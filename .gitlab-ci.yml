@@ -24,6 +24,7 @@ build:linux:
     - cargo test
 
 test:linux:
+  image: rust:1.29
   <<: *test_definition
   dependencies:
     - build:linux

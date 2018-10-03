@@ -17,7 +17,7 @@ members = [
     "network",
     "runtime",
     "storage",
-    "tx"
+    "txpool"
 ]
 
 [dependencies]
@@ -29,6 +29,6 @@ stegos_keychain = { path = "./keychain" }
 stegos_network = { path = "./network" }
 stegos_runtime = { path = "./runtime" }
 stegos_storage = { path = "./storage" }
-stegos_tx = { path = "./tx" }
+stegos_txpool = { path = "./txpool" }
 
 [build-dependencies]

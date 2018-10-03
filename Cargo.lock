@@ -10,7 +10,7 @@ dependencies = [
  "stegos_network 0.1.0",
  "stegos_runtime 0.1.0",
  "stegos_storage 0.1.0",
- "stegos_tx 0.1.0",
+ "stegos_txpool 0.1.0",
 ]
 
 [[package]]
@@ -49,6 +49,6 @@ name = "stegos_storage"
 version = "0.1.0"
 
 [[package]]
-name = "stegos_tx"
+name = "stegos_txpool"
 version = "0.1.0"
 

@@ -1,0 +1,20 @@
+stages:
+  - build
+  - test
+  - release
+
+.build: &build_definition
+  stage: build
+  script:
+    - cargo build
+  artifacts:
+    expire_in: 1 week
+    paths:
+      - target/
+
+build:linux:
+  image: rust:1.29
+  <<: *build_definition
+  tags:
+    - linux
+

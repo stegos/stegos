@@ -18,3 +18,32 @@ build:linux:
   tags:
     - linux
 
+.test: &test_definition
+  stage: test
+  script:
+    - cargo test
+
+test:linux:
+  <<: *test_definition
+  dependencies:
+    - build:linux
+  tags:
+    - linux
+
+.release: &release_definition
+  stage: release
+  script:
+    - cargo build --release
+  only:
+    - dev
+    - master
+  artifacts:
+    expire_in: 1 week
+    paths:
+      - target/
+
+release:linux:
+  image: rust:1.29
+  <<: *release_definition
+  tags:
+    - linux

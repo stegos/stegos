@@ -1,0 +1,17 @@
+language: rust
+
+os:
+  - linux
+
+dist: trusty
+
+cache:
+  cargo: true
+  timeout: 240
+
+rust:
+  - stable
+
+script:
+  - cargo build
+  - cargo test

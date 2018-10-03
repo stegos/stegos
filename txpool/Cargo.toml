@@ -1,0 +1,6 @@
+[package]
+name = "stegos_txpool"
+version = "0.1.0"
+authors = ["Stegos AG <info@stegos.cc>"]
+
+[dependencies]

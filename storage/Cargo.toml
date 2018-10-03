@@ -1,0 +1,6 @@
+[package]
+name = "stegos_storage"
+version = "0.1.0"
+authors = ["Stegos AG <info@stegos.cc>"]
+
+[dependencies]

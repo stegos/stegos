@@ -1,0 +1,34 @@
+[package]
+name = "stegos"
+version = "0.1.0"
+authors = ["Stegos AG <info@stegos.cc>"]
+
+[[bin]]
+name = "stegos"
+path = "src/stegos.rs"
+
+[workspace]
+members = [
+    "api",
+    "blockchain",
+    "consensus",
+    "crypto",
+    "keychain",
+    "network",
+    "runtime",
+    "storage",
+    "txpool"
+]
+
+[dependencies]
+stegos_api = { path = "./api" }
+stegos_blockchain = { path = "./blockchain" }
+stegos_consensus = { path = "./consensus" }
+stegos_crypto = { path = "./crypto" }
+stegos_keychain = { path = "./keychain" }
+stegos_network = { path = "./network" }
+stegos_runtime = { path = "./runtime" }
+stegos_storage = { path = "./storage" }
+stegos_txpool = { path = "./txpool" }
+
+[build-dependencies]

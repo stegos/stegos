@@ -1,0 +1,7 @@
+[package]
+name = "stegos_blockchain"
+version = "0.1.0"
+authors = ["Stegos AG <info@stegos.cc>"]
+
+[dependencies]
+stegos_keychain = { path = "../keychain" }

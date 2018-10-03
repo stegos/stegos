@@ -1,0 +1,54 @@
+[[package]]
+name = "stegos"
+version = "0.1.0"
+dependencies = [
+ "stegos_api 0.1.0",
+ "stegos_blockchain 0.1.0",
+ "stegos_consensus 0.1.0",
+ "stegos_crypto 0.1.0",
+ "stegos_keychain 0.1.0",
+ "stegos_network 0.1.0",
+ "stegos_runtime 0.1.0",
+ "stegos_storage 0.1.0",
+ "stegos_tx 0.1.0",
+]
+
+[[package]]
+name = "stegos_api"
+version = "0.1.0"
+
+[[package]]
+name = "stegos_blockchain"
+version = "0.1.0"
+dependencies = [
+ "stegos_keychain 0.1.0",
+]
+
+[[package]]
+name = "stegos_consensus"
+version = "0.1.0"
+
+[[package]]
+name = "stegos_crypto"
+version = "0.1.0"
+
+[[package]]
+name = "stegos_keychain"
+version = "0.1.0"
+
+[[package]]
+name = "stegos_network"
+version = "0.1.0"
+
+[[package]]
+name = "stegos_runtime"
+version = "0.1.0"
+
+[[package]]
+name = "stegos_storage"
+version = "0.1.0"
+
+[[package]]
+name = "stegos_tx"
+version = "0.1.0"
+

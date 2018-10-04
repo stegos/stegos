@@ -31,4 +31,6 @@ stegos_runtime = { path = "./runtime" }
 stegos_storage = { path = "./storage" }
 stegos_txpool = { path = "./txpool" }
 
+clap = "~2.32"
+
 [build-dependencies]

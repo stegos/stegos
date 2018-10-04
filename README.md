@@ -22,16 +22,16 @@ Spent coins in Stegos can be safely removed from the blockchain using cryptograp
 
 The compactness of Stegos blockchain allows us to use transactional sharding model, where each group of validators keeps the total blockchain state but verifying only a subset of incoming transactions and uses cross-shard atomic commit protocol to eliminate double-spending. We don't need (at least in the nearest future) to employ more complex state sharding model, which requires partitioning of blockchain data between multiple shards. Our goal is, upon reaching a stable transaction processing at VISA/Mastercard's speeds, go beyond hundreds of thousand transactions per second.
 
-Stegos is environment-friendly. Instead of forcing blockchain users to consume megawatts of elecricity for mining blocks, Stegos is using Proof-of-Stake consensus protocol, building on advancements in distributed systems theory and cryptography. Each new block in Stegos must be validated by a group of validators which must stake their funds in the escrow. If any validator will be found cheating or misbehaving by honest validators then its stake will be slashed and went to the Jackpot. The more funds a validator put into the escrow, the more chances it has to become a leader of the consensus in each epoch. The leader takes all block fees sans the part of it the must go into the Jackpot.
+Stegos is environment-friendly. Instead of forcing blockchain users to consume megawatts of elecricity for mining blocks, Stegos is using Proof-of-Stake consensus protocol, building on advancements in distributed systems theory and cryptography. Each new block in Stegos must be validated by a group of validators which must stake their funds in the escrow. If any validator will be found cheating or misbehaving by honest validators then its stake will be slashed and went to the Jackpot. The more funds a validator put into the escrow, the more chances it has to become a leader of the consensus in each epoch. The leader takes all block fees sans the part of it that must go into the Jackpot.
 
-The Jackpot is an unique feature of Stegos. A fraction of the fees from each block and all slashed stakes of valditors caught cheating go to the Jackpot. Each few thousand blocks, validators run cryptographic lottery based on verifiable distributed randomness, and transfer the contents of the Jackpot to the lottery winner. The longer a validator keeps it stake and participates in consensus, the higher probability it has to win the Jackpot lottery.
+The Jackpot is an unique feature of Stegos. A fraction of the fees from each block and all slashed stakes of validators caught cheating go to the Jackpot. Each few thousand blocks, validators run cryptographic lottery based on verifiable distributed randomness, and transfer the contents of the Jackpot to the lottery winner. The longer a validator keeps it stake and participates in the consensus, the higher probability it has to win the Jackpot lottery.
 
 ## Project Status
 
 We are in the very early days of the development. We are aiming to build our blockchain iteratively, using two-week cycles (spints). At the end of each sprint we will deliver something working and testable.
 
 Issue tracker is at https://github.com/stegos/stegos/issues.
-Project boards is at https://github.com/stegos/stegos/projects.
+Project boards are at https://github.com/stegos/stegos/projects.
 
 As our code, our issue tracker and project boards are completely open. We have nothing to hide from the public view. 
 
@@ -39,7 +39,7 @@ As our code, our issue tracker and project boards are completely open. We have n
 
 Even one word corrections are welcome! Our objective is to encourage you to get interested in Stegos and contribute in any way possible.
 
-Please see https://github.com/stegos/stegos/blob/dev/CONTRIBUTING.md for more information on contributing.
+Please see our [CONTRIBUTING GUIDE](https://github.com/stegos/stegos/blob/dev/CONTRIBUTING.md) and [CODE OF CONDUCT](https://github.com/stegos/stegos/blob/readme/CODE_OF_CONDUCT.md) for more information on contributing.
 
 
 Copyright (c) 2108 Stegos AG

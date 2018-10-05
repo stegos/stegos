@@ -30,6 +30,29 @@ Issue tracker is at https://github.com/stegos/stegos/issues.
 
 Project boards are at https://github.com/stegos/stegos/projects.
 
+## Installing from Source
+
+Stegos requires **Rust version 1.29.x** to build.
+
+The recommended way to install Rust it to use [rustup](https://www.rustup.rs/).
+If you don't already have `rustup`, you can install it like this:
+
+  ```bash
+  $ curl https://sh.rustup.rs -sSf | sh
+  ```
+
+Make sure that these binaries are in your `PATH`.
+After that, you should be able to build Stegos from the source.
+
+Run `cargo build` to create the main executable:
+
+```bash
+# build in release mode
+$ cargo build --release
+```
+
+This produces `stegos` executable in the `./target/release` subdirectory.
+
 ## How To Contribute
 
 We encourage you to contribute in any way you can!

@@ -60,4 +60,4 @@ We encourage you to contribute in any way you can!
 Please see our [CONTRIBUTING GUIDE](https://github.com/stegos/stegos/blob/dev/CONTRIBUTING.md) and [CODE OF CONDUCT](https://github.com/stegos/stegos/blob/readme/CODE_OF_CONDUCT.md) for more information on contributing.
 
 
-Copyright (c) 2108 Stegos AG
+Copyright (c) 2018 Stegos AG

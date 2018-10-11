@@ -1,0 +1,9 @@
+##
+## Sample configuration file for Stegos
+##
+
+[network]
+# An example string value
+strval = "string"
+# An example u32 value
+u32val = 10

@@ -1,7 +1,12 @@
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
+#[macro_use]
+extern crate slog;
+extern crate stegos_config;
+
+use slog::Logger;
+use std::error::Error;
+use stegos_config::ConfigNetwork;
+
+pub fn init(cfg: ConfigNetwork, log: Logger) -> Result<(), Box<Error>> {
+    info!(log, "starting network"; "strval" => &cfg.strval, "u32val" => cfg.u32val);
+    Ok(())
 }

@@ -35,5 +35,8 @@ stegos_txpool = { path = "./txpool" }
 
 clap = "~2.32"
 dirs = "~1.0"
+slog = "~2.4"
+slog-async = "~2.3"
+slog-term = "~2.4"
 
 [build-dependencies]

@@ -4,3 +4,6 @@ version = "0.1.0"
 authors = ["Stegos AG <info@stegos.cc>"]
 
 [dependencies]
+stegos_config = { path = "../config" }
+
+slog = "~2.4"

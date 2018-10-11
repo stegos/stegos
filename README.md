@@ -28,7 +28,7 @@ The *Jackpot* is distributed every few thousand blocks when validators run a cry
 
 Issue tracker is at https://github.com/stegos/stegos/issues.
 
-Project boards are at https://github.com/stegos/stegos/projects.
+Project boards are at https://github.com/orgs/stegos/projects.
 
 ## Installing from Source
 

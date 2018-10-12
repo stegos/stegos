@@ -8,12 +8,8 @@ use super::*;
 pub struct Zr([u8;ZR_SIZE_AR160]);
 
 impl Zr {
-    pub fn zero() -> Zr {
-        Zr([0u8;ZR_SIZE_AR160])
-    }
-
     pub fn new() -> Zr {
-        Zr::zero().clone()
+        Zr([0u8;ZR_SIZE_AR160])
     }
 
     pub fn random() -> Zr {
@@ -209,12 +205,8 @@ impl MulAssign<Zr> for Zr {
 pub struct G1([u8;G1_SIZE_AR160]);
 
 impl G1 {
-    pub fn zero() -> G1 {
-        G1([0u8;G1_SIZE_AR160])
-    }
-
     pub fn new() -> G1 {
-        G1::zero().clone()
+        G1([0u8;G1_SIZE_AR160])
     }
 
     pub fn base_vector(&self) -> &[u8] {
@@ -336,14 +328,10 @@ impl DivAssign<i64> for G1 {
 pub struct G2([u8;G2_SIZE_AR160]);
 
 impl G2 {
-    pub fn zero() -> G2 {
+    pub fn new() -> G2 {
         G2([0u8;G2_SIZE_AR160])
     }
     
-    pub fn new() -> G2 {
-        G2::zero().clone()
-    }
-
     pub fn base_vector(&self) -> &[u8] {
         &self.0
     }
@@ -464,14 +452,10 @@ impl DivAssign<i64> for G2 {
 pub struct GT([u8;GT_SIZE_AR160]);
 
 impl GT {
-    pub fn zero() -> GT {
+    pub fn new() -> GT {
         GT([0u8;GT_SIZE_AR160])
     }
     
-    pub fn new() -> GT {
-        GT::zero().clone()
-    }
-
     pub fn base_vector(&self) -> &[u8] {
         &self.0
     }

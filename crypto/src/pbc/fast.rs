@@ -35,6 +35,9 @@
 // Since eRandHound performs a lot of math on the curves, for shared polynomials, 
 // Lagrange interpolation, and point addition accumulators, we provide infix math 
 // operations on the curve field and groups.
+// 
+// We do not provide features like sub-keys, signatures, encryption. For those
+// purposes you should be using the "secure" module of PBC.
 // --------------------------------------------------------------------------
 
 use super::*;

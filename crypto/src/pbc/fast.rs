@@ -9,7 +9,12 @@ pub struct Zr([u8;ZR_SIZE_AR160]);
 
 impl Zr {
     pub fn new() -> Zr {
-        Zr([0u8;ZR_SIZE_AR160])
+        Zr(Zr::wv())
+    }
+    
+    fn wv() -> [u8; ZR_SIZE_AR160] {
+        // wv = Working Vector
+        [0u8;ZR_SIZE_AR160]
     }
 
     pub fn random() -> Zr {
@@ -21,13 +26,13 @@ impl Zr {
     }
 
     pub fn from_str(s : &str) -> Zr {
-        let mut v = [0u8;ZR_SIZE_AR160];
+        let mut v = Zr::wv();
         hexstr_to_u8v(&s, &mut v);
         Zr(v)
     }
 
     pub fn from_int(a : i64) -> Zr {
-        let mut v = [0u8;ZR_SIZE_AR160]; // big-endian encoding as byte vector
+        let mut v = Zr::wv(); // big-endian encoding as byte vector
         let mut va = if a < 0 { -(a as i128) } else { a as i128 };
         for ix in 0 .. 8 {
             v[ZR_SIZE_AR160-ix-1] = (va & 0x0ff) as u8;
@@ -206,7 +211,11 @@ pub struct G1([u8;G1_SIZE_AR160]);
 
 impl G1 {
     pub fn new() -> G1 {
-        G1([0u8;G1_SIZE_AR160])
+        G1(G1::wv())
+    }
+    
+    fn wv() -> [u8; G1_SIZE_AR160] {
+        [0u8;G1_SIZE_AR160]
     }
 
     pub fn base_vector(&self) -> &[u8] {
@@ -215,6 +224,12 @@ impl G1 {
 
     pub fn to_str(&self) -> String {
         u8v_to_typed_str("G1", &self.base_vector())
+    }
+
+    pub fn from_str(s : &str) -> G1 {
+        let mut v = G1::wv();
+        hexstr_to_u8v(&s, &mut v);
+        G1(v)
     }
 }
 
@@ -329,16 +344,25 @@ pub struct G2([u8;G2_SIZE_AR160]);
 
 impl G2 {
     pub fn new() -> G2 {
-        G2([0u8;G2_SIZE_AR160])
+        G2(G2::wv())
+    }
+    
+    fn wv() -> [u8; G2_SIZE_AR160] {
+        [0u8;G2_SIZE_AR160]
     }
     
     pub fn base_vector(&self) -> &[u8] {
         &self.0
     }
 
-
     pub fn to_str(&self) -> String {
         u8v_to_typed_str("G2", &self.base_vector())
+    }
+
+    pub fn from_str(s : &str) -> G2 {
+        let mut v = G2::wv();
+        hexstr_to_u8v(&s, &mut v);
+        G2(v)
     }
 }
 
@@ -453,7 +477,11 @@ pub struct GT([u8;GT_SIZE_AR160]);
 
 impl GT {
     pub fn new() -> GT {
-        GT([0u8;GT_SIZE_AR160])
+        GT(GT::wv())
+    }
+    
+    fn wv() -> [u8; GT_SIZE_AR160] {
+        [0u8;GT_SIZE_AR160]
     }
     
     pub fn base_vector(&self) -> &[u8] {

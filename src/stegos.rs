@@ -63,8 +63,7 @@ fn run() -> Result<(), Box<Error>> {
                 .value_name("FILE")
                 .help("Path to stegos.toml configuration file")
                 .takes_value(true),
-        )
-        .get_matches();
+        ).get_matches();
 
     // Parse configuration
     let cfg = load_configuration(&args)?;

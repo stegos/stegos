@@ -1,4 +1,6 @@
+// lev32.rs -- 32-byte little-endian vectors
 //
+// DM/Emotiq 10/18
 // MIT License
 //
 // Copyright (c) 2018 Stegos
@@ -15,30 +17,32 @@
 //
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 // IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFrINGEMENT. IN NO EVENT SHALL THE
 // AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FrOM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#![deny(warnings)]
+use super::*;
 
-extern crate generic_array;
-extern crate gmp;
-extern crate rand;
-extern crate rust_libpbc;
-extern crate sha3;
-extern crate typenum;
+// -----------------------------------------------------------------
+// type Lev32 represents a 256-bit bignum as a little-endian 32-byte vector
 
-pub mod curve1174;
-pub mod hash;
-pub mod pbc;
-pub mod utils;
+#[derive(Copy, Clone)]
+// #[repr(C)]
+pub union Lev32 {
+    pub v8: [u8; 32],
+    pub v64: [u64; 4],
+}
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
+impl Lev32 {
+    fn nbr_str(&self) -> String {
+        basic_nbr_str(unsafe { &self.v64 })
+    }
+}
+
+impl fmt::Display for Lev32 {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Lev32({})", self.nbr_str())
     }
 }

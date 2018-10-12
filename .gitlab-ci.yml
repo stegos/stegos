@@ -3,6 +3,8 @@ stages:
   - test
   - release
 
+before_script:
+  - ci-scripts/install-deps.sh
 .build: &build_definition
   stage: build
   script:

@@ -32,7 +32,6 @@ use generic_array::typenum::consts::U8;
 
 use std::fmt;
 use std::mem;
-use sha3::{Digest, Sha3_256, Shake256};
 
 use std::sync::{Mutex, Arc};
 use std::rc::Rc;
@@ -46,6 +45,9 @@ use rust_libpbc;
 pub mod secure;
 pub mod fast;
 pub mod hash;
+pub mod utils;
+
+use self::utils::*;
 
 // -------------------------------------------------------------------
 // Fast AR160 curves, but low security 2^80
@@ -128,61 +130,6 @@ pub const CURVES : &[PBCInfo] = &[
         g1           : G1_FR256,
         g2           : G2_FR256},
 ];        
-
-// -------------------------------------------------------------------
-// general utility functions
-
-pub fn hexstr_to_u8v(s: &str, x: &mut [u8]) {
-    // collect a vector of 8-bit values from a hex string.
-    let nx = x.len();
-    let mut pos = 0;
-    let mut val: u8 = 0;
-    let mut cct = 0;
-    for c in s.chars() {
-        if pos < nx {
-            match c.to_digit(16) {
-                Some(d) => {
-                    val += d as u8;
-                    cct += 1;
-                    if (cct & 1) == 0 {
-                        x[pos] = val;
-                        pos += 1;
-                        val = 0;
-                    }
-                    else {
-                        val <<= 4;
-                    }
-                },
-                None => panic!("Invalid hex digit")
-            }
-        }
-        else {
-            break;
-        }
-    }
-    for ix in pos..nx {
-        x[ix] = val;
-        val = 0;
-    }
-}
-
-pub fn u8v_to_hexstr(x : &[u8]) -> String {
-    // produce a hexnum string from a byte vector
-    let mut s = String::new();
-    for ix in 0 .. x.len() {
-        s.push_str(&format!("{:02x}", x[ix]));
-    }
-    s
-}
-
-fn u8v_to_typed_str(pref : &str, vec : &[u8]) -> String {
-    // produce a type-prefixed hexnum from a byte vector
-    let mut s = String::from(pref);
-    s.push_str("(");
-    s.push_str(&u8v_to_hexstr(&vec));
-    s.push_str(")");
-    s
-}
 
 // -------------------------------------------------------------------
 // init_pairings() -- must only be called once, at startup 

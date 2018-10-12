@@ -104,7 +104,7 @@ fn main() {
     // -------------------------------------
     // on Secure pairings
     // test PRNG
-    println!("rand Zr = {}", secure::get_random_Zr());
+    println!("rand Zr = {}", secure::Zr::random());
 
     // test keying...
     let (skey, pkey, sig) = secure::make_deterministic_keys(b"Testing");
@@ -117,7 +117,7 @@ fn main() {
     // -------------------------------------
     // on Fast pairings
     // test PRNG
-    println!("rand Zr = {}", fast::get_random_Zr());
+    println!("rand Zr = {}", fast::Zr::random());
 
     // test keying...
     let (skey, pkey, sig) = fast::make_deterministic_keys(b"Testing");

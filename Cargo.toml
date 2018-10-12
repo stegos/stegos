@@ -39,4 +39,10 @@ slog = "~2.4"
 slog-async = "~2.3"
 slog-term = "~2.4"
 
+[[example]]
+name = "pbc"
+
+[dev-dependencies]
+rust-libpbc = { git = "https://github.com/stegos/rust-pbcintf.git" }
+
 [build-dependencies]

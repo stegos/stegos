@@ -26,6 +26,10 @@
 // --------------------------------------------------------------------------
 // Field and group elements can be constructed from byte-vectors 
 // with UTF8 hex chars, as in b"FF3C...". Never use str format "FF3C..."
+//
+// This pairing system is intended for blockchain BLS mulit-signatures, and
+// encrypted payloads in UTXO's. No math is performed on the individual groups, 
+// and so we do not provide convenient infix access to such operations.
 // --------------------------------------------------------------------------
 
 use super::*;

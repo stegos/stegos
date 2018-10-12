@@ -27,6 +27,14 @@
 // --------------------------------------------------------------------------
 // Field and group elements can be constructed from byte-vectors 
 // with UTF8 hex chars, as in b"FF3C...". Never use str format "FF3C..."
+//
+// This weaker pairing system is intended for eRandHound, distributed randomness
+// generation, where secrets must be kept for durations measured in mere seconds,
+// and not for longer term exposure in the blockchain.
+//
+// Since eRandHound performs a lot of math on the curves, for shared polynomials, 
+// Lagrange interpolation, and point addition accumulators, we provide infix math 
+// operations on the curve field and groups.
 // --------------------------------------------------------------------------
 
 use super::*;

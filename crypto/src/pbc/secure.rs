@@ -12,6 +12,10 @@ impl Zr {
         Zr([0u8;ZR_SIZE_FR256])
     }
 
+    pub fn new() -> Zr {
+        Zr::zero().clone()
+    }
+
     pub fn random() -> Zr {
         Zr(random::<[u8;ZR_SIZE_FR256]>())
     }
@@ -48,6 +52,10 @@ impl G1 {
         G1([0u8;G1_SIZE_FR256])
     }
 
+    pub fn new() -> G1 {
+        G1::zero().clone()
+    }
+
     pub fn base_vector(&self) -> &[u8] {
         &self.0
     }
@@ -73,6 +81,10 @@ impl G2 {
         G2([0u8;G2_SIZE_FR256])
     }
 
+    pub fn new() -> G2 {
+        G2::zero().clone()
+    }
+
     pub fn base_vector(&self) -> &[u8] {
         &self.0
     }
@@ -96,6 +108,10 @@ pub struct GT([u8;GT_SIZE_FR256]);
 impl GT {
     pub fn zero () -> GT {
         GT([0u8;GT_SIZE_FR256])
+    }
+
+    pub fn new() -> GT {
+        GT::zero().clone()
     }
 
     pub fn base_vector(&self) -> &[u8] {
@@ -205,7 +221,7 @@ pub struct BlsSignature {
 
 pub fn sign_hash(h : &Hash, skey : &SecretKey) -> G1 {
     // return a raw signature on a hash
-    let v = G1::zero();
+    let v = G1::new();
     unsafe {
         rust_libpbc::sign_hash(
             PBC_CONTEXT_FR256 as u64,
@@ -247,19 +263,19 @@ pub fn check_message(msg : &[u8], sig : &BlsSignature) -> bool {
 
 pub fn make_deterministic_keys(seed : &[u8]) -> (SecretKey, PublicKey, G1) {
     let h = hash(&seed);
-    let sk = [0u8;ZR_SIZE_FR256]; // secret keys in Zr
-    let pk = [0u8;G2_SIZE_FR256]; // public keys in G2
+    let sk = Zr::new(); // secret keys in Zr
+    let pk = G2::new(); // public keys in G2
     unsafe {
         rust_libpbc::make_key_pair(
             PBC_CONTEXT_FR256 as u64,
-            sk.as_ptr() as *mut _,
-            pk.as_ptr() as *mut _,
+            sk.base_vector().as_ptr() as *mut _,
+            pk.base_vector().as_ptr() as *mut _,
             h.base_vector().as_ptr() as *mut _,
             HASH_SIZE as u64);
     }
-    let hpk = hash(&pk);
-    let skey = SecretKey(Zr(sk));
-    let pkey = PublicKey(G2(pk));
+    let hpk = hash(&pk.base_vector());
+    let skey = SecretKey(sk);
+    let pkey = PublicKey(pk);
     let sig  = sign_hash(&hpk, &skey);
     (skey, pkey, sig)
 }
@@ -277,30 +293,30 @@ pub fn make_random_keys() -> (SecretKey, PublicKey, G1) {
 
 pub fn make_secret_subkey(skey : &SecretKey, seed : &[u8]) -> SecretSubKey {
     let h = Hash::from_vector(&seed);
-    let sk = [0u8;G1_SIZE_FR256];
+    let sk = G1::new();
     unsafe {
         rust_libpbc::make_secret_subkey(
             PBC_CONTEXT_FR256 as u64,
-            sk.as_ptr() as *mut _,
+            sk.base_vector().as_ptr() as *mut _,
             skey.base_vector().as_ptr() as *mut _,
             h.base_vector().as_ptr() as *mut _,
             HASH_SIZE as u64);
     }
-    SecretSubKey(G1(sk))
+    SecretSubKey(sk)
 }
 
 pub fn make_public_subkey(pkey : &PublicKey, seed : &[u8]) -> PublicSubKey {
     let h = Hash::from_vector(&seed);
-    let pk = [0u8;G2_SIZE_FR256];
+    let pk = G2::new();
     unsafe {
         rust_libpbc::make_public_subkey(
             PBC_CONTEXT_FR256 as u64,
-            pk.as_ptr() as *mut _,
+            pk.base_vector().as_ptr() as *mut _,
             pkey.base_vector().as_ptr() as *mut _,
             h.base_vector().as_ptr() as *mut _,
             HASH_SIZE as u64);
     }
-    PublicSubKey(G2(pk))
+    PublicSubKey(pk)
 }
 
 // structure of a SAKKI encryption. 
@@ -330,8 +346,8 @@ pub fn ibe_encrypt(msg : &[u8], pkey : &PublicKey, id : &[u8]) -> EncryptedPacke
     }
     let rhash = hash(&concv);
 
-    let rval = G2::zero();
-    let pval = GT::zero();
+    let rval = G2::new();
+    let pval = GT::new();
     unsafe {
         rust_libpbc::sakai_kasahara_encrypt(
             PBC_CONTEXT_FR256 as u64,
@@ -358,7 +374,7 @@ pub fn ibe_decrypt(pack : &EncryptedPacket, skey : &SecretKey) -> Option<Vec<u8>
     let skid = make_secret_subkey(&skey, &pack.id);
     let pkid = make_public_subkey(&pack.pkey, &pack.id);
     let nmsg = pack.cmsg.len();
-    let pval = GT::zero();
+    let pval = GT::new();
     unsafe {
         rust_libpbc::sakai_kasahara_decrypt(
             PBC_CONTEXT_FR256 as u64,
@@ -385,11 +401,7 @@ pub fn ibe_decrypt(pack : &EncryptedPacket, skey : &SecretKey) -> Option<Vec<u8>
                     pkid.base_vector().as_ptr() as *mut _,
                     rhash.base_vector().as_ptr() as *mut _,
                     HASH_SIZE as u64);
-        if ans == 0 {
-            Some(msg)
-        } else {
-            None
-        }
+        if ans == 0 { Some(msg) } else { None }
     }
 }
 

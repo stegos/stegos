@@ -180,15 +180,6 @@ fn u8v_to_typed_str(pref : &str, vec : &[u8]) -> String {
     s
 }
 
-pub fn u8v_from_str(s : &str) -> Vec<u8> {
-    let mut v : Vec<u8> = Vec::new();
-    for c in s.chars() {
-        v.push(c as u8);
-    }
-    v
-}
-
-
 // // -------------------------------------------------------------------
 
 // fn main() {

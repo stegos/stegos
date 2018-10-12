@@ -12,6 +12,10 @@ impl Zr {
         Zr([0u8;ZR_SIZE_AR160])
     }
 
+    pub fn new() -> Zr {
+        Zr::zero().clone()
+    }
+
     pub fn random() -> Zr {
         Zr(random::<[u8;ZR_SIZE_AR160]>())
     }
@@ -28,21 +32,12 @@ impl Zr {
 
     pub fn from_int(a : i64) -> Zr {
         let mut v = [0u8;ZR_SIZE_AR160]; // big-endian encoding as byte vector
-        let mut va = if a < 0 {
-                                -(a as i128)
-                            } 
-                            else {
-                                a as i128
-                            };
+        let mut va = if a < 0 { -(a as i128) } else { a as i128 };
         for ix in 0 .. 8 {
             v[ZR_SIZE_AR160-ix-1] = (va & 0x0ff) as u8;
             va >>= 8;
         }
-        if a < 0 {
-            -Zr(v)
-        } else {
-            Zr(v)
-        }
+        if a < 0 { -Zr(v) } else { Zr(v) }
     }
 
     pub fn to_str(&self) -> String {
@@ -218,6 +213,10 @@ impl G1 {
         G1([0u8;G1_SIZE_AR160])
     }
 
+    pub fn new() -> G1 {
+        G1::zero().clone()
+    }
+
     pub fn base_vector(&self) -> &[u8] {
         &self.0
     }
@@ -341,6 +340,10 @@ impl G2 {
         G2([0u8;G2_SIZE_AR160])
     }
     
+    pub fn new() -> G2 {
+        G2::zero().clone()
+    }
+
     pub fn base_vector(&self) -> &[u8] {
         &self.0
     }
@@ -465,6 +468,10 @@ impl GT {
         GT([0u8;GT_SIZE_AR160])
     }
     
+    pub fn new() -> GT {
+        GT::zero().clone()
+    }
+
     pub fn base_vector(&self) -> &[u8] {
         &self.0
     }
@@ -552,7 +559,7 @@ impl fmt::Display for PublicKey {
 
 pub fn sign_hash(h : &Hash, skey : &SecretKey) -> G1 {
     // return a raw signature on a hash
-    let v = G1::zero();
+    let v = G1::new();
     unsafe {
         rust_libpbc::sign_hash(
             PBC_CONTEXT_AR160 as u64,
@@ -578,8 +585,8 @@ pub fn check_hash(h : &Hash, sig : &G1, pkey : &PublicKey) -> bool {
 
 pub fn make_deterministic_keys(seed : &[u8]) -> (SecretKey, PublicKey, G1) {
     let h = hash(&seed);
-    let sk = Zr::zero();  // secret keys in Zr
-    let pk = G2::zero();  // public keys in G2
+    let sk = Zr::new();  // secret keys in Zr
+    let pk = G2::new();  // public keys in G2
     unsafe {
         rust_libpbc::make_key_pair(
             PBC_CONTEXT_AR160 as u64,
@@ -607,7 +614,7 @@ pub fn make_random_keys() -> (SecretKey, PublicKey, G1) {
 // Curve Arithmetic...
 
 pub fn add_Zr_Zr(a : &Zr, b : &Zr) -> Zr {
-    let ans = *a;
+    let ans = a.clone();
     unsafe {
         rust_libpbc::add_Zr_vals(
             PBC_CONTEXT_AR160 as u64,
@@ -618,7 +625,7 @@ pub fn add_Zr_Zr(a : &Zr, b : &Zr) -> Zr {
 }
 
 pub fn sub_Zr_Zr(a : &Zr, b : &Zr) -> Zr {
-    let ans = *a;
+    let ans = a.clone();
     unsafe {
         rust_libpbc::sub_Zr_vals(
             PBC_CONTEXT_AR160 as u64,
@@ -629,7 +636,7 @@ pub fn sub_Zr_Zr(a : &Zr, b : &Zr) -> Zr {
 }
 
 pub fn mul_Zr_Zr(a : &Zr, b : &Zr) -> Zr {
-    let ans = *a;
+    let ans = a.clone();
     unsafe {
         rust_libpbc::mul_Zr_vals(
             PBC_CONTEXT_AR160 as u64,
@@ -640,7 +647,7 @@ pub fn mul_Zr_Zr(a : &Zr, b : &Zr) -> Zr {
 }
 
 pub fn div_Zr_Zr(a : &Zr, b : &Zr) -> Zr {
-    let ans = *a;
+    let ans = a.clone();
     unsafe {
         rust_libpbc::div_Zr_vals(
             PBC_CONTEXT_AR160 as u64,
@@ -651,7 +658,7 @@ pub fn div_Zr_Zr(a : &Zr, b : &Zr) -> Zr {
 }
 
 pub fn exp_Zr_Zr(a : &Zr, b : &Zr) -> Zr {
-    let ans = *a;
+    let ans = a.clone();
     unsafe {
         rust_libpbc::exp_Zr_vals(
             PBC_CONTEXT_AR160 as u64,
@@ -662,7 +669,7 @@ pub fn exp_Zr_Zr(a : &Zr, b : &Zr) -> Zr {
 }
 
 pub fn neg_Zr(a : &Zr) -> Zr {
-    let ans = *a;
+    let ans = a.clone();
     unsafe {
         rust_libpbc::neg_Zr_val(
             PBC_CONTEXT_AR160 as u64,
@@ -672,7 +679,7 @@ pub fn neg_Zr(a : &Zr) -> Zr {
 }
 
 pub fn inv_Zr(a : &Zr) -> Zr {
-    let ans = *a;
+    let ans = a.clone();
     unsafe {
         rust_libpbc::inv_Zr_val(
             PBC_CONTEXT_AR160 as u64,
@@ -684,7 +691,7 @@ pub fn inv_Zr(a : &Zr) -> Zr {
 // ---------------------------------
 
 pub fn mul_G1_Zr(a : &G1, b : &Zr) -> G1 {
-    let ans = *a;
+    let ans = a.clone();
     unsafe {
         rust_libpbc::exp_G1z(
             PBC_CONTEXT_AR160 as u64,
@@ -700,7 +707,7 @@ pub fn div_G1_Zr(a : &G1, b : &Zr) -> G1 {
 }
 
 pub fn add_G1_G1(a : &G1, b : &G1) -> G1 {
-    let ans = *a;
+    let ans = a.clone();
     unsafe {
         rust_libpbc::add_G1_pts(
             PBC_CONTEXT_AR160 as u64,
@@ -711,7 +718,7 @@ pub fn add_G1_G1(a : &G1, b : &G1) -> G1 {
 }
 
 pub fn sub_G1_G1(a : &G1, b : &G1) -> G1 {
-    let ans = *a;
+    let ans = a.clone();
     unsafe {
         rust_libpbc::sub_G1_pts(
             PBC_CONTEXT_AR160 as u64,
@@ -722,7 +729,7 @@ pub fn sub_G1_G1(a : &G1, b : &G1) -> G1 {
 }
 
 pub fn neg_G1(a : &G1) -> G1 {
-    let ans = *a;
+    let ans = a.clone();
     unsafe {
         rust_libpbc::neg_G1_pt(
             PBC_CONTEXT_AR160 as u64,
@@ -734,7 +741,7 @@ pub fn neg_G1(a : &G1) -> G1 {
 // ------------------------------------------------------
 
 pub fn mul_G2_Zr(a : &G2, b : &Zr) -> G2 {
-    let ans = *a;
+    let ans = a.clone();
     unsafe {
         rust_libpbc::exp_G2z(
             PBC_CONTEXT_AR160 as u64,
@@ -750,7 +757,7 @@ pub fn div_G2_Zr(a : &G2, b : &Zr) -> G2 {
 }
 
 pub fn add_G2_G2(a : &G2, b : &G2) -> G2 {
-    let ans = *a;
+    let ans = a.clone();
     unsafe {
         rust_libpbc::add_G2_pts(
             PBC_CONTEXT_AR160 as u64,
@@ -761,7 +768,7 @@ pub fn add_G2_G2(a : &G2, b : &G2) -> G2 {
 }
 
 pub fn sub_G2_G2(a : &G2, b : &G2) -> G2 {
-    let ans = *a;
+    let ans = a.clone();
     unsafe {
         rust_libpbc::sub_G2_pts(
             PBC_CONTEXT_AR160 as u64,
@@ -772,7 +779,7 @@ pub fn sub_G2_G2(a : &G2, b : &G2) -> G2 {
 }
 
 pub fn neg_G2(a : &G2) -> G2 {
-    let ans = *a;
+    let ans = a.clone();
     unsafe {
         rust_libpbc::neg_G2_pt(
             PBC_CONTEXT_AR160 as u64,
@@ -784,7 +791,7 @@ pub fn neg_G2(a : &G2) -> G2 {
 // -------------------------------------------------
 
 pub fn compute_pairing(a : &G1, b : &G2) -> GT {
-    let ans = GT::zero();
+    let ans = GT::new();
     unsafe {
         rust_libpbc::compute_pairing(
             PBC_CONTEXT_AR160 as u64,
@@ -796,7 +803,7 @@ pub fn compute_pairing(a : &G1, b : &G2) -> GT {
 }
 
 pub fn mul_GT_GT(a : &GT, b : &GT) -> GT {
-    let ans = *a;
+    let ans = a.clone();
     unsafe {
         rust_libpbc::mul_GT_vals(
             PBC_CONTEXT_AR160 as u64,
@@ -807,7 +814,7 @@ pub fn mul_GT_GT(a : &GT, b : &GT) -> GT {
 }
 
 pub fn div_GT_GT(a : &GT, b : &GT) -> GT {
-    let ans = *a;
+    let ans = a.clone();
     unsafe {
         rust_libpbc::div_GT_vals(
             PBC_CONTEXT_AR160 as u64,
@@ -818,7 +825,7 @@ pub fn div_GT_GT(a : &GT, b : &GT) -> GT {
 }
 
 pub fn exp_GT_Zr(a : &GT, b : &Zr) -> GT {
-    let ans = *a;
+    let ans = a.clone();
     unsafe {
         rust_libpbc::exp_GTz(
             PBC_CONTEXT_AR160 as u64,
@@ -829,7 +836,7 @@ pub fn exp_GT_Zr(a : &GT, b : &Zr) -> GT {
 }
 
 pub fn inv_GT(a : &GT) -> GT {
-    let ans = *a;
+    let ans = a.clone();
     unsafe {
         rust_libpbc::inv_GT_val(
             PBC_CONTEXT_AR160 as u64,
@@ -840,35 +847,20 @@ pub fn inv_GT(a : &GT) -> GT {
 
 // -------------------------------------------
 
-pub fn get_G1() -> G1 {
-    let u = G1::zero();
-    unsafe {
-        rust_libpbc::get_g1(
-            PBC_CONTEXT_AR160 as u64,
-            u.base_vector().as_ptr() as *mut _,
-            G1_SIZE_AR160 as u64);
-    }
-    u
-}
-
-pub fn get_G2() -> G2 {
-    let v = G2::zero();
-    unsafe {
-        rust_libpbc::get_g2(
-            PBC_CONTEXT_AR160 as u64,
-            v.base_vector().as_ptr() as *mut _,
-            G1_SIZE_AR160 as u64);
-    }
-    v
-}
-
 impl G1 {
     pub fn generator() -> G1 {
-        get_G1()
+        let u = G1::new();
+        unsafe {
+            rust_libpbc::get_g1(
+                PBC_CONTEXT_AR160 as u64,
+                u.base_vector().as_ptr() as *mut _,
+                G1_SIZE_AR160 as u64);
+        }
+        u
     }
 
     pub fn from_hash(h : &Hash) -> G1 {
-        let u = G1::zero();
+        let u = G1::new();
         unsafe {
             rust_libpbc::get_G1_from_hash(
                 PBC_CONTEXT_AR160 as u64,
@@ -882,11 +874,18 @@ impl G1 {
 
 impl G2 {
     pub fn generator() -> G2 {
-        get_G2()
+        let v = G2::new();
+        unsafe {
+            rust_libpbc::get_g2(
+                PBC_CONTEXT_AR160 as u64,
+                v.base_vector().as_ptr() as *mut _,
+                G1_SIZE_AR160 as u64);
+        }
+        v
     }
 
     pub fn from_hash(h : &Hash) -> G2 {
-        let v = G2::zero();
+        let v = G2::new();
         unsafe {
             rust_libpbc::get_G2_from_hash(
                 PBC_CONTEXT_AR160 as u64,

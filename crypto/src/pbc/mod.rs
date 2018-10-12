@@ -1,4 +1,5 @@
-// Test PBC Interface with Lynn's PBC Library and our LispPBCIntf glue layer.
+// PBC Crypto for Rust, atop Ben Lynn's PBCliib
+//
 // DM/Emotiq 10/18
 // MIT License
 //

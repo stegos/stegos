@@ -1,4 +1,6 @@
+// Single-curve ECC on Curve1174
 //
+// DM/Emotiq 10/18
 // MIT License
 //
 // Copyright (c) 2018 Stegos
@@ -21,22 +23,25 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-extern crate rust_libpbc;
-extern crate gmp;
-extern crate sha3;
-extern crate rand;
-extern crate generic_array;
-extern crate typenum;
+#![allow(non_snake_case)]
 
-pub mod pbc;
-pub mod curve1174;
-pub mod hash;
-pub mod utils;
+use rand::prelude::*;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
+use generic_array::{GenericArray, ArrayLength};
+use generic_array::typenum::consts::U8;
+
+use std::fmt;
+use std::mem;
+
+use std::sync::{Mutex, Arc};
+use std::rc::Rc;
+use std::thread;
+use std::marker;
+use std::vec::*;
+use std::ops::{Add, Sub, Mul, Div, Neg, AddAssign, SubAssign, MulAssign, DivAssign};
+
+// pub mod utils;
+
+// use self::utils::*;
+
+// -----------------------------------------------------------------------------------

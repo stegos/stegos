@@ -44,10 +44,10 @@ use rust_libpbc;
 
 pub mod secure;
 pub mod fast;
-pub mod hash;
-pub mod utils;
+// pub mod hash;
+// pub mod utils;
 
-use self::utils::*;
+use utils::*;
 
 // -------------------------------------------------------------------
 // Fast AR160 curves, but low security 2^80

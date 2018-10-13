@@ -28,8 +28,8 @@ extern crate stegos_crypto;
 extern crate rust_libpbc;
 
 use stegos_crypto::pbc::*;
-use stegos_crypto::pbc::hash::*;
-use stegos_crypto::pbc::utils::*;
+use stegos_crypto::hash::*;
+use stegos_crypto::utils::*;
 
 use std::sync::Mutex;
 

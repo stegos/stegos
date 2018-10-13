@@ -1,4 +1,4 @@
-// utils.rs - general utility functions for vector handling
+// mod.rs - general utility functions for vector handling
 //
 // DM/Emotiq 10/18
 // MIT License

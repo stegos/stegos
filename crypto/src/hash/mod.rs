@@ -1,4 +1,4 @@
-// hash.rs -- hashing with SHA3
+// mod.rs -- hashing with SHA3
 //
 // DM/Emotiq 10/18
 // MIT License
@@ -23,8 +23,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use super::*;
 use sha3::{Digest, Sha3_256};
+use utils::*;
 
 // -----------------------------------------------------
 // Hashing with SHA3

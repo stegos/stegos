@@ -33,7 +33,8 @@
 // --------------------------------------------------------------------------
 
 use super::*;
-use self::hash::*;
+use hash::*;
+use utils::*;
 
 #[derive(Copy, Clone)]
 pub struct Zr([u8;ZR_SIZE_FR256]);

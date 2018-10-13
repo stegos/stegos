@@ -35,25 +35,31 @@ necessary, these are forcibly viewed through an "unsafe" transformation to/from 
 
 ---------------------------------------------------------------------------- */
 
+#![allow(non_snake_case)]
+
 extern crate stegos_crypto;
+
+use stegos_crypto::curve1174::*;
+use stegos_crypto::hash::*;
+use stegos_crypto::utils::*;
 
 use std::fmt;
 use std::mem;
 
 // #[macro_use]
 // extern crate derive_more;
-extern crate bn;
-extern crate libc;
-use libc::{c_int, size_t};
+// extern crate bn;
+// extern crate libc;
+// use libc::{c_int, size_t};
 
 extern crate rand;
 // extern crate crypto;
-extern crate sha3;
+// extern crate sha3;
 
 use rand::prelude::*;
 // use crypto::digest::Digest;
 // use crypto::sha3::Sha3;
-use sha3::{Digest, Sha3_256};
+// use sha3::{Digest, Sha3_256};
 use std::ops::{Add, Sub, Mul, Div, Neg, AddAssign, SubAssign, MulAssign, DivAssign};
 use std::cmp::Ordering;
 
@@ -1637,8 +1643,6 @@ fn add_proj(qpt: &ECp, ppt: &ECp, zpt: &mut ECp) {
 
 // -------------------------------------------------------------------------------
 fn main() {
-    pbc_echo(b"This is a test!");
-
     let smul = "1FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF77965C4DFD307348944D45FD166C970"; // *ed-r* - 1
     let sx = "037FBB0CEA308C479343AEE7C029A190C021D96A492ECD6516123F27BCE29EDA";  // *ed-gen* x
     let sy = "06B72F82D47FB7CC6656841169840E0C4FE2DEE2AF3F976BA4CCB1BF9B46360E";  // *ed-gen* y
@@ -1699,12 +1703,12 @@ fn main() {
         r.fill_bytes(&mut x);
         println!("{:?}", &x);
     }
-    /* */
+    /*
     let mut hasher = Sha3_256::new();
     hasher.input(b"");
     let hex = hasher.result();
     println!("Hash = {:?}", hex);
-    /* */
+    */
     /*
     let mut hasher = Sha3_256::default();
     hasher.input(b"");

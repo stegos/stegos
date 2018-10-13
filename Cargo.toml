@@ -38,9 +38,13 @@ dirs = "~1.0"
 slog = "~2.4"
 slog-async = "~2.3"
 slog-term = "~2.4"
+rand = "0.5"
 
 [[example]]
 name = "pbc"
+
+[[example]]
+name = "curve1174"
 
 [dev-dependencies]
 rust-libpbc = { git = "https://github.com/stegos/rust-pbcintf.git" }

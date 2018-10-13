@@ -44,8 +44,6 @@ use rust_libpbc;
 
 pub mod secure;
 pub mod fast;
-// pub mod hash;
-// pub mod utils;
 
 use utils::*;
 

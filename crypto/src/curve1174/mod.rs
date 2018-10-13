@@ -2160,7 +2160,7 @@ impl From<ECp> for Pt {
 }
 
 pub fn pt_on_curve(pt : Pt) -> Option<ECp> {
-    let mut x = pt.0.clone();
+    let mut x = pt.0;
     let sgn = (x[31] & 0x80) != 0;
     x[31] &= 0x7f;
     if x == [0u8;32] { None } // can't be pt at infinity

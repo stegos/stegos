@@ -39,6 +39,10 @@ impl Hash {
         &self.0
     }
 
+    pub fn bits(self) -> [u8;32] {
+        self.0
+    }
+
     pub fn from_vector(msg : &[u8]) -> Hash {
         hash(msg)
     }

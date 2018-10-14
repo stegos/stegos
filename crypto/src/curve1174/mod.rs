@@ -2166,23 +2166,61 @@ pub fn pt_on_curve(pt : Pt) -> Option<ECp> {
     if x == [0u8;32] { None } // can't be pt at infinity
     else {
         let xq = FQ51::from(FQ_Unscaled(U256::from(LEV32(x))));
-        let yyq = ((1 + xq) * (1 - xq)) / (1 - xq.sqr() * CURVE_D);
-        match gsqrt(yyq) {
+        match solve_ypt(xq) {
             Some(ysqrt) => {
                 let yq = if ysqrt.is_odd() == sgn { ysqrt } else { -ysqrt };
                 let newpt = ECp::from_xy(xq, yq);
                 // check for small subgroup attack
                 if CURVE_H * newpt == ECp::inf() { None } else { Some(newpt) }
             },
-            None => None    // yyq wasn't square
+            None => None
         }
     }
+}
+
+fn solve_ypt(xq : FQ51) -> Option<FQ51> {
+    let yyq = ((1 + xq) * (1 - xq)) / (1 - xq.sqr() * CURVE_D);
+    gsqrt(yyq)
 }
 
 impl From<Pt> for ECp {
     fn from(pt : Pt) -> ECp {
         // NOTE: This will panic if invalid point
         pt_on_curve(pt).unwrap()
+    }
+}
+
+impl From<Hash> for ECp {
+    fn from(h : Hash) -> ECp {
+        let mut bits = h.bits();
+        let sgn = bits[31] & 0x80 != 0;
+        bits[31] &= 0x7f;
+        let mut x = U256::from(LEV32(bits));
+        while x >= Q {
+            div2(&mut x.0);
+        }
+        let mut xq = FQ51::from(FQ_Unscaled(x));
+        let hpt : ECp;
+        loop {
+            if xq != FQ51::zero() { 
+                // can't be pt at inf
+                match solve_ypt(xq) {
+                    Some(ysqrt) => {
+                        // xq must be on curve
+                        let yq = if sgn == ysqrt.is_odd() { ysqrt } else { -ysqrt };
+                        let pt = ECp::from_xy(xq, yq);
+                        if CURVE_H * pt != ECp::inf() { 
+                            // can't be pt in small subgroup
+                            hpt = pt;
+                            break;
+                        }
+                    },
+                    None => {}
+                }
+            }
+            xq = xq.sqr() + 1;
+        }
+        hpt
     }
 }
 
@@ -2261,7 +2299,8 @@ pub fn curve1174_tests() {
     let out = hasher.result();
     println!("{:x}", out);
     */
-    println!("x+y: {}", gen_x + gen_y)
+    println!("x+y: {}", gen_x + gen_y);
     /* */
+    println!("hash -> {}", Pt::from(ECp::from(hash(b"Testing"))));
 } 
 

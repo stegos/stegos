@@ -27,16 +27,7 @@
 
 use rand::prelude::*;
 
-use generic_array::{GenericArray, ArrayLength};
-use generic_array::typenum::consts::U8;
-
 use std::fmt;
-use std::mem;
-
-use std::sync::{Mutex, Arc};
-use std::rc::Rc;
-use std::thread;
-use std::marker;
 use std::vec::*;
 
 use rust_libpbc;

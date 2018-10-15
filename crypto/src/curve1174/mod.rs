@@ -27,20 +27,11 @@
 
 use rand::prelude::*;
 
-use generic_array::{GenericArray, ArrayLength};
-use generic_array::typenum::consts::U8;
-
 use std::fmt;
 use std::mem;
 
-use std::sync::{Mutex, Arc};
-use std::rc::Rc;
-use std::thread;
-use std::marker;
-use std::vec::*;
 use std::ops::{Add, Sub, Mul, Div, Neg, AddAssign, SubAssign, MulAssign, DivAssign};
 
-use utils::*;
 use hash::*;
 use std::cmp::Ordering;
 
@@ -1926,7 +1917,7 @@ fn mul_to_proj(w: &WinVec, ppt: &mut ECp) {
     let mut qpt = PT_INF;
     for _ in 0..(PANES-1) {
         jx -= 1;
-        select(&mut qpt, &wpts, w.0[jx]);
+        select(&mut qpt, &wpts, wv[jx]);
         window(&qpt, ppt);
     }
 }

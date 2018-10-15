@@ -44,6 +44,8 @@ use super::*;
 use hash::*;
 use utils::*;
 
+use::std::ops::{Neg, Add, AddAssign, Sub, SubAssign, Mul, MulAssign, Div, DivAssign};
+
 #[derive(Copy, Clone)]
 pub struct Zr([u8;ZR_SIZE_AR160]);
 

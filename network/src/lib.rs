@@ -1,3 +1,5 @@
+#![deny(warnings)]
+
 #[macro_use]
 extern crate slog;
 extern crate stegos_config;

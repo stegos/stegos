@@ -58,7 +58,7 @@ fn main() {
     let init = Mutex::new(false);
     {
         let mut done = init.lock().unwrap();
-        if ! *done {
+        if !*done {
             *done = true;
             init_pairings();
         }
@@ -67,7 +67,10 @@ fn main() {
     // test hashing
     let h = Hash::from_vector(b"");
     println!("hash(\"\") = {}", h.to_str());
-    assert_eq!(h.to_str(), "H(a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a)");
+    assert_eq!(
+        h.to_str(),
+        "H(a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a)"
+    );
     println!("");
 
     // -------------------------------------

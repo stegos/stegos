@@ -38,7 +38,6 @@ use std::rc::Rc;
 use std::thread;
 use std::marker;
 use std::vec::*;
-use std::ops::{Add, Sub, Mul, Div, Neg, AddAssign, SubAssign, MulAssign, DivAssign};
 
 use rust_libpbc;
 
@@ -50,8 +49,8 @@ use utils::*;
 // -------------------------------------------------------------------
 // Fast AR160 curves, but low security 2^80
 
-const PBC_CONTEXT_AR160 : u8 = 0;
-const NAME_AR160 : &str = "AR160";
+const PBC_CONTEXT_AR160: u8 = 0;
+const NAME_AR160: &str = "AR160";
 const INIT_TEXT_AR160 : &str = "type a
 q 8780710799663312522437781984754049815806883199414208211028653399266475630880222957078625179422662221423155858769582317459277713367317481324925129998224791
 h 12016012264891146079388821366740534204802954401251311822919615131047207289359704531102844802183906537786776
@@ -71,9 +70,9 @@ const GT_SIZE_AR160 : usize = 128;
 // -------------------------------------------------------------------
 // Secure BN curves, security approx 2^128
 
-const PBC_CONTEXT_FR256 : u8 = 1;
-const NAME_FR256 : &str = "FR256";
-const INIT_TEXT_FR256 : &str = "type f
+const PBC_CONTEXT_FR256: u8 = 1;
+const NAME_FR256: &str = "FR256";
+const INIT_TEXT_FR256: &str = "type f
 q 115792089237314936872688561244471742058375878355761205198700409522629664518163
 r 115792089237314936872688561244471742058035595988840268584488757999429535617037
 b 3

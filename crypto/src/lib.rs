@@ -21,11 +21,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-extern crate rust_libpbc;
-extern crate gmp;
-extern crate sha3;
-extern crate rand;
+#![deny(warnings)]
+
 extern crate generic_array;
+extern crate gmp;
+extern crate rand;
+extern crate rust_libpbc;
+extern crate sha3;
 extern crate typenum;
 
 pub mod pbc;

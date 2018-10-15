@@ -34,15 +34,9 @@ little-endian order, normally expressed as quads of 64-bit unsigned fragments. W
 necessary, these are forcibly viewed through an "unsafe" transformation to/from 32-bytes.
 
 ---------------------------------------------------------------------------- */
-
-#![allow(non_snake_case)]
-
 extern crate stegos_crypto;
 
 use stegos_crypto::curve1174::*;
-
-extern crate lazy_static;
-use lazy_static::*;
 
 // -------------------------------------------------------------------------------
 fn main() {

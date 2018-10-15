@@ -899,7 +899,7 @@ impl Div<FQ> for i64 {
 // in little-endian order, of i64 (vs u64 in FQ)
 // 47 bits in last frame
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone)]
 #[repr(C)]
 pub struct FQ51([i64;5]);
 
@@ -915,7 +915,23 @@ impl FQ51 {
         FQ51_1
     }
 
-    pub fn is_odd(self) -> bool {
+    pub fn is_zero(&self) -> bool {
+        // faster than test == FQ51_0
+        // avoid scr(FQ51_0);
+        let mut tmp = *self;
+        scr(&mut tmp);
+        tmp.0 == FQ51_0.0
+    }
+
+    pub fn is_one(&self) -> bool {
+        // faster than test == FQ51_1
+        // avoid scr(FQ51_1);
+        let mut tmp = *self;
+        scr(&mut tmp);
+        tmp.0 == FQ51_1.0
+    }
+    
+    pub fn is_odd(&self) -> bool {
         (self.0[0] & 1) != 0
     }
 
@@ -1077,11 +1093,7 @@ impl Mul<FQ51> for FQ51 {
     type Output = FQ51;
     fn mul(self, other: FQ51) -> FQ51 {
         let mut dst = FQ51::zero();
-        if self == other {
-            gsqr(&self, &mut dst)
-        } else {
-            gmul(&self, &other, &mut dst);
-        }
+        gmul(&self, &other, &mut dst);
         dst
     }
 }
@@ -1089,11 +1101,7 @@ impl Mul<FQ51> for FQ51 {
 impl MulAssign<FQ51> for FQ51 {
     fn mul_assign(&mut self, other: FQ51) {
         let tmp = *self;
-        if *self == other {
-            gsqr(&tmp, self)
-        } else {
-            gmul(&tmp, &other, self);
-        }
+         gmul(&tmp, &other, self);
     }
 }
 
@@ -1127,6 +1135,16 @@ impl Div<FQ51> for FQ51 {
         let mut tmp = x;
         ginv(&mut tmp);
         self * tmp
+    }
+}
+
+impl PartialEq for FQ51 {
+    fn eq(&self, other : &FQ51) -> bool {
+        let mut a = *self;
+        let mut b = *other;
+        scr(&mut a);
+        scr(&mut b);
+        a.0 == b.0
     }
 }
 // ---------------------------------------------------------
@@ -1184,21 +1202,25 @@ fn gsb2(x: &FQ51, w: &mut FQ51) {
 
 // reduce w - Short Coefficient Reduction
 fn scr(w: &mut FQ51) {
-    let w0 = w.0[0];
-    let t0 = w0 & BOT_51_BITS;
- 
-    let t1 = w.0[1] + (w0 >> 51);
-    w.0[1] = t1 & BOT_51_BITS;
+    loop {
+        let w0 = w.0[0];
+        let t0 = w0 & BOT_51_BITS;
+    
+        let t1 = w.0[1] + (w0 >> 51);
+        w.0[1] = t1 & BOT_51_BITS;
 
-    let t2 = w.0[2] + (t1 >> 51);
-    w.0[2] = t2 & BOT_51_BITS;
+        let t2 = w.0[2] + (t1 >> 51);
+        w.0[2] = t2 & BOT_51_BITS;
 
-    let t3 = w.0[3] + (t2 >> 51);
-    w.0[3] = t3 & BOT_51_BITS;
+        let t3 = w.0[3] + (t2 >> 51);
+        w.0[3] = t3 & BOT_51_BITS;
 
-    let t4 = w.0[4] + (t3 >> 51);
-    w.0[4] = t4 & BOT_47_BITS;
-    w.0[0] = t0 + 9*(t4 >> 47);
+        let t4 = w.0[4] + (t3 >> 51);
+        w.0[4] = t4 & BOT_47_BITS;
+        w.0[0] = t0 + 9*(t4 >> 47);
+
+        if (w.0[0] >> 51) == 0 { break; }
+    } 
 }
 
 // multiply w by a constant, w*=i
@@ -1322,7 +1344,7 @@ fn ginv(x: &mut FQ51) {
     let mut x5 = FQ51_0;
     
     // --------------------------------------
-    // 205*M
+    // 265*M
     gsqr(x, &mut w);      // w = x^2
     gmul(x, &w, &mut x3);   // x3 = x^3 = x^(2^2-1)
     gmul(&w, &x3, &mut x5);  // x5 = x^5
@@ -1395,29 +1417,99 @@ fn gdec2(x: &mut FQ51) {
     x.0[0] -= 2;
 }
 
-fn gchi(x: FQ51) -> FQ51 {
-    // TODO
-    FQ51::one()
-}
-
-fn is_quadratic_residue(x : FQ51) -> bool {
-    gchi(x) == FQ51::one()
-}
-
 fn gsqrt(x: FQ51) -> Option<FQ51> {
-    match is_quadratic_residue(x) {
-        false => None,
-        true => {
-            // TODO
-            Some(FQ51::one())
-        }
+    // we need to perform (x^((q+1)/4) mod q)
+    // for (q + 1)/4 = 0x01FF__FFFF__FFFF_FFFF__FFFF_FFFF_FFFF_FFFF__FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFE
+    //               = 2^(2*(248-1))
+    // At end we will verify: sqrt(x)^2 mod q == x, bypassing usual check for Legendre symbol = +1.
+
+    let mut w  = FQ51_0;
+    let mut t1 = FQ51_0;
+    let mut t2 = FQ51_0;
+
+    let mut t8   = FQ51_0;
+    let mut t16  = FQ51_0;
+    let mut t32  = FQ51_0;
+    let mut t64  = FQ51_0;
+
+    // --------------------------------------
+    // 260*M
+
+    gsqr(&x, &mut w);         // w = x^2
+    gmul(&x, &w, &mut t1);    // t1 = x^3
+    gsqr(&t1, &mut w);        // w = x^6
+    gsqr(&w, &mut t2);        // t2 = x^12
+    gmul(&t1, &t2, &mut w);   // w = x^15 = x^(2^4-1)
+
+    t2 = w;
+    for _ in 0 .. 2 {
+        gsqr(&w, &mut t1);
+        gsqr(&t1, &mut w);
     }
+    gmul(&t2, &w, &mut t8);  // t8 = x^(2^8-1)
+
+    w = t8;
+    for _ in 0 .. 4 {
+        gsqr(&w, &mut t1);
+        gsqr(&t1, &mut w);
+    }
+    gmul(&t8, &w, &mut t16);  // t16 = x^(2^16-1)
+
+    w = t16;
+    for _ in 0 .. 8 {
+        gsqr(&w, &mut t1);
+        gsqr(&t1, &mut w);
+    }
+    gmul(&t16, &w, &mut t32); // t32 = x^(2^32-1)
+
+    w = t32;
+    for _ in 0 .. 16 {
+        gsqr(&w, &mut t1);
+        gsqr(&t1, &mut w);
+    }
+    gmul(&t32, &w, &mut t64); // t64 = x^(2^64-1)
+
+    w = t64;
+    for _ in 0 .. 32 {
+        gsqr(&w, &mut t1);
+        gsqr(&t1, &mut w);
+    }
+    gmul(&t64, &w, &mut t1);  // t1 = x^(2^128-1)
+
+    for _ in 0 .. 32 {
+        gsqr(&t1, &mut w);
+        gsqr(&w, &mut t1);
+    }
+    gmul(&t64, &t1, &mut w); // w = x^(2^192-1)
+
+    for _ in 0 .. 16 {
+        gsqr(&w, &mut t1);
+        gsqr(&t1, &mut w);
+    }
+    gmul(&t32, &w, &mut t1); // t1 = x^(2^224-1)
+
+    for _ in 0 .. 8 {
+        gsqr(&t1, &mut w);
+        gsqr(&w, &mut t1);
+    }
+    gmul(&t16, &t1, &mut w); // w = x^(2^240-1)
+
+    for _ in 0 .. 4 {
+        gsqr(&w, &mut t1);
+        gsqr(&t1, &mut w);
+    }
+    gmul(&t8, &w, &mut t1); // t1 = x^(2^248-1)
+
+    gsqr(&t1, &mut w);      // w = x^(2*(248-1)) =? sqrt(x)
+
+    gsqr(&w, &mut t1);      // t1 = sqrt(x)^2 =? x
+    if t1 == x { Some(w) } else { None }
 }
 
 // -------------------------------------------------------------------------
 // Point Structure
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug)]
 #[repr(C)]
 pub struct ECp { x: FQ51,
                  y: FQ51,
@@ -1425,13 +1517,21 @@ pub struct ECp { x: FQ51,
                  t: FQ51 }
 
 const PT_INF: ECp  = ECp { x: FQ51_0,
-                            y: FQ51_1,
-                            z: FQ51_1,
-                            t: FQ51_0 };
+                           y: FQ51_1,
+                           z: FQ51_1,
+                           t: FQ51_0 };
 
 impl ECp {
     pub fn inf() -> ECp {
         PT_INF
+    }
+
+    pub fn is_inf(&self) -> bool {
+        self.x.is_zero()
+    }
+
+    pub fn is_affine(&self) -> bool {
+        self.z.is_one()
     }
 
     pub fn new(x: FQ, y: FQ) -> ECp {
@@ -2124,13 +2224,28 @@ mod tests {
 // ------------------------------------------------------------------------------------------
 // Client API - compressed points and simple fields
 
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Pt([u8;32]);
 
 impl Pt {
+    pub fn bits(self) -> [u8;32] {
+        self.0
+    }
+
     fn nbr_str(&self) -> String {
         let Pt(qv) = self;
         let v = unsafe { mem::transmute::<[u8;32], [u64;4]>(*qv) };
         basic_nbr_str(&v)
+    }
+
+    fn basic_from_ECp(pt : &ECp) -> Pt {
+        // only for affine pts
+        let ptx = FQ_Unscaled::from(pt.x);
+        let LEV32(mut x) = LEV32::from(U256::from(ptx));
+        if pt.y.is_odd() {
+            x[31] |= 0x80;
+        }
+        Pt(x)
     }
 }
 
@@ -2142,25 +2257,16 @@ impl fmt::Display for Pt {
 
 impl From<ECp> for Pt {
     fn from(pt : ECp) -> Pt {
-        if pt.z == FQ51::one() {
-            // affine pt - use directly
-            let ptx = FQ_Unscaled::from(pt.x);
-            let LEV32(mut x) = LEV32::from(U256::from(ptx));
-            if pt.y.is_odd() {
-                x[31] |= 0x80;
-            }
-            Pt(x)
-        } else {
-            // projective pt - convert to affine first
-            let mut afpt = pt;
+        let mut afpt = pt;
+        if !afpt.is_affine() {
             norm(&mut afpt);
-            Pt::from(afpt)
         }
+        Pt::basic_from_ECp(&afpt)
     }
 }
 
 pub fn pt_on_curve(pt : Pt) -> Option<ECp> {
-    let mut x = pt.0;
+    let mut x = pt.bits();
     let sgn = (x[31] & 0x80) != 0;
     x[31] &= 0x7f;
     if x == [0u8;32] { None } // can't be pt at infinity
@@ -2171,7 +2277,7 @@ pub fn pt_on_curve(pt : Pt) -> Option<ECp> {
                 let yq = if ysqrt.is_odd() == sgn { ysqrt } else { -ysqrt };
                 let newpt = ECp::from_xy(xq, yq);
                 // check for small subgroup attack
-                if CURVE_H * newpt == ECp::inf() { None } else { Some(newpt) }
+                if (CURVE_H * newpt).is_inf() { None } else { Some(newpt) }
             },
             None => None
         }
@@ -2208,9 +2314,9 @@ impl From<Hash> for ECp {
                     Some(ysqrt) => {
                         // xq must be on curve
                         let yq = if sgn == ysqrt.is_odd() { ysqrt } else { -ysqrt };
-                        let pt = ECp::from_xy(xq, yq);
-                        if CURVE_H * pt != ECp::inf() { 
-                            // can't be pt in small subgroup
+                        // avoid small subgroup
+                        let pt = CURVE_H * ECp::from_xy(xq, yq);
+                        if !pt.is_inf() {
                             hpt = pt;
                             break;
                         }
@@ -2301,6 +2407,11 @@ pub fn curve1174_tests() {
     */
     println!("x+y: {}", gen_x + gen_y);
     /* */
-    println!("hash -> {}", Pt::from(ECp::from(hash(b"Testing"))));
+    let ept = ECp::from(hash(b"Testing12")); // produces an odd Y
+    let cpt = Pt::from(ept);                 // MSB should be set
+    let ept2 = ECp::from(cpt.clone());
+    println!("hash -> {}", ept);
+    println!("hash -> {}", cpt);
+    println!("hash -> {}", ept2);
 } 
 

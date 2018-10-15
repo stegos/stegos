@@ -30,10 +30,11 @@ extern crate tokio_stdin;
 use futures::Stream;
 use futures::future::Future;
 use std::{env, mem};
-use libp2p::core::{either::EitherOutput, upgrade};
+use libp2p::core::upgrade;
 use libp2p::core::{Multiaddr, Transport, PublicKey};
 use libp2p::peerstore::PeerId;
 use libp2p::tcp::TcpConfig;
+use libp2p::secio::SecioOutput;
 use libp2p::websocket::WsConfig;
 
 fn main() {
@@ -54,20 +55,19 @@ fn main() {
         // On top of TCP/IP, we will use either the plaintext protocol or the secio protocol,
         // depending on which one the remote supports.
         .with_upgrade({
-            let plain_text = upgrade::PlainTextConfig;
-
             let secio = {
                 let private_key = include_bytes!("test-rsa-private-key.pk8");
                 let public_key = include_bytes!("test-rsa-public-key.der").to_vec();
-                libp2p::secio::SecioConfig::new(
-                    libp2p::secio::SecioKeyPair::rsa_from_pkcs8(private_key, public_key).unwrap()
-                )
+                let keypair = libp2p::secio::SecioKeyPair::rsa_from_pkcs8(private_key, public_key).unwrap();
+                libp2p::secio::SecioConfig::new(keypair)
             };
 
-            upgrade::or(
-                upgrade::map(plain_text, |pt| EitherOutput::First(pt)),
-                upgrade::map(secio, |out: libp2p::secio::SecioOutput<_>| EitherOutput::Second(out.stream))
-            )
+            upgrade::map_with_addr(secio,
+             |out: SecioOutput<_>, addr| {
+               println!("Remote key: {:?}", out.remote_key);
+               println!("Remote addr: {:?}", addr);
+               out.stream
+             })
         })
 
         // On top of plaintext or secio, we will use the multiplex protocol.

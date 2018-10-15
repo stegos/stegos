@@ -67,11 +67,6 @@ fn main() {
                println!("Remote addr: {:?}", addr);
                out.stream
              })
-            // upgrade::map(secio,
-            //  |out: SecioOutput<_>| {
-            //    println!("Remote key: {:?}", out.remote_key);
-            //    out.stream
-            //  })
         })
 
         // On top of plaintext or secio, we will use the multiplex protocol.

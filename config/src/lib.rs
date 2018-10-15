@@ -1,6 +1,7 @@
 //! Configuration Handling.
 
 #![warn(missing_docs, missing_debug_implementations)]
+#![deny(warnings)]
 
 #[macro_use]
 extern crate serde_derive;

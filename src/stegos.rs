@@ -1,3 +1,5 @@
+#![deny(warnings)]
+
 mod consts;
 
 #[macro_use]

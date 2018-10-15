@@ -26,17 +26,9 @@
 
 use rand::prelude::*;
 
-use generic_array::{GenericArray, ArrayLength};
-use generic_array::typenum::consts::U8;
-
 use std::fmt;
-use std::mem;
-use sha3::{Digest, Sha3_256, Shake256};
+use sha3::{Digest, Sha3_256};
 
-use std::sync::{Mutex, Arc};
-use std::rc::Rc;
-use std::thread;
-use std::marker;
 use std::vec::*;
 use std::ops::{Add, Sub, Mul, Div, Neg, AddAssign, SubAssign, MulAssign, DivAssign};
 
@@ -178,7 +170,6 @@ fn u8v_to_typed_str(pref : &str, vec : &[u8]) -> String {
 }
 
 pub fn u8v_from_str(s : &str) -> Vec<u8> {
-    let nel = s.len();
     let mut v : Vec<u8> = Vec::new();
     for c in s.chars() {
         v.push(c as u8);
@@ -708,9 +699,7 @@ pub mod secure {
 
     pub fn ibe_decrypt(pack : &EncryptedPacket, skey : &SecretKey) -> Option<Vec<u8>> {
         let skid = make_secret_subkey(&skey, &pack.id);
-        let pkid = make_public_subkey(&pack.pkey, &pack.id);
         let nmsg = pack.cmsg.len();
-        let mut msg = vec![0u8; nmsg];
         let pbuf = [0u8; GT_SIZE_FR256];
         unsafe {
             rust_libpbc::sakai_kasahara_decrypt(

@@ -21,6 +21,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#![deny(warnings)]
+
 extern crate rust_libpbc;
 extern crate gmp;
 extern crate sha3;

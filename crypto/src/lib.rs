@@ -23,11 +23,11 @@
 
 #![deny(warnings)]
 
-extern crate rust_libpbc;
-extern crate gmp;
-extern crate sha3;
-extern crate rand;
 extern crate generic_array;
+extern crate gmp;
+extern crate rand;
+extern crate rust_libpbc;
+extern crate sha3;
 extern crate typenum;
 
 pub mod pbc;

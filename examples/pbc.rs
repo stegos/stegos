@@ -1,13 +1,12 @@
 // -------------------------------------------------------------------
-extern crate stegos_crypto;
 extern crate rust_libpbc;
+extern crate stegos_crypto;
 
 use stegos_crypto::pbc::*;
 
 use std::sync::Mutex;
 
 fn main() {
-
     fn init_pairings() {
         for info in CURVES {
             let context = info.context as u64;
@@ -16,14 +15,15 @@ fn main() {
                 println!("Context: {}", context);
                 println!("{}", (*info.text).to_string());
 
-                let mut psize = [0u64;4];
+                let mut psize = [0u64; 4];
                 let ans = rust_libpbc::init_pairing(
                     context,
                     info.text as *mut _,
                     (*info.text).len() as u64,
-                    psize.as_ptr() as *mut _);
+                    psize.as_ptr() as *mut _,
+                );
                 assert_eq!(ans, 0);
-                
+
                 assert_eq!(psize[0], info.g1_size as u64);
                 assert_eq!(psize[1], info.g2_size as u64);
                 assert_eq!(psize[2], info.pairing_size as u64);
@@ -32,37 +32,26 @@ fn main() {
                 let mut v1 = vec![0u8; info.g1_size];
                 hexstr_to_u8v(&(*info.g1), &mut v1);
                 println!("G1: {}", u8v_to_hexstr(&v1));
-                let len = rust_libpbc::set_g1(
-                    context,
-                    v1.as_ptr() as *mut _);
+                let len = rust_libpbc::set_g1(context, v1.as_ptr() as *mut _);
                 // returns nbr bytes read, should equal length of G1
                 assert_eq!(len, info.g1_size as i64);
 
                 let mut v1 = vec![0u8; info.g1_size];
-                let len = rust_libpbc::get_g1(
-                    context,
-                    v1.as_ptr() as *mut _,
-                    info.g1_size as u64);
+                let len = rust_libpbc::get_g1(context, v1.as_ptr() as *mut _, info.g1_size as u64);
                 assert_eq!(len, info.g1_size as u64);
                 println!("G1 readback: {}", u8v_to_hexstr(&v1));
-                
+
                 let mut v2 = vec![0u8; info.g2_size];
                 hexstr_to_u8v(&(*info.g2), &mut v2);
                 println!("G2: {}", u8v_to_hexstr(&v2));
-                let len = rust_libpbc::set_g2(
-                    context,
-                    v2.as_ptr() as *mut _);
+                let len = rust_libpbc::set_g2(context, v2.as_ptr() as *mut _);
                 // returns nbr bytes read, should equal length of G2
                 assert_eq!(len, info.g2_size as i64);
 
                 let mut v2 = vec![0u8; info.g2_size];
-                let len = rust_libpbc::get_g2(
-                    context,
-                    v2.as_ptr() as *mut _,
-                    info.g2_size as u64);
+                let len = rust_libpbc::get_g2(context, v2.as_ptr() as *mut _, info.g2_size as u64);
                 assert_eq!(len, info.g2_size as u64);
                 println!("G2 readback: {}", u8v_to_hexstr(&v2));
-                
             }
             println!("");
         }
@@ -89,7 +78,7 @@ fn main() {
     let init = Mutex::new(false);
     {
         let mut done = init.lock().unwrap();
-        if ! *done {
+        if !*done {
             *done = true;
             init_pairings();
         }
@@ -98,7 +87,10 @@ fn main() {
     // test hashing
     let h = Hash::from_vector(b"");
     println!("hash(\"\") = {}", h.to_str());
-    assert_eq!(h.to_str(), "H(a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a)");
+    assert_eq!(
+        h.to_str(),
+        "H(a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a)"
+    );
     println!("");
 
     // -------------------------------------

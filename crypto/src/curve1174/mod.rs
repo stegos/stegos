@@ -17,13 +17,14 @@
 //
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 // IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFrINGEMENT. IN NO EVENT SHALL THE
 // AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FrOM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
 #![allow(non_snake_case)]
+#![allow(unused)]
 
 use rand::prelude::*;
 
@@ -39,7 +40,7 @@ use std::cmp::Ordering;
 
 const WINDOW : usize  =  4; // using 4-bit fixed windows
 
-const BOT_51_BITS : i64 = ((1 << 51) - 1); // FQ51 frames contain 51 bits
+const BOT_51_BITS : i64 = ((1 << 51) - 1); // Fq51 frames contain 51 bits
 const BOT_47_BITS : i64 = ((1 << 47) - 1); // MSB frame only has 47 bits
 const CURVE_D     : i64 = -1174; // the d value in the curve equation
 const CURVE_H     : i64 = 4; // cofactor of curve group
@@ -57,8 +58,8 @@ struct WinVec([i8;PANES]);
 
 const WINVEC_INIT: WinVec = WinVec([0;PANES]);
 
-impl From<FR_Unscaled> for WinVec {
-    fn from(x : FR_Unscaled) -> WinVec {
+impl From<FrUnscaled> for WinVec {
+    fn from(x : FrUnscaled) -> WinVec {
         let tmp = LEV32::from(x.0);
         let mut wv = WINVEC_INIT;
         cwin4(&tmp, &mut wv);
@@ -68,13 +69,13 @@ impl From<FR_Unscaled> for WinVec {
 
 impl From<i64> for WinVec {
     fn from(x : i64) -> WinVec {
-        WinVec::from(FR_Unscaled::from(x))
+        WinVec::from(FrUnscaled::from(x))
     }
 }
 
-impl From<FR> for WinVec {
-    fn from(x : FR) -> WinVec {
-        WinVec::from(FR_Unscaled::from(x))
+impl From<Fr> for WinVec {
+    fn from(x : Fr) -> WinVec {
+        WinVec::from(FrUnscaled::from(x))
     }
 }
 
@@ -256,31 +257,31 @@ impl fmt::Display for U256 {
     }
 }
 
-impl From<FR_Unscaled> for U256 {
-    fn from(x: FR_Unscaled) -> U256 {
+impl From<FrUnscaled> for U256 {
+    fn from(x: FrUnscaled) -> U256 {
         x.0
     }
 }
 
-impl From<FR> for FR_Unscaled {
-    fn from(x: FR) -> FR_Unscaled {
+impl From<Fr> for FrUnscaled {
+    fn from(x: Fr) -> FrUnscaled {
         let mut tmp = x.0;
         mul_collapse(&mut tmp.0, &R.0, FRINV);
-        FR_Unscaled(tmp)
+        FrUnscaled(tmp)
     }
 }
 
-impl From<FQ_Unscaled> for U256 {
-    fn from(x: FQ_Unscaled) -> U256 {
+impl From<FqUnscaled> for U256 {
+    fn from(x: FqUnscaled) -> U256 {
         x.0
     }
 }
 
-impl From<FQ> for FQ_Unscaled {
-    fn from(x: FQ) -> FQ_Unscaled {
+impl From<Fq> for FqUnscaled {
+    fn from(x: Fq) -> FqUnscaled {
         let mut tmp = x.0;
         mul_collapse(&mut tmp.0, &Q.0, FQINV);
-        FQ_Unscaled(tmp)
+        FqUnscaled(tmp)
     }
 }
 
@@ -460,32 +461,32 @@ fn basic_nbr_str(x: &[u64;4]) -> String {
 // Fr is the field on the curve.  |Fr| * GenPt = INF
 // |Fr| < |Fq|, both |Fr| and |Fq| are prime.
 //
-// Type FR is for working directly in the field Fr, using fast Montgomery reduction
-// for modular multiply. As such, FR is scaled by the R_ONE value. 
+// Type Fr is for working directly in the field Fr, using fast Montgomery reduction
+// for modular multiply. As such, Fr is scaled by the R_ONE value. 
 //
 // Point multiplication on the curve is performed using windowed vectors of 
-// unscaled Fr values. For that we have type FR_Unscaled, to avoid the overhead
+// unscaled Fr values. For that we have type FrUnscaled, to avoid the overhead
 // of scaling / descaling.
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 #[repr(C)]
-pub struct FR(U256);
+pub struct Fr(U256);
 
-const R : U256 = U256([0x8944D45FD166C971, 0xF77965C4DFD30734, 0xFFFFFFFFFFFFFFFF, 0x1FFFFFFFFFFFFFF]); // |FR|
+const R : U256 = U256([0x8944D45FD166C971, 0xF77965C4DFD30734, 0xFFFFFFFFFFFFFFFF, 0x1FFFFFFFFFFFFFF]); // |Fr|
 
-const ZR_SQUARED : FR = FR(U256([0x32A1CB0B0D0DF74A, 0x7FE44146DFCFDAF8, 0xAF59BBB1E8ACC494, 0x1A6134EBBFC821])); // (2^256)^2 mod |FR|
-const FRINV : u64 = 0xCD27F41CB1C5286F; // (-1/|FR|) mod 2^64
-const R_ONE : FR = FR(U256([0x5D95D0174C9B4780, 0x434D1D90167C65BB, 4, 0])); // = 2^256 mod |FR|
-const ZR_CUBED : FR = FR(U256([0x4BC368544B1323FA, 0xACA9EEEE6129D3CC, 0xA005B5D44D4502BD, 0x11ECFA1EAC284DF]));
+const ZR_SQUARED : Fr = Fr(U256([0x32A1CB0B0D0DF74A, 0x7FE44146DFCFDAF8, 0xAF59BBB1E8ACC494, 0x1A6134EBBFC821])); // (2^256)^2 mod |Fr|
+const FRINV : u64 = 0xCD27F41CB1C5286F; // (-1/|Fr|) mod 2^64
+const R_ONE : Fr = Fr(U256([0x5D95D0174C9B4780, 0x434D1D90167C65BB, 4, 0])); // = 2^256 mod |Fr|
+const ZR_CUBED : Fr = Fr(U256([0x4BC368544B1323FA, 0xACA9EEEE6129D3CC, 0xA005B5D44D4502BD, 0x11ECFA1EAC284DF]));
 
-impl PartialOrd for FR {
-    fn partial_cmp(&self, other: &FR) -> Option<Ordering> {
+impl PartialOrd for Fr {
+    fn partial_cmp(&self, other: &Fr) -> Option<Ordering> {
         U256::partial_cmp(&self.0, &other.0)
     }
 }
 
-impl Ord for FR {
-    fn cmp(&self, other: &FR) -> Ordering {
+impl Ord for Fr {
+    fn cmp(&self, other: &Fr) -> Ordering {
         U256::cmp(&self.0, &other.0)
     }
 }
@@ -493,416 +494,416 @@ impl Ord for FR {
 
 // -------------------------------------------------------------------
 
-impl FR {
-    pub fn zero() -> FR {
-        FR(U256::zero())
+impl Fr {
+    pub fn zero() -> Fr {
+        Fr(U256::zero())
     }
 
-    pub fn one() -> FR {
+    pub fn one() -> Fr {
         R_ONE
     }
 
-    pub fn invert(self) -> FR {
+    pub fn invert(self) -> Fr {
         let mut tmp = self;
         U256::invert_mod(&mut tmp.0, &R);
         ZR_CUBED * tmp
     }
 }
 
-impl fmt::Display for FR {
+impl fmt::Display for Fr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let FR_Unscaled(tmp) = FR_Unscaled::from(*self);
-        write!(f, "FR({})", tmp.nbr_str())
+        let FrUnscaled(tmp) = FrUnscaled::from(*self);
+        write!(f, "Fr({})", tmp.nbr_str())
     }
 }
 
-struct FR_Unscaled(U256);
+struct FrUnscaled(U256);
 
-impl From<i64> for FR_Unscaled {
-    fn from(x : i64) -> FR_Unscaled {
+impl From<i64> for FrUnscaled {
+    fn from(x : i64) -> FrUnscaled {
         if x >= 0 {
             let z = U256([x as u64, 0, 0, 0]);
-            FR_Unscaled(z)
+            FrUnscaled(z)
         } else {
             let tmp = [(-x) as u64, 0, 0, 0];
             let mut tmp2 = R.0;
             sub_noborrow(&mut tmp2, &tmp);
             let z = U256(tmp2);
-            FR_Unscaled(z)
+            FrUnscaled(z)
         }
     }
 }
 
-impl From<FR_Unscaled> for FR {
-    fn from(x : FR_Unscaled) -> FR {
-        let FR_Unscaled(z) = x;
-        ZR_SQUARED * FR(z)
+impl From<FrUnscaled> for Fr {
+    fn from(x : FrUnscaled) -> Fr {
+        let FrUnscaled(z) = x;
+        ZR_SQUARED * Fr(z)
     }
 }
 
-impl From<i64> for FR {
-    fn from(x : i64) -> FR {
-        FR::from(FR_Unscaled::from(x))
+impl From<i64> for Fr {
+    fn from(x : i64) -> Fr {
+        Fr::from(FrUnscaled::from(x))
     }
 }
 
-impl Add<FR> for FR {
-    type Output = FR;
-    fn add(self, other: FR) -> FR {
+impl Add<Fr> for Fr {
+    type Output = Fr;
+    fn add(self, other: Fr) -> Fr {
         let mut tmp = self;
         U256::add_mod(&mut tmp.0, &other.0, &R);
         tmp
     }
 }
 
-impl Add<i64> for FR {
-    type Output = FR;
-    fn add(self, other: i64) -> FR {
-        self + FR::from(other)
+impl Add<i64> for Fr {
+    type Output = Fr;
+    fn add(self, other: i64) -> Fr {
+        self + Fr::from(other)
     }
 }
 
-impl Add<FR> for i64 {
-    type Output = FR;
-    fn add(self, other: FR) -> FR {
-        FR::from(self) + other
+impl Add<Fr> for i64 {
+    type Output = Fr;
+    fn add(self, other: Fr) -> Fr {
+        Fr::from(self) + other
     }
 }
 
-impl AddAssign<FR> for FR {
-    fn add_assign(&mut self, other: FR) {
+impl AddAssign<Fr> for Fr {
+    fn add_assign(&mut self, other: Fr) {
         U256::add_mod(&mut self.0, &other.0, &R);
     }
 }
 
-impl AddAssign<i64> for FR {
+impl AddAssign<i64> for Fr {
     fn add_assign(&mut self, other: i64) {
-        *self += FR::from(other);
+        *self += Fr::from(other);
     }
 }
 
-impl Sub<FR> for FR {
-    type Output = FR;
-    fn sub(self, other: FR) -> FR {
+impl Sub<Fr> for Fr {
+    type Output = Fr;
+    fn sub(self, other: Fr) -> Fr {
         let mut tmp = self;
         U256::sub_mod(&mut tmp.0, &other.0, &R);
         tmp
     }
 }
 
-impl Sub<i64> for FR {
-    type Output = FR;
-    fn sub(self, other: i64) -> FR {
-        self - FR::from(other)
+impl Sub<i64> for Fr {
+    type Output = Fr;
+    fn sub(self, other: i64) -> Fr {
+        self - Fr::from(other)
     }
 }
 
-impl Sub<FR> for i64 {
-    type Output = FR;
-    fn sub(self, other: FR) -> FR {
-        FR::from(self) - other
+impl Sub<Fr> for i64 {
+    type Output = Fr;
+    fn sub(self, other: Fr) -> Fr {
+        Fr::from(self) - other
     }
 }
 
-impl SubAssign<FR> for FR {
-    fn sub_assign(&mut self, other: FR) {
+impl SubAssign<Fr> for Fr {
+    fn sub_assign(&mut self, other: Fr) {
         U256::sub_mod(&mut self.0, &other.0, &R);
     }
 }
 
-impl SubAssign<i64> for FR {
+impl SubAssign<i64> for Fr {
     fn sub_assign(&mut self, other: i64) {
-        *self -= FR::from(other);
+        *self -= Fr::from(other);
     }
 }
 
-impl Neg for FR {
-    type Output = FR;
-    fn neg(self) -> FR {
+impl Neg for Fr {
+    type Output = Fr;
+    fn neg(self) -> Fr {
         let mut tmp = self;
         U256::neg_mod(&mut tmp.0, &R);
         tmp
     }
 }
 
-impl Mul<FR> for FR {
-    type Output = FR;
-    fn mul(self, other: FR) -> FR {
+impl Mul<Fr> for Fr {
+    type Output = Fr;
+    fn mul(self, other: Fr) -> Fr {
         let mut tmp = self;
         U256::mul_mod(&mut tmp.0, &other.0, &R, FRINV);
         tmp
     }
 }
 
-impl Mul<i64> for FR {
-    type Output = FR;
-    fn mul(self, other: i64) -> FR {
-        self * FR::from(other)
+impl Mul<i64> for Fr {
+    type Output = Fr;
+    fn mul(self, other: i64) -> Fr {
+        self * Fr::from(other)
     }
 }
 
-impl Mul<FR> for i64 {
-    type Output = FR;
-    fn mul(self, other: FR) -> FR {
+impl Mul<Fr> for i64 {
+    type Output = Fr;
+    fn mul(self, other: Fr) -> Fr {
         other * self
     }
 }
 
-impl MulAssign<FR> for FR {
-    fn mul_assign(&mut self, other: FR) {
+impl MulAssign<Fr> for Fr {
+    fn mul_assign(&mut self, other: Fr) {
         U256::mul_mod(&mut self.0, &other.0, &R, FRINV);
     }
 }
 
-impl MulAssign<i64> for FR {
+impl MulAssign<i64> for Fr {
     fn mul_assign(&mut self, other: i64) {
-        *self *= FR::from(other);
+        *self *= Fr::from(other);
     }
 }
 
-impl Div<FR> for FR {
-    type Output = FR;
-    fn div(self, other: FR) -> FR {
-        self * FR::invert(other)
+impl Div<Fr> for Fr {
+    type Output = Fr;
+    fn div(self, other: Fr) -> Fr {
+        self * Fr::invert(other)
     }
 }
 
-impl Div<i64> for FR {
-    type Output = FR;
-    fn div(self, other: i64) -> FR {
-        self / FR::from(other)
+impl Div<i64> for Fr {
+    type Output = Fr;
+    fn div(self, other: i64) -> Fr {
+        self / Fr::from(other)
     }
 }
 
-impl Div<FR> for i64 {
-    type Output = FR;
-    fn div(self, other: FR) -> FR {
+impl Div<Fr> for i64 {
+    type Output = Fr;
+    fn div(self, other: Fr) -> Fr {
         if self == 1 {
-            FR::invert(other)
+            Fr::invert(other)
         } else {
-            FR::from(self) / other
+            Fr::from(self) / other
         }
     }
 }
 
-impl DivAssign<FR> for FR {
-    fn div_assign(&mut self, other: FR) {
-        *self *= FR::invert(other);
+impl DivAssign<Fr> for Fr {
+    fn div_assign(&mut self, other: Fr) {
+        *self *= Fr::invert(other);
     }
 }
 
-impl DivAssign<i64> for FR {
+impl DivAssign<i64> for Fr {
     fn div_assign(&mut self, other: i64) {
-        *self /= FR::from(other);
+        *self /= Fr::from(other);
     }
 }
 
 // -----------------------------------------------------------------
 // Fq is the field in which the curve is computed - coords are all elements of Fq
-// In Elliptic curve point operations these coordinates are converted to FQ51 representation
+// In Elliptic curve point operations these coordinates are converted to Fq51 representation
 //
-// Type FQ is for working directly in the field Fq, using fast Montgomery reduction
-// for modular multiply. As such, FQ is scaled by the Q_ONE value. Coordinate values
-// FQ51 must come from unscaled Fq values, and for that we have FQ_Unscaled types to 
+// Type Fq is for working directly in the field Fq, using fast Montgomery reduction
+// for modular multiply. As such, Fq is scaled by the Q_ONE value. Coordinate values
+// Fq51 must come from unscaled Fq values, and for that we have FqUnscaled types to 
 // help avoid the overhead of scaling / de-scaling. 
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 #[repr(C)]
-pub struct FQ(U256);
+pub struct Fq(U256);
 
-const Q : U256 = U256([0xFFFFFFFFFFFFFFF7, 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 0x7FFFFFFFFFFFFFF]); // |FQ|
+const Q : U256 = U256([0xFFFFFFFFFFFFFFF7, 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 0x7FFFFFFFFFFFFFF]); // |Fq|
 
-const ZQ_SQUARED : FQ = FQ(U256([0x014400, 0x00, 0x00, 0x00])); // (2^256)^2 mod |FQ|
-const FQINV : u64 = 0x8E38E38E38E38E39; // (-1/|FQ|) mod 2^64
-const Q_ONE : FQ = FQ(U256([0x0120, 0x00, 0x00, 0x00])); // = 2^256 mod |FQ|
-const ZQ_CUBED : FQ = FQ(U256([0x016C8000, 0x00, 0x00, 0x00])); // = (2^256)^3 mod |FQ|
+const ZQ_SQUARED : Fq = Fq(U256([0x014400, 0x00, 0x00, 0x00])); // (2^256)^2 mod |Fq|
+const FQINV : u64 = 0x8E38E38E38E38E39; // (-1/|Fq|) mod 2^64
+const Q_ONE : Fq = Fq(U256([0x0120, 0x00, 0x00, 0x00])); // = 2^256 mod |Fq|
+const ZQ_CUBED : Fq = Fq(U256([0x016C8000, 0x00, 0x00, 0x00])); // = (2^256)^3 mod |Fq|
 
-impl PartialOrd for FQ {
-    fn partial_cmp(&self, other: &FQ) -> Option<Ordering> {
+impl PartialOrd for Fq {
+    fn partial_cmp(&self, other: &Fq) -> Option<Ordering> {
         U256::partial_cmp(&self.0, &other.0)
     }
 }
 
-impl Ord for FQ {
-    fn cmp(&self, other: &FQ) -> Ordering {
+impl Ord for Fq {
+    fn cmp(&self, other: &Fq) -> Ordering {
         U256::cmp(&self.0, &other.0)
     }
 }
 
-impl FQ {
-    pub fn zero() -> FQ {
-        FQ(U256::zero())
+impl Fq {
+    pub fn zero() -> Fq {
+        Fq(U256::zero())
     }
 
-    pub fn one() -> FQ {
+    pub fn one() -> Fq {
         Q_ONE
     }
 
-    pub fn invert(self) -> FQ {
+    pub fn invert(self) -> Fq {
         let mut tmp = self;
         U256::invert_mod(&mut tmp.0, &Q);
         ZQ_CUBED * tmp
     }
 }
 
-impl fmt::Display for FQ {
+impl fmt::Display for Fq {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let FQ_Unscaled(tmp) = FQ_Unscaled::from(*self);
-        write!(f, "FQ({})", tmp.nbr_str())
+        let FqUnscaled(tmp) = FqUnscaled::from(*self);
+        write!(f, "Fq({})", tmp.nbr_str())
     }
 }
 
-struct FQ_Unscaled(U256);
+struct FqUnscaled(U256);
 
-impl From<i64> for FQ_Unscaled {
-    fn from(x : i64) -> FQ_Unscaled {
+impl From<i64> for FqUnscaled {
+    fn from(x : i64) -> FqUnscaled {
         if x >= 0 {
             let z = U256([x as u64, 0, 0, 0]);
-            FQ_Unscaled(z)
+            FqUnscaled(z)
         } else {
             let tmp = [(-x) as u64, 0, 0, 0];
             let mut tmp2 = Q.0;
             sub_noborrow(&mut tmp2, &tmp);
             let z = U256(tmp2);
-            FQ_Unscaled(z)
+            FqUnscaled(z)
         }
     }
 }
 
-impl From<FQ_Unscaled> for FQ {
-    fn from(x : FQ_Unscaled) -> FQ {
-        let FQ_Unscaled(z) = x;
-        ZQ_SQUARED * FQ(z)
+impl From<FqUnscaled> for Fq {
+    fn from(x : FqUnscaled) -> Fq {
+        let FqUnscaled(z) = x;
+        ZQ_SQUARED * Fq(z)
     }
 }
 
-impl From<i64> for FQ {
-    fn from(x : i64) -> FQ {
-        FQ::from(FQ_Unscaled::from(x))
+impl From<i64> for Fq {
+    fn from(x : i64) -> Fq {
+        Fq::from(FqUnscaled::from(x))
     }
 }
 
-impl Add<FQ> for FQ {
-    type Output = FQ;
-    fn add(self, other: FQ) -> FQ {
+impl Add<Fq> for Fq {
+    type Output = Fq;
+    fn add(self, other: Fq) -> Fq {
         let mut tmp = self;
         U256::add_mod(&mut tmp.0, &other.0, &Q);
         tmp
     }
 }
 
-impl Add<i64> for FQ {
-    type Output = FQ;
-    fn add(self, other: i64) -> FQ {
-        self + FQ::from(other)
+impl Add<i64> for Fq {
+    type Output = Fq;
+    fn add(self, other: i64) -> Fq {
+        self + Fq::from(other)
     }
 }
 
-impl Add<FQ> for i64 {
-    type Output = FQ;
-    fn add(self, other: FQ) -> FQ {
-        FQ::from(self) + other
+impl Add<Fq> for i64 {
+    type Output = Fq;
+    fn add(self, other: Fq) -> Fq {
+        Fq::from(self) + other
     }
 }
 
-impl Sub<FQ> for FQ {
-    type Output = FQ;
-    fn sub(self, other: FQ) -> FQ {
+impl Sub<Fq> for Fq {
+    type Output = Fq;
+    fn sub(self, other: Fq) -> Fq {
         let mut tmp = self;
         U256::sub_mod(&mut tmp.0, &other.0, &Q);
         tmp
     }
 }
 
-impl Sub<i64> for FQ {
-    type Output = FQ;
-    fn sub(self, other: i64) -> FQ {
-        self - FQ::from(other)
+impl Sub<i64> for Fq {
+    type Output = Fq;
+    fn sub(self, other: i64) -> Fq {
+        self - Fq::from(other)
     }
 }
 
-impl Sub<FQ> for i64 {
-    type Output = FQ;
-    fn sub(self, other: FQ) -> FQ {
-        FQ::from(self) - other
+impl Sub<Fq> for i64 {
+    type Output = Fq;
+    fn sub(self, other: Fq) -> Fq {
+        Fq::from(self) - other
     }
 }
 
-impl Neg for FQ {
-    type Output = FQ;
-    fn neg(self) -> FQ {
+impl Neg for Fq {
+    type Output = Fq;
+    fn neg(self) -> Fq {
         let mut tmp = self;
         U256::neg_mod(&mut tmp.0, &Q);
         tmp
     }
 }
 
-impl Mul<FQ> for FQ {
-    type Output = FQ;
-    fn mul(self, other: FQ) -> FQ {
+impl Mul<Fq> for Fq {
+    type Output = Fq;
+    fn mul(self, other: Fq) -> Fq {
         let mut tmp = self;
         U256::mul_mod(&mut tmp.0, &other.0, &Q, FQINV);
         tmp
     }
 }
 
-impl Mul<i64> for FQ {
-    type Output = FQ;
-    fn mul(self, other: i64) -> FQ {
-        self * FQ::from(other)
+impl Mul<i64> for Fq {
+    type Output = Fq;
+    fn mul(self, other: i64) -> Fq {
+        self * Fq::from(other)
     }
 }
 
-impl Mul<FQ> for i64 {
-    type Output = FQ;
-    fn mul(self, other: FQ) -> FQ {
+impl Mul<Fq> for i64 {
+    type Output = Fq;
+    fn mul(self, other: Fq) -> Fq {
         other * self
     }
 }
 
-impl Div<FQ> for FQ {
-    type Output = FQ;
-    fn div(self, other: FQ) -> FQ {
-        self * FQ::invert(other)
+impl Div<Fq> for Fq {
+    type Output = Fq;
+    fn div(self, other: Fq) -> Fq {
+        self * Fq::invert(other)
     }
 }
 
-impl Div<i64> for FQ {
-    type Output = FQ;
-    fn div(self, other: i64) -> FQ {
-        self / FQ::from(other)
+impl Div<i64> for Fq {
+    type Output = Fq;
+    fn div(self, other: i64) -> Fq {
+        self / Fq::from(other)
     }
 }
 
-impl Div<FQ> for i64 {
-    type Output = FQ;
-    fn div(self, other: FQ) -> FQ {
+impl Div<Fq> for i64 {
+    type Output = Fq;
+    fn div(self, other: Fq) -> Fq {
         if self == 1 {
-            FQ::invert(other)
+            Fq::invert(other)
         } else {
-            FQ::from(self) / other
+            Fq::from(self) / other
         }
     }
 }
 
 // -----------------------------------------------------------------
-// field FQ51 is FQ broken into 51-bit frames 
-// in little-endian order, of i64 (vs u64 in FQ)
+// field Fq51 is Fq broken into 51-bit frames 
+// in little-endian order, of i64 (vs u64 in Fq)
 // 47 bits in last frame
 
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct FQ51([i64;5]);
+pub struct Fq51([i64;5]);
 
-const FQ51_0 : FQ51 = FQ51([0;5]);
-const FQ51_1 : FQ51 = FQ51([1,0,0,0,0]);
+const FQ51_0 : Fq51 = Fq51([0;5]);
+const FQ51_1 : Fq51 = Fq51([1,0,0,0,0]);
 
-impl FQ51 {
-    pub fn zero() -> FQ51 {
+impl Fq51 {
+    pub fn zero() -> Fq51 {
         FQ51_0
     }
 
-    pub fn one() -> FQ51 {
+    pub fn one() -> Fq51 {
         FQ51_1
     }
 
@@ -926,8 +927,8 @@ impl FQ51 {
         (self.0[0] & 1) != 0
     }
 
-    pub fn sqr(self) -> FQ51 {
-        let mut tmp = FQ51::zero();
+    pub fn sqr(self) -> Fq51 {
+        let mut tmp = Fq51::zero();
         gsqr(&self, &mut tmp);
         tmp
     }
@@ -940,37 +941,37 @@ impl FQ51 {
     }
 }
 
-impl From<i64> for FQ51 {
-    fn from(x: i64) -> FQ51 {
-        FQ51::from(FQ_Unscaled::from(x))
+impl From<i64> for Fq51 {
+    fn from(x: i64) -> Fq51 {
+        Fq51::from(FqUnscaled::from(x))
     }
 }
 
-impl From<FQ_Unscaled> for FQ51 {
-    fn from(x : FQ_Unscaled) -> FQ51 {
-        let mut tmp = FQ51::zero();
+impl From<FqUnscaled> for Fq51 {
+    fn from(x : FqUnscaled) -> Fq51 {
+        let mut tmp = Fq51::zero();
         bin_to_elt(&x.0, &mut tmp);
         tmp
     }
 }
 
-impl From<FQ> for FQ51 {
-    fn from(x : FQ) -> FQ51 {
-        FQ51::from(FQ_Unscaled::from(x))
+impl From<Fq> for Fq51 {
+    fn from(x : Fq) -> Fq51 {
+        Fq51::from(FqUnscaled::from(x))
     }
 }
 
-impl From<FQ51> for FQ_Unscaled {
-    fn from(x : FQ51) -> FQ_Unscaled {
+impl From<Fq51> for FqUnscaled {
+    fn from(x : Fq51) -> FqUnscaled {
         let mut tmp = U256::zero();
         elt_to_bin(&x, &mut tmp);
-        FQ_Unscaled(tmp)
+        FqUnscaled(tmp)
     }
 }
 
-impl fmt::Debug for FQ51 {
+impl fmt::Debug for Fq51 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "FQ51([{:016x}, {:016x}, {:016x}, {:016x}, {:016x}])",
+        write!(f, "Fq51([{:016x}, {:016x}, {:016x}, {:016x}, {:016x}])",
           self.0[0] as u64, 
           self.0[1] as u64,
           self.0[2] as u64,
@@ -979,16 +980,16 @@ impl fmt::Debug for FQ51 {
     }
 }
 
-impl fmt::Display for FQ51 {
+impl fmt::Display for Fq51 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "FQ51({})", self.nbr_str())
+        write!(f, "Fq51({})", self.nbr_str())
     }
 }
 
-impl Add<FQ51> for FQ51 {
-    type Output = FQ51;
-    fn add(self, other: FQ51) -> FQ51 {
-        let mut dst = FQ51::zero();
+impl Add<Fq51> for Fq51 {
+    type Output = Fq51;
+    fn add(self, other: Fq51) -> Fq51 {
+        let mut dst = Fq51::zero();
         for i in 0..5 {
             dst.0[i] = self.0[i] + other.0[i];
         }
@@ -996,42 +997,42 @@ impl Add<FQ51> for FQ51 {
     }
 }
 
-impl Add<i64> for FQ51 {
-    type Output = FQ51;
-    fn add(self, other: i64) -> FQ51 {
+impl Add<i64> for Fq51 {
+    type Output = Fq51;
+    fn add(self, other: i64) -> Fq51 {
         let mut dst = self;
         dst.0[0] += other;
         dst
     }
 }
 
-impl Add<FQ51> for i64 {
-    type Output = FQ51;
-    fn add(self, other: FQ51) -> FQ51 {
+impl Add<Fq51> for i64 {
+    type Output = Fq51;
+    fn add(self, other: Fq51) -> Fq51 {
         let mut dst = other;
         dst.0[0] += self;
         dst
     }
 }
 
-impl AddAssign<FQ51> for FQ51 {
-    fn add_assign(&mut self, other: FQ51) {
+impl AddAssign<Fq51> for Fq51 {
+    fn add_assign(&mut self, other: Fq51) {
         for i in 0..5 {
             self.0[i] += other.0[i];
         }
     }
 }
 
-impl AddAssign<i64> for FQ51 {
+impl AddAssign<i64> for Fq51 {
     fn add_assign(&mut self, other: i64) {
         self.0[0] += other;
     }
 }
 
-impl Sub<FQ51> for FQ51 {
-    type Output = FQ51;
-    fn sub(self, other: FQ51) -> FQ51 {
-        let mut dst = FQ51::zero();
+impl Sub<Fq51> for Fq51 {
+    type Output = Fq51;
+    fn sub(self, other: Fq51) -> Fq51 {
+        let mut dst = Fq51::zero();
         for i in 0..5 {
             dst.0[i] = self.0[i] - other.0[i];
         }
@@ -1039,40 +1040,40 @@ impl Sub<FQ51> for FQ51 {
     }
 }
 
-impl Sub<i64> for FQ51 {
-    type Output = FQ51;
-    fn sub(self, other: i64) -> FQ51 {
+impl Sub<i64> for Fq51 {
+    type Output = Fq51;
+    fn sub(self, other: i64) -> Fq51 {
         let mut dst = self;
         dst.0[0] -= other;
         dst
     }
 }
 
-impl Sub<FQ51> for i64 {
-    type Output = FQ51;
-    fn sub(self, other: FQ51) -> FQ51 {
-        FQ51::from(self) - other
+impl Sub<Fq51> for i64 {
+    type Output = Fq51;
+    fn sub(self, other: Fq51) -> Fq51 {
+        Fq51::from(self) - other
     }
 }
 
-impl SubAssign<FQ51> for FQ51 {
-    fn sub_assign(&mut self, other: FQ51) {
+impl SubAssign<Fq51> for Fq51 {
+    fn sub_assign(&mut self, other: Fq51) {
         for i in 0..5 {
             self.0[i] -= other.0[i];
         }
     }
 }
 
-impl SubAssign<i64> for FQ51 {
+impl SubAssign<i64> for Fq51 {
     fn sub_assign(&mut self, other: i64) {
         self.0[0] -= other;
     }
 }
 
-impl Neg for FQ51 {
-    type Output = FQ51;
-    fn neg(self) -> FQ51 {
-        let mut dst = FQ51::zero();
+impl Neg for Fq51 {
+    type Output = Fq51;
+    fn neg(self) -> Fq51 {
+        let mut dst = Fq51::zero();
         for i in 0..5 {
             dst.0[i] = -self.0[i];
         }
@@ -1080,57 +1081,57 @@ impl Neg for FQ51 {
     }
 }
 
-impl Mul<FQ51> for FQ51 {
-    type Output = FQ51;
-    fn mul(self, other: FQ51) -> FQ51 {
-        let mut dst = FQ51::zero();
+impl Mul<Fq51> for Fq51 {
+    type Output = Fq51;
+    fn mul(self, other: Fq51) -> Fq51 {
+        let mut dst = Fq51::zero();
         gmul(&self, &other, &mut dst);
         dst
     }
 }
 
-impl MulAssign<FQ51> for FQ51 {
-    fn mul_assign(&mut self, other: FQ51) {
+impl MulAssign<Fq51> for Fq51 {
+    fn mul_assign(&mut self, other: Fq51) {
         let tmp = *self;
          gmul(&tmp, &other, self);
     }
 }
 
-impl Mul<FQ51> for i64 {
-    type Output = FQ51;
-    fn mul(self, other: FQ51) -> FQ51 {
+impl Mul<Fq51> for i64 {
+    type Output = Fq51;
+    fn mul(self, other: Fq51) -> Fq51 {
         let mut dst = other;
         gmuli(&mut dst, self);
         dst
     }
 }
 
-impl Mul<i64> for FQ51 {
-    type Output = FQ51;
-    fn mul(self, other: i64) -> FQ51 {
+impl Mul<i64> for Fq51 {
+    type Output = Fq51;
+    fn mul(self, other: i64) -> Fq51 {
         let mut dst = self;
         gmuli(&mut dst, other);
         dst
     }
 }
 
-impl MulAssign<i64> for FQ51 {
+impl MulAssign<i64> for Fq51 {
     fn mul_assign(&mut self, other: i64) {
         gmuli(self, other);
     }
 }
 
-impl Div<FQ51> for FQ51 {
-    type Output = FQ51;
-    fn div(self, x : FQ51) -> FQ51 {
+impl Div<Fq51> for Fq51 {
+    type Output = Fq51;
+    fn div(self, x : Fq51) -> Fq51 {
         let mut tmp = x;
         ginv(&mut tmp);
         self * tmp
     }
 }
 
-impl PartialEq for FQ51 {
-    fn eq(&self, other : &FQ51) -> bool {
+impl PartialEq for Fq51 {
+    fn eq(&self, other : &Fq51) -> bool {
         let mut a = *self;
         let mut b = *other;
         scr(&mut a);
@@ -1141,7 +1142,7 @@ impl PartialEq for FQ51 {
 // ---------------------------------------------------------
 // Group primitive operators
 
-fn gadd(x: &FQ51, y: &FQ51, w: &mut FQ51) {
+fn gadd(x: &Fq51, y: &Fq51, w: &mut Fq51) {
     w.0[0] = x.0[0] + y.0[0];
     w.0[1] = x.0[1] + y.0[1];
     w.0[2] = x.0[2] + y.0[2];
@@ -1149,7 +1150,7 @@ fn gadd(x: &FQ51, y: &FQ51, w: &mut FQ51) {
     w.0[4] = x.0[4] + y.0[4];
 }
 
-fn gsub(x: &FQ51, y: &FQ51, w: &mut FQ51) {
+fn gsub(x: &Fq51, y: &Fq51, w: &mut Fq51) {
     w.0[0] = x.0[0] - y.0[0];
     w.0[1] = x.0[1] - y.0[1];
     w.0[2] = x.0[2] - y.0[2];
@@ -1157,7 +1158,7 @@ fn gsub(x: &FQ51, y: &FQ51, w: &mut FQ51) {
     w.0[4] = x.0[4] - y.0[4];
 }
 
-fn gdec(x: &FQ51, w: &mut FQ51) {
+fn gdec(x: &Fq51, w: &mut Fq51) {
     w.0[0] -= x.0[0];
     w.0[1] -= x.0[1];
     w.0[2] -= x.0[2];
@@ -1165,7 +1166,7 @@ fn gdec(x: &FQ51, w: &mut FQ51) {
     w.0[4] -= x.0[4];
 }
 
-fn gneg(w: &FQ51, x: &mut FQ51) {
+fn gneg(w: &Fq51, x: &mut Fq51) {
     x.0[0] = -w.0[0];
     x.0[1] = -w.0[1];
     x.0[2] = -w.0[2];
@@ -1174,7 +1175,7 @@ fn gneg(w: &FQ51, x: &mut FQ51) {
 }
 
 // w*=2
-fn gmul2(w: &mut FQ51) {
+fn gmul2(w: &mut Fq51) {
     w.0[0] *= 2;
     w.0[1] *= 2;
     w.0[2] *= 2;
@@ -1183,7 +1184,7 @@ fn gmul2(w: &mut FQ51) {
 }
 
 // w-=2*x
-fn gsb2(x: &FQ51, w: &mut FQ51) {
+fn gsb2(x: &Fq51, w: &mut Fq51) {
     w.0[0] -= 2*x.0[0];
     w.0[1] -= 2*x.0[1];
     w.0[2] -= 2*x.0[2];
@@ -1192,7 +1193,7 @@ fn gsb2(x: &FQ51, w: &mut FQ51) {
 }
 
 // reduce w - Short Coefficient Reduction
-fn scr(w: &mut FQ51) {
+fn scr(w: &mut Fq51) {
     loop {
         let w0 = w.0[0];
         let t0 = w0 & BOT_51_BITS;
@@ -1216,7 +1217,7 @@ fn scr(w: &mut FQ51) {
 
 // multiply w by a constant, w*=i
 
-fn gmuli(w: &mut FQ51, i: i64) {
+fn gmuli(w: &mut Fq51, i: i64) {
     let ii = i as i128;
     let t0 = (w.0[0] as i128) * ii;
     w.0[0] = (t0 as i64) & BOT_51_BITS;
@@ -1237,7 +1238,7 @@ fn gmuli(w: &mut FQ51, i: i64) {
 
 // z=x^2
 
-fn gsqr(x: &FQ51, z: &mut FQ51) {
+fn gsqr(x: &Fq51, z: &mut Fq51) {
     let t4 = 2*((x.0[0] as i128) * (x.0[4] as i128) +
                 (x.0[1] as i128) * (x.0[3] as i128)) +
             (x.0[2] as i128) * (x.0[2] as i128);
@@ -1272,7 +1273,7 @@ fn gsqr(x: &FQ51, z: &mut FQ51) {
     z.0[0] += (9*(t4 >> 47)) as i64;
 }
 
-fn gmul(x: &FQ51, y: &FQ51, z: &mut FQ51) {
+fn gmul(x: &Fq51, y: &Fq51, z: &mut Fq51) {
 	// 5M + 4A
     let t4 = (x.0[0] as i128)*(y.0[4] as i128) +
         (x.0[4] as i128)*(y.0[0] as i128) +
@@ -1327,7 +1328,7 @@ fn gmul(x: &FQ51, y: &FQ51, z: &mut FQ51) {
 // the exponent (p-2) = "07FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5"
 // (61 F's)
 
-fn ginv(x: &mut FQ51) {
+fn ginv(x: &mut Fq51) {
     let mut w  = FQ51_0;
     let mut t1 = FQ51_0;
     let mut t2;
@@ -1404,11 +1405,11 @@ fn ginv(x: &mut FQ51) {
     gmul(&x5, &w, x);   // x = x^(2^251-11)
 }
 
-fn gdec2(x: &mut FQ51) {
+fn gdec2(x: &mut Fq51) {
     x.0[0] -= 2;
 }
 
-fn gsqrt(x: FQ51) -> Option<FQ51> {
+fn gsqrt(x: Fq51) -> Option<Fq51> {
     // we need to perform (x^((q+1)/4) mod q)
     // for (q + 1)/4 = 0x01FF__FFFF__FFFF_FFFF__FFFF_FFFF_FFFF_FFFF__FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFE
     //               = 2^(2*(248-1))
@@ -1502,10 +1503,10 @@ fn gsqrt(x: FQ51) -> Option<FQ51> {
 
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
-pub struct ECp { x: FQ51,
-                 y: FQ51,
-                 z: FQ51,
-                 t: FQ51 }
+pub struct ECp { x: Fq51,
+                 y: Fq51,
+                 z: Fq51,
+                 t: Fq51 }
 
 const PT_INF: ECp  = ECp { x: FQ51_0,
                            y: FQ51_1,
@@ -1525,16 +1526,16 @@ impl ECp {
         self.z.is_one()
     }
 
-    pub fn new(x: FQ, y: FQ) -> ECp {
-        let fq51_x = FQ51::from(x);
-        let fq51_y = FQ51::from(y);
+    pub fn new(x: Fq, y: Fq) -> ECp {
+        let fq51_x = Fq51::from(x);
+        let fq51_y = Fq51::from(y);
         ECp::from_xy(fq51_x, fq51_y)
     }
 
-    pub fn from_xy(x: FQ51, y: FQ51) -> ECp {
+    pub fn from_xy(x: Fq51, y: Fq51) -> ECp {
         ECp { x: x,
               y: y,
-              z: FQ51::one(),
+              z: Fq51::one(),
               t: x * y }
     }
 }
@@ -1587,9 +1588,9 @@ impl SubAssign<ECp> for ECp {
     }
 }
 
-impl Mul<FR> for ECp {
+impl Mul<Fr> for ECp {
     type Output = ECp;
-    fn mul(self, other: FR) -> ECp {
+    fn mul(self, other: Fr) -> ECp {
         let wv = WinVec::from(other);
         let mut tmp = self;
         ecp_mul(&wv, &mut tmp);
@@ -1597,15 +1598,15 @@ impl Mul<FR> for ECp {
     }
 }
 
-impl Mul<ECp> for FR {
+impl Mul<ECp> for Fr {
     type Output = ECp;
     fn mul(self, other: ECp) -> ECp {
         other * self
     }
 }
 
-impl MulAssign<FR> for ECp {
-    fn mul_assign(&mut self, other: FR) {
+impl MulAssign<Fr> for ECp {
+    fn mul_assign(&mut self, other: Fr) {
         let wv = WinVec::from(other);
         ecp_mul(&wv, self);
     }
@@ -1647,29 +1648,29 @@ impl MulAssign<i64> for ECp {
     }
 }
 
-impl Div<FR> for ECp {
+impl Div<Fr> for ECp {
     type Output = ECp;
-    fn div(self, other: FR) -> ECp {
-        self * FR::invert(other)
+    fn div(self, other: Fr) -> ECp {
+        self * Fr::invert(other)
     }
 }
 
-impl DivAssign<FR> for ECp {
-    fn div_assign(&mut self, other: FR) {
-        *self *= FR::invert(other);
+impl DivAssign<Fr> for ECp {
+    fn div_assign(&mut self, other: Fr) {
+        *self *= Fr::invert(other);
     }
 }
 
 impl Div<i64> for ECp {
     type Output = ECp;
     fn div(self, other: i64) -> ECp {
-        self / FR::from(other)
+        self / Fr::from(other)
     }
 }
 
 impl DivAssign<i64> for ECp {
     fn div_assign(&mut self, other: i64) {
-        *self /= FR::from(other);
+        *self /= Fr::from(other);
     }
 }
 
@@ -1757,10 +1758,10 @@ fn add_2(qpt: &ECp, ppt: &mut ECp) {
 // Initialise P
 // incoming x,y coordinates -> ECp in projective coords
 
-fn init(x: &FQ51, y: &FQ51, pt: &mut ECp) {
+fn init(x: &Fq51, y: &Fq51, pt: &mut ECp) {
     (*pt).x = *x;
     (*pt).y = *y;
-    (*pt).z = FQ51::one();
+    (*pt).z = Fq51::one();
     gmul(x, y, &mut pt.t);
 }
 
@@ -1778,7 +1779,7 @@ fn ecp_neg(qpt: &ECp, ppt: &mut ECp) {
 fn norm(pt: &mut ECp) {
     let mut w = pt.z;
     ginv(&mut w);
-    // (*pt).z = FQ51::one();
+    // (*pt).z = Fq51::one();
 
     let mut tmp = pt.x * w;
     scr(&mut tmp);
@@ -1856,10 +1857,10 @@ fn window(qpt: &ECp, ppt: &mut ECp) {
 
 // Constant time table look-up - borrowed from ed25519 
 
-fn fe_cmov(f: &mut FQ51, g: &FQ51, ib: i8) {
+fn fe_cmov(f: &mut Fq51, g: &Fq51, ib: i8) {
     let b = -ib as i64;
-    let FQ51(fv) = f;
-    let FQ51(gv) = g;
+    let Fq51(fv) = f;
+    let Fq51(gv) = g;
     fv[0] ^= (fv[0] ^ gv[0]) & b;
     fv[1] ^= (fv[1] ^ gv[1]) & b;
     fv[2] ^= (fv[2] ^ gv[2]) & b;
@@ -1977,15 +1978,15 @@ fn add_proj(qpt: &ECp, ppt: &ECp, zpt: &mut ECp) {
     zpt.x = x3;
     zpt.y = y3;
     zpt.z = z3;
-    zpt.t = FQ51::zero();
+    zpt.t = Fq51::zero();
 }
 
 // -------------------------------------------------------------------------------
 // Binary/frames conversions
 
-// convert a frame FQ51 from 51-bit representation into
+// convert a frame Fq51 from 51-bit representation into
 // into a collection of 64-bit cells
-fn elt_to_bin(x: &FQ51, y: &mut U256) {
+fn elt_to_bin(x: &Fq51, y: &mut U256) {
     let mut xx = *x;
     scr(&mut xx);
     let mut s  = xx.0[0] as u128;
@@ -2004,7 +2005,7 @@ fn elt_to_bin(x: &FQ51, y: &mut U256) {
 
 // convert consecutive (little-endian) 64-bit cells
 // into 51-bit representation
-fn bin_to_elt(y: &U256, x: &mut FQ51) {
+fn bin_to_elt(y: &U256, x: &mut Fq51) {
     {
         let mut s = y.0[0] as u128;
         x.0[0] = (s as i64) & BOT_51_BITS;
@@ -2084,28 +2085,28 @@ fn str_to_bin64(s: &str, x: &mut [u64]) {
     }
 }
 
-fn str_to_FQ(s: &str) -> FQ {
+fn str_to_Fq(s: &str) -> Fq {
     let mut bin : [u64;4] = [0;4];
     str_to_bin64(s, &mut bin);
     let mut ans = U256(bin);
     while ans >= Q {
         sub_noborrow(&mut ans.0, &Q.0);
     }
-    FQ::from(FQ_Unscaled(ans))
+    Fq::from(FqUnscaled(ans))
 }
 
-fn str_to_FR(s: &str) -> FR {
+fn str_to_Fr(s: &str) -> Fr {
     let mut bin : [u64;4] = [0;4];
     str_to_bin64(s, &mut bin);
     let mut ans = U256(bin);
     while ans >= R {
         sub_noborrow(&mut ans.0, &R.0);
     }
-    FR::from(FR_Unscaled(ans))
+    Fr::from(FrUnscaled(ans))
 }
 
-// convert bignm string to FQ51
-fn str_to_elt(s: &str, e: &mut FQ51) {
+// convert bignm string to Fq51
+fn str_to_elt(s: &str, e: &mut Fq51) {
     let mut bin: [u64;4] = [0;4];
     str_to_bin64(s, &mut bin);
     bin_to_elt(&U256(bin), e);
@@ -2166,7 +2167,7 @@ mod tests {
     fn tst_str_to_elt() {
         let mut e = FQ51_0;
         str_to_elt("123", &mut e);
-        let FQ51(ev) = e;
+        let Fq51(ev) = e;
         assert!(ev == [0x123,0,0,0,0]);
     }
     
@@ -2175,16 +2176,16 @@ mod tests {
         let sx = "037FBB0CEA308C479343AEE7C029A190C021D96A492ECD6516123F27BCE29EDA";
         let sy = "06B72F82D47FB7CC6656841169840E0C4FE2DEE2AF3F976BA4CCB1BF9B46360E";
 
-        let mut gen_x = FQ51::zero();
-        let mut gen_y = FQ51::zero();
+        let mut gen_x = Fq51::zero();
+        let mut gen_y = Fq51::zero();
         str_to_elt(sx, &mut gen_x); // *ed-gen*
         str_to_elt(sy, &mut gen_y);
         
         let mut pt1 : ECp = ECp::inf();
         init(&gen_x, &gen_y, &mut pt1);
 
-        let gx = str_to_FQ(sx);
-        let gy = str_to_FQ(sy);
+        let gx = str_to_Fq(sx);
+        let gy = str_to_Fq(sy);
         let pt2 = ECp::new(gx, gy);
 
         assert_eq!(pt1, pt2);
@@ -2195,17 +2196,17 @@ mod tests {
         let sx = "037FBB0CEA308C479343AEE7C029A190C021D96A492ECD6516123F27BCE29EDA";
         let sy = "06B72F82D47FB7CC6656841169840E0C4FE2DEE2AF3F976BA4CCB1BF9B46360E";
 
-        let mut gen_x = FQ51::zero();
-        let mut gen_y = FQ51::zero();
+        let mut gen_x = Fq51::zero();
+        let mut gen_y = Fq51::zero();
         str_to_elt(sx, &mut gen_x); // *ed-gen*
         str_to_elt(sy, &mut gen_y);
         
-        let mut sum = FQ51::zero();
+        let mut sum = Fq51::zero();
         gadd(&gen_x, &gen_y, &mut sum);
 
-        let gx = str_to_FQ(sx);
-        let gy = str_to_FQ(sy);
-        let gz = FQ51::from(gx) + FQ51::from(gy);
+        let gx = str_to_Fq(sx);
+        let gy = str_to_Fq(sy);
+        let gz = Fq51::from(gx) + Fq51::from(gy);
     
         assert_eq!(gz, sum);
     }
@@ -2231,7 +2232,7 @@ impl Pt {
 
     fn basic_from_ECp(pt : &ECp) -> Pt {
         // only for affine pts
-        let ptx = FQ_Unscaled::from(pt.x);
+        let ptx = FqUnscaled::from(pt.x);
         let LEV32(mut x) = LEV32::from(U256::from(ptx));
         if pt.y.is_odd() {
             x[31] |= 0x80;
@@ -2262,7 +2263,7 @@ pub fn pt_on_curve(pt : Pt) -> Option<ECp> {
     x[31] &= 0x7f;
     if x == [0u8;32] { None } // can't be pt at infinity
     else {
-        let xq = FQ51::from(FQ_Unscaled(U256::from(LEV32(x))));
+        let xq = Fq51::from(FqUnscaled(U256::from(LEV32(x))));
         match solve_ypt(xq) {
             Some(ysqrt) => {
                 let yq = if ysqrt.is_odd() == sgn { ysqrt } else { -ysqrt };
@@ -2275,7 +2276,7 @@ pub fn pt_on_curve(pt : Pt) -> Option<ECp> {
     }
 }
 
-fn solve_ypt(xq : FQ51) -> Option<FQ51> {
+fn solve_ypt(xq : Fq51) -> Option<Fq51> {
     let yyq = ((1 + xq) * (1 - xq)) / (1 - xq.sqr() * CURVE_D);
     gsqrt(yyq)
 }
@@ -2296,10 +2297,10 @@ impl From<Hash> for ECp {
         while x >= Q {
             div2(&mut x.0);
         }
-        let mut xq = FQ51::from(FQ_Unscaled(x));
+        let mut xq = Fq51::from(FqUnscaled(x));
         let hpt : ECp;
         loop {
-            if xq != FQ51::zero() { 
+            if xq != Fq51::zero() { 
                 // can't be pt at inf
                 match solve_ypt(xq) {
                     Some(ysqrt) => {
@@ -2328,9 +2329,9 @@ pub fn curve1174_tests() {
     let sx = "037FBB0CEA308C479343AEE7C029A190C021D96A492ECD6516123F27BCE29EDA";  // *ed-gen* x
     let sy = "06B72F82D47FB7CC6656841169840E0C4FE2DEE2AF3F976BA4CCB1BF9B46360E";  // *ed-gen* y
 
-    let gx = str_to_FQ(sx);
-    let gy = str_to_FQ(sy);
-    let mx = str_to_FR(smul);
+    let gx = str_to_Fq(sx);
+    let gy = str_to_Fq(sy);
+    let mx = str_to_Fr(smul);
     let mut pt2 : ECp = ECp::inf();
     for _ in 0..100 {
         let pt1 = ECp::new(gx, gy);
@@ -2347,8 +2348,8 @@ pub fn curve1174_tests() {
     let mut w = WINVEC_INIT;
     str_to_winvec(smul, &mut w);
 
-    let mut gen_x = FQ51::zero();
-    let mut gen_y = FQ51::zero();
+    let mut gen_x = Fq51::zero();
+    let mut gen_y = Fq51::zero();
     str_to_elt(sx, &mut gen_x); // *ed-gen*
     str_to_elt(sy, &mut gen_y);
 
@@ -2365,13 +2366,13 @@ pub fn curve1174_tests() {
     println!("Result as Bignums");
     println!("pt: {}", pt1);
     
-    println!("Result as FQ51s");
+    println!("Result as Fq51s");
     println!("pt: {:#?}", pt1);
 
-    let tmp = FR::from(2);
+    let tmp = Fr::from(2);
     let tmp2 = 1 / tmp;
-    // println!("1/mul: {}", 1/FR::from(2));
-    // println!("unity? {}", (1/FR::from(2)) * 2);
+    // println!("1/mul: {}", 1/Fr::from(2));
+    // println!("unity? {}", (1/Fr::from(2)) * 2);
     println!("mul: {}", tmp);
     println!("1/2 = {}", tmp2);
     println!("R = {}", R);

@@ -40,29 +40,6 @@ necessary, these are forcibly viewed through an "unsafe" transformation to/from 
 extern crate stegos_crypto;
 
 use stegos_crypto::curve1174::*;
-use stegos_crypto::hash::*;
-use stegos_crypto::utils::*;
-
-use std::fmt;
-use std::mem;
-
-// #[macro_use]
-// extern crate derive_more;
-// extern crate bn;
-// extern crate libc;
-// use libc::{c_int, size_t};
-
-extern crate rand;
-// extern crate crypto;
-// extern crate sha3;
-
-use rand::prelude::*;
-// use crypto::digest::Digest;
-// use crypto::sha3::Sha3;
-// use sha3::{Digest, Sha3_256};
-
-// extern crate field;
-// use field::*;
 
 // -------------------------------------------------------------------------------
 fn main() {

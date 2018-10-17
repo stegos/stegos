@@ -1,0 +1,5 @@
+[network]
+listen_address = "/ip4/127.0.0.1/tcp/10055"
+private_key = "testing/node01/private-key.pk8"
+public_key = "testing/node01/public-key.der"
+broadcast_topic = "chat"

@@ -30,15 +30,23 @@ extern crate slog_term;
 #[macro_use]
 extern crate clap;
 extern crate dirs;
+extern crate futures;
+extern crate libp2p;
 extern crate stegos_config;
 extern crate stegos_network;
+extern crate tokio;
+extern crate tokio_stdin;
 
 use clap::{App, Arg, ArgMatches};
+use futures::{Future, Sink, Stream};
+use libp2p::Multiaddr;
 use slog::{Drain, Logger};
 use std::error::Error;
+use std::mem;
 use std::path::PathBuf;
 use std::process;
 use stegos_config::{Config, ConfigError};
+use tokio::runtime::Runtime;
 
 fn load_configuration(args: &ArgMatches) -> Result<Config, Box<Error>> {
     if let Some(cfg_path) = args.value_of_os("config") {
@@ -93,7 +101,45 @@ fn run() -> Result<(), Box<Error>> {
     let log = initialize_logger(&args)?;
 
     // Initialize network
-    stegos_network::init(cfg.network, log.new(o!()))?;
+    let mut rt = Runtime::new().unwrap();
+    let node = stegos_network::init(cfg.network, log.new(o!()), &mut rt)?;
+    let sender = node.floodsub.tx.clone();
+    let dialer = node.floodsub.dialer.clone();
+
+    let floodsub_rx = node.floodsub.rx.for_each(|msg| {
+        println!("<<< {}", msg);
+        Ok(())
+    });
+
+    let stdin = {
+        let mut buffer = Vec::new();
+        tokio_stdin::spawn_stdin_stream_unbounded().for_each({
+            move |msg| {
+                let dialer2 = dialer.clone();
+                let sender2 = sender.clone();
+                if msg != b'\r' && msg != b'\n' {
+                    buffer.push(msg);
+                    return Ok(());
+                } else if buffer.is_empty() {
+                    return Ok(());
+                }
+
+                let msg = String::from_utf8(mem::replace(&mut buffer, Vec::new())).unwrap();
+                if msg.starts_with("/dial ") {
+                    let target: Multiaddr = msg[6..].parse().unwrap();
+                    println!("main: *Dialing {}*", target);
+                    dialer2.send(target).wait().unwrap();
+                } else {
+                    sender2.send(msg).wait().unwrap();
+                }
+                Ok(())
+            }
+        })
+    };
+
+    rt.spawn(stdin);
+
+    rt.block_on_all(floodsub_rx).unwrap();
 
     Ok(())
 }

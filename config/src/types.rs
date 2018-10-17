@@ -49,17 +49,32 @@ impl Default for Config {
 #[serde(default)]
 pub struct ConfigNetwork {
     /// An example string configuration value.
-    pub strval: String,
+    pub listen_address: String,
+    /// List of advertised reachable address for this node
+    pub advertised_addresses: Vec<String>,
     /// An example u32 configuration value.
     pub u32val: u32,
+    /// List of nodes to connect to on startup.
+    pub seed_nodes: Vec<String>,
+    /// Path to Node's public key
+    pub public_key: String,
+    /// Path to Node's private key
+    pub private_key: String,
+    /// Broadcast topit for FloodSub
+    pub broadcast_topic: String,
 }
 
 /// Default values for network configuration.
 impl Default for ConfigNetwork {
     fn default() -> ConfigNetwork {
         ConfigNetwork {
-            strval: "default value".to_string(),
             u32val: 0,
+            seed_nodes: vec![],
+            advertised_addresses: vec![],
+            listen_address: "/ip4/0.0.0.0/tcp/10050".to_string(),
+            public_key: "public_key.der".to_string(),
+            private_key: "private_key.pk8".to_string(),
+            broadcast_topic: "stegos".to_string(),
         }
     }
 }

@@ -3,7 +3,20 @@
 ##
 
 [network]
-# An example string value
-strval = "string"
-# An example u32 value
-u32val = 10
+# An example listen address
+listen_address = "/ip4/0.0.0.0/10050"
+# An example listen address
+advertised_addresses = [
+    "/ip4/127.0.0.1/10050",
+]
+# Example of list of seed nodes
+seed_nodes = [
+    "/ip4/127.0.0.1/tcp/10050",
+    "/ip4/127.0.0.1/tcp/10051",
+]
+# Path to Peers public key file in DER format
+public_key = "testing/node01/public-key.der"
+# Path to Peers private key file in PKCS8 format
+private_key = "testing/node01/private-key.pk8"
+# Topic name for Broadcast communications
+broadcast_topic = "stegos"

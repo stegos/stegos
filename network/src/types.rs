@@ -23,16 +23,23 @@
 
 #![deny(warnings)]
 
-#[macro_use]
-extern crate slog;
-extern crate failure;
-extern crate futures;
-extern crate libp2p;
-extern crate rand;
-extern crate stegos_config;
-extern crate tokio;
+use futures::sync::mpsc;
+use libp2p::Multiaddr;
 
-mod node;
-mod types;
+pub struct FloodSubHandler {
+    pub rx: mpsc::Receiver<String>,
+    pub tx: mpsc::Sender<String>,
+    pub dialer: mpsc::Sender<Multiaddr>,
+}
 
-pub use node::init;
+pub struct Node {
+    pub floodsub: FloodSubHandler,
+}
+
+// #[derive(Debug, Fail)]
+// pub enum NetworkError {
+//     #[fail(display = "Network configuration error: {}", cause)]
+//     NetworkConfigError { cause: String },
+//     #[fail(display = "unknown network error: {}", cause)]
+//     UnknownNetworkError { cause: String },
+// }

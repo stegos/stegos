@@ -1,61 +1,44 @@
+// Test PBC Crypto for Rust, atop Ben Lynn's PBCliib
+//
+// DM/Emotiq 10/18
+// MIT License
+//
+// Copyright (c) 2018 Stegos
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 // -------------------------------------------------------------------
 extern crate rust_libpbc;
 extern crate stegos_crypto;
 
+use stegos_crypto::hash::*;
 use stegos_crypto::pbc::*;
+use stegos_crypto::utils::*;
 
 use std::sync::Mutex;
 
+extern crate lazy_static;
+use lazy_static::*;
+
+// ------------------------------------------------------------------------
+
 fn main() {
-    fn init_pairings() {
-        for info in CURVES {
-            let context = info.context as u64;
-            unsafe {
-                println!("Init curve {}", (*info.name).to_string());
-                println!("Context: {}", context);
-                println!("{}", (*info.text).to_string());
-
-                let mut psize = [0u64; 4];
-                let ans = rust_libpbc::init_pairing(
-                    context,
-                    info.text as *mut _,
-                    (*info.text).len() as u64,
-                    psize.as_ptr() as *mut _,
-                );
-                assert_eq!(ans, 0);
-
-                assert_eq!(psize[0], info.g1_size as u64);
-                assert_eq!(psize[1], info.g2_size as u64);
-                assert_eq!(psize[2], info.pairing_size as u64);
-                assert_eq!(psize[3], info.field_size as u64);
-
-                let mut v1 = vec![0u8; info.g1_size];
-                hexstr_to_u8v(&(*info.g1), &mut v1);
-                println!("G1: {}", u8v_to_hexstr(&v1));
-                let len = rust_libpbc::set_g1(context, v1.as_ptr() as *mut _);
-                // returns nbr bytes read, should equal length of G1
-                assert_eq!(len, info.g1_size as i64);
-
-                let mut v1 = vec![0u8; info.g1_size];
-                let len = rust_libpbc::get_g1(context, v1.as_ptr() as *mut _, info.g1_size as u64);
-                assert_eq!(len, info.g1_size as u64);
-                println!("G1 readback: {}", u8v_to_hexstr(&v1));
-
-                let mut v2 = vec![0u8; info.g2_size];
-                hexstr_to_u8v(&(*info.g2), &mut v2);
-                println!("G2: {}", u8v_to_hexstr(&v2));
-                let len = rust_libpbc::set_g2(context, v2.as_ptr() as *mut _);
-                // returns nbr bytes read, should equal length of G2
-                assert_eq!(len, info.g2_size as i64);
-
-                let mut v2 = vec![0u8; info.g2_size];
-                let len = rust_libpbc::get_g2(context, v2.as_ptr() as *mut _, info.g2_size as u64);
-                assert_eq!(len, info.g2_size as u64);
-                println!("G2 readback: {}", u8v_to_hexstr(&v2));
-            }
-            println!("");
-        }
-    }
     // ------------------------------------------------------------------------
     // check connection to PBC library
     println!("Hello, world!");
@@ -74,6 +57,7 @@ fn main() {
     println!("Echo Output: {}", out_str);
     println!("");
 
+    // ------------------------------------------------------------
     // init PBC library -- must only be performed once
     let init = Mutex::new(false);
     {
@@ -96,7 +80,7 @@ fn main() {
     // -------------------------------------
     // on Secure pairings
     // test PRNG
-    println!("rand Zr = {}", secure::get_random_Zr());
+    println!("rand Zr = {}", secure::Zr::random());
 
     // test keying...
     let (skey, pkey, sig) = secure::make_deterministic_keys(b"Testing");
@@ -109,7 +93,7 @@ fn main() {
     // -------------------------------------
     // on Fast pairings
     // test PRNG
-    println!("rand Zr = {}", fast::get_random_Zr());
+    println!("rand Zr = {}", fast::Zr::random());
 
     // test keying...
     let (skey, pkey, sig) = fast::make_deterministic_keys(b"Testing");

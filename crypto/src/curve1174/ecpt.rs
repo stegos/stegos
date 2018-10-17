@@ -585,7 +585,7 @@ mod tests {
 
         let mut pt1 = ECp::inf();
         for _ in 0..100 {
-            pt1 = ECp::from_xy(&gen_x, &gen_y);
+            pt1 = ECp::from_xy51(&gen_x, &gen_y);
             ecp_mul(&w, &mut pt1);
         }
 

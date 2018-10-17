@@ -146,11 +146,11 @@ mod tests {
 
         let gen_x = Coord::from_str(sx);
         let gen_y = Coord::from_str(sy);
-        let pt1 = ECp::from_xy(&gen_x, &gen_y);
+        let pt1 = ECp::from_xy51(&gen_x, &gen_y);
 
         let gx = Coord::from_str(&sx);
         let gy = Coord::from_str(&sy);
-        let pt2 = ECp::from_xy(&gx, &gy);
+        let pt2 = ECp::from_xy51(&gx, &gy);
 
         assert_eq!(pt1, pt2);
     }

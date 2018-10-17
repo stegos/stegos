@@ -47,7 +47,21 @@ impl Hash {
     }
 
     pub fn from_vector(msg: &[u8]) -> Hash {
-        hash(msg)
+        let mut hasher = Hasher::new();
+        (*msg).hash(&mut hasher);
+        let Hash(out) = hasher.result();
+        let mut h = [0u8; HASH_SIZE];
+        h.copy_from_slice(&out[..HASH_SIZE]);
+        Hash(h)
+    }
+
+    pub fn from_str(msg: &str) -> Hash {
+        let mut hasher = Hasher::new();
+        (*msg).hash(&mut hasher);
+        let Hash(out) = hasher.result();
+        let mut h = [0u8; HASH_SIZE];
+        h.copy_from_slice(&out[..HASH_SIZE]);
+        Hash(h)
     }
 
     pub fn to_str(&self) -> String {
@@ -68,13 +82,10 @@ impl fmt::Display for Hash {
     }
 }
 
-pub fn hash(msg: &[u8]) -> Hash {
-    let mut hasher = Sha3_256::new();
-    hasher.input(msg);
-    let out = hasher.result();
-    let mut h = [0u8; HASH_SIZE];
-    h.copy_from_slice(&out[..HASH_SIZE]);
-    Hash(h)
+impl Hashable for Hash {
+    fn hash(&self, state: &mut Hasher) {
+        self.0.hash(state);
+    }
 }
 
 pub fn hash_nbytes(nb: usize, msg: &[u8]) -> Vec<u8> {
@@ -88,12 +99,12 @@ pub fn hash_nbytes(nb: usize, msg: &[u8]) -> Vec<u8> {
         for ix in 0..nmsg {
             inp.push(msg[ix]);
         }
-        let mut hasher = Sha3_256::new();
-        hasher.input(inp);
+        let mut hasher = Hasher::new();
+        inp.hash(&mut hasher);
         let out = hasher.result();
         let end = if ct > HASH_SIZE { HASH_SIZE } else { ct };
         for ix in 0..end {
-            ans[jx + ix] = out[ix];
+            ans[jx + ix] = out.0[ix];
         }
         jx += end;
         ct -= end;

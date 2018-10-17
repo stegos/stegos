@@ -56,12 +56,12 @@ impl Zr {
         &self.0
     }
 
-    pub fn from_str(s: &str) -> Zr {
+    pub fn from_str(s: &str) -> Result<Zr, hex::FromHexError> {
         // result might be larger than prime order, r,
         // but will be interpreted by PBC lib as (Zr mod r).
         let mut v = Zr::wv();
-        hexstr_to_bev_u8(&s, &mut v);
-        Zr(v)
+        hexstr_to_bev_u8(&s, &mut v)?;
+        Ok(Zr(v))
     }
 
     pub fn to_str(&self) -> String {
@@ -72,6 +72,13 @@ impl Zr {
 impl fmt::Display for Zr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.to_str())
+    }
+}
+
+impl Hashable for Zr {
+    fn hash(&self, state: &mut Hasher) {
+        "Zr".hash(state);
+        self.base_vector().hash(state);
     }
 }
 
@@ -95,10 +102,10 @@ impl G1 {
         u8v_to_typed_str("G1", &self.base_vector())
     }
 
-    pub fn from_str(s: &str) -> G1 {
+    pub fn from_str(s: &str) -> Result<G1, hex::FromHexError> {
         let mut v = G1::wv();
-        hexstr_to_bev_u8(&s, &mut v);
-        G1(v)
+        hexstr_to_bev_u8(&s, &mut v)?;
+        Ok(G1(v))
     }
 }
 
@@ -106,6 +113,13 @@ impl fmt::Display for G1 {
     // for display of signatures
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.to_str())
+    }
+}
+
+impl Hashable for G1 {
+    fn hash(&self, state: &mut Hasher) {
+        "G1".hash(state);
+        self.base_vector().hash(state);
     }
 }
 
@@ -130,16 +144,23 @@ impl G2 {
         u8v_to_typed_str("G2", &self.base_vector())
     }
 
-    pub fn from_str(s: &str) -> G2 {
+    pub fn from_str(s: &str) -> Result<G2, hex::FromHexError> {
         let mut v = G2::wv();
-        hexstr_to_bev_u8(&s, &mut v);
-        G2(v)
+        hexstr_to_bev_u8(&s, &mut v)?;
+        Ok(G2(v))
     }
 }
 
 impl fmt::Display for G2 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.to_str())
+    }
+}
+
+impl Hashable for G2 {
+    fn hash(&self, state: &mut Hasher) {
+        "G2".hash(state);
+        self.base_vector().hash(state);
     }
 }
 
@@ -171,6 +192,13 @@ impl fmt::Display for GT {
     }
 }
 
+impl Hashable for GT {
+    fn hash(&self, state: &mut Hasher) {
+        "GT".hash(state);
+        self.base_vector().hash(state);
+    }
+}
+
 // -----------------------------------------
 #[derive(Copy, Clone)]
 pub struct SecretKey(Zr);
@@ -188,6 +216,13 @@ impl SecretKey {
 impl fmt::Display for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.to_str())
+    }
+}
+
+impl Hashable for SecretKey {
+    fn hash(&self, state: &mut Hasher) {
+        "SKey".hash(state);
+        self.base_vector().hash(state);
     }
 }
 
@@ -211,6 +246,13 @@ impl fmt::Display for PublicKey {
     }
 }
 
+impl Hashable for PublicKey {
+    fn hash(&self, state: &mut Hasher) {
+        "PKey".hash(state);
+        self.base_vector().hash(state);
+    }
+}
+
 // -----------------------------------------
 #[derive(Copy, Clone)]
 pub struct SecretSubKey(G1);
@@ -228,6 +270,13 @@ impl SecretSubKey {
 impl fmt::Display for SecretSubKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.to_str())
+    }
+}
+
+impl Hashable for SecretSubKey {
+    fn hash(&self, state: &mut Hasher) {
+        "SSubKey".hash(state);
+        self.base_vector().hash(state);
     }
 }
 
@@ -251,17 +300,53 @@ impl fmt::Display for PublicSubKey {
     }
 }
 
+impl Hashable for PublicSubKey {
+    fn hash(&self, state: &mut Hasher) {
+        "PSubKey".hash(state);
+        self.base_vector().hash(state);
+    }
+}
+
 // -----------------------------------------
+
+#[derive(Copy, Clone)]
+pub struct Signature(G1);
+
+impl Signature {
+    pub fn base_vector(&self) -> &[u8] {
+        self.0.base_vector()
+    }
+
+    pub fn to_str(&self) -> String {
+        u8v_to_typed_str("Sig", &self.base_vector())
+    }
+}
+
+impl fmt::Display for Signature {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.to_str())
+    }
+}
+
+impl Hashable for Signature {
+    fn hash(&self, state: &mut Hasher) {
+        "Sig".hash(state);
+        self.base_vector().hash(state);
+    }
+}
+
+// -----------------------------------------
+
 #[derive(Copy, Clone)]
 pub struct BlsSignature {
-    sig: G1,
+    sig: Signature,
     pkey: PublicKey,
 }
 
 // ------------------------------------------------------------------------
 // BLS Signature Generation & Checking
 
-pub fn sign_hash(h: &Hash, skey: &SecretKey) -> G1 {
+pub fn sign_hash(h: &Hash, skey: &SecretKey) -> Signature {
     // return a raw signature on a hash
     let v = G1::new();
     unsafe {
@@ -273,10 +358,10 @@ pub fn sign_hash(h: &Hash, skey: &SecretKey) -> G1 {
             HASH_SIZE as u64,
         );
     }
-    v
+    Signature(v)
 }
 
-pub fn check_hash(h: &Hash, sig: &G1, pkey: &PublicKey) -> bool {
+pub fn check_hash(h: &Hash, sig: &Signature, pkey: &PublicKey) -> bool {
     // check a hash with a raw signature, return t/f
     unsafe {
         0 == rust_libpbc::check_signature(
@@ -305,8 +390,8 @@ pub fn check_message(msg: &[u8], sig: &BlsSignature) -> bool {
 // ------------------------------------------------------------------
 // Key Generation & Checking
 
-pub fn make_deterministic_keys(seed: &[u8]) -> (SecretKey, PublicKey, G1) {
-    let h = hash(&seed);
+pub fn make_deterministic_keys(seed: &[u8]) -> (SecretKey, PublicKey, Signature) {
+    let h = Hash::from_vector(&seed);
     let sk = Zr::new(); // secret keys in Zr
     let pk = G2::new(); // public keys in G2
     unsafe {
@@ -318,18 +403,18 @@ pub fn make_deterministic_keys(seed: &[u8]) -> (SecretKey, PublicKey, G1) {
             HASH_SIZE as u64,
         );
     }
-    let hpk = hash(&pk.base_vector());
+    let hpk = Hash::from_vector(&pk.base_vector());
     let skey = SecretKey(sk);
     let pkey = PublicKey(pk);
     let sig = sign_hash(&hpk, &skey);
     (skey, pkey, sig)
 }
 
-pub fn check_keying(pkey: &PublicKey, sig: &G1) -> bool {
-    check_hash(&hash(&pkey.base_vector()), &sig, &pkey)
+pub fn check_keying(pkey: &PublicKey, sig: &Signature) -> bool {
+    check_hash(&Hash::from_vector(&pkey.base_vector()), &sig, &pkey)
 }
 
-pub fn make_random_keys() -> (SecretKey, PublicKey, G1) {
+pub fn make_random_keys() -> (SecretKey, PublicKey, Signature) {
     make_deterministic_keys(&Zr::random().base_vector())
 }
 
@@ -366,6 +451,40 @@ pub fn make_public_subkey(pkey: &PublicKey, seed: &[u8]) -> PublicSubKey {
     PublicSubKey(pk)
 }
 
+// -----------------------------------------------------
+// Sakai-Hasakara Encryption
+
+#[derive(Copy, Clone)]
+pub struct RVal(G2);
+
+impl RVal {
+    // TODO: new() should be removed later, just here for testing for now
+    pub fn new() -> RVal {
+        RVal(G2::new())
+    }
+
+    pub fn base_vector(&self) -> &[u8] {
+        self.0.base_vector()
+    }
+
+    pub fn to_str(&self) -> String {
+        u8v_to_typed_str("RVal", &self.base_vector())
+    }
+}
+
+impl fmt::Display for RVal {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.to_str())
+    }
+}
+
+impl Hashable for RVal {
+    fn hash(&self, state: &mut Hasher) {
+        "RVal".hash(state);
+        self.base_vector().hash(state);
+    }
+}
+
 // structure of a SAKKI encryption.
 // ---------------------------------
 // For use in UTXO's you will only want to store the
@@ -376,7 +495,7 @@ pub fn make_public_subkey(pkey: &PublicKey, seed: &[u8]) -> PublicSubKey {
 pub struct EncryptedPacket {
     pkey: PublicKey, // public key of recipient
     id: Vec<u8>,     // IBE ID
-    rval: G2,        // R_val used for SAKE encryption
+    rval: RVal,      // R_val used for SAKE encryption
     cmsg: Vec<u8>,   // encrypted payload
 }
 
@@ -391,7 +510,7 @@ pub fn ibe_encrypt(msg: &[u8], pkey: &PublicKey, id: &[u8]) -> EncryptedPacket {
     for b in msg.to_vec() {
         concv.push(b);
     }
-    let rhash = hash(&concv);
+    let rhash = Hash::from_vector(&concv);
 
     let rval = G2::new();
     let pval = GT::new();
@@ -413,7 +532,7 @@ pub fn ibe_encrypt(msg: &[u8], pkey: &PublicKey, id: &[u8]) -> EncryptedPacket {
     EncryptedPacket {
         pkey: *pkey,
         id: id.to_vec(),
-        rval: rval,
+        rval: RVal(rval),
         cmsg: cmsg,
     }
 }
@@ -442,7 +561,7 @@ pub fn ibe_decrypt(pack: &EncryptedPacket, skey: &SecretKey) -> Option<Vec<u8>> 
     for b in msg.clone() {
         concv.push(b);
     }
-    let rhash = hash(&concv);
+    let rhash = Hash::from_vector(&concv);
     unsafe {
         let ans = rust_libpbc::sakai_kasahara_check(
             PBC_CONTEXT_FR256 as u64,

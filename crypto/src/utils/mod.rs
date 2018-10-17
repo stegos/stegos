@@ -23,39 +23,39 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use hex;
+
 // -------------------------------------------------------------------
 // general utility functions
 
-pub fn hexstr_to_bev_u8(s: &str, x: &mut [u8]) {
+pub fn hexstr_to_bev_u8(s: &str, x: &mut [u8]) -> Result<(), hex::FromHexError> {
     // collect a big-endian vector of 8-bit values from a hex string.
-    let nx = x.len();
-    let mut pos = 0;
-    let mut val: u8 = 0;
-    let mut cct = 0;
-    for c in s.chars() {
-        if pos < nx {
-            match c.to_digit(16) {
-                Some(d) => {
-                    val += d as u8;
-                    cct += 1;
-                    if (cct & 1) == 0 {
-                        x[pos] = val;
-                        pos += 1;
-                        val = 0;
-                    } else {
-                        val <<= 4;
-                    }
-                }
-                None => panic!("Invalid hex digit"),
-            }
-        } else {
-            break;
-        }
+    let v = hex::decode(s)?;
+    let nel = x.len();
+    if nel != v.len() {
+        return Err(hex::FromHexError::InvalidStringLength);
     }
-    for ix in pos..nx {
-        x[ix] = val;
-        val = 0;
+    let mut ix = 0; // this seems dumb... isn't there a better way?
+    for b in v {
+        x[ix] = b;
+        ix += 1;
     }
+    Ok(())
+}
+
+pub fn hexstr_to_lev_u8(s: &str, x: &mut [u8]) -> Result<bool, hex::FromHexError> {
+    // collect a little-endian vector of 8-bit values from a hex string.
+    let v = hex::decode(s)?;
+    let nel = x.len();
+    if nel != v.len() {
+        return Err(hex::FromHexError::InvalidStringLength);
+    }
+    let mut ix = nel; // this seems dumb... isn't there a better way?
+    for b in v {
+        ix -= 1;
+        x[ix] = b;
+    }
+    Ok(true)
 }
 
 pub fn u8v_to_hexstr(x: &[u8]) -> String {
@@ -76,30 +76,3 @@ pub fn u8v_to_typed_str(pref: &str, vec: &[u8]) -> String {
     s
 }
 
-// collect a little-endian vector of 8-bit values from a hex string.
-pub fn hexstr_to_lev_u8(s: &str, x: &mut [u8]) {
-    let nx = x.len();
-    let mut bf = 0;
-    let mut bw = 0;
-    let mut val: u8 = 0;
-    for c in s.chars().rev() {
-        match c.to_digit(16) {
-            Some(d) => {
-                val |= (d as u8) << bf;
-                bf += 4;
-                if bf == 8 {
-                    if bw < nx {
-                        x[bw] = val;
-                    }
-                    bf = 0;
-                    bw += 1;
-                    val = 0;
-                }
-            }
-            None => panic!("Invalid hex digit"),
-        }
-    }
-    if bf > 0 && bw < nx {
-        x[bw] = val;
-    }
-}

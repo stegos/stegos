@@ -23,7 +23,7 @@ build:linux:
 .test: &test_definition
   stage: test
   script:
-    - cargo test
+    - cargo test --all
 
 test:linux:
   image: rust:1.29

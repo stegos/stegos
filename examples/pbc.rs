@@ -33,9 +33,6 @@ use stegos_crypto::utils::*;
 
 use std::sync::Mutex;
 
-extern crate lazy_static;
-use lazy_static::*;
-
 // ------------------------------------------------------------------------
 
 fn main() {

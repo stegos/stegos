@@ -1,4 +1,4 @@
-//! Blockchain Implementation.
+//! Transaction Input.
 
 //
 // Copyright (c) 2018 Stegos
@@ -21,14 +21,31 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-mod block;
-mod input;
-mod output;
-mod payload;
+use stegos_crypto::hash::{Hash, Hashable, Hasher};
+use stegos_crypto::pbc::secure::Signature;
 
-pub use block::*;
-pub use input::*;
-pub use output::*;
+/// Transaction Input.
+#[derive(Debug, Clone)]
+pub struct Input {
+    /// Identifier of an unspent transaction output.
+    pub source_id: Hash,
+    /// Signature used to sign transactions.
+    pub signature: Signature,
+}
 
-extern crate chrono;
-extern crate stegos_crypto;
+impl Input {
+    /// Constructor for Input.
+    pub fn new(source_id: Hash, signature: Signature) -> Input {
+        Input {
+            source_id: source_id,
+            signature: signature,
+        }
+    }
+}
+
+impl Hashable for Input {
+    fn hash(&self, state: &mut Hasher) {
+        self.source_id.hash(state);
+        self.signature.hash(state);
+    }
+}

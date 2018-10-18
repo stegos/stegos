@@ -86,6 +86,15 @@ impl Hashable for Hash {
     }
 }
 
+pub fn hash(msg: &[u8]) -> Hash {
+    let mut hasher = Sha3_256::new();
+    hasher.input(msg);
+    let out = hasher.result();
+    let mut h = [0u8; HASH_SIZE];
+    h.copy_from_slice(&out[..HASH_SIZE]);
+    Hash(h)
+}
+
 pub fn hash_nbytes(nb: usize, msg: &[u8]) -> Vec<u8> {
     let nmsg = msg.len();
     let mut ct = nb;
@@ -119,7 +128,7 @@ impl Hasher {
     pub fn new() -> Self {
         Hasher(Sha3_256::new())
     }
-
+    
     /// Retrieve result.
     pub fn result(&self) -> Hash {
         // FIXME: .clone() is used because .result() doesn't use &self

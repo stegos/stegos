@@ -1,4 +1,4 @@
-//! Blockchain Implementation.
+//! Transaction Payload.
 
 //
 // Copyright (c) 2018 Stegos
@@ -21,14 +21,43 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-mod block;
-mod input;
-mod output;
-mod payload;
+use std::fmt;
+use stegos_crypto::pbc::secure::RVal;
+use stegos_crypto::utils::*;
+use stegos_crypto::hash::*;
 
-pub use block::*;
-pub use input::*;
-pub use output::*;
+#[derive(Clone)]
+pub struct EncryptedPayload {
+    r:  RVal,
+    ctxt: Vec<u8>
+}
 
-extern crate chrono;
-extern crate stegos_crypto;
+impl fmt::Debug for EncryptedPayload {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "r={} ctxt={}", self.r.to_str(), u8v_to_hexstr(&self.ctxt))
+    }
+}
+
+impl fmt::Display for EncryptedPayload {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
+}
+
+impl Hashable for EncryptedPayload {
+    fn hash(&self, state: &mut Hasher) {
+        self.r.hash(state);
+        self.ctxt[..].hash(state);
+    }
+}
+
+impl EncryptedPayload {
+    /// Returns some garbage for tests.
+    // TODO: remove
+    pub fn garbage() -> EncryptedPayload {
+        EncryptedPayload {
+            r: RVal::new(),
+            ctxt: vec![0; 5],
+        }
+    }
+}

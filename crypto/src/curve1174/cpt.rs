@@ -36,14 +36,18 @@ impl Pt {
     }
 
     fn nbr_str(&self) -> String {
-        let v = Lev32 { v8: (*self).0 };
-        basic_nbr_str(unsafe { &v.v64 })
+        let v = Lev32(self.0);
+        basic_nbr_str(&v.to_lev_u64())
     }
 
     pub fn from_str(s: &str) -> Pt {
         let mut v = [0u8; 32];
         hexstr_to_lev_u8(&s, &mut v);
         Pt(v)
+    }
+
+    pub fn decompress(pt: Self) -> Result<ECp, CurveError> {
+        ECp::try_from(pt)
     }
 }
 
@@ -63,41 +67,14 @@ impl Hashable for Pt {
 impl From<ECp> for Pt {
     fn from(pt: ECp) -> Pt {
         let mut afpt = pt;
-        if !afpt.is_affine() {
-            norm(&mut afpt);
-        }
+        norm(&mut afpt);
         let ptx = Fq::from(afpt.x);
-        let vx = Lev32::from(U256::from(ptx));
-        let mut x = unsafe { vx.v8 };
-        if pt.y.is_odd() {
+        let mut x = U256::from(ptx).to_lev_u8();
+        if afpt.y.is_odd() {
             x[31] |= 0x80;
         }
         Pt(x)
     }
 }
 
-pub fn pt_on_curve(pt: Pt) -> Option<ECp> {
-    let mut x = pt.bits();
-    let sgn = (x[31] & 0x80) != 0;
-    x[31] &= 0x7f;
-    if x == [0u8; 32] {
-        None
-    }
-    // can't be pt at infinity
-    else {
-        let xq = Fq51::from(Fq::Unscaled(U256::from(Lev32 { v8: x })));
-        match solve_y(&xq) {
-            Some(ysqrt) => {
-                let yq = if ysqrt.is_odd() == sgn { ysqrt } else { -ysqrt };
-                let newpt = ECp::from_xy51(&xq, &yq);
-                // check for small subgroup attack
-                if (CURVE_H * newpt).is_inf() {
-                    None
-                } else {
-                    Some(newpt)
-                }
-            }
-            None => None,
-        }
-    }
-}
+// ----------------------------------------------------------------

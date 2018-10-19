@@ -35,10 +35,9 @@ pub const WINVEC_INIT: WinVec = WinVec([0; PANES]);
 
 impl From<Fr> for WinVec {
     fn from(x: Fr) -> WinVec {
-        let bits = x.unscaled().bits();
-        let tmp = Lev32::from(bits);
+        let bits = x.unscaled().bits().to_lev_u8();
         let mut wv = WINVEC_INIT;
-        cwin4(unsafe { &tmp.v8 }, &mut wv);
+        cwin4(&bits, &mut wv);
         wv
     }
 }

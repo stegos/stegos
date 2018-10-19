@@ -7,10 +7,6 @@ authors = ["Stegos AG <info@stegos.cc>"]
 name = "stegos"
 path = "src/stegos.rs"
 
-[[bin]]
-name = "crypto"
-path = "examples/bulletproofs.rs"
-
 [workspace]
 members = [
     "api",

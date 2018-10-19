@@ -43,13 +43,15 @@ use self::winvec::*;
 mod lev32; // little-endian byte vector represetation
 use self::lev32::*;
 
-mod u256; // internal represntation of field elements
+// TODO: after debugging, make private u256
+pub mod u256; // internal represntation of field elements
 use self::u256::*;
 
 pub mod fields;
 use self::fields::*;
 
-mod fq51; // coord representation for Elliptic curve points
+// TODO: after debugging, make private fq51
+pub mod fq51; // coord representation for Elliptic curve points
 use self::fq51::*;
 
 pub mod ecpt; // uncompressed points, affine & projective coords
@@ -81,8 +83,26 @@ lazy_static! {
         let gen_y =
             Fq::from_str("06B72F82D47FB7CC6656841169840E0C4FE2DEE2AF3F976BA4CCB1BF9B46360E")
                 .unwrap();
-        ECp::from_xy(&gen_x, &gen_y)
+        ECp::try_from_xy(&gen_x, &gen_y).unwrap()
     };
+}
+
+pub enum CurveError {
+    NotQuadraticResidue,
+    PointNotOnCurve,
+}
+
+impl fmt::Debug for CurveError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match *self {
+                CurveError::NotQuadraticResidue => "CurveError::NotQuadraticResidue",
+                CurveError::PointNotOnCurve => "CurveError::PointNotOnCurve",
+            }
+        )
+    }
 }
 
 // -------------------------------------------------------
@@ -134,13 +154,13 @@ mod tests {
         let sx = "037FBB0CEA308C479343AEE7C029A190C021D96A492ECD6516123F27BCE29EDA";
         let sy = "06B72F82D47FB7CC6656841169840E0C4FE2DEE2AF3F976BA4CCB1BF9B46360E";
 
-        let gen_x = Coord::from_str(sx).unwrap();
-        let gen_y = Coord::from_str(sy).unwrap();
-        let pt1 = ECp::from_xy51(&gen_x, &gen_y);
+        let gen_x = Fq::from_str(sx).unwrap();
+        let gen_y = Fq::from_str(sy).unwrap();
+        let pt1 = ECp::try_from_xy(&gen_x, &gen_y).unwrap();
 
-        let gx = Coord::from_str(&sx).unwrap();
-        let gy = Coord::from_str(&sy).unwrap();
-        let pt2 = ECp::from_xy51(&gx, &gy);
+        let gx = Fq::from_str(&sx).unwrap();
+        let gy = Fq::from_str(&sy).unwrap();
+        let pt2 = ECp::try_from_xy(&gx, &gy).unwrap();
 
         assert_eq!(pt1, pt2);
     }
@@ -162,6 +182,13 @@ mod tests {
 
         assert_eq!(gz, sum);
     }
+
+    #[test]
+    #[should_panic]
+    fn check_bad_compression() {
+        let pt = ECp::compress(ECp::inf());
+        let ept = ECp::decompress(pt).unwrap();
+    }
 }
 
 // ------------------------------------------------------------------------------------------
@@ -176,12 +203,12 @@ pub fn curve1174_tests() {
     let mx = Fr::from_str(&smul).unwrap();
     let mut pt2: ECp = ECp::inf();
     for _ in 0..100 {
-        let pt1 = ECp::from_xy(&gx, &gy);
+        let pt1 = ECp::try_from_xy(&gx, &gy).unwrap();
         pt2 = pt1 * mx;
     }
     println!("pt2: {}", pt2);
 
-    let pt1 = ECp::from_xy(&gx, &gy);
+    let pt1 = ECp::try_from_xy(&gx, &gy).unwrap();
     let pt2 = pt1 + pt1;
     println!("ptsum {}", pt2);
 
@@ -202,20 +229,20 @@ pub fn curve1174_tests() {
         println!("{:?}", &x);
     }
 
-    let gen_x = Coord::from_str(&sx).unwrap();
-    let gen_y = Coord::from_str(&sy).unwrap();
-    assert!(is_valid_pt(&gen_x, &gen_y));
+    let gen_x = Fq::from_str(&sx).unwrap();
+    let gen_y = Fq::from_str(&sy).unwrap();
+    let pt = ECp::try_from_xy(&gen_x, &gen_y).unwrap();
 
     println!("The Generator Point");
     println!("gen_x: {}", gen_x);
     println!("gen_y: {}", gen_y);
-    println!("gen_pt: {}", ECp::from_xy51(&gen_x, &gen_y));
+    println!("gen_pt: {}", pt);
 
     println!("x+y: {}", gen_x + gen_y);
     /* */
     let ept = ECp::from(Hash::from_vector(b"Testing12")); // produces an odd Y
     let cpt = Pt::from(ept); // MSB should be set
-    let ept2 = ECp::from(cpt);
+    let ept2 = ECp::try_from(cpt).unwrap();
     println!("hash -> {}", ept);
     println!("hash -> {}", cpt);
     println!("hash -> {}", ept2);

@@ -64,6 +64,47 @@ impl U256 {
         basic_nbr_str(&self.0)
     }
 
+    pub fn to_lev_u8(self) -> [u8; 32] {
+        let mut ans = [0u8; 32];
+        ans[0] = (self.0[0] & 0x0ff) as u8;
+        ans[1] = ((self.0[0] >> 8) & 0x0ff) as u8;
+        ans[2] = ((self.0[0] >> 16) & 0x0ff) as u8;
+        ans[3] = ((self.0[0] >> 24) & 0x0ff) as u8;
+        ans[4] = ((self.0[0] >> 32) & 0x0ff) as u8;
+        ans[5] = ((self.0[0] >> 40) & 0x0ff) as u8;
+        ans[6] = ((self.0[0] >> 48) & 0x0ff) as u8;
+        ans[7] = ((self.0[0] >> 56) & 0x0ff) as u8;
+
+        ans[8] = (self.0[1] & 0x0ff) as u8;
+        ans[9] = ((self.0[1] >> 8) & 0x0ff) as u8;
+        ans[10] = ((self.0[1] >> 16) & 0x0ff) as u8;
+        ans[11] = ((self.0[1] >> 24) & 0x0ff) as u8;
+        ans[12] = ((self.0[1] >> 32) & 0x0ff) as u8;
+        ans[13] = ((self.0[1] >> 40) & 0x0ff) as u8;
+        ans[14] = ((self.0[1] >> 48) & 0x0ff) as u8;
+        ans[15] = ((self.0[1] >> 56) & 0x0ff) as u8;
+
+        ans[16] = (self.0[2] & 0x0ff) as u8;
+        ans[17] = ((self.0[2] >> 8) & 0x0ff) as u8;
+        ans[18] = ((self.0[2] >> 16) & 0x0ff) as u8;
+        ans[19] = ((self.0[2] >> 24) & 0x0ff) as u8;
+        ans[20] = ((self.0[2] >> 32) & 0x0ff) as u8;
+        ans[21] = ((self.0[2] >> 40) & 0x0ff) as u8;
+        ans[22] = ((self.0[2] >> 48) & 0x0ff) as u8;
+        ans[23] = ((self.0[2] >> 56) & 0x0ff) as u8;
+
+        ans[24] = (self.0[3] & 0x0ff) as u8;
+        ans[25] = ((self.0[3] >> 8) & 0x0ff) as u8;
+        ans[26] = ((self.0[3] >> 16) & 0x0ff) as u8;
+        ans[27] = ((self.0[3] >> 24) & 0x0ff) as u8;
+        ans[28] = ((self.0[3] >> 32) & 0x0ff) as u8;
+        ans[29] = ((self.0[3] >> 40) & 0x0ff) as u8;
+        ans[30] = ((self.0[3] >> 48) & 0x0ff) as u8;
+        ans[31] = ((self.0[3] >> 56) & 0x0ff) as u8;
+
+        ans
+    }
+
     pub fn add_mod(&mut self, other: &U256, modulo: &U256) {
         add_nocarry(&mut self.0, &other.0);
         if *self >= *modulo {
@@ -360,13 +401,13 @@ pub fn basic_nbr_str(x: &[u64; 4]) -> String {
 
 impl From<Lev32> for U256 {
     fn from(v: Lev32) -> U256 {
-        U256(unsafe { v.v64 })
+        U256(v.to_lev_u64())
     }
 }
 
 impl From<U256> for Lev32 {
     fn from(v: U256) -> Lev32 {
-        Lev32 { v64: v.0 }
+        Lev32(v.to_lev_u8())
     }
 }
 
@@ -378,7 +419,7 @@ impl U256 {
         // construct a little-endian [u64;4] from a hexstring
         let mut x = [0u8; 32];
         hexstr_to_lev_u8(s, &mut x)?;
-        let v = Lev32 { v8: x };
-        Ok(U256(unsafe { v.v64 }))
+        let v = Lev32(x);
+        Ok(U256::from(v))
     }
 }

@@ -22,19 +22,24 @@
 // SOFTWARE.
 
 use std::fmt;
+use stegos_crypto::hash::*;
 use stegos_crypto::pbc::secure::RVal;
 use stegos_crypto::utils::*;
-use stegos_crypto::hash::*;
 
 #[derive(Clone)]
 pub struct EncryptedPayload {
-    r:  RVal,
-    ctxt: Vec<u8>
+    r: RVal,
+    ctxt: Vec<u8>,
 }
 
 impl fmt::Debug for EncryptedPayload {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "r={} ctxt={}", self.r.to_str(), u8v_to_hexstr(&self.ctxt))
+        write!(
+            f,
+            "r={} ctxt={}",
+            self.r.to_str(),
+            u8v_to_hexstr(&self.ctxt)
+        )
     }
 }
 

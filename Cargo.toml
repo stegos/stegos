@@ -7,6 +7,10 @@ authors = ["Stegos AG <info@stegos.cc>"]
 name = "stegos"
 path = "src/stegos.rs"
 
+[[bin]]
+name = "crypto"
+path = "examples/bulletproofs.rs"
+
 [workspace]
 members = [
     "api",
@@ -53,6 +57,9 @@ rust-libpbc = { git = "https://github.com/stegos/rust-pbcintf.git" }
 libp2p = { git = "https://github.com/libp2p/rust-libp2p.git", rev = "e179951c74cb0c8916d27329f2dfd78917dddfb2" }
 
 [[example]]
+name = "bulletproofs"
+
+[[example]]
 name = "pbc"
 
 [[example]]
@@ -69,3 +76,7 @@ env_logger = "0.5.13"
 lazy_static = "1.1.0"
 
 [build-dependencies]
+
+
+[profile.release]
+opt-level = 3

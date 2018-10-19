@@ -1,4 +1,4 @@
-//! Test Fast Implementation of Edwards Curve Curve1174
+//! Test Fast Implementation of Bulletproofs on Curve1174
 
 //
 // Copyright (c) 2018 Stegos
@@ -21,29 +21,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-//! ----------------------------------------------------------------------------
-//! Internally, ECC point multiplication depends on projective coordinates expressed
-//! as 4 components (x, y, z, t), each of which is expressed as 51-bit integer fragments
-//! of a 256 bit number. This permits very fast addition/subtraction of field elements,
-//! with overflows spilling into the upper bits of each 64-bit fragment. During multiply
-//! operations these overflows are reapportioned to higher fragments.
-//!
-//! Externally the field elements of the coordinates are held as 256 bit bignums in
-//! little-endian order, normally expressed as quads of 64-bit unsigned fragments. When
-//! necessary, these are forcibly viewed through an "unsafe" transformation to/from 32-bytes.
-//!
-//! -----------------------------------------------------------------------------
-
 extern crate stegos_crypto;
 
-use stegos_crypto::curve1174::*;
-
-extern crate lazy_static;
-// use lazy_static::*;
-
-extern crate hex;
+use stegos_crypto::bulletproofs::*;
 
 // -------------------------------------------------------------------------------
 fn main() {
-    curve1174_tests();
+    bulletproofs_tests();
 }

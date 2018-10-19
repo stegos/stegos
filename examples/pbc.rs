@@ -24,9 +24,7 @@
 extern crate rust_libpbc;
 extern crate stegos_crypto;
 
-use stegos_crypto::hash::*;
 use stegos_crypto::pbc::*;
-use stegos_crypto::utils::*;
 
 use std::sync::Mutex;
 
@@ -37,25 +35,7 @@ extern crate hex;
 
 // ------------------------------------------------------------------------
 
-fn main() -> Result<(), hex::FromHexError> {
-    // ------------------------------------------------------------------------
-    // check connection to PBC library
-    println!("Hello, world!");
-    let input = "hello!".as_bytes();
-    let output = vec![0u8; input.len()];
-    unsafe {
-        let echo_out = rust_libpbc::echo(
-            input.len() as u64,
-            input.as_ptr() as *mut _,
-            output.as_ptr() as *mut _,
-        );
-        assert_eq!(echo_out, input.len() as u64);
-        assert_eq!(input.to_vec(), output);
-    }
-    let out_str: String = std::str::from_utf8(&output).unwrap().to_string();
-    println!("Echo Output: {}", out_str);
-    println!("");
-
+fn main() {
     // ------------------------------------------------------------
     // init PBC library -- must only be performed once
     let init = Mutex::new(false);
@@ -63,33 +43,9 @@ fn main() -> Result<(), hex::FromHexError> {
         let mut done = init.lock().unwrap();
         if !*done {
             *done = true;
-            init_pairings()?;
+            init_pairings().unwrap();
         }
     }
-
-    // test hashing
-    let h = Hash::from_vector(b"");
-    println!("hash(\"\") = {}", h.to_str());
-    assert_eq!(
-        h.to_str(),
-        "H(a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a)"
-    );
-    println!("");
-
-    let mut hasher = Hasher::new();
-    "".hash(&mut hasher);
-    let h = hasher.result();
-    println!("raw empty string: {}", h);
-
-    let h = Hash::from_str("");
-    println!("from empty string: {}", h);
-
-    let h = Hash::from_vector(b"1FE9AB");
-    println!("from vector: {}", h.to_str());
-    let h = Hash::from_str("1FE9AB");
-    println!("from string: {}", h.to_str());
-    let h = Hash::from_str("1fe9ab");
-    println!("from vector: {}", h.to_str());
 
     // -------------------------------------
     // on Secure pairings
@@ -122,12 +78,4 @@ fn main() -> Result<(), hex::FromHexError> {
     println!("chk Zr: 0x{:x} -> {}", a, fast::Zr::from_int(a));
     println!("chk Zr: -1 -> {}", fast::Zr::from_int(-1));
     println!("chk Zr: -1 + 1 -> {}", fast::Zr::from(-1) + 1);
-
-    // -------------------------------------------
-    let h = hash_nbytes(10, b"Testing");
-    println!("h = {}", u8v_to_hexstr(&h));
-    let h = hash_nbytes(64, b"Testing");
-    println!("h = {}", u8v_to_hexstr(&h));
-
-    Ok(())
 }

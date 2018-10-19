@@ -259,7 +259,9 @@ impl Div<Fq51> for Fq51 {
     fn div(self, x: Fq51) -> Fq51 {
         let mut tmp = x;
         ginv(&mut tmp);
-        self * tmp
+        let mut ans = Fq51::zero();
+        gmul(&self, &tmp, &mut ans);
+        ans
     }
 }
 
@@ -374,6 +376,7 @@ pub fn gmuli(w: &mut Fq51, i: i64) {
 
 // z=x^2
 
+#[inline(never)]
 pub fn gsqr(x: &Fq51, z: &mut Fq51) {
     let t4 = 2 * ((x.0[0] as i128) * (x.0[4] as i128) + (x.0[1] as i128) * (x.0[3] as i128))
         + (x.0[2] as i128) * (x.0[2] as i128);
@@ -406,6 +409,7 @@ pub fn gsqr(x: &Fq51, z: &mut Fq51) {
     z.0[0] += (9 * (t4 >> 47)) as i64;
 }
 
+#[inline(never)]
 pub fn gmul(x: &Fq51, y: &Fq51, z: &mut Fq51) {
     // 5M + 4A
     let t4 = (x.0[0] as i128) * (y.0[4] as i128)
@@ -461,7 +465,7 @@ pub fn gmul(x: &Fq51, y: &Fq51, z: &mut Fq51) {
 // Inverse x = 1/x = x^(p-2) mod p
 // the exponent (p-2) = "07FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5"
 // (61 F's)
-
+#[inline(never)]
 pub fn ginv(x: &mut Fq51) {
     let mut w = FQ51_0;
     let mut t1 = FQ51_0;
@@ -543,6 +547,7 @@ pub fn gdec2(x: &mut Fq51) {
     x.0[0] -= 2;
 }
 
+#[inline(never)]
 pub fn gsqrt(x: Fq51) -> Option<Fq51> {
     // we need to perform (x^((q+1)/4) mod q)
     // for (q + 1)/4 = 0x01FF__FFFF__FFFF_FFFF__FFFF_FFFF_FFFF_FFFF__FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFE
@@ -690,15 +695,4 @@ impl From<Fq51> for U256 {
         y.0[3] = s as u64;
         y
     }
-}
-
-pub fn solve_y(xq: &Fq51) -> Option<Fq51> {
-    let yyq = ((1 + *xq) * (1 - *xq)) / (1 - (*xq).sqr() * CURVE_D);
-    gsqrt(yyq)
-}
-
-pub fn is_valid_pt(x: &Fq51, y: &Fq51) -> bool {
-    let xsq = (*x).sqr();
-    let ysq = (*y).sqr();
-    xsq + ysq == 1 + CURVE_D * xsq * ysq
 }

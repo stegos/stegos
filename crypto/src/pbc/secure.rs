@@ -35,6 +35,7 @@ use hash::*;
 use utils::*;
 
 #[derive(Copy, Clone)]
+#[repr(C)]
 pub struct Zr([u8; ZR_SIZE_FR256]);
 
 impl Zr {
@@ -82,6 +83,7 @@ impl Hashable for Zr {
 
 // -----------------------------------------
 #[derive(Copy, Clone)]
+#[repr(C)]
 pub struct G1([u8; G1_SIZE_FR256]);
 
 impl G1 {
@@ -123,6 +125,7 @@ impl Hashable for G1 {
 
 // -----------------------------------------
 #[derive(Copy, Clone)]
+#[repr(C)]
 pub struct G2([u8; G2_SIZE_FR256]);
 
 impl G2 {
@@ -164,6 +167,7 @@ impl Hashable for G2 {
 
 // -----------------------------------------
 #[derive(Copy, Clone)]
+#[repr(C)]
 pub struct GT([u8; GT_SIZE_FR256]);
 
 impl GT {

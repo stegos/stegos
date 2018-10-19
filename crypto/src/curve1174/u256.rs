@@ -32,7 +32,7 @@ use super::*;
 // should never be mixed without careful consideration.
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-#[repr(C)]
+// #[repr(C)]
 pub struct U256(pub [u64; 4]);
 
 impl U256 {
@@ -42,6 +42,22 @@ impl U256 {
 
     pub fn one() -> U256 {
         U256([1, 0, 0, 0])
+    }
+
+    pub fn random() -> U256 {
+        U256(random::<[u64; 4]>())
+    }
+
+    pub fn force_to_range(&mut self, range: U256) {
+        while *self >= range {
+            div2(&mut self.0);
+        }
+    }
+
+    pub fn random_in_range(range: U256) -> U256 {
+        let mut x = Self::random();
+        Self::force_to_range(&mut x, range);
+        x
     }
 
     pub fn nbr_str(&self) -> String {

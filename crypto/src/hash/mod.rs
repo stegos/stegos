@@ -33,6 +33,7 @@ use utils::*;
 pub const HASH_SIZE: usize = 32;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
+#[repr(C)]
 pub struct Hash([u8; HASH_SIZE]);
 
 impl Hash {
@@ -45,21 +46,33 @@ impl Hash {
     }
 
     pub fn from_vector(msg: &[u8]) -> Hash {
+        // produce a Hash from a single &[u8] vector
         let mut hasher = Hasher::new();
         (*msg).hash(&mut hasher);
-        let Hash(out) = hasher.result();
-        let mut h = [0u8; HASH_SIZE];
-        h.copy_from_slice(&out[..HASH_SIZE]);
-        Hash(h)
+        hasher.result()
     }
 
     pub fn from_str(msg: &str) -> Hash {
+        // produce a Hash from a single string
         let mut hasher = Hasher::new();
         (*msg).hash(&mut hasher);
-        let Hash(out) = hasher.result();
-        let mut h = [0u8; HASH_SIZE];
-        h.copy_from_slice(&out[..HASH_SIZE]);
-        Hash(h)
+        hasher.result()
+    }
+
+    pub fn digest(msg: &Hashable) -> Hash {
+        // produce a Hash from a single Hashable
+        let mut hasher = Hasher::new();
+        msg.hash(&mut hasher);
+        hasher.result()
+    }
+
+    pub fn digest_chain(msgs: &[&Hashable]) -> Hash {
+        // produce a Hash from a list of Hashable items
+        let mut state = Hasher::new();
+        for x in msgs.iter() {
+            x.hash(&mut state);
+        }
+        state.result()
     }
 
     pub fn to_str(&self) -> String {
@@ -84,15 +97,6 @@ impl Hashable for Hash {
     fn hash(&self, state: &mut Hasher) {
         self.0.hash(state);
     }
-}
-
-pub fn hash(msg: &[u8]) -> Hash {
-    let mut hasher = Sha3_256::new();
-    hasher.input(msg);
-    let out = hasher.result();
-    let mut h = [0u8; HASH_SIZE];
-    h.copy_from_slice(&out[..HASH_SIZE]);
-    Hash(h)
 }
 
 pub fn hash_nbytes(nb: usize, msg: &[u8]) -> Vec<u8> {
@@ -128,7 +132,7 @@ impl Hasher {
     pub fn new() -> Self {
         Hasher(Sha3_256::new())
     }
-    
+
     /// Retrieve result.
     pub fn result(&self) -> Hash {
         // FIXME: .clone() is used because .result() doesn't use &self
@@ -251,12 +255,29 @@ pub mod tests {
         let mut arr = [0u8; HASH_SIZE];
         arr.copy_from_slice(garr.as_slice());
         let h1 = Hash(arr);
-
-        let mut hasher = Hasher::new();
-        d.hash(&mut hasher);
-        let h2: Hash = hasher.result();
+        let h2 = Hash::digest(&d);
 
         // Test that manually hashed result matches Hashable for Data implementation.
         assert!(h1 == h2);
+    }
+
+    #[test]
+    fn check_empty_hash() {
+        // assure that we get correct Sha3-256 hash of empty vector
+        extern crate hex;
+        let h = Hash::from_vector(b"");
+        let chk = hex::decode("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
+            .unwrap();
+        for (a, b) in h.bits().into_iter().zip(chk.iter()) {
+            assert_eq!(a, b);
+        }
+    }
+
+    #[test]
+    fn check_equivalence() {
+        // ensure that hash of byte vector hexstring is same as hash of hexstring
+        let hv = Hash::from_vector(b"1FE9AB");
+        let hs = Hash::from_str("1FE9AB");
+        assert_eq!(hv, hs);
     }
 }

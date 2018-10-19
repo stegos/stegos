@@ -26,7 +26,7 @@ use input::Input;
 use output::Output;
 use payload::EncryptedPayload;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::pbc::fast::{Zr};
+use stegos_crypto::pbc::fast::Zr;
 use stegos_crypto::pbc::secure::*;
 use stegos_crypto::*;
 
@@ -199,7 +199,7 @@ impl Block {
         let inputs = [];
 
         // But have one hard-coded output
-        let proof = BulletProof::garbage();
+        let (proof, _gamma) = bulletproofs::make_range_proof(1234567890);
         let payload = EncryptedPayload::garbage();
         let output = Output::new(leader.clone(), proof, payload);
         let outputs = [output];

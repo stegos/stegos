@@ -5,7 +5,7 @@ stages:
 
 before_script:
   - ci-scripts/install-deps.sh
-.build: &build_definition
+.build:
   stage: build
   script:
     - cargo build
@@ -15,38 +15,40 @@ before_script:
       - target/
 
 build:linux:
+  extends: .build
   image: rust:1.29
-  <<: *build_definition
   tags:
     - linux
 
-.test: &test_definition
+.test:
   stage: test
   script:
     - cargo test --all
 
 test:linux:
+  extends: .test
   image: rust:1.29
-  <<: *test_definition
   dependencies:
     - build:linux
   tags:
     - linux
 
-.release: &release_definition
+.release:
   stage: release
   script:
     - cargo build --release
   only:
     - dev
     - master
+  when: manual
   artifacts:
     expire_in: 1 week
     paths:
       - target/
 
 release:linux:
+  extends: .release
   image: rust:1.29
-  <<: *release_definition
   tags:
     - linux
+

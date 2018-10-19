@@ -23,6 +23,7 @@
 
 extern crate generic_array;
 extern crate gmp;
+extern crate hex;
 extern crate rand;
 extern crate rust_libpbc;
 extern crate sha3;

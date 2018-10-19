@@ -38,7 +38,13 @@ extern crate stegos_crypto;
 
 use stegos_crypto::curve1174::*;
 
+extern crate lazy_static;
+// use lazy_static::*;
+
+extern crate hex;
+
 // -------------------------------------------------------------------------------
-fn main() {
-    curve1174_tests();
+fn main() -> Result<(), hex::FromHexError> {
+    curve1174_tests()?;
+    Ok(())
 }

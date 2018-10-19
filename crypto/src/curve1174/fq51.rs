@@ -660,11 +660,11 @@ pub fn bin_to_elt(y: &U256, x: &mut Fq51) {
 }
 
 impl Fq51 {
-    pub fn from_str(s: &str) -> Fq51 {
-        let bin = U256::from_str(s);
+    pub fn from_str(s: &str) -> Result<Fq51, hex::FromHexError> {
+        let bin = U256::from_str(s)?;
         let mut e = Fq51::zero();
         bin_to_elt(&bin, &mut e);
-        e
+        Ok(e)
     }
 }
 

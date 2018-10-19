@@ -54,6 +54,13 @@ impl fmt::Display for Pt {
     }
 }
 
+impl Hashable for Pt {
+    fn hash(&self, state: &mut Hasher) {
+        "Pt".hash(state);
+        (*self).bits().hash(state);
+    }
+}
+
 impl From<ECp> for Pt {
     fn from(pt: ECp) -> Pt {
         let mut afpt = pt;

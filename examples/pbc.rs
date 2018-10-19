@@ -33,9 +33,14 @@ use stegos_crypto::utils::*;
 
 use std::sync::Mutex;
 
+extern crate lazy_static;
+// use lazy_static::*;
+
+extern crate hex;
+
 // ------------------------------------------------------------------------
 
-fn main() {
+fn main() -> Result<(), hex::FromHexError> {
     // ------------------------------------------------------------------------
     // check connection to PBC library
     println!("Hello, world!");
@@ -61,7 +66,7 @@ fn main() {
         let mut done = init.lock().unwrap();
         if !*done {
             *done = true;
-            init_pairings();
+            init_pairings()?;
         }
     }
 
@@ -73,6 +78,21 @@ fn main() {
         "H(a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a)"
     );
     println!("");
+
+    let mut hasher = Hasher::new();
+    "".hash(&mut hasher);
+    let h = hasher.result();
+    println!("raw empty string: {}", h);
+
+    let h = Hash::from_str("");
+    println!("from empty string: {}", h);
+
+    let h = Hash::from_vector(b"1FE9AB");
+    println!("from vector: {}", h.to_str());
+    let h = Hash::from_str("1FE9AB");
+    println!("from string: {}", h.to_str());
+    let h = Hash::from_str("1fe9ab");
+    println!("from vector: {}", h.to_str());
 
     // -------------------------------------
     // on Secure pairings
@@ -111,4 +131,6 @@ fn main() {
     println!("h = {}", u8v_to_hexstr(&h));
     let h = hash_nbytes(64, b"Testing");
     println!("h = {}", u8v_to_hexstr(&h));
+
+    Ok(())
 }

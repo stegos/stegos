@@ -67,10 +67,10 @@ impl Zr {
         &self.0
     }
 
-    pub fn from_str(s: &str) -> Zr {
+    pub fn from_str(s: &str) -> Result<Zr, hex::FromHexError> {
         let mut v = Zr::wv();
-        hexstr_to_bev_u8(&s, &mut v);
-        Zr(v)
+        hexstr_to_bev_u8(&s, &mut v)?;
+        Ok(Zr(v))
     }
 
     pub fn from_int(a: i64) -> Zr {
@@ -101,6 +101,13 @@ impl From<i64> for Zr {
 impl fmt::Display for Zr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.to_str())
+    }
+}
+
+impl Hashable for Zr {
+    fn hash(&self, state: &mut Hasher) {
+        "Zr".hash(state);
+        self.base_vector().hash(state);
     }
 }
 
@@ -272,16 +279,23 @@ impl G1 {
         u8v_to_typed_str("G1", &self.base_vector())
     }
 
-    pub fn from_str(s: &str) -> G1 {
+    pub fn from_str(s: &str) -> Result<G1, hex::FromHexError> {
         let mut v = G1::wv();
-        hexstr_to_bev_u8(&s, &mut v);
-        G1(v)
+        hexstr_to_bev_u8(&s, &mut v)?;
+        Ok(G1(v))
     }
 }
 
 impl fmt::Display for G1 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.to_str())
+    }
+}
+
+impl Hashable for G1 {
+    fn hash(&self, state: &mut Hasher) {
+        "G1".hash(state);
+        self.base_vector().hash(state);
     }
 }
 
@@ -405,16 +419,23 @@ impl G2 {
         u8v_to_typed_str("G2", &self.base_vector())
     }
 
-    pub fn from_str(s: &str) -> G2 {
+    pub fn from_str(s: &str) -> Result<G2, hex::FromHexError> {
         let mut v = G2::wv();
-        hexstr_to_bev_u8(&s, &mut v);
-        G2(v)
+        hexstr_to_bev_u8(&s, &mut v)?;
+        Ok(G2(v))
     }
 }
 
 impl fmt::Display for G2 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.to_str())
+    }
+}
+
+impl Hashable for G2 {
+    fn hash(&self, state: &mut Hasher) {
+        "G2".hash(state);
+        self.base_vector().hash(state);
     }
 }
 
@@ -545,6 +566,13 @@ impl fmt::Display for GT {
     }
 }
 
+impl Hashable for GT {
+    fn hash(&self, state: &mut Hasher) {
+        "GT".hash(state);
+        self.base_vector().hash(state);
+    }
+}
+
 impl Mul<GT> for GT {
     type Output = GT;
     fn mul(self, other: GT) -> GT {
@@ -591,6 +619,13 @@ impl fmt::Display for SecretKey {
     }
 }
 
+impl Hashable for SecretKey {
+    fn hash(&self, state: &mut Hasher) {
+        "SKey".hash(state);
+        self.base_vector().hash(state);
+    }
+}
+
 // -----------------------------------------
 #[derive(Copy, Clone)]
 pub struct PublicKey(G2);
@@ -611,10 +646,45 @@ impl fmt::Display for PublicKey {
     }
 }
 
+impl Hashable for PublicKey {
+    fn hash(&self, state: &mut Hasher) {
+        "PKey".hash(state);
+        self.base_vector().hash(state);
+    }
+}
+
+// ------------------------------------------------------------------
+
+#[derive(Copy, Clone)]
+pub struct Signature(G1);
+
+impl Signature {
+    pub fn base_vector(&self) -> &[u8] {
+        self.0.base_vector()
+    }
+
+    pub fn to_str(&self) -> String {
+        u8v_to_typed_str("Sig", &self.base_vector())
+    }
+}
+
+impl fmt::Display for Signature {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.to_str())
+    }
+}
+
+impl Hashable for Signature {
+    fn hash(&self, state: &mut Hasher) {
+        "Sig".hash(state);
+        self.base_vector().hash(state);
+    }
+}
+
 // ------------------------------------------------------------------
 // Key Generation & Checking
 
-pub fn sign_hash(h: &Hash, skey: &SecretKey) -> G1 {
+pub fn sign_hash(h: &Hash, skey: &SecretKey) -> Signature {
     // return a raw signature on a hash
     let v = G1::new();
     unsafe {
@@ -626,15 +696,15 @@ pub fn sign_hash(h: &Hash, skey: &SecretKey) -> G1 {
             HASH_SIZE as u64,
         );
     }
-    v
+    Signature(v)
 }
 
-pub fn check_hash(h: &Hash, sig: &G1, pkey: &PublicKey) -> bool {
+pub fn check_hash(h: &Hash, sig: &Signature, pkey: &PublicKey) -> bool {
     // check a hash with a raw signature, return t/f
     unsafe {
         0 == rust_libpbc::check_signature(
             PBC_CONTEXT_AR160 as u64,
-            sig.base_vector().as_ptr() as *mut _,
+            sig.0.base_vector().as_ptr() as *mut _,
             h.base_vector().as_ptr() as *mut _,
             HASH_SIZE as u64,
             pkey.base_vector().as_ptr() as *mut _,
@@ -642,8 +712,8 @@ pub fn check_hash(h: &Hash, sig: &G1, pkey: &PublicKey) -> bool {
     }
 }
 
-pub fn make_deterministic_keys(seed: &[u8]) -> (SecretKey, PublicKey, G1) {
-    let h = hash(&seed);
+pub fn make_deterministic_keys(seed: &[u8]) -> (SecretKey, PublicKey, Signature) {
+    let h = Hash::from_vector(&seed);
     let sk = Zr::new(); // secret keys in Zr
     let pk = G2::new(); // public keys in G2
     unsafe {
@@ -655,18 +725,18 @@ pub fn make_deterministic_keys(seed: &[u8]) -> (SecretKey, PublicKey, G1) {
             HASH_SIZE as u64,
         );
     }
-    let hpk = hash(&pk.base_vector());
+    let hpk = Hash::from_vector(&pk.base_vector());
     let skey = SecretKey(sk);
     let pkey = PublicKey(pk);
     let sig = sign_hash(&hpk, &skey);
     (skey, pkey, sig)
 }
 
-pub fn check_keying(pkey: &PublicKey, sig: &G1) -> bool {
-    check_hash(&hash(&pkey.base_vector()), &sig, &pkey)
+pub fn check_keying(pkey: &PublicKey, sig: &Signature) -> bool {
+    check_hash(&Hash::from_vector(&pkey.base_vector()), &sig, &pkey)
 }
 
-pub fn make_random_keys() -> (SecretKey, PublicKey, G1) {
+pub fn make_random_keys() -> (SecretKey, PublicKey, Signature) {
     make_deterministic_keys(Zr::random().base_vector())
 }
 

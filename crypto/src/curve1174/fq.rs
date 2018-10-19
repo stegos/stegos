@@ -341,11 +341,11 @@ impl From<Fq> for U256 {
 }
 
 impl Fq {
-    pub fn from_str(s: &str) -> Fq {
-        let mut ans = U256::from_str(s);
+    pub fn from_str(s: &str) -> Result<Fq, hex::FromHexError> {
+        let mut ans = U256::from_str(s)?;
         while ans >= Q {
             sub_noborrow(&mut ans.0, &Q.0);
         }
-        Fq::Unscaled(ans)
+        Ok(Fq::Unscaled(ans))
     }
 }

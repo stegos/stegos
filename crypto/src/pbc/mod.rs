@@ -37,6 +37,7 @@ use rust_libpbc;
 pub mod fast;
 pub mod secure;
 
+use hex;
 use utils::*;
 
 // -------------------------------------------------------------------
@@ -127,7 +128,7 @@ pub const CURVES: &[PBCInfo] = &[
 // init_pairings() -- must only be called once, at startup
 // (How to ensure that it is called, and can only be called just once?)
 
-pub fn init_pairings() {
+pub fn init_pairings() -> Result<(), hex::FromHexError> {
     for info in CURVES {
         let context = info.context as u64;
         unsafe {
@@ -150,7 +151,7 @@ pub fn init_pairings() {
             assert_eq!(psize[3], info.field_size as u64);
 
             let mut v1 = vec![0u8; info.g1_size];
-            hexstr_to_bev_u8(&(*info.g1), &mut v1);
+            hexstr_to_bev_u8(&(*info.g1), &mut v1)?;
             println!("G1: {}", u8v_to_hexstr(&v1));
             let len = rust_libpbc::set_g1(context, v1.as_ptr() as *mut _);
             // returns nbr bytes read, should equal length of G1
@@ -162,7 +163,7 @@ pub fn init_pairings() {
             println!("G1 readback: {}", u8v_to_hexstr(&v1));
 
             let mut v2 = vec![0u8; info.g2_size];
-            hexstr_to_bev_u8(&(*info.g2), &mut v2);
+            hexstr_to_bev_u8(&(*info.g2), &mut v2)?;
             println!("G2: {}", u8v_to_hexstr(&v2));
             let len = rust_libpbc::set_g2(context, v2.as_ptr() as *mut _);
             // returns nbr bytes read, should equal length of G2
@@ -175,4 +176,5 @@ pub fn init_pairings() {
         }
         println!("");
     }
+    Ok(())
 }

@@ -87,6 +87,17 @@ impl fmt::Display for ECp {
     }
 }
 
+// --------------------------------------------------------
+
+impl Hashable for ECp {
+    fn hash(&self, state: &mut Hasher) {
+        let pt = Pt::from(*self);
+        pt.hash(state);
+    }
+}
+
+// --------------------------------------------------------
+
 impl Eq for ECp {}
 impl PartialEq for ECp {
     fn eq(&self, b: &ECp) -> bool {
@@ -568,7 +579,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_mul() {
+    fn test_mul() -> Result<(), hex::FromHexError> {
         let smul = "1FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF77965C4DFD307348944D45FD166C970"; // *ed-r* - 1
         let sx = "037FBB0CEA308C479343AEE7C029A190C021D96A492ECD6516123F27BCE29EDA"; // *ed-gen* x
         let sy = "06B72F82D47FB7CC6656841169840E0C4FE2DEE2AF3F976BA4CCB1BF9B46360E"; // *ed-gen* y
@@ -576,8 +587,8 @@ mod tests {
                                                                                      // multiplier in 4-bit window form
         let mut w = WinVec::from_str(&smul);
 
-        let gen_x = Coord::from_str(&sx);
-        let gen_y = Coord::from_str(&sy);
+        let gen_x = Coord::from_str(&sx)?;
+        let gen_y = Coord::from_str(&sy)?;
 
         println!("The Generator Point");
         println!("gen_x: {}", gen_x);
@@ -594,5 +605,6 @@ mod tests {
 
         println!("Result as Fq51s");
         println!("pt: {:#?}", pt1);
+        Ok(())
     }
 }

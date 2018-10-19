@@ -360,11 +360,11 @@ impl From<U256> for Lev32 {
 // the vector has little-endian order
 
 impl U256 {
-    pub fn from_str(s: &str) -> U256 {
+    pub fn from_str(s: &str) -> Result<U256, hex::FromHexError> {
         // construct a little-endian [u64;4] from a hexstring
         let mut x = [0u8; 32];
-        hexstr_to_lev_u8(s, &mut x);
+        hexstr_to_lev_u8(s, &mut x)?;
         let v = Lev32 { v8: x };
-        U256(unsafe { v.v64 })
+        Ok(U256(unsafe { v.v64 }))
     }
 }

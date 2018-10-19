@@ -130,6 +130,21 @@ impl fmt::Display for Fr {
     }
 }
 
+// --------------------------------------------------------
+
+impl Hashable for Fr {
+    fn hash(&self, state: &mut Hasher) {
+        match (*self).unscaled() {
+            Fr::Unscaled(U256(v)) => {
+                let lv = Lev32 { v64: v };
+                "Fr".hash(state);
+                unsafe { lv.v8 }.hash(state);
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
 // -------------------------------------------
 
 impl PartialOrd for Fr {
@@ -360,11 +375,11 @@ impl From<Fr> for U256 {
 }
 
 impl Fr {
-    pub fn from_str(s: &str) -> Fr {
-        let mut ans = U256::from_str(s);
+    pub fn from_str(s: &str) -> Result<Fr, hex::FromHexError> {
+        let mut ans = U256::from_str(s)?;
         while ans >= R {
             sub_noborrow(&mut ans.0, &R.0);
         }
-        Fr::Unscaled(ans)
+        Ok(Fr::Unscaled(ans))
     }
 }

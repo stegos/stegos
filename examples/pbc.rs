@@ -1,7 +1,5 @@
-// Test PBC Crypto for Rust, atop Ben Lynn's PBCliib
-//
-// DM/Emotiq 10/18
-// MIT License
+//! Test PBC Crypto for Rust, atop Ben Lynn's PBCliib
+
 //
 // Copyright (c) 2018 Stegos
 //
@@ -23,7 +21,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-// -------------------------------------------------------------------
 extern crate rust_libpbc;
 extern crate stegos_crypto;
 

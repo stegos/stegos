@@ -1,7 +1,5 @@
-// mod.rs -- hashing with SHA3
-//
-// DM/Emotiq 10/18
-// MIT License
+//! Hashing with SHA3
+
 //
 // Copyright (c) 2018 Stegos
 //

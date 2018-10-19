@@ -1,7 +1,5 @@
-// PBC Crypto for Rust, atop Ben Lynn's PBCliib
-//
-// DM/Emotiq 10/18
-// MIT License
+//! PBC Crypto for Rust, atop Ben Lynn's PBCliib
+
 //
 // Copyright (c) 2018 Stegos
 //

@@ -1,7 +1,5 @@
-// fq.rs - field arithmetic in curve embedding field
-//
-// DM/Emotiq 10/18
-// MIT License
+//! fq.rs - Field arithmetic in curve embedding field
+
 //
 // Copyright (c) 2018 Stegos
 //
@@ -17,23 +15,22 @@
 //
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 // IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFrINGEMENT. IN NO EVENT SHALL THE
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 // AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FrOM,
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+//
 
 use super::*;
 
-// -----------------------------------------------------------------
-// Fq is the field in which the curve is computed - coords are all elements of Fq
-// In Elliptic curve point operations these coordinates are converted to Fq51 representation
-//
-// Type Fq::Scaled is for working directly in the field Fq, using fast Montgomery reduction
-// for modular multiply. As such, Fq is scaled by the Q_ONE value. Coordinate values
-// Fq51 must come from unscaled Fq values, and for that we have Fq::Unscaled types to
-// help avoid the overhead of scaling / de-scaling.
-
+/// Fq is the field in which the curve is computed - coords are all elements of Fq
+/// In Elliptic curve point operations these coordinates are converted to Fq51 representation
+///
+/// Type Fq::Scaled is for working directly in the field Fq, using fast Montgomery reduction
+/// for modular multiply. As such, Fq is scaled by the Q_ONE value. Coordinate values
+/// Fq51 must come from unscaled Fq values, and for that we have Fq::Unscaled types to
+/// help avoid the overhead of scaling / de-scaling.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Fq {
     Unscaled(U256), // plain bits

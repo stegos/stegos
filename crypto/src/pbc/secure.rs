@@ -1,7 +1,5 @@
-// secure.rs - Secure Pairings using BN Curve FR256 (type F, r approx 256 bits)
-//
-// DM/Emotiq 10/18
-// MIT License
+//! Secure Pairings using BN Curve FR256 (type F, r approx 256 bits)
+
 //
 // Copyright (c) 2018 Stegos
 //
@@ -23,14 +21,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-// --------------------------------------------------------------------------
-// Field and group elements can be constructed from byte-vectors
-// with UTF8 hex chars, as in b"FF3C...". Never use str format "FF3C..."
-//
-// This pairing system is intended for blockchain BLS mulit-signatures, and
-// encrypted payloads in UTXO's. No math is performed on the individual groups,
-// and so we do not provide convenient infix access to such operations.
-// --------------------------------------------------------------------------
+//! --------------------------------------------------------------------------
+//! Field and group elements can be constructed from byte-vectors
+//! with UTF8 hex chars, as in b"FF3C...". Never use str format "FF3C..."
+//!
+//! This pairing system is intended for blockchain BLS mulit-signatures, and
+//! encrypted payloads in UTXO's. No math is performed on the individual groups,
+//! and so we do not provide convenient infix access to such operations.
+//! --------------------------------------------------------------------------
 
 use super::*;
 use hash::*;

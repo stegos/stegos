@@ -97,6 +97,12 @@ impl From<i64> for Zr {
     }
 }
 
+impl fmt::Debug for Zr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.to_str())
+    }
+}
+
 impl fmt::Display for Zr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.to_str())
@@ -282,6 +288,12 @@ impl G1 {
         let mut v = G1::wv();
         hexstr_to_bev_u8(&s, &mut v)?;
         Ok(G1(v))
+    }
+}
+
+impl fmt::Debug for G1 {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.to_str())
     }
 }
 

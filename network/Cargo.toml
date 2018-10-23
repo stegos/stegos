@@ -5,5 +5,11 @@ authors = ["Stegos AG <info@stegos.cc>"]
 
 [dependencies]
 stegos_config = { path = "../config" }
-
+failure = "0.1.2"
+failure_derive = "0.1.2"
+futures = "0.1.25"
 slog = "~2.4"
+tokio = "0.1.11"
+rand = "0.5.5"
+
+libp2p = { git = "https://github.com/libp2p/rust-libp2p.git", rev = "e179951c74cb0c8916d27329f2dfd78917dddfb2" }

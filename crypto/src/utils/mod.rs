@@ -73,4 +73,3 @@ pub fn u8v_to_typed_str(pref: &str, vec: &[u8]) -> String {
     s.push_str(")");
     s
 }
-

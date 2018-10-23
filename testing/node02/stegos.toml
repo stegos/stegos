@@ -1,7 +1,7 @@
 [network]
 listen_address = "/ip4/127.0.0.1/tcp/10056"
-private_key = "testing/node01/private-key.pk8"
-public_key = "testing/node01/public-key.der"
+private_key = "testing/node02/private-key.pk8"
+public_key = "testing/node02/public-key.der"
 broadcast_topic = "chat"
 seed_nodes = [
     "/ip4/127.0.0.1/tcp/10055",

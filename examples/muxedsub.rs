@@ -28,21 +28,28 @@ extern crate futures;
 extern crate libp2p;
 extern crate rand;
 extern crate tokio;
+extern crate tokio_codec;
 extern crate tokio_current_thread;
 extern crate tokio_io;
 extern crate tokio_stdin;
+#[macro_use]
+extern crate log;
 
-use futures::future::Future;
+use bytes::Bytes;
+use futures::future::{Either, Future};
 use futures::sync::mpsc;
-use futures::{Sink, Stream};
-use libp2p::core::upgrade;
-use libp2p::core::{Multiaddr, PublicKey, Transport};
+use futures::{future, Poll, Sink, Stream};
+use libp2p::core::{either::EitherOutput, upgrade};
+use libp2p::core::{ConnectionUpgrade, Endpoint, Multiaddr, PublicKey, Transport};
 use libp2p::peerstore::PeerId;
 use libp2p::secio::SecioOutput;
 use libp2p::tcp::TcpConfig;
 use libp2p::websocket::WsConfig;
-use std::{env, mem};
+use std::io::{Error as IoError, ErrorKind as IoErrorKind};
+use std::{env, fmt, iter, mem};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::runtime::Runtime;
+use tokio_codec::{BytesCodec, Framed};
 
 pub struct FloodSubHandler {
     pub rx: mpsc::Receiver<String>,
@@ -52,6 +59,112 @@ pub struct FloodSubHandler {
 
 pub struct Node {
     pub floodsub: FloodSubHandler,
+}
+
+/// Implementation of the `ConnectionUpgrade` for the echo protocol.
+#[derive(Debug, Clone)]
+pub struct EchoUpgrade;
+
+impl EchoUpgrade {
+    pub fn new() -> Self {
+        EchoUpgrade {}
+    }
+}
+
+/// Implementation of `Future` that must be driven to completion in order for echo protocol to work.
+#[must_use = "futures do nothing unless polled"]
+pub struct EchoFuture {
+    inner: Box<Future<Item = (), Error = IoError> + Send>,
+}
+
+impl Future for EchoFuture {
+    type Item = ();
+    type Error = IoError;
+
+    #[inline]
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        self.inner.poll()
+    }
+}
+
+impl fmt::Debug for EchoFuture {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("EchoFuture").finish()
+    }
+}
+
+impl<C, Maf> ConnectionUpgrade<C, Maf> for EchoUpgrade
+where
+    C: AsyncRead + AsyncWrite + Send + 'static,
+    Maf: Future<Item = Multiaddr, Error = IoError> + Send + 'static,
+{
+    type NamesIter = iter::Once<(Bytes, Self::UpgradeIdentifier)>;
+    type UpgradeIdentifier = ();
+
+    #[inline]
+    fn protocol_names(&self) -> Self::NamesIter {
+        iter::once(("/echo/1.0.0".into(), ()))
+    }
+
+    type Output = EchoFuture;
+    type MultiaddrFuture = future::FutureResult<Multiaddr, IoError>;
+    type Future = Box<Future<Item = (Self::Output, Self::MultiaddrFuture), Error = IoError> + Send>;
+
+    #[inline]
+    fn upgrade(
+        self,
+        socket: C,
+        _: Self::UpgradeIdentifier,
+        _: Endpoint,
+        remote_addr: Maf,
+    ) -> Self::Future {
+        debug!("Upgrading connection as echo");
+        let future = remote_addr.and_then(move |remote_addr| {
+            // Split the socket into writing and reading parts.
+            // let (echo_sink, echo_stream) = Framed::new(socket, codec::UviBytes::default())
+            let (echo_sink, echo_stream) = Framed::new(socket, BytesCodec::new())
+                .sink_map_err(|err| IoError::new(IoErrorKind::InvalidData, err))
+                .map_err(|err| IoError::new(IoErrorKind::InvalidData, err))
+                .split();
+
+            let remote_addr_ret = future::ok(remote_addr.clone());
+            let future = future::loop_fn((echo_sink, echo_stream), move |(echo_sink, messages)| {
+                let _remote_addr = remote_addr.clone();
+
+                messages
+                    .into_future()
+                    .map_err(|(err, _)| err)
+                    .and_then(move |(input, rest)| {
+                        match input {
+                            Some(bytes) => {
+                                // Received a packet from the remote.
+                                // Need to send a message to remote.
+                                println!("Got message: {:?}, sending back", bytes);
+                                let future = echo_sink
+                                    .send(bytes.freeze())
+                                    .map(|echo_sink| future::Loop::Continue((echo_sink, rest)));
+                                Box::new(future) as Box<_>
+                            }
+
+                            None => {
+                                // Both the connection stream and `rx` are empty, so we break
+                                // the loop.
+                                println!("Got EOF from remote, closing connection!");
+                                let future = future::ok(future::Loop::Break(()));
+                                Box::new(future) as Box<Future<Item = _, Error = _> + Send>
+                            }
+                        }
+                    })
+            });
+            future::ok((
+                EchoFuture {
+                    inner: Box::new(future) as Box<_>,
+                },
+                remote_addr_ret,
+            ))
+        });
+        Box::new(future) as Box<_>
+    }
 }
 
 fn run_node(rt: &mut Runtime) -> Node {
@@ -110,26 +223,24 @@ fn run_node(rt: &mut Runtime) -> Node {
 
     let (floodsub_upgrade, floodsub_rx) = libp2p::floodsub::FloodSubUpgrade::new(my_id);
 
+    let flood_upgrade = upgrade::map(floodsub_upgrade.clone(), |fs| EitherOutput::First(fs));
+
+    let echo_upgrade = upgrade::map(EchoUpgrade::new(), |echo| EitherOutput::Second(echo));
+    let transport = transport.with_upgrade(upgrade::or(flood_upgrade, echo_upgrade));
+
     // Let's put this `transport` into a *swarm*. The swarm will handle all the incoming and
     // outgoing connections for us.
-    let (swarm_controller, swarm_future) = libp2p::core::swarm(
-        transport.clone().with_upgrade(floodsub_upgrade.clone()),
-        |socket, addr| {
-            addr.and_then(|addr| {
-                println!("Successfully negotiated floodsub protocol with: {}", addr);
-                socket.then(move |res| match res {
-                    Ok(_) => {
-                        println!("Floodsub successfully finished with: {}", addr);
-                        Ok(())
-                    }
-                    Err(e) => {
-                        eprintln!("Floodsub with {} finished with error: {}", addr, e);
-                        Ok(())
-                    }
-                })
-            })
-        },
-    );
+    let (swarm_controller, swarm_future) =
+        libp2p::core::swarm(transport.clone(), |out, _| match out {
+            EitherOutput::First(socket) => {
+                println!("Successfully negotiated floodsub protocol");
+                Either::A(socket)
+            }
+            EitherOutput::Second(socket) => {
+                println!("Successfully negotiated echo protocol");
+                Either::B(socket)
+            }
+        });
 
     let address = swarm_controller
         .listen_on(listen_addr.parse().expect("invalid multiaddr"))
@@ -165,11 +276,7 @@ fn run_node(rt: &mut Runtime) -> Node {
     let (dialer_tx, dialer_rx) = mpsc::channel::<Multiaddr>(1);
     let dialer = dialer_rx.for_each(move |msg| {
         println!("inner: *Dialing {}*", msg);
-        swarm_controller
-            .dial(
-                msg,
-                transport.clone().with_upgrade(floodsub_upgrade.clone()),
-            ).unwrap();
+        swarm_controller.dial(msg, transport.clone()).unwrap();
         Ok(())
     });
 

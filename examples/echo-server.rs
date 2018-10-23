@@ -26,19 +26,132 @@ extern crate bytes;
 extern crate env_logger;
 extern crate futures;
 extern crate libp2p;
+extern crate tokio;
 extern crate tokio_codec;
 extern crate tokio_current_thread;
+extern crate unsigned_varint;
+#[macro_use]
+extern crate log;
 
-use futures::future::{loop_fn, Future, IntoFuture, Loop};
-use futures::{Sink, Stream};
+use bytes::Bytes;
+use futures::future::Future;
+use futures::{future, Poll, Sink, Stream};
 use libp2p::core::upgrade;
-use libp2p::core::Transport;
+use libp2p::core::{ConnectionUpgrade, Endpoint, Multiaddr, Transport};
 use libp2p::secio::SecioOutput;
 use libp2p::tcp::TcpConfig;
-use libp2p::websocket::WsConfig;
-use libp2p::SimpleProtocol;
 use std::env;
+use std::fmt;
+use std::io::{Error as IoError, ErrorKind as IoErrorKind};
+use std::iter;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_codec::{BytesCodec, Framed};
+
+/// Implementation of the `ConnectionUpgrade` for the echo protocol.
+#[derive(Debug, Clone)]
+pub struct EchoUpgrade;
+
+impl EchoUpgrade {
+    pub fn new() -> Self {
+        EchoUpgrade {}
+    }
+}
+
+/// Implementation of `Future` that must be driven to completion in order for echo protocol to work.
+#[must_use = "futures do nothing unless polled"]
+pub struct EchoFuture {
+    inner: Box<Future<Item = (), Error = IoError> + Send>,
+}
+
+impl Future for EchoFuture {
+    type Item = ();
+    type Error = IoError;
+
+    #[inline]
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        self.inner.poll()
+    }
+}
+
+impl fmt::Debug for EchoFuture {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("EchoFuture").finish()
+    }
+}
+
+impl<C, Maf> ConnectionUpgrade<C, Maf> for EchoUpgrade
+where
+    C: AsyncRead + AsyncWrite + Send + 'static,
+    Maf: Future<Item = Multiaddr, Error = IoError> + Send + 'static,
+{
+    type NamesIter = iter::Once<(Bytes, Self::UpgradeIdentifier)>;
+    type UpgradeIdentifier = ();
+
+    #[inline]
+    fn protocol_names(&self) -> Self::NamesIter {
+        iter::once(("/echo/1.0.0".into(), ()))
+    }
+
+    type Output = EchoFuture;
+    type MultiaddrFuture = future::FutureResult<Multiaddr, IoError>;
+    type Future = Box<Future<Item = (Self::Output, Self::MultiaddrFuture), Error = IoError> + Send>;
+
+    #[inline]
+    fn upgrade(
+        self,
+        socket: C,
+        _: Self::UpgradeIdentifier,
+        _: Endpoint,
+        remote_addr: Maf,
+    ) -> Self::Future {
+        debug!("Upgrading connection as echo");
+        let future = remote_addr.and_then(move |remote_addr| {
+            // Split the socket into writing and reading parts.
+            // let (echo_sink, echo_stream) = Framed::new(socket, codec::UviBytes::default())
+            let (echo_sink, echo_stream) = Framed::new(socket, BytesCodec::new())
+                .sink_map_err(|err| IoError::new(IoErrorKind::InvalidData, err))
+                .map_err(|err| IoError::new(IoErrorKind::InvalidData, err))
+                .split();
+
+            let remote_addr_ret = future::ok(remote_addr.clone());
+            let future = future::loop_fn((echo_sink, echo_stream), move |(echo_sink, messages)| {
+                let _remote_addr = remote_addr.clone();
+
+                messages
+                    .into_future()
+                    .map_err(|(err, _)| err)
+                    .and_then(move |(input, rest)| {
+                        match input {
+                            Some(bytes) => {
+                                // Received a packet from the remote.
+                                // Need to send a message to remote.
+                                println!("Got message: {:?}, sending back", bytes);
+                                let future = echo_sink
+                                    .send(bytes.freeze())
+                                    .map(|echo_sink| future::Loop::Continue((echo_sink, rest)));
+                                Box::new(future) as Box<_>
+                            }
+
+                            None => {
+                                // Both the connection stream and `rx` are empty, so we break
+                                // the loop.
+                                println!("Got EOF from remote, closing connection!");
+                                let future = future::ok(future::Loop::Break(()));
+                                Box::new(future) as Box<Future<Item = _, Error = _> + Send>
+                            }
+                        }
+                    })
+            });
+            future::ok((
+                EchoFuture {
+                    inner: Box::new(future) as Box<_>,
+                },
+                remote_addr_ret,
+            ))
+        });
+        Box::new(future) as Box<_>
+    }
+}
 
 fn main() {
     env_logger::init();
@@ -50,13 +163,6 @@ fn main() {
 
     // We start by creating a `TcpConfig` that indicates that we want TCP/IP.
     let transport = TcpConfig::new()
-        // In addition to TCP/IP, we also want to support the Websockets protocol on top of TCP/IP.
-        // The parameter passed to `WsConfig::new()` must be an implementation of `Transport` to be
-        // used for the underlying multiaddress.
-        .or_transport(WsConfig::new(TcpConfig::new()))
-
-        // On top of TCP/IP, we will use either the plaintext protocol or the secio protocol,
-        // depending on which one the remote supports.
         .with_upgrade({
             let secio = {
                 let private_key = include_bytes!("test-rsa-private-key.pk8");
@@ -87,50 +193,15 @@ fn main() {
     // incoming connections, and that will automatically apply secio and multiplex on top
     // of any opened stream.
 
-    // We now prepare the protocol that we are going to negotiate with nodes that open a connection
-    // or substream to our server.
-    let proto = SimpleProtocol::new("/echo/1.0.0", |socket| {
-        // This closure is called whenever a stream using the "echo" protocol has been
-        // successfully negotiated. The parameter is the raw socket (implements the AsyncRead
-        // and AsyncWrite traits), and the closure must return an implementation of
-        // `IntoFuture` that can yield any type of object.
-        Ok(Framed::new(socket, BytesCodec::new()))
-    });
-
     // Let's put this `transport` into a *swarm*. The swarm will handle all the incoming and
     // outgoing connections for us.
     let (swarm_controller, swarm_future) = libp2p::core::swarm(
-        transport.clone().with_upgrade(proto),
+        transport.clone().with_upgrade(EchoUpgrade::new()),
         |socket, client_addr| {
             client_addr.and_then(|addr| {
                 println!("Successfully negotiated protocol");
                 println!("Remote address is: {}", addr);
-
-                // The type of `socket` is exactly what the closure of `SimpleProtocol` returns.
-
-                // We loop forever in order to handle all the messages sent by the client.
-                loop_fn(socket, move |socket| {
-                    socket
-                        .into_future()
-                        .map_err(|(e, _)| e)
-                        .and_then(move |(msg, rest)| {
-                            if let Some(msg) = msg {
-                                // One message has been received. We send it back to the client.
-                                println!(
-                                    "Received a message: {:?}\n => Sending back \
-                                     identical message to remote",
-                                    msg
-                                );
-                                Box::new(rest.send(msg.freeze()).map(|m| Loop::Continue(m)))
-                                    as Box<Future<Item = _, Error = _>>
-                            } else {
-                                // End of stream. Connection closed. Breaking the loop.
-                                println!("Received EOF\n => Dropping connection");
-                                Box::new(Ok(Loop::Break(())).into_future())
-                                    as Box<Future<Item = _, Error = _>>
-                            }
-                        })
-                })
+                socket
             })
         },
     );
@@ -149,5 +220,6 @@ fn main() {
     // `swarm_future` is a future that contains all the behaviour that we want, but nothing has
     // actually started yet. Because we created the `TcpConfig` with tokio, we need to run the
     // future through the tokio core.
-    tokio_current_thread::block_on_all(swarm_future.for_each(|_| Ok(()))).unwrap();
+    // tokio_current_thread::block_on_all(swarm_future.for_each(|_| Ok(()))).unwrap();
+    tokio::run(swarm_future.for_each(|_| Ok(())).map_err(|_| ()))
 }

@@ -26,8 +26,8 @@ use input::Input;
 use output::Output;
 use payload::EncryptedPayload;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::pbc::fast::{Zr, G1};
-use stegos_crypto::pbc::secure::{make_deterministic_keys, PublicKey};
+use stegos_crypto::pbc::fast::{Zr};
+use stegos_crypto::pbc::secure::*;
 use stegos_crypto::*;
 
 // The default file name for configuration
@@ -65,14 +65,6 @@ pub struct BlockHeader {
 
     /// Merklish root of all range proofs for output.
     pub outputs_range_hash: Hash,
-
-    /// Ordered list of witness public keys for current epoch.
-    /// The leader node is also considered a witness during the current epoch.
-    pub witnesses: Vec<PublicKey>,
-
-    /// CoSi multisignature on HCURR
-    // TODO: which kind
-    pub sig: G1,
 }
 
 pub enum OutputMerkleTreeNode {
@@ -91,17 +83,25 @@ pub struct Block {
     /// The list of transaction outputs in a Merkle Tree.
     // TODO: replace with Merkle tree
     pub outputs: Vec<OutputMerkleTreeNode>,
+
+    /// Ordered list of witness public keys for current epoch.
+    /// The leader node is also considered a witness during the current epoch.
+    pub witnesses: Vec<PublicKey>,
+
+    /// CoSi multisignature on HCURR
+    // TODO: which kind
+    pub sig: Signature,
 }
 
 impl Block {
     pub fn sign(
+        skey: &SecretKey,
         version: u64,
         epoch: u64,
         previous: Hash,
         leader: PublicKey,
         adjustment: Zr,
         witnesses: &[PublicKey],
-        sig: G1,
         inputs: &[Input],
         outputs: &[Output],
     ) -> Self {
@@ -145,13 +145,6 @@ impl Block {
         timestamp.hash(&mut hasher);
         inputs_range_hash.hash(&mut hasher);
         outputs_range_hash.hash(&mut hasher);
-        // hash the number of witnesses first
-        let witnesses_count: u64 = witnesses.len() as u64;
-        witnesses_count.hash(&mut hasher);
-        for witness in witnesses.iter() {
-            witness.hash(&mut hasher);
-        }
-        sig.hash(&mut hasher);
 
         // Finalize the block hash
         let hash = hasher.result();
@@ -167,30 +160,40 @@ impl Block {
             timestamp,
             inputs_range_hash,
             outputs_range_hash,
-            witnesses,
-            sig,
         };
+
+        // Sign header
+        let sig = sign_hash(&hash, skey);
+
+        // hash the number of witnesses first
+        let witnesses_count: u64 = witnesses.len() as u64;
+        witnesses_count.hash(&mut hasher);
+        for witness in witnesses.iter() {
+            witness.hash(&mut hasher);
+        }
+        sig.hash(&mut hasher);
 
         // Create the block
         Block {
             header,
             inputs,
             outputs,
+            witnesses,
+            sig,
         }
     }
 
     pub fn genesis() -> Block {
         let seed: [u8; 4] = [1, 2, 3, 4];
-        let keys = make_deterministic_keys(&seed);
 
-        let leader = keys.1;
+        let (skey, pubkey, _sig) = make_deterministic_keys(&seed);
+        let leader = pubkey;
 
         let version: u64 = 1;
         let epoch: u64 = 1;
         let previous = Hash::from_str(GENESIS_BLOCK_HASH_STRING);
         let adjustment: Zr = Zr::new();
         let witnesses = [leader.clone()];
-        let sig: G1 = G1::new();
 
         // Genesis doesn't have inputs
         let inputs = [];
@@ -202,7 +205,7 @@ impl Block {
         let outputs = [output];
 
         Block::sign(
-            version, epoch, previous, leader, adjustment, &witnesses, sig, &inputs, &outputs,
+            &skey, version, epoch, previous, leader, adjustment, &witnesses, &inputs, &outputs,
         )
     }
 }

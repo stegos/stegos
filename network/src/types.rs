@@ -22,24 +22,3 @@
 // SOFTWARE.
 
 #![deny(warnings)]
-
-use futures::sync::mpsc;
-use libp2p::Multiaddr;
-
-pub struct FloodSubHandler {
-    pub rx: mpsc::Receiver<String>,
-    pub tx: mpsc::Sender<String>,
-    pub dialer: mpsc::Sender<Multiaddr>,
-}
-
-pub struct Node {
-    pub floodsub: FloodSubHandler,
-}
-
-// #[derive(Debug, Fail)]
-// pub enum NetworkError {
-//     #[fail(display = "Network configuration error: {}", cause)]
-//     NetworkConfigError { cause: String },
-//     #[fail(display = "unknown network error: {}", cause)]
-//     UnknownNetworkError { cause: String },
-// }

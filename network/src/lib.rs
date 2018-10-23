@@ -26,8 +26,10 @@
 #[macro_use]
 extern crate slog;
 extern crate failure;
+extern crate fnv;
 extern crate futures;
 extern crate libp2p;
+extern crate parking_lot;
 extern crate rand;
 extern crate stegos_config;
 extern crate tokio;
@@ -35,4 +37,4 @@ extern crate tokio;
 mod node;
 mod types;
 
-pub use node::init;
+pub use node::Node;

@@ -22,45 +22,14 @@
 extern crate generic_array;
 extern crate gmp;
 extern crate hex;
+extern crate lazy_static;
 extern crate rand;
 extern crate rust_libpbc;
 extern crate sha3;
+extern crate typenum;
 
+pub mod bulletproofs;
 pub mod curve1174;
 pub mod hash;
 pub mod pbc;
 pub mod utils;
-use hash::{Hashable, Hasher};
-use std::fmt;
-use utils::u8v_to_hexstr;
-
-/// Stub for Bullet Proof
-// TODO: define
-#[derive(Clone)]
-pub struct BulletProof([u8; 4096]);
-
-impl fmt::Debug for BulletProof {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", u8v_to_hexstr(&self.0))
-    }
-}
-
-impl fmt::Display for BulletProof {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Debug::fmt(self, f)
-    }
-}
-
-impl Hashable for BulletProof {
-    fn hash(&self, state: &mut Hasher) {
-        self.0[..].hash(state)
-    }
-}
-
-impl BulletProof {
-    /// Returns some garbage.
-    /// Use only for tests.
-    pub fn garbage() -> BulletProof {
-        BulletProof([0 as u8; 4096])
-    }
-}

@@ -37,7 +37,7 @@ const NPREP: usize = 1 + (1 << (WINDOW - 1));
 pub type Coord = Fq51;
 
 #[derive(Copy, Clone, Debug)]
-#[repr(C)]
+// #[repr(C)]
 pub struct ECp {
     pub x: Fq51,
     pub y: Fq51,
@@ -540,7 +540,7 @@ impl ECp {
         let sgn = tmp[31] & 0x80 != 0;
         tmp[31] &= 0x7f;
         let mut x = U256::from(Lev32 { v8: tmp });
-        while x >= Q {
+        while x >= *Q {
             div2(&mut x.0);
         }
         let mut xq = Fq51::from(Fq::Unscaled(x));
@@ -570,6 +570,17 @@ impl ECp {
     pub fn random() -> ECp {
         ECp::from_random_bits(&random::<[u8; 32]>())
     }
+}
+
+pub fn solve_y(xq: &Fq51) -> Option<Fq51> {
+    let yyq = ((1 + *xq) * (1 - *xq)) / (1 - (*xq).sqr() * CURVE_D);
+    gsqrt(yyq)
+}
+
+pub fn is_valid_pt(x: &Fq51, y: &Fq51) -> bool {
+    let xsq = (*x).sqr();
+    let ysq = (*y).sqr();
+    xsq + ysq == 1 + CURVE_D * xsq * ysq
 }
 
 // -------------------------------------------------------------

@@ -28,7 +28,7 @@ use super::*;
 
 pub const PANES: usize = 64; // nbr of 4-bit nibbles in 256-bit numbers
 
-#[repr(C)]
+// #[repr(C)]
 pub struct WinVec(pub [i8; PANES]);
 
 pub const WINVEC_INIT: WinVec = WinVec([0; PANES]);

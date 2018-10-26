@@ -130,9 +130,9 @@ pub fn init_pairings() -> Result<(), hex::FromHexError> {
     for info in CURVES {
         let context = info.context as u64;
         unsafe {
-            println!("Init curve {}", (*info.name).to_string());
-            println!("Context: {}", context);
-            println!("{}", (*info.text).to_string());
+            // println!("Init curve {}", (*info.name).to_string());
+            // println!("Context: {}", context);
+            // println!("{}", (*info.text).to_string());
 
             let mut psize = [0u64; 4];
             let ans = rust_libpbc::init_pairing(
@@ -150,7 +150,7 @@ pub fn init_pairings() -> Result<(), hex::FromHexError> {
 
             let mut v1 = vec![0u8; info.g1_size];
             hexstr_to_bev_u8(&(*info.g1), &mut v1)?;
-            println!("G1: {}", u8v_to_hexstr(&v1));
+            // println!("G1: {}", u8v_to_hexstr(&v1));
             let len = rust_libpbc::set_g1(context, v1.as_ptr() as *mut _);
             // returns nbr bytes read, should equal length of G1
             assert_eq!(len, info.g1_size as i64);
@@ -158,11 +158,11 @@ pub fn init_pairings() -> Result<(), hex::FromHexError> {
             let mut v1 = vec![0u8; info.g1_size];
             let len = rust_libpbc::get_g1(context, v1.as_ptr() as *mut _, info.g1_size as u64);
             assert_eq!(len, info.g1_size as u64);
-            println!("G1 readback: {}", u8v_to_hexstr(&v1));
+            // println!("G1 readback: {}", u8v_to_hexstr(&v1));
 
             let mut v2 = vec![0u8; info.g2_size];
             hexstr_to_bev_u8(&(*info.g2), &mut v2)?;
-            println!("G2: {}", u8v_to_hexstr(&v2));
+            // println!("G2: {}", u8v_to_hexstr(&v2));
             let len = rust_libpbc::set_g2(context, v2.as_ptr() as *mut _);
             // returns nbr bytes read, should equal length of G2
             assert_eq!(len, info.g2_size as i64);
@@ -170,9 +170,32 @@ pub fn init_pairings() -> Result<(), hex::FromHexError> {
             let mut v2 = vec![0u8; info.g2_size];
             let len = rust_libpbc::get_g2(context, v2.as_ptr() as *mut _, info.g2_size as u64);
             assert_eq!(len, info.g2_size as u64);
-            println!("G2 readback: {}", u8v_to_hexstr(&v2));
+            // println!("G2 readback: {}", u8v_to_hexstr(&v2));
         }
-        println!("");
+        // println!("");
     }
     Ok(())
+}
+
+// --------------------------------------------------------
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    #[test]
+    fn check_pbc_connection() {
+        // show that we correctly connect to LispPBCIntf lib
+        let input = "hello!".as_bytes();
+        let output = vec![0u8; input.len()];
+        unsafe {
+            let echo_out = rust_libpbc::echo(
+                input.len() as u64,
+                input.as_ptr() as *mut _,
+                output.as_ptr() as *mut _,
+            );
+            assert_eq!(echo_out, input.len() as u64);
+        }
+        assert_eq!(input.to_vec(), output);
+    }
 }

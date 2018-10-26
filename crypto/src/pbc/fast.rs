@@ -46,6 +46,7 @@ use utils::*;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 #[derive(Copy, Clone)]
+#[repr(C)]
 pub struct Zr([u8; ZR_SIZE_AR160]);
 
 impl Zr {
@@ -265,6 +266,7 @@ impl DivAssign<Zr> for Zr {
 
 // -----------------------------------------
 #[derive(Copy, Clone)]
+#[repr(C)]
 pub struct G1([u8; G1_SIZE_AR160]);
 
 impl G1 {
@@ -411,6 +413,7 @@ impl DivAssign<i64> for G1 {
 
 // -----------------------------------------
 #[derive(Copy, Clone)]
+#[repr(C)]
 pub struct G2([u8; G2_SIZE_AR160]);
 
 impl G2 {
@@ -551,6 +554,7 @@ impl DivAssign<i64> for G2 {
 
 // -----------------------------------------
 #[derive(Copy, Clone)]
+#[repr(C)]
 pub struct GT([u8; GT_SIZE_AR160]);
 
 impl GT {
@@ -1021,6 +1025,20 @@ impl G1 {
         u
     }
 
+    pub fn random() -> G1 {
+        let h = random::<[u8; HASH_SIZE]>();
+        let u = G1::new();
+        unsafe {
+            rust_libpbc::get_G1_from_hash(
+                PBC_CONTEXT_AR160 as u64,
+                u.base_vector().as_ptr() as *mut _,
+                h.as_ptr() as *mut _,
+                HASH_SIZE as u64,
+            );
+        }
+        u
+    }
+
     pub fn from_hash(h: &Hash) -> G1 {
         let u = G1::new();
         unsafe {
@@ -1035,6 +1053,8 @@ impl G1 {
     }
 }
 
+// ---------------------------------------------------
+
 impl G2 {
     pub fn generator() -> G2 {
         let v = G2::new();
@@ -1043,6 +1063,20 @@ impl G2 {
                 PBC_CONTEXT_AR160 as u64,
                 v.base_vector().as_ptr() as *mut _,
                 G1_SIZE_AR160 as u64,
+            );
+        }
+        v
+    }
+
+    pub fn random() -> G2 {
+        let h = random::<[u8; HASH_SIZE]>();
+        let v = G2::new();
+        unsafe {
+            rust_libpbc::get_G2_from_hash(
+                PBC_CONTEXT_AR160 as u64,
+                v.base_vector().as_ptr() as *mut _,
+                h.as_ptr() as *mut _,
+                HASH_SIZE as u64,
             );
         }
         v

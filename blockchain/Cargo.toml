@@ -8,3 +8,4 @@ stegos_keychain = { path = "../keychain" }
 stegos_crypto = { path = "../crypto" }
 
 chrono = "~0.4"
+rand = "0.5"

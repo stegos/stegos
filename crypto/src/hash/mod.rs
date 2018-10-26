@@ -159,6 +159,13 @@ impl Hasher {
     pub fn reset(&mut self) {
         self.0.reset();
     }
+
+    /// A shortcut to calculate hash and return result
+    pub fn digest<T: Hashable>(data: &T) -> Hash {
+        let mut hasher = Hasher::new();
+        data.hash(&mut hasher);
+        hasher.result()
+    }
 }
 
 /// A hashable type.

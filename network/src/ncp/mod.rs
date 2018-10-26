@@ -21,29 +21,5 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#![deny(warnings)]
-#[macro_use]
-extern crate slog;
-extern crate bytes;
-extern crate failure;
-extern crate fnv;
-extern crate futures;
-extern crate libp2p;
-extern crate parking_lot;
-extern crate protobuf;
-extern crate rand;
-extern crate stegos_config;
-extern crate tokio;
-extern crate tokio_codec;
-extern crate tokio_io;
-extern crate unsigned_varint;
-
-mod echo;
-mod ncp;
-mod node;
-mod types;
-
-pub use echo::protocol::{EchoMiddleware, EchoUpgrade};
-pub use ncp::protocol::{NcpMsg, NcpProtocolConfig};
-
-pub use node::Node;
+mod ncp_proto;
+pub mod protocol;

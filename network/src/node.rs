@@ -25,10 +25,10 @@
 
 use failure::Error;
 use fnv::FnvHashMap;
-use futures::future::Future;
+use futures::future::{loop_fn, Either, Future, Loop};
 use futures::sync::mpsc;
-use futures::Stream;
-use libp2p::core::{swarm, upgrade};
+use futures::{IntoFuture, Sink, Stream};
+use libp2p::core::{either::EitherOutput, swarm, upgrade};
 use libp2p::core::{Multiaddr, PublicKey, Transport};
 use libp2p::floodsub;
 use libp2p::mplex;
@@ -38,18 +38,23 @@ use libp2p::tcp::TcpConfig;
 use parking_lot::RwLock;
 use slog::Logger;
 use std::fs::File;
+use std::io::Error as IoError;
 use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 use stegos_config::ConfigNetwork;
 
+// use super::{echo::handler::handler as echo_handler, EchoUpgrade};
+use super::ncp::protocol::{NcpMsg, NcpProtocolConfig};
+
+#[derive(Clone)]
 pub struct Node {
-    inner: Arc<RwLock<Inner>>,
+    pub(crate) inner: Arc<RwLock<Inner>>,
 }
 
-struct Inner {
+pub(crate) struct Inner {
     // Our config
-    config: ConfigNetwork,
+    pub(crate) config: ConfigNetwork,
     // FloodSubController refernce for message publishing
     floodsub_ctl: Option<floodsub::FloodSubController>,
     // FloodSub topic used for communications
@@ -57,16 +62,16 @@ struct Inner {
     // Channel for outbound dial
     dial_tx: Option<mpsc::UnboundedSender<Multiaddr>>,
     // Active floodsub connections with a remote.
-    floodsub_connections: RwLock<Vec<Multiaddr>>,
+    pub(crate) floodsub_connections: RwLock<Vec<Multiaddr>>,
     // All remote connections
-    remote_connections: RwLock<FnvHashMap<Multiaddr, RemoteInfo>>,
+    pub(crate) remote_connections: RwLock<FnvHashMap<Multiaddr, RemoteInfo>>,
     // Logger for the Node
-    logger: Logger,
+    pub(crate) logger: Logger,
 }
 
 // TODO
-struct RemoteInfo {
-    peer_id: PeerId,
+pub(crate) struct RemoteInfo {
+    pub(crate) peer_id: PeerId,
 }
 
 impl Node {
@@ -116,7 +121,6 @@ impl Node {
     ) -> Result<
         (
             Box<Future<Item = (), Error = ()> + Send + 'static>,
-            // floodsub::FloodSubReceiver,
             Box<Stream<Item = Vec<u8>, Error = ()> + Send>,
         ),
         Error,
@@ -178,50 +182,58 @@ impl Node {
 
         let (floodsub_upgrade, floodsub_rx) = floodsub::FloodSubUpgrade::new(my_id);
 
+        // Prepare transports for muxing
+        let flood_upgrade = upgrade::map(floodsub_upgrade.clone(), |fs| EitherOutput::First(fs));
+        let echo_upgrade = upgrade::map(NcpProtocolConfig {}, |echo| EitherOutput::Second(echo));
+
+        let muxed_transport = transport
+            .clone()
+            .with_upgrade(upgrade::or(flood_upgrade.clone(), echo_upgrade.clone()));
+
         // Let's put this `transport` into a *swarm*. The swarm will handle all the incoming and
         // outgoing connections for us.
-        let (swarm_controller, swarm_future) =
-            swarm(transport.clone().with_upgrade(floodsub_upgrade.clone()), {
-                let nl2 = netlog.clone();
+        let (swarm_controller, swarm_future) = swarm(muxed_transport.clone(), {
+            let inner = inner.clone();
+            move |socket, addr| {
                 let inner = inner.clone();
-                move |socket, addr| {
-                    let nl2 = nl2.clone();
-                    let inner = inner.clone();
-                    addr.and_then(move |addr| {
-                        {
-                            let inner = inner.read();
-                            inner.floodsub_connections.write().push(addr.clone());
-                        }
-                        debug!(
-                            nl2,
-                            "Successfully negotiated floodsub protocol with: {}", addr
-                        );
-                        socket.then({
-                            let inner = inner.clone();
-                            move |res| {
-                                let inner = inner.read();
-                                inner.floodsub_connections.write().retain(|a| *a != addr);
-                                match res {
-                                    Ok(_) => {
-                                        debug!(
-                                            nl2,
-                                            "Floodsub successfully finished with: {}", addr
+                match socket {
+                    EitherOutput::First(floodsub) => Either::A(
+                        addr.and_then(move |addr| floodsub_handler(floodsub, addr, inner)),
+                    ),
+                    EitherOutput::Second(echo) => {
+                        println!("Successfully negotiated echo protocol");
+                        println!("Endpoint: {:?}", echo.0);
+                        Either::B(loop_fn(echo.1, move |socket| {
+                            socket
+                                .into_future()
+                                .map_err(|(e, _)| e)
+                                .and_then(move |(msg, rest)| {
+                                    if let Some(msg) = msg {
+                                        // One message has been received. We send it back to the client.
+                                        println!(
+                                            "Received a message: {:?}\n => Sending back \
+                                            identical message to remote", msg
                                         );
-                                        Ok(())
+                                        match msg {
+                                            NcpMsg::Ping { ping_data } => {
+                                                let resp = NcpMsg::Pong { ping_data };
+                                                Box::new(rest.send(resp).map(|m| Loop::Continue(m)))
+                                                    as Box<Future<Item = _, Error = _> + Send>
+                                            }
+                                            _ => unimplemented!()
+                                        }
+                                    } else {
+                                        // End of stream. Connection closed. Breaking the loop.
+                                        println!("Received EOF\n => Dropping connection");
+                                        Box::new(Ok(Loop::Break(())).into_future())
+                                            as Box<Future<Item = _, Error = _> +Send>
                                     }
-                                    Err(e) => {
-                                        debug!(
-                                            nl2,
-                                            "Floodsub with {} finished with error: {}", addr, e
-                                        );
-                                        Ok(())
-                                    }
-                                }
-                            }
-                        })
-                    })
+                                })
+                        }))
+                    }
                 }
-            });
+            }
+        });
 
         let listen_addr = listen_addr.parse()?;
         let address = swarm_controller.listen_on(listen_addr);
@@ -240,10 +252,9 @@ impl Node {
         for addr in config.seed_nodes.iter() {
             debug!(netlog, "Dialing peer"; "address" => addr);
             match addr.parse() {
-                Ok(maddr) => if let Err(e) = swarm_controller.dial(
-                    maddr,
-                    transport.clone().with_upgrade(floodsub_upgrade.clone()),
-                ) {
+                Ok(maddr) => if let Err(e) = swarm_controller
+                    .dial(maddr, transport.clone().with_upgrade(flood_upgrade.clone()))
+                {
                     error!(netlog, "failed to dial node!"; "Error" => e.to_string());
                 },
                 Err(e) => {
@@ -257,10 +268,9 @@ impl Node {
             let nl2 = netlog.clone();
             move |msg| {
                 debug!(nl2, "inner: *Dialing {}*", msg);
-                if let Err(e) = swarm_controller.dial(
-                    msg,
-                    transport.clone().with_upgrade(floodsub_upgrade.clone()),
-                ) {
+                if let Err(e) = swarm_controller
+                    .dial(msg, transport.clone().with_upgrade(flood_upgrade.clone()))
+                {
                     error!(nl2, "failed to dial node!"; "Error" => e.to_string());
                 }
                 Ok(())
@@ -288,6 +298,46 @@ impl Node {
             Box::new(final_fut) as Box<Future<Item = (), Error = ()> + Send + 'static>;
         Ok((boxed_future, node_rx))
     }
+}
+
+fn floodsub_handler(
+    socket: floodsub::FloodSubFuture,
+    addr: Multiaddr,
+    node: Arc<RwLock<Inner>>,
+) -> Box<Future<Item = (), Error = IoError> + Send> {
+    let inner = node.clone();
+    let netlog = {
+        let inner = inner.read();
+        inner.logger.new(o!("submodule" => "floodsub"))
+    };
+
+    {
+        let inner = inner.read();
+        inner.floodsub_connections.write().push(addr.clone());
+    }
+    debug!(
+        netlog,
+        "Successfully negotiated floodsub protocol with: {}", addr
+    );
+    let socket = socket.then({
+        let inner = inner.clone();
+        move |res| {
+            let inner = inner.read();
+            inner.floodsub_connections.write().retain(|a| *a != addr);
+            match res {
+                Ok(_) => {
+                    debug!(netlog, "Floodsub successfully finished with: {}", addr);
+                    Ok(())
+                }
+                Err(e) => {
+                    debug!(netlog, "Floodsub with {} finished with error: {}", addr, e);
+                    Ok(())
+                }
+            }
+        }
+    });
+
+    Box::new(socket) as Box<Future<Item = (), Error = IoError> + Send>
 }
 
 fn key_from_file<P: AsRef<Path>>(file_path: P) -> Result<Vec<u8>, Error> {

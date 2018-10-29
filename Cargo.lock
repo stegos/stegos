@@ -1882,6 +1882,7 @@ name = "stegos_blockchain"
 version = "0.1.0"
 dependencies = [
  "chrono 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rand 0.5.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "stegos_crypto 0.1.0",
  "stegos_keychain 0.1.0",
 ]

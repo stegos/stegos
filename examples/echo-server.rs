@@ -45,7 +45,8 @@ use std::fmt;
 use std::io::{Error as IoError, ErrorKind as IoErrorKind};
 use std::iter;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_codec::{BytesCodec, Framed};
+use tokio_codec::Framed;
+use unsigned_varint::codec;
 
 /// Implementation of the `ConnectionUpgrade` for the echo protocol.
 #[derive(Debug, Clone)]
@@ -108,7 +109,7 @@ where
         let future = remote_addr.and_then(move |remote_addr| {
             // Split the socket into writing and reading parts.
             // let (echo_sink, echo_stream) = Framed::new(socket, codec::UviBytes::default())
-            let (echo_sink, echo_stream) = Framed::new(socket, BytesCodec::new())
+            let (echo_sink, echo_stream) = Framed::new(socket, codec::UviBytes::default())
                 .sink_map_err(|err| IoError::new(IoErrorKind::InvalidData, err))
                 .map_err(|err| IoError::new(IoErrorKind::InvalidData, err))
                 .split();

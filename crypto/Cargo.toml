@@ -12,7 +12,3 @@ rust-gmp = "0.5.0"
 rust-libpbc = { git = "https://github.com/stegos/rust-pbcintf.git" }
 sha3 = "0.8.0"
 typenum = "1.10.0"
-<<<<<<< HEAD
-
-=======
->>>>>>> Initial protobuf implementation for NCP

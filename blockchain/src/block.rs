@@ -23,8 +23,8 @@
 
 use chrono::prelude::Utc;
 use input::Input;
-use output::Output;
 use merkle::*;
+use output::Output;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::fast::Zr;
 use stegos_crypto::pbc::secure::*;
@@ -186,9 +186,9 @@ impl Block {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use payload::EncryptedPayload;
     use stegos_crypto::pbc::init_pairings;
     use stegos_crypto::*;
-    use payload::EncryptedPayload;
 
     pub fn fake(
         version: u64,

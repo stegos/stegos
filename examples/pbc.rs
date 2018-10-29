@@ -26,28 +26,14 @@ extern crate stegos_crypto;
 
 use stegos_crypto::pbc::*;
 
-use std::sync::Mutex;
-
-extern crate lazy_static;
-// use lazy_static::*;
-
 extern crate hex;
 
 // ------------------------------------------------------------------------
 
 fn main() {
+    let pt = fast::G1::generator() * fast::Zr::zero();
+    println!("pt = {}", pt);
     // ------------------------------------------------------------
-    // init PBC library -- must only be performed once
-    let init = Mutex::new(false);
-    {
-        let mut done = init.lock().unwrap();
-        if !*done {
-            *done = true;
-            init_pairings().unwrap();
-        }
-    }
-
-    // -------------------------------------
     // on Secure pairings
     // test PRNG
     println!("rand Zr = {}", secure::Zr::random());
@@ -75,7 +61,7 @@ fn main() {
     // -------------------------------------
     // check some arithmetic on the Fast curves
     let a = 0x123456789i64;
-    println!("chk Zr: 0x{:x} -> {}", a, fast::Zr::from_int(a));
-    println!("chk Zr: -1 -> {}", fast::Zr::from_int(-1));
+    println!("chk Zr: 0x{:x} -> {}", a, fast::Zr::from(a));
+    println!("chk Zr: -1 -> {}", fast::Zr::from(-1));
     println!("chk Zr: -1 + 1 -> {}", fast::Zr::from(-1) + 1);
 }

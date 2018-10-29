@@ -1,3 +1,5 @@
+//! Randhound++ Implementation.
+
 //
 // Copyright (c) 2018 Stegos
 //
@@ -19,18 +21,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-extern crate crypto;
-extern crate generic_array;
-extern crate gmp;
-extern crate hex;
 extern crate lazy_static;
+extern crate parking_lot;
 extern crate rand;
-extern crate rust_libpbc;
-extern crate sha3;
-extern crate typenum;
+extern crate stegos_crypto;
 
-pub mod bulletproofs;
-pub mod curve1174;
-pub mod hash;
-pub mod pbc;
-pub mod utils;
+pub mod randhound;

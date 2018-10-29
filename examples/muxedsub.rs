@@ -181,25 +181,23 @@ fn run_node(rt: &mut Runtime) -> Node {
         // The parameter passed to `WsConfig::new()` must be an implementation of `Transport` to be
         // used for the underlying multiaddress.
         .or_transport(WsConfig::new(TcpConfig::new()))
-
         // On top of TCP/IP, we will use either the plaintext protocol or the secio protocol,
         // depending on which one the remote supports.
         .with_upgrade({
             let secio = {
                 let private_key = include_bytes!("test-rsa-private-key.pk8");
                 let public_key = include_bytes!("test-rsa-public-key.der").to_vec();
-                let keypair = libp2p::secio::SecioKeyPair::rsa_from_pkcs8(private_key, public_key).unwrap();
+                let keypair =
+                    libp2p::secio::SecioKeyPair::rsa_from_pkcs8(private_key, public_key).unwrap();
                 libp2p::secio::SecioConfig::new(keypair)
             };
 
-            upgrade::map_with_addr(secio,
-             |out: SecioOutput<_>, addr| {
-               println!("Remote key: {:?}", out.remote_key);
-               println!("Remote addr: {:?}", addr);
-               out.stream
-             })
+            upgrade::map_with_addr(secio, |out: SecioOutput<_>, addr| {
+                println!("Remote key: {:?}", out.remote_key);
+                println!("Remote addr: {:?}", addr);
+                out.stream
+            })
         })
-
         // On top of plaintext or secio, we will use the multiplex protocol.
         .with_upgrade(libp2p::mplex::MplexConfig::new())
         // The object returned by the call to `with_upgrade(MplexConfig::new())` can't be used as a

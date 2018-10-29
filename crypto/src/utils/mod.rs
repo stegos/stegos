@@ -22,6 +22,7 @@
 // SOFTWARE.
 
 use hex;
+use std::cmp::Ordering;
 
 // -------------------------------------------------------------------
 // general utility functions
@@ -72,4 +73,90 @@ pub fn u8v_to_typed_str(pref: &str, vec: &[u8]) -> String {
     s.push_str(&u8v_to_hexstr(&vec));
     s.push_str(")");
     s
+}
+
+pub fn is_zero_bits(v: &[u8]) -> bool {
+    v.iter().fold(false, |_, b| {
+        if *b != 0 {
+            return false;
+        }
+        true
+    })
+}
+
+pub fn is_one_bits(v: &[u8]) -> bool {
+    v.iter().fold(false, |_, b| {
+        if *b != 0xff {
+            return false;
+        }
+        true
+    })
+}
+
+pub fn ucmp_be(a: &[u8], b: &[u8]) -> Ordering {
+    for (xa, xb) in a.iter().zip(b.iter()) {
+        if *xa < *xb {
+            return Ordering::Less;
+        } else if *xa > *xb {
+            return Ordering::Greater;
+        }
+    }
+    Ordering::Equal
+}
+
+pub fn ucmp_le(a: &[u8], b: &[u8]) -> Ordering {
+    for (xa, xb) in a.iter().zip(b.iter()).rev() {
+        if *xa < *xb {
+            return Ordering::Less;
+        } else if *xa > *xb {
+            return Ordering::Greater;
+        }
+    }
+    Ordering::Equal
+}
+
+pub fn ushr_be(src: &[u8], dst: &mut [u8], nsh: usize) {
+    let len = src.len();
+    assert!(len == dst.len());
+    let nb = {
+        let nb = nsh >> 3;
+        if nb >= len {
+            len
+        } else {
+            nb
+        }
+    };
+    let nbits = nsh & 7;
+    let lsh = 8 - nbits;
+    for elt in dst[0..nb].iter_mut() {
+        *elt = 0;
+    }
+    let mut tmp = 0;
+    for (elt, x) in dst[nb..len].iter_mut().zip(src[0..(len - nb)].iter()) {
+        *elt = tmp | (*x >> nbits);
+        tmp = *x << lsh;
+    }
+}
+
+pub fn ushr_le(src: &[u8], dst: &mut [u8], nsh: usize) {
+    let len = src.len();
+    assert!(len == dst.len());
+    let nb = {
+        let nb = nsh >> 3;
+        if nb >= len {
+            len
+        } else {
+            nb
+        }
+    };
+    let nbits = nsh & 7;
+    let lsh = 8 - nbits;
+    for elt in dst[(len - nb)..len].iter_mut() {
+        *elt = 0;
+    }
+    let mut tmp = 0;
+    for (elt, x) in dst[0..(len - nb)].iter_mut().zip(src[nb..len].iter()).rev() {
+        *elt = tmp | (*x >> nbits);
+        tmp = *x << lsh;
+    }
 }

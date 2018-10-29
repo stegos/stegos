@@ -24,10 +24,11 @@
 
 use super::*;
 
+use utils;
+
 macro_rules! field_impl {
-    ($name: ident, $modulus: ident, $rsquared: ident, $rcubed: ident, $one: ident, $inv: ident, $hash: expr, $fmt: expr) => {
+    ($name: ident, $modulus: ident, $rsquared: ident, $rcubed: ident, $one: ident, $inv: ident, $hash: expr, $fmt: expr, $min: ident) => {
         #[derive(Copy, Clone, Debug)]
-        // #[repr(C)]
         pub enum $name {
             Unscaled(U256), // plain bits
             Scaled(U256),   // Montgomery scaling
@@ -92,8 +93,18 @@ macro_rules! field_impl {
                 self.scaled().bits()
             }
 
-            pub fn random() -> Self {
+            pub fn basic_random() -> Self {
                 $name::Unscaled(U256::random_in_range(*$modulus))
+            }
+
+            pub fn random() -> Self {
+                let mut r = Self::basic_random();
+                let min = *$min;
+                let max = -min;
+                while r < min || r > max {
+                    r = Self::basic_random();
+                }
+                r
             }
 
             pub fn is_same_type(&self, other: &Self) -> bool {
@@ -140,12 +151,38 @@ macro_rules! field_impl {
                 }
             }
 
+            pub fn acceptable_minval() -> Self {
+                // NOTE: this value is cached in the lazy_static
+                let modulus = Lev32::from(*$modulus);
+                let mut minbits = [0u8; 32];
+                utils::ushr_le(&modulus.bits(), &mut minbits, 125);
+                $name::Unscaled(U256::from(Lev32(minbits)))
+            }
+
+            pub fn acceptable_random_rehash(k: Self) -> Self {
+                // to avoid brute force attacks, an acceptable random value, k,
+                // is either itself, or a rehash of itself, until the value
+                // lies in acceptable range.
+                let min = *$min; // cached value
+                let max = -min;
+                let mut mk = k.unscaled();
+                while mk < min || mk > max {
+                    mk = $name::from(Hash::digest(&mk));
+                }
+                mk
+            }
+
             pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
                 let mut ans = U256::from_str(s)?;
                 while ans >= *$modulus {
                     sub_noborrow(&mut ans.0, &(*$modulus).0);
                 }
                 Ok($name::Unscaled(ans))
+            }
+
+            pub fn nbr_str(&self) -> String {
+                let tmp = (*self).unscaled_bits();
+                format!("{}", tmp.nbr_str())
             }
         }
 
@@ -174,6 +211,28 @@ macro_rules! field_impl {
                 let mut x = U256(lv.to_lev_u64());
                 U256::force_to_range(&mut x, *$modulus);
                 $name::Unscaled(x)
+            }
+        }
+
+        // -------------------------------------------
+
+        impl Ord for $name {
+            fn cmp(&self, other: &Self) -> Ordering {
+                if self.is_same_type(other) {
+                    U256::cmp(&(*self).bits(), &(*other).bits())
+                } else {
+                    U256::cmp(&(*self).unscaled_bits(), &(*other).unscaled_bits())
+                }
+            }
+        }
+
+        impl PartialOrd for $name {
+            fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+                if self.is_same_type(other) {
+                    U256::partial_cmp(&(*self).bits(), &(*other).bits())
+                } else {
+                    U256::partial_cmp(&(*self).unscaled_bits(), &(*other).unscaled_bits())
+                }
             }
         }
 
@@ -394,5 +453,5 @@ const FQINV: u64 = 0x8E38E38E38E38E39; // (-1/|Fq|) mod 2^64
 const Q_ONE: Fq = Fq::Scaled(U256([0x0120, 0x00, 0x00, 0x00])); // = 2^256 mod |Fq|
 const ZQ_CUBED: Fq = Fq::Scaled(U256([0x016C8000, 0x00, 0x00, 0x00])); // = (2^256)^3 mod |Fq|
 
-field_impl!(Fr, R, ZR_SQUARED, ZR_CUBED, R_ONE, FRINV, "Fr", "Fr({})");
-field_impl!(Fq, Q, ZQ_SQUARED, ZQ_CUBED, Q_ONE, FQINV, "Fq", "Fq({})");
+field_impl!(Fr, R, ZR_SQUARED, ZR_CUBED, R_ONE, FRINV, "Fr", "Fr({})", RMIN);
+field_impl!(Fq, Q, ZQ_SQUARED, ZQ_CUBED, Q_ONE, FQINV, "Fq", "Fq({})", QMIN);

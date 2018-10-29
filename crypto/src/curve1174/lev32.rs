@@ -27,7 +27,6 @@ use super::*;
 // type Lev32 represents a 256-bit bignum as a little-endian 32-byte vector
 
 #[derive(Copy, Clone)]
-// #[repr(C)]
 pub struct Lev32(pub [u8; 32]);
 
 impl Lev32 {
@@ -71,6 +70,14 @@ impl Lev32 {
 
     fn nbr_str(&self) -> String {
         basic_nbr_str(&(*self).to_lev_u64())
+    }
+
+    pub fn bits(&self) -> &[u8] {
+        &(*self).0
+    }
+
+    pub fn random() -> Self {
+        Lev32(random::<[u8; 32]>())
     }
 }
 

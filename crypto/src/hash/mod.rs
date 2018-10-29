@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use hex;
 use sha3::{Digest, Sha3_256};
 use std::fmt;
 use std::mem;
@@ -35,7 +36,6 @@ use std::hash as stdhash;
 pub const HASH_SIZE: usize = 32;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-#[repr(C)]
 pub struct Hash([u8; HASH_SIZE]);
 
 impl Hash {
@@ -45,6 +45,12 @@ impl Hash {
 
     pub fn bits(self) -> [u8; 32] {
         self.0
+    }
+
+    pub fn basic_from_str(hexstr: &str) -> Result<Self, hex::FromHexError> {
+        let mut v = [0u8; HASH_SIZE];
+        hexstr_to_bev_u8(hexstr, &mut v)?;
+        Ok(Hash(v))
     }
 
     pub fn from_vector(msg: &[u8]) -> Hash {

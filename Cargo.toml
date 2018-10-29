@@ -16,6 +16,7 @@ members = [
     "crypto",
     "keychain",
     "network",
+    "randhound",
     "runtime",
     "storage",
     "txpool"
@@ -29,6 +30,7 @@ stegos_consensus = { path = "./consensus" }
 stegos_crypto = { path = "./crypto" }
 stegos_keychain = { path = "./keychain" }
 stegos_network = { path = "./network" }
+stegos_randhound = { path = "./randhound" }
 stegos_runtime = { path = "./runtime" }
 stegos_storage = { path = "./storage" }
 stegos_txpool = { path = "./txpool" }

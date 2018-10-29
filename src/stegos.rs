@@ -38,7 +38,7 @@ extern crate tokio;
 extern crate tokio_stdin;
 
 use clap::{App, Arg, ArgMatches};
-use futures::{Future, Sink, Stream};
+use futures::Stream;
 use libp2p::Multiaddr;
 use slog::{Drain, Logger};
 use std::error::Error;
@@ -102,12 +102,11 @@ fn run() -> Result<(), Box<Error>> {
 
     // Initialize network
     let mut rt = Runtime::new().unwrap();
-    let node = stegos_network::init(cfg.network, log.new(o!()), &mut rt)?;
-    let sender = node.floodsub.tx.clone();
-    let dialer = node.floodsub.dialer.clone();
+    let node = stegos_network::Node::new(cfg.network, &log);
+    let (node_future, floodsub_rx) = node.run()?;
 
-    let floodsub_rx = node.floodsub.rx.for_each(|msg| {
-        println!("<<< {}", msg);
+    let floodsub_rx = floodsub_rx.for_each(|msg| {
+        println!("<<< {}", String::from_utf8_lossy(msg.as_slice()));
         Ok(())
     });
 
@@ -115,22 +114,19 @@ fn run() -> Result<(), Box<Error>> {
         let mut buffer = Vec::new();
         tokio_stdin::spawn_stdin_stream_unbounded().for_each({
             move |msg| {
-                let dialer2 = dialer.clone();
-                let sender2 = sender.clone();
                 if msg != b'\r' && msg != b'\n' {
                     buffer.push(msg);
                     return Ok(());
                 } else if buffer.is_empty() {
                     return Ok(());
                 }
-
                 let msg = String::from_utf8(mem::replace(&mut buffer, Vec::new())).unwrap();
                 if msg.starts_with("/dial ") {
                     let target: Multiaddr = msg[6..].parse().unwrap();
                     println!("main: *Dialing {}*", target);
-                    dialer2.send(target).wait().unwrap();
+                    node.dial(target).unwrap();
                 } else {
-                    sender2.send(msg).wait().unwrap();
+                    node.publish(msg.as_bytes().to_vec()).unwrap();
                 }
                 Ok(())
             }
@@ -139,7 +135,9 @@ fn run() -> Result<(), Box<Error>> {
 
     rt.spawn(stdin);
 
-    rt.block_on_all(floodsub_rx).unwrap();
+    rt.spawn(node_future);
+    rt.block_on_all(floodsub_rx)
+        .expect("errors are handled earlier");
 
     Ok(())
 }

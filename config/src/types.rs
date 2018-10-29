@@ -45,7 +45,7 @@ impl Default for Config {
 }
 
 /// Network configuration.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(default)]
 pub struct ConfigNetwork {
     /// An example string configuration value.

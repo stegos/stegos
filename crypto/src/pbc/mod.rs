@@ -51,7 +51,7 @@ exp2 159
 exp1 107
 sign1 1
 sign0 1";
-const ORDER_AR160: &str = "730750818665451621361119245571504901405976559617";
+const ORDER_AR160: &str = "8000000000000800000000000000000000000001";
 const G1_AR160 : &str = "797EF95B4B2DED79B0F5E3320D4C38AE2617EB9CD8C0C390B9CCC6ED8CFF4CEA4025609A9093D4C3F58F37CE43C163EADED39E8200C939912B7F4B047CC9B69300";
 const G2_AR160 : &str = "A4913CAB767684B308E6F71D3994D65C2F1EB1BE4C9E96E276CD92E4D2B16A2877AA48A8A34CE5F1892CD548DE9106F3C5B0EBE7E13ACCB8C41CC0AE8D110A7F01";
 const ZR_SIZE_AR160: usize = 20;
@@ -71,8 +71,7 @@ b 3
 beta 76600213043964638334639432839350561620586998450651561245322304548751832163977
 alpha0 82889197335545133675228720470117632986673257748779594473736828145653330099944
 alpha1 66367173116409392252217737940259038242793962715127129791931788032832987594232";
-const ORDER_FR256: &str =
-    "115792089237314936872688561244471742058035595988840268584488757999429535617037";
+const ORDER_FR256: &str = "FFFFFFFFFFFCF0CD46E5F25EEE71A49E0CDC65FB1299921AF62D536CD10B500D";
 const G1_FR256: &str = "ff8f256bbd48990e94d834fba52da377b4cab2d3e2a08b6828ba6631ad4d668500";
 const G2_FR256 : &str = "e20543135c81c67051dc263a2bc882b838da80b05f3e1d7efa420a51f5688995e0040a12a1737c80def47c1a16a2ecc811c226c17fb61f446f3da56c420f38cc01";
 const ZR_SIZE_FR256: usize = 32;
@@ -82,21 +81,21 @@ const GT_SIZE_FR256: usize = 384;
 
 // -------------------------------------------------------------------
 
-pub struct PBCInfo {
-    pub context: u8, // which slot in the gluelib context table
-    pub name: *const str,
-    pub text: *const str,
-    pub g1_size: usize,
-    pub g2_size: usize,
-    pub pairing_size: usize,
-    pub field_size: usize,
-    pub order: *const str,
-    pub g1: *const str,
-    pub g2: *const str,
+struct PBCInitInfo {
+    context: u8, // which slot in the gluelib context table
+    name: *const str,
+    text: *const str,
+    g1_size: usize,
+    g2_size: usize,
+    pairing_size: usize,
+    field_size: usize,
+    order: *const str,
+    g1: *const str,
+    g2: *const str,
 }
 
-pub const CURVES: &[PBCInfo] = &[
-    PBCInfo {
+const CURVES_INIT: &[PBCInitInfo] = &[
+    PBCInitInfo {
         context: PBC_CONTEXT_AR160,
         name: NAME_AR160,
         text: INIT_TEXT_AR160,
@@ -108,7 +107,7 @@ pub const CURVES: &[PBCInfo] = &[
         g1: G1_AR160,
         g2: G2_AR160,
     },
-    PBCInfo {
+    PBCInitInfo {
         context: PBC_CONTEXT_FR256,
         name: NAME_FR256,
         text: INIT_TEXT_FR256,
@@ -127,7 +126,7 @@ pub const CURVES: &[PBCInfo] = &[
 // (How to ensure that it is called, and can only be called just once?)
 
 pub fn init_pairings() -> Result<(), hex::FromHexError> {
-    for info in CURVES {
+    for info in CURVES_INIT {
         let context = info.context as u64;
         unsafe {
             // println!("Init curve {}", (*info.name).to_string());

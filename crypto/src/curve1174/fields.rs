@@ -35,21 +35,31 @@ macro_rules! field_impl {
 
         impl From<$name> for U256 {
             fn from(a: $name) -> Self {
-                a.unscaled().bits()
+                a.unscaled_bits()
+            }
+        }
+
+        impl From<U256> for $name {
+            fn from(x: U256) -> Self {
+                assert!(x < *$modulus);
+                $name::Unscaled(x)
             }
         }
 
         impl From<i64> for $name {
             fn from(x: i64) -> $name {
-                if x >= 0 {
-                    let z = U256([x as u64, 0, 0, 0]);
-                    $name::Unscaled(z)
-                } else {
-                    let tmp = [(-x) as u64, 0, 0, 0];
-                    let mut tmp2 = (*$modulus).0;
-                    sub_noborrow(&mut tmp2, &tmp);
-                    let z = U256(tmp2);
-                    $name::Unscaled(z)
+                match x {
+                    0 => Self::zero(),
+                    1 => Self::one(),
+                    -1 => -Self::one(),
+                    _ if x > 0 => {
+                        let z = U256([x as u64, 0, 0, 0]);
+                        $name::Unscaled(z)
+                    }
+                    _ => {
+                        let z = U256([(-x) as u64, 0, 0, 0]);
+                        -$name::Unscaled(z)
+                    }
                 }
             }
         }
@@ -59,7 +69,7 @@ macro_rules! field_impl {
                 *$modulus
             }
 
-            pub fn zero() -> $name {
+            pub fn zero() -> Self {
                 $name::Unscaled(U256::zero())
             }
 
@@ -74,11 +84,19 @@ macro_rules! field_impl {
                 }
             }
 
-            pub fn random() -> $name {
+            pub fn unscaled_bits(self) -> U256 {
+                self.unscaled().bits()
+            }
+
+            pub fn scaled_bits(self) -> U256 {
+                self.scaled().bits()
+            }
+
+            pub fn random() -> Self {
                 $name::Unscaled(U256::random_in_range(*$modulus))
             }
 
-            pub fn is_same_type(&self, other: &$name) -> bool {
+            pub fn is_same_type(&self, other: &Self) -> bool {
                 match (self, other) {
                     (&$name::Scaled(_), &$name::Scaled(_))
                     | (&$name::Unscaled(_), &$name::Unscaled(_)) => true,
@@ -86,14 +104,14 @@ macro_rules! field_impl {
                 }
             }
 
-            pub fn scaled(self) -> $name {
+            pub fn scaled(self) -> Self {
                 match self {
                     $name::Unscaled(v) => $rsquared * $name::Scaled(v),
                     _ => self,
                 }
             }
 
-            pub fn unscaled(self) -> $name {
+            pub fn unscaled(self) -> Self {
                 match self {
                     $name::Scaled(v) => {
                         let mut x = v;
@@ -104,25 +122,25 @@ macro_rules! field_impl {
                 }
             }
 
-            pub fn invert(self) -> $name {
+            pub fn invert(self) -> Self {
                 match self {
                     $name::Scaled(v) => {
                         let mut tmp = v;
                         U256::invert_mod(&mut tmp, &(*$modulus));
                         $rcubed * $name::Scaled(tmp)
                     }
-                    $name::Unscaled(v) => $name::invert($rsquared * $name::Scaled(v)),
+                    $name::Unscaled(v) => Self::invert(self.scaled()),
                 }
             }
 
-            fn make_same_type(self, val: U256) -> $name {
+            fn make_same_type(self, val: U256) -> Self {
                 match self {
                     $name::Unscaled(_) => $name::Unscaled(val),
                     _ => $name::Scaled(val),
                 }
             }
 
-            pub fn from_str(s: &str) -> Result<$name, hex::FromHexError> {
+            pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
                 let mut ans = U256::from_str(s)?;
                 while ans >= *$modulus {
                     sub_noborrow(&mut ans.0, &(*$modulus).0);
@@ -135,7 +153,7 @@ macro_rules! field_impl {
 
         impl fmt::Display for $name {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                let tmp = (*self).unscaled().bits();
+                let tmp = (*self).unscaled_bits();
                 write!(f, $fmt, tmp.nbr_str())
             }
         }
@@ -144,34 +162,30 @@ macro_rules! field_impl {
 
         impl Hashable for $name {
             fn hash(&self, state: &mut Hasher) {
-                match (*self).unscaled() {
-                    $name::Unscaled(U256(v)) => {
-                        let lv = Lev32 { v64: v };
-                        $hash.hash(state);
-                        unsafe { lv.v8 }.hash(state);
-                    }
-                    _ => unreachable!(),
-                }
+                let x = (*self).unscaled_bits();
+                $hash.hash(state);
+                x.to_lev_u8().hash(state)
             }
         }
 
         impl From<Hash> for $name {
-            fn from(h: Hash) -> $name {
-                let lv = Lev32 { v8: h.bits() };
-                let mut x = U256(unsafe { lv.v64 });
+            fn from(h: Hash) -> Self {
+                let lv = Lev32(h.bits());
+                let mut x = U256(lv.to_lev_u64());
                 U256::force_to_range(&mut x, *$modulus);
                 $name::Unscaled(x)
             }
         }
+
         // -------------------------------------------
 
         impl PartialEq for $name {
-            fn eq(&self, other: &$name) -> bool {
+            fn eq(&self, other: &Self) -> bool {
                 if self.is_same_type(other) {
                     Ordering::Equal == U256::cmp(&(*self).bits(), &(*other).bits())
                 } else {
                     Ordering::Equal
-                        == U256::cmp(&(*self).unscaled().bits(), &(*other).unscaled().bits())
+                        == U256::cmp(&(*self).unscaled_bits(), &(*other).unscaled_bits())
                 }
             }
         }
@@ -181,36 +195,36 @@ macro_rules! field_impl {
         // -------------------------------------------
 
         impl Neg for $name {
-            type Output = $name;
-            fn neg(self) -> $name {
-                let mut tmp = self.unscaled().bits();
-                U256::neg_mod(&mut tmp, &Q);
-                $name::Unscaled(tmp)
+            type Output = Self;
+            fn neg(self) -> Self {
+                let mut tmp = self.bits();
+                U256::neg_mod(&mut tmp, &$modulus);
+                self.make_same_type(tmp)
             }
         }
 
         // -------------------------------------------
 
         impl Add<$name> for $name {
-            type Output = $name;
-            fn add(self, other: $name) -> $name {
+            type Output = Self;
+            fn add(self, other: Self) -> Self {
                 if self.is_same_type(&other) {
                     let mut tmp = self.bits();
-                    U256::add_mod(&mut tmp, &other.bits(), &Q);
+                    U256::add_mod(&mut tmp, &other.bits(), &$modulus);
                     self.make_same_type(tmp)
                 } else {
-                    let mut tmp = self.unscaled().bits();
-                    let b = other.unscaled().bits();
-                    U256::add_mod(&mut tmp, &b, &Q);
+                    let mut tmp = self.unscaled_bits();
+                    let b = other.unscaled_bits();
+                    U256::add_mod(&mut tmp, &b, &$modulus);
                     $name::Unscaled(tmp)
                 }
             }
         }
 
         impl Add<i64> for $name {
-            type Output = $name;
-            fn add(self, other: i64) -> $name {
-                self + $name::from(other)
+            type Output = Self;
+            fn add(self, other: i64) -> Self {
+                self + Self::from(other)
             }
         }
 
@@ -224,32 +238,30 @@ macro_rules! field_impl {
         // -------------------------------------------
 
         impl AddAssign<$name> for $name {
-            fn add_assign(&mut self, other: $name) {
+            fn add_assign(&mut self, other: Self) {
                 *self = *self + other
             }
         }
 
         impl AddAssign<i64> for $name {
             fn add_assign(&mut self, other: i64) {
-                *self += $name::from(other);
+                *self += Self::from(other);
             }
         }
 
         // -------------------------------------------
 
         impl Sub<$name> for $name {
-            type Output = $name;
-            fn sub(self, other: $name) -> $name {
-                let mut tmp = self.bits();
-                U256::sub_mod(&mut tmp, &other.bits(), &Q);
-                self.make_same_type(tmp)
+            type Output = Self;
+            fn sub(self, other: Self) -> Self {
+                self + (-other)
             }
         }
 
         impl Sub<i64> for $name {
-            type Output = $name;
-            fn sub(self, other: i64) -> $name {
-                self - $name::from(other)
+            type Output = Self;
+            fn sub(self, other: i64) -> Self {
+                self - Self::from(other)
             }
         }
 
@@ -263,33 +275,38 @@ macro_rules! field_impl {
         // -------------------------------------------
 
         impl SubAssign<$name> for $name {
-            fn sub_assign(&mut self, other: $name) {
+            fn sub_assign(&mut self, other: Self) {
                 *self = *self - other;
             }
         }
 
         impl SubAssign<i64> for $name {
             fn sub_assign(&mut self, other: i64) {
-                *self -= $name::from(other);
+                *self -= Self::from(other);
             }
         }
 
         // -------------------------------------------
 
         impl Mul<$name> for $name {
-            type Output = $name;
-            fn mul(self, other: $name) -> $name {
-                let mut tmp = self.scaled().bits();
-                let b = other.scaled().bits();
-                U256::mul_mod(&mut tmp, &b, &Q, FQINV);
+            type Output = Self;
+            fn mul(self, other: Self) -> Self {
+                let mut tmp = self.scaled_bits();
+                let b = other.scaled_bits();
+                U256::mul_mod(&mut tmp, &b, &$modulus, $inv);
                 $name::Scaled(tmp)
             }
         }
 
         impl Mul<i64> for $name {
-            type Output = $name;
-            fn mul(self, other: i64) -> $name {
-                self * $name::from(other)
+            type Output = Self;
+            fn mul(self, other: i64) -> Self {
+                match other {
+                    0 => Self::zero(),
+                    1 => self,
+                    -1 => -self,
+                    _ => self * Self::from(other),
+                }
             }
         }
 
@@ -303,30 +320,30 @@ macro_rules! field_impl {
         // -------------------------------------------
 
         impl MulAssign<$name> for $name {
-            fn mul_assign(&mut self, other: $name) {
+            fn mul_assign(&mut self, other: Self) {
                 *self = *self * other;
             }
         }
 
         impl MulAssign<i64> for $name {
             fn mul_assign(&mut self, other: i64) {
-                *self *= $name::from(other);
+                *self *= Self::from(other);
             }
         }
 
         // -------------------------------------------
 
         impl Div<$name> for $name {
-            type Output = $name;
-            fn div(self, other: $name) -> $name {
-                self * $name::invert(other)
+            type Output = Self;
+            fn div(self, other: Self) -> Self {
+                self * other.invert()
             }
         }
 
         impl Div<i64> for $name {
-            type Output = $name;
-            fn div(self, other: i64) -> $name {
-                self / $name::from(other)
+            type Output = Self;
+            fn div(self, other: i64) -> Self {
+                self / Self::from(other)
             }
         }
 
@@ -334,7 +351,7 @@ macro_rules! field_impl {
             type Output = $name;
             fn div(self, other: $name) -> $name {
                 if self == 1 {
-                    $name::invert(other)
+                    other.invert()
                 } else {
                     $name::from(self) / other
                 }
@@ -344,14 +361,14 @@ macro_rules! field_impl {
         // -------------------------------------------
 
         impl DivAssign<$name> for $name {
-            fn div_assign(&mut self, other: $name) {
-                *self *= $name::invert(other);
+            fn div_assign(&mut self, other: Self) {
+                *self *= other.invert();
             }
         }
 
         impl DivAssign<i64> for $name {
             fn div_assign(&mut self, other: i64) {
-                *self /= $name::from(other);
+                *self /= Self::from(other);
             }
         }
     };

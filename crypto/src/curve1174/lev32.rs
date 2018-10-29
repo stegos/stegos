@@ -28,14 +28,49 @@ use super::*;
 
 #[derive(Copy, Clone)]
 // #[repr(C)]
-pub union Lev32 {
-    pub v8: [u8; 32],
-    pub v64: [u64; 4],
-}
+pub struct Lev32(pub [u8; 32]);
 
 impl Lev32 {
+    pub fn to_lev_u64(self) -> [u64; 4] {
+        let mut ans = [0u64; 4];
+        ans[0] = (self.0[0] as u64)
+            | (self.0[1] as u64) << 8
+            | (self.0[2] as u64) << 16
+            | (self.0[3] as u64) << 24
+            | (self.0[4] as u64) << 32
+            | (self.0[5] as u64) << 40
+            | (self.0[6] as u64) << 48
+            | (self.0[7] as u64) << 56;
+        ans[1] = (self.0[8] as u64)
+            | (self.0[9] as u64) << 8
+            | (self.0[10] as u64) << 16
+            | (self.0[11] as u64) << 24
+            | (self.0[12] as u64) << 32
+            | (self.0[13] as u64) << 40
+            | (self.0[14] as u64) << 48
+            | (self.0[15] as u64) << 56;
+        ans[2] = (self.0[16] as u64)
+            | (self.0[17] as u64) << 8
+            | (self.0[18] as u64) << 16
+            | (self.0[19] as u64) << 24
+            | (self.0[20] as u64) << 32
+            | (self.0[21] as u64) << 40
+            | (self.0[22] as u64) << 48
+            | (self.0[23] as u64) << 56;
+        ans[3] = (self.0[24] as u64)
+            | (self.0[25] as u64) << 8
+            | (self.0[26] as u64) << 16
+            | (self.0[27] as u64) << 24
+            | (self.0[28] as u64) << 32
+            | (self.0[29] as u64) << 40
+            | (self.0[30] as u64) << 48
+            | (self.0[31] as u64) << 56;
+
+        ans
+    }
+
     fn nbr_str(&self) -> String {
-        basic_nbr_str(unsafe { &self.v64 })
+        basic_nbr_str(&(*self).to_lev_u64())
     }
 }
 

@@ -13,5 +13,3 @@ rust-libpbc = { git = "https://github.com/stegos/rust-pbcintf.git" }
 sha3 = "0.8.0"
 typenum = "1.10.0"
 
-[profile.release]
-opt-level = 1

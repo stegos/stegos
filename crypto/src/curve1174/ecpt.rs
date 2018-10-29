@@ -53,7 +53,7 @@ pub const PT_INF: ECp = ECp {
 };
 
 impl ECp {
-    pub fn inf() -> ECp {
+    pub fn inf() -> Self {
         PT_INF
     }
 
@@ -62,17 +62,106 @@ impl ECp {
     }
 
     pub fn is_affine(&self) -> bool {
-        self.z.is_one()
+        self.z.0 == FQ51_1.0
     }
 
-    pub fn from_xy51(x: &Fq51, y: &Fq51) -> ECp {
-        let mut pt = ECp::inf();
+    pub fn try_from_xy(x: &Fq, y: &Fq) -> Result<Self, CurveError> {
+        let x51 = Fq51::from(*x);
+        let y51 = Fq51::from(*y);
+        if Self::is_valid_pt(&x51, &y51) {
+            Ok(Self::new_from_xy51(&x51, &y51))
+        } else {
+            Err(CurveError::PointNotOnCurve)
+        }
+    }
+
+    fn solve_y(xq: &Fq51) -> Result<Fq51, CurveError> {
+        // CURVE_D is non-square in Fq, so division is unquestionably safe
+        let yyq = ((1 + *xq) * (1 - *xq)) / (1 - xq.sqr() * CURVE_D);
+        gsqrt(&yyq)
+    }
+
+    fn is_valid_pt(x: &Fq51, y: &Fq51) -> bool {
+        let xsq = x.sqr();
+        let ysq = y.sqr();
+        xsq + ysq == 1 + CURVE_D * xsq * ysq
+    }
+
+    fn new_from_xy51(x: &Fq51, y: &Fq51) -> Self {
+        let mut pt = Self::inf();
         init(&x, &y, &mut pt);
         pt
     }
 
-    pub fn from_xy(x: &Fq, y: &Fq) -> ECp {
-        Self::from_xy51(&Fq51::from(*x), &Fq51::from(*y))
+    pub fn try_from(pt: Pt) -> Result<Self, CurveError> {
+        let mut x = pt.bits();
+        let sgn = (x[31] & 0x80) != 0;
+        x[31] &= 0x7f;
+        let x256 = U256::from(Lev32(x));
+        let xq = Fq51::from(Fq::from(x256));
+        let ysqrt = Self::solve_y(&xq)?;
+        let yq = if ysqrt.is_odd() == sgn { ysqrt } else { -ysqrt };
+        let newpt = Self::new_from_xy51(&xq, &yq);
+
+        if (CURVE_H * newpt).is_inf() {
+            // point was Inf , or in small subgroup of curve
+            Err(CurveError::PointNotOnCurve)
+        } else {
+            Ok(newpt)
+        }
+    }
+
+    // internal routine for hashing onto the curve,
+    // and for selecting random points. We ensure that
+    // nobody will have any idea what the log_r(Pt) will be.
+    fn from_random_bits(bits: &[u8; 32]) -> Self {
+        let mut tmp: [u8; 32] = *bits;
+        let sgn = tmp[31] & 0x80 != 0;
+        tmp[31] &= 0x7f;
+        let mut x = U256::from(Lev32(tmp));
+        while x >= *Q {
+            div2(&mut x.0);
+        }
+        let mut xq = Fq51::from(Fq::from(x));
+        let hpt: Self;
+        loop {
+            if !xq.is_zero() {
+                // can't be pt at inf
+                match Self::solve_y(&xq) {
+                    // xq must be on curve
+                    Ok(ysqrt) => {
+                        let yq = if sgn == ysqrt.is_odd() { ysqrt } else { -ysqrt };
+                        // avoid small subgroup
+                        let pt = CURVE_H * Self::new_from_xy51(&xq, &yq);
+                        if !pt.is_inf() {
+                            hpt = pt;
+                            break;
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
+            xq = xq.sqr() + 1;
+        }
+        hpt
+    }
+
+    pub fn random() -> Self {
+        Self::from_random_bits(&random::<[u8; 32]>())
+    }
+
+    pub fn compress(pt: Self) -> Pt {
+        Pt::from(pt)
+    }
+
+    pub fn decompress(pt: Pt) -> Result<Self, CurveError> {
+        Self::try_from(pt)
+    }
+}
+
+impl From<Hash> for ECp {
+    fn from(h: Hash) -> Self {
+        Self::from_random_bits(&h.bits())
     }
 }
 
@@ -98,36 +187,36 @@ impl Hashable for ECp {
 // --------------------------------------------------------
 
 impl Eq for ECp {}
+
 impl PartialEq for ECp {
-    fn eq(&self, b: &ECp) -> bool {
-        let mut tmpa = *self;
-        let mut tmpb = *b;
-        norm(&mut tmpa);
-        norm(&mut tmpb);
-        (tmpa.x == tmpb.x) && (tmpa.y == tmpb.y) && (tmpa.z == tmpb.z) && (tmpa.t == tmpb.t)
+    fn eq(&self, b: &Self) -> bool {
+        let tmp = Pt::from(*self - *b).bits();
+        tmp == [0u8; 32]
     }
 }
 
+// ---------------------------------------------------------
+
 impl Add<ECp> for ECp {
-    type Output = ECp;
-    fn add(self, other: ECp) -> ECp {
-        let mut tmp = PT_INF;
+    type Output = Self;
+    fn add(self, other: ECp) -> Self {
+        let mut tmp = Self::inf();
         add_proj(&self, &other, &mut tmp);
         tmp
     }
 }
 
 impl AddAssign<ECp> for ECp {
-    fn add_assign(&mut self, other: ECp) {
+    fn add_assign(&mut self, other: Self) {
         let tmp = *self;
         add_proj(&tmp, &other, self);
     }
 }
 
 impl Neg for ECp {
-    type Output = ECp;
-    fn neg(self) -> ECp {
-        let mut tmp = ECp::inf();
+    type Output = Self;
+    fn neg(self) -> Self {
+        let mut tmp = Self::inf();
         tmp.x = -self.x;
         tmp.y = self.y;
         tmp.z = self.z;
@@ -137,24 +226,24 @@ impl Neg for ECp {
 }
 
 impl Sub<ECp> for ECp {
-    type Output = ECp;
-    fn sub(self, other: ECp) -> ECp {
+    type Output = Self;
+    fn sub(self, other: Self) -> Self {
         self + (-other)
     }
 }
 
 impl SubAssign<ECp> for ECp {
-    fn sub_assign(&mut self, other: ECp) {
+    fn sub_assign(&mut self, other: Self) {
         *self += -other;
     }
 }
 
 impl Mul<Fr> for ECp {
-    type Output = ECp;
-    fn mul(self, other: Fr) -> ECp {
+    type Output = Self;
+    fn mul(self, other: Fr) -> Self {
         let wv = WinVec::from(other);
         let mut tmp = self;
-        ecp_mul(&wv, &mut tmp);
+        mul_to_proj(&wv, &mut tmp);
         tmp
     }
 }
@@ -169,20 +258,23 @@ impl Mul<ECp> for Fr {
 impl MulAssign<Fr> for ECp {
     fn mul_assign(&mut self, other: Fr) {
         let wv = WinVec::from(other);
-        ecp_mul(&wv, self);
+        mul_to_proj(&wv, self);
     }
 }
 
 impl Mul<i64> for ECp {
-    type Output = ECp;
-    fn mul(self, other: i64) -> ECp {
+    type Output = Self;
+    fn mul(self, other: i64) -> Self {
         match other {
-            0 => ECp::inf(),
-            1 => self,
+            // 0 => ECp::inf(),
+            // 1 => self,
+            // -1 => -self,
+            // 2 => self + self,
+            // 3 => self + self + self,
             _ => {
                 let wv = WinVec::from(other);
                 let mut tmp = self;
-                ecp_mul(&wv, &mut tmp);
+                mul_to_proj(&wv, &mut tmp);
                 tmp
             }
         }
@@ -199,19 +291,20 @@ impl Mul<ECp> for i64 {
 impl MulAssign<i64> for ECp {
     fn mul_assign(&mut self, other: i64) {
         match other {
-            0 => *self = ECp::inf(),
+            0 => *self = Self::inf(),
             1 => (),
+            -1 => *self = -*self,
             _ => {
                 let wv = WinVec::from(other);
-                ecp_mul(&wv, self);
+                mul_to_proj(&wv, self);
             }
         }
     }
 }
 
 impl Div<Fr> for ECp {
-    type Output = ECp;
-    fn div(self, other: Fr) -> ECp {
+    type Output = Self;
+    fn div(self, other: Fr) -> Self {
         self * Fr::invert(other)
     }
 }
@@ -223,8 +316,8 @@ impl DivAssign<Fr> for ECp {
 }
 
 impl Div<i64> for ECp {
-    type Output = ECp;
-    fn div(self, other: i64) -> ECp {
+    type Output = Self;
+    fn div(self, other: i64) -> Self {
         self / Fr::from(other)
     }
 }
@@ -249,18 +342,20 @@ fn double_1(pt: &mut ECp) {
     let h = a - b;
     pt.x = e * f;
     pt.y = g * h;
-    pt.z = g * (g - 2);
+    pt.z = g.sqr() - 2 * g;
     pt.t = e * h;
+    scr(&mut pt.z);
 }
 
 fn double_2(pt: &mut ECp) {
     let a = pt.x.sqr();
     let b = pt.y.sqr();
     let c = 2 * pt.z.sqr();
+    let g = pt.x + pt.y;
+    let e = g.sqr() - a - b;
     let g = a + b;
-    let h = a - b;
     let f = g - c;
-    let e = (pt.x + pt.y).sqr() - g;
+    let h = a - b;
     pt.x = e * f;
     pt.y = g * h;
     pt.z = f * g;
@@ -270,10 +365,11 @@ fn double_3(pt: &mut ECp) {
     let a = pt.x.sqr();
     let b = pt.y.sqr();
     let c = 2 * pt.z.sqr();
+    let g = pt.x + pt.y;
+    let e = g.sqr() - a - b;
     let g = a + b;
-    let h = a - b;
     let f = g - c;
-    let e = (pt.x + pt.y).sqr() - g;
+    let h = a - b;
     pt.x = e * f;
     pt.y = g * h;
     pt.z = f * g;
@@ -323,7 +419,6 @@ fn init(x: &Fq51, y: &Fq51, pt: &mut ECp) {
     (*pt).x = *x;
     (*pt).y = *y;
     (*pt).z = Fq51::one();
-    gmul(x, y, &mut pt.t);
 }
 
 // P=-Q
@@ -338,32 +433,35 @@ fn ecp_neg(qpt: &ECp, ppt: &mut ECp) {
 // Make Affine
 
 pub fn norm(pt: &mut ECp) {
-    let mut w = pt.z;
-    ginv(&mut w);
-    // (*pt).z = Fq51::one();
+    if pt.is_affine() {
+        scr(&mut pt.x);
+        scr(&mut pt.y);
+    } else {
+        let mut w = pt.z;
+        ginv(&mut w);
+        pt.z = Fq51::one();
 
-    let mut tmp = pt.x * w;
-    scr(&mut tmp);
-    pt.x = tmp;
+        let mut tmp = pt.x * w;
+        scr(&mut tmp);
+        pt.x = tmp;
 
-    let mut tmp = pt.y * w;
-    scr(&mut tmp);
-    pt.y = tmp;
-
-    let mut tmp = pt.z * w;
-    scr(&mut tmp);
-    pt.z = tmp;
-
-    let mut tmp = pt.t * w;
-    scr(&mut tmp);
-    pt.t = tmp;
+        let mut tmp = pt.y * w;
+        scr(&mut tmp);
+        pt.y = tmp;
+    }
 }
 
 // Precomputation
 
-fn precomp(pt: &ECp, wpts: &mut [ECp]) {
+fn precomp(pt: &mut ECp, wpts: &mut [ECp]) {
+    norm(pt); // must start with affine form
+              // pt mult is the only place where pt.t is used
+    let mut tmp = pt.x * pt.y;
+    scr(&mut tmp);
+    pt.t = tmp;
+
     let mut tmp1 = *pt;
-    gmuli(&mut tmp1.t, CURVE_D);
+    tmp1.t *= CURVE_D;
 
     let mut tmp2 = *pt;
     double_1(&mut tmp2);
@@ -475,20 +573,11 @@ fn mul_to_proj(w: &WinVec, ppt: &mut ECp) {
     let WinVec(wv) = w;
     let ix = w.0[PANES - 1] as usize;
     *ppt = wpts[ix];
-    let mut jx = PANES - 1;
     let mut qpt = PT_INF;
-    for _ in 0..(PANES - 1) {
-        jx -= 1;
+    for jx in (0..(PANES - 1)).rev() {
         select(&mut qpt, &wpts, wv[jx]);
         window(&qpt, ppt);
     }
-}
-
-// multiply incoming projective point,
-// return result in affine coords
-pub fn ecp_mul(w: &WinVec, ppt: &mut ECp) {
-    mul_to_proj(w, ppt);
-    norm(ppt);
 }
 
 // point additon of two projective points
@@ -511,79 +600,14 @@ pub fn add_proj(qpt: &ECp, ppt: &ECp, zpt: &mut ECp) {
     let y3 = d - c;
     let z3 = g * y3;
     let y3 = a * z3;
-    let z3 = f * g; // c = 1
+    let z3 = f * g; // Curve1174 C = 1
     zpt.x = x3;
     zpt.y = y3;
     zpt.z = z3;
-    zpt.t = Fq51::zero();
-}
-
-impl From<Pt> for ECp {
-    fn from(pt: Pt) -> ECp {
-        // NOTE: This will panic if invalid point
-        pt_on_curve(pt).unwrap()
-    }
-}
-
-impl From<Hash> for ECp {
-    fn from(h: Hash) -> ECp {
-        ECp::from_random_bits(&h.bits())
-    }
-}
-
-impl ECp {
-    // internal routine for hashing onto the curve,
-    // and for selecting random points. We ensure that
-    // nobody will have any idea what the log_r(Pt) will be.
-    fn from_random_bits(bits: &[u8; 32]) -> ECp {
-        let mut tmp: [u8; 32] = *bits;
-        let sgn = tmp[31] & 0x80 != 0;
-        tmp[31] &= 0x7f;
-        let mut x = U256::from(Lev32 { v8: tmp });
-        while x >= *Q {
-            div2(&mut x.0);
-        }
-        let mut xq = Fq51::from(Fq::Unscaled(x));
-        let hpt: ECp;
-        loop {
-            if !xq.is_zero() {
-                // can't be pt at inf
-                match solve_y(&xq) {
-                    // xq must be on curve
-                    Some(ysqrt) => {
-                        let yq = if sgn == ysqrt.is_odd() { ysqrt } else { -ysqrt };
-                        // avoid small subgroup
-                        let pt = CURVE_H * ECp::from_xy51(&xq, &yq);
-                        if !pt.is_inf() {
-                            hpt = pt;
-                            break;
-                        }
-                    }
-                    None => {}
-                }
-            }
-            xq = xq.sqr() + 1;
-        }
-        hpt
-    }
-
-    pub fn random() -> ECp {
-        ECp::from_random_bits(&random::<[u8; 32]>())
-    }
-}
-
-pub fn solve_y(xq: &Fq51) -> Option<Fq51> {
-    let yyq = ((1 + *xq) * (1 - *xq)) / (1 - (*xq).sqr() * CURVE_D);
-    gsqrt(yyq)
-}
-
-pub fn is_valid_pt(x: &Fq51, y: &Fq51) -> bool {
-    let xsq = (*x).sqr();
-    let ysq = (*y).sqr();
-    xsq + ysq == 1 + CURVE_D * xsq * ysq
 }
 
 // -------------------------------------------------------------
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -597,8 +621,8 @@ mod tests {
                                                                                      // multiplier in 4-bit window form
         let mut w = WinVec::from_str(&smul);
 
-        let gen_x = Coord::from_str(&sx)?;
-        let gen_y = Coord::from_str(&sy)?;
+        let gen_x = Fq::from_str(&sx)?;
+        let gen_y = Fq::from_str(&sy)?;
 
         println!("The Generator Point");
         println!("gen_x: {}", gen_x);
@@ -606,8 +630,8 @@ mod tests {
 
         let mut pt1 = ECp::inf();
         for _ in 0..100 {
-            pt1 = ECp::from_xy51(&gen_x, &gen_y);
-            ecp_mul(&w, &mut pt1);
+            pt1 = ECp::try_from_xy(&gen_x, &gen_y).unwrap();
+            mul_to_proj(&w, &mut pt1);
         }
 
         println!("Result as Bignums");
@@ -616,5 +640,26 @@ mod tests {
         println!("Result as Fq51s");
         println!("pt: {:#?}", pt1);
         Ok(())
+    }
+
+    #[test]
+    pub fn check_pt_compression() {
+        // exercise the entire process from ECp generation
+        // through point compression, and back again.
+        // This tests curve solving, square roots, random hashing
+        // onto curve, etc.
+        for _ in 0..1_000 {
+            let pt = ECp::random();
+            let cpt = Pt::from(pt);
+            let ept = ECp::try_from(cpt).unwrap();
+            assert!(ept == pt);
+        }
+        for _ in 0..1_000 {
+            let x = Fr::random();
+            let pt = x * (*G);
+            let cpt = Pt::from(pt);
+            let ept = ECp::try_from(cpt).unwrap();
+            assert!(ept == pt);
+        }
     }
 }

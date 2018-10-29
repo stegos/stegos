@@ -55,14 +55,6 @@ impl Fq51 {
         tmp.0 == FQ51_0.0
     }
 
-    pub fn is_one(&self) -> bool {
-        // faster than test == FQ51_1
-        // avoid scr(FQ51_1);
-        let mut tmp = *self;
-        scr(&mut tmp);
-        tmp.0 == FQ51_1.0
-    }
-
     pub fn is_odd(&self) -> bool {
         (self.0[0] & 1) != 0
     }
@@ -95,7 +87,11 @@ impl From<Fq> for Fq51 {
 
 impl From<Fq51> for Fq {
     fn from(x: Fq51) -> Fq {
-        Fq::Unscaled(U256::from(x))
+        let mut tmp = U256::from(x);
+        while tmp >= *Q {
+            u256::sub_noborrow(&mut tmp.0, &(*Q).0);
+        }
+        Fq::from(tmp)
     }
 }
 
@@ -267,11 +263,7 @@ impl Div<Fq51> for Fq51 {
 
 impl PartialEq for Fq51 {
     fn eq(&self, other: &Fq51) -> bool {
-        let mut a = *self;
-        let mut b = *other;
-        scr(&mut a);
-        scr(&mut b);
-        a.0 == b.0
+        Fq::from(*self) == Fq::from(*other)
     }
 }
 
@@ -330,27 +322,21 @@ pub fn gsb2(x: &Fq51, w: &mut Fq51) {
 
 // reduce w - Short Coefficient Reduction
 pub fn scr(w: &mut Fq51) {
-    loop {
-        let w0 = w.0[0];
-        let t0 = w0 & BOT_51_BITS;
+    let w0 = w.0[0];
+    let t0 = w0 & BOT_51_BITS;
 
-        let t1 = w.0[1] + (w0 >> 51);
-        w.0[1] = t1 & BOT_51_BITS;
+    let t1 = w.0[1] + (w0 >> 51);
+    w.0[1] = t1 & BOT_51_BITS;
 
-        let t2 = w.0[2] + (t1 >> 51);
-        w.0[2] = t2 & BOT_51_BITS;
+    let t2 = w.0[2] + (t1 >> 51);
+    w.0[2] = t2 & BOT_51_BITS;
 
-        let t3 = w.0[3] + (t2 >> 51);
-        w.0[3] = t3 & BOT_51_BITS;
+    let t3 = w.0[3] + (t2 >> 51);
+    w.0[3] = t3 & BOT_51_BITS;
 
-        let t4 = w.0[4] + (t3 >> 51);
-        w.0[4] = t4 & BOT_47_BITS;
-        w.0[0] = t0 + 9 * (t4 >> 47);
-
-        if (w.0[0] >> 51) == 0 {
-            break;
-        }
-    }
+    let t4 = w.0[4] + (t3 >> 51);
+    w.0[4] = t4 & BOT_47_BITS;
+    w.0[0] = t0 + 9 * (t4 >> 47);
 }
 
 // multiply w by a constant, w*=i
@@ -548,11 +534,11 @@ pub fn gdec2(x: &mut Fq51) {
 }
 
 #[inline(never)]
-pub fn gsqrt(x: Fq51) -> Option<Fq51> {
+pub fn gsqrt(x: &Fq51) -> Result<Fq51, CurveError> {
     // we need to perform (x^((q+1)/4) mod q)
-    // for (q + 1)/4 = 0x01FF__FFFF__FFFF_FFFF__FFFF_FFFF_FFFF_FFFF__FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFE
+    // for (q + 1)/4 = 0x01FF_FFFF_FFFF_FFFF__FFFF_FFFF_FFFF_FFFF__FFFF_FFFF_FFFF_FFFF__FFFF_FFFF_FFFF_FFFE
     //               = 2^(2*(248-1))
-    // At end we will verify: sqrt(x)^2 mod q == x, bypassing usual check for Legendre symbol = +1.
+    // At end we will verify: sqrt(x)^2 mod q == x, bypassing usual check for Legendre symbol == +1.
 
     let mut w = FQ51_0;
     let mut t1 = FQ51_0;
@@ -566,14 +552,15 @@ pub fn gsqrt(x: Fq51) -> Option<Fq51> {
     // --------------------------------------
     // 260*M
 
-    gsqr(&x, &mut w); // w = x^2
-    gmul(&x, &w, &mut t1); // t1 = x^3
+    gsqr(x, &mut w); // w = x^2
+    gmul(x, &w, &mut t1); // t1 = x^3
     gsqr(&t1, &mut w); // w = x^6
     gsqr(&w, &mut t2); // t2 = x^12
     gmul(&t1, &t2, &mut w); // w = x^15 = x^(2^4-1)
 
     t2 = w;
     for _ in 0..2 {
+        // shift exponent left 4 bits
         gsqr(&w, &mut t1);
         gsqr(&t1, &mut w);
     }
@@ -581,6 +568,7 @@ pub fn gsqrt(x: Fq51) -> Option<Fq51> {
 
     w = t8;
     for _ in 0..4 {
+        // shift exponent left 8 bits
         gsqr(&w, &mut t1);
         gsqr(&t1, &mut w);
     }
@@ -588,6 +576,7 @@ pub fn gsqrt(x: Fq51) -> Option<Fq51> {
 
     w = t16;
     for _ in 0..8 {
+        // shift exponent left 16 bits
         gsqr(&w, &mut t1);
         gsqr(&t1, &mut w);
     }
@@ -595,6 +584,7 @@ pub fn gsqrt(x: Fq51) -> Option<Fq51> {
 
     w = t32;
     for _ in 0..16 {
+        // shift exponent left 32 bits
         gsqr(&w, &mut t1);
         gsqr(&t1, &mut w);
     }
@@ -602,45 +592,53 @@ pub fn gsqrt(x: Fq51) -> Option<Fq51> {
 
     w = t64;
     for _ in 0..32 {
+        // shift exponent left 64 bits
         gsqr(&w, &mut t1);
         gsqr(&t1, &mut w);
     }
     gmul(&t64, &w, &mut t1); // t1 = x^(2^128-1)
 
     for _ in 0..32 {
+        // shift exponent left 64 bits
         gsqr(&t1, &mut w);
         gsqr(&w, &mut t1);
     }
     gmul(&t64, &t1, &mut w); // w = x^(2^192-1)
 
     for _ in 0..16 {
+        // shift exponent left 32 bits
         gsqr(&w, &mut t1);
         gsqr(&t1, &mut w);
     }
     gmul(&t32, &w, &mut t1); // t1 = x^(2^224-1)
 
     for _ in 0..8 {
+        // shift exponent left 16 bits
         gsqr(&t1, &mut w);
         gsqr(&w, &mut t1);
     }
     gmul(&t16, &t1, &mut w); // w = x^(2^240-1)
 
     for _ in 0..4 {
+        // shift exponent left 8 bits
         gsqr(&w, &mut t1);
         gsqr(&t1, &mut w);
     }
     gmul(&t8, &w, &mut t1); // t1 = x^(2^248-1)
 
+    // shift exponent left 1 bit
     gsqr(&t1, &mut w); // w = x^(2*(248-1)) =? sqrt(x)
 
     gsqr(&w, &mut t1); // t1 = sqrt(x)^2 =? x
-    if t1 == x {
-        Some(w)
+
+    if t1 == *x {
+        Ok(w)
     } else {
-        None
+        Err(CurveError::NotQuadraticResidue)
     }
 }
 
+// ----------------------------------------------------------
 // convert consecutive (little-endian) 64-bit cells
 // into 51-bit representation
 pub fn bin_to_elt(y: &U256, x: &mut Fq51) {
@@ -681,18 +679,68 @@ impl From<Fq51> for U256 {
         let mut xx = x;
         scr(&mut xx);
         let mut y = U256::zero();
-        let mut s = xx.0[0] as u128;
-        s += (xx.0[1] as u128) << 51;
-        y.0[0] = s as u64;
-        s >>= 64;
-        s += (xx.0[2] as u128) << (2 * 51 - 64);
-        y.0[1] = s as u64;
-        s >>= 64;
-        s += (xx.0[3] as u128) << (3 * 51 - 128);
-        y.0[2] = s as u64;
-        s >>= 64;
-        s += (xx.0[4] as u128) << (4 * 51 - 192);
-        y.0[3] = s as u64;
+        clean_convert_Fq51_to_lev_u64(&xx, &mut y.0);
         y
+    }
+}
+
+fn clean_convert_Fq51_to_lev_u64(x: &Fq51, y: &mut [u64; 4]) {
+    // convert an Fq51 that has already been scr()
+    // to [u64;4] vector
+    let mut s = x.0[0] as u128;
+    s += (x.0[1] as u128) << 51;
+    y[0] = s as u64;
+    s >>= 64;
+    s += (x.0[2] as u128) << (2 * 51 - 64);
+    y[1] = s as u64;
+    s >>= 64;
+    s += (x.0[3] as u128) << (3 * 51 - 128);
+    y[2] = s as u64;
+    s >>= 64;
+    s += (x.0[4] as u128) << (4 * 51 - 192);
+    y[3] = s as u64;
+}
+
+// ------------------------------------------------------------------
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    #[test]
+    pub fn check_gsqrt() {
+        for _ in 0..1000 {
+            let x = Fq::random();
+            let x51 = Fq51::from(x);
+            let mut xsq51 = x51;
+            gsqr(&x51, &mut xsq51);
+            let mut xsq51a = x51;
+            // check that squaring = self mul
+            gmul(&x51, &x51, &mut xsq51a);
+            assert!(xsq51a == xsq51);
+            let xrt51 = gsqrt(&xsq51).expect("Valid root");
+            assert!(x51 == xrt51 || x51 == -xrt51);
+            /* */
+            let xb = Fq::random();
+            let xsq = xb * xb;
+            let xsq51b = Fq51::from(xsq);
+            let xrt51b = gsqrt(&xsq51b).expect("Valid root");
+            let xrt = Fq::from(xrt51b);
+            assert!(xrt == xb || -xrt == xb);
+            /* */
+        }
+    }
+
+    #[test]
+    pub fn check_ginv() {
+        for _ in 0..1000 {
+            let x = Fq::random();
+            let x51 = Fq51::from(x);
+            let mut xinv51 = x51;
+            ginv(&mut xinv51);
+            let mut xprod51 = xinv51;
+            gmul(&x51, &xinv51, &mut xprod51);
+            assert!(FQ51_1 == xprod51);
+        }
     }
 }

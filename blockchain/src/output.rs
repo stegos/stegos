@@ -22,9 +22,9 @@
 // SOFTWARE.
 
 use payload::EncryptedPayload;
+use stegos_crypto::bulletproofs::BulletProof;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure::PublicKey;
-use stegos_crypto::bulletproofs::BulletProof;
 
 /// Transaction output.
 /// (ID, P_{M, δ}, Bp, E_M(x, γ, δ))

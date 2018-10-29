@@ -24,8 +24,7 @@
 #![allow(non_snake_case)]
 #![allow(dead_code)]
 
-
-use rand::prelude::*;
+use rand::prelude::random;
 
 use std::fmt;
 use std::vec::*;
@@ -38,10 +37,32 @@ pub mod secure;
 use hex;
 use utils::*;
 
+use hash::*;
+use lazy_static::*;
+
+// -------------------------------------------------------------------
+// Signature Public Key - for checking curve constants validity
+//
+// Unit test: check_pbc_init() - validates the curve constants shown
+// here for AR160 and FR256.
+//
+// The PBC init won't succeed unless they checksum to the values
+// shown below for HASH_AR160 and HASH_FR256. That serves as a first
+// line of defense against accidental corruption.
+//
+// For defense against intentional corruption with crafted curves,
+// the unit test, check_pbc_init(), verifies the hash of these string
+// constants against known BLS signatures, SIG_AR160 and SIG_FR256,
+// using the public key, SIG_PKEY, shown here.
+
+const SIG_PKEY : &str = "21aa87b48c3fce1699ffd0b4be79fb6ad2eb0b941ffd2b45a08ef12939885bcad095484e8a3fbf0ebee88f3874a07cc4570bc439fa5c5457d73c10ef131d42d601";
+const SIG_AR160: &str = "92c30db345bf5c867ca22a439a2a3d9373147a87f18dfc5d9ba727f8363bbd8500";
+const SIG_FR256: &str = "f33bed0d86a668fb1768aa9b5f55020f92fa2a533e5a009316f1a35b0a78a9b800";
+
 // -------------------------------------------------------------------
 // Fast AR160 curves, but low security 2^80
 
-const PBC_CONTEXT_AR160: u8 = 0;
+const PBC_CONTEXT_AR160: u64 = 0;
 const NAME_AR160: &str = "AR160";
 const INIT_TEXT_AR160 : &str = "type a
 q 8780710799663312522437781984754049815806883199414208211028653399266475630880222957078625179422662221423155858769582317459277713367317481324925129998224791
@@ -58,11 +79,12 @@ const ZR_SIZE_AR160: usize = 20;
 const G1_SIZE_AR160: usize = 65;
 const G2_SIZE_AR160: usize = 65;
 const GT_SIZE_AR160: usize = 128;
+const HASH_AR160: &str = "970faebc98c5ddf8798e4223ba517177547b0a31c0b4fec7d83ff5916b4891dc";
 
 // -------------------------------------------------------------------
 // Secure BN curves, security approx 2^128
 
-const PBC_CONTEXT_FR256: u8 = 1;
+const PBC_CONTEXT_FR256: u64 = 1;
 const NAME_FR256: &str = "FR256";
 const INIT_TEXT_FR256: &str = "type f
 q 115792089237314936872688561244471742058375878355761205198700409522629664518163
@@ -78,102 +100,130 @@ const ZR_SIZE_FR256: usize = 32;
 const G1_SIZE_FR256: usize = 33;
 const G2_SIZE_FR256: usize = 65;
 const GT_SIZE_FR256: usize = 384;
+const HASH_FR256: &str = "89e9ab4061400136bcf7bf15dac687966837b8b8ffad433768acc0351ecfe699";
 
 // -------------------------------------------------------------------
 
-struct PBCInitInfo {
-    context: u8, // which slot in the gluelib context table
-    name: *const str,
-    text: *const str,
+lazy_static! {
+    pub static ref INIT: bool = {
+        private_init_pairings(
+            PBC_CONTEXT_AR160,
+            INIT_TEXT_AR160,
+            G1_SIZE_AR160,
+            G2_SIZE_AR160,
+            GT_SIZE_AR160,
+            ZR_SIZE_AR160,
+            G1_AR160,
+            G2_AR160,
+            ORDER_AR160,
+            HASH_AR160,
+        );
+        private_init_pairings(
+            PBC_CONTEXT_FR256,
+            INIT_TEXT_FR256,
+            G1_SIZE_FR256,
+            G2_SIZE_FR256,
+            GT_SIZE_FR256,
+            ZR_SIZE_FR256,
+            G1_FR256,
+            G2_FR256,
+            ORDER_FR256,
+            HASH_FR256,
+        );
+        true
+    };
+    pub static ref CONTEXT_FR256: u64 = {
+        assert!(*INIT, "Can't happen");
+        PBC_CONTEXT_FR256
+    };
+    pub static ref CONTEXT_AR160: u64 = {
+        assert!(*INIT, "Can't happen");
+        PBC_CONTEXT_AR160
+    };
+    pub static ref ORD_FR256: [u8; ZR_SIZE_FR256] = {
+        assert!(*INIT, "Can't happen");
+        let mut ord = [0u8; ZR_SIZE_FR256];
+        hexstr_to_bev_u8(&ORDER_FR256, &mut ord).expect("Invalid HexString");
+        ord
+    };
+    pub static ref MIN_FR256: secure::Zr = secure::Zr::acceptable_minval();
+    pub static ref MAX_FR256: secure::Zr = secure::Zr::acceptable_maxval();
+    pub static ref ORD_AR160: [u8; ZR_SIZE_AR160] = {
+        assert!(*INIT, "Can't happen");
+        let mut ord = [0u8; ZR_SIZE_AR160];
+        hexstr_to_bev_u8(&ORDER_AR160, &mut ord).expect("Invalid HexString");
+        ord
+    };
+    pub static ref MIN_AR160: fast::Zr = fast::Zr::acceptable_minval();
+    pub static ref MAX_AR160: fast::Zr = fast::Zr::acceptable_maxval();
+}
+
+// -------------------------------------------------------------------
+// init_pairings() -- no longer needed, PBC is self-init,
+// but harmless if called
+
+pub fn init_pairings() -> Result<(), hex::FromHexError> {
+    assert!(*INIT, "Can't happen");
+    Ok(())
+}
+
+fn private_init_pairings(
+    context: u64,
+    text: &str,
     g1_size: usize,
     g2_size: usize,
     pairing_size: usize,
     field_size: usize,
-    order: *const str,
-    g1: *const str,
-    g2: *const str,
-}
+    g1: &str,
+    g2: &str,
+    order: &str,
+    hchk: &str,
+) {
+    // First, check that the text constants haven't changed
+    let mut state = Hasher::new();
+    text.hash(&mut state);
+    order.hash(&mut state);
+    g1.hash(&mut state);
+    g2.hash(&mut state);
+    let h = state.result();
+    let chk = Hash::basic_from_str(hchk).expect("Invalid check hash");
+    assert!(h == chk, "Init constants have changed");
 
-const CURVES_INIT: &[PBCInitInfo] = &[
-    PBCInitInfo {
-        context: PBC_CONTEXT_AR160,
-        name: NAME_AR160,
-        text: INIT_TEXT_AR160,
-        g1_size: G1_SIZE_AR160,
-        g2_size: G2_SIZE_AR160,
-        pairing_size: GT_SIZE_AR160,
-        field_size: ZR_SIZE_AR160,
-        order: ORDER_AR160,
-        g1: G1_AR160,
-        g2: G2_AR160,
-    },
-    PBCInitInfo {
-        context: PBC_CONTEXT_FR256,
-        name: NAME_FR256,
-        text: INIT_TEXT_FR256,
-        g1_size: G1_SIZE_FR256,
-        g2_size: G2_SIZE_FR256,
-        pairing_size: GT_SIZE_FR256,
-        field_size: ZR_SIZE_FR256,
-        order: ORDER_FR256,
-        g1: G1_FR256,
-        g2: G2_FR256,
-    },
-];
-
-// -------------------------------------------------------------------
-// init_pairings() -- must only be called once, at startup
-// (How to ensure that it is called, and can only be called just once?)
-
-pub fn init_pairings() -> Result<(), hex::FromHexError> {
-    for info in CURVES_INIT {
-        let context = info.context as u64;
-        unsafe {
-            // println!("Init curve {}", (*info.name).to_string());
-            // println!("Context: {}", context);
-            // println!("{}", (*info.text).to_string());
-
-            let mut psize = [0u64; 4];
-            let ans = rust_libpbc::init_pairing(
-                context,
-                info.text as *mut _,
-                (*info.text).len() as u64,
-                psize.as_ptr() as *mut _,
-            );
-            assert_eq!(ans, 0);
-
-            assert_eq!(psize[0], info.g1_size as u64);
-            assert_eq!(psize[1], info.g2_size as u64);
-            assert_eq!(psize[2], info.pairing_size as u64);
-            assert_eq!(psize[3], info.field_size as u64);
-
-            let mut v1 = vec![0u8; info.g1_size];
-            hexstr_to_bev_u8(&(*info.g1), &mut v1)?;
-            // println!("G1: {}", u8v_to_hexstr(&v1));
-            let len = rust_libpbc::set_g1(context, v1.as_ptr() as *mut _);
-            // returns nbr bytes read, should equal length of G1
-            assert_eq!(len, info.g1_size as i64);
-
-            let mut v1 = vec![0u8; info.g1_size];
-            let len = rust_libpbc::get_g1(context, v1.as_ptr() as *mut _, info.g1_size as u64);
-            assert_eq!(len, info.g1_size as u64);
-            // println!("G1 readback: {}", u8v_to_hexstr(&v1));
-
-            let mut v2 = vec![0u8; info.g2_size];
-            hexstr_to_bev_u8(&(*info.g2), &mut v2)?;
-            // println!("G2: {}", u8v_to_hexstr(&v2));
-            let len = rust_libpbc::set_g2(context, v2.as_ptr() as *mut _);
-            // returns nbr bytes read, should equal length of G2
-            assert_eq!(len, info.g2_size as i64);
-
-            let mut v2 = vec![0u8; info.g2_size];
-            let len = rust_libpbc::get_g2(context, v2.as_ptr() as *mut _, info.g2_size as u64);
-            assert_eq!(len, info.g2_size as u64);
-            // println!("G2 readback: {}", u8v_to_hexstr(&v2));
-        }
-        // println!("");
+    // yes - all the assert!() should panic fail. We are useless without PBC.
+    let psize = [0u64; 4];
+    unsafe {
+        let ans = rust_libpbc::init_pairing(
+            context,
+            text.as_ptr() as *mut _,
+            text.len() as u64,
+            psize.as_ptr() as *mut _,
+        );
+        assert_eq!(ans, 0, "PBC Init Failure");
     }
-    Ok(())
+    assert_eq!(psize[0], g1_size as u64, "Invalid G1 size");
+    assert_eq!(psize[1], g2_size as u64, "Invalid G2 size");
+    assert_eq!(psize[2], pairing_size as u64, "Invalid GT size");
+    assert_eq!(psize[3], field_size as u64, "Invalid Zr size");
+
+    let mut v1 = vec![0u8; g1_size];
+    hexstr_to_bev_u8(g1, &mut v1).expect("Invalid G1 hexstring");
+    let len = unsafe { rust_libpbc::set_g1(context, v1.as_ptr() as *mut _) };
+    // returns nbr bytes read, should equal length of G1
+    assert_eq!(len, g1_size as i64, "Set G1 failure");
+
+    let v1 = vec![0u8; g1_size];
+    let len = unsafe { rust_libpbc::get_g1(context, v1.as_ptr() as *mut _, g1_size as u64) };
+    assert_eq!(len, g1_size as u64, "Get G1 failure");
+
+    let mut v2 = vec![0u8; g2_size];
+    hexstr_to_bev_u8(g2, &mut v2).expect("Invalid G2 hexstring");
+    let len = unsafe { rust_libpbc::set_g2(context, v2.as_ptr() as *mut _) };
+    // returns nbr bytes read, should equal length of G2
+    assert_eq!(len, g2_size as i64, "Set G2 failure");
+
+    let v2 = vec![0u8; g2_size];
+    let len = unsafe { rust_libpbc::get_g2(context, v2.as_ptr() as *mut _, g2_size as u64) };
+    assert_eq!(len, g2_size as u64, "Get G2 failure");
 }
 
 // --------------------------------------------------------
@@ -197,4 +247,31 @@ pub mod tests {
         }
         assert_eq!(input.to_vec(), output);
     }
+
+    #[test]
+    fn check_pbc_init() {
+        let sig_pkey = secure::PublicKey::from_str(&SIG_PKEY).expect("Invalid hexstring: SIG_PKEY");
+
+        let h = Hash::basic_from_str(&HASH_AR160).expect("Invalid hexstring: HASH_AR160");
+        let sig = secure::Signature::from_str(&SIG_AR160).expect("Invalid hexstring: SIG_AR160");
+        assert!(
+            secure::check_hash(&h, &sig, &sig_pkey),
+            "Invalid curve constants for AR160"
+        );
+
+        let h = Hash::basic_from_str(&HASH_FR256).expect("Invalid hexstring: HASH_FR256");
+        let sig = secure::Signature::from_str(SIG_FR256).expect("Invalid hexstring: SIG_FR256");
+        assert!(
+            secure::check_hash(&h, &sig, &sig_pkey),
+            "Invalid curve constants for FR256"
+        );
+
+        // check to be sure make_deterministic_keys() stil works properly
+        let seed = random::<[u8; 32]>();
+        let (_skey, pkey, sig) = secure::make_deterministic_keys(&seed);
+        assert!(secure::check_keying(&pkey, &sig), "Invalid keying");
+        fast::G2::generator();
+    }
 }
+
+// ---------------------------------------------------------------------

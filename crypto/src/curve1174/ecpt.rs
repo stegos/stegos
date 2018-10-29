@@ -37,7 +37,6 @@ const NPREP: usize = 1 + (1 << (WINDOW - 1));
 pub type Coord = Fq51;
 
 #[derive(Copy, Clone, Debug)]
-// #[repr(C)]
 pub struct ECp {
     pub x: Fq51,
     pub y: Fq51,
@@ -76,9 +75,10 @@ impl ECp {
     }
 
     fn solve_y(xq: &Fq51) -> Result<Fq51, CurveError> {
-        // CURVE_D is non-square in Fq, so division is unquestionably safe
-        let yyq = ((1 + *xq) * (1 - *xq)) / (1 - xq.sqr() * CURVE_D);
-        gsqrt(&yyq)
+        // CURVE_D is non-square in Fq, so division here is unquestionably safe
+        let xqsq = xq.sqr();
+        let ysq = (xqsq - 1) / (xqsq * CURVE_D - 1);
+        gsqrt(&ysq)
     }
 
     fn is_valid_pt(x: &Fq51, y: &Fq51) -> bool {

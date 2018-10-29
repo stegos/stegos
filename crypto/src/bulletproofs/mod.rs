@@ -70,6 +70,17 @@ pub struct BulletproofBasis {
 }
 
 lazy_static! {
+    pub static ref INIT : bool = {
+        let mut n = NBASIS;
+        let mut logn = 0;
+        while (1 & n) == 0 {
+            logn += 1;
+            n >>= 1;
+        }
+        assert!(n == 1, "NBASIS not 2^N");
+        assert!(logn == L2_NBASIS, "L2_NBASIS not equal Log2(NBASIS)");
+        true
+    };
     pub static ref TWOS : ScalarVect = pow_vec(Int::from(2));
     pub static ref MASK : Int =
         // NOTE: the mask value needs to = ((1 << NBASIS)-1)
@@ -376,6 +387,104 @@ impl Hashable for BulletProof {
 // ------------------------------------------------------------------
 
 pub fn make_range_proof(v: i64) -> (BulletProof, Int) {
+    fn make_lr_dot_proof(
+        y: Int,
+        mu: Int,
+        t_hat: Int,
+        lvec: &mut ScalarVect,
+        rvec: &mut ScalarVect,
+    ) -> DotProof {
+        fn fold_halves<T>(n: usize, v: &mut [T], lscale: Int, rscale: Int)
+        where
+            T: Copy + Add<T, Output = T> + Mul<Int, Output = T>,
+        {
+            let n_2 = n >> 1;
+            for (jx, kx) in (0..n_2).zip(n_2..n) {
+                v[jx] = v[jx] * lscale + v[kx] * rscale;
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // Avoid heap allocations. Since we are shrinking as we go,
+        // we can allocate the mutable vectors at their largest size at the outset,
+        // and just reuse their storage in each iteration.
+
+        // G, [G'_i] = [G_i] o [1/y^n], [H_i]
+        let (gpt, mut gv, mut hv) = basis_vectors(y);
+
+        // compute commitment to [L],[R]:
+        //  P = mu*G + [R].([G_i] o [1/y^n]) + [L].[H_i]
+        let pcmt = vec_commit(gpt, &gv, &hv, mu, rvec, lvec);
+
+        let u = (mu / t_hat) * gpt; // the cloaking point for all following commitments
+
+        let mut acc = *LR_INIT; // preallocate the LR list accumulator
+        let mut aix = 0; // accumulator (iteration) index
+
+        let mut n = NBASIS; // starting vector size
+
+        while n > 1 {
+            // for as long as we can halve vectors...
+            let n2 = n >> 1; // half-vector size
+
+            macro_rules! VL {
+                ($v: expr) => {
+                    &$v[0..n2]
+                }; // Left half-vector
+            }
+            macro_rules! VR {
+                ($v: expr) => {
+                    &$v[n2..n]
+                }; // Right half-vector
+            }
+
+            // L = cl*U + [R>].[G'<] + [L<].[H>]
+            let l = {
+                let cl = dot_prod(VL!(lvec), VR!(rvec)); // cl = [L<].[R>]
+                vec_commit(u, VL!(gv), VR!(hv), cl, VR!(rvec), VL!(lvec))
+            };
+
+            // R = cr*U + [R<].[G'>] + [L>].[H<]
+            let r = {
+                let cr = dot_prod(VR!(lvec), VL!(rvec)); // cr = [L>].[R<]
+                vec_commit(u, VR!(gv), VL!(hv), cr, VL!(rvec), VR!(lvec))
+            };
+
+            let x = Int::from(Hash::digest_chain(&[&l, &r])); // hash challenge value
+
+            // save this portion of the proof into list accumulator
+            acc[aix] = LR {
+                x: x.unscaled(), // x starts at 1, this applies to next LR half-sizing
+                l: Point::compress(l),
+                r: Point::compress(r),
+            };
+
+            let xs = x.scaled(); // do the scaling, unscaling just once = speedup below
+            let xinv = 1 / xs;
+            let xinvu = xinv.unscaled();
+
+            // form half-size vectors for next pass
+            fold_halves(n, &mut gv, x, xinvu); // [G'] <- x*[G'<] + [G'>]/x
+            fold_halves(n, &mut hv, xinvu, x); // [H]  <- [H<]/x + x*[H>]
+            fold_halves(n, lvec, xs, xinv); // [L] <- x*[L<] + [L>]/x
+            fold_halves(n, rvec, xinv, xs); // [R] <- [R<]/x + x*[R>]
+
+            aix += 1;
+            n = n2;
+        }
+        // final dot-product composite proof
+        DotProof {
+            u: Point::compress(u),
+            pcmt: Point::compress(pcmt),
+            a: lvec[0].unscaled(),
+            b: rvec[0].unscaled(),
+            xlrs: acc,
+        }
+    }
+    // ---------------------------------------------------------------
+
+    assert!(*INIT, "Can't happen");
+
     let (vcmt, gamma) = pedersen_commitment(v);
     let (gpt, gv, hv) = (BP.G, BP.GV, BP.HV);
 
@@ -466,90 +575,6 @@ pub fn make_range_proof(v: i64) -> (BulletProof, Int) {
     )
 }
 
-fn make_lr_dot_proof(
-    y: Int,
-    mu: Int,
-    t_hat: Int,
-    lvec: &mut ScalarVect,
-    rvec: &mut ScalarVect,
-) -> DotProof {
-    // do our best to avoid heap allocations. Since we are shrinking as we go,
-    // we can allocate the mutable vectors at their largest size at the outset,
-    // and just reuse their storage in each iteration.
-
-    // G, [G'_i] = [G_i] o [1/y^n], [H_i]
-    let (gpt, mut gv, mut hv) = basis_vectors(y);
-
-    // compute commitment to [L],[R]:
-    //  P = mu*G + [R].([G_i] o [1/y^n]) + [L].[H_i]
-    let pcmt = vec_commit(gpt, &gv, &hv, mu, rvec, lvec);
-
-    let u = (mu / t_hat) * gpt; // the cloaking point for all following commitments
-
-    let mut acc = *LR_INIT; // preallocate the LR list accumulator
-    let mut aix = 0; // accumulator (iteration) index
-
-    let mut n = NBASIS; // starting vector size
-
-    while n > 1 {
-        // for as long as we can halve vectors...
-        let n2 = n >> 1; // half-vector size
-
-        macro_rules! VL {
-            ($v: expr) => {
-                &$v[0..n2]
-            }; // Left half-vector
-        }
-        macro_rules! VR {
-            ($v: expr) => {
-                &$v[n2..n]
-            }; // Right half-vector
-        }
-
-        // L = cl*U + [R>].[G'<] + [L<].[H>]
-        let l = {
-            let cl = dot_prod(VL!(lvec), VR!(rvec)); // cl = [L<].[R>]
-            vec_commit(u, VL!(gv), VR!(hv), cl, VR!(rvec), VL!(lvec))
-        };
-
-        // R = cr*U + [R<].[G'>] + [L>].[H<]
-        let r = {
-            let cr = dot_prod(VR!(lvec), VL!(rvec)); // cr = [L>].[R<]
-            vec_commit(u, VR!(gv), VL!(hv), cr, VL!(rvec), VR!(lvec))
-        };
-
-        let x = Int::from(Hash::digest_chain(&[&l, &r])); // hash challenge value
-
-        // save this portion of the proof into list accumulator
-        acc[aix] = LR {
-            x: x.unscaled(), // x starts at 1, this applies to next LR half-sizing
-            l: Point::compress(l),
-            r: Point::compress(r),
-        };
-
-        let xs = x.scaled(); // do the scaling, unscaling just once = speedup below
-        let xinv = 1 / xs;
-        let xinvu = xinv.unscaled();
-
-        // form half-size vectors for next pass
-        fold_halves(n, &mut gv, x, xinvu); // [G'] <- x*[G'<] + [G'>]/x
-        fold_halves(n, &mut hv, xinvu, x); // [H]  <- [H<]/x + x*[H>]
-        fold_halves(n, lvec, xs, xinv); // [L] <- x*[L<] + [L>]/x
-        fold_halves(n, rvec, xinv, xs); // [R] <- [R<]/x + x*[R>]
-
-        aix += 1;
-        n = n2;
-    }
-    // final dot-product composite proof
-    DotProof {
-        u: Point::compress(u),
-        pcmt: Point::compress(pcmt),
-        a: lvec[0].unscaled(),
-        b: rvec[0].unscaled(),
-        xlrs: acc,
-    }
-}
-
 fn basis_vectors(y: Int) -> (Point, BasisVect, BasisVect) {
     let mut gv = BP.GV;
     hadamard_prod(&mut gv, &pow_vec(1 / y));
@@ -569,99 +594,104 @@ where
 // ---------------------------------------------------------------------
 
 pub fn validate_range_proof(bp: &BulletProof) -> bool {
+    fn try_validate_range_proof(bp: &BulletProof) -> Result<bool, CurveError> {
+        fn compute_iter_commit(xlrs: &[LR; L2_NBASIS], init: Point) -> Result<Point, CurveError> {
+            let mut sum = init;
+            for triple in xlrs.iter().rev() {
+                let x = triple.x.scaled();
+                let xsq = x * x;
+                let l = Point::decompress(triple.l)?;
+                let r = Point::decompress(triple.r)?;
+                sum += xsq * l + r / xsq;
+            }
+            Ok(sum)
+        }
+
+        fn compute_svec(xlrs: &[LR; L2_NBASIS]) -> ScalarVect {
+            let mut svec = *TWOS;
+            for ix in 0..NBASIS {
+                let mut prod = Int::one();
+                let mut jx = 0;
+                for triple in xlrs.iter().rev() {
+                    let x = triple.x.scaled();
+                    prod *= if (ix & (1 << jx)) != 0 { x } else { 1 / x };
+                    jx += 1;
+                }
+                svec[ix] = prod;
+            }
+            svec
+        }
+
+        // -------------------------------------------------------------
+
+        let y = bp.y;
+        let yvec = pow_vec(y);
+        let z = bp.z.scaled();
+        let zsq = z * z;
+        let delta = (z - zsq) * vec_sum(&yvec) - *MASK * z * zsq;
+
+        let x = bp.x.scaled();
+        let xsq = x * x;
+        let vcmt = Point::decompress(bp.vcmt)?;
+        let t1cmt = Point::decompress(bp.t1_cmt)?;
+        let t2cmt = Point::decompress(bp.t2_cmt)?;
+        let chk_v_r = zsq * vcmt + delta * BP.H + x * t1cmt + xsq * t2cmt;
+
+        let chk_v_l = simple_commit(bp.tau_x, bp.t_hat);
+
+        // check that: t_hat = t_0 + t_1 * x + t_2 * x^2
+        if chk_v_l != chk_v_r {
+            return Ok(false);
+        }
+
+        // -------------------------------------------------------------
+
+        let (_, mut gv, mut hv) = basis_vectors(y);
+
+        let mut gpows = yvec;
+        vec_scale(&mut gpows, z);
+        let mut gp2 = *TWOS;
+        vec_scale(&mut gp2, zsq);
+        vec_add(&mut gpows, &gp2);
+
+        let hpows = bpvec!(-z);
+
+        let acmt = Point::decompress(bp.acmt)?;
+        let scmt = Point::decompress(bp.scmt)?;
+
+        let chk_p_l = acmt + vec_commit(scmt, &gv, &hv, x, &gpows, &hpows);
+        let dot_proof = bp.dot_proof;
+        let p = Point::decompress(dot_proof.pcmt)?;
+
+        // check that commitment to [L], [R] equal l(x), r(x)
+        if chk_p_l != p {
+            return Ok(false);
+        }
+
+        // -------------------------------------------------------------
+
+        let u = Point::decompress(dot_proof.u)?;
+        let a = dot_proof.a.scaled();
+        let b = dot_proof.b.scaled();
+        let xlrs = dot_proof.xlrs;
+        let mut sv = compute_svec(&xlrs);
+        let mut svinv = sv;
+        vec_inv(&mut svinv);
+        vec_scale(&mut sv, a);
+        vec_scale(&mut svinv, b);
+        let chk_l = vec_commit(u, &gv, &hv, a * b, &svinv, &sv);
+        let chk_r = compute_iter_commit(&xlrs, p)?;
+
+        Ok(chk_l == chk_r)
+    }
+    // --------------------------------------------------------------
+
+    assert!(*INIT, "Can't happen");
+
     match try_validate_range_proof(bp) {
         Ok(tf) => tf, // did or did not validate
         _ => false,   // invalid points encountered
     }
-}
-
-fn try_validate_range_proof(bp: &BulletProof) -> Result<bool, CurveError> {
-    let y = bp.y;
-    let yvec = pow_vec(y);
-    let z = bp.z.scaled();
-    let zsq = z * z;
-    let delta = (z - zsq) * vec_sum(&yvec) - *MASK * z * zsq;
-
-    let x = bp.x.scaled();
-    let xsq = x * x;
-    let vcmt = Point::decompress(bp.vcmt)?;
-    let t1cmt = Point::decompress(bp.t1_cmt)?;
-    let t2cmt = Point::decompress(bp.t2_cmt)?;
-    let chk_v_r = zsq * vcmt + delta * BP.H + x * t1cmt + xsq * t2cmt;
-
-    let chk_v_l = simple_commit(bp.tau_x, bp.t_hat);
-
-    // check that: t_hat = t_0 + t_1 * x + t_2 * x^2
-    if chk_v_l != chk_v_r {
-        return Ok(false);
-    }
-
-    // -------------------------------------------------------------
-
-    let (_, mut gv, mut hv) = basis_vectors(y);
-
-    let mut gpows = yvec;
-    vec_scale(&mut gpows, z);
-    let mut gp2 = *TWOS;
-    vec_scale(&mut gp2, zsq);
-    vec_add(&mut gpows, &gp2);
-
-    let hpows = bpvec!(-z);
-
-    let acmt = Point::decompress(bp.acmt)?;
-    let scmt = Point::decompress(bp.scmt)?;
-
-    let chk_p_l = acmt + vec_commit(scmt, &gv, &hv, x, &gpows, &hpows);
-    let dot_proof = bp.dot_proof;
-    let p = Point::decompress(dot_proof.pcmt)?;
-
-    // check that commitment to [L], [R] equal l(x), r(x)
-    if chk_p_l != p {
-        return Ok(false);
-    }
-
-    // -------------------------------------------------------------
-
-    let u = Point::decompress(dot_proof.u)?;
-    let a = dot_proof.a.scaled();
-    let b = dot_proof.b.scaled();
-    let xlrs = dot_proof.xlrs;
-    let mut sv = compute_svec(&xlrs);
-    let mut svinv = sv;
-    vec_inv(&mut svinv);
-    vec_scale(&mut sv, a);
-    vec_scale(&mut svinv, b);
-    let chk_l = vec_commit(u, &gv, &hv, a * b, &svinv, &sv);
-    let chk_r = compute_iter_commit(&xlrs, p)?;
-
-    Ok(chk_l == chk_r)
-}
-
-fn compute_iter_commit(xlrs: &[LR; L2_NBASIS], init: Point) -> Result<Point, CurveError> {
-    let mut sum = init;
-    for triple in xlrs.iter().rev() {
-        let x = triple.x.scaled();
-        let xsq = x * x;
-        let l = Point::decompress(triple.l)?;
-        let r = Point::decompress(triple.r)?;
-        sum += xsq * l + r / xsq;
-    }
-    Ok(sum)
-}
-
-fn compute_svec(xlrs: &[LR; L2_NBASIS]) -> ScalarVect {
-    let mut svec = *TWOS;
-    for ix in 0..NBASIS {
-        let mut prod = Int::one();
-        let mut jx = 0;
-        for triple in xlrs.iter().rev() {
-            let x = triple.x.scaled();
-            prod *= if (ix & (1 << jx)) != 0 { x } else { 1 / x };
-            jx += 1;
-        }
-        svec[ix] = prod;
-    }
-    svec
 }
 
 // ---------------------------------------------------------------------
@@ -809,7 +839,7 @@ pub fn bulletproofs_tests() {
     let (proof, gamma) = make_range_proof(-1); // to pre-compute constants
     println!("Start BulletProofs");
     let start = SystemTime::now();
-    if true {
+    if false {
         for _ in 1..1000 {
             make_range_proof(1234567890);
         }
@@ -823,7 +853,7 @@ pub fn bulletproofs_tests() {
     println!("Start Validation");
     let start = SystemTime::now();
     let ans = validate_range_proof(&proof);
-    if true {
+    if false {
         for _ in 1..1000 {
             validate_range_proof(&proof);
         }

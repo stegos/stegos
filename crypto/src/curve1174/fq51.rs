@@ -32,7 +32,6 @@ const BOT_47_BITS: i64 = ((1 << 47) - 1); // MSB frame only has 47 bits
 // 47 bits in last frame
 
 #[derive(Copy, Clone)]
-#[repr(C)]
 pub struct Fq51(pub [i64; 5]);
 
 pub const FQ51_0: Fq51 = Fq51([0; 5]);

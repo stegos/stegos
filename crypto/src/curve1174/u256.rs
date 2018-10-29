@@ -32,7 +32,6 @@ use super::*;
 // should never be mixed without careful consideration.
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-// #[repr(C)]
 pub struct U256(pub [u64; 4]);
 
 impl U256 {
@@ -42,6 +41,10 @@ impl U256 {
 
     pub fn one() -> U256 {
         U256([1, 0, 0, 0])
+    }
+
+    pub fn bits(self) -> [u64; 4] {
+        self.0
     }
 
     pub fn random() -> U256 {
@@ -221,7 +224,7 @@ impl Ord for U256 {
                 return Ordering::Greater;
             }
         }
-        return Ordering::Equal;
+        Ordering::Equal
     }
 }
 
@@ -247,6 +250,12 @@ pub fn div2(a: &mut [u64; 4]) {
     a[1] |= b;
     a[0] >>= 1;
     a[0] |= t;
+}
+
+pub fn shr(a: &mut [u64; 4], n: usize) {
+    for _ in 0..n {
+        div2(a);
+    }
 }
 
 /// Multiply by two

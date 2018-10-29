@@ -34,6 +34,12 @@ use super::*;
 use hash::*;
 use utils::*;
 
+use std::cmp::Ordering;
+use std::hash as stdhash;
+use std::ops::Neg;
+
+// --------------------------------------------------------------------------------
+
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct Zr([u8; ZR_SIZE_FR256]);
@@ -47,12 +53,45 @@ impl Zr {
         [0u8; ZR_SIZE_FR256]
     }
 
-    pub fn random() -> Zr {
-        Zr(random::<[u8; ZR_SIZE_FR256]>())
-    }
-
     pub fn base_vector(&self) -> &[u8] {
         &self.0
+    }
+
+    pub fn acceptable_minval() -> Self {
+        // approx sqrt modulus
+        let mut x = [0u8; ZR_SIZE_FR256];
+        {
+            let mid = ZR_SIZE_FR256 >> 1;
+            let (_, bot) = x.split_at_mut(mid);
+            let botlen = ZR_SIZE_FR256 - mid;
+            bot.copy_from_slice(&(*ORD_FR256)[0..botlen]);
+        }
+        Zr(x)
+    }
+
+    pub fn acceptable_maxval() -> Self {
+        // approx = modulus - sqrt(modulus)
+        -*MIN_FR256
+    }
+
+    pub fn acceptable_random_rehash(k: Self) -> Self {
+        let min = *MIN_FR256;
+        let max = *MAX_FR256;
+        let mut mk = k;
+        while mk < min || mk > max {
+            mk = Self::from(Hash::digest(&mk));
+        }
+        mk
+    }
+
+    pub fn random() -> Self {
+        let mut x = Zr(random::<[u8; ZR_SIZE_FR256]>());
+        let min = *MIN_FR256;
+        let max = *MAX_FR256;
+        while x < min || x > max {
+            x = Zr(random::<[u8; ZR_SIZE_FR256]>());
+        }
+        x
     }
 
     pub fn from_str(s: &str) -> Result<Zr, hex::FromHexError> {
@@ -68,6 +107,40 @@ impl Zr {
     }
 }
 
+impl From<Hash> for Zr {
+    fn from(h: Hash) -> Self {
+        let v = Zr::new();
+        unsafe {
+            rust_libpbc::get_Zr_from_hash(
+                *CONTEXT_FR256,
+                v.base_vector().as_ptr() as *mut _,
+                h.base_vector().as_ptr() as *mut _,
+                HASH_SIZE as u64,
+            );
+        }
+        v
+    }
+}
+
+impl Eq for Zr {}
+impl PartialEq for Zr {
+    fn eq(&self, b: &Self) -> bool {
+        self.0[..] == b.0[..]
+    }
+}
+
+impl Ord for Zr {
+    fn cmp(&self, other: &Self) -> Ordering {
+        ucmp_be(&self.0, &other.0)
+    }
+}
+
+impl PartialOrd for Zr {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl fmt::Display for Zr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.to_str())
@@ -78,6 +151,17 @@ impl Hashable for Zr {
     fn hash(&self, state: &mut Hasher) {
         "Zr".hash(state);
         self.base_vector().hash(state);
+    }
+}
+
+impl Neg for Zr {
+    type Output = Self;
+    fn neg(self) -> Self {
+        let ans = self.clone();
+        unsafe {
+            rust_libpbc::neg_Zr_val(*CONTEXT_FR256, ans.base_vector().as_ptr() as *mut _);
+        }
+        ans
     }
 }
 
@@ -107,6 +191,18 @@ impl G1 {
         hexstr_to_bev_u8(&s, &mut v)?;
         Ok(G1(v))
     }
+
+    pub fn generator() -> Self {
+        let v = Self::new();
+        unsafe {
+            rust_libpbc::get_g1(
+                *CONTEXT_FR256,
+                v.base_vector().as_ptr() as *mut _,
+                G1_SIZE_FR256 as u64,
+            );
+        }
+        v
+    }
 }
 
 impl fmt::Display for G1 {
@@ -123,13 +219,20 @@ impl Hashable for G1 {
     }
 }
 
+impl Eq for G1 {}
+impl PartialEq for G1 {
+    fn eq(&self, b: &Self) -> bool {
+        self.0[..] == b.0[..]
+    }
+}
+
 // -----------------------------------------
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct G2([u8; G2_SIZE_FR256]);
 
 impl G2 {
-    pub fn new() -> G2 {
+    pub fn new() -> Self {
         G2(G2::wv())
     }
 
@@ -145,10 +248,22 @@ impl G2 {
         u8v_to_typed_str("G2", &self.base_vector())
     }
 
-    pub fn from_str(s: &str) -> Result<G2, hex::FromHexError> {
-        let mut v = G2::wv();
+    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+        let mut v = Self::wv();
         hexstr_to_bev_u8(&s, &mut v)?;
         Ok(G2(v))
+    }
+
+    pub fn generator() -> Self {
+        let v = Self::new();
+        unsafe {
+            rust_libpbc::get_g2(
+                *CONTEXT_FR256,
+                v.base_vector().as_ptr() as *mut _,
+                G2_SIZE_FR256 as u64,
+            );
+        }
+        v
     }
 }
 
@@ -162,6 +277,20 @@ impl Hashable for G2 {
     fn hash(&self, state: &mut Hasher) {
         "G2".hash(state);
         self.base_vector().hash(state);
+    }
+}
+
+impl Eq for G2 {}
+impl PartialEq for G2 {
+    fn eq(&self, b: &Self) -> bool {
+        self.0[..] == b.0[..]
+    }
+}
+
+impl stdhash::Hash for G2 {
+    fn hash<H: stdhash::Hasher>(&self, state: &mut H) {
+        stdhash::Hash::hash("G2", state);
+        stdhash::Hash::hash(&self.0[..], state);
     }
 }
 
@@ -186,6 +315,12 @@ impl GT {
     pub fn to_str(&self) -> String {
         u8v_to_typed_str("GT", &self.base_vector())
     }
+
+    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+        let mut v = GT::wv();
+        hexstr_to_bev_u8(&s, &mut v)?;
+        Ok(GT(v))
+    }
 }
 
 impl fmt::Display for GT {
@@ -201,6 +336,13 @@ impl Hashable for GT {
     }
 }
 
+impl Eq for GT {}
+impl PartialEq for GT {
+    fn eq(&self, b: &Self) -> bool {
+        self.0[..] == b.0[..]
+    }
+}
+
 // -----------------------------------------
 #[derive(Copy, Clone)]
 pub struct SecretKey(Zr);
@@ -212,6 +354,11 @@ impl SecretKey {
 
     pub fn to_str(&self) -> String {
         u8v_to_typed_str("SKey", &self.base_vector())
+    }
+
+    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+        let z = Zr::from_str(s)?;
+        Ok(SecretKey(z))
     }
 }
 
@@ -228,7 +375,15 @@ impl Hashable for SecretKey {
     }
 }
 
+impl Eq for SecretKey {}
+impl PartialEq for SecretKey {
+    fn eq(&self, b: &Self) -> bool {
+        self.0 == b.0
+    }
+}
+
 // -----------------------------------------
+
 #[derive(Copy, Clone)]
 pub struct PublicKey(G2);
 
@@ -239,6 +394,11 @@ impl PublicKey {
 
     pub fn to_str(&self) -> String {
         u8v_to_typed_str("PKey", &self.base_vector())
+    }
+
+    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+        let g = G2::from_str(s)?;
+        Ok(PublicKey(g))
     }
 }
 
@@ -261,7 +421,24 @@ impl Hashable for PublicKey {
     }
 }
 
+impl Eq for PublicKey {}
+impl PartialEq for PublicKey {
+    fn eq(&self, b: &Self) -> bool {
+        self.0 == b.0
+    }
+}
+
+impl stdhash::Hash for PublicKey {
+    // we often want to look things up by public key
+    // std::HashMap needs this
+    fn hash<H: stdhash::Hasher>(&self, state: &mut H) {
+        stdhash::Hash::hash("PKey", state);
+        stdhash::Hash::hash(&self.0, state);
+    }
+}
+
 // -----------------------------------------
+
 #[derive(Copy, Clone)]
 pub struct SecretSubKey(G1);
 
@@ -272,6 +449,11 @@ impl SecretSubKey {
 
     pub fn to_str(&self) -> String {
         u8v_to_typed_str("SSubKey", &self.base_vector())
+    }
+
+    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+        let g = G1::from_str(s)?;
+        Ok(SecretSubKey(g))
     }
 }
 
@@ -288,6 +470,13 @@ impl Hashable for SecretSubKey {
     }
 }
 
+impl Eq for SecretSubKey {}
+impl PartialEq for SecretSubKey {
+    fn eq(&self, b: &Self) -> bool {
+        self.0 == b.0
+    }
+}
+
 // -----------------------------------------
 #[derive(Copy, Clone)]
 pub struct PublicSubKey(G2);
@@ -299,6 +488,11 @@ impl PublicSubKey {
 
     pub fn to_str(&self) -> String {
         u8v_to_typed_str("PSubKey", &self.base_vector())
+    }
+
+    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+        let g = G2::from_str(s)?;
+        Ok(PublicSubKey(g))
     }
 }
 
@@ -315,6 +509,13 @@ impl Hashable for PublicSubKey {
     }
 }
 
+impl Eq for PublicSubKey {}
+impl PartialEq for PublicSubKey {
+    fn eq(&self, b: &Self) -> bool {
+        self.0 == b.0
+    }
+}
+
 // -----------------------------------------
 
 #[derive(Copy, Clone)]
@@ -327,6 +528,11 @@ impl Signature {
 
     pub fn to_str(&self) -> String {
         u8v_to_typed_str("Sig", &self.base_vector())
+    }
+
+    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+        let g = G1::from_str(s)?;
+        Ok(Signature(g))
     }
 }
 
@@ -349,6 +555,13 @@ impl Hashable for Signature {
     }
 }
 
+impl Eq for Signature {}
+impl PartialEq for Signature {
+    fn eq(&self, b: &Self) -> bool {
+        self.0 == b.0
+    }
+}
+
 // -----------------------------------------
 
 #[derive(Copy, Clone)]
@@ -365,7 +578,7 @@ pub fn sign_hash(h: &Hash, skey: &SecretKey) -> Signature {
     let v = G1::new();
     unsafe {
         rust_libpbc::sign_hash(
-            PBC_CONTEXT_FR256 as u64,
+            *CONTEXT_FR256,
             v.base_vector().as_ptr() as *mut _,
             skey.base_vector().as_ptr() as *mut _,
             h.base_vector().as_ptr() as *mut _,
@@ -379,7 +592,7 @@ pub fn check_hash(h: &Hash, sig: &Signature, pkey: &PublicKey) -> bool {
     // check a hash with a raw signature, return t/f
     unsafe {
         0 == rust_libpbc::check_signature(
-            PBC_CONTEXT_FR256 as u64,
+            *CONTEXT_FR256,
             sig.base_vector().as_ptr() as *mut _,
             h.base_vector().as_ptr() as *mut _,
             HASH_SIZE as u64,
@@ -406,30 +619,28 @@ pub fn check_message(msg: &[u8], sig: &BlsSignature) -> bool {
 
 pub fn make_deterministic_keys(seed: &[u8]) -> (SecretKey, PublicKey, Signature) {
     let h = Hash::from_vector(&seed);
-    let sk = Zr::new(); // secret keys in Zr
-    let pk = G2::new(); // public keys in G2
+    let zr = Zr::acceptable_random_rehash(Zr::from(h));
+    let pt = G2::generator().clone(); // public keys in G2
     unsafe {
-        rust_libpbc::make_key_pair(
-            PBC_CONTEXT_FR256 as u64,
-            sk.base_vector().as_ptr() as *mut _,
-            pk.base_vector().as_ptr() as *mut _,
-            h.base_vector().as_ptr() as *mut _,
-            HASH_SIZE as u64,
-        );
+        rust_libpbc::exp_G2z(
+            *CONTEXT_FR256,
+            pt.base_vector().as_ptr() as *mut _,
+            zr.base_vector().as_ptr() as *mut _,
+        )
     }
-    let hpk = Hash::from_vector(&pk.base_vector());
-    let skey = SecretKey(sk);
-    let pkey = PublicKey(pk);
+    let skey = SecretKey(zr);
+    let pkey = PublicKey(pt);
+    let hpk = Hash::digest(&pkey);
     let sig = sign_hash(&hpk, &skey);
     (skey, pkey, sig)
 }
 
 pub fn check_keying(pkey: &PublicKey, sig: &Signature) -> bool {
-    check_hash(&Hash::from_vector(&pkey.base_vector()), &sig, &pkey)
+    check_hash(&Hash::digest(pkey), &sig, &pkey)
 }
 
 pub fn make_random_keys() -> (SecretKey, PublicKey, Signature) {
-    make_deterministic_keys(&Zr::random().base_vector())
+    make_deterministic_keys(&random::<[u8; 32]>())
 }
 
 // ------------------------------------------------------------------------
@@ -440,7 +651,7 @@ pub fn make_secret_subkey(skey: &SecretKey, seed: &[u8]) -> SecretSubKey {
     let sk = G1::new();
     unsafe {
         rust_libpbc::make_secret_subkey(
-            PBC_CONTEXT_FR256 as u64,
+            *CONTEXT_FR256,
             sk.base_vector().as_ptr() as *mut _,
             skey.base_vector().as_ptr() as *mut _,
             h.base_vector().as_ptr() as *mut _,
@@ -455,7 +666,7 @@ pub fn make_public_subkey(pkey: &PublicKey, seed: &[u8]) -> PublicSubKey {
     let pk = G2::new();
     unsafe {
         rust_libpbc::make_public_subkey(
-            PBC_CONTEXT_FR256 as u64,
+            *CONTEXT_FR256,
             pk.base_vector().as_ptr() as *mut _,
             pkey.base_vector().as_ptr() as *mut _,
             h.base_vector().as_ptr() as *mut _,
@@ -484,6 +695,11 @@ impl RVal {
     pub fn to_str(&self) -> String {
         u8v_to_typed_str("RVal", &self.base_vector())
     }
+
+    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+        let g = G2::from_str(s)?;
+        Ok(RVal(g))
+    }
 }
 
 impl fmt::Display for RVal {
@@ -496,6 +712,13 @@ impl Hashable for RVal {
     fn hash(&self, state: &mut Hasher) {
         "RVal".hash(state);
         self.base_vector().hash(state);
+    }
+}
+
+impl Eq for RVal {}
+impl PartialEq for RVal {
+    fn eq(&self, b: &Self) -> bool {
+        self.0 == b.0
     }
 }
 
@@ -530,7 +753,7 @@ pub fn ibe_encrypt(msg: &[u8], pkey: &PublicKey, id: &[u8]) -> EncryptedPacket {
     let pval = GT::new();
     unsafe {
         rust_libpbc::sakai_kasahara_encrypt(
-            PBC_CONTEXT_FR256 as u64,
+            *CONTEXT_FR256,
             rval.base_vector().as_ptr() as *mut _,
             pval.base_vector().as_ptr() as *mut _,
             pkid.base_vector().as_ptr() as *mut _,
@@ -558,7 +781,7 @@ pub fn ibe_decrypt(pack: &EncryptedPacket, skey: &SecretKey) -> Option<Vec<u8>> 
     let pval = GT::new();
     unsafe {
         rust_libpbc::sakai_kasahara_decrypt(
-            PBC_CONTEXT_FR256 as u64,
+            *CONTEXT_FR256,
             pval.base_vector().as_ptr() as *mut _,
             pack.rval.base_vector().as_ptr() as *mut _,
             skid.base_vector().as_ptr() as *mut _,
@@ -578,7 +801,7 @@ pub fn ibe_decrypt(pack: &EncryptedPacket, skey: &SecretKey) -> Option<Vec<u8>> 
     let rhash = Hash::from_vector(&concv);
     unsafe {
         let ans = rust_libpbc::sakai_kasahara_check(
-            PBC_CONTEXT_FR256 as u64,
+            *CONTEXT_FR256,
             pack.rval.base_vector().as_ptr() as *mut _,
             pkid.base_vector().as_ptr() as *mut _,
             rhash.base_vector().as_ptr() as *mut _,

@@ -8,6 +8,7 @@ generic-array = "0.12.0"
 hex = "0.3.2"
 lazy_static = "1.1.0"
 rand = "0.5"
+rust-crypto = "0.2.36"
 rust-gmp = "0.5.0"
 rust-libpbc = { git = "https://github.com/stegos/rust-pbcintf.git" }
 sha3 = "0.8.0"

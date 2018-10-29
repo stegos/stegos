@@ -43,15 +43,13 @@ use self::winvec::*;
 mod lev32; // little-endian byte vector represetation
 use self::lev32::*;
 
-// TODO: after debugging, make private u256
-pub mod u256; // internal represntation of field elements
+mod u256; // internal represntation of field elements
 use self::u256::*;
 
 pub mod fields;
 use self::fields::*;
 
-// TODO: after debugging, make private fq51
-pub mod fq51; // coord representation for Elliptic curve points
+mod fq51; // coord representation for Elliptic curve points
 use self::fq51::*;
 
 pub mod ecpt; // uncompressed points, affine & projective coords
@@ -62,6 +60,24 @@ use self::cpt::*;
 
 use lazy_static::*;
 
+// -------------------------------------------------------------------
+// Signature Public Key - for checking curve constants validity
+//
+// Unit test: check_init() - validates the curve constants shown
+// here for Curve1174.
+//
+// The ECC init won't succeed unless they checksum to the value
+// shown below for HASH_CONSTS. That serves as a first line of defense
+// against accidental corruption.
+//
+// For defense against intentional corruption with crafted curves,
+// the unit test, check_init(), verifies the hash of these string
+// constants against the known BLS signature, SIG_1174, using the
+// public key, SIG_PKEY, shown here.
+
+const SIG_PKEY : &str = "21aa87b48c3fce1699ffd0b4be79fb6ad2eb0b941ffd2b45a08ef12939885bcad095484e8a3fbf0ebee88f3874a07cc4570bc439fa5c5457d73c10ef131d42d601";
+const SIG_1174: &str = "936cc106fed4b44ec9c9793eff701486eee6237347a4bca1d5a04314e484024401";
+
 // -------------------------------------------------------
 // Curve1174 General Constants
 // Curve is Edwards curve:  x^2 + y^2 = 1 + d*x^2*y^2
@@ -71,19 +87,47 @@ use lazy_static::*;
 pub const CURVE_D: i64 = -1174; // the d value in the curve equation
 pub const CURVE_H: i64 = 4; // cofactor of curve group
 
+pub const CURVE_R: &str = "01FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF77965C4DFD307348944D45FD166C971";
+pub const CURVE_Q: &str = "07FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF7";
+pub const GEN_X: &str = "037FBB0CEA308C479343AEE7C029A190C021D96A492ECD6516123F27BCE29EDA";
+pub const GEN_Y: &str = "06B72F82D47FB7CC6656841169840E0C4FE2DEE2AF3F976BA4CCB1BF9B46360E";
+pub const HASH_CONSTS: &str = "f68bce5c9388a3f20c8b3429ddd75333d156488a60a80ac373720f1d2d9d8313";
+
 lazy_static! {
-    pub static ref R: U256 =
-        U256::from_str("01FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF77965C4DFD307348944D45FD166C971").unwrap();
-    pub static ref Q: U256 =
-        U256::from_str("07FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF7").unwrap();
+    pub static ref INIT: bool = {
+        let mut state = Hasher::new();
+        CURVE_R.hash(&mut state);
+        CURVE_Q.hash(&mut state);
+        GEN_X.hash(&mut state);
+        GEN_Y.hash(&mut state);
+        format!("D{} H{}", CURVE_D, CURVE_H).hash(&mut state);
+        let h = state.result();
+        let chk = Hash::basic_from_str(&HASH_CONSTS).expect("Invalid hexstr: HASH_CONSTS");
+        assert!(h == chk, "Invalid curve constants checksum");
+        check_prng();
+        true
+    };
+    pub static ref R: U256 = {
+        assert!(*INIT, "can't happen");
+        U256::from_str(CURVE_R).expect("Invalid hexstr: R")
+    };
+    pub static ref RMIN: Fr = {
+        assert!(*INIT, "can't happen");
+        Fr::acceptable_minval()
+    };
+    pub static ref Q: U256 = {
+        assert!(*INIT, "can't happen");
+        U256::from_str(CURVE_Q).expect("Invalid hexstr: Q")
+    };
+    pub static ref QMIN: Fq = {
+        assert!(*INIT, "can't happen");
+        Fq::acceptable_minval()
+    };
     pub static ref G: ECp = {
-        let gen_x =
-            Fq::from_str("037FBB0CEA308C479343AEE7C029A190C021D96A492ECD6516123F27BCE29EDA")
-                .unwrap();
-        let gen_y =
-            Fq::from_str("06B72F82D47FB7CC6656841169840E0C4FE2DEE2AF3F976BA4CCB1BF9B46360E")
-                .unwrap();
-        ECp::try_from_xy(&gen_x, &gen_y).unwrap()
+        assert!(*INIT, "can't happen");
+        let gen_x = Fq::from_str(GEN_X).expect("Invalid Gen X hexstr");
+        let gen_y = Fq::from_str(GEN_Y).expect("Invalid Gen Y hexstr");
+        ECp::try_from_xy(&gen_x, &gen_y).expect("Invalid generator description")
     };
 }
 
@@ -103,6 +147,25 @@ impl fmt::Debug for CurveError {
             }
         )
     }
+}
+
+fn check_prng() {
+    use std::f32;
+    let n = 1_000_000;
+    let (sum, sumsq) = (0..n).fold((0.0f32, 0.0f32), |pair, _| {
+        let (s, s2) = pair;
+        let x = random::<f32>() - 0.5;
+        (s + x, s2 + x * x)
+    });
+    let mn = sum / (n as f32);
+    let stdev = f32::sqrt(sumsq / (n as f32));
+    let invrt12 = 1.0 / f32::sqrt(12.0);
+    let delta = 5.0 * invrt12 / f32::sqrt(n as f32);
+    // approx 5-sigma bounds
+    // could still fail on legitimate system, but only 1 in 3.5 million plausible
+    let msg = "plausible PRNG failure";
+    assert!(f32::abs(mn) < delta, msg);
+    assert!(f32::abs(stdev - invrt12) < delta, msg);
 }
 
 // -------------------------------------------------------
@@ -189,6 +252,33 @@ mod tests {
         let pt = ECp::compress(ECp::inf());
         let ept = ECp::decompress(pt).unwrap();
     }
+
+    #[test]
+    fn chk_init() {
+        use pbc::secure;
+        let sig_pkey = secure::PublicKey::from_str(&SIG_PKEY).expect("Invalid hexstr: SIG_PKEY");
+        let sig = secure::Signature::from_str(&SIG_1174).expect("Invalid hexstr: SIG_1174");
+        let h = Hash::basic_from_str(&HASH_CONSTS).expect("Invalid hexstr: HASH_CONSTS");
+        assert!(
+            secure::check_hash(&h, &sig, &sig_pkey),
+            "Invalid Curve1174 init constants"
+        );
+    }
+
+    #[test]
+    fn chk_encryption() {
+        use hash;
+        let (skey, pkey, sig) = make_random_keys();
+        check_keying(&pkey, &sig).expect("Random keying failed");
+        let msg = hash::hash_nbytes(72, b"This is a test");
+        let mchk = Hash::from_vector(&msg);
+        let payload = aes_encrypt(&msg, &pkey).expect("AES Encryption failed");
+        let echk = Hash::from_vector(&payload.ctxt);
+        assert!(mchk != echk, "AES Encryption produced identity mapping");
+        let dmsg = aes_decrypt(&payload, &skey).unwrap();
+        let dchk = Hash::from_vector(&dmsg);
+        assert!(mchk == dchk, "AES Decryption failed");
+    }
 }
 
 // ------------------------------------------------------------------------------------------
@@ -247,25 +337,32 @@ pub fn curve1174_tests() {
     println!("hash -> {}", cpt);
     println!("hash -> {}", ept2);
 
-    // simulate Bulletproof basis vector derivation
-    /*
-    let mut gen_hash = Hash::digest(&*G);
-    let hgen = Pt::from(ECp::from(gen_hash));
-    println!("hgen = {}", hgen);
-    let mut g_bpvec = Vec::<Pt>::new();
-    for ix in 0..64 {
-        gen_hash = Hash::digest(&gen_hash);
-        let pt = ECp::from(gen_hash);
-        let cpt = Pt::from(pt);
-        g_bpvec.push(cpt);
-        println!("g{}: {}", ix, cpt);
-    }
-    let mut h_bpvec = Vec::<Pt>::new();
-    for ix in 0..64 {
-        gen_hash = Hash::digest(&gen_hash);
-        let pt = ECp::from(gen_hash);
-        let cpt = Pt::from(pt);
-        h_bpvec.push(cpt);
-        println!("h{}: {}", ix, cpt);
-    }
-    */}
+    // ---------------------------------------------------------------
+    let (skey, pkey, sig) = make_deterministic_keys(b"Testing");
+    println!("Key Check = {}", check_keying(&pkey, &sig).unwrap());
+    println!("skey = {}", skey);
+    println!("pkey = {}", pkey);
+
+    let delta = Fr::random();
+    println!("delta = {}", delta);
+
+    let cpt = Pt::from(pkey);
+    let ept = ECp::try_from(cpt).unwrap() + delta * *G;
+    let delta_pkey = PublicKey::from(ept);
+    println!("delta_key = {}", Pt::from(delta_pkey));
+
+    let delta_skey = SecretKey::from(Fr::from(skey) + delta);
+
+    let hmsg = Hash::basic_from_str(&HASH_CONSTS).unwrap();
+    let sig = sign_hash(&hmsg, &skey);
+    println!("sig = (u: {}, K: {})", sig.u, sig.K);
+
+    use hash;
+    let msg = hash::hash_nbytes(72, b"This is a test");
+    println!("msg = {}", Hash::from_vector(&msg));
+    let payload = aes_encrypt(&msg, &pkey).unwrap();
+    println!("cmsg = {}", Hash::from_vector(&payload.ctxt));
+    let dmsg = aes_decrypt(&payload, &skey).unwrap();
+    println!("dmsg = {}", Hash::from_vector(&dmsg));
+    assert!(dmsg == msg, "Failure of encrypt/decrypt cycle");
+}

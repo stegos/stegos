@@ -22,12 +22,14 @@
 // SOFTWARE.
 
 mod block;
+mod blockchain;
 mod input;
 mod output;
 mod payload;
 mod merkle;
 
 pub use block::*;
+pub use blockchain::*;
 pub use input::*;
 pub use output::*;
 pub use merkle::*;

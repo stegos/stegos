@@ -27,6 +27,8 @@ use std::mem;
 use std::slice;
 use utils::*;
 
+use std::hash as stdhash;
+
 // -----------------------------------------------------
 // Hashing with SHA3
 
@@ -90,6 +92,12 @@ impl fmt::Debug for Hash {
 impl fmt::Display for Hash {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(self, f)
+    }
+}
+
+impl stdhash::Hash for Hash {
+    fn hash<H: stdhash::Hasher>(&self, state: &mut H) {
+        stdhash::Hash::hash(&self.0[..], state);
     }
 }
 

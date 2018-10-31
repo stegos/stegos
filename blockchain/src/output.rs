@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use std::fmt;
 use payload::EncryptedPayload;
 use stegos_crypto::bulletproofs::BulletProof;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
@@ -72,11 +73,25 @@ impl Output {
     }
 }
 
+impl fmt::Display for Output {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Output({})", self.hash)
+    }
+}
+
+
 impl Hashable for Output {
     fn hash(&self, state: &mut Hasher) {
         // Don't include self.hash because it is redundant in this case
         self.recipient.hash(state);
         self.proof.hash(state);
         self.payload.hash(state);
+    }
+}
+
+impl Hashable for Box<Output> {
+    fn hash(&self, state: &mut Hasher) {
+        let output = self.as_ref();
+        output.hash(state)
     }
 }

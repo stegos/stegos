@@ -34,6 +34,8 @@ extern crate futures;
 extern crate libp2p;
 extern crate stegos_config;
 extern crate stegos_network;
+extern crate stegos_crypto;
+extern crate stegos_blockchain;
 extern crate tokio;
 extern crate tokio_stdin;
 
@@ -46,6 +48,8 @@ use std::mem;
 use std::path::PathBuf;
 use std::process;
 use stegos_config::{Config, ConfigError};
+use stegos_blockchain::Blockchain;
+use stegos_crypto::pbc::init_pairings;
 use tokio::runtime::Runtime;
 
 fn load_configuration(args: &ArgMatches) -> Result<Config, Box<Error>> {
@@ -99,6 +103,11 @@ fn run() -> Result<(), Box<Error>> {
 
     // Initialize logger
     let log = initialize_logger(&args)?;
+
+    // Initialize blockchain
+    // TODO: remove init_pairings()
+    init_pairings().expect("pbc initialization");
+    let mut _blockchain = Blockchain::new();
 
     // Initialize network
     let mut rt = Runtime::new().unwrap();

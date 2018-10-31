@@ -24,13 +24,13 @@
 use chrono::prelude::Utc;
 use input::Input;
 use output::Output;
-use payload::EncryptedPayload;
+use merkle::*;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::fast::Zr;
 use stegos_crypto::pbc::secure::*;
-use stegos_crypto::*;
 
 // The default file name for configuration
+#[allow(dead_code)]
 const GENESIS_BLOCK_HASH_STRING: &'static str = "genesis";
 
 /// Block Header.
@@ -67,11 +67,6 @@ pub struct BlockHeader {
     pub outputs_range_hash: Hash,
 }
 
-pub enum OutputMerkleTreeNode {
-    Hash(Hash),
-    Output(Output),
-}
-
 /// Block.
 pub struct Block {
     /// Block Header.
@@ -82,7 +77,7 @@ pub struct Block {
 
     /// The list of transaction outputs in a Merkle Tree.
     // TODO: replace with Merkle tree
-    pub outputs: Vec<OutputMerkleTreeNode>,
+    pub outputs: Merkle<Box<Output>>,
 
     /// Ordered list of witness public keys for current epoch.
     /// The leader node is also considered a witness during the current epoch.
@@ -104,7 +99,7 @@ impl Block {
         witnesses: &[PublicKey],
         inputs: &[Input],
         outputs: &[Output],
-    ) -> Self {
+    ) -> (Block, Vec<MerklePath>) {
         // Get current time
         let timestamp = Utc::now().timestamp() as u64;
 
@@ -129,8 +124,10 @@ impl Block {
         let outputs_range_hash = hasher.result();
         let outputs = outputs
             .iter()
-            .map(|o| OutputMerkleTreeNode::Output(o.clone()))
-            .collect();
+            .map(|o| Box::<Output>::new(o.clone()))
+            .collect::<Vec<Box<Output>>>();
+
+        let (outputs, paths) = Merkle::from_array(&outputs);
 
         // Create witnesses array
         let witnesses = witnesses.to_vec();
@@ -174,29 +171,38 @@ impl Block {
         sig.hash(&mut hasher);
 
         // Create the block
-        Block {
+        let block = Block {
             header,
             inputs,
             outputs,
             witnesses,
             sig,
-        }
-    }
+        };
 
-    pub fn genesis() -> Block {
+        (block, paths)
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use stegos_crypto::pbc::init_pairings;
+    use stegos_crypto::*;
+    use payload::EncryptedPayload;
+
+    pub fn fake(
+        version: u64,
+        epoch: u64,
+        inputs: &[Input],
+        previous: &Hash,
+    ) -> (Block, Vec<MerklePath>) {
         let seed: [u8; 4] = [1, 2, 3, 4];
 
         let (skey, pubkey, _sig) = make_deterministic_keys(&seed);
         let leader = pubkey;
 
-        let version: u64 = 1;
-        let epoch: u64 = 1;
-        let previous = Hash::from_str(GENESIS_BLOCK_HASH_STRING);
         let adjustment: Zr = Zr::new();
         let witnesses = [leader.clone()];
-
-        // Genesis doesn't have inputs
-        let inputs = [];
 
         // But have one hard-coded output
         let (proof, _gamma) = bulletproofs::make_range_proof(1234567890);
@@ -205,21 +211,28 @@ impl Block {
         let outputs = [output];
 
         Block::sign(
-            &skey, version, epoch, previous, leader, adjustment, &witnesses, &inputs, &outputs,
+            &skey,
+            version,
+            epoch,
+            previous.clone(),
+            leader,
+            adjustment,
+            &witnesses,
+            &inputs,
+            &outputs,
         )
     }
-}
 
-#[cfg(test)]
-pub mod tests {
-    use super::*;
-    use stegos_crypto::pbc::init_pairings;
+    pub fn genesis() -> (Block, Vec<MerklePath>) {
+        let previous = Hash::from_str(GENESIS_BLOCK_HASH_STRING);
+        fake(1, 1, &[], &previous)
+    }
 
     #[test]
-    fn genesis() {
+    fn test_genesis() {
         init_pairings().expect("pbc initialization");
 
-        let genesis = Block::genesis();
+        let (genesis, _) = genesis();
         let header = genesis.header;
 
         assert_eq!(header.previous, Hash::from_str(GENESIS_BLOCK_HASH_STRING));

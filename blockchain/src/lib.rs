@@ -23,6 +23,7 @@
 
 mod block;
 mod blockchain;
+mod genesis;
 mod input;
 mod merkle;
 mod output;

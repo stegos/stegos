@@ -23,22 +23,26 @@
 
 use std::fmt;
 use stegos_crypto::hash::*;
+use stegos_crypto::pbc::secure::PublicKey;
 use stegos_crypto::pbc::secure::RVal;
+use stegos_crypto::pbc::secure::ibe_encrypt;
+use stegos_crypto::curve1174::fields::Fr;
+use stegos_crypto::pbc::fast::Zr;
 use stegos_crypto::utils::*;
 
 #[derive(Clone)]
 pub struct EncryptedPayload {
-    r: RVal,
-    ctxt: Vec<u8>,
+    rval: RVal,
+    cmsg: Vec<u8>,
 }
 
 impl fmt::Debug for EncryptedPayload {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "r={} ctxt={}",
-            self.r.to_str(),
-            u8v_to_hexstr(&self.ctxt)
+            "rval={} cmsg={}",
+            self.rval.to_str(),
+            u8v_to_hexstr(&self.cmsg)
         )
     }
 }
@@ -51,18 +55,32 @@ impl fmt::Display for EncryptedPayload {
 
 impl Hashable for EncryptedPayload {
     fn hash(&self, state: &mut Hasher) {
-        self.r.hash(state);
-        self.ctxt[..].hash(state);
+        self.rval.hash(state);
+        self.cmsg[..].hash(state);
     }
 }
 
+/// Package id for payments.
+/// Must be four-byte long.
+static PAYLOAD_PAYMENT_ID: [u8; 4] = *b"pmnt";
+
 impl EncryptedPayload {
-    /// Returns some garbage for tests.
-    // TODO: remove
-    pub fn garbage() -> EncryptedPayload {
+    pub fn new_payment(delta: Zr, gamma: Fr, amount: i64, pkey: PublicKey) -> EncryptedPayload {
+        // Convert amount to BE vector.
+        use std::mem::transmute;
+        let amount_bytes: [u8; 8] = unsafe { transmute(amount.to_be()) };
+        let gamma_bytes: [u8; 32] = gamma.bits().to_lev_u8();
+
+        let payload: Vec<u8> = [&amount_bytes[..], delta.base_vector(), &gamma_bytes[..]].concat();
+        // Ensure that the total length of package is 64.
+        assert_eq!(PAYLOAD_PAYMENT_ID.len() + payload.len(), 64);
+
+        // String together a gamma, delta, and Amount (i64) all in one long vector and encrypt it.
+        let packet = ibe_encrypt(&payload, &pkey, &PAYLOAD_PAYMENT_ID);
+
         EncryptedPayload {
-            r: RVal::new(),
-            ctxt: vec![0; 5],
+            rval: packet.rval().clone(),
+            cmsg: packet.cmsg().clone(),
         }
     }
 }

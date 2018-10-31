@@ -60,7 +60,9 @@ impl Output {
     pub fn new(recipient: PublicKey, proof: BulletProof, payload: EncryptedPayload) -> Output {
         let mut hasher = Hasher::new();
         recipient.hash(&mut hasher);
-        proof.hash(&mut hasher);
+        // TODO: UTXO hash is non-deterministic
+        // https://github.com/stegos/stegos/issues/125
+        // proof.hash(&mut hasher);
         payload.hash(&mut hasher);
         let hash = hasher.result();
 
@@ -83,7 +85,9 @@ impl Hashable for Output {
     fn hash(&self, state: &mut Hasher) {
         // Don't include self.hash because it is redundant in this case
         self.recipient.hash(state);
-        self.proof.hash(state);
+        // TODO: UTXO hash is non-deterministic
+        // https://github.com/stegos/stegos/issues/125
+        // proof.hash(&mut hasher);
         self.payload.hash(state);
     }
 }

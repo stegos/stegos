@@ -21,17 +21,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use chrono::prelude::Utc;
 use input::Input;
 use merkle::*;
 use output::Output;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::fast::Zr;
 use stegos_crypto::pbc::secure::*;
-
-// The default file name for configuration
-#[allow(dead_code)]
-const GENESIS_BLOCK_HASH_STRING: &'static str = "genesis";
 
 /// Block Header.
 #[derive(Debug)]
@@ -94,15 +89,13 @@ impl Block {
         version: u64,
         epoch: u64,
         previous: Hash,
+        timestamp: u64,
         leader: PublicKey,
         adjustment: Zr,
         witnesses: &[PublicKey],
         inputs: &[Input],
         outputs: &[Output],
     ) -> (Block, Vec<MerklePath>) {
-        // Get current time
-        let timestamp = Utc::now().timestamp() as u64;
-
         // Create inputs array
         let mut hasher = Hasher::new();
         let inputs_count: u64 = inputs.len() as u64;
@@ -114,7 +107,6 @@ impl Block {
         let inputs = inputs.to_vec();
 
         // Create outputs tree
-        // TODO: replace with actual Merkle tree
         let mut hasher = Hasher::new();
         let outputs_count: u64 = outputs.len() as u64;
         outputs_count.hash(&mut hasher);
@@ -186,6 +178,9 @@ impl Block {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use chrono::prelude::Utc;
+
+    use genesis::genesis_dev;
     use payload::EncryptedPayload;
     use stegos_crypto::pbc::init_pairings;
     use stegos_crypto::*;
@@ -197,15 +192,19 @@ pub mod tests {
         previous: &Hash,
     ) -> (Block, Vec<MerklePath>) {
         let seed: [u8; 4] = [1, 2, 3, 4];
+        // Get current time
+        let timestamp = Utc::now().timestamp() as u64;
 
-        let (skey, pubkey, _sig) = make_deterministic_keys(&seed);
-        let leader = pubkey;
+        let (skey, pkey, _sig) = make_deterministic_keys(&seed);
+        let leader = pkey;
 
-        let adjustment: Zr = Zr::new();
+        let delta: Zr = Zr::new();
         let witnesses = [leader.clone()];
 
         // But have one hard-coded output
-        let (proof, _gamma) = bulletproofs::make_range_proof(1234567890);
+        let amount: i64 = 112;
+        let (proof, _gamma) = bulletproofs::make_range_proof(amount);
+        // TODO: replace with real encrypted payload
         let payload = EncryptedPayload::garbage();
         let output = Output::new(leader.clone(), proof, payload);
         let outputs = [output];
@@ -215,27 +214,22 @@ pub mod tests {
             version,
             epoch,
             previous.clone(),
+            timestamp,
             leader,
-            adjustment,
+            delta,
             &witnesses,
             &inputs,
             &outputs,
         )
     }
 
-    pub fn genesis() -> (Block, Vec<MerklePath>) {
-        let previous = Hash::from_str(GENESIS_BLOCK_HASH_STRING);
-        fake(1, 1, &[], &previous)
-    }
-
     #[test]
     fn test_genesis() {
         init_pairings().expect("pbc initialization");
 
-        let (genesis, _) = genesis();
+        let (genesis, _) = genesis_dev();
         let header = genesis.header;
 
-        assert_eq!(header.previous, Hash::from_str(GENESIS_BLOCK_HASH_STRING));
         assert_eq!(header.epoch, 1);
         assert_eq!(header.version, 1);
     }

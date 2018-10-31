@@ -25,6 +25,7 @@ use std::collections::HashMap;
 use std::vec::Vec;
 
 use block::*;
+use genesis::*;
 use merkle::*;
 use output::*;
 use stegos_crypto::hash::*;
@@ -65,7 +66,8 @@ impl Blockchain {
             output_by_hash,
         };
 
-        blockchain.register_genesis_block();
+        let (genesis, paths) = genesis_dev();
+        blockchain.register_block(genesis, paths);
 
         blockchain
     }
@@ -149,16 +151,13 @@ impl Blockchain {
         // Must be the last line to make Rust happy.
         self.blocks.push(block);
     }
-
-    fn register_genesis_block(&mut self) {
-        assert!(self.blocks.is_empty())
-    }
 }
 
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use block::tests::{fake, genesis};
+
+    use block::tests::fake;
     use input::*;
     use stegos_crypto::pbc::init_pairings;
     use stegos_crypto::pbc::secure::*;
@@ -185,11 +184,7 @@ pub mod tests {
     fn basic() {
         init_pairings().expect("pbc initialization");
         let mut blockchain = Blockchain::new();
-
-        // TODO: remove this stub
-        let (genesis, paths) = genesis();
-        blockchain.register_block(genesis, paths);
-
+        assert!(blockchain.blocks().len() > 0);
         iterate(&mut blockchain);
         iterate(&mut blockchain);
         iterate(&mut blockchain);

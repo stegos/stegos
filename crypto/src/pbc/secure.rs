@@ -368,6 +368,12 @@ impl fmt::Display for SecretKey {
     }
 }
 
+impl fmt::Debug for SecretKey {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.to_str())
+    }
+}
+
 impl Hashable for SecretKey {
     fn hash(&self, state: &mut Hasher) {
         "SKey".hash(state);
@@ -399,6 +405,7 @@ impl PublicKey {
     pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
         let g = G2::from_str(s)?;
         Ok(PublicKey(g))
+
     }
 }
 
@@ -734,6 +741,16 @@ pub struct EncryptedPacket {
     id: Vec<u8>,     // IBE ID
     rval: RVal,      // R_val used for SAKE encryption
     cmsg: Vec<u8>,   // encrypted payload
+}
+
+impl EncryptedPacket {
+    pub fn rval(&self) -> &RVal {
+        &self.rval
+    }
+
+    pub fn cmsg(&self) -> &Vec<u8> {
+        &self.cmsg
+    }
 }
 
 pub fn ibe_encrypt(msg: &[u8], pkey: &PublicKey, id: &[u8]) -> EncryptedPacket {

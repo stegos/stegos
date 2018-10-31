@@ -28,17 +28,17 @@ use stegos_crypto::utils::*;
 
 #[derive(Clone)]
 pub struct EncryptedPayload {
-    r: RVal,
-    ctxt: Vec<u8>,
+    rval: RVal,
+    cmsg: Vec<u8>,
 }
 
 impl fmt::Debug for EncryptedPayload {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "r={} ctxt={}",
-            self.r.to_str(),
-            u8v_to_hexstr(&self.ctxt)
+            "rval={} cmsg={}",
+            self.rval.to_str(),
+            u8v_to_hexstr(&self.cmsg)
         )
     }
 }
@@ -51,8 +51,8 @@ impl fmt::Display for EncryptedPayload {
 
 impl Hashable for EncryptedPayload {
     fn hash(&self, state: &mut Hasher) {
-        self.r.hash(state);
-        self.ctxt[..].hash(state);
+        self.rval.hash(state);
+        self.cmsg[..].hash(state);
     }
 }
 
@@ -61,8 +61,8 @@ impl EncryptedPayload {
     // TODO: remove
     pub fn garbage() -> EncryptedPayload {
         EncryptedPayload {
-            r: RVal::new(),
-            ctxt: vec![0; 5],
+            rval: RVal::new(),
+            cmsg: vec![0; 5],
         }
     }
 }

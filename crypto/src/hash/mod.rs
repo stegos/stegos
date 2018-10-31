@@ -60,11 +60,10 @@ impl Hash {
         hasher.result()
     }
 
-    pub fn from_str(msg: &str) -> Hash {
-        // produce a Hash from a single string
-        let mut hasher = Hasher::new();
-        (*msg).hash(&mut hasher);
-        hasher.result()
+    pub fn from_str(s: &str) -> Result<Hash, hex::FromHexError> {
+        let mut v = [0u8; HASH_SIZE];
+        hexstr_to_bev_u8(&s, &mut v)?;
+        Ok(Hash(v))
     }
 
     pub fn digest(msg: &Hashable) -> Hash {

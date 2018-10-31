@@ -46,6 +46,7 @@ use utils::*;
 use std::cmp::Ordering;
 use std::hash as stdhash;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use rand::{Rng, StdRng, SeedableRng};
 
 // ---------------------------------------------------------------------------------
 
@@ -100,12 +101,13 @@ impl Zr {
         mk
     }
 
-    pub fn random() -> Self {
-        let mut x = Zr(random::<[u8; ZR_SIZE_AR160]>());
+    pub fn random(seed: [u8; 32]) -> Self {
+        let mut rng: StdRng = SeedableRng::from_seed(seed);
+        let mut x = Zr(rng.gen::<[u8; ZR_SIZE_AR160]>());
         let min = *MIN_AR160;
         let max = *MAX_AR160;
         while x < min || x > max {
-            x = Zr(random::<[u8; ZR_SIZE_AR160]>());
+            x = Zr(rng.gen::<[u8; ZR_SIZE_AR160]>());
         }
         x
     }

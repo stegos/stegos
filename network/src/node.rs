@@ -28,20 +28,24 @@ use fnv::FnvHashMap;
 use futures::future::{loop_fn, Either, Future, Loop};
 use futures::sync::mpsc;
 use futures::{IntoFuture, Sink, Stream};
+use ipnetwork::IpNetwork;
 use libp2p::core::{either::EitherOutput, swarm, upgrade};
 use libp2p::core::{Multiaddr, PublicKey, Transport};
 use libp2p::floodsub;
 use libp2p::mplex;
-use libp2p::peerstore::PeerId;
+use libp2p::multiaddr::{Protocol, ToMultiaddr};
+use libp2p::peerstore::{memory_peerstore, PeerAccess, PeerId, Peerstore};
 use libp2p::secio::{SecioConfig, SecioKeyPair, SecioOutput};
 use libp2p::tcp::TcpConfig;
 use parking_lot::RwLock;
+use pnet::datalink;
 use slog::Logger;
 use std::fs::File;
 use std::io::Error as IoError;
 use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 use stegos_config::ConfigNetwork;
 
 // use super::{echo::handler::handler as echo_handler, EchoUpgrade};
@@ -65,6 +69,10 @@ pub(crate) struct Inner {
     pub(crate) floodsub_connections: RwLock<Vec<Multiaddr>>,
     // All remote connections
     pub(crate) remote_connections: RwLock<FnvHashMap<Multiaddr, RemoteInfo>>,
+    // Node's PeerId
+    peer_id: Option<PeerId>,
+    // PeerStore for known Peers
+    peer_store: Arc<memory_peerstore::MemoryPeerstore>,
     // Logger for the Node
     pub(crate) logger: Logger,
 }
@@ -75,14 +83,16 @@ pub(crate) struct RemoteInfo {
 }
 
 impl Node {
-    pub fn new(cfg: ConfigNetwork, logger: &Logger) -> Self {
+    pub fn new(cfg: &ConfigNetwork, logger: &Logger) -> Self {
         let inner = Arc::new(RwLock::new(Inner {
-            config: cfg,
+            config: cfg.clone(),
             floodsub_ctl: None,
             floodsub_topic: None,
             dial_tx: None,
             floodsub_connections: RwLock::new(Vec::new()),
             remote_connections: RwLock::new(FnvHashMap::default()),
+            peer_id: None,
+            peer_store: Arc::new(memory_peerstore::MemoryPeerstore::empty()),
             logger: logger.new(o!("module" => "node")),
         }));
 
@@ -116,6 +126,31 @@ impl Node {
         Ok(())
     }
 
+    pub fn set_id<S>(&self, id: &S)
+    where
+        S: Into<String> + Clone,
+    {
+        let id: String = id.clone().into();
+        let topic = floodsub::TopicBuilder::new(id).build();
+        let inner = self.inner.read();
+        if let Some(floodsub_ctl) = inner.floodsub_ctl.clone() {
+            floodsub_ctl.subscribe(&topic);
+        }
+    }
+
+    pub fn send_to_id<S>(&self, id: &S, data: Vec<u8>) -> Result<(), Error>
+    where
+        S: Into<String> + Clone,
+    {
+        let id: String = id.clone().into();
+        let topic = floodsub::TopicBuilder::new(id).build();
+        let inner = self.inner.read();
+        if let Some(floodsub_ctl) = inner.floodsub_ctl.clone() {
+            floodsub_ctl.publish(&topic, data);
+        }
+        Ok(())
+    }
+
     pub fn run(
         &self,
     ) -> Result<
@@ -130,7 +165,10 @@ impl Node {
             let inner = inner.read();
             inner.config.clone()
         };
-        let listen_addr = &config.listen_address;
+        let mut bind_ip = Multiaddr::from(Protocol::Ip4(config.bind_ip.clone().parse()?));
+        bind_ip.append(Protocol::Tcp(config.bind_port));
+
+        let listen_addr = bind_ip;
         let private_key = key_from_file(&config.private_key)?;
         let public_key = key_from_file(&config.public_key)?;
         let netlog = {
@@ -142,7 +180,9 @@ impl Node {
         let transport = TcpConfig::new()
             .with_upgrade({
                 let secio = {
-                    let keypair = SecioKeyPair::rsa_from_pkcs8(private_key.as_slice(), public_key.clone()).unwrap();
+                    let keypair =
+                        SecioKeyPair::rsa_from_pkcs8(private_key.as_slice(), public_key.clone())
+                            .unwrap();
                     SecioConfig::new(keypair)
                 };
 
@@ -150,17 +190,21 @@ impl Node {
                     let nl2 = netlog.clone();
                     let inner = inner.clone();
                     move |out: SecioOutput<_>, addr| {
-                        let peer_info = RemoteInfo { peer_id: out.remote_key.into_peer_id() };
+                        let peer_info = RemoteInfo {
+                            peer_id: out.remote_key.into_peer_id(),
+                        };
                         debug!(nl2, "new connection";
                                 "remote_peer_id" => peer_info.peer_id.to_base58(),
                                 "remote_addr" => addr.to_string());
                         let inner = inner.write();
-                        inner.remote_connections.write().insert(addr.clone(), peer_info);
+                        inner
+                            .remote_connections
+                            .write()
+                            .insert(addr.clone(), peer_info);
                         out.stream
                     }
                 })
             })
-
             // On top of secio, we will use the multiplex protocol.
             .with_upgrade(mplex::MplexConfig::new())
             // The object returned by the call to `with_upgrade(MplexConfig::new())` can't be used as a
@@ -179,7 +223,17 @@ impl Node {
         // or substream to our server.
         // let my_id = PeerId::from_public_key(PublicKey::Rsa(key_from_file(&cfg.public_key)?))
         let my_id = PeerId::from_public_key(PublicKey::Rsa(public_key));
+        {
+            let mut inner = inner.write();
+            inner.peer_id = Some(my_id.clone());
+        }
 
+        populate_peerstore(inner.clone())?;
+        {
+            // Only for testing, will go away when we have proper protocol for peer info exchange
+            let inner = inner.read();
+            dump_peerstore(&*inner.peer_store)?;
+        }
         let (floodsub_upgrade, floodsub_rx) = floodsub::FloodSubUpgrade::new(my_id);
 
         // Prepare transports for muxing
@@ -212,7 +266,8 @@ impl Node {
                                         // One message has been received. We send it back to the client.
                                         println!(
                                             "Received a message: {:?}\n => Sending back \
-                                            identical message to remote", msg
+                                             identical message to remote",
+                                            msg
                                         );
                                         match msg {
                                             NcpMsg::Ping { ping_data } => {
@@ -220,13 +275,13 @@ impl Node {
                                                 Box::new(rest.send(resp).map(|m| Loop::Continue(m)))
                                                     as Box<Future<Item = _, Error = _> + Send>
                                             }
-                                            _ => unimplemented!()
+                                            _ => unimplemented!(),
                                         }
                                     } else {
                                         // End of stream. Connection closed. Breaking the loop.
                                         println!("Received EOF\n => Dropping connection");
                                         Box::new(Ok(Loop::Break(())).into_future())
-                                            as Box<Future<Item = _, Error = _> +Send>
+                                            as Box<Future<Item = _, Error = _> + Send>
                                     }
                                 })
                         }))
@@ -235,7 +290,6 @@ impl Node {
             }
         });
 
-        let listen_addr = listen_addr.parse()?;
         let address = swarm_controller.listen_on(listen_addr);
         debug!(netlog, "Now listening on {:?}", address);
 
@@ -340,9 +394,89 @@ fn floodsub_handler(
     Box::new(socket) as Box<Future<Item = (), Error = IoError> + Send>
 }
 
+pub(crate) fn populate_peerstore(node: Arc<RwLock<Inner>>) -> Result<(), Error> {
+    let inner = node.clone();
+    let logger = {
+        let inner = inner.read();
+        inner.logger.clone()
+    };
+    let config = {
+        let inner = inner.read();
+        inner.config.clone()
+    };
+
+    let ifaces = datalink::interfaces();
+    let mut my_addresses: Vec<Multiaddr> = vec![];
+
+    for addr in config.advertised_addresses.into_iter() {
+        match addr.parse() {
+            Ok(maddr) => my_addresses.push(maddr),
+            Err(e) => error!(logger, "error parsing multiaddr: {}", addr; "Error" => e.to_string()),
+        }
+    }
+
+    let bind_port = config.bind_port;
+
+    if config.advertise_local_ips {
+        let ips: Vec<IpNetwork> = ifaces
+            .into_iter()
+            .filter(|ref i| i.is_up() && !i.is_loopback())
+            .flat_map(|ref i| i.ips.clone())
+            .filter(|ref ip| ip.is_ipv4())
+            .collect();
+
+        let mut multiaddresses: Vec<Multiaddr> = ips
+            .clone()
+            .into_iter()
+            .map(|i| match i {
+                IpNetwork::V4(net) => net.ip(),
+                IpNetwork::V6(_) => unreachable!(),
+            }).map(|a| a.to_multiaddr().unwrap())
+            .map(|mut a| {
+                a.append(Protocol::Tcp(bind_port));
+                a
+            }).collect();
+
+        my_addresses.append(&mut multiaddresses);
+    }
+
+    // Add addresses to peer store
+    {
+        let inner = inner.read();
+        // TODO: setup reasonable duration
+        let ttl = Duration::from_secs(100 * 365 * 24 * 3600);
+
+        if let Some(peer_id) = inner.peer_id.clone() {
+            let peer_store = &inner.peer_store;
+            peer_store
+                .peer_or_create(&peer_id)
+                .add_addrs(my_addresses, ttl)
+        }
+    }
+
+    Ok(())
+}
+
 fn key_from_file<P: AsRef<Path>>(file_path: P) -> Result<Vec<u8>, Error> {
     let mut buf = Vec::new();
     let mut f = File::open(file_path)?;
     f.read_to_end(&mut buf)?;
     Ok(buf)
+}
+
+fn dump_peerstore<T>(peerstore: T) -> Result<(), Error>
+where
+    T: Peerstore + Clone,
+{
+    println!("Peerstore dump:");
+    let peers = peerstore.clone();
+
+    for peer in peers.peers() {
+        println!("\tPeerID: {}", peer.to_base58());
+        let peer_store = peerstore.clone();
+        for addr in peer_store.peer_or_create(&peer).addrs() {
+            println!("\t\tAddress: {}", addr)
+        }
+    }
+    Ok(())
 }

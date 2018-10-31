@@ -1,5 +1,3 @@
-///! Configuration Structures.
-
 //
 // Copyright (c) 2018 Stegos
 //
@@ -20,6 +18,11 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+
+use rand::distributions::Alphanumeric;
+use rand::{thread_rng, Rng};
+
+///! Configuration Structures.
 
 /// Configuration root
 ///
@@ -48,12 +51,17 @@ impl Default for Config {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(default)]
 pub struct ConfigNetwork {
-    /// An example string configuration value.
-    pub listen_address: String,
+    /// Node ID
+    /// TODO: Replace with correct public key, now only for testing
+    pub node_id: String,
+    /// Local IP address to bind to
+    pub bind_ip: String,
+    /// Local port to use for incoming connections
+    pub bind_port: u16,
     /// List of advertised reachable address for this node
     pub advertised_addresses: Vec<String>,
-    /// An example u32 configuration value.
-    pub u32val: u32,
+    /// Advertise local active, non-loopback addresses
+    pub advertise_local_ips: bool,
     /// List of nodes to connect to on startup.
     pub seed_nodes: Vec<String>,
     /// Path to Node's public key
@@ -67,11 +75,15 @@ pub struct ConfigNetwork {
 /// Default values for network configuration.
 impl Default for ConfigNetwork {
     fn default() -> ConfigNetwork {
+        let rand_string: String = thread_rng().sample_iter(&Alphanumeric).take(16).collect();
+
         ConfigNetwork {
-            u32val: 0,
+            node_id: rand_string.clone(),
+            bind_port: 10203,
             seed_nodes: vec![],
             advertised_addresses: vec![],
-            listen_address: "/ip4/0.0.0.0/tcp/10050".to_string(),
+            advertise_local_ips: true,
+            bind_ip: "0.0.0.0".to_string(),
             public_key: "public_key.der".to_string(),
             private_key: "private_key.pk8".to_string(),
             broadcast_topic: "stegos".to_string(),

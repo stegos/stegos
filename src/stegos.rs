@@ -38,19 +38,22 @@ extern crate stegos_crypto;
 extern crate stegos_blockchain;
 extern crate tokio;
 extern crate tokio_stdin;
+extern crate tokio_timer;
 
 use clap::{App, Arg, ArgMatches};
-use futures::Stream;
+use futures::{Future, Stream};
 use libp2p::Multiaddr;
 use slog::{Drain, Logger};
 use std::error::Error;
 use std::mem;
 use std::path::PathBuf;
 use std::process;
+use std::time::{Duration, Instant};
 use stegos_config::{Config, ConfigError};
 use stegos_blockchain::Blockchain;
 use stegos_crypto::pbc::init_pairings;
 use tokio::runtime::Runtime;
+use tokio::timer::Delay;
 
 fn load_configuration(args: &ArgMatches) -> Result<Config, Box<Error>> {
     if let Some(cfg_path) = args.value_of_os("config") {
@@ -111,13 +114,34 @@ fn run() -> Result<(), Box<Error>> {
 
     // Initialize network
     let mut rt = Runtime::new().unwrap();
-    let node = stegos_network::Node::new(cfg.network, &log);
+    let node = stegos_network::Node::new(&cfg.network, &log);
     let (node_future, floodsub_rx) = node.run()?;
+    node.set_id(&cfg.network.node_id);
 
     let floodsub_rx = floodsub_rx.for_each(|msg| {
         println!("<<< {}", String::from_utf8_lossy(msg.as_slice()));
         Ok(())
     });
+
+    let when = Instant::now() + Duration::from_secs(10);
+    let hello_future = Delay::new(when)
+        .and_then({
+            let node = node.clone();
+            move |_| {
+                let hello_msg1 = format!("hello from: {} to node01", &cfg.network.node_id);
+                let hello_msg2 = format!("hello from: {} to node02", &cfg.network.node_id);
+                let hello_msg3 = format!("hello from: {} to node03", &cfg.network.node_id);
+                node.send_to_id(&"node01".to_string(), hello_msg1.as_bytes().to_vec())
+                    .unwrap();
+                node.send_to_id(&"node02".to_string(), hello_msg2.as_bytes().to_vec())
+                    .unwrap();
+                node.send_to_id(&"node03".to_string(), hello_msg3.as_bytes().to_vec())
+                    .unwrap();
+                Ok(())
+            }
+        }).map_err(|_| ());
+
+    rt.spawn(hello_future);
 
     let stdin = {
         let mut buffer = Vec::new();

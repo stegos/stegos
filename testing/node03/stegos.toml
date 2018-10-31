@@ -1,9 +1,15 @@
 [network]
-listen_address = "/ip4/127.0.0.1/tcp/10057"
+node_id = "node03"
+bind_ip = "127.0.0.1"
+bind_port = 10057
+advertise_local_ips = false
 private_key = "testing/node03/private-key.pk8"
 public_key = "testing/node03/public-key.der"
 broadcast_topic = "chat"
 seed_nodes = [
     "/ip4/127.0.0.1/tcp/10055",
     "/ip4/127.0.0.1/tcp/10056",
+]
+advertised_addresses = [
+    "/ip4/127.0.0.1/10057",
 ]

@@ -1,5 +1,8 @@
 [network]
-listen_address = "/ip4/127.0.0.1/tcp/10055"
+### default = "0.0.0.0"
+# bind_ip = "127.0.0.1"
+bind_port = 10055
+advetise_local_ips = true
 private_key = "testing/node01/private-key.pk8"
 public_key = "testing/node01/public-key.der"
 broadcast_topic = "chat"

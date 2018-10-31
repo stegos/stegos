@@ -48,12 +48,14 @@ impl Default for Config {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(default)]
 pub struct ConfigNetwork {
-    /// An example string configuration value.
-    pub listen_address: String,
+    /// Local IP address to bind to
+    pub bind_ip: String,
+    /// Local port to use for incoming connections
+    pub bind_port: u16,
     /// List of advertised reachable address for this node
     pub advertised_addresses: Vec<String>,
-    /// An example u32 configuration value.
-    pub u32val: u32,
+    /// Advertise local active, non-loopback addresses
+    pub advertise_local_ips: bool,
     /// List of nodes to connect to on startup.
     pub seed_nodes: Vec<String>,
     /// Path to Node's public key
@@ -68,10 +70,11 @@ pub struct ConfigNetwork {
 impl Default for ConfigNetwork {
     fn default() -> ConfigNetwork {
         ConfigNetwork {
-            u32val: 0,
+            bind_port: 10203,
             seed_nodes: vec![],
             advertised_addresses: vec![],
-            listen_address: "/ip4/0.0.0.0/tcp/10050".to_string(),
+            advertise_local_ips: true,
+            bind_ip: "0.0.0.0".to_string(),
             public_key: "public_key.der".to_string(),
             private_key: "private_key.pk8".to_string(),
             broadcast_topic: "stegos".to_string(),

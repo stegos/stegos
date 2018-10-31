@@ -1,11 +1,14 @@
 ##
 ## Sample configuration file for Stegos
 ##
-
 [network]
-# An example listen address
-listen_address = "/ip4/0.0.0.0/10050"
-# An example listen address
+# Local IP to bind to
+bind_ip = "0.0.0.0"
+# Local port to use for incoming connections
+bind_port = 10203
+# Advertise local active, non-loopback addresses
+advertise_local_ips = true
+# Advertise our addresses for incoming connections
 advertised_addresses = [
     "/ip4/127.0.0.1/10050",
 ]

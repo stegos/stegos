@@ -7,3 +7,4 @@ authors = ["Stegos AG <info@stegos.cc>"]
 toml = "~0.4"
 serde = "~1.0"
 serde_derive = "~1.0"
+rand = "0.5.5"

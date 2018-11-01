@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use super::ncp_proto;
+use super::ncp as ncp_proto;
 use bytes::{Bytes, BytesMut};
 use futures::{future, sink, stream, Sink, Stream};
 use libp2p::core::{ConnectionUpgrade, Endpoint};

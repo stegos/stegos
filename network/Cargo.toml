@@ -2,6 +2,7 @@
 name = "stegos_network"
 version = "0.1.0"
 authors = ["Stegos AG <info@stegos.cc>"]
+build = "build.rs"
 
 [dependencies]
 bytes = "0.4.10"
@@ -24,3 +25,6 @@ tokio-stdin = "0.1.1"
 unsigned-varint = "0.2.1"
 
 libp2p = { git = "https://github.com/libp2p/rust-libp2p.git", rev = "e179951c74cb0c8916d27329f2dfd78917dddfb2" }
+
+[build-dependencies]
+protoc-rust = "2.0"

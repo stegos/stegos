@@ -399,7 +399,6 @@ impl PublicKey {
     pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
         let g = G2::from_str(s)?;
         Ok(PublicKey(g))
-
     }
 }
 

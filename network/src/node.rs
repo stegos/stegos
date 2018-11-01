@@ -66,9 +66,9 @@ pub(crate) struct Inner {
     // Channel for outbound dial
     dial_tx: Option<mpsc::UnboundedSender<Multiaddr>>,
     // Active floodsub connections with a remote.
-    pub(crate) floodsub_connections: RwLock<Vec<Multiaddr>>,
+    pub(crate) floodsub_connections: Vec<Multiaddr>,
     // All remote connections
-    pub(crate) remote_connections: RwLock<FnvHashMap<Multiaddr, RemoteInfo>>,
+    pub(crate) remote_connections: FnvHashMap<Multiaddr, RemoteInfo>,
     // Node's PeerId
     peer_id: Option<PeerId>,
     // PeerStore for known Peers
@@ -89,8 +89,8 @@ impl Node {
             floodsub_ctl: None,
             floodsub_topic: None,
             dial_tx: None,
-            floodsub_connections: RwLock::new(Vec::new()),
-            remote_connections: RwLock::new(FnvHashMap::default()),
+            floodsub_connections: Vec::new(),
+            remote_connections: FnvHashMap::default(),
             peer_id: None,
             peer_store: Arc::new(memory_peerstore::MemoryPeerstore::empty()),
             logger: logger.new(o!("module" => "node")),
@@ -196,11 +196,8 @@ impl Node {
                         debug!(nl2, "new connection";
                                 "remote_peer_id" => peer_info.peer_id.to_base58(),
                                 "remote_addr" => addr.to_string());
-                        let inner = inner.write();
-                        inner
-                            .remote_connections
-                            .write()
-                            .insert(addr.clone(), peer_info);
+                        let mut inner = inner.write();
+                        inner.remote_connections.insert(addr.clone(), peer_info);
                         out.stream
                     }
                 })
@@ -366,8 +363,8 @@ fn floodsub_handler(
     };
 
     {
-        let inner = inner.read();
-        inner.floodsub_connections.write().push(addr.clone());
+        let mut inner = inner.write();
+        inner.floodsub_connections.push(addr.clone());
     }
     debug!(
         netlog,
@@ -376,8 +373,8 @@ fn floodsub_handler(
     let socket = socket.then({
         let inner = inner.clone();
         move |res| {
-            let inner = inner.read();
-            inner.floodsub_connections.write().retain(|a| *a != addr);
+            let mut inner = inner.write();
+            inner.floodsub_connections.retain(|a| *a != addr);
             match res {
                 Ok(_) => {
                     debug!(netlog, "Floodsub successfully finished with: {}", addr);

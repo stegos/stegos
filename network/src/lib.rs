@@ -46,6 +46,7 @@ mod node;
 mod types;
 
 pub use echo::protocol::{EchoMiddleware, EchoUpgrade};
-pub use ncp::protocol::{NcpMsg, NcpProtocolConfig};
-
+// pub(crate) use ncp::protocol::{NcpMsg, NcpProtocolConfig};
+// pub(crate) use node::Inner;
+pub use ncp::protocol;
 pub use node::Node;

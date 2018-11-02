@@ -20,11 +20,12 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+#![allow(dead_code)]
 
 use super::ncp as ncp_proto;
 use bytes::{Bytes, BytesMut};
 use futures::{future, sink, stream, Sink, Stream};
-use libp2p::core::{ConnectionUpgrade, Endpoint};
+use libp2p::core::{ConnectionUpgrade, Endpoint, Multiaddr, PeerId};
 use protobuf::{self, Message};
 use std::io::Error as IoError;
 use std::iter;
@@ -58,7 +59,7 @@ where
     }
 }
 
-type NcpStreamSink<S> = stream::AndThen<
+pub type NcpStreamSink<S> = stream::AndThen<
     sink::With<
         stream::FromErr<Framed<S, codec::UviBytes<Vec<u8>>>, IoError>,
         NcpMsg,
@@ -87,7 +88,7 @@ where
 
 /// Message that we can send to a peer or received from a peer.
 // TODO: document the rest
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum NcpMsg {
     /// Ping request
     Ping {
@@ -99,7 +100,30 @@ pub enum NcpMsg {
         ping_data: Vec<u8>,
     },
     GetPeersRequest,
-    GetPeersResponse,
+    GetPeersResponse {
+        response: GetPeersResponse,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PeerInfo {
+    pub(crate) peer_id: PeerId,
+    pub(crate) addresses: Vec<Multiaddr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GetPeersResponse {
+    pub(crate) last_chunk: bool,
+    pub(crate) peers: Vec<PeerInfo>,
+}
+
+impl PeerInfo {
+    pub(crate) fn new(peer_id: &PeerId) -> Self {
+        Self {
+            peer_id: peer_id.clone(),
+            addresses: vec![],
+        }
+    }
 }
 
 // Turns a type-safe kadmelia message into the corresponding row protobuf message.
@@ -122,9 +146,20 @@ fn msg_to_proto(ncp_msg: NcpMsg) -> ncp_proto::Message {
             msg.set_field_type(ncp_proto::Message_MessageType::GET_PEERS_REQ);
             msg
         }
-        NcpMsg::GetPeersResponse => {
+        NcpMsg::GetPeersResponse { response } => {
             let mut msg = ncp_proto::Message::new();
             msg.set_field_type(ncp_proto::Message_MessageType::GET_PEERS_RES);
+            msg.set_last_chunk(response.last_chunk);
+
+            for peer in response.peers.into_iter() {
+                let mut peer_info = ncp_proto::Message_PeerInfo::new();
+                peer_info.set_peer_id(peer.peer_id.into_bytes());
+                for addr in peer.addresses.into_iter() {
+                    peer_info.mut_addrs().push(addr.into_bytes());
+                }
+                msg.mut_peers().push(peer_info);
+            }
+
             msg
         }
     }
@@ -145,7 +180,27 @@ fn proto_to_msg(mut message: ncp_proto::Message) -> Result<NcpMsg, IoError> {
 
         ncp_proto::Message_MessageType::GET_PEERS_REQ => Ok(NcpMsg::GetPeersRequest),
 
-        ncp_proto::Message_MessageType::GET_PEERS_RES => Ok(NcpMsg::GetPeersResponse),
+        ncp_proto::Message_MessageType::GET_PEERS_RES => {
+            let mut response = GetPeersResponse {
+                last_chunk: message.get_last_chunk(),
+                peers: vec![],
+            };
+            for peer in message.get_peers().into_iter() {
+                if let Ok(peer_id) = PeerId::from_bytes(peer.get_peer_id().to_vec()) {
+                    let mut peer_info = PeerInfo {
+                        peer_id,
+                        addresses: vec![],
+                    };
+                    for addr in peer.get_addrs().into_iter() {
+                        if let Ok(addr_) = Multiaddr::from_bytes(addr.to_vec()) {
+                            peer_info.addresses.push(addr_);
+                        }
+                    }
+                    response.peers.push(peer_info);
+                }
+            }
+            Ok(NcpMsg::GetPeersResponse { response })
+        }
     }
 }
 
@@ -155,9 +210,10 @@ mod tests {
     extern crate tokio_current_thread;
 
     use futures::{Future, Sink, Stream};
-    use libp2p::core::Transport;
+    use libp2p::core::{PeerId, PublicKey, Transport};
     use libp2p::tcp::TcpConfig;
-    use ncp::protocol::{NcpMsg, NcpProtocolConfig};
+    use ncp::protocol::{GetPeersResponse, NcpMsg, NcpProtocolConfig, PeerInfo};
+    use rand;
     use std::sync::mpsc;
     use std::thread;
 
@@ -172,7 +228,30 @@ mod tests {
         test_one(NcpMsg::Pong {
             ping_data: vec![1, 2, 3, 4, 5],
         });
+        test_one(NcpMsg::GetPeersRequest);
+
+        let msg = NcpMsg::GetPeersResponse {
+            response: GetPeersResponse {
+                last_chunk: true,
+                peers: vec![PeerInfo {
+                    peer_id: random_peerid(),
+                    addresses: vec![
+                        "/ip4/1.2.3.4/tcp/1111".parse().unwrap(),
+                        "/ip4/1.2.3.4/tcp/1231".parse().unwrap(),
+                        "/ip4/1.2.3.4/tcp/1221".parse().unwrap(),
+                    ],
+                }],
+            },
+        };
+
+        test_one(msg);
+
         // TODO: all messages
+
+        fn random_peerid() -> PeerId {
+            let key = (0..2048).map(|_| rand::random::<u8>()).collect::<Vec<_>>();
+            PeerId::from_public_key(PublicKey::Rsa(key))
+        }
 
         fn test_one(msg_server: NcpMsg) {
             let msg_client = msg_server.clone();

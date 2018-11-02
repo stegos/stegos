@@ -7,11 +7,18 @@ message Message {
         PONG = 1;
 		GET_PEERS_REQ = 2;
 		GET_PEERS_RES = 3;
-	}
+    }
+    
+    message PeerInfo {
+        required bytes peer_id = 1;
+        repeated bytes addrs = 2;
+    }
 
 	// defines what type of message it is.
 	optional MessageType type = 1;
 
 	// defines what coral cluster level this query/response belongs to.
-	optional bytes pingData = 10;
+    optional bytes pingData = 2;
+    optional bool last_chunk = 3;
+    repeated PeerInfo peers = 4;
 }

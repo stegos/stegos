@@ -25,9 +25,9 @@
 
 use failure::Error;
 use fnv::FnvHashMap;
-use futures::future::{loop_fn, Either, Future, Loop};
+use futures::future::{Either, Future};
 use futures::sync::mpsc;
-use futures::{IntoFuture, Sink, Stream};
+use futures::Stream;
 use ipnetwork::IpNetwork;
 use libp2p::core::{either::EitherOutput, swarm, upgrade};
 use libp2p::core::{Multiaddr, PublicKey, Transport};
@@ -49,7 +49,7 @@ use std::time::Duration;
 use stegos_config::ConfigNetwork;
 
 // use super::{echo::handler::handler as echo_handler, EchoUpgrade};
-use super::ncp::protocol::{NcpMsg, NcpProtocolConfig};
+use super::ncp::{handler::ncp_handler, protocol::NcpProtocolConfig};
 
 #[derive(Clone)]
 pub struct Node {
@@ -70,9 +70,9 @@ pub(crate) struct Inner {
     // All remote connections
     pub(crate) remote_connections: FnvHashMap<Multiaddr, RemoteInfo>,
     // Node's PeerId
-    peer_id: Option<PeerId>,
+    pub(crate) peer_id: Option<PeerId>,
     // PeerStore for known Peers
-    peer_store: Arc<memory_peerstore::MemoryPeerstore>,
+    pub(crate) peer_store: Arc<memory_peerstore::MemoryPeerstore>,
     // Logger for the Node
     pub(crate) logger: Logger,
 }
@@ -254,34 +254,9 @@ impl Node {
                     EitherOutput::Second(echo) => {
                         println!("Successfully negotiated echo protocol");
                         println!("Endpoint: {:?}", echo.0);
-                        Either::B(loop_fn(echo.1, move |socket| {
-                            socket
-                                .into_future()
-                                .map_err(|(e, _)| e)
-                                .and_then(move |(msg, rest)| {
-                                    if let Some(msg) = msg {
-                                        // One message has been received. We send it back to the client.
-                                        println!(
-                                            "Received a message: {:?}\n => Sending back \
-                                             identical message to remote",
-                                            msg
-                                        );
-                                        match msg {
-                                            NcpMsg::Ping { ping_data } => {
-                                                let resp = NcpMsg::Pong { ping_data };
-                                                Box::new(rest.send(resp).map(|m| Loop::Continue(m)))
-                                                    as Box<Future<Item = _, Error = _> + Send>
-                                            }
-                                            _ => unimplemented!(),
-                                        }
-                                    } else {
-                                        // End of stream. Connection closed. Breaking the loop.
-                                        println!("Received EOF\n => Dropping connection");
-                                        Box::new(Ok(Loop::Break(())).into_future())
-                                            as Box<Future<Item = _, Error = _> + Send>
-                                    }
-                                })
-                        }))
+                        Either::B(
+                            addr.and_then(move |addr| ncp_handler(echo.1, echo.0, addr, inner)),
+                        )
                     }
                 }
             }

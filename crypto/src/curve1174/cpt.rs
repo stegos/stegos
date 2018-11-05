@@ -169,7 +169,7 @@ impl From<SecretKey> for PublicKey {
 
 pub fn make_deterministic_keys(seed: &[u8]) -> (SecretKey, PublicKey, SchnorrSig) {
     let h = Hash::from_vector(&seed);
-    let zr = Fr::acceptable_random_rehash(Fr::from(h));
+    let zr = Fr::synthetic_random("skey", &*G, &h);
     let pt = zr * *G;
     let skey = SecretKey::from(zr);
     let pkey = PublicKey::from(pt);
@@ -212,8 +212,7 @@ pub fn sign_hash(hmsg: &Hash, skey: &SecretKey) -> SchnorrSig {
     // At the same time, we don't want k to be too small, making a brute force search on K feasible,
     // since that could also be used to find the secret key. So we rehash the k value, if necessary,
     // until its value lies within an acceptable range.
-    let hk = Fr::from(Hash::digest_chain(&[skey, hmsg]));
-    let k = Fr::acceptable_random_rehash(hk);
+    let k = Fr::synthetic_random("sig-k", skey, hmsg);
     let K = k * *G;
     let pkey = PublicKey::from(*skey);
     let h = Hash::digest_chain(&[&K, &pkey, hmsg]);
@@ -260,8 +259,9 @@ fn aes_encrypt_with_key(msg: &[u8], key: &[u8; 32]) -> Vec<u8> {
 }
 
 pub fn aes_encrypt(msg: &[u8], pkey: &PublicKey) -> Result<EncryptedPayload, CurveError> {
-    let alpha = Fr::random();
-    let k = Fr::random();
+    let h = Hash::from_vector(msg);
+    let alpha = Fr::synthetic_random("encr-alpha", pkey, &h);
+    let k = Fr::synthetic_random("encr-k", pkey, &h);
     let ppt = ECp::decompress(Pt::from(*pkey))?; // could give CurveError if invalid PublicKey
     let apkg = alpha * ppt + k * *G; // generate key transfer cloaking pair, apkg and ag
     let ag = alpha * *G;

@@ -77,7 +77,8 @@ impl Lev32 {
     }
 
     pub fn random() -> Self {
-        Lev32(random::<[u8; 32]>())
+        let mut rng: ThreadRng = thread_rng();
+        Lev32(rng.gen::<[u8; 32]>())
     }
 }
 

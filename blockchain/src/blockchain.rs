@@ -159,7 +159,6 @@ pub mod tests {
 
     use block::tests::fake;
     use input::*;
-    use stegos_crypto::pbc::init_pairings;
     use stegos_crypto::pbc::secure::*;
 
     pub fn iterate(blockchain: &mut Blockchain) {
@@ -182,7 +181,6 @@ pub mod tests {
 
     #[test]
     fn basic() {
-        init_pairings().expect("pbc initialization");
         let mut blockchain = Blockchain::new();
         assert!(blockchain.blocks().len() > 0);
         iterate(&mut blockchain);

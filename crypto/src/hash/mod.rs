@@ -47,7 +47,8 @@ impl Hash {
         self.0
     }
 
-    pub fn basic_from_str(hexstr: &str) -> Result<Self, hex::FromHexError> {
+    pub fn from_hash_facsimile_str(hexstr: &str) -> Result<Self, hex::FromHexError> {
+        // use this function to import a Hash digest facsimile from a string constant
         let mut v = [0u8; HASH_SIZE];
         hexstr_to_bev_u8(hexstr, &mut v)?;
         Ok(Hash(v))
@@ -60,10 +61,10 @@ impl Hash {
         hasher.result()
     }
 
-    pub fn from_str(s: &str) -> Result<Hash, hex::FromHexError> {
-        let mut v = [0u8; HASH_SIZE];
-        hexstr_to_bev_u8(&s, &mut v)?;
-        Ok(Hash(v))
+    pub fn from_str(s: &str) -> Hash {
+        let mut hasher = Hasher::new();
+        (*s).hash(&mut hasher);
+        hasher.result()
     }
 
     pub fn digest(msg: &Hashable) -> Hash {

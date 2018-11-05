@@ -172,6 +172,15 @@ macro_rules! field_impl {
                 mk
             }
 
+            pub fn synthetic_random(pref: &str, uniq: &Hashable, h: &Hash) -> Self {
+                // Construct a pseudo random field value without using the PRNG
+                // This generates so-called "deterministic randomness" and assures
+                // random-appearing values that will always be the same for the same
+                // input keying. The result will be in the "safe" range for the field.
+                let x = Self::from(Hash::digest_chain(&[&Hash::from_str(pref), uniq, h]));
+                Self::acceptable_random_rehash(x)
+            }
+
             pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
                 let mut ans = U256::from_str(s)?;
                 while ans >= *$modulus {

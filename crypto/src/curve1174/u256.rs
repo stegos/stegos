@@ -22,6 +22,8 @@
 // SOFTWARE.
 
 use super::*;
+use rand::thread_rng;
+use rand::{Rng, ThreadRng};
 
 // -----------------------------------------------------------------
 // U256 word chunks represent a 256-bit bignum as a little-endian u64 vector
@@ -48,7 +50,8 @@ impl U256 {
     }
 
     pub fn random() -> U256 {
-        U256(random::<[u64; 4]>())
+        let mut rng: ThreadRng = thread_rng();
+        U256(rng.gen::<[u64; 4]>())
     }
 
     pub fn force_to_range(&mut self, range: U256) {

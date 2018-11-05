@@ -108,10 +108,9 @@ impl Blockchain {
         let block_id = self.blocks.len();
         assert!(block_id == 0 || self.blocks[block_id - 1].header.hash == block.header.previous);
 
-        if let Some(_) = self.block_by_hash.insert(
-            block.header.hash.clone(),
-            block_id,
-        )
+        if let Some(_) = self
+            .block_by_hash
+            .insert(block.header.hash.clone(), block_id)
         {
             panic!("Block hash collision");
         }
@@ -159,10 +158,10 @@ impl Blockchain {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use block::tests::{fake, genesis};
     use input::*;
     use stegos_crypto::pbc::init_pairings;
     use stegos_crypto::pbc::secure::*;
-    use block::tests::{genesis, fake};
 
     pub fn iterate(blockchain: &mut Blockchain) {
         let (epoch, previous) = {

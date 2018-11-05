@@ -21,8 +21,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::fmt;
 use payload::EncryptedPayload;
+use std::fmt;
 use stegos_crypto::bulletproofs::BulletProof;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure::PublicKey;
@@ -78,7 +78,6 @@ impl fmt::Display for Output {
         write!(f, "Output({})", self.hash)
     }
 }
-
 
 impl Hashable for Output {
     fn hash(&self, state: &mut Hasher) {

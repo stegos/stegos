@@ -21,9 +21,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use std::vec::Vec;
 use std::fmt;
+use std::vec::Vec;
+use stegos_crypto::hash::{Hash, Hashable, Hasher};
 
 ///
 /// Merkle tree is a tree in which every leaf node is labelled with the hash of a data block and
@@ -256,12 +256,20 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
                     left: Some(ref left),
                     value: None, // node is not a leaf
                     ..
-                } if left_direction => left, // going left, has the left subtree
+                }
+                    if left_direction =>
+                {
+                    left
+                } // going left, has the left subtree
                 Node {
                     right: Some(ref right),
                     value: None, // node is not a leaf
                     ..
-                } if !left_direction => right, // going right, has the right subtree
+                }
+                    if !left_direction =>
+                {
+                    right
+                } // going right, has the right subtree
                 Node {
                     value: None, // node is not a leaf
                     ..
@@ -330,7 +338,7 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
                 left: None,
                 right: None,
                 ..
-            } => (true, value),  // report to the caller that this subtree should be removed
+            } => (true, value), // report to the caller that this subtree should be removed
             _ => (false, value), // still have some subtrees, don't remove
         }
     }
@@ -364,10 +372,7 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
                 write!(
                     f,
                     "{}: Node({}, l={}, r={})\n",
-                    h,
-                    node.hash,
-                    left.hash,
-                    right.hash
+                    h, node.hash, left.hash, right.hash
                 )?;
                 Merkle::fmt_r(f, &right, h + 1)
             }
@@ -523,43 +528,40 @@ pub mod tests {
                 left: Some(ref node1234),
                 right: Some(_),
                 ..
-            } => {
-                match **node1234 {
+            } => match **node1234 {
+                Node {
+                    left: Some(ref node12),
+                    right: Some(_),
+                    ..
+                } => match **node12 {
                     Node {
-                        left: Some(ref node12),
-                        right: Some(_),
+                        left: None,
+                        right: Some(ref node2),
                         ..
                     } => {
-                        match **node12 {
-                            Node {
-                                left: None,
-                                right: Some(ref node2),
-                                ..
-                            } => {
-                                assert_eq!(node2.value, Some(data[1]));
-                            }
-                            _ => unreachable!(),
-                        }
+                        assert_eq!(node2.value, Some(data[1]));
                     }
                     _ => unreachable!(),
-                }
-            }
+                },
+                _ => unreachable!(),
+            },
             _ => unreachable!(),
         };
 
         assert_eq!(tree.prune(&paths[1]), Some(data[1]));
         assert_eq!(tree.lookup(&paths[1]), None);
         match *tree.root {
-            Node { left: Some(ref node1234), .. } => {
-                match **node1234 {
-                    Node {
-                        left: None,
-                        right: Some(_),
-                        ..
-                    } => {}
-                    _ => unreachable!(),
-                }
-            }
+            Node {
+                left: Some(ref node1234),
+                ..
+            } => match **node1234 {
+                Node {
+                    left: None,
+                    right: Some(_),
+                    ..
+                } => {}
+                _ => unreachable!(),
+            },
             _ => unreachable!(),
         };
 

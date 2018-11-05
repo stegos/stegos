@@ -37,7 +37,7 @@ rustup update
 rustfmt --version
 ```
 
-Verify you did get version `rustfmt 0.99.1-stable (da17b689 2018-08-04)`
+Verify you did get version `rustfmt 0.99.4-stable (1c40881 2018-08-27)`
 or newer.
 
 ## Running rustfmt manually

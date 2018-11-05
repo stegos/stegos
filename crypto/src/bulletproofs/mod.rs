@@ -136,43 +136,55 @@ fn random_vec() -> ScalarVect {
 // -----------------------------------------------------------
 // vector operators over indefinitely sized vectors
 
-fn vec_add<T>(vdst: &mut [T], vsrc: &[T]) 
-    where T: Copy + AddAssign<T> {
+fn vec_add<T>(vdst: &mut [T], vsrc: &[T])
+where
+    T: Copy + AddAssign<T>,
+{
     for (pdst, psrc) in vdst.into_iter().zip(vsrc.iter()) {
         *pdst += *psrc;
     }
 }
 
-fn vec_sub<T>(vdst: &mut [T], vsrc: &[T]) 
-    where T: Copy + SubAssign<T> {
+fn vec_sub<T>(vdst: &mut [T], vsrc: &[T])
+where
+    T: Copy + SubAssign<T>,
+{
     for (pdst, psrc) in vdst.into_iter().zip(vsrc.iter()) {
         *pdst -= *psrc;
     }
 }
 
-fn hadamard_prod<T>(vdst: &mut [T], vsrc: &[Int]) 
-    where T: MulAssign<Int> {
+fn hadamard_prod<T>(vdst: &mut [T], vsrc: &[Int])
+where
+    T: MulAssign<Int>,
+{
     for (pdst, psrc) in vdst.into_iter().zip(vsrc.iter()) {
         *pdst *= *psrc;
     }
 }
 
-fn vec_incr<T>(vdst: &mut [T], k: T) 
-    where T: Copy + AddAssign<T> {
+fn vec_incr<T>(vdst: &mut [T], k: T)
+where
+    T: Copy + AddAssign<T>,
+{
     for pdst in vdst.into_iter() {
         *pdst += k;
     }
 }
 
-fn vec_decr<T>(vdst: &mut [T], k: T) 
-    where T: Copy + SubAssign<T> {
+fn vec_decr<T>(vdst: &mut [T], k: T)
+where
+    T: Copy + SubAssign<T>,
+{
     for pdst in vdst.into_iter() {
         *pdst -= k;
     }
 }
 
-fn vec_scale<T>(vdst: &mut [T], k: Int) 
-    where T: MulAssign<Int> {
+fn vec_scale<T>(vdst: &mut [T], k: Int)
+where
+    T: MulAssign<Int>,
+{
     for pdst in vdst.into_iter() {
         *pdst *= k;
     }
@@ -202,15 +214,19 @@ impl HasZero<Point> for Point {
     }
 }
 
-fn dot_prod<T>(v1: &[T], v2: &[Int]) -> T 
-    where T: Copy + Add<T, Output = T> + Mul<Int, Output = T> + HasZero<T> {
+fn dot_prod<T>(v1: &[T], v2: &[Int]) -> T
+where
+    T: Copy + Add<T, Output = T> + Mul<Int, Output = T> + HasZero<T>,
+{
     v1.iter()
         .zip(v2.iter())
         .fold(T::zero(), |sum, (a, b)| sum + *a * *b)
 }
 
-fn vec_sum<T>(v: &[T]) -> T 
-    where T: Copy + Add<T, Output = T> + HasZero<T> {
+fn vec_sum<T>(v: &[T]) -> T
+where
+    T: Copy + Add<T, Output = T> + HasZero<T>,
+{
     v.iter().fold(T::zero(), |sum, x| sum + *x)
 }
 
@@ -541,7 +557,9 @@ fn basis_vectors(y: Int) -> (Point, BasisVect, BasisVect) {
 }
 
 fn fold_halves<T>(n: usize, v: &mut [T], lscale: Int, rscale: Int)
-    where T: Copy + Add<T, Output = T> + Mul<Int, Output = T> {
+where
+    T: Copy + Add<T, Output = T> + Mul<Int, Output = T>,
+{
     let n_2 = n >> 1;
     for (jx, kx) in (0..n_2).zip(n_2..n) {
         v[jx] = v[jx] * lscale + v[kx] * rscale;

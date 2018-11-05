@@ -50,7 +50,6 @@ fn main() {
         // The parameter passed to `WsConfig::new()` must be an implementation of `Transport` to be
         // used for the underlying multiaddress.
         .or_transport(WsConfig::new(TcpConfig::new()))
-
         // On top of TCP/IP, we will use either the plaintext protocol or the secio protocol,
         // depending on which one the remote supports.
         .with_upgrade({
@@ -59,17 +58,18 @@ fn main() {
             let secio = {
                 let private_key = include_bytes!("test-rsa-private-key.pk8");
                 let public_key = include_bytes!("test-rsa-public-key.der").to_vec();
-                let keypair = libp2p::secio::SecioKeyPair::rsa_from_pkcs8(private_key, public_key).unwrap();
+                let keypair =
+                    libp2p::secio::SecioKeyPair::rsa_from_pkcs8(private_key, public_key).unwrap();
                 libp2p::secio::SecioConfig::new(keypair)
-
             };
 
             upgrade::or(
                 upgrade::map(plain_text, |pt| EitherOutput::First(pt)),
-                upgrade::map(secio, |out: libp2p::secio::SecioOutput<_>| EitherOutput::Second(out.stream))
+                upgrade::map(secio, |out: libp2p::secio::SecioOutput<_>| {
+                    EitherOutput::Second(out.stream)
+                }),
             )
         })
-
         // On top of plaintext or secio, we will use the multiplex protocol.
         .with_upgrade(libp2p::mplex::MplexConfig::new())
         // The object returned by the call to `with_upgrade(MplexConfig::new())` can't be used as a
@@ -97,9 +97,7 @@ fn main() {
             let finished_tx = finished_tx.take();
             echo.send("hello world".into())
                 // Then listening for one message from the remote.
-                .and_then(|echo| {
-                    echo.into_future().map_err(|(e, _)| e).map(|(n,_ )| n)
-                })
+                .and_then(|echo| echo.into_future().map_err(|(e, _)| e).map(|(n, _)| n))
                 .and_then(move |message| {
                     println!("Received message from listener: {:?}", message.unwrap());
                     if let Some(finished_tx) = finished_tx {
@@ -112,7 +110,10 @@ fn main() {
 
     // We now use the controller to dial to the address.
     swarm_controller
-        .dial(target_addr.parse().expect("invalid multiaddr"), transport.with_upgrade(EchoUpgrade {}))
+        .dial(
+            target_addr.parse().expect("invalid multiaddr"),
+            transport.with_upgrade(EchoUpgrade {}),
+        )
         // If the multiaddr protocol exists but is not supported, then we get an error containing
         // the original multiaddress.
         .expect("unsupported multiaddr");

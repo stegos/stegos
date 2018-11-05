@@ -7,6 +7,7 @@ authors = ["Stegos AG <info@stegos.cc>"]
 generic-array = "0.12.0"
 hex = "0.3.2"
 lazy_static = "1.1.0"
+parking_lot = "0.6.4"
 rand = "0.5"
 rust-crypto = "0.2.36"
 rust-gmp = "0.5.0"

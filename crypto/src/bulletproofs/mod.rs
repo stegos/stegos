@@ -581,16 +581,6 @@ fn basis_vectors(y: Int) -> (Point, BasisVect, BasisVect) {
     (BP.G, gv, BP.HV)
 }
 
-fn fold_halves<T>(n: usize, v: &mut [T], lscale: Int, rscale: Int)
-where
-    T: Copy + Add<T, Output = T> + Mul<Int, Output = T>,
-{
-    let n_2 = n >> 1;
-    for (jx, kx) in (0..n_2).zip(n_2..n) {
-        v[jx] = v[jx] * lscale + v[kx] * rscale;
-    }
-}
-
 // ---------------------------------------------------------------------
 
 pub fn validate_range_proof(bp: &BulletProof) -> bool {

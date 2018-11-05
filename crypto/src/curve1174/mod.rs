@@ -102,7 +102,7 @@ lazy_static! {
         GEN_Y.hash(&mut state);
         format!("D{} H{}", CURVE_D, CURVE_H).hash(&mut state);
         let h = state.result();
-        let chk = Hash::basic_from_str(&HASH_CONSTS).expect("Invalid hexstr: HASH_CONSTS");
+        let chk = Hash::from_hash_facsimile_str(&HASH_CONSTS).expect("Invalid hexstr: HASH_CONSTS");
         assert!(h == chk, "Invalid curve constants checksum");
         check_prng();
         true
@@ -151,10 +151,10 @@ impl fmt::Debug for CurveError {
 
 fn check_prng() {
     use std::f32;
+    let mut rng: ThreadRng = thread_rng();
     let n = 1_000_000;
-    let (sum, sumsq) = (0..n).fold((0.0f32, 0.0f32), |pair, _| {
-        let (s, s2) = pair;
-        let x = random::<f32>() - 0.5;
+    let (sum, sumsq) = (0..n).fold((0.0f32, 0.0f32), |(s, s2), _| {
+        let x = rng.gen::<f32>() - 0.5;
         (s + x, s2 + x * x)
     });
     let mn = sum / (n as f32);
@@ -258,7 +258,7 @@ mod tests {
         use pbc::secure;
         let sig_pkey = secure::PublicKey::from_str(&SIG_PKEY).expect("Invalid hexstr: SIG_PKEY");
         let sig = secure::Signature::from_str(&SIG_1174).expect("Invalid hexstr: SIG_1174");
-        let h = Hash::basic_from_str(&HASH_CONSTS).expect("Invalid hexstr: HASH_CONSTS");
+        let h = Hash::from_hash_facsimile_str(&HASH_CONSTS).expect("Invalid hexstr: HASH_CONSTS");
         assert!(
             secure::check_hash(&h, &sig, &sig_pkey),
             "Invalid Curve1174 init constants"
@@ -353,7 +353,7 @@ pub fn curve1174_tests() {
 
     let delta_skey = SecretKey::from(Fr::from(skey) + delta);
 
-    let hmsg = Hash::basic_from_str(&HASH_CONSTS).unwrap();
+    let hmsg = Hash::from_hash_facsimile_str(&HASH_CONSTS).unwrap();
     let sig = sign_hash(&hmsg, &skey);
     println!("sig = (u: {}, K: {})", sig.u, sig.K);
 

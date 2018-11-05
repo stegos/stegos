@@ -32,11 +32,14 @@
 
 use super::*;
 use hash::*;
+use rand::thread_rng;
 use utils::*;
 
 use std::cmp::Ordering;
 use std::hash as stdhash;
 use std::ops::Neg;
+
+use rand::{Rng, ThreadRng};
 
 // --------------------------------------------------------------------------------
 
@@ -85,13 +88,14 @@ impl Zr {
     }
 
     pub fn random() -> Self {
-        let mut x = Zr(random::<[u8; ZR_SIZE_FR256]>());
+        let mut rng: ThreadRng = thread_rng();
+        let mut zx = Zr(rng.gen::<[u8; ZR_SIZE_FR256]>());
         let min = *MIN_FR256;
         let max = *MAX_FR256;
-        while x < min || x > max {
-            x = Zr(random::<[u8; ZR_SIZE_FR256]>());
+        while zx < min || zx > max {
+            zx = Zr(rng.gen::<[u8; ZR_SIZE_FR256]>());
         }
-        x
+        zx
     }
 
     pub fn from_str(s: &str) -> Result<Zr, hex::FromHexError> {
@@ -405,7 +409,6 @@ impl PublicKey {
     pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
         let g = G2::from_str(s)?;
         Ok(PublicKey(g))
-
     }
 }
 
@@ -647,7 +650,8 @@ pub fn check_keying(pkey: &PublicKey, sig: &Signature) -> bool {
 }
 
 pub fn make_random_keys() -> (SecretKey, PublicKey, Signature) {
-    make_deterministic_keys(&random::<[u8; 32]>())
+    let mut rng: ThreadRng = thread_rng();
+    make_deterministic_keys(&rng.gen::<[u8; 32]>())
 }
 
 // ------------------------------------------------------------------------
@@ -690,11 +694,6 @@ pub fn make_public_subkey(pkey: &PublicKey, seed: &[u8]) -> PublicSubKey {
 pub struct RVal(G2);
 
 impl RVal {
-    // TODO: new() should be removed later, just here for testing for now
-    pub fn new() -> RVal {
-        RVal(G2::new())
-    }
-
     pub fn base_vector(&self) -> &[u8] {
         self.0.base_vector()
     }

@@ -182,7 +182,6 @@ pub mod tests {
 
     use genesis::genesis_dev;
     use payload::EncryptedPayload;
-    use stegos_crypto::pbc::init_pairings;
     use stegos_crypto::*;
 
     pub fn fake(
@@ -198,7 +197,7 @@ pub mod tests {
         let (skey, pkey, _sig) = make_deterministic_keys(&seed);
         let leader = pkey;
 
-        let delta: Zr = Zr::new();
+        let delta: Zr = Zr::random();
         let witnesses = [leader.clone()];
 
         // But have one hard-coded output
@@ -225,8 +224,6 @@ pub mod tests {
 
     #[test]
     fn test_genesis() {
-        init_pairings().expect("pbc initialization");
-
         let (genesis, _) = genesis_dev();
         let header = genesis.header;
 

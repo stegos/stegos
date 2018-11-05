@@ -24,8 +24,6 @@
 #![allow(non_snake_case)]
 #![allow(dead_code)]
 
-use rand::prelude::random;
-
 use std::fmt;
 use std::vec::*;
 
@@ -186,7 +184,7 @@ fn private_init_pairings(
     g1.hash(&mut state);
     g2.hash(&mut state);
     let h = state.result();
-    let chk = Hash::basic_from_str(hchk).expect("Invalid check hash");
+    let chk = Hash::from_hash_facsimile_str(hchk).expect("Invalid check hash");
     assert!(h == chk, "Init constants have changed");
 
     // yes - all the assert!() should panic fail. We are useless without PBC.
@@ -250,16 +248,19 @@ pub mod tests {
 
     #[test]
     fn check_pbc_init() {
+        use rand::thread_rng;
+        use rand::{Rng, ThreadRng};
+
         let sig_pkey = secure::PublicKey::from_str(&SIG_PKEY).expect("Invalid hexstring: SIG_PKEY");
 
-        let h = Hash::basic_from_str(&HASH_AR160).expect("Invalid hexstring: HASH_AR160");
+        let h = Hash::from_hash_facsimile_str(&HASH_AR160).expect("Invalid hexstring: HASH_AR160");
         let sig = secure::Signature::from_str(&SIG_AR160).expect("Invalid hexstring: SIG_AR160");
         assert!(
             secure::check_hash(&h, &sig, &sig_pkey),
             "Invalid curve constants for AR160"
         );
 
-        let h = Hash::basic_from_str(&HASH_FR256).expect("Invalid hexstring: HASH_FR256");
+        let h = Hash::from_hash_facsimile_str(&HASH_FR256).expect("Invalid hexstring: HASH_FR256");
         let sig = secure::Signature::from_str(SIG_FR256).expect("Invalid hexstring: SIG_FR256");
         assert!(
             secure::check_hash(&h, &sig, &sig_pkey),
@@ -267,7 +268,8 @@ pub mod tests {
         );
 
         // check to be sure make_deterministic_keys() stil works properly
-        let seed = random::<[u8; 32]>();
+        let mut rng: ThreadRng = thread_rng();
+        let seed = rng.gen::<[u8; 32]>();
         let (_skey, pkey, sig) = secure::make_deterministic_keys(&seed);
         assert!(secure::check_keying(&pkey, &sig), "Invalid keying");
         fast::G2::generator();

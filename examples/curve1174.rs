@@ -37,13 +37,12 @@
 extern crate stegos_crypto;
 
 use stegos_crypto::curve1174::*;
-
-extern crate lazy_static;
-// use lazy_static::*;
-
-extern crate hex;
+use stegos_crypto::hash::*;
 
 // -------------------------------------------------------------------------------
 fn main() {
     curve1174_tests();
+    let hv = Hash::from_vector(b"1FE9AB");
+    let hs = Hash::from_str("1FE9AB");
+    assert_eq!(hv, hs);
 }

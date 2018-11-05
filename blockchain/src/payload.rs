@@ -22,13 +22,14 @@
 // SOFTWARE.
 
 use std::fmt;
+use stegos_crypto::curve1174::cpt::*;
 use stegos_crypto::hash::*;
-use stegos_crypto::pbc::secure::RVal;
 use stegos_crypto::utils::*;
 
 #[derive(Clone)]
 pub struct EncryptedPayload {
-    rval: RVal,
+    apkg: Pt,
+    ag: Pt,
     cmsg: Vec<u8>,
 }
 
@@ -36,8 +37,9 @@ impl fmt::Debug for EncryptedPayload {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "rval={} cmsg={}",
-            self.rval.to_str(),
+            "apkg={} ag={} cmsg={}",
+            self.apkg,
+            self.ag,
             u8v_to_hexstr(&self.cmsg)
         )
     }
@@ -51,7 +53,9 @@ impl fmt::Display for EncryptedPayload {
 
 impl Hashable for EncryptedPayload {
     fn hash(&self, state: &mut Hasher) {
-        self.rval.hash(state);
+        "Encr".hash(state);
+        self.apkg.hash(state);
+        self.ag.hash(state);
         self.cmsg[..].hash(state);
     }
 }
@@ -60,9 +64,12 @@ impl EncryptedPayload {
     /// Returns some garbage for tests.
     // TODO: remove
     pub fn garbage() -> EncryptedPayload {
+        let (_, pkey, _) = make_deterministic_keys(b"A test seed");
+        let pkg = aes_encrypt(b"This is a test", &pkey).unwrap();
         EncryptedPayload {
-            rval: RVal::new(),
-            cmsg: vec![0; 5],
+            apkg: pkg.apkg,
+            ag: pkg.ag,
+            cmsg: pkg.ctxt,
         }
     }
 }

@@ -41,12 +41,14 @@
 
 use super::*;
 use hash::*;
+use rand::thread_rng;
 use utils::*;
 
 use std::cmp::Ordering;
 use std::hash as stdhash;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
-use rand::{Rng, StdRng, SeedableRng};
+
+use rand::{Rng, ThreadRng};
 
 // ---------------------------------------------------------------------------------
 
@@ -101,15 +103,15 @@ impl Zr {
         mk
     }
 
-    pub fn random(seed: [u8; 32]) -> Self {
-        let mut rng: StdRng = SeedableRng::from_seed(seed);
-        let mut x = Zr(rng.gen::<[u8; ZR_SIZE_AR160]>());
+    pub fn random() -> Self {
+        let mut rng: ThreadRng = thread_rng();
+        let mut zx = Zr(rng.gen::<[u8; ZR_SIZE_AR160]>());
         let min = *MIN_AR160;
         let max = *MAX_AR160;
-        while x < min || x > max {
-            x = Zr(rng.gen::<[u8; ZR_SIZE_AR160]>());
+        while zx < min || zx > max {
+            zx = Zr(rng.gen::<[u8; ZR_SIZE_AR160]>());
         }
-        x
+        zx
     }
 
     pub fn base_vector(&self) -> &[u8] {
@@ -385,7 +387,8 @@ impl G1 {
     }
 
     pub fn random() -> G1 {
-        let h = random::<[u8; HASH_SIZE]>();
+        let mut rng: ThreadRng = thread_rng();
+        let h = rng.gen::<[u8; HASH_SIZE]>();
         let u = G1::new();
         unsafe {
             rust_libpbc::get_G1_from_hash(
@@ -580,7 +583,8 @@ impl G2 {
     }
 
     pub fn random() -> G2 {
-        let h = random::<[u8; HASH_SIZE]>();
+        let mut rng: ThreadRng = thread_rng();
+        let h = rng.gen::<[u8; HASH_SIZE]>();
         let v = G2::new();
         unsafe {
             rust_libpbc::get_G2_from_hash(
@@ -969,7 +973,8 @@ pub fn check_keying(pkey: &PublicKey, sig: &Signature) -> bool {
 }
 
 pub fn make_random_keys() -> (SecretKey, PublicKey, Signature) {
-    make_deterministic_keys(&random::<[u8; 32]>())
+    let mut rng: ThreadRng = thread_rng();
+    make_deterministic_keys(&rng.gen::<[u8; 32]>())
 }
 
 // ----------------------------------------------------------------

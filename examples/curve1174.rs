@@ -34,10 +34,17 @@
 //!
 //! -----------------------------------------------------------------------------
 
+#![allow(non_snake_case)]
+#![allow(unused)]
+
+extern crate rand;
 extern crate stegos_crypto;
 
+use rand::thread_rng;
+use rand::{Rng, ThreadRng};
 use stegos_crypto::curve1174::*;
 use stegos_crypto::hash::*;
+use stegos_crypto::keying::*;
 
 // -------------------------------------------------------------------------------
 fn main() {
@@ -45,4 +52,23 @@ fn main() {
     let hv = Hash::from_vector(b"1FE9AB");
     let hs = Hash::from_str("1FE9AB");
     assert_eq!(hv, hs);
+
+    //  let mut rng: ThreadRng = thread_rng();
+    let mut x = [0u8; 33];
+    for ix in 0..33 {
+        let v = rand::random::<u8>();
+        println!("{:x}", v);
+        x[ix] = v;
+    }
+    println!("----");
+    // println!("x = {:#?}", x);
+    let lst = convert_int_to_wordlist(&x);
+    for w in lst.iter() {
+        println!("{}", w);
+    }
+    let mut xx = [0u8; 33];
+    convert_wordlist_to_int(&lst, &mut xx);
+    for ix in 0..33 {
+        assert!(x[ix] == xx[ix], "Mismatch on wordlist conversion");
+    }
 }

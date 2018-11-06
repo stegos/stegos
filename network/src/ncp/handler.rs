@@ -20,7 +20,6 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-#![allow(dead_code)]
 
 use super::super::node::Inner;
 use super::protocol::{GetPeersResponse, NcpMsg, NcpStreamSink, PeerInfo};
@@ -37,7 +36,7 @@ use tokio_io::{AsyncRead, AsyncWrite};
 
 pub(crate) fn ncp_handler<S>(
     socket: NcpStreamSink<S>,
-    _endpoint: Endpoint,
+    endpoint: Endpoint,
     _addr: Multiaddr,
     node: Arc<RwLock<Inner>>,
 ) -> Box<Future<Item = (), Error = IoError> + Send>
@@ -50,7 +49,14 @@ where
         inner.logger.new(o!("submodule" => "ncp"))
     };
 
-    let fut = loop_fn(socket, {
+    // If we are dialing, send request for peers list
+    // TODO: handle possible error
+    let sock = match endpoint {
+        Endpoint::Dialer => socket.send(NcpMsg::GetPeersRequest).wait().unwrap(),
+        Endpoint::Listener => socket,
+    };
+
+    let fut = loop_fn(sock, {
         let inner = inner.clone();
         let netlog = netlog.clone();
         move |socket| {
@@ -60,12 +66,7 @@ where
                 move |(msg, rest)| {
                     if let Some(msg) = msg {
                         // One message has been received. We send it back to the client.
-                        debug!(
-                            netlog,
-                            "Received a message: {:?}\n => Sending back \
-                             identical message to remote",
-                            msg
-                        );
+                        debug!(netlog, "Received a message: {:?}", msg);
                         match msg {
                             NcpMsg::Ping { ping_data } => {
                                 let mut resp = NcpMsg::Pong { ping_data };
@@ -110,8 +111,13 @@ where
                                         .peer_or_create(&peer.peer_id)
                                         .add_addrs(peer.addresses, hour);
                                 }
-                                Box::new(future::ok(Loop::Continue(rest)))
-                                    as Box<Future<Item = _, Error = _> + Send>
+                                if response.last_chunk {
+                                    Box::new(Ok(Loop::Break(())).into_future())
+                                        as Box<Future<Item = _, Error = _> + Send>
+                                } else {
+                                    Box::new(future::ok(Loop::Continue(rest)))
+                                        as Box<Future<Item = _, Error = _> + Send>
+                                }
                             }
                         }
                     } else {
@@ -127,19 +133,3 @@ where
 
     Box::new(fut) as Box<Future<Item = _, Error = _> + Send>
 }
-
-// let inner = node.read();
-// let peerstore = (&*inner).peer_store.clone();
-// let mut msg = ncp_proto::Message::new();
-// msg.set_field_type(ncp_proto::Message_MessageType::GET_PEERS_RES);
-// msg.set_last_chunk(true);
-
-// for peer in peerstore.peers() {
-//     let peerstore = peerstore.clone();
-//     let peer_info = ncp_proto::Message_PeerInfo::new();
-//     peer_info.set_peer_id(peer.to_base58().into_bytes());
-//     for addr in peerstore.peer_or_create(&peer).addrs() {
-//         peer_info.mut_addrs().push(addr.into_bytes());
-//     }
-//     msg.mut_peers().push(peer_info);
-// }

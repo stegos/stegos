@@ -70,7 +70,7 @@ pub type NcpStreamSink<S> = stream::AndThen<
     Result<NcpMsg, IoError>,
 >;
 
-// Upgrades a socket to use the Kademlia protocol.
+// Upgrades a socket to use the NCP protocol.
 fn ncp_protocol<S>(socket: S) -> NcpStreamSink<S>
 where
     S: AsyncRead + AsyncWrite,

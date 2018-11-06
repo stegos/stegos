@@ -3,7 +3,10 @@
 # bind_ip = "127.0.0.1"
 node_id = "node01"
 bind_port = 10055
-advetise_local_ips = true
+advetise_local_ips = false
 private_key = "testing/node01/private-key.pk8"
 public_key = "testing/node01/public-key.der"
 broadcast_topic = "chat"
+advertised_addresses = [
+    "/ip4/127.0.0.1/tcp/10055",
+]

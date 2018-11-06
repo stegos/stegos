@@ -70,6 +70,12 @@ pub struct ConfigNetwork {
     pub private_key: String,
     /// Broadcast topit for FloodSub
     pub broadcast_topic: String,
+    /// Minimum active connections (try to keep at least so many established connections)
+    pub min_connections: usize,
+    /// Maximum active connections (Don't try to open more than max_connections connections)
+    pub max_connections: usize,
+    /// Connection monitoring tick interval (secs)
+    pub monitoring_interval: u64,
 }
 
 /// Default values for network configuration.
@@ -87,6 +93,9 @@ impl Default for ConfigNetwork {
             public_key: "public_key.der".to_string(),
             private_key: "private_key.pk8".to_string(),
             broadcast_topic: "stegos".to_string(),
+            min_connections: 2,
+            max_connections: 2,
+            monitoring_interval: 15,
         }
     }
 }

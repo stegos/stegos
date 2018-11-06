@@ -19,8 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#![deny(warnings)]
-
+mod console;
 mod consts;
 
 #[macro_use]
@@ -30,30 +29,28 @@ extern crate slog_term;
 #[macro_use]
 extern crate clap;
 extern crate dirs;
+extern crate failure;
 extern crate futures;
 extern crate libp2p;
 extern crate stegos_blockchain;
 extern crate stegos_config;
 extern crate stegos_crypto;
 extern crate stegos_network;
+extern crate stegos_randhound;
 extern crate tokio;
 extern crate tokio_stdin;
 extern crate tokio_timer;
 
 use clap::{App, Arg, ArgMatches};
-use futures::{Future, Stream};
-use libp2p::Multiaddr;
+use console::*;
 use slog::{Drain, Logger};
 use std::error::Error;
-use std::mem;
 use std::path::PathBuf;
 use std::process;
-use std::time::{Duration, Instant};
 use stegos_blockchain::Blockchain;
 use stegos_config::{Config, ConfigError};
-use stegos_crypto::pbc::init_pairings;
-use tokio::runtime::Runtime;
-use tokio::timer::Delay;
+use stegos_network::Node;
+use stegos_randhound::*;
 
 fn load_configuration(args: &ArgMatches) -> Result<Config, Box<Error>> {
     if let Some(cfg_path) = args.value_of_os("config") {
@@ -108,68 +105,27 @@ fn run() -> Result<(), Box<Error>> {
     let log = initialize_logger(&args)?;
 
     // Initialize blockchain
-    // TODO: remove init_pairings()
-    init_pairings().expect("pbc initialization");
     let mut _blockchain = Blockchain::new();
 
     // Initialize network
-    let mut rt = Runtime::new().unwrap();
-    let node = stegos_network::Node::new(&cfg.network, &log);
+    let mut rt = tokio::runtime::current_thread::Runtime::new()?;
+    let my_id = cfg.network.node_id.clone();
+    let node = Node::new(&cfg.network, &log);
     let (node_future, floodsub_rx) = node.run()?;
-    node.set_id(&cfg.network.node_id);
 
-    let floodsub_rx = floodsub_rx.for_each(|msg| {
-        println!("<<< {}", String::from_utf8_lossy(msg.as_slice()));
-        Ok(())
-    });
+    // Initialize console service
+    let console_service = ConsoleService::new(node.clone());
+    rt.spawn(console_service);
 
-    let when = Instant::now() + Duration::from_secs(10);
-    let hello_future = Delay::new(when)
-        .and_then({
-            let node = node.clone();
-            move |_| {
-                let hello_msg1 = format!("hello from: {} to node01", &cfg.network.node_id);
-                let hello_msg2 = format!("hello from: {} to node02", &cfg.network.node_id);
-                let hello_msg3 = format!("hello from: {} to node03", &cfg.network.node_id);
-                node.send_to_id(&"node01".to_string(), hello_msg1.as_bytes().to_vec())
-                    .unwrap();
-                node.send_to_id(&"node02".to_string(), hello_msg2.as_bytes().to_vec())
-                    .unwrap();
-                node.send_to_id(&"node03".to_string(), hello_msg3.as_bytes().to_vec())
-                    .unwrap();
-                Ok(())
-            }
-        }).map_err(|_| ());
+    // Initialize randhound
+    // TODO: use individual streams for each topic.
+    // See https://github.com/stegos/stegos/issues/126
+    let randhound_rx = floodsub_rx;
+    let randhound = RandHoundService::new(node.clone(), &my_id, randhound_rx);
+    rt.spawn(randhound);
 
-    rt.spawn(hello_future);
-
-    let stdin = {
-        let mut buffer = Vec::new();
-        tokio_stdin::spawn_stdin_stream_unbounded().for_each({
-            move |msg| {
-                if msg != b'\r' && msg != b'\n' {
-                    buffer.push(msg);
-                    return Ok(());
-                } else if buffer.is_empty() {
-                    return Ok(());
-                }
-                let msg = String::from_utf8(mem::replace(&mut buffer, Vec::new())).unwrap();
-                if msg.starts_with("/dial ") {
-                    let target: Multiaddr = msg[6..].parse().unwrap();
-                    println!("main: *Dialing {}*", target);
-                    node.dial(target).unwrap();
-                } else {
-                    node.publish(msg.as_bytes().to_vec()).unwrap();
-                }
-                Ok(())
-            }
-        })
-    };
-
-    rt.spawn(stdin);
-
-    rt.spawn(node_future);
-    rt.block_on_all(floodsub_rx)
+    // Start main event loop
+    rt.block_on(node_future)
         .expect("errors are handled earlier");
 
     Ok(())

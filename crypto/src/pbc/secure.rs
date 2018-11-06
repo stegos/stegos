@@ -98,6 +98,15 @@ impl Zr {
         zx
     }
 
+    pub fn synthetic_random(pref: &str, uniq: &Hashable, h: &Hash) -> Self {
+        // Construct a pseudo random field value without using the PRNG
+        // This generates so-called "deterministic randomness" and assures
+        // random-appearing values that will always be the same for the same
+        // input keying. The result will be in the "safe" range for the field.
+        let x = Self::from(Hash::digest_chain(&[&Hash::from_str(pref), uniq, h]));
+        Self::acceptable_random_rehash(x)
+    }
+
     pub fn from_str(s: &str) -> Result<Zr, hex::FromHexError> {
         // result might be larger than prime order, r,
         // but will be interpreted by PBC lib as (Zr mod r).
@@ -629,7 +638,7 @@ pub fn check_message(msg: &[u8], sig: &BlsSignature) -> bool {
 
 pub fn make_deterministic_keys(seed: &[u8]) -> (SecretKey, PublicKey, Signature) {
     let h = Hash::from_vector(&seed);
-    let zr = Zr::acceptable_random_rehash(Zr::from(h));
+    let zr = Zr::synthetic_random("skey", &G1::generator(), &h);
     let pt = G2::generator().clone(); // public keys in G2
     unsafe {
         rust_libpbc::exp_G2z(

@@ -102,7 +102,7 @@ lazy_static! {
         GEN_Y.hash(&mut state);
         format!("D{} H{}", CURVE_D, CURVE_H).hash(&mut state);
         let h = state.result();
-        let chk = Hash::from_hash_facsimile_str(&HASH_CONSTS).expect("Invalid hexstr: HASH_CONSTS");
+        let chk = Hash::from_hex(&HASH_CONSTS).expect("Invalid hexstr: HASH_CONSTS");
         assert!(h == chk, "Invalid curve constants checksum");
         check_prng();
         true
@@ -258,7 +258,7 @@ mod tests {
         use pbc::secure;
         let sig_pkey = secure::PublicKey::from_str(&SIG_PKEY).expect("Invalid hexstr: SIG_PKEY");
         let sig = secure::Signature::from_str(&SIG_1174).expect("Invalid hexstr: SIG_1174");
-        let h = Hash::from_hash_facsimile_str(&HASH_CONSTS).expect("Invalid hexstr: HASH_CONSTS");
+        let h = Hash::from_hex(&HASH_CONSTS).expect("Invalid hexstr: HASH_CONSTS");
         assert!(
             secure::check_hash(&h, &sig, &sig_pkey),
             "Invalid Curve1174 init constants"
@@ -278,6 +278,16 @@ mod tests {
         let dmsg = aes_decrypt(&payload, &skey).unwrap();
         let dchk = Hash::from_vector(&dmsg);
         assert!(mchk == dchk, "AES Decryption failed");
+    }
+
+    #[test]
+    fn chk_random() {
+        let x1 = Fr::random();
+        let x2 = Fr::random();
+        assert!(
+            x1 != x2,
+            "Random generator not working in the expected manner"
+        );
     }
 }
 
@@ -353,7 +363,7 @@ pub fn curve1174_tests() {
 
     let delta_skey = SecretKey::from(Fr::from(skey) + delta);
 
-    let hmsg = Hash::from_hash_facsimile_str(&HASH_CONSTS).unwrap();
+    let hmsg = Hash::from_hex(&HASH_CONSTS).unwrap();
     let sig = sign_hash(&hmsg, &skey);
     println!("sig = (u: {}, K: {})", sig.u, sig.K);
 

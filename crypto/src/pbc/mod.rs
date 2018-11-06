@@ -184,7 +184,7 @@ fn private_init_pairings(
     g1.hash(&mut state);
     g2.hash(&mut state);
     let h = state.result();
-    let chk = Hash::from_hash_facsimile_str(hchk).expect("Invalid check hash");
+    let chk = Hash::from_hex(hchk).expect("Invalid check hash");
     assert!(h == chk, "Init constants have changed");
 
     // yes - all the assert!() should panic fail. We are useless without PBC.
@@ -253,14 +253,14 @@ pub mod tests {
 
         let sig_pkey = secure::PublicKey::from_str(&SIG_PKEY).expect("Invalid hexstring: SIG_PKEY");
 
-        let h = Hash::from_hash_facsimile_str(&HASH_AR160).expect("Invalid hexstring: HASH_AR160");
+        let h = Hash::from_hex(&HASH_AR160).expect("Invalid hexstring: HASH_AR160");
         let sig = secure::Signature::from_str(&SIG_AR160).expect("Invalid hexstring: SIG_AR160");
         assert!(
             secure::check_hash(&h, &sig, &sig_pkey),
             "Invalid curve constants for AR160"
         );
 
-        let h = Hash::from_hash_facsimile_str(&HASH_FR256).expect("Invalid hexstring: HASH_FR256");
+        let h = Hash::from_hex(&HASH_FR256).expect("Invalid hexstring: HASH_FR256");
         let sig = secure::Signature::from_str(SIG_FR256).expect("Invalid hexstring: SIG_FR256");
         assert!(
             secure::check_hash(&h, &sig, &sig_pkey),

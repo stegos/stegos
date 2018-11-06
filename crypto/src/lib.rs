@@ -33,5 +33,6 @@ extern crate typenum;
 pub mod bulletproofs;
 pub mod curve1174;
 pub mod hash;
+pub mod keying;
 pub mod pbc;
 pub mod utils;

@@ -64,4 +64,9 @@ fn main() {
     println!("chk Zr: 0x{:x} -> {}", a, fast::Zr::from(a));
     println!("chk Zr: -1 -> {}", fast::Zr::from(-1));
     println!("chk Zr: -1 + 1 -> {}", fast::Zr::from(-1) + 1);
+
+    let (skey, pkey, sig) = secure::make_deterministic_keys(b"dev");
+    println!("skey = {}", skey);
+    println!("pkey = {}", pkey);
+    println!("sig = {}", sig);
 }

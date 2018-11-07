@@ -24,9 +24,9 @@
 use input::Input;
 use merkle::*;
 use output::Output;
+use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::pbc::fast::Zr;
-use stegos_crypto::pbc::secure::*;
+// use stegos_crypto::pbc::secure::BlsSignature;
 
 /// Block Header.
 #[derive(Debug)]
@@ -45,12 +45,9 @@ pub struct BlockHeader {
     /// Hash of the block previous to this in the chain.
     pub previous: Hash,
 
-    /// Leader public key
-    pub leader: PublicKey,
-
     /// The sum of all gamma adjustments found in the block transactions (∑ γ_adj).
     /// Includes the γ_adj from the leader's fee distribution transaction.
-    pub adjustment: Zr,
+    pub adjustment: Fr,
 
     /// Timestamp at which the block was built.
     pub timestamp: u64,
@@ -71,28 +68,21 @@ pub struct Block {
     pub inputs: Vec<Input>,
 
     /// The list of transaction outputs in a Merkle Tree.
-    // TODO: replace with Merkle tree
     pub outputs: Merkle<Box<Output>>,
+    // TODO: BLS Multi-signature.
+    // pub sig: BlsSignature,
 
-    /// Ordered list of witness public keys for current epoch.
-    /// The leader node is also considered a witness during the current epoch.
-    pub witnesses: Vec<PublicKey>,
-
-    /// CoSi multisignature on HCURR
-    // TODO: which kind
-    pub sig: Signature,
+    // TODO: Bitmap of signers in the multi-signature.
+    // pub signers: u64,
 }
 
 impl Block {
     pub fn sign(
-        skey: &SecretKey,
         version: u64,
         epoch: u64,
         previous: Hash,
         timestamp: u64,
-        leader: PublicKey,
-        adjustment: Zr,
-        witnesses: &[PublicKey],
+        adjustment: Fr,
         inputs: &[Input],
         outputs: &[Output],
     ) -> (Block, Vec<MerklePath>) {
@@ -121,15 +111,11 @@ impl Block {
 
         let (outputs, paths) = Merkle::from_array(&outputs);
 
-        // Create witnesses array
-        let witnesses = witnesses.to_vec();
-
         // Calculate block hash
         let mut hasher = Hasher::new();
         version.hash(&mut hasher);
         epoch.hash(&mut hasher);
         previous.hash(&mut hasher);
-        leader.hash(&mut hasher);
         adjustment.hash(&mut hasher);
         timestamp.hash(&mut hasher);
         inputs_range_hash.hash(&mut hasher);
@@ -144,90 +130,19 @@ impl Block {
             version,
             epoch,
             previous,
-            leader,
             adjustment,
             timestamp,
             inputs_range_hash,
             outputs_range_hash,
         };
 
-        // Sign header
-        let sig = sign_hash(&hash, skey);
-
-        // hash the number of witnesses first
-        let witnesses_count: u64 = witnesses.len() as u64;
-        witnesses_count.hash(&mut hasher);
-        for witness in witnesses.iter() {
-            witness.hash(&mut hasher);
-        }
-        sig.hash(&mut hasher);
-
         // Create the block
         let block = Block {
             header,
             inputs,
             outputs,
-            witnesses,
-            sig,
         };
 
         (block, paths)
-    }
-}
-
-#[cfg(test)]
-pub mod tests {
-    use super::*;
-    use chrono::prelude::Utc;
-
-    use genesis::genesis_dev;
-    use payload::EncryptedPayload;
-    use stegos_crypto::*;
-
-    pub fn fake(
-        version: u64,
-        epoch: u64,
-        inputs: &[Input],
-        previous: &Hash,
-    ) -> (Block, Vec<MerklePath>) {
-        let seed: [u8; 4] = [1, 2, 3, 4];
-        // Get current time
-        let timestamp = Utc::now().timestamp() as u64;
-
-        let (skey, pkey, _sig) = make_deterministic_keys(&seed);
-        let leader = pkey;
-
-        let delta: Zr = Zr::random();
-        let witnesses = [leader.clone()];
-
-        // But have one hard-coded output
-        let amount: i64 = 112;
-        let (proof, _gamma) = bulletproofs::make_range_proof(amount);
-        // TODO: replace with real encrypted payload
-        let payload = EncryptedPayload::garbage();
-        let output = Output::new(leader.clone(), proof, payload);
-        let outputs = [output];
-
-        Block::sign(
-            &skey,
-            version,
-            epoch,
-            previous.clone(),
-            timestamp,
-            leader,
-            delta,
-            &witnesses,
-            &inputs,
-            &outputs,
-        )
-    }
-
-    #[test]
-    fn test_genesis() {
-        let (genesis, _) = genesis_dev();
-        let header = genesis.header;
-
-        assert_eq!(header.epoch, 1);
-        assert_eq!(header.version, 1);
     }
 }

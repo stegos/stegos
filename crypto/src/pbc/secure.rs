@@ -567,12 +567,13 @@ impl fmt::Display for Signature {
     }
 }
 
-impl Hashable for Signature {
-    fn hash(&self, state: &mut Hasher) {
-        "Sig".hash(state);
-        self.base_vector().hash(state);
-    }
-}
+// NOTE: BLS Multi-signature never contributes to the computation of any block header hash.
+//impl Hashable for Signature {
+//    fn hash(&self, state: &mut Hasher) {
+//        "Sig".hash(state);
+//        self.base_vector().hash(state);
+//    }
+//}
 
 impl Eq for Signature {}
 impl PartialEq for Signature {

@@ -157,9 +157,14 @@ impl Blockchain {
 pub mod tests {
     use super::*;
 
-    use block::tests::fake;
+    use chrono::prelude::Utc;
+
+    use stegos_crypto::bulletproofs;
+    use stegos_crypto::curve1174::cpt::make_random_keys;
+    use stegos_crypto::curve1174::fields::Fr;
+
     use input::*;
-    use stegos_crypto::pbc::secure::*;
+    use payload::*;
 
     pub fn iterate(blockchain: &mut Blockchain) {
         let (epoch, previous) = {
@@ -169,13 +174,40 @@ pub mod tests {
             (epoch, previous)
         };
 
-        let seed: [u8; 4] = [1, 2, 3, 4];
-        let (_skey, _pubkey, signature) = make_deterministic_keys(&seed);
+        let (_skey, pkey, _sig) = make_random_keys();
 
         let output_hash = blockchain.output_by_hash.keys().next().unwrap().clone();
-        let input = Input::new(output_hash.clone(), signature);
+        let input = Input::new(output_hash.clone());
         let inputs = [input];
-        let (block, paths) = fake(1, epoch, &inputs, &previous);
+
+        let timestamp = Utc::now().timestamp() as u64;
+        let version = 1;
+
+        let leader = pkey;
+
+        let delta: Fr = Fr::random();
+
+        let amount: i64 = 112;
+        let (proof, gamma) = bulletproofs::make_range_proof(amount);
+
+        let payload = new_monetary(delta, gamma, amount, pkey).expect("tests have valid keys");
+
+        let output = Output::new(leader.clone(), proof, payload);
+        let outputs = [output];
+
+        // Adjustment is the sum of all gamma found in UTXOs.
+        let adjustment = delta;
+
+        let (block, paths) = Block::sign(
+            version,
+            epoch,
+            previous.clone(),
+            timestamp,
+            adjustment,
+            &inputs,
+            &outputs,
+        );
+
         blockchain.register_block(block, paths);
     }
 

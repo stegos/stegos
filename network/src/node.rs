@@ -39,7 +39,6 @@ use libp2p::secio::{SecioConfig, SecioKeyPair, SecioOutput};
 use libp2p::tcp::TcpConfig;
 use parking_lot::RwLock;
 use pnet::datalink;
-use slog::Logger;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::Error as IoError;
@@ -76,8 +75,6 @@ pub(crate) struct Inner {
     pub(crate) peer_id: Option<PeerId>,
     // PeerStore for known Peers
     pub(crate) peer_store: Arc<memory_peerstore::MemoryPeerstore>,
-    // Logger for the Node
-    pub(crate) logger: Logger,
 }
 
 // TODO
@@ -86,7 +83,7 @@ pub(crate) struct RemoteInfo {
 }
 
 impl Node {
-    pub fn new(cfg: &ConfigNetwork, logger: &Logger) -> Self {
+    pub fn new(cfg: &ConfigNetwork) -> Self {
         let inner = Arc::new(RwLock::new(Inner {
             config: cfg.clone(),
             floodsub_ctl: None,
@@ -96,7 +93,6 @@ impl Node {
             remote_connections: FnvHashMap::default(),
             peer_id: None,
             peer_store: Arc::new(memory_peerstore::MemoryPeerstore::empty()),
-            logger: logger.new(o!("module" => "node")),
         }));
 
         let node = Node { inner };
@@ -106,7 +102,7 @@ impl Node {
     pub fn dial(&self, target: Multiaddr) -> Result<(), Error> {
         let inner2 = &self.inner.clone();
         let inner = inner2.read();
-        debug!(inner.logger, "*Dialing FloodSub {}*", target);
+        debug!("*Dialing FloodSub {}*", target);
         if let Some(dial_tx) = inner.dial_tx.clone() {
             dial_tx.unbounded_send(target)?;
         };
@@ -116,7 +112,7 @@ impl Node {
     pub fn dial_ncp(&self, target: Multiaddr) -> Result<(), Error> {
         let inner2 = &self.inner.clone();
         let inner = inner2.read();
-        debug!(inner.logger, "*Dialing NCP {}*", target);
+        debug!("*Dialing NCP {}*", target);
         if let Some(dial_tx) = inner.dial_ncp_tx.clone() {
             dial_tx.unbounded_send(target)?;
         };
@@ -128,7 +124,7 @@ impl Node {
         S: Into<String> + Clone,
     {
         let topic: String = topic.clone().into();
-        println!("net: *Subscribed to topic '{}'*", &topic);
+        debug!("net: *Subscribed to topic '{}'*", &topic);
         let topic = floodsub::TopicBuilder::new(topic).build();
         let inner = self.inner.read();
         if let Some(floodsub_ctl) = inner.floodsub_ctl.clone() {
@@ -169,10 +165,6 @@ impl Node {
         let listen_addr = bind_ip;
         let private_key = key_from_file(&config.private_key)?;
         let public_key = key_from_file(&config.public_key)?;
-        let netlog = {
-            let inner = inner.read();
-            &inner.logger.clone()
-        };
 
         // We start by creating a `TcpConfig` that indicates that we want TCP/IP.
         let transport = TcpConfig::new()
@@ -185,15 +177,16 @@ impl Node {
                 };
 
                 upgrade::map_with_addr(secio, {
-                    let nl2 = netlog.clone();
                     let inner = inner.clone();
                     move |out: SecioOutput<_>, addr| {
                         let peer_info = RemoteInfo {
                             peer_id: out.remote_key.into_peer_id(),
                         };
-                        debug!(nl2, "new connection";
-                                "remote_peer_id" => peer_info.peer_id.to_base58(),
-                                "remote_addr" => addr.to_string());
+                        debug!(
+                            "new connection with peer: {}. addr: {}",
+                            peer_info.peer_id.to_base58(),
+                            addr.to_string()
+                        );
                         let mut inner = inner.write();
                         inner.remote_connections.insert(addr.clone(), peer_info);
                         out.stream
@@ -250,8 +243,8 @@ impl Node {
                         addr.and_then(move |addr| floodsub_handler(floodsub, addr, inner)),
                     ),
                     EitherOutput::Second(echo) => {
-                        println!("Successfully negotiated NCP protocol");
-                        println!("Endpoint: {:?}", echo.0);
+                        debug!("Successfully negotiated NCP protocol");
+                        debug!("Endpoint: {:?}", echo.0);
                         Either::B(
                             addr.and_then(move |addr| ncp_handler(echo.1, echo.0, addr, inner)),
                         )
@@ -261,7 +254,7 @@ impl Node {
         });
 
         let address = swarm_controller.listen_on(listen_addr);
-        debug!(netlog, "Now listening on {:?}", address);
+        debug!("Now listening on {:?}", address);
 
         let floodsub_ctl = floodsub::FloodSubController::new(&floodsub_upgrade);
         {
@@ -270,18 +263,16 @@ impl Node {
         }
 
         for addr in config.seed_nodes.iter() {
-            debug!(netlog, "Dialing peer"; "address" => addr);
+            debug!("Dialing peer with address {}", addr);
             match addr.parse::<Multiaddr>() {
                 Ok(maddr) => {
                     if let Err(e) = swarm_controller
                         .dial(maddr, transport.clone().with_upgrade(flood_upgrade.clone()))
                     {
-                        error!(netlog, "failed to dial node!"; "Error" => e.to_string());
+                        error!("failed to dial node: {}", e);
                     };
                 }
-                Err(e) => {
-                    error!(netlog, "failed to parse address: {}", addr; "Error" => e.to_string())
-                }
+                Err(e) => error!("failed to parse address: {}, error: {}", addr, e),
             }
         }
 
@@ -289,13 +280,12 @@ impl Node {
         let dialer = dial_rx.for_each({
             let swarm_controller2 = swarm_controller.clone();
             let transport2 = transport.clone();
-            let nl2 = netlog.clone();
             move |msg| {
-                debug!(nl2, "inner: *Dialing FloodSub: {}*", msg);
+                debug!("inner: *Dialing FloodSub: {}*", msg);
                 if let Err(e) = swarm_controller2
                     .dial(msg, transport2.clone().with_upgrade(flood_upgrade.clone()))
                 {
-                    error!(nl2, "failed to dial node!"; "Error" => e.to_string());
+                    error!("failed to dial node: {}", e);
                 }
                 Ok(())
             }
@@ -307,15 +297,14 @@ impl Node {
 
         let (dial_ncp_tx, dial_ncp_rx) = mpsc::unbounded();
         let dialer_ncp = dial_ncp_rx.for_each({
-            let nl2 = netlog.clone();
             let swarm_controller2 = swarm_controller.clone();
             let transport2 = transport.clone();
             move |msg| {
-                debug!(nl2, "inner: *Dialing NCP: {}*", msg);
+                debug!("inner: *Dialing NCP: {}*", msg);
                 if let Err(e) = swarm_controller2
                     .dial(msg, transport2.clone().with_upgrade(ncp_upgrade.clone()))
                 {
-                    error!(nl2, "failed to dial node!"; "Error" => e.to_string());
+                    error!("failed to dial node: {}", e);
                 }
                 Ok(())
             }
@@ -327,11 +316,10 @@ impl Node {
 
         let monitor = Interval::new_interval(Duration::from_secs(config.monitoring_interval))
             .for_each({
-                let nl2 = netlog.clone();
                 let inner = inner.clone();
                 move |_| {
                     if let Err(e) = connection_monitor(inner.clone()) {
-                        debug!(nl2, "Error from connection monitorng: {}", e);
+                        debug!("Error from connection monitorng: {}", e);
                     };
                     Ok(())
                 }
@@ -349,9 +337,8 @@ impl Node {
             .map_err(|_| ());
 
         let node_rx = Box::new(floodsub_rx.map(|msg| msg.data).map_err({
-            let netlog = netlog.clone();
-            move |e| {
-                error!(&netlog, "error receiving message"; "Error" => e.to_string());
+            |e| {
+                error!("error receiving message: {}", e);
             }
         }));
         let boxed_future =
@@ -366,28 +353,19 @@ fn floodsub_handler(
     node: Arc<RwLock<Inner>>,
 ) -> Box<Future<Item = (), Error = IoError> + Send> {
     let inner = node.clone();
-    let netlog = {
-        let inner = inner.read();
-        inner.logger.new(o!("submodule" => "floodsub"))
-    };
-
     {
         let mut inner = inner.write();
         let peer_id = inner.remote_connections.get(&addr).unwrap().peer_id.clone();
         inner.floodsub_connections.insert(peer_id);
     }
-    debug!(
-        netlog,
-        "Successfully negotiated floodsub protocol with: {}", addr
-    );
+    debug!("Successfully negotiated floodsub protocol with: {}", addr);
     // Request peers list from remote
     //
     {
         let inner = inner.read();
-        let netlog = netlog.clone();
         if let Some(ref dial_tx) = inner.dial_ncp_tx {
             if let Err(e) = dial_tx.unbounded_send(addr.clone()) {
-                debug!(netlog, "Error trying to dial NCP to {}", addr; "Error" => e.to_string());
+                debug!("Error trying to dial NCP to {}, error: {}", addr, e);
             };
         }
     }
@@ -399,11 +377,11 @@ fn floodsub_handler(
             inner.floodsub_connections.remove(&peer_id);
             match res {
                 Ok(_) => {
-                    debug!(netlog, "Floodsub successfully finished with: {}", addr);
+                    debug!("Floodsub successfully finished with: {}", addr);
                     Ok(())
                 }
                 Err(e) => {
-                    debug!(netlog, "Floodsub with {} finished with error: {}", addr, e);
+                    debug!("Floodsub with {} finished with error: {}", addr, e);
                     Ok(())
                 }
             }
@@ -415,10 +393,6 @@ fn floodsub_handler(
 
 pub(crate) fn populate_peerstore(node: Arc<RwLock<Inner>>) -> Result<(), Error> {
     let inner = node.clone();
-    let logger = {
-        let inner = inner.read();
-        inner.logger.clone()
-    };
     let config = {
         let inner = inner.read();
         inner.config.clone()
@@ -430,7 +404,7 @@ pub(crate) fn populate_peerstore(node: Arc<RwLock<Inner>>) -> Result<(), Error> 
     for addr in config.advertised_addresses.into_iter() {
         match addr.parse() {
             Ok(maddr) => my_addresses.push(maddr),
-            Err(e) => error!(logger, "error parsing multiaddr: {}", addr; "Error" => e.to_string()),
+            Err(e) => error!("error parsing multiaddr: {} error: {}", addr, e),
         }
     }
 
@@ -480,14 +454,14 @@ fn dump_peerstore<T>(peerstore: T) -> Result<(), Error>
 where
     T: Peerstore + Clone,
 {
-    println!("Peerstore dump:");
+    debug!("Peerstore dump:");
     let peers = peerstore.clone();
 
     for peer in peers.peers() {
-        println!("\tPeerID: {}", peer.to_base58());
+        debug!("\tPeerID: {}", peer.to_base58());
         let peer_store = peerstore.clone();
         for addr in peer_store.peer_or_create(&peer).addrs() {
-            println!("\t\tAddress: {}", addr)
+            debug!("\t\tAddress: {}", addr)
         }
     }
     Ok(())
@@ -499,11 +473,7 @@ fn connection_monitor(node: Arc<RwLock<Inner>>) -> Result<(), Error> {
         let inner = node.read();
         inner.config.clone()
     };
-    let logger = {
-        let inner = inner.read();
-        inner.logger.clone()
-    };
-    debug!(logger, "Monitoring TICK!");
+    debug!("Monitoring TICK!");
     {
         let inner = inner.read();
         if inner.floodsub_connections.len() < config.min_connections {

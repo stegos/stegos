@@ -36,6 +36,8 @@ use rand::{thread_rng, Rng};
 pub struct Config {
     /// Network configuration.
     pub network: ConfigNetwork,
+    /// General settings
+    pub general: ConfigGeneral,
 }
 
 /// Default values for global configuration.
@@ -43,6 +45,23 @@ impl Default for Config {
     fn default() -> Config {
         Config {
             network: Default::default(),
+            general: Default::default(),
+        }
+    }
+}
+
+/// General configuration.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(default)]
+pub struct ConfigGeneral {
+    /// Log4RS configuration file
+    pub log4rs_config: String,
+}
+
+impl Default for ConfigGeneral {
+    fn default() -> Self {
+        ConfigGeneral {
+            log4rs_config: "stegos-log4rs.toml".to_string(),
         }
     }
 }

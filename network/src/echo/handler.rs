@@ -35,21 +35,12 @@ use tokio::io::{AsyncRead, AsyncWrite};
 pub(crate) fn handler<S>(
     ncp_out: (Endpoint, EchoMiddleware<S>),
     addr: Multiaddr,
-    node: Arc<RwLock<Inner>>,
+    _node: Arc<RwLock<Inner>>,
 ) -> Box<Future<Item = (), Error = IoError> + Send>
 where
     S: AsyncRead + AsyncWrite + Send + 'static,
 {
-    let inner = node.clone();
-    let netlog = {
-        let inner = inner.read();
-        inner.logger.new(o!("submodule" => "ncp"))
-    };
-
-    debug!(
-        netlog,
-        "Successfully negotiated NCP protocol with: {}", addr
-    );
+    debug!("Successfully negotiated NCP protocol with: {}", addr);
 
     let (_endpoint, socket) = ncp_out;
 
@@ -60,7 +51,7 @@ where
             .and_then(move |(msg, rest)| {
                 if let Some(msg) = msg {
                     // One message has been received. We send it back to the client.
-                    println!(
+                    debug!(
                         "Received a message: {:?}\n => Sending back \
                          identical message to remote",
                         msg
@@ -69,7 +60,7 @@ where
                         as Box<Future<Item = _, Error = _> + Send>
                 } else {
                     // End of stream. Connection closed. Breaking the loop.
-                    println!("Received EOF\n => Dropping connection");
+                    debug!("Received EOF\n => Dropping connection");
                     Box::new(Ok(Loop::Break(())).into_future())
                         as Box<Future<Item = _, Error = _> + Send>
                 }

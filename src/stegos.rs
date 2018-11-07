@@ -106,7 +106,6 @@ fn run() -> Result<(), Box<Error>> {
     let log = initialize_logger(&args)?;
 
     // Initialize blockchain
-    // TODO: remove init_pairings()
     print!("Node is starting, initializing blockchain... ");
     io::stdout().flush().unwrap();
     let mut _blockchain = Blockchain::new();

@@ -157,13 +157,6 @@ lazy_static! {
 }
 
 // -------------------------------------------------------------------
-// init_pairings() -- no longer needed, PBC is self-init,
-// but harmless if called
-
-pub fn init_pairings() -> Result<(), hex::FromHexError> {
-    assert!(*INIT, "Can't happen");
-    Ok(())
-}
 
 fn private_init_pairings(
     context: u64,

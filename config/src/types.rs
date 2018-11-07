@@ -34,18 +34,18 @@ use rand::{thread_rng, Rng};
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(default)]
 pub struct Config {
-    /// Network configuration.
-    pub network: ConfigNetwork,
     /// General settings
     pub general: ConfigGeneral,
+    /// Network configuration.
+    pub network: ConfigNetwork,
 }
 
 /// Default values for global configuration.
 impl Default for Config {
     fn default() -> Config {
         Config {
-            network: Default::default(),
             general: Default::default(),
+            network: Default::default(),
         }
     }
 }

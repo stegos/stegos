@@ -29,6 +29,8 @@ extern crate rand;
 extern crate rust_libpbc;
 extern crate sha3;
 extern crate typenum;
+#[macro_use]
+extern crate log;
 
 pub mod bulletproofs;
 pub mod curve1174;

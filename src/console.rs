@@ -52,13 +52,13 @@ impl ConsoleService {
         let msg = String::from_utf8(mem::replace(&mut self.buf, Vec::new())).unwrap();
         if msg.starts_with("/dial ") {
             let target: Multiaddr = msg[6..].parse().unwrap();
-            println!("main: *Dialing {}*", target);
+            info!("main: *Dialing {}*", target);
             self.node.dial(target).unwrap();
         } else if msg.starts_with("/publish ") {
             let sep_pos = msg[9..].find(' ').unwrap_or(0);
             let topic: String = msg[9..9 + sep_pos].to_string();
             let msg: String = msg[9 + sep_pos + 1..].to_string();
-            println!("main: *Publishing to topic '{}': {} *", topic, msg);
+            info!("main: *Publishing to topic '{}': {} *", topic, msg);
             self.node.publish(&topic, msg.as_bytes().to_vec()).unwrap();
         } else {
             eprintln!("Usage:");

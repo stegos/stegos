@@ -36,5 +36,7 @@ pub use merkle::*;
 pub use output::*;
 
 extern crate chrono;
+#[cfg_attr(test, macro_use)]
+extern crate log;
 extern crate rand;
 extern crate stegos_crypto;

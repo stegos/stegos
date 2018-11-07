@@ -100,7 +100,6 @@ fn initialize_logger(cfg: &Config) -> Result<LogHandle, LogError> {
             log4rs::init_config(config)?
         }
     };
-
     Ok(handle)
 }
 
@@ -122,13 +121,13 @@ fn run() -> Result<(), Box<Error>> {
     let cfg = load_configuration(&args)?;
 
     // Initialize logger
-    let _log = initialize_logger(&cfg)?;
+    initialize_logger(&cfg)?;
 
     // Initialize blockchain
-    print!("Node is starting, initializing blockchain... ");
+    info!("Node is starting, initializing blockchain... ");
     io::stdout().flush().unwrap();
     let mut _blockchain = Blockchain::new();
-    println!("Done!");
+    info!("Done!");
 
     // Initialize network
     let mut rt = tokio::runtime::current_thread::Runtime::new()?;
@@ -156,7 +155,7 @@ fn run() -> Result<(), Box<Error>> {
 
 fn main() {
     if let Err(e) = run() {
-        eprintln!("{}", e);
+        error!("{}", e);
         process::exit(1)
     };
 }

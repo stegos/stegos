@@ -40,6 +40,7 @@ use libp2p::tcp::TcpConfig;
 use parking_lot::RwLock;
 use pnet::datalink;
 use slog::Logger;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::Error as IoError;
 use std::io::Read;
@@ -47,6 +48,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use stegos_config::ConfigNetwork;
+use tokio::timer::Interval;
 
 // use super::{echo::handler::handler as echo_handler, EchoUpgrade};
 use super::ncp::{handler::ncp_handler, protocol::NcpProtocolConfig};
@@ -63,8 +65,11 @@ pub(crate) struct Inner {
     floodsub_ctl: Option<floodsub::FloodSubController>,
     // Channel for outbound dial
     dial_tx: Option<mpsc::UnboundedSender<Multiaddr>>,
+    // Channel for outbound NCP dial
+    dial_ncp_tx: Option<mpsc::UnboundedSender<Multiaddr>>,
     // Active floodsub connections with a remote.
-    pub(crate) floodsub_connections: Vec<Multiaddr>,
+    // pub(crate) floodsub_connections: Vec<Multiaddr>,
+    pub(crate) floodsub_connections: HashSet<PeerId>,
     // All remote connections
     pub(crate) remote_connections: FnvHashMap<Multiaddr, RemoteInfo>,
     // Node's PeerId
@@ -86,7 +91,8 @@ impl Node {
             config: cfg.clone(),
             floodsub_ctl: None,
             dial_tx: None,
-            floodsub_connections: Vec::new(),
+            dial_ncp_tx: None,
+            floodsub_connections: HashSet::new(),
             remote_connections: FnvHashMap::default(),
             peer_id: None,
             peer_store: Arc::new(memory_peerstore::MemoryPeerstore::empty()),
@@ -100,8 +106,18 @@ impl Node {
     pub fn dial(&self, target: Multiaddr) -> Result<(), Error> {
         let inner2 = &self.inner.clone();
         let inner = inner2.read();
-        debug!(inner.logger, "*Dialing {}*", target);
+        debug!(inner.logger, "*Dialing FloodSub {}*", target);
         if let Some(dial_tx) = inner.dial_tx.clone() {
+            dial_tx.unbounded_send(target)?;
+        };
+        Ok(())
+    }
+
+    pub fn dial_ncp(&self, target: Multiaddr) -> Result<(), Error> {
+        let inner2 = &self.inner.clone();
+        let inner = inner2.read();
+        debug!(inner.logger, "*Dialing NCP {}*", target);
+        if let Some(dial_tx) = inner.dial_ncp_tx.clone() {
             dial_tx.unbounded_send(target)?;
         };
         Ok(())
@@ -217,11 +233,11 @@ impl Node {
 
         // Prepare transports for muxing
         let flood_upgrade = upgrade::map(floodsub_upgrade.clone(), |fs| EitherOutput::First(fs));
-        let echo_upgrade = upgrade::map(NcpProtocolConfig {}, |echo| EitherOutput::Second(echo));
+        let ncp_upgrade = upgrade::map(NcpProtocolConfig {}, |ncp| EitherOutput::Second(ncp));
 
         let muxed_transport = transport
             .clone()
-            .with_upgrade(upgrade::or(flood_upgrade.clone(), echo_upgrade.clone()));
+            .with_upgrade(upgrade::or(flood_upgrade.clone(), ncp_upgrade.clone()));
 
         // Let's put this `transport` into a *swarm*. The swarm will handle all the incoming and
         // outgoing connections for us.
@@ -234,7 +250,7 @@ impl Node {
                         addr.and_then(move |addr| floodsub_handler(floodsub, addr, inner)),
                     ),
                     EitherOutput::Second(echo) => {
-                        println!("Successfully negotiated echo protocol");
+                        println!("Successfully negotiated NCP protocol");
                         println!("Endpoint: {:?}", echo.0);
                         Either::B(
                             addr.and_then(move |addr| ncp_handler(echo.1, echo.0, addr, inner)),
@@ -255,12 +271,14 @@ impl Node {
 
         for addr in config.seed_nodes.iter() {
             debug!(netlog, "Dialing peer"; "address" => addr);
-            match addr.parse() {
-                Ok(maddr) => if let Err(e) = swarm_controller
-                    .dial(maddr, transport.clone().with_upgrade(flood_upgrade.clone()))
-                {
-                    error!(netlog, "failed to dial node!"; "Error" => e.to_string());
-                },
+            match addr.parse::<Multiaddr>() {
+                Ok(maddr) => {
+                    if let Err(e) = swarm_controller
+                        .dial(maddr, transport.clone().with_upgrade(flood_upgrade.clone()))
+                    {
+                        error!(netlog, "failed to dial node!"; "Error" => e.to_string());
+                    };
+                }
                 Err(e) => {
                     error!(netlog, "failed to parse address: {}", addr; "Error" => e.to_string())
                 }
@@ -269,11 +287,13 @@ impl Node {
 
         let (dial_tx, dial_rx) = mpsc::unbounded();
         let dialer = dial_rx.for_each({
+            let swarm_controller2 = swarm_controller.clone();
+            let transport2 = transport.clone();
             let nl2 = netlog.clone();
             move |msg| {
-                debug!(nl2, "inner: *Dialing {}*", msg);
-                if let Err(e) = swarm_controller
-                    .dial(msg, transport.clone().with_upgrade(flood_upgrade.clone()))
+                debug!(nl2, "inner: *Dialing FloodSub: {}*", msg);
+                if let Err(e) = swarm_controller2
+                    .dial(msg, transport2.clone().with_upgrade(flood_upgrade.clone()))
                 {
                     error!(nl2, "failed to dial node!"; "Error" => e.to_string());
                 }
@@ -285,10 +305,46 @@ impl Node {
             inner.dial_tx = Some(dial_tx);
         }
 
+        let (dial_ncp_tx, dial_ncp_rx) = mpsc::unbounded();
+        let dialer_ncp = dial_ncp_rx.for_each({
+            let nl2 = netlog.clone();
+            let swarm_controller2 = swarm_controller.clone();
+            let transport2 = transport.clone();
+            move |msg| {
+                debug!(nl2, "inner: *Dialing NCP: {}*", msg);
+                if let Err(e) = swarm_controller2
+                    .dial(msg, transport2.clone().with_upgrade(ncp_upgrade.clone()))
+                {
+                    error!(nl2, "failed to dial node!"; "Error" => e.to_string());
+                }
+                Ok(())
+            }
+        });
+        {
+            let mut inner = inner.write();
+            inner.dial_ncp_tx = Some(dial_ncp_tx);
+        }
+
+        let monitor = Interval::new_interval(Duration::from_secs(config.monitoring_interval))
+            .for_each({
+                let nl2 = netlog.clone();
+                let inner = inner.clone();
+                move |_| {
+                    if let Err(e) = connection_monitor(inner.clone()) {
+                        debug!(nl2, "Error from connection monitorng: {}", e);
+                    };
+                    Ok(())
+                }
+            });
+
         // TODO: handle intenal errors properly
         let final_fut = swarm_future
             .for_each(|_| Ok(()))
             .select(dialer.map_err(|_| unreachable!()))
+            .map(|_| ())
+            .select(dialer_ncp.map_err(|_| unreachable!()))
+            .map(|_| ())
+            .select(monitor.map_err(|_| unreachable!()))
             .map(|_| ())
             .map_err(|_| ());
 
@@ -317,17 +373,30 @@ fn floodsub_handler(
 
     {
         let mut inner = inner.write();
-        inner.floodsub_connections.push(addr.clone());
+        let peer_id = inner.remote_connections.get(&addr).unwrap().peer_id.clone();
+        inner.floodsub_connections.insert(peer_id);
     }
     debug!(
         netlog,
         "Successfully negotiated floodsub protocol with: {}", addr
     );
+    // Request peers list from remote
+    //
+    {
+        let inner = inner.read();
+        let netlog = netlog.clone();
+        if let Some(ref dial_tx) = inner.dial_ncp_tx {
+            if let Err(e) = dial_tx.unbounded_send(addr.clone()) {
+                debug!(netlog, "Error trying to dial NCP to {}", addr; "Error" => e.to_string());
+            };
+        }
+    }
     let socket = socket.then({
         let inner = inner.clone();
         move |res| {
             let mut inner = inner.write();
-            inner.floodsub_connections.retain(|a| *a != addr);
+            let peer_id = inner.remote_connections.get(&addr).unwrap().peer_id.clone();
+            inner.floodsub_connections.remove(&peer_id);
             match res {
                 Ok(_) => {
                     debug!(netlog, "Floodsub successfully finished with: {}", addr);
@@ -407,13 +476,6 @@ pub(crate) fn populate_peerstore(node: Arc<RwLock<Inner>>) -> Result<(), Error> 
     Ok(())
 }
 
-fn key_from_file<P: AsRef<Path>>(file_path: P) -> Result<Vec<u8>, Error> {
-    let mut buf = Vec::new();
-    let mut f = File::open(file_path)?;
-    f.read_to_end(&mut buf)?;
-    Ok(buf)
-}
-
 fn dump_peerstore<T>(peerstore: T) -> Result<(), Error>
 where
     T: Peerstore + Clone,
@@ -429,4 +491,52 @@ where
         }
     }
     Ok(())
+}
+
+fn connection_monitor(node: Arc<RwLock<Inner>>) -> Result<(), Error> {
+    let inner = node.clone();
+    let config = {
+        let inner = node.read();
+        inner.config.clone()
+    };
+    let logger = {
+        let inner = inner.read();
+        inner.logger.clone()
+    };
+    debug!(logger, "Monitoring TICK!");
+    {
+        let inner = inner.read();
+        if inner.floodsub_connections.len() < config.min_connections {
+            let peers = inner.peer_store.clone();
+
+            for p in peers.peers().into_iter() {
+                if let Some(ref peer) = inner.peer_id {
+                    if *peer == p {
+                        continue;
+                    };
+                };
+                for a in peers.peer_or_create(&p).addrs().into_iter() {
+                    let a_ = a.clone();
+                    if !inner.floodsub_connections.contains(&p) {
+                        // When floodsub connection is established, it will also be queried for peers
+                        if let Some(ref dial_tx) = inner.dial_tx {
+                            dial_tx.unbounded_send(a)?;
+                        }
+                    } else {
+                        if let Some(ref dial_tx) = inner.dial_ncp_tx {
+                            dial_tx.unbounded_send(a_)?;
+                        }
+                    }
+                }
+            }
+        };
+    }
+    Ok(())
+}
+
+fn key_from_file<P: AsRef<Path>>(file_path: P) -> Result<Vec<u8>, Error> {
+    let mut buf = Vec::new();
+    let mut f = File::open(file_path)?;
+    f.read_to_end(&mut buf)?;
+    Ok(buf)
 }

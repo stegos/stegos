@@ -8,8 +8,8 @@ public_key = "testing/node03/public-key.der"
 broadcast_topic = "chat"
 seed_nodes = [
     "/ip4/127.0.0.1/tcp/10055",
-    "/ip4/127.0.0.1/tcp/10056",
+    # "/ip4/127.0.0.1/tcp/10056",
 ]
 advertised_addresses = [
-    "/ip4/127.0.0.1/10057",
+    "/ip4/127.0.0.1/tcp/10057",
 ]

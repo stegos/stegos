@@ -45,6 +45,7 @@ use clap::{App, Arg, ArgMatches};
 use console::*;
 use slog::{Drain, Logger};
 use std::error::Error;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process;
 use stegos_blockchain::Blockchain;
@@ -105,7 +106,11 @@ fn run() -> Result<(), Box<Error>> {
     let log = initialize_logger(&args)?;
 
     // Initialize blockchain
+    // TODO: remove init_pairings()
+    print!("Node is starting, initializing blockchain... ");
+    io::stdout().flush().unwrap();
     let mut _blockchain = Blockchain::new();
+    println!("Done!");
 
     // Initialize network
     let mut rt = tokio::runtime::current_thread::Runtime::new()?;

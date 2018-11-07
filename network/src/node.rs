@@ -61,8 +61,6 @@ pub(crate) struct Inner {
     pub(crate) config: ConfigNetwork,
     // FloodSubController refernce for message publishing
     floodsub_ctl: Option<floodsub::FloodSubController>,
-    // FloodSub topic used for communications
-    floodsub_topic: Option<floodsub::Topic>,
     // Channel for outbound dial
     dial_tx: Option<mpsc::UnboundedSender<Multiaddr>>,
     // Active floodsub connections with a remote.
@@ -87,7 +85,6 @@ impl Node {
         let inner = Arc::new(RwLock::new(Inner {
             config: cfg.clone(),
             floodsub_ctl: None,
-            floodsub_topic: None,
             dial_tx: None,
             floodsub_connections: Vec::new(),
             remote_connections: FnvHashMap::default(),
@@ -110,39 +107,24 @@ impl Node {
         Ok(())
     }
 
-    pub fn publish(&self, data: Vec<u8>) -> Result<(), Error> {
-        let inner2 = &self.inner.clone();
-        let inner = inner2.read();
-        debug!(
-            inner.logger,
-            "publishing message: {}*",
-            String::from_utf8_lossy(&data)
-        );
-        if let Some(topic) = &inner.floodsub_topic {
-            if let Some(floodsub_ctl) = &inner.floodsub_ctl {
-                floodsub_ctl.publish(topic, data)
-            }
-        }
-        Ok(())
-    }
-
-    pub fn set_id<S>(&self, id: &S)
+    pub fn subscribe<S>(&self, topic: &S)
     where
         S: Into<String> + Clone,
     {
-        let id: String = id.clone().into();
-        let topic = floodsub::TopicBuilder::new(id).build();
+        let topic: String = topic.clone().into();
+        println!("net: *Subscribed to topic '{}'*", &topic);
+        let topic = floodsub::TopicBuilder::new(topic).build();
         let inner = self.inner.read();
         if let Some(floodsub_ctl) = inner.floodsub_ctl.clone() {
             floodsub_ctl.subscribe(&topic);
         }
     }
 
-    pub fn send_to_id<S>(&self, id: &S, data: Vec<u8>) -> Result<(), Error>
+    pub fn publish<S>(&self, topic: &S, data: Vec<u8>) -> Result<(), Error>
     where
         S: Into<String> + Clone,
     {
-        let id: String = id.clone().into();
+        let id: String = topic.clone().into();
         let topic = floodsub::TopicBuilder::new(id).build();
         let inner = self.inner.read();
         if let Some(floodsub_ctl) = inner.floodsub_ctl.clone() {
@@ -265,14 +247,10 @@ impl Node {
         let address = swarm_controller.listen_on(listen_addr);
         debug!(netlog, "Now listening on {:?}", address);
 
-        let topic = floodsub::TopicBuilder::new(config.broadcast_topic.as_str()).build();
-
         let floodsub_ctl = floodsub::FloodSubController::new(&floodsub_upgrade);
-        floodsub_ctl.subscribe(&topic);
         {
             let mut inner = inner.write();
             inner.floodsub_ctl = Some(floodsub_ctl.clone());
-            inner.floodsub_topic = Some(topic.clone());
         }
 
         for addr in config.seed_nodes.iter() {

@@ -22,30 +22,23 @@
 // SOFTWARE.
 
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::pbc::secure::Signature;
 
 /// Transaction Input.
 #[derive(Debug, Clone)]
 pub struct Input {
     /// Identifier of an unspent transaction output.
     pub source_id: Hash,
-    /// Signature used to sign transactions.
-    pub signature: Signature,
 }
 
 impl Input {
     /// Constructor for Input.
-    pub fn new(source_id: Hash, signature: Signature) -> Input {
-        Input {
-            source_id: source_id,
-            signature: signature,
-        }
+    pub fn new(source_id: Hash) -> Input {
+        Input { source_id }
     }
 }
 
 impl Hashable for Input {
     fn hash(&self, state: &mut Hasher) {
         self.source_id.hash(state);
-        self.signature.hash(state);
     }
 }

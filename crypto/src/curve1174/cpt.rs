@@ -65,6 +65,12 @@ impl fmt::Display for Pt {
     }
 }
 
+impl fmt::Debug for Pt {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Pt({})", self.nbr_str())
+    }
+}
+
 impl Hashable for Pt {
     fn hash(&self, state: &mut Hasher) {
         "Pt".hash(state);
@@ -91,12 +97,18 @@ impl From<ECp> for Pt {
 pub struct SecretKey(Fr);
 
 impl SecretKey {
-    fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
         Ok(SecretKey(Fr::from_str(s)?))
     }
 }
 
 impl fmt::Display for SecretKey {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "SKey({})", (*self).0.nbr_str())
+    }
+}
+
+impl fmt::Debug for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "SKey({})", (*self).0.nbr_str())
     }
@@ -127,12 +139,18 @@ impl From<SecretKey> for Fr {
 pub struct PublicKey(Pt);
 
 impl PublicKey {
-    fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
         Ok(PublicKey(Pt::from_str(s)?))
     }
 }
 
 impl fmt::Display for PublicKey {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "PKey({})", (*self).0.nbr_str())
+    }
+}
+
+impl fmt::Debug for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "PKey({})", (*self).0.nbr_str())
     }
@@ -194,10 +212,18 @@ pub fn make_random_keys() -> (SecretKey, PublicKey, SchnorrSig) {
 // generate K = k*G for k = random Fr
 // generate u = k + Fr(H(K, P, msg)) * s
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct SchnorrSig {
     pub u: Fr,
     pub K: Pt,
+}
+
+impl Hashable for SchnorrSig {
+    fn hash(&self, state: &mut Hasher) {
+        "SchnorrSig".hash(state);
+        self.u.hash(state);
+        self.K.hash(state);
+    }
 }
 
 pub fn sign_hash(hmsg: &Hash, skey: &SecretKey) -> SchnorrSig {
@@ -240,10 +266,38 @@ pub fn validate_sig(hmsg: &Hash, sig: &SchnorrSig, pkey: &PublicKey) -> Result<b
 
 use std::iter::repeat;
 
+#[derive(Clone)]
 pub struct EncryptedPayload {
     pub apkg: Pt,
     pub ag: Pt,
     pub ctxt: Vec<u8>,
+}
+
+impl fmt::Debug for EncryptedPayload {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "apkg={} ag={} cmsg={}",
+            self.apkg,
+            self.ag,
+            u8v_to_hexstr(&self.ctxt)
+        )
+    }
+}
+
+impl fmt::Display for EncryptedPayload {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
+}
+
+impl Hashable for EncryptedPayload {
+    fn hash(&self, state: &mut Hasher) {
+        "Encr".hash(state);
+        self.apkg.hash(state);
+        self.ag.hash(state);
+        self.ctxt[..].hash(state);
+    }
 }
 
 fn aes_encrypt_with_key(msg: &[u8], key: &[u8; 32]) -> Vec<u8> {

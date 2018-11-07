@@ -26,11 +26,11 @@ use chrono::prelude::{TimeZone, Utc};
 use input::*;
 use merkle::MerklePath;
 use output::*;
-use payload::EncryptedPayload;
+use payload::*;
 use stegos_crypto::bulletproofs;
+use stegos_crypto::curve1174::cpt::{make_deterministic_keys, PublicKey, SecretKey};
+use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::fast::Zr;
-use stegos_crypto::pbc::secure::*;
 
 /// Genesis block for tests and development purposes.
 pub fn genesis_dev() -> (Block, Vec<MerklePath>) {
@@ -38,14 +38,11 @@ pub fn genesis_dev() -> (Block, Vec<MerklePath>) {
     let amount: i64 = 1_000_000;
     let epoch: u64 = 1;
     let previous = Hash::digest(&"dev".to_string());
-    let (skey, pkey, sig) = make_deterministic_keys(b"dev");
-    let delta: Zr = Zr::random();
+    let (skey, pkey, _sig) = make_deterministic_keys(b"dev");
+    let delta: Fr = Fr::random();
     let timestamp = Utc.ymd(2018, 11, 01).and_hms(0, 0, 0).timestamp() as u64;
 
     let leader = pkey;
-
-    // Genesis is self-signed.
-    let witnesses = [leader.clone()];
 
     // Recipient is ourselves.
     let recipient = leader.clone();
@@ -54,29 +51,50 @@ pub fn genesis_dev() -> (Block, Vec<MerklePath>) {
     let inputs: [Input; 0] = [];
 
     // Genesis block have one hard-coded output.
-    let (proof, _gamma) = bulletproofs::make_range_proof(amount);
-    // TODO: replace with real EncryptedPayload
-    let payload = EncryptedPayload::garbage();
+    let (proof, gamma) = bulletproofs::make_range_proof(amount);
+
+    // Genesis block
+    let payload = new_monetary(delta, gamma, amount, pkey).expect("genesis has valid keys");
+
     let output = Output::new(recipient, proof, payload);
     let outputs = [output];
 
+    // Adjustment is the sum of all gamma found in UTXOs.
+    let adjustment = delta;
+
     let (block, paths) = Block::sign(
-        &skey, version, epoch, previous, timestamp, leader, delta, &witnesses, &inputs, &outputs,
+        version, epoch, previous, timestamp, adjustment, &inputs, &outputs,
     );
 
     // Fool-proof checks.
     static PREVIOUS_HEX: &str = "daeed6308874de11ec5ba896aff636aee60821b397f88164be3eae5cf6d276d8";
-    static SKEY_HEX: &str = "104305c39c7f664feb4ac92c10b898eb8854645454640025732c9de7902e790e";
-    static PKEY_HEX: &str = "b05872990364a0bd71087ce252732e1b4370beb78e9f94aa8415c412aafb4142689043c1832e0df0fff3c10eb845dbf80b0621fd373fe2d2f3402cf56574cf8c00";
-    static SIG_HEX: &str = "f28cde3684e3176a72203c2231615eae825bd691c04ff1a44bb3f283414b3b1701";
+    static SKEY_HEX: &str = "0136fbf72a0a0c0ea44f850e26a55f0443622cd8ae00fd49e845ffba9d1ef0d2";
+    static PKEY_HEX: &str = "86b452ac7d46311ccccf475e9716fb47086589e5720848986f2657f489fc1b05";
+    // static SIG_HEX: &str = "f28cde3684e3176a72203c2231615eae825bd691c04ff1a44bb3f283414b3b1701";
     // static DELTA_HEX: &str = "3987487567fa7d862b5890ba4b288efc486298ba";
     // static HASH_HEX: &str = "3334d1466924068a65de9be925059ab9ee8866f62db9432d502edd7252b483ea";
     assert_eq!(previous, Hash::from_hex(PREVIOUS_HEX).expect("hex"));
     assert_eq!(skey, SecretKey::from_str(SKEY_HEX).expect("hex"));
     assert_eq!(pkey, PublicKey::from_str(PKEY_HEX).expect("hex"));
-    assert_eq!(sig, Signature::from_str(SIG_HEX).expect("hex"));
+    // assert_eq!(sig, SchnorrSig::from_str(SIG_HEX).expect("hex"));
     // assert_eq!(delta, Zr::from_str(DELTA_HEX).expect("hex"));
     // assert_eq!(block.header.hash, Hash::from_hex(HASH_HEX).expect("hex"));
 
     (block, paths)
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    #[test]
+    fn test_genesis_dev() {
+        let (genesis, _) = genesis_dev();
+        let header = genesis.header;
+
+        assert_eq!(header.epoch, 1);
+        assert_eq!(header.version, 1);
+
+        // TODO: add more tests
+    }
 }

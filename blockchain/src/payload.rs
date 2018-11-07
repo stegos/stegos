@@ -21,55 +21,32 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::fmt;
-use stegos_crypto::curve1174::cpt::*;
-use stegos_crypto::hash::*;
-use stegos_crypto::utils::*;
+use stegos_crypto::curve1174::cpt::{aes_encrypt, PublicKey};
+use stegos_crypto::curve1174::fields::Fr;
 
-#[derive(Clone)]
-pub struct EncryptedPayload {
-    apkg: Pt,
-    ag: Pt,
-    cmsg: Vec<u8>,
-}
+// Re-export symbols needed for public API
+pub use stegos_crypto::curve1174::cpt::EncryptedPayload;
+pub use stegos_crypto::curve1174::CurveError;
 
-impl fmt::Debug for EncryptedPayload {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "apkg={} ag={} cmsg={}",
-            self.apkg,
-            self.ag,
-            u8v_to_hexstr(&self.cmsg)
-        )
-    }
-}
+/// Create a new monetary transaction.
+pub fn new_monetary(
+    delta: Fr,
+    gamma: Fr,
+    amount: i64,
+    pkey: PublicKey,
+) -> Result<EncryptedPayload, CurveError> {
+    // Convert amount to BE vector.
+    use std::mem::transmute;
+    let amount_bytes: [u8; 8] = unsafe { transmute(amount.to_be()) };
 
-impl fmt::Display for EncryptedPayload {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Debug::fmt(self, f)
-    }
-}
+    let gamma_bytes: [u8; 32] = gamma.bits().to_lev_u8();
+    let delta_bytes: [u8; 32] = delta.bits().to_lev_u8();
 
-impl Hashable for EncryptedPayload {
-    fn hash(&self, state: &mut Hasher) {
-        "Encr".hash(state);
-        self.apkg.hash(state);
-        self.ag.hash(state);
-        self.cmsg[..].hash(state);
-    }
-}
+    let payload: Vec<u8> = [&amount_bytes[..], &delta_bytes[..], &gamma_bytes[..]].concat();
 
-impl EncryptedPayload {
-    /// Returns some garbage for tests.
-    // TODO: remove
-    pub fn garbage() -> EncryptedPayload {
-        let (_, pkey, _) = make_deterministic_keys(b"A test seed");
-        let pkg = aes_encrypt(b"This is a test", &pkey).unwrap();
-        EncryptedPayload {
-            apkg: pkg.apkg,
-            ag: pkg.ag,
-            cmsg: pkg.ctxt,
-        }
-    }
+    // Ensure that the total length of package is 72 bytes.
+    assert_eq!(payload.len(), 72);
+
+    // String together a gamma, delta, and Amount (i64) all in one long vector and encrypt it.
+    aes_encrypt(&payload, &pkey)
 }

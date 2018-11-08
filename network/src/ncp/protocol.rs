@@ -207,6 +207,7 @@ fn proto_to_msg(mut message: ncp_proto::Message) -> Result<NcpMsg, IoError> {
 #[cfg(test)]
 mod tests {
     extern crate libp2p;
+    extern crate simple_logger;
     extern crate tokio_current_thread;
 
     use futures::{Future, Sink, Stream};
@@ -218,7 +219,16 @@ mod tests {
     use std::thread;
 
     #[test]
+    fn log_test() {
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+        info!("log test");
+        assert_eq!(2 + 2, 4);
+    }
+
+    #[test]
     fn correct_transfer() {
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+        info!("transfer test");
         // We open a server and a client, send a message between the two, and check that they were
         // successfully received.
 

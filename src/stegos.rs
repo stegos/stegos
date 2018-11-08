@@ -159,3 +159,20 @@ fn main() {
         process::exit(1)
     };
 }
+
+#[cfg(test)]
+mod tests {
+    extern crate simple_logger;
+
+    #[test]
+    fn log_test() {
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+
+        trace!("This is trace output");
+        debug!("This is debug output");
+        info!("This is info output");
+        warn!("This is warn output");
+        error!("This is error output");
+        assert_eq!(2 + 2, 4);
+    }
+}

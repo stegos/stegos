@@ -66,9 +66,9 @@ impl Blockchain {
             output_by_hash,
         };
 
-        let (genesis, paths) = genesis_dev();
+        let (genesis, outputs) = genesis_dev();
         let inputs: [Hash; 0] = [];
-        blockchain.register_monetary_block(genesis, &inputs, paths);
+        blockchain.register_monetary_block(genesis, &inputs, &outputs);
 
         blockchain
     }
@@ -115,7 +115,7 @@ impl Blockchain {
         &mut self,
         block: MonetaryBlock,
         inputs: &[Hash],
-        paths: Vec<(Hash, MerklePath)>,
+        outputs: &[(Hash, MerklePath)],
     ) {
         let block_id = self.blocks.len();
 
@@ -151,10 +151,13 @@ impl Blockchain {
         }
 
         // Register create unspent outputs.
-        for (hash, path) in paths {
+        for (hash, path) in outputs {
             // Create the new unspent output
-            let output_key = OutputKey { block_id, path };
-            if let Some(_) = self.output_by_hash.insert(hash, output_key) {
+            let output_key = OutputKey {
+                block_id,
+                path: path.clone(),
+            };
+            if let Some(_) = self.output_by_hash.insert(hash.clone(), output_key) {
                 panic!("The output hash collision");
             }
         }
@@ -208,9 +211,9 @@ pub mod tests {
         // Adjustment is the sum of all gamma found in UTXOs.
         let adjustment = delta;
 
-        let (block, paths) = MonetaryBlock::new(base, adjustment, &inputs, &outputs);
+        let (block, outputs) = MonetaryBlock::new(base, adjustment, &inputs, &outputs);
 
-        blockchain.register_monetary_block(block, &inputs, paths);
+        blockchain.register_monetary_block(block, &inputs, &outputs);
     }
 
     #[test]

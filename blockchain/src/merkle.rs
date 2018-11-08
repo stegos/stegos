@@ -76,6 +76,7 @@ type Path = u32;
 /// 0 bit - go to the left subtree
 /// 1 bit - go to the right subtree
 /// Stored in inverted order - from leaf to root
+#[derive(Clone)]
 pub struct MerklePath(Path);
 
 // -------------------------------------

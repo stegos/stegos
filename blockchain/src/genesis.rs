@@ -23,60 +23,145 @@
 
 use block::*;
 use chrono::prelude::{TimeZone, Utc};
-use input::*;
 use merkle::MerklePath;
 use output::*;
-use payload::EncryptedPayload;
+use payload::*;
 use stegos_crypto::bulletproofs;
+use stegos_crypto::curve1174::cpt as wallet_keys;
+use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::fast::Zr;
-use stegos_crypto::pbc::secure::*;
+use stegos_crypto::pbc::secure as cosi_keys;
 
-/// Genesis block for tests and development purposes.
-pub fn genesis_dev() -> (Block, Vec<MerklePath>) {
+const GENESIS_WITNESSES_COUNT: usize = 6;
+
+/// Genesis blocks for tests and development purposes.
+pub fn genesis_dev() -> (KeyBlock, MonetaryBlock, Vec<Hash>, Vec<(Hash, MerklePath)>) {
+    //
+    // Create initial keys.
+    //
+    #[allow(dead_code)]
+    struct SeedKeys {
+        wallet_skey: wallet_keys::SecretKey,
+        wallet_pkey: wallet_keys::PublicKey,
+        wallet_sig: wallet_keys::SchnorrSig,
+        cosi_skey: cosi_keys::SecretKey,
+        cosi_pkey: cosi_keys::PublicKey,
+        cosi_sig: cosi_keys::Signature,
+    }
+    let mut keys = Vec::<SeedKeys>::with_capacity(GENESIS_WITNESSES_COUNT);
+    for i in 0..GENESIS_WITNESSES_COUNT {
+        let seed = format!("dev{}", i + 1);
+        let (wallet_skey, wallet_pkey, wallet_sig) =
+            wallet_keys::make_deterministic_keys(seed.as_bytes());
+        // TODO: find a better wait to pair wallet and CoSi keys
+        let wallet_skey_hash = Hash::digest(&wallet_skey);
+        let cosi_seed = &wallet_skey_hash.base_vector();
+        let (cosi_skey, cosi_pkey, cosi_sig) = cosi_keys::make_deterministic_keys(cosi_seed);
+
+        keys.push(SeedKeys {
+            wallet_skey,
+            wallet_pkey,
+            wallet_sig,
+            cosi_skey,
+            cosi_pkey,
+            cosi_sig,
+        });
+    }
+
+    // Both block are created at the same time in the same epoch.
+    let version: u64 = 1;
+    let epoch: u64 = 1;
+    let timestamp = Utc.ymd(2018, 11, 01).and_hms(0, 0, 0).timestamp() as u64;
+
+    //
+    // Create initial Key Block.
+    //
+    let block1 = {
+        let previous = Hash::digest(&"dev".to_string());
+        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+
+        let witnesses = keys
+            .iter()
+            .map(|p| p.cosi_pkey.clone())
+            .collect::<Vec<cosi_keys::PublicKey>>();
+        let leader = witnesses[0].clone();
+
+        KeyBlock::new(base, leader, witnesses)
+    };
+
+    //
+    // Create initial Monetary Block.
+    //
+    let (block2, inputs2, outputs2) = {
+        let previous = Hash::digest(&block1);
+        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+
+        let amount: i64 = 1_000_000;
+
+        let delta: Fr = Fr::random();
+
+        // Recipient is ourselves.
+        let recipient = keys[0].wallet_pkey.clone();
+
+        // Genesis doesn't have inputs
+        let inputs = Vec::<Hash>::new();
+
+        // Genesis block have one hard-coded output.
+        let (proof, gamma) = bulletproofs::make_range_proof(amount);
+        let payload =
+            new_monetary(delta, gamma, amount, recipient).expect("genesis has valid keys");
+        let output = Output::new(recipient, proof, payload);
+        let outputs = [output];
+
+        // Adjustment is the sum of all gamma found in UTXOs.
+        let adjustment = delta;
+
+        let (block, outputs) = MonetaryBlock::new(base, adjustment, &inputs, &outputs);
+        (block, inputs, outputs)
+    };
+
+    (block1, block2, inputs2, outputs2)
+}
+
+/*
+pub fn genesis_dev() -> (MonetaryBlock, Vec<(Hash, MerklePath)>) {
     let version: u64 = 1;
     let amount: i64 = 1_000_000;
     let epoch: u64 = 1;
     let previous = Hash::digest(&"dev".to_string());
-    let (skey, pkey, sig) = make_deterministic_keys(b"dev");
-    let delta: Zr = Zr::random();
     let timestamp = Utc.ymd(2018, 11, 01).and_hms(0, 0, 0).timestamp() as u64;
 
-    let leader = pkey;
-
-    // Genesis is self-signed.
-    let witnesses = [leader.clone()];
-
-    // Recipient is ourselves.
-    let recipient = leader.clone();
-
-    // Genesis block doesn't have inputs.
-    let inputs: [Input; 0] = [];
-
-    // Genesis block have one hard-coded output.
-    let (proof, _gamma) = bulletproofs::make_range_proof(amount);
-    // TODO: replace with real EncryptedPayload
-    let payload = EncryptedPayload::garbage();
-    let output = Output::new(recipient, proof, payload);
-    let outputs = [output];
-
-    let (block, paths) = Block::sign(
-        &skey, version, epoch, previous, timestamp, leader, delta, &witnesses, &inputs, &outputs,
-    );
 
     // Fool-proof checks.
     static PREVIOUS_HEX: &str = "daeed6308874de11ec5ba896aff636aee60821b397f88164be3eae5cf6d276d8";
-    static SKEY_HEX: &str = "104305c39c7f664feb4ac92c10b898eb8854645454640025732c9de7902e790e";
-    static PKEY_HEX: &str = "b05872990364a0bd71087ce252732e1b4370beb78e9f94aa8415c412aafb4142689043c1832e0df0fff3c10eb845dbf80b0621fd373fe2d2f3402cf56574cf8c00";
-    static SIG_HEX: &str = "f28cde3684e3176a72203c2231615eae825bd691c04ff1a44bb3f283414b3b1701";
+    static SKEY_HEX: &str = "0136fbf72a0a0c0ea44f850e26a55f0443622cd8ae00fd49e845ffba9d1ef0d2";
+    static PKEY_HEX: &str = "86b452ac7d46311ccccf475e9716fb47086589e5720848986f2657f489fc1b05";
+    // static SIG_HEX: &str = "f28cde3684e3176a72203c2231615eae825bd691c04ff1a44bb3f283414b3b1701";
     // static DELTA_HEX: &str = "3987487567fa7d862b5890ba4b288efc486298ba";
     // static HASH_HEX: &str = "3334d1466924068a65de9be925059ab9ee8866f62db9432d502edd7252b483ea";
     assert_eq!(previous, Hash::from_hex(PREVIOUS_HEX).expect("hex"));
     assert_eq!(skey, SecretKey::from_str(SKEY_HEX).expect("hex"));
     assert_eq!(pkey, PublicKey::from_str(PKEY_HEX).expect("hex"));
-    assert_eq!(sig, Signature::from_str(SIG_HEX).expect("hex"));
+    // assert_eq!(sig, SchnorrSig::from_str(SIG_HEX).expect("hex"));
     // assert_eq!(delta, Zr::from_str(DELTA_HEX).expect("hex"));
     // assert_eq!(block.header.hash, Hash::from_hex(HASH_HEX).expect("hex"));
 
     (block, paths)
+}
+*/
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    #[test]
+    fn test_genesis_dev() {
+        let (block1, _block2, _inputs1, _inputs2) = genesis_dev();
+        let header = block1.header;
+
+        assert_eq!(header.base.epoch, 1);
+        assert_eq!(header.base.version, 1);
+
+        // TODO: add more tests
+    }
 }

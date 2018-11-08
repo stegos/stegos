@@ -24,19 +24,17 @@
 mod block;
 mod blockchain;
 mod genesis;
-mod input;
 mod merkle;
 mod output;
 mod payload;
 
 pub use block::*;
 pub use blockchain::*;
-pub use input::*;
 pub use merkle::*;
 pub use output::*;
 
 extern crate chrono;
-#[cfg_attr(test, macro_use)]
+#[macro_use]
 extern crate log;
 extern crate rand;
 extern crate stegos_crypto;

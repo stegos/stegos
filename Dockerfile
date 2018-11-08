@@ -1,6 +1,6 @@
 # Use multi-stage build to reduce image size
-FROM rust:1.29-slim-stretch AS builder
-MAINTAINER Stegos AG <info@stegos.cc>
+FROM rust:1.30-slim-stretch AS builder
+LABEL maintainer="Stegos AG <info@stegos.cc>"
 
 ADD . /usr/src/stegos
 WORKDIR /usr/src/stegos
@@ -12,6 +12,6 @@ FROM debian:stretch-slim
 COPY --from=builder /usr/local/lib/libpbc* /usr/local/lib/
 COPY --from=builder /usr/local/lib/libgmp* /usr/local/lib/
 COPY --from=builder /usr/local/bin/stegos /usr/local/bin/
-RUN stegos --version
+RUN ldconfig && stegos --version
 
 CMD ["stegos"]

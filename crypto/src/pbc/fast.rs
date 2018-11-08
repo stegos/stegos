@@ -53,7 +53,6 @@ use rand::{Rng, ThreadRng};
 // ---------------------------------------------------------------------------------
 
 #[derive(Copy, Clone)]
-#[repr(C)]
 pub struct Zr([u8; ZR_SIZE_AR160]);
 
 impl Zr {
@@ -357,10 +356,13 @@ impl DivAssign<Zr> for Zr {
 
 // -----------------------------------------
 #[derive(Copy, Clone)]
-#[repr(C)]
 pub struct G1([u8; G1_SIZE_AR160]);
 
 impl G1 {
+    pub fn zero() -> Self {
+        Self::new()
+    }
+
     pub fn new() -> Self {
         G1(Self::wv())
     }
@@ -553,10 +555,13 @@ impl DivAssign<i64> for G1 {
 
 // -----------------------------------------
 #[derive(Copy, Clone)]
-#[repr(C)]
 pub struct G2([u8; G2_SIZE_AR160]);
 
 impl G2 {
+    pub fn zero() -> Self {
+        Self::new()
+    }
+
     pub fn new() -> Self {
         G2(Self::wv())
     }
@@ -750,7 +755,6 @@ impl stdhash::Hash for G2 {
 
 // -----------------------------------------
 #[derive(Copy, Clone)]
-#[repr(C)]
 pub struct GT([u8; GT_SIZE_AR160]);
 
 impl GT {
@@ -851,6 +855,12 @@ impl PartialEq for SecretKey {
     }
 }
 
+impl From<SecretKey> for Zr {
+    fn from(skey: SecretKey) -> Zr {
+        skey.0
+    }
+}
+
 // -----------------------------------------
 #[derive(Copy, Clone)]
 pub struct PublicKey(G2);
@@ -891,6 +901,12 @@ impl stdhash::Hash for PublicKey {
     fn hash<H: stdhash::Hasher>(&self, state: &mut H) {
         stdhash::Hash::hash("PKey", state);
         stdhash::Hash::hash(&self.0, state);
+    }
+}
+
+impl From<PublicKey> for G2 {
+    fn from(key: PublicKey) -> Self {
+        key.0
     }
 }
 

@@ -110,7 +110,7 @@ impl Blockchain {
 
     //----------------------------------------------------------------------------------------------
     #[allow(dead_code)]
-    fn register_monetary_block(&mut self, block: MonetaryBlock, paths: Vec<MerklePath>) {
+    fn register_monetary_block(&mut self, block: MonetaryBlock, paths: Vec<(Hash, MerklePath)>) {
         let block_id = self.blocks.len();
 
         let this_hash = Hash::digest(&block.header);
@@ -146,15 +146,10 @@ impl Blockchain {
         }
 
         // Register create unspent outputs.
-        for path in paths {
-            // TODO: this algorithm is efficient and has O(nlogn) complexity because of lookup().
-            // Vec<&Output> should be passed as an argument in order to fix it.
-            // I tried to do so, Rust is not happy with &Output lifetime.
-            let output: &Output = block.body.outputs.lookup(&path).unwrap();
-
+        for (hash, path) in paths {
             // Create the new unspent output
             let output_key = OutputKey { block_id, path };
-            if let Some(_) = self.output_by_hash.insert(output.hash, output_key) {
+            if let Some(_) = self.output_by_hash.insert(hash, output_key) {
                 panic!("The output hash collision");
             }
         }

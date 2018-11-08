@@ -33,7 +33,7 @@ use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
 
 /// Genesis block for tests and development purposes.
-pub fn genesis_dev() -> (MonetaryBlock, Vec<MerklePath>) {
+pub fn genesis_dev() -> (MonetaryBlock, Vec<(Hash, MerklePath)>) {
     let version: u64 = 1;
     let amount: i64 = 1_000_000;
     let epoch: u64 = 1;

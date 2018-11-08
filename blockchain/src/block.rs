@@ -158,7 +158,7 @@ impl MonetaryBlock {
         adjustment: Fr,
         inputs: &[Input],
         outputs: &[Output],
-    ) -> (MonetaryBlock, Vec<MerklePath>) {
+    ) -> (MonetaryBlock, Vec<(Hash, MerklePath)>) {
         // Create inputs array
         let mut hasher = Hasher::new();
         let inputs_count: u64 = inputs.len() as u64;
@@ -182,7 +182,14 @@ impl MonetaryBlock {
             .map(|o| Box::<Output>::new(o.clone()))
             .collect::<Vec<Box<Output>>>();
 
-        let (outputs, paths) = Merkle::from_array(&outputs);
+        let (tree, paths) = Merkle::from_array(&outputs);
+        assert_eq!(paths.len(), outputs.len());
+        let paths = outputs
+            .iter()
+            .zip(paths.iter())
+            .map(|(o, p)| (o.hash.clone(), p.clone()))
+            .collect::<Vec<(Hash, MerklePath)>>();
+        let outputs = tree;
 
         // Create header
         let header = MonetaryBlockHeader {

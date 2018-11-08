@@ -21,7 +21,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use input::Input;
 use merkle::*;
 use output::Output;
 use stegos_crypto::curve1174::fields::Fr;
@@ -123,9 +122,6 @@ impl Hashable for MonetaryBlockHeader {
 /// Monetary Block.
 #[derive(Debug)]
 pub struct MonetaryBlockBody {
-    /// The list of transaction inputs.
-    pub inputs: Vec<Input>,
-
     /// The list of transaction outputs in a Merkle Tree.
     pub outputs: Merkle<Box<Output>>,
 }
@@ -156,7 +152,7 @@ impl MonetaryBlock {
     pub fn new(
         base: BaseBlockHeader,
         adjustment: Fr,
-        inputs: &[Input],
+        inputs: &[Hash],
         outputs: &[Output],
     ) -> (MonetaryBlock, Vec<(Hash, MerklePath)>) {
         // Create inputs array
@@ -167,7 +163,6 @@ impl MonetaryBlock {
             input.hash(&mut hasher);
         }
         let inputs_range_hash = hasher.result();
-        let inputs = inputs.to_vec();
 
         // Create outputs tree
         let mut hasher = Hasher::new();
@@ -200,7 +195,7 @@ impl MonetaryBlock {
         };
 
         // Create the block
-        let body = MonetaryBlockBody { inputs, outputs };
+        let body = MonetaryBlockBody { outputs };
 
         let block = MonetaryBlock { header, body };
 

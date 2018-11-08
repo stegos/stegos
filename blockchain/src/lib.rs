@@ -24,14 +24,12 @@
 mod block;
 mod blockchain;
 mod genesis;
-mod input;
 mod merkle;
 mod output;
 mod payload;
 
 pub use block::*;
 pub use blockchain::*;
-pub use input::*;
 pub use merkle::*;
 pub use output::*;
 

@@ -67,7 +67,8 @@ impl Blockchain {
         };
 
         let (genesis, paths) = genesis_dev();
-        blockchain.register_monetary_block(genesis, paths);
+        let inputs: [Hash; 0] = [];
+        blockchain.register_monetary_block(genesis, &inputs, paths);
 
         blockchain
     }
@@ -110,7 +111,12 @@ impl Blockchain {
 
     //----------------------------------------------------------------------------------------------
     #[allow(dead_code)]
-    fn register_monetary_block(&mut self, block: MonetaryBlock, paths: Vec<(Hash, MerklePath)>) {
+    fn register_monetary_block(
+        &mut self,
+        block: MonetaryBlock,
+        inputs: &[Hash],
+        paths: Vec<(Hash, MerklePath)>,
+    ) {
         let block_id = self.blocks.len();
 
         let this_hash = Hash::digest(&block.header);
@@ -125,8 +131,7 @@ impl Blockchain {
         }
 
         // Remove spent outputs.
-        for input in &block.body.inputs {
-            let output_hash = &input.source_id;
+        for output_hash in inputs {
             // Remove from the set of unspent outputs.
             if let Some(OutputKey { block_id, path }) = self.output_by_hash.remove(output_hash) {
                 let block = &mut self.blocks[block_id];
@@ -169,7 +174,6 @@ pub mod tests {
     use stegos_crypto::curve1174::cpt::make_random_keys;
     use stegos_crypto::curve1174::fields::Fr;
 
-    use input::*;
     use payload::*;
 
     pub fn iterate(blockchain: &mut Blockchain) {
@@ -188,7 +192,7 @@ pub mod tests {
         let (_skey, pkey, _sig) = make_random_keys();
 
         let output_hash = blockchain.output_by_hash.keys().next().unwrap().clone();
-        let input = Input::new(output_hash.clone());
+        let input = output_hash.clone();
         let inputs = [input];
 
         let delta: Fr = Fr::random();
@@ -206,7 +210,7 @@ pub mod tests {
 
         let (block, paths) = MonetaryBlock::new(base, adjustment, &inputs, &outputs);
 
-        blockchain.register_monetary_block(block, paths);
+        blockchain.register_monetary_block(block, &inputs, paths);
     }
 
     #[test]

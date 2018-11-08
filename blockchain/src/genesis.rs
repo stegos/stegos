@@ -23,7 +23,6 @@
 
 use block::*;
 use chrono::prelude::{TimeZone, Utc};
-use input::*;
 use merkle::MerklePath;
 use output::*;
 use payload::*;
@@ -51,7 +50,7 @@ pub fn genesis_dev() -> (MonetaryBlock, Vec<(Hash, MerklePath)>) {
     let recipient = leader.clone();
 
     // Genesis block doesn't have inputs.
-    let inputs: [Input; 0] = [];
+    let inputs: [Hash; 0] = [];
 
     // Genesis block have one hard-coded output.
     let (proof, gamma) = bulletproofs::make_range_proof(amount);

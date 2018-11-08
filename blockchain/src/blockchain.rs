@@ -67,7 +67,7 @@ impl Blockchain {
         };
 
         let (genesis, paths) = genesis_dev();
-        blockchain.register_block(genesis, paths);
+        blockchain.register_monetary_block(genesis, paths);
 
         blockchain
     }
@@ -76,10 +76,14 @@ impl Blockchain {
     pub fn output_by_hash(&self, output_hash: &Hash) -> Option<&Output> {
         if let Some(OutputKey { block_id, path }) = self.output_by_hash.get(output_hash) {
             let block = &self.blocks[*block_id];
-            if let Some(output) = block.outputs.lookup(path) {
-                return Some(&output);
+            if let Block::MonetaryBlock(MonetaryBlock { header: _, body }) = block {
+                if let Some(output) = body.outputs.lookup(path) {
+                    return Some(&output);
+                } else {
+                    return None;
+                }
             } else {
-                return None;
+                unreachable!(); // Non-monetary block
             }
         }
         return None;
@@ -106,28 +110,35 @@ impl Blockchain {
 
     //----------------------------------------------------------------------------------------------
     #[allow(dead_code)]
-    fn register_block(&mut self, block: Block, paths: Vec<MerklePath>) {
+    fn register_monetary_block(&mut self, block: MonetaryBlock, paths: Vec<MerklePath>) {
         let block_id = self.blocks.len();
-        assert!(block_id == 0 || self.blocks[block_id - 1].header.hash == block.header.previous);
 
-        if let Some(_) = self
-            .block_by_hash
-            .insert(block.header.hash.clone(), block_id)
-        {
+        let this_hash = Hash::digest(&block.header);
+
+        if let Some(previous_block) = self.blocks.last() {
+            let previous_hash = Hash::digest(previous_block.base_header());
+            assert_eq!(previous_hash, block.header.base.previous);
+        }
+
+        if let Some(_) = self.block_by_hash.insert(this_hash.clone(), block_id) {
             panic!("Block hash collision");
         }
 
         // Remove spent outputs.
-        for input in &block.inputs {
+        for input in &block.body.inputs {
             let output_hash = &input.source_id;
             // Remove from the set of unspent outputs.
             if let Some(OutputKey { block_id, path }) = self.output_by_hash.remove(output_hash) {
                 let block = &mut self.blocks[block_id];
-                // Remove from the block.
-                if let Some(output) = block.outputs.prune(&path) {
-                    assert_eq!(output.hash, *output_hash);
+                if let Block::MonetaryBlock(MonetaryBlock { header: _, body }) = block {
+                    // Remove from the block.
+                    if let Some(output) = body.outputs.prune(&path) {
+                        assert_eq!(output.hash, *output_hash);
+                    } else {
+                        panic!("Missing output with id {}", output_hash);
+                    }
                 } else {
-                    panic!("Missing output with id {}", output_hash);
+                    unreachable!(); // Non-monetary block.
                 }
             } else {
                 panic!("Can't find input with id {}", output_hash);
@@ -139,7 +150,7 @@ impl Blockchain {
             // TODO: this algorithm is efficient and has O(nlogn) complexity because of lookup().
             // Vec<&Output> should be passed as an argument in order to fix it.
             // I tried to do so, Rust is not happy with &Output lifetime.
-            let output: &Output = block.outputs.lookup(&path).unwrap();
+            let output: &Output = block.body.outputs.lookup(&path).unwrap();
 
             // Create the new unspent output
             let output_key = OutputKey { block_id, path };
@@ -149,7 +160,7 @@ impl Blockchain {
         }
 
         // Must be the last line to make Rust happy.
-        self.blocks.push(block);
+        self.blocks.push(Block::MonetaryBlock(block));
     }
 }
 
@@ -167,23 +178,23 @@ pub mod tests {
     use payload::*;
 
     pub fn iterate(blockchain: &mut Blockchain) {
+        let version = 1;
+        let timestamp = Utc::now().timestamp() as u64;
         let (epoch, previous) = {
             let last = blockchain.last_block();
-            let epoch = last.header.epoch + 1;
-            let previous = last.header.hash.clone();
+            let base_header = last.base_header();
+            let epoch = base_header.epoch + 1;
+            let previous = Hash::digest(base_header);
             (epoch, previous)
         };
+
+        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
 
         let (_skey, pkey, _sig) = make_random_keys();
 
         let output_hash = blockchain.output_by_hash.keys().next().unwrap().clone();
         let input = Input::new(output_hash.clone());
         let inputs = [input];
-
-        let timestamp = Utc::now().timestamp() as u64;
-        let version = 1;
-
-        let leader = pkey;
 
         let delta: Fr = Fr::random();
 
@@ -192,23 +203,15 @@ pub mod tests {
 
         let payload = new_monetary(delta, gamma, amount, pkey).expect("tests have valid keys");
 
-        let output = Output::new(leader.clone(), proof, payload);
+        let output = Output::new(pkey.clone(), proof, payload);
         let outputs = [output];
 
         // Adjustment is the sum of all gamma found in UTXOs.
         let adjustment = delta;
 
-        let (block, paths) = Block::sign(
-            version,
-            epoch,
-            previous.clone(),
-            timestamp,
-            adjustment,
-            &inputs,
-            &outputs,
-        );
+        let (block, paths) = MonetaryBlock::new(base, adjustment, &inputs, &outputs);
 
-        blockchain.register_block(block, paths);
+        blockchain.register_monetary_block(block, paths);
     }
 
     #[test]

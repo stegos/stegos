@@ -26,31 +26,83 @@ use merkle::*;
 use output::Output;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-// use stegos_crypto::pbc::secure::BlsSignature;
+use stegos_crypto::pbc::secure::PublicKey as WitnessPublicKey;
 
-/// Block Header.
-#[derive(Debug)]
-pub struct BlockHeader {
-    /// Hash of the current block (except Merkle trees):
-    /// H(BNO | HPREV | SGA | RH_TXINS | RH_TXOUT) (HCURR)
-    pub hash: Hash,
-
+/// General Block Header.
+#[derive(Debug, PartialEq, Eq)]
+pub struct BaseBlockHeader {
     /// Version number.
     pub version: u64,
+
+    /// Hash of the block previous to this in the chain.
+    pub previous: Hash,
 
     /// A monotonically increasing value that represents the heights of the blockchain,
     /// starting from genesis block (=0).
     pub epoch: u64,
 
-    /// Hash of the block previous to this in the chain.
-    pub previous: Hash,
+    /// Timestamp at which the block was built.
+    pub timestamp: u64,
+    // TODO: BLS Multi-signature.
+    // pub sig: BlsSignature,
+
+    // TODO: Bitmap of signers in the multi-signature.
+    // pub signers: u64,
+}
+
+impl BaseBlockHeader {
+    pub fn new(version: u64, previous: Hash, epoch: u64, timestamp: u64) -> Self {
+        BaseBlockHeader {
+            version,
+            previous,
+            epoch,
+            timestamp,
+        }
+    }
+}
+
+impl Hashable for BaseBlockHeader {
+    fn hash(&self, state: &mut Hasher) {
+        self.version.hash(state);
+        self.previous.hash(state);
+        self.epoch.hash(state);
+        self.timestamp.hash(state);
+    }
+}
+
+/// Header for Key Blocks.
+#[derive(Debug, PartialEq, Eq)]
+pub struct KeyBlockHeader {
+    /// Common header.
+    pub base: BaseBlockHeader,
+
+    /// Leader public key.
+    pub leader: WitnessPublicKey,
+    // Ordered list of witnesses public keys.
+    // pub witnesses: Vec<WitnessPublicKey>,
+
+    // TODO: pooled transactions facilitator public key (which kind?).
+    // pub facilitator: WitnessPublicKey,
+}
+
+impl Hashable for KeyBlockHeader {
+    fn hash(&self, state: &mut Hasher) {
+        self.base.hash(state);
+        self.leader.hash(state);
+        // self.witnesses[..].hash(state);
+        // self.facilitator.hash(state);
+    }
+}
+
+/// Monetary Block Header.
+#[derive(Debug, PartialEq, Eq)]
+pub struct MonetaryBlockHeader {
+    /// Common header.
+    pub base: BaseBlockHeader,
 
     /// The sum of all gamma adjustments found in the block transactions (∑ γ_adj).
     /// Includes the γ_adj from the leader's fee distribution transaction.
     pub adjustment: Fr,
-
-    /// Timestamp at which the block was built.
-    pub timestamp: u64,
 
     /// Merklish root of all range proofs for inputs.
     pub inputs_range_hash: Hash,
@@ -59,33 +111,54 @@ pub struct BlockHeader {
     pub outputs_range_hash: Hash,
 }
 
-/// Block.
-pub struct Block {
-    /// Block Header.
-    pub header: BlockHeader,
+impl Hashable for MonetaryBlockHeader {
+    fn hash(&self, state: &mut Hasher) {
+        self.base.hash(state);
+        self.adjustment.hash(state);
+        self.inputs_range_hash.hash(state);
+        self.outputs_range_hash.hash(state);
+    }
+}
 
+/// Monetary Block.
+#[derive(Debug)]
+pub struct MonetaryBlockBody {
     /// The list of transaction inputs.
     pub inputs: Vec<Input>,
 
     /// The list of transaction outputs in a Merkle Tree.
     pub outputs: Merkle<Box<Output>>,
-    // TODO: BLS Multi-signature.
-    // pub sig: BlsSignature,
-
-    // TODO: Bitmap of signers in the multi-signature.
-    // pub signers: u64,
 }
 
-impl Block {
-    pub fn sign(
-        version: u64,
-        epoch: u64,
-        previous: Hash,
-        timestamp: u64,
+impl PartialEq for MonetaryBlockBody {
+    fn eq(&self, _other: &MonetaryBlockBody) -> bool {
+        // Required by enum Block.
+        unreachable!();
+    }
+}
+
+impl Eq for MonetaryBlockBody {}
+
+/// Carries all cryptocurrency transactions.
+#[derive(Debug, PartialEq, Eq)]
+pub struct KeyBlock(pub KeyBlockHeader);
+
+/// Carries administrative information to blockchain participants.
+#[derive(Debug, PartialEq, Eq)]
+pub struct MonetaryBlock {
+    /// Header.
+    pub header: MonetaryBlockHeader,
+    /// Body
+    pub body: MonetaryBlockBody,
+}
+
+impl MonetaryBlock {
+    pub fn new(
+        base: BaseBlockHeader,
         adjustment: Fr,
         inputs: &[Input],
         outputs: &[Output],
-    ) -> (Block, Vec<MerklePath>) {
+    ) -> (MonetaryBlock, Vec<MerklePath>) {
         // Create inputs array
         let mut hasher = Hasher::new();
         let inputs_count: u64 = inputs.len() as u64;
@@ -111,38 +184,44 @@ impl Block {
 
         let (outputs, paths) = Merkle::from_array(&outputs);
 
-        // Calculate block hash
-        let mut hasher = Hasher::new();
-        version.hash(&mut hasher);
-        epoch.hash(&mut hasher);
-        previous.hash(&mut hasher);
-        adjustment.hash(&mut hasher);
-        timestamp.hash(&mut hasher);
-        inputs_range_hash.hash(&mut hasher);
-        outputs_range_hash.hash(&mut hasher);
-
-        // Finalize the block hash
-        let hash = hasher.result();
-
         // Create header
-        let header = BlockHeader {
-            hash,
-            version,
-            epoch,
-            previous,
+        let header = MonetaryBlockHeader {
+            base,
             adjustment,
-            timestamp,
             inputs_range_hash,
             outputs_range_hash,
         };
 
         // Create the block
-        let block = Block {
-            header,
-            inputs,
-            outputs,
-        };
+        let body = MonetaryBlockBody { inputs, outputs };
+
+        let block = MonetaryBlock { header, body };
 
         (block, paths)
+    }
+}
+
+/// Types of blocks supported by this blockchain.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Block {
+    KeyBlock(KeyBlock),
+    MonetaryBlock(MonetaryBlock),
+}
+
+impl Block {
+    pub fn base_header(&self) -> &BaseBlockHeader {
+        match self {
+            Block::KeyBlock(KeyBlock(header)) => &header.base,
+            Block::MonetaryBlock(MonetaryBlock { header, body: _ }) => &header.base,
+        }
+    }
+}
+
+impl Hashable for Block {
+    fn hash(&self, state: &mut Hasher) {
+        match self {
+            Block::KeyBlock(KeyBlock(header)) => header.hash(state),
+            Block::MonetaryBlock(MonetaryBlock { header, body: _ }) => header.hash(state),
+        }
     }
 }

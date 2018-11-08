@@ -33,14 +33,17 @@ use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
 
 /// Genesis block for tests and development purposes.
-pub fn genesis_dev() -> (Block, Vec<MerklePath>) {
+pub fn genesis_dev() -> (MonetaryBlock, Vec<MerklePath>) {
     let version: u64 = 1;
     let amount: i64 = 1_000_000;
     let epoch: u64 = 1;
     let previous = Hash::digest(&"dev".to_string());
+    let timestamp = Utc.ymd(2018, 11, 01).and_hms(0, 0, 0).timestamp() as u64;
+
+    let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+
     let (skey, pkey, _sig) = make_deterministic_keys(b"dev");
     let delta: Fr = Fr::random();
-    let timestamp = Utc.ymd(2018, 11, 01).and_hms(0, 0, 0).timestamp() as u64;
 
     let leader = pkey;
 
@@ -62,9 +65,7 @@ pub fn genesis_dev() -> (Block, Vec<MerklePath>) {
     // Adjustment is the sum of all gamma found in UTXOs.
     let adjustment = delta;
 
-    let (block, paths) = Block::sign(
-        version, epoch, previous, timestamp, adjustment, &inputs, &outputs,
-    );
+    let (block, paths) = MonetaryBlock::new(base, adjustment, &inputs, &outputs);
 
     // Fool-proof checks.
     static PREVIOUS_HEX: &str = "daeed6308874de11ec5ba896aff636aee60821b397f88164be3eae5cf6d276d8";
@@ -92,8 +93,8 @@ pub mod tests {
         let (genesis, _) = genesis_dev();
         let header = genesis.header;
 
-        assert_eq!(header.epoch, 1);
-        assert_eq!(header.version, 1);
+        assert_eq!(header.base.epoch, 1);
+        assert_eq!(header.base.version, 1);
 
         // TODO: add more tests
     }

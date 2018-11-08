@@ -27,5 +27,8 @@ unsigned-varint = "0.2.1"
 
 libp2p = { git = "https://github.com/libp2p/rust-libp2p.git", rev = "e179951c74cb0c8916d27329f2dfd78917dddfb2" }
 
+[dev-dependencies]
+simple_logger = "1.0.1"
+
 [build-dependencies]
 protoc-rust = "2.1.4"

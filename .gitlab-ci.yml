@@ -24,7 +24,7 @@ build:linux:
 .test:
   stage: test
   script:
-    - cargo test --all
+    - cargo test --all -- --nocapture
 
 test:linux:
   extends: .test

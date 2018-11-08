@@ -27,11 +27,103 @@ use merkle::MerklePath;
 use output::*;
 use payload::*;
 use stegos_crypto::bulletproofs;
-use stegos_crypto::curve1174::cpt::{make_deterministic_keys, PublicKey, SecretKey};
+use stegos_crypto::curve1174::cpt as wallet_keys;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
+use stegos_crypto::pbc::secure as cosi_keys;
 
-/// Genesis block for tests and development purposes.
+const GENESIS_WITNESSES_COUNT: usize = 6;
+
+/// Genesis blocks for tests and development purposes.
+pub fn genesis_dev() -> (KeyBlock, MonetaryBlock, Vec<Hash>, Vec<(Hash, MerklePath)>) {
+    //
+    // Create initial keys.
+    //
+    #[allow(dead_code)]
+    struct SeedKeys {
+        wallet_skey: wallet_keys::SecretKey,
+        wallet_pkey: wallet_keys::PublicKey,
+        wallet_sig: wallet_keys::SchnorrSig,
+        cosi_skey: cosi_keys::SecretKey,
+        cosi_pkey: cosi_keys::PublicKey,
+        cosi_sig: cosi_keys::Signature,
+    }
+    let mut keys = Vec::<SeedKeys>::with_capacity(GENESIS_WITNESSES_COUNT);
+    for i in 0..GENESIS_WITNESSES_COUNT {
+        let seed = format!("dev{}", i + 1);
+        let (wallet_skey, wallet_pkey, wallet_sig) =
+            wallet_keys::make_deterministic_keys(seed.as_bytes());
+        // TODO: find a better wait to pair wallet and CoSi keys
+        let wallet_skey_hash = Hash::digest(&wallet_skey);
+        let cosi_seed = &wallet_skey_hash.base_vector();
+        let (cosi_skey, cosi_pkey, cosi_sig) = cosi_keys::make_deterministic_keys(cosi_seed);
+
+        keys.push(SeedKeys {
+            wallet_skey,
+            wallet_pkey,
+            wallet_sig,
+            cosi_skey,
+            cosi_pkey,
+            cosi_sig,
+        });
+    }
+
+    // Both block are created at the same time in the same epoch.
+    let version: u64 = 1;
+    let epoch: u64 = 1;
+    let timestamp = Utc.ymd(2018, 11, 01).and_hms(0, 0, 0).timestamp() as u64;
+
+    //
+    // Create initial Key Block.
+    //
+    let block1 = {
+        let previous = Hash::digest(&"dev".to_string());
+        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+
+        let witnesses = keys
+            .iter()
+            .map(|p| p.cosi_pkey.clone())
+            .collect::<Vec<cosi_keys::PublicKey>>();
+        let leader = witnesses[0].clone();
+
+        KeyBlock::new(base, leader, witnesses)
+    };
+
+    //
+    // Create initial Monetary Block.
+    //
+    let (block2, inputs2, outputs2) = {
+        let previous = Hash::digest(&block1);
+        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+
+        let amount: i64 = 1_000_000;
+
+        let delta: Fr = Fr::random();
+
+        // Recipient is ourselves.
+        let recipient = keys[0].wallet_pkey.clone();
+
+        // Genesis doesn't have inputs
+        let inputs = Vec::<Hash>::new();
+
+        // Genesis block have one hard-coded output.
+        let (proof, gamma) = bulletproofs::make_range_proof(amount);
+        let payload =
+            new_monetary(delta, gamma, amount, recipient).expect("genesis has valid keys");
+        let output = Output::new(recipient, proof, payload);
+        let outputs = [output];
+
+        // Adjustment is the sum of all gamma found in UTXOs.
+        let adjustment = delta;
+
+        let (block, outputs) = MonetaryBlock::new(base, adjustment, &inputs, &outputs);
+        (block, inputs, outputs)
+    };
+
+    (block1, block2, inputs2, outputs2)
+}
+
+/*
 pub fn genesis_dev() -> (MonetaryBlock, Vec<(Hash, MerklePath)>) {
     let version: u64 = 1;
     let amount: i64 = 1_000_000;
@@ -39,32 +131,6 @@ pub fn genesis_dev() -> (MonetaryBlock, Vec<(Hash, MerklePath)>) {
     let previous = Hash::digest(&"dev".to_string());
     let timestamp = Utc.ymd(2018, 11, 01).and_hms(0, 0, 0).timestamp() as u64;
 
-    let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
-
-    let (skey, pkey, _sig) = make_deterministic_keys(b"dev");
-    let delta: Fr = Fr::random();
-
-    let leader = pkey;
-
-    // Recipient is ourselves.
-    let recipient = leader.clone();
-
-    // Genesis block doesn't have inputs.
-    let inputs: [Hash; 0] = [];
-
-    // Genesis block have one hard-coded output.
-    let (proof, gamma) = bulletproofs::make_range_proof(amount);
-
-    // Genesis block
-    let payload = new_monetary(delta, gamma, amount, pkey).expect("genesis has valid keys");
-
-    let output = Output::new(recipient, proof, payload);
-    let outputs = [output];
-
-    // Adjustment is the sum of all gamma found in UTXOs.
-    let adjustment = delta;
-
-    let (block, paths) = MonetaryBlock::new(base, adjustment, &inputs, &outputs);
 
     // Fool-proof checks.
     static PREVIOUS_HEX: &str = "daeed6308874de11ec5ba896aff636aee60821b397f88164be3eae5cf6d276d8";
@@ -82,6 +148,7 @@ pub fn genesis_dev() -> (MonetaryBlock, Vec<(Hash, MerklePath)>) {
 
     (block, paths)
 }
+*/
 
 #[cfg(test)]
 pub mod tests {
@@ -89,8 +156,8 @@ pub mod tests {
 
     #[test]
     fn test_genesis_dev() {
-        let (genesis, _) = genesis_dev();
-        let header = genesis.header;
+        let (block1, _block2, _inputs1, _inputs2) = genesis_dev();
+        let header = block1.header;
 
         assert_eq!(header.base.epoch, 1);
         assert_eq!(header.base.version, 1);

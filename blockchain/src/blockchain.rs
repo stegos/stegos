@@ -66,9 +66,13 @@ impl Blockchain {
             output_by_hash,
         };
 
-        let (genesis, outputs) = genesis_dev();
-        let inputs: [Hash; 0] = [];
-        blockchain.register_monetary_block(genesis, &inputs, &outputs);
+        let (block1, block2, inputs2, output2) = genesis_dev();
+
+        info!("Genesis key block hash: {}", Hash::digest(&block1));
+        info!("Genesis monetary block hash: {}", Hash::digest(&block2));
+
+        blockchain.register_key_block(block1);
+        blockchain.register_monetary_block(block2, &inputs2, &output2);
 
         blockchain
     }
@@ -110,7 +114,26 @@ impl Blockchain {
     }
 
     //----------------------------------------------------------------------------------------------
-    #[allow(dead_code)]
+
+    fn register_key_block(&mut self, block: KeyBlock) {
+        let block_id = self.blocks.len();
+
+        let this_hash = Hash::digest(&block);
+
+        info!("Registering a new key block: {}", this_hash);
+
+        if let Some(previous_block) = self.blocks.last() {
+            let previous_hash = Hash::digest(previous_block);
+            assert_eq!(previous_hash, block.header.base.previous);
+        }
+
+        if let Some(_) = self.block_by_hash.insert(this_hash.clone(), block_id) {
+            panic!("Block hash collision");
+        }
+
+        self.blocks.push(Block::KeyBlock(block));
+    }
+
     fn register_monetary_block(
         &mut self,
         block: MonetaryBlock,
@@ -119,10 +142,12 @@ impl Blockchain {
     ) {
         let block_id = self.blocks.len();
 
-        let this_hash = Hash::digest(&block.header);
+        let this_hash = Hash::digest(&block);
+
+        info!("Registering a new monetary block: {}", this_hash);
 
         if let Some(previous_block) = self.blocks.last() {
-            let previous_hash = Hash::digest(previous_block.base_header());
+            let previous_hash = Hash::digest(previous_block);
             assert_eq!(previous_hash, block.header.base.previous);
         }
 
@@ -132,6 +157,7 @@ impl Blockchain {
 
         // Remove spent outputs.
         for output_hash in inputs {
+            debug!("Prune UXTO({})", output_hash);
             // Remove from the set of unspent outputs.
             if let Some(OutputKey { block_id, path }) = self.output_by_hash.remove(output_hash) {
                 let block = &mut self.blocks[block_id];
@@ -152,6 +178,8 @@ impl Blockchain {
 
         // Register create unspent outputs.
         for (hash, path) in outputs {
+            debug!("Register UXTO({})", hash);
+
             // Create the new unspent output
             let output_key = OutputKey {
                 block_id,
@@ -186,7 +214,7 @@ pub mod tests {
             let last = blockchain.last_block();
             let base_header = last.base_header();
             let epoch = base_header.epoch + 1;
-            let previous = Hash::digest(base_header);
+            let previous = Hash::digest(last);
             (epoch, previous)
         };
 
@@ -218,6 +246,9 @@ pub mod tests {
 
     #[test]
     fn basic() {
+        extern crate simple_logger;
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+
         let mut blockchain = Blockchain::new();
         assert!(blockchain.blocks().len() > 0);
         iterate(&mut blockchain);

@@ -447,6 +447,18 @@ impl PartialEq for PublicKey {
     }
 }
 
+// Needed to sort the list of witnesses
+impl Ord for PublicKey {
+    fn cmp(&self, other: &PublicKey) -> Ordering {
+        self.0.base_vector().cmp(&other.0.base_vector())
+    }
+}
+impl PartialOrd for PublicKey {
+    fn partial_cmp(&self, other: &PublicKey) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl stdhash::Hash for PublicKey {
     // we often want to look things up by public key
     // std::HashMap needs this

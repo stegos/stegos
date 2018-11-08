@@ -77,9 +77,9 @@ pub struct KeyBlockHeader {
 
     /// Leader public key.
     pub leader: WitnessPublicKey,
-    // Ordered list of witnesses public keys.
-    // pub witnesses: Vec<WitnessPublicKey>,
 
+    /// Ordered list of witnesses public keys.
+    pub witnesses: Vec<WitnessPublicKey>,
     // TODO: pooled transactions facilitator public key (which kind?).
     // pub facilitator: WitnessPublicKey,
 }
@@ -137,7 +137,40 @@ impl Eq for MonetaryBlockBody {}
 
 /// Carries all cryptocurrency transactions.
 #[derive(Debug, PartialEq, Eq)]
-pub struct KeyBlock(pub KeyBlockHeader);
+pub struct KeyBlock {
+    /// Header.
+    pub header: KeyBlockHeader,
+}
+
+impl KeyBlock {
+    pub fn new(
+        base: BaseBlockHeader,
+        leader: WitnessPublicKey,
+        mut witnesses: Vec<WitnessPublicKey>,
+    ) -> Self {
+        // Witnesses list must be sorted.
+        witnesses.sort();
+
+        // Leader must present in witnesses array.
+        //assert_eq!(witnesses.binary_search(leader), Ok((_, _)));
+
+        // Create header
+        let header = KeyBlockHeader {
+            base,
+            leader,
+            witnesses,
+        };
+
+        // Create the block
+        KeyBlock { header }
+    }
+}
+
+impl Hashable for KeyBlock {
+    fn hash(&self, state: &mut Hasher) {
+        self.header.hash(state)
+    }
+}
 
 /// Carries administrative information to blockchain participants.
 #[derive(Debug, PartialEq, Eq)]
@@ -203,6 +236,12 @@ impl MonetaryBlock {
     }
 }
 
+impl Hashable for MonetaryBlock {
+    fn hash(&self, state: &mut Hasher) {
+        self.header.hash(state)
+    }
+}
+
 /// Types of blocks supported by this blockchain.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Block {
@@ -213,7 +252,7 @@ pub enum Block {
 impl Block {
     pub fn base_header(&self) -> &BaseBlockHeader {
         match self {
-            Block::KeyBlock(KeyBlock(header)) => &header.base,
+            Block::KeyBlock(KeyBlock { header }) => &header.base,
             Block::MonetaryBlock(MonetaryBlock { header, body: _ }) => &header.base,
         }
     }
@@ -222,8 +261,8 @@ impl Block {
 impl Hashable for Block {
     fn hash(&self, state: &mut Hasher) {
         match self {
-            Block::KeyBlock(KeyBlock(header)) => header.hash(state),
-            Block::MonetaryBlock(MonetaryBlock { header, body: _ }) => header.hash(state),
+            Block::KeyBlock(key_block) => key_block.hash(state),
+            Block::MonetaryBlock(monetary_block) => monetary_block.hash(state),
         }
     }
 }

@@ -692,11 +692,11 @@ pub mod tests {
 
     #[test]
     pub fn check_bp_init() {
-        println!("G: {}", Point::compress(*G));
-        println!("H: {}", Point::compress(BP.H));
+        debug!("G: {}", Point::compress(*G));
+        debug!("H: {}", Point::compress(BP.H));
         for ix in 0..NBASIS {
-            println!("GV{} = {}", ix, Point::compress(BP.GV[ix]));
-            println!("HV{} = {}", ix, Point::compress(BP.HV[ix]));
+            debug!("GV{} = {}", ix, Point::compress(BP.GV[ix]));
+            debug!("HV{} = {}", ix, Point::compress(BP.HV[ix]));
         }
     }
 
@@ -827,7 +827,7 @@ pub mod tests {
 // ------------------------------------------------------------
 pub fn bulletproofs_tests() {
     let (proof, gamma) = make_range_proof(-1); // to pre-compute constants
-    println!("Start BulletProofs");
+    debug!("Start BulletProofs");
     let start = SystemTime::now();
     if false {
         for _ in 1..1000 {
@@ -836,11 +836,11 @@ pub fn bulletproofs_tests() {
     }
     let (proof, gamma) = make_range_proof(1234567890);
     let timing = start.elapsed();
-    println!("proof = {:#?}", proof);
-    println!("gamma = {}", gamma);
-    println!("Time: {:?}", timing);
-    println!("");
-    println!("Start Validation");
+    debug!("proof = {:#?}", proof);
+    debug!("gamma = {}", gamma);
+    debug!("Time: {:?}", timing);
+    debug!("");
+    debug!("Start Validation");
     let start = SystemTime::now();
     let ans = validate_range_proof(&proof);
     if false {
@@ -849,8 +849,8 @@ pub fn bulletproofs_tests() {
         }
     }
     let timing = start.elapsed();
-    println!("Check = {}", ans);
-    println!("Time: {:?}", timing);
+    debug!("Check = {}", ans);
+    debug!("Time: {:?}", timing);
 }
 
 // -------------------------------------------------------------

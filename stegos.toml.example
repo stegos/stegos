@@ -1,6 +1,8 @@
 ##
 ## Sample configuration file for Stegos
 ##
+[general]
+log4rs_config = "stegos-log4rs.toml"
 [network]
 # Local IP to bind to
 bind_ip = "0.0.0.0"

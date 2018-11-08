@@ -1,3 +1,6 @@
+[general]
+log4rs_config = "stegos-log4rs.toml"
+
 [network]
 ### default = "0.0.0.0"
 # bind_ip = "127.0.0.1"

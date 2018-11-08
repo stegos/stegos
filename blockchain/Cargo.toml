@@ -6,6 +6,6 @@ authors = ["Stegos AG <info@stegos.cc>"]
 [dependencies]
 stegos_keychain = { path = "../keychain" }
 stegos_crypto = { path = "../crypto" }
-
-chrono = "~0.4"
+chrono = "0.4"
 rand = "0.5"
+log = "0.4"

@@ -4,3 +4,4 @@ version = "0.1.0"
 authors = ["Stegos AG <info@stegos.cc>"]
 
 [dependencies]
+log = "0.4"

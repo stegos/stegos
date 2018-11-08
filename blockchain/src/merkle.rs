@@ -450,7 +450,7 @@ pub mod tests {
         let (mut tree, paths) = Merkle::from_array(&data);
 
         // Check structure
-        println!("Tree: {:?}", tree);
+        debug!("Tree: {:?}", tree);
         assert_eq!(
             tree.roothash().to_str(),
             "H(295cd1698c6ac5bd804a09e50f19f8549475e52db1c6ebd441ed0c7b256e1ddf)"
@@ -477,7 +477,7 @@ pub mod tests {
         assert_ne!(tree.lookup(&paths[0]), None);
         let value = tree.prune(&paths[0]);
         assert_eq!(value, Some(data[0]));
-        println!("Tree after pruning: {:?}", tree);
+        debug!("Tree after pruning: {:?}", tree);
         assert_eq!(tree.root.value, None);
         assert_eq!(tree.lookup(&paths[0]), None);
         assert_eq!(tree.prune(&paths[0]), None);
@@ -501,7 +501,7 @@ pub mod tests {
         let (mut tree, paths) = Merkle::from_array(&data);
 
         // Check structure
-        println!("Tree: {:?}", tree);
+        debug!("Tree: {:?}", tree);
         assert_eq!(
             tree.roothash().to_str(),
             "H(d5a54245486913be1e0926802666157aa940d445f3558d886a654ea7117213e0)"

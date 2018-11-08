@@ -44,10 +44,6 @@ where
     S: AsyncRead + AsyncWrite + Send + 'static,
 {
     let inner = node.clone();
-    let netlog = {
-        let inner = inner.read();
-        inner.logger.new(o!("submodule" => "ncp"))
-    };
 
     // If we are dialing, send request for peers list
     // TODO: handle possible error
@@ -58,15 +54,13 @@ where
 
     let fut = loop_fn(sock, {
         let inner = inner.clone();
-        let netlog = netlog.clone();
         move |socket| {
             socket.into_future().map_err(|(e, _)| e).and_then({
                 let inner = inner.clone();
-                let netlog = netlog.clone();
                 move |(msg, rest)| {
                     if let Some(msg) = msg {
                         // One message has been received. We send it back to the client.
-                        debug!(netlog, "Received a message: {:?}", msg);
+                        debug!("Received a message: {:?}", msg);
                         match msg {
                             NcpMsg::Ping { ping_data } => {
                                 let mut resp = NcpMsg::Pong { ping_data };
@@ -122,7 +116,7 @@ where
                         }
                     } else {
                         // End of stream. Connection closed. Breaking the loop.
-                        println!("Received EOF\n => Dropping connection");
+                        debug!("Received EOF\n => Dropping connection");
                         Box::new(Ok(Loop::Break(())).into_future())
                             as Box<Future<Item = _, Error = _> + Send>
                     }

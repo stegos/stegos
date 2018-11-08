@@ -23,7 +23,7 @@
 
 #![deny(warnings)]
 #[macro_use]
-extern crate slog;
+extern crate log;
 extern crate bytes;
 extern crate failure;
 extern crate fnv;

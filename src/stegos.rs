@@ -23,9 +23,8 @@ mod console;
 mod consts;
 
 #[macro_use]
-extern crate slog;
-extern crate slog_async;
-extern crate slog_term;
+extern crate log;
+extern crate log4rs;
 #[macro_use]
 extern crate clap;
 extern crate dirs;
@@ -43,7 +42,11 @@ extern crate tokio_timer;
 
 use clap::{App, Arg, ArgMatches};
 use console::*;
-use slog::{Drain, Logger};
+use log::LevelFilter;
+use log4rs::append::console::ConsoleAppender;
+use log4rs::config::{Appender, Config as LogConfig, Logger, Root};
+use log4rs::encode::pattern::PatternEncoder;
+use log4rs::{Error as LogError, Handle as LogHandle};
 use std::error::Error;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -75,14 +78,29 @@ fn load_configuration(args: &ArgMatches) -> Result<Config, Box<Error>> {
     }
 }
 
-fn initialize_logger(_: &ArgMatches) -> Result<Logger, Box<Error>> {
-    // TODO: allow to configure logger by configuration file
-    // Initialize logger
-    let decorator = slog_term::TermDecorator::new().build();
-    // let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-    let drain = slog_term::FullFormat::new(decorator).build().fuse();
-    let drain = slog_async::Async::new(drain).build().fuse();
-    Ok(slog::Logger::root(drain, o!()))
+fn initialize_logger(cfg: &Config) -> Result<LogHandle, LogError> {
+    // Try to load log4rs config file
+    let handle = match log4rs::load_config_file(
+        PathBuf::from(&cfg.general.log4rs_config),
+        Default::default(),
+    ) {
+        Ok(config) => log4rs::init_config(config)?,
+        Err(e) => {
+            error!("Failed to read log4rs config file: {}", e);
+            println!("Failed to read log4rs config file: {}", e);
+            let stdout = ConsoleAppender::builder()
+                .encoder(Box::new(PatternEncoder::new(
+                    "{d(%Y-%m-%d %H:%M:%S)(local)} [{t}] {h({l})} {M}: {m}{n}",
+                ))).build();
+            let config = LogConfig::builder()
+                .appender(Appender::builder().build("stdout", Box::new(stdout)))
+                .logger(Logger::builder().build("stegos_network", LevelFilter::Debug))
+                .build(Root::builder().appender("stdout").build(LevelFilter::Info))
+                .expect("console logger should never fail");
+            log4rs::init_config(config)?
+        }
+    };
+    Ok(handle)
 }
 
 fn run() -> Result<(), Box<Error>> {
@@ -103,18 +121,18 @@ fn run() -> Result<(), Box<Error>> {
     let cfg = load_configuration(&args)?;
 
     // Initialize logger
-    let log = initialize_logger(&args)?;
+    initialize_logger(&cfg)?;
 
     // Initialize blockchain
-    print!("Node is starting, initializing blockchain... ");
+    info!("Node is starting, initializing blockchain... ");
     io::stdout().flush().unwrap();
     let mut _blockchain = Blockchain::new();
-    println!("Done!");
+    info!("Done!");
 
     // Initialize network
     let mut rt = tokio::runtime::current_thread::Runtime::new()?;
     let my_id = cfg.network.node_id.clone();
-    let node = Node::new(&cfg.network, &log);
+    let node = Node::new(&cfg.network);
     let (node_future, floodsub_rx) = node.run()?;
 
     // Initialize console service
@@ -137,7 +155,7 @@ fn run() -> Result<(), Box<Error>> {
 
 fn main() {
     if let Err(e) = run() {
-        eprintln!("{}", e);
+        error!("{}", e);
         process::exit(1)
     };
 }

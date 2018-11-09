@@ -164,7 +164,7 @@ impl Blockchain {
                 if let Block::MonetaryBlock(MonetaryBlock { header: _, body }) = block {
                     // Remove from the block.
                     if let Some(output) = body.outputs.prune(&path) {
-                        assert_eq!(output.hash, *output_hash);
+                        assert_eq!(Hash::digest(&output), *output_hash);
                     } else {
                         panic!("Missing output with id {}", output_hash);
                     }

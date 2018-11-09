@@ -215,7 +215,7 @@ impl MonetaryBlock {
         let paths = outputs
             .iter()
             .zip(paths.iter())
-            .map(|(o, p)| (o.hash.clone(), p.clone()))
+            .map(|(o, p)| (Hash::digest(o), p.clone()))
             .collect::<Vec<(Hash, MerklePath)>>();
         let outputs = tree;
 

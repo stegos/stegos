@@ -31,11 +31,6 @@ use stegos_crypto::hash::{Hash, Hashable, Hasher};
 /// (ID, P_{M, δ}, Bp, E_M(x, γ, δ))
 #[derive(Debug, Clone)]
 pub struct Output {
-    /// Unique identifier of the output.
-    /// Formed by hashing the rest of this structure.
-    /// H_r(P_{M, δ},B_p, E_M(x, γ, δ)).
-    pub hash: Hash,
-
     /// Clocked public key of recipient.
     /// P_M + δG
     pub recipient: PublicKey,
@@ -58,16 +53,7 @@ pub struct Output {
 impl Output {
     /// Constructor for Output.
     pub fn new(recipient: PublicKey, proof: BulletProof, payload: EncryptedPayload) -> Output {
-        let mut hasher = Hasher::new();
-        recipient.hash(&mut hasher);
-        // TODO: UTXO hash is non-deterministic
-        // https://github.com/stegos/stegos/issues/125
-        // proof.hash(&mut hasher);
-        payload.hash(&mut hasher);
-        let hash = hasher.result();
-
         Output {
-            hash: hash,
             recipient: recipient,
             proof: proof,
             payload: payload,
@@ -77,17 +63,17 @@ impl Output {
 
 impl fmt::Display for Output {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Output({})", self.hash)
+        write!(f, "Output({})", Hash::digest(self))
     }
 }
 
 impl Hashable for Output {
+    /// Unique identifier of the output.
+    /// Formed by hashing all fields of this structure.
+    /// H_r(P_{M, δ},B_p, E_M(x, γ, δ)).
     fn hash(&self, state: &mut Hasher) {
-        // Don't include self.hash because it is redundant in this case
         self.recipient.hash(state);
-        // TODO: UTXO hash is non-deterministic
-        // https://github.com/stegos/stegos/issues/125
-        // proof.hash(&mut hasher);
+        self.proof.hash(state);
         self.payload.hash(state);
     }
 }

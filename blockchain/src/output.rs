@@ -21,11 +21,15 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use payload::EncryptedPayload;
+use payload::*;
 use std::fmt;
-use stegos_crypto::bulletproofs::BulletProof;
-use stegos_crypto::curve1174::cpt::PublicKey;
+use stegos_crypto::bulletproofs::{make_range_proof, BulletProof};
+use stegos_crypto::curve1174::cpt::{PublicKey, SecretKey};
+use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
+
+// Re-export symbols needed for public API
+pub use stegos_crypto::curve1174::CurveError;
 
 /// Transaction output.
 /// (ID, P_{M, δ}, Bp, E_M(x, γ, δ))
@@ -52,12 +56,46 @@ pub struct Output {
 
 impl Output {
     /// Constructor for Output.
-    pub fn new(recipient: PublicKey, proof: BulletProof, payload: EncryptedPayload) -> Output {
-        Output {
-            recipient: recipient,
-            proof: proof,
-            payload: payload,
-        }
+    pub fn new(
+        timestamp: u64,
+        sender_skey: SecretKey,
+        recipient_pkey: PublicKey,
+        amount: i64,
+    ) -> Result<(Self, Fr), CurveError> {
+        // Clock recipient public key
+        let (cloaked_pkey, delta) = Output::cloak_key(sender_skey, recipient_pkey, timestamp);
+
+        // Genesis block have one hard-coded output.
+        let (proof, gamma) = make_range_proof(amount);
+        let payload = new_monetary(delta, gamma, amount, cloaked_pkey)?;
+
+        let output = Output {
+            recipient: cloaked_pkey,
+            proof,
+            payload,
+        };
+
+        Ok((output, delta))
+    }
+
+    fn cloak_key(
+        sender_skey: SecretKey,
+        recipient_pkey: PublicKey,
+        timestamp: u64,
+    ) -> (PublicKey, Fr) {
+        // h is the digest of the recipients actual public key mixed with a timestamp.
+        let mut hasher = Hasher::new();
+        recipient_pkey.hash(&mut hasher);
+        timestamp.hash(&mut hasher);
+        let h = hasher.result();
+
+        // Use deterministic randomness here too, to protect against PRNG attacks.
+        let delta: Fr = Fr::synthetic_random(&"PKey", &sender_skey, &h);
+
+        // Resulting publickey will be a random-like value in a safe range of the field,
+        // not too small, and not too large. This helps avoid brute force attacks, looking
+        // for the discrete log corresponding to delta.
+        (recipient_pkey.cloak(delta), delta)
     }
 }
 

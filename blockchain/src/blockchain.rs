@@ -201,11 +201,7 @@ pub mod tests {
 
     use chrono::prelude::Utc;
 
-    use stegos_crypto::bulletproofs;
     use stegos_crypto::curve1174::cpt::make_random_keys;
-    use stegos_crypto::curve1174::fields::Fr;
-
-    use payload::*;
 
     pub fn iterate(blockchain: &mut Blockchain) {
         let version = 1;
@@ -220,20 +216,15 @@ pub mod tests {
 
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
 
-        let (_skey, pkey, _sig) = make_random_keys();
+        let (skey, pkey, _sig) = make_random_keys();
 
         let output_hash = blockchain.output_by_hash.keys().next().unwrap().clone();
         let input = output_hash.clone();
         let inputs = [input];
 
-        let delta: Fr = Fr::random();
-
         let amount: i64 = 112;
-        let (proof, gamma) = bulletproofs::make_range_proof(amount);
-
-        let payload = new_monetary(delta, gamma, amount, pkey).expect("tests have valid keys");
-
-        let output = Output::new(pkey.clone(), proof, payload);
+        let (output, delta) = Output::new(timestamp, skey.clone(), pkey.clone(), amount)
+            .expect("tests have valid keys");
         let outputs = [output];
 
         // Adjustment is the sum of all gamma found in UTXOs.

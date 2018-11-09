@@ -9,6 +9,8 @@ stegos_crypto = { path = "../crypto" }
 chrono = "0.4"
 rand = "0.5"
 log = "0.4"
+failure = "0.1.2"
+failure_derive = "0.1.2"
 
 [dev-dependencies]
 simple_logger = "1.0.1"

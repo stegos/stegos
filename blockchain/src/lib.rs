@@ -36,5 +36,7 @@ extern crate chrono;
 #[macro_use]
 extern crate log;
 extern crate failure;
+#[macro_use]
+extern crate failure_derive;
 extern crate rand;
 extern crate stegos_crypto;

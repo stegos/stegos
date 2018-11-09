@@ -97,6 +97,8 @@ pub fn genesis_dev() -> (KeyBlock, MonetaryBlock, Vec<Hash>, Vec<(Hash, MerklePa
         // Genesis doesn't have inputs
         let inputs = Vec::<Hash>::new();
 
+        // Genesis block have one hard-coded output.
+
         // Send money to yourself.
         let sender = &keys[0];
         let recipient = &keys[0];

@@ -21,10 +21,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use payload::*;
 use std::fmt;
 use stegos_crypto::bulletproofs::{make_range_proof, BulletProof};
-use stegos_crypto::curve1174::cpt::{PublicKey, SecretKey};
+use stegos_crypto::curve1174::cpt::{aes_encrypt, EncryptedPayload, PublicKey, SecretKey};
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 
@@ -63,11 +62,10 @@ impl Output {
         amount: i64,
     ) -> Result<(Self, Fr), CurveError> {
         // Clock recipient public key
-        let (cloaked_pkey, delta) = Output::cloak_key(sender_skey, recipient_pkey, timestamp);
+        let (cloaked_pkey, delta) = Self::cloak_key(sender_skey, recipient_pkey, timestamp);
 
-        // Genesis block have one hard-coded output.
         let (proof, gamma) = make_range_proof(amount);
-        let payload = new_monetary(delta, gamma, amount, cloaked_pkey)?;
+        let payload = Self::encrypt_payload(delta, gamma, amount, cloaked_pkey)?;
 
         let output = Output {
             recipient: cloaked_pkey,
@@ -78,6 +76,7 @@ impl Output {
         Ok((output, delta))
     }
 
+    /// Cloak recipient's public key.
     fn cloak_key(
         sender_skey: SecretKey,
         recipient_pkey: PublicKey,
@@ -96,6 +95,29 @@ impl Output {
         // not too small, and not too large. This helps avoid brute force attacks, looking
         // for the discrete log corresponding to delta.
         (recipient_pkey.cloak(delta), delta)
+    }
+
+    /// Create a new monetary transaction.
+    fn encrypt_payload(
+        delta: Fr,
+        gamma: Fr,
+        amount: i64,
+        pkey: PublicKey,
+    ) -> Result<EncryptedPayload, CurveError> {
+        // Convert amount to BE vector.
+        use std::mem::transmute;
+        let amount_bytes: [u8; 8] = unsafe { transmute(amount.to_be()) };
+
+        let gamma_bytes: [u8; 32] = gamma.bits().to_lev_u8();
+        let delta_bytes: [u8; 32] = delta.bits().to_lev_u8();
+
+        let payload: Vec<u8> = [&amount_bytes[..], &delta_bytes[..], &gamma_bytes[..]].concat();
+
+        // Ensure that the total length of package is 72 bytes.
+        assert_eq!(payload.len(), 72);
+
+        // String together a gamma, delta, and Amount (i64) all in one long vector and encrypt it.
+        aes_encrypt(&payload, &pkey)
     }
 }
 

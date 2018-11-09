@@ -26,7 +26,6 @@ mod blockchain;
 mod genesis;
 mod merkle;
 mod output;
-mod payload;
 
 pub use block::*;
 pub use blockchain::*;

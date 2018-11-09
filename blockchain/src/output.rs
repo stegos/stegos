@@ -77,7 +77,7 @@ impl Output {
         amount: i64,
     ) -> Result<(Self, Fr), Error> {
         // Clock recipient public key
-        let (cloaked_pkey, delta) = Self::cloak_key(sender_skey, recipient_pkey, timestamp);
+        let (cloaked_pkey, delta) = Self::cloak_key(sender_skey, recipient_pkey, timestamp)?;
 
         let (proof, gamma) = make_range_proof(amount);
 
@@ -98,7 +98,7 @@ impl Output {
         sender_skey: SecretKey,
         recipient_pkey: PublicKey,
         timestamp: u64,
-    ) -> (PublicKey, Fr) {
+    ) -> Result<(PublicKey, Fr), CurveError> {
         // h is the digest of the recipients actual public key mixed with a timestamp.
         let mut hasher = Hasher::new();
         recipient_pkey.hash(&mut hasher);
@@ -111,7 +111,7 @@ impl Output {
         // Resulting publickey will be a random-like value in a safe range of the field,
         // not too small, and not too large. This helps avoid brute force attacks, looking
         // for the discrete log corresponding to delta.
-        (recipient_pkey.cloak(delta), delta)
+        Ok((recipient_pkey.cloak(delta)?, delta))
     }
 
     /// Create a new monetary transaction.

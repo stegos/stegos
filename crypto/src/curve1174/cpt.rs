@@ -144,9 +144,9 @@ impl PublicKey {
     }
 
     /// Cloak public key with random factor.
-    pub fn cloak(&self, delta: Fr) -> Self {
-        let pt = Pt::decompress(self.0).expect("PublicKey is valid");
-        PublicKey(ECp::compress(pt + delta * (*super::G)))
+    pub fn cloak(&self, delta: Fr) -> Result<Self, CurveError> {
+        let pt = Pt::decompress(self.0)?;
+        Ok(PublicKey(ECp::compress(pt + delta * (*super::G))))
     }
 }
 

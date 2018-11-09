@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use failure::Error;
 use std::fmt;
 use stegos_crypto::bulletproofs::{make_range_proof, BulletProof};
 use stegos_crypto::curve1174::cpt::{aes_encrypt, EncryptedPayload, PublicKey, SecretKey};

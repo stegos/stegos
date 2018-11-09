@@ -131,22 +131,12 @@ lazy_static! {
     };
 }
 
+#[derive(Debug, Fail)]
 pub enum CurveError {
+    #[fail(display = "CurveError::NotQuadraticResidue")]
     NotQuadraticResidue,
+    #[fail(display = "CurveError::PointNotOnCurve")]
     PointNotOnCurve,
-}
-
-impl fmt::Debug for CurveError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match *self {
-                CurveError::NotQuadraticResidue => "CurveError::NotQuadraticResidue",
-                CurveError::PointNotOnCurve => "CurveError::PointNotOnCurve",
-            }
-        )
-    }
 }
 
 fn check_prng() {

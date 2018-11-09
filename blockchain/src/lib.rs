@@ -35,5 +35,6 @@ pub use output::*;
 extern crate chrono;
 #[macro_use]
 extern crate log;
+extern crate failure;
 extern crate rand;
 extern crate stegos_crypto;

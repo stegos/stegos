@@ -25,13 +25,15 @@ use libp2p::Multiaddr;
 use std::mem;
 use std::thread;
 use std::thread::ThreadId;
-use stegos_network::Node;
+use stegos_network::{BrokerHandler, Node};
 use tokio_stdin;
 
 /// Console (stdin) service.
 pub struct ConsoleService {
     /// Network node.
     node: Node,
+    /// Network message broker.
+    broker: BrokerHandler,
     /// A channel to receive message from stdin thread.
     stdin: UnboundedReceiver<u8>,
     /// Input buffer.
@@ -59,7 +61,9 @@ impl ConsoleService {
             let topic: String = msg[9..9 + sep_pos].to_string();
             let msg: String = msg[9 + sep_pos + 1..].to_string();
             info!("main: *Publishing to topic '{}': {} *", topic, msg);
-            self.node.publish(&topic, msg.as_bytes().to_vec()).unwrap();
+            self.broker
+                .publish(&topic, msg.as_bytes().to_vec())
+                .unwrap();
         } else {
             eprintln!("Usage:");
             eprintln!("/dial multiaddr");
@@ -70,12 +74,13 @@ impl ConsoleService {
 
 impl ConsoleService {
     /// Constructor.
-    pub fn new(net: Node) -> Self {
+    pub fn new(node: Node, broker: BrokerHandler) -> Self {
         let stdin = tokio_stdin::spawn_stdin_stream_unbounded();
         let buf = Vec::<u8>::new();
         let thread_id = thread::current().id();
         ConsoleService {
-            node: net,
+            node,
+            broker,
             stdin,
             buf,
             thread_id,

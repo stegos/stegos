@@ -136,17 +136,11 @@ fn run() -> Result<(), Box<Error>> {
     let (node_future, broker) = node.run()?;
 
     // Initialize console service
-    let console_service = ConsoleService::new(node.clone());
+    let console_service = ConsoleService::new(node.clone(), broker.clone());
     rt.spawn(console_service);
 
     // Initialize randhound
-    // TODO: use individual streams for each topic.
-    // See https://github.com/stegos/stegos/issues/126
-    // let randhound_rx = floodsub_rx;
-
-    let randhound_rx = Box::new(broker.subscribe(&"randhound".to_string())?);
-    let randhound = RandHoundService::new(node.clone(), &my_id, randhound_rx);
-
+    let randhound = RandHoundService::new(broker.clone(), &my_id)?;
     rt.spawn(randhound);
 
     // Start main event loop

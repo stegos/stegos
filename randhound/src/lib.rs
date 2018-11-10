@@ -30,13 +30,16 @@ extern crate stegos_crypto;
 extern crate stegos_network;
 extern crate tokio;
 extern crate tokio_timer;
+#[macro_use]
+extern crate log;
 
 use failure::Error;
+use futures::sync::mpsc::UnboundedReceiver;
 use futures::{Async, Future, Poll, Stream};
 use std::thread;
 use std::thread::ThreadId;
 use std::time::Duration;
-use stegos_network::Node;
+use stegos_network::BrokerHandler;
 use tokio::timer::Interval;
 
 mod randhound;
@@ -45,12 +48,14 @@ const TOPIC: &'static str = "randhound";
 
 /// RandHound++ network service.
 pub struct RandHoundService {
-    /// Network node
-    node: Node,
+    /// Network message broker.
+    broker: BrokerHandler,
     /// Timer
     timer: Interval,
-    /// Input Messages.
-    inbox: Box<Stream<Item = Vec<u8>, Error = ()>>,
+    /// Unicast Input Messages.
+    unicast_rx: UnboundedReceiver<Vec<u8>>,
+    /// Broadcast Input Messages.
+    broadcast_rx: UnboundedReceiver<Vec<u8>>,
     /// Network node id.
     my_id: String,
     /// Thread Id (just for debug).
@@ -60,25 +65,34 @@ pub struct RandHoundService {
 impl RandHoundService {
     /// Send an unicast message to RandHound peer.
     fn unicast(&self, node_id: &String, data: Vec<u8>) -> Result<(), Error> {
-        self.node.publish(&format!("{}-{}", node_id, TOPIC), data)
+        self.broker.publish(&format!("{}-{}", node_id, TOPIC), data)
     }
 
     /// Send a broadcast message to RandHound peer.
     fn broadcast(&self, data: Vec<u8>) -> Result<(), Error> {
-        self.node.publish(&TOPIC.to_string(), data)
+        self.broker.publish(&TOPIC.to_string(), data)
     }
 
-    /// Called on a new message.
-    fn on_message(&mut self, msg: Vec<u8>) {
-        println!(
-            "randhound: *message: {}*",
+    /// Called on a new unitcast message.
+    fn on_unicast(&mut self, msg: Vec<u8>) {
+        info!(
+            "received unicast message: {}*",
+            String::from_utf8_lossy(msg.as_slice())
+        );
+    }
+
+    /// Called on a new broadcast message.
+    fn on_broadcast(&mut self, msg: Vec<u8>) {
+        info!(
+            "received broadcast message: {}*",
             String::from_utf8_lossy(msg.as_slice())
         );
     }
 
     /// Called on timer event.
     fn on_timer(&mut self) {
-        // println!("randhound: *timer*");
+        debug!("timer");
+
         let hello_msg1 = format!("hello from: {} to node01", &self.my_id);
         let hello_msg2 = format!("hello from: {} to node02", &self.my_id);
         let hello_msg3 = format!("hello from: {} to node03", &self.my_id);
@@ -105,8 +119,16 @@ impl Future for RandHoundService {
 
         // Process incoming messages
         loop {
-            match self.inbox.poll() {
-                Ok(Async::Ready(Some(msg))) => self.on_message(msg),
+            match self.unicast_rx.poll() {
+                Ok(Async::Ready(Some(msg))) => self.on_unicast(msg),
+                Ok(Async::Ready(None)) => unreachable!(), // never happens
+                Ok(Async::NotReady) => break,             // fall through
+                Err(()) => panic!("Network failure"),
+            }
+        }
+        loop {
+            match self.broadcast_rx.poll() {
+                Ok(Async::Ready(Some(msg))) => self.on_broadcast(msg),
                 Ok(Async::Ready(None)) => unreachable!(), // never happens
                 Ok(Async::NotReady) => break,             // fall through
                 Err(()) => panic!("Network failure"),
@@ -126,23 +148,28 @@ impl Future for RandHoundService {
 }
 
 impl RandHoundService {
-    pub fn new(node: Node, my_id: &String, inbox: Box<Stream<Item = Vec<u8>, Error = ()>>) -> Self {
+    pub fn new(broker: BrokerHandler, my_id: &String) -> Result<Self, Error> {
         let my_id = my_id.clone();
 
         // Subscribe to unicast topic.
-        node.subscribe(&format!("{}-{}", my_id, TOPIC));
+        let unicast_rx = broker.subscribe(&format!("{}-{}", my_id, TOPIC))?;
+
         // Subscribe to broadcast topic.
-        node.subscribe(&TOPIC.to_string());
+        let broadcast_rx = broker.subscribe(&TOPIC.to_string())?;
+
         // Set up timer event.
         let timer = Interval::new_interval(Duration::from_secs(10));
 
         let thread_id = thread::current().id();
-        RandHoundService {
-            node,
+        let randhound = RandHoundService {
+            broker,
             my_id,
             timer,
-            inbox,
+            unicast_rx,
+            broadcast_rx,
             thread_id,
-        }
+        };
+
+        Ok(randhound)
     }
 }

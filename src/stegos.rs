@@ -133,7 +133,7 @@ fn run() -> Result<(), Box<Error>> {
     let mut rt = tokio::runtime::current_thread::Runtime::new()?;
     let my_id = cfg.network.node_id.clone();
     let node = Node::new(&cfg.network);
-    let (node_future, floodsub_rx) = node.run()?;
+    let (node_future, broker) = node.run()?;
 
     // Initialize console service
     let console_service = ConsoleService::new(node.clone());
@@ -142,8 +142,11 @@ fn run() -> Result<(), Box<Error>> {
     // Initialize randhound
     // TODO: use individual streams for each topic.
     // See https://github.com/stegos/stegos/issues/126
-    let randhound_rx = floodsub_rx;
+    // let randhound_rx = floodsub_rx;
+
+    let randhound_rx = Box::new(broker.subscribe(&"randhound".to_string())?);
     let randhound = RandHoundService::new(node.clone(), &my_id, randhound_rx);
+
     rt.spawn(randhound);
 
     // Start main event loop

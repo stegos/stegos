@@ -21,8 +21,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-// #![deny(warnings)]
-
 use failure::Error;
 use fnv::FnvHashMap;
 use futures::future::{Either, Future};
@@ -49,6 +47,8 @@ use std::time::Duration;
 use stegos_config::ConfigNetwork;
 use tokio::timer::Interval;
 
+pub mod broker;
+
 // use super::{echo::handler::handler as echo_handler, EchoUpgrade};
 use super::ncp::{handler::ncp_handler, protocol::NcpProtocolConfig};
 
@@ -67,7 +67,6 @@ pub(crate) struct Inner {
     // Channel for outbound NCP dial
     dial_ncp_tx: Option<mpsc::UnboundedSender<Multiaddr>>,
     // Active floodsub connections with a remote.
-    // pub(crate) floodsub_connections: Vec<Multiaddr>,
     pub(crate) floodsub_connections: HashSet<PeerId>,
     // All remote connections
     pub(crate) remote_connections: FnvHashMap<Multiaddr, RemoteInfo>,
@@ -119,6 +118,7 @@ impl Node {
         Ok(())
     }
 
+    // Deprecated!
     pub fn subscribe<S>(&self, topic: &S)
     where
         S: Into<String> + Clone,
@@ -132,6 +132,7 @@ impl Node {
         }
     }
 
+    // Deprecated!
     pub fn publish<S>(&self, topic: &S, data: Vec<u8>) -> Result<(), Error>
     where
         S: Into<String> + Clone,
@@ -145,12 +146,16 @@ impl Node {
         Ok(())
     }
 
+    /// Returns tuple (node_future, broker_handler)
+    /// * node_future should be run to completion for network machinery to work
+    /// * broker_handler manages subscriptions to topics
+    ///
     pub fn run(
         &self,
     ) -> Result<
         (
             Box<Future<Item = (), Error = ()> + Send + 'static>,
-            Box<Stream<Item = Vec<u8>, Error = ()> + Send>,
+            broker::BrokerHandler,
         ),
         Error,
     > {
@@ -257,10 +262,6 @@ impl Node {
         debug!("Now listening on {:?}", address);
 
         let floodsub_ctl = floodsub::FloodSubController::new(&floodsub_upgrade);
-        {
-            let mut inner = inner.write();
-            inner.floodsub_ctl = Some(floodsub_ctl.clone());
-        }
 
         for addr in config.seed_nodes.iter() {
             debug!("Dialing peer with address {}", addr);
@@ -290,10 +291,6 @@ impl Node {
                 Ok(())
             }
         });
-        {
-            let mut inner = inner.write();
-            inner.dial_tx = Some(dial_tx);
-        }
 
         let (dial_ncp_tx, dial_ncp_rx) = mpsc::unbounded();
         let dialer_ncp = dial_ncp_rx.for_each({
@@ -309,9 +306,13 @@ impl Node {
                 Ok(())
             }
         });
+
+        let (broker, broker_handler) = broker::Broker::new(floodsub_rx, floodsub_ctl.clone());
         {
             let mut inner = inner.write();
             inner.dial_ncp_tx = Some(dial_ncp_tx);
+            inner.dial_tx = Some(dial_tx);
+            inner.floodsub_ctl = Some(floodsub_ctl.clone());
         }
 
         let monitor = Interval::new_interval(Duration::from_secs(config.monitoring_interval))
@@ -334,16 +335,13 @@ impl Node {
             .map(|_| ())
             .select(monitor.map_err(|_| unreachable!()))
             .map(|_| ())
+            .select(broker.map_err(|_| unreachable!()))
+            .map(|_| ())
             .map_err(|_| ());
 
-        let node_rx = Box::new(floodsub_rx.map(|msg| msg.data).map_err({
-            |e| {
-                error!("error receiving message: {}", e);
-            }
-        }));
         let boxed_future =
             Box::new(final_fut) as Box<Future<Item = (), Error = ()> + Send + 'static>;
-        Ok((boxed_future, node_rx))
+        Ok((boxed_future, broker_handler))
     }
 }
 

@@ -22,9 +22,12 @@
 // SOFTWARE.
 
 #![deny(warnings)]
+
 #[macro_use]
 extern crate log;
 extern crate bytes;
+// #[macro_use]
+// extern crate failure_derive;
 extern crate failure;
 extern crate fnv;
 extern crate futures;
@@ -46,7 +49,6 @@ mod node;
 mod types;
 
 pub use echo::protocol::{EchoMiddleware, EchoUpgrade};
-// pub(crate) use ncp::protocol::{NcpMsg, NcpProtocolConfig};
-// pub(crate) use node::Inner;
 pub use ncp::protocol;
+pub use node::broker::BrokerHandler;
 pub use node::Node;

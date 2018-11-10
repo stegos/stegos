@@ -118,34 +118,6 @@ impl Node {
         Ok(())
     }
 
-    // Deprecated!
-    pub fn subscribe<S>(&self, topic: &S)
-    where
-        S: Into<String> + Clone,
-    {
-        let topic: String = topic.clone().into();
-        debug!("net: *Subscribed to topic '{}'*", &topic);
-        let topic = floodsub::TopicBuilder::new(topic).build();
-        let inner = self.inner.read();
-        if let Some(floodsub_ctl) = inner.floodsub_ctl.clone() {
-            floodsub_ctl.subscribe(&topic);
-        }
-    }
-
-    // Deprecated!
-    pub fn publish<S>(&self, topic: &S, data: Vec<u8>) -> Result<(), Error>
-    where
-        S: Into<String> + Clone,
-    {
-        let id: String = topic.clone().into();
-        let topic = floodsub::TopicBuilder::new(id).build();
-        let inner = self.inner.read();
-        if let Some(floodsub_ctl) = inner.floodsub_ctl.clone() {
-            floodsub_ctl.publish(&topic, data);
-        }
-        Ok(())
-    }
-
     /// Returns tuple (node_future, broker_handler)
     /// * node_future should be run to completion for network machinery to work
     /// * broker_handler manages subscriptions to topics

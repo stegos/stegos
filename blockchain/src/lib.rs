@@ -26,11 +26,13 @@ mod blockchain;
 mod genesis;
 mod merkle;
 mod output;
+mod transaction;
 
 pub use block::*;
 pub use blockchain::*;
 pub use merkle::*;
 pub use output::*;
+pub use transaction::*;
 
 extern crate chrono;
 #[macro_use]

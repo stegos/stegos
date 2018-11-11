@@ -90,7 +90,7 @@ impl Output {
             payload,
         };
 
-        Ok((output, delta))
+        Ok((output, gamma))
     }
 
     /// Cloak recipient's public key.
@@ -213,14 +213,14 @@ pub mod tests {
         let timestamp = Utc::now().timestamp() as u64;
         let amount: i64 = 100500;
 
-        let (output, delta) =
+        let (output, gamma) =
             Output::new(timestamp, skey1, pkey2, amount).expect("encryption successful");
-        let (delta2, _gamma, amount2) = output
+        let (_delta2, gamma2, amount2) = output
             .decrypt_payload(skey2)
             .expect("decryption successful");
 
         assert_eq!(amount, amount2);
-        assert_eq!(delta, delta2);
+        assert_eq!(gamma, gamma2);
 
         // Error handling
         if let Err(e) = output.decrypt_payload(skey1) {

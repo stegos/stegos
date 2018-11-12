@@ -38,6 +38,8 @@ pub struct Config {
     pub general: ConfigGeneral,
     /// Network configuration.
     pub network: ConfigNetwork,
+    /// Key Chain configuration.
+    pub keychain: ConfigKeyChain,
 }
 
 /// Default values for global configuration.
@@ -46,6 +48,7 @@ impl Default for Config {
         Config {
             general: Default::default(),
             network: Default::default(),
+            keychain: Default::default(),
         }
     }
 }
@@ -62,6 +65,25 @@ impl Default for ConfigGeneral {
     fn default() -> Self {
         ConfigGeneral {
             log4rs_config: "stegos-log4rs.toml".to_string(),
+        }
+    }
+}
+
+/// Key Chain Configuration.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(default)]
+pub struct ConfigKeyChain {
+    /// Path to secret key.
+    pub private_key: String,
+    /// Path to public key.
+    pub public_key: String,
+}
+
+impl Default for ConfigKeyChain {
+    fn default() -> Self {
+        ConfigKeyChain {
+            private_key: "stegos.skey".to_string(),
+            public_key: "stegos.pkey".to_string(),
         }
     }
 }

@@ -28,8 +28,9 @@ use output::*;
 use stegos_crypto::curve1174::cpt as wallet_keys;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure as cosi_keys;
+use stegos_keychain::wallet_to_cosi_keys;
 
-const GENESIS_WITNESSES_COUNT: usize = 6;
+const GENESIS_WITNESSES_COUNT: usize = 3;
 
 /// Genesis blocks for tests and development purposes.
 pub fn genesis_dev() -> (KeyBlock, MonetaryBlock, Vec<Hash>, Vec<(Hash, MerklePath)>) {
@@ -50,10 +51,8 @@ pub fn genesis_dev() -> (KeyBlock, MonetaryBlock, Vec<Hash>, Vec<(Hash, MerklePa
         let seed = format!("dev{}", i + 1);
         let (wallet_skey, wallet_pkey, wallet_sig) =
             wallet_keys::make_deterministic_keys(seed.as_bytes());
-        // TODO: find a better wait to pair wallet and CoSi keys
-        let wallet_skey_hash = Hash::digest(&wallet_skey);
-        let cosi_seed = &wallet_skey_hash.base_vector();
-        let (cosi_skey, cosi_pkey, cosi_sig) = cosi_keys::make_deterministic_keys(cosi_seed);
+
+        let (cosi_skey, cosi_pkey, cosi_sig) = wallet_to_cosi_keys(&wallet_skey);
 
         keys.push(SeedKeys {
             wallet_skey,

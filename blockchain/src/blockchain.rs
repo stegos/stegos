@@ -57,6 +57,7 @@ impl Blockchain {
     //----------------------------------------------------------------------------------------------
 
     pub fn new() -> Blockchain {
+        info!("Initializing...");
         let blocks = Vec::new();
         let block_by_hash = HashMap::<Hash, BlockId>::new();
         let output_by_hash = HashMap::<Hash, OutputKey>::new();
@@ -74,6 +75,7 @@ impl Blockchain {
         blockchain.register_key_block(block1);
         blockchain.register_monetary_block(block2, &inputs2, &output2);
 
+        info!("Done");
         blockchain
     }
 

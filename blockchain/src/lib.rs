@@ -42,3 +42,4 @@ extern crate failure;
 extern crate failure_derive;
 extern crate rand;
 extern crate stegos_crypto;
+extern crate stegos_keychain;

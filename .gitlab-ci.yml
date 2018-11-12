@@ -1,6 +1,7 @@
 stages:
   - build
   - test
+  - code_coverage
   - release
 
 before_script:
@@ -25,6 +26,10 @@ build:linux:
   stage: test
   script:
     - cargo test --all -- --nocapture
+  artifacts:
+    expire_in: 1 week
+    paths:
+      - target/
 
 test:linux:
   extends: .test
@@ -33,6 +38,19 @@ test:linux:
     - build:linux
   tags:
     - linux
+
+code_coverage:
+  stage: code_coverage
+  image: rust:1.30
+  script:
+    - ci-scripts/coverage.sh
+  dependencies:
+    - test:linux
+  tags:
+    - linux
+  only:
+    - dev
+    - master
 
 .release:
   stage: release

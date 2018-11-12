@@ -189,6 +189,16 @@ macro_rules! field_impl {
                 Ok($name::Unscaled(ans))
             }
 
+            /// Save to a byte array.
+            pub fn to_lev_u8(self) -> [u8; 32] {
+                self.bits().to_lev_u8()
+            }
+
+            /// Load from a byte array.
+            pub fn from_lev_u8(bytes: [u8; 32]) -> Self {
+                $name::Unscaled(U256::from_lev_u8(bytes))
+            }
+
             pub fn nbr_str(&self) -> String {
                 let tmp = (*self).unscaled_bits();
                 format!("{}", tmp.nbr_str())

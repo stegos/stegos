@@ -26,15 +26,19 @@ mod blockchain;
 mod genesis;
 mod merkle;
 mod output;
-mod payload;
+mod transaction;
 
 pub use block::*;
 pub use blockchain::*;
 pub use merkle::*;
 pub use output::*;
+pub use transaction::*;
 
 extern crate chrono;
 #[macro_use]
 extern crate log;
+extern crate failure;
+#[macro_use]
+extern crate failure_derive;
 extern crate rand;
 extern crate stegos_crypto;

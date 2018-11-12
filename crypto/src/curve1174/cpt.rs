@@ -142,6 +142,12 @@ impl PublicKey {
     pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
         Ok(PublicKey(Pt::from_str(s)?))
     }
+
+    /// Cloak public key with random factor.
+    pub fn cloak(&self, delta: Fr) -> Result<Self, CurveError> {
+        let pt = Pt::decompress(self.0)?;
+        Ok(PublicKey(ECp::compress(pt + delta * (*super::G))))
+    }
 }
 
 impl fmt::Display for PublicKey {

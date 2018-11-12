@@ -15,3 +15,5 @@ rust-libpbc = { git = "https://github.com/stegos/rust-pbcintf.git" }
 sha3 = "0.8.0"
 typenum = "1.10.0"
 log = "0.4"
+failure = "0.1.2"
+failure_derive = "0.1.2"

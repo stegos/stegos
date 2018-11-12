@@ -70,6 +70,7 @@ impl U256 {
         basic_nbr_str(&self.0)
     }
 
+    /// Host Order to Little Endian.
     pub fn to_lev_u8(self) -> [u8; 32] {
         let mut ans = [0u8; 32];
         ans[0] = (self.0[0] & 0x0ff) as u8;
@@ -109,6 +110,47 @@ impl U256 {
         ans[31] = ((self.0[3] >> 56) & 0x0ff) as u8;
 
         ans
+    }
+
+    /// Little Endian to Host Order.
+    pub fn from_lev_u8(src: [u8; 32]) -> Self {
+        let a0 = (src[0] as u64)
+            | ((src[1] as u64) << 8)
+            | ((src[2] as u64) << 16)
+            | ((src[3] as u64) << 24)
+            | ((src[4] as u64) << 32)
+            | ((src[5] as u64) << 40)
+            | ((src[6] as u64) << 48)
+            | ((src[7] as u64) << 56);
+
+        let a1 = (src[8] as u64)
+            | ((src[9] as u64) << 8)
+            | ((src[10] as u64) << 16)
+            | ((src[11] as u64) << 24)
+            | ((src[12] as u64) << 32)
+            | ((src[13] as u64) << 40)
+            | ((src[14] as u64) << 48)
+            | ((src[15] as u64) << 56);
+
+        let a2 = (src[16] as u64)
+            | ((src[17] as u64) << 8)
+            | ((src[18] as u64) << 16)
+            | ((src[19] as u64) << 24)
+            | ((src[20] as u64) << 32)
+            | ((src[21] as u64) << 40)
+            | ((src[22] as u64) << 48)
+            | ((src[23] as u64) << 56);
+
+        let a3 = (src[24] as u64)
+            | ((src[25] as u64) << 8)
+            | ((src[26] as u64) << 16)
+            | ((src[27] as u64) << 24)
+            | ((src[28] as u64) << 32)
+            | ((src[29] as u64) << 40)
+            | ((src[30] as u64) << 48)
+            | ((src[31] as u64) << 56);
+
+        U256([a0, a1, a2, a3])
     }
 
     pub fn add_mod(&mut self, other: &U256, modulo: &U256) {
@@ -433,5 +475,18 @@ impl U256 {
         hexstr_to_lev_u8(s, &mut x)?;
         let v = Lev32(x);
         Ok(U256::from(v))
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    #[test]
+    pub fn to_from_lev_u8() {
+        let uv = U256::random();
+        let bytes = uv.to_lev_u8();
+        let uv2 = U256::from_lev_u8(bytes);
+        assert_eq!(uv, uv2);
     }
 }

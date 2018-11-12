@@ -384,6 +384,12 @@ impl Hashable for BulletProof {
     }
 }
 
+impl BulletProof {
+    pub fn pedersen_commitment(&self) -> Pt {
+        self.vcmt
+    }
+}
+
 // ------------------------------------------------------------------
 
 pub fn make_range_proof(v: i64) -> (BulletProof, Int) {

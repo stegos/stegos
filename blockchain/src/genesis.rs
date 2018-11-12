@@ -25,10 +25,7 @@ use block::*;
 use chrono::prelude::{TimeZone, Utc};
 use merkle::MerklePath;
 use output::*;
-use payload::*;
-use stegos_crypto::bulletproofs;
 use stegos_crypto::curve1174::cpt as wallet_keys;
-use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure as cosi_keys;
 
@@ -95,26 +92,24 @@ pub fn genesis_dev() -> (KeyBlock, MonetaryBlock, Vec<Hash>, Vec<(Hash, MerklePa
     let (block2, inputs2, outputs2) = {
         let previous = Hash::digest(&block1);
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
-
         let amount: i64 = 1_000_000;
-
-        let delta: Fr = Fr::random();
-
-        // Recipient is ourselves.
-        let recipient = keys[0].wallet_pkey.clone();
 
         // Genesis doesn't have inputs
         let inputs = Vec::<Hash>::new();
 
         // Genesis block have one hard-coded output.
-        let (proof, gamma) = bulletproofs::make_range_proof(amount);
-        let payload =
-            new_monetary(delta, gamma, amount, recipient).expect("genesis has valid keys");
-        let output = Output::new(recipient, proof, payload);
+
+        // Send money to yourself.
+        let sender = &keys[0];
+        let recipient = &keys[0];
+
+        let (output, gamma) =
+            Output::new(timestamp, sender.wallet_skey, recipient.wallet_pkey, amount)
+                .expect("genesis has valid public keys");
         let outputs = [output];
 
         // Adjustment is the sum of all gamma found in UTXOs.
-        let adjustment = delta;
+        let adjustment = gamma;
 
         let (block, outputs) = MonetaryBlock::new(base, adjustment, &inputs, &outputs);
         (block, inputs, outputs)

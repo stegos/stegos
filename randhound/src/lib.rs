@@ -75,7 +75,7 @@ impl RandHoundService {
 
     /// Called on a new unitcast message.
     fn on_unicast(&mut self, msg: Vec<u8>) {
-        info!(
+        debug!(
             "received unicast message: {}*",
             String::from_utf8_lossy(msg.as_slice())
         );
@@ -83,7 +83,7 @@ impl RandHoundService {
 
     /// Called on a new broadcast message.
     fn on_broadcast(&mut self, msg: Vec<u8>) {
-        info!(
+        debug!(
             "received broadcast message: {}*",
             String::from_utf8_lossy(msg.as_slice())
         );

@@ -1,4 +1,4 @@
-# Stegos Blockchain ![Coverage Status](https://codecov.io/gh/stegos/stegos/branch/dev/graphs/badge.svg)
+# Stegos Blockchain [![pipeline status](https://gitlab.aws.emotiq.ch/Stegos/stegos/badges/dev/pipeline.svg)](https://gitlab.aws.emotiq.ch/Stegos/stegos/commits/dev)  [![Coverage Status](https://codecov.io/gh/stegos/stegos/branch/dev/graphs/badge.svg)](https://codecov.io/gh/stegos/stegos)
 
 Stegos is a completely private, confidential, and scalable cryptocurrency that’s friendly to the environment. Stegos builds and improves upon other privacy coins and can be used to send payments and data with complete confidentiality.
 

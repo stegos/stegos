@@ -136,22 +136,32 @@ impl Future for Broker {
                         }
                         PubsubMessage::Publish { topic, data } => {
                             let new_topic = floodsub::TopicBuilder::new(topic).build();
+                            let topic_hash = new_topic.hash();
+                            debug!(
+                                "Got publish message from Upstream, publishing to topic {}!",
+                                topic_hash.clone().into_string()
+                            );
                             self.floodsub_ctl.publish(&new_topic, data);
                         }
                     },
                     Some(Message::Input(m)) => {
                         for t in m.topics.into_iter() {
+                            debug!(
+                                "Got message for topic {}, sending to consumers",
+                                t.clone().into_string()
+                            );
                             let consumers = self.consumers.entry(t).or_insert(vec![]);
-                            for i in 0..consumers.len() {
-                                if consumers[i].is_closed() {
-                                    consumers.remove(i);
-                                } else {
-                                    if let Err(e) = consumers[i].unbounded_send(m.data.clone()) {
+                            consumers.retain({
+                                let data = &m.data;
+                                move |c| {
+                                    if let Err(e) = c.unbounded_send(data.clone()) {
                                         error!("Error sending data to consumer: {}", e);
-                                        consumers.remove(i);
+                                        false
+                                    } else {
+                                        true
                                     }
                                 }
-                            }
+                            })
                         }
                     }
                     None => return Ok(Async::Ready(())), // All streams are done!

@@ -12,7 +12,7 @@ bind_port = 10203
 advertise_local_ips = true
 # Advertise our addresses for incoming connections
 advertised_addresses = [
-    "/ip4/127.0.0.1/10050",
+    "/ip4/127.0.0.1/tcp/10050",
 ]
 # Example of list of seed nodes
 seed_nodes = [

@@ -24,13 +24,15 @@
 
 use super::*;
 
-extern crate crypto;
+// extern crate crypto;
 
 use crypto::aes;
 use crypto::aes::KeySize::KeySize128;
 use crypto::aesni;
 use crypto::aessafe;
 use crypto::symmetriccipher::{BlockDecryptor, BlockEncryptor};
+
+use std::hash as stdhash;
 
 // ------------------------------------------------------------------------------------------
 // Client API - compressed points and simple fields
@@ -56,6 +58,21 @@ impl Pt {
 
     pub fn decompress(pt: Self) -> Result<ECp, CurveError> {
         ECp::try_from(pt)
+    }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0.to_vec()
+    }
+
+    pub fn from_bytes(bytes: &Vec<u8>) -> Result<Self, CurveError> {
+        let mut bits: [u8; 32] = [0u8; 32];
+        bits.copy_from_slice(&bytes[0..31]);
+        let pt = Pt(bits);
+        if let Err(e) = ECp::try_from(pt.clone()) {
+            Err(e)
+        } else {
+            Ok(pt)
+        }
     }
 }
 
@@ -148,6 +165,15 @@ impl PublicKey {
         let pt = Pt::decompress(self.0)?;
         Ok(PublicKey(ECp::compress(pt + delta * (*super::G))))
     }
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0.into_bytes()
+    }
+
+    pub fn from_bytes(bytes: &Vec<u8>) -> Self {
+        let mut bits: [u8; 32] = [0u8; 32];
+        bits.copy_from_slice(&bytes[0..31]);
+        PublicKey(Pt(bits))
+    }
 }
 
 impl fmt::Display for PublicKey {
@@ -166,6 +192,13 @@ impl Hashable for PublicKey {
     fn hash(&self, state: &mut Hasher) {
         "PKey".hash(state);
         (*self).0.hash(state);
+    }
+}
+
+impl stdhash::Hash for PublicKey {
+    fn hash<H: stdhash::Hasher>(&self, state: &mut H) {
+        stdhash::Hash::hash(&"PKey", state);
+        stdhash::Hash::hash(&(*self).0.bits(), state);
     }
 }
 

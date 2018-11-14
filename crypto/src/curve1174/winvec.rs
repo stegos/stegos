@@ -22,6 +22,7 @@
 // SOFTWARE.
 
 use super::*;
+use crate::CryptoError;
 
 // -----------------------------------------------------------------
 // window vector of 4-bit values, used for fast multiply of curve points

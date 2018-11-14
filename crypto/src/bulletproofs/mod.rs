@@ -25,15 +25,13 @@
 #![allow(non_snake_case)]
 #![allow(unused)]
 
+use crate::CryptoError;
 use rand::prelude::*;
-use std::fmt::Debug;
-use std::time::{Duration, SystemTime};
-
 use std::fmt;
+use std::fmt::Debug;
 use std::mem;
-
-use hex;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use std::time::{Duration, SystemTime};
 
 use crate::curve1174::cpt::*;
 use crate::curve1174::ecpt::*;
@@ -590,8 +588,8 @@ fn basis_vectors(y: Int) -> (Point, BasisVect, BasisVect) {
 // ---------------------------------------------------------------------
 
 pub fn validate_range_proof(bp: &BulletProof) -> bool {
-    fn try_validate_range_proof(bp: &BulletProof) -> Result<bool, CurveError> {
-        fn compute_iter_commit(xlrs: &[LR; L2_NBASIS], init: Point) -> Result<Point, CurveError> {
+    fn try_validate_range_proof(bp: &BulletProof) -> Result<bool, CryptoError> {
+        fn compute_iter_commit(xlrs: &[LR; L2_NBASIS], init: Point) -> Result<Point, CryptoError> {
             let mut sum = init;
             for triple in xlrs.iter().rev() {
                 let x = triple.x.scaled();

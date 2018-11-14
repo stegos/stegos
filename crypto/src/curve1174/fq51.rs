@@ -22,6 +22,7 @@
 // SOFTWARE.
 
 use super::*;
+use crate::CryptoError;
 
 const BOT_51_BITS: i64 = ((1 << 51) - 1); // Fq51 frames contain 51 bits
 const BOT_47_BITS: i64 = ((1 << 47) - 1); // MSB frame only has 47 bits
@@ -533,7 +534,7 @@ pub fn gdec2(x: &mut Fq51) {
 }
 
 #[inline(never)]
-pub fn gsqrt(x: &Fq51) -> Result<Fq51, CurveError> {
+pub fn gsqrt(x: &Fq51) -> Result<Fq51, CryptoError> {
     // we need to perform (x^((q+1)/4) mod q)
     // for (q + 1)/4 = 0x01FF_FFFF_FFFF_FFFF__FFFF_FFFF_FFFF_FFFF__FFFF_FFFF_FFFF_FFFF__FFFF_FFFF_FFFF_FFFE
     //               = 2^(2*(248-1))
@@ -633,7 +634,7 @@ pub fn gsqrt(x: &Fq51) -> Result<Fq51, CurveError> {
     if t1 == *x {
         Ok(w)
     } else {
-        Err(CurveError::NotQuadraticResidue)
+        Err(CryptoError::NotQuadraticResidue)
     }
 }
 
@@ -660,7 +661,7 @@ pub fn bin_to_elt(y: &U256, x: &mut Fq51) {
 }
 
 impl Fq51 {
-    pub fn from_str(s: &str) -> Result<Fq51, hex::FromHexError> {
+    pub fn from_str(s: &str) -> Result<Fq51, CryptoError> {
         let bin = U256::from_str(s)?;
         let mut e = Fq51::zero();
         bin_to_elt(&bin, &mut e);

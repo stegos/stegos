@@ -26,11 +26,13 @@ use std::fmt;
 use std::mem::transmute;
 use stegos_crypto::bulletproofs::{make_range_proof, BulletProof};
 use stegos_crypto::curve1174::cpt::{
-    aes_decrypt, aes_encrypt, EncryptedPayload, PublicKey, SecretKey,
+    aes_decrypt, aes_encrypt, EncryptedPayload, Pt, PublicKey, SecretKey,
 };
+use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
-use stegos_crypto::curve1174::CurveError;
+use stegos_crypto::curve1174::G;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
+use stegos_crypto::CryptoError;
 
 /// A magic value used to encode/decode payload.
 const PAYLOAD_MAGIC: [u8; 4] = [112, 97, 121, 109]; // "paym"
@@ -98,7 +100,7 @@ impl Output {
         sender_skey: &SecretKey,
         recipient_pkey: &PublicKey,
         timestamp: u64,
-    ) -> Result<(PublicKey, Fr), CurveError> {
+    ) -> Result<(PublicKey, Fr), CryptoError> {
         // h is the digest of the recipients actual public key mixed with a timestamp.
         let mut hasher = Hasher::new();
         recipient_pkey.hash(&mut hasher);
@@ -111,7 +113,11 @@ impl Output {
         // Resulting publickey will be a random-like value in a safe range of the field,
         // not too small, and not too large. This helps avoid brute force attacks, looking
         // for the discrete log corresponding to delta.
-        Ok((recipient_pkey.cloak(delta)?, delta))
+
+        let pt = Pt::from(*recipient_pkey);
+        let pt = ECp::decompress(pt)?;
+        let cloaked_pkey = PublicKey::from(pt + delta * (*G));
+        Ok((cloaked_pkey, delta))
     }
 
     /// Create a new monetary transaction.
@@ -120,7 +126,7 @@ impl Output {
         gamma: Fr,
         amount: i64,
         pkey: &PublicKey,
-    ) -> Result<EncryptedPayload, CurveError> {
+    ) -> Result<EncryptedPayload, CryptoError> {
         // Convert amount to BE vector.
 
         let amount_bytes: [u8; 8] = unsafe { transmute(amount.to_be()) };

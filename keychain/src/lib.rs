@@ -100,9 +100,10 @@ impl KeyChain {
                 tag: SKEY_TAG.to_string(),
                 contents: skey.into_bytes().to_vec(),
             };
+            let pkey_bytes: [u8; 32] = pkey.into_bytes();
             let pkey_pem = pem::Pem {
                 tag: PKEY_TAG.to_string(),
-                contents: pkey.into_bytes().to_vec(),
+                contents: pkey_bytes.to_vec(),
             };
 
             fs::write(skey_path, pem::encode(&skey_pem))?;
@@ -131,9 +132,8 @@ impl KeyChain {
                 return Err(KeyChainError::KeyParseError(cfg.public_key.clone()).into());
             }
 
-            // TODO: validate keys on curve
-            let skey = cpt::SecretKey::from_bytes(&skey.contents);
-            let pkey = cpt::PublicKey::from_bytes(&pkey.contents);
+            let skey = cpt::SecretKey::try_from_bytes(&skey.contents)?;
+            let pkey = cpt::PublicKey::try_from_bytes(&pkey.contents[..])?;
             let pkey_check = skey.into();
 
             if pkey != pkey_check {

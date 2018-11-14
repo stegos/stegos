@@ -213,7 +213,7 @@ impl ConsoleService {
             };
 
             let recipient = caps.name("recipient").unwrap().as_str();
-            let recipient = match PublicKey::from_str(recipient) {
+            let recipient = match PublicKey::try_from_hex(recipient) {
                 Ok(r) => r,
                 Err(e) => {
                     println!("Invalid public key {}: {}", recipient, e);

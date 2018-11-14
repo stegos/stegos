@@ -22,6 +22,7 @@
 // SOFTWARE.
 
 use super::*;
+use crate::CryptoError;
 
 // -----------------------------------------------------------------
 // type Lev32 represents a 256-bit bignum as a little-endian 32-byte vector

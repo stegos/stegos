@@ -11,7 +11,6 @@ install_deps_linux() {
         libdw-dev \
         libiberty-dev \
         libssl-dev \
-        protobuf-compiler \
         pkg-config \
         wget \
         zlib1g-dev

@@ -21,13 +21,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#![deny(warnings)]
+// #![deny(warnings)]
 
 #[macro_use]
 extern crate log;
 extern crate bytes;
 // #[macro_use]
 // extern crate failure_derive;
+#[macro_use]
 extern crate failure;
 extern crate fnv;
 extern crate futures;
@@ -38,6 +39,8 @@ extern crate pnet;
 extern crate protobuf;
 extern crate rand;
 extern crate stegos_config;
+extern crate stegos_crypto;
+extern crate stegos_keychain;
 extern crate tokio;
 extern crate tokio_codec;
 extern crate tokio_io;

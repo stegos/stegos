@@ -103,6 +103,8 @@ pub struct ConfigNetwork {
     pub advertised_addresses: Vec<String>,
     /// Advertise local active, non-loopback addresses
     pub advertise_local_ips: bool,
+    /// Heartbeat interval secs
+    pub heartbeat_interval: u64,
     /// List of nodes to connect to on startup.
     pub seed_nodes: Vec<String>,
     /// Path to Node's public key
@@ -137,6 +139,7 @@ impl Default for ConfigNetwork {
             min_connections: 2,
             max_connections: 2,
             monitoring_interval: 15,
+            heartbeat_interval: 10,
         }
     }
 }

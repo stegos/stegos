@@ -126,7 +126,7 @@ impl PeerInfo {
     }
 }
 
-// Turns a type-safe kadmelia message into the corresponding row protobuf message.
+// Turns a type-safe NCP message into the corresponding row protobuf message.
 fn msg_to_proto(ncp_msg: NcpMsg) -> ncp_proto::Message {
     match ncp_msg {
         NcpMsg::Ping { ping_data } => {
@@ -165,7 +165,7 @@ fn msg_to_proto(ncp_msg: NcpMsg) -> ncp_proto::Message {
     }
 }
 
-/// Turns a raw Kademlia message into a type-safe message.
+/// Turns a raw NCP message into a type-safe message.
 fn proto_to_msg(mut message: ncp_proto::Message) -> Result<NcpMsg, IoError> {
     match message.get_field_type() {
         ncp_proto::Message_MessageType::PING => {

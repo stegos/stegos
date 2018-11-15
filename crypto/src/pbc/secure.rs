@@ -267,6 +267,16 @@ impl G2 {
         Ok(G2(v))
     }
 
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0.to_vec()
+    }
+
+    pub fn from_bytes(bytes: &Vec<u8>) -> Self {
+        let mut bits: [u8; G2_SIZE_FR256] = [0u8; G2_SIZE_FR256];
+        bits.copy_from_slice(&bytes[0..(G2_SIZE_FR256)]);
+        G2(bits)
+    }
+
     pub fn generator() -> Self {
         let v = Self::new();
         unsafe {
@@ -418,6 +428,13 @@ impl PublicKey {
     pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
         let g = G2::from_str(s)?;
         Ok(PublicKey(g))
+    }
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0.into_bytes()
+    }
+
+    pub fn from_bytes(bytes: &Vec<u8>) -> Self {
+        PublicKey(G2::from_bytes(bytes))
     }
 }
 

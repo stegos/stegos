@@ -38,8 +38,8 @@ use std::sync::Arc;
 
 // -------------------------------------------------------------------------
 // Distributed BFT randommness generation. A collection of witness nodes
-// is divided up into groups. Within each group, each member compute separate
-// random values, and shares with other group members through a share from their
+// is divided up into groups. Within each group, each member computes a separate
+// random value, and shares with other group members through a share from their
 // own unique random sharing polynomial. (Shamir Secret Sharing).
 //
 // They each commit to the randomness by offering ZKP's on the share values,
@@ -1409,12 +1409,13 @@ fn send_randomness_to_group_leader(v: &Vec<(secure::PublicKey, G2)>) {
     // Send a batch of decoded randomness to the group leader
     set_stage(SessionStage::Stage4); // now awaiting subgroup randomness
     let me = get_pkey();
-    if me == get_group_leader() {
+    let grpleader = get_group_leader();
+    if me == grpleader {
         // I am a group leader, so just call my handler directly
         stash_subsubgroup_randomness(&me, v);
     } else {
         let msg = MsgType::SubgroupRandomness { rands: v.clone() };
-        send_message(&get_group_leader(), &msg);
+        send_message(&grpleader, &msg);
     }
 }
 
@@ -1510,12 +1511,13 @@ fn stash_decrypted_shares(from: &secure::PublicKey, shares: &Vec<(secure::Public
 fn send_to_beacon(rand: G2) {
     set_stage(SessionStage::Stage5); // now awaiting group randomness
     let me = get_pkey();
-    if me == get_current_beacon() {
+    let beacon = get_current_beacon();
+    if me == beacon {
         // I am the Beacon, so just call my handler directly
         stash_group_randomness(&me, &rand);
     } else {
         let msg = MsgType::GroupRandomness { rand: rand };
-        send_message(&get_current_beacon(), &msg);
+        send_message(&beacon, &msg);
     }
 }
 
@@ -1546,6 +1548,7 @@ fn stash_subsubgroup_randomness(from: &secure::PublicKey, rands: &Vec<(secure::P
                 let mut info = GSTATE.session_info.write();
                 let mut sess = info.clone().unwrap();
                 let mut newsess = sess.clone();
+                let mut done = false;
                 for (pkey, pt) in rands {
                     // session_info.grands is a HashMap arranged by polynomial
                     // (polynomials are identified by the secure::PublicKey of their creator)
@@ -1592,6 +1595,7 @@ fn stash_subsubgroup_randomness(from: &secure::PublicKey, rands: &Vec<(secure::P
                                                 .iter()
                                                 .fold(G2::zero(), |ans, pt| ans + *pt),
                                         );
+                                        done = true;
                                     }
                                 }
                             }
@@ -1601,6 +1605,9 @@ fn stash_subsubgroup_randomness(from: &secure::PublicKey, rands: &Vec<(secure::P
                             map.insert(*from, *pt);
                             map
                         });
+                    if done {
+                        break;
+                    }
                 }
                 newsess.grands = sess.grands.clone(); // are these really necesasry?
                 *info = Some(newsess); // ditto...

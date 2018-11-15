@@ -40,6 +40,22 @@ struct OutputKey {
     pub path: MerklePath,
 }
 
+#[derive(Debug, Fail)]
+pub enum BlockchainError {
+    #[fail(
+        display = "Previous hash mismatch: expected={}, got={}.",
+        _0,
+        _1
+    )]
+    PreviousHashMismatch(Hash, Hash),
+    #[fail(display = "Block hash collision: {}.", _0)]
+    BlockHashCollision(Hash),
+    #[fail(display = "UXTO hash collision: {}.", _0)]
+    OutputHashCollision(Hash),
+    #[fail(display = "Missing UXTO {}.", _0)]
+    MissingUTXO(Hash),
+}
+
 /// The Blockchain.
 pub struct Blockchain {
     /// Blockchain blocks stored in-memory.
@@ -57,26 +73,31 @@ impl Blockchain {
     //----------------------------------------------------------------------------------------------
 
     pub fn new() -> Blockchain {
-        info!("Initializing...");
         let blocks = Vec::new();
         let block_by_hash = HashMap::<Hash, BlockId>::new();
         let output_by_hash = HashMap::<Hash, OutputKey>::new();
-        let mut blockchain = Blockchain {
+        let blockchain = Blockchain {
             blocks,
             block_by_hash,
             output_by_hash,
         };
+        blockchain
+    }
 
+    pub fn bootstrap(&mut self) -> Result<(), BlockchainError> {
+        assert_eq!(self.blocks().len(), 0);
+        info!("Generating genesis blocks...");
         let (block1, block2, inputs2, output2) = genesis_dev();
-
         info!("Genesis key block hash: {}", Hash::digest(&block1));
         info!("Genesis monetary block hash: {}", Hash::digest(&block2));
-
-        blockchain.register_key_block(block1);
-        blockchain.register_monetary_block(block2, &inputs2, &output2);
-
         info!("Done");
-        blockchain
+
+        info!("Registering genesis blocks...");
+        self.register_key_block(block1)?;
+        self.register_monetary_block(block2, &inputs2, &output2)?;
+        info!("Done");
+
+        Ok(())
     }
 
     /// Find UTXO by its hash.
@@ -117,23 +138,39 @@ impl Blockchain {
 
     //----------------------------------------------------------------------------------------------
 
-    fn register_key_block(&mut self, block: KeyBlock) {
+    fn register_key_block(&mut self, block: KeyBlock) -> Result<(), BlockchainError> {
         let block_id = self.blocks.len();
 
-        let this_hash = Hash::digest(&block);
-
-        info!("Registering a new key block: {}", this_hash);
-
+        // Check previous hash.
         if let Some(previous_block) = self.blocks.last() {
             let previous_hash = Hash::digest(previous_block);
-            assert_eq!(previous_hash, block.header.base.previous);
+            if previous_hash != block.header.base.previous {
+                return Err(BlockchainError::PreviousHashMismatch(
+                    previous_hash,
+                    block.header.base.previous,
+                ));
+            }
         }
+
+        // Check new hash.
+        let this_hash = Hash::digest(&block);
+        if let Some(_) = self.block_by_hash.get(&this_hash) {
+            return Err(BlockchainError::BlockHashCollision(this_hash));
+        }
+
+        // -----------------------------------------------------------------------------------------
+        // Alright, starting transaction.
+        // -----------------------------------------------------------------------------------------
+
+        info!("Register Key Block: {}", this_hash);
 
         if let Some(_) = self.block_by_hash.insert(this_hash.clone(), block_id) {
             panic!("Block hash collision");
         }
 
         self.blocks.push(Block::KeyBlock(block));
+
+        Ok(())
     }
 
     fn register_monetary_block(
@@ -141,46 +178,87 @@ impl Blockchain {
         block: MonetaryBlock,
         inputs: &[Hash],
         outputs: &[(Hash, MerklePath)],
-    ) {
+    ) -> Result<(Vec<Output>), BlockchainError> {
         let block_id = self.blocks.len();
 
-        let this_hash = Hash::digest(&block);
-
-        info!("Registering a new monetary block: {}", this_hash);
-
+        // Check previous hash.
         if let Some(previous_block) = self.blocks.last() {
             let previous_hash = Hash::digest(previous_block);
-            assert_eq!(previous_hash, block.header.base.previous);
+            if previous_hash != block.header.base.previous {
+                return Err(BlockchainError::PreviousHashMismatch(
+                    previous_hash,
+                    block.header.base.previous,
+                ));
+            }
         }
 
-        if let Some(_) = self.block_by_hash.insert(this_hash.clone(), block_id) {
-            panic!("Block hash collision");
+        // Check new hash.
+        let this_hash = Hash::digest(&block);
+        if let Some(_) = self.block_by_hash.get(&this_hash) {
+            return Err(BlockchainError::BlockHashCollision(this_hash));
         }
+
+        // Check all inputs.
+        for output_hash in inputs {
+            if let Some(OutputKey { block_id, path }) = self.output_by_hash.get(output_hash) {
+                assert!(*block_id < self.blocks.len());
+                let block = &self.blocks[*block_id];
+                if let Block::MonetaryBlock(MonetaryBlock { header: _, body }) = block {
+                    if let Some(output) = body.outputs.lookup(&path) {
+                        // Check that hash is the same.
+                        assert_eq!(Hash::digest(output), *output_hash);
+                    } else {
+                        // Internal database inconsistency - missing UTXO in block.
+                        unreachable!();
+                    }
+                } else {
+                    // Internal database inconsistency - invalid block type.
+                    unreachable!();
+                }
+            } else {
+                // Cannot find UTXO referred by block.
+                return Err(BlockchainError::MissingUTXO(*output_hash));
+            }
+        }
+
+        // Check all outputs.
+        for (hash, _path) in outputs {
+            if let Some(_) = self.output_by_hash.get(hash) {
+                return Err(BlockchainError::OutputHashCollision(*hash));
+            }
+        }
+
+        // -----------------------------------------------------------------------------------------
+        // Alright, starting transaction.
+        // -----------------------------------------------------------------------------------------
+        info!("Register Monetary Block block: {}", this_hash);
+
+        let mut pruned: Vec<Output> = Vec::with_capacity(inputs.len());
 
         // Remove spent outputs.
         for output_hash in inputs {
-            debug!("Prune UXTO({})", output_hash);
+            info!("Prune UXTO({})", output_hash);
             // Remove from the set of unspent outputs.
             if let Some(OutputKey { block_id, path }) = self.output_by_hash.remove(output_hash) {
                 let block = &mut self.blocks[block_id];
                 if let Block::MonetaryBlock(MonetaryBlock { header: _, body }) = block {
                     // Remove from the block.
                     if let Some(output) = body.outputs.prune(&path) {
-                        assert_eq!(Hash::digest(&output), *output_hash);
+                        pruned.push(*output);
                     } else {
-                        panic!("Missing output with id {}", output_hash);
+                        unreachable!();
                     }
                 } else {
-                    unreachable!(); // Non-monetary block.
+                    unreachable!();
                 }
             } else {
-                panic!("Can't find input with id {}", output_hash);
+                unreachable!();
             }
         }
 
         // Register create unspent outputs.
         for (hash, path) in outputs {
-            debug!("Register UXTO({})", hash);
+            info!("Register UXTO({})", hash);
 
             // Create the new unspent output
             let output_key = OutputKey {
@@ -188,12 +266,19 @@ impl Blockchain {
                 path: path.clone(),
             };
             if let Some(_) = self.output_by_hash.insert(hash.clone(), output_key) {
-                panic!("The output hash collision");
+                unreachable!();
             }
+        }
+
+        // Register block
+        if let Some(_) = self.block_by_hash.insert(this_hash.clone(), block_id) {
+            unreachable!();
         }
 
         // Must be the last line to make Rust happy.
         self.blocks.push(Block::MonetaryBlock(block));
+
+        Ok(pruned)
     }
 }
 
@@ -205,7 +290,7 @@ pub mod tests {
 
     use stegos_crypto::curve1174::cpt::make_random_keys;
 
-    pub fn iterate(blockchain: &mut Blockchain) {
+    pub fn iterate(blockchain: &mut Blockchain) -> Result<(), BlockchainError> {
         let version = 1;
         let timestamp = Utc::now().timestamp() as u64;
         let (epoch, previous) = {
@@ -234,7 +319,9 @@ pub mod tests {
 
         let (block, outputs) = MonetaryBlock::new(base, adjustment, &inputs, &outputs);
 
-        blockchain.register_monetary_block(block, &inputs, &outputs);
+        blockchain.register_monetary_block(block, &inputs, &outputs)?;
+
+        Ok(())
     }
 
     #[test]
@@ -243,9 +330,10 @@ pub mod tests {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
         let mut blockchain = Blockchain::new();
+        blockchain.bootstrap().unwrap();
         assert!(blockchain.blocks().len() > 0);
-        iterate(&mut blockchain);
-        iterate(&mut blockchain);
-        iterate(&mut blockchain);
+        iterate(&mut blockchain).unwrap();
+        iterate(&mut blockchain).unwrap();
+        iterate(&mut blockchain).unwrap();
     }
 }

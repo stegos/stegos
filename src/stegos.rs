@@ -34,6 +34,7 @@ extern crate libp2p;
 extern crate stegos_blockchain;
 extern crate stegos_config;
 extern crate stegos_crypto;
+extern crate stegos_keychain;
 extern crate stegos_network;
 extern crate stegos_randhound;
 extern crate tokio;
@@ -48,11 +49,11 @@ use log4rs::config::{Appender, Config as LogConfig, Logger, Root};
 use log4rs::encode::pattern::PatternEncoder;
 use log4rs::{Error as LogError, Handle as LogHandle};
 use std::error::Error;
-use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process;
 use stegos_blockchain::Blockchain;
 use stegos_config::{Config, ConfigError};
+use stegos_keychain::*;
 use stegos_network::Node;
 use stegos_randhound::*;
 
@@ -123,11 +124,11 @@ fn run() -> Result<(), Box<Error>> {
     // Initialize logger
     initialize_logger(&cfg)?;
 
+    // Initialize keychain
+    let _keychain = KeyChain::new(&cfg.keychain)?;
+
     // Initialize blockchain
-    info!("Node is starting, initializing blockchain... ");
-    io::stdout().flush().unwrap();
     let mut _blockchain = Blockchain::new();
-    info!("Done!");
 
     // Initialize network
     let mut rt = tokio::runtime::current_thread::Runtime::new()?;

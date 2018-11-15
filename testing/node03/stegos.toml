@@ -1,6 +1,10 @@
 [general]
 log4rs_config = "stegos-log4rs.toml"
 
+[keychain]
+private_key = "testing/node03/stegos.skey"
+public_key = "testing/node03/stegos.pkey"
+
 [network]
 node_id = "node03"
 bind_ip = "127.0.0.1"

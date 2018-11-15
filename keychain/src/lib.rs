@@ -21,10 +21,142 @@
 
 #![deny(warnings)]
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
+extern crate stegos_config;
+extern crate stegos_crypto;
+#[macro_use]
+extern crate log;
+extern crate failure;
+#[macro_use]
+extern crate failure_derive;
+extern crate base64;
+#[macro_use]
+extern crate lazy_static;
+extern crate regex;
+
+mod pem;
+
+use failure::Error;
+use std::fs;
+use std::path::Path;
+use stegos_config::ConfigKeyChain;
+use stegos_crypto::curve1174::cpt;
+use stegos_crypto::hash::Hash;
+use stegos_crypto::pbc::secure;
+
+/// Create deterministic CoSi keys from Wallet Keys.
+///
+/// # Arguments
+///
+/// * `wallet_skey` - Wallet Secret Key.
+///
+pub fn wallet_to_cosi_keys(
+    wallet_skey: &cpt::SecretKey,
+) -> (secure::SecretKey, secure::PublicKey, secure::Signature) {
+    let wallet_skey_hash = Hash::digest(wallet_skey);
+    let cosi_seed = wallet_skey_hash.base_vector();
+    secure::make_deterministic_keys(cosi_seed)
+}
+
+/// PEM tag for secret key.
+const SKEY_TAG: &'static str = "STEGOS-CURVE1174 SECRET KEY";
+/// PEM tag for public key.
+const PKEY_TAG: &'static str = "STEGOS-CURVE1174 PUBLIC KEY";
+
+/// Wallet implementation.
+pub struct KeyChain {
+    /// Wallet Secret Key.
+    pub wallet_skey: cpt::SecretKey,
+    /// Wallet Public Key.
+    pub wallet_pkey: cpt::PublicKey,
+    /// Wallet Signature.
+    pub wallet_sig: cpt::SchnorrSig,
+    /// CoSi Secret Key.
+    pub cosi_skey: secure::SecretKey,
+    /// CoSi Public Key.
+    pub cosi_pkey: secure::PublicKey,
+    /// CoSi Signature.
+    pub cosi_sig: secure::Signature,
+}
+
+#[derive(Debug, Fail)]
+pub enum KeyChainError {
+    #[fail(display = "Failed to parse key: {}.", _0)]
+    KeyParseError(String),
+    #[fail(display = "Failed to validate key.")]
+    KeyValidateError,
+}
+
+impl KeyChain {
+    pub fn new(cfg: &ConfigKeyChain) -> Result<Self, Error> {
+        let skey_path = Path::new(&cfg.private_key);
+        let pkey_path = Path::new(&cfg.public_key);
+
+        let (wallet_skey, wallet_pkey, wallet_sig) = if !skey_path.exists() && !pkey_path.exists() {
+            info!("Generatin a new key pair...");
+            let (skey, pkey, sig) = cpt::make_random_keys();
+
+            let skey_pem = pem::Pem {
+                tag: SKEY_TAG.to_string(),
+                contents: skey.into_bytes().to_vec(),
+            };
+            let pkey_pem = pem::Pem {
+                tag: PKEY_TAG.to_string(),
+                contents: pkey.into_bytes().to_vec(),
+            };
+
+            fs::write(skey_path, pem::encode(&skey_pem))?;
+            fs::write(pkey_path, pem::encode(&pkey_pem))?;
+
+            info!("Generated {}", pkey);
+            (skey, pkey, sig)
+        } else {
+            info!(
+                "Loading existing key pair from {} and {}...",
+                cfg.private_key, cfg.public_key
+            );
+
+            let skey = fs::read_to_string(skey_path)?;
+            let pkey = fs::read_to_string(pkey_path)?;
+
+            let skey = pem::parse(skey)
+                .map_err(|_| KeyChainError::KeyParseError(cfg.private_key.clone()))?;
+            if skey.tag != SKEY_TAG {
+                return Err(KeyChainError::KeyParseError(cfg.private_key.clone()).into());
+            }
+
+            let pkey = pem::parse(pkey)
+                .map_err(|_| KeyChainError::KeyParseError(cfg.public_key.clone()))?;
+            if pkey.tag != PKEY_TAG {
+                return Err(KeyChainError::KeyParseError(cfg.public_key.clone()).into());
+            }
+
+            // TODO: validate keys on curve
+            let skey = cpt::SecretKey::from_bytes(&skey.contents);
+            let pkey = cpt::PublicKey::from_bytes(&pkey.contents);
+            let pkey_check = skey.into();
+
+            if pkey != pkey_check {
+                return Err(KeyChainError::KeyValidateError.into());
+            }
+
+            let hkey = Hash::digest(&pkey);
+            let sig = cpt::sign_hash(&hkey, &skey);
+
+            info!("Loaded {}", pkey);
+            (skey, pkey, sig)
+        };
+
+        let (cosi_skey, cosi_pkey, cosi_sig) = wallet_to_cosi_keys(&wallet_skey);
+
+        let keychain = KeyChain {
+            wallet_skey,
+            wallet_pkey,
+            wallet_sig,
+            cosi_skey,
+            cosi_pkey,
+            cosi_sig,
+        };
+
+        Ok(keychain)
     }
 }

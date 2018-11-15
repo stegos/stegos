@@ -117,6 +117,17 @@ impl SecretKey {
     pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
         Ok(SecretKey(Fr::from_str(s)?))
     }
+
+    pub fn into_bytes(self) -> [u8; 32] {
+        self.0.to_lev_u8()
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        assert_eq!(bytes.len(), 32);
+        let mut bits: [u8; 32] = [0u8; 32];
+        bits.copy_from_slice(bytes);
+        SecretKey(Fr::from_lev_u8(bits))
+    }
 }
 
 impl fmt::Display for SecretKey {
@@ -165,13 +176,15 @@ impl PublicKey {
         let pt = Pt::decompress(self.0)?;
         Ok(PublicKey(ECp::compress(pt + delta * (*super::G))))
     }
+
     pub fn into_bytes(self) -> Vec<u8> {
         self.0.into_bytes()
     }
 
-    pub fn from_bytes(bytes: &Vec<u8>) -> Self {
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        assert_eq!(bytes.len(), 32);
         let mut bits: [u8; 32] = [0u8; 32];
-        bits.copy_from_slice(&bytes[0..31]);
+        bits.copy_from_slice(bytes);
         PublicKey(Pt(bits))
     }
 }

@@ -36,6 +36,7 @@ extern crate stegos_config;
 extern crate stegos_crypto;
 extern crate stegos_keychain;
 extern crate stegos_network;
+extern crate stegos_node;
 extern crate stegos_randhound;
 extern crate tokio;
 extern crate tokio_stdin;
@@ -51,10 +52,10 @@ use log4rs::{Error as LogError, Handle as LogHandle};
 use std::error::Error;
 use std::path::PathBuf;
 use std::process;
-use stegos_blockchain::Blockchain;
 use stegos_config::{Config, ConfigError};
 use stegos_keychain::*;
 use stegos_network::Network;
+use stegos_node::Node;
 use stegos_randhound::*;
 use tokio::runtime::Runtime;
 
@@ -128,16 +129,17 @@ fn run() -> Result<(), Box<Error>> {
     // Initialize keychain
     let keychain = KeyChain::new(&cfg.keychain)?;
 
-    // Initialize blockchain
-    let mut _blockchain = Blockchain::new();
-
     // Initialize network
     let mut rt = Runtime::new()?;
     let my_id = cfg.network.node_id.clone();
     let (network, network_service, broker) = Network::new(&cfg.network, &keychain)?;
 
+    // Initialize node
+    let (node_service, node) = Node::new(keychain, broker.clone())?;
+    rt.spawn(node_service);
+
     // Initialize console
-    let console_service = Console::new(network.clone(), broker.clone())?;
+    let console_service = Console::new(network.clone(), broker.clone(), node.clone())?;
     rt.spawn(console_service);
 
     // Initialize randhound

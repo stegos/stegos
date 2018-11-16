@@ -2129,6 +2129,7 @@ dependencies = [
  "stegos_crypto 0.1.0",
  "stegos_keychain 0.1.0",
  "stegos_network 0.1.0",
+ "stegos_node 0.1.0",
  "stegos_randhound 0.1.0",
  "stegos_runtime 0.1.0",
  "stegos_storage 0.1.0",
@@ -2242,6 +2243,21 @@ dependencies = [
  "tokio-io 0.1.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio-stdin 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "unsigned-varint 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "stegos_node"
+version = "0.1.0"
+dependencies = [
+ "failure 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "failure_derive 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "futures 0.1.25 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "stegos_blockchain 0.1.0",
+ "stegos_config 0.1.0",
+ "stegos_crypto 0.1.0",
+ "stegos_keychain 0.1.0",
+ "stegos_network 0.1.0",
 ]
 
 [[package]]

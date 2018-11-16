@@ -23,7 +23,7 @@
 
 use failure::Error;
 use fnv::FnvHashMap;
-use futures::future::{Either, Future};
+use futures::future::{select_all, Either, Future};
 use futures::sync::mpsc;
 use futures::Stream;
 use ipnetwork::IpNetwork;
@@ -45,12 +45,15 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use stegos_config::ConfigNetwork;
+use stegos_keychain::KeyChain;
 use tokio::timer::Interval;
 
 pub mod broker;
+pub mod heartbeat;
 
 // use super::{echo::handler::handler as echo_handler, EchoUpgrade};
 use super::ncp::{handler::ncp_handler, protocol::NcpProtocolConfig};
+// use heartbeat::{HeartbeatService, HeartbeatServiceHandler, NodePublicKey};
 
 #[derive(Clone)]
 pub struct Node {
@@ -74,6 +77,14 @@ pub(crate) struct Inner {
     pub(crate) peer_id: Option<PeerId>,
     // PeerStore for known Peers
     pub(crate) peer_store: Arc<memory_peerstore::MemoryPeerstore>,
+    // BrokerHandle to create subscriptions to new Protocols.
+    pub(crate) broker_handle: Option<broker::BrokerHandler>,
+    // Heartbeat Handle to create susbcriptions to Heartbeat Updates
+    pub(crate) heartbeat_handle: Option<heartbeat::HeartbeatServiceHandler>,
+    // This node's public key
+    pub(crate) public_key: heartbeat::NodePublicKey,
+    // Extra info
+    pub(crate) extra_info: heartbeat::ExtraInfo,
 }
 
 // TODO
@@ -82,7 +93,7 @@ pub(crate) struct RemoteInfo {
 }
 
 impl Node {
-    pub fn new(cfg: &ConfigNetwork) -> Self {
+    pub fn new(cfg: &ConfigNetwork, keychain: &KeyChain) -> Self {
         let inner = Arc::new(RwLock::new(Inner {
             config: cfg.clone(),
             floodsub_ctl: None,
@@ -92,6 +103,10 @@ impl Node {
             remote_connections: FnvHashMap::default(),
             peer_id: None,
             peer_store: Arc::new(memory_peerstore::MemoryPeerstore::empty()),
+            broker_handle: None,
+            heartbeat_handle: None,
+            public_key: keychain.cosi_pkey.clone(),
+            extra_info: heartbeat::ExtraInfo::default(),
         }));
 
         let node = Node { inner };
@@ -285,7 +300,10 @@ impl Node {
             inner.dial_ncp_tx = Some(dial_ncp_tx);
             inner.dial_tx = Some(dial_tx);
             inner.floodsub_ctl = Some(floodsub_ctl.clone());
+            inner.broker_handle = Some(broker_handler.clone());
         }
+        let (heartbeat, heartbeat_handler) = heartbeat::HeartbeatService::new(inner.clone())?;
+        inner.write().heartbeat_handle = Some(heartbeat_handler.clone());
 
         let monitor = Interval::new_interval(Duration::from_secs(config.monitoring_interval))
             .for_each({
@@ -299,15 +317,18 @@ impl Node {
             });
 
         // TODO: handle intenal errors properly
+        let mut services: Vec<Box<Future<Item = (), Error = ()> + Send>> = vec![];
+        services.push(Box::new(dialer) as Box<Future<Item = (), Error = ()> + Send>);
+        services.push(Box::new(dialer_ncp) as Box<Future<Item = (), Error = ()> + Send>);
+        services
+            .push(Box::new(monitor.map_err(|_| ())) as Box<Future<Item = (), Error = ()> + Send>);
+        services.push(Box::new(broker) as Box<Future<Item = (), Error = ()> + Send>);
+        services.push(Box::new(heartbeat) as Box<Future<Item = (), Error = ()> + Send>);
+        let service_future = select_all(services).map(|(_, _, _)| ());
+
         let final_fut = swarm_future
             .for_each(|_| Ok(()))
-            .select(dialer.map_err(|_| unreachable!()))
-            .map(|_| ())
-            .select(dialer_ncp.map_err(|_| unreachable!()))
-            .map(|_| ())
-            .select(monitor.map_err(|_| unreachable!()))
-            .map(|_| ())
-            .select(broker.map_err(|_| unreachable!()))
+            .select(service_future.map_err(|_| unreachable!()))
             .map(|_| ())
             .map_err(|_| ());
 

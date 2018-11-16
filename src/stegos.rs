@@ -125,7 +125,7 @@ fn run() -> Result<(), Box<Error>> {
     initialize_logger(&cfg)?;
 
     // Initialize keychain
-    let _keychain = KeyChain::new(&cfg.keychain)?;
+    let keychain = KeyChain::new(&cfg.keychain)?;
 
     // Initialize blockchain
     let mut _blockchain = Blockchain::new();
@@ -133,7 +133,7 @@ fn run() -> Result<(), Box<Error>> {
     // Initialize network
     let mut rt = tokio::runtime::current_thread::Runtime::new()?;
     let my_id = cfg.network.node_id.clone();
-    let node = Node::new(&cfg.network);
+    let node = Node::new(&cfg.network, &keychain);
     let (node_future, broker) = node.run()?;
 
     // Initialize console service

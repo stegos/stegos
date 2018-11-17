@@ -22,8 +22,9 @@
 // SOFTWARE.
 
 use super::*;
+use rand::rngs::ThreadRng;
 use rand::thread_rng;
-use rand::{Rng, ThreadRng};
+use rand::Rng;
 
 // -----------------------------------------------------------------
 // U256 word chunks represent a 256-bit bignum as a little-endian u64 vector

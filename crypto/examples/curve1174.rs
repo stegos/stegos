@@ -40,8 +40,9 @@
 extern crate rand;
 extern crate stegos_crypto;
 
+use rand::rngs::ThreadRng;
 use rand::thread_rng;
-use rand::{Rng, ThreadRng};
+use rand::Rng;
 use stegos_crypto::curve1174::*;
 use stegos_crypto::hash::*;
 use stegos_crypto::keying::*;

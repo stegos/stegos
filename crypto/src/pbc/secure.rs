@@ -39,7 +39,8 @@ use std::cmp::Ordering;
 use std::hash as stdhash;
 use std::ops::Neg;
 
-use rand::{Rng, ThreadRng};
+use rand::rngs::ThreadRng;
+use rand::Rng;
 
 // --------------------------------------------------------------------------------
 

@@ -436,6 +436,7 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> fmt::Debug for Merkle<T> {
 pub mod tests {
     use super::*;
     use rand::prelude::*;
+    use rand::seq::SliceRandom;
 
     #[test]
     #[should_panic]
@@ -606,7 +607,7 @@ pub mod tests {
 
         // Shuffle original numbers
         let mut indexes: Vec<usize> = (0..size).collect();
-        rng.shuffle(&mut indexes);
+        indexes.shuffle(&mut rng);
 
         // Check valid lookups
         for i in &indexes {

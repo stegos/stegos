@@ -35,13 +35,13 @@ use std::mem;
 use hex;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use curve1174::cpt::*;
-use curve1174::ecpt::*;
-use curve1174::fields::*;
-use curve1174::*;
-use hash::*;
+use crate::curve1174::cpt::*;
+use crate::curve1174::ecpt::*;
+use crate::curve1174::fields::*;
+use crate::curve1174::*;
+use crate::hash::*;
+use crate::utils::*;
 use std::cmp::Ordering;
-use utils::*;
 
 use lazy_static::*;
 

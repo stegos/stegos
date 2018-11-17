@@ -24,10 +24,10 @@
 use std::collections::HashMap;
 use std::vec::Vec;
 
-use block::*;
-use genesis::*;
-use merkle::*;
-use output::*;
+use crate::block::*;
+use crate::genesis::*;
+use crate::merkle::*;
+use crate::output::*;
 use stegos_crypto::hash::*;
 
 type BlockId = usize;

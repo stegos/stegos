@@ -51,7 +51,7 @@ mod ncp;
 mod node;
 mod types;
 
-pub use echo::protocol::{EchoMiddleware, EchoUpgrade};
-pub use ncp::protocol;
-pub use node::broker::BrokerHandler;
-pub use node::Node;
+pub use crate::echo::protocol::{EchoMiddleware, EchoUpgrade};
+pub use crate::ncp::protocol;
+pub use crate::node::broker::BrokerHandler;
+pub use crate::node::Node;

@@ -32,10 +32,10 @@ use rust_libpbc;
 pub mod fast;
 pub mod secure;
 
+use crate::utils::*;
 use hex;
-use utils::*;
 
-use hash::*;
+use crate::hash::*;
 use lazy_static::*;
 
 // -------------------------------------------------------------------

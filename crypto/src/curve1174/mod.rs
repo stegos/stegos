@@ -33,9 +33,9 @@ use std::mem;
 use hex;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use hash::*;
+use crate::hash::*;
+use crate::utils::*;
 use std::cmp::Ordering;
-use utils::*;
 
 mod winvec; // window vectors for point multiplication
 use self::winvec::*;
@@ -245,7 +245,7 @@ mod tests {
 
     #[test]
     fn chk_init() {
-        use pbc::secure;
+        use crate::pbc::secure;
         let sig_pkey = secure::PublicKey::from_str(&SIG_PKEY).expect("Invalid hexstr: SIG_PKEY");
         let sig = secure::Signature::from_str(&SIG_1174).expect("Invalid hexstr: SIG_1174");
         let h = Hash::from_hex(&HASH_CONSTS).expect("Invalid hexstr: HASH_CONSTS");
@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn chk_encryption() {
-        use hash;
+        use crate::hash;
         let (skey, pkey, sig) = make_random_keys();
         check_keying(&pkey, &sig).expect("Random keying failed");
         let msg = hash::hash_nbytes(72, b"This is a test");
@@ -357,7 +357,7 @@ pub fn curve1174_tests() {
     let sig = sign_hash(&hmsg, &skey);
     println!("sig = (u: {}, K: {})", sig.u, sig.K);
 
-    use hash;
+    use crate::hash;
     let msg = hash::hash_nbytes(72, b"This is a test");
     println!("msg = {}", Hash::from_vector(&msg));
     let payload = aes_encrypt(&msg, &pkey).unwrap();

@@ -21,8 +21,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::output::*;
 use failure::Error;
-use output::*;
 use stegos_crypto::curve1174::cpt::{
     sign_hash, validate_sig, Pt, PublicKey, SchnorrSig, SecretKey,
 };

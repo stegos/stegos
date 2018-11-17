@@ -31,9 +31,9 @@
 //! --------------------------------------------------------------------------
 
 use super::*;
-use hash::*;
+use crate::hash::*;
+use crate::utils::*;
 use rand::thread_rng;
-use utils::*;
 
 use std::cmp::Ordering;
 use std::hash as stdhash;

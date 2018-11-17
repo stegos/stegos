@@ -21,12 +21,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::utils::*;
 use hex;
 use sha3::{Digest, Sha3_256};
 use std::fmt;
 use std::mem;
 use std::slice;
-use utils::*;
 
 use std::hash as stdhash;
 
@@ -90,8 +90,7 @@ impl Hash {
 
 impl fmt::Debug for Hash {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str());
-        Ok(())
+        write!(f, "{}", self.to_str())
     }
 }
 

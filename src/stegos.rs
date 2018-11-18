@@ -56,6 +56,7 @@ use stegos_config::{Config, ConfigError};
 use stegos_keychain::*;
 use stegos_network::Network;
 use stegos_randhound::*;
+use tokio::runtime::Runtime;
 
 fn load_configuration(args: &ArgMatches) -> Result<Config, Box<Error>> {
     if let Some(cfg_path) = args.value_of_os("config") {
@@ -131,7 +132,7 @@ fn run() -> Result<(), Box<Error>> {
     let mut _blockchain = Blockchain::new();
 
     // Initialize network
-    let mut rt = tokio::runtime::current_thread::Runtime::new()?;
+    let mut rt = Runtime::new()?;
     let my_id = cfg.network.node_id.clone();
     let (network, network_service, broker) = Network::new(&cfg.network, &keychain)?;
 

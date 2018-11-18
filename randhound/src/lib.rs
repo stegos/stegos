@@ -36,8 +36,6 @@ extern crate log;
 use failure::Error;
 use futures::sync::mpsc::UnboundedReceiver;
 use futures::{Async, Future, Poll, Stream};
-use std::thread;
-use std::thread::ThreadId;
 use std::time::Duration;
 use stegos_network::Broker;
 use tokio::timer::Interval;
@@ -79,8 +77,6 @@ struct RandHoundService {
     broadcast_rx: UnboundedReceiver<Vec<u8>>,
     /// Network node id.
     my_id: String,
-    /// Thread Id (just for debug).
-    thread_id: ThreadId,
 }
 
 impl RandHoundService {
@@ -136,8 +132,6 @@ impl Future for RandHoundService {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        assert_eq!(self.thread_id, thread::current().id());
-
         // Process incoming messages
         loop {
             match self.unicast_rx.poll() {
@@ -182,14 +176,12 @@ impl RandHoundService {
         // Set up timer event.
         let timer = Interval::new_interval(Duration::from_secs(10));
 
-        let thread_id = thread::current().id();
         let randhound = RandHoundService {
             broker,
             my_id,
             timer,
             unicast_rx,
             broadcast_rx,
-            thread_id,
         };
 
         Ok(randhound)

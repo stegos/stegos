@@ -24,8 +24,6 @@ use futures::sync::mpsc::UnboundedReceiver;
 use futures::{Async, Future, Poll, Stream};
 use libp2p::Multiaddr;
 use std::mem;
-use std::thread;
-use std::thread::ThreadId;
 use stegos_network::{Broker, Network};
 use tokio_stdin;
 
@@ -60,8 +58,6 @@ struct ConsoleService {
     stdin: UnboundedReceiver<u8>,
     /// Input buffer.
     buf: Vec<u8>,
-    /// Thread Id (just for debug).
-    thread_id: ThreadId,
 }
 
 impl ConsoleService {
@@ -69,13 +65,11 @@ impl ConsoleService {
     fn new(node: Network, broker: Broker) -> Result<ConsoleService, Error> {
         let stdin = tokio_stdin::spawn_stdin_stream_unbounded();
         let buf = Vec::<u8>::new();
-        let thread_id = thread::current().id();
         let service = ConsoleService {
             node,
             broker,
             stdin,
             buf,
-            thread_id,
         };
         Ok(service)
     }
@@ -116,7 +110,6 @@ impl Future for ConsoleService {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        assert_eq!(self.thread_id, thread::current().id());
         loop {
             match self.stdin.poll() {
                 Ok(Async::Ready(Some(ch))) => self.on_input(ch),

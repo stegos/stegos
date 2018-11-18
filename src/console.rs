@@ -1,3 +1,4 @@
+///! Console - command-line interface.
 //
 // Copyright (c) 2018 Stegos
 //
@@ -18,22 +19,43 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-
+use failure::Error;
 use futures::sync::mpsc::UnboundedReceiver;
 use futures::{Async, Future, Poll, Stream};
 use libp2p::Multiaddr;
 use std::mem;
 use std::thread;
 use std::thread::ThreadId;
-use stegos_network::{BrokerHandler, Node};
+use stegos_network::{Broker, Network};
 use tokio_stdin;
 
+// ----------------------------------------------------------------
+// Public API.
+// ----------------------------------------------------------------
+
+/// Console - command-line interface.
+pub struct Console {}
+
+impl Console {
+    /// Create a new Console Service.
+    pub fn new(
+        network: Network,
+        broker: Broker,
+    ) -> Result<impl Future<Item = (), Error = ()>, Error> {
+        ConsoleService::new(network, broker)
+    }
+}
+
+// ----------------------------------------------------------------
+// Internal Implementation.
+// ----------------------------------------------------------------
+
 /// Console (stdin) service.
-pub struct ConsoleService {
+struct ConsoleService {
     /// Network node.
-    node: Node,
+    node: Network,
     /// Network message broker.
-    broker: BrokerHandler,
+    broker: Broker,
     /// A channel to receive message from stdin thread.
     stdin: UnboundedReceiver<u8>,
     /// Input buffer.
@@ -43,6 +65,22 @@ pub struct ConsoleService {
 }
 
 impl ConsoleService {
+    /// Constructor.
+    fn new(node: Network, broker: Broker) -> Result<ConsoleService, Error> {
+        let stdin = tokio_stdin::spawn_stdin_stream_unbounded();
+        let buf = Vec::<u8>::new();
+        let thread_id = thread::current().id();
+        let service = ConsoleService {
+            node,
+            broker,
+            stdin,
+            buf,
+            thread_id,
+        };
+        Ok(service)
+    }
+
+    /// Called when char is typed in standard input.
     fn on_input(&mut self, ch: u8) {
         if ch != b'\r' && ch != b'\n' {
             self.buf.push(ch);
@@ -72,23 +110,7 @@ impl ConsoleService {
     }
 }
 
-impl ConsoleService {
-    /// Constructor.
-    pub fn new(node: Node, broker: BrokerHandler) -> Self {
-        let stdin = tokio_stdin::spawn_stdin_stream_unbounded();
-        let buf = Vec::<u8>::new();
-        let thread_id = thread::current().id();
-        ConsoleService {
-            node,
-            broker,
-            stdin,
-            buf,
-            thread_id,
-        }
-    }
-}
-
-/// Tokio boilerplate.
+// Event loop.
 impl Future for ConsoleService {
     type Item = ();
     type Error = ();

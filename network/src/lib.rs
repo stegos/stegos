@@ -53,5 +53,5 @@ mod types;
 
 pub use crate::echo::protocol::{EchoMiddleware, EchoUpgrade};
 pub use crate::ncp::protocol;
-pub use crate::node::broker::BrokerHandler;
-pub use crate::node::Node;
+pub use crate::node::broker::Broker;
+pub use crate::node::Network;

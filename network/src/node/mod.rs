@@ -56,7 +56,7 @@ use super::ncp::{handler::ncp_handler, protocol::NcpProtocolConfig};
 // use heartbeat::{HeartbeatService, HeartbeatServiceHandler, NodePublicKey};
 
 #[derive(Clone)]
-pub struct Node {
+pub struct Network {
     pub(crate) inner: Arc<RwLock<Inner>>,
 }
 
@@ -78,9 +78,9 @@ pub(crate) struct Inner {
     // PeerStore for known Peers
     pub(crate) peer_store: Arc<memory_peerstore::MemoryPeerstore>,
     // BrokerHandle to create subscriptions to new Protocols.
-    pub(crate) broker_handle: Option<broker::BrokerHandler>,
+    pub(crate) broker_handle: Option<broker::Broker>,
     // Heartbeat Handle to create susbcriptions to Heartbeat Updates
-    pub(crate) heartbeat_handle: Option<heartbeat::HeartbeatServiceHandler>,
+    pub(crate) heartbeat_handle: Option<heartbeat::Heartbeat>,
     // This node's public key
     pub(crate) public_key: heartbeat::NodePublicKey,
     // Extra info
@@ -92,8 +92,11 @@ pub(crate) struct RemoteInfo {
     pub(crate) peer_id: PeerId,
 }
 
-impl Node {
-    pub fn new(cfg: &ConfigNetwork, keychain: &KeyChain) -> Self {
+impl Network {
+    pub fn new(
+        cfg: &ConfigNetwork,
+        keychain: &KeyChain,
+    ) -> Result<(Network, impl Future<Item = (), Error = ()>, broker::Broker), Error> {
         let inner = Arc::new(RwLock::new(Inner {
             config: cfg.clone(),
             floodsub_ctl: None,
@@ -109,8 +112,9 @@ impl Node {
             extra_info: heartbeat::ExtraInfo::default(),
         }));
 
-        let node = Node { inner };
-        node
+        let node = Network { inner };
+        let (service, broker) = node.run()?;
+        Ok((node, service, broker))
     }
 
     pub fn dial(&self, target: Multiaddr) -> Result<(), Error> {
@@ -137,15 +141,7 @@ impl Node {
     /// * node_future should be run to completion for network machinery to work
     /// * broker_handler manages subscriptions to topics
     ///
-    pub fn run(
-        &self,
-    ) -> Result<
-        (
-            Box<Future<Item = (), Error = ()> + Send + 'static>,
-            broker::BrokerHandler,
-        ),
-        Error,
-    > {
+    fn run(&self) -> Result<(impl Future<Item = (), Error = ()>, broker::Broker), Error> {
         let inner = self.inner.clone();
         let config = {
             let inner = inner.read();
@@ -294,16 +290,16 @@ impl Node {
             }
         });
 
-        let (broker, broker_handler) = broker::Broker::new(floodsub_rx, floodsub_ctl.clone());
+        let (broker_service, broker) = broker::Broker::new(floodsub_rx, floodsub_ctl.clone());
         {
             let mut inner = inner.write();
             inner.dial_ncp_tx = Some(dial_ncp_tx);
             inner.dial_tx = Some(dial_tx);
             inner.floodsub_ctl = Some(floodsub_ctl.clone());
-            inner.broker_handle = Some(broker_handler.clone());
+            inner.broker_handle = Some(broker.clone());
         }
-        let (heartbeat, heartbeat_handler) = heartbeat::HeartbeatService::new(inner.clone())?;
-        inner.write().heartbeat_handle = Some(heartbeat_handler.clone());
+        let (heartbeat_service, heartbeat) = heartbeat::Heartbeat::new(inner.clone())?;
+        inner.write().heartbeat_handle = Some(heartbeat.clone());
 
         let monitor = Interval::new_interval(Duration::from_secs(config.monitoring_interval))
             .for_each({
@@ -322,8 +318,8 @@ impl Node {
         services.push(Box::new(dialer_ncp) as Box<Future<Item = (), Error = ()> + Send>);
         services
             .push(Box::new(monitor.map_err(|_| ())) as Box<Future<Item = (), Error = ()> + Send>);
-        services.push(Box::new(broker) as Box<Future<Item = (), Error = ()> + Send>);
-        services.push(Box::new(heartbeat) as Box<Future<Item = (), Error = ()> + Send>);
+        services.push(Box::new(broker_service) as Box<Future<Item = (), Error = ()> + Send>);
+        services.push(Box::new(heartbeat_service) as Box<Future<Item = (), Error = ()> + Send>);
         let service_future = select_all(services).map(|(_, _, _)| ());
 
         let final_fut = swarm_future
@@ -332,9 +328,7 @@ impl Node {
             .map(|_| ())
             .map_err(|_| ());
 
-        let boxed_future =
-            Box::new(final_fut) as Box<Future<Item = (), Error = ()> + Send + 'static>;
-        Ok((boxed_future, broker_handler))
+        Ok((final_fut, broker))
     }
 }
 

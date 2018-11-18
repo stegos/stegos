@@ -39,17 +39,38 @@ use futures::{Async, Future, Poll, Stream};
 use std::thread;
 use std::thread::ThreadId;
 use std::time::Duration;
-use stegos_network::BrokerHandler;
+use stegos_network::Broker;
 use tokio::timer::Interval;
 
 mod randhound;
 
 const TOPIC: &'static str = "randhound";
 
+// ----------------------------------------------------------------
+// Public API.
+// ----------------------------------------------------------------
+
+/// RandHound++ - distributed randomness.
+pub struct RandHound {}
+
+impl RandHound {
+    /// Create a new RandHound service.
+    pub fn new(
+        broker: Broker,
+        my_id: &String,
+    ) -> Result<impl Future<Item = (), Error = ()>, Error> {
+        RandHoundService::new(broker, my_id)
+    }
+}
+
+// ----------------------------------------------------------------
+// Internal Implementation.
+// ----------------------------------------------------------------
+
 /// RandHound++ network service.
-pub struct RandHoundService {
+struct RandHoundService {
     /// Network message broker.
-    broker: BrokerHandler,
+    broker: Broker,
     /// Timer
     timer: Interval,
     /// Unicast Input Messages.
@@ -109,7 +130,7 @@ impl RandHoundService {
     }
 }
 
-/// Tokio boilerplate.
+// Event loop.
 impl Future for RandHoundService {
     type Item = ();
     type Error = ();
@@ -148,7 +169,8 @@ impl Future for RandHoundService {
 }
 
 impl RandHoundService {
-    pub fn new(broker: BrokerHandler, my_id: &String) -> Result<Self, Error> {
+    /// Constructor.
+    fn new(broker: Broker, my_id: &String) -> Result<Self, Error> {
         let my_id = my_id.clone();
 
         // Subscribe to unicast topic.

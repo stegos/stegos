@@ -31,26 +31,30 @@ use futures::Stream;
 use futures::{Async, Future, Poll};
 use libp2p::floodsub::{self, TopicHash};
 
-#[derive(Clone, Debug)]
-enum PubsubMessage {
-    Subscribe {
-        topic: String,
-        handler: mpsc::UnboundedSender<Vec<u8>>,
-    },
-    Publish {
-        topic: String,
-        data: Vec<u8>,
-    },
-}
+// ----------------------------------------------------------------
+// Public API.
+// ----------------------------------------------------------------
 
 /// Manages subscriptions to topics
 ///
 #[derive(Clone, Debug)]
-pub struct BrokerHandler {
+pub struct Broker {
     upstream: mpsc::UnboundedSender<PubsubMessage>,
 }
 
-impl BrokerHandler {
+impl Broker {
+    /// Create a new Broker service
+    pub fn new(
+        input: floodsub::FloodSubReceiver,
+        floodsub_ctl: floodsub::FloodSubController,
+    ) -> (impl Future<Item = (), Error = ()>, Broker) {
+        let (tx, rx) = mpsc::unbounded();
+
+        let service = BrokerService::new(input, floodsub_ctl, rx);
+        let broker = Broker { upstream: tx };
+        (service, broker)
+    }
+
     /// Subscribe to topic, returns Stream<Vec<u8>> of messages incoming to topic
     pub fn subscribe<S>(&self, topic: &S) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error>
     where
@@ -79,31 +83,46 @@ impl BrokerHandler {
     }
 }
 
+// ----------------------------------------------------------------
+// Internal Implementation.
+// ----------------------------------------------------------------
+
+#[derive(Clone, Debug)]
+enum PubsubMessage {
+    Subscribe {
+        topic: String,
+        handler: mpsc::UnboundedSender<Vec<u8>>,
+    },
+    Publish {
+        topic: String,
+        data: Vec<u8>,
+    },
+}
+
 enum Message {
     Pubsub(PubsubMessage),
     Input(floodsub::Message),
 }
 
-pub struct Broker {
+struct BrokerService {
     consumers: FnvHashMap<TopicHash, Vec<mpsc::UnboundedSender<Vec<u8>>>>,
     pubsub_rx: Box<Stream<Item = Message, Error = ()> + Send>,
     floodsub_ctl: floodsub::FloodSubController,
 }
 
-impl Broker {
-    pub fn new(
+impl BrokerService {
+    fn new(
         input: floodsub::FloodSubReceiver,
         floodsub_ctl: floodsub::FloodSubController,
-    ) -> (Self, BrokerHandler) {
-        let (tx, rx) = mpsc::unbounded();
-
+        rx: mpsc::UnboundedReceiver<PubsubMessage>,
+    ) -> BrokerService {
         let messages =
             rx.map(|m| Message::Pubsub(m))
                 .select(input.map(|m| Message::Input(m)).map_err(|e| {
                     error!("Error reading from floodsub receiver: {}", e);
                 }));
 
-        let broker = Broker {
+        let service = BrokerService {
             consumers: FnvHashMap::default(),
             // input,
             // downstream: rx,
@@ -111,12 +130,11 @@ impl Broker {
             floodsub_ctl,
         };
 
-        let broker_handler = BrokerHandler { upstream: tx };
-        (broker, broker_handler)
+        service
     }
 }
 
-impl Future for Broker {
+impl Future for BrokerService {
     type Item = ();
     type Error = ();
 

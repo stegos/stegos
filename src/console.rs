@@ -24,7 +24,9 @@ use futures::sync::mpsc::UnboundedReceiver;
 use futures::{Async, Future, Poll, Stream};
 use libp2p::Multiaddr;
 use std::mem;
+use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_network::{Broker, Network};
+use stegos_node::Node;
 use tokio_stdin;
 
 // ----------------------------------------------------------------
@@ -39,8 +41,9 @@ impl Console {
     pub fn new(
         network: Network,
         broker: Broker,
+        node: Node,
     ) -> Result<impl Future<Item = (), Error = ()>, Error> {
-        ConsoleService::new(network, broker)
+        ConsoleService::new(network, broker, node)
     }
 }
 
@@ -51,25 +54,32 @@ impl Console {
 /// Console (stdin) service.
 struct ConsoleService {
     /// Network node.
-    node: Network,
+    network: Network,
     /// Network message broker.
     broker: Broker,
+    /// Blockchain Node.
+    node: Node,
     /// A channel to receive message from stdin thread.
     stdin: UnboundedReceiver<u8>,
     /// Input buffer.
     buf: Vec<u8>,
+    /// A channel to receive notification about balance changes.
+    balance_rx: UnboundedReceiver<i64>,
 }
 
 impl ConsoleService {
     /// Constructor.
-    fn new(node: Network, broker: Broker) -> Result<ConsoleService, Error> {
+    fn new(network: Network, broker: Broker, node: Node) -> Result<ConsoleService, Error> {
         let stdin = tokio_stdin::spawn_stdin_stream_unbounded();
         let buf = Vec::<u8>::new();
+        let balance_rx = node.subscribe_balance()?;
         let service = ConsoleService {
-            node,
+            network,
             broker,
+            node,
             stdin,
             buf,
+            balance_rx,
         };
         Ok(service)
     }
@@ -87,8 +97,9 @@ impl ConsoleService {
         if msg.starts_with("/dial ") {
             let target: Multiaddr = msg[6..].parse().unwrap();
             info!("main: *Dialing {}*", target);
-            self.node.dial(target).unwrap();
+            self.network.dial(target).unwrap();
         } else if msg.starts_with("/publish ") {
+            // TODO: rewrite this buggy parser
             let sep_pos = msg[9..].find(' ').unwrap_or(0);
             let topic: String = msg[9..9 + sep_pos].to_string();
             let msg: String = msg[9 + sep_pos + 1..].to_string();
@@ -96,11 +107,41 @@ impl ConsoleService {
             self.broker
                 .publish(&topic, msg.as_bytes().to_vec())
                 .unwrap();
+        } else if msg.starts_with("/pay ") {
+            // TODO: rewrite this buggy parser
+            let sep_pos = msg[5..].find(' ').unwrap_or(0);
+            let recipient: String = msg[5..5 + sep_pos].to_string();
+            let amount: String = msg[5 + sep_pos + 1..].to_string();
+
+            let recipient = match PublicKey::from_str(&recipient) {
+                Ok(r) => r,
+                Err(e) => {
+                    error!("Invalid public key: {}", e);
+                    return;
+                }
+            };
+            let amount = match amount.parse::<i64>() {
+                Ok(r) => r,
+                Err(e) => {
+                    error!("Invalid amount: {}", e);
+                    return;
+                }
+            };
+
+            info!("requesting payment to {} amount={}", recipient, amount);
+            if let Err(e) = self.node.pay(recipient, amount) {
+                error!("Request failed: {}", e);
+            }
         } else {
             eprintln!("Usage:");
             eprintln!("/dial multiaddr");
             eprintln!("/publish topic message");
+            eprintln!("/pay publickey amount");
         }
+    }
+
+    fn on_balance_changed(&self, balance: i64) {
+        info!("Balance => {}", balance);
     }
 }
 
@@ -114,8 +155,17 @@ impl Future for ConsoleService {
             match self.stdin.poll() {
                 Ok(Async::Ready(Some(ch))) => self.on_input(ch),
                 Ok(Async::Ready(None)) => unreachable!(),
-                Ok(Async::NotReady) => return Ok(Async::NotReady),
+                Ok(Async::NotReady) => break, // fall through
                 Err(()) => panic!(),
+            }
+        }
+
+        loop {
+            match self.balance_rx.poll() {
+                Ok(Async::Ready(Some(balance))) => self.on_balance_changed(balance),
+                Ok(Async::Ready(None)) => unreachable!(),
+                Ok(Async::NotReady) => return Ok(Async::NotReady),
+                Err(()) => panic!("Wallet failure"),
             }
         }
     }

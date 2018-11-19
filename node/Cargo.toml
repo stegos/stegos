@@ -1,0 +1,15 @@
+[package]
+name = "stegos_node"
+version = "0.1.0"
+authors = ["Stegos AG <info@stegos.cc>"]
+
+[dependencies]
+stegos_config = { path = "../config" }
+stegos_crypto = { path = "../crypto" }
+stegos_blockchain = { path = "../blockchain" }
+stegos_network = { path = "../network" }
+stegos_keychain = { path = "../keychain" }
+log = "0.4"
+failure = "0.1.2"
+failure_derive = "0.1.2"
+futures = "0.1.25"

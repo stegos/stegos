@@ -100,6 +100,12 @@ impl Blockchain {
         Ok(())
     }
 
+    /// Returns an iterator over UTXO hashes.
+    pub fn unspent(&self) -> Vec<Hash> {
+        // TODO: return iterator instead.
+        self.output_by_hash.keys().cloned().collect()
+    }
+
     /// Find UTXO by its hash.
     pub fn output_by_hash(&self, output_hash: &Hash) -> Option<&Output> {
         if let Some(OutputKey { block_id, path }) = self.output_by_hash.get(output_hash) {

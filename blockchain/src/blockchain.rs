@@ -25,6 +25,7 @@ use std::collections::HashMap;
 use std::vec::Vec;
 
 use crate::block::*;
+use crate::error::*;
 use crate::genesis::*;
 use crate::merkle::*;
 use crate::output::*;
@@ -38,22 +39,6 @@ struct OutputKey {
     pub block_id: BlockId,
     /// Merkle Tree path inside block.
     pub path: MerklePath,
-}
-
-#[derive(Debug, Fail)]
-pub enum BlockchainError {
-    #[fail(
-        display = "Previous hash mismatch: expected={}, got={}.",
-        _0,
-        _1
-    )]
-    PreviousHashMismatch(Hash, Hash),
-    #[fail(display = "Block hash collision: {}.", _0)]
-    BlockHashCollision(Hash),
-    #[fail(display = "UXTO hash collision: {}.", _0)]
-    OutputHashCollision(Hash),
-    #[fail(display = "Missing UXTO {}.", _0)]
-    MissingUTXO(Hash),
 }
 
 /// The Blockchain.
@@ -88,14 +73,12 @@ impl Blockchain {
         assert_eq!(self.blocks().len(), 0);
         info!("Generating genesis blocks...");
         let (block1, block2, inputs2, output2) = genesis_dev();
-        info!("Genesis key block hash: {}", Hash::digest(&block1));
-        info!("Genesis monetary block hash: {}", Hash::digest(&block2));
-        info!("Done");
+        info!("Genesis key block: hash={}", Hash::digest(&block1));
+        info!("Genesis monetary block: hash={}", Hash::digest(&block2));
 
         info!("Registering genesis blocks...");
         self.register_key_block(block1)?;
         self.register_monetary_block(block2, &inputs2, &output2)?;
-        info!("Done");
 
         Ok(())
     }
@@ -121,6 +104,24 @@ impl Blockchain {
             }
         }
         return None;
+    }
+
+    /// Resolve UTXOs by its hashes.
+    pub fn outputs_by_hashes(
+        &self,
+        output_hashes: &[Hash],
+    ) -> Result<Vec<Output>, BlockchainError> {
+        // Find appropriate UTXO in the database.
+        let mut outputs = Vec::<Output>::new();
+        for output_hash in output_hashes {
+            let input = match self.output_by_hash(output_hash) {
+                Some(o) => o.clone(),
+                None => return Err(BlockchainError::MissingUTXO(output_hash.clone()).into()),
+            };
+            outputs.push(input);
+        }
+
+        Ok(outputs)
     }
 
     /// Find block by its hash
@@ -168,7 +169,7 @@ impl Blockchain {
         // Alright, starting transaction.
         // -----------------------------------------------------------------------------------------
 
-        info!("Register Key Block: {}", this_hash);
+        info!("Register Key Block: hash={}", this_hash);
 
         if let Some(_) = self.block_by_hash.insert(this_hash.clone(), block_id) {
             panic!("Block hash collision");
@@ -179,11 +180,11 @@ impl Blockchain {
         Ok(())
     }
 
-    fn register_monetary_block(
+    pub fn register_monetary_block(
         &mut self,
         block: MonetaryBlock,
-        inputs: &[Hash],
-        outputs: &[(Hash, MerklePath)],
+        inputs: &[Hash],                // TODO: remove this optimization
+        outputs: &[(Hash, MerklePath)], // TODO: remove this optimization
     ) -> Result<(Vec<Output>), BlockchainError> {
         let block_id = self.blocks.len();
 
@@ -237,13 +238,13 @@ impl Blockchain {
         // -----------------------------------------------------------------------------------------
         // Alright, starting transaction.
         // -----------------------------------------------------------------------------------------
-        info!("Register Monetary Block block: {}", this_hash);
+        info!("Register Monetary Block: hash={}", this_hash);
 
         let mut pruned: Vec<Output> = Vec::with_capacity(inputs.len());
 
         // Remove spent outputs.
         for output_hash in inputs {
-            info!("Prune UXTO({})", output_hash);
+            info!("Prune UXTO: hash={}", output_hash);
             // Remove from the set of unspent outputs.
             if let Some(OutputKey { block_id, path }) = self.output_by_hash.remove(output_hash) {
                 let block = &mut self.blocks[block_id];
@@ -264,7 +265,7 @@ impl Blockchain {
 
         // Register create unspent outputs.
         for (hash, path) in outputs {
-            info!("Register UXTO({})", hash);
+            info!("Register UXTO: hash={}", hash);
 
             // Create the new unspent output
             let output_key = OutputKey {
@@ -316,8 +317,8 @@ pub mod tests {
         let inputs = [input];
 
         let amount: i64 = 112;
-        let (output, delta) = Output::new(timestamp, skey.clone(), pkey.clone(), amount)
-            .expect("tests have valid keys");
+        let (output, delta) =
+            Output::new(timestamp, &skey, &pkey, amount).expect("tests have valid keys");
         let outputs = [output];
 
         // Adjustment is the sum of all gamma found in UTXOs.

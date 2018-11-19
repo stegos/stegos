@@ -72,8 +72,8 @@ impl Output {
     /// Constructor for Output.
     pub fn new(
         timestamp: u64,
-        sender_skey: SecretKey,
-        recipient_pkey: PublicKey,
+        sender_skey: &SecretKey,
+        recipient_pkey: &PublicKey,
         amount: i64,
     ) -> Result<(Self, Fr), Error> {
         // Clock recipient public key
@@ -95,8 +95,8 @@ impl Output {
 
     /// Cloak recipient's public key.
     fn cloak_key(
-        sender_skey: SecretKey,
-        recipient_pkey: PublicKey,
+        sender_skey: &SecretKey,
+        recipient_pkey: &PublicKey,
         timestamp: u64,
     ) -> Result<(PublicKey, Fr), CurveError> {
         // h is the digest of the recipients actual public key mixed with a timestamp.
@@ -106,7 +106,7 @@ impl Output {
         let h = hasher.result();
 
         // Use deterministic randomness here too, to protect against PRNG attacks.
-        let delta: Fr = Fr::synthetic_random(&"PKey", &sender_skey, &h);
+        let delta: Fr = Fr::synthetic_random(&"PKey", sender_skey, &h);
 
         // Resulting publickey will be a random-like value in a safe range of the field,
         // not too small, and not too large. This helps avoid brute force attacks, looking
@@ -119,7 +119,7 @@ impl Output {
         delta: Fr,
         gamma: Fr,
         amount: i64,
-        pkey: PublicKey,
+        pkey: &PublicKey,
     ) -> Result<EncryptedPayload, CurveError> {
         // Convert amount to BE vector.
 
@@ -144,7 +144,7 @@ impl Output {
     }
 
     /// Decrypt monetary transaction.
-    pub fn decrypt_payload(&self, skey: SecretKey) -> Result<(Fr, Fr, i64), Error> {
+    pub fn decrypt_payload(&self, skey: &SecretKey) -> Result<(Fr, Fr, i64), Error> {
         let payload: Vec<u8> = aes_decrypt(&self.payload, &skey)?;
 
         if payload.len() != PAYLOAD_LEN {
@@ -214,16 +214,16 @@ pub mod tests {
         let amount: i64 = 100500;
 
         let (output, gamma) =
-            Output::new(timestamp, skey1, pkey2, amount).expect("encryption successful");
+            Output::new(timestamp, &skey1, &pkey2, amount).expect("encryption successful");
         let (_delta2, gamma2, amount2) = output
-            .decrypt_payload(skey2)
+            .decrypt_payload(&skey2)
             .expect("decryption successful");
 
         assert_eq!(amount, amount2);
         assert_eq!(gamma, gamma2);
 
         // Error handling
-        if let Err(e) = output.decrypt_payload(skey1) {
+        if let Err(e) = output.decrypt_payload(&skey1) {
             match e.downcast::<OutputError>() {
                 Ok(OutputError::PayloadDecryptionError) => (),
                 _ => assert!(false),

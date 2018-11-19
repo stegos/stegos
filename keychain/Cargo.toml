@@ -5,10 +5,10 @@ authors = ["Stegos AG <info@stegos.cc>"]
 
 [dependencies]
 log = "0.4"
-failure = "0.1.2"
-failure_derive = "0.1.2"
+failure = "0.1"
+failure_derive = "0.1"
 base64 = "0.9"
-lazy_static = "1.1.0"
+lazy_static = "1.1"
 regex = "1.0"
 stegos_config = { path = "../config" }
 stegos_crypto = { path = "../crypto" }

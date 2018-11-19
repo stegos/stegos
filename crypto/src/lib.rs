@@ -20,7 +20,6 @@
 // SOFTWARE.
 
 extern crate crypto;
-extern crate generic_array;
 extern crate gmp;
 extern crate hex;
 extern crate lazy_static;
@@ -28,7 +27,6 @@ extern crate parking_lot;
 extern crate rand;
 extern crate rust_libpbc;
 extern crate sha3;
-extern crate typenum;
 #[macro_use]
 extern crate log;
 extern crate failure;

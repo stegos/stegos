@@ -48,7 +48,8 @@ use std::cmp::Ordering;
 use std::hash as stdhash;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use rand::{Rng, ThreadRng};
+use rand::rngs::ThreadRng;
+use rand::Rng;
 
 // ---------------------------------------------------------------------------------
 

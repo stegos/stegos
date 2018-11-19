@@ -241,8 +241,9 @@ pub mod tests {
 
     #[test]
     fn check_pbc_init() {
+        use rand::rngs::ThreadRng;
         use rand::thread_rng;
-        use rand::{Rng, ThreadRng};
+        use rand::Rng;
 
         let sig_pkey = secure::PublicKey::from_str(&SIG_PKEY).expect("Invalid hexstring: SIG_PKEY");
 

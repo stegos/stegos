@@ -37,55 +37,21 @@ stegos_runtime = { path = "./runtime" }
 stegos_storage = { path = "./storage" }
 stegos_txpool = { path = "./txpool" }
 
-bytes = "0.4.10"
-clap = "~2.32"
-dirs = "~1.0"
-futures = "0.1.25"
-hex = "0.3.2"
-lazy_static = "1.1.0"
-rand = "0.5.5"
-tokio-codec = "0.1.1"
-tokio-io = "0.1.9"
-tokio-stdin = "0.1.1"
-tokio-current-thread = "0.1.3"
-tokio-timer = "0.2.7"
-tokio = "0.1.11"
-unsigned-varint = "0.2.1"
+clap = "2.32"
+dirs = "1.0"
+futures = "0.1"
+tokio-io = "0.1"
+tokio-stdin = "0.1"
+tokio-current-thread = "0.1"
+tokio-timer = "0.2"
+tokio = "0.1"
 log = "0.4"
-log4rs = { version = "0.8.1", features = ["all_components", "gzip", "file", "toml_format"]}
-failure = "0.1.2"
-failure_derive = "0.1.2"
-
-rust-libpbc = { git = "https://github.com/stegos/rust-pbcintf.git" }
+log4rs = { version = "0.8", features = ["all_components", "gzip", "file", "toml_format"]}
+failure = "0.1"
+failure_derive = "0.1"
 libp2p = { git = "https://github.com/libp2p/rust-libp2p.git", rev = "e179951c74cb0c8916d27329f2dfd78917dddfb2" }
 
-[[example]]
-name = "bulletproofs"
-
-[[example]]
-name = "pbc"
-
-[[example]]
-name = "curve1174"
-
-[[example]]
-name = "floodsub"
-
-[[example]]
-name = "muxedsub"
-
-[[example]]
-name = "echo-server"
-
-[[example]]
-name = "echo-dialer"
-
-[[example]]
-name = "ncp-ping"
-
 [dev-dependencies]
-simple_logger = "1.0.1"
-env_logger = "0.5.13"
-lazy_static = "1.1.0"
+simple_logger = "1.0"
 
 [build-dependencies]

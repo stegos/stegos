@@ -54,8 +54,9 @@ use std::process;
 use stegos_blockchain::Blockchain;
 use stegos_config::{Config, ConfigError};
 use stegos_keychain::*;
-use stegos_network::Node;
+use stegos_network::Network;
 use stegos_randhound::*;
+use tokio::runtime::Runtime;
 
 fn load_configuration(args: &ArgMatches) -> Result<Config, Box<Error>> {
     if let Some(cfg_path) = args.value_of_os("config") {
@@ -131,21 +132,20 @@ fn run() -> Result<(), Box<Error>> {
     let mut _blockchain = Blockchain::new();
 
     // Initialize network
-    let mut rt = tokio::runtime::current_thread::Runtime::new()?;
+    let mut rt = Runtime::new()?;
     let my_id = cfg.network.node_id.clone();
-    let node = Node::new(&cfg.network, &keychain);
-    let (node_future, broker) = node.run()?;
+    let (network, network_service, broker) = Network::new(&cfg.network, &keychain)?;
 
-    // Initialize console service
-    let console_service = ConsoleService::new(node.clone(), broker.clone());
+    // Initialize console
+    let console_service = Console::new(network.clone(), broker.clone())?;
     rt.spawn(console_service);
 
     // Initialize randhound
-    let randhound = RandHoundService::new(broker.clone(), &my_id)?;
-    rt.spawn(randhound);
+    let randhound_service = RandHound::new(broker.clone(), &my_id)?;
+    rt.spawn(randhound_service);
 
     // Start main event loop
-    rt.block_on(node_future)
+    rt.block_on(network_service)
         .expect("errors are handled earlier");
 
     Ok(())

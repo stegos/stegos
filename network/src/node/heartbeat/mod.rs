@@ -23,7 +23,7 @@
 
 #![allow(dead_code)]
 
-use super::{broker::BrokerHandler, Inner};
+use super::{broker::Broker, Inner};
 use failure::Error;
 use futures::sync::mpsc;
 use futures::{Async, Future, Poll, Stream};
@@ -43,7 +43,50 @@ mod heartbeat_proto;
 
 const HEARTBEAT_TOPIC: &'static str = "stegos-heartbeat";
 
-pub type ExtraInfo = Vec<u8>;
+// ----------------------------------------------------------------
+// Public API.
+// ----------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub(crate) struct HeartbeatUpdateMessage {
+    public_key: NodePublicKey,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum HeartbeatUpdate {
+    Update(HeartbeatUpdateMessage),
+    Delete(NodePublicKey),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct Heartbeat {
+    tx: mpsc::UnboundedSender<HeartbeatControlMsg>,
+}
+
+impl Heartbeat {
+    /// Create a new Heartbeat Service.
+    pub fn new(
+        inner: Arc<RwLock<Inner>>,
+    ) -> Result<(impl Future<Item = (), Error = ()>, Self), Error> {
+        let (control_tx, control_rx) = mpsc::unbounded();
+        let service = HeartbeatService::new(inner, control_rx)?;
+        let handle = Heartbeat { tx: control_tx };
+
+        Ok((service, handle))
+    }
+
+    pub fn subscribe(&self) -> Result<mpsc::UnboundedReceiver<HeartbeatUpdate>, Error> {
+        let (tx, rx) = mpsc::unbounded();
+        self.tx.unbounded_send(HeartbeatControlMsg::Subscribe(tx))?;
+        Ok(rx)
+    }
+}
+
+pub(crate) type ExtraInfo = Vec<u8>;
+
+// ----------------------------------------------------------------
+// Internal Implementation.
+// ----------------------------------------------------------------
 
 #[derive(Debug)]
 struct NodeInfo {
@@ -67,17 +110,6 @@ impl PartialEq for NodeInfo {
 
 impl Eq for NodeInfo {}
 
-#[derive(Debug, Clone)]
-pub struct HeartbeatUpdateMessage {
-    public_key: NodePublicKey,
-}
-
-#[derive(Debug, Clone)]
-pub enum HeartbeatUpdate {
-    Update(HeartbeatUpdateMessage),
-    Delete(NodePublicKey),
-}
-
 #[derive(Debug)]
 enum HeartbeatControlMsg {
     Subscribe(mpsc::UnboundedSender<HeartbeatUpdate>),
@@ -85,30 +117,20 @@ enum HeartbeatControlMsg {
     Heartbeat(Vec<u8>),
 }
 
-#[derive(Debug, Clone)]
-pub struct HeartbeatServiceHandler {
-    tx: mpsc::UnboundedSender<HeartbeatControlMsg>,
-}
-
-impl HeartbeatServiceHandler {
-    pub fn subscribe(&self) -> Result<mpsc::UnboundedReceiver<HeartbeatUpdate>, Error> {
-        let (tx, rx) = mpsc::unbounded();
-        self.tx.unbounded_send(HeartbeatControlMsg::Subscribe(tx))?;
-        Ok(rx)
-    }
-}
-
-pub(crate) struct HeartbeatService {
+struct HeartbeatService {
     me: NodeInfo,
     active_nodes: HashSet<NodeInfo>,
     input: Box<Stream<Item = HeartbeatControlMsg, Error = ()> + Send>,
     consumers: Vec<mpsc::UnboundedSender<HeartbeatUpdate>>,
     ttl: u64,
-    broker: BrokerHandler,
+    broker: Broker,
 }
 
 impl HeartbeatService {
-    pub(crate) fn new(inner: Arc<RwLock<Inner>>) -> Result<(Self, HeartbeatServiceHandler), Error> {
+    fn new(
+        inner: Arc<RwLock<Inner>>,
+        control_rx: mpsc::UnboundedReceiver<HeartbeatControlMsg>,
+    ) -> Result<Self, Error> {
         let inner = inner.clone();
         let broker_ = inner.read().broker_handle.clone();
         if let Some(broker) = broker_ {
@@ -116,8 +138,6 @@ impl HeartbeatService {
             let heartbeat_rx = broker
                 .subscribe(&HEARTBEAT_TOPIC)?
                 .map(|m| HeartbeatControlMsg::Heartbeat(m));
-
-            let (control_tx, control_rx) = mpsc::unbounded();
 
             let ticker = Interval::new(
                 Instant::now(),
@@ -157,9 +177,8 @@ impl HeartbeatService {
                 ttl: config.heartbeat_interval,
                 broker: broker.clone(),
             };
-            let heartbeat_handler = HeartbeatServiceHandler { tx: control_tx };
 
-            Ok((heartbeat_service, heartbeat_handler))
+            Ok(heartbeat_service)
         } else {
             Err(format_err!("Broadcast broker is not yes initialized!"))
         }

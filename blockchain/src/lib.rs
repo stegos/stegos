@@ -28,11 +28,11 @@ mod merkle;
 mod output;
 mod transaction;
 
-pub use block::*;
-pub use blockchain::*;
-pub use merkle::*;
-pub use output::*;
-pub use transaction::*;
+pub use crate::block::*;
+pub use crate::blockchain::*;
+pub use crate::merkle::*;
+pub use crate::output::*;
+pub use crate::transaction::*;
 
 extern crate chrono;
 #[macro_use]

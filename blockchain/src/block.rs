@@ -21,8 +21,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use merkle::*;
-use output::Output;
+use crate::merkle::*;
+use crate::output::Output;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure::PublicKey as WitnessPublicKey;

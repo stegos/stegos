@@ -210,10 +210,10 @@ mod tests {
     extern crate simple_logger;
     extern crate tokio_current_thread;
 
+    use crate::ncp::protocol::{GetPeersResponse, NcpMsg, NcpProtocolConfig, PeerInfo};
     use futures::{Future, Sink, Stream};
     use libp2p::core::{PeerId, PublicKey, Transport};
     use libp2p::tcp::TcpConfig;
-    use ncp::protocol::{GetPeersResponse, NcpMsg, NcpProtocolConfig, PeerInfo};
     use rand;
     use std::sync::mpsc;
     use std::thread;

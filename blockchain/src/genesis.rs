@@ -21,10 +21,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use block::*;
 use chrono::prelude::{TimeZone, Utc};
-use merkle::MerklePath;
-use output::*;
+use crate::block::*;
+use crate::merkle::MerklePath;
+use crate::output::*;
 use stegos_crypto::curve1174::cpt as wallet_keys;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure as cosi_keys;

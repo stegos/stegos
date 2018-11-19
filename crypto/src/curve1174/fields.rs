@@ -24,7 +24,7 @@
 
 use super::*;
 
-use utils;
+use crate::utils;
 
 macro_rules! field_impl {
     ($name: ident, $modulus: ident, $rsquared: ident, $rcubed: ident, $one: ident, $inv: ident, $hash: expr, $fmt: expr, $min: ident) => {

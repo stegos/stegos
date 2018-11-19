@@ -42,7 +42,7 @@ extern crate tokio_stdin;
 extern crate tokio_timer;
 
 use clap::{App, Arg, ArgMatches};
-use console::*;
+use crate::console::*;
 use log::LevelFilter;
 use log4rs::append::console::ConsoleAppender;
 use log4rs::config::{Appender, Config as LogConfig, Logger, Root};

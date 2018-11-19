@@ -31,8 +31,8 @@ extern crate toml;
 
 mod error;
 mod types;
-pub use error::*;
-pub use types::*;
+pub use crate::error::*;
+pub use crate::types::*;
 
 use std::fs::File;
 use std::io::ErrorKind;

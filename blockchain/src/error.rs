@@ -1,4 +1,4 @@
-//! Blockchain Implementation.
+//! Blockchain Errors.
 
 //
 // Copyright (c) 2018 Stegos
@@ -21,27 +21,22 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-mod block;
-mod blockchain;
-mod error;
-mod genesis;
-mod merkle;
-mod output;
-mod transaction;
+use stegos_crypto::hash::Hash;
 
-pub use crate::block::*;
-pub use crate::blockchain::*;
-pub use crate::error::*;
-pub use crate::merkle::*;
-pub use crate::output::*;
-pub use crate::transaction::*;
-
-extern crate chrono;
-#[macro_use]
-extern crate log;
-extern crate failure;
-#[macro_use]
-extern crate failure_derive;
-extern crate rand;
-extern crate stegos_crypto;
-extern crate stegos_keychain;
+#[derive(Debug, Fail)]
+pub enum BlockchainError {
+    #[fail(
+        display = "Previous hash mismatch: expected={}, got={}.",
+        _0,
+        _1
+    )]
+    PreviousHashMismatch(Hash, Hash),
+    #[fail(display = "Block hash collision: {}.", _0)]
+    BlockHashCollision(Hash),
+    #[fail(display = "UXTO hash collision: {}.", _0)]
+    OutputHashCollision(Hash),
+    #[fail(display = "Missing UXTO {}.", _0)]
+    MissingUTXO(Hash),
+    #[fail(display = "Invalid transaction signature.")]
+    InvalidTransactionSignature,
+}

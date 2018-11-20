@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::error::*;
 use crate::output::*;
 use failure::Error;
 use stegos_crypto::curve1174::cpt::{
@@ -28,11 +29,10 @@ use stegos_crypto::curve1174::cpt::{
 };
 use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
-use stegos_crypto::curve1174::CurveError;
-
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 
 /// Transaction body.
+#[derive(Clone, Debug)]
 pub struct TransactionBody {
     /// List of inputs.
     pub txins: Vec<Hash>,
@@ -69,6 +69,7 @@ impl Hashable for TransactionBody {
 }
 
 /// Transaction.
+#[derive(Clone, Debug)]
 pub struct Transaction {
     /// Transaction body.
     pub body: TransactionBody,
@@ -88,7 +89,7 @@ impl Transaction {
     /// * `fee` - Total Fee
     ///
     pub fn new(
-        skey: SecretKey,
+        skey: &SecretKey,
         inputs: &[Output],
         outputs: &[Output],
         adjustment: Fr,
@@ -101,7 +102,7 @@ impl Transaction {
         // where i in txins, j in txouts
         //
 
-        let skey_fr: Fr = skey.into();
+        let skey_fr: Fr = (*skey).into();
         let mut eff_skey: Fr = skey_fr * (inputs.len() as i64); // N * s_M
 
         let mut tx_gamma: Fr = Fr::zero();
@@ -152,7 +153,7 @@ impl Transaction {
     ///
     /// * - `inputs` - UTXOs referred by self.body.txins, in the same order as in self.body.txins.
     ///
-    pub fn validate(&self, inputs: &[Output]) -> Result<bool, CurveError> {
+    pub fn validate(&self, inputs: &[Output]) -> Result<(), Error> {
         //
         // Calculate P_eff = \sum P_i + \sum C_i + \sum C_j - fee, where i in txins, j in txouts
         //
@@ -184,7 +185,11 @@ impl Transaction {
         // Create public key and check signature
         let eff_pkey: PublicKey = eff_pkey.into();
         let tx_hash = Hash::digest(&self.body);
-        validate_sig(&tx_hash, &self.sig, &eff_pkey)
+
+        match validate_sig(&tx_hash, &self.sig, &eff_pkey)? {
+            true => Ok(()),
+            false => Err(BlockchainError::InvalidTransactionSignature.into()),
+        }
     }
 }
 
@@ -208,18 +213,16 @@ pub mod tests {
 
         // "genesis" output by 0
         let (output0, _delta0) =
-            Output::new(timestamp, skey0, pkey1, amount).expect("keys are valid");
+            Output::new(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
 
         // Transaction from 1 to 2
         let inputs1 = [output0];
         let (output1, delta1) =
-            Output::new(timestamp, skey1, pkey2, amount).expect("keys are valid");
+            Output::new(timestamp, &skey1, &pkey2, amount).expect("keys are valid");
         let tx =
-            Transaction::new(skey1, &inputs1, &[output1], delta1, fee).expect("keys are valid");
+            Transaction::new(&skey1, &inputs1, &[output1], delta1, fee).expect("keys are valid");
 
         // Validation
-        let valid = tx.validate(&inputs1).expect("keys are valid");
-
-        assert!(valid);
+        tx.validate(&inputs1).expect("keys are valid");
     }
 }

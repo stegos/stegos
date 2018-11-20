@@ -128,7 +128,7 @@ impl ConsoleService {
                 }
             };
 
-            info!("requesting payment to {} amount={}", recipient, amount);
+            info!("Requesting payment: to={}, amount={}", recipient, amount);
             if let Err(e) = self.node.pay(recipient, amount) {
                 error!("Request failed: {}", e);
             }

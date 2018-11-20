@@ -102,9 +102,12 @@ pub fn genesis_dev() -> (KeyBlock, MonetaryBlock, Vec<Hash>, Vec<(Hash, MerklePa
         let sender = &keys[0];
         let recipient = &keys[0];
 
-        let (output, gamma) =
-            Output::new(timestamp, sender.wallet_skey, recipient.wallet_pkey, amount)
-                .expect("genesis has valid public keys");
+        let (output, gamma) = Output::new(
+            timestamp,
+            &sender.wallet_skey,
+            &recipient.wallet_pkey,
+            amount,
+        ).expect("genesis has valid public keys");
         let outputs = [output];
 
         // Adjustment is the sum of all gamma found in UTXOs.

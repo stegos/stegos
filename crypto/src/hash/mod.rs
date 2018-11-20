@@ -213,6 +213,11 @@ impl Hashable for u64 {
         state.input(&unsafe { mem::transmute::<_, [u8; 8]>(*self) })
     }
 }
+impl Hashable for i64 {
+    fn hash(&self, state: &mut Hasher) {
+        state.input(&unsafe { mem::transmute::<_, [u8; 8]>(*self) })
+    }
+}
 
 impl Hashable for char {
     fn hash(&self, state: &mut Hasher) {

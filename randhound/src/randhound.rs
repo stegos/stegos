@@ -1,5 +1,3 @@
-//! Randhound++ - Distributed Randomness Generation
-
 //
 // Copyright (c) 2018 Stegos
 //
@@ -21,8 +19,92 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+//! Randhound++ - Distributed Randomness Generation
+//! -------------------------------------------------------------------------
+//! Distributed BFT randommness generation. A collection of witness nodes
+//! is divided up into groups. Within each group, each member computes a separate
+//! random value, and shares with other group members through a share from their
+//! own unique random sharing polynomial. (Shamir Secret Sharing).
+//!
+//! They each commit to the randomness by offering ZKP's on the share values,
+//! and the shares in the commitment are encrypted so that nodes can only see
+//! what their own shares are.
+//!
+//! After receiving a BFT threshold number of commitments from other group
+//! members, each member sends his own decrypted shares, one for each polynomial,
+//! to all other group members. At this point, no further commitments will be
+//! accepted by the group member. Waiting like this precludes any advantage to
+//! lurkers who might try to game the system by waiting until they see what
+//! others offer before making their own contribution.
+//!
+//! So, for group size N, there are N different sharing polynomials, each of
+//! which offers N shares to group members. We keep track of decrypted shares
+//! by which polynomial it refers to, and from which group member the share
+//! arrived.
+//!
+//! And after receiving a sufficient number (BFT Threshold) of decrypted shares
+//! for any one polynomial, each group member decodes the hidden shared randomness
+//! by using Lagrange interpolation to find what the polynomial shows for share #0.
+//! That is the true randomness hidden by the shared secrets. At this point no
+//! further decrypted shares will be accepted for the polynomial.
+//!
+//! After obtaining a BFT threshold number of decoded polynomial randomness,
+//! they each send their batch to the group leader, along with the identity
+//! of the polynomial from which the randomness was derived. At this point
+//! the group members are finished.
+//!
+//! Group leaders collect randomness per polynomial, and after a BFT threshold
+//! number of nodes respond for any one polynomial, those random values are
+//! added together to make just one random value per polynomial. At this point
+//! no further randomness will be accepted for the polynomial.
+//!
+//! After the group leader collects a BFT threshold number of polynomial sums
+//! it sends the sum of all the individual polynomial sums to the Beacon node
+//! at the head of the tree. At this point the group leaders are finished.
+//!
+//! At the Beacon node, it awaits arrival of a BFT threshold number of random
+//! values from each of the group leaders. When the threshold is crossed, the
+//! Beacon node adds up all the contributions to a final grand sum. That grand
+//! sum is then converted to a Tate-pairing field value, then hashed to become
+//! the new lottery ticket of randomness. At that point the entire protocol
+//! is finished. The Beacon broadcasts the new lottery number to all witness
+//! nodes in the system, even if they didn't participate in the Randhound run.
+//!
+//! Witness nodes will note that new random value, and use it to determine
+//! which node becomes the Leader, which node becomes the new Beacon node in
+//! charge of Randhound, and what their individual roles will be, in the next
+//! epoch.
+//!
+//! The premise of distributed randomness generation, is that even if only a
+//! single node manages to produce unmolested, honest, randomness, his result
+//! will make all sums which include it, also random. Randomness is contageous.
+//!
+//! -------------------------------------------------------------------------
+//! While the blockchain relies on secure curve FR256 PBC crypto, and participant nodes
+//! are identified by secure::PublicKey's, we utilize the shorter, faster,
+//! symmetric pairings offered by curve AR160 in pbc::fast, for the distributed
+//! randomness generation. The shared secrets only need to be protected for a
+//! few seconds, from the start of a session, until the randomness has been generated.
+//!
+//! To clarify... wallets, transactions, and UTXO's rely on single-curve Curve1174
+//! ECC crypto. But witnesses know each other by secure PBC keying, and the blockchain
+//! relies on secure PBC crypto for efficient BLS multi-signatures.
+//!
+//! Here, we are witness nodes communicating with other witness nodes. So all crypto
+//! occurs in the secure and fast PBC crypto domain.
+//!
+//! All messages between witness nodes carry BLS signatures that must be validated for
+//! protection against trolls. Only valid signed messages from others in the known witness
+//! pool, or subgroups of those witnesses, are considered valid messages. And these signatures
+//! are created in the secure PBC domain. Only the internal math utilizes fast PBC crypto.
+//! -------------------------------------------------------------------------
+
 #![allow(non_snake_case)]
 #![allow(dead_code)]
+
+use failure::Error;
+use std::fs;
+use stegos_keychain::{pem, KeyChain, KeyChainError};
 
 use parking_lot::RwLock;
 use std::collections::hash_map::HashMap;
@@ -32,88 +114,9 @@ use std::vec::Vec;
 use stegos_crypto::hash::*;
 use stegos_crypto::pbc::*;
 
-use lazy_static::*;
+// use lazy_static::*;
 use std::collections::VecDeque;
 use std::sync::Arc;
-
-// -------------------------------------------------------------------------
-// Distributed BFT randommness generation. A collection of witness nodes
-// is divided up into groups. Within each group, each member computes a separate
-// random value, and shares with other group members through a share from their
-// own unique random sharing polynomial. (Shamir Secret Sharing).
-//
-// They each commit to the randomness by offering ZKP's on the share values,
-// and the shares in the commitment are encrypted so that nodes can only see
-// what their own shares are.
-//
-// After receiving a BFT threshold number of commitments from other group
-// members, each member sends his own decrypted shares, one for each polynomial,
-// to all other group members. At this point, no further commitments will be
-// accepted by the group member. Waiting like this precludes any advantage to
-// lurkers who might try to game the system by waiting until they see what
-// others offer before making their own contribution.
-//
-// So, for group size N, there are N different sharing polynomials, each of
-// which offers N shares to group members. We keep track of decrypted shares
-// by which polynomial it refers to, and from which group member the share
-// arrived.
-//
-// And after receiving a sufficient number (BFT Threshold) of decrypted shares
-// for any one polynomial, each group member decodes the hidden shared randomness
-// by using Lagrange interpolation to find what the polynomial shows for share #0.
-// That is the true randomness hidden by the shared secrets. At this point no
-// further decrypted shares will be accepted for the polynomial.
-//
-// After obtaining a BFT threshold number of decoded polynomial randomness,
-// they each send their batch to the group leader, along with the identity
-// of the polynomial from which the randomness was derived. At this point
-// the group members are finished.
-//
-// Group leaders collect randomness per polynomial, and after a BFT threshold
-// number of nodes respond for any one polynomial, those random values are
-// added together to make just one random value per polynomial. At this point
-// no further randomness will be accepted for the polynomial.
-//
-// After the group leader collects a BFT threshold number of polynomial sums
-// it sends the sum of all the individual polynomial sums to the Beacon node
-// at the head of the tree. At this point the group leaders are finished.
-//
-// At the Beacon node, it awaits arrival of a BFT threshold number of random
-// values from each of the group leaders. When the threshold is crossed, the
-// Beacon node adds up all the contributions to a final grand sum. That grand
-// sum is then converted to a Tate-pairing field value, then hashed to become
-// the new lottery ticket of randomness. At that point the entire protocol
-// is finished. The Beacon broadcasts the new lottery number to all witness
-// nodes in the system, even if they didn't participate in the Randhound run.
-//
-// Witness nodes will note that new random value, and use it to determine
-// which node becomes the Leader, which node becomes the new Beacon node in
-// charge of Randhound, and what their individual roles will be, in the next
-// epoch.
-//
-// The premise of distributed randomness generation, is that even if only a
-// single node manages to produce unmolested, honest, randomness, his result
-// will make all sums which include it, also random. Randomness is contageous.
-//
-// -------------------------------------------------------------------------
-// While the blockchain relies on secure curve FR256 PBC crypto, and participant nodes
-// are identified by secure::PublicKey's, we utilize the shorter, faster,
-// symmetric pairings offered by curve AR160 in pbc::fast, for the distributed
-// randomness generation. The shared secrets only need to be protected for a
-// few seconds, from the start of a session, until the randomness has been generated.
-//
-// To clarify... wallets, transactions, and UTXO's rely on single-curve Curve1174
-// ECC crypto. But witnesses know each other by secure PBC keying, and the blockchain
-// relies on secure PBC crypto for efficient BLS multi-signatures.
-//
-// Here, we are witness nodes communicating with other witness nodes. So all crypto
-// occurs in the secure and fast PBC crypto domain.
-//
-// All messages between witness nodes carry BLS signatures that must be validated for
-// protection against trolls. Only valid signed messages from others in the known witness
-// pool, or subgroups of those witnesses, are considered valid messages. And these signatures
-// are created in the secure PBC domain. Only the internal math utilizes fast PBC crypto.
-// -------------------------------------------------------------------------
 
 type Zr = fast::Zr;
 type G1 = fast::G1;
@@ -121,6 +124,9 @@ type G2 = fast::G2;
 type GT = fast::GT;
 
 const NETWORK_DELAY: f32 = 0.5; // typical round-trip network delay (seconds)
+
+/// PEM tag for public key.
+const PBC_PKEY_TAG: &'static str = "STEGOS-PBC PUBLIC KEY";
 
 // -------------------------------------------------------------------------
 // Math support routines
@@ -228,42 +234,81 @@ enum SessionStage {
     Stage5, // Beacon collects group randomness
 }
 
+// lazy_static! {
+//     static ref GSTATE: GlobalState = make_initial_global_state();
+// }
 lazy_static! {
-    static ref GSTATE: GlobalState = make_initial_global_state();
+    static ref GSTATE: state::Storage<GlobalState> = state::Storage::new();
 }
 
 // ------------------------------------------------------------
 // Pertaining to global state
 
-fn make_initial_global_state() -> GlobalState {
-    // TODO: Read keying seed from config file
-    let (skey, pkey, sig) = secure::make_deterministic_keys(b"Test");
-    assert!(secure::check_keying(&pkey, &sig));
-    GlobalState {
-        pkey: pkey,
-        skey: skey,
-        witnesses: Arc::new(RwLock::new(HashSet::new())),
+// fn make_initial_global_state() -> {
+//     // TODO: Read keying seed from config file
+//     let (skey, pkey, sig) = secure::make_deterministic_keys(b"Test");
+//     assert!(secure::check_keying(&pkey, &sig));
+//     GSTATE.set(GlobalState {
+//         pkey: pkey,
+//         skey: skey,
+//         witnesses: Arc::new(RwLock::new(HashSet::new())),
+//         session_info: Arc::new(RwLock::new(None)),
+//         epoch_info: Arc::new(RwLock::new(EpochInfo {
+//             leader: pkey, // TODO: from genesis info
+//             beacon: pkey,
+//             epoch: Hash::from_str(&"None"),
+//         })),
+//     });
+// }
+
+pub fn init_state(cfg: &stegos_config::Config, keychain: &KeyChain) -> Result<(), Error> {
+    fn read_pbc_key(f: &String) -> Result<secure::PublicKey, Error> {
+        let pkey = fs::read_to_string(f.clone())?;
+        let pkey = pem::parse(pkey)?;
+        if pkey.tag != PBC_PKEY_TAG {
+            return Err(KeyChainError::KeyParseError(f.to_string()).into());
+        }
+        Ok(secure::PublicKey::from_bytes(&pkey.contents))
+    }
+
+    let mut witnesses = HashSet::new();
+    for key in cfg.randhound.participants.iter() {
+        let pkey = read_pbc_key(key)?;
+        witnesses.insert(pkey);
+    }
+    let leader_pkey = read_pbc_key(&cfg.randhound.leader)?;
+    assert!(secure::check_keying(
+        &keychain.cosi_pkey,
+        &keychain.cosi_sig
+    ));
+    debug!("Loaded {} participants.", cfg.randhound.participants.len(),);
+    debug!("Leader's pkey is: {:#?}", leader_pkey,);
+    GSTATE.set(GlobalState {
+        pkey: keychain.cosi_pkey.clone(),
+        skey: keychain.cosi_skey.clone(),
+        witnesses: Arc::new(RwLock::new(witnesses)),
         session_info: Arc::new(RwLock::new(None)),
         epoch_info: Arc::new(RwLock::new(EpochInfo {
-            leader: pkey, // TODO: from genesis info
-            beacon: pkey,
+            leader: leader_pkey,
+            beacon: leader_pkey,
             epoch: Hash::from_str(&"None"),
         })),
-    }
+    });
+    Ok(())
 }
 
 fn add_witness(pkey: &secure::PublicKey) {
-    let mut wits = GSTATE.witnesses.write();
+    let mut wits = GSTATE.get().witnesses.write();
     wits.insert(*pkey);
 }
 
 fn drop_witness(pkey: &secure::PublicKey) {
-    let mut wits = GSTATE.witnesses.write();
+    let mut wits = GSTATE.get().witnesses.write();
     wits.remove(&pkey);
 }
 
 fn is_valid_witness(pkey: &secure::PublicKey) -> bool {
-    let wits = GSTATE.witnesses.read();
+    let wits = GSTATE.get().witnesses.read();
     wits.contains(&pkey)
 }
 
@@ -271,7 +316,7 @@ fn get_witnesses() -> HashSet<secure::PublicKey> {
     // TODO: make sure we have some real witnesses
     // Must include Leader node, Beacon node, and at least a
     // handful of others...
-    let wits = GSTATE.witnesses.read();
+    let wits = GSTATE.get().witnesses.read();
     wits.clone()
 }
 
@@ -279,17 +324,17 @@ fn get_witnesses() -> HashSet<secure::PublicKey> {
 // Pertaining to Epoch
 
 fn get_current_leader() -> secure::PublicKey {
-    let ep = GSTATE.epoch_info.read();
+    let ep = GSTATE.get().epoch_info.read();
     ep.leader
 }
 
 fn get_current_beacon() -> secure::PublicKey {
-    let ep = GSTATE.epoch_info.read();
+    let ep = GSTATE.get().epoch_info.read();
     ep.beacon
 }
 
 fn get_current_epoch() -> Hash {
-    let ep = GSTATE.epoch_info.read();
+    let ep = GSTATE.get().epoch_info.read();
     ep.epoch
 }
 
@@ -298,14 +343,14 @@ fn get_current_epoch() -> Hash {
 
 fn start_session(id: &Hash, grp: &Vec<secure::PublicKey>) {
     // leader is group leader
-    let mut info = GSTATE.session_info.write();
+    let mut info = GSTATE.get().session_info.write();
     match *info {
         None => {
             // Beacon inits its own session_info, we might be Beacon
             let leader = grp[0];
             assert!(is_valid_witness(&leader), "Invalid leader");
             // generate ephemeral fast keying for new session
-            let seed = Hash::digest_chain(&[id, &GSTATE.skey]);
+            let seed = Hash::digest_chain(&[id, &GSTATE.get().skey]);
             let (fskey, fpkey, fsig) = fast::make_deterministic_keys(&seed.bits());
             assert!(fast::check_keying(&fpkey, &fsig));
             *info = Some(Session {
@@ -333,13 +378,13 @@ fn start_session(id: &Hash, grp: &Vec<secure::PublicKey>) {
 }
 
 fn get_my_fast_pkey() -> fast::PublicKey {
-    let info = GSTATE.session_info.read();
+    let info = GSTATE.get().session_info.read();
     let sess = info.clone().unwrap();
     sess.fpkey
 }
 
 fn get_my_fast_skey() -> fast::SecretKey {
-    let info = GSTATE.session_info.read();
+    let info = GSTATE.get().session_info.read();
     let sess = info.clone().unwrap();
     sess.fskey
 }
@@ -347,7 +392,7 @@ fn get_my_fast_skey() -> fast::SecretKey {
 fn add_fast_key(pkey: &secure::PublicKey, fpkey: &fast::PublicKey) {
     // If an entry for pkey in the grptbl is missing, then add one
     // in as initialized with the indicated fast pkey.
-    let mut info = GSTATE.session_info.write();
+    let mut info = GSTATE.get().session_info.write();
     let mut sess = info.clone().unwrap();
     sess.grptbl.entry(*pkey).or_insert(GrpInfo {
         fkey: Some(*fpkey),
@@ -358,25 +403,25 @@ fn add_fast_key(pkey: &secure::PublicKey, fpkey: &fast::PublicKey) {
 }
 
 fn get_ngroups() -> usize {
-    let info = GSTATE.session_info.read();
+    let info = GSTATE.get().session_info.read();
     let sess = info.clone().unwrap();
     sess.ngrps
 }
 
 fn group_size() -> usize {
-    let info = GSTATE.session_info.read();
+    let info = GSTATE.get().session_info.read();
     let sess = info.clone().unwrap();
     sess.grp.len()
 }
 
 fn actual_group_size() -> usize {
-    let info = GSTATE.session_info.read();
+    let info = GSTATE.get().session_info.read();
     let sess = info.clone().unwrap();
     sess.grptbl.len()
 }
 
 fn position_in_group(pkey: &secure::PublicKey) -> usize {
-    let info = GSTATE.session_info.read();
+    let info = GSTATE.get().session_info.read();
     let sess = info.clone().unwrap();
     let mut pos = 0;
     for key in sess.clone().grp {
@@ -390,20 +435,20 @@ fn position_in_group(pkey: &secure::PublicKey) -> usize {
 }
 
 fn get_stage() -> SessionStage {
-    let info = GSTATE.session_info.read();
+    let info = GSTATE.get().session_info.read();
     let sess = info.clone().unwrap();
     sess.stage
 }
 
 fn set_stage(stage: SessionStage) {
-    let mut info = GSTATE.session_info.write();
+    let mut info = GSTATE.get().session_info.write();
     let ref mut sess = info.clone().unwrap();
     sess.stage = stage;
     *info = Some(sess.clone()); // is this necessary?
 }
 
 fn is_group_leader(pkey: &secure::PublicKey) -> bool {
-    let info = GSTATE.session_info.read();
+    let info = GSTATE.get().session_info.read();
     let sess = info.clone().unwrap();
     for key in sess.grpleaders {
         if key == *pkey {
@@ -417,27 +462,27 @@ fn is_group_leader(pkey: &secure::PublicKey) -> bool {
 // Global Node info
 
 fn get_pkey() -> secure::PublicKey {
-    GSTATE.pkey
+    GSTATE.get().pkey
 }
 
 fn get_skey() -> secure::SecretKey {
-    GSTATE.skey
+    GSTATE.get().skey
 }
 
 fn get_current_session() -> Hash {
-    let info = GSTATE.session_info.read();
+    let info = GSTATE.get().session_info.read();
     let sess = info.clone().unwrap();
     sess.session
 }
 
 fn get_group_keys() -> Vec<secure::PublicKey> {
-    let info = GSTATE.session_info.read();
+    let info = GSTATE.get().session_info.read();
     let sess = info.clone().unwrap();
     sess.grp
 }
 
 fn is_group_member(pkey: &secure::PublicKey) -> bool {
-    let info = GSTATE.session_info.read();
+    let info = GSTATE.get().session_info.read();
     let sess = info.clone().unwrap();
     for key in sess.grp {
         if key == *pkey {
@@ -448,7 +493,7 @@ fn is_group_member(pkey: &secure::PublicKey) -> bool {
 }
 
 fn get_group_leader() -> secure::PublicKey {
-    let info = GSTATE.session_info.read();
+    let info = GSTATE.get().session_info.read();
     let sess = info.clone().unwrap();
     sess.leader
 }
@@ -619,7 +664,7 @@ fn validate_signed_message(msg: &Message) -> Result<(), MsgErr> {
             if epoch != get_current_epoch() {
                 return Err(MsgErr::NotCurrentEpoch);
             }
-            let info = GSTATE.session_info.write();
+            let info = GSTATE.get().session_info.write();
             if get_pkey() != msg.from {
                 // if I'm not the beacon node
                 if let Some(_) = *info {
@@ -632,7 +677,7 @@ fn validate_signed_message(msg: &Message) -> Result<(), MsgErr> {
         _ => {
             // other messages only valid if we are in a session,
             // and must be for the current session,
-            let info = GSTATE.session_info.read();
+            let info = GSTATE.get().session_info.read();
             if let None = *info {
                 return Err(MsgErr::NotInSession);
             }
@@ -714,7 +759,7 @@ fn dispatch_fifo_messages() {
         let msgs;
         {
             // we are already in a running session
-            let mut info = GSTATE.session_info.write();
+            let mut info = GSTATE.get().session_info.write();
             let mut sess = info.clone().unwrap();
             msgs = sess.msgq;
             sess.msgq = VecDeque::new();
@@ -726,7 +771,7 @@ fn dispatch_fifo_messages() {
             dispatch_message(&from, &msg);
         }
         {
-            let info = GSTATE.session_info.read();
+            let info = GSTATE.get().session_info.read();
             if let Some(ref sess) = *info {
                 // we're still alive...
                 if nel == sess.msgq.len() {
@@ -760,7 +805,7 @@ fn dispatch_message(from: &secure::PublicKey, msg: &MsgType) {
 
 fn stash_fifo(from: &secure::PublicKey, msg: &MsgType) {
     // Stash a message onto the FIFO queue for later processing
-    let mut info = GSTATE.session_info.write();
+    let mut info = GSTATE.get().session_info.write();
     let mut sess = info.clone().unwrap();
     sess.msgq.push_back((*from, msg.clone()));
     *info = Some(sess); // is this needed?
@@ -896,7 +941,7 @@ pub fn start_randhound_round() {
         let (fskey, fpkey, fsig) = fast::make_deterministic_keys(&session_id.bits());
         assert!(fast::check_keying(&fpkey, &fsig));
         {
-            let mut info = GSTATE.session_info.write();
+            let mut info = GSTATE.get().session_info.write();
             *info = Some(Session {
                 session: session_id,
                 stage: SessionStage::Init,
@@ -934,7 +979,7 @@ fn clear_session_state() {
     // Called at the very end as a result of seeing a FinalLoterryTicket message.
     // All witnesses receive this message. But only those participating will reach
     // this function.
-    let mut info = GSTATE.session_info.write();
+    let mut info = GSTATE.get().session_info.write();
     *info = None;
 }
 
@@ -1061,7 +1106,7 @@ fn generate_shared_randomness() {
     let mut proofs = Vec::<G1>::new();
     let mut enc_shares = Vec::<G2>::new();
     {
-        let info = GSTATE.session_info.read();
+        let info = GSTATE.get().session_info.read();
         let sess = info.clone().unwrap();
         for (ix, pkey) in (1..=ngrp).zip(sess.grp) {
             //
@@ -1113,7 +1158,7 @@ fn generate_shared_randomness() {
             proof: proofs[my_pos],
             kpt: kpt,
         };
-        let mut info = GSTATE.session_info.write();
+        let mut info = GSTATE.get().session_info.write();
         let mut sess = info.clone().unwrap();
         sess.grptbl.entry(me).and_modify(|e| {
             e.commit = true;
@@ -1166,7 +1211,7 @@ fn generate_shared_randomness() {
 // ----------------------------------------------------------------------------
 
 fn nbr_commits() -> usize {
-    let info = GSTATE.session_info.read();
+    let info = GSTATE.get().session_info.read();
     let grpinfo = info.clone().unwrap().grptbl;
     let mut count = 0;
     for (_, entry) in grpinfo {
@@ -1196,7 +1241,7 @@ fn validate_commitment(commit: &Commitment) -> bool {
         }
     }
 
-    let info = GSTATE.session_info.read(); // sure hope a read lock inside
+    let info = GSTATE.get().session_info.read(); // sure hope a read lock inside
     let ref sess = info.clone().unwrap(); // of a write lock works in Rust...
 
     // Reed-Solomon check for valid proofs vector
@@ -1294,7 +1339,7 @@ fn stash_commitment(from: &secure::PublicKey, commit: &Commitment) {
             let thresh = ngrp - max_byz_fails(ngrp);
             let mut newrand = None;
             {
-                let mut info = GSTATE.session_info.write();
+                let mut info = GSTATE.get().session_info.write();
                 let mut sess = info.clone().unwrap();
                 sess.grptbl.entry(*from).or_insert({
                     // We haven't seen sender's fast public key.
@@ -1344,7 +1389,7 @@ fn stash_commitment(from: &secure::PublicKey, commit: &Commitment) {
 
             // if we collected new randomness, pool it into the pending vector
             if let Some(pair) = newrand {
-                let mut info = GSTATE.session_info.write();
+                let mut info = GSTATE.get().session_info.write();
                 let mut sess = info.clone().unwrap();
                 sess.rands.push(pair);
                 if sess.rands.len() >= thresh {
@@ -1366,7 +1411,7 @@ fn show_decrypted_shares() {
     // Send the stash to all other group members
     set_stage(SessionStage::Stage3); // now awaiting decodings
     let me = get_pkey();
-    let info = GSTATE.session_info.read();
+    let info = GSTATE.get().session_info.read();
     let sess = info.clone().unwrap();
     let mut decrs = Vec::new();
     for (pkey, entry) in sess.grptbl {
@@ -1446,7 +1491,7 @@ fn stash_decrypted_shares(from: &secure::PublicKey, shares: &Vec<(secure::Public
         SessionStage::Stage2 | SessionStage::Stage3 => {
             let ngrp = group_size();
             let thresh = ngrp - max_byz_fails(ngrp);
-            let mut info = GSTATE.session_info.write();
+            let mut info = GSTATE.get().session_info.write();
             let mut sess = info.clone().unwrap();
             let mut newsess = sess.clone();
             let mut done = false;
@@ -1545,7 +1590,7 @@ fn stash_subsubgroup_randomness(from: &secure::PublicKey, rands: &Vec<(secure::P
             | SessionStage::Stage4 => {
                 let ngrp = group_size();
                 let thresh = ngrp - max_byz_fails(ngrp);
-                let mut info = GSTATE.session_info.write();
+                let mut info = GSTATE.get().session_info.write();
                 let mut sess = info.clone().unwrap();
                 let mut newsess = sess.clone();
                 let mut done = false;
@@ -1641,7 +1686,7 @@ fn stash_group_randomness(from: &secure::PublicKey, rand: &G2) {
     if get_pkey() == get_current_beacon() {
         let ngrps = get_ngroups();
         let thresh = ngrps - max_byz_fails(ngrps);
-        let mut info = GSTATE.session_info.write();
+        let mut info = GSTATE.get().session_info.write();
         let mut sess = info.clone().unwrap();
         if sess.brands.len() < thresh {
             // Only accept new randomness if we haven't yet seen a threshold

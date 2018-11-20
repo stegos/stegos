@@ -23,20 +23,28 @@
 
 extern crate failure;
 extern crate futures;
+#[macro_use]
 extern crate lazy_static;
 extern crate parking_lot;
 extern crate rand;
+extern crate state;
+extern crate stegos_config;
 extern crate stegos_crypto;
+extern crate stegos_keychain;
 extern crate stegos_network;
 extern crate tokio;
 extern crate tokio_timer;
 #[macro_use]
 extern crate log;
+// #[macro_use]
+// extern crate failure_derive;
 
 use failure::Error;
 use futures::sync::mpsc::UnboundedReceiver;
 use futures::{Async, Future, Poll, Stream};
 use std::time::Duration;
+use stegos_config::Config;
+use stegos_keychain::KeyChain;
 use stegos_network::Broker;
 use tokio::timer::Interval;
 
@@ -56,8 +64,10 @@ impl RandHound {
     pub fn new(
         broker: Broker,
         my_id: &String,
+        cfg: &Config,
+        keychain: &KeyChain,
     ) -> Result<impl Future<Item = (), Error = ()>, Error> {
-        RandHoundService::new(broker, my_id)
+        RandHoundService::new(broker, my_id, cfg, keychain)
     }
 }
 
@@ -164,7 +174,12 @@ impl Future for RandHoundService {
 
 impl RandHoundService {
     /// Constructor.
-    fn new(broker: Broker, my_id: &String) -> Result<Self, Error> {
+    fn new(
+        broker: Broker,
+        my_id: &String,
+        cfg: &Config,
+        keychain: &KeyChain,
+    ) -> Result<Self, Error> {
         let my_id = my_id.clone();
 
         // Subscribe to unicast topic.
@@ -184,6 +199,7 @@ impl RandHoundService {
             broadcast_rx,
         };
 
+        randhound::init_state(cfg, keychain)?;
         Ok(randhound)
     }
 }

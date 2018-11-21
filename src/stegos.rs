@@ -124,11 +124,8 @@ fn run() -> Result<(), Box<Error>> {
                 .takes_value(true),
         ).get_matches();
 
-    debug!("before parsing config...");
     // Parse configuration
     let cfg = load_configuration(&args)?;
-    println!("Ky!");
-    debug!("Randhound config: {:#?}", cfg);
 
     // Initialize logger
     initialize_logger(&cfg)?;
@@ -138,7 +135,6 @@ fn run() -> Result<(), Box<Error>> {
 
     // Initialize network
     let mut rt = Runtime::new()?;
-    let my_id = cfg.network.node_id.clone();
     let (network, network_service, broker) = Network::new(&cfg.network, &keychain)?;
 
     // Initialize node
@@ -153,7 +149,7 @@ fn run() -> Result<(), Box<Error>> {
     }
 
     // Initialize randhound
-    let randhound_service = RandHound::new(broker.clone(), &my_id, &cfg, &keychain)?;
+    let randhound_service = RandHound::new(broker.clone(), &cfg, &keychain)?;
     rt.spawn(randhound_service);
 
     // Start main event loop

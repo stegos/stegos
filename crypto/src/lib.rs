@@ -48,9 +48,13 @@ pub enum CryptoError {
     /// Point Not OnCurve
     #[fail(display = "Point is not on a curve")]
     PointNotOnCurve,
-    /// Point Not On Curve
-    #[fail(display = "Invalid binary string length")]
-    InvalidBinaryLength,
+    /// Trying to coerce from incorrecte byte array
+    #[fail(
+        display = "Invalid binary string length. Expected: {}, Got: {}",
+        _0,
+        _1
+    )]
+    InvalidBinaryLength(usize, usize),
     /// An invalid character was found. Valid ones are: `0...9`, `a...f`
     #[fail(display = "Invalid hex characters")]
     InvalidHexCharacter,

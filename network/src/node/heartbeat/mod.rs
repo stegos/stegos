@@ -238,8 +238,8 @@ impl Future for HeartbeatService {
                                 let node_info = match proto_to_msg(proto_msg) {
                                     Ok(n) => n,
                                     Err(e) => {
-                                        error!("Invalid public key: {}", e);
-                                        return Err(());
+                                        error!("Error in Hearbeat message: {}", e);
+                                        continue;
                                     }
                                 };
                                 let msg = HeartbeatUpdate::Update(HeartbeatUpdateMessage {

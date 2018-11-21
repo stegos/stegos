@@ -120,8 +120,11 @@ fn run() -> Result<(), Box<Error>> {
                 .takes_value(true),
         ).get_matches();
 
+    debug!("before parsing config...");
     // Parse configuration
     let cfg = load_configuration(&args)?;
+    println!("Ky!");
+    debug!("Randhound config: {:#?}", cfg);
 
     // Initialize logger
     initialize_logger(&cfg)?;
@@ -135,7 +138,7 @@ fn run() -> Result<(), Box<Error>> {
     let (network, network_service, broker) = Network::new(&cfg.network, &keychain)?;
 
     // Initialize node
-    let (node_service, node) = Node::new(keychain, broker.clone())?;
+    let (node_service, node) = Node::new(keychain.clone(), broker.clone())?;
     rt.spawn(node_service);
 
     // Initialize console
@@ -143,7 +146,7 @@ fn run() -> Result<(), Box<Error>> {
     rt.spawn(console_service);
 
     // Initialize randhound
-    let randhound_service = RandHound::new(broker.clone(), &my_id)?;
+    let randhound_service = RandHound::new(broker.clone(), &my_id, &cfg, &keychain)?;
     rt.spawn(randhound_service);
 
     // Start main event loop
@@ -155,6 +158,7 @@ fn run() -> Result<(), Box<Error>> {
 
 fn main() {
     if let Err(e) = run() {
+        println!("Failed with error: {}", e); // Logger can be not yet initialized.
         error!("{}", e);
         process::exit(1)
     };

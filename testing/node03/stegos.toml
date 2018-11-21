@@ -4,6 +4,15 @@ log4rs_config = "stegos-log4rs.toml"
 [keychain]
 private_key = "testing/node03/stegos.skey"
 public_key = "testing/node03/stegos.pkey"
+pbc_pkey = "testing/node03/stegos-pbc.pkey"
+
+[randhound]
+leader = "testing/node01/node01-pbc.pkey"
+participants = [
+    "testing/node01/node01-pbc.pkey",
+    "testing/node01/node02-pbc.pkey",
+    "testing/node01/node03-pbc.pkey",
+]
 
 [network]
 node_id = "node03"

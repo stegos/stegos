@@ -28,30 +28,43 @@
 //! https://en.wikipedia.org/wiki/Privacy-enhanced_Electronic_Mail).
 //!
 
-#![deny(missing_docs,
-missing_debug_implementations, missing_copy_implementations,
-trivial_casts, trivial_numeric_casts,
-unsafe_code,
-unstable_features,
-unused_import_braces, unused_qualifications)]
+#![deny(
+    missing_docs,
+    missing_debug_implementations,
+    missing_copy_implementations,
+    trivial_casts,
+    trivial_numeric_casts,
+    unsafe_code,
+    unstable_features,
+    unused_import_braces,
+    unused_qualifications
+)]
 
 use regex::bytes::{Captures, Regex};
 
+/// Erros caused by PEM decoder
 #[derive(Debug, Fail)]
 pub enum ErrorKind {
-    #[fail(display = "Invalid UTF-8 sequence: {}", 0)]
+    /// Non-UTF8 input
+    #[fail(display = "Invalid UTF-8 sequence: {}", _0)]
     NotUtf8(std::str::Utf8Error),
+    /// Mising PEM framing
     #[fail(display = "Missing framing")]
     MalformedFraming,
+    /// Missing BEGIN tag
     #[fail(display = "Missing BEGIN tag")]
     MissingBeginTag,
+    /// Missing END tag
     #[fail(display = "Missing END tag")]
     MissingEndTag,
+    /// No data
     #[fail(display = "Missing DATA")]
     MissingData,
-    #[fail(display = "Invalid DATA: {}", 0)]
+    /// Error base64-decoding data
+    #[fail(display = "Invalid DATA: {}", _0)]
     InvalidData(base64::DecodeError),
-    #[fail(display = "mismatching BEGIN and END tags.")]
+    /// BEGIN/END tags mismatch
+    #[fail(display = "mismatching BEGIN:{} and END:{} tags.", _0, _1)]
     MismatchedTags(String, String),
 }
 

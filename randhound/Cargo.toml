@@ -4,15 +4,18 @@ version = "0.1.0"
 authors = ["Stegos AG <info@stegos.cc>"]
 
 [dependencies]
+stegos_config = { path = "../config" }
 stegos_crypto = { path = "../crypto" }
+stegos_keychain = { path = "../keychain" }
 stegos_network = { path = "../network" }
-hex = "0.3"
-lazy_static = "1.1"
-parking_lot = "0.6"
-rand = "0.6"
-futures = "0.1"
-tokio = "0.1"
-tokio-timer = "0.2"
 failure = "0.1"
 failure_derive = "0.1"
+futures = "0.1"
+hex = "0.3"
+lazy_static = "1.1"
 log = "0.4"
+parking_lot = "0.6"
+rand = "0.6"
+state = "0.4"
+tokio = "0.1"
+tokio-timer = "0.2"

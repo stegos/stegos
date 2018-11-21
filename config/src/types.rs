@@ -40,6 +40,8 @@ pub struct Config {
     pub network: ConfigNetwork,
     /// Key Chain configuration.
     pub keychain: ConfigKeyChain,
+    /// Randhound configuration.
+    pub randhound: ConfigRandhound,
 }
 
 /// Default values for global configuration.
@@ -49,6 +51,7 @@ impl Default for Config {
             general: Default::default(),
             network: Default::default(),
             keychain: Default::default(),
+            randhound: Default::default(),
         }
     }
 }
@@ -73,9 +76,9 @@ impl Default for ConfigGeneral {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(default)]
 pub struct ConfigKeyChain {
-    /// Path to secret key.
+    /// Path to Curve1174 secret key.
     pub private_key: String,
-    /// Path to public key.
+    /// Path to Curve1174 public key.
     pub public_key: String,
 }
 
@@ -140,6 +143,25 @@ impl Default for ConfigNetwork {
             max_connections: 2,
             monitoring_interval: 15,
             heartbeat_interval: 10,
+        }
+    }
+}
+
+/// Randhound initial configuration.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(default)]
+pub struct ConfigRandhound {
+    /// Path to leader's PBC public key,
+    pub leader: String,
+    /// Keys for Randhound partiticpants,
+    pub participants: Vec<String>,
+}
+
+impl Default for ConfigRandhound {
+    fn default() -> ConfigRandhound {
+        ConfigRandhound {
+            leader: "stegos-pbc.pkey".to_string(),
+            participants: vec![],
         }
     }
 }

@@ -33,7 +33,7 @@ extern crate base64;
 extern crate lazy_static;
 extern crate regex;
 
-mod pem;
+pub mod pem;
 
 use failure::Error;
 use std::fs;
@@ -63,6 +63,7 @@ const SKEY_TAG: &'static str = "STEGOS-CURVE1174 SECRET KEY";
 const PKEY_TAG: &'static str = "STEGOS-CURVE1174 PUBLIC KEY";
 
 /// Wallet implementation.
+#[derive(Clone, Debug)]
 pub struct KeyChain {
     /// Wallet Secret Key.
     pub wallet_skey: cpt::SecretKey,

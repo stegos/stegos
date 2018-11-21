@@ -27,10 +27,15 @@ extern crate log;
 extern crate log4rs;
 #[macro_use]
 extern crate clap;
+extern crate atty;
 extern crate dirs;
 extern crate failure;
 extern crate futures;
+extern crate lazy_static;
 extern crate libp2p;
+extern crate parking_lot;
+extern crate regex;
+extern crate rustyline;
 extern crate stegos_blockchain;
 extern crate stegos_config;
 extern crate stegos_crypto;
@@ -39,7 +44,6 @@ extern crate stegos_network;
 extern crate stegos_node;
 extern crate stegos_randhound;
 extern crate tokio;
-extern crate tokio_stdin;
 extern crate tokio_timer;
 
 use clap::{App, Arg, ArgMatches};
@@ -141,9 +145,12 @@ fn run() -> Result<(), Box<Error>> {
     let (node_service, node) = Node::new(keychain.clone(), broker.clone())?;
     rt.spawn(node_service);
 
-    // Initialize console
-    let console_service = Console::new(network.clone(), broker.clone(), node.clone())?;
-    rt.spawn(console_service);
+    // Don't initialize REPL if stdin is not a TTY device
+    if atty::is(atty::Stream::Stdin) {
+        // Initialize console
+        let console_service = Console::new(network.clone(), broker.clone(), node.clone())?;
+        rt.spawn(console_service);
+    }
 
     // Initialize randhound
     let randhound_service = RandHound::new(broker.clone(), &my_id, &cfg, &keychain)?;

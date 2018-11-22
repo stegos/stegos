@@ -21,3 +21,9 @@
 
 // The default file name for configuration
 pub const CONFIG_FILE_NAME: &'static str = "stegos.toml";
+
+// The default file name for command-line history
+pub const HISTORY_FILE_NAME: &'static str = "stegos.history";
+
+// Command-line prompt
+pub const PROMPT: &'static str = "stegos> ";

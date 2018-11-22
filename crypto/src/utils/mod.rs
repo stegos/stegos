@@ -67,15 +67,6 @@ pub fn u8v_to_hexstr(x: &[u8]) -> String {
     s
 }
 
-pub fn u8v_to_typed_str(pref: &str, vec: &[u8]) -> String {
-    // produce a type-prefixed hexnum from a byte vector
-    let mut s = String::from(pref);
-    s.push_str("(");
-    s.push_str(&u8v_to_hexstr(&vec));
-    s.push_str(")");
-    s
-}
-
 pub fn is_zero_bits(v: &[u8]) -> bool {
     v.iter().fold(false, |_, b| {
         if *b != 0 {

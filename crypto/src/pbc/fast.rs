@@ -124,14 +124,16 @@ impl Zr {
         &self.0
     }
 
-    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        u8v_to_hexstr(&self.0)
+    }
+
+    /// Try to convert from hex string.
+    pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
         let mut v = Self::wv();
         hexstr_to_bev_u8(&s, &mut v)?;
         Ok(Zr(v))
-    }
-
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("Zr", &self.base_vector())
     }
 }
 
@@ -172,13 +174,13 @@ impl From<i64> for Zr {
 
 impl fmt::Debug for Zr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "Zr({})", self.into_hex())
     }
 }
 
 impl fmt::Display for Zr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "Zr({})", self.into_hex())
     }
 }
 
@@ -373,11 +375,13 @@ impl G1 {
         &self.0
     }
 
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("G1", &self.base_vector())
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        u8v_to_hexstr(&self.0)
     }
 
-    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
+    /// Try to convert from hex string.
+    pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
         let mut v = Self::wv();
         hexstr_to_bev_u8(&s, &mut v)?;
         Ok(G1(v))
@@ -420,13 +424,13 @@ impl PartialEq for G1 {
 
 impl fmt::Debug for G1 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "G1({})", self.into_hex())
     }
 }
 
 impl fmt::Display for G1 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "G1({})", self.into_hex())
     }
 }
 
@@ -572,11 +576,13 @@ impl G2 {
         &self.0
     }
 
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("G2", &self.base_vector())
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        u8v_to_hexstr(&self.0)
     }
 
-    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
+    /// Try to convert from hex string.
+    pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
         let mut v = Self::wv();
         hexstr_to_bev_u8(&s, &mut v)?;
         Ok(G2(v))
@@ -619,7 +625,7 @@ impl PartialEq for G2 {
 
 impl fmt::Display for G2 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "G2({})", self.into_hex())
     }
 }
 
@@ -768,14 +774,15 @@ impl GT {
         &self.0
     }
 
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("GT", &self.base_vector())
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        u8v_to_hexstr(&self.0)
     }
 }
 
 impl fmt::Display for GT {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "GT({})", self.into_hex())
     }
 }
 
@@ -828,14 +835,15 @@ impl SecretKey {
         self.0.base_vector()
     }
 
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("SKey", &self.base_vector())
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        self.0.into_hex()
     }
 }
 
 impl fmt::Display for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "SKey({})", self.into_hex())
     }
 }
 
@@ -868,8 +876,9 @@ impl PublicKey {
         self.0.base_vector()
     }
 
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("PKey", &self.base_vector())
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        self.0.into_hex()
     }
 }
 
@@ -882,7 +891,7 @@ impl PartialEq for PublicKey {
 
 impl fmt::Display for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "PKey({})", self.into_hex())
     }
 }
 
@@ -918,14 +927,15 @@ impl Signature {
         self.0.base_vector()
     }
 
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("Sig", &self.base_vector())
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        self.0.into_hex()
     }
 }
 
 impl fmt::Display for Signature {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "Sig({})", self.into_hex())
     }
 }
 

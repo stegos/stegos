@@ -235,7 +235,13 @@ impl Future for HeartbeatService {
                         }
                         HeartbeatControlMsg::Heartbeat(m) => {
                             if let Ok(proto_msg) = protobuf::parse_from_bytes(&m) {
-                                let node_info = proto_to_msg(proto_msg);
+                                let node_info = match proto_to_msg(proto_msg) {
+                                    Ok(n) => n,
+                                    Err(e) => {
+                                        error!("Invalid public key: {}", e);
+                                        return Err(());
+                                    }
+                                };
                                 let msg = HeartbeatUpdate::Update(HeartbeatUpdateMessage {
                                     public_key: node_info.node_public_key.clone(),
                                 });
@@ -273,7 +279,7 @@ impl Future for HeartbeatService {
 // Turns a type-safe Heartbeat message into the corresponding row protobuf message.
 fn msg_to_proto(hb_msg: &NodeInfo) -> heartbeat_proto::Message {
     let mut msg = heartbeat_proto::Message::new();
-    msg.set_public_key(hb_msg.node_public_key.into_bytes());
+    msg.set_public_key(hb_msg.node_public_key.into_bytes().to_vec());
     msg.set_extra_info((&*hb_msg.extra_info).to_vec());
     for a in (&*hb_msg.advertised_ips).into_iter() {
         msg.mut_addrs().push(a.clone().into_bytes());
@@ -282,9 +288,9 @@ fn msg_to_proto(hb_msg: &NodeInfo) -> heartbeat_proto::Message {
 }
 
 /// Turns a raw Heartbeat message into a type-safe message.
-fn proto_to_msg(message: heartbeat_proto::Message) -> NodeInfo {
+fn proto_to_msg(message: heartbeat_proto::Message) -> Result<NodeInfo, Error> {
     let mut node_info = NodeInfo {
-        node_public_key: NodePublicKey::from_bytes(&message.get_public_key().to_vec()),
+        node_public_key: NodePublicKey::try_from_bytes(&message.get_public_key())?,
         extra_info: message.get_extra_info().to_vec(),
         last_seen: Instant::now(),
         advertised_ips: vec![],
@@ -297,5 +303,5 @@ fn proto_to_msg(message: heartbeat_proto::Message) -> NodeInfo {
         }
     }
 
-    node_info
+    Ok(node_info)
 }

@@ -454,8 +454,8 @@ pub mod tests {
         // Check structure
         debug!("Tree: {:?}", tree);
         assert_eq!(
-            tree.roothash().to_str(),
-            "H(295cd1698c6ac5bd804a09e50f19f8549475e52db1c6ebd441ed0c7b256e1ddf)"
+            tree.roothash().into_hex(),
+            "295cd1698c6ac5bd804a09e50f19f8549475e52db1c6ebd441ed0c7b256e1ddf"
         );
 
         // Check height
@@ -505,8 +505,8 @@ pub mod tests {
         // Check structure
         debug!("Tree: {:?}", tree);
         assert_eq!(
-            tree.roothash().to_str(),
-            "H(d5a54245486913be1e0926802666157aa940d445f3558d886a654ea7117213e0)"
+            tree.roothash().into_hex(),
+            "d5a54245486913be1e0926802666157aa940d445f3558d886a654ea7117213e0"
         );
 
         // Check height

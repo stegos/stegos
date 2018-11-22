@@ -105,16 +105,18 @@ impl Zr {
         Self::acceptable_random_rehash(x)
     }
 
-    pub fn from_str(s: &str) -> Result<Zr, CryptoError> {
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        u8v_to_hexstr(&self.0)
+    }
+
+    /// Try to convert from hex string.
+    pub fn try_from_hex(s: &str) -> Result<Zr, CryptoError> {
         // result might be larger than prime order, r,
         // but will be interpreted by PBC lib as (Zr mod r).
         let mut v = Zr::wv();
         hexstr_to_bev_u8(&s, &mut v)?;
         Ok(Zr(v))
-    }
-
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("Zr", &self.base_vector())
     }
 }
 
@@ -154,7 +156,7 @@ impl PartialOrd for Zr {
 
 impl fmt::Display for Zr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "Zr({})", self.into_hex())
     }
 }
 
@@ -193,11 +195,13 @@ impl G1 {
         &self.0
     }
 
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("G1", &self.base_vector())
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        u8v_to_hexstr(&self.0)
     }
 
-    pub fn from_str(s: &str) -> Result<G1, CryptoError> {
+    /// Try to convert from hex string.
+    pub fn try_from_hex(s: &str) -> Result<G1, CryptoError> {
         let mut v = G1::wv();
         hexstr_to_bev_u8(&s, &mut v)?;
         Ok(G1(v))
@@ -219,7 +223,7 @@ impl G1 {
 impl fmt::Display for G1 {
     // for display of signatures
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "G1({})", self.into_hex())
     }
 }
 
@@ -255,24 +259,31 @@ impl G2 {
         &self.0
     }
 
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("G2", &self.base_vector())
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        u8v_to_hexstr(&self.0)
     }
 
-    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
+    /// Try to convert from hex string.
+    pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
         let mut v = Self::wv();
         hexstr_to_bev_u8(&s, &mut v)?;
         Ok(G2(v))
     }
 
-    pub fn into_bytes(self) -> Vec<u8> {
-        self.0.to_vec()
+    /// Convert to raw bytes.
+    pub fn into_bytes(self) -> [u8; G2_SIZE_FR256] {
+        self.0
     }
 
-    pub fn from_bytes(bytes: &Vec<u8>) -> Self {
-        let mut bits: [u8; G2_SIZE_FR256] = [0u8; G2_SIZE_FR256];
-        bits.copy_from_slice(&bytes[0..(G2_SIZE_FR256)]);
-        G2(bits)
+    /// Try to convert from raw bytes.
+    pub fn try_from_bytes(bytes_slices: &[u8]) -> Result<Self, CryptoError> {
+        if bytes_slices.len() != G2_SIZE_FR256 {
+            return Err(CryptoError::InvalidBinaryLength);
+        }
+        let mut bytes: [u8; G2_SIZE_FR256] = [0u8; G2_SIZE_FR256];
+        bytes.copy_from_slice(bytes_slices);
+        Ok(G2(bytes))
     }
 
     pub fn generator() -> Self {
@@ -290,7 +301,7 @@ impl G2 {
 
 impl fmt::Display for G2 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "G2({})", self.into_hex())
     }
 }
 
@@ -333,11 +344,13 @@ impl GT {
         &self.0
     }
 
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("GT", &self.base_vector())
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        u8v_to_hexstr(&self.0)
     }
 
-    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
+    /// Try to convert from hex string.
+    pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
         let mut v = GT::wv();
         hexstr_to_bev_u8(&s, &mut v)?;
         Ok(GT(v))
@@ -346,7 +359,7 @@ impl GT {
 
 impl fmt::Display for GT {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "GT({})", self.into_hex())
     }
 }
 
@@ -373,25 +386,27 @@ impl SecretKey {
         self.0.base_vector()
     }
 
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("SKey", &self.base_vector())
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        self.0.into_hex()
     }
 
-    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
-        let z = Zr::from_str(s)?;
+    /// Try to convert from hex string.
+    pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
+        let z = Zr::try_from_hex(s)?;
         Ok(SecretKey(z))
     }
 }
 
 impl fmt::Display for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "SKey({})", self.into_hex())
     }
 }
 
 impl fmt::Debug for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "SKey({})", self.into_hex())
     }
 }
 
@@ -419,32 +434,41 @@ impl PublicKey {
         self.0.base_vector()
     }
 
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("PKey", &self.base_vector())
+    /// Convert into hex string.
+    #[inline]
+    pub fn into_hex(self) -> String {
+        self.0.into_hex()
     }
 
-    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
-        let g = G2::from_str(s)?;
+    /// Try to convert from raw bytes.
+    #[inline]
+    pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
+        let g = G2::try_from_hex(s)?;
         Ok(PublicKey(g))
     }
-    pub fn into_bytes(self) -> Vec<u8> {
+
+    /// Convert into hex string.
+    #[inline]
+    pub fn into_bytes(self) -> [u8; G2_SIZE_FR256] {
         self.0.into_bytes()
     }
 
-    pub fn from_bytes(bytes: &Vec<u8>) -> Self {
-        PublicKey(G2::from_bytes(bytes))
+    /// Try to convert from raw bytes.
+    #[inline]
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        Ok(PublicKey(G2::try_from_bytes(bytes)?))
     }
 }
 
 impl fmt::Debug for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "PKey({})", self.into_hex())
     }
 }
 
 impl fmt::Display for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "PKey({})", self.into_hex())
     }
 }
 
@@ -493,19 +517,21 @@ impl SecretSubKey {
         self.0.base_vector()
     }
 
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("SSubKey", &self.base_vector())
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        self.0.into_hex()
     }
 
-    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
-        let g = G1::from_str(s)?;
+    /// Try to convert form hex string
+    pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
+        let g = G1::try_from_hex(s)?;
         Ok(SecretSubKey(g))
     }
 }
 
 impl fmt::Display for SecretSubKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "SSubKey({})", self.into_hex())
     }
 }
 
@@ -532,19 +558,21 @@ impl PublicSubKey {
         self.0.base_vector()
     }
 
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("PSubKey", &self.base_vector())
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        self.0.into_hex()
     }
 
-    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
-        let g = G2::from_str(s)?;
+    /// Try to convert form hex string
+    pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
+        let g = G2::try_from_hex(s)?;
         Ok(PublicSubKey(g))
     }
 }
 
 impl fmt::Display for PublicSubKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "PSubKey({})", self.into_hex())
     }
 }
 
@@ -572,25 +600,27 @@ impl Signature {
         self.0.base_vector()
     }
 
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("Sig", &self.base_vector())
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        self.0.into_hex()
     }
 
-    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
-        let g = G1::from_str(s)?;
+    /// Try to convert from hex string.
+    pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
+        let g = G1::try_from_hex(s)?;
         Ok(Signature(g))
     }
 }
 
 impl fmt::Debug for Signature {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "Sig({})", self.into_hex())
     }
 }
 
 impl fmt::Display for Signature {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "Sig({})", self.into_hex())
     }
 }
 
@@ -735,19 +765,21 @@ impl RVal {
         self.0.base_vector()
     }
 
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("RVal", &self.base_vector())
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        self.0.into_hex()
     }
 
-    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
-        let g = G2::from_str(s)?;
+    /// Try to convert from hex string
+    pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
+        let g = G2::try_from_hex(s)?;
         Ok(RVal(g))
     }
 }
 
 impl fmt::Display for RVal {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "RVal({})", self.into_hex())
     }
 }
 

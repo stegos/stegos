@@ -662,7 +662,7 @@ pub fn bin_to_elt(y: &U256, x: &mut Fq51) {
 
 impl Fq51 {
     pub fn from_str(s: &str) -> Result<Fq51, CryptoError> {
-        let bin = U256::from_str(s)?;
+        let bin = U256::try_from_hex(s)?;
         let mut e = Fq51::zero();
         bin_to_elt(&bin, &mut e);
         Ok(e)

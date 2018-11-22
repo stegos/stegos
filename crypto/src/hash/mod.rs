@@ -46,7 +46,13 @@ impl Hash {
         self.0
     }
 
-    pub fn from_hex(hexstr: &str) -> Result<Self, CryptoError> {
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        u8v_to_hexstr(&self.0)
+    }
+
+    /// Try to convert from hex string.
+    pub fn try_from_hex(hexstr: &str) -> Result<Self, CryptoError> {
         // use this function to import a Hash digest facsimile from a string constant
         let mut v = [0u8; HASH_SIZE];
         hexstr_to_bev_u8(hexstr, &mut v)?;
@@ -81,15 +87,11 @@ impl Hash {
         }
         state.result()
     }
-
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("H", &self.base_vector())
-    }
 }
 
 impl fmt::Debug for Hash {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "H({})", self.into_hex())
     }
 }
 

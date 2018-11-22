@@ -124,14 +124,16 @@ impl Zr {
         &self.0
     }
 
-    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        u8v_to_hexstr(&self.0)
+    }
+
+    /// Try to convert from hex string.
+    pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
         let mut v = Self::wv();
         hexstr_to_bev_u8(&s, &mut v)?;
         Ok(Zr(v))
-    }
-
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("Zr", &self.base_vector())
     }
 }
 
@@ -172,19 +174,19 @@ impl From<i64> for Zr {
 
 impl fmt::Debug for Zr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "FastZr({})", self.into_hex())
     }
 }
 
 impl fmt::Display for Zr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "FastZr({})", self.into_hex())
     }
 }
 
 impl Hashable for Zr {
     fn hash(&self, state: &mut Hasher) {
-        "Zr".hash(state);
+        "FastZr".hash(state);
         self.base_vector().hash(state);
     }
 }
@@ -373,11 +375,13 @@ impl G1 {
         &self.0
     }
 
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("G1", &self.base_vector())
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        u8v_to_hexstr(&self.0)
     }
 
-    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
+    /// Try to convert from hex string.
+    pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
         let mut v = Self::wv();
         hexstr_to_bev_u8(&s, &mut v)?;
         Ok(G1(v))
@@ -420,19 +424,19 @@ impl PartialEq for G1 {
 
 impl fmt::Debug for G1 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "FastG1({})", self.into_hex())
     }
 }
 
 impl fmt::Display for G1 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "FastG1({})", self.into_hex())
     }
 }
 
 impl Hashable for G1 {
     fn hash(&self, state: &mut Hasher) {
-        "G1".hash(state);
+        "FastG1".hash(state);
         self.base_vector().hash(state);
     }
 }
@@ -572,11 +576,13 @@ impl G2 {
         &self.0
     }
 
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("G2", &self.base_vector())
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        u8v_to_hexstr(&self.0)
     }
 
-    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
+    /// Try to convert from hex string.
+    pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
         let mut v = Self::wv();
         hexstr_to_bev_u8(&s, &mut v)?;
         Ok(G2(v))
@@ -619,13 +625,13 @@ impl PartialEq for G2 {
 
 impl fmt::Display for G2 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "FastG2({})", self.into_hex())
     }
 }
 
 impl Hashable for G2 {
     fn hash(&self, state: &mut Hasher) {
-        "G2".hash(state);
+        "FastG2".hash(state);
         self.base_vector().hash(state);
     }
 }
@@ -768,14 +774,15 @@ impl GT {
         &self.0
     }
 
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("GT", &self.base_vector())
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        u8v_to_hexstr(&self.0)
     }
 }
 
 impl fmt::Display for GT {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "FastGT({})", self.into_hex())
     }
 }
 
@@ -788,7 +795,7 @@ impl PartialEq for GT {
 
 impl Hashable for GT {
     fn hash(&self, state: &mut Hasher) {
-        "GT".hash(state);
+        "FastGT".hash(state);
         self.base_vector().hash(state);
     }
 }
@@ -828,20 +835,21 @@ impl SecretKey {
         self.0.base_vector()
     }
 
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("SKey", &self.base_vector())
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        self.0.into_hex()
     }
 }
 
 impl fmt::Display for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "FastSKey({})", self.into_hex())
     }
 }
 
 impl Hashable for SecretKey {
     fn hash(&self, state: &mut Hasher) {
-        "SKey".hash(state);
+        "FastSKey".hash(state);
         self.base_vector().hash(state);
     }
 }
@@ -868,8 +876,9 @@ impl PublicKey {
         self.0.base_vector()
     }
 
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("PKey", &self.base_vector())
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        self.0.into_hex()
     }
 }
 
@@ -882,13 +891,13 @@ impl PartialEq for PublicKey {
 
 impl fmt::Display for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "FastPKey({})", self.into_hex())
     }
 }
 
 impl Hashable for PublicKey {
     fn hash(&self, state: &mut Hasher) {
-        "PKey".hash(state);
+        "FastPKey".hash(state);
         self.base_vector().hash(state);
     }
 }
@@ -918,20 +927,21 @@ impl Signature {
         self.0.base_vector()
     }
 
-    pub fn to_str(&self) -> String {
-        u8v_to_typed_str("Sig", &self.base_vector())
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
+        self.0.into_hex()
     }
 }
 
 impl fmt::Display for Signature {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "FastSig({})", self.into_hex())
     }
 }
 
 impl Hashable for Signature {
     fn hash(&self, state: &mut Hasher) {
-        "Sig".hash(state);
+        "FastSig".hash(state);
         self.base_vector().hash(state);
     }
 }

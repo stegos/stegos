@@ -216,7 +216,7 @@ macro_rules! field_impl {
 
             /// Try to convert from hex string.
             pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
-                let mut ans = U256::from_str(s)?;
+                let mut ans = U256::try_from_hex(s)?;
                 while ans >= *$modulus {
                     sub_noborrow(&mut ans.0, &(*$modulus).0);
                 }

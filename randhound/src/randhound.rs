@@ -268,7 +268,7 @@ pub fn init_state(cfg: &stegos_config::Config, keychain: &KeyChain) -> Result<()
         if pkey.tag != PBC_PKEY_TAG {
             return Err(KeyChainError::KeyParseError(f.to_string()).into());
         }
-        Ok(secure::PublicKey::from_bytes(&pkey.contents))
+        Ok(secure::PublicKey::try_from_bytes(&pkey.contents)?)
     }
 
     let mut witnesses = HashSet::new();

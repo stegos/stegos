@@ -102,14 +102,14 @@ lazy_static! {
         GEN_Y.hash(&mut state);
         format!("D{} H{}", CURVE_D, CURVE_H).hash(&mut state);
         let h = state.result();
-        let chk = Hash::from_hex(&HASH_CONSTS).expect("Invalid hexstr: HASH_CONSTS");
+        let chk = Hash::try_from_hex(&HASH_CONSTS).expect("Invalid hexstr: HASH_CONSTS");
         assert!(h == chk, "Invalid curve constants checksum");
         check_prng();
         true
     };
     pub static ref R: U256 = {
         assert!(*INIT, "can't happen");
-        U256::from_str(CURVE_R).expect("Invalid hexstr: R")
+        U256::try_from_hex(CURVE_R).expect("Invalid hexstr: R")
     };
     pub static ref RMIN: Fr = {
         assert!(*INIT, "can't happen");
@@ -117,7 +117,7 @@ lazy_static! {
     };
     pub static ref Q: U256 = {
         assert!(*INIT, "can't happen");
-        U256::from_str(CURVE_Q).expect("Invalid hexstr: Q")
+        U256::try_from_hex(CURVE_Q).expect("Invalid hexstr: Q")
     };
     pub static ref QMIN: Fq = {
         assert!(*INIT, "can't happen");
@@ -238,9 +238,10 @@ mod tests {
     #[test]
     fn chk_init() {
         use crate::pbc::secure;
-        let sig_pkey = secure::PublicKey::from_str(&SIG_PKEY).expect("Invalid hexstr: SIG_PKEY");
-        let sig = secure::Signature::from_str(&SIG_1174).expect("Invalid hexstr: SIG_1174");
-        let h = Hash::from_hex(&HASH_CONSTS).expect("Invalid hexstr: HASH_CONSTS");
+        let sig_pkey =
+            secure::PublicKey::try_from_hex(&SIG_PKEY).expect("Invalid hexstr: SIG_PKEY");
+        let sig = secure::Signature::try_from_hex(&SIG_1174).expect("Invalid hexstr: SIG_1174");
+        let h = Hash::try_from_hex(&HASH_CONSTS).expect("Invalid hexstr: HASH_CONSTS");
         assert!(
             secure::check_hash(&h, &sig, &sig_pkey),
             "Invalid Curve1174 init constants"
@@ -345,7 +346,7 @@ pub fn curve1174_tests() {
 
     let delta_skey = SecretKey::from(Fr::from(skey) + delta);
 
-    let hmsg = Hash::from_hex(&HASH_CONSTS).unwrap();
+    let hmsg = Hash::try_from_hex(&HASH_CONSTS).unwrap();
     let sig = sign_hash(&hmsg, &skey);
     println!("sig = (u: {}, K: {})", sig.u, sig.K);
 

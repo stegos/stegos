@@ -40,16 +40,13 @@
 //! --------------------------------------------------------------------------
 
 use super::*;
-use crate::hash::*;
-use crate::utils::*;
+use crate::CryptoError;
+use rand::rngs::ThreadRng;
 use rand::thread_rng;
-
+use rand::Rng;
 use std::cmp::Ordering;
 use std::hash as stdhash;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
-
-use rand::rngs::ThreadRng;
-use rand::Rng;
 
 // ---------------------------------------------------------------------------------
 
@@ -127,7 +124,7 @@ impl Zr {
         &self.0
     }
 
-    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
         let mut v = Self::wv();
         hexstr_to_bev_u8(&s, &mut v)?;
         Ok(Zr(v))
@@ -380,7 +377,7 @@ impl G1 {
         u8v_to_typed_str("G1", &self.base_vector())
     }
 
-    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
         let mut v = Self::wv();
         hexstr_to_bev_u8(&s, &mut v)?;
         Ok(G1(v))
@@ -579,7 +576,7 @@ impl G2 {
         u8v_to_typed_str("G2", &self.base_vector())
     }
 
-    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
         let mut v = Self::wv();
         hexstr_to_bev_u8(&s, &mut v)?;
         Ok(G2(v))

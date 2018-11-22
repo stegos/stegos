@@ -22,6 +22,7 @@
 // SOFTWARE.
 
 use super::*;
+use crate::CryptoError;
 use rand::rngs::ThreadRng;
 use rand::thread_rng;
 use rand::Rng;
@@ -470,7 +471,7 @@ impl From<U256> for Lev32 {
 // the vector has little-endian order
 
 impl U256 {
-    pub fn from_str(s: &str) -> Result<U256, hex::FromHexError> {
+    pub fn from_str(s: &str) -> Result<U256, CryptoError> {
         // construct a little-endian [u64;4] from a hexstring
         let mut x = [0u8; 32];
         hexstr_to_lev_u8(s, &mut x)?;

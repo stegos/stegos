@@ -23,8 +23,8 @@
 //
 
 use super::*;
-
 use crate::utils;
+use crate::CryptoError;
 
 macro_rules! field_impl {
     ($name: ident, $modulus: ident, $rsquared: ident, $rcubed: ident, $one: ident, $inv: ident, $hash: expr, $fmt: expr, $min: ident) => {
@@ -181,27 +181,46 @@ macro_rules! field_impl {
                 Self::acceptable_random_rehash(x)
             }
 
-            pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+            /// Convert into raw bytes.
+            pub fn to_lev_u8(self) -> [u8; 32] {
+                self.bits().to_lev_u8()
+            }
+
+            /// Convert into raw bytes.
+            #[inline]
+            pub fn into_bytes(self) -> [u8; 32] {
+                self.to_lev_u8()
+            }
+
+            /// Convert from raw bytes.
+            pub fn from_lev_u8(bytes: [u8; 32]) -> Self {
+                $name::Unscaled(U256::from_lev_u8(bytes))
+            }
+
+            /// Convert from raw bytes.
+            #[inline]
+            pub fn try_from_bytes(bytes_slice: &[u8]) -> Result<Self, CryptoError> {
+                let mut bytes: [u8; 32] = [0u8; 32];
+                if bytes_slice.len() != 32 {
+                    return Err(CryptoError::InvalidBinaryLength);
+                }
+                bytes.copy_from_slice(bytes_slice);
+                Ok($name::from_lev_u8(bytes))
+            }
+
+            /// Convert into hex string.
+            pub fn into_hex(self) -> String {
+                let tmp = self.unscaled_bits();
+                format!("{}", tmp.nbr_str())
+            }
+
+            /// Try to convert from hex string.
+            pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
                 let mut ans = U256::from_str(s)?;
                 while ans >= *$modulus {
                     sub_noborrow(&mut ans.0, &(*$modulus).0);
                 }
                 Ok($name::Unscaled(ans))
-            }
-
-            /// Save to a byte array.
-            pub fn to_lev_u8(self) -> [u8; 32] {
-                self.bits().to_lev_u8()
-            }
-
-            /// Load from a byte array.
-            pub fn from_lev_u8(bytes: [u8; 32]) -> Self {
-                $name::Unscaled(U256::from_lev_u8(bytes))
-            }
-
-            pub fn nbr_str(&self) -> String {
-                let tmp = (*self).unscaled_bits();
-                format!("{}", tmp.nbr_str())
             }
         }
 

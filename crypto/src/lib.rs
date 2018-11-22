@@ -39,3 +39,38 @@ pub mod hash;
 pub mod keying;
 pub mod pbc;
 pub mod utils;
+
+#[derive(Debug, Fail)]
+pub enum CryptoError {
+    /// Not Quadratic Residue
+    #[fail(display = "Quadratic Residue")]
+    NotQuadraticResidue,
+    /// Point Not OnCurve
+    #[fail(display = "Point is not on a curve")]
+    PointNotOnCurve,
+    /// Point Not On Curve
+    #[fail(display = "Invalid binary string length")]
+    InvalidBinaryLength,
+    /// An invalid character was found. Valid ones are: `0...9`, `a...f`
+    #[fail(display = "Invalid hex characters")]
+    InvalidHexCharacter,
+    /// A hex string's length needs to be even, as two digits correspond to
+    /// one byte.
+    #[fail(display = "Odd number of digits in hex string")]
+    OddHexLength,
+    /// If the hex string is decoded into a fixed sized container, such as an
+    /// array, the hex string's length * 2 has to match the container's
+    /// length.
+    #[fail(display = "Invalid hex string length")]
+    InvalidHexLength,
+}
+
+impl From<hex::FromHexError> for CryptoError {
+    fn from(error: hex::FromHexError) -> Self {
+        match error {
+            hex::FromHexError::InvalidHexCharacter { .. } => CryptoError::InvalidHexCharacter,
+            hex::FromHexError::InvalidStringLength => CryptoError::InvalidHexLength,
+            hex::FromHexError::OddLength => CryptoError::OddHexLength,
+        }
+    }
+}

@@ -23,6 +23,7 @@
 //
 
 use super::*;
+use crate::CryptoError;
 
 // -----------------------------------------------------------------------------------
 
@@ -64,17 +65,17 @@ impl ECp {
         self.z.0 == FQ51_1.0
     }
 
-    pub fn try_from_xy(x: &Fq, y: &Fq) -> Result<Self, CurveError> {
+    pub fn try_from_xy(x: &Fq, y: &Fq) -> Result<Self, CryptoError> {
         let x51 = Fq51::from(*x);
         let y51 = Fq51::from(*y);
         if Self::is_valid_pt(&x51, &y51) {
             Ok(Self::new_from_xy51(&x51, &y51))
         } else {
-            Err(CurveError::PointNotOnCurve)
+            Err(CryptoError::PointNotOnCurve)
         }
     }
 
-    fn solve_y(xq: &Fq51) -> Result<Fq51, CurveError> {
+    fn solve_y(xq: &Fq51) -> Result<Fq51, CryptoError> {
         // CURVE_D is non-square in Fq, so division here is unquestionably safe
         let xqsq = xq.sqr();
         let ysq = (xqsq - 1) / (xqsq * CURVE_D - 1);
@@ -93,8 +94,8 @@ impl ECp {
         pt
     }
 
-    pub fn try_from(pt: Pt) -> Result<Self, CurveError> {
-        let mut x = pt.bits();
+    /// Try to convert from raw bytes.
+    pub fn try_from_bytes(mut x: [u8; 32]) -> Result<Self, CryptoError> {
         let sgn = (x[31] & 0x80) != 0;
         x[31] &= 0x7f;
         let x256 = U256::from(Lev32(x));
@@ -105,10 +106,17 @@ impl ECp {
 
         if (CURVE_H * newpt).is_inf() {
             // point was Inf , or in small subgroup of curve
-            Err(CurveError::PointNotOnCurve)
+            Err(CryptoError::PointNotOnCurve)
         } else {
             Ok(newpt)
         }
+    }
+
+    /// Try to convert from a compressed point.
+    #[inline]
+    pub fn decompress(pt: Pt) -> Result<Self, CryptoError> {
+        let bytes = pt.into_bytes();
+        ECp::try_from_bytes(bytes)
     }
 
     // internal routine for hashing onto the curve,
@@ -150,12 +158,22 @@ impl ECp {
         Self::from_random_bits(&random::<[u8; 32]>())
     }
 
-    pub fn compress(pt: Self) -> Pt {
-        Pt::from(pt)
+    /// Convert into raw bytes.
+    pub fn into_bytes(self) -> [u8; 32] {
+        let mut afpt = self;
+        norm(&mut afpt);
+        let ptx = Fq::from(afpt.x);
+        let mut x = U256::from(ptx).to_lev_u8();
+        if afpt.y.is_odd() {
+            x[31] |= 0x80;
+        }
+        x
     }
 
-    pub fn decompress(pt: Pt) -> Result<Self, CurveError> {
-        Self::try_from(pt)
+    /// Convert into compressed point.
+    #[inline]
+    pub fn compress(self) -> Pt {
+        Pt::compress(self)
     }
 }
 
@@ -190,7 +208,7 @@ impl Eq for ECp {}
 
 impl PartialEq for ECp {
     fn eq(&self, b: &Self) -> bool {
-        let tmp = Pt::from(*self - *b).bits();
+        let tmp: [u8; 32] = (*self - *b).into_bytes();
         tmp == [0u8; 32]
     }
 }
@@ -613,7 +631,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_mul() -> Result<(), hex::FromHexError> {
+    fn test_mul() -> Result<(), CryptoError> {
         let smul = "1FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF77965C4DFD307348944D45FD166C970"; // *ed-r* - 1
         let sx = "037FBB0CEA308C479343AEE7C029A190C021D96A492ECD6516123F27BCE29EDA"; // *ed-gen* x
         let sy = "06B72F82D47FB7CC6656841169840E0C4FE2DEE2AF3F976BA4CCB1BF9B46360E"; // *ed-gen* y
@@ -621,8 +639,8 @@ mod tests {
                                                                                      // multiplier in 4-bit window form
         let mut w = WinVec::from_str(&smul);
 
-        let gen_x = Fq::from_str(&sx)?;
-        let gen_y = Fq::from_str(&sy)?;
+        let gen_x = Fq::try_from_hex(&sx)?;
+        let gen_y = Fq::try_from_hex(&sy)?;
 
         println!("The Generator Point");
         println!("gen_x: {}", gen_x);
@@ -651,14 +669,14 @@ mod tests {
         for _ in 0..1_000 {
             let pt = ECp::random();
             let cpt = Pt::from(pt);
-            let ept = ECp::try_from(cpt).unwrap();
+            let ept = ECp::decompress(cpt).unwrap();
             assert!(ept == pt);
         }
         for _ in 0..1_000 {
             let x = Fr::random();
             let pt = x * (*G);
             let cpt = Pt::from(pt);
-            let ept = ECp::try_from(cpt).unwrap();
+            let ept = ECp::decompress(cpt).unwrap();
             assert!(ept == pt);
         }
     }

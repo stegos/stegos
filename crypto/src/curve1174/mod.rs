@@ -125,18 +125,10 @@ lazy_static! {
     };
     pub static ref G: ECp = {
         assert!(*INIT, "can't happen");
-        let gen_x = Fq::from_str(GEN_X).expect("Invalid Gen X hexstr");
-        let gen_y = Fq::from_str(GEN_Y).expect("Invalid Gen Y hexstr");
+        let gen_x = Fq::try_from_hex(GEN_X).expect("Invalid Gen X hexstr");
+        let gen_y = Fq::try_from_hex(GEN_Y).expect("Invalid Gen Y hexstr");
         ECp::try_from_xy(&gen_x, &gen_y).expect("Invalid generator description")
     };
-}
-
-#[derive(Debug, Fail)]
-pub enum CurveError {
-    #[fail(display = "CurveError::NotQuadraticResidue")]
-    NotQuadraticResidue,
-    #[fail(display = "CurveError::PointNotOnCurve")]
-    PointNotOnCurve,
 }
 
 fn check_prng() {
@@ -207,12 +199,12 @@ mod tests {
         let sx = "037FBB0CEA308C479343AEE7C029A190C021D96A492ECD6516123F27BCE29EDA";
         let sy = "06B72F82D47FB7CC6656841169840E0C4FE2DEE2AF3F976BA4CCB1BF9B46360E";
 
-        let gen_x = Fq::from_str(sx).unwrap();
-        let gen_y = Fq::from_str(sy).unwrap();
+        let gen_x = Fq::try_from_hex(sx).unwrap();
+        let gen_y = Fq::try_from_hex(sy).unwrap();
         let pt1 = ECp::try_from_xy(&gen_x, &gen_y).unwrap();
 
-        let gx = Fq::from_str(&sx).unwrap();
-        let gy = Fq::from_str(&sy).unwrap();
+        let gx = Fq::try_from_hex(&sx).unwrap();
+        let gy = Fq::try_from_hex(&sy).unwrap();
         let pt2 = ECp::try_from_xy(&gx, &gy).unwrap();
 
         assert_eq!(pt1, pt2);
@@ -288,9 +280,9 @@ pub fn curve1174_tests() {
     let sx = "037FBB0CEA308C479343AEE7C029A190C021D96A492ECD6516123F27BCE29EDA"; // *ed-gen* x
     let sy = "06B72F82D47FB7CC6656841169840E0C4FE2DEE2AF3F976BA4CCB1BF9B46360E"; // *ed-gen* y
 
-    let gx = Fq::from_str(&sx).unwrap();
-    let gy = Fq::from_str(&sy).unwrap();
-    let mx = Fr::from_str(&smul).unwrap();
+    let gx = Fq::try_from_hex(&sx).unwrap();
+    let gy = Fq::try_from_hex(&sy).unwrap();
+    let mx = Fr::try_from_hex(&smul).unwrap();
     let mut pt2: ECp = ECp::inf();
     for _ in 0..100 {
         let pt1 = ECp::try_from_xy(&gx, &gy).unwrap();
@@ -319,8 +311,8 @@ pub fn curve1174_tests() {
         println!("{:?}", &x);
     }
 
-    let gen_x = Fq::from_str(&sx).unwrap();
-    let gen_y = Fq::from_str(&sy).unwrap();
+    let gen_x = Fq::try_from_hex(&sx).unwrap();
+    let gen_y = Fq::try_from_hex(&sy).unwrap();
     let pt = ECp::try_from_xy(&gen_x, &gen_y).unwrap();
 
     println!("The Generator Point");
@@ -332,7 +324,7 @@ pub fn curve1174_tests() {
     /* */
     let ept = ECp::from(Hash::from_vector(b"Testing12")); // produces an odd Y
     let cpt = Pt::from(ept); // MSB should be set
-    let ept2 = ECp::try_from(cpt).unwrap();
+    let ept2 = ECp::decompress(cpt).unwrap();
     println!("hash -> {}", ept);
     println!("hash -> {}", cpt);
     println!("hash -> {}", ept2);
@@ -347,7 +339,7 @@ pub fn curve1174_tests() {
     println!("delta = {}", delta);
 
     let cpt = Pt::from(pkey);
-    let ept = ECp::try_from(cpt).unwrap() + delta * *G;
+    let ept = ECp::decompress(cpt).unwrap() + delta * *G;
     let delta_pkey = PublicKey::from(ept);
     println!("delta_key = {}", Pt::from(delta_pkey));
 

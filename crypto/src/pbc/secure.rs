@@ -31,16 +31,13 @@
 //! --------------------------------------------------------------------------
 
 use super::*;
-use crate::hash::*;
-use crate::utils::*;
+use crate::CryptoError;
+use rand::rngs::ThreadRng;
 use rand::thread_rng;
-
+use rand::Rng;
 use std::cmp::Ordering;
 use std::hash as stdhash;
 use std::ops::Neg;
-
-use rand::rngs::ThreadRng;
-use rand::Rng;
 
 // --------------------------------------------------------------------------------
 
@@ -108,7 +105,7 @@ impl Zr {
         Self::acceptable_random_rehash(x)
     }
 
-    pub fn from_str(s: &str) -> Result<Zr, hex::FromHexError> {
+    pub fn from_str(s: &str) -> Result<Zr, CryptoError> {
         // result might be larger than prime order, r,
         // but will be interpreted by PBC lib as (Zr mod r).
         let mut v = Zr::wv();
@@ -200,7 +197,7 @@ impl G1 {
         u8v_to_typed_str("G1", &self.base_vector())
     }
 
-    pub fn from_str(s: &str) -> Result<G1, hex::FromHexError> {
+    pub fn from_str(s: &str) -> Result<G1, CryptoError> {
         let mut v = G1::wv();
         hexstr_to_bev_u8(&s, &mut v)?;
         Ok(G1(v))
@@ -262,7 +259,7 @@ impl G2 {
         u8v_to_typed_str("G2", &self.base_vector())
     }
 
-    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
         let mut v = Self::wv();
         hexstr_to_bev_u8(&s, &mut v)?;
         Ok(G2(v))
@@ -340,7 +337,7 @@ impl GT {
         u8v_to_typed_str("GT", &self.base_vector())
     }
 
-    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
         let mut v = GT::wv();
         hexstr_to_bev_u8(&s, &mut v)?;
         Ok(GT(v))
@@ -380,7 +377,7 @@ impl SecretKey {
         u8v_to_typed_str("SKey", &self.base_vector())
     }
 
-    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
         let z = Zr::from_str(s)?;
         Ok(SecretKey(z))
     }
@@ -426,7 +423,7 @@ impl PublicKey {
         u8v_to_typed_str("PKey", &self.base_vector())
     }
 
-    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
         let g = G2::from_str(s)?;
         Ok(PublicKey(g))
     }
@@ -500,7 +497,7 @@ impl SecretSubKey {
         u8v_to_typed_str("SSubKey", &self.base_vector())
     }
 
-    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
         let g = G1::from_str(s)?;
         Ok(SecretSubKey(g))
     }
@@ -539,7 +536,7 @@ impl PublicSubKey {
         u8v_to_typed_str("PSubKey", &self.base_vector())
     }
 
-    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
         let g = G2::from_str(s)?;
         Ok(PublicSubKey(g))
     }
@@ -579,7 +576,7 @@ impl Signature {
         u8v_to_typed_str("Sig", &self.base_vector())
     }
 
-    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
         let g = G1::from_str(s)?;
         Ok(Signature(g))
     }
@@ -742,7 +739,7 @@ impl RVal {
         u8v_to_typed_str("RVal", &self.base_vector())
     }
 
-    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
         let g = G2::from_str(s)?;
         Ok(RVal(g))
     }

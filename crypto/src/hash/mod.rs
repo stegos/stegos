@@ -22,13 +22,12 @@
 // SOFTWARE.
 
 use crate::utils::*;
-use hex;
+use crate::CryptoError;
 use sha3::{Digest, Sha3_256};
 use std::fmt;
+use std::hash as stdhash;
 use std::mem;
 use std::slice;
-
-use std::hash as stdhash;
 
 // -----------------------------------------------------
 // Hashing with SHA3
@@ -47,7 +46,7 @@ impl Hash {
         self.0
     }
 
-    pub fn from_hex(hexstr: &str) -> Result<Self, hex::FromHexError> {
+    pub fn from_hex(hexstr: &str) -> Result<Self, CryptoError> {
         // use this function to import a Hash digest facsimile from a string constant
         let mut v = [0u8; HASH_SIZE];
         hexstr_to_bev_u8(hexstr, &mut v)?;

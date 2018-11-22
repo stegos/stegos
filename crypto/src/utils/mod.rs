@@ -21,18 +21,19 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::CryptoError;
 use hex;
 use std::cmp::Ordering;
 
 // -------------------------------------------------------------------
 // general utility functions
 
-pub fn hexstr_to_bev_u8(s: &str, x: &mut [u8]) -> Result<(), hex::FromHexError> {
+pub fn hexstr_to_bev_u8(s: &str, x: &mut [u8]) -> Result<(), CryptoError> {
     // collect a big-endian vector of 8-bit values from a hex string.
     let v = hex::decode(s)?;
     let nel = x.len();
     if nel != v.len() {
-        return Err(hex::FromHexError::InvalidStringLength);
+        return Err(CryptoError::InvalidHexLength);
     }
     let mut ix = 0; // this seems dumb... isn't there a better way?
     for b in v {
@@ -42,12 +43,12 @@ pub fn hexstr_to_bev_u8(s: &str, x: &mut [u8]) -> Result<(), hex::FromHexError> 
     Ok(())
 }
 
-pub fn hexstr_to_lev_u8(s: &str, x: &mut [u8]) -> Result<bool, hex::FromHexError> {
+pub fn hexstr_to_lev_u8(s: &str, x: &mut [u8]) -> Result<bool, CryptoError> {
     // collect a little-endian vector of 8-bit values from a hex string.
     let v = hex::decode(s)?;
     let nel = x.len();
     if nel != v.len() {
-        return Err(hex::FromHexError::InvalidStringLength);
+        return Err(CryptoError::InvalidHexLength);
     }
     let mut ix = nel; // this seems dumb... isn't there a better way?
     for b in v {

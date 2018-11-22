@@ -23,15 +23,12 @@
 //
 
 use super::*;
-
-// extern crate crypto;
-
+use crate::CryptoError;
 use crypto::aes;
 use crypto::aes::KeySize::KeySize128;
 use crypto::aesni;
 use crypto::aessafe;
 use crypto::symmetriccipher::{BlockDecryptor, BlockEncryptor};
-
 use std::hash as stdhash;
 
 // ------------------------------------------------------------------------------------------
@@ -41,70 +38,73 @@ use std::hash as stdhash;
 pub struct Pt([u8; 32]);
 
 impl Pt {
-    pub fn bits(self) -> [u8; 32] {
-        self.0
+    /// Convert into raw bytes.
+    pub fn into_bytes(self) -> [u8; 32] {
+        return self.0;
     }
 
-    pub fn nbr_str(&self) -> String {
+    /// Try to convert from raw bytes.
+    pub fn try_from_bytes(bytes_slice: &[u8]) -> Result<Self, CryptoError> {
+        if bytes_slice.len() != 32 {
+            return Err(CryptoError::InvalidBinaryLength);
+        }
+        let mut bytes: [u8; 32] = [0u8; 32];
+        bytes.copy_from_slice(bytes_slice);
+        ECp::try_from_bytes(bytes)?; // validate point
+        let pt = Pt(bytes);
+        Ok(pt)
+    }
+
+    /// Create from an uncompressed point.
+    #[inline]
+    pub fn compress(ept: ECp) -> Pt {
+        let bytes = ECp::into_bytes(ept);
+        Pt(bytes)
+    }
+
+    /// Decompress point.
+    #[inline]
+    pub fn decompress(self) -> Result<ECp, CryptoError> {
+        ECp::decompress(self)
+    }
+
+    /// Convert into hex string.
+    pub fn into_hex(self) -> String {
         let v = Lev32(self.0);
         basic_nbr_str(&v.to_lev_u64())
     }
 
-    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
+    /// Try to convert from hex string.
+    pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
         let mut v = [0u8; 32];
         hexstr_to_lev_u8(&s, &mut v)?;
+        ECp::try_from_bytes(v)?; // validate point
         Ok(Pt(v))
-    }
-
-    pub fn decompress(pt: Self) -> Result<ECp, CurveError> {
-        ECp::try_from(pt)
-    }
-
-    pub fn into_bytes(self) -> Vec<u8> {
-        self.0.to_vec()
-    }
-
-    pub fn from_bytes(bytes: &Vec<u8>) -> Result<Self, CurveError> {
-        let mut bits: [u8; 32] = [0u8; 32];
-        bits.copy_from_slice(&bytes[0..31]);
-        let pt = Pt(bits);
-        if let Err(e) = ECp::try_from(pt.clone()) {
-            Err(e)
-        } else {
-            Ok(pt)
-        }
     }
 }
 
 impl fmt::Display for Pt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Pt({})", self.nbr_str())
+        write!(f, "Pt({})", self.into_hex())
     }
 }
 
 impl fmt::Debug for Pt {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Pt({})", self.nbr_str())
+        write!(f, "Pt({})", self.into_hex())
     }
 }
 
 impl Hashable for Pt {
     fn hash(&self, state: &mut Hasher) {
         "Pt".hash(state);
-        (*self).bits().hash(state);
+        (*self).0.hash(state);
     }
 }
 
 impl From<ECp> for Pt {
     fn from(pt: ECp) -> Pt {
-        let mut afpt = pt;
-        norm(&mut afpt);
-        let ptx = Fq::from(afpt.x);
-        let mut x = U256::from(ptx).to_lev_u8();
-        if afpt.y.is_odd() {
-            x[31] |= 0x80;
-        }
-        Pt(x)
+        pt.compress()
     }
 }
 
@@ -114,31 +114,40 @@ impl From<ECp> for Pt {
 pub struct SecretKey(Fr);
 
 impl SecretKey {
-    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
-        Ok(SecretKey(Fr::from_str(s)?))
+    /// Convert into hex string.
+    #[inline]
+    pub fn into_hex(self) -> String {
+        self.0.into_hex()
     }
 
+    /// Try to convert from hex string.
+    #[inline]
+    pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
+        Ok(SecretKey(Fr::try_from_hex(s)?))
+    }
+
+    /// Convert into raw bytes.
+    #[inline]
     pub fn into_bytes(self) -> [u8; 32] {
-        self.0.to_lev_u8()
+        self.0.into_bytes()
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> Self {
-        assert_eq!(bytes.len(), 32);
-        let mut bits: [u8; 32] = [0u8; 32];
-        bits.copy_from_slice(bytes);
-        SecretKey(Fr::from_lev_u8(bits))
+    /// Try to convert from raw bytes.
+    #[inline]
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        Ok(SecretKey(Fr::try_from_bytes(bytes)?))
     }
 }
 
 impl fmt::Display for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "SKey({})", (*self).0.nbr_str())
+        write!(f, "SKey({})", self.into_hex())
     }
 }
 
 impl fmt::Debug for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "SKey({})", (*self).0.nbr_str())
+        write!(f, "SKey({})", self.into_hex())
     }
 }
 
@@ -167,37 +176,40 @@ impl From<SecretKey> for Fr {
 pub struct PublicKey(Pt);
 
 impl PublicKey {
-    pub fn from_str(s: &str) -> Result<Self, hex::FromHexError> {
-        Ok(PublicKey(Pt::from_str(s)?))
-    }
-
-    /// Cloak public key with random factor.
-    pub fn cloak(&self, delta: Fr) -> Result<Self, CurveError> {
-        let pt = Pt::decompress(self.0)?;
-        Ok(PublicKey(ECp::compress(pt + delta * (*super::G))))
-    }
-
-    pub fn into_bytes(self) -> Vec<u8> {
+    /// Convert into raw bytes.
+    #[inline]
+    pub fn into_bytes(self) -> [u8; 32] {
         self.0.into_bytes()
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> Self {
-        assert_eq!(bytes.len(), 32);
-        let mut bits: [u8; 32] = [0u8; 32];
-        bits.copy_from_slice(bytes);
-        PublicKey(Pt(bits))
+    /// Try to convert from raw bytes.
+    #[inline]
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        Ok(PublicKey(Pt::try_from_bytes(bytes)?))
+    }
+
+    /// Convert into hex string.
+    #[inline]
+    pub fn into_hex(self) -> String {
+        self.0.into_hex()
+    }
+
+    /// Try to convert from hex string.
+    #[inline]
+    pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
+        Ok(PublicKey(Pt::try_from_hex(s)?))
     }
 }
 
 impl fmt::Display for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "PKey({})", (*self).0.nbr_str())
+        write!(f, "PKey({})", self.into_hex())
     }
 }
 
 impl fmt::Debug for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "PKey({})", (*self).0.nbr_str())
+        write!(f, "PKey({})", self.into_hex())
     }
 }
 
@@ -211,7 +223,8 @@ impl Hashable for PublicKey {
 impl stdhash::Hash for PublicKey {
     fn hash<H: stdhash::Hasher>(&self, state: &mut H) {
         stdhash::Hash::hash(&"PKey", state);
-        stdhash::Hash::hash(&(*self).0.bits(), state);
+        let bytes: [u8; 32] = self.into_bytes();
+        stdhash::Hash::hash(&bytes, state);
     }
 }
 
@@ -223,7 +236,7 @@ impl From<PublicKey> for Pt {
 
 impl From<ECp> for PublicKey {
     fn from(pt: ECp) -> Self {
-        PublicKey(ECp::compress(pt))
+        PublicKey(Pt::from(pt))
     }
 }
 
@@ -248,7 +261,7 @@ pub fn make_deterministic_keys(seed: &[u8]) -> (SecretKey, PublicKey, SchnorrSig
     (skey, pkey, sig)
 }
 
-pub fn check_keying(pkey: &PublicKey, sig: &SchnorrSig) -> Result<bool, CurveError> {
+pub fn check_keying(pkey: &PublicKey, sig: &SchnorrSig) -> Result<bool, CryptoError> {
     let hkey = Hash::digest(pkey);
     validate_sig(&hkey, &sig, &pkey)
 }
@@ -301,7 +314,7 @@ pub fn sign_hash(hmsg: &Hash, skey: &SecretKey) -> SchnorrSig {
     }
 }
 
-pub fn validate_sig(hmsg: &Hash, sig: &SchnorrSig, pkey: &PublicKey) -> Result<bool, CurveError> {
+pub fn validate_sig(hmsg: &Hash, sig: &SchnorrSig, pkey: &PublicKey) -> Result<bool, CryptoError> {
     let h = Hash::digest_chain(&[&sig.K, pkey, hmsg]);
     let Ppt = Pt::decompress(pkey.0)?;
     let Kpt = Pt::decompress(sig.K)?;
@@ -364,11 +377,11 @@ fn aes_encrypt_with_key(msg: &[u8], key: &[u8; 32]) -> Vec<u8> {
     ctxt
 }
 
-pub fn aes_encrypt(msg: &[u8], pkey: &PublicKey) -> Result<EncryptedPayload, CurveError> {
+pub fn aes_encrypt(msg: &[u8], pkey: &PublicKey) -> Result<EncryptedPayload, CryptoError> {
     let h = Hash::from_vector(msg);
     let alpha = Fr::synthetic_random("encr-alpha", pkey, &h);
     let k = Fr::synthetic_random("encr-k", pkey, &h);
-    let ppt = ECp::decompress(Pt::from(*pkey))?; // could give CurveError if invalid PublicKey
+    let ppt = ECp::decompress(Pt::from(*pkey))?; // could give CryptoError if invalid PublicKey
     let apkg = alpha * ppt + k * *G; // generate key transfer cloaking pair, apkg and ag
     let ag = alpha * *G;
     let kg = k * *G; // the actual key seed
@@ -381,9 +394,9 @@ pub fn aes_encrypt(msg: &[u8], pkey: &PublicKey) -> Result<EncryptedPayload, Cur
     })
 }
 
-pub fn aes_decrypt(payload: &EncryptedPayload, skey: &SecretKey) -> Result<Vec<u8>, CurveError> {
+pub fn aes_decrypt(payload: &EncryptedPayload, skey: &SecretKey) -> Result<Vec<u8>, CryptoError> {
     let zr = Fr::from(*skey);
-    let apkg = ECp::decompress(payload.apkg)?; // could give CurveError if corrupted payload
+    let apkg = ECp::decompress(payload.apkg)?; // could give CryptoError if corrupted payload
     let ag = ECp::decompress(payload.ag)?; // ... ditto ...
     let kg = apkg - zr * ag; // compute the actual key seed = k*G
     let key = Hash::digest(&kg);

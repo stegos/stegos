@@ -156,13 +156,13 @@ impl PartialOrd for Zr {
 
 impl fmt::Display for Zr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Zr({})", self.into_hex())
+        write!(f, "SecureZr({})", self.into_hex())
     }
 }
 
 impl Hashable for Zr {
     fn hash(&self, state: &mut Hasher) {
-        "Zr".hash(state);
+        "SecureZr".hash(state);
         self.base_vector().hash(state);
     }
 }
@@ -223,13 +223,13 @@ impl G1 {
 impl fmt::Display for G1 {
     // for display of signatures
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "G1({})", self.into_hex())
+        write!(f, "SecureG1({})", self.into_hex())
     }
 }
 
 impl Hashable for G1 {
     fn hash(&self, state: &mut Hasher) {
-        "G1".hash(state);
+        "SecureG1".hash(state);
         self.base_vector().hash(state);
     }
 }
@@ -301,13 +301,13 @@ impl G2 {
 
 impl fmt::Display for G2 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "G2({})", self.into_hex())
+        write!(f, "SecureG2({})", self.into_hex())
     }
 }
 
 impl Hashable for G2 {
     fn hash(&self, state: &mut Hasher) {
-        "G2".hash(state);
+        "SecureG2".hash(state);
         self.base_vector().hash(state);
     }
 }
@@ -359,13 +359,13 @@ impl GT {
 
 impl fmt::Display for GT {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "GT({})", self.into_hex())
+        write!(f, "SecureGT({})", self.into_hex())
     }
 }
 
 impl Hashable for GT {
     fn hash(&self, state: &mut Hasher) {
-        "GT".hash(state);
+        "SecureGT".hash(state);
         self.base_vector().hash(state);
     }
 }
@@ -400,19 +400,19 @@ impl SecretKey {
 
 impl fmt::Display for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "SKey({})", self.into_hex())
+        write!(f, "SecureSKey({})", self.into_hex())
     }
 }
 
 impl fmt::Debug for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "SKey({})", self.into_hex())
+        write!(f, "SecureSKey({})", self.into_hex())
     }
 }
 
 impl Hashable for SecretKey {
     fn hash(&self, state: &mut Hasher) {
-        "SKey".hash(state);
+        "SecureSKey".hash(state);
         self.base_vector().hash(state);
     }
 }
@@ -462,19 +462,19 @@ impl PublicKey {
 
 impl fmt::Debug for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "PKey({})", self.into_hex())
+        write!(f, "SecurePKey({})", self.into_hex())
     }
 }
 
 impl fmt::Display for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "PKey({})", self.into_hex())
+        write!(f, "SecurePKey({})", self.into_hex())
     }
 }
 
 impl Hashable for PublicKey {
     fn hash(&self, state: &mut Hasher) {
-        "PKey".hash(state);
+        "SecurePKey".hash(state);
         self.base_vector().hash(state);
     }
 }
@@ -531,13 +531,13 @@ impl SecretSubKey {
 
 impl fmt::Display for SecretSubKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "SSubKey({})", self.into_hex())
+        write!(f, "SecureSSubKey({})", self.into_hex())
     }
 }
 
 impl Hashable for SecretSubKey {
     fn hash(&self, state: &mut Hasher) {
-        "SSubKey".hash(state);
+        "SecureSSubKey".hash(state);
         self.base_vector().hash(state);
     }
 }
@@ -572,13 +572,13 @@ impl PublicSubKey {
 
 impl fmt::Display for PublicSubKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "PSubKey({})", self.into_hex())
+        write!(f, "SecurePSubKey({})", self.into_hex())
     }
 }
 
 impl Hashable for PublicSubKey {
     fn hash(&self, state: &mut Hasher) {
-        "PSubKey".hash(state);
+        "SecurePSubKey".hash(state);
         self.base_vector().hash(state);
     }
 }
@@ -614,20 +614,20 @@ impl Signature {
 
 impl fmt::Debug for Signature {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Sig({})", self.into_hex())
+        write!(f, "SecureSig({})", self.into_hex())
     }
 }
 
 impl fmt::Display for Signature {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Sig({})", self.into_hex())
+        write!(f, "SecureSig({})", self.into_hex())
     }
 }
 
 // NOTE: BLS Multi-signature never contributes to the computation of any block header hash.
 //impl Hashable for Signature {
 //    fn hash(&self, state: &mut Hasher) {
-//        "Sig".hash(state);
+//        "SecureSig".hash(state);
 //        self.base_vector().hash(state);
 //    }
 //}
@@ -779,13 +779,13 @@ impl RVal {
 
 impl fmt::Display for RVal {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "RVal({})", self.into_hex())
+        write!(f, "SecureRVal({})", self.into_hex())
     }
 }
 
 impl Hashable for RVal {
     fn hash(&self, state: &mut Hasher) {
-        "RVal".hash(state);
+        "SecureRVal".hash(state);
         self.base_vector().hash(state);
     }
 }

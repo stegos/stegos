@@ -174,19 +174,19 @@ impl From<i64> for Zr {
 
 impl fmt::Debug for Zr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Zr({})", self.into_hex())
+        write!(f, "FastZr({})", self.into_hex())
     }
 }
 
 impl fmt::Display for Zr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Zr({})", self.into_hex())
+        write!(f, "FastZr({})", self.into_hex())
     }
 }
 
 impl Hashable for Zr {
     fn hash(&self, state: &mut Hasher) {
-        "Zr".hash(state);
+        "FastZr".hash(state);
         self.base_vector().hash(state);
     }
 }
@@ -424,19 +424,19 @@ impl PartialEq for G1 {
 
 impl fmt::Debug for G1 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "G1({})", self.into_hex())
+        write!(f, "FastG1({})", self.into_hex())
     }
 }
 
 impl fmt::Display for G1 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "G1({})", self.into_hex())
+        write!(f, "FastG1({})", self.into_hex())
     }
 }
 
 impl Hashable for G1 {
     fn hash(&self, state: &mut Hasher) {
-        "G1".hash(state);
+        "FastG1".hash(state);
         self.base_vector().hash(state);
     }
 }
@@ -625,13 +625,13 @@ impl PartialEq for G2 {
 
 impl fmt::Display for G2 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "G2({})", self.into_hex())
+        write!(f, "FastG2({})", self.into_hex())
     }
 }
 
 impl Hashable for G2 {
     fn hash(&self, state: &mut Hasher) {
-        "G2".hash(state);
+        "FastG2".hash(state);
         self.base_vector().hash(state);
     }
 }
@@ -782,7 +782,7 @@ impl GT {
 
 impl fmt::Display for GT {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "GT({})", self.into_hex())
+        write!(f, "FastGT({})", self.into_hex())
     }
 }
 
@@ -795,7 +795,7 @@ impl PartialEq for GT {
 
 impl Hashable for GT {
     fn hash(&self, state: &mut Hasher) {
-        "GT".hash(state);
+        "FastGT".hash(state);
         self.base_vector().hash(state);
     }
 }
@@ -843,13 +843,13 @@ impl SecretKey {
 
 impl fmt::Display for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "SKey({})", self.into_hex())
+        write!(f, "FastSKey({})", self.into_hex())
     }
 }
 
 impl Hashable for SecretKey {
     fn hash(&self, state: &mut Hasher) {
-        "SKey".hash(state);
+        "FastSKey".hash(state);
         self.base_vector().hash(state);
     }
 }
@@ -891,13 +891,13 @@ impl PartialEq for PublicKey {
 
 impl fmt::Display for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "PKey({})", self.into_hex())
+        write!(f, "FastPKey({})", self.into_hex())
     }
 }
 
 impl Hashable for PublicKey {
     fn hash(&self, state: &mut Hasher) {
-        "PKey".hash(state);
+        "FastPKey".hash(state);
         self.base_vector().hash(state);
     }
 }
@@ -935,13 +935,13 @@ impl Signature {
 
 impl fmt::Display for Signature {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Sig({})", self.into_hex())
+        write!(f, "FastSig({})", self.into_hex())
     }
 }
 
 impl Hashable for Signature {
     fn hash(&self, state: &mut Hasher) {
-        "Sig".hash(state);
+        "FastSig".hash(state);
         self.base_vector().hash(state);
     }
 }

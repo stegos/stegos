@@ -15,7 +15,15 @@ hex = "0.3"
 lazy_static = "1.1"
 log = "0.4"
 parking_lot = "0.6"
+protobuf = "2.2"
 rand = "0.6"
 state = "0.4"
 tokio = "0.1"
 tokio-timer = "0.2"
+
+[dev-dependencies]
+simple_logger = "1.0"
+
+[build-dependencies]
+# protoc-rust = "2.1"
+protobuf-codegen-pure = "2.2"

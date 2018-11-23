@@ -387,6 +387,19 @@ impl G1 {
         Ok(G1(v))
     }
 
+    pub fn into_bytes(self) -> [u8; G1_SIZE_AR160] {
+        self.0
+    }
+
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        if bytes.len() != G1_SIZE_AR160 {
+            return Err(CryptoError::InvalidBinaryLength(G1_SIZE_AR160, bytes.len()));
+        }
+        let mut bits: [u8; G1_SIZE_AR160] = [0u8; G1_SIZE_AR160];
+        bits.copy_from_slice(bytes);
+        Ok(G1(bits))
+    }
+
     pub fn generator() -> G1 {
         let u = G1::new();
         unsafe {
@@ -588,6 +601,19 @@ impl G2 {
         Ok(G2(v))
     }
 
+    pub fn into_bytes(self) -> [u8; G2_SIZE_AR160] {
+        self.0
+    }
+
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        if bytes.len() != G2_SIZE_AR160 {
+            return Err(CryptoError::InvalidBinaryLength(G2_SIZE_AR160, bytes.len()));
+        }
+        let mut bits: [u8; G2_SIZE_AR160] = [0u8; G2_SIZE_AR160];
+        bits.copy_from_slice(bytes);
+        Ok(G2(bits))
+    }
+
     pub fn generator() -> G2 {
         let v = G2::new();
         unsafe {
@@ -620,6 +646,12 @@ impl Eq for G2 {}
 impl PartialEq for G2 {
     fn eq(&self, b: &Self) -> bool {
         self.0[..] == b.0[..]
+    }
+}
+
+impl fmt::Debug for G2 {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "FastG2({})", self.into_hex())
     }
 }
 
@@ -880,12 +912,26 @@ impl PublicKey {
     pub fn into_hex(self) -> String {
         self.0.into_hex()
     }
+
+    pub fn into_bytes(self) -> [u8; G2_SIZE_FR256] {
+        self.0.into_bytes()
+    }
+
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        Ok(PublicKey(G2::try_from_bytes(bytes)?))
+    }
 }
 
 impl Eq for PublicKey {}
 impl PartialEq for PublicKey {
     fn eq(&self, b: &Self) -> bool {
         self.0 == b.0
+    }
+}
+
+impl fmt::Debug for PublicKey {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "FastPKey({})", self.into_hex())
     }
 }
 

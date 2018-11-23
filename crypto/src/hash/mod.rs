@@ -87,6 +87,19 @@ impl Hash {
         }
         state.result()
     }
+
+    pub fn into_bytes(self) -> [u8; HASH_SIZE] {
+        self.0
+    }
+
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        if bytes.len() != HASH_SIZE {
+            return Err(CryptoError::InvalidBinaryLength(HASH_SIZE, bytes.len()));
+        }
+        let mut bits: [u8; HASH_SIZE] = [0u8; HASH_SIZE];
+        bits.copy_from_slice(bytes);
+        Ok(Hash(bits))
+    }
 }
 
 impl fmt::Debug for Hash {

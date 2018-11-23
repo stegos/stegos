@@ -26,6 +26,7 @@ extern crate futures;
 #[macro_use]
 extern crate lazy_static;
 extern crate parking_lot;
+extern crate protobuf;
 extern crate rand;
 extern crate state;
 extern crate stegos_config;
@@ -36,19 +37,21 @@ extern crate tokio;
 extern crate tokio_timer;
 #[macro_use]
 extern crate log;
-// #[macro_use]
-// extern crate failure_derive;
+#[macro_use]
+extern crate failure_derive;
 
 use failure::Error;
 use futures::sync::mpsc::UnboundedReceiver;
 use futures::{Async, Future, Poll, Stream};
 use std::time::Duration;
 use stegos_config::Config;
+use stegos_crypto::hash::{Hash, Hashable};
 use stegos_keychain::KeyChain;
 use stegos_network::Broker;
 use tokio::timer::Interval;
 
 mod randhound;
+mod randhound_proto;
 
 const TOPIC: &'static str = "randhound";
 
@@ -63,11 +66,10 @@ impl RandHound {
     /// Create a new RandHound service.
     pub fn new(
         broker: Broker,
-        my_id: &String,
         cfg: &Config,
         keychain: &KeyChain,
     ) -> Result<impl Future<Item = (), Error = ()>, Error> {
-        RandHoundService::new(broker, my_id, cfg, keychain)
+        RandHoundService::new(broker, cfg, keychain)
     }
 }
 
@@ -78,61 +80,70 @@ impl RandHound {
 /// RandHound++ network service.
 struct RandHoundService {
     /// Network message broker.
-    broker: Broker,
+    // broker: Broker,
     /// Timer
     timer: Interval,
     /// Unicast Input Messages.
     unicast_rx: UnboundedReceiver<Vec<u8>>,
     /// Broadcast Input Messages.
     broadcast_rx: UnboundedReceiver<Vec<u8>>,
-    /// Network node id.
-    my_id: String,
+    /// Is Randhound started??
+    randhound_started: bool,
 }
 
 impl RandHoundService {
-    /// Send an unicast message to RandHound peer.
-    fn unicast(&self, node_id: &String, data: Vec<u8>) -> Result<(), Error> {
-        self.broker.publish(&format!("{}-{}", node_id, TOPIC), data)
+    /// Constructor.
+    fn new(broker: Broker, cfg: &Config, keychain: &KeyChain) -> Result<Self, Error> {
+        // Subscribe to unicast topic.
+        let unicast_rx = broker.subscribe(&node_id_from_hashable(&keychain.cosi_pkey))?;
+
+        // Subscribe to broadcast topic.
+        let broadcast_rx = broker.subscribe(&TOPIC.to_string())?;
+
+        // Set up timer event.
+        let timer = Interval::new_interval(Duration::from_secs(30));
+
+        let randhound = RandHoundService {
+            // broker: broker.clone(),
+            timer,
+            unicast_rx,
+            broadcast_rx,
+            randhound_started: false,
+        };
+
+        randhound::init_state(cfg, &keychain, broker)?;
+        Ok(randhound)
     }
+    /// Send an unicast message to RandHound peer.
+    // fn unicast(&self, node_id: &String, data: Vec<u8>) -> Result<(), Error> {
+    //     self.broker.publish(node_id, data)
+    // }
 
     /// Send a broadcast message to RandHound peer.
-    fn broadcast(&self, data: Vec<u8>) -> Result<(), Error> {
-        self.broker.publish(&TOPIC.to_string(), data)
-    }
+    // fn broadcast(&self, data: Vec<u8>) -> Result<(), Error> {
+    //     self.broker.publish(&TOPIC.to_string(), data)
+    // }
 
     /// Called on a new unitcast message.
     fn on_unicast(&mut self, msg: Vec<u8>) {
-        debug!(
-            "received unicast message: {}*",
-            String::from_utf8_lossy(msg.as_slice())
-        );
+        process_msg(msg);
     }
 
     /// Called on a new broadcast message.
     fn on_broadcast(&mut self, msg: Vec<u8>) {
-        debug!(
-            "received broadcast message: {}*",
-            String::from_utf8_lossy(msg.as_slice())
-        );
+        process_msg(msg);
     }
 
     /// Called on timer event.
     fn on_timer(&mut self) {
         debug!("timer");
-
-        let hello_msg1 = format!("hello from: {} to node01", &self.my_id);
-        let hello_msg2 = format!("hello from: {} to node02", &self.my_id);
-        let hello_msg3 = format!("hello from: {} to node03", &self.my_id);
-        let hello_broadcast = format!("broadcast hello from: {}", &self.my_id);
-
-        self.unicast(&"node01".to_string(), hello_msg1.as_bytes().to_vec())
-            .unwrap();
-        self.unicast(&"node02".to_string(), hello_msg2.as_bytes().to_vec())
-            .unwrap();
-        self.unicast(&"node03".to_string(), hello_msg3.as_bytes().to_vec())
-            .unwrap();
-
-        self.broadcast(hello_broadcast.as_bytes().to_vec()).unwrap();
+        if self.randhound_started {
+            debug!("Randhound already started!");
+        } else {
+            debug!("Starting Randhound!");
+            self.randhound_started = true;
+            randhound::start_randhound_round();
+        }
     }
 }
 
@@ -172,34 +183,32 @@ impl Future for RandHoundService {
     }
 }
 
-impl RandHoundService {
-    /// Constructor.
-    fn new(
-        broker: Broker,
-        my_id: &String,
-        cfg: &Config,
-        keychain: &KeyChain,
-    ) -> Result<Self, Error> {
-        let my_id = my_id.clone();
+#[inline]
+pub fn node_id_from_hashable(id: &Hashable) -> String {
+    Hash::digest(id).into_hex()
+}
 
-        // Subscribe to unicast topic.
-        let unicast_rx = broker.subscribe(&format!("{}-{}", my_id, TOPIC))?;
-
-        // Subscribe to broadcast topic.
-        let broadcast_rx = broker.subscribe(&TOPIC.to_string())?;
-
-        // Set up timer event.
-        let timer = Interval::new_interval(Duration::from_secs(10));
-
-        let randhound = RandHoundService {
-            broker,
-            my_id,
-            timer,
-            unicast_rx,
-            broadcast_rx,
-        };
-
-        randhound::init_state(cfg, keychain)?;
-        Ok(randhound)
-    }
+fn process_msg(msg: Vec<u8>) {
+    let proto_msg = match protobuf::parse_from_bytes(&msg) {
+        Ok(msg) => {
+            debug!("*received unicast protobuf message: {:#?}*", msg);
+            msg
+        }
+        Err(e) => {
+            error!("Bad protobuf message received: {}", e);
+            return;
+        }
+    };
+    match randhound::proto_to_msg(proto_msg) {
+        Ok(m) => {
+            debug!("*received randhound message: {:#?}", m);
+            if let Err(e) = randhound::dispatch_incoming_message(&m) {
+                error!("Error processing randhound message: {}", e);
+            }
+        }
+        Err(e) => {
+            error!("failed to decode protobuf message: {}", e);
+            return;
+        }
+    };
 }

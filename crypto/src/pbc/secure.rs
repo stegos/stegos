@@ -207,6 +207,19 @@ impl G1 {
         Ok(G1(v))
     }
 
+    pub fn into_bytes(self) -> [u8; G1_SIZE_FR256] {
+        self.0
+    }
+
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        if bytes.len() != G1_SIZE_FR256 {
+            return Err(CryptoError::InvalidBinaryLength(G1_SIZE_FR256, bytes.len()));
+        }
+        let mut bits: [u8; G1_SIZE_FR256] = [0u8; G1_SIZE_FR256];
+        bits.copy_from_slice(bytes);
+        Ok(G1(bits))
+    }
+
     pub fn generator() -> Self {
         let v = Self::new();
         unsafe {
@@ -279,7 +292,10 @@ impl G2 {
     /// Try to convert from raw bytes.
     pub fn try_from_bytes(bytes_slices: &[u8]) -> Result<Self, CryptoError> {
         if bytes_slices.len() != G2_SIZE_FR256 {
-            return Err(CryptoError::InvalidBinaryLength);
+            return Err(CryptoError::InvalidBinaryLength(
+                G2_SIZE_FR256,
+                bytes_slices.len(),
+            ));
         }
         let mut bytes: [u8; G2_SIZE_FR256] = [0u8; G2_SIZE_FR256];
         bytes.copy_from_slice(bytes_slices);
@@ -609,6 +625,14 @@ impl Signature {
     pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
         let g = G1::try_from_hex(s)?;
         Ok(Signature(g))
+    }
+
+    pub fn into_bytes(self) -> [u8; G1_SIZE_FR256] {
+        self.0.into_bytes()
+    }
+
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        Ok(Signature(G1::try_from_bytes(bytes)?))
     }
 }
 

@@ -202,7 +202,7 @@ macro_rules! field_impl {
             pub fn try_from_bytes(bytes_slice: &[u8]) -> Result<Self, CryptoError> {
                 let mut bytes: [u8; 32] = [0u8; 32];
                 if bytes_slice.len() != 32 {
-                    return Err(CryptoError::InvalidBinaryLength);
+                    return Err(CryptoError::InvalidBinaryLength(32, bytes_slice.len()));
                 }
                 bytes.copy_from_slice(bytes_slice);
                 Ok($name::from_lev_u8(bytes))

@@ -114,9 +114,14 @@ use std::vec::Vec;
 use stegos_crypto::hash::*;
 use stegos_crypto::pbc::*;
 
-// use lazy_static::*;
 use std::collections::VecDeque;
 use std::sync::Arc;
+
+use stegos_network::Broker;
+
+use super::randhound_proto::{self, RandhoundMessage, RandhoundMessageTypes};
+
+use protobuf::Message as ProtoMessage;
 
 type Zr = fast::Zr;
 type G1 = fast::G1;
@@ -179,6 +184,7 @@ struct GlobalState {
     pub witnesses: Arc<RwLock<HashSet<secure::PublicKey>>>, // a malleable list of witnesses
     pub session_info: Arc<RwLock<Option<Session>>>, // Randhound session
     pub epoch_info: Arc<RwLock<EpochInfo>>, // epoch information
+    pub broker: Broker,          // handler to send messages
 }
 
 // Epoch info - one epoch might have multiple Randhound sessions(?)
@@ -261,7 +267,11 @@ lazy_static! {
 //     });
 // }
 
-pub fn init_state(cfg: &stegos_config::Config, keychain: &KeyChain) -> Result<(), Error> {
+pub fn init_state(
+    cfg: &stegos_config::Config,
+    keychain: &KeyChain,
+    broker: Broker,
+) -> Result<(), Error> {
     fn read_pbc_key(f: &String) -> Result<secure::PublicKey, Error> {
         let pkey = fs::read_to_string(f.clone())?;
         let pkey = pem::parse(pkey)?;
@@ -293,6 +303,7 @@ pub fn init_state(cfg: &stegos_config::Config, keychain: &KeyChain) -> Result<()
             beacon: leader_pkey,
             epoch: Hash::from_str(&"None"),
         })),
+        broker,
     });
     Ok(())
 }
@@ -501,7 +512,7 @@ fn get_group_leader() -> secure::PublicKey {
 // --------------------------------------------------------------------------------
 // Communication Messages between Nodes
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DecrShare {
     kpt: G1,
     share: G2,
@@ -525,7 +536,7 @@ impl Hashable for DecrShare {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Commitment {
     kpt: G1,
     eshares: Vec<G2>,
@@ -544,7 +555,7 @@ impl Hashable for Commitment {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum MsgType {
     Start {
         epoch: Hash,
@@ -619,7 +630,7 @@ impl Hashable for MsgType {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Message {
     pub sess: Hash,              // the session ID
     pub typ: MsgType,            // what kind of message in the body
@@ -641,15 +652,24 @@ fn make_signed_message(body: &MsgType) -> Message {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Fail, Debug)]
 pub enum MsgErr {
+    #[fail(display = "Session mismatch")]
     SessionMismatch,
+    #[fail(display = "Message not from a group member")]
     NotFromGroupMember,
+    #[fail(display = "Invalid Signature")]
     InvalidSignature,
+    #[fail(display = "Message not from Beacon")]
     NotFromBeacon,
+    #[fail(display = "Message from another Epoch")]
     NotCurrentEpoch,
+    #[fail(display = "Message not from Beacon")]
     NotFromGroupLeader,
+    #[fail(display = "Not in session")]
     NotInSession,
+    #[fail(display = "Invalid protobuf message")]
+    BadProtobuf,
 }
 
 fn validate_signed_message(msg: &Message) -> Result<(), MsgErr> {
@@ -814,29 +834,39 @@ fn stash_fifo(from: &secure::PublicKey, msg: &MsgType) {
 // --------------------------------------------------------------------------------
 // Communication among nodes
 
-fn broadcast(msg: &MsgType) {
+fn broadcast(msg: &MsgType) -> Result<(), Error> {
     // TODO: Send to message to ALL witnesses,
     // even those not participating in Randhound
-    let _smsg = make_signed_message(msg);
+    let smsg = make_signed_message(msg);
     // send the signed message
+    let buf = msg_to_proto(&smsg).write_to_bytes()?;
+    GSTATE.get().broker.publish(&crate::TOPIC, buf)?;
+    Ok(())
 }
 
-fn send_message(_key: &secure::PublicKey, msg: &MsgType) {
+fn send_message(key: &secure::PublicKey, msg: &MsgType) -> Result<(), Error> {
     // TODO: Send the message to the node identified with key
-    let _smsg = make_signed_message(msg);
+    let smsg = make_signed_message(msg);
     // send the signed message
+    let buf = msg_to_proto(&smsg).write_to_bytes()?;
+    GSTATE
+        .get()
+        .broker
+        .publish(&crate::node_id_from_hashable(key), buf)?;
+    Ok(())
 }
 
-fn broadcast_grp(msg: &MsgType) {
+fn broadcast_grp(msg: &MsgType) -> Result<(), Error> {
     // This function shoudl send the message to all other nodes
     // in our group, but not to ourself.
     let grp = get_group_keys();
     let me = get_pkey();
     for key in grp {
         if key != me {
-            send_message(&key, msg);
+            send_message(&key, msg)?;
         }
     }
+    Ok(())
 }
 
 // ------------------------------------------------------------------
@@ -967,7 +997,9 @@ pub fn start_randhound_round() {
             grps: grps.clone(),
         };
         // send START to every witness, including me!
-        broadcast(&msg);
+        if let Err(e) = broadcast(&msg) {
+            error!("Failed to broadcast message: {}", e);
+        }
         // NOTE: if broadcast also sends to myself,
         // then comment out the following line...
         // (but no harm if left alone)
@@ -1018,7 +1050,9 @@ fn handle_start_message(sess: &Hash, grps: &Vec<Vec<secure::PublicKey>>) {
             start_session(sess, &grp);
             let fkey = get_my_fast_pkey();
             let msg = MsgType::FastKey { key: fkey };
-            broadcast_grp(&msg);
+            if let Err(e) = broadcast_grp(&msg) {
+                error!("Failed to send broadcast message to group: {}", e);
+            }
             // this one is easy - very minimal compute overhead at each node
             // so just have to account for network delays
             schedule_after(3.0 * NETWORK_DELAY, &maybe_transition_from_init_phase);
@@ -1188,7 +1222,9 @@ fn generate_shared_randomness() {
         proofs: proofs,
     };
     let msg = MsgType::SubgroupCommit { commit: commit };
-    broadcast_grp(&msg);
+    if let Err(e) = broadcast_grp(&msg) {
+        error!("Failed to send broadcast message to group: {}", e);
+    }
 
     // We might have been receiving commitments all along
     // from other nodes. Check to see if we now exceed the
@@ -1420,7 +1456,9 @@ fn show_decrypted_shares() {
         }
     }
     let msg = MsgType::DecrShares { shares: decrs };
-    broadcast_grp(&msg);
+    if let Err(e) = broadcast_grp(&msg) {
+        error!("Failed to send broadcast message to group: {}", e);
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -1460,7 +1498,9 @@ fn send_randomness_to_group_leader(v: &Vec<(secure::PublicKey, G2)>) {
         stash_subsubgroup_randomness(&me, v);
     } else {
         let msg = MsgType::SubgroupRandomness { rands: v.clone() };
-        send_message(&grpleader, &msg);
+        if let Err(e) = send_message(&grpleader, &msg) {
+            error!("Failed to send message to leader: {}", e);
+        }
     }
 }
 
@@ -1562,7 +1602,9 @@ fn send_to_beacon(rand: G2) {
         stash_group_randomness(&me, &rand);
     } else {
         let msg = MsgType::GroupRandomness { rand: rand };
-        send_message(&beacon, &msg);
+        if let Err(e) = send_message(&beacon, &msg) {
+            error!("Failed to send message to beacon: {}", e);
+        }
     }
 }
 
@@ -1714,11 +1756,392 @@ fn stash_group_randomness(from: &secure::PublicKey, rand: &G2) {
                 let ticket = Hash::digest(&trand);
                 let msg = MsgType::FinalLotteryTicket { ticket: ticket };
                 // tell everyone the outcome with the next lottery ticket
-                broadcast(&msg);
+                if let Err(e) = broadcast(&msg) {
+                    error!("Failed to broadcast lottery ticket: {}", e);
+                }
                 *info = None; // we're done here...
             } else {
                 *info = Some(sess); // is this actually necessary?
             }
         }
+    }
+}
+
+/// Turns a raw Randhound message into a type-safe message.
+pub(crate) fn proto_to_msg(mut message: RandhoundMessage) -> Result<Message, Error> {
+    let sess = Hash::try_from_bytes(&message.take_sess().to_vec())?;
+    let sig = secure::Signature::try_from_bytes(&message.take_sig().to_vec())?;
+    let from = secure::PublicKey::try_from_bytes(&message.take_from().to_vec())?;
+    let typ = match message.get_field_type() {
+        RandhoundMessageTypes::START => {
+            if !message.has_start() {
+                return Err(MsgErr::BadProtobuf.into());
+            }
+            let mut start_msg = message.take_start();
+            let epoch = Hash::try_from_bytes(&start_msg.take_epoch().to_vec())?;
+            let sess = Hash::try_from_bytes(&start_msg.take_sess().to_vec())?;
+
+            let mut grps: Vec<Vec<secure::PublicKey>> = vec![];
+            for g in start_msg.get_grps().iter() {
+                let mut group = vec![];
+                for k in g.get_pkeys() {
+                    let pkey = secure::PublicKey::try_from_bytes(k)?;
+                    group.push(pkey);
+                }
+                grps.push(group);
+            }
+            MsgType::Start { epoch, sess, grps }
+        }
+        RandhoundMessageTypes::FASTKEY => {
+            if !message.has_fast_key() {
+                return Err(MsgErr::BadProtobuf.into());
+            }
+            let mut fk_msg = message.take_fast_key();
+            let key = fast::PublicKey::try_from_bytes(&fk_msg.take_key().to_vec())?;
+            MsgType::FastKey { key }
+        }
+        RandhoundMessageTypes::SUBGROUP_COMMIT => {
+            if !message.has_sub_group_commit() {
+                return Err(MsgErr::BadProtobuf.into());
+            }
+            let mut commit_msg = message.take_sub_group_commit().take_commit();
+            let kpt = fast::G1::try_from_bytes(&commit_msg.take_kpt().to_vec())?;
+            let mut eshares = vec![];
+            for e in commit_msg.get_eshares() {
+                let eshare = fast::G2::try_from_bytes(e)?;
+                eshares.push(eshare);
+            }
+            let mut proofs = vec![];
+            for p in commit_msg.get_proofs() {
+                let proof = fast::G1::try_from_bytes(p)?;
+                proofs.push(proof);
+            }
+            MsgType::SubgroupCommit {
+                commit: Commitment {
+                    kpt,
+                    eshares,
+                    proofs,
+                },
+            }
+        }
+        RandhoundMessageTypes::DECR_SHARES => {
+            if !message.has_decr_shares() {
+                return Err(MsgErr::BadProtobuf.into());
+            }
+            let shares_msg = message.take_decr_shares().take_shares();
+            let mut shares = vec![];
+            for s in shares_msg.iter() {
+                let pkey = secure::PublicKey::try_from_bytes(&s.get_pkey().to_vec())?;
+                let mut decr_share_msg = s.get_decr_share();
+                let kpt = G1::try_from_bytes(&decr_share_msg.get_kpt().to_vec())?;
+                let share = G2::try_from_bytes(&decr_share_msg.get_share().to_vec())?;
+                let proof = G1::try_from_bytes(&decr_share_msg.get_proof().to_vec())?;
+                let index = decr_share_msg.get_index() as usize;
+                let decr_share = DecrShare {
+                    kpt,
+                    share,
+                    proof,
+                    index,
+                };
+                shares.push((pkey, decr_share));
+            }
+            MsgType::DecrShares { shares }
+        }
+        RandhoundMessageTypes::SUBGROUP_RANDOMNESS => {
+            if !message.has_sub_group_randomness() {
+                return Err(MsgErr::BadProtobuf.into());
+            }
+            let mut rands = vec![];
+            for r in message.take_sub_group_randomness().take_rands().iter() {
+                let pkey = secure::PublicKey::try_from_bytes(&r.get_pkey().to_vec())?;
+                let pt = G2::try_from_bytes(&r.get_pt().to_vec())?;
+                rands.push((pkey, pt));
+            }
+            MsgType::SubgroupRandomness { rands }
+        }
+        RandhoundMessageTypes::GROUP_RANDOMNESS => {
+            if !message.has_group_randomness() {
+                return Err(MsgErr::BadProtobuf.into());
+            }
+            let rand = G2::try_from_bytes(&message.take_group_randomness().take_rand().to_vec())?;
+            MsgType::GroupRandomness { rand }
+        }
+        RandhoundMessageTypes::FINAL_LOTTERY_TICKET => {
+            if !message.has_final_lottery_ticket() {
+                return Err(MsgErr::BadProtobuf.into());
+            }
+            let ticket =
+                Hash::try_from_bytes(&message.take_final_lottery_ticket().take_ticket().to_vec())?;
+            MsgType::FinalLotteryTicket { ticket }
+        }
+    };
+    let msg = Message {
+        sess,
+        sig,
+        from,
+        typ,
+    };
+    Ok(msg)
+}
+
+// Turns a type-safe Randhound message into the corresponding row protobuf message.
+pub(crate) fn msg_to_proto(rh_msg: &Message) -> RandhoundMessage {
+    let mut msg = RandhoundMessage::new();
+    msg.set_sess(rh_msg.sess.into_bytes().to_vec());
+    msg.set_sig(rh_msg.sig.into_bytes().to_vec());
+    msg.set_from(rh_msg.from.into_bytes().to_vec());
+    match rh_msg.typ {
+        MsgType::Start {
+            epoch,
+            sess,
+            ref grps,
+        } => {
+            let mut msg_typ = randhound_proto::Start::new();
+            msg_typ.set_epoch(epoch.into_bytes().to_vec());
+            msg_typ.set_sess(sess.into_bytes().to_vec());
+            for g in grps {
+                let mut group = randhound_proto::Start_Group::new();
+                for k in g {
+                    group.mut_pkeys().push(k.into_bytes().to_vec());
+                }
+                msg_typ.mut_grps().push(group);
+            }
+            msg.set_start(msg_typ);
+            msg.set_field_type(RandhoundMessageTypes::START);
+        }
+        MsgType::FastKey { key } => {
+            let mut msg_typ = randhound_proto::FastKey::new();
+            msg_typ.set_key(key.into_bytes().to_vec());
+            msg.set_fast_key(msg_typ);
+            msg.set_field_type(RandhoundMessageTypes::FASTKEY);
+        }
+        MsgType::SubgroupCommit { ref commit } => {
+            let mut msg_typ = randhound_proto::SubGroupCommit::new();
+            let mut commit_msg = randhound_proto::SubGroupCommit_Commitment::new();
+            commit_msg.set_kpt(commit.kpt.into_bytes().to_vec());
+            for e in commit.eshares.iter() {
+                commit_msg.mut_eshares().push(e.into_bytes().to_vec());
+            }
+            for p in commit.proofs.iter() {
+                commit_msg.mut_proofs().push(p.into_bytes().to_vec());
+            }
+            msg_typ.set_commit(commit_msg);
+            msg.set_sub_group_commit(msg_typ);
+            msg.set_field_type(RandhoundMessageTypes::SUBGROUP_COMMIT);
+        }
+        MsgType::DecrShares { ref shares } => {
+            let mut msg_typ = randhound_proto::DecrShares::new();
+            for s in shares {
+                let mut decr_share_msg = randhound_proto::DecrShares_DecrShare::new();
+                decr_share_msg.set_kpt(s.1.kpt.into_bytes().to_vec());
+                decr_share_msg.set_share(s.1.share.into_bytes().to_vec());
+                decr_share_msg.set_proof(s.1.proof.into_bytes().to_vec());
+                decr_share_msg.set_index(s.1.index as u32);
+                let mut share_msg = randhound_proto::DecrShares_Share::new();
+                share_msg.set_pkey(s.0.into_bytes().to_vec());
+                share_msg.set_decr_share(decr_share_msg);
+                msg_typ.mut_shares().push(share_msg);
+            }
+            msg.set_decr_shares(msg_typ);
+            msg.set_field_type(RandhoundMessageTypes::DECR_SHARES)
+        }
+        MsgType::SubgroupRandomness { ref rands } => {
+            let mut msg_typ = randhound_proto::SubGroupRandomness::new();
+            for r in rands {
+                let mut rand_msg = randhound_proto::SubGroupRandomness_Randomness::new();
+                rand_msg.set_pkey(r.0.into_bytes().to_vec());
+                rand_msg.set_pt(r.1.into_bytes().to_vec());
+                msg_typ.mut_rands().push(rand_msg);
+            }
+            msg.set_sub_group_randomness(msg_typ);
+            msg.set_field_type(RandhoundMessageTypes::SUBGROUP_RANDOMNESS)
+        }
+        MsgType::GroupRandomness { rand } => {
+            let mut msg_typ = randhound_proto::GroupRandomness::new();
+            msg_typ.set_rand(rand.into_bytes().to_vec());
+            msg.set_group_randomness(msg_typ);
+            msg.set_field_type(RandhoundMessageTypes::GROUP_RANDOMNESS)
+        }
+        MsgType::FinalLotteryTicket { ticket } => {
+            let mut msg_typ = randhound_proto::FinalLotteryTicket::new();
+            msg_typ.set_ticket(ticket.into_bytes().to_vec());
+            msg.set_final_lottery_ticket(msg_typ);
+            msg.set_field_type(RandhoundMessageTypes::FINAL_LOTTERY_TICKET)
+        }
+    };
+    msg
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::randhound::{msg_to_proto, proto_to_msg, Commitment, DecrShare, Message, MsgType};
+    use protobuf::{self, Message as ProtoMessage};
+    use rand;
+    use stegos_crypto::hash::Hash;
+    use stegos_crypto::pbc::{fast, secure};
+
+    fn random_vec(len: usize) -> Vec<u8> {
+        let key = (0..len).map(|_| rand::random::<u8>()).collect::<Vec<_>>();
+        key
+    }
+
+    fn roundtrip_check(rh_msg: Message) {
+        let proto_msg = msg_to_proto(&rh_msg);
+        let buf = proto_msg.write_to_bytes().unwrap();
+        let new_proto_msg = protobuf::parse_from_bytes(&buf).unwrap();
+        let new_msg = proto_to_msg(new_proto_msg).unwrap();
+
+        assert_eq!(rh_msg.sess, new_msg.sess);
+        assert_eq!(rh_msg.sig, new_msg.sig);
+        assert_eq!(rh_msg.from, new_msg.from);
+        assert_eq!(Hash::digest(&rh_msg.typ), Hash::digest(&new_msg.typ),);
+    }
+
+    #[test]
+    fn randhound_start() {
+        let mut grps = vec![];
+        for _i in 0..5 {
+            let mut g = vec![];
+            for _j in 0..10 {
+                g.push(secure::PublicKey::try_from_bytes(&random_vec(65)).unwrap());
+            }
+            grps.push(g);
+        }
+        let msg_typ = MsgType::Start {
+            epoch: Hash::try_from_bytes(&random_vec(32)).unwrap(),
+            sess: Hash::try_from_bytes(&random_vec(32)).unwrap(),
+            grps,
+        };
+
+        let msg = Message {
+            sess: Hash::try_from_bytes(&random_vec(32)).unwrap(),
+            typ: msg_typ,
+            sig: secure::Signature::try_from_bytes(&random_vec(33)).unwrap(),
+            from: secure::PublicKey::try_from_bytes(&random_vec(65)).unwrap(),
+        };
+
+        roundtrip_check(msg);
+    }
+
+    #[test]
+    fn randhound_fastkey() {
+        let msg_typ = MsgType::FastKey {
+            key: fast::PublicKey::try_from_bytes(&random_vec(65)).unwrap(),
+        };
+
+        let msg = Message {
+            sess: Hash::try_from_bytes(&random_vec(32)).unwrap(),
+            typ: msg_typ,
+            sig: secure::Signature::try_from_bytes(&random_vec(33)).unwrap(),
+            from: secure::PublicKey::try_from_bytes(&random_vec(65)).unwrap(),
+        };
+
+        roundtrip_check(msg);
+    }
+
+    #[test]
+    fn randhound_subgroup_commit() {
+        let mut eshares = vec![];
+        let mut proofs = vec![];
+        for _i in 0..10 {
+            eshares.push(fast::G2::try_from_bytes(&random_vec(65)).unwrap());
+            proofs.push(fast::G1::try_from_bytes(&random_vec(65)).unwrap());
+        }
+
+        let commit = Commitment {
+            kpt: fast::G1::try_from_bytes(&random_vec(65)).unwrap(),
+            eshares,
+            proofs,
+        };
+
+        let msg_typ = MsgType::SubgroupCommit { commit };
+
+        let msg = Message {
+            sess: Hash::try_from_bytes(&random_vec(32)).unwrap(),
+            typ: msg_typ,
+            sig: secure::Signature::try_from_bytes(&random_vec(33)).unwrap(),
+            from: secure::PublicKey::try_from_bytes(&random_vec(65)).unwrap(),
+        };
+
+        roundtrip_check(msg);
+    }
+
+    #[test]
+    fn randhound_decr_shares() {
+        let mut shares = vec![];
+        for _i in 0..10 {
+            let share = DecrShare {
+                kpt: fast::G1::try_from_bytes(&random_vec(65)).unwrap(),
+                share: fast::G2::try_from_bytes(&random_vec(65)).unwrap(),
+                proof: fast::G1::try_from_bytes(&random_vec(65)).unwrap(),
+                index: rand::random::<usize>(),
+            };
+            let pkey = secure::PublicKey::try_from_bytes(&random_vec(65)).unwrap();
+            shares.push((pkey, share));
+        }
+
+        let msg_typ = MsgType::DecrShares { shares };
+
+        let msg = Message {
+            sess: Hash::try_from_bytes(&random_vec(32)).unwrap(),
+            typ: msg_typ,
+            sig: secure::Signature::try_from_bytes(&random_vec(33)).unwrap(),
+            from: secure::PublicKey::try_from_bytes(&random_vec(65)).unwrap(),
+        };
+
+        roundtrip_check(msg);
+    }
+
+    #[test]
+    fn randhound_subgroup_randomness() {
+        let mut rands = vec![];
+        for _i in 0..10 {
+            let pkey = secure::PublicKey::try_from_bytes(&random_vec(65)).unwrap();
+            let pt = fast::G2::try_from_bytes(&random_vec(65)).unwrap();
+            rands.push((pkey, pt));
+        }
+
+        let msg_typ = MsgType::SubgroupRandomness { rands };
+
+        let msg = Message {
+            sess: Hash::try_from_bytes(&random_vec(32)).unwrap(),
+            typ: msg_typ,
+            sig: secure::Signature::try_from_bytes(&random_vec(33)).unwrap(),
+            from: secure::PublicKey::try_from_bytes(&random_vec(65)).unwrap(),
+        };
+
+        roundtrip_check(msg);
+    }
+
+    #[test]
+    fn randhound_group_randomness() {
+        let msg_typ = MsgType::GroupRandomness {
+            rand: fast::G2::try_from_bytes(&random_vec(65)).unwrap(),
+        };
+
+        let msg = Message {
+            sess: Hash::try_from_bytes(&random_vec(32)).unwrap(),
+            typ: msg_typ,
+            sig: secure::Signature::try_from_bytes(&random_vec(33)).unwrap(),
+            from: secure::PublicKey::try_from_bytes(&random_vec(65)).unwrap(),
+        };
+
+        roundtrip_check(msg);
+    }
+
+    #[test]
+    fn randhound_final_lottery_ticket() {
+        let msg_typ = MsgType::FinalLotteryTicket {
+            ticket: Hash::try_from_bytes(&random_vec(32)).unwrap(),
+        };
+
+        let msg = Message {
+            sess: Hash::try_from_bytes(&random_vec(32)).unwrap(),
+            typ: msg_typ,
+            sig: secure::Signature::try_from_bytes(&random_vec(33)).unwrap(),
+            from: secure::PublicKey::try_from_bytes(&random_vec(65)).unwrap(),
+        };
+
+        roundtrip_check(msg);
     }
 }

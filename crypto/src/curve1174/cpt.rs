@@ -46,7 +46,7 @@ impl Pt {
     /// Try to convert from raw bytes.
     pub fn try_from_bytes(bytes_slice: &[u8]) -> Result<Self, CryptoError> {
         if bytes_slice.len() != 32 {
-            return Err(CryptoError::InvalidBinaryLength);
+            return Err(CryptoError::InvalidBinaryLength(32, bytes_slice.len()));
         }
         let mut bytes: [u8; 32] = [0u8; 32];
         bytes.copy_from_slice(bytes_slice);

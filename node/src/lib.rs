@@ -42,6 +42,8 @@ use chrono::Utc;
 use failure::Error;
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::{Async, Future, Poll, Stream};
+use protobuf::Message;
+use protos::{FromProto, IntoProto};
 use std::collections::HashMap;
 use std::time::Duration;
 use stegos_blockchain::*;
@@ -99,12 +101,12 @@ impl Node {
 // ----------------------------------------------------------------
 
 const MEMPOOL_TTL: u64 = 5;
+const TOPIC: &'static str = "tx";
 
 #[derive(Clone, Debug)]
 enum NodeMessage {
     Init,
     PaymentRequest { recipient: PublicKey, amount: i64 },
-    TransactionRequest { tx: Transaction },
     SubscribeBalance(UnboundedSender<i64>),
 }
 
@@ -128,12 +130,14 @@ struct NodeService {
     /// Memory pool of pending transactions.
     mempool: Vec<Transaction>,
     /// Network interface.
-    #[allow(dead_code)]
     broker: Broker,
     /// MailBox.
     inbox: UnboundedReceiver<NodeMessage>,
     /// Used internally for testing purposes to send messages to inbox.
+    #[allow(dead_code)]
     outbox: UnboundedSender<NodeMessage>,
+    /// Broadcast Input Messages.
+    transaction_rx: UnboundedReceiver<Vec<u8>>,
     /// Timer.
     timer: Interval,
     /// Triggered when balance is changed.
@@ -152,6 +156,7 @@ impl NodeService {
         let balance = 0i64;
         let unspent = HashMap::new();
         let mempool = Vec::<Transaction>::new();
+        let transaction_rx = broker.subscribe(&TOPIC.to_string())?;
         let timer = Interval::new_interval(Duration::from_secs(MEMPOOL_TTL));
         let on_balance_changed = Vec::<UnboundedSender<i64>>::new();
 
@@ -163,6 +168,7 @@ impl NodeService {
             mempool,
             inbox,
             outbox,
+            transaction_rx,
             timer,
             broker,
             on_balance_changed,
@@ -197,7 +203,14 @@ impl NodeService {
     }
 
     /// Handle incoming transactions received from network.
-    fn handle_transaction_request(&mut self, tx: Transaction) -> Result<(), Error> {
+    fn handle_transaction_request(&mut self, msg: Vec<u8>) -> Result<(), Error> {
+        let proto: protos::node::Transaction = match protobuf::parse_from_bytes(&msg) {
+            Ok(msg) => msg,
+            Err(e) => return Err(e.into()),
+        };
+
+        let tx = Transaction::from_proto(&proto)?;
+
         let tx_hash = Hash::digest(&tx.body);
         info!("Received transaction: hash={}", &tx_hash);
         debug!("Validating transaction: hash={}..", &tx_hash);
@@ -261,9 +274,12 @@ impl NodeService {
 
     /// Send transaction to network.
     fn send_transaction(&mut self, tx: Transaction) -> Result<(), Error> {
-        // TODO: send transaction to validators via network
-        let msg = NodeMessage::TransactionRequest { tx };
-        self.outbox.unbounded_send(msg)?;
+        info!("Sending transaction: hash={}", Hash::digest(&tx.body));
+        let proto = tx.into_proto();
+        let data = proto.write_to_bytes()?;
+        self.broker.publish(&TOPIC.to_string(), data.clone())?;
+        // Sic: broadcast messages are not delivered to sender itself.
+        self.handle_transaction_request(data)?;
         Ok(())
     }
 
@@ -440,9 +456,6 @@ impl Future for NodeService {
                         self.handle_payment_request(&recipient, amount)
                             .expect("handle errors");
                     }
-                    NodeMessage::TransactionRequest { tx } => {
-                        self.handle_transaction_request(tx).expect("handle errors");
-                    }
                     NodeMessage::SubscribeBalance(tx) => {
                         self.handle_subscribe_balance(tx);
                     }
@@ -450,6 +463,18 @@ impl Future for NodeService {
                 Ok(Async::Ready(None)) => unreachable!(), // never happens
                 Ok(Async::NotReady) => break,             // fall through
                 Err(()) => unreachable!(),                // never happens
+            }
+        }
+
+        // Process network events
+        loop {
+            match self.transaction_rx.poll() {
+                Ok(Async::Ready(Some(msg))) => {
+                    self.handle_transaction_request(msg).expect("handle errors")
+                }
+                Ok(Async::Ready(None)) => unreachable!(), // never happens
+                Ok(Async::NotReady) => break,             // fall through
+                Err(()) => panic!("Network failure"),
             }
         }
 

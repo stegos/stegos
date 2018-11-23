@@ -151,6 +151,8 @@ impl Default for ConfigNetwork {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(default)]
 pub struct ConfigRandhound {
+    /// Path to node's PBC public key
+    pub node_pkey: String,
     /// Path to leader's PBC public key,
     pub leader: String,
     /// Keys for Randhound partiticpants,
@@ -160,7 +162,8 @@ pub struct ConfigRandhound {
 impl Default for ConfigRandhound {
     fn default() -> ConfigRandhound {
         ConfigRandhound {
-            leader: "stegos-pbc.pkey".to_string(),
+            node_pkey: "node-pbc.pkey".to_string(),
+            leader: "leader-pbc.pkey".to_string(),
             participants: vec![],
         }
     }

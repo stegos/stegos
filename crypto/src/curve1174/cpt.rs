@@ -38,6 +38,11 @@ use std::hash as stdhash;
 pub struct Pt([u8; 32]);
 
 impl Pt {
+    /// Return random point on a curve.
+    pub fn random() -> Self {
+        ECp::random().compress()
+    }
+
     /// Convert into raw bytes.
     pub fn into_bytes(self) -> [u8; 32] {
         return self.0;
@@ -231,6 +236,12 @@ impl stdhash::Hash for PublicKey {
 impl From<PublicKey> for Pt {
     fn from(pkey: PublicKey) -> Self {
         pkey.0
+    }
+}
+
+impl From<Pt> for PublicKey {
+    fn from(pt: Pt) -> Self {
+        PublicKey(pt)
     }
 }
 

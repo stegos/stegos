@@ -29,10 +29,14 @@ extern crate tokio_timer;
 extern crate failure_derive;
 extern crate chrono;
 extern crate futures;
+extern crate protobuf;
+extern crate rand;
 extern crate stegos_blockchain;
 extern crate stegos_crypto;
 extern crate stegos_keychain;
 extern crate stegos_network;
+
+mod protos;
 
 use chrono::Utc;
 use failure::Error;

@@ -308,7 +308,7 @@ pub struct BulletProof {
     pub z: Int,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct DotProof {
     // represents the composite proof on the dot product
     pub u: Pt,
@@ -318,7 +318,7 @@ pub struct DotProof {
     pub xlrs: [LR; L2_NBASIS],
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct LR {
     // represents one component of the proof for each power-of-2 folding
     pub x: Int,

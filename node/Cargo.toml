@@ -2,6 +2,7 @@
 name = "stegos_node"
 version = "0.1.0"
 authors = ["Stegos AG <info@stegos.cc>"]
+build = "build.rs"
 
 [dependencies]
 stegos_config = { path = "../config" }
@@ -15,3 +16,10 @@ failure_derive = "0.1.2"
 futures = "0.1.25"
 tokio-timer = "0.2"
 chrono = "0.4"
+protobuf = "2.2"
+serde = "1.0"
+serde_derive = "1.0"
+rand = "0.6"
+
+[build-dependencies]
+protobuf-codegen-pure = "2.2"

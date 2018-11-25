@@ -437,6 +437,54 @@ impl NodeService {
 
         Ok(())
     }
+
+    fn do_poll(&mut self) -> Poll<(), Error> {
+        // Process control messages.
+        loop {
+            match self.inbox.poll() {
+                Ok(Async::Ready(Some(msg))) => match msg {
+                    NodeMessage::Init => {
+                        self.handle_init();
+                    }
+                    NodeMessage::PaymentRequest { recipient, amount } => {
+                        self.handle_payment_request(&recipient, amount)?;
+                    }
+                    NodeMessage::SubscribeBalance(tx) => {
+                        self.handle_subscribe_balance(tx);
+                    }
+                },
+                Ok(Async::Ready(None)) => break, // channel closed, fall through
+                Ok(Async::NotReady) => break,    // not ready, fall throughs
+                Err(()) => unreachable!(),       // never happens
+            }
+        }
+
+        // Process network events
+        loop {
+            match self.transaction_rx.poll() {
+                Ok(Async::Ready(Some(msg))) => if let Err(e) = self.handle_transaction_request(msg)
+                {
+                    // Ignore invalid packets.
+                    error!("Invalid request: {}", e);
+                },
+                Ok(Async::Ready(None)) => break, // channel closed, fall through
+                Ok(Async::NotReady) => break,    // not ready, fall through
+                Err(()) => unreachable!(),       // never happens
+            }
+        }
+
+        // Process timer events
+        loop {
+            match self.timer.poll() {
+                Ok(Async::Ready(Some(_instant))) => self.handle_timer()?,
+                Ok(Async::Ready(None)) => break, // timed stopped, fall through
+                Ok(Async::NotReady) => break,
+                Err(e) => return Err(e.into()),
+            };
+        }
+
+        Ok(Async::NotReady)
+    }
 }
 
 // Event loop.
@@ -445,47 +493,11 @@ impl Future for NodeService {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        loop {
-            match self.inbox.poll() {
-                Ok(Async::Ready(Some(msg))) => match msg {
-                    // Handle incoming messages.
-                    NodeMessage::Init => {
-                        self.handle_init();
-                    }
-                    NodeMessage::PaymentRequest { recipient, amount } => {
-                        self.handle_payment_request(&recipient, amount)
-                            .expect("handle errors");
-                    }
-                    NodeMessage::SubscribeBalance(tx) => {
-                        self.handle_subscribe_balance(tx);
-                    }
-                },
-                Ok(Async::Ready(None)) => unreachable!(), // never happens
-                Ok(Async::NotReady) => break,             // fall through
-                Err(()) => unreachable!(),                // never happens
+        match self.do_poll() {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                panic!("Internal error: {}", e);
             }
-        }
-
-        // Process network events
-        loop {
-            match self.transaction_rx.poll() {
-                Ok(Async::Ready(Some(msg))) => {
-                    self.handle_transaction_request(msg).expect("handle errors")
-                }
-                Ok(Async::Ready(None)) => unreachable!(), // never happens
-                Ok(Async::NotReady) => break,             // fall through
-                Err(()) => panic!("Network failure"),
-            }
-        }
-
-        // Process timer events
-        loop {
-            match self.timer.poll() {
-                Ok(Async::Ready(Some(_instant))) => self.handle_timer().expect("handle errors"),
-                Ok(Async::Ready(None)) => unreachable!(), // never happens
-                Ok(Async::NotReady) => return Ok(Async::NotReady),
-                Err(e) => panic!("Timer failure: {}", e),
-            };
         }
     }
 }

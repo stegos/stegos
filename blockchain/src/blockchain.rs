@@ -72,13 +72,13 @@ impl Blockchain {
     pub fn bootstrap(&mut self) -> Result<(), BlockchainError> {
         assert_eq!(self.blocks().len(), 0);
         info!("Generating genesis blocks...");
-        let (block1, block2, inputs2, output2) = genesis_dev();
+        let (block1, block2) = genesis_dev();
         info!("Genesis key block: hash={}", Hash::digest(&block1));
         info!("Genesis monetary block: hash={}", Hash::digest(&block2));
 
         info!("Registering genesis blocks...");
         self.register_key_block(block1)?;
-        self.register_monetary_block(block2, &inputs2, &output2)?;
+        self.register_monetary_block(block2)?;
 
         Ok(())
     }
@@ -183,8 +183,6 @@ impl Blockchain {
     pub fn register_monetary_block(
         &mut self,
         block: MonetaryBlock,
-        inputs: &[Hash],                // TODO: remove this optimization
-        outputs: &[(Hash, MerklePath)], // TODO: remove this optimization
     ) -> Result<(Vec<Output>), BlockchainError> {
         let block_id = self.blocks.len();
 
@@ -206,7 +204,7 @@ impl Blockchain {
         }
 
         // Check all inputs.
-        for output_hash in inputs {
+        for output_hash in &block.body.inputs {
             if let Some(OutputKey { block_id, path }) = self.output_by_hash.get(output_hash) {
                 assert!(*block_id < self.blocks.len());
                 let block = &self.blocks[*block_id];
@@ -229,7 +227,14 @@ impl Blockchain {
         }
 
         // Check all outputs.
-        for (hash, _path) in outputs {
+        let outputs_pathes = block
+            .body
+            .outputs
+            .leafs()
+            .iter()
+            .map(|(o, path)| (Hash::digest(*o), *path))
+            .collect::<Vec<(Hash, MerklePath)>>();
+        for (hash, _path) in &outputs_pathes {
             if let Some(_) = self.output_by_hash.get(hash) {
                 return Err(BlockchainError::OutputHashCollision(*hash));
             }
@@ -240,10 +245,10 @@ impl Blockchain {
         // -----------------------------------------------------------------------------------------
         info!("Register Monetary Block: hash={}", this_hash);
 
-        let mut pruned: Vec<Output> = Vec::with_capacity(inputs.len());
+        let mut pruned: Vec<Output> = Vec::with_capacity(block.body.inputs.len());
 
         // Remove spent outputs.
-        for output_hash in inputs {
+        for output_hash in &block.body.inputs {
             info!("Prune UXTO: hash={}", output_hash);
             // Remove from the set of unspent outputs.
             if let Some(OutputKey { block_id, path }) = self.output_by_hash.remove(output_hash) {
@@ -264,15 +269,12 @@ impl Blockchain {
         }
 
         // Register create unspent outputs.
-        for (hash, path) in outputs {
-            info!("Register UXTO: hash={}", hash);
+        for (hash, path) in outputs_pathes {
+            info!("Register UXTO: hash={}", &hash);
 
             // Create the new unspent output
-            let output_key = OutputKey {
-                block_id,
-                path: path.clone(),
-            };
-            if let Some(_) = self.output_by_hash.insert(hash.clone(), output_key) {
+            let output_key = OutputKey { block_id, path };
+            if let Some(_) = self.output_by_hash.insert(hash, output_key) {
                 unreachable!();
             }
         }
@@ -324,9 +326,9 @@ pub mod tests {
         // Adjustment is the sum of all gamma found in UTXOs.
         let adjustment = delta;
 
-        let (block, outputs) = MonetaryBlock::new(base, adjustment, &inputs, &outputs);
+        let block = MonetaryBlock::new(base, adjustment, &inputs, &outputs);
 
-        blockchain.register_monetary_block(block, &inputs, &outputs)?;
+        blockchain.register_monetary_block(block)?;
 
         Ok(())
     }

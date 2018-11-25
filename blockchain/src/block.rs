@@ -122,6 +122,9 @@ impl Hashable for MonetaryBlockHeader {
 /// Monetary Block.
 #[derive(Debug)]
 pub struct MonetaryBlockBody {
+    /// The list of transaction inputs in a Merkle Tree.
+    pub inputs: Vec<Hash>,
+
     /// The list of transaction outputs in a Merkle Tree.
     pub outputs: Merkle<Box<Output>>,
 }
@@ -187,7 +190,7 @@ impl MonetaryBlock {
         adjustment: Fr,
         inputs: &[Hash],
         outputs: &[Output],
-    ) -> (MonetaryBlock, Vec<(Hash, MerklePath)>) {
+    ) -> MonetaryBlock {
         // Create inputs array
         let mut hasher = Hasher::new();
         let inputs_count: u64 = inputs.len() as u64;
@@ -196,6 +199,7 @@ impl MonetaryBlock {
             input.hash(&mut hasher);
         }
         let inputs_range_hash = hasher.result();
+        let inputs = inputs.iter().map(|o| o.clone()).collect::<Vec<Hash>>();
 
         // Create outputs tree
         let mut hasher = Hasher::new();
@@ -210,14 +214,7 @@ impl MonetaryBlock {
             .map(|o| Box::<Output>::new(o.clone()))
             .collect::<Vec<Box<Output>>>();
 
-        let (tree, paths) = Merkle::from_array(&outputs);
-        assert_eq!(paths.len(), outputs.len());
-        let paths = outputs
-            .iter()
-            .zip(paths.iter())
-            .map(|(o, p)| (Hash::digest(o), p.clone()))
-            .collect::<Vec<(Hash, MerklePath)>>();
-        let outputs = tree;
+        let outputs = Merkle::from_array(&outputs);
 
         // Create header
         let header = MonetaryBlockHeader {
@@ -228,11 +225,10 @@ impl MonetaryBlock {
         };
 
         // Create the block
-        let body = MonetaryBlockBody { outputs };
+        let body = MonetaryBlockBody { inputs, outputs };
 
         let block = MonetaryBlock { header, body };
-
-        (block, paths)
+        block
     }
 }
 

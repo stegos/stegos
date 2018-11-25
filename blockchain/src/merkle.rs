@@ -76,20 +76,10 @@ type Path = u32;
 /// 0 bit - go to the left subtree
 /// 1 bit - go to the right subtree
 /// Stored in inverted order - from leaf to root
-#[derive(Clone)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct MerklePath(Path);
 
 // -------------------------------------
-
-/// Reverse the order of bits in a byte
-fn reverse_u32(mut n: u32) -> u32 {
-    n = (n >> 1) & 0x55555555 | (n << 1) & 0xaaaaaaaa;
-    n = (n >> 2) & 0x33333333 | (n << 2) & 0xcccccccc;
-    n = (n >> 4) & 0x0f0f0f0f | (n << 4) & 0xf0f0f0f0;
-    n = (n >> 8) & 0x00ff00ff | (n << 8) & 0xff00ff00;
-    n = (n >> 16) & 0x0000ffff | (n << 16) & 0xffff0000;
-    n
-}
 
 /// Calculate the next power of two
 fn next_pow2(mut n: usize) -> usize {
@@ -173,10 +163,9 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
 
     /// Create a Merkle Tree from an array.
     ///
-    /// Returns the new tree and a paths for each element in `src`.
-    /// These paths can be used to lookup() or prune() elements.
+    /// Returns the new tree.
     ///
-    pub fn from_array(src: &[T]) -> (Merkle<T>, Vec<MerklePath>) {
+    pub fn from_array(src: &[T]) -> Merkle<T> {
         assert!(src.len() > 0 && src.len() <= Path::max_value() as usize);
 
         let mut nodes: Vec<Box<Node<T>>> = Vec::with_capacity(src.len() + 1);
@@ -223,22 +212,7 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
 
         assert_eq!(height, expected_height(src.len()));
 
-        let tree = Merkle { root, height };
-
-        // Create MerklePath for all leafs.
-        //
-        // It's not obvious, but in the full binary tree (like we have here) the binary
-        // representation of a leaf number makes bitwise path from this LEAF to the ROOT.
-        // For example, the leftmost leaf has path 0b0000, its right sibling - 0b1000 and so on.
-        //
-        // We reverse this path in order to get the path FROM the root to a leaf.
-        // In other words, (path & 1) == 1 means that you need to go right from the root
-        // in order to find that leaf.
-        //
-        let paths: Vec<MerklePath> = (0..src.len())
-            .map(|x| MerklePath(reverse_u32((x << (32 - height)) as Path)))
-            .collect();
-        (tree, paths)
+        Merkle { root, height }
     }
 
     /// Lookup an element by path
@@ -359,6 +333,68 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
         value
     }
 
+    /// A recursive helper for leafs().
+    fn leafs_r<'a>(r: &mut Vec<(&'a T, MerklePath)>, node: &'a Node<T>, path: Path, h: Height) {
+        match node {
+            Node {
+                left: Some(ref left),
+                right: Some(ref right),
+                value: None,
+                ..
+            } => {
+                // An inner node with both subtree
+                Merkle::leafs_r(r, &left, path, h + 1);
+                Merkle::leafs_r(r, &right, path | 1 << h, h + 1);
+            }
+            Node {
+                left: Some(ref left),
+                right: None,
+                value: None,
+                ..
+            } => {
+                // An inner node with only a left subtree
+                Merkle::leafs_r(r, &left, path, h + 1);
+            }
+            Node {
+                left: None,
+                right: Some(ref right),
+                value: None,
+                ..
+            } => {
+                // An inner node with only a right subtree
+                Merkle::leafs_r(r, &right, path << h, h + 1);
+            }
+            Node {
+                left: None,
+                right: None,
+                value: Some(ref value),
+                ..
+            } => {
+                // A leaf
+                r.push((value, MerklePath(path)));
+            }
+            Node {
+                left: None,
+                right: None,
+                value: None,
+                ..
+            } => {
+                // An empty leaf - can only happen if tree is empty
+            }
+            _ => unreachable!(), // No more cases
+        }
+    }
+
+    ///
+    /// Return a vector of all leafs with pathes.
+    /// These paths can be used to lookup() or prune() elements.
+    ///
+    pub fn leafs(&self) -> Vec<(&T, MerklePath)> {
+        let mut r = Vec::<(&T, MerklePath)>::new();
+        Merkle::leafs_r(&mut r, &self.root, 0, 0);
+        r
+    }
+
     /// A recursive helper for fmt().
     fn fmt_r(f: &mut fmt::Formatter, node: &Node<T>, h: usize) -> fmt::Result {
         match node {
@@ -437,10 +473,38 @@ pub mod tests {
     use super::*;
     use rand::prelude::*;
     use rand::seq::SliceRandom;
+    extern crate simple_logger;
+
+    /// Reverse the order of bits in a byte
+    fn reverse_u32(mut n: u32) -> u32 {
+        n = (n >> 1) & 0x55555555 | (n << 1) & 0xaaaaaaaa;
+        n = (n >> 2) & 0x33333333 | (n << 2) & 0xcccccccc;
+        n = (n >> 4) & 0x0f0f0f0f | (n << 4) & 0xf0f0f0f0;
+        n = (n >> 8) & 0x00ff00ff | (n << 8) & 0xff00ff00;
+        n = (n >> 16) & 0x0000ffff | (n << 16) & 0xffff0000;
+        n
+    }
+
+    fn expected_paths(count: usize, height: Height) -> Vec<MerklePath> {
+        // Create MerklePath for all leafs.
+        //
+        // It's not obvious, but in the full binary tree (like we have here) the binary
+        // representation of a leaf number makes bitwise path from this LEAF to the ROOT.
+        // For example, the leftmost leaf has path 0b0000, its right sibling - 0b1000 and so on.
+        //
+        // We reverse this path in order to get the path FROM the root to a leaf.
+        // In other words, (path & 1) == 1 means that you need to go right from the root
+        // in order to find that leaf.
+        //
+        (0..count)
+            .map(|x| MerklePath(reverse_u32((x << (32 - height)) as Path)))
+            .collect::<Vec<MerklePath>>()
+    }
 
     #[test]
     #[should_panic]
     fn no_items() {
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
         // Is not supported
         let data: [u32; 0] = [];
         Merkle::from_array(&data);
@@ -448,8 +512,10 @@ pub mod tests {
 
     #[test]
     fn single_item() {
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+
         let data: [u32; 1] = [1];
-        let (mut tree, paths) = Merkle::from_array(&data);
+        let mut tree = Merkle::from_array(&data);
 
         // Check structure
         debug!("Tree: {:?}", tree);
@@ -461,6 +527,14 @@ pub mod tests {
         // Check height
         assert_eq!(tree.height, 0);
 
+        // Check leafs
+        {
+            let leafs = tree.leafs();
+            for (left, (right, _path)) in data.iter().zip(leafs) {
+                assert_eq!(*left, *right);
+            }
+        };
+
         // Tree of one element has the only one leaf without intermediate nodes
         assert!(if let (None, None) = (&tree.root.left, &tree.root.right) {
             true
@@ -471,6 +545,18 @@ pub mod tests {
 
         // Root hash must be the same as data[0].hash()
         assert_eq!(*tree.roothash(), Hasher::digest(&data[0]));
+
+        // Check paths
+        let paths = tree
+            .leafs()
+            .iter()
+            .map(|(_elem, path)| *path)
+            .collect::<Vec<MerklePath>>();
+        let epaths = expected_paths(data.len(), tree.height);
+        assert_eq!(paths.len(), epaths.len());
+        for (left, right) in paths.iter().zip(epaths.iter()) {
+            assert_eq!(*left, *right);
+        }
 
         // Check valid lookups
         assert_eq!(tree.lookup(&paths[0]), Some(&data[0]));
@@ -488,6 +574,8 @@ pub mod tests {
 
     #[test]
     fn multiple_items() {
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+
         // Expected structure:
         // ```text
         //                            root = h(h1234 + h5678)
@@ -500,7 +588,7 @@ pub mod tests {
         // ```
 
         let data: [u32; 5] = [1, 2, 3, 4, 5];
-        let (mut tree, paths) = Merkle::from_array(&data);
+        let mut tree = Merkle::from_array(&data);
 
         // Check structure
         debug!("Tree: {:?}", tree);
@@ -511,6 +599,26 @@ pub mod tests {
 
         // Check height
         assert_eq!(tree.height, 3);
+
+        // Check leafs
+        {
+            let leafs = tree.leafs();
+            for (left, (right, _path)) in data.iter().zip(leafs) {
+                assert_eq!(*left, *right);
+            }
+        }
+
+        // Check paths
+        let paths = tree
+            .leafs()
+            .iter()
+            .map(|(_elem, path)| *path)
+            .collect::<Vec<MerklePath>>();
+        let epaths = expected_paths(data.len(), tree.height);
+        assert_eq!(paths.len(), epaths.len());
+        for (left, right) in paths.iter().zip(epaths.iter()) {
+            assert_eq!(*left, *right);
+        }
 
         // Check valid lookups
         for (value, path) in data.iter().zip(&paths) {
@@ -598,16 +706,33 @@ pub mod tests {
 
     #[test]
     fn random() {
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+
         // Generate random tree
         let mut rng = thread_rng();
         let size = rng.gen_range(500, 1000);
         let data: Vec<u64> = (0..size).map(|_| rng.gen()).collect();
 
-        let (mut tree, paths) = Merkle::from_array(&data);
+        let mut tree = Merkle::from_array(&data);
+
+        // Check leafs
+        {
+            let leafs = tree.leafs();
+            for (left, (right, _path)) in data.iter().zip(leafs) {
+                assert_eq!(*left, *right);
+            }
+        }
 
         // Shuffle original numbers
         let mut indexes: Vec<usize> = (0..size).collect();
         indexes.shuffle(&mut rng);
+
+        // Check paths
+        let paths = tree
+            .leafs()
+            .iter()
+            .map(|(_elem, path)| *path)
+            .collect::<Vec<MerklePath>>();
 
         // Check valid lookups
         for i in &indexes {

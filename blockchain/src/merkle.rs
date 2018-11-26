@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use std::cmp::max;
 use std::fmt;
 use std::vec::Vec;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
@@ -57,6 +58,13 @@ struct Node<T> {
     /// [1]: https://doc.rust-lang.org/1.29.1/std/num/struct.NonZeroUsize.html
     ///
     value: Option<T>,
+}
+
+#[derive(Debug, Fail)]
+pub enum MerkleError {
+    /// Validation error
+    #[fail(display = "Validation error: expected={}, got={}", _0, _1)]
+    ValidationError(Hash, Hash),
 }
 
 /// 2**256 is more than anyone needed.
@@ -117,10 +125,9 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
         let height1 = heights.pop().unwrap();
         assert_eq!(height, height1);
 
-        // Pair the hash of both nodes
         let mut hasher = Hasher::new();
         left.hash.hash(&mut hasher);
-        left.hash.hash(&mut hasher);
+        right.hash.hash(&mut hasher);
         let hash = hasher.result();
 
         let node = Box::new(Node {
@@ -267,18 +274,14 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
     // Although the pruning algorithm is straightforward and doesn't require recursion
     // for implementation, we had to use it here in order to deal with Rust's borrow checker.
     //
-    // The return protocol works as follow:
-    //
-    // (subtree_is_empty_and_must_be_removed: bool, value_which_has_been_found_in_a_leaf: Option<T>)
-    //
-    fn prune_r(node: &mut Box<Node<T>>, remain: Height, path: Path) -> (bool, Option<T>) {
+    fn prune_r(node: &mut Box<Node<T>>, remain: Height, path: Path) -> Option<T> {
         if remain == 0 {
             // Leaf nodes
             return match node.value {
                 // Magic happens here - take() extracts the original T and puts None instead.
                 // Now value is own by recursion.
-                Some(_) => (true, node.value.take()),
-                None => return (false, None),
+                Some(_) => node.value.take(),
+                None => None,
             };
         }
 
@@ -286,51 +289,58 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
         // Sic: this code is real boilerplate. Say thanks to Rust for the underdeveloped enums.
         let left_direction = (path & 1) == 0;
         let value = if left_direction {
-            let (remove, value) = if let Some(ref mut left) = node.left {
+            if let Some(ref mut left) = node.left {
                 Merkle::prune_r(left, remain - 1, path >> 1)
             } else {
-                return (false, None); // Missing a left subtree
-            };
-            if remove {
-                node.left = None; // Discard the left subtree
-            };
-            value
+                unreachable!(); // Left subtree always exists
+            }
         } else {
-            let (remove, value) = if let Some(ref mut right) = node.right {
+            if let Some(ref mut right) = node.right {
                 Merkle::prune_r(right, remain - 1, path >> 1)
             } else {
-                return (false, None); // Missing a right subtree
-            };
-            if remove {
-                node.right = None; // Discard the right subtree
-            };
-            value
+                return None; // Missing a right subtree
+            }
         };
 
-        // Check if this node doesn't have subtrees anymore and can be removed
-        match **node {
-            Node {
-                left: None,
-                right: None,
-                ..
-            } => (true, value), // report to the caller that this subtree should be removed
-            _ => (false, value), // still have some subtrees, don't remove
+        if value.is_none() {
+            return None; // Not found
         }
+
+        // Check if this node doesn't have subtrees anymore and can be removed
+        let left_empty = match &node.left {
+            Some(left) => {
+                if left.left.is_none() && left.right.is_none() && left.value.is_none() {
+                    true
+                } else {
+                    false
+                }
+            }
+            None => true,
+        };
+        let right_empty = match &node.right {
+            Some(right) => {
+                if right.left.is_none() && right.right.is_none() && right.value.is_none() {
+                    true
+                } else {
+                    false
+                }
+            }
+            None => true,
+        };
+
+        if left_empty && right_empty {
+            // Prune left and right subtrees
+            node.left = None;
+            node.right = None;
+        }
+
+        value
     }
 
     /// Lookup an element by path.
     pub fn prune(&mut self, path: &MerklePath) -> Option<T> {
         let path = path.0;
-        let (remove, value) = Merkle::prune_r(&mut self.root, self.height, path);
-        if remove {
-            // Special case for handling empty tree
-            if path & 1 == 0 {
-                self.root.left = None;
-            } else {
-                self.root.right = None;
-            }
-        };
-        value
+        Merkle::prune_r(&mut self.root, self.height, path)
     }
 
     /// A recursive helper for leafs().
@@ -354,15 +364,6 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
             } => {
                 // An inner node with only a left subtree
                 Merkle::leafs_r(r, &left, path, h + 1);
-            }
-            Node {
-                left: None,
-                right: Some(ref right),
-                value: None,
-                ..
-            } => {
-                // An inner node with only a right subtree
-                Merkle::leafs_r(r, &right, path << h, h + 1);
             }
             Node {
                 left: None,
@@ -395,6 +396,87 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
         r
     }
 
+    /// A recursive helper for validate().
+    fn validate_r(node: &Node<T>) -> Result<Height, MerkleError> {
+        match node {
+            // An inner node with both subtree
+            Node {
+                hash,
+                left: Some(ref left),
+                right: Some(ref right),
+                value: None,
+                ..
+            } => {
+                // Check left and right subtrees recursively.
+                let left_height = Merkle::validate_r(&left)?;
+                let right_height = Merkle::validate_r(&right)?;
+
+                // Check hash
+                let mut hasher = Hasher::new();
+                left.hash.hash(&mut hasher);
+                right.hash.hash(&mut hasher);
+                let check_hash = hasher.result();
+                if *hash != check_hash {
+                    return Err(MerkleError::ValidationError(*hash, check_hash));
+                }
+
+                return Ok(max(left_height, right_height) + 1);
+            }
+            // An inner node with only a left subtree
+            Node {
+                hash,
+                left: Some(ref left),
+                right: None,
+                value: None,
+                ..
+            } => {
+                // Check left subtree recursively.
+                let h = Merkle::validate_r(&left)?;
+
+                // Check hash.
+                let mut hasher = Hasher::new();
+                left.hash.hash(&mut hasher);
+                left.hash.hash(&mut hasher);
+                let check_hash = hasher.result();
+                if *hash != check_hash {
+                    return Err(MerkleError::ValidationError(*hash, check_hash));
+                }
+
+                return Ok(h + 1);
+            }
+            // A leaf
+            Node {
+                hash,
+                left: None,
+                right: None,
+                value: Some(ref value),
+                ..
+            } => {
+                let check_hash = Hash::digest(value);
+                if *hash != check_hash {
+                    return Err(MerkleError::ValidationError(*hash, check_hash));
+                }
+                return Ok(0);
+            }
+            // An empty leaf - can only happen if tree is empty
+            Node {
+                left: None,
+                right: None,
+                value: None,
+                ..
+            } => {
+                return Ok(0);
+            }
+            _ => unreachable!(), // No more cases
+        }
+    }
+
+    /// Validate Merkle Tree.
+    pub fn validate(&self) -> Result<(), MerkleError> {
+        Merkle::validate_r(&self.root)?;
+        Ok(())
+    }
+
     /// A recursive helper for fmt().
     fn fmt_r(f: &mut fmt::Formatter, node: &Node<T>, h: usize) -> fmt::Result {
         match node {
@@ -422,16 +504,6 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
                 // An inner node with only a left subtree
                 Merkle::fmt_r(f, &left, h + 1)?;
                 write!(f, "{}: Node({}, l={}, r=None)\n", h, node.hash, left.hash)
-            }
-            Node {
-                left: None,
-                right: Some(ref right),
-                value: None,
-                ..
-            } => {
-                // An inner node with only a right subtree
-                write!(f, "{}: Node({}, l=None, r={})\n", h, node.hash, right.hash)?;
-                Merkle::fmt_r(f, &right, h + 1)
             }
             Node {
                 left: None,
@@ -527,6 +599,9 @@ pub mod tests {
         // Check height
         assert_eq!(tree.height, 0);
 
+        // Check hashes
+        tree.validate().unwrap();
+
         // Check leafs
         {
             let leafs = tree.leafs();
@@ -570,6 +645,7 @@ pub mod tests {
         assert_eq!(tree.lookup(&paths[0]), None);
         assert_eq!(tree.prune(&paths[0]), None);
         assert_eq!(tree.root.value, None);
+        tree.validate().unwrap();
     }
 
     #[test]
@@ -594,11 +670,14 @@ pub mod tests {
         debug!("Tree: {:?}", tree);
         assert_eq!(
             tree.roothash().into_hex(),
-            "d5a54245486913be1e0926802666157aa940d445f3558d886a654ea7117213e0"
+            "9cfc92fdc167efd8971ea01910586d551ab6f8a9bb9d56ee791fad27c0ec8da0"
         );
 
         // Check height
         assert_eq!(tree.height, 3);
+
+        // Check hashes
+        tree.validate().unwrap();
 
         // Check leafs
         {
@@ -645,10 +724,11 @@ pub mod tests {
                     ..
                 } => match **node12 {
                     Node {
-                        left: None,
+                        left: Some(ref node1),
                         right: Some(ref node2),
                         ..
                     } => {
+                        assert_eq!(node1.value, None);
                         assert_eq!(node2.value, Some(data[1]));
                     }
                     _ => unreachable!(),
@@ -657,23 +737,33 @@ pub mod tests {
             },
             _ => unreachable!(),
         };
+        tree.validate().unwrap();
 
         assert_eq!(tree.prune(&paths[1]), Some(data[1]));
         assert_eq!(tree.lookup(&paths[1]), None);
         match *tree.root {
             Node {
                 left: Some(ref node1234),
+                right: Some(_),
                 ..
             } => match **node1234 {
                 Node {
-                    left: None,
+                    left: Some(ref node12),
                     right: Some(_),
                     ..
-                } => {}
+                } => match **node12 {
+                    Node {
+                        left: None,
+                        right: None,
+                        ..
+                    } => {}
+                    _ => unreachable!(),
+                },
                 _ => unreachable!(),
             },
             _ => unreachable!(),
         };
+        tree.validate().unwrap();
 
         // Remove n34 and n1234
         assert_eq!(tree.prune(&paths[3]), Some(data[3]));
@@ -682,9 +772,21 @@ pub mod tests {
         assert_eq!(tree.prune(&paths[2]), Some(data[2]));
         assert_eq!(tree.lookup(&paths[2]), None);
         match *tree.root {
-            Node { left: None, .. } => {}
+            Node {
+                left: Some(ref node1234),
+                right: Some(_),
+                ..
+            } => match **node1234 {
+                Node {
+                    left: None,
+                    right: None,
+                    ..
+                } => {}
+                _ => unreachable!(),
+            },
             _ => unreachable!(),
         };
+        tree.validate().unwrap();
 
         // Remove n56
         assert_eq!(tree.prune(&paths[4]), Some(data[4]));
@@ -697,10 +799,119 @@ pub mod tests {
             } => {}
             _ => unreachable!(),
         };
+        tree.validate().unwrap();
 
         // Tree is completely empty now
         for path in paths {
             assert_eq!(tree.lookup(&path), None);
+        }
+    }
+
+    #[test]
+    fn validate() {
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+        let data: [u32; 3] = [1, 2, 3];
+        let node12_hash =
+            Hash::try_from_hex("fc484dcaf94a6a6e0b9d78fb42527f8b55555561a45eb34ed7fa58150f823df7")
+                .unwrap();
+        let node34_hash =
+            Hash::try_from_hex("02ebbd3fdf4b0c3d3bca09542b9b4810cd8a9c75fbc0cd4bb60d88d402da815f")
+                .unwrap();
+
+        //
+        // Leafs
+        //
+        let mut tree = Merkle::from_array(&data);
+        {
+            let root = &mut tree.root;
+            let node12 = root.left.as_mut().unwrap();
+            let node1 = node12.left.as_mut().unwrap();
+            node1.value = Some(0);
+        }
+        match tree.validate() {
+            Err(MerkleError::ValidationError(expected, got)) => {
+                assert_eq!(expected, Hash::digest(&1u32));
+                assert_eq!(got, Hash::digest(&0u32));
+            }
+            _ => unreachable!(),
+        }
+
+        //
+        // Full inner node
+        //
+        let mut tree = Merkle::from_array(&data);
+        {
+            let root = &mut tree.root;
+            let node12 = root.left.as_mut().unwrap();
+            let node1 = node12.left.as_mut().unwrap();
+            node1.value = Some(0u32);
+            node1.hash = Hash::digest(&0u32);
+        }
+        match tree.validate() {
+            Err(MerkleError::ValidationError(expected, _got)) => {
+                assert_eq!(expected, node12_hash);
+            }
+            _ => unreachable!(),
+        }
+
+        //
+        // Full node with invalid left subtree
+        //
+        let mut tree = Merkle::from_array(&data);
+        {
+            let val = tree.prune(&MerklePath(2)).unwrap();
+            assert_eq!(val, 2);
+            let root = &mut tree.root;
+            let node12 = root.left.as_mut().unwrap();
+            let node1 = node12.left.as_mut().unwrap();
+            node1.value = Some(0u32);
+            node1.hash = Hash::digest(&0u32);
+        }
+        match tree.validate() {
+            Err(MerkleError::ValidationError(expected, _got)) => {
+                assert_eq!(expected, node12_hash);
+            }
+            _ => unreachable!(),
+        }
+
+        //
+        // Full node with invalid right subtree
+        //
+        let mut tree = Merkle::from_array(&data);
+        {
+            let val = tree.prune(&MerklePath(0)).unwrap();
+            assert_eq!(val, 1);
+            let root = &mut tree.root;
+            let node12 = root.left.as_mut().unwrap();
+            let node2 = node12.right.as_mut().unwrap();
+            node2.value = Some(0u32);
+            node2.hash = Hash::digest(&0u32);
+        }
+        match tree.validate() {
+            Err(MerkleError::ValidationError(expected, _got)) => {
+                assert_eq!(expected, node12_hash);
+            }
+            _ => unreachable!(),
+        }
+
+        //
+        // Left node
+        //
+        let mut tree = Merkle::from_array(&data);
+        {
+            let val = tree.prune(&MerklePath(0)).unwrap();
+            assert_eq!(val, 1);
+            let root = &mut tree.root;
+            let node34 = root.right.as_mut().unwrap();
+            let node3 = node34.left.as_mut().unwrap();
+            node3.value = Some(0u32);
+            node3.hash = Hash::digest(&0u32);
+        }
+        match tree.validate() {
+            Err(MerkleError::ValidationError(expected, _got)) => {
+                assert_eq!(expected, node34_hash);
+            }
+            _ => unreachable!(),
         }
     }
 
@@ -710,10 +921,13 @@ pub mod tests {
 
         // Generate random tree
         let mut rng = thread_rng();
-        let size = rng.gen_range(500, 1000);
+        let size = rng.gen_range(100, 500);
         let data: Vec<u64> = (0..size).map(|_| rng.gen()).collect();
 
         let mut tree = Merkle::from_array(&data);
+
+        // Check hashes
+        tree.validate().unwrap();
 
         // Check leafs
         {
@@ -742,6 +956,7 @@ pub mod tests {
         // Prune
         for i in &indexes {
             assert_eq!(tree.prune(&paths[*i]).unwrap(), data[*i]);
+            tree.validate().unwrap();
         }
 
         // Tree is completely empty now

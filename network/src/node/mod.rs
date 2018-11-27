@@ -83,6 +83,8 @@ pub(crate) struct Inner {
     pub(crate) heartbeat_handle: Option<heartbeat::Heartbeat>,
     // This node's public key
     pub(crate) public_key: heartbeat::NodePublicKey,
+    // This node's public key
+    pub(crate) secret_key: heartbeat::NodeSecretKey,
     // Extra info
     pub(crate) extra_info: heartbeat::ExtraInfo,
 }
@@ -109,6 +111,7 @@ impl Network {
             broker_handle: None,
             heartbeat_handle: None,
             public_key: keychain.cosi_pkey.clone(),
+            secret_key: keychain.cosi_skey.clone(),
             extra_info: heartbeat::ExtraInfo::default(),
         }));
 

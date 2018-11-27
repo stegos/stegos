@@ -193,6 +193,13 @@ impl Transaction {
     }
 }
 
+impl Hashable for Transaction {
+    fn hash(&self, state: &mut Hasher) {
+        self.body.hash(state);
+        self.sig.hash(state);
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;

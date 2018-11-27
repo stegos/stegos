@@ -29,15 +29,21 @@ extern crate tokio_timer;
 extern crate failure_derive;
 extern crate chrono;
 extern crate futures;
+extern crate protobuf;
+extern crate rand;
 extern crate stegos_blockchain;
 extern crate stegos_crypto;
 extern crate stegos_keychain;
 extern crate stegos_network;
 
+mod protos;
+
 use chrono::Utc;
 use failure::Error;
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::{Async, Future, Poll, Stream};
+use protobuf::Message;
+use protos::{FromProto, IntoProto};
 use std::collections::HashMap;
 use std::time::Duration;
 use stegos_blockchain::*;
@@ -95,12 +101,12 @@ impl Node {
 // ----------------------------------------------------------------
 
 const MEMPOOL_TTL: u64 = 5;
+const TOPIC: &'static str = "tx";
 
 #[derive(Clone, Debug)]
 enum NodeMessage {
     Init,
     PaymentRequest { recipient: PublicKey, amount: i64 },
-    TransactionRequest { tx: Transaction },
     SubscribeBalance(UnboundedSender<i64>),
 }
 
@@ -124,12 +130,14 @@ struct NodeService {
     /// Memory pool of pending transactions.
     mempool: Vec<Transaction>,
     /// Network interface.
-    #[allow(dead_code)]
     broker: Broker,
     /// MailBox.
     inbox: UnboundedReceiver<NodeMessage>,
     /// Used internally for testing purposes to send messages to inbox.
+    #[allow(dead_code)]
     outbox: UnboundedSender<NodeMessage>,
+    /// Broadcast Input Messages.
+    transaction_rx: UnboundedReceiver<Vec<u8>>,
     /// Timer.
     timer: Interval,
     /// Triggered when balance is changed.
@@ -148,6 +156,7 @@ impl NodeService {
         let balance = 0i64;
         let unspent = HashMap::new();
         let mempool = Vec::<Transaction>::new();
+        let transaction_rx = broker.subscribe(&TOPIC.to_string())?;
         let timer = Interval::new_interval(Duration::from_secs(MEMPOOL_TTL));
         let on_balance_changed = Vec::<UnboundedSender<i64>>::new();
 
@@ -159,6 +168,7 @@ impl NodeService {
             mempool,
             inbox,
             outbox,
+            transaction_rx,
             timer,
             broker,
             on_balance_changed,
@@ -193,7 +203,14 @@ impl NodeService {
     }
 
     /// Handle incoming transactions received from network.
-    fn handle_transaction_request(&mut self, tx: Transaction) -> Result<(), Error> {
+    fn handle_transaction_request(&mut self, msg: Vec<u8>) -> Result<(), Error> {
+        let proto: protos::node::Transaction = match protobuf::parse_from_bytes(&msg) {
+            Ok(msg) => msg,
+            Err(e) => return Err(e.into()),
+        };
+
+        let tx = Transaction::from_proto(&proto)?;
+
         let tx_hash = Hash::digest(&tx.body);
         info!("Received transaction: hash={}", &tx_hash);
         debug!("Validating transaction: hash={}..", &tx_hash);
@@ -257,9 +274,12 @@ impl NodeService {
 
     /// Send transaction to network.
     fn send_transaction(&mut self, tx: Transaction) -> Result<(), Error> {
-        // TODO: send transaction to validators via network
-        let msg = NodeMessage::TransactionRequest { tx };
-        self.outbox.unbounded_send(msg)?;
+        info!("Sending transaction: hash={}", Hash::digest(&tx.body));
+        let proto = tx.into_proto();
+        let data = proto.write_to_bytes()?;
+        self.broker.publish(&TOPIC.to_string(), data.clone())?;
+        // Sic: broadcast messages are not delivered to sender itself.
+        self.handle_transaction_request(data)?;
         Ok(())
     }
 
@@ -417,6 +437,54 @@ impl NodeService {
 
         Ok(())
     }
+
+    fn do_poll(&mut self) -> Poll<(), Error> {
+        // Process control messages.
+        loop {
+            match self.inbox.poll() {
+                Ok(Async::Ready(Some(msg))) => match msg {
+                    NodeMessage::Init => {
+                        self.handle_init();
+                    }
+                    NodeMessage::PaymentRequest { recipient, amount } => {
+                        self.handle_payment_request(&recipient, amount)?;
+                    }
+                    NodeMessage::SubscribeBalance(tx) => {
+                        self.handle_subscribe_balance(tx);
+                    }
+                },
+                Ok(Async::Ready(None)) => break, // channel closed, fall through
+                Ok(Async::NotReady) => break,    // not ready, fall throughs
+                Err(()) => unreachable!(),       // never happens
+            }
+        }
+
+        // Process network events
+        loop {
+            match self.transaction_rx.poll() {
+                Ok(Async::Ready(Some(msg))) => if let Err(e) = self.handle_transaction_request(msg)
+                {
+                    // Ignore invalid packets.
+                    error!("Invalid request: {}", e);
+                },
+                Ok(Async::Ready(None)) => break, // channel closed, fall through
+                Ok(Async::NotReady) => break,    // not ready, fall through
+                Err(()) => unreachable!(),       // never happens
+            }
+        }
+
+        // Process timer events
+        loop {
+            match self.timer.poll() {
+                Ok(Async::Ready(Some(_instant))) => self.handle_timer()?,
+                Ok(Async::Ready(None)) => break, // timed stopped, fall through
+                Ok(Async::NotReady) => break,
+                Err(e) => return Err(e.into()),
+            };
+        }
+
+        Ok(Async::NotReady)
+    }
 }
 
 // Event loop.
@@ -425,38 +493,11 @@ impl Future for NodeService {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        loop {
-            match self.inbox.poll() {
-                Ok(Async::Ready(Some(msg))) => match msg {
-                    // Handle incoming messages.
-                    NodeMessage::Init => {
-                        self.handle_init();
-                    }
-                    NodeMessage::PaymentRequest { recipient, amount } => {
-                        self.handle_payment_request(&recipient, amount)
-                            .expect("handle errors");
-                    }
-                    NodeMessage::TransactionRequest { tx } => {
-                        self.handle_transaction_request(tx).expect("handle errors");
-                    }
-                    NodeMessage::SubscribeBalance(tx) => {
-                        self.handle_subscribe_balance(tx);
-                    }
-                },
-                Ok(Async::Ready(None)) => unreachable!(), // never happens
-                Ok(Async::NotReady) => break,             // fall through
-                Err(()) => unreachable!(),                // never happens
+        match self.do_poll() {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                panic!("Internal error: {}", e);
             }
-        }
-
-        // Process timer events
-        loop {
-            match self.timer.poll() {
-                Ok(Async::Ready(Some(_instant))) => self.handle_timer().expect("handle errors"),
-                Ok(Async::Ready(None)) => unreachable!(), // never happens
-                Ok(Async::NotReady) => return Ok(Async::NotReady),
-                Err(e) => panic!("Timer failure: {}", e),
-            };
         }
     }
 }

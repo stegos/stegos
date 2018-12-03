@@ -81,7 +81,7 @@ pub fn genesis_dev() -> (KeyBlock, MonetaryBlock) {
             .collect::<Vec<cosi_keys::PublicKey>>();
         let leader = witnesses[0].clone();
 
-        KeyBlock::new(base, leader, witnesses)
+        KeyBlock::new(base, leader, &witnesses)
     };
 
     //

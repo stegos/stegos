@@ -9,6 +9,10 @@ message Fr {
     bytes data = 1;
 }
 
+message G2 {
+    bytes data = 1;
+}
+
 message Hash {
     bytes data = 1;
 }
@@ -20,6 +24,10 @@ message PublicKey {
 message SchnorrSig {
     Fr u = 1;
     Pt K = 2;
+}
+
+message SecurePublicKey {
+    G2 point = 1;
 }
 
 message EncryptedPayload {
@@ -69,4 +77,52 @@ message Transaction {
     Fr gamma = 3;
     int64 fee = 4;
     SchnorrSig sig = 5;
+}
+
+message BaseBlockHeader {
+    uint64 version = 1;
+    Hash previous = 2;
+    uint64 epoch = 3;
+    uint64 timestamp = 4;
+}
+
+message MonetaryBlockHeader {
+    BaseBlockHeader base = 1;
+    Fr adjustment = 2;
+    Hash inputs_range_hash = 3;
+    Hash outputs_range_hash = 4;
+}
+
+message MerkleNode {
+    Hash hash = 1;
+    uint64 left = 2;
+    uint64 right = 3;
+    Output value = 4;
+}
+
+message MonetaryBlockBody {
+    repeated Hash inputs = 1;
+    repeated MerkleNode outputs = 2;
+}
+
+message MonetaryBlock {
+    MonetaryBlockHeader header = 1;
+    MonetaryBlockBody body = 2;
+}
+
+message KeyBlockHeader {
+    BaseBlockHeader base = 1;
+    SecurePublicKey leader = 2;
+    repeated SecurePublicKey witnesses = 3;
+}
+
+message KeyBlock {
+    KeyBlockHeader header = 1;
+}
+
+message Block {
+    oneof block {
+        KeyBlock key_block = 1;
+        MonetaryBlock monetary_block = 2;
+    }
 }

@@ -25,7 +25,7 @@ use crate::merkle::*;
 use crate::output::Output;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::pbc::secure::PublicKey as WitnessPublicKey;
+use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
 
 /// General Block Header.
 #[derive(Debug, PartialEq, Eq)]
@@ -76,12 +76,12 @@ pub struct KeyBlockHeader {
     pub base: BaseBlockHeader,
 
     /// Leader public key.
-    pub leader: WitnessPublicKey,
+    pub leader: SecurePublicKey,
 
     /// Ordered list of witnesses public keys.
-    pub witnesses: Vec<WitnessPublicKey>,
+    pub witnesses: Vec<SecurePublicKey>,
     // TODO: pooled transactions facilitator public key (which kind?).
-    // pub facilitator: WitnessPublicKey,
+    // pub facilitator: SecurePublicKey,
 }
 
 impl Hashable for KeyBlockHeader {
@@ -138,6 +138,17 @@ impl PartialEq for MonetaryBlockBody {
 
 impl Eq for MonetaryBlockBody {}
 
+impl Hashable for MonetaryBlockBody {
+    fn hash(&self, state: &mut Hasher) {
+        let inputs_count: u64 = self.inputs.len() as u64;
+        inputs_count.hash(state);
+        for input in &self.inputs {
+            input.hash(state);
+        }
+        self.outputs.roothash().hash(state)
+    }
+}
+
 /// Carries all cryptocurrency transactions.
 #[derive(Debug, PartialEq, Eq)]
 pub struct KeyBlock {
@@ -148,9 +159,11 @@ pub struct KeyBlock {
 impl KeyBlock {
     pub fn new(
         base: BaseBlockHeader,
-        leader: WitnessPublicKey,
-        mut witnesses: Vec<WitnessPublicKey>,
+        leader: SecurePublicKey,
+        witnesses: &[SecurePublicKey],
     ) -> Self {
+        let mut witnesses = witnesses.to_vec();
+
         // Witnesses list must be sorted.
         witnesses.sort();
 

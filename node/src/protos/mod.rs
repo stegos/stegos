@@ -24,13 +24,21 @@
 pub mod node;
 
 use failure::Error;
-use stegos_blockchain::{Output, Transaction, TransactionBody};
+use stegos_blockchain::*;
 use stegos_crypto::bulletproofs::{BulletProof, DotProof, L2_NBASIS, LR};
 use stegos_crypto::curve1174::cpt::Pt;
 use stegos_crypto::curve1174::cpt::{EncryptedPayload, PublicKey, SchnorrSig};
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
+use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
+use stegos_crypto::pbc::secure::G2;
 use stegos_crypto::CryptoError;
+
+#[derive(Debug, Fail)]
+pub enum ProtoError {
+    #[fail(display = "Missing field '{}' in packet '{}'.", _1, _0)]
+    MissingField(String, String),
+}
 
 pub trait IntoProto<T: ::protobuf::Message> {
     fn into_proto(&self) -> T;
@@ -73,6 +81,24 @@ impl IntoProto<node::Fr> for Fr {
 impl FromProto<node::Fr> for Fr {
     fn from_proto(proto: &node::Fr) -> Result<Self, Error> {
         Ok(Fr::try_from_bytes(proto.get_data())?)
+    }
+}
+
+//
+// G2
+//
+
+impl IntoProto<node::G2> for G2 {
+    fn into_proto(&self) -> node::G2 {
+        let mut proto = node::G2::new();
+        proto.set_data(self.into_bytes().to_vec());
+        proto
+    }
+}
+
+impl FromProto<node::G2> for G2 {
+    fn from_proto(proto: &node::G2) -> Result<Self, Error> {
+        Ok(G2::try_from_bytes(proto.get_data())?)
     }
 }
 
@@ -133,6 +159,26 @@ impl FromProto<node::SchnorrSig> for SchnorrSig {
         let K: Pt = Pt::from_proto(proto.get_K())?;
         let u: Fr = Fr::from_proto(proto.get_u())?;
         Ok(SchnorrSig { K, u })
+    }
+}
+
+//
+// SecurePublicKey
+//
+
+impl IntoProto<node::SecurePublicKey> for SecurePublicKey {
+    fn into_proto(&self) -> node::SecurePublicKey {
+        let mut proto = node::SecurePublicKey::new();
+        let g: G2 = (*self).into();
+        proto.set_point(g.into_proto());
+        proto
+    }
+}
+
+impl FromProto<node::SecurePublicKey> for SecurePublicKey {
+    fn from_proto(proto: &node::SecurePublicKey) -> Result<Self, Error> {
+        let g: G2 = G2::from_proto(proto.get_point())?;
+        Ok(SecurePublicKey::from(g))
     }
 }
 
@@ -339,6 +385,247 @@ impl FromProto<node::Transaction> for Transaction {
     }
 }
 
+//
+// Base Block
+//
+
+impl IntoProto<node::BaseBlockHeader> for BaseBlockHeader {
+    fn into_proto(&self) -> node::BaseBlockHeader {
+        let mut proto = node::BaseBlockHeader::new();
+        proto.set_version(self.version);
+        proto.set_previous(self.previous.into_proto());
+        proto.set_epoch(self.epoch);
+        proto.set_timestamp(self.timestamp);
+        proto
+    }
+}
+
+impl FromProto<node::BaseBlockHeader> for BaseBlockHeader {
+    fn from_proto(proto: &node::BaseBlockHeader) -> Result<Self, Error> {
+        let version = proto.get_version();
+        let previous = Hash::from_proto(proto.get_previous())?;
+        let epoch = proto.get_epoch();
+        let timestamp = proto.get_timestamp();
+        Ok(BaseBlockHeader {
+            version,
+            previous,
+            epoch,
+            timestamp,
+        })
+    }
+}
+
+//
+// Key Block
+//
+
+impl IntoProto<node::KeyBlockHeader> for KeyBlockHeader {
+    fn into_proto(&self) -> node::KeyBlockHeader {
+        let mut proto = node::KeyBlockHeader::new();
+        proto.set_base(self.base.into_proto());
+        proto.set_leader(self.leader.into_proto());
+        for witness in &self.witnesses {
+            proto.witnesses.push(witness.into_proto());
+        }
+        proto
+    }
+}
+
+impl FromProto<node::KeyBlockHeader> for KeyBlockHeader {
+    fn from_proto(proto: &node::KeyBlockHeader) -> Result<Self, Error> {
+        let base = BaseBlockHeader::from_proto(proto.get_base())?;
+        let leader = SecurePublicKey::from_proto(proto.get_leader())?;
+        let mut witnesses = Vec::with_capacity(proto.witnesses.len());
+        for witness in proto.witnesses.iter() {
+            witnesses.push(SecurePublicKey::from_proto(witness)?);
+        }
+
+        Ok(KeyBlockHeader {
+            base,
+            leader,
+            witnesses,
+        })
+    }
+}
+
+impl IntoProto<node::KeyBlock> for KeyBlock {
+    fn into_proto(&self) -> node::KeyBlock {
+        let mut proto = node::KeyBlock::new();
+        proto.set_header(self.header.into_proto());
+        proto
+    }
+}
+
+impl FromProto<node::KeyBlock> for KeyBlock {
+    fn from_proto(proto: &node::KeyBlock) -> Result<Self, Error> {
+        let header = KeyBlockHeader::from_proto(proto.get_header())?;
+        Ok(KeyBlock { header })
+    }
+}
+
+//
+// Monetary Block
+//
+
+impl IntoProto<node::MonetaryBlockHeader> for MonetaryBlockHeader {
+    fn into_proto(&self) -> node::MonetaryBlockHeader {
+        let mut proto = node::MonetaryBlockHeader::new();
+        proto.set_base(self.base.into_proto());
+        proto.set_adjustment(self.adjustment.into_proto());
+        proto.set_inputs_range_hash(self.inputs_range_hash.into_proto());
+        proto.set_outputs_range_hash(self.outputs_range_hash.into_proto());
+        proto
+    }
+}
+
+impl FromProto<node::MonetaryBlockHeader> for MonetaryBlockHeader {
+    fn from_proto(proto: &node::MonetaryBlockHeader) -> Result<Self, Error> {
+        let base = BaseBlockHeader::from_proto(proto.get_base())?;
+        let adjustment = Fr::from_proto(proto.get_adjustment())?;
+        let inputs_range_hash = Hash::from_proto(proto.get_inputs_range_hash())?;
+        let outputs_range_hash = Hash::from_proto(proto.get_outputs_range_hash())?;
+        Ok(MonetaryBlockHeader {
+            base,
+            adjustment,
+            inputs_range_hash,
+            outputs_range_hash,
+        })
+    }
+}
+
+impl IntoProto<node::MerkleNode> for SerializedNode<Box<Output>> {
+    fn into_proto(&self) -> node::MerkleNode {
+        let mut proto = node::MerkleNode::new();
+        proto.set_hash(self.hash.into_proto());
+        if let Some(left) = self.left {
+            proto.set_left(left as u64 + 1);
+        } else {
+            proto.set_left(0);
+        }
+        if let Some(right) = self.right {
+            proto.set_right(right as u64 + 1);
+        } else {
+            proto.set_right(0);
+        }
+        if let Some(ref value) = self.value {
+            proto.set_value(value.into_proto());
+        }
+        proto
+    }
+}
+
+impl FromProto<node::MerkleNode> for SerializedNode<Box<Output>> {
+    fn from_proto(proto: &node::MerkleNode) -> Result<Self, Error> {
+        let hash = Hash::from_proto(proto.get_hash())?;
+        let left = if proto.get_left() > 0 {
+            Some((proto.get_left() - 1) as usize)
+        } else {
+            None
+        };
+        let right = if proto.get_right() > 0 {
+            Some((proto.get_right() - 1) as usize)
+        } else {
+            None
+        };
+        let value = if proto.has_value() {
+            Some(Box::new(Output::from_proto(proto.get_value())?))
+        } else {
+            None
+        };
+        Ok(SerializedNode::<Box<Output>> {
+            hash,
+            left,
+            right,
+            value,
+        })
+    }
+}
+
+impl IntoProto<node::MonetaryBlockBody> for MonetaryBlockBody {
+    fn into_proto(&self) -> node::MonetaryBlockBody {
+        let mut proto = node::MonetaryBlockBody::new();
+        for input in &self.inputs {
+            proto.inputs.push(input.into_proto());
+        }
+        for output in self.outputs.serialize() {
+            proto.outputs.push(output.into_proto());
+        }
+        proto
+    }
+}
+
+impl FromProto<node::MonetaryBlockBody> for MonetaryBlockBody {
+    fn from_proto(proto: &node::MonetaryBlockBody) -> Result<Self, Error> {
+        let mut inputs = Vec::<Hash>::with_capacity(proto.inputs.len());
+        for input in proto.inputs.iter() {
+            inputs.push(Hash::from_proto(input)?);
+        }
+
+        let mut outputs = Vec::with_capacity(proto.outputs.len());
+        for output in proto.outputs.iter() {
+            outputs.push(SerializedNode::<Box<Output>>::from_proto(output)?);
+        }
+        let outputs = Merkle::deserialize(&outputs)?;
+
+        Ok(MonetaryBlockBody { inputs, outputs })
+    }
+}
+
+impl IntoProto<node::MonetaryBlock> for MonetaryBlock {
+    fn into_proto(&self) -> node::MonetaryBlock {
+        let mut proto = node::MonetaryBlock::new();
+        proto.set_header(self.header.into_proto());
+        proto.set_body(self.body.into_proto());
+        proto
+    }
+}
+
+impl FromProto<node::MonetaryBlock> for MonetaryBlock {
+    fn from_proto(proto: &node::MonetaryBlock) -> Result<Self, Error> {
+        let header = MonetaryBlockHeader::from_proto(proto.get_header())?;
+        let body = MonetaryBlockBody::from_proto(proto.get_body())?;
+        Ok(MonetaryBlock { header, body })
+    }
+}
+
+//
+// enum Block
+//
+
+impl IntoProto<node::Block> for Block {
+    fn into_proto(&self) -> node::Block {
+        let mut proto = node::Block::new();
+        match self {
+            Block::KeyBlock(key_block) => proto.set_key_block(key_block.into_proto()),
+            Block::MonetaryBlock(monetary_block) => {
+                proto.set_monetary_block(monetary_block.into_proto())
+            }
+        }
+        proto
+    }
+}
+
+impl FromProto<node::Block> for Block {
+    fn from_proto(proto: &node::Block) -> Result<Self, Error> {
+        let block = match proto.block {
+            Some(node::Block_oneof_block::key_block(ref key_block)) => {
+                let key_block = KeyBlock::from_proto(key_block)?;
+                Block::KeyBlock(key_block)
+            }
+            Some(node::Block_oneof_block::monetary_block(ref monetary_block)) => {
+                let monetary_block = MonetaryBlock::from_proto(monetary_block)?;
+                Block::MonetaryBlock(monetary_block)
+            }
+            None => {
+                return Err(
+                    ProtoError::MissingField("block".to_string(), "block".to_string()).into(),
+                );
+            }
+        };
+        Ok(block)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,6 +637,7 @@ mod tests {
     use stegos_crypto::curve1174::cpt::make_random_keys;
     use stegos_crypto::curve1174::ecpt::ECp;
     use stegos_crypto::hash::Hashable;
+    use stegos_crypto::pbc::secure::make_random_keys as make_secure_random_keys;
 
     fn roundtrip<M, T>(x: &T) -> T
     where
@@ -368,6 +656,9 @@ mod tests {
 
         let fr = Fr::random();
         roundtrip(&fr);
+
+        let g = G2::generator();
+        roundtrip(&g);
     }
 
     #[test]
@@ -375,6 +666,12 @@ mod tests {
         let (_skey, pkey, sig) = make_random_keys();
         roundtrip(&pkey);
         roundtrip(&sig);
+    }
+
+    #[test]
+    fn secure_keys() {
+        let (_skey, pkey, _sig) = make_secure_random_keys();
+        roundtrip(&pkey);
     }
 
     #[test]
@@ -436,5 +733,59 @@ mod tests {
 
         let tx2 = roundtrip(&tx);
         tx2.validate(&inputs1).unwrap();
+    }
+
+    #[test]
+    fn key_blocks() {
+        let (_skey0, pkey0, _sig0) = make_secure_random_keys();
+
+        let version: u64 = 1;
+        let epoch: u64 = 1;
+        let timestamp = Utc::now().timestamp() as u64;
+        let previous = Hash::digest(&"test".to_string());
+
+        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+
+        let witnesses = [pkey0.clone()];
+        let leader = pkey0.clone();
+
+        let block = KeyBlock::new(base, leader, &witnesses);
+        roundtrip(&block.header);
+        roundtrip(&block);
+
+        let block = Block::KeyBlock(block);
+        roundtrip(&block);
+    }
+
+    #[test]
+    fn monetary_blocks() {
+        let (skey0, _pkey0, _sig0) = make_random_keys();
+        let (skey1, pkey1, _sig1) = make_random_keys();
+        let (_skey2, pkey2, _sig2) = make_random_keys();
+
+        let version: u64 = 1;
+        let epoch: u64 = 1;
+        let timestamp = Utc::now().timestamp() as u64;
+        let amount: i64 = 1_000_000;
+        let previous = Hash::digest(&"test".to_string());
+
+        // "genesis" output by 0
+        let (output0, _delta0) = Output::new(timestamp, &skey0, &pkey1, amount).unwrap();
+
+        // Transaction from 1 to 2
+        let inputs1 = [Hash::digest(&output0)];
+        let (output1, delta1) = Output::new(timestamp, &skey1, &pkey2, amount).unwrap();
+        let outputs1 = [output1];
+
+        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+        roundtrip(&base);
+
+        let block = MonetaryBlock::new(base, delta1, &inputs1, &outputs1);
+        roundtrip(&block.header);
+        roundtrip(&block.body);
+        roundtrip(&block);
+
+        let block = Block::MonetaryBlock(block);
+        roundtrip(&block);
     }
 }

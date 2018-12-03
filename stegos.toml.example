@@ -10,16 +10,14 @@ skey = "stegos.skey"
 # Path to a public key in PEM format
 pkey = "stegos.pkey"
 
-[[randhound.participant]]
-key = "node01.pkey"
-[[randhound.participant]]
-key = "node02.pkey"
-[[randhound.participant]]
-key = "node03.pkey"
-[randhound.leader]
-# Should be one of the participants
-key = "node01.pkey"
-
+[randhound]
+node_pbc = "testing/node01/node01.pkey"
+leader = "testing/node01/node01-pbc.pkey"
+participants = [
+    "testing/node01/node01-pbc.pkey",
+    "testing/node01/node02-pbc.pkey",
+    "testing/node01/node03-pbc.pkey",
+]
 
 [network]
 # Local IP to bind to

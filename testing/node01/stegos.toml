@@ -7,7 +7,8 @@ public_key = "testing/node01/stegos.pkey"
 pbc_pkey = "testing/node01/stegos-pbc.pkey"
 
 [randhound]
-leader = "testing/node01/node01-pbc.pkey"
+node_pkey = "testing/node01/node-pbc.pkey"
+leader = "testing/node01/node03-pbc.pkey"
 participants = [
     "testing/node01/node01-pbc.pkey",
     "testing/node01/node02-pbc.pkey",

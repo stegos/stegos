@@ -19,7 +19,7 @@ fn check_for_regen(src: &str, dst: &str) -> bool {
 }
 
 fn main() {
-    if check_for_regen("protos/node.protos", "src/protos/node.rs") {
+    if check_for_regen("protos/node.proto", "src/protos/node.rs") {
         protobuf_codegen_pure::run(Args {
             out_dir: &"src/protos",
             input: &["protos/node.proto"],

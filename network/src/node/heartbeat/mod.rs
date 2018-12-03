@@ -36,7 +36,9 @@ use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-pub use stegos_crypto::pbc::secure::PublicKey as NodePublicKey;
+use stegos_crypto::hash::{Hashable as StegosHasheable, Hasher as StegosHasher};
+use stegos_crypto::pbc::secure::{self, Signature};
+pub use stegos_crypto::pbc::secure::{PublicKey as NodePublicKey, SecretKey as NodeSecretKey};
 use tokio::timer::Interval;
 
 mod heartbeat_proto;
@@ -98,7 +100,7 @@ struct NodeInfo {
 
 impl Hash for NodeInfo {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.node_public_key.hash(state);
+        Hash::hash(&self.node_public_key, state);
     }
 }
 
@@ -110,6 +112,21 @@ impl PartialEq for NodeInfo {
 
 impl Eq for NodeInfo {}
 
+impl StegosHasheable for NodeInfo {
+    fn hash(&self, state: &mut StegosHasher) {
+        stegos_crypto::hash::Hashable::hash(&self.node_public_key, state);
+        for a in self.advertised_ips.iter() {
+            stegos_crypto::hash::Hashable::hash(&a.clone().into_bytes(), state);
+        }
+        stegos_crypto::hash::Hashable::hash(&self.extra_info, state);
+    }
+}
+
+fn sign_node_info(node_info: &NodeInfo, key: &NodeSecretKey) -> Signature {
+    let h = stegos_crypto::hash::Hash::digest(node_info);
+    secure::sign_hash(&h, key)
+}
+
 #[derive(Debug)]
 enum HeartbeatControlMsg {
     Subscribe(mpsc::UnboundedSender<HeartbeatUpdate>),
@@ -119,6 +136,7 @@ enum HeartbeatControlMsg {
 
 struct HeartbeatService {
     me: NodeInfo,
+    my_skey: NodeSecretKey,
     active_nodes: HashSet<NodeInfo>,
     input: Box<Stream<Item = HeartbeatControlMsg, Error = ()> + Send>,
     consumers: Vec<mpsc::UnboundedSender<HeartbeatUpdate>>,
@@ -171,6 +189,7 @@ impl HeartbeatService {
             };
             let heartbeat_service = HeartbeatService {
                 me,
+                my_skey: inner.read().secret_key.clone(),
                 active_nodes: HashSet::default(),
                 input: Box::new(input),
                 consumers: vec![],
@@ -198,7 +217,7 @@ impl Future for HeartbeatService {
                     match msg {
                         HeartbeatControlMsg::Tick => {
                             // Send heartbeat
-                            let msg = msg_to_proto(&self.me);
+                            let msg = msg_to_proto(&self.me, &self.my_skey);
                             if let Ok(proto_msg) = msg.write_to_bytes() {
                                 if let Err(e) = self.broker.publish(&HEARTBEAT_TOPIC, proto_msg) {
                                     error!("Error sending message to network: {}", e);
@@ -277,20 +296,22 @@ impl Future for HeartbeatService {
 }
 
 // Turns a type-safe Heartbeat message into the corresponding row protobuf message.
-fn msg_to_proto(hb_msg: &NodeInfo) -> heartbeat_proto::Message {
+fn msg_to_proto(hb_msg: &NodeInfo, key: &NodeSecretKey) -> heartbeat_proto::Message {
     let mut msg = heartbeat_proto::Message::new();
     msg.set_public_key(hb_msg.node_public_key.into_bytes().to_vec());
     msg.set_extra_info((&*hb_msg.extra_info).to_vec());
     for a in (&*hb_msg.advertised_ips).into_iter() {
         msg.mut_addrs().push(a.clone().into_bytes());
     }
+    msg.set_signature(sign_node_info(&hb_msg, key).into_bytes().to_vec());
     msg
 }
 
 /// Turns a raw Heartbeat message into a type-safe message.
 fn proto_to_msg(message: heartbeat_proto::Message) -> Result<NodeInfo, Error> {
+    let pkey = NodePublicKey::try_from_bytes(&message.get_public_key())?;
     let mut node_info = NodeInfo {
-        node_public_key: NodePublicKey::try_from_bytes(&message.get_public_key())?,
+        node_public_key: pkey.clone(),
         extra_info: message.get_extra_info().to_vec(),
         last_seen: Instant::now(),
         advertised_ips: vec![],
@@ -303,5 +324,11 @@ fn proto_to_msg(message: heartbeat_proto::Message) -> Result<NodeInfo, Error> {
         }
     }
 
-    Ok(node_info)
+    let sig = Signature::try_from_bytes(message.get_signature())?;
+    let h = stegos_crypto::hash::Hash::digest(&node_info);
+    if secure::check_hash(&h, &sig, &pkey) {
+        return Ok(node_info);
+    } else {
+        return Err(format_err!("Invalid message signature"));
+    }
 }

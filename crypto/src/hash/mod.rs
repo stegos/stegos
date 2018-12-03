@@ -262,6 +262,12 @@ impl Hashable for [u8] {
     }
 }
 
+impl Hashable for Vec<u8> {
+    fn hash(&self, state: &mut Hasher) {
+        state.input(self);
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;

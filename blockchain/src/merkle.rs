@@ -21,7 +21,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::cmp::max;
 use std::fmt;
 use std::vec::Vec;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
@@ -89,7 +88,6 @@ type Height = u8;
 
 pub struct Merkle<T: Hashable> {
     root: Box<Node<T>>,
-    pub height: Height,
 }
 
 // -------------------------------------
@@ -236,7 +234,7 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
 
         assert_eq!(height, expected_height(src.len()));
 
-        Merkle { root, height }
+        Merkle { root }
     }
 
     /// Lookup an element by path
@@ -245,7 +243,7 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
         let mut path = path.0;
 
         // Traverse via inner nodes
-        for _ in 0..self.height {
+        loop {
             // true - go left, false - go right
             let left_direction = (path & 1) == 0;
             path >>= 1;
@@ -270,20 +268,17 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
                     right
                 } // going right, has the right subtree
                 Node {
+                    left: None,
+                    right: None,
+                    value: Some(ref value),
+                    ..
+                } => return Some(value),
+                Node {
                     value: None, // node is not a leaf
                     ..
                 } => return None, // missing subtree
                 _ => unreachable!(), // a leaf, doesn't happen in this algorithm
             };
-        }
-
-        // Handle leaf node
-        match node.value {
-            // Regular case
-            Some(ref value) => Some(value),
-            // Can happen in case if tree has the only one element (i.e. root=leaf) and
-            // this element has been pruned.
-            None => None,
         }
     }
 
@@ -291,8 +286,8 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
     // Although the pruning algorithm is straightforward and doesn't require recursion
     // for implementation, we had to use it here in order to deal with Rust's borrow checker.
     //
-    fn prune_r(node: &mut Box<Node<T>>, remain: Height, path: Path) -> Option<T> {
-        if remain == 0 {
+    fn prune_r(node: &mut Box<Node<T>>, path: Path) -> Option<T> {
+        if node.left.is_none() && node.right.is_none() {
             // Leaf nodes
             return match node.value {
                 // Magic happens here - take() extracts the original T and puts None instead.
@@ -307,13 +302,13 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
         let left_direction = (path & 1) == 0;
         let value = if left_direction {
             if let Some(ref mut left) = node.left {
-                Merkle::prune_r(left, remain - 1, path >> 1)
+                Merkle::prune_r(left, path >> 1)
             } else {
                 unreachable!(); // Left subtree always exists
             }
         } else {
             if let Some(ref mut right) = node.right {
-                Merkle::prune_r(right, remain - 1, path >> 1)
+                Merkle::prune_r(right, path >> 1)
             } else {
                 return None; // Missing a right subtree
             }
@@ -357,7 +352,7 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
     /// Lookup an element by path.
     pub fn prune(&mut self, path: &MerklePath) -> Option<T> {
         let path = path.0;
-        Merkle::prune_r(&mut self.root, self.height, path)
+        Merkle::prune_r(&mut self.root, path)
     }
 
     /// A recursive helper for leafs().
@@ -414,7 +409,7 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
     }
 
     /// A recursive helper for validate().
-    fn validate_r(node: &Node<T>) -> Result<Height, MerkleError> {
+    fn validate_r(node: &Node<T>) -> Result<(), MerkleError> {
         match node {
             // An inner node with both subtree
             Node {
@@ -425,8 +420,8 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
                 ..
             } => {
                 // Check left and right subtrees recursively.
-                let left_height = Merkle::validate_r(&left)?;
-                let right_height = Merkle::validate_r(&right)?;
+                Merkle::validate_r(&left)?;
+                Merkle::validate_r(&right)?;
 
                 // Check hash
                 let mut hasher = Hasher::new();
@@ -437,7 +432,7 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
                     return Err(MerkleError::ValidationError(*hash, check_hash));
                 }
 
-                return Ok(max(left_height, right_height) + 1);
+                return Ok(());
             }
             // An inner node with only a left subtree
             Node {
@@ -448,7 +443,7 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
                 ..
             } => {
                 // Check left subtree recursively.
-                let h = Merkle::validate_r(&left)?;
+                Merkle::validate_r(&left)?;
 
                 // Check hash.
                 let mut hasher = Hasher::new();
@@ -459,7 +454,7 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
                     return Err(MerkleError::ValidationError(*hash, check_hash));
                 }
 
-                return Ok(h + 1);
+                return Ok(());
             }
             // A leaf
             Node {
@@ -473,7 +468,7 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
                 if *hash != check_hash {
                     return Err(MerkleError::ValidationError(*hash, check_hash));
                 }
-                return Ok(0);
+                return Ok(());
             }
             // An empty leaf - can only happen if tree is empty
             Node {
@@ -482,7 +477,7 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
                 value: None,
                 ..
             } => {
-                return Ok(0);
+                return Ok(());
             }
             // Invalid structure
             _ => return Err(MerkleError::InvalidStructure),
@@ -491,8 +486,7 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
 
     /// Validate Merkle Tree.
     pub fn validate(&self) -> Result<(), MerkleError> {
-        Merkle::validate_r(&self.root)?;
-        Ok(())
+        Merkle::validate_r(&self.root)
     }
 
     /// A recursive helper for serialize().
@@ -635,9 +629,9 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
         drop(nodes);
 
         // Validate Merkle Tree.
-        let height = Merkle::validate_r(&root)?;
+        Merkle::validate_r(&root)?;
 
-        let tree = Merkle { root, height };
+        let tree = Merkle { root };
 
         Ok(tree)
     }
@@ -762,9 +756,6 @@ pub mod tests {
             "295cd1698c6ac5bd804a09e50f19f8549475e52db1c6ebd441ed0c7b256e1ddf"
         );
 
-        // Check height
-        assert_eq!(tree.height, 0);
-
         // Check hashes
         tree.validate().unwrap();
 
@@ -793,7 +784,7 @@ pub mod tests {
             .iter()
             .map(|(_elem, path)| *path)
             .collect::<Vec<MerklePath>>();
-        let epaths = expected_paths(data.len(), tree.height);
+        let epaths = expected_paths(data.len(), expected_height(data.len()));
         assert_eq!(paths.len(), epaths.len());
         for (left, right) in paths.iter().zip(epaths.iter()) {
             assert_eq!(*left, *right);
@@ -839,9 +830,6 @@ pub mod tests {
             "9cfc92fdc167efd8971ea01910586d551ab6f8a9bb9d56ee791fad27c0ec8da0"
         );
 
-        // Check height
-        assert_eq!(tree.height, 3);
-
         // Check hashes
         tree.validate().unwrap();
 
@@ -859,7 +847,7 @@ pub mod tests {
             .iter()
             .map(|(_elem, path)| *path)
             .collect::<Vec<MerklePath>>();
-        let epaths = expected_paths(data.len(), tree.height);
+        let epaths = expected_paths(data.len(), expected_height(data.len()));
         assert_eq!(paths.len(), epaths.len());
         for (left, right) in paths.iter().zip(epaths.iter()) {
             assert_eq!(*left, *right);

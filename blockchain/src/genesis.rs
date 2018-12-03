@@ -23,7 +23,6 @@
 
 use chrono::prelude::{TimeZone, Utc};
 use crate::block::*;
-use crate::merkle::MerklePath;
 use crate::output::*;
 use stegos_crypto::curve1174::cpt as wallet_keys;
 use stegos_crypto::hash::Hash;
@@ -33,7 +32,7 @@ use stegos_keychain::wallet_to_cosi_keys;
 const GENESIS_WITNESSES_COUNT: usize = 3;
 
 /// Genesis blocks for tests and development purposes.
-pub fn genesis_dev() -> (KeyBlock, MonetaryBlock, Vec<Hash>, Vec<(Hash, MerklePath)>) {
+pub fn genesis_dev() -> (KeyBlock, MonetaryBlock) {
     //
     // Create initial keys.
     //
@@ -82,13 +81,13 @@ pub fn genesis_dev() -> (KeyBlock, MonetaryBlock, Vec<Hash>, Vec<(Hash, MerklePa
             .collect::<Vec<cosi_keys::PublicKey>>();
         let leader = witnesses[0].clone();
 
-        KeyBlock::new(base, leader, witnesses)
+        KeyBlock::new(base, leader, &witnesses)
     };
 
     //
     // Create initial Monetary Block.
     //
-    let (block2, inputs2, outputs2) = {
+    let block2 = {
         let previous = Hash::digest(&block1);
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
         let amount: i64 = 1_000_000;
@@ -113,11 +112,10 @@ pub fn genesis_dev() -> (KeyBlock, MonetaryBlock, Vec<Hash>, Vec<(Hash, MerklePa
         // Adjustment is the sum of all gamma found in UTXOs.
         let adjustment = gamma;
 
-        let (block, outputs) = MonetaryBlock::new(base, adjustment, &inputs, &outputs);
-        (block, inputs, outputs)
+        MonetaryBlock::new(base, adjustment, &inputs, &outputs)
     };
 
-    (block1, block2, inputs2, outputs2)
+    (block1, block2)
 }
 
 /*
@@ -153,7 +151,7 @@ pub mod tests {
 
     #[test]
     fn test_genesis_dev() {
-        let (block1, _block2, _inputs1, _inputs2) = genesis_dev();
+        let (block1, _block2) = genesis_dev();
         let header = block1.header;
 
         assert_eq!(header.base.epoch, 1);

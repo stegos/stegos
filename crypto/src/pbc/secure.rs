@@ -315,6 +315,12 @@ impl G2 {
     }
 }
 
+impl fmt::Debug for G2 {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "SecureG2({})", self.into_hex())
+    }
+}
+
 impl fmt::Display for G2 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "SecureG2({})", self.into_hex())
@@ -485,6 +491,18 @@ impl fmt::Debug for PublicKey {
 impl fmt::Display for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "SecurePKey({})", self.into_hex())
+    }
+}
+
+impl From<PublicKey> for G2 {
+    fn from(pkey: PublicKey) -> Self {
+        pkey.0
+    }
+}
+
+impl From<G2> for PublicKey {
+    fn from(g: G2) -> Self {
+        PublicKey(g)
     }
 }
 

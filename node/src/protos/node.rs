@@ -348,6 +348,169 @@ impl ::protobuf::reflect::ProtobufValue for Fr {
 }
 
 #[derive(PartialEq,Clone,Default)]
+pub struct G2 {
+    // message fields
+    pub data: ::std::vec::Vec<u8>,
+    // special fields
+    pub unknown_fields: ::protobuf::UnknownFields,
+    pub cached_size: ::protobuf::CachedSize,
+}
+
+impl G2 {
+    pub fn new() -> G2 {
+        ::std::default::Default::default()
+    }
+
+    // bytes data = 1;
+
+    pub fn clear_data(&mut self) {
+        self.data.clear();
+    }
+
+    // Param is passed by value, moved
+    pub fn set_data(&mut self, v: ::std::vec::Vec<u8>) {
+        self.data = v;
+    }
+
+    // Mutable pointer to the field.
+    // If field is not initialized, it is initialized with default value first.
+    pub fn mut_data(&mut self) -> &mut ::std::vec::Vec<u8> {
+        &mut self.data
+    }
+
+    // Take field
+    pub fn take_data(&mut self) -> ::std::vec::Vec<u8> {
+        ::std::mem::replace(&mut self.data, ::std::vec::Vec::new())
+    }
+
+    pub fn get_data(&self) -> &[u8] {
+        &self.data
+    }
+}
+
+impl ::protobuf::Message for G2 {
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
+        while !is.eof()? {
+            let (field_number, wire_type) = is.read_tag_unpack()?;
+            match field_number {
+                1 => {
+                    ::protobuf::rt::read_singular_proto3_bytes_into(wire_type, is, &mut self.data)?;
+                },
+                _ => {
+                    ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u32 {
+        let mut my_size = 0;
+        if !self.data.is_empty() {
+            my_size += ::protobuf::rt::bytes_size(1, &self.data);
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
+        self.cached_size.set(my_size);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
+        if !self.data.is_empty() {
+            os.write_bytes(1, &self.data)?;
+        }
+        os.write_unknown_fields(self.get_unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn get_cached_size(&self) -> u32 {
+        self.cached_size.get()
+    }
+
+    fn get_unknown_fields(&self) -> &::protobuf::UnknownFields {
+        &self.unknown_fields
+    }
+
+    fn mut_unknown_fields(&mut self) -> &mut ::protobuf::UnknownFields {
+        &mut self.unknown_fields
+    }
+
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
+    }
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
+    }
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
+        self
+    }
+
+    fn descriptor(&self) -> &'static ::protobuf::reflect::MessageDescriptor {
+        Self::descriptor_static()
+    }
+
+    fn new() -> G2 {
+        G2::new()
+    }
+
+    fn descriptor_static() -> &'static ::protobuf::reflect::MessageDescriptor {
+        static mut descriptor: ::protobuf::lazy::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const ::protobuf::reflect::MessageDescriptor,
+        };
+        unsafe {
+            descriptor.get(|| {
+                let mut fields = ::std::vec::Vec::new();
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeBytes>(
+                    "data",
+                    |m: &G2| { &m.data },
+                    |m: &mut G2| { &mut m.data },
+                ));
+                ::protobuf::reflect::MessageDescriptor::new::<G2>(
+                    "G2",
+                    fields,
+                    file_descriptor_proto()
+                )
+            })
+        }
+    }
+
+    fn default_instance() -> &'static G2 {
+        static mut instance: ::protobuf::lazy::Lazy<G2> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const G2,
+        };
+        unsafe {
+            instance.get(G2::new)
+        }
+    }
+}
+
+impl ::protobuf::Clear for G2 {
+    fn clear(&mut self) {
+        self.clear_data();
+        self.unknown_fields.clear();
+    }
+}
+
+impl ::std::fmt::Debug for G2 {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for G2 {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
+        ::protobuf::reflect::ProtobufValueRef::Message(self)
+    }
+}
+
+#[derive(PartialEq,Clone,Default)]
 pub struct Hash {
     // message fields
     pub data: ::std::vec::Vec<u8>,
@@ -918,6 +1081,184 @@ impl ::std::fmt::Debug for SchnorrSig {
 }
 
 impl ::protobuf::reflect::ProtobufValue for SchnorrSig {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
+        ::protobuf::reflect::ProtobufValueRef::Message(self)
+    }
+}
+
+#[derive(PartialEq,Clone,Default)]
+pub struct SecurePublicKey {
+    // message fields
+    pub point: ::protobuf::SingularPtrField<G2>,
+    // special fields
+    pub unknown_fields: ::protobuf::UnknownFields,
+    pub cached_size: ::protobuf::CachedSize,
+}
+
+impl SecurePublicKey {
+    pub fn new() -> SecurePublicKey {
+        ::std::default::Default::default()
+    }
+
+    // .protobuf.pb.G2 point = 1;
+
+    pub fn clear_point(&mut self) {
+        self.point.clear();
+    }
+
+    pub fn has_point(&self) -> bool {
+        self.point.is_some()
+    }
+
+    // Param is passed by value, moved
+    pub fn set_point(&mut self, v: G2) {
+        self.point = ::protobuf::SingularPtrField::some(v);
+    }
+
+    // Mutable pointer to the field.
+    // If field is not initialized, it is initialized with default value first.
+    pub fn mut_point(&mut self) -> &mut G2 {
+        if self.point.is_none() {
+            self.point.set_default();
+        }
+        self.point.as_mut().unwrap()
+    }
+
+    // Take field
+    pub fn take_point(&mut self) -> G2 {
+        self.point.take().unwrap_or_else(|| G2::new())
+    }
+
+    pub fn get_point(&self) -> &G2 {
+        self.point.as_ref().unwrap_or_else(|| G2::default_instance())
+    }
+}
+
+impl ::protobuf::Message for SecurePublicKey {
+    fn is_initialized(&self) -> bool {
+        for v in &self.point {
+            if !v.is_initialized() {
+                return false;
+            }
+        };
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
+        while !is.eof()? {
+            let (field_number, wire_type) = is.read_tag_unpack()?;
+            match field_number {
+                1 => {
+                    ::protobuf::rt::read_singular_message_into(wire_type, is, &mut self.point)?;
+                },
+                _ => {
+                    ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u32 {
+        let mut my_size = 0;
+        if let Some(ref v) = self.point.as_ref() {
+            let len = v.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
+        self.cached_size.set(my_size);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
+        if let Some(ref v) = self.point.as_ref() {
+            os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
+            os.write_raw_varint32(v.get_cached_size())?;
+            v.write_to_with_cached_sizes(os)?;
+        }
+        os.write_unknown_fields(self.get_unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn get_cached_size(&self) -> u32 {
+        self.cached_size.get()
+    }
+
+    fn get_unknown_fields(&self) -> &::protobuf::UnknownFields {
+        &self.unknown_fields
+    }
+
+    fn mut_unknown_fields(&mut self) -> &mut ::protobuf::UnknownFields {
+        &mut self.unknown_fields
+    }
+
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
+    }
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
+    }
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
+        self
+    }
+
+    fn descriptor(&self) -> &'static ::protobuf::reflect::MessageDescriptor {
+        Self::descriptor_static()
+    }
+
+    fn new() -> SecurePublicKey {
+        SecurePublicKey::new()
+    }
+
+    fn descriptor_static() -> &'static ::protobuf::reflect::MessageDescriptor {
+        static mut descriptor: ::protobuf::lazy::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const ::protobuf::reflect::MessageDescriptor,
+        };
+        unsafe {
+            descriptor.get(|| {
+                let mut fields = ::std::vec::Vec::new();
+                fields.push(::protobuf::reflect::accessor::make_singular_ptr_field_accessor::<_, ::protobuf::types::ProtobufTypeMessage<G2>>(
+                    "point",
+                    |m: &SecurePublicKey| { &m.point },
+                    |m: &mut SecurePublicKey| { &mut m.point },
+                ));
+                ::protobuf::reflect::MessageDescriptor::new::<SecurePublicKey>(
+                    "SecurePublicKey",
+                    fields,
+                    file_descriptor_proto()
+                )
+            })
+        }
+    }
+
+    fn default_instance() -> &'static SecurePublicKey {
+        static mut instance: ::protobuf::lazy::Lazy<SecurePublicKey> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const SecurePublicKey,
+        };
+        unsafe {
+            instance.get(SecurePublicKey::new)
+        }
+    }
+}
+
+impl ::protobuf::Clear for SecurePublicKey {
+    fn clear(&mut self) {
+        self.clear_point();
+        self.unknown_fields.clear();
+    }
+}
+
+impl ::std::fmt::Debug for SecurePublicKey {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for SecurePublicKey {
     fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
         ::protobuf::reflect::ProtobufValueRef::Message(self)
     }
@@ -3355,46 +3696,2212 @@ impl ::protobuf::reflect::ProtobufValue for Transaction {
     }
 }
 
+#[derive(PartialEq,Clone,Default)]
+pub struct BaseBlockHeader {
+    // message fields
+    pub version: u64,
+    pub previous: ::protobuf::SingularPtrField<Hash>,
+    pub epoch: u64,
+    pub timestamp: u64,
+    // special fields
+    pub unknown_fields: ::protobuf::UnknownFields,
+    pub cached_size: ::protobuf::CachedSize,
+}
+
+impl BaseBlockHeader {
+    pub fn new() -> BaseBlockHeader {
+        ::std::default::Default::default()
+    }
+
+    // uint64 version = 1;
+
+    pub fn clear_version(&mut self) {
+        self.version = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_version(&mut self, v: u64) {
+        self.version = v;
+    }
+
+    pub fn get_version(&self) -> u64 {
+        self.version
+    }
+
+    // .protobuf.pb.Hash previous = 2;
+
+    pub fn clear_previous(&mut self) {
+        self.previous.clear();
+    }
+
+    pub fn has_previous(&self) -> bool {
+        self.previous.is_some()
+    }
+
+    // Param is passed by value, moved
+    pub fn set_previous(&mut self, v: Hash) {
+        self.previous = ::protobuf::SingularPtrField::some(v);
+    }
+
+    // Mutable pointer to the field.
+    // If field is not initialized, it is initialized with default value first.
+    pub fn mut_previous(&mut self) -> &mut Hash {
+        if self.previous.is_none() {
+            self.previous.set_default();
+        }
+        self.previous.as_mut().unwrap()
+    }
+
+    // Take field
+    pub fn take_previous(&mut self) -> Hash {
+        self.previous.take().unwrap_or_else(|| Hash::new())
+    }
+
+    pub fn get_previous(&self) -> &Hash {
+        self.previous.as_ref().unwrap_or_else(|| Hash::default_instance())
+    }
+
+    // uint64 epoch = 3;
+
+    pub fn clear_epoch(&mut self) {
+        self.epoch = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_epoch(&mut self, v: u64) {
+        self.epoch = v;
+    }
+
+    pub fn get_epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    // uint64 timestamp = 4;
+
+    pub fn clear_timestamp(&mut self) {
+        self.timestamp = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_timestamp(&mut self, v: u64) {
+        self.timestamp = v;
+    }
+
+    pub fn get_timestamp(&self) -> u64 {
+        self.timestamp
+    }
+}
+
+impl ::protobuf::Message for BaseBlockHeader {
+    fn is_initialized(&self) -> bool {
+        for v in &self.previous {
+            if !v.is_initialized() {
+                return false;
+            }
+        };
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
+        while !is.eof()? {
+            let (field_number, wire_type) = is.read_tag_unpack()?;
+            match field_number {
+                1 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint64()?;
+                    self.version = tmp;
+                },
+                2 => {
+                    ::protobuf::rt::read_singular_message_into(wire_type, is, &mut self.previous)?;
+                },
+                3 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint64()?;
+                    self.epoch = tmp;
+                },
+                4 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint64()?;
+                    self.timestamp = tmp;
+                },
+                _ => {
+                    ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u32 {
+        let mut my_size = 0;
+        if self.version != 0 {
+            my_size += ::protobuf::rt::value_size(1, self.version, ::protobuf::wire_format::WireTypeVarint);
+        }
+        if let Some(ref v) = self.previous.as_ref() {
+            let len = v.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
+        }
+        if self.epoch != 0 {
+            my_size += ::protobuf::rt::value_size(3, self.epoch, ::protobuf::wire_format::WireTypeVarint);
+        }
+        if self.timestamp != 0 {
+            my_size += ::protobuf::rt::value_size(4, self.timestamp, ::protobuf::wire_format::WireTypeVarint);
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
+        self.cached_size.set(my_size);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
+        if self.version != 0 {
+            os.write_uint64(1, self.version)?;
+        }
+        if let Some(ref v) = self.previous.as_ref() {
+            os.write_tag(2, ::protobuf::wire_format::WireTypeLengthDelimited)?;
+            os.write_raw_varint32(v.get_cached_size())?;
+            v.write_to_with_cached_sizes(os)?;
+        }
+        if self.epoch != 0 {
+            os.write_uint64(3, self.epoch)?;
+        }
+        if self.timestamp != 0 {
+            os.write_uint64(4, self.timestamp)?;
+        }
+        os.write_unknown_fields(self.get_unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn get_cached_size(&self) -> u32 {
+        self.cached_size.get()
+    }
+
+    fn get_unknown_fields(&self) -> &::protobuf::UnknownFields {
+        &self.unknown_fields
+    }
+
+    fn mut_unknown_fields(&mut self) -> &mut ::protobuf::UnknownFields {
+        &mut self.unknown_fields
+    }
+
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
+    }
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
+    }
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
+        self
+    }
+
+    fn descriptor(&self) -> &'static ::protobuf::reflect::MessageDescriptor {
+        Self::descriptor_static()
+    }
+
+    fn new() -> BaseBlockHeader {
+        BaseBlockHeader::new()
+    }
+
+    fn descriptor_static() -> &'static ::protobuf::reflect::MessageDescriptor {
+        static mut descriptor: ::protobuf::lazy::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const ::protobuf::reflect::MessageDescriptor,
+        };
+        unsafe {
+            descriptor.get(|| {
+                let mut fields = ::std::vec::Vec::new();
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
+                    "version",
+                    |m: &BaseBlockHeader| { &m.version },
+                    |m: &mut BaseBlockHeader| { &mut m.version },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_singular_ptr_field_accessor::<_, ::protobuf::types::ProtobufTypeMessage<Hash>>(
+                    "previous",
+                    |m: &BaseBlockHeader| { &m.previous },
+                    |m: &mut BaseBlockHeader| { &mut m.previous },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
+                    "epoch",
+                    |m: &BaseBlockHeader| { &m.epoch },
+                    |m: &mut BaseBlockHeader| { &mut m.epoch },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
+                    "timestamp",
+                    |m: &BaseBlockHeader| { &m.timestamp },
+                    |m: &mut BaseBlockHeader| { &mut m.timestamp },
+                ));
+                ::protobuf::reflect::MessageDescriptor::new::<BaseBlockHeader>(
+                    "BaseBlockHeader",
+                    fields,
+                    file_descriptor_proto()
+                )
+            })
+        }
+    }
+
+    fn default_instance() -> &'static BaseBlockHeader {
+        static mut instance: ::protobuf::lazy::Lazy<BaseBlockHeader> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const BaseBlockHeader,
+        };
+        unsafe {
+            instance.get(BaseBlockHeader::new)
+        }
+    }
+}
+
+impl ::protobuf::Clear for BaseBlockHeader {
+    fn clear(&mut self) {
+        self.clear_version();
+        self.clear_previous();
+        self.clear_epoch();
+        self.clear_timestamp();
+        self.unknown_fields.clear();
+    }
+}
+
+impl ::std::fmt::Debug for BaseBlockHeader {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for BaseBlockHeader {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
+        ::protobuf::reflect::ProtobufValueRef::Message(self)
+    }
+}
+
+#[derive(PartialEq,Clone,Default)]
+pub struct MonetaryBlockHeader {
+    // message fields
+    pub base: ::protobuf::SingularPtrField<BaseBlockHeader>,
+    pub adjustment: ::protobuf::SingularPtrField<Fr>,
+    pub inputs_range_hash: ::protobuf::SingularPtrField<Hash>,
+    pub outputs_range_hash: ::protobuf::SingularPtrField<Hash>,
+    // special fields
+    pub unknown_fields: ::protobuf::UnknownFields,
+    pub cached_size: ::protobuf::CachedSize,
+}
+
+impl MonetaryBlockHeader {
+    pub fn new() -> MonetaryBlockHeader {
+        ::std::default::Default::default()
+    }
+
+    // .protobuf.pb.BaseBlockHeader base = 1;
+
+    pub fn clear_base(&mut self) {
+        self.base.clear();
+    }
+
+    pub fn has_base(&self) -> bool {
+        self.base.is_some()
+    }
+
+    // Param is passed by value, moved
+    pub fn set_base(&mut self, v: BaseBlockHeader) {
+        self.base = ::protobuf::SingularPtrField::some(v);
+    }
+
+    // Mutable pointer to the field.
+    // If field is not initialized, it is initialized with default value first.
+    pub fn mut_base(&mut self) -> &mut BaseBlockHeader {
+        if self.base.is_none() {
+            self.base.set_default();
+        }
+        self.base.as_mut().unwrap()
+    }
+
+    // Take field
+    pub fn take_base(&mut self) -> BaseBlockHeader {
+        self.base.take().unwrap_or_else(|| BaseBlockHeader::new())
+    }
+
+    pub fn get_base(&self) -> &BaseBlockHeader {
+        self.base.as_ref().unwrap_or_else(|| BaseBlockHeader::default_instance())
+    }
+
+    // .protobuf.pb.Fr adjustment = 2;
+
+    pub fn clear_adjustment(&mut self) {
+        self.adjustment.clear();
+    }
+
+    pub fn has_adjustment(&self) -> bool {
+        self.adjustment.is_some()
+    }
+
+    // Param is passed by value, moved
+    pub fn set_adjustment(&mut self, v: Fr) {
+        self.adjustment = ::protobuf::SingularPtrField::some(v);
+    }
+
+    // Mutable pointer to the field.
+    // If field is not initialized, it is initialized with default value first.
+    pub fn mut_adjustment(&mut self) -> &mut Fr {
+        if self.adjustment.is_none() {
+            self.adjustment.set_default();
+        }
+        self.adjustment.as_mut().unwrap()
+    }
+
+    // Take field
+    pub fn take_adjustment(&mut self) -> Fr {
+        self.adjustment.take().unwrap_or_else(|| Fr::new())
+    }
+
+    pub fn get_adjustment(&self) -> &Fr {
+        self.adjustment.as_ref().unwrap_or_else(|| Fr::default_instance())
+    }
+
+    // .protobuf.pb.Hash inputs_range_hash = 3;
+
+    pub fn clear_inputs_range_hash(&mut self) {
+        self.inputs_range_hash.clear();
+    }
+
+    pub fn has_inputs_range_hash(&self) -> bool {
+        self.inputs_range_hash.is_some()
+    }
+
+    // Param is passed by value, moved
+    pub fn set_inputs_range_hash(&mut self, v: Hash) {
+        self.inputs_range_hash = ::protobuf::SingularPtrField::some(v);
+    }
+
+    // Mutable pointer to the field.
+    // If field is not initialized, it is initialized with default value first.
+    pub fn mut_inputs_range_hash(&mut self) -> &mut Hash {
+        if self.inputs_range_hash.is_none() {
+            self.inputs_range_hash.set_default();
+        }
+        self.inputs_range_hash.as_mut().unwrap()
+    }
+
+    // Take field
+    pub fn take_inputs_range_hash(&mut self) -> Hash {
+        self.inputs_range_hash.take().unwrap_or_else(|| Hash::new())
+    }
+
+    pub fn get_inputs_range_hash(&self) -> &Hash {
+        self.inputs_range_hash.as_ref().unwrap_or_else(|| Hash::default_instance())
+    }
+
+    // .protobuf.pb.Hash outputs_range_hash = 4;
+
+    pub fn clear_outputs_range_hash(&mut self) {
+        self.outputs_range_hash.clear();
+    }
+
+    pub fn has_outputs_range_hash(&self) -> bool {
+        self.outputs_range_hash.is_some()
+    }
+
+    // Param is passed by value, moved
+    pub fn set_outputs_range_hash(&mut self, v: Hash) {
+        self.outputs_range_hash = ::protobuf::SingularPtrField::some(v);
+    }
+
+    // Mutable pointer to the field.
+    // If field is not initialized, it is initialized with default value first.
+    pub fn mut_outputs_range_hash(&mut self) -> &mut Hash {
+        if self.outputs_range_hash.is_none() {
+            self.outputs_range_hash.set_default();
+        }
+        self.outputs_range_hash.as_mut().unwrap()
+    }
+
+    // Take field
+    pub fn take_outputs_range_hash(&mut self) -> Hash {
+        self.outputs_range_hash.take().unwrap_or_else(|| Hash::new())
+    }
+
+    pub fn get_outputs_range_hash(&self) -> &Hash {
+        self.outputs_range_hash.as_ref().unwrap_or_else(|| Hash::default_instance())
+    }
+}
+
+impl ::protobuf::Message for MonetaryBlockHeader {
+    fn is_initialized(&self) -> bool {
+        for v in &self.base {
+            if !v.is_initialized() {
+                return false;
+            }
+        };
+        for v in &self.adjustment {
+            if !v.is_initialized() {
+                return false;
+            }
+        };
+        for v in &self.inputs_range_hash {
+            if !v.is_initialized() {
+                return false;
+            }
+        };
+        for v in &self.outputs_range_hash {
+            if !v.is_initialized() {
+                return false;
+            }
+        };
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
+        while !is.eof()? {
+            let (field_number, wire_type) = is.read_tag_unpack()?;
+            match field_number {
+                1 => {
+                    ::protobuf::rt::read_singular_message_into(wire_type, is, &mut self.base)?;
+                },
+                2 => {
+                    ::protobuf::rt::read_singular_message_into(wire_type, is, &mut self.adjustment)?;
+                },
+                3 => {
+                    ::protobuf::rt::read_singular_message_into(wire_type, is, &mut self.inputs_range_hash)?;
+                },
+                4 => {
+                    ::protobuf::rt::read_singular_message_into(wire_type, is, &mut self.outputs_range_hash)?;
+                },
+                _ => {
+                    ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u32 {
+        let mut my_size = 0;
+        if let Some(ref v) = self.base.as_ref() {
+            let len = v.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
+        }
+        if let Some(ref v) = self.adjustment.as_ref() {
+            let len = v.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
+        }
+        if let Some(ref v) = self.inputs_range_hash.as_ref() {
+            let len = v.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
+        }
+        if let Some(ref v) = self.outputs_range_hash.as_ref() {
+            let len = v.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
+        self.cached_size.set(my_size);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
+        if let Some(ref v) = self.base.as_ref() {
+            os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
+            os.write_raw_varint32(v.get_cached_size())?;
+            v.write_to_with_cached_sizes(os)?;
+        }
+        if let Some(ref v) = self.adjustment.as_ref() {
+            os.write_tag(2, ::protobuf::wire_format::WireTypeLengthDelimited)?;
+            os.write_raw_varint32(v.get_cached_size())?;
+            v.write_to_with_cached_sizes(os)?;
+        }
+        if let Some(ref v) = self.inputs_range_hash.as_ref() {
+            os.write_tag(3, ::protobuf::wire_format::WireTypeLengthDelimited)?;
+            os.write_raw_varint32(v.get_cached_size())?;
+            v.write_to_with_cached_sizes(os)?;
+        }
+        if let Some(ref v) = self.outputs_range_hash.as_ref() {
+            os.write_tag(4, ::protobuf::wire_format::WireTypeLengthDelimited)?;
+            os.write_raw_varint32(v.get_cached_size())?;
+            v.write_to_with_cached_sizes(os)?;
+        }
+        os.write_unknown_fields(self.get_unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn get_cached_size(&self) -> u32 {
+        self.cached_size.get()
+    }
+
+    fn get_unknown_fields(&self) -> &::protobuf::UnknownFields {
+        &self.unknown_fields
+    }
+
+    fn mut_unknown_fields(&mut self) -> &mut ::protobuf::UnknownFields {
+        &mut self.unknown_fields
+    }
+
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
+    }
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
+    }
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
+        self
+    }
+
+    fn descriptor(&self) -> &'static ::protobuf::reflect::MessageDescriptor {
+        Self::descriptor_static()
+    }
+
+    fn new() -> MonetaryBlockHeader {
+        MonetaryBlockHeader::new()
+    }
+
+    fn descriptor_static() -> &'static ::protobuf::reflect::MessageDescriptor {
+        static mut descriptor: ::protobuf::lazy::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const ::protobuf::reflect::MessageDescriptor,
+        };
+        unsafe {
+            descriptor.get(|| {
+                let mut fields = ::std::vec::Vec::new();
+                fields.push(::protobuf::reflect::accessor::make_singular_ptr_field_accessor::<_, ::protobuf::types::ProtobufTypeMessage<BaseBlockHeader>>(
+                    "base",
+                    |m: &MonetaryBlockHeader| { &m.base },
+                    |m: &mut MonetaryBlockHeader| { &mut m.base },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_singular_ptr_field_accessor::<_, ::protobuf::types::ProtobufTypeMessage<Fr>>(
+                    "adjustment",
+                    |m: &MonetaryBlockHeader| { &m.adjustment },
+                    |m: &mut MonetaryBlockHeader| { &mut m.adjustment },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_singular_ptr_field_accessor::<_, ::protobuf::types::ProtobufTypeMessage<Hash>>(
+                    "inputs_range_hash",
+                    |m: &MonetaryBlockHeader| { &m.inputs_range_hash },
+                    |m: &mut MonetaryBlockHeader| { &mut m.inputs_range_hash },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_singular_ptr_field_accessor::<_, ::protobuf::types::ProtobufTypeMessage<Hash>>(
+                    "outputs_range_hash",
+                    |m: &MonetaryBlockHeader| { &m.outputs_range_hash },
+                    |m: &mut MonetaryBlockHeader| { &mut m.outputs_range_hash },
+                ));
+                ::protobuf::reflect::MessageDescriptor::new::<MonetaryBlockHeader>(
+                    "MonetaryBlockHeader",
+                    fields,
+                    file_descriptor_proto()
+                )
+            })
+        }
+    }
+
+    fn default_instance() -> &'static MonetaryBlockHeader {
+        static mut instance: ::protobuf::lazy::Lazy<MonetaryBlockHeader> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const MonetaryBlockHeader,
+        };
+        unsafe {
+            instance.get(MonetaryBlockHeader::new)
+        }
+    }
+}
+
+impl ::protobuf::Clear for MonetaryBlockHeader {
+    fn clear(&mut self) {
+        self.clear_base();
+        self.clear_adjustment();
+        self.clear_inputs_range_hash();
+        self.clear_outputs_range_hash();
+        self.unknown_fields.clear();
+    }
+}
+
+impl ::std::fmt::Debug for MonetaryBlockHeader {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for MonetaryBlockHeader {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
+        ::protobuf::reflect::ProtobufValueRef::Message(self)
+    }
+}
+
+#[derive(PartialEq,Clone,Default)]
+pub struct MerkleNode {
+    // message fields
+    pub hash: ::protobuf::SingularPtrField<Hash>,
+    pub left: u64,
+    pub right: u64,
+    pub value: ::protobuf::SingularPtrField<Output>,
+    // special fields
+    pub unknown_fields: ::protobuf::UnknownFields,
+    pub cached_size: ::protobuf::CachedSize,
+}
+
+impl MerkleNode {
+    pub fn new() -> MerkleNode {
+        ::std::default::Default::default()
+    }
+
+    // .protobuf.pb.Hash hash = 1;
+
+    pub fn clear_hash(&mut self) {
+        self.hash.clear();
+    }
+
+    pub fn has_hash(&self) -> bool {
+        self.hash.is_some()
+    }
+
+    // Param is passed by value, moved
+    pub fn set_hash(&mut self, v: Hash) {
+        self.hash = ::protobuf::SingularPtrField::some(v);
+    }
+
+    // Mutable pointer to the field.
+    // If field is not initialized, it is initialized with default value first.
+    pub fn mut_hash(&mut self) -> &mut Hash {
+        if self.hash.is_none() {
+            self.hash.set_default();
+        }
+        self.hash.as_mut().unwrap()
+    }
+
+    // Take field
+    pub fn take_hash(&mut self) -> Hash {
+        self.hash.take().unwrap_or_else(|| Hash::new())
+    }
+
+    pub fn get_hash(&self) -> &Hash {
+        self.hash.as_ref().unwrap_or_else(|| Hash::default_instance())
+    }
+
+    // uint64 left = 2;
+
+    pub fn clear_left(&mut self) {
+        self.left = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_left(&mut self, v: u64) {
+        self.left = v;
+    }
+
+    pub fn get_left(&self) -> u64 {
+        self.left
+    }
+
+    // uint64 right = 3;
+
+    pub fn clear_right(&mut self) {
+        self.right = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_right(&mut self, v: u64) {
+        self.right = v;
+    }
+
+    pub fn get_right(&self) -> u64 {
+        self.right
+    }
+
+    // .protobuf.pb.Output value = 4;
+
+    pub fn clear_value(&mut self) {
+        self.value.clear();
+    }
+
+    pub fn has_value(&self) -> bool {
+        self.value.is_some()
+    }
+
+    // Param is passed by value, moved
+    pub fn set_value(&mut self, v: Output) {
+        self.value = ::protobuf::SingularPtrField::some(v);
+    }
+
+    // Mutable pointer to the field.
+    // If field is not initialized, it is initialized with default value first.
+    pub fn mut_value(&mut self) -> &mut Output {
+        if self.value.is_none() {
+            self.value.set_default();
+        }
+        self.value.as_mut().unwrap()
+    }
+
+    // Take field
+    pub fn take_value(&mut self) -> Output {
+        self.value.take().unwrap_or_else(|| Output::new())
+    }
+
+    pub fn get_value(&self) -> &Output {
+        self.value.as_ref().unwrap_or_else(|| Output::default_instance())
+    }
+}
+
+impl ::protobuf::Message for MerkleNode {
+    fn is_initialized(&self) -> bool {
+        for v in &self.hash {
+            if !v.is_initialized() {
+                return false;
+            }
+        };
+        for v in &self.value {
+            if !v.is_initialized() {
+                return false;
+            }
+        };
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
+        while !is.eof()? {
+            let (field_number, wire_type) = is.read_tag_unpack()?;
+            match field_number {
+                1 => {
+                    ::protobuf::rt::read_singular_message_into(wire_type, is, &mut self.hash)?;
+                },
+                2 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint64()?;
+                    self.left = tmp;
+                },
+                3 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint64()?;
+                    self.right = tmp;
+                },
+                4 => {
+                    ::protobuf::rt::read_singular_message_into(wire_type, is, &mut self.value)?;
+                },
+                _ => {
+                    ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u32 {
+        let mut my_size = 0;
+        if let Some(ref v) = self.hash.as_ref() {
+            let len = v.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
+        }
+        if self.left != 0 {
+            my_size += ::protobuf::rt::value_size(2, self.left, ::protobuf::wire_format::WireTypeVarint);
+        }
+        if self.right != 0 {
+            my_size += ::protobuf::rt::value_size(3, self.right, ::protobuf::wire_format::WireTypeVarint);
+        }
+        if let Some(ref v) = self.value.as_ref() {
+            let len = v.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
+        self.cached_size.set(my_size);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
+        if let Some(ref v) = self.hash.as_ref() {
+            os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
+            os.write_raw_varint32(v.get_cached_size())?;
+            v.write_to_with_cached_sizes(os)?;
+        }
+        if self.left != 0 {
+            os.write_uint64(2, self.left)?;
+        }
+        if self.right != 0 {
+            os.write_uint64(3, self.right)?;
+        }
+        if let Some(ref v) = self.value.as_ref() {
+            os.write_tag(4, ::protobuf::wire_format::WireTypeLengthDelimited)?;
+            os.write_raw_varint32(v.get_cached_size())?;
+            v.write_to_with_cached_sizes(os)?;
+        }
+        os.write_unknown_fields(self.get_unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn get_cached_size(&self) -> u32 {
+        self.cached_size.get()
+    }
+
+    fn get_unknown_fields(&self) -> &::protobuf::UnknownFields {
+        &self.unknown_fields
+    }
+
+    fn mut_unknown_fields(&mut self) -> &mut ::protobuf::UnknownFields {
+        &mut self.unknown_fields
+    }
+
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
+    }
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
+    }
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
+        self
+    }
+
+    fn descriptor(&self) -> &'static ::protobuf::reflect::MessageDescriptor {
+        Self::descriptor_static()
+    }
+
+    fn new() -> MerkleNode {
+        MerkleNode::new()
+    }
+
+    fn descriptor_static() -> &'static ::protobuf::reflect::MessageDescriptor {
+        static mut descriptor: ::protobuf::lazy::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const ::protobuf::reflect::MessageDescriptor,
+        };
+        unsafe {
+            descriptor.get(|| {
+                let mut fields = ::std::vec::Vec::new();
+                fields.push(::protobuf::reflect::accessor::make_singular_ptr_field_accessor::<_, ::protobuf::types::ProtobufTypeMessage<Hash>>(
+                    "hash",
+                    |m: &MerkleNode| { &m.hash },
+                    |m: &mut MerkleNode| { &mut m.hash },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
+                    "left",
+                    |m: &MerkleNode| { &m.left },
+                    |m: &mut MerkleNode| { &mut m.left },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
+                    "right",
+                    |m: &MerkleNode| { &m.right },
+                    |m: &mut MerkleNode| { &mut m.right },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_singular_ptr_field_accessor::<_, ::protobuf::types::ProtobufTypeMessage<Output>>(
+                    "value",
+                    |m: &MerkleNode| { &m.value },
+                    |m: &mut MerkleNode| { &mut m.value },
+                ));
+                ::protobuf::reflect::MessageDescriptor::new::<MerkleNode>(
+                    "MerkleNode",
+                    fields,
+                    file_descriptor_proto()
+                )
+            })
+        }
+    }
+
+    fn default_instance() -> &'static MerkleNode {
+        static mut instance: ::protobuf::lazy::Lazy<MerkleNode> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const MerkleNode,
+        };
+        unsafe {
+            instance.get(MerkleNode::new)
+        }
+    }
+}
+
+impl ::protobuf::Clear for MerkleNode {
+    fn clear(&mut self) {
+        self.clear_hash();
+        self.clear_left();
+        self.clear_right();
+        self.clear_value();
+        self.unknown_fields.clear();
+    }
+}
+
+impl ::std::fmt::Debug for MerkleNode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for MerkleNode {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
+        ::protobuf::reflect::ProtobufValueRef::Message(self)
+    }
+}
+
+#[derive(PartialEq,Clone,Default)]
+pub struct MonetaryBlockBody {
+    // message fields
+    pub inputs: ::protobuf::RepeatedField<Hash>,
+    pub outputs: ::protobuf::RepeatedField<MerkleNode>,
+    // special fields
+    pub unknown_fields: ::protobuf::UnknownFields,
+    pub cached_size: ::protobuf::CachedSize,
+}
+
+impl MonetaryBlockBody {
+    pub fn new() -> MonetaryBlockBody {
+        ::std::default::Default::default()
+    }
+
+    // repeated .protobuf.pb.Hash inputs = 1;
+
+    pub fn clear_inputs(&mut self) {
+        self.inputs.clear();
+    }
+
+    // Param is passed by value, moved
+    pub fn set_inputs(&mut self, v: ::protobuf::RepeatedField<Hash>) {
+        self.inputs = v;
+    }
+
+    // Mutable pointer to the field.
+    pub fn mut_inputs(&mut self) -> &mut ::protobuf::RepeatedField<Hash> {
+        &mut self.inputs
+    }
+
+    // Take field
+    pub fn take_inputs(&mut self) -> ::protobuf::RepeatedField<Hash> {
+        ::std::mem::replace(&mut self.inputs, ::protobuf::RepeatedField::new())
+    }
+
+    pub fn get_inputs(&self) -> &[Hash] {
+        &self.inputs
+    }
+
+    // repeated .protobuf.pb.MerkleNode outputs = 2;
+
+    pub fn clear_outputs(&mut self) {
+        self.outputs.clear();
+    }
+
+    // Param is passed by value, moved
+    pub fn set_outputs(&mut self, v: ::protobuf::RepeatedField<MerkleNode>) {
+        self.outputs = v;
+    }
+
+    // Mutable pointer to the field.
+    pub fn mut_outputs(&mut self) -> &mut ::protobuf::RepeatedField<MerkleNode> {
+        &mut self.outputs
+    }
+
+    // Take field
+    pub fn take_outputs(&mut self) -> ::protobuf::RepeatedField<MerkleNode> {
+        ::std::mem::replace(&mut self.outputs, ::protobuf::RepeatedField::new())
+    }
+
+    pub fn get_outputs(&self) -> &[MerkleNode] {
+        &self.outputs
+    }
+}
+
+impl ::protobuf::Message for MonetaryBlockBody {
+    fn is_initialized(&self) -> bool {
+        for v in &self.inputs {
+            if !v.is_initialized() {
+                return false;
+            }
+        };
+        for v in &self.outputs {
+            if !v.is_initialized() {
+                return false;
+            }
+        };
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
+        while !is.eof()? {
+            let (field_number, wire_type) = is.read_tag_unpack()?;
+            match field_number {
+                1 => {
+                    ::protobuf::rt::read_repeated_message_into(wire_type, is, &mut self.inputs)?;
+                },
+                2 => {
+                    ::protobuf::rt::read_repeated_message_into(wire_type, is, &mut self.outputs)?;
+                },
+                _ => {
+                    ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u32 {
+        let mut my_size = 0;
+        for value in &self.inputs {
+            let len = value.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
+        };
+        for value in &self.outputs {
+            let len = value.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
+        };
+        my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
+        self.cached_size.set(my_size);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
+        for v in &self.inputs {
+            os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
+            os.write_raw_varint32(v.get_cached_size())?;
+            v.write_to_with_cached_sizes(os)?;
+        };
+        for v in &self.outputs {
+            os.write_tag(2, ::protobuf::wire_format::WireTypeLengthDelimited)?;
+            os.write_raw_varint32(v.get_cached_size())?;
+            v.write_to_with_cached_sizes(os)?;
+        };
+        os.write_unknown_fields(self.get_unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn get_cached_size(&self) -> u32 {
+        self.cached_size.get()
+    }
+
+    fn get_unknown_fields(&self) -> &::protobuf::UnknownFields {
+        &self.unknown_fields
+    }
+
+    fn mut_unknown_fields(&mut self) -> &mut ::protobuf::UnknownFields {
+        &mut self.unknown_fields
+    }
+
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
+    }
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
+    }
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
+        self
+    }
+
+    fn descriptor(&self) -> &'static ::protobuf::reflect::MessageDescriptor {
+        Self::descriptor_static()
+    }
+
+    fn new() -> MonetaryBlockBody {
+        MonetaryBlockBody::new()
+    }
+
+    fn descriptor_static() -> &'static ::protobuf::reflect::MessageDescriptor {
+        static mut descriptor: ::protobuf::lazy::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const ::protobuf::reflect::MessageDescriptor,
+        };
+        unsafe {
+            descriptor.get(|| {
+                let mut fields = ::std::vec::Vec::new();
+                fields.push(::protobuf::reflect::accessor::make_repeated_field_accessor::<_, ::protobuf::types::ProtobufTypeMessage<Hash>>(
+                    "inputs",
+                    |m: &MonetaryBlockBody| { &m.inputs },
+                    |m: &mut MonetaryBlockBody| { &mut m.inputs },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_repeated_field_accessor::<_, ::protobuf::types::ProtobufTypeMessage<MerkleNode>>(
+                    "outputs",
+                    |m: &MonetaryBlockBody| { &m.outputs },
+                    |m: &mut MonetaryBlockBody| { &mut m.outputs },
+                ));
+                ::protobuf::reflect::MessageDescriptor::new::<MonetaryBlockBody>(
+                    "MonetaryBlockBody",
+                    fields,
+                    file_descriptor_proto()
+                )
+            })
+        }
+    }
+
+    fn default_instance() -> &'static MonetaryBlockBody {
+        static mut instance: ::protobuf::lazy::Lazy<MonetaryBlockBody> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const MonetaryBlockBody,
+        };
+        unsafe {
+            instance.get(MonetaryBlockBody::new)
+        }
+    }
+}
+
+impl ::protobuf::Clear for MonetaryBlockBody {
+    fn clear(&mut self) {
+        self.clear_inputs();
+        self.clear_outputs();
+        self.unknown_fields.clear();
+    }
+}
+
+impl ::std::fmt::Debug for MonetaryBlockBody {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for MonetaryBlockBody {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
+        ::protobuf::reflect::ProtobufValueRef::Message(self)
+    }
+}
+
+#[derive(PartialEq,Clone,Default)]
+pub struct MonetaryBlock {
+    // message fields
+    pub header: ::protobuf::SingularPtrField<MonetaryBlockHeader>,
+    pub body: ::protobuf::SingularPtrField<MonetaryBlockBody>,
+    // special fields
+    pub unknown_fields: ::protobuf::UnknownFields,
+    pub cached_size: ::protobuf::CachedSize,
+}
+
+impl MonetaryBlock {
+    pub fn new() -> MonetaryBlock {
+        ::std::default::Default::default()
+    }
+
+    // .protobuf.pb.MonetaryBlockHeader header = 1;
+
+    pub fn clear_header(&mut self) {
+        self.header.clear();
+    }
+
+    pub fn has_header(&self) -> bool {
+        self.header.is_some()
+    }
+
+    // Param is passed by value, moved
+    pub fn set_header(&mut self, v: MonetaryBlockHeader) {
+        self.header = ::protobuf::SingularPtrField::some(v);
+    }
+
+    // Mutable pointer to the field.
+    // If field is not initialized, it is initialized with default value first.
+    pub fn mut_header(&mut self) -> &mut MonetaryBlockHeader {
+        if self.header.is_none() {
+            self.header.set_default();
+        }
+        self.header.as_mut().unwrap()
+    }
+
+    // Take field
+    pub fn take_header(&mut self) -> MonetaryBlockHeader {
+        self.header.take().unwrap_or_else(|| MonetaryBlockHeader::new())
+    }
+
+    pub fn get_header(&self) -> &MonetaryBlockHeader {
+        self.header.as_ref().unwrap_or_else(|| MonetaryBlockHeader::default_instance())
+    }
+
+    // .protobuf.pb.MonetaryBlockBody body = 2;
+
+    pub fn clear_body(&mut self) {
+        self.body.clear();
+    }
+
+    pub fn has_body(&self) -> bool {
+        self.body.is_some()
+    }
+
+    // Param is passed by value, moved
+    pub fn set_body(&mut self, v: MonetaryBlockBody) {
+        self.body = ::protobuf::SingularPtrField::some(v);
+    }
+
+    // Mutable pointer to the field.
+    // If field is not initialized, it is initialized with default value first.
+    pub fn mut_body(&mut self) -> &mut MonetaryBlockBody {
+        if self.body.is_none() {
+            self.body.set_default();
+        }
+        self.body.as_mut().unwrap()
+    }
+
+    // Take field
+    pub fn take_body(&mut self) -> MonetaryBlockBody {
+        self.body.take().unwrap_or_else(|| MonetaryBlockBody::new())
+    }
+
+    pub fn get_body(&self) -> &MonetaryBlockBody {
+        self.body.as_ref().unwrap_or_else(|| MonetaryBlockBody::default_instance())
+    }
+}
+
+impl ::protobuf::Message for MonetaryBlock {
+    fn is_initialized(&self) -> bool {
+        for v in &self.header {
+            if !v.is_initialized() {
+                return false;
+            }
+        };
+        for v in &self.body {
+            if !v.is_initialized() {
+                return false;
+            }
+        };
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
+        while !is.eof()? {
+            let (field_number, wire_type) = is.read_tag_unpack()?;
+            match field_number {
+                1 => {
+                    ::protobuf::rt::read_singular_message_into(wire_type, is, &mut self.header)?;
+                },
+                2 => {
+                    ::protobuf::rt::read_singular_message_into(wire_type, is, &mut self.body)?;
+                },
+                _ => {
+                    ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u32 {
+        let mut my_size = 0;
+        if let Some(ref v) = self.header.as_ref() {
+            let len = v.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
+        }
+        if let Some(ref v) = self.body.as_ref() {
+            let len = v.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
+        self.cached_size.set(my_size);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
+        if let Some(ref v) = self.header.as_ref() {
+            os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
+            os.write_raw_varint32(v.get_cached_size())?;
+            v.write_to_with_cached_sizes(os)?;
+        }
+        if let Some(ref v) = self.body.as_ref() {
+            os.write_tag(2, ::protobuf::wire_format::WireTypeLengthDelimited)?;
+            os.write_raw_varint32(v.get_cached_size())?;
+            v.write_to_with_cached_sizes(os)?;
+        }
+        os.write_unknown_fields(self.get_unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn get_cached_size(&self) -> u32 {
+        self.cached_size.get()
+    }
+
+    fn get_unknown_fields(&self) -> &::protobuf::UnknownFields {
+        &self.unknown_fields
+    }
+
+    fn mut_unknown_fields(&mut self) -> &mut ::protobuf::UnknownFields {
+        &mut self.unknown_fields
+    }
+
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
+    }
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
+    }
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
+        self
+    }
+
+    fn descriptor(&self) -> &'static ::protobuf::reflect::MessageDescriptor {
+        Self::descriptor_static()
+    }
+
+    fn new() -> MonetaryBlock {
+        MonetaryBlock::new()
+    }
+
+    fn descriptor_static() -> &'static ::protobuf::reflect::MessageDescriptor {
+        static mut descriptor: ::protobuf::lazy::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const ::protobuf::reflect::MessageDescriptor,
+        };
+        unsafe {
+            descriptor.get(|| {
+                let mut fields = ::std::vec::Vec::new();
+                fields.push(::protobuf::reflect::accessor::make_singular_ptr_field_accessor::<_, ::protobuf::types::ProtobufTypeMessage<MonetaryBlockHeader>>(
+                    "header",
+                    |m: &MonetaryBlock| { &m.header },
+                    |m: &mut MonetaryBlock| { &mut m.header },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_singular_ptr_field_accessor::<_, ::protobuf::types::ProtobufTypeMessage<MonetaryBlockBody>>(
+                    "body",
+                    |m: &MonetaryBlock| { &m.body },
+                    |m: &mut MonetaryBlock| { &mut m.body },
+                ));
+                ::protobuf::reflect::MessageDescriptor::new::<MonetaryBlock>(
+                    "MonetaryBlock",
+                    fields,
+                    file_descriptor_proto()
+                )
+            })
+        }
+    }
+
+    fn default_instance() -> &'static MonetaryBlock {
+        static mut instance: ::protobuf::lazy::Lazy<MonetaryBlock> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const MonetaryBlock,
+        };
+        unsafe {
+            instance.get(MonetaryBlock::new)
+        }
+    }
+}
+
+impl ::protobuf::Clear for MonetaryBlock {
+    fn clear(&mut self) {
+        self.clear_header();
+        self.clear_body();
+        self.unknown_fields.clear();
+    }
+}
+
+impl ::std::fmt::Debug for MonetaryBlock {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for MonetaryBlock {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
+        ::protobuf::reflect::ProtobufValueRef::Message(self)
+    }
+}
+
+#[derive(PartialEq,Clone,Default)]
+pub struct KeyBlockHeader {
+    // message fields
+    pub base: ::protobuf::SingularPtrField<BaseBlockHeader>,
+    pub leader: ::protobuf::SingularPtrField<SecurePublicKey>,
+    pub witnesses: ::protobuf::RepeatedField<SecurePublicKey>,
+    // special fields
+    pub unknown_fields: ::protobuf::UnknownFields,
+    pub cached_size: ::protobuf::CachedSize,
+}
+
+impl KeyBlockHeader {
+    pub fn new() -> KeyBlockHeader {
+        ::std::default::Default::default()
+    }
+
+    // .protobuf.pb.BaseBlockHeader base = 1;
+
+    pub fn clear_base(&mut self) {
+        self.base.clear();
+    }
+
+    pub fn has_base(&self) -> bool {
+        self.base.is_some()
+    }
+
+    // Param is passed by value, moved
+    pub fn set_base(&mut self, v: BaseBlockHeader) {
+        self.base = ::protobuf::SingularPtrField::some(v);
+    }
+
+    // Mutable pointer to the field.
+    // If field is not initialized, it is initialized with default value first.
+    pub fn mut_base(&mut self) -> &mut BaseBlockHeader {
+        if self.base.is_none() {
+            self.base.set_default();
+        }
+        self.base.as_mut().unwrap()
+    }
+
+    // Take field
+    pub fn take_base(&mut self) -> BaseBlockHeader {
+        self.base.take().unwrap_or_else(|| BaseBlockHeader::new())
+    }
+
+    pub fn get_base(&self) -> &BaseBlockHeader {
+        self.base.as_ref().unwrap_or_else(|| BaseBlockHeader::default_instance())
+    }
+
+    // .protobuf.pb.SecurePublicKey leader = 2;
+
+    pub fn clear_leader(&mut self) {
+        self.leader.clear();
+    }
+
+    pub fn has_leader(&self) -> bool {
+        self.leader.is_some()
+    }
+
+    // Param is passed by value, moved
+    pub fn set_leader(&mut self, v: SecurePublicKey) {
+        self.leader = ::protobuf::SingularPtrField::some(v);
+    }
+
+    // Mutable pointer to the field.
+    // If field is not initialized, it is initialized with default value first.
+    pub fn mut_leader(&mut self) -> &mut SecurePublicKey {
+        if self.leader.is_none() {
+            self.leader.set_default();
+        }
+        self.leader.as_mut().unwrap()
+    }
+
+    // Take field
+    pub fn take_leader(&mut self) -> SecurePublicKey {
+        self.leader.take().unwrap_or_else(|| SecurePublicKey::new())
+    }
+
+    pub fn get_leader(&self) -> &SecurePublicKey {
+        self.leader.as_ref().unwrap_or_else(|| SecurePublicKey::default_instance())
+    }
+
+    // repeated .protobuf.pb.SecurePublicKey witnesses = 3;
+
+    pub fn clear_witnesses(&mut self) {
+        self.witnesses.clear();
+    }
+
+    // Param is passed by value, moved
+    pub fn set_witnesses(&mut self, v: ::protobuf::RepeatedField<SecurePublicKey>) {
+        self.witnesses = v;
+    }
+
+    // Mutable pointer to the field.
+    pub fn mut_witnesses(&mut self) -> &mut ::protobuf::RepeatedField<SecurePublicKey> {
+        &mut self.witnesses
+    }
+
+    // Take field
+    pub fn take_witnesses(&mut self) -> ::protobuf::RepeatedField<SecurePublicKey> {
+        ::std::mem::replace(&mut self.witnesses, ::protobuf::RepeatedField::new())
+    }
+
+    pub fn get_witnesses(&self) -> &[SecurePublicKey] {
+        &self.witnesses
+    }
+}
+
+impl ::protobuf::Message for KeyBlockHeader {
+    fn is_initialized(&self) -> bool {
+        for v in &self.base {
+            if !v.is_initialized() {
+                return false;
+            }
+        };
+        for v in &self.leader {
+            if !v.is_initialized() {
+                return false;
+            }
+        };
+        for v in &self.witnesses {
+            if !v.is_initialized() {
+                return false;
+            }
+        };
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
+        while !is.eof()? {
+            let (field_number, wire_type) = is.read_tag_unpack()?;
+            match field_number {
+                1 => {
+                    ::protobuf::rt::read_singular_message_into(wire_type, is, &mut self.base)?;
+                },
+                2 => {
+                    ::protobuf::rt::read_singular_message_into(wire_type, is, &mut self.leader)?;
+                },
+                3 => {
+                    ::protobuf::rt::read_repeated_message_into(wire_type, is, &mut self.witnesses)?;
+                },
+                _ => {
+                    ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u32 {
+        let mut my_size = 0;
+        if let Some(ref v) = self.base.as_ref() {
+            let len = v.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
+        }
+        if let Some(ref v) = self.leader.as_ref() {
+            let len = v.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
+        }
+        for value in &self.witnesses {
+            let len = value.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
+        };
+        my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
+        self.cached_size.set(my_size);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
+        if let Some(ref v) = self.base.as_ref() {
+            os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
+            os.write_raw_varint32(v.get_cached_size())?;
+            v.write_to_with_cached_sizes(os)?;
+        }
+        if let Some(ref v) = self.leader.as_ref() {
+            os.write_tag(2, ::protobuf::wire_format::WireTypeLengthDelimited)?;
+            os.write_raw_varint32(v.get_cached_size())?;
+            v.write_to_with_cached_sizes(os)?;
+        }
+        for v in &self.witnesses {
+            os.write_tag(3, ::protobuf::wire_format::WireTypeLengthDelimited)?;
+            os.write_raw_varint32(v.get_cached_size())?;
+            v.write_to_with_cached_sizes(os)?;
+        };
+        os.write_unknown_fields(self.get_unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn get_cached_size(&self) -> u32 {
+        self.cached_size.get()
+    }
+
+    fn get_unknown_fields(&self) -> &::protobuf::UnknownFields {
+        &self.unknown_fields
+    }
+
+    fn mut_unknown_fields(&mut self) -> &mut ::protobuf::UnknownFields {
+        &mut self.unknown_fields
+    }
+
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
+    }
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
+    }
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
+        self
+    }
+
+    fn descriptor(&self) -> &'static ::protobuf::reflect::MessageDescriptor {
+        Self::descriptor_static()
+    }
+
+    fn new() -> KeyBlockHeader {
+        KeyBlockHeader::new()
+    }
+
+    fn descriptor_static() -> &'static ::protobuf::reflect::MessageDescriptor {
+        static mut descriptor: ::protobuf::lazy::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const ::protobuf::reflect::MessageDescriptor,
+        };
+        unsafe {
+            descriptor.get(|| {
+                let mut fields = ::std::vec::Vec::new();
+                fields.push(::protobuf::reflect::accessor::make_singular_ptr_field_accessor::<_, ::protobuf::types::ProtobufTypeMessage<BaseBlockHeader>>(
+                    "base",
+                    |m: &KeyBlockHeader| { &m.base },
+                    |m: &mut KeyBlockHeader| { &mut m.base },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_singular_ptr_field_accessor::<_, ::protobuf::types::ProtobufTypeMessage<SecurePublicKey>>(
+                    "leader",
+                    |m: &KeyBlockHeader| { &m.leader },
+                    |m: &mut KeyBlockHeader| { &mut m.leader },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_repeated_field_accessor::<_, ::protobuf::types::ProtobufTypeMessage<SecurePublicKey>>(
+                    "witnesses",
+                    |m: &KeyBlockHeader| { &m.witnesses },
+                    |m: &mut KeyBlockHeader| { &mut m.witnesses },
+                ));
+                ::protobuf::reflect::MessageDescriptor::new::<KeyBlockHeader>(
+                    "KeyBlockHeader",
+                    fields,
+                    file_descriptor_proto()
+                )
+            })
+        }
+    }
+
+    fn default_instance() -> &'static KeyBlockHeader {
+        static mut instance: ::protobuf::lazy::Lazy<KeyBlockHeader> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const KeyBlockHeader,
+        };
+        unsafe {
+            instance.get(KeyBlockHeader::new)
+        }
+    }
+}
+
+impl ::protobuf::Clear for KeyBlockHeader {
+    fn clear(&mut self) {
+        self.clear_base();
+        self.clear_leader();
+        self.clear_witnesses();
+        self.unknown_fields.clear();
+    }
+}
+
+impl ::std::fmt::Debug for KeyBlockHeader {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for KeyBlockHeader {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
+        ::protobuf::reflect::ProtobufValueRef::Message(self)
+    }
+}
+
+#[derive(PartialEq,Clone,Default)]
+pub struct KeyBlock {
+    // message fields
+    pub header: ::protobuf::SingularPtrField<KeyBlockHeader>,
+    // special fields
+    pub unknown_fields: ::protobuf::UnknownFields,
+    pub cached_size: ::protobuf::CachedSize,
+}
+
+impl KeyBlock {
+    pub fn new() -> KeyBlock {
+        ::std::default::Default::default()
+    }
+
+    // .protobuf.pb.KeyBlockHeader header = 1;
+
+    pub fn clear_header(&mut self) {
+        self.header.clear();
+    }
+
+    pub fn has_header(&self) -> bool {
+        self.header.is_some()
+    }
+
+    // Param is passed by value, moved
+    pub fn set_header(&mut self, v: KeyBlockHeader) {
+        self.header = ::protobuf::SingularPtrField::some(v);
+    }
+
+    // Mutable pointer to the field.
+    // If field is not initialized, it is initialized with default value first.
+    pub fn mut_header(&mut self) -> &mut KeyBlockHeader {
+        if self.header.is_none() {
+            self.header.set_default();
+        }
+        self.header.as_mut().unwrap()
+    }
+
+    // Take field
+    pub fn take_header(&mut self) -> KeyBlockHeader {
+        self.header.take().unwrap_or_else(|| KeyBlockHeader::new())
+    }
+
+    pub fn get_header(&self) -> &KeyBlockHeader {
+        self.header.as_ref().unwrap_or_else(|| KeyBlockHeader::default_instance())
+    }
+}
+
+impl ::protobuf::Message for KeyBlock {
+    fn is_initialized(&self) -> bool {
+        for v in &self.header {
+            if !v.is_initialized() {
+                return false;
+            }
+        };
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
+        while !is.eof()? {
+            let (field_number, wire_type) = is.read_tag_unpack()?;
+            match field_number {
+                1 => {
+                    ::protobuf::rt::read_singular_message_into(wire_type, is, &mut self.header)?;
+                },
+                _ => {
+                    ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u32 {
+        let mut my_size = 0;
+        if let Some(ref v) = self.header.as_ref() {
+            let len = v.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
+        self.cached_size.set(my_size);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
+        if let Some(ref v) = self.header.as_ref() {
+            os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
+            os.write_raw_varint32(v.get_cached_size())?;
+            v.write_to_with_cached_sizes(os)?;
+        }
+        os.write_unknown_fields(self.get_unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn get_cached_size(&self) -> u32 {
+        self.cached_size.get()
+    }
+
+    fn get_unknown_fields(&self) -> &::protobuf::UnknownFields {
+        &self.unknown_fields
+    }
+
+    fn mut_unknown_fields(&mut self) -> &mut ::protobuf::UnknownFields {
+        &mut self.unknown_fields
+    }
+
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
+    }
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
+    }
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
+        self
+    }
+
+    fn descriptor(&self) -> &'static ::protobuf::reflect::MessageDescriptor {
+        Self::descriptor_static()
+    }
+
+    fn new() -> KeyBlock {
+        KeyBlock::new()
+    }
+
+    fn descriptor_static() -> &'static ::protobuf::reflect::MessageDescriptor {
+        static mut descriptor: ::protobuf::lazy::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const ::protobuf::reflect::MessageDescriptor,
+        };
+        unsafe {
+            descriptor.get(|| {
+                let mut fields = ::std::vec::Vec::new();
+                fields.push(::protobuf::reflect::accessor::make_singular_ptr_field_accessor::<_, ::protobuf::types::ProtobufTypeMessage<KeyBlockHeader>>(
+                    "header",
+                    |m: &KeyBlock| { &m.header },
+                    |m: &mut KeyBlock| { &mut m.header },
+                ));
+                ::protobuf::reflect::MessageDescriptor::new::<KeyBlock>(
+                    "KeyBlock",
+                    fields,
+                    file_descriptor_proto()
+                )
+            })
+        }
+    }
+
+    fn default_instance() -> &'static KeyBlock {
+        static mut instance: ::protobuf::lazy::Lazy<KeyBlock> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const KeyBlock,
+        };
+        unsafe {
+            instance.get(KeyBlock::new)
+        }
+    }
+}
+
+impl ::protobuf::Clear for KeyBlock {
+    fn clear(&mut self) {
+        self.clear_header();
+        self.unknown_fields.clear();
+    }
+}
+
+impl ::std::fmt::Debug for KeyBlock {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for KeyBlock {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
+        ::protobuf::reflect::ProtobufValueRef::Message(self)
+    }
+}
+
+#[derive(PartialEq,Clone,Default)]
+pub struct Block {
+    // message oneof groups
+    pub block: ::std::option::Option<Block_oneof_block>,
+    // special fields
+    pub unknown_fields: ::protobuf::UnknownFields,
+    pub cached_size: ::protobuf::CachedSize,
+}
+
+#[derive(Clone,PartialEq)]
+pub enum Block_oneof_block {
+    key_block(KeyBlock),
+    monetary_block(MonetaryBlock),
+}
+
+impl Block {
+    pub fn new() -> Block {
+        ::std::default::Default::default()
+    }
+
+    // .protobuf.pb.KeyBlock key_block = 1;
+
+    pub fn clear_key_block(&mut self) {
+        self.block = ::std::option::Option::None;
+    }
+
+    pub fn has_key_block(&self) -> bool {
+        match self.block {
+            ::std::option::Option::Some(Block_oneof_block::key_block(..)) => true,
+            _ => false,
+        }
+    }
+
+    // Param is passed by value, moved
+    pub fn set_key_block(&mut self, v: KeyBlock) {
+        self.block = ::std::option::Option::Some(Block_oneof_block::key_block(v))
+    }
+
+    // Mutable pointer to the field.
+    pub fn mut_key_block(&mut self) -> &mut KeyBlock {
+        if let ::std::option::Option::Some(Block_oneof_block::key_block(_)) = self.block {
+        } else {
+            self.block = ::std::option::Option::Some(Block_oneof_block::key_block(KeyBlock::new()));
+        }
+        match self.block {
+            ::std::option::Option::Some(Block_oneof_block::key_block(ref mut v)) => v,
+            _ => panic!(),
+        }
+    }
+
+    // Take field
+    pub fn take_key_block(&mut self) -> KeyBlock {
+        if self.has_key_block() {
+            match self.block.take() {
+                ::std::option::Option::Some(Block_oneof_block::key_block(v)) => v,
+                _ => panic!(),
+            }
+        } else {
+            KeyBlock::new()
+        }
+    }
+
+    pub fn get_key_block(&self) -> &KeyBlock {
+        match self.block {
+            ::std::option::Option::Some(Block_oneof_block::key_block(ref v)) => v,
+            _ => KeyBlock::default_instance(),
+        }
+    }
+
+    // .protobuf.pb.MonetaryBlock monetary_block = 2;
+
+    pub fn clear_monetary_block(&mut self) {
+        self.block = ::std::option::Option::None;
+    }
+
+    pub fn has_monetary_block(&self) -> bool {
+        match self.block {
+            ::std::option::Option::Some(Block_oneof_block::monetary_block(..)) => true,
+            _ => false,
+        }
+    }
+
+    // Param is passed by value, moved
+    pub fn set_monetary_block(&mut self, v: MonetaryBlock) {
+        self.block = ::std::option::Option::Some(Block_oneof_block::monetary_block(v))
+    }
+
+    // Mutable pointer to the field.
+    pub fn mut_monetary_block(&mut self) -> &mut MonetaryBlock {
+        if let ::std::option::Option::Some(Block_oneof_block::monetary_block(_)) = self.block {
+        } else {
+            self.block = ::std::option::Option::Some(Block_oneof_block::monetary_block(MonetaryBlock::new()));
+        }
+        match self.block {
+            ::std::option::Option::Some(Block_oneof_block::monetary_block(ref mut v)) => v,
+            _ => panic!(),
+        }
+    }
+
+    // Take field
+    pub fn take_monetary_block(&mut self) -> MonetaryBlock {
+        if self.has_monetary_block() {
+            match self.block.take() {
+                ::std::option::Option::Some(Block_oneof_block::monetary_block(v)) => v,
+                _ => panic!(),
+            }
+        } else {
+            MonetaryBlock::new()
+        }
+    }
+
+    pub fn get_monetary_block(&self) -> &MonetaryBlock {
+        match self.block {
+            ::std::option::Option::Some(Block_oneof_block::monetary_block(ref v)) => v,
+            _ => MonetaryBlock::default_instance(),
+        }
+    }
+}
+
+impl ::protobuf::Message for Block {
+    fn is_initialized(&self) -> bool {
+        if let Some(Block_oneof_block::key_block(ref v)) = self.block {
+            if !v.is_initialized() {
+                return false;
+            }
+        }
+        if let Some(Block_oneof_block::monetary_block(ref v)) = self.block {
+            if !v.is_initialized() {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
+        while !is.eof()? {
+            let (field_number, wire_type) = is.read_tag_unpack()?;
+            match field_number {
+                1 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeLengthDelimited {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    self.block = ::std::option::Option::Some(Block_oneof_block::key_block(is.read_message()?));
+                },
+                2 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeLengthDelimited {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    self.block = ::std::option::Option::Some(Block_oneof_block::monetary_block(is.read_message()?));
+                },
+                _ => {
+                    ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u32 {
+        let mut my_size = 0;
+        if let ::std::option::Option::Some(ref v) = self.block {
+            match v {
+                &Block_oneof_block::key_block(ref v) => {
+                    let len = v.compute_size();
+                    my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
+                },
+                &Block_oneof_block::monetary_block(ref v) => {
+                    let len = v.compute_size();
+                    my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
+                },
+            };
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
+        self.cached_size.set(my_size);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
+        if let ::std::option::Option::Some(ref v) = self.block {
+            match v {
+                &Block_oneof_block::key_block(ref v) => {
+                    os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
+                    os.write_raw_varint32(v.get_cached_size())?;
+                    v.write_to_with_cached_sizes(os)?;
+                },
+                &Block_oneof_block::monetary_block(ref v) => {
+                    os.write_tag(2, ::protobuf::wire_format::WireTypeLengthDelimited)?;
+                    os.write_raw_varint32(v.get_cached_size())?;
+                    v.write_to_with_cached_sizes(os)?;
+                },
+            };
+        }
+        os.write_unknown_fields(self.get_unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn get_cached_size(&self) -> u32 {
+        self.cached_size.get()
+    }
+
+    fn get_unknown_fields(&self) -> &::protobuf::UnknownFields {
+        &self.unknown_fields
+    }
+
+    fn mut_unknown_fields(&mut self) -> &mut ::protobuf::UnknownFields {
+        &mut self.unknown_fields
+    }
+
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
+    }
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
+    }
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
+        self
+    }
+
+    fn descriptor(&self) -> &'static ::protobuf::reflect::MessageDescriptor {
+        Self::descriptor_static()
+    }
+
+    fn new() -> Block {
+        Block::new()
+    }
+
+    fn descriptor_static() -> &'static ::protobuf::reflect::MessageDescriptor {
+        static mut descriptor: ::protobuf::lazy::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const ::protobuf::reflect::MessageDescriptor,
+        };
+        unsafe {
+            descriptor.get(|| {
+                let mut fields = ::std::vec::Vec::new();
+                fields.push(::protobuf::reflect::accessor::make_singular_message_accessor::<_, KeyBlock>(
+                    "key_block",
+                    Block::has_key_block,
+                    Block::get_key_block,
+                ));
+                fields.push(::protobuf::reflect::accessor::make_singular_message_accessor::<_, MonetaryBlock>(
+                    "monetary_block",
+                    Block::has_monetary_block,
+                    Block::get_monetary_block,
+                ));
+                ::protobuf::reflect::MessageDescriptor::new::<Block>(
+                    "Block",
+                    fields,
+                    file_descriptor_proto()
+                )
+            })
+        }
+    }
+
+    fn default_instance() -> &'static Block {
+        static mut instance: ::protobuf::lazy::Lazy<Block> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const Block,
+        };
+        unsafe {
+            instance.get(Block::new)
+        }
+    }
+}
+
+impl ::protobuf::Clear for Block {
+    fn clear(&mut self) {
+        self.clear_key_block();
+        self.clear_monetary_block();
+        self.unknown_fields.clear();
+    }
+}
+
+impl ::std::fmt::Debug for Block {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for Block {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
+        ::protobuf::reflect::ProtobufValueRef::Message(self)
+    }
+}
+
 static file_descriptor_proto_data: &'static [u8] = b"\
     \n\nnode.proto\x12\x0bprotobuf.pb\"\x16\n\x02Pt\x12\x10\n\x04data\x18\
     \x01\x20\x01(\x0cB\x02\x18\0\"\x16\n\x02Fr\x12\x10\n\x04data\x18\x01\x20\
-    \x01(\x0cB\x02\x18\0\"\x18\n\x04Hash\x12\x10\n\x04data\x18\x01\x20\x01(\
-    \x0cB\x02\x18\0\"/\n\tPublicKey\x12\"\n\x05point\x18\x01\x20\x01(\x0b2\
-    \x0f.protobuf.pb.PtB\x02\x18\0\"L\n\nSchnorrSig\x12\x1e\n\x01u\x18\x01\
-    \x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12\x1e\n\x01K\x18\x02\x20\
-    \x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\0\"h\n\x10EncryptedPayload\x12!\n\
-    \x04apkg\x18\x01\x20\x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\0\x12\x1f\n\
-    \x02ag\x18\x02\x20\x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\0\x12\x10\n\x04\
-    ctxt\x18\x03\x20\x01(\x0cB\x02\x18\0\"d\n\x02LR\x12\x1e\n\x01x\x18\x01\
-    \x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12\x1e\n\x01l\x18\x02\x20\
-    \x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\0\x12\x1e\n\x01r\x18\x03\x20\x01(\
-    \x0b2\x0f.protobuf.pb.PtB\x02\x18\0\"\xb0\x01\n\x08DotProof\x12\x1e\n\
-    \x01u\x18\x01\x20\x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\0\x12!\n\x04pcmt\
-    \x18\x02\x20\x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\0\x12\x1e\n\x01a\x18\
-    \x03\x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12\x1e\n\x01b\x18\x04\
-    \x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12!\n\x04xlrs\x18\x05\x20\
-    \x03(\x0b2\x0f.protobuf.pb.LRB\x02\x18\0\"\xb7\x03\n\x0bBulletProof\x12!\
-    \n\x04vcmt\x18\x01\x20\x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\0\x12!\n\
-    \x04acmt\x18\x02\x20\x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\0\x12!\n\x04s\
-    cmt\x18\x03\x20\x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\0\x12#\n\x06t1_cmt\
-    \x18\x04\x20\x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\0\x12#\n\x06t2_cmt\
-    \x18\x05\x20\x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\0\x12\"\n\x05tau_x\
-    \x18\x06\x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12\x1f\n\x02mu\x18\
-    \x07\x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12\"\n\x05t_hat\x18\
-    \x08\x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12,\n\tdot_proof\x18\t\
-    \x20\x01(\x0b2\x15.protobuf.pb.DotProofB\x02\x18\0\x12\x1e\n\x01x\x18\n\
-    \x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12\x1e\n\x01y\x18\x0b\x20\
-    \x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12\x1e\n\x01z\x18\x0c\x20\x01(\
-    \x0b2\x0f.protobuf.pb.FrB\x02\x18\0\"\x98\x01\n\x06Output\x12-\n\trecipi\
-    ent\x18\x01\x20\x01(\x0b2\x16.protobuf.pb.PublicKeyB\x02\x18\0\x12+\n\
-    \x05proof\x18\x02\x20\x01(\x0b2\x18.protobuf.pb.BulletProofB\x02\x18\0\
-    \x122\n\x07payload\x18\x03\x20\x01(\x0b2\x1d.protobuf.pb.EncryptedPayloa\
-    dB\x02\x18\0\"\xbb\x01\n\x0bTransaction\x12$\n\x05txins\x18\x01\x20\x03(\
-    \x0b2\x11.protobuf.pb.HashB\x02\x18\0\x12'\n\x06txouts\x18\x02\x20\x03(\
-    \x0b2\x13.protobuf.pb.OutputB\x02\x18\0\x12\"\n\x05gamma\x18\x03\x20\x01\
-    (\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12\x0f\n\x03fee\x18\x04\x20\x01(\
-    \x03B\x02\x18\0\x12(\n\x03sig\x18\x05\x20\x01(\x0b2\x17.protobuf.pb.Schn\
-    orrSigB\x02\x18\0B\0b\x06proto3\
+    \x01(\x0cB\x02\x18\0\"\x16\n\x02G2\x12\x10\n\x04data\x18\x01\x20\x01(\
+    \x0cB\x02\x18\0\"\x18\n\x04Hash\x12\x10\n\x04data\x18\x01\x20\x01(\x0cB\
+    \x02\x18\0\"/\n\tPublicKey\x12\"\n\x05point\x18\x01\x20\x01(\x0b2\x0f.pr\
+    otobuf.pb.PtB\x02\x18\0\"L\n\nSchnorrSig\x12\x1e\n\x01u\x18\x01\x20\x01(\
+    \x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12\x1e\n\x01K\x18\x02\x20\x01(\x0b2\
+    \x0f.protobuf.pb.PtB\x02\x18\0\"5\n\x0fSecurePublicKey\x12\"\n\x05point\
+    \x18\x01\x20\x01(\x0b2\x0f.protobuf.pb.G2B\x02\x18\0\"h\n\x10EncryptedPa\
+    yload\x12!\n\x04apkg\x18\x01\x20\x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\0\
+    \x12\x1f\n\x02ag\x18\x02\x20\x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\0\x12\
+    \x10\n\x04ctxt\x18\x03\x20\x01(\x0cB\x02\x18\0\"d\n\x02LR\x12\x1e\n\x01x\
+    \x18\x01\x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12\x1e\n\x01l\x18\
+    \x02\x20\x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\0\x12\x1e\n\x01r\x18\x03\
+    \x20\x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\0\"\xb0\x01\n\x08DotProof\x12\
+    \x1e\n\x01u\x18\x01\x20\x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\0\x12!\n\
+    \x04pcmt\x18\x02\x20\x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\0\x12\x1e\n\
+    \x01a\x18\x03\x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12\x1e\n\x01b\
+    \x18\x04\x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12!\n\x04xlrs\x18\
+    \x05\x20\x03(\x0b2\x0f.protobuf.pb.LRB\x02\x18\0\"\xb7\x03\n\x0bBulletPr\
+    oof\x12!\n\x04vcmt\x18\x01\x20\x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\0\
+    \x12!\n\x04acmt\x18\x02\x20\x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\0\x12!\
+    \n\x04scmt\x18\x03\x20\x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\0\x12#\n\
+    \x06t1_cmt\x18\x04\x20\x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\0\x12#\n\
+    \x06t2_cmt\x18\x05\x20\x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\0\x12\"\n\
+    \x05tau_x\x18\x06\x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12\x1f\n\
+    \x02mu\x18\x07\x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12\"\n\x05t_\
+    hat\x18\x08\x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12,\n\tdot_proo\
+    f\x18\t\x20\x01(\x0b2\x15.protobuf.pb.DotProofB\x02\x18\0\x12\x1e\n\x01x\
+    \x18\n\x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12\x1e\n\x01y\x18\
+    \x0b\x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12\x1e\n\x01z\x18\x0c\
+    \x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\"\x98\x01\n\x06Output\x12-\
+    \n\trecipient\x18\x01\x20\x01(\x0b2\x16.protobuf.pb.PublicKeyB\x02\x18\0\
+    \x12+\n\x05proof\x18\x02\x20\x01(\x0b2\x18.protobuf.pb.BulletProofB\x02\
+    \x18\0\x122\n\x07payload\x18\x03\x20\x01(\x0b2\x1d.protobuf.pb.Encrypted\
+    PayloadB\x02\x18\0\"\xbb\x01\n\x0bTransaction\x12$\n\x05txins\x18\x01\
+    \x20\x03(\x0b2\x11.protobuf.pb.HashB\x02\x18\0\x12'\n\x06txouts\x18\x02\
+    \x20\x03(\x0b2\x13.protobuf.pb.OutputB\x02\x18\0\x12\"\n\x05gamma\x18\
+    \x03\x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12\x0f\n\x03fee\x18\
+    \x04\x20\x01(\x03B\x02\x18\0\x12(\n\x03sig\x18\x05\x20\x01(\x0b2\x17.pro\
+    tobuf.pb.SchnorrSigB\x02\x18\0\"y\n\x0fBaseBlockHeader\x12\x13\n\x07vers\
+    ion\x18\x01\x20\x01(\x04B\x02\x18\0\x12'\n\x08previous\x18\x02\x20\x01(\
+    \x0b2\x11.protobuf.pb.HashB\x02\x18\0\x12\x11\n\x05epoch\x18\x03\x20\x01\
+    (\x04B\x02\x18\0\x12\x15\n\ttimestamp\x18\x04\x20\x01(\x04B\x02\x18\0\"\
+    \xd3\x01\n\x13MonetaryBlockHeader\x12.\n\x04base\x18\x01\x20\x01(\x0b2\
+    \x1c.protobuf.pb.BaseBlockHeaderB\x02\x18\0\x12'\n\nadjustment\x18\x02\
+    \x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x120\n\x11inputs_range_hash\
+    \x18\x03\x20\x01(\x0b2\x11.protobuf.pb.HashB\x02\x18\0\x121\n\x12outputs\
+    _range_hash\x18\x04\x20\x01(\x0b2\x11.protobuf.pb.HashB\x02\x18\0\"~\n\n\
+    MerkleNode\x12#\n\x04hash\x18\x01\x20\x01(\x0b2\x11.protobuf.pb.HashB\
+    \x02\x18\0\x12\x10\n\x04left\x18\x02\x20\x01(\x04B\x02\x18\0\x12\x11\n\
+    \x05right\x18\x03\x20\x01(\x04B\x02\x18\0\x12&\n\x05value\x18\x04\x20\
+    \x01(\x0b2\x13.protobuf.pb.OutputB\x02\x18\0\"h\n\x11MonetaryBlockBody\
+    \x12%\n\x06inputs\x18\x01\x20\x03(\x0b2\x11.protobuf.pb.HashB\x02\x18\0\
+    \x12,\n\x07outputs\x18\x02\x20\x03(\x0b2\x17.protobuf.pb.MerkleNodeB\x02\
+    \x18\0\"w\n\rMonetaryBlock\x124\n\x06header\x18\x01\x20\x01(\x0b2\x20.pr\
+    otobuf.pb.MonetaryBlockHeaderB\x02\x18\0\x120\n\x04body\x18\x02\x20\x01(\
+    \x0b2\x1e.protobuf.pb.MonetaryBlockBodyB\x02\x18\0\"\xa7\x01\n\x0eKeyBlo\
+    ckHeader\x12.\n\x04base\x18\x01\x20\x01(\x0b2\x1c.protobuf.pb.BaseBlockH\
+    eaderB\x02\x18\0\x120\n\x06leader\x18\x02\x20\x01(\x0b2\x1c.protobuf.pb.\
+    SecurePublicKeyB\x02\x18\0\x123\n\twitnesses\x18\x03\x20\x03(\x0b2\x1c.p\
+    rotobuf.pb.SecurePublicKeyB\x02\x18\0\";\n\x08KeyBlock\x12/\n\x06header\
+    \x18\x01\x20\x01(\x0b2\x1b.protobuf.pb.KeyBlockHeaderB\x02\x18\0\"z\n\
+    \x05Block\x12.\n\tkey_block\x18\x01\x20\x01(\x0b2\x15.protobuf.pb.KeyBlo\
+    ckH\0B\x02\x18\0\x128\n\x0emonetary_block\x18\x02\x20\x01(\x0b2\x1a.prot\
+    obuf.pb.MonetaryBlockH\0B\x02\x18\0B\x07\n\x05blockB\0b\x06proto3\
 ";
 
 static mut file_descriptor_proto_lazy: ::protobuf::lazy::Lazy<::protobuf::descriptor::FileDescriptorProto> = ::protobuf::lazy::Lazy {

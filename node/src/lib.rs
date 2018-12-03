@@ -407,8 +407,7 @@ impl NodeService {
         let version = 1;
 
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
-
-        let (block, outputs_paths) = MonetaryBlock::new(base, adjustment, &inputs_hashes, &outputs);
+        let block = MonetaryBlock::new(base, adjustment, &inputs_hashes, &outputs);
 
         info!("Created block: hash={}", Hash::digest(&block));
 
@@ -418,8 +417,7 @@ impl NodeService {
         // Seal and register the block.
         //
 
-        self.chain
-            .register_monetary_block(block, &inputs_hashes, &outputs_paths)?;
+        self.chain.register_monetary_block(block)?;
 
         //
         // Notify subscribers.

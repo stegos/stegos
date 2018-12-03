@@ -25,7 +25,7 @@ use crate::merkle::*;
 use crate::output::Output;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::pbc::secure::PublicKey as WitnessPublicKey;
+use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
 
 /// General Block Header.
 #[derive(Debug, PartialEq, Eq)]
@@ -76,12 +76,12 @@ pub struct KeyBlockHeader {
     pub base: BaseBlockHeader,
 
     /// Leader public key.
-    pub leader: WitnessPublicKey,
+    pub leader: SecurePublicKey,
 
     /// Ordered list of witnesses public keys.
-    pub witnesses: Vec<WitnessPublicKey>,
+    pub witnesses: Vec<SecurePublicKey>,
     // TODO: pooled transactions facilitator public key (which kind?).
-    // pub facilitator: WitnessPublicKey,
+    // pub facilitator: SecurePublicKey,
 }
 
 impl Hashable for KeyBlockHeader {
@@ -122,6 +122,9 @@ impl Hashable for MonetaryBlockHeader {
 /// Monetary Block.
 #[derive(Debug)]
 pub struct MonetaryBlockBody {
+    /// The list of transaction inputs in a Merkle Tree.
+    pub inputs: Vec<Hash>,
+
     /// The list of transaction outputs in a Merkle Tree.
     pub outputs: Merkle<Box<Output>>,
 }
@@ -135,6 +138,17 @@ impl PartialEq for MonetaryBlockBody {
 
 impl Eq for MonetaryBlockBody {}
 
+impl Hashable for MonetaryBlockBody {
+    fn hash(&self, state: &mut Hasher) {
+        let inputs_count: u64 = self.inputs.len() as u64;
+        inputs_count.hash(state);
+        for input in &self.inputs {
+            input.hash(state);
+        }
+        self.outputs.roothash().hash(state)
+    }
+}
+
 /// Carries all cryptocurrency transactions.
 #[derive(Debug, PartialEq, Eq)]
 pub struct KeyBlock {
@@ -145,9 +159,11 @@ pub struct KeyBlock {
 impl KeyBlock {
     pub fn new(
         base: BaseBlockHeader,
-        leader: WitnessPublicKey,
-        mut witnesses: Vec<WitnessPublicKey>,
+        leader: SecurePublicKey,
+        witnesses: &[SecurePublicKey],
     ) -> Self {
+        let mut witnesses = witnesses.to_vec();
+
         // Witnesses list must be sorted.
         witnesses.sort();
 
@@ -187,7 +203,7 @@ impl MonetaryBlock {
         adjustment: Fr,
         inputs: &[Hash],
         outputs: &[Output],
-    ) -> (MonetaryBlock, Vec<(Hash, MerklePath)>) {
+    ) -> MonetaryBlock {
         // Create inputs array
         let mut hasher = Hasher::new();
         let inputs_count: u64 = inputs.len() as u64;
@@ -196,6 +212,7 @@ impl MonetaryBlock {
             input.hash(&mut hasher);
         }
         let inputs_range_hash = hasher.result();
+        let inputs = inputs.iter().map(|o| o.clone()).collect::<Vec<Hash>>();
 
         // Create outputs tree
         let mut hasher = Hasher::new();
@@ -210,14 +227,7 @@ impl MonetaryBlock {
             .map(|o| Box::<Output>::new(o.clone()))
             .collect::<Vec<Box<Output>>>();
 
-        let (tree, paths) = Merkle::from_array(&outputs);
-        assert_eq!(paths.len(), outputs.len());
-        let paths = outputs
-            .iter()
-            .zip(paths.iter())
-            .map(|(o, p)| (Hash::digest(o), p.clone()))
-            .collect::<Vec<(Hash, MerklePath)>>();
-        let outputs = tree;
+        let outputs = Merkle::from_array(&outputs);
 
         // Create header
         let header = MonetaryBlockHeader {
@@ -228,11 +238,10 @@ impl MonetaryBlock {
         };
 
         // Create the block
-        let body = MonetaryBlockBody { outputs };
+        let body = MonetaryBlockBody { inputs, outputs };
 
         let block = MonetaryBlock { header, body };
-
-        (block, paths)
+        block
     }
 }
 

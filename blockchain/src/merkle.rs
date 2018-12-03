@@ -60,8 +60,25 @@ struct Node<T> {
     value: Option<T>,
 }
 
+/// Serialized Merkle Tree Node.
+/// See serialize().
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SerializedNode<T> {
+    /// Hash value.
+    pub hash: Hash,
+    /// Left subtree.
+    pub left: Option<usize>,
+    /// Right subtree.
+    pub right: Option<usize>,
+    /// Value (stored only in leafs).
+    pub value: Option<T>,
+}
+
 #[derive(Debug, Fail)]
 pub enum MerkleError {
+    /// Invalid serialized representation
+    #[fail(display = "Invalid serialized representation")]
+    InvalidStructure,
     /// Validation error
     #[fail(display = "Validation error: expected={}, got={}", _0, _1)]
     ValidationError(Hash, Hash),
@@ -467,7 +484,8 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
             } => {
                 return Ok(0);
             }
-            _ => unreachable!(), // No more cases
+            // Invalid structure
+            _ => return Err(MerkleError::InvalidStructure),
         }
     }
 
@@ -475,6 +493,153 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
     pub fn validate(&self) -> Result<(), MerkleError> {
         Merkle::validate_r(&self.root)?;
         Ok(())
+    }
+
+    /// A recursive helper for serialize().
+    fn serialize_r(r: &mut Vec<SerializedNode<T>>, node: &Node<T>) -> usize {
+        return match node {
+            // An inner node with both subtrees
+            Node {
+                hash,
+                left: Some(ref left),
+                right: Some(ref right),
+                value: None,
+                ..
+            } => {
+                let left = Merkle::serialize_r(r, &left);
+                let right = Merkle::serialize_r(r, &right);
+                let node = SerializedNode {
+                    hash: hash.clone(),
+                    left: Some(left),
+                    right: Some(right),
+                    value: None,
+                };
+                let id = r.len();
+                r.push(node);
+                id
+            }
+            // An inner node with only a left subtree
+            Node {
+                hash,
+                left: Some(ref left),
+                right: None,
+                value: None,
+                ..
+            } => {
+                let left = Merkle::serialize_r(r, &left);
+                let node = SerializedNode {
+                    hash: hash.clone(),
+                    left: Some(left),
+                    right: None,
+                    value: None,
+                };
+                let id = r.len();
+                r.push(node);
+                id
+            }
+            // A leaf
+            Node {
+                hash,
+                left: None,
+                right: None,
+                value: Some(ref value),
+                ..
+            } => {
+                let node = SerializedNode {
+                    hash: hash.clone(),
+                    left: None,
+                    right: None,
+                    value: Some(value.clone()),
+                };
+                let id = r.len();
+                r.push(node);
+                id
+            }
+            // An empty leaf - can only happen if tree is empty
+            Node {
+                hash,
+                left: None,
+                right: None,
+                value: None,
+                ..
+            } => {
+                let node = SerializedNode {
+                    hash: hash.clone(),
+                    left: None,
+                    right: None,
+                    value: None,
+                };
+                let id = r.len();
+                r.push(node);
+                id
+            }
+            _ => unreachable!(), // No more cases
+        };
+    }
+
+    /// Linearize and serialize the tree.
+    pub fn serialize(&self) -> Vec<SerializedNode<T>> {
+        let mut r = Vec::<SerializedNode<T>>::new();
+        Merkle::serialize_r(&mut r, &self.root);
+        r
+    }
+
+    /// Create a Merkle Tree from serialized representation.
+    pub fn deserialize(snodes: &[SerializedNode<T>]) -> Result<Merkle<T>, MerkleError> {
+        if snodes.len() < 1 {
+            return Err(MerkleError::InvalidStructure);
+        }
+
+        let mut nodes = Vec::<Option<Box<Node<T>>>>::with_capacity(snodes.len());
+        for snode in snodes {
+            let mut node = Box::new(Node {
+                hash: snode.hash.clone(),
+                left: None,
+                right: None,
+                value: None,
+            });
+
+            // Restore left subtree.
+            if let Some(left) = snode.left {
+                if left >= nodes.len() || nodes[left].is_none() {
+                    return Err(MerkleError::InvalidStructure);
+                }
+                node.left = nodes[left].take();
+            }
+
+            // Restore right subtree.
+            if let Some(right) = snode.right {
+                if right >= nodes.len() || nodes[right].is_none() {
+                    return Err(MerkleError::InvalidStructure);
+                }
+                node.right = nodes[right].take();
+            }
+
+            // Restore value.
+            if let Some(ref value) = snode.value {
+                node.value = Some(value.clone());
+            }
+
+            nodes.push(Some(node));
+        }
+
+        assert!(nodes[nodes.len() - 1].is_some());
+        let root = nodes.pop().unwrap().take().unwrap();
+
+        // Check that all nodes are processed.
+        for node in &nodes {
+            if node.is_some() {
+                return Err(MerkleError::InvalidStructure);
+            }
+        }
+        drop(nodes);
+
+        // Validate Merkle Tree.
+        let height = Merkle::validate_r(&root)?;
+
+        let tree = Merkle { root, height };
+
+        Ok(tree)
     }
 
     /// A recursive helper for fmt().
@@ -545,6 +710,7 @@ pub mod tests {
     use super::*;
     use rand::prelude::*;
     use rand::seq::SliceRandom;
+
     extern crate simple_logger;
 
     /// Reverse the order of bits in a byte
@@ -963,5 +1129,109 @@ pub mod tests {
         for path in paths {
             assert_eq!(tree.lookup(&path), None);
         }
+    }
+
+    #[test]
+    fn serialize_errors() {
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+
+        let data: [u32; 5] = [1, 2, 3, 4, 5];
+        let tree = Merkle::from_array(&data);
+
+        // Zero elements
+        let mut serialized = tree.serialize();
+        serialized.clear();
+        match Merkle::deserialize(&serialized) {
+            Err(MerkleError::InvalidStructure) => {}
+            _ => unreachable!(),
+        };
+
+        // Missing elements
+        let mut serialized = tree.serialize();
+        serialized.pop();
+        match Merkle::deserialize(&serialized) {
+            Err(MerkleError::InvalidStructure) => {}
+            _ => unreachable!(),
+        };
+
+        // Extra elements
+        let mut serialized = tree.serialize();
+        serialized.push(SerializedNode {
+            hash: Hash::digest(&0u64),
+            left: None,
+            right: None,
+            value: None,
+        });
+        match Merkle::deserialize(&serialized) {
+            Err(MerkleError::InvalidStructure) => {}
+            _ => unreachable!(),
+        };
+
+        // Validation error
+        let mut serialized = tree.serialize();
+        serialized[0].value = Some(0);
+        match Merkle::deserialize(&serialized) {
+            Err(MerkleError::ValidationError(expected, got)) => {
+                assert_eq!(expected, Hash::digest(&1u32));
+                assert_eq!(got, Hash::digest(&0u32));
+            }
+            _ => unreachable!(),
+        };
+    }
+
+    fn check_serialize_rt(tree: &Merkle<u32>) {
+        let serialized = tree.serialize();
+        let tree2 = Merkle::deserialize(&serialized).unwrap();
+        assert_eq!(tree.roothash(), tree2.roothash());
+        let serialized2 = tree2.serialize();
+        assert_eq!(serialized, serialized2);
+        //assert_eq!(tree.height, tree2.height);
+        let leafs = tree.leafs();
+        let leafs2 = tree2.leafs();
+        assert_eq!(leafs, leafs2);
+    }
+
+    #[test]
+    fn serialize_single_item() {
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+
+        let data: [u32; 1] = [1];
+        let tree = Merkle::from_array(&data);
+        check_serialize_rt(&tree);
+    }
+
+    #[test]
+    fn serialize_multiple_items() {
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+
+        let data: [u32; 5] = [1, 2, 3, 4, 5];
+        let mut tree = Merkle::from_array(&data);
+        let paths = tree
+            .leafs()
+            .iter()
+            .map(|(_elem, path)| *path)
+            .collect::<Vec<MerklePath>>();
+
+        check_serialize_rt(&tree);
+
+        let val1 = tree.prune(&paths[1]).unwrap();
+        assert_eq!(val1, data[1]);
+        check_serialize_rt(&tree);
+
+        let val0 = tree.prune(&paths[0]).unwrap();
+        assert_eq!(val0, data[0]);
+        check_serialize_rt(&tree);
+
+        let val4 = tree.prune(&paths[4]).unwrap();
+        assert_eq!(val4, data[4]);
+        check_serialize_rt(&tree);
+
+        let val2 = tree.prune(&paths[2]).unwrap();
+        assert_eq!(val2, data[2]);
+        check_serialize_rt(&tree);
+
+        let val3 = tree.prune(&paths[3]).unwrap();
+        assert_eq!(val3, data[3]);
+        check_serialize_rt(&tree);
     }
 }

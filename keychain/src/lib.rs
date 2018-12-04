@@ -93,7 +93,7 @@ impl KeyChain {
         let pkey_path = Path::new(&cfg.public_key);
 
         let (wallet_skey, wallet_pkey, wallet_sig) = if !skey_path.exists() && !pkey_path.exists() {
-            info!("Generatin a new key pair...");
+            info!("Generating a new key pair...");
             let (skey, pkey, sig) = cpt::make_random_keys();
 
             let skey_pem = pem::Pem {
@@ -159,5 +159,22 @@ impl KeyChain {
         };
 
         Ok(keychain)
+    }
+
+    /// Temporary KeyChain for tests.
+    pub fn new_mem() -> Self {
+        let (wallet_skey, wallet_pkey, wallet_sig) = cpt::make_random_keys();
+        let (cosi_skey, cosi_pkey, cosi_sig) = wallet_to_cosi_keys(&wallet_skey);
+
+        let keychain = KeyChain {
+            wallet_skey,
+            wallet_pkey,
+            wallet_sig,
+            cosi_skey,
+            cosi_pkey,
+            cosi_sig,
+        };
+
+        keychain
     }
 }

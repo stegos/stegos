@@ -26,7 +26,6 @@ use std::vec::Vec;
 
 use crate::block::*;
 use crate::error::*;
-use crate::genesis::*;
 use crate::merkle::*;
 use crate::output::*;
 use stegos_crypto::hash::*;
@@ -67,20 +66,6 @@ impl Blockchain {
             output_by_hash,
         };
         blockchain
-    }
-
-    pub fn bootstrap(&mut self) -> Result<(), BlockchainError> {
-        assert_eq!(self.blocks().len(), 0);
-        info!("Generating genesis blocks...");
-        let (block1, block2) = genesis_dev();
-        info!("Genesis key block: hash={}", Hash::digest(&block1));
-        info!("Genesis monetary block: hash={}", Hash::digest(&block2));
-
-        info!("Registering genesis blocks...");
-        self.register_key_block(block1)?;
-        self.register_monetary_block(block2)?;
-
-        Ok(())
     }
 
     /// Returns an iterator over UTXO hashes.
@@ -145,7 +130,7 @@ impl Blockchain {
 
     //----------------------------------------------------------------------------------------------
 
-    fn register_key_block(&mut self, block: KeyBlock) -> Result<(), BlockchainError> {
+    pub fn register_key_block(&mut self, block: KeyBlock) -> Result<(), BlockchainError> {
         let block_id = self.blocks.len();
 
         // Check previous hash.
@@ -297,7 +282,9 @@ pub mod tests {
 
     use chrono::prelude::Utc;
 
+    use crate::genesis::genesis;
     use stegos_crypto::curve1174::cpt::make_random_keys;
+    use stegos_keychain::KeyChain;
 
     pub fn iterate(blockchain: &mut Blockchain) -> Result<(), BlockchainError> {
         let version = 1;
@@ -338,8 +325,18 @@ pub mod tests {
         extern crate simple_logger;
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
+        let keychains = [
+            KeyChain::new_mem(),
+            KeyChain::new_mem(),
+            KeyChain::new_mem(),
+        ];
+
+        let (key_block, monetary_block) = genesis(&keychains);
+
         let mut blockchain = Blockchain::new();
-        blockchain.bootstrap().unwrap();
+        blockchain.register_key_block(key_block).unwrap();
+        blockchain.register_monetary_block(monetary_block).unwrap();
+
         assert!(blockchain.blocks().len() > 0);
         iterate(&mut blockchain).unwrap();
         iterate(&mut blockchain).unwrap();

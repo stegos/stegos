@@ -36,7 +36,7 @@ extern crate stegos_crypto;
 extern crate stegos_keychain;
 extern crate stegos_network;
 
-mod protos;
+pub mod protos;
 
 use chrono::Utc;
 use failure::Error;
@@ -178,14 +178,35 @@ impl NodeService {
     }
 
     /// Handler for NodeMessage::Init.
-    fn handle_init(&mut self) {
-        self.chain.bootstrap().unwrap();
+    fn handle_init(&mut self) -> Result<(), Error> {
+        info!("Registering genesis blocks...");
+
+        // Load generated blocks
+        let key_block = include_bytes!("../data/genesis0.bin");
+        let key_block: protos::node::KeyBlock = protobuf::parse_from_bytes(&key_block[..])?;
+        let key_block = KeyBlock::from_proto(&key_block)?;
+
+        let monetary_block = include_bytes!("../data/genesis1.bin");
+        let monetary_block: protos::node::MonetaryBlock =
+            protobuf::parse_from_bytes(&monetary_block[..])?;
+        let monetary_block = MonetaryBlock::from_proto(&monetary_block)?;
+
+        info!("Genesis key block: hash={}", Hash::digest(&key_block));
+        info!(
+            "Genesis monetary block: hash={}",
+            Hash::digest(&monetary_block)
+        );
+
+        self.chain.register_key_block(key_block)?;
+        self.chain.register_monetary_block(monetary_block)?;
 
         // Iterate over genesis UTXO.
         for hash in self.chain.unspent() {
             let output = self.chain.output_by_hash(&hash).unwrap().clone();
             self.on_output_created(hash, &output);
         }
+
+        Ok(())
     }
 
     /// Handler for NodeMessage::PaymentRequest.
@@ -442,7 +463,7 @@ impl NodeService {
             match self.inbox.poll() {
                 Ok(Async::Ready(Some(msg))) => match msg {
                     NodeMessage::Init => {
-                        self.handle_init();
+                        self.handle_init()?;
                     }
                     NodeMessage::PaymentRequest { recipient, amount } => {
                         self.handle_payment_request(&recipient, amount)?;

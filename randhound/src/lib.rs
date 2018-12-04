@@ -148,14 +148,14 @@ impl RandHoundService {
     /// Called on timer event.
     fn on_timer(&mut self) {
         debug!("timer");
-        if self.randhound_started {
-            debug!("Randhound already started!");
-            self.state.maybe_transition_from_init_phase();
-        } else {
-            debug!("Starting Randhound!");
-            self.randhound_started = true;
-            self.state.start_randhound_round();
-        }
+        // if self.randhound_started {
+        //     debug!("Randhound already started!");
+        //     self.state.maybe_transition_from_init_phase();
+        // } else {
+        //     debug!("Starting Randhound!");
+        //     self.randhound_started = true;
+        //     self.state.start_randhound_round();
+        // }
     }
 
     fn process_msg(&self, msg: Vec<u8>) {

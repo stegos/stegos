@@ -699,6 +699,13 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> fmt::Debug for Merkle<T> {
     }
 }
 
+impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Clone for Merkle<T> {
+    fn clone(&self) -> Merkle<T> {
+        let serialized = self.serialize();
+        Merkle::deserialize(&serialized).unwrap()
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;

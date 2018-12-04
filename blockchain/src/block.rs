@@ -28,7 +28,7 @@ use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
 
 /// General Block Header.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BaseBlockHeader {
     /// Version number.
     pub version: u64,
@@ -70,7 +70,7 @@ impl Hashable for BaseBlockHeader {
 }
 
 /// Header for Key Blocks.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyBlockHeader {
     /// Common header.
     pub base: BaseBlockHeader,
@@ -94,7 +94,7 @@ impl Hashable for KeyBlockHeader {
 }
 
 /// Monetary Block Header.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MonetaryBlockHeader {
     /// Common header.
     pub base: BaseBlockHeader,
@@ -120,7 +120,7 @@ impl Hashable for MonetaryBlockHeader {
 }
 
 /// Monetary Block.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MonetaryBlockBody {
     /// The list of transaction inputs in a Merkle Tree.
     pub inputs: Vec<Hash>,
@@ -150,7 +150,7 @@ impl Hashable for MonetaryBlockBody {
 }
 
 /// Carries all cryptocurrency transactions.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyBlock {
     /// Header.
     pub header: KeyBlockHeader,
@@ -189,7 +189,7 @@ impl Hashable for KeyBlock {
 }
 
 /// Carries administrative information to blockchain participants.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MonetaryBlock {
     /// Header.
     pub header: MonetaryBlockHeader,

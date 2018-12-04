@@ -207,9 +207,9 @@ pub fn encode(pem: &Pem) -> String {
         );
     }
 
-    output.push_str(&format!("-----BEGIN {}-----\r\n", pem.tag));
-    output.push_str(&format!("{}\r\n", contents));
-    output.push_str(&format!("-----END {}-----\r\n", pem.tag));
+    output.push_str(&format!("-----BEGIN {}-----\n", pem.tag));
+    output.push_str(&format!("{}\n", contents));
+    output.push_str(&format!("-----END {}-----\n", pem.tag));
 
     output
 }

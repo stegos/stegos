@@ -45,11 +45,14 @@ use futures::{Async, Future, Poll, Stream};
 use protobuf::Message;
 use protos::{FromProto, IntoProto};
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::time::Duration;
 use stegos_blockchain::*;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
+use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
+use stegos_crypto::pbc::secure::G2;
 use stegos_keychain::KeyChain;
 use stegos_network::Broker;
 use tokio_timer::Interval;
@@ -100,8 +103,10 @@ impl Node {
 // Internal Implementation.
 // ----------------------------------------------------------------
 
+const VERSION: u64 = 1;
 const MEMPOOL_TTL: u64 = 5;
-const TOPIC: &'static str = "tx";
+const TX_TOPIC: &'static str = "tx";
+const BLOCK_TOPIC: &'static str = "block";
 
 #[derive(Clone, Debug)]
 enum NodeMessage {
@@ -127,8 +132,15 @@ struct NodeService {
     unspent: HashMap<Hash, i64>,
     /// Calculated Node's balance.
     balance: i64,
+    /// A monotonically increasing value that represents the heights of the blockchain,
+    /// starting from genesis block (=0).
+    epoch: u64,
+    /// Current epoch leader.
+    leader: SecurePublicKey,
     /// Memory pool of pending transactions.
     mempool: Vec<Transaction>,
+    /// Hashes of UTXO used by mempool transactions,
+    mempool_outputs: HashSet<Hash>,
     /// Network interface.
     broker: Broker,
     /// MailBox.
@@ -136,8 +148,10 @@ struct NodeService {
     /// Used internally for testing purposes to send messages to inbox.
     #[allow(dead_code)]
     outbox: UnboundedSender<NodeMessage>,
-    /// Broadcast Input Messages.
+    /// TX messages.
     transaction_rx: UnboundedReceiver<Vec<u8>>,
+    /// Blocks messages.
+    block_rx: UnboundedReceiver<Vec<u8>>,
     /// Timer.
     timer: Interval,
     /// Triggered when balance is changed.
@@ -155,8 +169,12 @@ impl NodeService {
         let chain = Blockchain::new();
         let balance = 0i64;
         let unspent = HashMap::new();
+        let epoch: u64 = 1;
+        let leader: SecurePublicKey = G2::generator().into(); // some fake key
         let mempool = Vec::<Transaction>::new();
-        let transaction_rx = broker.subscribe(&TOPIC.to_string())?;
+        let mempool_outputs = HashSet::<Hash>::new();
+        let transaction_rx = broker.subscribe(&TX_TOPIC.to_string())?;
+        let block_rx = broker.subscribe(&BLOCK_TOPIC.to_string())?;
         let timer = Interval::new_interval(Duration::from_secs(MEMPOOL_TTL));
         let on_balance_changed = Vec::<UnboundedSender<i64>>::new();
 
@@ -165,10 +183,14 @@ impl NodeService {
             keys,
             balance,
             unspent,
+            epoch,
+            leader,
             mempool,
+            mempool_outputs,
             inbox,
             outbox,
             transaction_rx,
+            block_rx,
             timer,
             broker,
             on_balance_changed,
@@ -197,14 +219,8 @@ impl NodeService {
             Hash::digest(&monetary_block)
         );
 
-        self.chain.register_key_block(key_block)?;
-        self.chain.register_monetary_block(monetary_block)?;
-
-        // Iterate over genesis UTXO.
-        for hash in self.chain.unspent() {
-            let output = self.chain.output_by_hash(&hash).unwrap().clone();
-            self.on_output_created(hash, &output);
-        }
+        self.handle_key_block_request(key_block)?;
+        self.handle_monetary_block_request(monetary_block)?;
 
         Ok(())
     }
@@ -225,12 +241,12 @@ impl NodeService {
 
     /// Handle incoming transactions received from network.
     fn handle_transaction_request(&mut self, msg: Vec<u8>) -> Result<(), Error> {
-        let proto: protos::node::Transaction = match protobuf::parse_from_bytes(&msg) {
-            Ok(msg) => msg,
-            Err(e) => return Err(e.into()),
-        };
+        if !self.is_leader() {
+            return Ok(());
+        }
 
-        let tx = Transaction::from_proto(&proto)?;
+        let tx: protos::node::Transaction = protobuf::parse_from_bytes(&msg)?;
+        let tx = Transaction::from_proto(&tx)?;
 
         let tx_hash = Hash::digest(&tx.body);
         info!("Received transaction: hash={}", &tx_hash);
@@ -243,11 +259,87 @@ impl NodeService {
         tx.validate(&inputs)?;
         info!("Transaction is valid: hash={}", &tx_hash);
 
+        // Check that UTXOs are not already queued to mempool.
+        for hash in &tx.body.txins {
+            if let Some(_) = self.mempool_outputs.get(hash) {
+                error!("UTXO is already queued to mempool: hash={}", &hash);
+                return Err(BlockchainError::MissingUTXO(hash.clone()).into());
+            }
+        }
+
         // Queue to mempool.
         debug!("Queuing to mempool: hash={}", &tx_hash);
+        for hash in &tx.body.txins {
+            let nodup = self.mempool_outputs.insert(hash.clone());
+            assert!(nodup);
+        }
         self.mempool.push(tx);
 
         Ok(())
+    }
+
+    /// Handle incoming KeyBlock
+    fn handle_key_block_request(&mut self, key_block: KeyBlock) -> Result<(), Error> {
+        let key_block2 = key_block.clone();
+        self.epoch = self.epoch + 1;
+        self.chain.register_key_block(key_block)?;
+        self.on_key_block_registered(&key_block2);
+        Ok(())
+    }
+
+    /// Handle incoming KeyBlock
+    fn handle_monetary_block_request(
+        &mut self,
+        monetary_block: MonetaryBlock,
+    ) -> Result<(), Error> {
+        let monetary_block2 = monetary_block.clone();
+        let inputs = self.chain.register_monetary_block(monetary_block)?;
+        self.on_monetary_block_registered(&monetary_block2, &inputs);
+        Ok(())
+    }
+
+    /// Handle incoming blocks received from network.
+    fn handle_block_request(&mut self, msg: Vec<u8>) -> Result<(), Error> {
+        let block: protos::node::Block = protobuf::parse_from_bytes(&msg)?;
+        let block = Block::from_proto(&block)?;
+
+        let block_hash = Hash::digest(&block);
+        info!("Received block: hash={}", &block_hash);
+
+        // Check that block is not registered yet.
+        if let Some(_) = self.chain.block_by_hash(&block_hash) {
+            info!("Block is already registered: hash={}", &block_hash);
+            // Already registered, skip.
+            return Ok(());
+        }
+
+        {
+            let header = block.base_header();
+
+            // Check previous hash.
+            let previous_hash = Hash::digest(self.chain.last_block());
+            if previous_hash != header.previous {
+                error!("Invalid or out-of-order block received: hash={}, expected_previous={}, got_previous={}",
+                       &block_hash, &previous_hash, &header.previous);
+                return Ok(());
+            }
+
+            // Check epoch.
+            if self.epoch != header.epoch {
+                error!("Invalid or out-of-order block received: hash={}, expected_epoch={}, got_epoch={}",
+                       &block_hash, self.epoch, header.epoch);
+                return Ok(());
+            }
+
+            // TODO: check CoSi signature
+        }
+
+        match block {
+            Block::KeyBlock(key_block) => self.handle_key_block_request(key_block),
+            Block::MonetaryBlock(monetary_block) => {
+                self.handle_monetary_block_request(monetary_block)
+            }
+        }
     }
 
     /// Handle period timer.
@@ -270,6 +362,38 @@ impl NodeService {
         info!("Balance is {}", balance);
         self.on_balance_changed
             .retain(move |tx| tx.unbounded_send(balance).is_ok())
+    }
+
+    /// Returns true if current node is leader.
+    fn is_leader(&self) -> bool {
+        self.keys.cosi_pkey == self.leader
+    }
+
+    /// Called when a new key block is registered.
+    fn on_key_block_registered(&mut self, key_block: &KeyBlock) {
+        self.leader = key_block.header.leader.clone();
+        if self.is_leader() {
+            info!("I'm leader");
+        } else {
+            info!("New leader is {}", &self.leader);
+        }
+    }
+
+    /// Called when a new key block is registered.
+    fn on_monetary_block_registered(&mut self, monetary_block: &MonetaryBlock, inputs: &[Output]) {
+        //
+        // Notify subscribers.
+        //
+
+        for input in inputs {
+            let hash = Hash::digest(input);
+            self.on_output_pruned(hash, input);
+        }
+
+        for (output, _) in monetary_block.body.outputs.leafs() {
+            let hash = Hash::digest(output);
+            self.on_output_created(hash, output);
+        }
     }
 
     /// Called when UTXO is created.
@@ -298,9 +422,19 @@ impl NodeService {
         info!("Sending transaction: hash={}", Hash::digest(&tx.body));
         let proto = tx.into_proto();
         let data = proto.write_to_bytes()?;
-        self.broker.publish(&TOPIC.to_string(), data.clone())?;
+        self.broker.publish(&TX_TOPIC.to_string(), data.clone())?;
         // Sic: broadcast messages are not delivered to sender itself.
         self.handle_transaction_request(data)?;
+        Ok(())
+    }
+
+    /// Send block to network.
+    fn send_block(&mut self, block: Block) -> Result<(), Error> {
+        info!("Sending block: hash={}", Hash::digest(&block));
+        let proto = block.into_proto();
+        let data = proto.write_to_bytes()?;
+        // Don't send block to myself.
+        self.broker.publish(&BLOCK_TOPIC.to_string(), data)?;
         Ok(())
     }
 
@@ -385,6 +519,11 @@ impl NodeService {
 
     /// Process transactions in mempool.
     fn process_mempool(&mut self) -> Result<(), Error> {
+        if !self.is_leader() {
+            assert!(self.mempool.is_empty());
+            return Ok(());
+        }
+
         if self.mempool.is_empty() {
             return Ok(());
         }
@@ -399,14 +538,23 @@ impl NodeService {
         for tx in self.mempool.drain(..) {
             let tx_hash = Hash::digest(&tx.body);
             info!("Adding transaction: hash={}", &tx_hash);
-            let tx_inputs = self.chain.outputs_by_hashes(&tx.body.txins)?;
+            let tx_inputs = self
+                .chain
+                .outputs_by_hashes(&tx.body.txins)
+                .expect("mempool transaction are validated before");
             inputs.extend(tx_inputs);
+            for tx_input in &tx.body.txins {
+                let exists = self.mempool_outputs.remove(tx_input);
+                assert!(exists);
+            }
             inputs_hashes.extend(tx.body.txins);
             outputs.extend(tx.body.txouts);
 
             adjustment += tx.body.gamma;
             fee += tx.body.fee;
         }
+        assert!(self.mempool.is_empty());
+        assert!(self.mempool_outputs.is_empty());
 
         // TODO: create a transaction for fee
         drop(fee);
@@ -418,16 +566,14 @@ impl NodeService {
         debug!("Creating monetary block");
 
         let timestamp = Utc::now().timestamp() as u64;
-        let (epoch, previous) = {
+        let previous = {
             let last = self.chain.last_block();
-            let base_header = last.base_header();
-            let epoch = base_header.epoch;
             let previous = Hash::digest(last);
-            (epoch, previous)
+            previous
         };
-        let version = 1;
+        let epoch = self.epoch;
 
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+        let base = BaseBlockHeader::new(VERSION, previous, epoch, timestamp);
         let block = MonetaryBlock::new(base, adjustment, &inputs_hashes, &outputs);
 
         info!("Created block: hash={}", Hash::digest(&block));
@@ -438,21 +584,13 @@ impl NodeService {
         // Seal and register the block.
         //
 
-        self.chain.register_monetary_block(block)?;
-
-        //
-        // Notify subscribers.
-        //
-
-        for input in &inputs {
-            let hash = Hash::digest(input);
-            self.on_output_pruned(hash, input);
-        }
-
-        for output in &outputs {
-            let hash = Hash::digest(output);
-            self.on_output_created(hash, output);
-        }
+        let block2 = block.clone();
+        let pruned = self
+            .chain
+            .register_monetary_block(block)
+            .expect("mempool transaction are validated before");
+        self.on_monetary_block_registered(&block2, &pruned);
+        self.send_block(Block::MonetaryBlock(block2))?;
 
         Ok(())
     }
@@ -483,6 +621,18 @@ impl NodeService {
             match self.transaction_rx.poll() {
                 Ok(Async::Ready(Some(msg))) => if let Err(e) = self.handle_transaction_request(msg)
                 {
+                    // Ignore invalid packets.
+                    error!("Invalid request: {}", e);
+                },
+                Ok(Async::Ready(None)) => break, // channel closed, fall through
+                Ok(Async::NotReady) => break,    // not ready, fall through
+                Err(()) => unreachable!(),       // never happens
+            }
+        }
+
+        loop {
+            match self.block_rx.poll() {
+                Ok(Async::Ready(Some(msg))) => if let Err(e) = self.handle_block_request(msg) {
                     // Ignore invalid packets.
                     error!("Invalid request: {}", e);
                 },

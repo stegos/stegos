@@ -91,12 +91,28 @@ impl Node {
         Ok(rx)
     }
 
+    /// Subscribe to epoch changes.
+    pub fn subscribe_epoch(&self) -> Result<UnboundedReceiver<EpochNotification>, Error> {
+        let (tx, rx) = unbounded();
+        let msg = NodeMessage::SubscribeEpoch(tx);
+        self.outbox.unbounded_send(msg)?;
+        Ok(rx)
+    }
+
     /// Request a payment.
     pub fn pay(&self, recipient: PublicKey, amount: i64) -> Result<(), Error> {
         let msg = NodeMessage::PaymentRequest { recipient, amount };
         self.outbox.unbounded_send(msg)?;
         Ok(())
     }
+}
+
+/// Send when epoch is changed.
+#[derive(Debug)]
+pub struct EpochNotification {
+    pub epoch: u64,
+    pub leader: SecurePublicKey,
+    pub witnesses: Vec<SecurePublicKey>,
 }
 
 // ----------------------------------------------------------------
@@ -113,6 +129,7 @@ enum NodeMessage {
     Init,
     PaymentRequest { recipient: PublicKey, amount: i64 },
     SubscribeBalance(UnboundedSender<i64>),
+    SubscribeEpoch(UnboundedSender<EpochNotification>),
 }
 
 #[derive(Debug, Fail)]
@@ -137,6 +154,8 @@ struct NodeService {
     epoch: u64,
     /// Current epoch leader.
     leader: SecurePublicKey,
+    /// The list of witnesses public keys.
+    witnesses: Vec<SecurePublicKey>,
     /// Memory pool of pending transactions.
     mempool: Vec<Transaction>,
     /// Hashes of UTXO used by mempool transactions,
@@ -156,6 +175,8 @@ struct NodeService {
     timer: Interval,
     /// Triggered when balance is changed.
     on_balance_changed: Vec<UnboundedSender<i64>>,
+    /// Triggered when epoch is changed.
+    on_epoch_changed: Vec<UnboundedSender<EpochNotification>>,
 }
 
 impl NodeService {
@@ -171,12 +192,14 @@ impl NodeService {
         let unspent = HashMap::new();
         let epoch: u64 = 1;
         let leader: SecurePublicKey = G2::generator().into(); // some fake key
+        let witnesses = Vec::<SecurePublicKey>::new();
         let mempool = Vec::<Transaction>::new();
         let mempool_outputs = HashSet::<Hash>::new();
         let transaction_rx = broker.subscribe(&TX_TOPIC.to_string())?;
         let block_rx = broker.subscribe(&BLOCK_TOPIC.to_string())?;
         let timer = Interval::new_interval(Duration::from_secs(MEMPOOL_TTL));
         let on_balance_changed = Vec::<UnboundedSender<i64>>::new();
+        let on_epoch_changed = Vec::<UnboundedSender<EpochNotification>>::new();
 
         let service = NodeService {
             chain,
@@ -185,6 +208,7 @@ impl NodeService {
             unspent,
             epoch,
             leader,
+            witnesses,
             mempool,
             mempool_outputs,
             inbox,
@@ -194,6 +218,7 @@ impl NodeService {
             timer,
             broker,
             on_balance_changed,
+            on_epoch_changed,
         };
 
         Ok(service)
@@ -281,7 +306,6 @@ impl NodeService {
     /// Handle incoming KeyBlock
     fn handle_key_block_request(&mut self, key_block: KeyBlock) -> Result<(), Error> {
         let key_block2 = key_block.clone();
-        self.epoch = self.epoch + 1;
         self.chain.register_key_block(key_block)?;
         self.on_key_block_registered(&key_block2);
         Ok(())
@@ -350,8 +374,25 @@ impl NodeService {
     }
 
     /// Handler for NodeMessage::SubscribeBalance.
-    fn handle_subscribe_balance(&mut self, tx: UnboundedSender<i64>) {
+    fn handle_subscribe_balance(&mut self, tx: UnboundedSender<i64>) -> Result<(), Error> {
+        tx.unbounded_send(self.balance)?;
         self.on_balance_changed.push(tx);
+        Ok(())
+    }
+
+    /// Handler for NodeMessage::SubscribeEpoch.
+    fn handle_subscribe_epoch(
+        &mut self,
+        tx: UnboundedSender<EpochNotification>,
+    ) -> Result<(), Error> {
+        let msg = EpochNotification {
+            epoch: self.epoch,
+            leader: self.leader.clone(),
+            witnesses: self.witnesses.clone(),
+        };
+        tx.unbounded_send(msg)?;
+        self.on_epoch_changed.push(tx);
+        Ok(())
     }
 
     /// Called when balance is changed.
@@ -372,6 +413,9 @@ impl NodeService {
     /// Called when a new key block is registered.
     fn on_key_block_registered(&mut self, key_block: &KeyBlock) {
         self.leader = key_block.header.leader.clone();
+        self.epoch = self.epoch + 1;
+        self.leader = key_block.header.leader.clone();
+        self.witnesses = key_block.header.witnesses.clone();
         if self.is_leader() {
             info!("I'm leader");
         } else {
@@ -607,7 +651,10 @@ impl NodeService {
                         self.handle_payment_request(&recipient, amount)?;
                     }
                     NodeMessage::SubscribeBalance(tx) => {
-                        self.handle_subscribe_balance(tx);
+                        self.handle_subscribe_balance(tx)?;
+                    }
+                    NodeMessage::SubscribeEpoch(tx) => {
+                        self.handle_subscribe_epoch(tx)?;
                     }
                 },
                 Ok(Async::Ready(None)) => break, // channel closed, fall through

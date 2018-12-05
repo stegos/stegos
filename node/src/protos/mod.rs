@@ -471,7 +471,7 @@ impl IntoProto<node::MonetaryBlockHeader> for MonetaryBlockHeader {
     fn into_proto(&self) -> node::MonetaryBlockHeader {
         let mut proto = node::MonetaryBlockHeader::new();
         proto.set_base(self.base.into_proto());
-        proto.set_adjustment(self.adjustment.into_proto());
+        proto.set_gamma(self.gamma.into_proto());
         proto.set_inputs_range_hash(self.inputs_range_hash.into_proto());
         proto.set_outputs_range_hash(self.outputs_range_hash.into_proto());
         proto
@@ -481,12 +481,12 @@ impl IntoProto<node::MonetaryBlockHeader> for MonetaryBlockHeader {
 impl FromProto<node::MonetaryBlockHeader> for MonetaryBlockHeader {
     fn from_proto(proto: &node::MonetaryBlockHeader) -> Result<Self, Error> {
         let base = BaseBlockHeader::from_proto(proto.get_base())?;
-        let adjustment = Fr::from_proto(proto.get_adjustment())?;
+        let gamma = Fr::from_proto(proto.get_gamma())?;
         let inputs_range_hash = Hash::from_proto(proto.get_inputs_range_hash())?;
         let outputs_range_hash = Hash::from_proto(proto.get_outputs_range_hash())?;
         Ok(MonetaryBlockHeader {
             base,
-            adjustment,
+            gamma: gamma,
             inputs_range_hash,
             outputs_range_hash,
         })
@@ -716,19 +716,19 @@ mod tests {
         let fee: i64 = 0;
 
         // "genesis" output by 0
-        let (output0, _delta0) =
+        let (output0, _gamma0) =
             Output::new(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
 
         // Transaction from 1 to 2
         let inputs1 = [output0];
-        let (output1, delta1) =
+        let (output1, gamma1) =
             Output::new(timestamp, &skey1, &pkey2, amount).expect("keys are valid");
 
         roundtrip(&output1);
-        roundtrip(&delta1);
+        roundtrip(&gamma1);
 
         let tx =
-            Transaction::new(&skey1, &inputs1, &[output1], delta1, fee).expect("keys are valid");
+            Transaction::new(&skey1, &inputs1, &[output1], gamma1, fee).expect("keys are valid");
         tx.validate(&inputs1).unwrap();
 
         let tx2 = roundtrip(&tx);
@@ -770,17 +770,18 @@ mod tests {
         let previous = Hash::digest(&"test".to_string());
 
         // "genesis" output by 0
-        let (output0, _delta0) = Output::new(timestamp, &skey0, &pkey1, amount).unwrap();
+        let (output0, gamma0) = Output::new(timestamp, &skey0, &pkey1, amount).unwrap();
 
         // Transaction from 1 to 2
         let inputs1 = [Hash::digest(&output0)];
-        let (output1, delta1) = Output::new(timestamp, &skey1, &pkey2, amount).unwrap();
+        let (output1, gamma1) = Output::new(timestamp, &skey1, &pkey2, amount).unwrap();
         let outputs1 = [output1];
+        let gamma = gamma0 - gamma1;
 
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
         roundtrip(&base);
 
-        let block = MonetaryBlock::new(base, delta1, &inputs1, &outputs1);
+        let block = MonetaryBlock::new(base, gamma, &inputs1, &outputs1);
         roundtrip(&block.header);
         roundtrip(&block.body);
         roundtrip(&block);

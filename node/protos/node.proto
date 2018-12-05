@@ -88,7 +88,7 @@ message BaseBlockHeader {
 
 message MonetaryBlockHeader {
     BaseBlockHeader base = 1;
-    Fr adjustment = 2;
+    Fr gamma = 2;
     Hash inputs_range_hash = 3;
     Hash outputs_range_hash = 4;
 }

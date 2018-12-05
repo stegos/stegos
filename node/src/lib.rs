@@ -232,8 +232,18 @@ impl NodeService {
             Hash::digest(&monetary_block)
         );
 
-        self.handle_key_block_request(key_block)?;
-        self.handle_monetary_block_request(monetary_block)?;
+        //
+        // Sic: genesis block has invalid monetary balance, so handle_monetary_block_request()
+        // can't be used here.
+        //
+
+        let key_block2 = key_block.clone();
+        self.chain.register_key_block(key_block)?;
+        self.on_key_block_registered(&key_block2);
+
+        let monetary_block2 = monetary_block.clone();
+        let inputs = self.chain.register_monetary_block(monetary_block)?;
+        self.on_monetary_block_registered(&monetary_block2, &inputs);
 
         Ok(())
     }
@@ -268,7 +278,7 @@ impl NodeService {
         // Resolve inputs.
         let inputs = self.chain.outputs_by_hashes(&tx.body.txins)?;
 
-        // Validate signature.
+        // Validate monetary balance and signature.
         tx.validate(&inputs)?;
         info!("Transaction is valid: hash={}", &tx_hash);
 
@@ -304,6 +314,18 @@ impl NodeService {
         &mut self,
         monetary_block: MonetaryBlock,
     ) -> Result<(), Error> {
+        let block_hash = Hash::digest(&monetary_block);
+
+        debug!("Validating block monetary balance: hash={}..", &block_hash);
+
+        // Resolve inputs.
+        let inputs = self.chain.outputs_by_hashes(&monetary_block.body.inputs)?;
+
+        // Validate monetary balance.
+        monetary_block.validate(&inputs)?;
+
+        info!("Block monetary balance is ok: hash={}", &block_hash);
+
         let monetary_block2 = monetary_block.clone();
         let inputs = self.chain.register_monetary_block(monetary_block)?;
         self.on_monetary_block_registered(&monetary_block2, &inputs);
@@ -528,24 +550,25 @@ impl NodeService {
 
         // Create an output for payment
         debug!("Creating UTXO for payment");
-        let (output1, delta1) = Output::new(timestamp, sender_skey, recipient, amount)?;
+        let (output1, gamma1) = Output::new(timestamp, sender_skey, recipient, amount)?;
         outputs.push(output1);
-        let mut adjustment = delta1;
+        let mut gamma = gamma1;
 
         if change > 0 {
             // Create an output for change
             debug!("Creating UTXO for the change");
-            let (output2, delta2) = Output::new(timestamp, sender_skey, sender_pkey, change)?;
+            let (output2, gamma2) = Output::new(timestamp, sender_skey, sender_pkey, change)?;
             outputs.push(output2);
-            adjustment += delta2;
+            gamma += gamma2;
         }
 
         // TODO: implement fee calculation
         let fee: i64 = 0;
 
         debug!("Signing transaction");
-        let tx = Transaction::new(sender_skey, &inputs, &outputs, adjustment, fee)?;
-
+        let tx = Transaction::new(sender_skey, &inputs, &outputs, gamma, fee)?;
+        // Double-check transaction
+        tx.validate(&inputs)?;
         Ok(tx)
     }
 
@@ -561,7 +584,7 @@ impl NodeService {
         }
 
         info!("Processing mempool: size={}", self.mempool.len());
-        let mut adjustment = Fr::zero();
+        let mut gamma = Fr::zero();
         let mut fee = 0i64;
 
         let mut inputs = Vec::<Output>::new();
@@ -582,7 +605,7 @@ impl NodeService {
             inputs_hashes.extend(tx.body.txins);
             outputs.extend(tx.body.txouts);
 
-            adjustment += tx.body.gamma;
+            gamma += tx.body.gamma;
             fee += tx.body.fee;
         }
         assert!(self.mempool.is_empty());
@@ -606,7 +629,10 @@ impl NodeService {
         let epoch = self.epoch;
 
         let base = BaseBlockHeader::new(VERSION, previous, epoch, timestamp);
-        let block = MonetaryBlock::new(base, adjustment, &inputs_hashes, &outputs);
+        let block = MonetaryBlock::new(base, gamma, &inputs_hashes, &outputs);
+
+        // Double-check the monetary balance of created block.
+        block.validate(&inputs)?;
 
         info!("Created block: hash={}", Hash::digest(&block));
 
@@ -636,7 +662,9 @@ impl NodeService {
                         self.handle_init()?;
                     }
                     NodeMessage::PaymentRequest { recipient, amount } => {
-                        self.handle_payment_request(&recipient, amount)?;
+                        if let Err(e) = self.handle_payment_request(&recipient, amount) {
+                            error!("Invalid payment request: {}", e);
+                        }
                     }
                     NodeMessage::SubscribeBalance(tx) => {
                         self.handle_subscribe_balance(tx)?;

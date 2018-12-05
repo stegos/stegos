@@ -72,10 +72,7 @@ pub fn genesis(keychains: &[KeyChain]) -> (KeyBlock, MonetaryBlock) {
             .expect("genesis has valid public keys");
         let outputs = [output];
 
-        // Adjustment is the sum of all gamma found in UTXOs.
-        let adjustment = gamma;
-
-        MonetaryBlock::new(base, adjustment, &inputs, &outputs)
+        MonetaryBlock::new(base, gamma, &inputs, &outputs)
     };
 
     (block1, block2)

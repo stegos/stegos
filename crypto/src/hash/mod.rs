@@ -39,6 +39,11 @@ pub const HASH_SIZE: usize = 32;
 pub struct Hash([u8; HASH_SIZE]);
 
 impl Hash {
+    /// Return a hash with all zeros.
+    pub fn zero() -> Self {
+        Hash([0u8; HASH_SIZE])
+    }
+
     pub fn base_vector(&self) -> &[u8] {
         &self.0
     }

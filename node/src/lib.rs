@@ -87,9 +87,24 @@ impl Node {
         Ok(rx)
     }
 
+    /// Subscribe to messages.
+    pub fn subscribe_messages(&self) -> Result<UnboundedReceiver<MessageNotification>, Error> {
+        let (tx, rx) = unbounded();
+        let msg = NodeMessage::SubscribeMessage(tx);
+        self.outbox.unbounded_send(msg)?;
+        Ok(rx)
+    }
+
     /// Request a payment.
     pub fn pay(&self, recipient: PublicKey, amount: i64) -> Result<(), Error> {
         let msg = NodeMessage::PaymentRequest { recipient, amount };
+        self.outbox.unbounded_send(msg)?;
+        Ok(())
+    }
+
+    /// Send a message
+    pub fn msg(&self, recipient: PublicKey, data: Vec<u8>) -> Result<(), Error> {
+        let msg = NodeMessage::MessageRequest { recipient, data };
         self.outbox.unbounded_send(msg)?;
         Ok(())
     }
@@ -103,12 +118,18 @@ pub struct EpochNotification {
     pub witnesses: Vec<SecurePublicKey>,
 }
 
+/// Send when message is received.
+#[derive(Debug, Clone)]
+pub struct MessageNotification {
+    pub data: Vec<u8>,
+}
+
 // ----------------------------------------------------------------
 // Internal Implementation.
 // ----------------------------------------------------------------
 
 const VERSION: u64 = 1;
-const MEMPOOL_TTL: u64 = 5;
+const MEMPOOL_TTL: u64 = 15;
 const TX_TOPIC: &'static str = "tx";
 const BLOCK_TOPIC: &'static str = "block";
 
@@ -116,13 +137,15 @@ const BLOCK_TOPIC: &'static str = "block";
 enum NodeMessage {
     Init,
     PaymentRequest { recipient: PublicKey, amount: i64 },
+    MessageRequest { recipient: PublicKey, data: Vec<u8> },
     SubscribeBalance(UnboundedSender<i64>),
     SubscribeEpoch(UnboundedSender<EpochNotification>),
+    SubscribeMessage(UnboundedSender<MessageNotification>),
 }
 
 #[derive(Debug, Fail)]
 pub enum NodeError {
-    #[fail(display = "Amount cannot be negative.")]
+    #[fail(display = "Amount should be greater than zero.")]
     ZeroOrNegativeAmount,
     #[fail(display = "Not enough money.")]
     NotEnoughMoney,
@@ -165,6 +188,8 @@ struct NodeService {
     on_balance_changed: Vec<UnboundedSender<i64>>,
     /// Triggered when epoch is changed.
     on_epoch_changed: Vec<UnboundedSender<EpochNotification>>,
+    /// Triggered when message is received.
+    on_message_received: Vec<UnboundedSender<MessageNotification>>,
 }
 
 impl NodeService {
@@ -188,6 +213,7 @@ impl NodeService {
         let timer = Interval::new_interval(Duration::from_secs(MEMPOOL_TTL));
         let on_balance_changed = Vec::<UnboundedSender<i64>>::new();
         let on_epoch_changed = Vec::<UnboundedSender<EpochNotification>>::new();
+        let on_message_received = Vec::<UnboundedSender<MessageNotification>>::new();
 
         let service = NodeService {
             chain,
@@ -207,6 +233,7 @@ impl NodeService {
             broker,
             on_balance_changed,
             on_epoch_changed,
+            on_message_received,
         };
 
         Ok(service)
@@ -250,13 +277,32 @@ impl NodeService {
 
     /// Handler for NodeMessage::PaymentRequest.
     fn handle_payment_request(&mut self, recipient: &PublicKey, amount: i64) -> Result<(), Error> {
-        info!(
+        debug!(
             "Received payment request: to={}, amount={}",
             recipient, amount
         );
 
         debug!("Creating transaction");
-        let tx = self.create_transaction(recipient, amount)?;
+        let tx = self.create_monetary_transaction(recipient, amount)?;
+        info!("Created transaction: hash={}", Hash::digest(&tx.body));
+
+        self.send_transaction(tx)
+    }
+
+    /// Handler for NodeMessage::PaymentRequest.
+    fn handle_message_request(
+        &mut self,
+        recipient: &PublicKey,
+        data: Vec<u8>,
+    ) -> Result<(), Error> {
+        debug!(
+            "Received message request: to={}, data={}",
+            recipient,
+            String::from_utf8_lossy(&data)
+        );
+
+        debug!("Creating transaction");
+        let tx = self.create_data_transaction(recipient, data)?;
         info!("Created transaction: hash={}", Hash::digest(&tx.body));
 
         self.send_transaction(tx)
@@ -405,6 +451,11 @@ impl NodeService {
         Ok(())
     }
 
+    /// Handler for NodeMessage::SubscribeMessage.
+    fn handle_subscribe_message(&mut self, tx: UnboundedSender<MessageNotification>) {
+        self.on_message_received.push(tx);
+    }
+
     /// Called when balance is changed.
     fn update_balance(&mut self, amount: i64) {
         self.balance += amount;
@@ -452,22 +503,61 @@ impl NodeService {
 
     /// Called when UTXO is created.
     fn on_output_created(&mut self, hash: Hash, output: &Output) {
-        if let Ok((_delta, _gamma, amount)) = output.decrypt_payload(&self.keys.wallet_skey) {
-            info!("Received UTXO: hash={}, amount={}", hash, amount);
-            let missing = self.unspent.insert(hash, amount);
-            assert_eq!(missing, None);
-            self.update_balance(amount);
+        match output {
+            Output::MonetaryOutput(output) => {
+                if let Ok((_delta, _gamma, amount)) = output.decrypt_payload(&self.keys.wallet_skey)
+                {
+                    info!("Received monetary UTXO: hash={}, amount={}", hash, amount);
+                    let missing = self.unspent.insert(hash, amount);
+                    assert_eq!(missing, None);
+                    self.update_balance(amount);
+                }
+            }
+            Output::DataOutput(output) => {
+                if let Ok((_delta, _gamma, data)) = output.decrypt_payload(&self.keys.wallet_skey) {
+                    info!(
+                        "Received data UTXO: hash={}, msg={}",
+                        hash,
+                        String::from_utf8_lossy(&data)
+                    );
+                    // Notify subscribers.
+                    let msg = MessageNotification { data };
+                    self.on_message_received
+                        .retain(move |tx| tx.unbounded_send(msg.clone()).is_ok());
+
+                    // Send a prune request.
+                    debug!("Pruning data");
+                    let tx = self
+                        .create_data_ack_transaction(output.clone())
+                        .expect("cannot fail");
+                    info!("Created transaction: hash={}", Hash::digest(&tx.body));
+                    self.send_transaction(tx).ok();
+                }
+            }
         }
     }
 
     /// Called when UTXO is spent.
-    #[allow(dead_code)]
     fn on_output_pruned(&mut self, hash: Hash, output: &Output) {
-        if let Ok((_delta, _gamma, amount)) = output.decrypt_payload(&self.keys.wallet_skey) {
-            info!("Spent UTXO: hash={}, amount={}", hash, amount);
-            let exists = self.unspent.remove(&hash);
-            assert_eq!(exists, Some(amount));
-            self.update_balance(-amount);
+        match output {
+            Output::MonetaryOutput(output) => {
+                if let Ok((_delta, _gamma, amount)) = output.decrypt_payload(&self.keys.wallet_skey)
+                {
+                    info!("Spent monetary UTXO: hash={}, amount={}", hash, amount);
+                    let exists = self.unspent.remove(&hash);
+                    assert_eq!(exists, Some(amount));
+                    self.update_balance(-amount);
+                }
+            }
+            Output::DataOutput(output) => {
+                if let Ok((_delta, _gamma, data)) = output.decrypt_payload(&self.keys.wallet_skey) {
+                    info!(
+                        "Pruned data UTXO: hash={}, data={}",
+                        hash,
+                        String::from_utf8_lossy(&data)
+                    );
+                }
+            }
         }
     }
 
@@ -529,7 +619,11 @@ impl NodeService {
     }
 
     /// Create monetary transaction.
-    fn create_transaction(&self, recipient: &PublicKey, amount: i64) -> Result<Transaction, Error> {
+    fn create_monetary_transaction(
+        &self,
+        recipient: &PublicKey,
+        amount: i64,
+    ) -> Result<Transaction, Error> {
         let sender_skey = &self.keys.wallet_skey;
         let sender_pkey = &self.keys.wallet_pkey;
 
@@ -550,14 +644,15 @@ impl NodeService {
 
         // Create an output for payment
         debug!("Creating UTXO for payment");
-        let (output1, gamma1) = Output::new(timestamp, sender_skey, recipient, amount)?;
+        let (output1, gamma1) = Output::new_monetary(timestamp, sender_skey, recipient, amount)?;
         outputs.push(output1);
         let mut gamma = gamma1;
 
         if change > 0 {
             // Create an output for change
             debug!("Creating UTXO for the change");
-            let (output2, gamma2) = Output::new(timestamp, sender_skey, sender_pkey, change)?;
+            let (output2, gamma2) =
+                Output::new_monetary(timestamp, sender_skey, sender_pkey, change)?;
             outputs.push(output2);
             gamma += gamma2;
         }
@@ -569,6 +664,64 @@ impl NodeService {
         let tx = Transaction::new(sender_skey, &inputs, &outputs, gamma, fee)?;
         // Double-check transaction
         tx.validate(&inputs)?;
+        Ok(tx)
+    }
+
+    /// Create data transaction.
+    fn create_data_transaction(
+        &self,
+        recipient: &PublicKey,
+        data: Vec<u8>,
+    ) -> Result<Transaction, Error> {
+        let sender_skey = &self.keys.wallet_skey;
+        //let sender_pkey = &self.keys.wallet_pkey;
+
+        //
+        // Create inputs
+        //
+
+        // Collect unspent UTXOs
+        //let (spent, change) = NodeService::find_utxo(&self.unspent, amount)?;
+        //let inputs = self.chain.outputs_by_hashes(&spent)?;
+        // TODO: implement fee calculation
+        let inputs = [];
+
+        //
+        // Create outputs
+        //
+
+        let timestamp = Utc::now().timestamp() as u64;
+        let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
+
+        // Create an output for payment
+        debug!("Creating UTXO for data");
+        // TODO: pass TTL
+        let ttl = 10;
+        let (output1, delta1) = Output::new_data(timestamp, sender_skey, recipient, ttl, &data)?;
+        outputs.push(output1);
+        let adjustment = delta1;
+
+        // TODO: implement fee calculation
+        let fee: i64 = 0;
+
+        debug!("Signing transaction");
+        let tx = Transaction::new(sender_skey, &inputs, &outputs, adjustment, fee)?;
+
+        Ok(tx)
+    }
+
+    /// Create a transaction to prune data.
+    fn create_data_ack_transaction(&self, output: DataOutput) -> Result<Transaction, Error> {
+        let sender_skey = &self.keys.wallet_skey;
+
+        let inputs = [Output::DataOutput(output)];
+        let outputs = [];
+        let adjustment = Fr::zero();
+        let fee: i64 = 0;
+
+        debug!("Signing transaction");
+        let tx = Transaction::new(sender_skey, &inputs, &outputs, adjustment, fee)?;
+
         Ok(tx)
     }
 
@@ -657,21 +810,24 @@ impl NodeService {
         // Process control messages.
         loop {
             match self.inbox.poll() {
-                Ok(Async::Ready(Some(msg))) => match msg {
-                    NodeMessage::Init => {
-                        self.handle_init()?;
-                    }
-                    NodeMessage::PaymentRequest { recipient, amount } => {
-                        if let Err(e) = self.handle_payment_request(&recipient, amount) {
-                            error!("Invalid payment request: {}", e);
+                Ok(Async::Ready(Some(msg))) => if let Err(e) = {
+                    match msg {
+                        NodeMessage::Init => self.handle_init(),
+                        NodeMessage::PaymentRequest { recipient, amount } => {
+                            self.handle_payment_request(&recipient, amount)
+                        }
+                        NodeMessage::MessageRequest { recipient, data } => {
+                            self.handle_message_request(&recipient, data)
+                        }
+                        NodeMessage::SubscribeBalance(tx) => self.handle_subscribe_balance(tx),
+                        NodeMessage::SubscribeEpoch(tx) => self.handle_subscribe_epoch(tx),
+                        NodeMessage::SubscribeMessage(tx) => {
+                            self.handle_subscribe_message(tx);
+                            Ok(())
                         }
                     }
-                    NodeMessage::SubscribeBalance(tx) => {
-                        self.handle_subscribe_balance(tx)?;
-                    }
-                    NodeMessage::SubscribeEpoch(tx) => {
-                        self.handle_subscribe_epoch(tx)?;
-                    }
+                } {
+                    error!("Error: {}", e)
                 },
                 Ok(Async::Ready(None)) => break, // channel closed, fall through
                 Ok(Async::NotReady) => break,    // not ready, fall throughs

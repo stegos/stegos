@@ -68,6 +68,8 @@ message BulletProof {
 message Output {
     PublicKey recipient = 1;
     BulletProof proof = 2;
+    Pt vcmt = 4;
+    uint64 ttl = 5;
     EncryptedPayload payload = 3;
 }
 

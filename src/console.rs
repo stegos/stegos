@@ -34,7 +34,7 @@ use std::str::FromStr;
 use std::thread;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_network::{Broker, Network};
-use stegos_node::Node;
+use stegos_node::*;
 
 use crate::consts;
 
@@ -65,6 +65,8 @@ lazy_static! {
     static ref DIAL_COMMAND_RE: Regex = Regex::new(r"\s*(?P<address>\S+)\s*$").unwrap();
     /// Regex to parse "pay" command.
     static ref PAY_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]{64})\s+(?P<amount>[0-9]{1,19})\s*$").unwrap();
+    /// Regex to parse "msg" command.
+    static ref MSG_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]{64})\s+(?P<msg>.*)$").unwrap();
     /// Regex to parse "publish" command.
     static ref PUBLISH_COMMAND_RE: Regex = Regex::new(r"\s*(?P<topic>[0-9A-Za-z]{1,128})\s+(?P<msg>.*)$").unwrap();
 }
@@ -83,6 +85,10 @@ struct ConsoleService {
     stdin_th: thread::JoinHandle<()>,
     /// A channel to receive notification about balance changes.
     balance_rx: UnboundedReceiver<i64>,
+    /// A channel to receive notification about epoch changes.
+    epoch_rx: UnboundedReceiver<EpochNotification>,
+    /// A channel to receive notification about new messages..
+    message_rx: UnboundedReceiver<MessageNotification>,
 }
 
 impl ConsoleService {
@@ -92,6 +98,8 @@ impl ConsoleService {
         let stdin_th = thread::spawn(move || ConsoleService::readline_thread_f(tx));
         let stdin = rx;
         let balance_rx = node.subscribe_balance()?;
+        let epoch_rx = node.subscribe_epoch()?;
+        let message_rx = node.subscribe_messages()?;
         let service = ConsoleService {
             network,
             broker,
@@ -99,6 +107,8 @@ impl ConsoleService {
             stdin,
             stdin_th,
             balance_rx,
+            epoch_rx,
+            message_rx,
         };
         Ok(service)
     }
@@ -154,6 +164,7 @@ impl ConsoleService {
         println!("dial MULTIADDR");
         println!("publish TOPIC MESSAGE");
         println!("pay PUBLICKEY AMOUNT");
+        println!("msg PUBLICKEY MESSAGE");
         println!("");
     }
 
@@ -174,6 +185,14 @@ impl ConsoleService {
         println!("Usage: /pay PUBLICKEY AMOUNT");
         println!(" - PUBLICKEY recipient's public key in HEX format");
         println!(" - AMOUNT amount in tokens");
+        println!("");
+    }
+
+    fn help_msg() {
+        println!("Usage: /msg PUBLICKEY MESSAGE [TTL]");
+        println!(" - PUBLICKEY recipient's public key in HEX format");
+        println!(" - MESSAGE some message");
+        println!(" - TTL the number of blocks for which this message should be kept");
         println!("");
     }
 
@@ -229,6 +248,26 @@ impl ConsoleService {
             if let Err(e) = self.node.pay(recipient, amount) {
                 error!("Request failed: {}", e);
             }
+        } else if msg.starts_with("msg ") {
+            let caps = match MSG_COMMAND_RE.captures(&msg[4..]) {
+                Some(c) => c,
+                None => return ConsoleService::help_msg(),
+            };
+
+            let recipient = caps.name("recipient").unwrap().as_str();
+            let recipient = match PublicKey::try_from_hex(recipient) {
+                Ok(r) => r,
+                Err(e) => {
+                    println!("Invalid public key {}: {}", recipient, e);
+                    return ConsoleService::help_msg();
+                }
+            };
+            let data = caps.name("msg").unwrap().as_str();
+
+            info!("Requesting message: to={}, data={}", recipient, data);
+            if let Err(e) = self.node.msg(recipient, data.as_bytes().to_vec()) {
+                error!("Request failed: {}", e);
+            }
         } else {
             return ConsoleService::help();
         }
@@ -240,6 +279,14 @@ impl ConsoleService {
 
     fn on_balance_changed(&self, balance: i64) {
         info!("Balance => {}", balance);
+    }
+
+    fn on_epoch_changed(&self, msg: EpochNotification) {
+        info!("Epoch => {}", msg.epoch);
+    }
+
+    fn on_message_received(&self, msg: MessageNotification) {
+        info!("Message => {}", String::from_utf8_lossy(&msg.data));
     }
 }
 
@@ -266,9 +313,29 @@ impl Future for ConsoleService {
             match self.balance_rx.poll() {
                 Ok(Async::Ready(Some(balance))) => self.on_balance_changed(balance),
                 Ok(Async::Ready(None)) => self.on_exit(),
-                Ok(Async::NotReady) => return Ok(Async::NotReady),
+                Ok(Async::NotReady) => break, // fall through
                 Err(()) => panic!("Wallet failure"),
             }
         }
+
+        loop {
+            match self.epoch_rx.poll() {
+                Ok(Async::Ready(Some(msg))) => self.on_epoch_changed(msg),
+                Ok(Async::Ready(None)) => self.on_exit(),
+                Ok(Async::NotReady) => break, // fall through
+                Err(()) => panic!("Wallet failure"),
+            }
+        }
+
+        loop {
+            match self.message_rx.poll() {
+                Ok(Async::Ready(Some(msg))) => self.on_message_received(msg),
+                Ok(Async::Ready(None)) => self.on_exit(),
+                Ok(Async::NotReady) => break, // fall through
+                Err(()) => panic!("Wallet failure"),
+            }
+        }
+
+        return Ok(Async::NotReady);
     }
 }

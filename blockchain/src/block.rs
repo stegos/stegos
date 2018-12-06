@@ -23,7 +23,7 @@
 
 use crate::error::*;
 use crate::merkle::*;
-use crate::output::Output;
+use crate::output::*;
 use failure::Error;
 use stegos_crypto::bulletproofs::validate_range_proof;
 use stegos_crypto::curve1174::cpt::Pt;
@@ -265,21 +265,29 @@ impl MonetaryBlock {
 
         let mut pedersen_commitment_diff = ECp::inf();
 
-        // +\sum{P_i} + \sum{C_i} for i in txins
+        // +\sum{C_i} for i in txins
         for (txin_hash, txin) in self.body.inputs.iter().zip(inputs) {
             assert_eq!(Hash::digest(txin), *txin_hash);
-
-            let pedersen_commitment: Pt = txin.proof.pedersen_commitment();
+            let pedersen_commitment = match txin {
+                Output::MonetaryOutput(o) => o.proof.vcmt,
+                Output::DataOutput(o) => o.vcmt,
+            };
             let pedersen_commitment: ECp = Pt::decompress(pedersen_commitment)?;
             pedersen_commitment_diff += pedersen_commitment;
         }
 
         // -\sum{C_o} for o in txouts
         for (txout, _) in self.body.outputs.leafs() {
-            if !validate_range_proof(&txout.proof) {
-                return Err(BlockchainError::InvalidBulletProof.into());
-            }
-            let pedersen_commitment: Pt = txout.proof.pedersen_commitment();
+            let pedersen_commitment = match **txout {
+                Output::MonetaryOutput(ref o) => {
+                    // Check bulletproofs of created outputs
+                    if !validate_range_proof(&o.proof) {
+                        return Err(BlockchainError::InvalidBulletProof.into());
+                    }
+                    o.proof.vcmt
+                }
+                Output::DataOutput(ref o) => o.vcmt,
+            };
             let pedersen_commitment: ECp = Pt::decompress(pedersen_commitment)?;
             pedersen_commitment_diff -= pedersen_commitment;
         }
@@ -348,10 +356,12 @@ pub mod tests {
         // Valid block with transaction from 1 to 2
         //
         {
-            let (output0, gamma0) = Output::new(timestamp, &skey0, &pkey1, amount).unwrap();
+            let (output0, gamma0) =
+                Output::new_monetary(timestamp, &skey0, &pkey1, amount).unwrap();
             let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
             let inputs1 = [Hash::digest(&output0)];
-            let (output1, gamma1) = Output::new(timestamp, &skey1, &pkey2, amount).unwrap();
+            let (output1, gamma1) =
+                Output::new_monetary(timestamp, &skey1, &pkey2, amount).unwrap();
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
             let block = MonetaryBlock::new(base, gamma, &inputs1, &outputs1);
@@ -362,10 +372,12 @@ pub mod tests {
         // Block with invalid monetary balance
         //
         {
-            let (output0, gamma0) = Output::new(timestamp, &skey0, &pkey1, amount).unwrap();
+            let (output0, gamma0) =
+                Output::new_monetary(timestamp, &skey0, &pkey1, amount).unwrap();
             let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
             let inputs1 = [Hash::digest(&output0)];
-            let (output1, gamma1) = Output::new(timestamp, &skey1, &pkey2, amount - 1).unwrap();
+            let (output1, gamma1) =
+                Output::new_monetary(timestamp, &skey1, &pkey2, amount - 1).unwrap();
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
             let block = MonetaryBlock::new(base, gamma, &inputs1, &outputs1);

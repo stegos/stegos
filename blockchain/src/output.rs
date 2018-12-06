@@ -23,6 +23,7 @@
 
 use failure::{Error, Fail};
 use std::fmt;
+use std::mem::size_of;
 use std::mem::transmute;
 use stegos_crypto::bulletproofs::{make_range_proof, pedersen_commitment, BulletProof};
 use stegos_crypto::curve1174::cpt::{
@@ -216,6 +217,11 @@ impl MonetaryOutput {
 
         Ok((delta, gamma, amount))
     }
+
+    /// Returns approximate the size of a UTXO in bytes.
+    pub fn size_of(&self) -> usize {
+        size_of::<MonetaryOutput>() + self.payload.ctxt.len() * size_of::<u8>()
+    }
 }
 
 impl DataOutput {
@@ -309,6 +315,11 @@ impl DataOutput {
         assert!(self.payload.ctxt.len() > DATA_PAYLOAD_LEN);
         (self.payload.ctxt.len() - DATA_PAYLOAD_LEN) as u64
     }
+
+    /// Returns approximate the size of a UTXO in bytes.
+    pub fn size_of(&self) -> usize {
+        size_of::<DataOutput>() + self.payload.ctxt.len() * size_of::<u8>()
+    }
 }
 
 impl Output {
@@ -345,6 +356,14 @@ impl Output {
                 let (delta, gamma, _data) = data.decrypt_payload(skey)?;
                 Ok((delta, gamma))
             }
+        }
+    }
+
+    /// Returns approximate the size of a UTXO in bytes.
+    pub fn size_of(&self) -> usize {
+        match self {
+            Output::MonetaryOutput(monetary) => monetary.size_of(),
+            Output::DataOutput(data) => data.size_of(),
         }
     }
 }
@@ -408,6 +427,7 @@ pub mod tests {
         let (_delta2, gamma2, amount2) = output
             .decrypt_payload(&skey2)
             .expect("decryption successful");
+        assert!(output.size_of() > 1200 || output.size_of() < 1400);
 
         assert_eq!(amount, amount2);
         assert_eq!(gamma, gamma2);

@@ -227,6 +227,16 @@ impl Transaction {
             false => Err(BlockchainError::InvalidTransactionSignature.into()),
         }
     }
+
+    /// Returns approximate the size of a transaction in bytes.
+    pub fn size_of(&self) -> usize {
+        let mut r = std::mem::size_of::<Transaction>();
+        r += self.body.txins.len() * std::mem::size_of::<Hash>();
+        for output in &self.body.txouts {
+            r += output.size_of();
+        }
+        r
+    }
 }
 
 impl Hashable for Transaction {

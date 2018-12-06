@@ -186,6 +186,13 @@ impl KeyBlock {
         // Create the block
         KeyBlock { header }
     }
+
+    /// Returns approximate the size of a block in bytes.
+    pub fn size_of(&self) -> usize {
+        let mut r = std::mem::size_of::<KeyBlock>();
+        r += self.header.witnesses.len() * std::mem::size_of::<SecurePublicKey>();
+        r
+    }
 }
 
 impl Hashable for KeyBlock {
@@ -298,6 +305,16 @@ impl MonetaryBlock {
         }
 
         Ok(())
+    }
+
+    /// Returns approximate the size of a block in bytes.
+    pub fn size_of(&self) -> usize {
+        let mut r = std::mem::size_of::<MonetaryBlock>();
+        r += self.body.inputs.len() * std::mem::size_of::<Hash>();
+        for (output, _) in self.body.outputs.leafs() {
+            r += output.size_of();
+        }
+        r
     }
 }
 

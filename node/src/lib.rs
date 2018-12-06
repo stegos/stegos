@@ -139,6 +139,8 @@ const BLOCK_TOPIC: &'static str = "block";
 const MONETARY_FEE: i64 = 1;
 const DATA_UNIT: u64 = 1024;
 const DATA_UNIT_FEE: i64 = 1;
+// Maximum block size
+const MAX_BLOCK_SIZE: usize = 2 * 1024 * 1024; // 2MB
 
 #[derive(Clone, Debug)]
 enum NodeMessage {
@@ -185,6 +187,8 @@ struct NodeService {
     witnesses: Vec<SecurePublicKey>,
     /// Memory pool of pending transactions.
     mempool: Vec<Transaction>,
+    /// Approximate size of of mempool in bytes.
+    mempool_size_of: usize,
     /// Hashes of UTXO used by mempool transactions,
     mempool_outputs: HashSet<Hash>,
     /// Network interface.
@@ -223,6 +227,7 @@ impl NodeService {
         let leader: SecurePublicKey = G2::generator().into(); // some fake key
         let witnesses = Vec::<SecurePublicKey>::new();
         let mempool = Vec::<Transaction>::new();
+        let mempool_size_of: usize = 0;
         let mempool_outputs = HashSet::<Hash>::new();
         let transaction_rx = broker.subscribe(&TX_TOPIC.to_string())?;
         let block_rx = broker.subscribe(&BLOCK_TOPIC.to_string())?;
@@ -240,6 +245,7 @@ impl NodeService {
             leader,
             witnesses,
             mempool,
+            mempool_size_of,
             mempool_outputs,
             inbox,
             outbox,
@@ -362,7 +368,12 @@ impl NodeService {
             let nodup = self.mempool_outputs.insert(hash.clone());
             assert!(nodup);
         }
+        self.mempool_size_of += tx.size_of();
         self.mempool.push(tx);
+        if std::mem::size_of::<Block>() + self.mempool_size_of >= MAX_BLOCK_SIZE {
+            // Mempool has enough transactions to create block. Process them.
+            self.process_mempool()?;
+        }
 
         Ok(())
     }
@@ -839,15 +850,45 @@ impl NodeService {
             return Ok(());
         }
 
+
         info!("Processing mempool: size={}", self.mempool.len());
+
+        // Calculate approximate block size.
+        let mut spent_size_of = 0;
+        let mut tx_count: usize = 0;
+        for tx in self.mempool.iter() {
+            if std::mem::size_of::<Block>() + spent_size_of + tx.size_of() >= MAX_BLOCK_SIZE {
+                break; // stop before reaching the limit.
+            }
+            spent_size_of += tx.size_of();
+            tx_count += 1;
+        }
+        assert!(tx_count > 0); // block limit is adequate.
+        assert!(self.mempool_size_of >= spent_size_of);
+
+        info!(
+            "Processing {}/{} transactions from mempool",
+            tx_count,
+            self.mempool.len()
+        );
+        debug!(
+            "Estimated block size is {}",
+            std::mem::size_of::<Block>() + spent_size_of
+        );
+
         let timestamp = Utc::now().timestamp() as u64;
         let mut gamma = Fr::zero();
         let mut fee = 0i64;
-
         let mut inputs = Vec::<Output>::new();
         let mut inputs_hashes = Vec::<Hash>::new();
         let mut outputs = Vec::<Output>::new();
-        for tx in self.mempool.drain(..) {
+        //
+        // Process tx_count first transactions in FIFO order
+        // Note that std::vec::Vec<> is used as FIFO queue here intentionally
+        // because one memmove() (i.e. .drain()) should be faster and easier
+        // to use in Rust than any list-like in-memory structures.
+        //
+        for tx in self.mempool.drain(0..tx_count) {
             let tx_hash = Hash::digest(&tx.body);
             info!("Adding transaction: hash={}", &tx_hash);
             let tx_inputs = self
@@ -865,8 +906,14 @@ impl NodeService {
             gamma += tx.body.gamma;
             fee += tx.body.fee;
         }
-        assert!(self.mempool.is_empty());
-        assert!(self.mempool_outputs.is_empty());
+        assert!(self.mempool_size_of >= spent_size_of);
+        debug!(
+            "Mempool size_of {} => {}",
+            self.mempool_size_of,
+            self.mempool_size_of - spent_size_of
+        );
+        self.mempool_size_of -= spent_size_of;
+        assert!(self.mempool.len() > 0 || self.mempool_size_of == 0);
 
         // Create transaction for fee
         if fee > 0 {
@@ -901,6 +948,7 @@ impl NodeService {
         block.validate(&inputs)?;
 
         info!("Created block: hash={}", Hash::digest(&block));
+        debug!("Real block size is {}", block.size_of());
 
         // TODO: implement consensus
 

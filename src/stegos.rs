@@ -81,7 +81,8 @@ fn initialize_logger(cfg: &Config) -> Result<LogHandle, LogError> {
             let stdout = ConsoleAppender::builder()
                 .encoder(Box::new(PatternEncoder::new(
                     "{d(%Y-%m-%d %H:%M:%S)(local)} [{t}] {h({l})} {M}: {m}{n}",
-                ))).build();
+                )))
+                .build();
             let config = LogConfig::builder()
                 .appender(Appender::builder().build("stdout", Box::new(stdout)))
                 .logger(Logger::builder().build("stegos_network", LevelFilter::Debug))
@@ -105,7 +106,8 @@ fn run() -> Result<(), Box<dyn Error>> {
                 .value_name("FILE")
                 .help("Path to stegos.toml configuration file")
                 .takes_value(true),
-        ).get_matches();
+        )
+        .get_matches();
 
     // Parse configuration
     let cfg = load_configuration(&args)?;
@@ -132,7 +134,13 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     // Initialize randhound
-    let randhound_service = RandHound::new(broker.clone(), &cfg, &keychain)?;
+    let randhound_service = RandHound::new(
+        broker.clone(),
+        network.clone(),
+        node.clone(),
+        &keychain,
+        rt.executor().clone(),
+    )?;
     rt.spawn(randhound_service);
 
     // Start main event loop

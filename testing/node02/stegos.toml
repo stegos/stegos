@@ -6,15 +6,6 @@ private_key = "testing/node02/stegos.skey"
 public_key = "testing/node02/stegos.pkey"
 pbc_pkey = "testing/node02/stegos-pbc.pkey"
 
-[randhound]
-node_pkey = "testing/node02/node-pbc.pkey"
-leader = "testing/node01/node03-pbc.pkey"
-participants = [
-    "testing/node01/node01-pbc.pkey",
-    "testing/node01/node02-pbc.pkey",
-    "testing/node01/node03-pbc.pkey",
-]
-
 [network]
 node_id = "node02"
 bind_ip = "127.0.0.1"

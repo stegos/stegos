@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use failure::Error;
+use failure::{Error, Fail};
 use fnv::FnvHashMap;
 use futures::future::{select_all, Either, Future};
 use futures::sync::mpsc;
@@ -52,13 +52,20 @@ use tokio::timer::Interval;
 pub mod broker;
 pub mod heartbeat;
 
-// use super::{echo::handler::handler as echo_handler, EchoUpgrade};
+use self::heartbeat::HeartbeatUpdate;
 use super::ncp::{handler::ncp_handler, protocol::NcpProtocolConfig};
-// use heartbeat::{HeartbeatService, HeartbeatServiceHandler, NodePublicKey};
 
 #[derive(Clone)]
 pub struct Network {
     pub(crate) inner: Arc<RwLock<Inner>>,
+}
+
+#[derive(Debug, Fail)]
+pub enum NetworkError {
+    #[fail(display = "Broker not yet initialized")]
+    NoBroker,
+    #[fail(display = "Heartbeat not yet initialized")]
+    NoHeartbeat,
 }
 
 pub(crate) struct Inner {
@@ -139,6 +146,16 @@ impl Network {
             dial_tx.unbounded_send(target)?;
         };
         Ok(())
+    }
+
+    pub fn subscribe_heartbeat(&self) -> Result<mpsc::UnboundedReceiver<HeartbeatUpdate>, Error> {
+        let inner_ = &self.inner.clone();
+        let inner = inner_.read();
+        if inner.heartbeat_handle.is_none() {
+            return Err(Error::from(NetworkError::NoHeartbeat));
+        }
+        // None case is out of the way, can unwrap safely
+        inner.heartbeat_handle.clone().unwrap().subscribe()
     }
 
     /// Returns tuple (node_future, broker_handler)

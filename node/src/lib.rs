@@ -39,11 +39,11 @@ extern crate stegos_network;
 pub mod protos;
 
 use chrono::Utc;
+use crate::protos::{FromProto, IntoProto};
 use failure::Error;
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::{Async, Future, Poll, Stream};
 use protobuf::Message;
-use protos::{FromProto, IntoProto};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::time::Duration;

@@ -54,7 +54,7 @@ use tokio::timer::Interval;
 mod randhound;
 mod randhound_proto;
 
-use randhound::GlobalState;
+use crate::randhound::GlobalState;
 
 const TOPIC: &'static str = "randhound";
 
@@ -91,7 +91,7 @@ struct RandHoundService {
     /// Broadcast Input Messages.
     broadcast_rx: UnboundedReceiver<Vec<u8>>,
     /// Is Randhound started??
-    randhound_started: bool,
+    // randhound_started: bool,
     /// Randhound state
     state: Arc<GlobalState>,
 }
@@ -119,7 +119,7 @@ impl RandHoundService {
             timer,
             unicast_rx,
             broadcast_rx,
-            randhound_started: false,
+            // randhound_started: false,
             state: Arc::new(state),
         };
 

@@ -63,7 +63,7 @@ where
                         debug!("Received a message: {:?}", msg);
                         match msg {
                             NcpMsg::Ping { ping_data } => {
-                                let mut resp = NcpMsg::Pong { ping_data };
+                                let resp = NcpMsg::Pong { ping_data };
                                 Box::new(rest.send(resp).map(|m| Loop::Continue(m)))
                                     as Box<Future<Item = _, Error = _> + Send>
                             }

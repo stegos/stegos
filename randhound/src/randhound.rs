@@ -1900,7 +1900,7 @@ pub(crate) fn proto_to_msg(mut message: RandhoundMessage) -> Result<Message, Err
             let mut shares = vec![];
             for s in shares_msg.iter() {
                 let pkey = secure::PublicKey::try_from_bytes(&s.get_pkey().to_vec())?;
-                let mut decr_share_msg = s.get_decr_share();
+                let decr_share_msg = s.get_decr_share();
                 let kpt = G1::try_from_bytes(&decr_share_msg.get_kpt().to_vec())?;
                 let share = G2::try_from_bytes(&decr_share_msg.get_share().to_vec())?;
                 let proof = G1::try_from_bytes(&decr_share_msg.get_proof().to_vec())?;

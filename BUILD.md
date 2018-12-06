@@ -2,7 +2,7 @@
 
 ## Requirements
 
-* `Stegos` requires **Rust version 1.30.x or higher** to build.
+* `Stegos` requires **Rust version 1.31.x or higher** to build.
 
     The recommended way to install Rust it to use [rustup](https://www.rustup.rs/).
     If you don't already have `rustup`, you can install it like this:

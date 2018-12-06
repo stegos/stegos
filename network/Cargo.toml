@@ -2,6 +2,7 @@
 name = "stegos_network"
 version = "0.1.0"
 authors = ["Stegos AG <info@stegos.cc>"]
+edition = "2018"
 build = "build.rs"
 
 [dependencies]

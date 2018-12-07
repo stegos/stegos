@@ -32,6 +32,7 @@
 
 use super::*;
 use crate::CryptoError;
+
 use rand::rngs::ThreadRng;
 use rand::thread_rng;
 use rand::Rng;
@@ -96,7 +97,7 @@ impl Zr {
         zx
     }
 
-    pub fn synthetic_random(pref: &str, uniq: &Hashable, h: &Hash) -> Self {
+    pub fn synthetic_random(pref: &str, uniq: &dyn Hashable, h: &Hash) -> Self {
         // Construct a pseudo random field value without using the PRNG
         // This generates so-called "deterministic randomness" and assures
         // random-appearing values that will always be the same for the same
@@ -155,7 +156,7 @@ impl PartialOrd for Zr {
 }
 
 impl fmt::Display for Zr {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "SecureZr({})", self.into_hex())
     }
 }
@@ -235,7 +236,7 @@ impl G1 {
 
 impl fmt::Display for G1 {
     // for display of signatures
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "SecureG1({})", self.into_hex())
     }
 }
@@ -316,13 +317,13 @@ impl G2 {
 }
 
 impl fmt::Debug for G2 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "SecureG2({})", self.into_hex())
     }
 }
 
 impl fmt::Display for G2 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "SecureG2({})", self.into_hex())
     }
 }
@@ -380,7 +381,7 @@ impl GT {
 }
 
 impl fmt::Display for GT {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "SecureGT({})", self.into_hex())
     }
 }
@@ -421,13 +422,13 @@ impl SecretKey {
 }
 
 impl fmt::Display for SecretKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "SecureSKey({})", self.into_hex())
     }
 }
 
 impl fmt::Debug for SecretKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "SecureSKey({})", self.into_hex())
     }
 }
@@ -483,13 +484,13 @@ impl PublicKey {
 }
 
 impl fmt::Debug for PublicKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "SecurePKey({})", self.into_hex())
     }
 }
 
 impl fmt::Display for PublicKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "SecurePKey({})", self.into_hex())
     }
 }
@@ -564,7 +565,7 @@ impl SecretSubKey {
 }
 
 impl fmt::Display for SecretSubKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "SecureSSubKey({})", self.into_hex())
     }
 }
@@ -605,7 +606,7 @@ impl PublicSubKey {
 }
 
 impl fmt::Display for PublicSubKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "SecurePSubKey({})", self.into_hex())
     }
 }
@@ -655,13 +656,13 @@ impl Signature {
 }
 
 impl fmt::Debug for Signature {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "SecureSig({})", self.into_hex())
     }
 }
 
 impl fmt::Display for Signature {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "SecureSig({})", self.into_hex())
     }
 }
@@ -820,7 +821,7 @@ impl RVal {
 }
 
 impl fmt::Display for RVal {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "SecureRVal({})", self.into_hex())
     }
 }

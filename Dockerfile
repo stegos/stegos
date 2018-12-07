@@ -1,5 +1,5 @@
 # Use multi-stage build to reduce image size
-FROM rust:1.30-slim-stretch AS builder
+FROM rust:1.31-slim-stretch AS builder
 LABEL maintainer="Stegos AG <info@stegos.cc>"
 
 ADD . /usr/src/stegos

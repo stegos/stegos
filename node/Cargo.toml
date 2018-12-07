@@ -3,6 +3,7 @@ name = "stegos_node"
 version = "0.1.0"
 authors = ["Stegos AG <info@stegos.cc>"]
 build = "build.rs"
+edition = "2018"
 
 [dependencies]
 stegos_config = { path = "../config" }
@@ -11,9 +12,8 @@ stegos_blockchain = { path = "../blockchain" }
 stegos_network = { path = "../network" }
 stegos_keychain = { path = "../keychain" }
 log = "0.4"
-failure = "0.1.2"
-failure_derive = "0.1.2"
-futures = "0.1.25"
+failure = "0.1"
+futures = "0.1"
 tokio-timer = "0.2"
 chrono = "0.4"
 protobuf = "2.2"

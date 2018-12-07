@@ -22,6 +22,7 @@
 // SOFTWARE.
 
 use crate::CryptoError;
+
 use hex;
 use std::cmp::Ordering;
 

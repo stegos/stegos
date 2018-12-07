@@ -24,11 +24,13 @@
 #![allow(dead_code)]
 
 use super::{broker::Broker, Inner};
+use failure::format_err;
 use failure::Error;
 use futures::sync::mpsc;
 use futures::{Async, Future, Poll, Stream};
 use libp2p::peerstore::{PeerAccess, Peerstore};
 use libp2p::Multiaddr;
+use log::*;
 use parking_lot::RwLock;
 use protobuf::{self, Message};
 use std::cmp::{Eq, PartialEq};
@@ -138,7 +140,7 @@ struct HeartbeatService {
     me: NodeInfo,
     my_skey: NodeSecretKey,
     active_nodes: HashSet<NodeInfo>,
-    input: Box<Stream<Item = HeartbeatControlMsg, Error = ()> + Send>,
+    input: Box<dyn Stream<Item = HeartbeatControlMsg, Error = ()> + Send>,
     consumers: Vec<mpsc::UnboundedSender<HeartbeatUpdate>>,
     ttl: u64,
     broker: Broker,

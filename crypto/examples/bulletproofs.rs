@@ -21,8 +21,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-extern crate stegos_crypto;
-
 use stegos_crypto::bulletproofs::*;
 
 // -------------------------------------------------------------------------------

@@ -24,21 +24,18 @@
 #![warn(missing_docs, missing_debug_implementations)]
 #![deny(warnings)]
 
-#[macro_use]
-extern crate serde_derive;
-extern crate rand;
-extern crate toml;
-
 mod error;
 mod types;
+
 pub use crate::error::*;
 pub use crate::types::*;
-
+use serde_derive;
 use std::fs::File;
 use std::io::ErrorKind;
 use std::io::Read;
 use std::path::Path;
 use std::result::Result;
+use toml;
 
 ///
 /// Load configuration file

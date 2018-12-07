@@ -25,17 +25,15 @@
 #![allow(non_snake_case)]
 #![allow(unused)]
 
+use lazy_static::lazy_static;
 use rand::prelude::*;
-
+use std::cmp::Ordering;
 use std::fmt;
 use std::mem;
-
-use hex;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use crate::hash::*;
 use crate::utils::*;
-use std::cmp::Ordering;
 
 mod winvec; // window vectors for point multiplication
 use self::winvec::*;
@@ -57,8 +55,6 @@ use self::ecpt::*;
 
 pub mod cpt; // compressed point representation
 use self::cpt::*;
-
-use lazy_static::*;
 
 // -------------------------------------------------------------------
 // Signature Public Key - for checking curve constants validity

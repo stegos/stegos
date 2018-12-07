@@ -23,7 +23,7 @@
 
 pub mod node;
 
-use failure::Error;
+use failure::{Error, Fail};
 use stegos_blockchain::*;
 use stegos_crypto::bulletproofs::{BulletProof, DotProof, L2_NBASIS, LR};
 use stegos_crypto::curve1174::cpt::Pt;

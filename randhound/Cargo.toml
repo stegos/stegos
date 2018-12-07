@@ -2,6 +2,7 @@
 name = "stegos_randhound"
 version = "0.1.0"
 authors = ["Stegos AG <info@stegos.cc>"]
+edition = "2018"
 
 [dependencies]
 stegos_config = { path = "../config" }
@@ -9,7 +10,6 @@ stegos_crypto = { path = "../crypto" }
 stegos_keychain = { path = "../keychain" }
 stegos_network = { path = "../network" }
 failure = "0.1"
-failure_derive = "0.1"
 futures = "0.1"
 hex = "0.3"
 lazy_static = "1.1"

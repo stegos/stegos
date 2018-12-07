@@ -41,6 +41,7 @@
 
 use super::*;
 use crate::CryptoError;
+
 use rand::rngs::ThreadRng;
 use rand::thread_rng;
 use rand::Rng;
@@ -111,7 +112,7 @@ impl Zr {
         zx
     }
 
-    pub fn synthetic_random(pref: &str, uniq: &Hashable, h: &Hash) -> Self {
+    pub fn synthetic_random(pref: &str, uniq: &dyn Hashable, h: &Hash) -> Self {
         // Construct a pseudo random field value without using the PRNG
         // This generates so-called "deterministic randomness" and assures
         // random-appearing values that will always be the same for the same
@@ -173,13 +174,13 @@ impl From<i64> for Zr {
 }
 
 impl fmt::Debug for Zr {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "FastZr({})", self.into_hex())
     }
 }
 
 impl fmt::Display for Zr {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "FastZr({})", self.into_hex())
     }
 }
@@ -436,13 +437,13 @@ impl PartialEq for G1 {
 }
 
 impl fmt::Debug for G1 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "FastG1({})", self.into_hex())
     }
 }
 
 impl fmt::Display for G1 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "FastG1({})", self.into_hex())
     }
 }
@@ -650,13 +651,13 @@ impl PartialEq for G2 {
 }
 
 impl fmt::Debug for G2 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "FastG2({})", self.into_hex())
     }
 }
 
 impl fmt::Display for G2 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "FastG2({})", self.into_hex())
     }
 }
@@ -813,7 +814,7 @@ impl GT {
 }
 
 impl fmt::Display for GT {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "FastGT({})", self.into_hex())
     }
 }
@@ -874,7 +875,7 @@ impl SecretKey {
 }
 
 impl fmt::Display for SecretKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "FastSKey({})", self.into_hex())
     }
 }
@@ -930,13 +931,13 @@ impl PartialEq for PublicKey {
 }
 
 impl fmt::Debug for PublicKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "FastPKey({})", self.into_hex())
     }
 }
 
 impl fmt::Display for PublicKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "FastPKey({})", self.into_hex())
     }
 }
@@ -980,7 +981,7 @@ impl Signature {
 }
 
 impl fmt::Display for Signature {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "FastSig({})", self.into_hex())
     }
 }

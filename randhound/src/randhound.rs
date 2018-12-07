@@ -102,26 +102,22 @@
 #![allow(non_snake_case)]
 #![allow(dead_code)]
 
-use failure::Error;
-use std::fs;
-use stegos_keychain::{pem, KeyChain, KeyChainError};
+use super::randhound_proto::{self, RandhoundMessage, RandhoundMessageTypes};
 
+use failure::{Error, Fail};
+use log::*;
 use parking_lot::RwLock;
+use protobuf::Message as ProtoMessage;
 use std::collections::hash_map::HashMap;
 use std::collections::hash_set::HashSet;
-
+use std::collections::VecDeque;
+use std::fs;
+use std::sync::Arc;
 use std::vec::Vec;
 use stegos_crypto::hash::*;
 use stegos_crypto::pbc::*;
-
-use std::collections::VecDeque;
-use std::sync::Arc;
-
+use stegos_keychain::{pem, KeyChain, KeyChainError};
 use stegos_network::Broker;
-
-use super::randhound_proto::{self, RandhoundMessage, RandhoundMessageTypes};
-
-use protobuf::Message as ProtoMessage;
 
 type Zr = fast::Zr;
 type G1 = fast::G1;
@@ -1821,7 +1817,7 @@ fn reduce_lagrange_interpolate(v: &HashMap<secure::PublicKey, DecrShare>) -> G2 
         .fold(G2::zero(), |ans, (x, y)| ans + *y * lagrange_wt(&xs, *x))
 }
 
-fn schedule_after(_dursec: f32, _skedfn: &Fn() -> ()) {
+fn schedule_after(_dursec: f32, _skedfn: &dyn Fn() -> ()) {
     // TODO: somehow pull this off...
     // Wait till dursec seconds have elapsed, then call the indicated function.
     //
@@ -1900,7 +1896,7 @@ pub(crate) fn proto_to_msg(mut message: RandhoundMessage) -> Result<Message, Err
             let mut shares = vec![];
             for s in shares_msg.iter() {
                 let pkey = secure::PublicKey::try_from_bytes(&s.get_pkey().to_vec())?;
-                let mut decr_share_msg = s.get_decr_share();
+                let decr_share_msg = s.get_decr_share();
                 let kpt = G1::try_from_bytes(&decr_share_msg.get_kpt().to_vec())?;
                 let share = G2::try_from_bytes(&decr_share_msg.get_share().to_vec())?;
                 let proof = G1::try_from_bytes(&decr_share_msg.get_proof().to_vec())?;

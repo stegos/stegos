@@ -19,26 +19,23 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-extern crate crypto;
-extern crate gmp;
-extern crate hex;
-extern crate lazy_static;
-extern crate parking_lot;
-extern crate rand;
-extern crate rust_libpbc;
-extern crate sha3;
-#[macro_use]
-extern crate log;
-extern crate failure;
-#[macro_use]
-extern crate failure_derive;
-
 pub mod bulletproofs;
 pub mod curve1174;
 pub mod hash;
 pub mod keying;
 pub mod pbc;
 pub mod utils;
+
+use crypto;
+use failure::Fail;
+use gmp;
+use hex;
+use lazy_static;
+use log;
+use parking_lot;
+use rand;
+use rust_libpbc;
+use sha3;
 
 #[derive(Debug, Fail)]
 pub enum CryptoError {

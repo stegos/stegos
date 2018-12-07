@@ -19,7 +19,6 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-use crate::consts;
 use dirs;
 use failure::Error;
 use futures::sync::mpsc::UnboundedReceiver;
@@ -27,6 +26,7 @@ use futures::sync::mpsc::{channel, Receiver, Sender};
 use futures::{Async, Future, Poll, Sink, Stream};
 use lazy_static::*;
 use libp2p::Multiaddr;
+use log::*;
 use regex::Regex;
 use rustyline as rl;
 use std::path::PathBuf;
@@ -35,6 +35,8 @@ use std::thread;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_network::{Broker, Network};
 use stegos_node::Node;
+
+use crate::consts;
 
 // ----------------------------------------------------------------
 // Public API.

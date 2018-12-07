@@ -23,6 +23,7 @@
 
 use crate::utils::*;
 use crate::CryptoError;
+
 use sha3::{Digest, Sha3_256};
 use std::fmt;
 use std::hash as stdhash;
@@ -72,14 +73,14 @@ impl Hash {
         hasher.result()
     }
 
-    pub fn digest(msg: &Hashable) -> Hash {
+    pub fn digest(msg: &dyn Hashable) -> Hash {
         // produce a Hash from a single Hashable
         let mut hasher = Hasher::new();
         msg.hash(&mut hasher);
         hasher.result()
     }
 
-    pub fn digest_chain(msgs: &[&Hashable]) -> Hash {
+    pub fn digest_chain(msgs: &[&dyn Hashable]) -> Hash {
         // produce a Hash from a list of Hashable items
         let mut state = Hasher::new();
         for x in msgs.iter() {
@@ -103,13 +104,13 @@ impl Hash {
 }
 
 impl fmt::Debug for Hash {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "H({})", self.into_hex())
     }
 }
 
 impl fmt::Display for Hash {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(self, f)
     }
 }
@@ -309,7 +310,6 @@ pub mod tests {
     #[test]
     fn check_empty_hash() {
         // assure that we get correct Sha3-256 hash of empty vector
-        extern crate hex;
         let h = Hash::from_vector(b"");
         let chk = hex::decode("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
             .unwrap();

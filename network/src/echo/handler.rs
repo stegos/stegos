@@ -27,6 +27,7 @@ use super::protocol::EchoMiddleware;
 use futures::future::{loop_fn, Future, IntoFuture, Loop};
 use futures::{Sink, Stream};
 use libp2p::core::{Endpoint, Multiaddr};
+use log::*;
 use parking_lot::RwLock;
 use std::io::Error as IoError;
 use std::sync::Arc;
@@ -36,7 +37,7 @@ pub(crate) fn handler<S>(
     ncp_out: (Endpoint, EchoMiddleware<S>),
     addr: Multiaddr,
     _node: Arc<RwLock<Inner>>,
-) -> Box<Future<Item = (), Error = IoError> + Send>
+) -> Box<dyn Future<Item = (), Error = IoError> + Send>
 where
     S: AsyncRead + AsyncWrite + Send + 'static,
 {
@@ -57,15 +58,15 @@ where
                         msg
                     );
                     Box::new(rest.send(msg.freeze()).map(|m| Loop::Continue(m)))
-                        as Box<Future<Item = _, Error = _> + Send>
+                        as Box<dyn Future<Item = _, Error = _> + Send>
                 } else {
                     // End of stream. Connection closed. Breaking the loop.
                     debug!("Received EOF\n => Dropping connection");
                     Box::new(Ok(Loop::Break(())).into_future())
-                        as Box<Future<Item = _, Error = _> + Send>
+                        as Box<dyn Future<Item = _, Error = _> + Send>
                 }
             })
     });
 
-    Box::new(fut) as Box<Future<Item = (), Error = IoError> + Send>
+    Box::new(fut) as Box<dyn Future<Item = (), Error = IoError> + Send>
 }

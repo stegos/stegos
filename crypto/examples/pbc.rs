@@ -21,12 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-extern crate rust_libpbc;
-extern crate stegos_crypto;
-
 use stegos_crypto::pbc::*;
-
-extern crate hex;
 
 // ------------------------------------------------------------------------
 

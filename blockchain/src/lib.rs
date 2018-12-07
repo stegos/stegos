@@ -37,12 +37,4 @@ pub use crate::merkle::*;
 pub use crate::output::*;
 pub use crate::transaction::*;
 
-extern crate chrono;
-#[macro_use]
-extern crate log;
-extern crate failure;
-#[macro_use]
-extern crate failure_derive;
-extern crate rand;
-extern crate stegos_crypto;
-extern crate stegos_keychain;
+use log;

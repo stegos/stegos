@@ -19,19 +19,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-extern crate stegos_blockchain;
-extern crate stegos_config;
-extern crate stegos_keychain;
-extern crate stegos_node;
-#[macro_use]
-extern crate clap;
-#[macro_use]
-extern crate log;
-extern crate protobuf;
-extern crate simple_logger;
-
-use clap::{App, Arg};
+use clap::{crate_version, App, Arg};
+use log::*;
 use protobuf::Message;
+use simple_logger;
 use std::fs;
 use std::process;
 use stegos_blockchain::genesis;

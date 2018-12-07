@@ -21,6 +21,7 @@
 
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
+use serde_derive::{Deserialize, Serialize};
 
 ///! Configuration Structures.
 

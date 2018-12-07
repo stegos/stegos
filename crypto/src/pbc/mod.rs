@@ -24,15 +24,15 @@
 #![allow(non_snake_case)]
 #![allow(dead_code)]
 
+pub mod fast;
+pub mod secure;
 use crate::hash::*;
 use crate::utils::*;
-use lazy_static::*;
+
+use lazy_static::lazy_static;
 use rust_libpbc;
 use std::fmt;
 use std::vec::*;
-
-pub mod fast;
-pub mod secure;
 
 // -------------------------------------------------------------------
 // Signature Public Key - for checking curve constants validity

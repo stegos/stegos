@@ -21,29 +21,17 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#[macro_use]
-extern crate log;
-extern crate failure;
-extern crate tokio_timer;
-#[macro_use]
-extern crate failure_derive;
-extern crate chrono;
-extern crate futures;
-extern crate protobuf;
-extern crate rand;
-extern crate stegos_blockchain;
-extern crate stegos_crypto;
-extern crate stegos_keychain;
-extern crate stegos_network;
-
 pub mod protos;
 
+use crate::protos::{FromProto, IntoProto};
+
 use chrono::Utc;
-use failure::Error;
+use failure::{Error, Fail};
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::{Async, Future, Poll, Stream};
+use log::*;
+use protobuf;
 use protobuf::Message;
-use protos::{FromProto, IntoProto};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::time::Duration;

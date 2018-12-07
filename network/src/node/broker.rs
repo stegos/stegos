@@ -30,6 +30,7 @@ use futures::sync::mpsc;
 use futures::Stream;
 use futures::{Async, Future, Poll};
 use libp2p::floodsub::{self, TopicHash};
+use log::*;
 
 // ----------------------------------------------------------------
 // Public API.
@@ -106,7 +107,7 @@ enum Message {
 
 struct BrokerService {
     consumers: FnvHashMap<TopicHash, Vec<mpsc::UnboundedSender<Vec<u8>>>>,
-    pubsub_rx: Box<Stream<Item = Message, Error = ()> + Send>,
+    pubsub_rx: Box<dyn Stream<Item = Message, Error = ()> + Send>,
     floodsub_ctl: floodsub::FloodSubController,
 }
 

@@ -2,11 +2,11 @@
 name = "stegos_keychain"
 version = "0.1.0"
 authors = ["Stegos AG <info@stegos.cc>"]
+edition = "2018"
 
 [dependencies]
 log = "0.4"
 failure = "0.1"
-failure_derive = "0.1"
 base64 = "0.9"
 lazy_static = "1.1"
 regex = "1.0"

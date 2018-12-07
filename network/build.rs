@@ -1,5 +1,3 @@
-extern crate protobuf_codegen_pure;
-
 use protobuf_codegen_pure::{Args, Customize};
 use std::fs;
 

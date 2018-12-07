@@ -8,7 +8,6 @@ build = "build.rs"
 [dependencies]
 bytes = "0.4"
 failure = "0.1"
-failure_derive = "0.1"
 fnv = "1.0"
 futures = "0.1"
 ipnetwork = "^0.12"

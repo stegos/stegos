@@ -172,7 +172,7 @@ macro_rules! field_impl {
                 mk
             }
 
-            pub fn synthetic_random(pref: &str, uniq: &Hashable, h: &Hash) -> Self {
+            pub fn synthetic_random(pref: &str, uniq: &dyn Hashable, h: &Hash) -> Self {
                 // Construct a pseudo random field value without using the PRNG
                 // This generates so-called "deterministic randomness" and assures
                 // random-appearing values that will always be the same for the same
@@ -227,7 +227,7 @@ macro_rules! field_impl {
         // -------------------------------------------
 
         impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 let tmp = (*self).unscaled_bits();
                 write!(f, $fmt, tmp.nbr_str())
             }

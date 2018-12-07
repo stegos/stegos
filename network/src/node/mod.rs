@@ -35,6 +35,7 @@ use libp2p::multiaddr::{Protocol, ToMultiaddr};
 use libp2p::peerstore::{memory_peerstore, PeerAccess, PeerId, Peerstore};
 use libp2p::secio::{SecioConfig, SecioKeyPair, SecioOutput};
 use libp2p::tcp::TcpConfig;
+use log::*;
 use parking_lot::RwLock;
 use pnet::datalink;
 use std::collections::HashSet;
@@ -316,13 +317,14 @@ impl Network {
             });
 
         // TODO: handle intenal errors properly
-        let mut services: Vec<Box<Future<Item = (), Error = ()> + Send>> = vec![];
-        services.push(Box::new(dialer) as Box<Future<Item = (), Error = ()> + Send>);
-        services.push(Box::new(dialer_ncp) as Box<Future<Item = (), Error = ()> + Send>);
-        services
-            .push(Box::new(monitor.map_err(|_| ())) as Box<Future<Item = (), Error = ()> + Send>);
-        services.push(Box::new(broker_service) as Box<Future<Item = (), Error = ()> + Send>);
-        services.push(Box::new(heartbeat_service) as Box<Future<Item = (), Error = ()> + Send>);
+        let mut services: Vec<Box<dyn Future<Item = (), Error = ()> + Send>> = vec![];
+        services.push(Box::new(dialer) as Box<dyn Future<Item = (), Error = ()> + Send>);
+        services.push(Box::new(dialer_ncp) as Box<dyn Future<Item = (), Error = ()> + Send>);
+        services.push(
+            Box::new(monitor.map_err(|_| ())) as Box<dyn Future<Item = (), Error = ()> + Send>
+        );
+        services.push(Box::new(broker_service) as Box<dyn Future<Item = (), Error = ()> + Send>);
+        services.push(Box::new(heartbeat_service) as Box<dyn Future<Item = (), Error = ()> + Send>);
         let service_future = select_all(services).map(|(_, _, _)| ());
 
         let final_fut = swarm_future
@@ -339,7 +341,7 @@ fn floodsub_handler(
     socket: floodsub::FloodSubFuture,
     addr: Multiaddr,
     node: Arc<RwLock<Inner>>,
-) -> Box<Future<Item = (), Error = IoError> + Send> {
+) -> Box<dyn Future<Item = (), Error = IoError> + Send> {
     let inner = node.clone();
     {
         let mut inner = inner.write();
@@ -376,7 +378,7 @@ fn floodsub_handler(
         }
     });
 
-    Box::new(socket) as Box<Future<Item = (), Error = IoError> + Send>
+    Box::new(socket) as Box<dyn Future<Item = (), Error = IoError> + Send>
 }
 
 pub(crate) fn populate_peerstore(node: Arc<RwLock<Inner>>) -> Result<(), Error> {

@@ -21,21 +21,11 @@
 
 #![deny(warnings)]
 
-extern crate stegos_config;
-extern crate stegos_crypto;
-#[macro_use]
-extern crate log;
-extern crate failure;
-#[macro_use]
-extern crate failure_derive;
-extern crate base64;
-#[macro_use]
-extern crate lazy_static;
-extern crate regex;
-
 pub mod pem;
 
-use failure::Error;
+use failure::{Error, Fail};
+use lazy_static;
+use log::*;
 use std::fs;
 use std::path::Path;
 use stegos_config::ConfigKeyChain;

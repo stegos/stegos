@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use failure::Error;
+use failure::{Error, Fail};
 use std::fmt;
 use std::mem::transmute;
 use stegos_crypto::bulletproofs::{make_range_proof, BulletProof};
@@ -181,7 +181,7 @@ impl Output {
 }
 
 impl fmt::Display for Output {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Output({})", Hash::digest(self))
     }
 }

@@ -10,7 +10,6 @@ stegos_crypto = { path = "../crypto" }
 stegos_keychain = { path = "../keychain" }
 stegos_network = { path = "../network" }
 failure = "0.1"
-failure_derive = "0.1"
 futures = "0.1"
 hex = "0.3"
 lazy_static = "1.1"

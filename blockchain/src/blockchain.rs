@@ -21,13 +21,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::collections::HashMap;
-use std::vec::Vec;
-
 use crate::block::*;
 use crate::error::*;
 use crate::merkle::*;
 use crate::output::*;
+use log::*;
+use std::collections::HashMap;
+use std::vec::Vec;
 use stegos_crypto::hash::*;
 
 type BlockId = usize;
@@ -322,7 +322,7 @@ pub mod tests {
 
     #[test]
     fn basic() {
-        extern crate simple_logger;
+        use simple_logger;
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
         let keychains = [

@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use failure::Fail;
 use std::fmt;
 use std::vec::Vec;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
@@ -637,7 +638,7 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
     }
 
     /// A recursive helper for fmt().
-    fn fmt_r(f: &mut fmt::Formatter, node: &Node<T>, h: usize) -> fmt::Result {
+    fn fmt_r(f: &mut fmt::Formatter<'_>, node: &Node<T>, h: usize) -> fmt::Result {
         match node {
             Node {
                 left: Some(ref left),
@@ -687,14 +688,14 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
     }
 
     /// Debug formatting.
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "\n")?;
         Merkle::fmt_r(f, &self.root, 0)
     }
 }
 
 impl<T: Hashable + Clone + fmt::Debug + fmt::Display> fmt::Debug for Merkle<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.fmt(f)
     }
 }
@@ -709,10 +710,10 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Clone for Merkle<T> {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use log::*;
     use rand::prelude::*;
     use rand::seq::SliceRandom;
-
-    extern crate simple_logger;
+    use simple_logger;
 
     /// Reverse the order of bits in a byte
     fn reverse_u32(mut n: u32) -> u32 {

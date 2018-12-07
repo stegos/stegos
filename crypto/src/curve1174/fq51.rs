@@ -96,7 +96,7 @@ impl From<Fq51> for Fq {
 }
 
 impl fmt::Debug for Fq51 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "Fq51([{:016x}, {:016x}, {:016x}, {:016x}, {:016x}])",
@@ -110,7 +110,7 @@ impl fmt::Debug for Fq51 {
 }
 
 impl fmt::Display for Fq51 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Fq51({})", self.nbr_str())
     }
 }

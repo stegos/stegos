@@ -206,17 +206,18 @@ fn proto_to_msg(mut message: ncp_proto::Message) -> Result<NcpMsg, IoError> {
 
 #[cfg(test)]
 mod tests {
-    extern crate libp2p;
-    extern crate simple_logger;
-    extern crate tokio_current_thread;
-
     use crate::ncp::protocol::{GetPeersResponse, NcpMsg, NcpProtocolConfig, PeerInfo};
+
     use futures::{Future, Sink, Stream};
+    use libp2p;
     use libp2p::core::{PeerId, PublicKey, Transport};
     use libp2p::tcp::TcpConfig;
+    use log::*;
     use rand;
+    use simple_logger;
     use std::sync::mpsc;
     use std::thread;
+    use tokio_current_thread;
 
     #[test]
     fn log_test() {

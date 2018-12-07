@@ -21,28 +21,16 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-extern crate failure;
-extern crate futures;
-// #[macro_use]
-// extern crate lazy_static;
-extern crate parking_lot;
-extern crate protobuf;
-extern crate rand;
-extern crate state;
-extern crate stegos_config;
-extern crate stegos_crypto;
-extern crate stegos_keychain;
-extern crate stegos_network;
-extern crate tokio;
-extern crate tokio_timer;
-#[macro_use]
-extern crate log;
-#[macro_use]
-extern crate failure_derive;
+mod randhound;
+mod randhound_proto;
+
+use crate::randhound::GlobalState;
 
 use failure::Error;
 use futures::sync::mpsc::UnboundedReceiver;
 use futures::{Async, Future, Poll, Stream};
+use log::*;
+use protobuf;
 use std::sync::Arc;
 use std::time::Duration;
 use stegos_config::Config;
@@ -50,11 +38,6 @@ use stegos_crypto::hash::{Hash, Hashable};
 use stegos_keychain::KeyChain;
 use stegos_network::Broker;
 use tokio::timer::Interval;
-
-mod randhound;
-mod randhound_proto;
-
-use crate::randhound::GlobalState;
 
 const TOPIC: &'static str = "randhound";
 
@@ -221,6 +204,6 @@ impl Future for RandHoundService {
 }
 
 #[inline]
-pub fn node_id_from_hashable(id: &Hashable) -> String {
+pub fn node_id_from_hashable(id: &dyn Hashable) -> String {
     Hash::digest(id).into_hex()
 }

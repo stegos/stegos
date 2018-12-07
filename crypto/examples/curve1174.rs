@@ -37,9 +37,6 @@
 #![allow(non_snake_case)]
 #![allow(unused)]
 
-extern crate rand;
-extern crate stegos_crypto;
-
 use rand::rngs::ThreadRng;
 use rand::thread_rng;
 use rand::Rng;

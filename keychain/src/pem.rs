@@ -40,6 +40,8 @@
     unused_qualifications
 )]
 
+use failure::Fail;
+use lazy_static::lazy_static;
 use regex::bytes::{Captures, Regex};
 
 /// Erros caused by PEM decoder
@@ -85,7 +87,7 @@ pub struct Pem {
 }
 
 impl Pem {
-    fn new_from_captures(caps: Captures) -> Result<Pem, ErrorKind> {
+    fn new_from_captures(caps: Captures<'_>) -> Result<Pem, ErrorKind> {
         fn as_utf8<'a>(bytes: &'a [u8]) -> Result<&'a str, ErrorKind> {
             std::str::from_utf8(bytes).map_err(|e| ErrorKind::NotUtf8(e).into())
         }

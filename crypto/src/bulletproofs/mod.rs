@@ -25,23 +25,23 @@
 #![allow(non_snake_case)]
 #![allow(unused)]
 
-use crate::CryptoError;
-use rand::prelude::*;
-use std::fmt;
-use std::fmt::Debug;
-use std::mem;
-use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
-use std::time::{Duration, SystemTime};
-
 use crate::curve1174::cpt::*;
 use crate::curve1174::ecpt::*;
 use crate::curve1174::fields::*;
 use crate::curve1174::*;
 use crate::hash::*;
 use crate::utils::*;
-use std::cmp::Ordering;
+use crate::CryptoError;
 
-use lazy_static::*;
+use lazy_static::lazy_static;
+use log::*;
+use rand::prelude::*;
+use std::cmp::Ordering;
+use std::fmt;
+use std::fmt::Debug;
+use std::mem;
+use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use std::time::{Duration, SystemTime};
 
 // ----------------------------------------------------------------
 
@@ -329,13 +329,13 @@ pub struct LR {
 // --------------------------------------------------------
 
 impl Debug for BulletProof {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "BP(vcmt: {}, ...)", self.vcmt)
     }
 }
 
 impl fmt::Display for BulletProof {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(self, f)
     }
 }

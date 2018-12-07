@@ -47,7 +47,6 @@ tokio = "0.1"
 log = "0.4"
 log4rs = { version = "0.8", features = ["all_components", "gzip", "file", "toml_format"]}
 failure = "0.1"
-failure_derive = "0.1"
 rustyline = "2.1"
 libp2p = { git = "https://github.com/libp2p/rust-libp2p.git", rev = "e179951c74cb0c8916d27329f2dfd78917dddfb2" }
 parking_lot = "0.6"

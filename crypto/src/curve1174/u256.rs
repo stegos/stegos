@@ -23,6 +23,7 @@
 
 use super::*;
 use crate::CryptoError;
+
 use rand::rngs::ThreadRng;
 use rand::thread_rng;
 use rand::Rng;
@@ -245,7 +246,7 @@ impl U256 {
 // -------------------------------------------
 
 impl fmt::Debug for U256 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "U256([{:016x}, {:016x}, {:016x}, {:016x}])",
@@ -255,7 +256,7 @@ impl fmt::Debug for U256 {
 }
 
 impl fmt::Display for U256 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "U256({})", self.nbr_str())
     }
 }

@@ -28,6 +28,7 @@ use futures::future::{loop_fn, Loop};
 use futures::{Future, IntoFuture, Sink, Stream};
 use libp2p::core::{Endpoint, Multiaddr};
 use libp2p::peerstore::{PeerAccess, Peerstore};
+use log::*;
 use parking_lot::RwLock;
 use std::io::Error as IoError;
 use std::sync::Arc;
@@ -39,7 +40,7 @@ pub(crate) fn ncp_handler<S>(
     endpoint: Endpoint,
     _addr: Multiaddr,
     node: Arc<RwLock<Inner>>,
-) -> Box<Future<Item = (), Error = IoError> + Send>
+) -> Box<dyn Future<Item = (), Error = IoError> + Send>
 where
     S: AsyncRead + AsyncWrite + Send + 'static,
 {
@@ -65,11 +66,11 @@ where
                             NcpMsg::Ping { ping_data } => {
                                 let resp = NcpMsg::Pong { ping_data };
                                 Box::new(rest.send(resp).map(|m| Loop::Continue(m)))
-                                    as Box<Future<Item = _, Error = _> + Send>
+                                    as Box<dyn Future<Item = _, Error = _> + Send>
                             }
                             NcpMsg::Pong { ping_data: _ } => {
                                 Box::new(future::ok(Loop::Continue(rest)))
-                                    as Box<Future<Item = _, Error = _> + Send>
+                                    as Box<dyn Future<Item = _, Error = _> + Send>
                             }
                             NcpMsg::GetPeersRequest => {
                                 let mut response = GetPeersResponse {
@@ -93,7 +94,7 @@ where
                                     rest.send(NcpMsg::GetPeersResponse { response })
                                         .map(|m| Loop::Continue(m)),
                                 )
-                                    as Box<Future<Item = _, Error = _> + Send>
+                                    as Box<dyn Future<Item = _, Error = _> + Send>
                             }
                             NcpMsg::GetPeersResponse { response } => {
                                 let inner = inner.read();
@@ -107,10 +108,10 @@ where
                                 }
                                 if response.last_chunk {
                                     Box::new(Ok(Loop::Break(())).into_future())
-                                        as Box<Future<Item = _, Error = _> + Send>
+                                        as Box<dyn Future<Item = _, Error = _> + Send>
                                 } else {
                                     Box::new(future::ok(Loop::Continue(rest)))
-                                        as Box<Future<Item = _, Error = _> + Send>
+                                        as Box<dyn Future<Item = _, Error = _> + Send>
                                 }
                             }
                         }
@@ -118,12 +119,12 @@ where
                         // End of stream. Connection closed. Breaking the loop.
                         debug!("Received EOF\n => Dropping connection");
                         Box::new(Ok(Loop::Break(())).into_future())
-                            as Box<Future<Item = _, Error = _> + Send>
+                            as Box<dyn Future<Item = _, Error = _> + Send>
                     }
                 }
             })
         }
     });
 
-    Box::new(fut) as Box<Future<Item = _, Error = _> + Send>
+    Box::new(fut) as Box<dyn Future<Item = _, Error = _> + Send>
 }

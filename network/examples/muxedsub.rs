@@ -22,34 +22,26 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-extern crate bytes;
-extern crate env_logger;
-extern crate futures;
-extern crate libp2p;
-extern crate rand;
-extern crate tokio;
-extern crate tokio_codec;
-extern crate tokio_current_thread;
-extern crate tokio_io;
-extern crate tokio_stdin;
-#[macro_use]
-extern crate log;
-
 use bytes::Bytes;
+use env_logger;
 use futures::future::{Either, Future};
 use futures::sync::mpsc;
 use futures::{future, Poll, Sink, Stream};
+use libp2p;
 use libp2p::core::{either::EitherOutput, upgrade};
 use libp2p::core::{ConnectionUpgrade, Endpoint, Multiaddr, PublicKey, Transport};
 use libp2p::peerstore::PeerId;
 use libp2p::secio::SecioOutput;
 use libp2p::tcp::TcpConfig;
 use libp2p::websocket::WsConfig;
+use log::*;
+use rand;
 use std::io::{Error as IoError, ErrorKind as IoErrorKind};
 use std::{env, fmt, iter, mem};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::runtime::Runtime;
 use tokio_codec::{BytesCodec, Framed};
+use tokio_stdin;
 
 pub struct FloodSubHandler {
     pub rx: mpsc::Receiver<String>,
@@ -74,7 +66,7 @@ impl EchoUpgrade {
 /// Implementation of `Future` that must be driven to completion in order for echo protocol to work.
 #[must_use = "futures do nothing unless polled"]
 pub struct EchoFuture {
-    inner: Box<Future<Item = (), Error = IoError> + Send>,
+    inner: Box<dyn Future<Item = (), Error = IoError> + Send>,
 }
 
 impl Future for EchoFuture {
@@ -88,7 +80,7 @@ impl Future for EchoFuture {
 }
 
 impl fmt::Debug for EchoFuture {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("EchoFuture").finish()
     }
 }
@@ -108,7 +100,8 @@ where
 
     type Output = EchoFuture;
     type MultiaddrFuture = future::FutureResult<Multiaddr, IoError>;
-    type Future = Box<Future<Item = (Self::Output, Self::MultiaddrFuture), Error = IoError> + Send>;
+    type Future =
+        Box<dyn Future<Item = (Self::Output, Self::MultiaddrFuture), Error = IoError> + Send>;
 
     #[inline]
     fn upgrade(
@@ -151,7 +144,7 @@ where
                                 // the loop.
                                 println!("Got EOF from remote, closing connection!");
                                 let future = future::ok(future::Loop::Break(()));
-                                Box::new(future) as Box<Future<Item = _, Error = _> + Send>
+                                Box::new(future) as Box<dyn Future<Item = _, Error = _> + Send>
                             }
                         }
                     })

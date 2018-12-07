@@ -22,27 +22,21 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-extern crate bytes;
-extern crate env_logger;
-extern crate futures;
-extern crate libp2p;
-extern crate rand;
-extern crate tokio;
-extern crate tokio_current_thread;
-extern crate tokio_io;
-extern crate tokio_stdin;
-
+use env_logger;
 use futures::future::Future;
 use futures::sync::mpsc;
 use futures::{Sink, Stream};
+use libp2p;
 use libp2p::core::upgrade;
 use libp2p::core::{Multiaddr, PublicKey, Transport};
 use libp2p::peerstore::PeerId;
 use libp2p::secio::SecioOutput;
 use libp2p::tcp::TcpConfig;
 use libp2p::websocket::WsConfig;
+use rand;
 use std::{env, mem};
 use tokio::runtime::Runtime;
+use tokio_stdin;
 
 pub struct FloodSubHandler {
     pub rx: mpsc::Receiver<String>,

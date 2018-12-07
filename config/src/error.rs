@@ -37,7 +37,7 @@ pub enum ConfigError {
 
 /// Display implementation for ConfigError.
 impl fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ConfigError::NotFoundError => write!(f, "Configuration file not found"),
             ConfigError::IOError(e) => write!(f, "Failed to read configuration file: {}", e),
@@ -48,7 +48,7 @@ impl fmt::Display for ConfigError {
 
 /// Error implementation for ConfigError.
 impl error::Error for ConfigError {
-    fn cause(&self) -> Option<&error::Error> {
+    fn cause(&self) -> Option<&dyn error::Error> {
         match *self {
             ConfigError::IOError(ref e) => Some(e),
             ConfigError::ParseError(ref e) => Some(e),

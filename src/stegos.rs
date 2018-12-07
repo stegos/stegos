@@ -22,40 +22,21 @@
 mod console;
 mod consts;
 
-#[macro_use]
-extern crate log;
-extern crate log4rs;
-#[macro_use]
-extern crate clap;
-extern crate atty;
-extern crate dirs;
-extern crate failure;
-extern crate futures;
-extern crate lazy_static;
-extern crate libp2p;
-extern crate parking_lot;
-extern crate regex;
-extern crate rustyline;
-extern crate stegos_blockchain;
-extern crate stegos_config;
-extern crate stegos_crypto;
-extern crate stegos_keychain;
-extern crate stegos_network;
-extern crate stegos_node;
-extern crate stegos_randhound;
-extern crate tokio;
-extern crate tokio_timer;
-
+use atty;
+use clap;
+use clap::crate_version;
 use clap::{App, Arg, ArgMatches};
-use crate::console::*;
-use log::LevelFilter;
+use dirs;
+use log::*;
 use log4rs::append::console::ConsoleAppender;
 use log4rs::config::{Appender, Config as LogConfig, Logger, Root};
 use log4rs::encode::pattern::PatternEncoder;
 use log4rs::{Error as LogError, Handle as LogHandle};
+use rustyline;
 use std::error::Error;
 use std::path::PathBuf;
 use std::process;
+use stegos_config;
 use stegos_config::{Config, ConfigError};
 use stegos_keychain::*;
 use stegos_network::Network;
@@ -63,7 +44,9 @@ use stegos_node::Node;
 use stegos_randhound::*;
 use tokio::runtime::Runtime;
 
-fn load_configuration(args: &ArgMatches) -> Result<Config, Box<Error>> {
+use crate::console::*;
+
+fn load_configuration(args: &ArgMatches<'_>) -> Result<Config, Box<dyn Error>> {
     if let Some(cfg_path) = args.value_of_os("config") {
         // Use --config argument for configuration.
         return Ok(stegos_config::from_file(cfg_path)?);
@@ -110,7 +93,7 @@ fn initialize_logger(cfg: &Config) -> Result<LogHandle, LogError> {
     Ok(handle)
 }
 
-fn run() -> Result<(), Box<Error>> {
+fn run() -> Result<(), Box<dyn Error>> {
     let args = App::new("Stegos")
         .version(crate_version!())
         .author("Stegos AG <info@stegos.cc>")
@@ -169,7 +152,8 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    extern crate simple_logger;
+    use super::*;
+    use simple_logger;
 
     #[test]
     fn log_test() {

@@ -18,23 +18,17 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-extern crate bytes;
-extern crate env_logger;
-extern crate futures;
-extern crate libp2p;
-extern crate stegos_network;
-extern crate tokio_codec;
-extern crate tokio_current_thread;
-extern crate unsigned_varint;
-
+use env_logger;
 use futures::sync::oneshot;
 use futures::{Future, Sink, Stream};
+use libp2p;
 use libp2p::core::Transport;
 use libp2p::core::{either::EitherOutput, upgrade};
 use libp2p::tcp::TcpConfig;
 use libp2p::websocket::WsConfig;
 use std::env;
 use stegos_network::EchoUpgrade;
+use tokio_current_thread;
 
 fn main() {
     env_logger::init();

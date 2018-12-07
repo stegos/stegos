@@ -41,7 +41,7 @@ where
 {
     type Output = (Endpoint, EchoMiddleware<S>);
     type MultiaddrFuture = Maf;
-    type Future = Box<Future<Item = (Self::Output, Maf), Error = IoError> + Send>;
+    type Future = Box<dyn Future<Item = (Self::Output, Maf), Error = IoError> + Send>;
     type NamesIter = iter::Once<(Bytes, ())>;
     type UpgradeIdentifier = ();
 
@@ -77,7 +77,9 @@ where
     S: AsyncRead + AsyncWrite + Send,
 {
     /// Wraps stream in Framing proto
-    pub fn new<'a>(socket: S) -> Box<Future<Item = EchoMiddleware<S>, Error = IoError> + Send + 'a>
+    pub fn new<'a>(
+        socket: S,
+    ) -> Box<dyn Future<Item = EchoMiddleware<S>, Error = IoError> + Send + 'a>
     where
         S: 'a,
     {

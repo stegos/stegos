@@ -67,7 +67,7 @@ impl ::protobuf::Message for Pt {
         true
     }
 
-    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
         while !is.eof()? {
             let (field_number, wire_type) = is.read_tag_unpack()?;
             match field_number {
@@ -94,7 +94,7 @@ impl ::protobuf::Message for Pt {
         my_size
     }
 
-    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
         if !self.data.is_empty() {
             os.write_bytes(1, &self.data)?;
         }
@@ -114,13 +114,13 @@ impl ::protobuf::Message for Pt {
         &mut self.unknown_fields
     }
 
-    fn as_any(&self) -> &dyn (::std::any::Any) {
-        self as &dyn (::std::any::Any)
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
     }
-    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
-        self as &mut dyn (::std::any::Any)
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
     }
-    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
         self
     }
 
@@ -173,13 +173,13 @@ impl ::protobuf::Clear for Pt {
 }
 
 impl ::std::fmt::Debug for Pt {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         ::protobuf::text_format::fmt(self, f)
     }
 }
 
 impl ::protobuf::reflect::ProtobufValue for Pt {
-    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef<'_> {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
         ::protobuf::reflect::ProtobufValueRef::Message(self)
     }
 }
@@ -230,7 +230,7 @@ impl ::protobuf::Message for Fr {
         true
     }
 
-    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
         while !is.eof()? {
             let (field_number, wire_type) = is.read_tag_unpack()?;
             match field_number {
@@ -257,7 +257,7 @@ impl ::protobuf::Message for Fr {
         my_size
     }
 
-    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
         if !self.data.is_empty() {
             os.write_bytes(1, &self.data)?;
         }
@@ -277,13 +277,13 @@ impl ::protobuf::Message for Fr {
         &mut self.unknown_fields
     }
 
-    fn as_any(&self) -> &dyn (::std::any::Any) {
-        self as &dyn (::std::any::Any)
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
     }
-    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
-        self as &mut dyn (::std::any::Any)
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
     }
-    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
         self
     }
 
@@ -336,13 +336,13 @@ impl ::protobuf::Clear for Fr {
 }
 
 impl ::std::fmt::Debug for Fr {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         ::protobuf::text_format::fmt(self, f)
     }
 }
 
 impl ::protobuf::reflect::ProtobufValue for Fr {
-    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef<'_> {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
         ::protobuf::reflect::ProtobufValueRef::Message(self)
     }
 }
@@ -393,7 +393,7 @@ impl ::protobuf::Message for G2 {
         true
     }
 
-    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
         while !is.eof()? {
             let (field_number, wire_type) = is.read_tag_unpack()?;
             match field_number {
@@ -420,7 +420,7 @@ impl ::protobuf::Message for G2 {
         my_size
     }
 
-    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
         if !self.data.is_empty() {
             os.write_bytes(1, &self.data)?;
         }
@@ -440,13 +440,13 @@ impl ::protobuf::Message for G2 {
         &mut self.unknown_fields
     }
 
-    fn as_any(&self) -> &dyn (::std::any::Any) {
-        self as &dyn (::std::any::Any)
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
     }
-    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
-        self as &mut dyn (::std::any::Any)
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
     }
-    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
         self
     }
 
@@ -499,13 +499,13 @@ impl ::protobuf::Clear for G2 {
 }
 
 impl ::std::fmt::Debug for G2 {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         ::protobuf::text_format::fmt(self, f)
     }
 }
 
 impl ::protobuf::reflect::ProtobufValue for G2 {
-    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef<'_> {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
         ::protobuf::reflect::ProtobufValueRef::Message(self)
     }
 }
@@ -556,7 +556,7 @@ impl ::protobuf::Message for Hash {
         true
     }
 
-    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
         while !is.eof()? {
             let (field_number, wire_type) = is.read_tag_unpack()?;
             match field_number {
@@ -583,7 +583,7 @@ impl ::protobuf::Message for Hash {
         my_size
     }
 
-    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
         if !self.data.is_empty() {
             os.write_bytes(1, &self.data)?;
         }
@@ -603,13 +603,13 @@ impl ::protobuf::Message for Hash {
         &mut self.unknown_fields
     }
 
-    fn as_any(&self) -> &dyn (::std::any::Any) {
-        self as &dyn (::std::any::Any)
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
     }
-    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
-        self as &mut dyn (::std::any::Any)
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
     }
-    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
         self
     }
 
@@ -662,13 +662,13 @@ impl ::protobuf::Clear for Hash {
 }
 
 impl ::std::fmt::Debug for Hash {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         ::protobuf::text_format::fmt(self, f)
     }
 }
 
 impl ::protobuf::reflect::ProtobufValue for Hash {
-    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef<'_> {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
         ::protobuf::reflect::ProtobufValueRef::Message(self)
     }
 }
@@ -731,7 +731,7 @@ impl ::protobuf::Message for PublicKey {
         true
     }
 
-    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
         while !is.eof()? {
             let (field_number, wire_type) = is.read_tag_unpack()?;
             match field_number {
@@ -759,7 +759,7 @@ impl ::protobuf::Message for PublicKey {
         my_size
     }
 
-    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
         if let Some(ref v) = self.point.as_ref() {
             os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
             os.write_raw_varint32(v.get_cached_size())?;
@@ -781,13 +781,13 @@ impl ::protobuf::Message for PublicKey {
         &mut self.unknown_fields
     }
 
-    fn as_any(&self) -> &dyn (::std::any::Any) {
-        self as &dyn (::std::any::Any)
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
     }
-    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
-        self as &mut dyn (::std::any::Any)
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
     }
-    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
         self
     }
 
@@ -840,13 +840,13 @@ impl ::protobuf::Clear for PublicKey {
 }
 
 impl ::std::fmt::Debug for PublicKey {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         ::protobuf::text_format::fmt(self, f)
     }
 }
 
 impl ::protobuf::reflect::ProtobufValue for PublicKey {
-    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef<'_> {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
         ::protobuf::reflect::ProtobufValueRef::Message(self)
     }
 }
@@ -948,7 +948,7 @@ impl ::protobuf::Message for SchnorrSig {
         true
     }
 
-    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
         while !is.eof()? {
             let (field_number, wire_type) = is.read_tag_unpack()?;
             match field_number {
@@ -983,7 +983,7 @@ impl ::protobuf::Message for SchnorrSig {
         my_size
     }
 
-    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
         if let Some(ref v) = self.u.as_ref() {
             os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
             os.write_raw_varint32(v.get_cached_size())?;
@@ -1010,13 +1010,13 @@ impl ::protobuf::Message for SchnorrSig {
         &mut self.unknown_fields
     }
 
-    fn as_any(&self) -> &dyn (::std::any::Any) {
-        self as &dyn (::std::any::Any)
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
     }
-    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
-        self as &mut dyn (::std::any::Any)
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
     }
-    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
         self
     }
 
@@ -1075,13 +1075,13 @@ impl ::protobuf::Clear for SchnorrSig {
 }
 
 impl ::std::fmt::Debug for SchnorrSig {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         ::protobuf::text_format::fmt(self, f)
     }
 }
 
 impl ::protobuf::reflect::ProtobufValue for SchnorrSig {
-    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef<'_> {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
         ::protobuf::reflect::ProtobufValueRef::Message(self)
     }
 }
@@ -1144,7 +1144,7 @@ impl ::protobuf::Message for SecurePublicKey {
         true
     }
 
-    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
         while !is.eof()? {
             let (field_number, wire_type) = is.read_tag_unpack()?;
             match field_number {
@@ -1172,7 +1172,7 @@ impl ::protobuf::Message for SecurePublicKey {
         my_size
     }
 
-    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
         if let Some(ref v) = self.point.as_ref() {
             os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
             os.write_raw_varint32(v.get_cached_size())?;
@@ -1194,13 +1194,13 @@ impl ::protobuf::Message for SecurePublicKey {
         &mut self.unknown_fields
     }
 
-    fn as_any(&self) -> &dyn (::std::any::Any) {
-        self as &dyn (::std::any::Any)
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
     }
-    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
-        self as &mut dyn (::std::any::Any)
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
     }
-    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
         self
     }
 
@@ -1253,13 +1253,13 @@ impl ::protobuf::Clear for SecurePublicKey {
 }
 
 impl ::std::fmt::Debug for SecurePublicKey {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         ::protobuf::text_format::fmt(self, f)
     }
 }
 
 impl ::protobuf::reflect::ProtobufValue for SecurePublicKey {
-    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef<'_> {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
         ::protobuf::reflect::ProtobufValueRef::Message(self)
     }
 }
@@ -1388,7 +1388,7 @@ impl ::protobuf::Message for EncryptedPayload {
         true
     }
 
-    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
         while !is.eof()? {
             let (field_number, wire_type) = is.read_tag_unpack()?;
             match field_number {
@@ -1429,7 +1429,7 @@ impl ::protobuf::Message for EncryptedPayload {
         my_size
     }
 
-    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
         if let Some(ref v) = self.apkg.as_ref() {
             os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
             os.write_raw_varint32(v.get_cached_size())?;
@@ -1459,13 +1459,13 @@ impl ::protobuf::Message for EncryptedPayload {
         &mut self.unknown_fields
     }
 
-    fn as_any(&self) -> &dyn (::std::any::Any) {
-        self as &dyn (::std::any::Any)
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
     }
-    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
-        self as &mut dyn (::std::any::Any)
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
     }
-    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
         self
     }
 
@@ -1530,13 +1530,13 @@ impl ::protobuf::Clear for EncryptedPayload {
 }
 
 impl ::std::fmt::Debug for EncryptedPayload {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         ::protobuf::text_format::fmt(self, f)
     }
 }
 
 impl ::protobuf::reflect::ProtobufValue for EncryptedPayload {
-    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef<'_> {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
         ::protobuf::reflect::ProtobufValueRef::Message(self)
     }
 }
@@ -1677,7 +1677,7 @@ impl ::protobuf::Message for LR {
         true
     }
 
-    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
         while !is.eof()? {
             let (field_number, wire_type) = is.read_tag_unpack()?;
             match field_number {
@@ -1719,7 +1719,7 @@ impl ::protobuf::Message for LR {
         my_size
     }
 
-    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
         if let Some(ref v) = self.x.as_ref() {
             os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
             os.write_raw_varint32(v.get_cached_size())?;
@@ -1751,13 +1751,13 @@ impl ::protobuf::Message for LR {
         &mut self.unknown_fields
     }
 
-    fn as_any(&self) -> &dyn (::std::any::Any) {
-        self as &dyn (::std::any::Any)
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
     }
-    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
-        self as &mut dyn (::std::any::Any)
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
     }
-    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
         self
     }
 
@@ -1822,13 +1822,13 @@ impl ::protobuf::Clear for LR {
 }
 
 impl ::std::fmt::Debug for LR {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         ::protobuf::text_format::fmt(self, f)
     }
 }
 
 impl ::protobuf::reflect::ProtobufValue for LR {
-    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef<'_> {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
         ::protobuf::reflect::ProtobufValueRef::Message(self)
     }
 }
@@ -2039,7 +2039,7 @@ impl ::protobuf::Message for DotProof {
         true
     }
 
-    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
         while !is.eof()? {
             let (field_number, wire_type) = is.read_tag_unpack()?;
             match field_number {
@@ -2095,7 +2095,7 @@ impl ::protobuf::Message for DotProof {
         my_size
     }
 
-    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
         if let Some(ref v) = self.u.as_ref() {
             os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
             os.write_raw_varint32(v.get_cached_size())?;
@@ -2137,13 +2137,13 @@ impl ::protobuf::Message for DotProof {
         &mut self.unknown_fields
     }
 
-    fn as_any(&self) -> &dyn (::std::any::Any) {
-        self as &dyn (::std::any::Any)
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
     }
-    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
-        self as &mut dyn (::std::any::Any)
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
     }
-    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
         self
     }
 
@@ -2220,13 +2220,13 @@ impl ::protobuf::Clear for DotProof {
 }
 
 impl ::std::fmt::Debug for DotProof {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         ::protobuf::text_format::fmt(self, f)
     }
 }
 
 impl ::protobuf::reflect::ProtobufValue for DotProof {
-    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef<'_> {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
         ::protobuf::reflect::ProtobufValueRef::Message(self)
     }
 }
@@ -2718,7 +2718,7 @@ impl ::protobuf::Message for BulletProof {
         true
     }
 
-    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
         while !is.eof()? {
             let (field_number, wire_type) = is.read_tag_unpack()?;
             match field_number {
@@ -2823,7 +2823,7 @@ impl ::protobuf::Message for BulletProof {
         my_size
     }
 
-    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
         if let Some(ref v) = self.vcmt.as_ref() {
             os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
             os.write_raw_varint32(v.get_cached_size())?;
@@ -2900,13 +2900,13 @@ impl ::protobuf::Message for BulletProof {
         &mut self.unknown_fields
     }
 
-    fn as_any(&self) -> &dyn (::std::any::Any) {
-        self as &dyn (::std::any::Any)
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
     }
-    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
-        self as &mut dyn (::std::any::Any)
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
     }
-    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
         self
     }
 
@@ -3025,13 +3025,13 @@ impl ::protobuf::Clear for BulletProof {
 }
 
 impl ::std::fmt::Debug for BulletProof {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         ::protobuf::text_format::fmt(self, f)
     }
 }
 
 impl ::protobuf::reflect::ProtobufValue for BulletProof {
-    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef<'_> {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
         ::protobuf::reflect::ProtobufValueRef::Message(self)
     }
 }
@@ -3172,7 +3172,7 @@ impl ::protobuf::Message for Output {
         true
     }
 
-    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
         while !is.eof()? {
             let (field_number, wire_type) = is.read_tag_unpack()?;
             match field_number {
@@ -3214,7 +3214,7 @@ impl ::protobuf::Message for Output {
         my_size
     }
 
-    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
         if let Some(ref v) = self.recipient.as_ref() {
             os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
             os.write_raw_varint32(v.get_cached_size())?;
@@ -3246,13 +3246,13 @@ impl ::protobuf::Message for Output {
         &mut self.unknown_fields
     }
 
-    fn as_any(&self) -> &dyn (::std::any::Any) {
-        self as &dyn (::std::any::Any)
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
     }
-    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
-        self as &mut dyn (::std::any::Any)
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
     }
-    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
         self
     }
 
@@ -3317,13 +3317,13 @@ impl ::protobuf::Clear for Output {
 }
 
 impl ::std::fmt::Debug for Output {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         ::protobuf::text_format::fmt(self, f)
     }
 }
 
 impl ::protobuf::reflect::ProtobufValue for Output {
-    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef<'_> {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
         ::protobuf::reflect::ProtobufValueRef::Message(self)
     }
 }
@@ -3503,7 +3503,7 @@ impl ::protobuf::Message for Transaction {
         true
     }
 
-    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
         while !is.eof()? {
             let (field_number, wire_type) = is.read_tag_unpack()?;
             match field_number {
@@ -3562,7 +3562,7 @@ impl ::protobuf::Message for Transaction {
         my_size
     }
 
-    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
         for v in &self.txins {
             os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
             os.write_raw_varint32(v.get_cached_size())?;
@@ -3602,13 +3602,13 @@ impl ::protobuf::Message for Transaction {
         &mut self.unknown_fields
     }
 
-    fn as_any(&self) -> &dyn (::std::any::Any) {
-        self as &dyn (::std::any::Any)
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
     }
-    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
-        self as &mut dyn (::std::any::Any)
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
     }
-    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
         self
     }
 
@@ -3685,13 +3685,13 @@ impl ::protobuf::Clear for Transaction {
 }
 
 impl ::std::fmt::Debug for Transaction {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         ::protobuf::text_format::fmt(self, f)
     }
 }
 
 impl ::protobuf::reflect::ProtobufValue for Transaction {
-    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef<'_> {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
         ::protobuf::reflect::ProtobufValueRef::Message(self)
     }
 }
@@ -3802,7 +3802,7 @@ impl ::protobuf::Message for BaseBlockHeader {
         true
     }
 
-    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
         while !is.eof()? {
             let (field_number, wire_type) = is.read_tag_unpack()?;
             match field_number {
@@ -3860,7 +3860,7 @@ impl ::protobuf::Message for BaseBlockHeader {
         my_size
     }
 
-    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
         if self.version != 0 {
             os.write_uint64(1, self.version)?;
         }
@@ -3891,13 +3891,13 @@ impl ::protobuf::Message for BaseBlockHeader {
         &mut self.unknown_fields
     }
 
-    fn as_any(&self) -> &dyn (::std::any::Any) {
-        self as &dyn (::std::any::Any)
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
     }
-    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
-        self as &mut dyn (::std::any::Any)
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
     }
-    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
         self
     }
 
@@ -3968,13 +3968,13 @@ impl ::protobuf::Clear for BaseBlockHeader {
 }
 
 impl ::std::fmt::Debug for BaseBlockHeader {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         ::protobuf::text_format::fmt(self, f)
     }
 }
 
 impl ::protobuf::reflect::ProtobufValue for BaseBlockHeader {
-    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef<'_> {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
         ::protobuf::reflect::ProtobufValueRef::Message(self)
     }
 }
@@ -3983,7 +3983,7 @@ impl ::protobuf::reflect::ProtobufValue for BaseBlockHeader {
 pub struct MonetaryBlockHeader {
     // message fields
     pub base: ::protobuf::SingularPtrField<BaseBlockHeader>,
-    pub adjustment: ::protobuf::SingularPtrField<Fr>,
+    pub gamma: ::protobuf::SingularPtrField<Fr>,
     pub inputs_range_hash: ::protobuf::SingularPtrField<Hash>,
     pub outputs_range_hash: ::protobuf::SingularPtrField<Hash>,
     // special fields
@@ -4029,37 +4029,37 @@ impl MonetaryBlockHeader {
         self.base.as_ref().unwrap_or_else(|| BaseBlockHeader::default_instance())
     }
 
-    // .protobuf.pb.Fr adjustment = 2;
+    // .protobuf.pb.Fr gamma = 2;
 
-    pub fn clear_adjustment(&mut self) {
-        self.adjustment.clear();
+    pub fn clear_gamma(&mut self) {
+        self.gamma.clear();
     }
 
-    pub fn has_adjustment(&self) -> bool {
-        self.adjustment.is_some()
+    pub fn has_gamma(&self) -> bool {
+        self.gamma.is_some()
     }
 
     // Param is passed by value, moved
-    pub fn set_adjustment(&mut self, v: Fr) {
-        self.adjustment = ::protobuf::SingularPtrField::some(v);
+    pub fn set_gamma(&mut self, v: Fr) {
+        self.gamma = ::protobuf::SingularPtrField::some(v);
     }
 
     // Mutable pointer to the field.
     // If field is not initialized, it is initialized with default value first.
-    pub fn mut_adjustment(&mut self) -> &mut Fr {
-        if self.adjustment.is_none() {
-            self.adjustment.set_default();
+    pub fn mut_gamma(&mut self) -> &mut Fr {
+        if self.gamma.is_none() {
+            self.gamma.set_default();
         }
-        self.adjustment.as_mut().unwrap()
+        self.gamma.as_mut().unwrap()
     }
 
     // Take field
-    pub fn take_adjustment(&mut self) -> Fr {
-        self.adjustment.take().unwrap_or_else(|| Fr::new())
+    pub fn take_gamma(&mut self) -> Fr {
+        self.gamma.take().unwrap_or_else(|| Fr::new())
     }
 
-    pub fn get_adjustment(&self) -> &Fr {
-        self.adjustment.as_ref().unwrap_or_else(|| Fr::default_instance())
+    pub fn get_gamma(&self) -> &Fr {
+        self.gamma.as_ref().unwrap_or_else(|| Fr::default_instance())
     }
 
     // .protobuf.pb.Hash inputs_range_hash = 3;
@@ -4136,7 +4136,7 @@ impl ::protobuf::Message for MonetaryBlockHeader {
                 return false;
             }
         };
-        for v in &self.adjustment {
+        for v in &self.gamma {
             if !v.is_initialized() {
                 return false;
             }
@@ -4154,7 +4154,7 @@ impl ::protobuf::Message for MonetaryBlockHeader {
         true
     }
 
-    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
         while !is.eof()? {
             let (field_number, wire_type) = is.read_tag_unpack()?;
             match field_number {
@@ -4162,7 +4162,7 @@ impl ::protobuf::Message for MonetaryBlockHeader {
                     ::protobuf::rt::read_singular_message_into(wire_type, is, &mut self.base)?;
                 },
                 2 => {
-                    ::protobuf::rt::read_singular_message_into(wire_type, is, &mut self.adjustment)?;
+                    ::protobuf::rt::read_singular_message_into(wire_type, is, &mut self.gamma)?;
                 },
                 3 => {
                     ::protobuf::rt::read_singular_message_into(wire_type, is, &mut self.inputs_range_hash)?;
@@ -4186,7 +4186,7 @@ impl ::protobuf::Message for MonetaryBlockHeader {
             let len = v.compute_size();
             my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
         }
-        if let Some(ref v) = self.adjustment.as_ref() {
+        if let Some(ref v) = self.gamma.as_ref() {
             let len = v.compute_size();
             my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
         }
@@ -4203,13 +4203,13 @@ impl ::protobuf::Message for MonetaryBlockHeader {
         my_size
     }
 
-    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
         if let Some(ref v) = self.base.as_ref() {
             os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
             os.write_raw_varint32(v.get_cached_size())?;
             v.write_to_with_cached_sizes(os)?;
         }
-        if let Some(ref v) = self.adjustment.as_ref() {
+        if let Some(ref v) = self.gamma.as_ref() {
             os.write_tag(2, ::protobuf::wire_format::WireTypeLengthDelimited)?;
             os.write_raw_varint32(v.get_cached_size())?;
             v.write_to_with_cached_sizes(os)?;
@@ -4240,13 +4240,13 @@ impl ::protobuf::Message for MonetaryBlockHeader {
         &mut self.unknown_fields
     }
 
-    fn as_any(&self) -> &dyn (::std::any::Any) {
-        self as &dyn (::std::any::Any)
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
     }
-    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
-        self as &mut dyn (::std::any::Any)
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
     }
-    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
         self
     }
 
@@ -4272,9 +4272,9 @@ impl ::protobuf::Message for MonetaryBlockHeader {
                     |m: &mut MonetaryBlockHeader| { &mut m.base },
                 ));
                 fields.push(::protobuf::reflect::accessor::make_singular_ptr_field_accessor::<_, ::protobuf::types::ProtobufTypeMessage<Fr>>(
-                    "adjustment",
-                    |m: &MonetaryBlockHeader| { &m.adjustment },
-                    |m: &mut MonetaryBlockHeader| { &mut m.adjustment },
+                    "gamma",
+                    |m: &MonetaryBlockHeader| { &m.gamma },
+                    |m: &mut MonetaryBlockHeader| { &mut m.gamma },
                 ));
                 fields.push(::protobuf::reflect::accessor::make_singular_ptr_field_accessor::<_, ::protobuf::types::ProtobufTypeMessage<Hash>>(
                     "inputs_range_hash",
@@ -4309,7 +4309,7 @@ impl ::protobuf::Message for MonetaryBlockHeader {
 impl ::protobuf::Clear for MonetaryBlockHeader {
     fn clear(&mut self) {
         self.clear_base();
-        self.clear_adjustment();
+        self.clear_gamma();
         self.clear_inputs_range_hash();
         self.clear_outputs_range_hash();
         self.unknown_fields.clear();
@@ -4317,13 +4317,13 @@ impl ::protobuf::Clear for MonetaryBlockHeader {
 }
 
 impl ::std::fmt::Debug for MonetaryBlockHeader {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         ::protobuf::text_format::fmt(self, f)
     }
 }
 
 impl ::protobuf::reflect::ProtobufValue for MonetaryBlockHeader {
-    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef<'_> {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
         ::protobuf::reflect::ProtobufValueRef::Message(self)
     }
 }
@@ -4457,7 +4457,7 @@ impl ::protobuf::Message for MerkleNode {
         true
     }
 
-    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
         while !is.eof()? {
             let (field_number, wire_type) = is.read_tag_unpack()?;
             match field_number {
@@ -4512,7 +4512,7 @@ impl ::protobuf::Message for MerkleNode {
         my_size
     }
 
-    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
         if let Some(ref v) = self.hash.as_ref() {
             os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
             os.write_raw_varint32(v.get_cached_size())?;
@@ -4545,13 +4545,13 @@ impl ::protobuf::Message for MerkleNode {
         &mut self.unknown_fields
     }
 
-    fn as_any(&self) -> &dyn (::std::any::Any) {
-        self as &dyn (::std::any::Any)
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
     }
-    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
-        self as &mut dyn (::std::any::Any)
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
     }
-    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
         self
     }
 
@@ -4622,13 +4622,13 @@ impl ::protobuf::Clear for MerkleNode {
 }
 
 impl ::std::fmt::Debug for MerkleNode {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         ::protobuf::text_format::fmt(self, f)
     }
 }
 
 impl ::protobuf::reflect::ProtobufValue for MerkleNode {
-    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef<'_> {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
         ::protobuf::reflect::ProtobufValueRef::Message(self)
     }
 }
@@ -4714,7 +4714,7 @@ impl ::protobuf::Message for MonetaryBlockBody {
         true
     }
 
-    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
         while !is.eof()? {
             let (field_number, wire_type) = is.read_tag_unpack()?;
             match field_number {
@@ -4749,7 +4749,7 @@ impl ::protobuf::Message for MonetaryBlockBody {
         my_size
     }
 
-    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
         for v in &self.inputs {
             os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
             os.write_raw_varint32(v.get_cached_size())?;
@@ -4776,13 +4776,13 @@ impl ::protobuf::Message for MonetaryBlockBody {
         &mut self.unknown_fields
     }
 
-    fn as_any(&self) -> &dyn (::std::any::Any) {
-        self as &dyn (::std::any::Any)
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
     }
-    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
-        self as &mut dyn (::std::any::Any)
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
     }
-    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
         self
     }
 
@@ -4841,13 +4841,13 @@ impl ::protobuf::Clear for MonetaryBlockBody {
 }
 
 impl ::std::fmt::Debug for MonetaryBlockBody {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         ::protobuf::text_format::fmt(self, f)
     }
 }
 
 impl ::protobuf::reflect::ProtobufValue for MonetaryBlockBody {
-    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef<'_> {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
         ::protobuf::reflect::ProtobufValueRef::Message(self)
     }
 }
@@ -4949,7 +4949,7 @@ impl ::protobuf::Message for MonetaryBlock {
         true
     }
 
-    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
         while !is.eof()? {
             let (field_number, wire_type) = is.read_tag_unpack()?;
             match field_number {
@@ -4984,7 +4984,7 @@ impl ::protobuf::Message for MonetaryBlock {
         my_size
     }
 
-    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
         if let Some(ref v) = self.header.as_ref() {
             os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
             os.write_raw_varint32(v.get_cached_size())?;
@@ -5011,13 +5011,13 @@ impl ::protobuf::Message for MonetaryBlock {
         &mut self.unknown_fields
     }
 
-    fn as_any(&self) -> &dyn (::std::any::Any) {
-        self as &dyn (::std::any::Any)
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
     }
-    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
-        self as &mut dyn (::std::any::Any)
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
     }
-    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
         self
     }
 
@@ -5076,13 +5076,13 @@ impl ::protobuf::Clear for MonetaryBlock {
 }
 
 impl ::std::fmt::Debug for MonetaryBlock {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         ::protobuf::text_format::fmt(self, f)
     }
 }
 
 impl ::protobuf::reflect::ProtobufValue for MonetaryBlock {
-    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef<'_> {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
         ::protobuf::reflect::ProtobufValueRef::Message(self)
     }
 }
@@ -5215,7 +5215,7 @@ impl ::protobuf::Message for KeyBlockHeader {
         true
     }
 
-    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
         while !is.eof()? {
             let (field_number, wire_type) = is.read_tag_unpack()?;
             match field_number {
@@ -5257,7 +5257,7 @@ impl ::protobuf::Message for KeyBlockHeader {
         my_size
     }
 
-    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
         if let Some(ref v) = self.base.as_ref() {
             os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
             os.write_raw_varint32(v.get_cached_size())?;
@@ -5289,13 +5289,13 @@ impl ::protobuf::Message for KeyBlockHeader {
         &mut self.unknown_fields
     }
 
-    fn as_any(&self) -> &dyn (::std::any::Any) {
-        self as &dyn (::std::any::Any)
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
     }
-    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
-        self as &mut dyn (::std::any::Any)
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
     }
-    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
         self
     }
 
@@ -5360,13 +5360,13 @@ impl ::protobuf::Clear for KeyBlockHeader {
 }
 
 impl ::std::fmt::Debug for KeyBlockHeader {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         ::protobuf::text_format::fmt(self, f)
     }
 }
 
 impl ::protobuf::reflect::ProtobufValue for KeyBlockHeader {
-    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef<'_> {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
         ::protobuf::reflect::ProtobufValueRef::Message(self)
     }
 }
@@ -5429,7 +5429,7 @@ impl ::protobuf::Message for KeyBlock {
         true
     }
 
-    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
         while !is.eof()? {
             let (field_number, wire_type) = is.read_tag_unpack()?;
             match field_number {
@@ -5457,7 +5457,7 @@ impl ::protobuf::Message for KeyBlock {
         my_size
     }
 
-    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
         if let Some(ref v) = self.header.as_ref() {
             os.write_tag(1, ::protobuf::wire_format::WireTypeLengthDelimited)?;
             os.write_raw_varint32(v.get_cached_size())?;
@@ -5479,13 +5479,13 @@ impl ::protobuf::Message for KeyBlock {
         &mut self.unknown_fields
     }
 
-    fn as_any(&self) -> &dyn (::std::any::Any) {
-        self as &dyn (::std::any::Any)
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
     }
-    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
-        self as &mut dyn (::std::any::Any)
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
     }
-    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
         self
     }
 
@@ -5538,13 +5538,13 @@ impl ::protobuf::Clear for KeyBlock {
 }
 
 impl ::std::fmt::Debug for KeyBlock {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         ::protobuf::text_format::fmt(self, f)
     }
 }
 
 impl ::protobuf::reflect::ProtobufValue for KeyBlock {
-    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef<'_> {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
         ::protobuf::reflect::ProtobufValueRef::Message(self)
     }
 }
@@ -5683,7 +5683,7 @@ impl ::protobuf::Message for Block {
         true
     }
 
-    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
         while !is.eof()? {
             let (field_number, wire_type) = is.read_tag_unpack()?;
             match field_number {
@@ -5728,7 +5728,7 @@ impl ::protobuf::Message for Block {
         my_size
     }
 
-    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
         if let ::std::option::Option::Some(ref v) = self.block {
             match v {
                 &Block_oneof_block::key_block(ref v) => {
@@ -5759,13 +5759,13 @@ impl ::protobuf::Message for Block {
         &mut self.unknown_fields
     }
 
-    fn as_any(&self) -> &dyn (::std::any::Any) {
-        self as &dyn (::std::any::Any)
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
     }
-    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
-        self as &mut dyn (::std::any::Any)
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
     }
-    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
         self
     }
 
@@ -5824,13 +5824,13 @@ impl ::protobuf::Clear for Block {
 }
 
 impl ::std::fmt::Debug for Block {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         ::protobuf::text_format::fmt(self, f)
     }
 }
 
 impl ::protobuf::reflect::ProtobufValue for Block {
-    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef<'_> {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
         ::protobuf::reflect::ProtobufValueRef::Message(self)
     }
 }
@@ -5880,28 +5880,28 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     ion\x18\x01\x20\x01(\x04B\x02\x18\0\x12'\n\x08previous\x18\x02\x20\x01(\
     \x0b2\x11.protobuf.pb.HashB\x02\x18\0\x12\x11\n\x05epoch\x18\x03\x20\x01\
     (\x04B\x02\x18\0\x12\x15\n\ttimestamp\x18\x04\x20\x01(\x04B\x02\x18\0\"\
-    \xd3\x01\n\x13MonetaryBlockHeader\x12.\n\x04base\x18\x01\x20\x01(\x0b2\
-    \x1c.protobuf.pb.BaseBlockHeaderB\x02\x18\0\x12'\n\nadjustment\x18\x02\
-    \x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x120\n\x11inputs_range_hash\
-    \x18\x03\x20\x01(\x0b2\x11.protobuf.pb.HashB\x02\x18\0\x121\n\x12outputs\
-    _range_hash\x18\x04\x20\x01(\x0b2\x11.protobuf.pb.HashB\x02\x18\0\"~\n\n\
-    MerkleNode\x12#\n\x04hash\x18\x01\x20\x01(\x0b2\x11.protobuf.pb.HashB\
-    \x02\x18\0\x12\x10\n\x04left\x18\x02\x20\x01(\x04B\x02\x18\0\x12\x11\n\
-    \x05right\x18\x03\x20\x01(\x04B\x02\x18\0\x12&\n\x05value\x18\x04\x20\
-    \x01(\x0b2\x13.protobuf.pb.OutputB\x02\x18\0\"h\n\x11MonetaryBlockBody\
-    \x12%\n\x06inputs\x18\x01\x20\x03(\x0b2\x11.protobuf.pb.HashB\x02\x18\0\
-    \x12,\n\x07outputs\x18\x02\x20\x03(\x0b2\x17.protobuf.pb.MerkleNodeB\x02\
-    \x18\0\"w\n\rMonetaryBlock\x124\n\x06header\x18\x01\x20\x01(\x0b2\x20.pr\
-    otobuf.pb.MonetaryBlockHeaderB\x02\x18\0\x120\n\x04body\x18\x02\x20\x01(\
-    \x0b2\x1e.protobuf.pb.MonetaryBlockBodyB\x02\x18\0\"\xa7\x01\n\x0eKeyBlo\
-    ckHeader\x12.\n\x04base\x18\x01\x20\x01(\x0b2\x1c.protobuf.pb.BaseBlockH\
-    eaderB\x02\x18\0\x120\n\x06leader\x18\x02\x20\x01(\x0b2\x1c.protobuf.pb.\
-    SecurePublicKeyB\x02\x18\0\x123\n\twitnesses\x18\x03\x20\x03(\x0b2\x1c.p\
-    rotobuf.pb.SecurePublicKeyB\x02\x18\0\";\n\x08KeyBlock\x12/\n\x06header\
-    \x18\x01\x20\x01(\x0b2\x1b.protobuf.pb.KeyBlockHeaderB\x02\x18\0\"z\n\
-    \x05Block\x12.\n\tkey_block\x18\x01\x20\x01(\x0b2\x15.protobuf.pb.KeyBlo\
-    ckH\0B\x02\x18\0\x128\n\x0emonetary_block\x18\x02\x20\x01(\x0b2\x1a.prot\
-    obuf.pb.MonetaryBlockH\0B\x02\x18\0B\x07\n\x05blockB\0b\x06proto3\
+    \xce\x01\n\x13MonetaryBlockHeader\x12.\n\x04base\x18\x01\x20\x01(\x0b2\
+    \x1c.protobuf.pb.BaseBlockHeaderB\x02\x18\0\x12\"\n\x05gamma\x18\x02\x20\
+    \x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x120\n\x11inputs_range_hash\x18\
+    \x03\x20\x01(\x0b2\x11.protobuf.pb.HashB\x02\x18\0\x121\n\x12outputs_ran\
+    ge_hash\x18\x04\x20\x01(\x0b2\x11.protobuf.pb.HashB\x02\x18\0\"~\n\nMerk\
+    leNode\x12#\n\x04hash\x18\x01\x20\x01(\x0b2\x11.protobuf.pb.HashB\x02\
+    \x18\0\x12\x10\n\x04left\x18\x02\x20\x01(\x04B\x02\x18\0\x12\x11\n\x05ri\
+    ght\x18\x03\x20\x01(\x04B\x02\x18\0\x12&\n\x05value\x18\x04\x20\x01(\x0b\
+    2\x13.protobuf.pb.OutputB\x02\x18\0\"h\n\x11MonetaryBlockBody\x12%\n\x06\
+    inputs\x18\x01\x20\x03(\x0b2\x11.protobuf.pb.HashB\x02\x18\0\x12,\n\x07o\
+    utputs\x18\x02\x20\x03(\x0b2\x17.protobuf.pb.MerkleNodeB\x02\x18\0\"w\n\
+    \rMonetaryBlock\x124\n\x06header\x18\x01\x20\x01(\x0b2\x20.protobuf.pb.M\
+    onetaryBlockHeaderB\x02\x18\0\x120\n\x04body\x18\x02\x20\x01(\x0b2\x1e.p\
+    rotobuf.pb.MonetaryBlockBodyB\x02\x18\0\"\xa7\x01\n\x0eKeyBlockHeader\
+    \x12.\n\x04base\x18\x01\x20\x01(\x0b2\x1c.protobuf.pb.BaseBlockHeaderB\
+    \x02\x18\0\x120\n\x06leader\x18\x02\x20\x01(\x0b2\x1c.protobuf.pb.Secure\
+    PublicKeyB\x02\x18\0\x123\n\twitnesses\x18\x03\x20\x03(\x0b2\x1c.protobu\
+    f.pb.SecurePublicKeyB\x02\x18\0\";\n\x08KeyBlock\x12/\n\x06header\x18\
+    \x01\x20\x01(\x0b2\x1b.protobuf.pb.KeyBlockHeaderB\x02\x18\0\"z\n\x05Blo\
+    ck\x12.\n\tkey_block\x18\x01\x20\x01(\x0b2\x15.protobuf.pb.KeyBlockH\0B\
+    \x02\x18\0\x128\n\x0emonetary_block\x18\x02\x20\x01(\x0b2\x1a.protobuf.p\
+    b.MonetaryBlockH\0B\x02\x18\0B\x07\n\x05blockB\0b\x06proto3\
 ";
 
 static mut file_descriptor_proto_lazy: ::protobuf::lazy::Lazy<::protobuf::descriptor::FileDescriptorProto> = ::protobuf::lazy::Lazy {

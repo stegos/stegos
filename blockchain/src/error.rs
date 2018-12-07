@@ -40,4 +40,10 @@ pub enum BlockchainError {
     MissingUTXO(Hash),
     #[fail(display = "Invalid transaction signature.")]
     InvalidTransactionSignature,
+    #[fail(display = "Invalid transaction monetary balance.")]
+    InvalidTransactionBalance,
+    #[fail(display = "Invalid block monetary balance.")]
+    InvalidBlockBalance,
+    #[fail(display = "Invalid UTXO bulletproof.")]
+    InvalidBulletProof,
 }

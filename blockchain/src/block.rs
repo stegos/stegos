@@ -21,9 +21,15 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::error::*;
 use crate::merkle::*;
 use crate::output::Output;
+use failure::Error;
+use stegos_crypto::bulletproofs::validate_range_proof;
+use stegos_crypto::curve1174::cpt::Pt;
+use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
+use stegos_crypto::curve1174::G;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
 
@@ -101,7 +107,7 @@ pub struct MonetaryBlockHeader {
 
     /// The sum of all gamma adjustments found in the block transactions (∑ γ_adj).
     /// Includes the γ_adj from the leader's fee distribution transaction.
-    pub adjustment: Fr,
+    pub gamma: Fr,
 
     /// Merklish root of all range proofs for inputs.
     pub inputs_range_hash: Hash,
@@ -113,7 +119,7 @@ pub struct MonetaryBlockHeader {
 impl Hashable for MonetaryBlockHeader {
     fn hash(&self, state: &mut Hasher) {
         self.base.hash(state);
-        self.adjustment.hash(state);
+        self.gamma.hash(state);
         self.inputs_range_hash.hash(state);
         self.outputs_range_hash.hash(state);
     }
@@ -200,7 +206,7 @@ pub struct MonetaryBlock {
 impl MonetaryBlock {
     pub fn new(
         base: BaseBlockHeader,
-        adjustment: Fr,
+        gamma: Fr,
         inputs: &[Hash],
         outputs: &[Output],
     ) -> MonetaryBlock {
@@ -232,7 +238,7 @@ impl MonetaryBlock {
         // Create header
         let header = MonetaryBlockHeader {
             base,
-            adjustment,
+            gamma: gamma,
             inputs_range_hash,
             outputs_range_hash,
         };
@@ -242,6 +248,50 @@ impl MonetaryBlock {
 
         let block = MonetaryBlock { header, body };
         block
+    }
+
+    /// Validate the monetary balance of block.
+    ///
+    /// # Arguments
+    ///
+    /// * - `inputs` - UTXOs referred by self.body.inputs, in the same order as in self.body.inputs.
+    ///
+    pub fn validate(&self, inputs: &[Output]) -> Result<(), Error> {
+        //
+        // Calculate the pedersen commitment difference in order to check the monetary balance:
+        //
+        //     pedersen_commitment_diff = \sum C_i - \sum C_o - fee
+        //
+
+        let mut pedersen_commitment_diff = ECp::inf();
+
+        // +\sum{P_i} + \sum{C_i} for i in txins
+        for (txin_hash, txin) in self.body.inputs.iter().zip(inputs) {
+            assert_eq!(Hash::digest(txin), *txin_hash);
+
+            let pedersen_commitment: Pt = txin.proof.pedersen_commitment();
+            let pedersen_commitment: ECp = Pt::decompress(pedersen_commitment)?;
+            pedersen_commitment_diff += pedersen_commitment;
+        }
+
+        // -\sum{C_o} for o in txouts
+        for (txout, _) in self.body.outputs.leafs() {
+            if !validate_range_proof(&txout.proof) {
+                return Err(BlockchainError::InvalidBulletProof.into());
+            }
+            let pedersen_commitment: Pt = txout.proof.pedersen_commitment();
+            let pedersen_commitment: ECp = Pt::decompress(pedersen_commitment)?;
+            pedersen_commitment_diff -= pedersen_commitment;
+        }
+
+        // TODO: add fee
+
+        // Check the monetary balance
+        if pedersen_commitment_diff != self.header.gamma * (*G) {
+            return Err(BlockchainError::InvalidBlockBalance.into());
+        }
+
+        Ok(())
     }
 }
 
@@ -272,6 +322,60 @@ impl Hashable for Block {
         match self {
             Block::KeyBlock(key_block) => key_block.hash(state),
             Block::MonetaryBlock(monetary_block) => monetary_block.hash(state),
+        }
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use chrono::Utc;
+    use stegos_crypto::curve1174::cpt::make_random_keys;
+
+    #[test]
+    fn create_validate() {
+        let (skey0, _pkey0, _sig0) = make_random_keys();
+        let (skey1, pkey1, _sig1) = make_random_keys();
+        let (_skey2, pkey2, _sig2) = make_random_keys();
+
+        let version: u64 = 1;
+        let epoch: u64 = 1;
+        let timestamp = Utc::now().timestamp() as u64;
+        let amount: i64 = 1_000_000;
+        let previous = Hash::digest(&"test".to_string());
+
+        //
+        // Valid block with transaction from 1 to 2
+        //
+        {
+            let (output0, gamma0) = Output::new(timestamp, &skey0, &pkey1, amount).unwrap();
+            let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+            let inputs1 = [Hash::digest(&output0)];
+            let (output1, gamma1) = Output::new(timestamp, &skey1, &pkey2, amount).unwrap();
+            let outputs1 = [output1];
+            let gamma = gamma0 - gamma1;
+            let block = MonetaryBlock::new(base, gamma, &inputs1, &outputs1);
+            block.validate(&[output0]).expect("block is valid");
+        }
+
+        //
+        // Block with invalid monetary balance
+        //
+        {
+            let (output0, gamma0) = Output::new(timestamp, &skey0, &pkey1, amount).unwrap();
+            let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+            let inputs1 = [Hash::digest(&output0)];
+            let (output1, gamma1) = Output::new(timestamp, &skey1, &pkey2, amount - 1).unwrap();
+            let outputs1 = [output1];
+            let gamma = gamma0 - gamma1;
+            let block = MonetaryBlock::new(base, gamma, &inputs1, &outputs1);
+            match block.validate(&[output0]) {
+                Err(e) => match e.downcast::<BlockchainError>().unwrap() {
+                    BlockchainError::InvalidBlockBalance => {}
+                    _ => panic!(),
+                },
+                _ => panic!(),
+            }
         }
     }
 }

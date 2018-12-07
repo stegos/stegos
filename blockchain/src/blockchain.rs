@@ -306,14 +306,11 @@ pub mod tests {
         let inputs = [input];
 
         let amount: i64 = 112;
-        let (output, delta) =
+        let (output, gamma) =
             Output::new(timestamp, &skey, &pkey, amount).expect("tests have valid keys");
         let outputs = [output];
 
-        // Adjustment is the sum of all gamma found in UTXOs.
-        let adjustment = delta;
-
-        let block = MonetaryBlock::new(base, adjustment, &inputs, &outputs);
+        let block = MonetaryBlock::new(base, gamma, &inputs, &outputs);
 
         blockchain.register_monetary_block(block)?;
 

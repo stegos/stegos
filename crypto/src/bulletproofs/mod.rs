@@ -247,6 +247,10 @@ fn simple_commit(blind: Int, val: Int) -> Point {
     blind * BP.G + val * BP.H
 }
 
+pub fn fee_a(val: i64) -> Point {
+    val * BP.H
+}
+
 fn vec_commit(
     gpt: Point,
     gpts: &[Point],

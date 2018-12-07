@@ -238,7 +238,7 @@ impl MonetaryBlock {
         // Create header
         let header = MonetaryBlockHeader {
             base,
-            gamma: gamma,
+            gamma,
             inputs_range_hash,
             outputs_range_hash,
         };
@@ -260,7 +260,7 @@ impl MonetaryBlock {
         //
         // Calculate the pedersen commitment difference in order to check the monetary balance:
         //
-        //     pedersen_commitment_diff = \sum C_i - \sum C_o - fee
+        //     pedersen_commitment_diff = \sum C_i - \sum C_o
         //
 
         let mut pedersen_commitment_diff = ECp::inf();
@@ -291,8 +291,6 @@ impl MonetaryBlock {
             let pedersen_commitment: ECp = Pt::decompress(pedersen_commitment)?;
             pedersen_commitment_diff -= pedersen_commitment;
         }
-
-        // TODO: add fee
 
         // Check the monetary balance
         if pedersen_commitment_diff != self.header.gamma * (*G) {

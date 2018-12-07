@@ -24,7 +24,7 @@
 use crate::error::*;
 use crate::output::*;
 use failure::Error;
-use stegos_crypto::bulletproofs::validate_range_proof;
+use stegos_crypto::bulletproofs::{fee_a, validate_range_proof};
 use stegos_crypto::curve1174::cpt::{
     sign_hash, validate_sig, Pt, PublicKey, SchnorrSig, SecretKey,
 };
@@ -97,7 +97,8 @@ impl Transaction {
         outputs_gamma: Fr,
         fee: i64,
     ) -> Result<Self, Error> {
-        // TODO: fee is not used yet
+        assert!(fee >= 0);
+        assert!(inputs.len() > 0 || outputs.len() > 0);
 
         //
         // Compute S_eff = N * S_M + \sum{\delta_i} + \sum{\gamma_i} - \sum{gamma_j},
@@ -161,7 +162,7 @@ impl Transaction {
         //
         // Calculate the pedersen commitment difference in order to check the monetary balance:
         //
-        //     pedersen_commitment_diff = \sum C_i - \sum C_o - fee
+        //     pedersen_commitment_diff = \sum C_i - \sum C_o - fee * A
         //
         // Calculate `P_eff` to validate transaction's signature:
         //
@@ -197,7 +198,8 @@ impl Transaction {
             pedersen_commitment_diff -= pedersen_commitment;
         }
 
-        // TODO: add fee
+        // -fee * A
+        pedersen_commitment_diff -= fee_a(self.body.fee);
 
         // Check the monetary balance
         if pedersen_commitment_diff != self.body.gamma * (*G) {
@@ -250,7 +252,7 @@ pub mod tests {
 
         let timestamp = Utc::now().timestamp() as u64;
         let amount: i64 = 1_000_000;
-        let fee: i64 = 0;
+        let fee: i64 = 1;
 
         // "genesis" output by 0
         let (output0, _gamma0) =
@@ -261,7 +263,7 @@ pub mod tests {
         //
         let inputs1 = [output0];
         let (output1, gamma1) =
-            Output::new_monetary(timestamp, &skey1, &pkey2, amount).expect("keys are valid");
+            Output::new_monetary(timestamp, &skey1, &pkey2, amount - fee).expect("keys are valid");
         let outputs_gamma = gamma1;
         let mut tx = Transaction::new(&skey1, &inputs1, &[output1], outputs_gamma, fee)
             .expect("keys are valid");
@@ -285,7 +287,8 @@ pub mod tests {
         // Invalid monetary balance
         //
         let (output_invalid1, gamma_invalid1) =
-            Output::new_monetary(timestamp, &skey1, &pkey2, amount - 1).expect("keys are valid");
+            Output::new_monetary(timestamp, &skey1, &pkey2, amount - fee - 1)
+                .expect("keys are valid");
         let outputs_gamma = gamma_invalid1;
         let tx = Transaction::new(&skey1, &inputs1, &[output_invalid1], outputs_gamma, fee)
             .expect("keys are valid");

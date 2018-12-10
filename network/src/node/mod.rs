@@ -21,14 +21,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use failure::{Error, Fail};
+use failure::{format_err, Error, Fail};
 use fnv::FnvHashMap;
 use futures::future::{select_all, Either, Future};
 use futures::sync::mpsc;
 use futures::Stream;
 use ipnetwork::IpNetwork;
 use libp2p::core::{either::EitherOutput, swarm, upgrade};
-use libp2p::core::{Multiaddr, PublicKey, Transport};
+use libp2p::core::{Multiaddr, Transport};
 use libp2p::floodsub;
 use libp2p::mplex;
 use libp2p::multiaddr::{Protocol, ToMultiaddr};
@@ -39,10 +39,7 @@ use log::*;
 use parking_lot::RwLock;
 use pnet::datalink;
 use std::collections::HashSet;
-use std::fs::File;
 use std::io::Error as IoError;
-use std::io::Read;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use stegos_config::ConfigNetwork;
@@ -82,7 +79,7 @@ pub(crate) struct Inner {
     // All remote connections
     pub(crate) remote_connections: FnvHashMap<Multiaddr, RemoteInfo>,
     // Node's PeerId
-    pub(crate) peer_id: Option<PeerId>,
+    pub(crate) peer_id: PeerId,
     // PeerStore for known Peers
     pub(crate) peer_store: Arc<memory_peerstore::MemoryPeerstore>,
     // BrokerHandle to create subscriptions to new Protocols.
@@ -107,6 +104,12 @@ impl Network {
         cfg: &ConfigNetwork,
         keychain: &KeyChain,
     ) -> Result<(Network, impl Future<Item = (), Error = ()>, broker::Broker), Error> {
+        let sec_secret_key = keychain.generate_secp256k1_keypair()?.0;
+        // Generate new key on startup, and init peer_id.
+        let keypair = SecioKeyPair::secp256k1_raw_key(&sec_secret_key[..])
+            .map_err(|e| format_err!("Couldn't produce SecioKeyPair key, reason = {}", e))?;
+        let my_id = keypair.to_peer_id();
+
         let inner = Arc::new(RwLock::new(Inner {
             config: cfg.clone(),
             floodsub_ctl: None,
@@ -114,7 +117,7 @@ impl Network {
             dial_ncp_tx: None,
             floodsub_connections: HashSet::new(),
             remote_connections: FnvHashMap::default(),
-            peer_id: None,
+            peer_id: my_id,
             peer_store: Arc::new(memory_peerstore::MemoryPeerstore::empty()),
             broker_handle: None,
             heartbeat_handle: None,
@@ -124,7 +127,7 @@ impl Network {
         }));
 
         let node = Network { inner };
-        let (service, broker) = node.run()?;
+        let (service, broker) = node.run(keypair)?;
         Ok((node, service, broker))
     }
 
@@ -158,32 +161,31 @@ impl Network {
         inner.heartbeat_handle.clone().unwrap().subscribe()
     }
 
+    /// Creates node futures.
+    /// Accept node keypair in libp2p_secio format.
+    ///
     /// Returns tuple (node_future, broker_handler)
     /// * node_future should be run to completion for network machinery to work
     /// * broker_handler manages subscriptions to topics
     ///
-    fn run(&self) -> Result<(impl Future<Item = (), Error = ()>, broker::Broker), Error> {
+    fn run(
+        &self,
+        keypair: SecioKeyPair,
+    ) -> Result<(impl Future<Item = (), Error = ()>, broker::Broker), Error> {
         let inner = self.inner.clone();
-        let config = {
+        let (config, my_id) = {
             let inner = inner.read();
-            inner.config.clone()
+            (inner.config.clone(), inner.peer_id.clone())
         };
         let mut bind_ip = Multiaddr::from(Protocol::Ip4(config.bind_ip.clone().parse()?));
         bind_ip.append(Protocol::Tcp(config.bind_port));
 
         let listen_addr = bind_ip;
-        let private_key = key_from_file(&config.private_key)?;
-        let public_key = key_from_file(&config.public_key)?;
 
         // We start by creating a `TcpConfig` that indicates that we want TCP/IP.
         let transport = TcpConfig::new()
             .with_upgrade({
-                let secio = {
-                    let keypair =
-                        SecioKeyPair::rsa_from_pkcs8(private_key.as_slice(), public_key.clone())
-                            .unwrap();
-                    SecioConfig::new(keypair)
-                };
+                let secio = SecioConfig::new(keypair);
 
                 upgrade::map_with_addr(secio, {
                     let inner = inner.clone();
@@ -218,12 +220,6 @@ impl Network {
 
         // We now prepare the protocol that we are going to negotiate with nodes that open a connection
         // or substream to our server.
-        // let my_id = PeerId::from_public_key(PublicKey::Rsa(key_from_file(&cfg.public_key)?))
-        let my_id = PeerId::from_public_key(PublicKey::Rsa(public_key));
-        {
-            let mut inner = inner.write();
-            inner.peer_id = Some(my_id.clone());
-        }
 
         populate_peerstore(inner.clone())?;
         {
@@ -448,12 +444,10 @@ pub(crate) fn populate_peerstore(node: Arc<RwLock<Inner>>) -> Result<(), Error> 
         // TODO: setup reasonable duration
         let ttl = Duration::from_secs(100 * 365 * 24 * 3600);
 
-        if let Some(peer_id) = inner.peer_id.clone() {
-            let peer_store = &inner.peer_store;
-            peer_store
-                .peer_or_create(&peer_id)
-                .add_addrs(my_addresses, ttl)
-        }
+        let peer_id = inner.peer_id.clone();
+        let peer_store = &inner.peer_store;
+        let mut peer = peer_store.peer_or_create(&peer_id);
+        peer.add_addrs(my_addresses, ttl)
     }
 
     Ok(())
@@ -489,11 +483,10 @@ fn connection_monitor(node: Arc<RwLock<Inner>>) -> Result<(), Error> {
             let peers = inner.peer_store.clone();
 
             for p in peers.peers().into_iter() {
-                if let Some(ref peer) = inner.peer_id {
-                    if *peer == p {
-                        continue;
-                    };
+                if inner.peer_id == p {
+                    continue;
                 };
+
                 for a in peers.peer_or_create(&p).addrs().into_iter() {
                     let a_ = a.clone();
                     if !inner.floodsub_connections.contains(&p) {
@@ -511,11 +504,4 @@ fn connection_monitor(node: Arc<RwLock<Inner>>) -> Result<(), Error> {
         };
     }
     Ok(())
-}
-
-fn key_from_file<P: AsRef<Path>>(file_path: P) -> Result<Vec<u8>, Error> {
-    let mut buf = Vec::new();
-    let mut f = File::open(file_path)?;
-    f.read_to_end(&mut buf)?;
-    Ok(buf)
 }

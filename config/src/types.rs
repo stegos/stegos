@@ -108,10 +108,6 @@ pub struct ConfigNetwork {
     pub heartbeat_interval: u64,
     /// List of nodes to connect to on startup.
     pub seed_nodes: Vec<String>,
-    /// Path to Node's public key
-    pub public_key: String,
-    /// Path to Node's private key
-    pub private_key: String,
     /// Broadcast topit for FloodSub
     pub broadcast_topic: String,
     /// Minimum active connections (try to keep at least so many established connections)
@@ -134,8 +130,6 @@ impl Default for ConfigNetwork {
             advertised_addresses: vec![],
             advertise_local_ips: true,
             bind_ip: "0.0.0.0".to_string(),
-            public_key: "public_key.der".to_string(),
-            private_key: "private_key.pk8".to_string(),
             broadcast_topic: "stegos".to_string(),
             min_connections: 2,
             max_connections: 2,

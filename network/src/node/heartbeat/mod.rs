@@ -168,18 +168,15 @@ impl HeartbeatService {
                 error!("Timer error: {}", e);
             });
 
-            let addresses = {
+            let addresses: Vec<_> = {
                 let inner = inner.read();
                 let peerstore = (&*inner).peer_store.clone();
                 let mut addresses = vec![];
-                if let Some(peer_id) = &inner.peer_id {
-                    for addr in peerstore.peer_or_create(peer_id).addrs() {
-                        addresses.push(addr);
-                    }
-                    addresses
-                } else {
-                    unreachable!();
+
+                for addr in peerstore.peer_or_create(&inner.peer_id).addrs() {
+                    addresses.push(addr);
                 }
+                addresses
             };
 
             let input = control_rx.select(heartbeat_rx).select(ticker);

@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#![deny(warnings)]
+// #![deny(warnings)]
 
 use log;
 use protobuf;
@@ -35,4 +35,5 @@ mod types;
 pub use crate::echo::protocol::{EchoMiddleware, EchoUpgrade};
 pub use crate::ncp::protocol;
 pub use crate::node::broker::Broker;
-pub use crate::node::Network;
+pub use crate::node::heartbeat::{HeartbeatUpdate, HeartbeatUpdateMessage};
+pub use crate::node::{Network, NetworkError};

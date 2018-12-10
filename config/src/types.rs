@@ -41,8 +41,6 @@ pub struct Config {
     pub network: ConfigNetwork,
     /// Key Chain configuration.
     pub keychain: ConfigKeyChain,
-    /// Randhound configuration.
-    pub randhound: ConfigRandhound,
 }
 
 /// Default values for global configuration.
@@ -52,7 +50,6 @@ impl Default for Config {
             general: Default::default(),
             network: Default::default(),
             keychain: Default::default(),
-            randhound: Default::default(),
         }
     }
 }
@@ -144,28 +141,6 @@ impl Default for ConfigNetwork {
             max_connections: 2,
             monitoring_interval: 15,
             heartbeat_interval: 10,
-        }
-    }
-}
-
-/// Randhound initial configuration.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(default)]
-pub struct ConfigRandhound {
-    /// Path to node's PBC public key
-    pub node_pkey: String,
-    /// Path to leader's PBC public key,
-    pub leader: String,
-    /// Keys for Randhound partiticpants,
-    pub participants: Vec<String>,
-}
-
-impl Default for ConfigRandhound {
-    fn default() -> ConfigRandhound {
-        ConfigRandhound {
-            node_pkey: "node-pbc.pkey".to_string(),
-            leader: "leader-pbc.pkey".to_string(),
-            participants: vec![],
         }
     }
 }

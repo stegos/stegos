@@ -103,21 +103,26 @@
 #![allow(dead_code)]
 
 use super::randhound_proto::{self, RandhoundMessage, RandhoundMessageTypes};
+use super::RandHoundEvent;
 
 use failure::{Error, Fail};
+use futures::future::Future;
+use futures::sync::mpsc::{self, UnboundedSender};
 use log::*;
 use parking_lot::RwLock;
 use protobuf::Message as ProtoMessage;
 use std::collections::hash_map::HashMap;
 use std::collections::hash_set::HashSet;
 use std::collections::VecDeque;
-use std::fs;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use std::vec::Vec;
 use stegos_crypto::hash::*;
 use stegos_crypto::pbc::*;
-use stegos_keychain::{pem, KeyChain, KeyChainError};
+use stegos_keychain::KeyChain;
 use stegos_network::Broker;
+use tokio::runtime::TaskExecutor;
+use tokio_timer::Delay;
 
 type Zr = fast::Zr;
 type G1 = fast::G1;
@@ -178,17 +183,30 @@ pub(crate) struct GlobalState {
     pkey: secure::PublicKey, // node secure PBC keying - lasts eternally
     skey: secure::SecretKey, // ... ditto ...
     witnesses: Arc<RwLock<HashSet<secure::PublicKey>>>, // a malleable list of witnesses
-    session_info: Arc<RwLock<Option<Session>>>, // Randhound session
+    session_info: Arc<RwLock<Session>>, // Randhound session
     epoch_info: Arc<RwLock<EpochInfo>>, // epoch information
     broker: Broker,          // handler to send messages
+    msg_queue: VecDeque<Message>, // Messages received in Idle stage
+    runtime: TaskExecutor,   // Handle to runtime to start delayed event
+    service: mpsc::UnboundedSender<RandHoundEvent>, // Events to event loop
 }
 
 // Epoch info - one epoch might have multiple Randhound sessions(?)
 #[derive(Clone)]
-struct EpochInfo {
+pub(crate) struct EpochInfo {
     pub epoch: Hash,               // epoch ID
     pub leader: secure::PublicKey, // Leader node for current epoch
     pub beacon: secure::PublicKey, // Beacon leader for current epoch
+}
+
+impl Default for EpochInfo {
+    fn default() -> Self {
+        EpochInfo {
+            epoch: Hash::from_str(&"None"),
+            leader: secure::PublicKey::from(secure::G2::new()),
+            beacon: secure::PublicKey::from(secure::G2::new()),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -229,11 +247,36 @@ struct Session {
 
 #[derive(Clone, PartialEq)]
 enum SessionStage {
+    Idle,   // No session yet started
     Init,   // key collection phase
     Stage2, // encrypted random share collecting
     Stage3, // decrypted random share collecting
     Stage4, // group leaders collect decoded randomness
     Stage5, // Beacon collects group randomness
+}
+
+impl Default for Session {
+    fn default() -> Self {
+        let (fskey, fpkey, _fsig) = fast::make_deterministic_keys(b"idle");
+        // Populate with some dummy values
+        Session {
+            session: Hash::digest(&"idle".to_string()),
+            stage: SessionStage::Idle,
+            leader: secure::PublicKey::from(secure::G2::new()),
+            fpkey,
+            fskey,
+            ngrps: 0,
+            grpleaders: vec![],
+            grp: vec![],
+            grptbl: HashMap::new(),
+            rschkv: vec![],
+            rands: vec![],
+            grands: HashMap::new(),
+            lrands: vec![],
+            brands: HashMap::new(),
+            msgq: VecDeque::new(),
+        }
+    }
 }
 
 // lazy_static! {
@@ -264,60 +307,27 @@ enum SessionStage {
 // }
 
 pub(crate) fn init_state(
-    cfg: &stegos_config::Config,
     keychain: &KeyChain,
     broker: Broker,
-) -> Result<GlobalState, Error> {
-    fn read_pbc_key(f: &String) -> Result<secure::PublicKey, Error> {
-        let pkey = fs::read_to_string(f.clone())?;
-        let pkey = pem::parse(pkey)?;
-        if pkey.tag != PBC_PKEY_TAG {
-            return Err(KeyChainError::KeyParseError(f.to_string()).into());
-        }
-        Ok(secure::PublicKey::try_from_bytes(&pkey.contents)?)
-    }
-
-    fn save_pbc_key(pkey: &secure::PublicKey, f: &String) -> Result<(), Error> {
-        let pkey_bytes = pkey.into_bytes();
-        let pkey_pem = pem::Pem {
-            tag: PBC_PKEY_TAG.to_string(),
-            contents: pkey_bytes.to_vec(),
-        };
-
-        fs::write(f, pem::encode(&pkey_pem))?;
-        Ok(())
-    }
-
-    let mut witnesses = HashSet::new();
-    for key in cfg.randhound.participants.iter() {
-        let pkey = read_pbc_key(key)?;
-        witnesses.insert(pkey);
-    }
-    let leader_pkey = read_pbc_key(&cfg.randhound.leader)?;
-    assert!(secure::check_keying(
-        &keychain.cosi_pkey,
-        &keychain.cosi_sig
-    ));
-    save_pbc_key(&keychain.cosi_pkey, &cfg.randhound.node_pkey)?;
-    debug!("Loaded {} participants.", cfg.randhound.participants.len(),);
-    debug!("Leader's pkey is: {:#?}", leader_pkey,);
-    debug!("Node's pkey os: {:#?}", keychain.cosi_pkey);
-    Ok(GlobalState {
+    runtime: TaskExecutor,
+    service: UnboundedSender<RandHoundEvent>,
+) -> GlobalState {
+    debug!("Node's pkey is: {:#?}", keychain.cosi_pkey);
+    GlobalState {
         pkey: keychain.cosi_pkey.clone(),
         skey: keychain.cosi_skey.clone(),
-        witnesses: Arc::new(RwLock::new(witnesses)),
-        session_info: Arc::new(RwLock::new(None)),
-        epoch_info: Arc::new(RwLock::new(EpochInfo {
-            leader: leader_pkey,
-            beacon: leader_pkey,
-            epoch: Hash::from_str(&"None"),
-        })),
+        witnesses: Arc::new(RwLock::new(HashSet::new())),
+        session_info: Arc::new(RwLock::new(Session::default())),
+        epoch_info: Arc::new(RwLock::new(EpochInfo::default())),
         broker,
-    })
+        msg_queue: VecDeque::new(),
+        runtime,
+        service,
+    }
 }
 
 impl GlobalState {
-    fn add_witness(&self, pkey: &secure::PublicKey) {
+    pub(crate) fn add_witness(&self, pkey: &secure::PublicKey) {
         let mut wits = self.witnesses.write();
         wits.insert(*pkey);
     }
@@ -343,12 +353,12 @@ impl GlobalState {
     // -------------------------------------------------------------------
     // Pertaining to Epoch
 
-    fn get_current_leader(&self) -> secure::PublicKey {
+    pub(crate) fn get_current_leader(&self) -> secure::PublicKey {
         let ep = self.epoch_info.read();
         ep.leader
     }
 
-    fn get_current_beacon(&self) -> secure::PublicKey {
+    pub(crate) fn get_current_beacon(&self) -> secure::PublicKey {
         let ep = self.epoch_info.read();
         ep.beacon
     }
@@ -357,52 +367,53 @@ impl GlobalState {
         let ep = self.epoch_info.read();
         ep.epoch
     }
+
+    pub(crate) fn set_epoch(&mut self, e: EpochInfo) {
+        *self.epoch_info.write() = e;
+    }
+
     fn get_my_fast_pkey(&self) -> fast::PublicKey {
-        let info = self.session_info.read();
-        let sess = info.clone().unwrap();
-        sess.fpkey
+        self.session_info.read().fpkey.clone()
     }
 
     fn get_my_fast_skey(&self) -> fast::SecretKey {
-        let info = self.session_info.read();
-        let sess = info.clone().unwrap();
-        sess.fskey
+        self.session_info.read().fskey.clone()
     }
 
     fn add_fast_key(&self, pkey: &secure::PublicKey, fpkey: &fast::PublicKey) {
         // If an entry for pkey in the grptbl is missing, then add one
         // in as initialized with the indicated fast pkey.
         let mut info = self.session_info.write();
-        let mut sess = info.clone().unwrap();
+        let mut sess = info.clone();
         sess.grptbl.entry(*pkey).or_insert(GrpInfo {
             fkey: Some(*fpkey),
             commit: false,
             decrs: HashMap::new(),
         });
-        *info = Some(sess); // is this necessary?
+        *info = sess; // is this necessary?
     }
 
     fn get_ngroups(&self) -> usize {
         let info = self.session_info.read();
-        let sess = info.clone().unwrap();
+        let sess = info.clone();
         sess.ngrps
     }
 
     fn group_size(&self) -> usize {
         let info = self.session_info.read();
-        let sess = info.clone().unwrap();
+        let sess = info.clone();
         sess.grp.len()
     }
 
     fn actual_group_size(&self) -> usize {
         let info = self.session_info.read();
-        let sess = info.clone().unwrap();
+        let sess = info.clone();
         sess.grptbl.len()
     }
 
     fn position_in_group(&self, pkey: &secure::PublicKey) -> usize {
         let info = self.session_info.read();
-        let sess = info.clone().unwrap();
+        let sess = info.clone();
         let mut pos = 0;
         for key in sess.clone().grp {
             if *pkey == key {
@@ -416,20 +427,20 @@ impl GlobalState {
 
     fn get_stage(&self) -> SessionStage {
         let info = self.session_info.read();
-        let sess = info.clone().unwrap();
+        let sess = info.clone();
         sess.stage
     }
 
     fn set_stage(&self, stage: SessionStage) {
         let mut info = self.session_info.write();
-        let ref mut sess = info.clone().unwrap();
+        let ref mut sess = info.clone();
         sess.stage = stage;
-        *info = Some(sess.clone()); // is this necessary?
+        *info = sess.clone(); // is this necessary?
     }
 
     fn is_group_leader(&self, pkey: &secure::PublicKey) -> bool {
         let info = self.session_info.read();
-        let sess = info.clone().unwrap();
+        let sess = info.clone();
         for key in sess.grpleaders {
             if key == *pkey {
                 return true;
@@ -441,7 +452,7 @@ impl GlobalState {
     // --------------------------------------------------------------------------------
     // Global Node info
 
-    fn get_pkey(&self) -> secure::PublicKey {
+    pub(crate) fn get_pkey(&self) -> secure::PublicKey {
         self.pkey
     }
 
@@ -451,19 +462,19 @@ impl GlobalState {
 
     fn get_current_session(&self) -> Hash {
         let info = self.session_info.read();
-        let sess = info.clone().unwrap();
+        let sess = info.clone();
         sess.session
     }
 
     fn get_group_keys(&self) -> Vec<secure::PublicKey> {
         let info = self.session_info.read();
-        let sess = info.clone().unwrap();
+        let sess = info.clone();
         sess.grp
     }
 
     fn is_group_member(&self, pkey: &secure::PublicKey) -> bool {
         let info = self.session_info.read();
-        let sess = info.clone().unwrap();
+        let sess = info.clone();
         for key in sess.grp {
             if key == *pkey {
                 return true;
@@ -474,7 +485,7 @@ impl GlobalState {
 
     fn get_group_leader(&self) -> secure::PublicKey {
         let info = self.session_info.read();
-        let sess = info.clone().unwrap();
+        let sess = info.clone();
         sess.leader
     }
 
@@ -491,7 +502,7 @@ impl GlobalState {
             from: self.get_pkey(), // our secure::PublicKey for "who sent it?"
         }
     }
-    fn validate_signed_message(&self, msg: &Message) -> Result<(), MsgErr> {
+    fn validate_signed_message(&mut self, msg: &Message) -> Result<(), MsgErr> {
         // Generic message validation...
         match msg.typ {
             MsgType::Start { epoch, .. } => {
@@ -503,10 +514,9 @@ impl GlobalState {
                 if epoch != self.get_current_epoch() {
                     return Err(MsgErr::NotCurrentEpoch);
                 }
-                let info = self.session_info.write();
                 if self.get_pkey() != msg.from {
                     // if I'm not the beacon node
-                    if let Some(_) = *info {
+                    if self.get_stage() != SessionStage::Idle {
                         // If we were left in a session, or got a second notice
                         // to Start, then clear state and try again.
                         self.clear_session_state();
@@ -516,9 +526,10 @@ impl GlobalState {
             _ => {
                 // other messages only valid if we are in a session,
                 // and must be for the current session,
-                let info = self.session_info.read();
-                if let None = *info {
-                    return Err(MsgErr::NotInSession);
+                if self.get_stage() == SessionStage::Idle {
+                    self.msg_queue.push_back(msg.clone());
+                    return Ok(());
+                    // return Err(MsgErr::NotInSession);
                 }
                 let sess = self.get_current_session();
                 if sess != msg.sess {
@@ -551,44 +562,42 @@ impl GlobalState {
 
     fn start_session(&self, id: &Hash, grp: &Vec<secure::PublicKey>) {
         // leader is group leader
-        let info = self.session_info.read().clone();
-        match info {
-            None => {
-                debug!("Starting new session!");
-                // Beacon inits its own session_info, we might be Beacon
-                let leader = grp[0];
-                assert!(self.is_valid_witness(&leader), "Invalid leader");
-                // generate ephemeral fast keying for new session
-                let seed = Hash::digest_chain(&[id, &self.get_skey()]);
-                let (fskey, fpkey, fsig) = fast::make_deterministic_keys(&seed.bits());
-                assert!(fast::check_keying(&fpkey, &fsig));
-                {
-                    let mut info = self.session_info.write();
-                    *info = Some(Session {
-                        session: id.clone(),
-                        stage: SessionStage::Init,
-                        leader: leader.clone(), // group leader
-                        fpkey: fpkey,
-                        fskey: fskey,
-                        ngrps: 0,
-                        grpleaders: Vec::new(),
-                        grp: grp.to_vec(),
-                        grptbl: HashMap::new(),
-                        rschkv: Vec::new(),
-                        rands: Vec::new(),
-                        grands: HashMap::new(),
-                        lrands: Vec::new(),
-                        brands: HashMap::new(),
-                        msgq: VecDeque::new(),
-                    });
-                }
-                debug!("New session structure ready");
-                let me = self.get_pkey();
-                self.add_fast_key(&me, &fpkey);
+        if self.get_stage() == SessionStage::Idle {
+            debug!("Starting new session!");
+            // Beacon inits its own session_info, we might be Beacon
+            let leader = grp[0];
+            assert!(self.is_valid_witness(&leader), "Invalid leader");
+            // generate ephemeral fast keying for new session
+            let seed = Hash::digest_chain(&[id, &self.get_skey()]);
+            let (fskey, fpkey, fsig) = fast::make_deterministic_keys(&seed.bits());
+            assert!(fast::check_keying(&fpkey, &fsig));
+            {
+                let mut info = self.session_info.write();
+                *info = Session {
+                    session: id.clone(),
+                    stage: SessionStage::Init,
+                    leader: leader.clone(), // group leader
+                    fpkey: fpkey,
+                    fskey: fskey,
+                    ngrps: 0,
+                    grpleaders: Vec::new(),
+                    grp: grp.to_vec(),
+                    grptbl: HashMap::new(),
+                    rschkv: Vec::new(),
+                    rands: Vec::new(),
+                    grands: HashMap::new(),
+                    lrands: Vec::new(),
+                    brands: HashMap::new(),
+                    msgq: VecDeque::new(),
+                };
             }
-            _ => (),
+            debug!("New session structure ready");
+            let me = self.get_pkey();
+            self.add_fast_key(&me, &fpkey);
+            debug!("Start session done!");
+        } else {
+            error!("Start session received out of band!");
         }
-        debug!("Start session done!");
     }
 
     // ------------------------------------------------------------------------
@@ -605,7 +614,7 @@ impl GlobalState {
     // get pushed into a FIFO queue for later processing.
     // ------------------------------------------------------------------------
 
-    pub fn dispatch_incoming_message(&self, msg: &Message) -> Result<(), MsgErr> {
+    pub fn dispatch_incoming_message(&mut self, msg: &Message) -> Result<(), MsgErr> {
         // This is the function that should be called by the message receiver loop
         // If the message is valid, an Ok(()) will be returned. Otherwise, one of
         // the MsgErr values will be sent back.
@@ -617,6 +626,12 @@ impl GlobalState {
                 ref grps,
             } => {
                 self.handle_start_message(&sess, &grps);
+                // dispatch messages received during Idle stage
+                let mut q = self.msg_queue.clone();
+                for m in q.drain(..) {
+                    self.dispatch_incoming_message(&m)?;
+                }
+                self.msg_queue = VecDeque::new();
             }
             _ => {
                 // Perform the new incoming message first, then look at what
@@ -639,24 +654,19 @@ impl GlobalState {
         // the queue till empty. This run through may enqueue additional
         // messages, so work on a copy of the current FIFO queue, and repeat
         // until no changes are detected in number of enqueued messages.
+        // TODO: Exit from the loop if stage wasn't changed
         debug!("Dispatching queued messages");
         loop {
             let msgs;
             {
                 // we are already in a running session (not always)
-                let sess_ = self.session_info.read().clone();
-                if let Some(mut sess) = sess_ {
-                    if sess.msgq.len() > 0 {
-                        msgs = sess.msgq;
-                        sess.msgq = VecDeque::new();
-                        *self.session_info.write() = Some(sess); // is this actually needed?
-                    } else {
-                        debug!("Nothing to process, breaking out!");
-                        break;
-                    }
+                let mut sess = self.session_info.read().clone();
+                if sess.msgq.len() > 0 {
+                    msgs = sess.msgq;
+                    sess.msgq = VecDeque::new();
+                    *self.session_info.write() = sess; // is this actually needed?
                 } else {
-                    // Session is None,
-                    debug!("Trying do dequeue None session!");
+                    debug!("Nothing to process, breaking out!");
                     break;
                 }
             }
@@ -665,20 +675,12 @@ impl GlobalState {
             for (from, msg) in msgs {
                 self.dispatch_message(&from, &msg);
             }
-            {
-                let info = self.session_info.read();
-                if let Some(ref sess) = *info {
-                    // we're still alive...
-                    if nel == sess.msgq.len() {
-                        // no change so get out...
-                        break;
-                    }
-                } else {
-                    // we must have finished up.
-                    break;
-                }
-            } // end of read-lock
+            if nel == self.session_info.read().msgq.len() {
+                // no change so get out...
+                break;
+            }
         }
+        debug!("Finished processing FIFO messages!");
     }
 
     fn dispatch_message(&self, from: &secure::PublicKey, msg: &MsgType) {
@@ -703,9 +705,9 @@ impl GlobalState {
     fn stash_fifo(&self, from: &secure::PublicKey, msg: &MsgType) {
         // Stash a message onto the FIFO queue for later processing
         let mut info = self.session_info.write();
-        let mut sess = info.clone().unwrap();
+        let mut sess = info.clone();
         sess.msgq.push_back((*from, msg.clone()));
-        *info = Some(sess); // is this needed?
+        *info = sess; // is this needed?
     }
 
     // --------------------------------------------------------------------------------
@@ -861,7 +863,7 @@ impl GlobalState {
             assert!(fast::check_keying(&fpkey, &fsig));
             {
                 let mut info = self.session_info.write();
-                *info = Some(Session {
+                *info = Session {
                     session: session_id,
                     stage: SessionStage::Init,
                     leader: *my_leader,
@@ -877,7 +879,7 @@ impl GlobalState {
                     lrands: Vec::new(),
                     brands: HashMap::new(),
                     msgq: VecDeque::new(),
-                });
+                };
             }
             self.add_fast_key(&me, &fpkey);
             let msg = MsgType::Start {
@@ -903,7 +905,7 @@ impl GlobalState {
         // All witnesses receive this message. But only those participating will reach
         // this function.
         let mut info = self.session_info.write();
-        *info = None;
+        *info = Session::default();
     }
 
     fn handle_start_message(&self, sess: &Hash, grps: &Vec<Vec<secure::PublicKey>>) {
@@ -946,9 +948,23 @@ impl GlobalState {
                 if let Err(e) = self.broadcast_grp(&msg) {
                     error!("Failed to send broadcast message to group: {}", e);
                 }
+
                 // this one is easy - very minimal compute overhead at each node
                 // so just have to account for network delays
                 // schedule_after(3.0 * NETWORK_DELAY, &self.maybe_transition_from_init_phase);
+                self.runtime.spawn({
+                    let delayed = Delay::new(Instant::now() + Duration::from_secs(5)).and_then({
+                        let send = self.service.clone();
+                        move |()| {
+                            debug!("Kabooom!");
+                            if let Err(e) = send.unbounded_send(RandHoundEvent::CheckInitQuorum) {
+                                error!("Timer error, scheduling check for init quorum: {}", e)
+                            }
+                            Ok(())
+                        }
+                    });
+                    delayed.map_err(|_| ())
+                });
             }
         }
     }
@@ -1025,7 +1041,7 @@ impl GlobalState {
         let mut enc_shares = Vec::<G2>::new();
         {
             let info = self.session_info.read();
-            let sess = info.clone().unwrap();
+            let sess = info.clone();
             for (ix, pkey) in (1..=ngrp).zip(sess.grp) {
                 //
                 // If we have actual keying information for this recipient
@@ -1077,7 +1093,7 @@ impl GlobalState {
                 kpt: kpt,
             };
             let mut info = self.session_info.write();
-            let mut sess = info.clone().unwrap();
+            let mut sess = info.clone();
             sess.grptbl.entry(me).and_modify(|e| {
                 e.commit = true;
                 e.decrs.insert(me, decr);
@@ -1096,7 +1112,7 @@ impl GlobalState {
                 sess.rschkv.push(rschk / invwt);
             }
             // store back the updated session info
-            *info = Some(sess); // is this really necessary?
+            *info = sess; // is this really necessary?
         } // end of write-lock (poor semantic syntax)
 
         // we perform this last so we don't have to clone the proofs vector
@@ -1136,7 +1152,7 @@ impl GlobalState {
 
     fn nbr_commits(&self) -> usize {
         let info = self.session_info.read();
-        let grpinfo = info.clone().unwrap().grptbl;
+        let grpinfo = info.clone().grptbl;
         let mut count = 0;
         for (_, entry) in grpinfo {
             if entry.commit && entry.decrs.len() > 0 {
@@ -1167,7 +1183,7 @@ impl GlobalState {
 
         // let info = self.session_info.read(); // sure hope a read lock inside
         // let ref sess = info.clone().unwrap(); // of a write lock works in Rust...
-        let sess = self.session_info.read().clone().unwrap(); // TODO: handle Option properly
+        let sess = self.session_info.read().clone(); // TODO: handle Option properly
 
         // Reed-Solomon check for valid proofs vector
         let rschk = dot_prod_g1_zr(&commit.proofs, &sess.rschkv);
@@ -1264,7 +1280,7 @@ impl GlobalState {
                 let thresh = ngrp - max_byz_fails(ngrp);
                 let mut newrand = None;
                 {
-                    let mut sess = self.session_info.read().clone().unwrap();
+                    let mut sess = self.session_info.read().clone();
                     sess.grptbl.entry(*from).or_insert({
                         // We haven't seen sender's fast public key.
                         // But that shouldn't stop us from accepting his commitments.
@@ -1308,7 +1324,7 @@ impl GlobalState {
                             debug!("Commit is invalid!");
                         }
                     });
-                    *self.session_info.write() = Some(sess); // is this necessary?
+                    *self.session_info.write() = sess; // is this necessary?
                 } // end of write-lock (very poor syntax...)
 
                 debug!("Number of commitments received: {}", self.nbr_commits());
@@ -1319,7 +1335,7 @@ impl GlobalState {
                 // if we collected new randomness, pool it into the pending vector
                 if let Some(pair) = newrand {
                     let mut info = self.session_info.write();
-                    let mut sess = info.clone().unwrap();
+                    let mut sess = info.clone();
                     sess.rands.push(pair);
                     if sess.rands.len() >= thresh {
                         // If the output pending vector now has a threshold number
@@ -1327,7 +1343,7 @@ impl GlobalState {
                         // leader.
                         self.send_randomness_to_group_leader(&sess.rands);
                     }
-                    *info = Some(sess); // is this really necessary?
+                    *info = sess; // is this really necessary?
                 }
             }
             _ => {
@@ -1342,7 +1358,7 @@ impl GlobalState {
         self.dispatch_fifo_messages();
         let me = self.get_pkey();
         let info = self.session_info.read();
-        let sess = info.clone().unwrap();
+        let sess = info.clone();
         let mut decrs = Vec::new();
         for (pkey, entry) in sess.grptbl {
             if let Some(pt) = entry.decrs.get(&me) {
@@ -1408,7 +1424,7 @@ impl GlobalState {
             SessionStage::Stage2 | SessionStage::Stage3 => {
                 let ngrp = self.group_size();
                 let thresh = ngrp - max_byz_fails(ngrp);
-                let mut sess = self.session_info.read().clone().unwrap();
+                let mut sess = self.session_info.read().clone();
                 let mut newsess = sess.clone();
                 let mut done = false;
                 for (pkey, decr) in shares {
@@ -1439,7 +1455,8 @@ impl GlobalState {
                                         }
                                     }
                                 }
-                            }).or_insert({
+                            })
+                            .or_insert({
                                 // We haven't seen this poly before, but don't discard the
                                 // decrypted randomness. It might actually live onward...
                                 let mut grpinfo = GrpInfo {
@@ -1457,7 +1474,7 @@ impl GlobalState {
                     }
                 }
                 newsess.grptbl = sess.grptbl.clone(); // is this really necessary?
-                *self.session_info.write() = Some(newsess); // is this really necessary?
+                *self.session_info.write() = newsess; // is this really necessary?
             }
             _ => {
                 // latecomers... just ignore the message
@@ -1512,7 +1529,7 @@ impl GlobalState {
                 | SessionStage::Stage4 => {
                     let ngrp = self.group_size();
                     let thresh = ngrp - max_byz_fails(ngrp);
-                    let mut sess = self.session_info.read().clone().unwrap();
+                    let mut sess = self.session_info.read().clone();
                     let mut newsess = sess.clone();
                     let mut done = false;
                     for (pkey, pt) in rands {
@@ -1565,7 +1582,8 @@ impl GlobalState {
                                         }
                                     }
                                 }
-                            }).or_insert({
+                            })
+                            .or_insert({
                                 // First entry for a polynomial...
                                 let mut map = HashMap::new();
                                 map.insert(*from, *pt);
@@ -1576,7 +1594,7 @@ impl GlobalState {
                         }
                     }
                     newsess.grands = sess.grands.clone(); // are these really necesasry?
-                    *self.session_info.write() = Some(newsess); // ditto...
+                    *self.session_info.write() = newsess; // ditto...
                 }
                 _ => {
                     // latecomers... just drop the message
@@ -1607,7 +1625,7 @@ impl GlobalState {
         if self.get_pkey() == self.get_current_beacon() {
             let ngrps = self.get_ngroups();
             let thresh = ngrps - max_byz_fails(ngrps);
-            let mut sess = self.session_info.read().clone().unwrap();
+            let mut sess = self.session_info.read().clone();
             if sess.brands.len() < thresh {
                 // Only accept new randomness if we haven't yet seen a threshold
                 // number of them.
@@ -1637,9 +1655,9 @@ impl GlobalState {
                     if let Err(e) = self.broadcast(&msg) {
                         error!("Failed to broadcast lottery ticket: {}", e);
                     }
-                    *self.session_info.write() = None; // we're done here...
+                    *self.session_info.write() = Session::default(); // we're done here...
                 } else {
-                    *self.session_info.write() = Some(sess); // is this actually necessary?
+                    *self.session_info.write() = sess; // is this actually necessary?
                 }
             }
         }

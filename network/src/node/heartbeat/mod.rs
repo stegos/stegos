@@ -52,12 +52,12 @@ const HEARTBEAT_TOPIC: &'static str = "stegos-heartbeat";
 // ----------------------------------------------------------------
 
 #[derive(Debug, Clone)]
-pub(crate) struct HeartbeatUpdateMessage {
+pub struct HeartbeatUpdateMessage {
     public_key: NodePublicKey,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum HeartbeatUpdate {
+pub enum HeartbeatUpdate {
     Update(HeartbeatUpdateMessage),
     Delete(NodePublicKey),
 }

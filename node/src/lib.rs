@@ -115,7 +115,7 @@ impl Node {
 }
 
 /// Send when epoch is changed.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct EpochNotification {
     pub epoch: u64,
     pub leader: SecurePublicKey,

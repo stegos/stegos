@@ -24,20 +24,21 @@
 mod randhound;
 mod randhound_proto;
 
-use crate::randhound::GlobalState;
+use crate::randhound::{EpochInfo, GlobalState};
 
-use failure::Error;
-use futures::sync::mpsc::UnboundedReceiver;
+use failure::{Error, Fail};
+use futures::sync::mpsc::{self, UnboundedSender};
 use futures::{Async, Future, Poll, Stream};
+use futures_stream_select_all_send::select_all;
 use log::*;
 use protobuf;
-use std::sync::Arc;
-use std::time::Duration;
-use stegos_config::Config;
+use std::time::{Duration, Instant};
 use stegos_crypto::hash::{Hash, Hashable};
 use stegos_keychain::KeyChain;
-use stegos_network::Broker;
-use tokio::timer::Interval;
+use stegos_network::{Broker, HeartbeatUpdate, Network};
+use stegos_node::{EpochNotification, Node};
+use tokio::runtime::TaskExecutor;
+use tokio::timer::{Delay, Interval};
 
 const TOPIC: &'static str = "randhound";
 
@@ -52,10 +53,12 @@ impl RandHound {
     /// Create a new RandHound service.
     pub fn new(
         broker: Broker,
-        cfg: &Config,
+        network: Network,
+        node: Node,
         keychain: &KeyChain,
+        runtime: TaskExecutor,
     ) -> Result<impl Future<Item = (), Error = ()>, Error> {
-        RandHoundService::new(broker, cfg, keychain)
+        RandHoundService::new(broker, network, node, keychain, runtime)
     }
 }
 
@@ -63,47 +66,105 @@ impl RandHound {
 // Internal Implementation.
 // ----------------------------------------------------------------
 
-/// RandHound++ network service.
-struct RandHoundService {
-    /// Network message broker.
-    // broker: Broker,
-    /// Timer
-    timer: Interval,
-    /// Unicast Input Messages.
-    unicast_rx: UnboundedReceiver<Vec<u8>>,
-    /// Broadcast Input Messages.
-    broadcast_rx: UnboundedReceiver<Vec<u8>>,
-    /// Is Randhound started??
-    // randhound_started: bool,
-    /// Randhound state
-    state: Arc<GlobalState>,
+#[derive(Clone, Debug)]
+pub(crate) enum RandHoundEvent {
+    Timer(Instant),
+    Unicast(Vec<u8>),
+    Broadcast(Vec<u8>),
+    Epoch(EpochNotification),
+    Heartbeat(HeartbeatUpdate),
+    CheckInitQuorum,
+    NewRound,
 }
 
-impl RandHoundService {
+#[derive(Debug, Fail)]
+enum RandHoundInputError {
+    #[fail(display = "Timer error: {:#?}", _0)]
+    Timer(tokio_timer::Error),
+    #[fail(display = "Unreachable")]
+    NoError, // To wrap Error = () from network streams
+}
+
+/// RandHound++ network service.
+pub struct RandHoundService {
+    /// event sender
+    send: UnboundedSender<RandHoundEvent>,
+    /// event receiver
+    recv: Box<Stream<Item = RandHoundEvent, Error = RandHoundInputError> + Send>,
+    /// Randhound state
+    state: GlobalState,
+    /// Tokio runtime handler
+    runtime: TaskExecutor,
+}
+
+impl<'a> RandHoundService {
     /// Constructor.
-    fn new(broker: Broker, cfg: &Config, keychain: &KeyChain) -> Result<Self, Error> {
+    pub fn new(
+        broker: Broker,
+        network: Network,
+        node: Node,
+        keychain: &KeyChain,
+        runtime: TaskExecutor,
+    ) -> Result<Self, Error> {
         // Subscribe to unicast topic.
         debug!(
             "subscribed to topic: {}",
             node_id_from_hashable(&keychain.cosi_pkey)
         );
-        let unicast_rx = broker.subscribe(&node_id_from_hashable(&keychain.cosi_pkey))?;
 
-        // Subscribe to broadcast topic.
-        let broadcast_rx = broker.subscribe(&TOPIC.to_string())?;
+        let mut inputs: Vec<
+            Box<Stream<Item = RandHoundEvent, Error = RandHoundInputError> + Send>,
+        > = vec![];
+
+        let heartbeat_rx = network
+            .subscribe_heartbeat()?
+            .map(|m| RandHoundEvent::Heartbeat(m))
+            .map_err(|_| RandHoundInputError::NoError);
+
+        inputs.push(Box::new(heartbeat_rx));
+
+        let unicast_rx = broker
+            .subscribe(&node_id_from_hashable(&keychain.cosi_pkey))?
+            .map(|m| RandHoundEvent::Unicast(m))
+            .map_err(|_| RandHoundInputError::NoError);
+
+        inputs.push(Box::new(unicast_rx));
+
+        let broadcast_rx = broker
+            .subscribe(&TOPIC.to_string())?
+            .map(|m| RandHoundEvent::Broadcast(m))
+            .map_err(|_| RandHoundInputError::NoError);
+
+        inputs.push(Box::new(broadcast_rx));
+
+        let epoch_rx = node
+            .subscribe_epoch()?
+            .map(|m| RandHoundEvent::Epoch(m))
+            .map_err(|_| RandHoundInputError::NoError);
+
+        inputs.push(Box::new(epoch_rx));
+
+        let (send, recv) = mpsc::unbounded();
+
+        inputs.push(Box::new(recv.map_err(|_| RandHoundInputError::NoError)));
 
         // Set up timer event.
-        let timer = Interval::new_interval(Duration::from_secs(15));
+        let timer = Interval::new_interval(Duration::from_secs(15))
+            .map(|i| RandHoundEvent::Timer(i))
+            .map_err(|e| RandHoundInputError::Timer(e));
 
-        let state = randhound::init_state(cfg, &keychain, broker)?;
+        inputs.push(Box::new(timer));
+
+        let recv = select_all(inputs);
+
+        let state = randhound::init_state(&keychain, broker, runtime.clone(), send.clone());
 
         let randhound = RandHoundService {
             // broker: broker.clone(),
-            timer,
-            unicast_rx,
-            broadcast_rx,
-            // randhound_started: false,
-            state: Arc::new(state),
+            send,
+            recv,
+            state,
+            runtime,
         };
 
         Ok(randhound)
@@ -128,20 +189,53 @@ impl RandHoundService {
         self.process_msg(msg);
     }
 
-    /// Called on timer event.
-    fn on_timer(&mut self) {
-        debug!("timer");
-        // if self.randhound_started {
-        //     debug!("Randhound already started!");
-        //     self.state.maybe_transition_from_init_phase();
-        // } else {
-        //     debug!("Starting Randhound!");
-        //     self.randhound_started = true;
-        //     self.state.start_randhound_round();
-        // }
+    fn on_epoch(&mut self, msg: EpochNotification) {
+        debug!("Epoch notification received: {:#?}", msg);
+        let mut epoch = EpochInfo::default();
+        epoch.leader = msg.leader.clone();
+        epoch.beacon = msg.leader.clone();
+        for w in msg.witnesses.iter() {
+            self.state.add_witness(w);
+        }
+        self.state.set_epoch(epoch);
+        if self.state.get_pkey() == msg.leader {
+            debug!("I'm beacon! Schedule Randhound round ");
+            self.runtime.spawn({
+                let delayed = Delay::new(Instant::now() + Duration::from_secs(15)).and_then({
+                    let send = self.send.clone();
+                    move |()| {
+                        debug!("Kabooom!");
+                        if let Err(e) = send.unbounded_send(RandHoundEvent::NewRound) {
+                            error!("Timer error, scheduling Randhound round: {}", e)
+                        }
+                        Ok(())
+                    }
+                });
+                delayed.map_err(|_| ())
+            });
+        }
     }
 
-    fn process_msg(&self, msg: Vec<u8>) {
+    fn on_heartbeat(&mut self, msg: HeartbeatUpdate) {
+        debug!("Heartbeat notification received: {:#?}", msg);
+    }
+
+    /// Called on timer event.
+    fn on_check_init_quorum(&mut self) {
+        debug!("Checking for quorum during Init stage");
+        self.state.maybe_transition_from_init_phase();
+    }
+
+    fn on_new_round(&mut self) {
+        debug!("Starting Randhound!");
+        self.state.start_randhound_round();
+    }
+
+    fn on_timer(&self) {
+        debug!("Tick!");
+    }
+
+    fn process_msg(&mut self, msg: Vec<u8>) {
         let proto_msg = match protobuf::parse_from_bytes(&msg) {
             Ok(msg) => {
                 debug!("*received unicast protobuf message: {:#?}*", msg);
@@ -173,32 +267,24 @@ impl Future for RandHoundService {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        // Process incoming messages
         loop {
-            match self.unicast_rx.poll() {
-                Ok(Async::Ready(Some(msg))) => self.on_unicast(msg),
-                Ok(Async::Ready(None)) => unreachable!(), // never happens
-                Ok(Async::NotReady) => break,             // fall through
-                Err(()) => panic!("Network failure"),
-            }
-        }
-        loop {
-            match self.broadcast_rx.poll() {
-                Ok(Async::Ready(Some(msg))) => self.on_broadcast(msg),
-                Ok(Async::Ready(None)) => unreachable!(), // never happens
-                Ok(Async::NotReady) => break,             // fall through
-                Err(()) => panic!("Network failure"),
-            }
-        }
-
-        // Process timer events
-        loop {
-            match self.timer.poll() {
-                Ok(Async::Ready(Some(_instant))) => self.on_timer(),
-                Ok(Async::Ready(None)) => unreachable!(), // never happens
+            match self.recv.poll() {
+                Ok(Async::Ready(Some(evt))) => match evt {
+                    RandHoundEvent::Unicast(msg) => self.on_unicast(msg),
+                    RandHoundEvent::Broadcast(msg) => self.on_broadcast(msg),
+                    RandHoundEvent::Epoch(msg) => self.on_epoch(msg),
+                    RandHoundEvent::Heartbeat(msg) => self.on_heartbeat(msg),
+                    RandHoundEvent::Timer(_i) => self.on_timer(),
+                    RandHoundEvent::CheckInitQuorum => self.on_check_init_quorum(),
+                    RandHoundEvent::NewRound => self.on_new_round(),
+                },
+                Ok(Async::Ready(None)) => unreachable!(), // never should happen
                 Ok(Async::NotReady) => return Ok(Async::NotReady),
-                Err(e) => panic!("Timer failure: {}", e),
-            };
+                Err(e) => {
+                    error!("Error in Randhound event loop: {:#?}", e);
+                    return Err(());
+                }
+            }
         }
     }
 }

@@ -131,10 +131,10 @@ impl Default for ConfigNetwork {
             advertise_local_ips: true,
             bind_ip: "0.0.0.0".to_string(),
             broadcast_topic: "stegos".to_string(),
-            min_connections: 2,
-            max_connections: 2,
-            monitoring_interval: 15,
-            heartbeat_interval: 10,
+            min_connections: 8,
+            max_connections: 32,
+            monitoring_interval: 5,
+            heartbeat_interval: 30,
         }
     }
 }

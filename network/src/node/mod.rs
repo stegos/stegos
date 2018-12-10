@@ -247,12 +247,10 @@ impl Network {
                     EitherOutput::First(floodsub) => Either::A(
                         addr.and_then(move |addr| floodsub_handler(floodsub, addr, inner)),
                     ),
-                    EitherOutput::Second(echo) => {
+                    EitherOutput::Second(ncp) => {
                         debug!("Successfully negotiated NCP protocol");
-                        debug!("Endpoint: {:?}", echo.0);
-                        Either::B(
-                            addr.and_then(move |addr| ncp_handler(echo.1, echo.0, addr, inner)),
-                        )
+                        debug!("Endpoint: {:?}", ncp.0);
+                        Either::B(addr.and_then(move |addr| ncp_handler(ncp.1, ncp.0, addr, inner)))
                     }
                 }
             }
@@ -270,8 +268,8 @@ impl Network {
                     if let Err(e) = swarm_controller
                         .dial(maddr, transport.clone().with_upgrade(flood_upgrade.clone()))
                     {
-                        error!("failed to dial node: {}", e);
-                    };
+                        error!("failed to floodsub dial node: {}", e);
+                    }
                 }
                 Err(e) => error!("failed to parse address: {}, error: {}", addr, e),
             }
@@ -361,14 +359,14 @@ fn floodsub_handler(
         let peer_id = inner.remote_connections.get(&addr).unwrap().peer_id.clone();
         inner.floodsub_connections.insert(peer_id);
     }
-    debug!("Successfully negotiated floodsub protocol with: {}", addr);
+    info!("Successfully negotiated floodsub protocol with: {}", addr);
     // Request peers list from remote
     //
     {
         let inner = inner.read();
         if let Some(ref dial_tx) = inner.dial_ncp_tx {
             if let Err(e) = dial_tx.unbounded_send(addr.clone()) {
-                debug!("Error trying to dial NCP to {}, error: {}", addr, e);
+                error!("Error trying to dial NCP to {}, error: {}", addr, e);
             };
         }
     }

@@ -183,6 +183,7 @@ pub(crate) struct GlobalState {
     witnesses: HashSet<secure::PublicKey>, // a malleable list of witnesses
     session_info: Session,   // Randhound session
     epoch_info: EpochInfo,   // epoch information
+    next_epoch: EpochInfo,   // epoch to be used on next round
     broker: Broker,          // handler to send messages
     msg_queue: VecDeque<Message>, // Messages received in Idle stage
     runtime: TaskExecutor,   // Handle to runtime to start delayed event
@@ -243,7 +244,7 @@ struct Session {
     pub msgq: VecDeque<(secure::PublicKey, MsgType)>, // pending recycled messages
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 enum SessionStage {
     Idle,   // No session yet started
     Init,   // key collection phase
@@ -287,23 +288,6 @@ impl Default for Session {
 // ------------------------------------------------------------
 // Pertaining to global state
 
-// fn make_initial_global_state() -> {
-//     // TODO: Read keying seed from config file
-//     let (skey, pkey, sig) = secure::make_deterministic_keys(b"Test");
-//     assert!(secure::check_keying(&pkey, &sig));
-//     GSTATE.set(GlobalState {
-//         pkey: pkey,
-//         skey: skey,
-//         witnesses: Arc::new(RwLock::new(HashSet::new())),
-//         session_info: Arc::new(RwLock::new(None)),
-//         epoch_info: Arc::new(RwLock::new(EpochInfo {
-//             leader: pkey, // TODO: from genesis info
-//             beacon: pkey,
-//             epoch: Hash::from_str(&"None"),
-//         })),
-//     });
-// }
-
 pub(crate) fn init_state(
     keychain: &KeyChain,
     broker: Broker,
@@ -317,6 +301,7 @@ pub(crate) fn init_state(
         witnesses: HashSet::new(),
         session_info: Session::default(),
         epoch_info: EpochInfo::default(),
+        next_epoch: EpochInfo::default(),
         broker,
         msg_queue: VecDeque::new(),
         runtime,
@@ -344,6 +329,10 @@ impl GlobalState {
         self.witnesses.clone()
     }
 
+    pub(crate) fn witnesses_size(&self) -> usize {
+        self.witnesses.len()
+    }
+
     // -------------------------------------------------------------------
     // Pertaining to Epoch
 
@@ -363,6 +352,10 @@ impl GlobalState {
         self.epoch_info = e;
     }
 
+    pub(crate) fn set_next_epoch(&mut self, e: EpochInfo) {
+        self.next_epoch = e;
+    }
+
     fn get_my_fast_pkey(&self) -> fast::PublicKey {
         self.session_info.fpkey.clone()
     }
@@ -374,17 +367,15 @@ impl GlobalState {
     fn add_fast_key(&mut self, pkey: &secure::PublicKey, fpkey: &fast::PublicKey) {
         // If an entry for pkey in the grptbl is missing, then add one
         // in as initialized with the indicated fast pkey.
-        let mut sess = self.session_info.clone();
-        sess.grptbl.entry(*pkey).or_insert(GrpInfo {
+        self.session_info.grptbl.entry(*pkey).or_insert(GrpInfo {
             fkey: Some(*fpkey),
             commit: false,
             decrs: HashMap::new(),
         });
-        self.session_info = sess; // is this necessary?
     }
 
     fn get_ngroups(&self) -> usize {
-        self.session_info.ngrps.clone()
+        self.session_info.ngrps
     }
 
     fn group_size(&self) -> usize {
@@ -412,6 +403,7 @@ impl GlobalState {
     }
 
     fn set_stage(&mut self, stage: SessionStage) {
+        info!("Progessed to stage: {:#?}", stage);
         self.session_info.stage = stage;
     }
 
@@ -473,6 +465,7 @@ impl GlobalState {
         // Generic message validation...
         match msg.typ {
             MsgType::Start { epoch, .. } => {
+                self.epoch_info = self.next_epoch.clone();
                 // New Start message valid only if arrives from Beacon
                 // and for current Epoch.
                 if msg.from != self.get_current_beacon() {
@@ -529,6 +522,8 @@ impl GlobalState {
 
     fn start_session(&mut self, id: &Hash, grp: &Vec<secure::PublicKey>) {
         // leader is group leader
+        // Beacon/leader has already initialized session,
+        // So initialize only when Stage is Idle (participants)
         if self.get_stage() == SessionStage::Idle {
             debug!("Starting new session!");
             // Beacon inits its own session_info, we might be Beacon
@@ -559,9 +554,8 @@ impl GlobalState {
             let me = self.get_pkey();
             self.add_fast_key(&me, &fpkey);
             debug!("Start session done!");
-        } else {
-            error!("Start session received out of band!");
         }
+        info!("Randound session started!");
     }
 
     // ------------------------------------------------------------------------
@@ -700,16 +694,20 @@ impl GlobalState {
 
     fn broadcast_grp(&self, msg: &MsgType) -> Result<(), Error> {
         debug!("Sending broadcast message to group");
+        self.broadcast(msg)
         // This function shoudl send the message to all other nodes
         // in our group, but not to ourself.
-        let grp = self.get_group_keys();
-        let me = self.get_pkey();
-        for key in grp {
-            if key != me {
-                self.send_message(&key, msg)?;
-            }
-        }
-        Ok(())
+
+        // Not working with current unicast implementation
+
+        // let grp = self.get_group_keys();
+        // let me = self.get_pkey();
+        // for key in grp {
+        //     if key != me {
+        //         self.send_message(&key, msg)?;
+        //     }
+        // }
+        // Ok(())
     }
 
     // ------------------------------------------------------------------
@@ -752,6 +750,8 @@ impl GlobalState {
             }
             new_wits
         }
+
+        self.epoch_info = self.next_epoch.clone();
 
         debug!(
             "Checking for beacon, me: {:#?}, beacon: {:#?}",
@@ -911,7 +911,10 @@ impl GlobalState {
                 // so just have to account for network delays
                 // schedule_after(3.0 * NETWORK_DELAY, &self.maybe_transition_from_init_phase);
                 self.runtime.spawn({
-                    let delayed = Delay::new(Instant::now() + Duration::from_secs(5)).and_then({
+                    let delayed = Delay::new(
+                        Instant::now() + Duration::from_secs(self.group_size() as u64 * 2),
+                    )
+                    .and_then({
                         let send = self.service.clone();
                         move |()| {
                             debug!("Kabooom!");
@@ -936,14 +939,13 @@ impl GlobalState {
             let ngrp = self.group_size();
             let thresh = ngrp - max_byz_fails(ngrp);
             if self.actual_group_size() >= thresh {
-                debug!("BFT threshold for init phase reached! Moving on to Stage2");
+                info!("BFT threshold for init phase reached! Moving on to Stage2");
                 self.set_stage(SessionStage::Stage2);
                 // Dispatch OOB messages
                 self.dispatch_fifo_messages();
                 self.generate_shared_randomness();
             } else {
-                // panic!("BFT failure"); // TODO: change this to system notification
-                debug!("BFT threshold of witnesses not reached in Init phase");
+                info!("BFT threshold of witnesses not reached in Init phase. Resetting state.");
             }
         }
     }
@@ -964,6 +966,13 @@ impl GlobalState {
         match self.get_stage() {
             SessionStage::Init => {
                 self.add_fast_key(from, key);
+                if self.actual_group_size() == self.group_size() {
+                    debug!("Received all possible keys, moving on to next stage!");
+                    self.set_stage(SessionStage::Stage2);
+                    // Dispatch OOB messages
+                    self.dispatch_fifo_messages();
+                    self.generate_shared_randomness();
+                }
             }
             _ => {
                 // latecomers... just ignore
@@ -1596,6 +1605,7 @@ impl GlobalState {
                         .fold(G2::zero(), |sum, (_, pt)| sum + *pt);
                     let trand = fast::compute_pairing(&G1::generator(), &grand);
                     let ticket = Hash::digest(&trand);
+                    info!("Calculated Final Lottery Ticket: {}", ticket);
                     let msg = MsgType::FinalLotteryTicket { ticket: ticket };
                     // tell everyone the outcome with the next lottery ticket
                     if let Err(e) = self.broadcast(&msg) {

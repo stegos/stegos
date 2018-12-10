@@ -374,17 +374,15 @@ impl GlobalState {
     fn add_fast_key(&mut self, pkey: &secure::PublicKey, fpkey: &fast::PublicKey) {
         // If an entry for pkey in the grptbl is missing, then add one
         // in as initialized with the indicated fast pkey.
-        let mut sess = self.session_info.clone();
-        sess.grptbl.entry(*pkey).or_insert(GrpInfo {
+        self.session_info.grptbl.entry(*pkey).or_insert(GrpInfo {
             fkey: Some(*fpkey),
             commit: false,
             decrs: HashMap::new(),
         });
-        self.session_info = sess; // is this necessary?
     }
 
     fn get_ngroups(&self) -> usize {
-        self.session_info.ngrps.clone()
+        self.session_info.ngrps
     }
 
     fn group_size(&self) -> usize {
@@ -942,8 +940,7 @@ impl GlobalState {
                 self.dispatch_fifo_messages();
                 self.generate_shared_randomness();
             } else {
-                // panic!("BFT failure"); // TODO: change this to system notification
-                debug!("BFT threshold of witnesses not reached in Init phase");
+                debug!("BFT threshold of witnesses not reached in Init phase. Resetting state.");
             }
         }
     }
@@ -964,6 +961,13 @@ impl GlobalState {
         match self.get_stage() {
             SessionStage::Init => {
                 self.add_fast_key(from, key);
+                if self.actual_group_size() == self.group_size() {
+                    debug!("Received all possible keys, moving on to next stage!");
+                    self.set_stage(SessionStage::Stage2);
+                    // Dispatch OOB messages
+                    self.dispatch_fifo_messages();
+                    self.generate_shared_randomness();
+                }
             }
             _ => {
                 // latecomers... just ignore

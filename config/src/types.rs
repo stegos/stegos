@@ -139,7 +139,7 @@ impl Default for ConfigNetwork {
             broadcast_topic: "stegos".to_string(),
             min_connections: 2,
             max_connections: 2,
-            monitoring_interval: 15,
+            monitoring_interval: 5,
             heartbeat_interval: 10,
         }
     }

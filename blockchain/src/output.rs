@@ -178,7 +178,7 @@ impl MonetaryOutput {
             &delta_bytes[..],
             &gamma_bytes[..],
         ]
-            .concat();
+        .concat();
 
         // Ensure that the total length of package is 76 bytes.
         assert_eq!(payload.len(), MONETARY_PAYLOAD_LEN);
@@ -266,7 +266,7 @@ impl DataOutput {
             &gamma_bytes[..],
             &data[..],
         ]
-            .concat();
+        .concat();
 
         // Ensure that the total length of package is 68 bytes + data.len().
         assert_eq!(payload.len(), DATA_PAYLOAD_LEN + data.len());

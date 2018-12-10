@@ -32,12 +32,12 @@ please don't hesitate to contact us:
 You should use rustup:.
 
 ```
-rustup component add rustfmt-preview
+rustup component add rustfmt
 rustup update
 rustfmt --version
 ```
 
-Verify you did get version `rustfmt 0.99.4-stable (1c40881 2018-08-27)`
+Verify you did get version `rustfmt 1.0.0-stable (4a4e508 2018-11-29)`
 or newer.
 
 ## Running rustfmt manually

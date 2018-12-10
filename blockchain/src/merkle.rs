@@ -266,20 +266,12 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
                     left: Some(ref left),
                     value: None, // node is not a leaf
                     ..
-                }
-                    if left_direction =>
-                {
-                    left
-                } // going left, has the left subtree
+                } if left_direction => left, // going left, has the left subtree
                 Node {
                     right: Some(ref right),
                     value: None, // node is not a leaf
                     ..
-                }
-                    if !left_direction =>
-                {
-                    right
-                } // going right, has the right subtree
+                } if !left_direction => right, // going right, has the right subtree
                 Node {
                     left: None,
                     right: None,

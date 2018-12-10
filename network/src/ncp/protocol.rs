@@ -80,7 +80,8 @@ where
         .with::<_, fn(_) -> _, _>(|request| -> Result<_, IoError> {
             let proto_struct = msg_to_proto(request);
             Ok(proto_struct.write_to_bytes().unwrap()) // TODO: error?
-        }).and_then::<fn(_) -> _, _>(|bytes| {
+        })
+        .and_then::<fn(_) -> _, _>(|bytes| {
             let response = protobuf::parse_from_bytes(&bytes)?;
             proto_to_msg(response)
         })
@@ -286,7 +287,8 @@ mod tests {
                             .into_future()
                             .map_err(|(err, _)| err)
                             .map(|(v, _)| v)
-                    }).map(|recv_msg| {
+                    })
+                    .map(|recv_msg| {
                         assert_eq!(recv_msg.unwrap(), msg_server);
                         ()
                     });

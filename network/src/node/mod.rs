@@ -431,11 +431,13 @@ pub(crate) fn populate_peerstore(node: Arc<RwLock<Inner>>) -> Result<(), Error> 
             .map(|i| match i {
                 IpNetwork::V4(net) => net.ip(),
                 IpNetwork::V6(_) => unreachable!(),
-            }).map(|a| a.to_multiaddr().unwrap())
+            })
+            .map(|a| a.to_multiaddr().unwrap())
             .map(|mut a| {
                 a.append(Protocol::Tcp(bind_port));
                 a
-            }).collect();
+            })
+            .collect();
 
         my_addresses.append(&mut multiaddresses);
     }

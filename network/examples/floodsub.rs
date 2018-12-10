@@ -161,7 +161,8 @@ fn run_node(rt: &mut Runtime) -> Node {
             .dial(
                 msg,
                 transport.clone().with_upgrade(floodsub_upgrade.clone()),
-            ).unwrap();
+            )
+            .unwrap();
         Ok(())
     });
 

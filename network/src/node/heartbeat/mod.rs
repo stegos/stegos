@@ -162,7 +162,8 @@ impl HeartbeatService {
             let ticker = Interval::new(
                 Instant::now(),
                 Duration::from_secs(config.heartbeat_interval),
-            ).map(|_| HeartbeatControlMsg::Tick)
+            )
+            .map(|_| HeartbeatControlMsg::Tick)
             .map_err(|e| {
                 error!("Timer error: {}", e);
             });

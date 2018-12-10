@@ -103,8 +103,12 @@ impl Node {
     }
 
     /// Send a message
-    pub fn msg(&self, recipient: PublicKey, data: Vec<u8>) -> Result<(), Error> {
-        let msg = NodeMessage::MessageRequest { recipient, data };
+    pub fn msg(&self, recipient: PublicKey, ttl: u64, data: Vec<u8>) -> Result<(), Error> {
+        let msg = NodeMessage::MessageRequest {
+            recipient,
+            ttl,
+            data,
+        };
         self.outbox.unbounded_send(msg)?;
         Ok(())
     }
@@ -132,12 +136,22 @@ const VERSION: u64 = 1;
 const MEMPOOL_TTL: u64 = 15;
 const TX_TOPIC: &'static str = "tx";
 const BLOCK_TOPIC: &'static str = "block";
+const MONETARY_FEE: i64 = 1;
+const DATA_UNIT: u64 = 1024;
+const DATA_UNIT_FEE: i64 = 1;
 
 #[derive(Clone, Debug)]
 enum NodeMessage {
     Init,
-    PaymentRequest { recipient: PublicKey, amount: i64 },
-    MessageRequest { recipient: PublicKey, data: Vec<u8> },
+    PaymentRequest {
+        recipient: PublicKey,
+        amount: i64,
+    },
+    MessageRequest {
+        recipient: PublicKey,
+        ttl: u64,
+        data: Vec<u8>,
+    },
     SubscribeBalance(UnboundedSender<i64>),
     SubscribeEpoch(UnboundedSender<EpochNotification>),
     SubscribeMessage(UnboundedSender<MessageNotification>),
@@ -149,6 +163,8 @@ pub enum NodeError {
     ZeroOrNegativeAmount,
     #[fail(display = "Not enough money.")]
     NotEnoughMoney,
+    #[fail(display = "Fee is to low: min={}, got={}", _0, _1)]
+    TooLowFee(i64, i64),
 }
 
 struct NodeService {
@@ -293,6 +309,7 @@ impl NodeService {
     fn handle_message_request(
         &mut self,
         recipient: &PublicKey,
+        ttl: u64,
         data: Vec<u8>,
     ) -> Result<(), Error> {
         debug!(
@@ -302,7 +319,7 @@ impl NodeService {
         );
 
         debug!("Creating transaction");
-        let tx = self.create_data_transaction(recipient, data)?;
+        let tx = self.create_data_transaction(recipient, ttl, data)?;
         info!("Created transaction: hash={}", Hash::digest(&tx.body));
 
         self.send_transaction(tx)
@@ -320,6 +337,9 @@ impl NodeService {
         let tx_hash = Hash::digest(&tx.body);
         info!("Received transaction: hash={}", &tx_hash);
         debug!("Validating transaction: hash={}..", &tx_hash);
+
+        // Check fee.
+        NodeService::check_acceptable_fee(&tx)?;
 
         // Resolve inputs.
         let inputs = self.chain.outputs_by_hashes(&tx.body.txins)?;
@@ -582,15 +602,47 @@ impl NodeService {
         Ok(())
     }
 
+    /// Calculate fee for data transaction.
+    fn data_fee(size: u64, ttl: u64) -> i64 {
+        assert!(size > 0);
+        let units: u64 = (size + (DATA_UNIT - 1u64)) / DATA_UNIT;
+        (units as i64) * (ttl as i64) * DATA_UNIT_FEE
+    }
+
+    /// Check minimal acceptable fee for transaction.
+    fn check_acceptable_fee(tx: &Transaction) -> Result<(), NodeError> {
+        let mut min_fee: i64 = 0;
+        for txout in &tx.body.txouts {
+            min_fee += match txout {
+                Output::MonetaryOutput(_o) => MONETARY_FEE,
+                Output::DataOutput(o) => NodeService::data_fee(o.data_size(), o.ttl),
+            };
+        }
+
+        // Transaction's fee is too low.
+        if tx.body.fee < min_fee {
+            return Err(NodeError::TooLowFee(min_fee, tx.body.fee));
+        }
+        Ok(())
+    }
+
+    /// Find UTXO with exact value.
+    fn find_utxo_exact(unspent: &HashMap<Hash, i64>, sum: i64) -> Option<Hash> {
+        for (hash, amount) in unspent.iter() {
+            if *amount == sum {
+                debug!("Use UTXO: hash={}, amount={}", hash, amount);
+                return Some(hash.clone());
+            }
+        }
+        None
+    }
+
     /// Find appropriate UTXO to spent and calculate a change.
     fn find_utxo(
         unspent: &HashMap<Hash, i64>,
         mut sum: i64,
     ) -> Result<(Vec<Hash>, i64), NodeError> {
-        if sum <= 0 {
-            return Err(NodeError::ZeroOrNegativeAmount);
-        }
-
+        assert!(sum >= 0);
         let mut unspent: Vec<(i64, Hash)> = unspent
             .iter()
             .map(|(hash, amount)| (*amount, hash.clone()))
@@ -627,13 +679,40 @@ impl NodeService {
         let sender_skey = &self.keys.wallet_skey;
         let sender_pkey = &self.keys.wallet_pkey;
 
+        if amount <= 0 {
+            return Err(NodeError::ZeroOrNegativeAmount.into());
+        }
+
         //
-        // Create inputs
+        // Find inputs
         //
 
-        // Collect unspent UTXOs
-        let (spent, change) = NodeService::find_utxo(&self.unspent, amount)?;
-        let inputs = self.chain.outputs_by_hashes(&spent)?;
+        // Try to find exact sum plus fee, without a change.
+        let (fee, change, inputs) =
+            match NodeService::find_utxo_exact(&self.unspent, amount + MONETARY_FEE) {
+                Some(inputs) => {
+                    // If found, then charge the minimal fee.
+                    let fee = MONETARY_FEE;
+                    let inputs = self.chain.outputs_by_hashes(&[inputs])?;
+                    (fee, 0i64, inputs)
+                }
+                None => {
+                    // Otherwise, charge the double fee.
+                    let fee = 2 * MONETARY_FEE;
+                    let (inputs, change) = NodeService::find_utxo(&self.unspent, amount + fee)?;
+                    let inputs = self.chain.outputs_by_hashes(&inputs)?;
+                    (fee, change, inputs)
+                }
+            };
+
+        info!(
+            "Transaction preview: recipient={}, sent={}, spent={}, change={}, fee={}",
+            recipient,
+            amount,
+            amount + change + fee,
+            change,
+            fee
+        );
 
         //
         // Create outputs
@@ -643,22 +722,19 @@ impl NodeService {
         let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
 
         // Create an output for payment
-        debug!("Creating UTXO for payment");
+        debug!("Creating UTXO for payment: amount={}", amount);
         let (output1, gamma1) = Output::new_monetary(timestamp, sender_skey, recipient, amount)?;
         outputs.push(output1);
         let mut gamma = gamma1;
 
         if change > 0 {
             // Create an output for change
-            debug!("Creating UTXO for the change");
+            debug!("Creating UTXO for the change: amount={}", change);
             let (output2, gamma2) =
                 Output::new_monetary(timestamp, sender_skey, sender_pkey, change)?;
             outputs.push(output2);
             gamma += gamma2;
         }
-
-        // TODO: implement fee calculation
-        let fee: i64 = 0;
 
         debug!("Signing transaction");
         let tx = Transaction::new(sender_skey, &inputs, &outputs, gamma, fee)?;
@@ -671,20 +747,43 @@ impl NodeService {
     fn create_data_transaction(
         &self,
         recipient: &PublicKey,
+        ttl: u64,
         data: Vec<u8>,
     ) -> Result<Transaction, Error> {
         let sender_skey = &self.keys.wallet_skey;
-        //let sender_pkey = &self.keys.wallet_pkey;
+        let sender_pkey = &self.keys.wallet_pkey;
 
         //
-        // Create inputs
+        // Find inputs
         //
 
-        // Collect unspent UTXOs
-        //let (spent, change) = NodeService::find_utxo(&self.unspent, amount)?;
-        //let inputs = self.chain.outputs_by_hashes(&spent)?;
-        // TODO: implement fee calculation
-        let inputs = [];
+        let fee = NodeService::data_fee(data.len() as u64, ttl);
+        // Try to find exact sum plus fee, without a change.
+        let (fee, change, inputs) =
+            match NodeService::find_utxo_exact(&self.unspent, fee + MONETARY_FEE) {
+                Some(inputs) => {
+                    // If found, then charge the minimal fee.
+                    let fee = fee + MONETARY_FEE;
+                    let inputs = self.chain.outputs_by_hashes(&[inputs])?;
+                    (fee, 0i64, inputs)
+                }
+                None => {
+                    // Otherwise, charge the double fee.
+                    let fee = fee + 2 * MONETARY_FEE;
+                    let (inputs, change) = NodeService::find_utxo(&self.unspent, fee)?;
+                    let inputs = self.chain.outputs_by_hashes(&inputs)?;
+                    (fee, change, inputs)
+                }
+            };
+
+        info!(
+            "Transaction preview: recipient={}, ttl={}, spent={}, change={}, fee={}",
+            recipient,
+            ttl,
+            change + fee,
+            change,
+            fee
+        );
 
         //
         // Create outputs
@@ -695,17 +794,21 @@ impl NodeService {
 
         // Create an output for payment
         debug!("Creating UTXO for data");
-        // TODO: pass TTL
-        let ttl = 10;
-        let (output1, delta1) = Output::new_data(timestamp, sender_skey, recipient, ttl, &data)?;
+        let (output1, gamma1) = Output::new_data(timestamp, sender_skey, recipient, ttl, &data)?;
         outputs.push(output1);
-        let adjustment = delta1;
+        let mut gamma = gamma1;
 
-        // TODO: implement fee calculation
-        let fee: i64 = 0;
+        if change > 0 {
+            // Create an output for change
+            debug!("Creating UTXO for the change: amount={}", change);
+            let (output2, gamma2) =
+                Output::new_monetary(timestamp, sender_skey, sender_pkey, change)?;
+            outputs.push(output2);
+            gamma += gamma2;
+        }
 
         debug!("Signing transaction");
-        let tx = Transaction::new(sender_skey, &inputs, &outputs, adjustment, fee)?;
+        let tx = Transaction::new(sender_skey, &inputs, &outputs, gamma, fee)?;
 
         Ok(tx)
     }
@@ -737,6 +840,7 @@ impl NodeService {
         }
 
         info!("Processing mempool: size={}", self.mempool.len());
+        let timestamp = Utc::now().timestamp() as u64;
         let mut gamma = Fr::zero();
         let mut fee = 0i64;
 
@@ -764,8 +868,18 @@ impl NodeService {
         assert!(self.mempool.is_empty());
         assert!(self.mempool_outputs.is_empty());
 
-        // TODO: create a transaction for fee
-        drop(fee);
+        // Create transaction for fee
+        if fee > 0 {
+            debug!("Creating UTXO for fee: amount={}", fee);
+            let (output_fee, gamma_fee) = Output::new_monetary(
+                timestamp,
+                &self.keys.wallet_skey,
+                &self.keys.wallet_pkey,
+                fee,
+            )?;
+            outputs.push(output_fee);
+            gamma -= gamma_fee;
+        }
 
         //
         // Create a block
@@ -773,7 +887,6 @@ impl NodeService {
 
         debug!("Creating monetary block");
 
-        let timestamp = Utc::now().timestamp() as u64;
         let previous = {
             let last = self.chain.last_block();
             let previous = Hash::digest(last);
@@ -816,9 +929,11 @@ impl NodeService {
                         NodeMessage::PaymentRequest { recipient, amount } => {
                             self.handle_payment_request(&recipient, amount)
                         }
-                        NodeMessage::MessageRequest { recipient, data } => {
-                            self.handle_message_request(&recipient, data)
-                        }
+                        NodeMessage::MessageRequest {
+                            recipient,
+                            ttl,
+                            data,
+                        } => self.handle_message_request(&recipient, ttl, data),
                         NodeMessage::SubscribeBalance(tx) => self.handle_subscribe_balance(tx),
                         NodeMessage::SubscribeEpoch(tx) => self.handle_subscribe_epoch(tx),
                         NodeMessage::SubscribeMessage(tx) => {
@@ -903,9 +1018,6 @@ pub mod tests {
             unspent.insert(Hash::digest(amount), *amount);
         }
 
-        assert!(NodeService::find_utxo(&unspent, -1).is_err());
-        assert!(NodeService::find_utxo(&unspent, 0).is_err());
-
         let (spent, change) = NodeService::find_utxo(&unspent, 1).unwrap();
         assert_eq!(spent, vec![Hash::digest(&1i64)]);
         assert_eq!(change, 0);
@@ -939,5 +1051,18 @@ pub mod tests {
         assert_eq!(change, 0);
 
         assert!(NodeService::find_utxo(&unspent, 164).is_err());
+    }
+
+    /// Check data fee calculation.
+    #[test]
+    pub fn data_fee() {
+        assert_eq!(NodeService::data_fee(1, 1), DATA_UNIT_FEE);
+        assert_eq!(NodeService::data_fee(1, 2), 2 * DATA_UNIT_FEE);
+        assert_eq!(NodeService::data_fee(DATA_UNIT - 1, 1), DATA_UNIT_FEE);
+        assert_eq!(NodeService::data_fee(DATA_UNIT - 1, 2), 2 * DATA_UNIT_FEE);
+        assert_eq!(NodeService::data_fee(DATA_UNIT, 1), DATA_UNIT_FEE);
+        assert_eq!(NodeService::data_fee(DATA_UNIT, 2), 2 * DATA_UNIT_FEE);
+        assert_eq!(NodeService::data_fee(DATA_UNIT + 1, 1), 2 * DATA_UNIT_FEE);
+        assert_eq!(NodeService::data_fee(DATA_UNIT + 1, 2), 4 * DATA_UNIT_FEE);
     }
 }

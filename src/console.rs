@@ -66,7 +66,7 @@ lazy_static! {
     /// Regex to parse "pay" command.
     static ref PAY_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]{64})\s+(?P<amount>[0-9]{1,19})\s*$").unwrap();
     /// Regex to parse "msg" command.
-    static ref MSG_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]{64})\s+(?P<msg>.*)$").unwrap();
+    static ref MSG_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]{64})\s+(?P<msg>.+)$").unwrap();
     /// Regex to parse "publish" command.
     static ref PUBLISH_COMMAND_RE: Regex = Regex::new(r"\s*(?P<topic>[0-9A-Za-z]{1,128})\s+(?P<msg>.*)$").unwrap();
 }
@@ -263,9 +263,12 @@ impl ConsoleService {
                 }
             };
             let data = caps.name("msg").unwrap().as_str();
+            assert!(data.len() > 0);
 
             info!("Requesting message: to={}, data={}", recipient, data);
-            if let Err(e) = self.node.msg(recipient, data.as_bytes().to_vec()) {
+            // TODO: allow to chose ttl
+            let ttl = 10;
+            if let Err(e) = self.node.msg(recipient, ttl, data.as_bytes().to_vec()) {
                 error!("Request failed: {}", e);
             }
         } else {

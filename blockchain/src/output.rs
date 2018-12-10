@@ -272,7 +272,9 @@ impl DataOutput {
         assert_eq!(payload.len(), DATA_PAYLOAD_LEN + data.len());
 
         // Encrypt the payload.
-        aes_encrypt(&payload, &pkey)
+        let payload = aes_encrypt(&payload, &pkey)?;
+        assert_eq!(payload.ctxt.len(), DATA_PAYLOAD_LEN + data.len());
+        Ok(payload)
     }
 
     /// Decrypt data payload.
@@ -301,6 +303,11 @@ impl DataOutput {
         let delta: Fr = Fr::from_lev_u8(delta_bytes);
 
         Ok((delta, gamma, data))
+    }
+
+    pub fn data_size(&self) -> u64 {
+        assert!(self.payload.ctxt.len() > DATA_PAYLOAD_LEN);
+        (self.payload.ctxt.len() - DATA_PAYLOAD_LEN) as u64
     }
 }
 

@@ -189,7 +189,19 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
     /// Returns the new tree.
     ///
     pub fn from_array(src: &[T]) -> Merkle<T> {
-        assert!(src.len() > 0 && src.len() <= Path::max_value() as usize);
+        assert!(src.len() <= Path::max_value() as usize);
+
+        // Special case - empty tree.
+        if src.len() == 0 {
+            let root = Box::new(Node {
+                hash: Hash::zero(),
+                left: None,
+                right: None,
+                value: None,
+            });
+
+            return Merkle { root };
+        }
 
         let mut nodes: Vec<Box<Node<T>>> = Vec::with_capacity(src.len() + 1);
         let mut heights: Vec<Height> = Vec::with_capacity(src.len() + 1);
@@ -742,12 +754,23 @@ pub mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn no_items() {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
         // Is not supported
         let data: [u32; 0] = [];
-        Merkle::from_array(&data);
+        let tree = Merkle::from_array(&data);
+        match *tree.root {
+            Node {
+                hash,
+                left: None,
+                right: None,
+                value: None,
+            } => {
+                assert_eq!(hash, Hash::zero());
+            }
+            _ => panic!(),
+        }
+        assert_eq!(tree.leafs().len(), 0);
     }
 
     #[test]

@@ -307,7 +307,7 @@ pub mod tests {
 
         let amount: i64 = 112;
         let (output, gamma) =
-            Output::new(timestamp, &skey, &pkey, amount).expect("tests have valid keys");
+            Output::new_monetary(timestamp, &skey, &pkey, amount).expect("tests have valid keys");
         let outputs = [output];
 
         let block = MonetaryBlock::new(base, gamma, &inputs, &outputs);

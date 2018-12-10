@@ -319,9 +319,10 @@ impl FromProto<node::BulletProof> for BulletProof {
     }
 }
 
-impl IntoProto<node::Output> for Output {
+impl IntoProto<node::Output> for MonetaryOutput {
     fn into_proto(&self) -> node::Output {
         let mut proto = node::Output::new();
+        proto.set_ttl(0);
         proto.set_recipient(self.recipient.into_proto());
         proto.set_proof(self.proof.into_proto());
         proto.set_payload(self.payload.into_proto());
@@ -329,16 +330,65 @@ impl IntoProto<node::Output> for Output {
     }
 }
 
-impl FromProto<node::Output> for Output {
+impl IntoProto<node::Output> for DataOutput {
+    fn into_proto(&self) -> node::Output {
+        let mut proto = node::Output::new();
+        assert!(self.ttl > 0);
+        proto.set_recipient(self.recipient.into_proto());
+        proto.set_ttl(self.ttl);
+        proto.set_vcmt(self.vcmt.into_proto());
+        proto.set_payload(self.payload.into_proto());
+        proto
+    }
+}
+
+impl IntoProto<node::Output> for Output {
+    fn into_proto(&self) -> node::Output {
+        match self {
+            Output::MonetaryOutput(monetary) => monetary.into_proto(),
+            Output::DataOutput(data) => data.into_proto(),
+        }
+    }
+}
+
+impl FromProto<node::Output> for MonetaryOutput {
     fn from_proto(proto: &node::Output) -> Result<Self, Error> {
+        assert_eq!(proto.ttl, 0);
         let recipient = PublicKey::from_proto(proto.get_recipient())?;
         let proof = BulletProof::from_proto(proto.get_proof())?;
         let payload = EncryptedPayload::from_proto(proto.get_payload())?;
-        Ok(Output {
+        Ok(MonetaryOutput {
             recipient,
             proof,
             payload,
         })
+    }
+}
+
+impl FromProto<node::Output> for DataOutput {
+    fn from_proto(proto: &node::Output) -> Result<Self, Error> {
+        assert_ne!(proto.ttl, 0);
+        let recipient = PublicKey::from_proto(proto.get_recipient())?;
+        let ttl = proto.ttl;
+        let vcmt = Pt::from_proto(proto.get_vcmt())?;
+        let payload = EncryptedPayload::from_proto(proto.get_payload())?;
+        Ok(DataOutput {
+            recipient,
+            ttl,
+            vcmt,
+            payload,
+        })
+    }
+}
+
+impl FromProto<node::Output> for Output {
+    fn from_proto(proto: &node::Output) -> Result<Self, Error> {
+        let ttl = proto.get_ttl();
+        if ttl == 0 {
+            Ok(Output::MonetaryOutput(MonetaryOutput::from_proto(proto)?))
+        } else {
+            Ok(Output::DataOutput(DataOutput::from_proto(proto)?))
+        }
     }
 }
 
@@ -713,22 +763,30 @@ mod tests {
 
         let timestamp = Utc::now().timestamp() as u64;
         let amount: i64 = 1_000_000;
+        let data = b"hello";
         let fee: i64 = 0;
+        let ttl = 10;
 
         // "genesis" output by 0
-        let (output0, _gamma0) =
-            Output::new(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
+        let (output0, _delta0) =
+            Output::new_monetary(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
 
         // Transaction from 1 to 2
         let inputs1 = [output0];
-        let (output1, gamma1) =
-            Output::new(timestamp, &skey1, &pkey2, amount).expect("keys are valid");
+        let (output11, gamma11) =
+            Output::new_monetary(timestamp, &skey1, &pkey2, amount).expect("keys are valid");
+        let (output12, gamma12) =
+            Output::new_data(timestamp, &skey1, &pkey2, ttl, data).expect("keys are valid");
 
-        roundtrip(&output1);
-        roundtrip(&gamma1);
+        roundtrip(&output11);
+        roundtrip(&gamma11);
+        roundtrip(&output12);
+        roundtrip(&gamma12);
 
-        let tx =
-            Transaction::new(&skey1, &inputs1, &[output1], gamma1, fee).expect("keys are valid");
+        let outputs_gamma = gamma11 + gamma12;
+
+        let tx = Transaction::new(&skey1, &inputs1, &[output11, output12], outputs_gamma, fee)
+            .expect("keys are valid");
         tx.validate(&inputs1).unwrap();
 
         let tx2 = roundtrip(&tx);
@@ -770,11 +828,11 @@ mod tests {
         let previous = Hash::digest(&"test".to_string());
 
         // "genesis" output by 0
-        let (output0, gamma0) = Output::new(timestamp, &skey0, &pkey1, amount).unwrap();
+        let (output0, gamma0) = Output::new_monetary(timestamp, &skey0, &pkey1, amount).unwrap();
 
         // Transaction from 1 to 2
         let inputs1 = [Hash::digest(&output0)];
-        let (output1, gamma1) = Output::new(timestamp, &skey1, &pkey2, amount).unwrap();
+        let (output1, gamma1) = Output::new_monetary(timestamp, &skey1, &pkey2, amount).unwrap();
         let outputs1 = [output1];
         let gamma = gamma0 - gamma1;
 

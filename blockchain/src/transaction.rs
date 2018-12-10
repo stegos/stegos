@@ -112,7 +112,7 @@ impl Transaction {
         let mut txouts: Vec<Output> = Vec::with_capacity(outputs.len());
 
         for txin in inputs {
-            let (delta, gamma, _amount) = txin.decrypt_payload(skey)?;
+            let (delta, gamma) = txin.decrypt_payload(skey)?;
             let hash = Hasher::digest(txin);
 
             txins.push(hash);
@@ -173,19 +173,26 @@ impl Transaction {
         // +\sum{C_i} for i in txins
         for (txin_hash, txin) in self.body.txins.iter().zip(inputs) {
             assert_eq!(Hash::digest(txin), *txin_hash);
-
-            let pedersen_commitment: Pt = txin.proof.pedersen_commitment();
+            let pedersen_commitment = match txin {
+                Output::MonetaryOutput(o) => o.proof.vcmt,
+                Output::DataOutput(o) => o.vcmt,
+            };
             let pedersen_commitment: ECp = Pt::decompress(pedersen_commitment)?;
             pedersen_commitment_diff += pedersen_commitment;
         }
 
         // -\sum{C_o} for o in txouts
         for txout in &self.body.txouts {
-            // Check bulletproofs of created outputs
-            if !validate_range_proof(&txout.proof) {
-                return Err(BlockchainError::InvalidBulletProof.into());
-            }
-            let pedersen_commitment: Pt = txout.proof.pedersen_commitment();
+            let pedersen_commitment = match txout {
+                Output::MonetaryOutput(o) => {
+                    // Check bulletproofs of created outputs
+                    if !validate_range_proof(&o.proof) {
+                        return Err(BlockchainError::InvalidBulletProof.into());
+                    }
+                    o.proof.vcmt
+                }
+                Output::DataOutput(o) => o.vcmt,
+            };
             let pedersen_commitment: ECp = Pt::decompress(pedersen_commitment)?;
             pedersen_commitment_diff -= pedersen_commitment;
         }
@@ -201,7 +208,11 @@ impl Transaction {
         let mut eff_pkey = pedersen_commitment_diff;
         // +\sum{P_i} for i in txins
         for txin in inputs.iter() {
-            let recipient: Pt = txin.recipient.into();
+            let recipient = match txin {
+                Output::MonetaryOutput(o) => o.recipient,
+                Output::DataOutput(o) => o.recipient,
+            };
+            let recipient: Pt = recipient.into();
             let recipient: ECp = Pt::decompress(recipient)?;
             eff_pkey += recipient;
         }
@@ -243,14 +254,14 @@ pub mod tests {
 
         // "genesis" output by 0
         let (output0, _gamma0) =
-            Output::new(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
+            Output::new_monetary(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
 
         //
         // Valid transaction from 1 to 2
         //
         let inputs1 = [output0];
         let (output1, gamma1) =
-            Output::new(timestamp, &skey1, &pkey2, amount).expect("keys are valid");
+            Output::new_monetary(timestamp, &skey1, &pkey2, amount).expect("keys are valid");
         let outputs_gamma = gamma1;
         let mut tx = Transaction::new(&skey1, &inputs1, &[output1], outputs_gamma, fee)
             .expect("keys are valid");
@@ -274,7 +285,7 @@ pub mod tests {
         // Invalid monetary balance
         //
         let (output_invalid1, gamma_invalid1) =
-            Output::new(timestamp, &skey1, &pkey2, amount - 1).expect("keys are valid");
+            Output::new_monetary(timestamp, &skey1, &pkey2, amount - 1).expect("keys are valid");
         let outputs_gamma = gamma_invalid1;
         let tx = Transaction::new(&skey1, &inputs1, &[output_invalid1], outputs_gamma, fee)
             .expect("keys are valid");

@@ -3041,6 +3041,8 @@ pub struct Output {
     // message fields
     pub recipient: ::protobuf::SingularPtrField<PublicKey>,
     pub proof: ::protobuf::SingularPtrField<BulletProof>,
+    pub vcmt: ::protobuf::SingularPtrField<Pt>,
+    pub ttl: u64,
     pub payload: ::protobuf::SingularPtrField<EncryptedPayload>,
     // special fields
     pub unknown_fields: ::protobuf::UnknownFields,
@@ -3118,6 +3120,54 @@ impl Output {
         self.proof.as_ref().unwrap_or_else(|| BulletProof::default_instance())
     }
 
+    // .protobuf.pb.Pt vcmt = 4;
+
+    pub fn clear_vcmt(&mut self) {
+        self.vcmt.clear();
+    }
+
+    pub fn has_vcmt(&self) -> bool {
+        self.vcmt.is_some()
+    }
+
+    // Param is passed by value, moved
+    pub fn set_vcmt(&mut self, v: Pt) {
+        self.vcmt = ::protobuf::SingularPtrField::some(v);
+    }
+
+    // Mutable pointer to the field.
+    // If field is not initialized, it is initialized with default value first.
+    pub fn mut_vcmt(&mut self) -> &mut Pt {
+        if self.vcmt.is_none() {
+            self.vcmt.set_default();
+        }
+        self.vcmt.as_mut().unwrap()
+    }
+
+    // Take field
+    pub fn take_vcmt(&mut self) -> Pt {
+        self.vcmt.take().unwrap_or_else(|| Pt::new())
+    }
+
+    pub fn get_vcmt(&self) -> &Pt {
+        self.vcmt.as_ref().unwrap_or_else(|| Pt::default_instance())
+    }
+
+    // uint64 ttl = 5;
+
+    pub fn clear_ttl(&mut self) {
+        self.ttl = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_ttl(&mut self, v: u64) {
+        self.ttl = v;
+    }
+
+    pub fn get_ttl(&self) -> u64 {
+        self.ttl
+    }
+
     // .protobuf.pb.EncryptedPayload payload = 3;
 
     pub fn clear_payload(&mut self) {
@@ -3164,6 +3214,11 @@ impl ::protobuf::Message for Output {
                 return false;
             }
         };
+        for v in &self.vcmt {
+            if !v.is_initialized() {
+                return false;
+            }
+        };
         for v in &self.payload {
             if !v.is_initialized() {
                 return false;
@@ -3181,6 +3236,16 @@ impl ::protobuf::Message for Output {
                 },
                 2 => {
                     ::protobuf::rt::read_singular_message_into(wire_type, is, &mut self.proof)?;
+                },
+                4 => {
+                    ::protobuf::rt::read_singular_message_into(wire_type, is, &mut self.vcmt)?;
+                },
+                5 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint64()?;
+                    self.ttl = tmp;
                 },
                 3 => {
                     ::protobuf::rt::read_singular_message_into(wire_type, is, &mut self.payload)?;
@@ -3205,6 +3270,13 @@ impl ::protobuf::Message for Output {
             let len = v.compute_size();
             my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
         }
+        if let Some(ref v) = self.vcmt.as_ref() {
+            let len = v.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
+        }
+        if self.ttl != 0 {
+            my_size += ::protobuf::rt::value_size(5, self.ttl, ::protobuf::wire_format::WireTypeVarint);
+        }
         if let Some(ref v) = self.payload.as_ref() {
             let len = v.compute_size();
             my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
@@ -3224,6 +3296,14 @@ impl ::protobuf::Message for Output {
             os.write_tag(2, ::protobuf::wire_format::WireTypeLengthDelimited)?;
             os.write_raw_varint32(v.get_cached_size())?;
             v.write_to_with_cached_sizes(os)?;
+        }
+        if let Some(ref v) = self.vcmt.as_ref() {
+            os.write_tag(4, ::protobuf::wire_format::WireTypeLengthDelimited)?;
+            os.write_raw_varint32(v.get_cached_size())?;
+            v.write_to_with_cached_sizes(os)?;
+        }
+        if self.ttl != 0 {
+            os.write_uint64(5, self.ttl)?;
         }
         if let Some(ref v) = self.payload.as_ref() {
             os.write_tag(3, ::protobuf::wire_format::WireTypeLengthDelimited)?;
@@ -3282,6 +3362,16 @@ impl ::protobuf::Message for Output {
                     |m: &Output| { &m.proof },
                     |m: &mut Output| { &mut m.proof },
                 ));
+                fields.push(::protobuf::reflect::accessor::make_singular_ptr_field_accessor::<_, ::protobuf::types::ProtobufTypeMessage<Pt>>(
+                    "vcmt",
+                    |m: &Output| { &m.vcmt },
+                    |m: &mut Output| { &mut m.vcmt },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
+                    "ttl",
+                    |m: &Output| { &m.ttl },
+                    |m: &mut Output| { &mut m.ttl },
+                ));
                 fields.push(::protobuf::reflect::accessor::make_singular_ptr_field_accessor::<_, ::protobuf::types::ProtobufTypeMessage<EncryptedPayload>>(
                     "payload",
                     |m: &Output| { &m.payload },
@@ -3311,6 +3401,8 @@ impl ::protobuf::Clear for Output {
     fn clear(&mut self) {
         self.clear_recipient();
         self.clear_proof();
+        self.clear_vcmt();
+        self.clear_ttl();
         self.clear_payload();
         self.unknown_fields.clear();
     }
@@ -5867,41 +5959,43 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     f\x18\t\x20\x01(\x0b2\x15.protobuf.pb.DotProofB\x02\x18\0\x12\x1e\n\x01x\
     \x18\n\x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12\x1e\n\x01y\x18\
     \x0b\x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12\x1e\n\x01z\x18\x0c\
-    \x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\"\x98\x01\n\x06Output\x12-\
+    \x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\"\xcc\x01\n\x06Output\x12-\
     \n\trecipient\x18\x01\x20\x01(\x0b2\x16.protobuf.pb.PublicKeyB\x02\x18\0\
     \x12+\n\x05proof\x18\x02\x20\x01(\x0b2\x18.protobuf.pb.BulletProofB\x02\
-    \x18\0\x122\n\x07payload\x18\x03\x20\x01(\x0b2\x1d.protobuf.pb.Encrypted\
-    PayloadB\x02\x18\0\"\xbb\x01\n\x0bTransaction\x12$\n\x05txins\x18\x01\
-    \x20\x03(\x0b2\x11.protobuf.pb.HashB\x02\x18\0\x12'\n\x06txouts\x18\x02\
-    \x20\x03(\x0b2\x13.protobuf.pb.OutputB\x02\x18\0\x12\"\n\x05gamma\x18\
-    \x03\x20\x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x12\x0f\n\x03fee\x18\
-    \x04\x20\x01(\x03B\x02\x18\0\x12(\n\x03sig\x18\x05\x20\x01(\x0b2\x17.pro\
-    tobuf.pb.SchnorrSigB\x02\x18\0\"y\n\x0fBaseBlockHeader\x12\x13\n\x07vers\
-    ion\x18\x01\x20\x01(\x04B\x02\x18\0\x12'\n\x08previous\x18\x02\x20\x01(\
-    \x0b2\x11.protobuf.pb.HashB\x02\x18\0\x12\x11\n\x05epoch\x18\x03\x20\x01\
-    (\x04B\x02\x18\0\x12\x15\n\ttimestamp\x18\x04\x20\x01(\x04B\x02\x18\0\"\
-    \xce\x01\n\x13MonetaryBlockHeader\x12.\n\x04base\x18\x01\x20\x01(\x0b2\
-    \x1c.protobuf.pb.BaseBlockHeaderB\x02\x18\0\x12\"\n\x05gamma\x18\x02\x20\
-    \x01(\x0b2\x0f.protobuf.pb.FrB\x02\x18\0\x120\n\x11inputs_range_hash\x18\
-    \x03\x20\x01(\x0b2\x11.protobuf.pb.HashB\x02\x18\0\x121\n\x12outputs_ran\
-    ge_hash\x18\x04\x20\x01(\x0b2\x11.protobuf.pb.HashB\x02\x18\0\"~\n\nMerk\
-    leNode\x12#\n\x04hash\x18\x01\x20\x01(\x0b2\x11.protobuf.pb.HashB\x02\
-    \x18\0\x12\x10\n\x04left\x18\x02\x20\x01(\x04B\x02\x18\0\x12\x11\n\x05ri\
-    ght\x18\x03\x20\x01(\x04B\x02\x18\0\x12&\n\x05value\x18\x04\x20\x01(\x0b\
-    2\x13.protobuf.pb.OutputB\x02\x18\0\"h\n\x11MonetaryBlockBody\x12%\n\x06\
-    inputs\x18\x01\x20\x03(\x0b2\x11.protobuf.pb.HashB\x02\x18\0\x12,\n\x07o\
-    utputs\x18\x02\x20\x03(\x0b2\x17.protobuf.pb.MerkleNodeB\x02\x18\0\"w\n\
-    \rMonetaryBlock\x124\n\x06header\x18\x01\x20\x01(\x0b2\x20.protobuf.pb.M\
-    onetaryBlockHeaderB\x02\x18\0\x120\n\x04body\x18\x02\x20\x01(\x0b2\x1e.p\
-    rotobuf.pb.MonetaryBlockBodyB\x02\x18\0\"\xa7\x01\n\x0eKeyBlockHeader\
-    \x12.\n\x04base\x18\x01\x20\x01(\x0b2\x1c.protobuf.pb.BaseBlockHeaderB\
-    \x02\x18\0\x120\n\x06leader\x18\x02\x20\x01(\x0b2\x1c.protobuf.pb.Secure\
-    PublicKeyB\x02\x18\0\x123\n\twitnesses\x18\x03\x20\x03(\x0b2\x1c.protobu\
-    f.pb.SecurePublicKeyB\x02\x18\0\";\n\x08KeyBlock\x12/\n\x06header\x18\
-    \x01\x20\x01(\x0b2\x1b.protobuf.pb.KeyBlockHeaderB\x02\x18\0\"z\n\x05Blo\
-    ck\x12.\n\tkey_block\x18\x01\x20\x01(\x0b2\x15.protobuf.pb.KeyBlockH\0B\
-    \x02\x18\0\x128\n\x0emonetary_block\x18\x02\x20\x01(\x0b2\x1a.protobuf.p\
-    b.MonetaryBlockH\0B\x02\x18\0B\x07\n\x05blockB\0b\x06proto3\
+    \x18\0\x12!\n\x04vcmt\x18\x04\x20\x01(\x0b2\x0f.protobuf.pb.PtB\x02\x18\
+    \0\x12\x0f\n\x03ttl\x18\x05\x20\x01(\x04B\x02\x18\0\x122\n\x07payload\
+    \x18\x03\x20\x01(\x0b2\x1d.protobuf.pb.EncryptedPayloadB\x02\x18\0\"\xbb\
+    \x01\n\x0bTransaction\x12$\n\x05txins\x18\x01\x20\x03(\x0b2\x11.protobuf\
+    .pb.HashB\x02\x18\0\x12'\n\x06txouts\x18\x02\x20\x03(\x0b2\x13.protobuf.\
+    pb.OutputB\x02\x18\0\x12\"\n\x05gamma\x18\x03\x20\x01(\x0b2\x0f.protobuf\
+    .pb.FrB\x02\x18\0\x12\x0f\n\x03fee\x18\x04\x20\x01(\x03B\x02\x18\0\x12(\
+    \n\x03sig\x18\x05\x20\x01(\x0b2\x17.protobuf.pb.SchnorrSigB\x02\x18\0\"y\
+    \n\x0fBaseBlockHeader\x12\x13\n\x07version\x18\x01\x20\x01(\x04B\x02\x18\
+    \0\x12'\n\x08previous\x18\x02\x20\x01(\x0b2\x11.protobuf.pb.HashB\x02\
+    \x18\0\x12\x11\n\x05epoch\x18\x03\x20\x01(\x04B\x02\x18\0\x12\x15\n\ttim\
+    estamp\x18\x04\x20\x01(\x04B\x02\x18\0\"\xce\x01\n\x13MonetaryBlockHeade\
+    r\x12.\n\x04base\x18\x01\x20\x01(\x0b2\x1c.protobuf.pb.BaseBlockHeaderB\
+    \x02\x18\0\x12\"\n\x05gamma\x18\x02\x20\x01(\x0b2\x0f.protobuf.pb.FrB\
+    \x02\x18\0\x120\n\x11inputs_range_hash\x18\x03\x20\x01(\x0b2\x11.protobu\
+    f.pb.HashB\x02\x18\0\x121\n\x12outputs_range_hash\x18\x04\x20\x01(\x0b2\
+    \x11.protobuf.pb.HashB\x02\x18\0\"~\n\nMerkleNode\x12#\n\x04hash\x18\x01\
+    \x20\x01(\x0b2\x11.protobuf.pb.HashB\x02\x18\0\x12\x10\n\x04left\x18\x02\
+    \x20\x01(\x04B\x02\x18\0\x12\x11\n\x05right\x18\x03\x20\x01(\x04B\x02\
+    \x18\0\x12&\n\x05value\x18\x04\x20\x01(\x0b2\x13.protobuf.pb.OutputB\x02\
+    \x18\0\"h\n\x11MonetaryBlockBody\x12%\n\x06inputs\x18\x01\x20\x03(\x0b2\
+    \x11.protobuf.pb.HashB\x02\x18\0\x12,\n\x07outputs\x18\x02\x20\x03(\x0b2\
+    \x17.protobuf.pb.MerkleNodeB\x02\x18\0\"w\n\rMonetaryBlock\x124\n\x06hea\
+    der\x18\x01\x20\x01(\x0b2\x20.protobuf.pb.MonetaryBlockHeaderB\x02\x18\0\
+    \x120\n\x04body\x18\x02\x20\x01(\x0b2\x1e.protobuf.pb.MonetaryBlockBodyB\
+    \x02\x18\0\"\xa7\x01\n\x0eKeyBlockHeader\x12.\n\x04base\x18\x01\x20\x01(\
+    \x0b2\x1c.protobuf.pb.BaseBlockHeaderB\x02\x18\0\x120\n\x06leader\x18\
+    \x02\x20\x01(\x0b2\x1c.protobuf.pb.SecurePublicKeyB\x02\x18\0\x123\n\twi\
+    tnesses\x18\x03\x20\x03(\x0b2\x1c.protobuf.pb.SecurePublicKeyB\x02\x18\0\
+    \";\n\x08KeyBlock\x12/\n\x06header\x18\x01\x20\x01(\x0b2\x1b.protobuf.pb\
+    .KeyBlockHeaderB\x02\x18\0\"z\n\x05Block\x12.\n\tkey_block\x18\x01\x20\
+    \x01(\x0b2\x15.protobuf.pb.KeyBlockH\0B\x02\x18\0\x128\n\x0emonetary_blo\
+    ck\x18\x02\x20\x01(\x0b2\x1a.protobuf.pb.MonetaryBlockH\0B\x02\x18\0B\
+    \x07\n\x05blockB\0b\x06proto3\
 ";
 
 static mut file_descriptor_proto_lazy: ::protobuf::lazy::Lazy<::protobuf::descriptor::FileDescriptorProto> = ::protobuf::lazy::Lazy {

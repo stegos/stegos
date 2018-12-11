@@ -2400,7 +2400,6 @@ dependencies = [
  "hex 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "lazy_static 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
- "parking_lot 0.6.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "protobuf 2.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "protobuf-codegen-pure 2.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",

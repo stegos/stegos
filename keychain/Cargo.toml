@@ -10,5 +10,9 @@ failure = "0.1"
 base64 = "0.9"
 lazy_static = "1.1"
 regex = "1.0"
+
+eth-secp256k1 = { git = "https://github.com/tomaka/rust-secp256k1", branch = "pub-rand" }
+rand = "0.4"
+
 stegos_config = { path = "../config" }
 stegos_crypto = { path = "../crypto" }

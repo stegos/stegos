@@ -23,7 +23,7 @@
 
 pub mod pem;
 
-use failure::{Error, Fail};
+use failure::{format_err, Error, Fail};
 use lazy_static;
 use log::*;
 use std::fs;
@@ -32,6 +32,8 @@ use stegos_config::ConfigKeyChain;
 use stegos_crypto::curve1174::cpt;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
+
+use rand::{ChaChaRng, SeedableRng};
 
 /// Create deterministic CoSi keys from Wallet Keys.
 ///
@@ -166,5 +168,27 @@ impl KeyChain {
         };
 
         keychain
+    }
+
+    /// Generate new secp256k1 keypair using KeyChain as seed.
+    pub fn generate_secp256k1_keypair(
+        &self,
+    ) -> Result<(secp256k1::key::SecretKey, secp256k1::key::PublicKey), Error> {
+        // seed generator, with validator key.
+        let seed: [u8; 32] = self.wallet_skey.into_bytes();
+        // convert seed to old rand version format.
+        let mut seed_converted = [0u32; 4];
+        for i in 0..4 {
+            seed_converted[i] = (seed[i * 4 + 0] as u32) << 24
+                | (seed[i * 4 + 1] as u32) << 16
+                | (seed[i * 4 + 2] as u32) << 8
+                | (seed[i * 4 + 3] as u32);
+        }
+
+        let mut rng = ChaChaRng::from_seed(&seed_converted);
+
+        let sec = secp256k1::Secp256k1::new();
+        sec.generate_keypair(&mut rng)
+            .map_err(|e| format_err!("Couldn't produce sec256k1 key, reason = {}", e))
     }
 }

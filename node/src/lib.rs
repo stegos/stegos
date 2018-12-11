@@ -923,27 +923,29 @@ impl NodeService {
         // Process control messages.
         loop {
             match self.inbox.poll() {
-                Ok(Async::Ready(Some(msg))) => if let Err(e) = {
-                    match msg {
-                        NodeMessage::Init => self.handle_init(),
-                        NodeMessage::PaymentRequest { recipient, amount } => {
-                            self.handle_payment_request(&recipient, amount)
+                Ok(Async::Ready(Some(msg))) => {
+                    if let Err(e) = {
+                        match msg {
+                            NodeMessage::Init => self.handle_init(),
+                            NodeMessage::PaymentRequest { recipient, amount } => {
+                                self.handle_payment_request(&recipient, amount)
+                            }
+                            NodeMessage::MessageRequest {
+                                recipient,
+                                ttl,
+                                data,
+                            } => self.handle_message_request(&recipient, ttl, data),
+                            NodeMessage::SubscribeBalance(tx) => self.handle_subscribe_balance(tx),
+                            NodeMessage::SubscribeEpoch(tx) => self.handle_subscribe_epoch(tx),
+                            NodeMessage::SubscribeMessage(tx) => {
+                                self.handle_subscribe_message(tx);
+                                Ok(())
+                            }
                         }
-                        NodeMessage::MessageRequest {
-                            recipient,
-                            ttl,
-                            data,
-                        } => self.handle_message_request(&recipient, ttl, data),
-                        NodeMessage::SubscribeBalance(tx) => self.handle_subscribe_balance(tx),
-                        NodeMessage::SubscribeEpoch(tx) => self.handle_subscribe_epoch(tx),
-                        NodeMessage::SubscribeMessage(tx) => {
-                            self.handle_subscribe_message(tx);
-                            Ok(())
-                        }
+                    } {
+                        error!("Error: {}", e)
                     }
-                } {
-                    error!("Error: {}", e)
-                },
+                }
                 Ok(Async::Ready(None)) => break, // channel closed, fall through
                 Ok(Async::NotReady) => break,    // not ready, fall throughs
                 Err(()) => unreachable!(),       // never happens
@@ -953,11 +955,12 @@ impl NodeService {
         // Process network events
         loop {
             match self.transaction_rx.poll() {
-                Ok(Async::Ready(Some(msg))) => if let Err(e) = self.handle_transaction_request(msg)
-                {
-                    // Ignore invalid packets.
-                    error!("Invalid request: {}", e);
-                },
+                Ok(Async::Ready(Some(msg))) => {
+                    if let Err(e) = self.handle_transaction_request(msg) {
+                        // Ignore invalid packets.
+                        error!("Invalid request: {}", e);
+                    }
+                }
                 Ok(Async::Ready(None)) => break, // channel closed, fall through
                 Ok(Async::NotReady) => break,    // not ready, fall through
                 Err(()) => unreachable!(),       // never happens
@@ -966,10 +969,12 @@ impl NodeService {
 
         loop {
             match self.block_rx.poll() {
-                Ok(Async::Ready(Some(msg))) => if let Err(e) = self.handle_block_request(msg) {
-                    // Ignore invalid packets.
-                    error!("Invalid request: {}", e);
-                },
+                Ok(Async::Ready(Some(msg))) => {
+                    if let Err(e) = self.handle_block_request(msg) {
+                        // Ignore invalid packets.
+                        error!("Invalid request: {}", e);
+                    }
+                }
                 Ok(Async::Ready(None)) => break, // channel closed, fall through
                 Ok(Async::NotReady) => break,    // not ready, fall through
                 Err(()) => unreachable!(),       // never happens

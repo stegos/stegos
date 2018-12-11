@@ -26,11 +26,7 @@ use stegos_crypto::hash::Hash;
 
 #[derive(Debug, Fail)]
 pub enum BlockchainError {
-    #[fail(
-        display = "Previous hash mismatch: expected={}, got={}.",
-        _0,
-        _1
-    )]
+    #[fail(display = "Previous hash mismatch: expected={}, got={}.", _0, _1)]
     PreviousHashMismatch(Hash, Hash),
     #[fail(display = "Block hash collision: {}.", _0)]
     BlockHashCollision(Hash),

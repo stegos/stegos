@@ -28,7 +28,8 @@ fn main() {
             customize: Customize {
                 ..Default::default()
             },
-        }).expect("protoc");
+        })
+        .expect("protoc");
     }
 
     if check_for_regen("protos/ncp.proto", "src/ncp/ncp.rs") {
@@ -39,6 +40,7 @@ fn main() {
             customize: Customize {
                 ..Default::default()
             },
-        }).expect("protoc");
+        })
+        .expect("protoc");
     }
 }

@@ -44,7 +44,8 @@ fn main() {
                 .value_name("NUMBER")
                 .help("Number of initial keys to generate.")
                 .takes_value(true),
-        ).get_matches();
+        )
+        .get_matches();
 
     let keys = if let Some(keys) = args.value_of("keys") {
         match keys.parse::<i32>() {

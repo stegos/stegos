@@ -21,9 +21,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use chrono::prelude::Utc;
 use crate::block::*;
 use crate::output::*;
+use chrono::prelude::Utc;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure as cosi_keys;
 use stegos_keychain::KeyChain;

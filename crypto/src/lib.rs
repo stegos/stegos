@@ -48,8 +48,7 @@ pub enum CryptoError {
     /// Trying to coerce from incorrecte byte array
     #[fail(
         display = "Invalid binary string length. Expected: {}, Got: {}",
-        _0,
-        _1
+        _0, _1
     )]
     InvalidBinaryLength(usize, usize),
     /// An invalid character was found. Valid ones are: `0...9`, `a...f`

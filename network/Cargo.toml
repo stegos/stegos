@@ -35,18 +35,3 @@ env_logger = "0.6"
 [build-dependencies]
 # protoc-rust = "2.1"
 protobuf-codegen-pure = "2.2"
-
-[[example]]
-name = "floodsub"
-
-[[example]]
-name = "muxedsub"
-
-[[example]]
-name = "echo-server"
-
-[[example]]
-name = "echo-dialer"
-
-[[example]]
-name = "ncp-ping"

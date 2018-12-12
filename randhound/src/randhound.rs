@@ -651,9 +651,15 @@ impl GlobalState {
                 self.stash_subsubgroup_randomness(&from, &rands)
             }
             MsgType::GroupRandomness { ref rand } => self.stash_group_randomness(&from, &rand),
-            MsgType::FinalLotteryTicket { .. } => {
+            MsgType::FinalLotteryTicket { ref ticket } => {
                 // There should me more to do here...
                 // (hold election, assign new roles, etc.)
+                if let Err(e) = self
+                    .service
+                    .unbounded_send(RandHoundEvent::Randomness(ticket.clone()))
+                {
+                    error!("Failerd to send generated Randomness to subscribers: {}", e);
+                }
                 self.clear_session_state() // but certainly this much...
             }
             _ => (),
@@ -1606,6 +1612,12 @@ impl GlobalState {
                     let trand = fast::compute_pairing(&G1::generator(), &grand);
                     let ticket = Hash::digest(&trand);
                     info!("Calculated Final Lottery Ticket: {}", ticket);
+                    if let Err(e) = self
+                        .service
+                        .unbounded_send(RandHoundEvent::Randomness(ticket.clone()))
+                    {
+                        error!("Failed to send generated Randomness to subscribers: {}", e);
+                    }
                     let msg = MsgType::FinalLotteryTicket { ticket: ticket };
                     // tell everyone the outcome with the next lottery ticket
                     if let Err(e) = self.broadcast(&msg) {

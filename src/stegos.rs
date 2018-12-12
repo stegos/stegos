@@ -134,10 +134,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     // Initialize randhound
-    let randhound_service = RandHound::new(
+    let (randhound_service, _randhound) = RandHound::new(
         broker.clone(),
         network.clone(),
-        node.clone(),
         &keychain,
         rt.executor().clone(),
     )?;

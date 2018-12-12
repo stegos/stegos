@@ -27,7 +27,7 @@ mod randhound_proto;
 use crate::randhound::{EpochInfo, GlobalState};
 
 use failure::{Error, Fail};
-use futures::sync::mpsc::{self, UnboundedSender};
+use futures::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use futures::{Async, Future, Poll, Stream};
 use futures_stream_select_all_send::select_all;
 use log::*;
@@ -36,7 +36,7 @@ use std::time::{Duration, Instant};
 use stegos_crypto::hash::{Hash, Hashable};
 use stegos_keychain::KeyChain;
 use stegos_network::{Broker, HeartbeatUpdate, Network};
-use stegos_node::{EpochNotification, Node};
+use stegos_node::EpochNotification;
 use tokio::runtime::TaskExecutor;
 use tokio::timer::{Delay, Interval};
 
@@ -47,18 +47,44 @@ const TOPIC: &'static str = "randhound";
 // ----------------------------------------------------------------
 
 /// RandHound++ - distributed randomness.
-pub struct RandHound {}
+///
+#[derive(Clone, Debug)]
+pub struct RandHound {
+    control: UnboundedSender<RandHoundEvent>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Randomness {
+    pub value: Hash,
+}
 
 impl RandHound {
     /// Create a new RandHound service.
     pub fn new(
         broker: Broker,
         network: Network,
-        node: Node,
         keychain: &KeyChain,
         runtime: TaskExecutor,
-    ) -> Result<impl Future<Item = (), Error = ()>, Error> {
-        RandHoundService::new(broker, network, node, keychain, runtime)
+    ) -> Result<(impl Future<Item = (), Error = ()>, Self), Error> {
+        let (service, channel) = RandHoundService::new(broker, network, keychain, runtime)?;
+        let handle = RandHound { control: channel };
+        Ok((service, handle))
+    }
+
+    pub fn on_epoch(&self, msg: EpochNotification) -> Result<(), Error> {
+        self.control.unbounded_send(RandHoundEvent::Epoch(msg))?;
+        Ok(())
+    }
+
+    pub fn start_round(&self) -> Result<(), Error> {
+        self.control.unbounded_send(RandHoundEvent::NewRound)?;
+        Ok(())
+    }
+
+    pub fn subscribe(&self) -> Result<UnboundedReceiver<Randomness>, Error> {
+        let (tx, rx) = mpsc::unbounded();
+        self.control.unbounded_send(RandHoundEvent::Subscribe(tx))?;
+        Ok(rx)
     }
 }
 
@@ -74,6 +100,8 @@ pub(crate) enum RandHoundEvent {
     Epoch(EpochNotification),
     Heartbeat(HeartbeatUpdate),
     CheckInitQuorum,
+    Subscribe(UnboundedSender<Randomness>),
+    Randomness(Hash),
     NewRound,
 }
 
@@ -95,17 +123,18 @@ pub struct RandHoundService {
     state: GlobalState,
     /// Tokio runtime handler
     runtime: TaskExecutor,
+    /// List of Randomness receivers
+    consumers: Vec<UnboundedSender<Randomness>>,
 }
 
 impl<'a> RandHoundService {
     /// Constructor.
-    pub fn new(
+    pub(crate) fn new(
         broker: Broker,
         network: Network,
-        node: Node,
         keychain: &KeyChain,
         runtime: TaskExecutor,
-    ) -> Result<Self, Error> {
+    ) -> Result<(Self, UnboundedSender<RandHoundEvent>), Error> {
         // Subscribe to unicast topic.
         debug!(
             "subscribed to topic: {}",
@@ -137,12 +166,12 @@ impl<'a> RandHoundService {
 
         inputs.push(Box::new(broadcast_rx));
 
-        let epoch_rx = node
-            .subscribe_epoch()?
-            .map(|m| RandHoundEvent::Epoch(m))
-            .map_err(|_| RandHoundInputError::NoError);
+        // let epoch_rx = node
+        //     .subscribe_epoch()?
+        //     .map(|m| RandHoundEvent::Epoch(m))
+        //     .map_err(|_| RandHoundInputError::NoError);
 
-        inputs.push(Box::new(epoch_rx));
+        // inputs.push(Box::new(epoch_rx));
 
         let (send, recv) = mpsc::unbounded();
 
@@ -161,14 +190,16 @@ impl<'a> RandHoundService {
 
         let randhound = RandHoundService {
             // broker: broker.clone(),
-            send,
+            send: send.clone(),
             recv,
             state,
             runtime,
+            consumers: vec![],
         };
 
-        Ok(randhound)
+        Ok((randhound, send))
     }
+
     /// Send an unicast message to RandHound peer.
     // fn unicast(&self, node_id: &String, data: Vec<u8>) -> Result<(), Error> {
     //     self.broker.publish(node_id, data)
@@ -199,6 +230,7 @@ impl<'a> RandHoundService {
         }
         self.state.set_next_epoch(epoch);
         // TODO: remove this in favor Node service orchestrating RandHound
+        // Remove this, when appropriate code is present in Node
         if self.state.get_pkey() == msg.leader {
             debug!("I'm beacon! Schedule Randhound round ");
             self.runtime.spawn({
@@ -281,6 +313,14 @@ impl Future for RandHoundService {
                     RandHoundEvent::Timer(_i) => self.on_timer(),
                     RandHoundEvent::CheckInitQuorum => self.on_check_init_quorum(),
                     RandHoundEvent::NewRound => self.on_new_round(),
+                    RandHoundEvent::Subscribe(tx) => self.consumers.push(tx),
+                    RandHoundEvent::Randomness(h) => {
+                        for c in self.consumers.iter() {
+                            if let Err(e) = c.unbounded_send(Randomness { value: h }) {
+                                error!("Failed to send generated Randomness to consumers: {}", e);
+                            }
+                        }
+                    }
                 },
                 Ok(Async::Ready(None)) => unreachable!(), // never should happen
                 Ok(Async::NotReady) => return Ok(Async::NotReady),

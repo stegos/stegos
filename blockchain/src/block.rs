@@ -221,19 +221,12 @@ impl MonetaryBlock {
         let inputs = inputs.iter().map(|o| o.clone()).collect::<Vec<Hash>>();
 
         // Create outputs tree
-        let mut hasher = Hasher::new();
-        let outputs_count: u64 = outputs.len() as u64;
-        outputs_count.hash(&mut hasher);
-        for output in outputs {
-            output.hash(&mut hasher);
-        }
-        let outputs_range_hash = hasher.result();
         let outputs = outputs
             .iter()
             .map(|o| Box::<Output>::new(o.clone()))
             .collect::<Vec<Box<Output>>>();
-
         let outputs = Merkle::from_array(&outputs);
+        let outputs_range_hash = outputs.roothash().clone();
 
         // Create header
         let header = MonetaryBlockHeader {
@@ -250,13 +243,39 @@ impl MonetaryBlock {
         block
     }
 
-    /// Validate the monetary balance of block.
+    /// Validate block.
+    ///
+    /// This functions validates monetary balance, bulletproofs, inputs and outputs.
+    /// Sic: only full untrimmed blocks are currently supported.
     ///
     /// # Arguments
     ///
     /// * - `inputs` - UTXOs referred by self.body.inputs, in the same order as in self.body.inputs.
     ///
     pub fn validate(&self, inputs: &[Output]) -> Result<(), Error> {
+        // Validate inputs.
+        let inputs_range_hash = {
+            let mut hasher = Hasher::new();
+            let inputs_count: u64 = self.body.inputs.len() as u64;
+            inputs_count.hash(&mut hasher);
+            for input in &self.body.inputs {
+                input.hash(&mut hasher);
+            }
+            hasher.result()
+        };
+        if self.header.inputs_range_hash != inputs_range_hash {
+            let expected = self.header.inputs_range_hash.clone();
+            let got = inputs_range_hash;
+            return Err(BlockchainError::InvalidBlockInputsHash(expected, got).into());
+        }
+
+        // Validate outputs.
+        if self.header.outputs_range_hash != *self.body.outputs.roothash() {
+            let expected = self.header.outputs_range_hash.clone();
+            let got = self.body.outputs.roothash().clone();
+            return Err(BlockchainError::InvalidBlockOutputsHash(expected, got).into());
+        }
+
         //
         // Calculate the pedersen commitment difference in order to check the monetary balance:
         //
@@ -386,6 +405,52 @@ pub mod tests {
                 },
                 _ => panic!(),
             }
+        }
+
+        //
+        // Valid block with invalid inputs/outputs hash
+        //
+        {
+            let (output0, gamma0) =
+                Output::new_monetary(timestamp, &skey0, &pkey1, amount).unwrap();
+            let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+            let inputs1 = [Hash::digest(&output0)];
+            let (output1, gamma1) =
+                Output::new_monetary(timestamp, &skey1, &pkey2, amount).unwrap();
+            let outputs1 = [output1];
+            let gamma = gamma0 - gamma1;
+            let mut block = MonetaryBlock::new(base, gamma, &inputs1, &outputs1);
+
+            // Invalid inputs_range_hash.
+            let inputs = [output0];
+            let inputs_range_hash = block.header.inputs_range_hash.clone();
+            block.header.inputs_range_hash = Hash::digest(&"invalid".to_string());
+            match block.validate(&inputs) {
+                Err(e) => match e.downcast::<BlockchainError>().unwrap() {
+                    BlockchainError::InvalidBlockInputsHash(expected, got) => {
+                        assert_eq!(block.header.inputs_range_hash, expected);
+                        assert_eq!(inputs_range_hash, got);
+                    }
+                    _ => panic!(),
+                },
+                _ => panic!(),
+            }
+            block.header.inputs_range_hash = inputs_range_hash;
+
+            // Invalid outputs_range_hash.
+            let outputs_range_hash = block.header.outputs_range_hash.clone();
+            block.header.outputs_range_hash = Hash::digest(&"invalid".to_string());
+            match block.validate(&inputs) {
+                Err(e) => match e.downcast::<BlockchainError>().unwrap() {
+                    BlockchainError::InvalidBlockOutputsHash(expected, got) => {
+                        assert_eq!(block.header.outputs_range_hash, expected);
+                        assert_eq!(outputs_range_hash, got);
+                    }
+                    _ => panic!(),
+                },
+                _ => panic!(),
+            }
+            block.header.outputs_range_hash = outputs_range_hash;
         }
     }
 }

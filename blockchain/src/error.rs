@@ -40,6 +40,10 @@ pub enum BlockchainError {
     InvalidTransactionBalance,
     #[fail(display = "Invalid block monetary balance.")]
     InvalidBlockBalance,
+    #[fail(display = "Invalid block inputs: expected={}, got={}.", _0, _1)]
+    InvalidBlockInputsHash(Hash, Hash),
+    #[fail(display = "Invalid block outputs: expected={}, got={}.", _0, _1)]
+    InvalidBlockOutputsHash(Hash, Hash),
     #[fail(display = "Invalid UTXO bulletproof.")]
     InvalidBulletProof,
 }

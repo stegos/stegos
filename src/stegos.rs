@@ -122,9 +122,18 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut rt = Runtime::new()?;
     let (network, network_service, broker) = Network::new(&cfg.network, &keychain)?;
 
+    // Initialize randhound
+    let (randhound_service, randhound) = RandHound::new(
+        broker.clone(),
+        network.clone(),
+        &keychain,
+        rt.executor().clone(),
+    )?;
+    rt.spawn(randhound_service);
+
     // Initialize node
     let genesis = genesis_dev().expect("failed to load genesis block");
-    let (node_service, node) = Node::new(keychain.clone(), genesis, broker.clone())?;
+    let (node_service, node) = Node::new(keychain.clone(), genesis, broker.clone(), randhound)?;
     rt.spawn(node_service);
 
     // Don't initialize REPL if stdin is not a TTY device
@@ -133,16 +142,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         let console_service = Console::new(network.clone(), broker.clone(), node.clone())?;
         rt.spawn(console_service);
     }
-
-    // Initialize randhound
-    let randhound_service = RandHound::new(
-        broker.clone(),
-        network.clone(),
-        node.clone(),
-        &keychain,
-        rt.executor().clone(),
-    )?;
-    rt.spawn(randhound_service);
 
     // Start main event loop
     rt.block_on(network_service)

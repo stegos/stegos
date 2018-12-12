@@ -9,7 +9,6 @@ stegos_config = { path = "../config" }
 stegos_crypto = { path = "../crypto" }
 stegos_keychain = { path = "../keychain" }
 stegos_network = { path = "../network" }
-stegos_node = { path = "../node" }
 failure = "0.1"
 futures = "0.1"
 futures-stream-select-all-send = "0.1"

@@ -195,7 +195,7 @@ impl<'a> RandHoundService {
         epoch.leader = msg.leader.clone();
         epoch.beacon = msg.leader.clone();
         for w in msg.witnesses.iter() {
-            self.state.add_witness(w);
+            self.state.add_witness(w.public_key());
         }
         self.state.set_next_epoch(epoch);
         // TODO: remove this in favor Node service orchestrating RandHound

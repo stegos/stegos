@@ -138,7 +138,7 @@ impl Node {
 pub struct EpochNotification {
     pub epoch: u64,
     pub leader: SecurePublicKey,
-    pub witnesses: Vec<SecurePublicKey>,
+    pub witnesses: Vec<ValidatorState>,
 }
 
 /// Send when message is received.
@@ -210,6 +210,36 @@ pub enum NodeError {
     TooLowFee(i64, i64),
 }
 
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+pub struct ValidatorState {
+    public_key: SecurePublicKey,
+    stake: u64,
+}
+
+impl ValidatorState {
+    pub fn new(public_key: SecurePublicKey, stake: u64) -> ValidatorState {
+        ValidatorState { public_key, stake }
+    }
+    pub fn without_stake(public_key: SecurePublicKey) -> ValidatorState {
+        ValidatorState {
+            public_key,
+            stake: 0,
+        }
+    }
+
+    pub fn public_key(&self) -> &SecurePublicKey {
+        &self.public_key
+    }
+
+    pub fn stake(&self) -> u64 {
+        self.stake
+    }
+
+    pub fn set_stake(&mut self, new_stake: u64) {
+        self.stake = new_stake;
+    }
+}
+
 struct NodeService {
     /// Blockchain.
     chain: Blockchain,
@@ -224,8 +254,10 @@ struct NodeService {
     epoch: u64,
     /// Current epoch leader.
     leader: SecurePublicKey,
-    /// The list of witnesses public keys.
-    witnesses: Vec<SecurePublicKey>,
+    /// The list of current validators states.
+    witnesses: Vec<ValidatorState>,
+    /// Map of all actual nodes stakes.
+    stakes: HashMap<SecurePublicKey, u64>,
     /// Memory pool of pending transactions.
     mempool: Vec<Transaction>,
     /// Hashes of UTXO used by mempool transactions,
@@ -254,7 +286,8 @@ impl NodeService {
         let unspent = HashMap::new();
         let epoch: u64 = 1;
         let leader: SecurePublicKey = G2::generator().into(); // some fake key
-        let witnesses = Vec::<SecurePublicKey>::new();
+        let witnesses = Vec::new();
+        let stakes = HashMap::new();
         let mempool = Vec::<Transaction>::new();
         let mempool_outputs = HashSet::<Hash>::new();
         let on_balance_changed = Vec::<UnboundedSender<i64>>::new();
@@ -295,6 +328,7 @@ impl NodeService {
             epoch,
             leader,
             witnesses,
+            stakes,
             mempool,
             mempool_outputs,
             broker,
@@ -321,6 +355,12 @@ impl NodeService {
                 Block::KeyBlock(key_block) => {
                     info!("Genesis key block: hash={}", Hash::digest(&key_block));
                     let key_block2 = key_block.clone();
+
+                    // TODO: remove stakes initialisation.
+                    for node in &key_block.header.witnesses {
+                        self.stakes.insert(*node, 10);
+                    }
+
                     self.chain.register_key_block(key_block)?;
                     self.on_key_block_registered(&key_block2);
                 }
@@ -538,6 +578,41 @@ impl NodeService {
             .retain(move |tx| tx.unbounded_send(balance).is_ok())
     }
 
+    /// Returns stake from database.
+    /// Called when witnesses list was changed.
+    fn validator_stake(&self, validator: &SecurePublicKey) -> u64 {
+        //TODO: replace by real calculation.
+        self.stakes.get(validator).cloned().unwrap_or(0)
+    }
+
+    /// Adds some stake to node full stake.
+    #[allow(dead_code)]
+    fn add_stake(&mut self, node: &SecurePublicKey, stake: u64) {
+        *self.stakes.entry(*node).or_insert(0) += stake;
+        //update current validator list
+        for validator in &mut self.witnesses {
+            if validator.public_key() == node {
+                validator.set_stake(validator.stake() + stake);
+                break;
+            }
+        }
+    }
+
+    /// Take nodes stake.
+    /// Returns value of stake;
+    #[allow(dead_code)]
+    fn take_stake(&mut self, node: &SecurePublicKey) -> u64 {
+        let stake = self.stakes.remove(node).unwrap_or(0);
+        //update current validator list
+        for validator in &mut self.witnesses {
+            if validator.public_key() == node {
+                validator.set_stake(0);
+                break;
+            }
+        }
+        stake
+    }
+
     /// Returns true if current node is leader.
     fn is_leader(&self) -> bool {
         self.keys.cosi_pkey == self.leader
@@ -548,7 +623,15 @@ impl NodeService {
         self.leader = key_block.header.leader.clone();
         self.epoch = self.epoch + 1;
         self.leader = key_block.header.leader.clone();
-        self.witnesses = key_block.header.witnesses.clone();
+        self.witnesses = key_block
+            .header
+            .witnesses
+            .iter()
+            .map(|validator| {
+                let stake = self.validator_stake(validator);
+                ValidatorState::new(*validator, stake)
+            })
+            .collect();
         if self.is_leader() {
             info!("I'm leader");
         } else {
@@ -1044,7 +1127,7 @@ pub mod tests {
         assert_eq!(node.epoch, 2);
         assert_eq!(node.leader, keys.cosi_pkey);
         assert_eq!(node.witnesses.len(), 1);
-        assert_eq!(node.witnesses[0], node.leader);
+        assert_eq!(node.witnesses[0].public_key(), &node.leader);
     }
 
     #[test]

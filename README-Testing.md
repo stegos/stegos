@@ -1,26 +1,48 @@
 # Running test nodes locally
 
-* build the code:
+## Prerequisite
+
+To generate node's configurations, Jinja2 CLI tool is needed.
+It can be installed with:
 
 ```shell
-cargo build
+pip install j2cli
 ```
 
-* run nodes sequentially (NN = 01, 02, 03):
+## Prepare configurations
+
+1. Remove previous configs
 
 ```shell
-cargo run -- -c testing/nodeNN/stegos.toml
+rm -rf testing/node*
 ```
 
-`Node01` is simply listening on configured port (10055) and doesn't make any attempts to connect to any peers.
+1. Generate new configurations, keys, and genesis block for N nodes:
 
-`Node02` on start will start listening on port (10056) and connects to `Node01`
+```shell
+./create-testing-keys.sh N
+```
 
-`Node03` listens on port 10057 and connects to `Node01` and `Node02`
+1. Build the code with new Genesis block:
 
-Anything typed on stdin is broadcasted to all connected nodes.
-Typing `dial <multiaddr>` will connect to other node, listening on provided Multiaddr.
+```shell
+cargo build --release
+```
 
-Multiaddr has format: `/ip4/<IP>/tcp/<port>`
+## Start N nodes:
 
-DNS current is not supported.
+```shell
+./start-cluster.sh N
+```
+
+Attach to the Leader node:
+
+```shell
+tmux a -t node01
+```
+
+## Stop all nodes:
+
+```shell
+./stop-cluster.sh N
+```

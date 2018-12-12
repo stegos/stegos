@@ -197,11 +197,15 @@ impl<'a> RandHoundService {
         for w in msg.witnesses.iter() {
             self.state.add_witness(w);
         }
-        self.state.set_epoch(epoch);
+        self.state.set_next_epoch(epoch);
+        // TODO: remove this in favor Node service orchestrating RandHound
         if self.state.get_pkey() == msg.leader {
             debug!("I'm beacon! Schedule Randhound round ");
             self.runtime.spawn({
-                let delayed = Delay::new(Instant::now() + Duration::from_secs(15)).and_then({
+                let delayed = Delay::new(
+                    Instant::now() + Duration::from_secs(self.state.witnesses_size() as u64 + 10),
+                )
+                .and_then({
                     let send = self.send.clone();
                     move |()| {
                         debug!("Kabooom!");
@@ -238,7 +242,7 @@ impl<'a> RandHoundService {
     fn process_msg(&mut self, msg: Vec<u8>) {
         let proto_msg = match protobuf::parse_from_bytes(&msg) {
             Ok(msg) => {
-                debug!("*received unicast protobuf message: {:#?}*", msg);
+                trace!("*received protobuf message: {:#?}*", msg);
                 msg
             }
             Err(e) => {

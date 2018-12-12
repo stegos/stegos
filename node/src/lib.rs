@@ -50,6 +50,22 @@ use tokio_timer::Interval;
 // Public API.
 // ----------------------------------------------------------------
 
+/// Load genesis blocks for tests and development.
+pub fn genesis_dev() -> Result<Vec<Block>, Error> {
+    // Load generated blocks
+    let key_block = include_bytes!("../data/genesis0.bin");
+    let key_block: protos::node::KeyBlock = protobuf::parse_from_bytes(&key_block[..])?;
+    let key_block = KeyBlock::from_proto(&key_block)?;
+    let monetary_block = include_bytes!("../data/genesis1.bin");
+    let monetary_block: protos::node::MonetaryBlock =
+        protobuf::parse_from_bytes(&monetary_block[..])?;
+    let monetary_block = MonetaryBlock::from_proto(&monetary_block)?;
+    Ok(vec![
+        Block::KeyBlock(key_block),
+        Block::MonetaryBlock(monetary_block),
+    ])
+}
+
 /// Blockchain Node.
 #[derive(Clone, Debug)]
 pub struct Node {
@@ -60,11 +76,13 @@ impl Node {
     /// Create a new blockchain node.
     pub fn new(
         keys: KeyChain,
+        genesis: Vec<Block>,
         broker: Broker,
     ) -> Result<(impl Future<Item = (), Error = ()>, Node), Error> {
         let (outbox, inbox) = unbounded();
 
-        outbox.unbounded_send(NodeMessage::Init)?;
+        let msg = NodeMessage::Init { genesis };
+        outbox.unbounded_send(msg)?;
 
         let service = NodeService::new(keys, broker, inbox)?;
         let handler = Node { outbox };
@@ -133,12 +151,20 @@ pub struct MessageNotification {
 // Internal Implementation.
 // ----------------------------------------------------------------
 
+/// Blockchain version.
 const VERSION: u64 = 1;
+/// Mempool processing interval.
+// TODO: replace with randound rounds
 const MEMPOOL_TTL: u64 = 15;
+/// Topic used for sending transactions.
 const TX_TOPIC: &'static str = "tx";
+/// Topic used for sending sealed blocks.
 const BLOCK_TOPIC: &'static str = "block";
+/// Fixed fee for monetary transactions.
 const MONETARY_FEE: i64 = 1;
-const DATA_UNIT: u64 = 1024;
+/// Data unit used to calculate fee.
+const DATA_UNIT: usize = 1024;
+/// Fee for one DATA_UNIT.
 const DATA_UNIT_FEE: i64 = 1;
 
 #[derive(Clone, Debug)]
@@ -168,11 +194,13 @@ enum NodeMessage {
     //
     // Internal Events
     //
-    Init,
+    Init {
+        genesis: Vec<Block>,
+    },
     Timer(Instant), // TODO: replace with RandHound
 }
 
-#[derive(Debug, Fail)]
+#[derive(Debug, Fail, PartialEq, Eq)]
 pub enum NodeError {
     #[fail(display = "Amount should be greater than zero.")]
     ZeroOrNegativeAmount,
@@ -280,37 +308,33 @@ impl NodeService {
     }
 
     /// Handler for NodeMessage::Init.
-    fn handle_init(&mut self) -> Result<(), Error> {
+    fn handle_init(&mut self, genesis: Vec<Block>) -> Result<(), Error> {
         info!("Registering genesis blocks...");
-
-        // Load generated blocks
-        let key_block = include_bytes!("../data/genesis0.bin");
-        let key_block: protos::node::KeyBlock = protobuf::parse_from_bytes(&key_block[..])?;
-        let key_block = KeyBlock::from_proto(&key_block)?;
-
-        let monetary_block = include_bytes!("../data/genesis1.bin");
-        let monetary_block: protos::node::MonetaryBlock =
-            protobuf::parse_from_bytes(&monetary_block[..])?;
-        let monetary_block = MonetaryBlock::from_proto(&monetary_block)?;
-
-        info!("Genesis key block: hash={}", Hash::digest(&key_block));
-        info!(
-            "Genesis monetary block: hash={}",
-            Hash::digest(&monetary_block)
-        );
 
         //
         // Sic: genesis block has invalid monetary balance, so handle_monetary_block_request()
         // can't be used here.
         //
 
-        let key_block2 = key_block.clone();
-        self.chain.register_key_block(key_block)?;
-        self.on_key_block_registered(&key_block2);
-
-        let monetary_block2 = monetary_block.clone();
-        let inputs = self.chain.register_monetary_block(monetary_block)?;
-        self.on_monetary_block_registered(&monetary_block2, &inputs);
+        for block in genesis {
+            match block {
+                Block::KeyBlock(key_block) => {
+                    info!("Genesis key block: hash={}", Hash::digest(&key_block));
+                    let key_block2 = key_block.clone();
+                    self.chain.register_key_block(key_block)?;
+                    self.on_key_block_registered(&key_block2);
+                }
+                Block::MonetaryBlock(monetary_block) => {
+                    info!(
+                        "Genesis monetary block: hash={}",
+                        Hash::digest(&monetary_block)
+                    );
+                    let monetary_block2 = monetary_block.clone();
+                    let inputs = self.chain.register_monetary_block(monetary_block)?;
+                    self.on_monetary_block_registered(&monetary_block2, &inputs);
+                }
+            }
+        }
 
         Ok(())
     }
@@ -631,9 +655,9 @@ impl NodeService {
     }
 
     /// Calculate fee for data transaction.
-    fn data_fee(size: u64, ttl: u64) -> i64 {
+    fn data_fee(size: usize, ttl: u64) -> i64 {
         assert!(size > 0);
-        let units: u64 = (size + (DATA_UNIT - 1u64)) / DATA_UNIT;
+        let units: usize = (size + (DATA_UNIT - 1)) / DATA_UNIT;
         (units as i64) * (ttl as i64) * DATA_UNIT_FEE
     }
 
@@ -785,24 +809,22 @@ impl NodeService {
         // Find inputs
         //
 
-        let fee = NodeService::data_fee(data.len() as u64, ttl);
+        let fee = NodeService::data_fee(data.len(), ttl);
         // Try to find exact sum plus fee, without a change.
-        let (fee, change, inputs) =
-            match NodeService::find_utxo_exact(&self.unspent, fee + MONETARY_FEE) {
-                Some(inputs) => {
-                    // If found, then charge the minimal fee.
-                    let fee = fee + MONETARY_FEE;
-                    let inputs = self.chain.outputs_by_hashes(&[inputs])?;
-                    (fee, 0i64, inputs)
-                }
-                None => {
-                    // Otherwise, charge the double fee.
-                    let fee = fee + 2 * MONETARY_FEE;
-                    let (inputs, change) = NodeService::find_utxo(&self.unspent, fee)?;
-                    let inputs = self.chain.outputs_by_hashes(&inputs)?;
-                    (fee, change, inputs)
-                }
-            };
+        let (fee, change, inputs) = match NodeService::find_utxo_exact(&self.unspent, fee) {
+            Some(inputs) => {
+                // If found, then charge the minimal fee.
+                let inputs = self.chain.outputs_by_hashes(&[inputs])?;
+                (fee, 0i64, inputs)
+            }
+            None => {
+                // Otherwise, charge the double fee.
+                let fee = fee + MONETARY_FEE;
+                let (inputs, change) = NodeService::find_utxo(&self.unspent, fee)?;
+                let inputs = self.chain.outputs_by_hashes(&inputs)?;
+                (fee, change, inputs)
+            }
+        };
 
         info!(
             "Transaction preview: recipient={}, ttl={}, spent={}, change={}, fee={}",
@@ -958,7 +980,7 @@ impl Future for NodeService {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => {
                     let result: Result<(), Error> = match event {
-                        NodeMessage::Init => self.handle_init(),
+                        NodeMessage::Init { genesis } => self.handle_init(genesis),
                         NodeMessage::PaymentRequest { recipient, amount } => {
                             self.handle_payment_request(&recipient, amount)
                         }
@@ -991,6 +1013,253 @@ impl Future for NodeService {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+
+    #[test]
+    pub fn init() {
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+        let keys = KeyChain::new_mem();
+        let (_outbox, inbox) = unbounded();
+        let (broker_tx, _broker_rx) = unbounded();
+        let broker = Broker {
+            upstream: broker_tx,
+        };
+        let mut node = NodeService::new(keys.clone(), broker, inbox).unwrap();
+
+        assert_eq!(node.chain.blocks().len(), 0);
+        assert_eq!(node.balance, 0);
+        assert_eq!(node.unspent.len(), 0);
+        assert_eq!(node.mempool.len(), 0);
+        assert_eq!(node.epoch, 1);
+        assert_ne!(node.leader, keys.cosi_pkey);
+        assert_eq!(node.witnesses.len(), 0);
+
+        let amount: i64 = 3_000_000;
+        let genesis = genesis(&[keys.clone()], amount);
+        let genesis_count = genesis.len();
+        node.handle_init(genesis).unwrap();
+        assert_eq!(node.chain.blocks().len(), genesis_count);
+        assert_eq!(node.balance, amount);
+        assert_eq!(node.unspent.len(), 1);
+        assert_eq!(node.mempool.len(), 0);
+        assert_eq!(node.epoch, 2);
+        assert_eq!(node.leader, keys.cosi_pkey);
+        assert_eq!(node.witnesses.len(), 1);
+        assert_eq!(node.witnesses[0], node.leader);
+    }
+
+    #[test]
+    pub fn monetary_requests() {
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+        let keys = KeyChain::new_mem();
+        let (_outbox, inbox) = unbounded();
+        let (broker_tx, _broker_rx) = unbounded();
+        let broker = Broker {
+            upstream: broker_tx,
+        };
+        let mut node = NodeService::new(keys.clone(), broker, inbox).unwrap();
+
+        let total: i64 = 3_000_000;
+        let genesis = genesis(&[keys.clone()], total);
+        node.handle_init(genesis).unwrap();
+        let mut block_count = node.chain.blocks().len();
+
+        // Invalid requests.
+        let e = node
+            .handle_payment_request(&keys.wallet_pkey, -1)
+            .unwrap_err();
+        assert_eq!(
+            e.downcast::<NodeError>().unwrap(),
+            NodeError::ZeroOrNegativeAmount
+        );
+        let e = node
+            .handle_payment_request(&keys.wallet_pkey, 0)
+            .unwrap_err();
+        assert_eq!(
+            e.downcast::<NodeError>().unwrap(),
+            NodeError::ZeroOrNegativeAmount
+        );
+        let e = node
+            .handle_payment_request(&keys.wallet_pkey, total)
+            .unwrap_err();
+        assert_eq!(
+            e.downcast::<NodeError>().unwrap(),
+            NodeError::NotEnoughMoney
+        );
+
+        // Payment without a change.
+        node.handle_payment_request(&keys.wallet_pkey, total - MONETARY_FEE)
+            .unwrap();
+        assert_eq!(node.mempool.len(), 1);
+        node.process_mempool().unwrap();
+        assert_eq!(node.mempool.len(), 0);
+        assert_eq!(node.balance, total); // fee is returned back
+        assert_eq!(node.unspent.len(), 2);
+        assert_eq!(node.chain.blocks().len(), block_count + 1);
+        let mut amounts = Vec::new();
+        for (unspent, _) in node.unspent.iter() {
+            match node.chain.output_by_hash(unspent) {
+                Some(Output::MonetaryOutput(o)) => {
+                    let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
+                    amounts.push(amount);
+                }
+                _ => panic!(),
+            }
+        }
+        amounts.sort();
+        assert_eq!(amounts, vec![MONETARY_FEE, total - MONETARY_FEE]);
+        block_count += 1;
+
+        // Payment with a change.
+        node.handle_payment_request(&keys.wallet_pkey, 100).unwrap();
+        assert_eq!(node.mempool.len(), 1);
+        node.process_mempool().unwrap();
+        assert_eq!(node.mempool.len(), 0);
+        assert_eq!(node.balance, total); // fee is returned back
+        assert_eq!(node.unspent.len(), 3);
+        assert_eq!(node.chain.blocks().len(), block_count + 1);
+        let mut amounts = Vec::new();
+        for (unspent, _) in node.unspent.iter() {
+            match node.chain.output_by_hash(unspent) {
+                Some(Output::MonetaryOutput(o)) => {
+                    let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
+                    amounts.push(amount);
+                }
+                _ => panic!(),
+            }
+        }
+        amounts.sort();
+        let expected = vec![2 * MONETARY_FEE, 100, total - 100 - 2 * MONETARY_FEE];
+        assert_eq!(amounts, expected);
+
+        assert_eq!(block_count, 3);
+    }
+
+    #[test]
+    pub fn data_requests() {
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+        let keys = KeyChain::new_mem();
+        let (_outbox, inbox) = unbounded();
+        let (broker_tx, _broker_rx) = unbounded();
+        let broker = Broker {
+            upstream: broker_tx,
+        };
+        let mut node = NodeService::new(keys.clone(), broker, inbox).unwrap();
+
+        let total: i64 = 100;
+        let genesis = genesis(&[keys.clone()], total);
+        node.handle_init(genesis).unwrap();
+        let mut block_count = node.chain.blocks().len();
+
+        // Invalid requests.
+        let e = node
+            .handle_message_request(&keys.wallet_pkey, 100500, b"hello".to_vec())
+            .unwrap_err();
+        assert_eq!(
+            e.downcast::<NodeError>().unwrap(),
+            NodeError::NotEnoughMoney
+        );
+
+        let data = b"hello".to_vec();
+        let ttl = 3;
+        let data_fee = NodeService::data_fee(data.len(), ttl);
+
+        // Change money for the next test.
+        node.handle_payment_request(&keys.wallet_pkey, data_fee)
+            .unwrap();
+        node.process_mempool().unwrap();
+        assert_eq!(node.mempool.len(), 0);
+        assert_eq!(node.balance, total); // fee is returned back
+        assert_eq!(node.unspent.len(), 3);
+        assert_eq!(node.chain.blocks().len(), block_count + 1);
+        let mut amounts = Vec::new();
+        for (unspent, _) in node.unspent.iter() {
+            match node.chain.output_by_hash(unspent) {
+                Some(Output::MonetaryOutput(o)) => {
+                    let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
+                    amounts.push(amount);
+                }
+                _ => panic!(),
+            }
+        }
+        amounts.sort();
+        let expected = vec![
+            2 * MONETARY_FEE,
+            data_fee,
+            total - data_fee - 2 * MONETARY_FEE,
+        ];
+        assert_eq!(amounts, expected);
+        block_count += 1;
+
+        // Send data without a change.
+        node.handle_message_request(&keys.wallet_pkey, ttl, data)
+            .unwrap();
+        assert_eq!(node.mempool.len(), 1);
+        node.process_mempool().unwrap();
+        assert_eq!(node.mempool.len(), 1); // mempool contains "ack" for data
+        assert_eq!(node.balance, total); // fee is returned back
+        assert_eq!(node.chain.blocks().len(), block_count + 1);
+        let mut amounts = Vec::new();
+        for (unspent, _) in node.unspent.iter() {
+            match node.chain.output_by_hash(unspent) {
+                Some(Output::MonetaryOutput(o)) => {
+                    let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
+                    amounts.push(amount);
+                }
+                _ => panic!(),
+            }
+        }
+        amounts.sort();
+        let expected = vec![
+            2 * MONETARY_FEE,
+            data_fee,
+            total - data_fee - 2 * MONETARY_FEE,
+        ];
+        assert_eq!(amounts, expected);
+        block_count += 1;
+
+        // Spent data transaction.
+        let unspent_len = node.chain.unspent().len();
+        assert_eq!(node.mempool.len(), 1);
+        node.process_mempool().unwrap();
+        assert_eq!(node.mempool.len(), 0);
+        assert_eq!(node.chain.unspent().len(), unspent_len - 1);
+        assert_eq!(node.chain.blocks().len(), block_count + 1);
+        block_count += 1;
+
+        // Send data with a change.
+        let data = b"hello".to_vec();
+        let ttl = 10;
+        let data_fee2 = NodeService::data_fee(data.len(), ttl);
+        node.handle_message_request(&keys.wallet_pkey, ttl, data)
+            .unwrap();
+        assert_eq!(node.mempool.len(), 1);
+        node.process_mempool().unwrap();
+        assert_eq!(node.mempool.len(), 1); // mempool contains "ack" for data
+        assert_eq!(node.balance, total); // fee is returned back
+        assert_eq!(node.chain.blocks().len(), block_count + 1);
+        let mut amounts = Vec::new();
+        for (unspent, _) in node.unspent.iter() {
+            match node.chain.output_by_hash(unspent) {
+                Some(Output::MonetaryOutput(o)) => {
+                    let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
+                    amounts.push(amount);
+                }
+                _ => panic!(),
+            }
+        }
+        amounts.sort();
+        let expected = vec![MONETARY_FEE + data_fee2, total - MONETARY_FEE - data_fee2];
+        assert_eq!(amounts, expected);
+        block_count += 1;
+
+        // Spent data a transaction.
+        let unspent_len = node.chain.unspent().len();
+        assert_eq!(node.mempool.len(), 1);
+        node.process_mempool().unwrap();
+        assert_eq!(node.mempool.len(), 0);
+        assert_eq!(node.chain.unspent().len(), unspent_len - 1);
+        assert_eq!(node.chain.blocks().len(), block_count + 1);
+    }
 
     /// Check transaction signing and validation.
     #[test]

@@ -29,7 +29,9 @@ use stegos_crypto::pbc::secure as cosi_keys;
 use stegos_keychain::KeyChain;
 
 /// Genesis blocks.
-pub fn genesis(keychains: &[KeyChain]) -> (KeyBlock, MonetaryBlock) {
+pub fn genesis(keychains: &[KeyChain], amount: i64) -> Vec<Block> {
+    let mut blocks = Vec::with_capacity(2);
+
     // Both block are created at the same time in the same epoch.
     let version: u64 = 1;
     let epoch: u64 = 1;
@@ -57,7 +59,6 @@ pub fn genesis(keychains: &[KeyChain]) -> (KeyBlock, MonetaryBlock) {
     let block2 = {
         let previous = Hash::digest(&block1);
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
-        let amount: i64 = 1_000_000;
 
         // Genesis doesn't have inputs
         let inputs = Vec::<Hash>::new();
@@ -75,5 +76,8 @@ pub fn genesis(keychains: &[KeyChain]) -> (KeyBlock, MonetaryBlock) {
         MonetaryBlock::new(base, gamma, &inputs, &outputs)
     };
 
-    (block1, block2)
+    blocks.push(Block::KeyBlock(block1));
+    blocks.push(Block::MonetaryBlock(block2));
+
+    blocks
 }

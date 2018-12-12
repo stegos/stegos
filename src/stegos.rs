@@ -40,7 +40,7 @@ use stegos_config;
 use stegos_config::{Config, ConfigError};
 use stegos_keychain::*;
 use stegos_network::Network;
-use stegos_node::Node;
+use stegos_node::{genesis_dev, Node};
 use stegos_randhound::*;
 use tokio::runtime::Runtime;
 
@@ -123,7 +123,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     let (network, network_service, broker) = Network::new(&cfg.network, &keychain)?;
 
     // Initialize node
-    let (node_service, node) = Node::new(keychain.clone(), broker.clone())?;
+    let genesis = genesis_dev().expect("failed to load genesis block");
+    let (node_service, node) = Node::new(keychain.clone(), genesis, broker.clone())?;
     rt.spawn(node_service);
 
     // Don't initialize REPL if stdin is not a TTY device

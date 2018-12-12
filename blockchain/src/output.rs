@@ -305,9 +305,9 @@ impl DataOutput {
         Ok((delta, gamma, data))
     }
 
-    pub fn data_size(&self) -> u64 {
+    pub fn data_size(&self) -> usize {
         assert!(self.payload.ctxt.len() > DATA_PAYLOAD_LEN);
-        (self.payload.ctxt.len() - DATA_PAYLOAD_LEN) as u64
+        (self.payload.ctxt.len() - DATA_PAYLOAD_LEN)
     }
 }
 

@@ -53,17 +53,15 @@ use tokio_timer::Interval;
 /// Load genesis blocks for tests and development.
 pub fn genesis_dev() -> Result<Vec<Block>, Error> {
     // Load generated blocks
-    let key_block = include_bytes!("../data/genesis0.bin");
-    let key_block: protos::node::KeyBlock = protobuf::parse_from_bytes(&key_block[..])?;
-    let key_block = KeyBlock::from_proto(&key_block)?;
-    let monetary_block = include_bytes!("../data/genesis1.bin");
-    let monetary_block: protos::node::MonetaryBlock =
-        protobuf::parse_from_bytes(&monetary_block[..])?;
-    let monetary_block = MonetaryBlock::from_proto(&monetary_block)?;
-    Ok(vec![
-        Block::KeyBlock(key_block),
-        Block::MonetaryBlock(monetary_block),
-    ])
+    let block1 = include_bytes!("../data/genesis0.bin");
+    let block2 = include_bytes!("../data/genesis1.bin");
+    let mut blocks = Vec::<Block>::new();
+    for block in &[&block1[..], &block2[..]] {
+        let block: protos::node::Block = protobuf::parse_from_bytes(block)?;
+        let block = Block::from_proto(&block)?;
+        blocks.push(block);
+    }
+    Ok(blocks)
 }
 
 /// Blockchain Node.

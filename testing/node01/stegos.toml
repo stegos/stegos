@@ -6,12 +6,12 @@ private_key = "testing/node01/stegos.skey"
 public_key = "testing/node01/stegos.pkey"
 
 [network]
-### default = "0.0.0.0"
-# bind_ip = "127.0.0.1"
 node_id = "node01"
+bind_ip = "127.0.0.1"
 bind_port = 10055
-advetise_local_ips = false
+advertise_local_ips = false
 broadcast_topic = "chat"
+
 advertised_addresses = [
     "/ip4/127.0.0.1/tcp/10055",
 ]

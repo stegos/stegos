@@ -38,7 +38,7 @@ use rand::thread_rng;
 use rand::Rng;
 use std::cmp::Ordering;
 use std::hash as stdhash;
-use std::ops::{Neg, Add};
+use std::ops::{Add, Neg};
 
 // --------------------------------------------------------------------------------
 
@@ -261,7 +261,6 @@ impl Add<G1> for G1 {
         add_G1_G1(&self, &other)
     }
 }
-
 
 // -----------------------------------------
 #[derive(Copy, Clone)]
@@ -560,7 +559,7 @@ impl stdhash::Hash for PublicKey {
 impl Add<PublicKey> for PublicKey {
     type Output = Self;
     fn add(self, other: Self) -> Self {
-       PublicKey(self.0 + other.0)
+        PublicKey(self.0 + other.0)
     }
 }
 
@@ -998,4 +997,3 @@ pub fn add_G2_G2(a: &G2, b: &G2) -> G2 {
     }
     ans
 }
-

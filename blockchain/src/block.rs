@@ -94,8 +94,9 @@ impl Hashable for KeyBlockHeader {
     fn hash(&self, state: &mut Hasher) {
         self.base.hash(state);
         self.leader.hash(state);
-        // self.witnesses[..].hash(state);
-        // self.facilitator.hash(state);
+        for witness in self.witnesses.iter() {
+            witness.hash(state);
+        }
     }
 }
 

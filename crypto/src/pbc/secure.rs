@@ -38,7 +38,7 @@ use rand::thread_rng;
 use rand::Rng;
 use std::cmp::Ordering;
 use std::hash as stdhash;
-use std::ops::Neg;
+use std::ops::{Neg, Add};
 
 // --------------------------------------------------------------------------------
 
@@ -255,6 +255,14 @@ impl PartialEq for G1 {
     }
 }
 
+impl Add<G1> for G1 {
+    type Output = Self;
+    fn add(self, other: Self) -> Self {
+        add_G1_G1(&self, &other)
+    }
+}
+
+
 // -----------------------------------------
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -346,6 +354,13 @@ impl stdhash::Hash for G2 {
     fn hash<H: stdhash::Hasher>(&self, state: &mut H) {
         stdhash::Hash::hash("G2", state);
         stdhash::Hash::hash(&self.0[..], state);
+    }
+}
+
+impl Add<G2> for G2 {
+    type Output = Self;
+    fn add(self, other: Self) -> Self {
+        add_G2_G2(&self, &other)
     }
 }
 
@@ -542,6 +557,13 @@ impl stdhash::Hash for PublicKey {
     }
 }
 
+impl Add<PublicKey> for PublicKey {
+    type Output = Self;
+    fn add(self, other: Self) -> Self {
+       PublicKey(self.0 + other.0)
+    }
+}
+
 // -----------------------------------------
 
 #[derive(Copy, Clone)]
@@ -679,6 +701,13 @@ impl Eq for Signature {}
 impl PartialEq for Signature {
     fn eq(&self, b: &Self) -> bool {
         self.0 == b.0
+    }
+}
+
+impl Add<Signature> for Signature {
+    type Output = Self;
+    fn add(self, other: Self) -> Self {
+        Signature(self.0 + other.0)
     }
 }
 
@@ -942,3 +971,31 @@ pub fn ibe_decrypt(pack: &EncryptedPacket, skey: &SecretKey) -> Option<Vec<u8>> 
         }
     }
 }
+
+// -------------------------------------------------------
+// primitives
+
+pub fn add_G1_G1(a: &G1, b: &G1) -> G1 {
+    let ans = a.clone();
+    unsafe {
+        rust_libpbc::add_G1_pts(
+            *CONTEXT_FR256,
+            ans.base_vector().as_ptr() as *mut _,
+            b.base_vector().as_ptr() as *mut _,
+        );
+    }
+    ans
+}
+
+pub fn add_G2_G2(a: &G2, b: &G2) -> G2 {
+    let ans = a.clone();
+    unsafe {
+        rust_libpbc::add_G2_pts(
+            *CONTEXT_FR256,
+            ans.base_vector().as_ptr() as *mut _,
+            b.base_vector().as_ptr() as *mut _,
+        );
+    }
+    ans
+}
+

@@ -24,6 +24,7 @@
 pub mod node;
 
 use failure::{Error, Fail};
+use std::collections::BTreeSet;
 use stegos_blockchain::*;
 use stegos_consensus::*;
 use stegos_crypto::bulletproofs::{BulletProof, DotProof, L2_NBASIS, LR};
@@ -41,6 +42,8 @@ use stegos_crypto::CryptoError;
 pub enum ProtoError {
     #[fail(display = "Missing field '{}' in packet '{}'.", _1, _0)]
     MissingField(String, String),
+    #[fail(display = "Duplicate value in field '{}'.", _0)]
+    DuplicateValue(String),
 }
 
 pub trait IntoProto<T: ::protobuf::Message> {
@@ -526,9 +529,11 @@ impl FromProto<node::KeyBlockHeader> for KeyBlockHeader {
     fn from_proto(proto: &node::KeyBlockHeader) -> Result<Self, Error> {
         let base = BaseBlockHeader::from_proto(proto.get_base())?;
         let leader = SecurePublicKey::from_proto(proto.get_leader())?;
-        let mut witnesses = Vec::with_capacity(proto.witnesses.len());
+        let mut witnesses = BTreeSet::new();
         for witness in proto.witnesses.iter() {
-            witnesses.push(SecurePublicKey::from_proto(witness)?);
+            if !witnesses.insert(SecurePublicKey::from_proto(witness)?) {
+                return Err(ProtoError::DuplicateValue("witnesses".to_string()).into());
+            }
         }
 
         Ok(KeyBlockHeader {
@@ -986,10 +991,10 @@ mod tests {
 
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
 
-        let witnesses = [pkey0.clone()];
+        let witnesses: BTreeSet<SecurePublicKey> = [pkey0].iter().cloned().collect();
         let leader = pkey0.clone();
 
-        let block = KeyBlock::new(base, leader, &witnesses);
+        let block = KeyBlock::new(base, leader, witnesses);
         roundtrip(&block.header);
         roundtrip(&block);
 

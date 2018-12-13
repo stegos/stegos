@@ -25,6 +25,7 @@ use crate::error::*;
 use crate::merkle::*;
 use crate::output::*;
 use failure::Error;
+use std::collections::BTreeSet;
 use stegos_crypto::bulletproofs::validate_range_proof;
 use stegos_crypto::curve1174::cpt::Pt;
 use stegos_crypto::curve1174::ecpt::ECp;
@@ -85,7 +86,7 @@ pub struct KeyBlockHeader {
     pub leader: SecurePublicKey,
 
     /// Ordered list of witnesses public keys.
-    pub witnesses: Vec<SecurePublicKey>,
+    pub witnesses: BTreeSet<SecurePublicKey>,
     // TODO: pooled transactions facilitator public key (which kind?).
     // pub facilitator: SecurePublicKey,
 }
@@ -167,15 +168,13 @@ impl KeyBlock {
     pub fn new(
         base: BaseBlockHeader,
         leader: SecurePublicKey,
-        witnesses: &[SecurePublicKey],
+        witnesses: BTreeSet<SecurePublicKey>,
     ) -> Self {
-        let mut witnesses = witnesses.to_vec();
-
-        // Witnesses list must be sorted.
-        witnesses.sort();
-
-        // Leader must present in witnesses array.
-        //assert_eq!(witnesses.binary_search(leader), Ok((_, _)));
+        assert!(!witnesses.is_empty(), "witnesses is not empty");
+        assert!(
+            witnesses.contains(&leader),
+            "leader must present in witnesses array"
+        );
 
         // Create header
         let header = KeyBlockHeader {
@@ -186,6 +185,18 @@ impl KeyBlock {
 
         // Create the block
         KeyBlock { header }
+    }
+
+    /// Validate basic properties of KeyBlock.
+    pub fn validate(&self) -> Result<(), Error> {
+        if self.header.witnesses.is_empty() {
+            return Err(BlockchainError::MissingWitnesses.into());
+        }
+
+        if !self.header.witnesses.contains(&self.header.leader) {
+            return Err(BlockchainError::InvalidLeaderIsNotWitness.into());
+        }
+        Ok(())
     }
 }
 
@@ -357,9 +368,52 @@ pub mod tests {
     use super::*;
     use chrono::Utc;
     use stegos_crypto::curve1174::cpt::make_random_keys;
+    use stegos_crypto::pbc::secure::make_random_keys as make_secure_random_keys;
 
     #[test]
-    fn create_validate() {
+    fn create_validate_key_block() {
+        let (_skey0, pkey0, _sig0) = make_secure_random_keys();
+
+        let version: u64 = 1;
+        let epoch: u64 = 1;
+        let timestamp = Utc::now().timestamp() as u64;
+        let previous = Hash::digest(&"test".to_string());
+
+        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+
+        let witnesses: BTreeSet<SecurePublicKey> = [pkey0].iter().cloned().collect();
+        let leader = pkey0.clone();
+
+        let mut block = KeyBlock::new(base, leader, witnesses);
+        block.validate().expect("block is valid");
+
+        // Missing witnesses.
+        let mut witnesses = BTreeSet::new();
+        std::mem::swap(&mut block.header.witnesses, &mut witnesses);
+        match block.validate() {
+            Err(e) => match e.downcast::<BlockchainError>().unwrap() {
+                BlockchainError::MissingWitnesses => {}
+                _ => panic!(),
+            },
+            _ => panic!(),
+        }
+        std::mem::swap(&mut block.header.witnesses, &mut witnesses);
+
+        // Leader is not included to the list of witnesses.
+        let (_skey0, mut pkey1, _sig0) = make_secure_random_keys();
+        std::mem::swap(&mut block.header.leader, &mut pkey1);
+        match block.validate() {
+            Err(e) => match e.downcast::<BlockchainError>().unwrap() {
+                BlockchainError::InvalidLeaderIsNotWitness => {}
+                _ => panic!(),
+            },
+            _ => panic!(),
+        }
+        std::mem::swap(&mut block.header.leader, &mut pkey1);
+    }
+
+    #[test]
+    fn create_validate_monetary_block() {
         let (skey0, _pkey0, _sig0) = make_random_keys();
         let (skey1, pkey1, _sig1) = make_random_keys();
         let (_skey2, pkey2, _sig2) = make_random_keys();

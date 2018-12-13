@@ -46,4 +46,8 @@ pub enum BlockchainError {
     InvalidBlockOutputsHash(Hash, Hash),
     #[fail(display = "Invalid UTXO bulletproof.")]
     InvalidBulletProof,
+    #[fail(display = "Block must contain at least one witness.")]
+    MissingWitnesses,
+    #[fail(display = "The leader must be witness.")]
+    InvalidLeaderIsNotWitness,
 }

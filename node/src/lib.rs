@@ -33,6 +33,7 @@ use futures_stream_select_all_send::select_all;
 use log::*;
 use protobuf;
 use protobuf::Message;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -139,7 +140,7 @@ impl Node {
 pub struct EpochNotification {
     pub epoch: u64,
     pub leader: SecurePublicKey,
-    pub witnesses: Vec<SecurePublicKey>,
+    pub witnesses: BTreeSet<SecurePublicKey>,
 }
 
 /// Send when message is received.
@@ -233,7 +234,7 @@ struct NodeService {
     /// Current epoch leader.
     leader: SecurePublicKey,
     /// The list of witnesses public keys.
-    witnesses: Vec<SecurePublicKey>,
+    witnesses: BTreeSet<SecurePublicKey>,
     /// Memory pool of pending transactions.
     mempool: Vec<Transaction>,
     /// Hashes of UTXO used by mempool transactions,
@@ -266,7 +267,7 @@ impl NodeService {
         let epoch: u64 = 1;
         let randomness = Hash::digest(&"0xDEADBEEF".to_string());
         let leader: SecurePublicKey = G2::generator().into(); // some fake key
-        let witnesses = Vec::<SecurePublicKey>::new();
+        let witnesses = BTreeSet::<SecurePublicKey>::new();
         let mempool = Vec::<Transaction>::new();
         let mempool_outputs = HashSet::<Hash>::new();
         let on_balance_changed = Vec::<UnboundedSender<i64>>::new();
@@ -365,7 +366,11 @@ impl NodeService {
         let msg = RandhoundEpoch {
             epoch: self.epoch,
             leader: self.leader.clone(),
-            witnesses: self.witnesses.clone(), 
+            witnesses: self
+                .witnesses
+                .iter()
+                .cloned()
+                .collect::<Vec<SecurePublicKey>>(),
         };
         RandHound::on_epoch(&self.randhound, msg)?;
 
@@ -469,6 +474,7 @@ impl NodeService {
 
     /// Handle incoming KeyBlock
     fn handle_sealed_key_block_request(&mut self, key_block: KeyBlock) -> Result<(), Error> {
+        key_block.validate()?;
         let key_block2 = key_block.clone();
         self.chain.register_key_block(key_block)?;
         self.on_key_block_registered(&key_block2);
@@ -605,16 +611,24 @@ impl NodeService {
         self.keys.cosi_pkey == self.leader
     }
 
+    /// Returns true if current node is validator.
+    fn is_witness(&self) -> bool {
+        self.witnesses.contains(&self.keys.cosi_pkey)
+    }
+
     /// Called when a new key block is registered.
     fn on_key_block_registered(&mut self, key_block: &KeyBlock) {
-        self.leader = key_block.header.leader.clone();
         self.epoch = self.epoch + 1;
         self.leader = key_block.header.leader.clone();
         self.witnesses = key_block.header.witnesses.clone();
+        assert!(self.witnesses.contains(&self.leader));
+
         if self.is_leader() {
             info!("I'm leader");
+        } else if self.is_witness() {
+            info!("I'm witness, leader is {}", &self.leader);
         } else {
-            info!("New leader is {}", &self.leader);
+            info!("Leader is {}", &self.leader);
         }
     }
 
@@ -1112,7 +1126,7 @@ pub mod tests {
         assert_eq!(node.mempool.len(), 0);
         assert_eq!(node.epoch, 1);
         assert_ne!(node.leader, keys.cosi_pkey);
-        assert_eq!(node.witnesses.len(), 0);
+        assert!(node.witnesses.is_empty());
 
         let amount: i64 = 3_000_000;
         let genesis = genesis(&[keys.clone()], amount);
@@ -1125,7 +1139,7 @@ pub mod tests {
         assert_eq!(node.epoch, 2);
         assert_eq!(node.leader, keys.cosi_pkey);
         assert_eq!(node.witnesses.len(), 1);
-        assert_eq!(node.witnesses[0], node.leader);
+        assert_eq!(node.witnesses.iter().next().unwrap(), &node.leader);
     }
 
     #[test]

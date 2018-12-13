@@ -40,7 +40,7 @@ use log::*;
 ///
 #[derive(Clone, Debug)]
 pub struct Broker {
-    upstream: mpsc::UnboundedSender<PubsubMessage>,
+    pub upstream: mpsc::UnboundedSender<PubsubMessage>,
 }
 
 impl Broker {
@@ -62,7 +62,6 @@ impl Broker {
         S: Into<String> + Clone,
     {
         let topic: String = topic.clone().into();
-        debug!("net: *Subscribed to topic '{}'*", &topic);
         let (tx, rx) = mpsc::unbounded();
         let msg = PubsubMessage::Subscribe { topic, handler: tx };
         self.upstream.unbounded_send(msg)?;
@@ -74,7 +73,6 @@ impl Broker {
         S: Into<String> + Clone,
     {
         let topic: String = topic.clone().into();
-        debug!("net: *Publishing message to topic '{}'*", &topic);
         let msg = PubsubMessage::Publish {
             topic: topic.clone().into(),
             data,
@@ -89,7 +87,7 @@ impl Broker {
 // ----------------------------------------------------------------
 
 #[derive(Clone, Debug)]
-enum PubsubMessage {
+pub enum PubsubMessage {
     Subscribe {
         topic: String,
         handler: mpsc::UnboundedSender<Vec<u8>>,
@@ -145,6 +143,7 @@ impl Future for BrokerService {
                 Ok(Async::Ready(msg)) => match msg {
                     Some(Message::Pubsub(m)) => match m {
                         PubsubMessage::Subscribe { topic, handler } => {
+                            debug!("Subscribed to topic '{}'*", &topic);
                             let new_topic = floodsub::TopicBuilder::new(topic).build();
                             let topic_hash = new_topic.hash();
                             self.consumers

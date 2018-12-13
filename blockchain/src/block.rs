@@ -327,7 +327,7 @@ impl Hashable for MonetaryBlock {
 }
 
 /// Types of blocks supported by this blockchain.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Block {
     KeyBlock(KeyBlock),
     MonetaryBlock(MonetaryBlock),

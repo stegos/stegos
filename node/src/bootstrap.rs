@@ -45,6 +45,14 @@ fn main() {
                 .help("Number of initial keys to generate.")
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("coins")
+                .short("c")
+                .long("coins")
+                .value_name("NUMBER")
+                .help("Number of coins to create.")
+                .takes_value(true),
+        )
         .get_matches();
 
     let keys = if let Some(keys) = args.value_of("keys") {
@@ -63,6 +71,24 @@ fn main() {
         }
     } else {
         5
+    };
+
+    let coins = if let Some(coins) = args.value_of("coins") {
+        match coins.parse::<i64>() {
+            Ok(keys) => {
+                if keys < 100 {
+                    eprintln!("Invalid number of coins: must be greater than 100");
+                    process::exit(1);
+                };
+                keys
+            }
+            Err(e) => {
+                eprintln!("Invalid number of coins: {}", e);
+                process::exit(1);
+            }
+        }
+    } else {
+        1_000_000
     };
 
     info!("Generating genesis keys...");
@@ -85,15 +111,12 @@ fn main() {
     }
 
     info!("Generating genesis blocks...");
-    let (key_block, monetary_block) = genesis(&keychains);
-    let key_block_data = key_block.into_proto();
-    let key_block_data = key_block_data.write_to_bytes().unwrap();
-    let monetary_block_data = monetary_block.into_proto();
-    let monetary_block_data = monetary_block_data.write_to_bytes().unwrap();
-
-    info!("Saving genesis blocks...");
-    fs::write("genesis0.bin", &key_block_data).expect("failed to write genesis block");
-    fs::write("genesis1.bin", &monetary_block_data).expect("failed to write genesis block");
+    let blocks = genesis(&keychains, coins);
+    for (i, block) in blocks.iter().enumerate() {
+        let block_data = block.into_proto();
+        let block_data = block_data.write_to_bytes().unwrap();
+        fs::write(format!("genesis{}.bin", i), &block_data).expect("failed to write genesis block");
+    }
 
     info!("Done");
 }

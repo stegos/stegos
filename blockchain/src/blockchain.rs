@@ -328,11 +328,17 @@ pub mod tests {
             KeyChain::new_mem(),
         ];
 
-        let (key_block, monetary_block) = genesis(&keychains);
+        let blocks = genesis(&keychains, 1_000_000);
 
         let mut blockchain = Blockchain::new();
-        blockchain.register_key_block(key_block).unwrap();
-        blockchain.register_monetary_block(monetary_block).unwrap();
+        for block in blocks {
+            match block {
+                Block::KeyBlock(block) => blockchain.register_key_block(block).unwrap(),
+                Block::MonetaryBlock(block) => {
+                    blockchain.register_monetary_block(block).unwrap();
+                }
+            }
+        }
 
         assert!(blockchain.blocks().len() > 0);
         iterate(&mut blockchain).unwrap();

@@ -15,7 +15,7 @@ node-pbc.pkey
 network/src/ncp/ncp.rs
 network/src/node/heartbeat/heartbeat_proto.rs
 randhound/src/randhound_proto.rs
-blockchain/src/protobuf/
+node/src/protos/node.rs
 
 # IDE files
 /.vscode

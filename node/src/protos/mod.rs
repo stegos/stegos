@@ -25,12 +25,15 @@ pub mod node;
 
 use failure::{Error, Fail};
 use stegos_blockchain::*;
+use stegos_consensus::*;
 use stegos_crypto::bulletproofs::{BulletProof, DotProof, L2_NBASIS, LR};
 use stegos_crypto::curve1174::cpt::Pt;
 use stegos_crypto::curve1174::cpt::{EncryptedPayload, PublicKey, SchnorrSig};
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
+use stegos_crypto::pbc::secure::Signature as SecureSignature;
+use stegos_crypto::pbc::secure::G1;
 use stegos_crypto::pbc::secure::G2;
 use stegos_crypto::CryptoError;
 
@@ -81,6 +84,24 @@ impl IntoProto<node::Fr> for Fr {
 impl FromProto<node::Fr> for Fr {
     fn from_proto(proto: &node::Fr) -> Result<Self, Error> {
         Ok(Fr::try_from_bytes(proto.get_data())?)
+    }
+}
+
+//
+// G1
+//
+
+impl IntoProto<node::G1> for G1 {
+    fn into_proto(&self) -> node::G1 {
+        let mut proto = node::G1::new();
+        proto.set_data(self.into_bytes().to_vec());
+        proto
+    }
+}
+
+impl FromProto<node::G1> for G1 {
+    fn from_proto(proto: &node::G1) -> Result<Self, Error> {
+        Ok(G1::try_from_bytes(proto.get_data())?)
     }
 }
 
@@ -179,6 +200,26 @@ impl FromProto<node::SecurePublicKey> for SecurePublicKey {
     fn from_proto(proto: &node::SecurePublicKey) -> Result<Self, Error> {
         let g: G2 = G2::from_proto(proto.get_point())?;
         Ok(SecurePublicKey::from(g))
+    }
+}
+
+//
+// SecureSignature
+//
+
+impl IntoProto<node::SecureSignature> for SecureSignature {
+    fn into_proto(&self) -> node::SecureSignature {
+        let mut proto = node::SecureSignature::new();
+        let g: G1 = (*self).into();
+        proto.set_point(g.into_proto());
+        proto
+    }
+}
+
+impl FromProto<node::SecureSignature> for SecureSignature {
+    fn from_proto(proto: &node::SecureSignature) -> Result<Self, Error> {
+        let g: G1 = G1::from_proto(proto.get_point())?;
+        Ok(SecureSignature::from(g))
     }
 }
 
@@ -676,6 +717,93 @@ impl FromProto<node::Block> for Block {
     }
 }
 
+//
+// Consensus
+//
+
+impl IntoProto<node::MonetaryBlockProposal> for MonetaryBlockProposal {
+    fn into_proto(&self) -> node::MonetaryBlockProposal {
+        let mut proto = node::MonetaryBlockProposal::new();
+        for tx in &self.txs {
+            proto.txs.push(tx.into_proto());
+        }
+        if let Some(ref fee_output) = self.fee_output {
+            proto.set_fee_output(fee_output.into_proto());
+        }
+        proto.set_block_hash(self.block_hash.into_proto());
+        proto.set_block_header(self.block_header.into_proto());
+        proto
+    }
+}
+
+impl FromProto<node::MonetaryBlockProposal> for MonetaryBlockProposal {
+    fn from_proto(proto: &node::MonetaryBlockProposal) -> Result<Self, Error> {
+        let mut txs = Vec::with_capacity(proto.txs.len());
+        for tx in proto.txs.iter() {
+            txs.push(Transaction::from_proto(tx)?);
+        }
+        let fee_output = if proto.has_fee_output() {
+            Some(Output::from_proto(proto.get_fee_output())?)
+        } else {
+            None
+        };
+        let block_hash = Hash::from_proto(proto.get_block_hash())?;
+        let block_header = MonetaryBlockHeader::from_proto(proto.get_block_header())?;
+        Ok(MonetaryBlockProposal {
+            txs,
+            fee_output,
+            block_hash,
+            block_header,
+        })
+    }
+}
+
+impl IntoProto<node::ConsensusMessageBody> for ConsensusMessageBody {
+    fn into_proto(&self) -> node::ConsensusMessageBody {
+        let mut proto = node::ConsensusMessageBody::new();
+        match self {
+            ConsensusMessageBody::MonetaryBlockProposal(msg) => {
+                proto.set_monetary_block_proposal(msg.into_proto())
+            }
+        }
+        proto
+    }
+}
+
+impl FromProto<node::ConsensusMessageBody> for ConsensusMessageBody {
+    fn from_proto(proto: &node::ConsensusMessageBody) -> Result<Self, Error> {
+        let msg = match proto.body {
+            Some(node::ConsensusMessageBody_oneof_body::monetary_block_proposal(ref msg)) => {
+                let msg = MonetaryBlockProposal::from_proto(msg)?;
+                ConsensusMessageBody::MonetaryBlockProposal(msg)
+            }
+            None => {
+                return Err(ProtoError::MissingField("body".to_string(), "body".to_string()).into());
+            }
+        };
+        Ok(msg)
+    }
+}
+
+impl IntoProto<node::ConsensusMessage> for ConsensusMessage {
+    fn into_proto(&self) -> node::ConsensusMessage {
+        let mut proto = node::ConsensusMessage::new();
+        proto.set_body(self.body.into_proto());
+        proto.set_sig(self.sig.into_proto());
+        proto.set_pkey(self.pkey.into_proto());
+        proto
+    }
+}
+
+impl FromProto<node::ConsensusMessage> for ConsensusMessage {
+    fn from_proto(proto: &node::ConsensusMessage) -> Result<Self, Error> {
+        let body = ConsensusMessageBody::from_proto(proto.get_body())?;
+        let sig = SecureSignature::from_proto(proto.get_sig())?;
+        let pkey = SecurePublicKey::from_proto(proto.get_pkey())?;
+        Ok(ConsensusMessage { body, sig, pkey })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -707,8 +835,11 @@ mod tests {
         let fr = Fr::random();
         roundtrip(&fr);
 
-        let g = G2::generator();
-        roundtrip(&g);
+        let g1 = G1::generator();
+        roundtrip(&g1);
+
+        let g2 = G2::generator();
+        roundtrip(&g2);
     }
 
     #[test]
@@ -720,8 +851,9 @@ mod tests {
 
     #[test]
     fn secure_keys() {
-        let (_skey, pkey, _sig) = make_secure_random_keys();
+        let (_skey, pkey, sig) = make_secure_random_keys();
         roundtrip(&pkey);
+        roundtrip(&sig);
     }
 
     #[test]
@@ -755,8 +887,7 @@ mod tests {
         roundtrip(&gamma);
     }
 
-    #[test]
-    fn transactions() {
+    fn mktransaction() -> Transaction {
         let (skey0, _pkey0, _sig0) = make_random_keys();
         let (skey1, pkey1, _sig1) = make_random_keys();
         let (_skey2, pkey2, _sig2) = make_random_keys();
@@ -791,6 +922,57 @@ mod tests {
 
         let tx2 = roundtrip(&tx);
         tx2.validate(&inputs1).unwrap();
+
+        tx
+    }
+
+    #[test]
+    fn transactions() {
+        mktransaction();
+    }
+
+    #[test]
+    fn monetary_block_proposal() {
+        let (skey, pkey, _sig) = make_random_keys();
+        let (cosi_skey, cosi_pkey, _cosi_sig) = make_secure_random_keys();
+        let timestamp = Utc::now().timestamp() as u64;
+
+        //
+        // Block Proposal
+        //
+        let tx = mktransaction(); // re-use the test above
+        let (fee_output, _fee_gamma) =
+            Output::new_monetary(timestamp, &skey, &pkey, 100).expect("keys are valid");
+        let mut txs = Vec::new();
+        txs.push(tx);
+        let block_hash = Hash::digest(&"test".to_string());
+        let base = BaseBlockHeader::new(1, Hash::digest(&"dev".to_string()), 1, timestamp);
+        let block_header = MonetaryBlockHeader {
+            base,
+            gamma: Fr::random(),
+            inputs_range_hash: Hash::digest(&1u64),
+            outputs_range_hash: Hash::digest(&2u64),
+        };
+
+        let monetary_block_proposal = ConsensusMessage::new_block_proposal(
+            &cosi_skey,
+            &cosi_pkey,
+            txs.clone(),
+            Some(fee_output),
+            block_hash,
+            block_header.clone(),
+        );
+        roundtrip(&monetary_block_proposal);
+
+        let monetary_block_proposal = ConsensusMessage::new_block_proposal(
+            &cosi_skey,
+            &cosi_pkey,
+            txs.clone(),
+            None,
+            block_hash,
+            block_header.clone(),
+        );
+        roundtrip(&monetary_block_proposal);
     }
 
     #[test]

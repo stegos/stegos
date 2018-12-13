@@ -274,6 +274,14 @@ impl Hashable for Vec<u8> {
     }
 }
 
+impl<T: Hashable> Hashable for Option<T> {
+    fn hash(&self, state: &mut Hasher) {
+        if let Some(val) = self {
+            val.hash(state);
+        }
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;

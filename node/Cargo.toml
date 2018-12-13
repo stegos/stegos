@@ -14,6 +14,7 @@ stegos_keychain = { path = "../keychain" }
 log = "0.4"
 failure = "0.1"
 futures = "0.1"
+futures-stream-select-all-send = "0.1"
 tokio-timer = "0.2"
 chrono = "0.4"
 protobuf = "2.2"

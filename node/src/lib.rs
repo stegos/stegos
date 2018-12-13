@@ -29,12 +29,13 @@ use chrono::Utc;
 use failure::{Error, Fail};
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::{Async, Future, Poll, Stream};
+use futures_stream_select_all_send::select_all;
 use log::*;
 use protobuf;
 use protobuf::Message;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use stegos_blockchain::*;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::curve1174::fields::Fr;
@@ -65,7 +66,7 @@ impl Node {
 
         outbox.unbounded_send(NodeMessage::Init)?;
 
-        let service = NodeService::new(keys, broker, inbox, outbox.clone())?;
+        let service = NodeService::new(keys, broker, inbox)?;
         let handler = Node { outbox };
 
         Ok((service, handler))
@@ -142,7 +143,9 @@ const DATA_UNIT_FEE: i64 = 1;
 
 #[derive(Clone, Debug)]
 enum NodeMessage {
-    Init,
+    //
+    // Public API
+    //
     PaymentRequest {
         recipient: PublicKey,
         amount: i64,
@@ -155,6 +158,18 @@ enum NodeMessage {
     SubscribeBalance(UnboundedSender<i64>),
     SubscribeEpoch(UnboundedSender<EpochNotification>),
     SubscribeMessage(UnboundedSender<MessageNotification>),
+
+    //
+    // Network Events
+    //
+    TransactionRequest(Vec<u8>),
+    BlockRequest(Vec<u8>),
+
+    //
+    // Internal Events
+    //
+    Init,
+    Timer(Instant), // TODO: replace with RandHound
 }
 
 #[derive(Debug, Fail)]
@@ -189,23 +204,14 @@ struct NodeService {
     mempool_outputs: HashSet<Hash>,
     /// Network interface.
     broker: Broker,
-    /// MailBox.
-    inbox: UnboundedReceiver<NodeMessage>,
-    /// Used internally for testing purposes to send messages to inbox.
-    #[allow(dead_code)]
-    outbox: UnboundedSender<NodeMessage>,
-    /// TX messages.
-    transaction_rx: UnboundedReceiver<Vec<u8>>,
-    /// Blocks messages.
-    block_rx: UnboundedReceiver<Vec<u8>>,
-    /// Timer.
-    timer: Interval,
     /// Triggered when balance is changed.
     on_balance_changed: Vec<UnboundedSender<i64>>,
     /// Triggered when epoch is changed.
     on_epoch_changed: Vec<UnboundedSender<EpochNotification>>,
     /// Triggered when message is received.
     on_message_received: Vec<UnboundedSender<MessageNotification>>,
+    /// Aggregated stream of events.
+    events: Box<Stream<Item = NodeMessage, Error = ()> + Send>,
 }
 
 impl NodeService {
@@ -214,7 +220,6 @@ impl NodeService {
         keys: KeyChain,
         broker: Broker,
         inbox: UnboundedReceiver<NodeMessage>,
-        outbox: UnboundedSender<NodeMessage>,
     ) -> Result<Self, Error> {
         let chain = Blockchain::new();
         let balance = 0i64;
@@ -224,12 +229,35 @@ impl NodeService {
         let witnesses = Vec::<SecurePublicKey>::new();
         let mempool = Vec::<Transaction>::new();
         let mempool_outputs = HashSet::<Hash>::new();
-        let transaction_rx = broker.subscribe(&TX_TOPIC.to_string())?;
-        let block_rx = broker.subscribe(&BLOCK_TOPIC.to_string())?;
-        let timer = Interval::new_interval(Duration::from_secs(MEMPOOL_TTL));
         let on_balance_changed = Vec::<UnboundedSender<i64>>::new();
         let on_epoch_changed = Vec::<UnboundedSender<EpochNotification>>::new();
         let on_message_received = Vec::<UnboundedSender<MessageNotification>>::new();
+
+        let mut streams = Vec::<Box<Stream<Item = NodeMessage, Error = ()> + Send>>::new();
+
+        // Control messages
+        streams.push(Box::new(inbox));
+
+        // Transaction Requests
+        let transaction_rx = broker
+            .subscribe(&TX_TOPIC.to_string())?
+            .map(|m| NodeMessage::TransactionRequest(m));
+        streams.push(Box::new(transaction_rx));
+
+        // Block Requests
+        let block_rx = broker
+            .subscribe(&BLOCK_TOPIC.to_string())?
+            .map(|m| NodeMessage::BlockRequest(m));
+        streams.push(Box::new(block_rx));
+
+        // Timer events
+        let duration = Duration::from_secs(MEMPOOL_TTL);
+        let timer = Interval::new_interval(duration)
+            .map(|i| NodeMessage::Timer(i))
+            .map_err(|_e| ()); // ignore transient timer errors
+        streams.push(Box::new(timer));
+
+        let events = select_all(streams);
 
         let service = NodeService {
             chain,
@@ -241,15 +269,11 @@ impl NodeService {
             witnesses,
             mempool,
             mempool_outputs,
-            inbox,
-            outbox,
-            transaction_rx,
-            block_rx,
-            timer,
             broker,
             on_balance_changed,
             on_epoch_changed,
             on_message_received,
+            events,
         };
 
         Ok(service)
@@ -472,8 +496,12 @@ impl NodeService {
     }
 
     /// Handler for NodeMessage::SubscribeMessage.
-    fn handle_subscribe_message(&mut self, tx: UnboundedSender<MessageNotification>) {
+    fn handle_subscribe_message(
+        &mut self,
+        tx: UnboundedSender<MessageNotification>,
+    ) -> Result<(), Error> {
         self.on_message_received.push(tx);
+        Ok(())
     }
 
     /// Called when balance is changed.
@@ -918,81 +946,6 @@ impl NodeService {
 
         Ok(())
     }
-
-    fn do_poll(&mut self) -> Poll<(), Error> {
-        // Process control messages.
-        loop {
-            match self.inbox.poll() {
-                Ok(Async::Ready(Some(msg))) => {
-                    if let Err(e) = {
-                        match msg {
-                            NodeMessage::Init => self.handle_init(),
-                            NodeMessage::PaymentRequest { recipient, amount } => {
-                                self.handle_payment_request(&recipient, amount)
-                            }
-                            NodeMessage::MessageRequest {
-                                recipient,
-                                ttl,
-                                data,
-                            } => self.handle_message_request(&recipient, ttl, data),
-                            NodeMessage::SubscribeBalance(tx) => self.handle_subscribe_balance(tx),
-                            NodeMessage::SubscribeEpoch(tx) => self.handle_subscribe_epoch(tx),
-                            NodeMessage::SubscribeMessage(tx) => {
-                                self.handle_subscribe_message(tx);
-                                Ok(())
-                            }
-                        }
-                    } {
-                        error!("Error: {}", e)
-                    }
-                }
-                Ok(Async::Ready(None)) => break, // channel closed, fall through
-                Ok(Async::NotReady) => break,    // not ready, fall throughs
-                Err(()) => unreachable!(),       // never happens
-            }
-        }
-
-        // Process network events
-        loop {
-            match self.transaction_rx.poll() {
-                Ok(Async::Ready(Some(msg))) => {
-                    if let Err(e) = self.handle_transaction_request(msg) {
-                        // Ignore invalid packets.
-                        error!("Invalid request: {}", e);
-                    }
-                }
-                Ok(Async::Ready(None)) => break, // channel closed, fall through
-                Ok(Async::NotReady) => break,    // not ready, fall through
-                Err(()) => unreachable!(),       // never happens
-            }
-        }
-
-        loop {
-            match self.block_rx.poll() {
-                Ok(Async::Ready(Some(msg))) => {
-                    if let Err(e) = self.handle_block_request(msg) {
-                        // Ignore invalid packets.
-                        error!("Invalid request: {}", e);
-                    }
-                }
-                Ok(Async::Ready(None)) => break, // channel closed, fall through
-                Ok(Async::NotReady) => break,    // not ready, fall through
-                Err(()) => unreachable!(),       // never happens
-            }
-        }
-
-        // Process timer events
-        loop {
-            match self.timer.poll() {
-                Ok(Async::Ready(Some(_instant))) => self.handle_timer()?,
-                Ok(Async::Ready(None)) => break, // timed stopped, fall through
-                Ok(Async::NotReady) => break,
-                Err(e) => return Err(e.into()),
-            };
-        }
-
-        Ok(Async::NotReady)
-    }
 }
 
 // Event loop.
@@ -1001,10 +954,35 @@ impl Future for NodeService {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        match self.do_poll() {
-            Ok(r) => Ok(r),
-            Err(e) => {
-                panic!("Internal error: {}", e);
+        loop {
+            match self.events.poll().expect("all errors are already handled") {
+                Async::Ready(Some(event)) => {
+                    let result: Result<(), Error> = match event {
+                        NodeMessage::Init => self.handle_init(),
+                        NodeMessage::PaymentRequest { recipient, amount } => {
+                            self.handle_payment_request(&recipient, amount)
+                        }
+                        NodeMessage::MessageRequest {
+                            recipient,
+                            ttl,
+                            data,
+                        } => self.handle_message_request(&recipient, ttl, data),
+                        NodeMessage::SubscribeBalance(tx) => self.handle_subscribe_balance(tx),
+                        NodeMessage::SubscribeEpoch(tx) => self.handle_subscribe_epoch(tx),
+                        NodeMessage::SubscribeMessage(tx) => self.handle_subscribe_message(tx),
+
+                        NodeMessage::TransactionRequest(msg) => {
+                            self.handle_transaction_request(msg)
+                        }
+                        NodeMessage::BlockRequest(msg) => self.handle_block_request(msg),
+                        NodeMessage::Timer(_instant) => self.handle_timer(),
+                    };
+                    if let Err(e) = result {
+                        error!("Error: {}", e);
+                    }
+                }
+                Async::Ready(None) => unreachable!(), // never happens
+                Async::NotReady => return Ok(Async::NotReady),
             }
         }
     }

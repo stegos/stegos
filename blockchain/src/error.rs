@@ -38,6 +38,8 @@ pub enum BlockchainError {
     InvalidTransactionSignature,
     #[fail(display = "Invalid transaction monetary balance.")]
     InvalidTransactionBalance,
+    #[fail(display = "Invalid transaction fee.")]
+    InvalidTransactionFee,
     #[fail(display = "Invalid block monetary balance.")]
     InvalidBlockBalance,
     #[fail(display = "Invalid block inputs: expected={}, got={}.", _0, _1)]

@@ -159,6 +159,11 @@ impl Transaction {
     pub fn validate(&self, inputs: &[Output]) -> Result<(), Error> {
         assert_eq!(self.body.txins.len(), inputs.len());
 
+        // Check fee.
+        if self.body.fee < 0 {
+            return Err(BlockchainError::InvalidTransactionFee.into());
+        }
+
         //
         // Calculate the pedersen commitment difference in order to check the monetary balance:
         //
@@ -270,6 +275,20 @@ pub mod tests {
 
         // Validation
         tx.validate(&inputs1).expect("keys are valid");
+
+        //
+        // Invalid fee
+        //
+        let fee = tx.body.fee;
+        tx.body.fee = -1i64;
+        match tx.validate(&inputs1) {
+            Err(e) => match e.downcast::<BlockchainError>().unwrap() {
+                BlockchainError::InvalidTransactionFee => {}
+                _ => panic!(),
+            },
+            _ => panic!(),
+        };
+        tx.body.fee = fee;
 
         //
         // Invalid signature

@@ -28,7 +28,7 @@ use crate::randhound::{EpochInfo, GlobalState};
 
 use failure::{Error, Fail};
 use futures::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
-use futures::{Async, Future, Poll, Stream};
+use futures::{self, Async, Future, Poll, Stream};
 use futures_stream_select_all_send::select_all;
 use log::*;
 use protobuf;
@@ -113,7 +113,6 @@ pub(crate) enum RandHoundEvent {
     Broadcast(Vec<u8>),
     Epoch(RandhoundEpoch),
     Heartbeat(HeartbeatUpdate),
-    CheckInitQuorum,
     Subscribe(UnboundedSender<Randomness>),
     NewRound,
 }
@@ -134,11 +133,11 @@ pub struct RandHoundService {
     recv: Box<Stream<Item = RandHoundEvent, Error = RandHoundInputError> + Send>,
     /// Randhound state
     state: GlobalState,
-    /// Tokio runtime handler
+    /// Tokio Runtime,
     runtime: TaskExecutor,
 }
 
-impl<'a> RandHoundService {
+impl RandHoundService {
     /// Constructor.
     fn new(
         broker: Broker,
@@ -190,7 +189,7 @@ impl<'a> RandHoundService {
 
         let recv = select_all(inputs);
 
-        let state = randhound::init_state(&keychain, broker, runtime.clone(), send.clone());
+        let state = randhound::init_state(&keychain, broker, send.clone());
 
         let randhound = RandHoundService {
             // broker: broker.clone(),
@@ -249,12 +248,6 @@ impl<'a> RandHoundService {
         debug!("Heartbeat notification received: {:#?}", msg);
     }
 
-    /// Called on timer event.
-    fn on_check_init_quorum(&mut self) {
-        debug!("Checking for quorum during Init stage");
-        self.state.maybe_transition_from_init_phase();
-    }
-
     fn on_new_round(&mut self) {
         debug!("Starting Randhound!");
         self.state.start_randhound_round();
@@ -262,6 +255,15 @@ impl<'a> RandHoundService {
 
     fn on_timer(&self) {
         debug!("Tick!");
+    }
+
+    fn on_deadline(&mut self, session: Hash) {
+        info!("Deadline triggered for session: {}", session);
+        if session != self.state.get_current_session() {
+            error!("Stray deadline, current session is: {}", session);
+        } else {
+            self.state.maybe_transition_from_init_phase();
+        }
     }
 
     fn process_msg(&mut self, msg: Vec<u8>) {
@@ -297,6 +299,16 @@ impl Future for RandHoundService {
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
+            let deadline_poll = self.state.poll_deadline();
+            match deadline_poll {
+                Ok(Async::Ready(Some(session))) => self.on_deadline(session),
+                Ok(Async::Ready(None)) => (),
+                Ok(Async::NotReady) => (),
+                Err(e) => {
+                    error!("Error in DelayQueue: {}", e);
+                    return Err(());
+                }
+            }
             match self.recv.poll() {
                 Ok(Async::Ready(Some(evt))) => match evt {
                     RandHoundEvent::Unicast(msg) => self.on_unicast(msg),
@@ -304,12 +316,18 @@ impl Future for RandHoundService {
                     RandHoundEvent::Epoch(msg) => self.on_epoch(msg),
                     RandHoundEvent::Heartbeat(msg) => self.on_heartbeat(msg),
                     RandHoundEvent::Timer(_i) => self.on_timer(),
-                    RandHoundEvent::CheckInitQuorum => self.on_check_init_quorum(),
                     RandHoundEvent::NewRound => self.on_new_round(),
                     RandHoundEvent::Subscribe(tx) => self.state.subscribe(tx),
                 },
                 Ok(Async::Ready(None)) => unreachable!(), // never should happen
-                Ok(Async::NotReady) => return Ok(Async::NotReady),
+                Ok(Async::NotReady) => {
+                    let deadline_result = deadline_poll.unwrap();
+                    if deadline_result == Async::NotReady || deadline_result == Async::Ready(None) {
+                        return Ok(Async::NotReady);
+                    } else {
+                        continue;
+                    }
+                }
                 Err(e) => {
                     error!("Error in Randhound event loop: {:#?}", e);
                     return Err(());

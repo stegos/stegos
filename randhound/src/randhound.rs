@@ -106,21 +106,20 @@ use super::randhound_proto::{self, RandhoundMessage, RandhoundMessageTypes};
 use super::{RandHoundEvent, Randomness};
 
 use failure::{Error, Fail};
-use futures::future::Future;
 use futures::sync::mpsc::{self, UnboundedSender};
+use futures::{Async, Poll, Stream};
 use log::*;
 use protobuf::Message as ProtoMessage;
 use std::collections::hash_map::HashMap;
 use std::collections::hash_set::HashSet;
 use std::collections::VecDeque;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 use std::vec::Vec;
 use stegos_crypto::hash::*;
 use stegos_crypto::pbc::*;
 use stegos_keychain::KeyChain;
 use stegos_network::Broker;
-use tokio::runtime::TaskExecutor;
-use tokio_timer::Delay;
+use tokio_timer::DelayQueue;
 
 type Zr = fast::Zr;
 type G1 = fast::G1;
@@ -176,7 +175,6 @@ fn dot_prod_g1_zr(pts: &[G1], zrs: &[Zr]) -> G1 {
 // -------------------------------------------------------------------
 // Now we need to implement a stateful system....
 
-#[derive(Clone)]
 pub(crate) struct GlobalState {
     pkey: secure::PublicKey, // node secure PBC keying - lasts eternally
     skey: secure::SecretKey, // ... ditto ...
@@ -186,14 +184,15 @@ pub(crate) struct GlobalState {
     next_epoch: EpochInfo,   // epoch to be used on next round
     broker: Broker,          // handler to send messages
     msg_queue: VecDeque<Message>, // Messages received in Idle stage
-    runtime: TaskExecutor,   // Handle to runtime to start delayed event
     service: mpsc::UnboundedSender<RandHoundEvent>, // Events to event loop
-    /// List of Randomness receivers
+    // List of Randomness receivers
     consumers: Vec<UnboundedSender<Randomness>>,
+    // Delay Qurue for initial FastKey collection stage
+    deadline: DelayQueue<Hash>,
 }
 
 // Epoch info - one epoch might have multiple Randhound sessions(?)
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct EpochInfo {
     pub epoch: Hash,               // epoch ID
     pub leader: secure::PublicKey, // Leader node for current epoch
@@ -293,7 +292,6 @@ impl Default for Session {
 pub(crate) fn init_state(
     keychain: &KeyChain,
     broker: Broker,
-    runtime: TaskExecutor,
     service: UnboundedSender<RandHoundEvent>,
 ) -> GlobalState {
     debug!("Node's pkey is: {:#?}", keychain.cosi_pkey);
@@ -306,13 +304,22 @@ pub(crate) fn init_state(
         next_epoch: EpochInfo::default(),
         broker,
         msg_queue: VecDeque::new(),
-        runtime,
         service,
         consumers: vec![],
+        deadline: DelayQueue::new(),
     }
 }
 
 impl GlobalState {
+    pub fn poll_deadline(&mut self) -> Poll<Option<Hash>, Error> {
+        match self.deadline.poll() {
+            Ok(Async::Ready(Some(expired))) => return Ok(Async::Ready(Some(expired.into_inner()))),
+            Ok(Async::Ready(None)) => return Ok(Async::Ready(None)),
+            Ok(Async::NotReady) => Ok(Async::NotReady),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     pub(crate) fn subscribe(&mut self, consumer: UnboundedSender<Randomness>) {
         self.consumers.push(consumer);
     }
@@ -434,7 +441,7 @@ impl GlobalState {
         self.skey
     }
 
-    fn get_current_session(&self) -> Hash {
+    pub(crate) fn get_current_session(&self) -> Hash {
         self.session_info.session
     }
 
@@ -934,22 +941,10 @@ impl GlobalState {
                 // this one is easy - very minimal compute overhead at each node
                 // so just have to account for network delays
                 // schedule_after(3.0 * NETWORK_DELAY, &self.maybe_transition_from_init_phase);
-                self.runtime.spawn({
-                    let delayed = Delay::new(
-                        Instant::now() + Duration::from_secs(self.group_size() as u64 * 2),
-                    )
-                    .and_then({
-                        let send = self.service.clone();
-                        move |()| {
-                            debug!("Kabooom!");
-                            if let Err(e) = send.unbounded_send(RandHoundEvent::CheckInitQuorum) {
-                                error!("Timer error, scheduling check for init quorum: {}", e)
-                            }
-                            Ok(())
-                        }
-                    });
-                    delayed.map_err(|_| ())
-                });
+                self.deadline.insert(
+                    self.get_current_session(),
+                    Duration::from_secs(self.group_size() as u64 * 2),
+                );
             }
         }
     }
@@ -992,6 +987,7 @@ impl GlobalState {
                 self.add_fast_key(from, key);
                 if self.actual_group_size() == self.group_size() {
                     debug!("Received all possible keys, moving on to next stage!");
+                    self.deadline.clear();
                     self.set_stage(SessionStage::Stage2);
                     // Dispatch OOB messages
                     self.dispatch_fifo_messages();

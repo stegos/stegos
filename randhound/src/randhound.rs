@@ -103,7 +103,7 @@
 #![allow(dead_code)]
 
 use super::randhound_proto::{self, RandhoundMessage, RandhoundMessageTypes};
-use super::RandHoundEvent;
+use super::{RandHoundEvent, Randomness};
 
 use failure::{Error, Fail};
 use futures::future::Future;
@@ -113,7 +113,7 @@ use protobuf::Message as ProtoMessage;
 use std::collections::hash_map::HashMap;
 use std::collections::hash_set::HashSet;
 use std::collections::VecDeque;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use std::vec::Vec;
 use stegos_crypto::hash::*;
 use stegos_crypto::pbc::*;
@@ -188,6 +188,8 @@ pub(crate) struct GlobalState {
     msg_queue: VecDeque<Message>, // Messages received in Idle stage
     runtime: TaskExecutor,   // Handle to runtime to start delayed event
     service: mpsc::UnboundedSender<RandHoundEvent>, // Events to event loop
+    /// List of Randomness receivers
+    consumers: Vec<UnboundedSender<Randomness>>,
 }
 
 // Epoch info - one epoch might have multiple Randhound sessions(?)
@@ -306,10 +308,15 @@ pub(crate) fn init_state(
         msg_queue: VecDeque::new(),
         runtime,
         service,
+        consumers: vec![],
     }
 }
 
 impl GlobalState {
+    pub(crate) fn subscribe(&mut self, consumer: UnboundedSender<Randomness>) {
+        self.consumers.push(consumer);
+    }
+
     pub(crate) fn add_witness(&mut self, pkey: &secure::PublicKey) {
         self.witnesses.insert(*pkey);
     }
@@ -493,7 +500,7 @@ impl GlobalState {
                 }
                 let sess = self.get_current_session();
                 if sess != msg.sess {
-                    return Err(MsgErr::SessionMismatch);
+                    return Err(MsgErr::SessionMismatch(sess, msg.sess));
                 }
                 if let MsgType::GroupRandomness { .. } = msg.typ {
                     // ... and this must have arrived from a group leader
@@ -555,7 +562,7 @@ impl GlobalState {
             self.add_fast_key(&me, &fpkey);
             debug!("Start session done!");
         }
-        info!("Randound session started!");
+        info!("Randound session started ({})!", self.session_info.session);
     }
 
     // ------------------------------------------------------------------------
@@ -651,9 +658,16 @@ impl GlobalState {
                 self.stash_subsubgroup_randomness(&from, &rands)
             }
             MsgType::GroupRandomness { ref rand } => self.stash_group_randomness(&from, &rand),
-            MsgType::FinalLotteryTicket { .. } => {
+            MsgType::FinalLotteryTicket { ref ticket } => {
+                info!("Final lottery ticket receiced: {}", ticket);
                 // There should me more to do here...
                 // (hold election, assign new roles, etc.)
+                self.consumers.retain(move |tx| {
+                    tx.unbounded_send(Randomness {
+                        value: ticket.clone(),
+                    })
+                    .is_ok()
+                });
                 self.clear_session_state() // but certainly this much...
             }
             _ => (),
@@ -819,7 +833,17 @@ impl GlobalState {
             //
             let my_group = grps.first().unwrap();
             let my_leader = my_group.first().unwrap();
-            let session_id = Hash::digest_chain(&[&self.get_current_epoch(), &self.get_skey()]);
+            let mut hasher = Hasher::new();
+            let _secs_from_bigbang = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                .hash(&mut hasher);
+            self.get_current_epoch().hash(&mut hasher);
+            self.get_skey().hash(&mut hasher);
+
+            let session_id = hasher.result();
+
             let (fskey, fpkey, fsig) = fast::make_deterministic_keys(&session_id.bits());
             assert!(fast::check_keying(&fpkey, &fsig));
             self.session_info = Session {
@@ -1606,6 +1630,12 @@ impl GlobalState {
                     let trand = fast::compute_pairing(&G1::generator(), &grand);
                     let ticket = Hash::digest(&trand);
                     info!("Calculated Final Lottery Ticket: {}", ticket);
+                    self.consumers.retain(move |tx| {
+                        tx.unbounded_send(Randomness {
+                            value: ticket.clone(),
+                        })
+                        .is_ok()
+                    });
                     let msg = MsgType::FinalLotteryTicket { ticket: ticket };
                     // tell everyone the outcome with the next lottery ticket
                     if let Err(e) = self.broadcast(&msg) {
@@ -1749,8 +1779,8 @@ pub struct Message {
 
 #[derive(Copy, Clone, Fail, Debug)]
 pub enum MsgErr {
-    #[fail(display = "Session mismatch")]
-    SessionMismatch,
+    #[fail(display = "Session mismatch (expected: {}, got: {}", _0, _1)]
+    SessionMismatch(Hash, Hash),
     #[fail(display = "Message not from a group member")]
     NotFromGroupMember,
     #[fail(display = "Invalid Signature")]

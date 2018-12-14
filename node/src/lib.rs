@@ -1037,6 +1037,10 @@ impl NodeService {
         let block = MonetaryBlock::new(base, gamma, &inputs_hashes, &outputs);
 
         // Double-check the monetary balance of created block.
+        let inputs = self
+            .chain
+            .outputs_by_hashes(&block.body.inputs)
+            .expect("transactions valid");
         block.validate(&inputs)?;
 
         info!("Created block: hash={}", Hash::digest(&block));

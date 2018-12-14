@@ -26,6 +26,7 @@ use crate::merkle::*;
 use crate::output::*;
 use failure::Error;
 use std::collections::BTreeSet;
+use std::collections::HashSet;
 use stegos_crypto::bulletproofs::validate_range_proof;
 use stegos_crypto::curve1174::cpt::Pt;
 use stegos_crypto::curve1174::ecpt::ECp;
@@ -222,21 +223,38 @@ impl MonetaryBlock {
         inputs: &[Hash],
         outputs: &[Output],
     ) -> MonetaryBlock {
-        // Create inputs array
-        let mut hasher = Hasher::new();
-        let inputs_count: u64 = inputs.len() as u64;
-        inputs_count.hash(&mut hasher);
-        for input in inputs {
-            input.hash(&mut hasher);
-        }
-        let inputs_range_hash = hasher.result();
-        let inputs = inputs.iter().map(|o| o.clone()).collect::<Vec<Hash>>();
+        // Re-order all inputs to blur transaction boundaries.
+        // Current algorithm just sorts this list.
+        // Since Hash is random, it has the same effect as shuffling.
+        let inputs_len = inputs.len();
+        let mut inputs: Vec<Hash> = inputs.iter().cloned().collect();
+        inputs.sort();
+        inputs.dedup(); // should do nothing
+        assert_eq!(inputs.len(), inputs_len, "inputs must be unique");
 
-        // Create outputs tree
-        let outputs = outputs
+        // Calculate input_range_hash.
+        let inputs_range_hash: Hash = {
+            let mut hasher = Hasher::new();
+            let inputs_count: u64 = inputs.len() as u64;
+            inputs_count.hash(&mut hasher);
+            for input in &inputs {
+                input.hash(&mut hasher);
+            }
+            hasher.result()
+        };
+
+        // Re-order all outputs to blur transaction boundaries.
+        let outputs_len = outputs.len();
+        let mut outputs: Vec<(Hash, Box<Output>)> = outputs
             .iter()
-            .map(|o| Box::<Output>::new(o.clone()))
-            .collect::<Vec<Box<Output>>>();
+            .map(|o| (Hash::digest(o), Box::<Output>::new(o.clone())))
+            .collect();
+        outputs.sort_by(|(h1, _o1), (h2, _o2)| h1.cmp(h2));
+        outputs.dedup_by(|(h1, _o1), (h2, _o2)| h1 == h2); // should do nothing
+        assert_eq!(outputs.len(), outputs_len, "outputs must be unique");
+        let outputs: Vec<Box<Output>> = outputs.into_iter().map(|(_h, o)| o).collect();
+
+        // Create Merkle Tree and calculate outputs_range_hash.
         let outputs = Merkle::from_array(&outputs);
         let outputs_range_hash = outputs.roothash().clone();
 
@@ -297,8 +315,12 @@ impl MonetaryBlock {
         let mut pedersen_commitment_diff = ECp::inf();
 
         // +\sum{C_i} for i in txins
+        let mut txins_set: HashSet<Hash> = HashSet::new();
         for (txin_hash, txin) in self.body.inputs.iter().zip(inputs) {
             assert_eq!(Hash::digest(txin), *txin_hash);
+            if !txins_set.insert(*txin_hash) {
+                return Err(BlockchainError::DuplicateBlockInput(*txin_hash).into());
+            }
             let pedersen_commitment = match txin {
                 Output::MonetaryOutput(o) => o.proof.vcmt,
                 Output::DataOutput(o) => o.vcmt,
@@ -306,9 +328,15 @@ impl MonetaryBlock {
             let pedersen_commitment: ECp = Pt::decompress(pedersen_commitment)?;
             pedersen_commitment_diff += pedersen_commitment;
         }
+        drop(txins_set);
 
         // -\sum{C_o} for o in txouts
+        let mut txouts_set: HashSet<Hash> = HashSet::new();
         for (txout, _) in self.body.outputs.leafs() {
+            let txout_hash = Hash::digest(txout);
+            if !txouts_set.insert(txout_hash) {
+                return Err(BlockchainError::DuplicateBlockOutput(txout_hash).into());
+            }
             let pedersen_commitment = match **txout {
                 Output::MonetaryOutput(ref o) => {
                     // Check bulletproofs of created outputs
@@ -322,6 +350,7 @@ impl MonetaryBlock {
             let pedersen_commitment: ECp = Pt::decompress(pedersen_commitment)?;
             pedersen_commitment_diff -= pedersen_commitment;
         }
+        drop(txouts_set);
 
         // Check the monetary balance
         if pedersen_commitment_diff != self.header.gamma * (*G) {
@@ -463,7 +492,7 @@ pub mod tests {
         }
 
         //
-        // Valid block with invalid inputs/outputs hash
+        // Valid block with invalid inputs/outputs.
         //
         {
             let (output0, gamma0) =
@@ -472,12 +501,12 @@ pub mod tests {
             let inputs1 = [Hash::digest(&output0)];
             let (output1, gamma1) =
                 Output::new_monetary(timestamp, &skey1, &pkey2, amount).unwrap();
-            let outputs1 = [output1];
+            let outputs1 = [output1.clone()];
             let gamma = gamma0 - gamma1;
             let mut block = MonetaryBlock::new(base, gamma, &inputs1, &outputs1);
+            let inputs = [output0.clone()];
 
             // Invalid inputs_range_hash.
-            let inputs = [output0];
             let inputs_range_hash = block.header.inputs_range_hash.clone();
             block.header.inputs_range_hash = Hash::digest(&"invalid".to_string());
             match block.validate(&inputs) {
@@ -506,6 +535,56 @@ pub mod tests {
                 _ => panic!(),
             }
             block.header.outputs_range_hash = outputs_range_hash;
+
+            // Duplicate input.
+            let bad_inputs = vec![output0.clone(), output0.clone()];
+            let mut bad_input_hashes = vec![Hash::digest(&output0), Hash::digest(&output0)];
+            let mut bad_inputs_range_hash: Hash = {
+                let mut hasher = Hasher::new();
+                let inputs_count: u64 = bad_inputs.len() as u64;
+                inputs_count.hash(&mut hasher);
+                for input in &bad_input_hashes {
+                    input.hash(&mut hasher);
+                }
+                hasher.result()
+            };
+            std::mem::swap(&mut block.body.inputs, &mut bad_input_hashes);
+            std::mem::swap(
+                &mut block.header.inputs_range_hash,
+                &mut bad_inputs_range_hash,
+            );
+            match block.validate(&bad_inputs) {
+                Err(e) => match e.downcast::<BlockchainError>().unwrap() {
+                    BlockchainError::DuplicateBlockInput(txin_hash) => {
+                        assert_eq!(txin_hash, bad_input_hashes[0]);
+                    }
+                    _ => panic!(),
+                },
+                _ => panic!(),
+            };
+            block.body.inputs = bad_input_hashes;
+            block.header.inputs_range_hash = bad_inputs_range_hash;
+
+            // Duplicate output.
+            let bad_outputs = vec![Box::new(output1.clone()), Box::new(output1.clone())];
+            let mut bad_outputs = Merkle::from_array(&bad_outputs);
+            let mut bad_outputs_range_hash = bad_outputs.roothash().clone();
+            std::mem::swap(&mut block.body.outputs, &mut bad_outputs);
+            std::mem::swap(
+                &mut block.header.outputs_range_hash,
+                &mut bad_outputs_range_hash,
+            );
+            match block.validate(&inputs) {
+                Err(e) => match e.downcast::<BlockchainError>().unwrap() {
+                    BlockchainError::DuplicateBlockOutput(hash) => {
+                        assert_eq!(hash, Hash::digest(&output1));
+                    }
+                    _ => panic!(),
+                },
+                _ => panic!(),
+            };
+            block.body.outputs = bad_outputs;
+            block.header.outputs_range_hash = bad_outputs_range_hash;
         }
     }
 }

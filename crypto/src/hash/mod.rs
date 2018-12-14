@@ -25,6 +25,7 @@ use crate::utils::*;
 use crate::CryptoError;
 
 use sha3::{Digest, Sha3_256};
+use std::cmp::Ordering;
 use std::fmt;
 use std::hash as stdhash;
 use std::mem;
@@ -279,6 +280,18 @@ impl<T: Hashable> Hashable for Option<T> {
         if let Some(val) = self {
             val.hash(state);
         }
+    }
+}
+
+// Needed to use within BTreeSet/BTreeMap
+impl Ord for Hash {
+    fn cmp(&self, other: &Hash) -> Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+impl PartialOrd for Hash {
+    fn partial_cmp(&self, other: &Hash) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 

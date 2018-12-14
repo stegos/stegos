@@ -40,12 +40,20 @@ pub enum BlockchainError {
     InvalidTransactionBalance,
     #[fail(display = "Invalid transaction fee.")]
     InvalidTransactionFee,
+    #[fail(display = "Duplicate transaction input: {}.", _0)]
+    DuplicateTransactionInput(Hash),
+    #[fail(display = "Duplicate transaction output: {}.", _0)]
+    DuplicateTransactionOutput(Hash),
     #[fail(display = "Invalid block monetary balance.")]
     InvalidBlockBalance,
     #[fail(display = "Invalid block inputs: expected={}, got={}.", _0, _1)]
     InvalidBlockInputsHash(Hash, Hash),
     #[fail(display = "Invalid block outputs: expected={}, got={}.", _0, _1)]
     InvalidBlockOutputsHash(Hash, Hash),
+    #[fail(display = "Duplicate block input: {}.", _0)]
+    DuplicateBlockInput(Hash),
+    #[fail(display = "Duplicate block output: {}.", _0)]
+    DuplicateBlockOutput(Hash),
     #[fail(display = "Invalid UTXO bulletproof.")]
     InvalidBulletProof,
     #[fail(display = "Block must contain at least one witness.")]

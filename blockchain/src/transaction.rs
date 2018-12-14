@@ -24,6 +24,7 @@
 use crate::error::*;
 use crate::output::*;
 use failure::Error;
+use std::collections::HashSet;
 use stegos_crypto::bulletproofs::{fee_a, validate_range_proof};
 use stegos_crypto::curve1174::cpt::{
     sign_hash, validate_sig, Pt, PublicKey, SchnorrSig, SecretKey,
@@ -112,25 +113,32 @@ impl Transaction {
         let mut txins: Vec<Hash> = Vec::with_capacity(inputs.len());
         let mut txouts: Vec<Output> = Vec::with_capacity(outputs.len());
 
+        let mut txins_set: HashSet<Hash> = HashSet::new();
         for txin in inputs {
             let (delta, gamma) = txin.decrypt_payload(skey)?;
             let hash = Hasher::digest(txin);
 
+            assert!(txins_set.insert(hash), "inputs must be unique");
             txins.push(hash);
 
             tx_gamma += gamma;
             eff_skey += delta;
             eff_skey += gamma;
         }
+        drop(txins_set);
 
         // gamma adjustment == \sum \gamma_j for j in txouts
         tx_gamma -= outputs_gamma;
         eff_skey -= outputs_gamma;
 
         // Clone created UTXOs
+        let mut txouts_set: HashSet<Hash> = HashSet::new();
         for txout in outputs {
+            let hash = Hasher::digest(txout);
+            assert!(txouts_set.insert(hash), "inputs must be unique");
             txouts.push(txout.clone());
         }
+        drop(txouts_set);
 
         // Create a transaction body and calculate the hash.
         let body = TransactionBody {
@@ -177,8 +185,12 @@ impl Transaction {
         let mut pedersen_commitment_diff = ECp::inf();
 
         // +\sum{C_i} for i in txins
+        let mut txins_set: HashSet<Hash> = HashSet::new();
         for (txin_hash, txin) in self.body.txins.iter().zip(inputs) {
             assert_eq!(Hash::digest(txin), *txin_hash);
+            if !txins_set.insert(*txin_hash) {
+                return Err(BlockchainError::DuplicateTransactionInput(*txin_hash).into());
+            }
             let pedersen_commitment = match txin {
                 Output::MonetaryOutput(o) => o.proof.vcmt,
                 Output::DataOutput(o) => o.vcmt,
@@ -186,9 +198,15 @@ impl Transaction {
             let pedersen_commitment: ECp = Pt::decompress(pedersen_commitment)?;
             pedersen_commitment_diff += pedersen_commitment;
         }
+        drop(txins_set);
 
         // -\sum{C_o} for o in txouts
+        let mut txouts_set: HashSet<Hash> = HashSet::new();
         for txout in &self.body.txouts {
+            let txout_hash = Hash::digest(txout);
+            if !txouts_set.insert(txout_hash) {
+                return Err(BlockchainError::DuplicateTransactionOutput(txout_hash).into());
+            }
             let pedersen_commitment = match txout {
                 Output::MonetaryOutput(o) => {
                     // Check bulletproofs of created outputs
@@ -202,6 +220,7 @@ impl Transaction {
             let pedersen_commitment: ECp = Pt::decompress(pedersen_commitment)?;
             pedersen_commitment_diff -= pedersen_commitment;
         }
+        drop(txouts_set);
 
         // -fee * A
         pedersen_commitment_diff -= fee_a(self.body.fee);
@@ -266,7 +285,7 @@ pub mod tests {
         //
         // Valid transaction from 1 to 2
         //
-        let inputs1 = [output0];
+        let inputs1 = [output0.clone()];
         let (output1, gamma1) =
             Output::new_monetary(timestamp, &skey1, &pkey2, amount - fee).expect("keys are valid");
         let outputs_gamma = gamma1;
@@ -289,6 +308,38 @@ pub mod tests {
             _ => panic!(),
         };
         tx.body.fee = fee;
+
+        //
+        // Duplicate input
+        //
+        tx.body.txins.push(tx.body.txins.last().unwrap().clone());
+        let inputs11 = &[output0.clone(), output0.clone()];
+        match tx.validate(inputs11) {
+            Err(e) => match e.downcast::<BlockchainError>().unwrap() {
+                BlockchainError::DuplicateTransactionInput(txin_hash) => {
+                    assert_eq!(&txin_hash, tx.body.txins.last().unwrap());
+                }
+                _ => panic!(),
+            },
+            _ => panic!(),
+        };
+        drop(inputs11);
+        tx.body.txins.pop().unwrap();
+
+        //
+        // Duplicate output
+        //
+        tx.body.txouts.push(tx.body.txouts.last().unwrap().clone());
+        match tx.validate(&inputs1) {
+            Err(e) => match e.downcast::<BlockchainError>().unwrap() {
+                BlockchainError::DuplicateTransactionOutput(txout_hash) => {
+                    assert_eq!(txout_hash, Hash::digest(tx.body.txouts.last().unwrap()));
+                }
+                _ => panic!(),
+            },
+            _ => panic!(),
+        };
+        tx.body.txouts.pop().unwrap();
 
         //
         // Invalid signature

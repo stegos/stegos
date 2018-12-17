@@ -192,7 +192,7 @@ enum NodeMessage {
     BlockRequest(Vec<u8>),
 
     // Randomness Event from RandHound
-    Randomness(Hash),
+    Randomness(Option<Hash>),
     //
     // Internal Events
     //
@@ -287,8 +287,10 @@ impl NodeService {
         streams.push(Box::new(block_rx));
 
         // Randomness events from RandHound
-        let randomness_rx =
-            RandHound::subscribe(&randhound)?.map(|m| NodeMessage::Randomness(m.value));
+        let randomness_rx = RandHound::subscribe(&randhound)?.map(|m| match m {
+            Some(r) => NodeMessage::Randomness(Some(r.value)),
+            None => NodeMessage::Randomness(None),
+        });
         streams.push(Box::new(randomness_rx));
 
         // Timer events
@@ -551,9 +553,13 @@ impl NodeService {
         Ok(())
     }
 
-    fn handle_new_randomness(&mut self, h: Hash) -> Result<(), Error> {
-        self.randomness = h;
-        info!("New randomness obtained: {}", h);
+    fn handle_new_randomness(&mut self, h: Option<Hash>) -> Result<(), Error> {
+        if let Some(randomness) = h {
+            info!("New randomness obtained: {}", randomness);
+            self.randomness = randomness;
+        } else {
+            error!("Randhound failed!");
+        }
         // Start new round, if we are the leader
         if self.is_leader() {
             RandHound::start_round(&self.randhound)?;

@@ -88,7 +88,7 @@ impl RandHound {
         Ok(())
     }
 
-    pub fn subscribe(rh: &Self) -> Result<UnboundedReceiver<Randomness>, Error> {
+    pub fn subscribe(rh: &Self) -> Result<UnboundedReceiver<Option<Randomness>>, Error> {
         let (tx, rx) = mpsc::unbounded();
         rh.control.unbounded_send(RandHoundEvent::Subscribe(tx))?;
         Ok(rx)
@@ -113,7 +113,7 @@ pub(crate) enum RandHoundEvent {
     Broadcast(Vec<u8>),
     Epoch(RandhoundEpoch),
     Heartbeat(HeartbeatUpdate),
-    Subscribe(UnboundedSender<Randomness>),
+    Subscribe(UnboundedSender<Option<Randomness>>),
     NewRound,
 }
 

@@ -186,7 +186,7 @@ pub(crate) struct GlobalState {
     msg_queue: VecDeque<Message>, // Messages received in Idle stage
     service: mpsc::UnboundedSender<RandHoundEvent>, // Events to event loop
     // List of Randomness receivers
-    consumers: Vec<UnboundedSender<Randomness>>,
+    consumers: Vec<UnboundedSender<Option<Randomness>>>,
     // Delay Qurue for initial FastKey collection stage
     deadline: DelayQueue<Hash>,
 }
@@ -320,7 +320,7 @@ impl GlobalState {
         }
     }
 
-    pub(crate) fn subscribe(&mut self, consumer: UnboundedSender<Randomness>) {
+    pub(crate) fn subscribe(&mut self, consumer: UnboundedSender<Option<Randomness>>) {
         self.consumers.push(consumer);
     }
 
@@ -670,9 +670,9 @@ impl GlobalState {
                 // There should me more to do here...
                 // (hold election, assign new roles, etc.)
                 self.consumers.retain(move |tx| {
-                    tx.unbounded_send(Randomness {
+                    tx.unbounded_send(Some(Randomness {
                         value: ticket.clone(),
-                    })
+                    }))
                     .is_ok()
                 });
                 self.clear_session_state() // but certainly this much...
@@ -965,6 +965,9 @@ impl GlobalState {
                 self.generate_shared_randomness();
             } else {
                 info!("BFT threshold of witnesses not reached in Init phase. Resetting state.");
+                self.consumers
+                    .retain(move |tx| tx.unbounded_send(None).is_ok());
+                self.clear_session_state();
             }
         }
     }
@@ -1627,9 +1630,9 @@ impl GlobalState {
                     let ticket = Hash::digest(&trand);
                     info!("Calculated Final Lottery Ticket: {}", ticket);
                     self.consumers.retain(move |tx| {
-                        tx.unbounded_send(Randomness {
+                        tx.unbounded_send(Some(Randomness {
                             value: ticket.clone(),
-                        })
+                        }))
                         .is_ok()
                     });
                     let msg = MsgType::FinalLotteryTicket { ticket: ticket };

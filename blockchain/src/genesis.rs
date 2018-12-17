@@ -24,6 +24,7 @@
 use crate::block::*;
 use crate::output::*;
 use chrono::prelude::Utc;
+use std::collections::BTreeSet;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure as cosi_keys;
 use stegos_keychain::KeyChain;
@@ -44,13 +45,11 @@ pub fn genesis(keychains: &[KeyChain], amount: i64) -> Vec<Block> {
         let previous = Hash::digest(&"genesis".to_string());
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
 
-        let witnesses = keychains
-            .iter()
-            .map(|p| p.cosi_pkey.clone())
-            .collect::<Vec<cosi_keys::PublicKey>>();
-        let leader = witnesses[0].clone();
+        let witnesses: BTreeSet<cosi_keys::PublicKey> =
+            keychains.iter().map(|p| p.cosi_pkey.clone()).collect();
+        let leader = witnesses.iter().next().unwrap().clone();
 
-        KeyBlock::new(base, leader, &witnesses)
+        KeyBlock::new(base, leader, witnesses)
     };
 
     //

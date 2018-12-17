@@ -9,6 +9,10 @@ message Fr {
     bytes data = 1;
 }
 
+message G1 {
+    bytes data = 1;
+}
+
 message G2 {
     bytes data = 1;
 }
@@ -28,6 +32,10 @@ message SchnorrSig {
 
 message SecurePublicKey {
     G2 point = 1;
+}
+
+message SecureSignature {
+    G1 point = 1;
 }
 
 message EncryptedPayload {
@@ -127,4 +135,23 @@ message Block {
         KeyBlock key_block = 1;
         MonetaryBlock monetary_block = 2;
     }
+}
+
+message MonetaryBlockProposal {
+    repeated Transaction txs = 1;
+    Output fee_output = 2;
+    Hash block_hash = 3;
+    MonetaryBlockHeader block_header = 4;
+}
+
+message ConsensusMessageBody {
+    oneof body {
+        MonetaryBlockProposal monetary_block_proposal = 1;
+    }
+}
+
+message ConsensusMessage {
+    ConsensusMessageBody body = 1;
+    SecurePublicKey pkey = 2;
+    SecureSignature sig = 3;
 }

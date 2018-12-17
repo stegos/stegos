@@ -119,6 +119,21 @@ impl Zr {
         hexstr_to_bev_u8(&s, &mut v)?;
         Ok(Zr(v))
     }
+
+    /// Convert to raw bytes.
+    pub fn into_bytes(self) -> [u8; ZR_SIZE_FR256] {
+        self.0
+    }
+
+    /// Try to convert from raw bytes.
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        if bytes.len() != ZR_SIZE_FR256 {
+            return Err(CryptoError::InvalidBinaryLength(ZR_SIZE_FR256, bytes.len()));
+        }
+        let mut bits: [u8; ZR_SIZE_FR256] = [0u8; ZR_SIZE_FR256];
+        bits.copy_from_slice(bytes);
+        Ok(Zr(bits))
+    }
 }
 
 impl From<Hash> for Zr {
@@ -231,6 +246,12 @@ impl G1 {
             );
         }
         v
+    }
+}
+
+impl fmt::Debug for G1 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "SecureG1({})", self.into_hex())
     }
 }
 
@@ -688,13 +709,12 @@ impl fmt::Display for Signature {
     }
 }
 
-// NOTE: BLS Multi-signature never contributes to the computation of any block header hash.
-//impl Hashable for Signature {
-//    fn hash(&self, state: &mut Hasher) {
-//        "SecureSig".hash(state);
-//        self.base_vector().hash(state);
-//    }
-//}
+impl Hashable for Signature {
+    fn hash(&self, state: &mut Hasher) {
+        "SecureSig".hash(state);
+        self.base_vector().hash(state);
+    }
+}
 
 impl Eq for Signature {}
 impl PartialEq for Signature {
@@ -707,6 +727,18 @@ impl Add<Signature> for Signature {
     type Output = Self;
     fn add(self, other: Self) -> Self {
         Signature(self.0 + other.0)
+    }
+}
+
+impl From<Signature> for G1 {
+    fn from(sig: Signature) -> Self {
+        sig.0
+    }
+}
+
+impl From<G1> for Signature {
+    fn from(g: G1) -> Self {
+        Signature(g)
     }
 }
 

@@ -33,10 +33,12 @@ use futures_stream_select_all_send::select_all;
 use log::*;
 use protobuf;
 use protobuf::Message;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use stegos_blockchain::*;
+use stegos_consensus::*;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
@@ -138,7 +140,7 @@ impl Node {
 pub struct EpochNotification {
     pub epoch: u64,
     pub leader: SecurePublicKey,
-    pub witnesses: Vec<SecurePublicKey>,
+    pub witnesses: BTreeSet<SecurePublicKey>,
 }
 
 /// Send when message is received.
@@ -158,8 +160,10 @@ const VERSION: u64 = 1;
 const MEMPOOL_TTL: u64 = 15;
 /// Topic used for sending transactions.
 const TX_TOPIC: &'static str = "tx";
+/// Topic used for CoSi.
+const CONSENSUS_TOPIC: &'static str = "consensus";
 /// Topic used for sending sealed blocks.
-const BLOCK_TOPIC: &'static str = "block";
+const SEALED_BLOCK_TOPIC: &'static str = "block";
 /// Fixed fee for monetary transactions.
 const MONETARY_FEE: i64 = 1;
 /// Data unit used to calculate fee.
@@ -189,7 +193,8 @@ enum NodeMessage {
     // Network Events
     //
     TransactionRequest(Vec<u8>),
-    BlockRequest(Vec<u8>),
+    ConsensusRequest(Vec<u8>),
+    SealedBlockRequest(Vec<u8>),
 
     // Randomness Event from RandHound
     Randomness(Option<Hash>),
@@ -229,7 +234,7 @@ struct NodeService {
     /// Current epoch leader.
     leader: SecurePublicKey,
     /// The list of witnesses public keys.
-    witnesses: Vec<SecurePublicKey>,
+    witnesses: BTreeSet<SecurePublicKey>,
     /// Memory pool of pending transactions.
     mempool: Vec<Transaction>,
     /// Hashes of UTXO used by mempool transactions,
@@ -262,7 +267,7 @@ impl NodeService {
         let epoch: u64 = 1;
         let randomness = Hash::digest(&"0xDEADBEEF".to_string());
         let leader: SecurePublicKey = G2::generator().into(); // some fake key
-        let witnesses = Vec::<SecurePublicKey>::new();
+        let witnesses = BTreeSet::<SecurePublicKey>::new();
         let mempool = Vec::<Transaction>::new();
         let mempool_outputs = HashSet::<Hash>::new();
         let on_balance_changed = Vec::<UnboundedSender<i64>>::new();
@@ -280,10 +285,16 @@ impl NodeService {
             .map(|m| NodeMessage::TransactionRequest(m));
         streams.push(Box::new(transaction_rx));
 
+        // Consensus Requests
+        let consensus_rx = broker
+            .subscribe(&CONSENSUS_TOPIC.to_string())?
+            .map(|m| NodeMessage::ConsensusRequest(m));
+        streams.push(Box::new(consensus_rx));
+
         // Block Requests
         let block_rx = broker
-            .subscribe(&BLOCK_TOPIC.to_string())?
-            .map(|m| NodeMessage::BlockRequest(m));
+            .subscribe(&SEALED_BLOCK_TOPIC.to_string())?
+            .map(|m| NodeMessage::SealedBlockRequest(m));
         streams.push(Box::new(block_rx));
 
         // Randomness events from RandHound
@@ -357,7 +368,11 @@ impl NodeService {
         let msg = RandhoundEpoch {
             epoch: self.epoch,
             leader: self.leader.clone(),
-            witnesses: self.witnesses.clone(),
+            witnesses: self
+                .witnesses
+                .iter()
+                .cloned()
+                .collect::<Vec<SecurePublicKey>>(),
         };
         RandHound::on_epoch(&self.randhound, msg)?;
 
@@ -440,8 +455,28 @@ impl NodeService {
         Ok(())
     }
 
+    /// Handle incoming consensus requests received from network.
+    fn handle_consensus_request(&mut self, msg: Vec<u8>) -> Result<(), Error> {
+        if !self.is_leader() {
+            return Ok(());
+        }
+
+        let msg: protos::node::ConsensusMessage = protobuf::parse_from_bytes(&msg)?;
+        let msg = ConsensusMessage::from_proto(&msg)?;
+
+        let msg_hash = Hash::digest(&msg);
+        info!("Received consensus message: hash={}", &msg_hash);
+
+        msg.validate()?;
+
+        // TODO: ??
+
+        Ok(())
+    }
+
     /// Handle incoming KeyBlock
-    fn handle_key_block_request(&mut self, key_block: KeyBlock) -> Result<(), Error> {
+    fn handle_sealed_key_block_request(&mut self, key_block: KeyBlock) -> Result<(), Error> {
+        key_block.validate()?;
         let key_block2 = key_block.clone();
         self.chain.register_key_block(key_block)?;
         self.on_key_block_registered(&key_block2);
@@ -449,7 +484,7 @@ impl NodeService {
     }
 
     /// Handle incoming KeyBlock
-    fn handle_monetary_block_request(
+    fn handle_sealed_monetary_block_request(
         &mut self,
         monetary_block: MonetaryBlock,
     ) -> Result<(), Error> {
@@ -472,7 +507,7 @@ impl NodeService {
     }
 
     /// Handle incoming blocks received from network.
-    fn handle_block_request(&mut self, msg: Vec<u8>) -> Result<(), Error> {
+    fn handle_sealed_block_request(&mut self, msg: Vec<u8>) -> Result<(), Error> {
         let block: protos::node::Block = protobuf::parse_from_bytes(&msg)?;
         let block = Block::from_proto(&block)?;
 
@@ -508,9 +543,9 @@ impl NodeService {
         }
 
         match block {
-            Block::KeyBlock(key_block) => self.handle_key_block_request(key_block),
+            Block::KeyBlock(key_block) => self.handle_sealed_key_block_request(key_block),
             Block::MonetaryBlock(monetary_block) => {
-                self.handle_monetary_block_request(monetary_block)
+                self.handle_sealed_monetary_block_request(monetary_block)
             }
         }
     }
@@ -582,16 +617,24 @@ impl NodeService {
         self.keys.cosi_pkey == self.leader
     }
 
+    /// Returns true if current node is validator.
+    fn is_witness(&self) -> bool {
+        self.witnesses.contains(&self.keys.cosi_pkey)
+    }
+
     /// Called when a new key block is registered.
     fn on_key_block_registered(&mut self, key_block: &KeyBlock) {
-        self.leader = key_block.header.leader.clone();
         self.epoch = self.epoch + 1;
         self.leader = key_block.header.leader.clone();
         self.witnesses = key_block.header.witnesses.clone();
+        assert!(self.witnesses.contains(&self.leader));
+
         if self.is_leader() {
             info!("I'm leader");
+        } else if self.is_witness() {
+            info!("I'm witness, leader is {}", &self.leader);
         } else {
-            info!("New leader is {}", &self.leader);
+            info!("Leader is {}", &self.leader);
         }
     }
 
@@ -683,13 +726,26 @@ impl NodeService {
         Ok(())
     }
 
+    /// Send consensus message to network
+    #[allow(dead_code)]
+    fn send_consensus_message(&mut self, msg: ConsensusMessage) -> Result<(), Error> {
+        info!("Sending consensus message: hash={}", Hash::digest(&msg));
+        let proto = msg.into_proto();
+        let data = proto.write_to_bytes()?;
+        self.broker
+            .publish(&CONSENSUS_TOPIC.to_string(), data.clone())?;
+        // Sic: broadcast messages are not delivered to sender itself.
+        self.handle_consensus_request(data)?;
+        Ok(())
+    }
+
     /// Send block to network.
-    fn send_block(&mut self, block: Block) -> Result<(), Error> {
+    fn send_sealed_block(&mut self, block: Block) -> Result<(), Error> {
         info!("Sending block: hash={}", Hash::digest(&block));
         let proto = block.into_proto();
         let data = proto.write_to_bytes()?;
         // Don't send block to myself.
-        self.broker.publish(&BLOCK_TOPIC.to_string(), data)?;
+        self.broker.publish(&SEALED_BLOCK_TOPIC.to_string(), data)?;
         Ok(())
     }
 
@@ -987,6 +1043,10 @@ impl NodeService {
         let block = MonetaryBlock::new(base, gamma, &inputs_hashes, &outputs);
 
         // Double-check the monetary balance of created block.
+        let inputs = self
+            .chain
+            .outputs_by_hashes(&block.body.inputs)
+            .expect("transactions valid");
         block.validate(&inputs)?;
 
         info!("Created block: hash={}", Hash::digest(&block));
@@ -1003,8 +1063,7 @@ impl NodeService {
             .register_monetary_block(block)
             .expect("mempool transaction are validated before");
         self.on_monetary_block_registered(&block2, &pruned);
-        self.send_block(Block::MonetaryBlock(block2))?;
-
+        self.send_sealed_block(Block::MonetaryBlock(block2))?;
         Ok(())
     }
 }
@@ -1035,7 +1094,10 @@ impl Future for NodeService {
                         NodeMessage::TransactionRequest(msg) => {
                             self.handle_transaction_request(msg)
                         }
-                        NodeMessage::BlockRequest(msg) => self.handle_block_request(msg),
+                        NodeMessage::ConsensusRequest(msg) => self.handle_consensus_request(msg),
+                        NodeMessage::SealedBlockRequest(msg) => {
+                            self.handle_sealed_block_request(msg)
+                        }
                         NodeMessage::Timer(_instant) => self.handle_timer(),
                         NodeMessage::Randomness(h) => self.handle_new_randomness(h),
                     };
@@ -1074,7 +1136,7 @@ pub mod tests {
         assert_eq!(node.mempool.len(), 0);
         assert_eq!(node.epoch, 1);
         assert_ne!(node.leader, keys.cosi_pkey);
-        assert_eq!(node.witnesses.len(), 0);
+        assert!(node.witnesses.is_empty());
 
         let amount: i64 = 3_000_000;
         let genesis = genesis(&[keys.clone()], amount);
@@ -1087,7 +1149,7 @@ pub mod tests {
         assert_eq!(node.epoch, 2);
         assert_eq!(node.leader, keys.cosi_pkey);
         assert_eq!(node.witnesses.len(), 1);
-        assert_eq!(node.witnesses[0], node.leader);
+        assert_eq!(node.witnesses.iter().next().unwrap(), &node.leader);
     }
 
     #[test]

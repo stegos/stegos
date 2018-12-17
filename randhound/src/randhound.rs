@@ -1450,8 +1450,10 @@ impl GlobalState {
                         }
                     }
                 }
-                newsess.grptbl = sess.grptbl.clone(); // is this really necessary?
-                self.session_info = newsess; // is this really necessary?
+                if !done {
+                    newsess.grptbl = sess.grptbl.clone();
+                    self.session_info = newsess;
+                }
             }
             _ => {
                 // latecomers... just ignore the message

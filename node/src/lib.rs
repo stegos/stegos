@@ -37,7 +37,6 @@ use protobuf::Message;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::time::{Duration, Instant};
 use stegos_blockchain::*;
 use stegos_consensus::*;
 use stegos_crypto::curve1174::cpt::PublicKey;
@@ -48,7 +47,6 @@ use stegos_crypto::pbc::secure::G2;
 use stegos_keychain::KeyChain;
 use stegos_network::Broker;
 use stegos_randhound::{RandHound, RandhoundEpoch};
-use tokio_timer::Interval;
 
 // ----------------------------------------------------------------
 // Public API.
@@ -157,8 +155,6 @@ pub struct MessageNotification {
 /// Blockchain version.
 const VERSION: u64 = 1;
 /// Mempool processing interval.
-// TODO: replace with randound rounds
-const MEMPOOL_TTL: u64 = 15;
 /// Topic used for sending transactions.
 const TX_TOPIC: &'static str = "tx";
 /// Topic used for CoSi.

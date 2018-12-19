@@ -24,6 +24,7 @@
 use crate::error::*;
 use crate::merkle::*;
 use crate::output::*;
+use bitvector::BitVector;
 use failure::Error;
 use std::collections::BTreeSet;
 use std::collections::HashSet;
@@ -34,9 +35,12 @@ use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::curve1174::G;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
+use stegos_crypto::pbc::secure::Signature as SecureSignature;
+
+pub const WITNESSES_MAX: usize = 128;
 
 /// General Block Header.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BaseBlockHeader {
     /// Version number.
     pub version: u64,
@@ -50,20 +54,25 @@ pub struct BaseBlockHeader {
 
     /// Timestamp at which the block was built.
     pub timestamp: u64,
-    // TODO: BLS Multi-signature.
-    // pub sig: BlsSignature,
 
-    // TODO: Bitmap of signers in the multi-signature.
-    // pub signers: u64,
+    /// BLS multi-signature
+    pub sig: SecureSignature,
+
+    /// Bitmap of signers in the multi-signature.
+    pub sigmap: BitVector,
 }
 
 impl BaseBlockHeader {
     pub fn new(version: u64, previous: Hash, epoch: u64, timestamp: u64) -> Self {
+        let sig = SecureSignature::null();
+        let sigbitmap = BitVector::new(WITNESSES_MAX);
         BaseBlockHeader {
             version,
             previous,
             epoch,
             timestamp,
+            sig,
+            sigmap: sigbitmap,
         }
     }
 }
@@ -76,6 +85,8 @@ impl Hashable for BaseBlockHeader {
         self.timestamp.hash(state);
     }
 }
+
+impl Eq for BaseBlockHeader {}
 
 /// Header for Key Blocks.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,6 +187,7 @@ impl KeyBlock {
             witnesses.contains(&leader),
             "leader must present in witnesses array"
         );
+        assert!(witnesses.len() <= WITNESSES_MAX, "max number of witnesses");
 
         // Create header
         let header = KeyBlockHeader {

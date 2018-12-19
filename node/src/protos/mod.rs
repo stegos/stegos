@@ -23,6 +23,7 @@
 
 pub mod node;
 
+use bitvector::BitVector;
 use failure::{Error, Fail};
 use std::collections::BTreeSet;
 use stegos_blockchain::*;
@@ -490,6 +491,16 @@ impl IntoProto<node::BaseBlockHeader> for BaseBlockHeader {
         proto.set_previous(self.previous.into_proto());
         proto.set_epoch(self.epoch);
         proto.set_timestamp(self.timestamp);
+        if !self.sig.is_null() {
+            proto.set_sig(self.sig.into_proto());
+        }
+        if !self.sigmap.is_empty() {
+            assert!(self.sigmap.len() <= WITNESSES_MAX);
+            proto.sigmap.resize(WITNESSES_MAX, false);
+            for bit in self.sigmap.iter() {
+                proto.sigmap[bit] = true;
+            }
+        }
         proto
     }
 }
@@ -500,11 +511,27 @@ impl FromProto<node::BaseBlockHeader> for BaseBlockHeader {
         let previous = Hash::from_proto(proto.get_previous())?;
         let epoch = proto.get_epoch();
         let timestamp = proto.get_timestamp();
+        let sig = if proto.has_sig() {
+            SecureSignature::from_proto(proto.get_sig())?
+        } else {
+            SecureSignature::null()
+        };
+        if proto.sigmap.len() > WITNESSES_MAX {
+            return Err(CryptoError::InvalidBinaryLength(WITNESSES_MAX, proto.sigmap.len()).into());
+        }
+        let mut sigmap = BitVector::new(WITNESSES_MAX);
+        for (bit, val) in proto.sigmap.iter().enumerate() {
+            if *val {
+                sigmap.insert(bit);
+            }
+        }
         Ok(BaseBlockHeader {
             version,
             previous,
             epoch,
             timestamp,
+            sig,
+            sigmap,
         })
     }
 }
@@ -982,14 +1009,20 @@ mod tests {
 
     #[test]
     fn key_blocks() {
-        let (_skey0, pkey0, _sig0) = make_secure_random_keys();
+        let (_skey0, pkey0, sig0) = make_secure_random_keys();
 
         let version: u64 = 1;
         let epoch: u64 = 1;
         let timestamp = Utc::now().timestamp() as u64;
         let previous = Hash::digest(&"test".to_string());
 
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+        let mut base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+        roundtrip(&sig0);
+        base.sig = sig0;
+        base.sigmap.insert(1);
+        base.sigmap.insert(13);
+        base.sigmap.insert(44);
+        roundtrip(&base);
 
         let witnesses: BTreeSet<SecurePublicKey> = [pkey0].iter().cloned().collect();
         let leader = pkey0.clone();

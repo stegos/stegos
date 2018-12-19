@@ -200,8 +200,14 @@ impl Neg for Zr {
 pub struct G1([u8; G1_SIZE_FR256]);
 
 impl G1 {
-    pub fn new() -> G1 {
+    /// Create a new point which binary representation consists of all zeros.
+    pub fn null() -> G1 {
         G1(G1::wv())
+    }
+
+    /// Check that binary representation consists of all zeros.
+    pub fn is_null(&self) -> bool {
+        self.0[..] == G1::wv()[..]
     }
 
     fn wv() -> [u8; G1_SIZE_FR256] {
@@ -237,7 +243,7 @@ impl G1 {
     }
 
     pub fn generator() -> Self {
-        let v = Self::new();
+        let v = Self::null();
         unsafe {
             rust_libpbc::get_g1(
                 *CONTEXT_FR256,
@@ -673,6 +679,17 @@ impl PartialEq for PublicSubKey {
 pub struct Signature(G1);
 
 impl Signature {
+    /// Create a new point which binary representation consists of all zeros.
+    pub fn null() -> Signature {
+        Signature(G1::null())
+    }
+
+    /// Check that binary representation consists of all zeros.
+    #[inline]
+    pub fn is_null(&self) -> bool {
+        self.0.is_null()
+    }
+
     pub fn base_vector(&self) -> &[u8] {
         self.0.base_vector()
     }
@@ -755,7 +772,7 @@ pub struct BlsSignature {
 
 pub fn sign_hash(h: &Hash, skey: &SecretKey) -> Signature {
     // return a raw signature on a hash
-    let v = G1::new();
+    let v = G1::null();
     unsafe {
         rust_libpbc::sign_hash(
             *CONTEXT_FR256,
@@ -829,7 +846,7 @@ pub fn make_random_keys() -> (SecretKey, PublicKey, Signature) {
 
 pub fn make_secret_subkey(skey: &SecretKey, seed: &[u8]) -> SecretSubKey {
     let h = Hash::from_vector(&seed);
-    let sk = G1::new();
+    let sk = G1::null();
     unsafe {
         rust_libpbc::make_secret_subkey(
             *CONTEXT_FR256,

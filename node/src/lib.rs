@@ -205,7 +205,6 @@ enum NodeMessage {
     Init {
         genesis: Vec<Block>,
     },
-    Timer(Instant), // TODO: replace with RandHound
 }
 
 #[derive(Debug, Fail, PartialEq, Eq)]
@@ -310,13 +309,6 @@ impl NodeService {
             None => NodeMessage::Randomness(None),
         });
         streams.push(Box::new(randomness_rx));
-
-        // Timer events
-        let duration = Duration::from_secs(MEMPOOL_TTL);
-        let timer = Interval::new_interval(duration)
-            .map(|i| NodeMessage::Timer(i))
-            .map_err(|_e| ()); // ignore transient timer errors
-        streams.push(Box::new(timer));
 
         let events = select_all(streams);
 
@@ -566,13 +558,6 @@ impl NodeService {
         }
     }
 
-    /// Handle period timer.
-    fn handle_timer(&mut self) -> Result<(), Error> {
-        self.process_mempool()?;
-
-        Ok(())
-    }
-
     /// Handler for NodeMessage::SubscribeBalance.
     fn handle_subscribe_balance(&mut self, tx: UnboundedSender<i64>) -> Result<(), Error> {
         tx.unbounded_send(self.balance)?;
@@ -609,33 +594,48 @@ impl NodeService {
         if let Some(randomness) = h {
             self.randomness.push(randomness);
             info!("New randomness obtained: {}", randomness);
-            if self.randomness.len() == self.election_round && self.is_leader() {
-                debug_assert!(self.election_round > 0);
-                let last_random = *self.randomness.last().unwrap();
-                let key_block = self.on_create_new_epoch(last_random);
 
-                info!("Created block: hash={}", Hash::digest(&key_block));
-
-                //
-                // Seal and register the block.
-                //
-
-                let block2 = key_block.clone();
-                self.chain.register_key_block(block2)?;
-                self.on_key_block_registered(&key_block)?;
-                self.send_sealed_block(Block::KeyBlock(key_block))?;
-                // Early return to skip starting new round.
+            // if we got some random and we is leader, move network forward.
+            if self.is_leader() && self.on_new_generation()? {
+                // Early return to skip starting new randhound round.
                 // New validator will start it.
                 return Ok(());
             }
         } else {
             error!("Randhound failed!");
         }
-        // Start new round, if we are the leader
+        // Start new randhound round, if we are the leader
         if self.is_leader() {
             RandHound::start_round(&self.randhound)?;
         }
         Ok(())
+    }
+
+    /// Handler for new iteration inside epoch.
+    /// Returns true if we going to other height
+    fn on_new_generation(&mut self) -> Result<bool, Error> {
+        assert!(self.is_leader());
+
+        if self.randomness.len() == self.election_round {
+            debug_assert!(self.election_round > 0);
+            let last_random = *self.randomness.last().unwrap();
+            let key_block = self.on_create_new_epoch(last_random);
+
+            info!("Created block: hash={}", Hash::digest(&key_block));
+
+            //
+            // Seal and register the block.
+            //
+
+            let block2 = key_block.clone();
+            self.chain.register_key_block(block2)?;
+            self.on_key_block_registered(&key_block)?;
+            self.send_sealed_block(Block::KeyBlock(key_block))?;
+            return Ok(true);
+        } else {
+            self.process_mempool()?;
+        }
+        Ok(false)
     }
 
     /// Handler for new epoch creation procedure.
@@ -1199,7 +1199,6 @@ impl Future for NodeService {
                         NodeMessage::SealedBlockRequest(msg) => {
                             self.handle_sealed_block_request(msg)
                         }
-                        NodeMessage::Timer(_instant) => self.handle_timer(),
                         NodeMessage::Randomness(h) => self.handle_new_randomness(h),
                     };
                     if let Err(e) = result {

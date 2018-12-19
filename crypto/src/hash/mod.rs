@@ -25,7 +25,6 @@ use crate::utils::*;
 use crate::CryptoError;
 
 use sha3::{Digest, Sha3_256};
-use std::cmp::Ordering;
 use std::fmt;
 use std::hash as stdhash;
 use std::mem;
@@ -36,7 +35,7 @@ use std::slice;
 
 pub const HASH_SIZE: usize = 32;
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Hash([u8; HASH_SIZE]);
 
 impl Hash {
@@ -234,6 +233,7 @@ impl Hashable for u64 {
         state.input(&unsafe { mem::transmute::<_, [u8; 8]>(*self) })
     }
 }
+
 impl Hashable for i64 {
     fn hash(&self, state: &mut Hasher) {
         state.input(&unsafe { mem::transmute::<_, [u8; 8]>(*self) })
@@ -280,18 +280,6 @@ impl<T: Hashable> Hashable for Option<T> {
         if let Some(val) = self {
             val.hash(state);
         }
-    }
-}
-
-// Needed to use within BTreeSet/BTreeMap
-impl Ord for Hash {
-    fn cmp(&self, other: &Hash) -> Ordering {
-        self.0.cmp(&other.0)
-    }
-}
-impl PartialOrd for Hash {
-    fn partial_cmp(&self, other: &Hash) -> Option<Ordering> {
-        Some(self.cmp(other))
     }
 }
 

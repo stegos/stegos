@@ -22,8 +22,10 @@
 #![deny(warnings)]
 
 mod error;
+mod multisignature;
 
 pub use crate::error::*;
+pub use crate::multisignature::*;
 
 use stegos_blockchain::*;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};

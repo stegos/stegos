@@ -253,6 +253,8 @@ pub enum NodeError {
         _0, _1, _2
     )]
     BlockProposalFromNonLeader(Hash, SecurePublicKey, SecurePublicKey),
+    #[fail(display = "Invalid block BLS multisignature: block={}", _0)]
+    InvalidBlockSignature(Hash),
 }
 
 struct NodeService {
@@ -570,7 +572,6 @@ impl NodeService {
         let block = Block::from_proto(&block)?;
 
         // TODO: check that message is signed by leader
-        // TODO: check multisig
 
         let block_hash = Hash::digest(&block);
         info!("Received block: hash={}", &block_hash);
@@ -600,11 +601,30 @@ impl NodeService {
                 return Ok(());
             }
 
-            // TODO: check CoSi signature
+            // TODO: check signature for KeyBlocks
+            if let Block::MonetaryBlock(_block) = &block {
+                // Check BLS multi-signature.
+                // Sic: double-hash of block is used for signature.
+                let block_hash_hash = Hash::digest(&block_hash);
+                if !check_multi_signature(
+                    &block_hash_hash,
+                    &header.multisig,
+                    &header.multisigmap,
+                    &self.witnesses,
+                    &self.leader,
+                ) {
+                    return Err(NodeError::InvalidBlockSignature(block_hash).into());
+                }
+            }
         }
 
-        if let Some(_) = self.proposed_block_hash {
-            self.discard_proposed_block();
+        if self.is_witness() {
+            if let Some(proposed_block_hash) = self.proposed_block_hash {
+                if block_hash != proposed_block_hash {
+                    return Err(NodeError::InvalidBlockHash(proposed_block_hash, block_hash).into());
+                }
+                self.discard_proposed_block();
+            }
         }
 
         match block {
@@ -653,7 +673,7 @@ impl NodeService {
             info!("New randomness obtained: {}", randomness);
 
             // if we got some random and we is leader, move network forward.
-            if self.is_leader() && self.on_new_generation()? {
+            if self.is_leader() && !self.consensus_in_progress() && self.on_new_generation()? {
                 // Early return to skip starting new randhound round.
                 // New validator will start it.
                 return Ok(());
@@ -1320,6 +1340,13 @@ impl NodeService {
     }
 
     ///
+    /// Returns true if consensus in progress.
+    ///
+    fn consensus_in_progress(&self) -> bool {
+        self.proposed_block_hash.is_some()
+    }
+
+    ///
     /// Sends consensus message to the network.
     ///
     fn send_consensus_message(&mut self, msg: ConsensusMessage) -> Result<(), Error> {
@@ -1577,6 +1604,7 @@ impl NodeService {
     ) -> Result<(), Error> {
         debug!("Got signature: block={}, from={}", block_hash, &pkey);
         assert_eq!(&self.proposed_block_hash.unwrap(), block_hash);
+        // Sic: double-hash of block is used for signature.
         self.signatures.insert(pkey, sig);
         self.handle_consensus_timer()?; // wake up consensus
         Ok(())
@@ -1605,14 +1633,36 @@ impl NodeService {
         let block_hash = self.proposed_block_hash.take().unwrap();
         assert_eq!(Hash::digest(&block), block_hash);
         assert!(self.has_supermajority());
-        info!("CoSi commitblock: block={}", block_hash);
+        self.consensus_deadline = *INSTANT_INFINITY;
+
+        debug!("Creating BLS multi-signature: block={}", &block_hash);
+
+        // Create multi-signature.
+        let (multisig, multisigmap) = create_multi_signature(&self.witnesses, &self.signatures);
+        self.signatures.clear();
+
+        // Sic: double-hash of block is used for signature.
+        let block_hash_hash = Hash::digest(&block_hash);
+        if !check_multi_signature(
+            &block_hash_hash,
+            &multisig,
+            &multisigmap,
+            &self.witnesses,
+            &self.leader,
+        ) {
+            panic!("Invalid block multisignature");
+        }
+
+        debug!("BLS multi-signature is valid: block={}", block_hash);
 
         // TODO: implement proper handling of mempool.
         self.mempool.clear();
         self.mempool_outputs.clear();
 
         match block {
-            Block::KeyBlock(key_block) => {
+            Block::KeyBlock(mut key_block) => {
+                key_block.header.base.multisig = multisig;
+                key_block.header.base.multisigmap = multisigmap;
                 let key_block2 = key_block.clone();
                 self.chain
                     .register_key_block(key_block)
@@ -1622,7 +1672,9 @@ impl NodeService {
                 self.send_sealed_block(Block::KeyBlock(key_block2))
                     .expect("failed to send sealed monetary block");
             }
-            Block::MonetaryBlock(monetary_block) => {
+            Block::MonetaryBlock(mut monetary_block) => {
+                monetary_block.header.base.multisig = multisig;
+                monetary_block.header.base.multisigmap = multisigmap;
                 let monetary_block2 = monetary_block.clone();
                 let pruned = self
                     .chain
@@ -1633,9 +1685,6 @@ impl NodeService {
                     .expect("failed to send sealed monetary block");
             }
         }
-        // TODO: add CoSi signature.
-        self.consensus_deadline = *INSTANT_INFINITY;
-        self.signatures.clear();
     }
 }
 

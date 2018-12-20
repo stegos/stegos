@@ -94,6 +94,8 @@ message BaseBlockHeader {
     Hash previous = 2;
     uint64 epoch = 3;
     uint64 timestamp = 4;
+    SecureSignature sig = 5;
+    repeated bool sigmap = 6;
 }
 
 message MonetaryBlockHeader {

@@ -27,6 +27,7 @@ rand = "0.6"
 simple_logger = "1.0"
 clap = "2.32"
 lazy_static = "1.1"
+bitvector = "0.1"
 
 [build-dependencies]
 protobuf-codegen-pure = "2.2"

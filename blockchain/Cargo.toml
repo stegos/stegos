@@ -11,6 +11,7 @@ chrono = "0.4"
 rand = "0.6"
 log = "0.4"
 failure = "0.1"
+bitvector = "0.1"
 
 [dev-dependencies]
 simple_logger = "1.0"

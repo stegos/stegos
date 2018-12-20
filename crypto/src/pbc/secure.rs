@@ -38,7 +38,7 @@ use rand::thread_rng;
 use rand::Rng;
 use std::cmp::Ordering;
 use std::hash as stdhash;
-use std::ops::{Add, Neg};
+use std::ops::{Add, AddAssign, Neg};
 
 // --------------------------------------------------------------------------------
 
@@ -200,8 +200,14 @@ impl Neg for Zr {
 pub struct G1([u8; G1_SIZE_FR256]);
 
 impl G1 {
-    pub fn new() -> G1 {
+    /// Create a new point which binary representation consists of all zeros.
+    pub fn zero() -> G1 {
         G1(G1::wv())
+    }
+
+    /// Check that binary representation consists of all zeros.
+    pub fn is_zero(&self) -> bool {
+        self.0[..] == G1::wv()[..]
     }
 
     fn wv() -> [u8; G1_SIZE_FR256] {
@@ -237,7 +243,7 @@ impl G1 {
     }
 
     pub fn generator() -> Self {
-        let v = Self::new();
+        let v = Self::zero();
         unsafe {
             rust_libpbc::get_g1(
                 *CONTEXT_FR256,
@@ -283,14 +289,26 @@ impl Add<G1> for G1 {
     }
 }
 
+impl AddAssign<G1> for G1 {
+    fn add_assign(&mut self, other: Self) {
+        *self = add_G1_G1(self, &other);
+    }
+}
+
 // -----------------------------------------
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct G2([u8; G2_SIZE_FR256]);
 
 impl G2 {
-    pub fn new() -> Self {
+    /// Create a new point which binary representation consists of all zeros.
+    pub fn zero() -> G2 {
         G2(G2::wv())
+    }
+
+    /// Check that binary representation consists of all zeros.
+    pub fn is_zero(&self) -> bool {
+        self.0[..] == G2::wv()[..]
     }
 
     fn wv() -> [u8; G2_SIZE_FR256] {
@@ -332,7 +350,7 @@ impl G2 {
     }
 
     pub fn generator() -> Self {
-        let v = Self::new();
+        let v = Self::zero();
         unsafe {
             rust_libpbc::get_g2(
                 *CONTEXT_FR256,
@@ -381,6 +399,12 @@ impl Add<G2> for G2 {
     type Output = Self;
     fn add(self, other: Self) -> Self {
         add_G2_G2(&self, &other)
+    }
+}
+
+impl AddAssign<G2> for G2 {
+    fn add_assign(&mut self, other: Self) {
+        *self = add_G2_G2(self, &other);
     }
 }
 
@@ -673,6 +697,17 @@ impl PartialEq for PublicSubKey {
 pub struct Signature(G1);
 
 impl Signature {
+    /// Create a new point which binary representation consists of all zeros.
+    pub fn zero() -> Signature {
+        Signature(G1::zero())
+    }
+
+    /// Check that binary representation consists of all zeros.
+    #[inline]
+    pub fn is_zero(&self) -> bool {
+        self.0.is_zero()
+    }
+
     pub fn base_vector(&self) -> &[u8] {
         self.0.base_vector()
     }
@@ -742,20 +777,12 @@ impl From<G1> for Signature {
     }
 }
 
-// -----------------------------------------
-
-#[derive(Copy, Clone)]
-pub struct BlsSignature {
-    sig: Signature,
-    pkey: PublicKey,
-}
-
 // ------------------------------------------------------------------------
 // BLS Signature Generation & Checking
 
 pub fn sign_hash(h: &Hash, skey: &SecretKey) -> Signature {
     // return a raw signature on a hash
-    let v = G1::new();
+    let v = G1::zero();
     unsafe {
         rust_libpbc::sign_hash(
             *CONTEXT_FR256,
@@ -779,19 +806,6 @@ pub fn check_hash(h: &Hash, sig: &Signature, pkey: &PublicKey) -> bool {
             pkey.base_vector().as_ptr() as *mut _,
         )
     }
-}
-
-pub fn sign_message(msg: &[u8], skey: &SecretKey, pkey: &PublicKey) -> BlsSignature {
-    // hash the message and form a BLS signature
-    BlsSignature {
-        sig: sign_hash(&Hash::from_vector(&msg), skey),
-        pkey: pkey.clone(),
-    }
-}
-
-pub fn check_message(msg: &[u8], sig: &BlsSignature) -> bool {
-    // check the message against the BLS signature, return t/f
-    check_hash(&Hash::from_vector(&msg), &sig.sig, &sig.pkey)
 }
 
 // ------------------------------------------------------------------
@@ -829,7 +843,7 @@ pub fn make_random_keys() -> (SecretKey, PublicKey, Signature) {
 
 pub fn make_secret_subkey(skey: &SecretKey, seed: &[u8]) -> SecretSubKey {
     let h = Hash::from_vector(&seed);
-    let sk = G1::new();
+    let sk = G1::zero();
     unsafe {
         rust_libpbc::make_secret_subkey(
             *CONTEXT_FR256,
@@ -844,7 +858,7 @@ pub fn make_secret_subkey(skey: &SecretKey, seed: &[u8]) -> SecretSubKey {
 
 pub fn make_public_subkey(pkey: &PublicKey, seed: &[u8]) -> PublicSubKey {
     let h = Hash::from_vector(&seed);
-    let pk = G2::new();
+    let pk = G2::zero();
     unsafe {
         rust_libpbc::make_public_subkey(
             *CONTEXT_FR256,
@@ -937,7 +951,7 @@ pub fn ibe_encrypt(msg: &[u8], pkey: &PublicKey, id: &[u8]) -> EncryptedPacket {
     }
     let rhash = Hash::from_vector(&concv);
 
-    let rval = G2::new();
+    let rval = G2::zero();
     let pval = GT::new();
     unsafe {
         rust_libpbc::sakai_kasahara_encrypt(

@@ -203,8 +203,8 @@ impl Default for EpochInfo {
     fn default() -> Self {
         EpochInfo {
             epoch: Hash::from_str(&"None"),
-            leader: secure::PublicKey::from(secure::G2::new()),
-            beacon: secure::PublicKey::from(secure::G2::new()),
+            leader: secure::PublicKey::from(secure::G2::zero()),
+            beacon: secure::PublicKey::from(secure::G2::zero()),
         }
     }
 }
@@ -262,7 +262,7 @@ impl Default for Session {
         Session {
             session: Hash::digest(&"idle".to_string()),
             stage: SessionStage::Idle,
-            leader: secure::PublicKey::from(secure::G2::new()),
+            leader: secure::PublicKey::from(secure::G2::zero()),
             fpkey,
             fskey,
             ngrps: 0,

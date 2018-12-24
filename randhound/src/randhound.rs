@@ -1427,7 +1427,6 @@ impl GlobalState {
                                         if newsess.rands.len() >= thresh {
                                             // If the output pending vector now has a threshold number of decoded
                                             // randomness, then send the batch to our group leader.
-                                            self.send_randomness_to_group_leader(&newsess.rands);
                                             done = true; // don't bother accepting any more decryptions.
                                         }
                                     }
@@ -1450,9 +1449,11 @@ impl GlobalState {
                         }
                     }
                 }
-                if !done {
-                    newsess.grptbl = sess.grptbl.clone();
-                    self.session_info = newsess;
+                newsess.grptbl = sess.grptbl.clone();
+                let new_rands = newsess.rands.clone();
+                self.session_info = newsess.clone();
+                if done {
+                    self.send_randomness_to_group_leader(&new_rands);
                 }
             }
             _ => {

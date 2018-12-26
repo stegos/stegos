@@ -32,13 +32,13 @@ use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::{Async, Future, Poll, Stream};
 use futures_stream_select_all_send::select_all;
 use lazy_static::lazy_static;
+use linked_hash_map::LinkedHashMap;
 use log::*;
 use protobuf;
 use protobuf::Message;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use stegos_blockchain::*;
 use stegos_consensus::*;
@@ -183,6 +183,8 @@ lazy_static! {
     static ref INSTANT_INFINITY: Instant = Instant::now() + Duration::new(60u64 * 60  * 24 * 365 * 100, 0);
 }
 
+type Mempool = LinkedHashMap<Hash, Transaction>;
+
 #[derive(Clone, Debug)]
 enum NodeMessage {
     //
@@ -257,6 +259,10 @@ pub enum NodeError {
     BlockProposalFromNonLeader(Hash, SecurePublicKey, SecurePublicKey),
     #[fail(display = "Invalid block BLS multisignature: block={}", _0)]
     InvalidBlockSignature(Hash),
+    #[fail(display = "Transaction missing in mempool: {}.", _0)]
+    TransactionMissingInMempool(Hash),
+    #[fail(display = "Transaction already exists in mempool: {}.", _0)]
+    TransactionAlreadyExists(Hash),
 }
 
 struct NodeService {
@@ -300,9 +306,7 @@ struct NodeService {
     consensus_deadline: Instant,
 
     /// Memory pool of pending transactions.
-    mempool: Vec<Transaction>,
-    /// Hashes of UTXO used by mempool transactions,
-    mempool_outputs: HashSet<Hash>,
+    mempool: Mempool,
     /// Network interface.
     broker: Broker,
     /// RandHound Service handle
@@ -342,8 +346,7 @@ impl NodeService {
         let signatures = BTreeMap::<SecurePublicKey, SecureSignature>::new();
         let consensus_deadline = *INSTANT_INFINITY;
 
-        let mempool = Vec::<Transaction>::new();
-        let mempool_outputs = HashSet::<Hash>::new();
+        let mempool = Mempool::new();
         let on_balance_changed = Vec::<UnboundedSender<i64>>::new();
         let on_epoch_changed = Vec::<UnboundedSender<EpochNotification>>::new();
         let on_message_received = Vec::<UnboundedSender<MessageNotification>>::new();
@@ -405,7 +408,6 @@ impl NodeService {
             signatures,
             consensus_deadline,
             mempool,
-            mempool_outputs,
             broker,
             randhound,
             on_balance_changed,
@@ -515,6 +517,10 @@ impl NodeService {
         info!("Received transaction: hash={}", &tx_hash);
         debug!("Validating transaction: hash={}..", &tx_hash);
 
+        if self.mempool.contains_key(&tx_hash) {
+            return Err(NodeError::TransactionAlreadyExists(tx_hash).into());
+        }
+
         // Check fee.
         NodeService::check_acceptable_fee(&tx)?;
 
@@ -525,21 +531,9 @@ impl NodeService {
         tx.validate(&inputs)?;
         info!("Transaction is valid: hash={}", &tx_hash);
 
-        // Check that UTXOs are not already queued to mempool.
-        for hash in &tx.body.txins {
-            if let Some(_) = self.mempool_outputs.get(hash) {
-                error!("UTXO is already queued to mempool: hash={}", &hash);
-                return Err(BlockchainError::MissingUTXO(hash.clone()).into());
-            }
-        }
-
         // Queue to mempool.
         debug!("Queuing to mempool: hash={}", &tx_hash);
-        for hash in &tx.body.txins {
-            let nodup = self.mempool_outputs.insert(hash.clone());
-            assert!(nodup);
-        }
-        self.mempool.push(tx);
+        self.mempool.insert(tx_hash, tx);
 
         Ok(())
     }
@@ -1211,8 +1205,10 @@ impl NodeService {
         let mut outputs = Vec::<Output>::new();
         let mut outputs_hashes = BTreeSet::<Hash>::new();
         let mut txs = Vec::with_capacity(tx_count);
-        for tx in self.mempool[0..tx_count].iter() {
-            let tx_hash = Hash::digest(&tx.body);
+        for entry in self.mempool.entries() {
+            let tx_hash = entry.key();
+            let tx = entry.get();
+            assert_eq!(tx_hash, &Hash::digest(&tx.body));
             debug!("Processing transaction: hash={}", &tx_hash);
 
             // Check that transaction's inputs are exists.
@@ -1505,7 +1501,10 @@ impl NodeService {
             let tx_hash = Hash::digest(&tx.body);
             debug!("Processing transaction: hash={}", &tx_hash);
 
-            // TODO: check mempool.
+            // Check that transaction is present in mempool.
+            if !self.mempool.contains_key(&tx_hash) {
+                return Err(NodeError::TransactionMissingInMempool(tx_hash).into());
+            }
 
             // Check that transaction's inputs are exists.
             let tx_inputs = self.chain.outputs_by_hashes(&tx.body.txins)?;
@@ -1798,7 +1797,6 @@ impl NodeService {
 
         // TODO: implement proper handling of mempool.
         self.mempool.clear();
-        self.mempool_outputs.clear();
 
         match block {
             Block::KeyBlock(mut key_block) => {

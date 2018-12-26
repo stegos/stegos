@@ -94,6 +94,8 @@ message BaseBlockHeader {
     Hash previous = 2;
     uint64 epoch = 3;
     uint64 timestamp = 4;
+    SecureSignature sig = 5;
+    repeated bool sigmap = 6;
 }
 
 message MonetaryBlockHeader {
@@ -138,20 +140,23 @@ message Block {
 }
 
 message MonetaryBlockProposal {
-    repeated Transaction txs = 1;
+    MonetaryBlockHeader block_header = 1;
     Output fee_output = 2;
-    Hash block_hash = 3;
-    MonetaryBlockHeader block_header = 4;
+    repeated Transaction txs = 3;
 }
+
+message BlockAcceptance {}
 
 message ConsensusMessageBody {
     oneof body {
         MonetaryBlockProposal monetary_block_proposal = 1;
+        BlockAcceptance block_acceptance = 2;
     }
 }
 
 message ConsensusMessage {
-    ConsensusMessageBody body = 1;
-    SecurePublicKey pkey = 2;
-    SecureSignature sig = 3;
+    Hash block_hash = 1;
+    ConsensusMessageBody body = 2;
+    SecurePublicKey pkey = 3;
+    SecureSignature sig = 4;
 }

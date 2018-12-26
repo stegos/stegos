@@ -22,8 +22,10 @@
 #![deny(warnings)]
 
 mod error;
+mod multisignature;
 
 pub use crate::error::*;
+pub use crate::multisignature::*;
 
 use stegos_blockchain::*;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
@@ -33,21 +35,26 @@ use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
 use stegos_crypto::pbc::secure::SecretKey as SecureSecretKey;
 use stegos_crypto::pbc::secure::Signature as SecureSignature;
 
+/// Monetary Block Proposal Message.
 #[derive(Clone, Debug)]
 pub struct MonetaryBlockProposal {
-    pub txs: Vec<Transaction>,
-    pub fee_output: Option<Output>,
-    pub block_hash: Hash,
     pub block_header: MonetaryBlockHeader,
+    pub fee_output: Option<Output>,
+    pub txs: Vec<Transaction>,
 }
 
+/// Payload.
 #[derive(Clone, Debug)]
 pub enum ConsensusMessageBody {
     MonetaryBlockProposal(MonetaryBlockProposal),
+    BlockAcceptance,
 }
 
+/// Message.
 #[derive(Clone, Debug)]
 pub struct ConsensusMessage {
+    /// Block hash && unique session id.
+    pub block_hash: Hash,
     /// Message Body.
     pub body: ConsensusMessageBody,
     /// Secure Public Key used to sign this message.
@@ -58,16 +65,15 @@ pub struct ConsensusMessage {
 
 impl Hashable for MonetaryBlockProposal {
     fn hash(&self, state: &mut Hasher) {
+        self.block_header.hash(state);
+        self.fee_output.hash(state);
+
         // Sign transactions.
         let txs_count: u64 = self.txs.len() as u64;
         txs_count.hash(state);
         for tx in &self.txs {
             tx.hash(state);
         }
-
-        self.fee_output.hash(state);
-        self.block_hash.hash(state);
-        self.block_header.hash(state);
     }
 }
 
@@ -75,29 +81,54 @@ impl Hashable for ConsensusMessageBody {
     fn hash(&self, state: &mut Hasher) {
         match self {
             ConsensusMessageBody::MonetaryBlockProposal(message) => message.hash(state),
+            ConsensusMessageBody::BlockAcceptance => {}
         }
     }
 }
 
 impl ConsensusMessage {
-    pub fn new_block_proposal(
+    ///
+    /// Create a new monetary block proposal message.
+    ///
+    pub fn new_monetary_block_proposal(
         skey: &SecureSecretKey,
         pkey: &SecurePublicKey,
-        txs: Vec<Transaction>,
-        fee_output: Option<Output>,
         block_hash: Hash,
         block_header: MonetaryBlockHeader,
+        fee_output: Option<Output>,
+        txs: Vec<Transaction>,
     ) -> ConsensusMessage {
         let body = MonetaryBlockProposal {
             txs,
             fee_output,
-            block_hash,
             block_header,
         };
-        let hash = Hash::digest(&body);
+        let mut hasher = Hasher::new();
+        block_hash.hash(&mut hasher);
+        body.hash(&mut hasher);
+        let hash = hasher.result();
         let sig = secure_sign_hash(&hash, skey);
         ConsensusMessage {
+            block_hash,
             body: ConsensusMessageBody::MonetaryBlockProposal(body),
+            pkey: pkey.clone(),
+            sig,
+        }
+    }
+
+    ///
+    /// Create a new block acceptance message.
+    ///
+    pub fn new_block_acceptance(
+        skey: &SecureSecretKey,
+        pkey: &SecurePublicKey,
+        block_hash: Hash,
+    ) -> ConsensusMessage {
+        let hash = Hash::digest(&block_hash);
+        let sig = secure_sign_hash(&hash, skey);
+        ConsensusMessage {
+            block_hash,
+            body: ConsensusMessageBody::BlockAcceptance,
             pkey: pkey.clone(),
             sig,
         }
@@ -107,7 +138,10 @@ impl ConsensusMessage {
     /// Validate signature.
     ///
     pub fn validate(&self) -> Result<(), ConsensusError> {
-        let hash = Hash::digest(&self.body);
+        let mut hasher = Hasher::new();
+        self.block_hash.hash(&mut hasher);
+        self.body.hash(&mut hasher);
+        let hash = hasher.result();
         if !secure_check_hash(&hash, &self.sig, &self.pkey) {
             return Err(ConsensusError::InvalidMessageSignature);
         }
@@ -117,6 +151,7 @@ impl ConsensusMessage {
 
 impl Hashable for ConsensusMessage {
     fn hash(&self, state: &mut Hasher) {
+        self.block_hash.hash(state);
         self.body.hash(state);
         self.sig.hash(state);
     }

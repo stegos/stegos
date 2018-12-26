@@ -9,3 +9,4 @@ log = "0.4"
 failure = "0.1"
 stegos_crypto = { path = "../crypto" }
 stegos_blockchain = { path = "../blockchain" }
+bitvector = "0.1"

@@ -23,6 +23,7 @@
 
 pub mod node;
 
+use bitvector::BitVector;
 use failure::{Error, Fail};
 use std::collections::BTreeSet;
 use stegos_blockchain::*;
@@ -490,6 +491,16 @@ impl IntoProto<node::BaseBlockHeader> for BaseBlockHeader {
         proto.set_previous(self.previous.into_proto());
         proto.set_epoch(self.epoch);
         proto.set_timestamp(self.timestamp);
+        if !self.multisig.is_zero() {
+            proto.set_sig(self.multisig.into_proto());
+        }
+        if !self.multisigmap.is_empty() {
+            assert!(self.multisigmap.len() <= WITNESSES_MAX);
+            proto.sigmap.resize(WITNESSES_MAX, false);
+            for bit in self.multisigmap.iter() {
+                proto.sigmap[bit] = true;
+            }
+        }
         proto
     }
 }
@@ -500,11 +511,27 @@ impl FromProto<node::BaseBlockHeader> for BaseBlockHeader {
         let previous = Hash::from_proto(proto.get_previous())?;
         let epoch = proto.get_epoch();
         let timestamp = proto.get_timestamp();
+        let sig = if proto.has_sig() {
+            SecureSignature::from_proto(proto.get_sig())?
+        } else {
+            SecureSignature::zero()
+        };
+        if proto.sigmap.len() > WITNESSES_MAX {
+            return Err(CryptoError::InvalidBinaryLength(WITNESSES_MAX, proto.sigmap.len()).into());
+        }
+        let mut sigmap = BitVector::new(WITNESSES_MAX);
+        for (bit, val) in proto.sigmap.iter().enumerate() {
+            if *val {
+                sigmap.insert(bit);
+            }
+        }
         Ok(BaseBlockHeader {
             version,
             previous,
             epoch,
             timestamp,
+            multisig: sig,
+            multisigmap: sigmap,
         })
     }
 }
@@ -735,7 +762,6 @@ impl IntoProto<node::MonetaryBlockProposal> for MonetaryBlockProposal {
         if let Some(ref fee_output) = self.fee_output {
             proto.set_fee_output(fee_output.into_proto());
         }
-        proto.set_block_hash(self.block_hash.into_proto());
         proto.set_block_header(self.block_header.into_proto());
         proto
     }
@@ -752,12 +778,10 @@ impl FromProto<node::MonetaryBlockProposal> for MonetaryBlockProposal {
         } else {
             None
         };
-        let block_hash = Hash::from_proto(proto.get_block_hash())?;
         let block_header = MonetaryBlockHeader::from_proto(proto.get_block_header())?;
         Ok(MonetaryBlockProposal {
             txs,
             fee_output,
-            block_hash,
             block_header,
         })
     }
@@ -769,6 +793,9 @@ impl IntoProto<node::ConsensusMessageBody> for ConsensusMessageBody {
         match self {
             ConsensusMessageBody::MonetaryBlockProposal(msg) => {
                 proto.set_monetary_block_proposal(msg.into_proto())
+            }
+            ConsensusMessageBody::BlockAcceptance => {
+                proto.set_block_acceptance(node::BlockAcceptance::new())
             }
         }
         proto
@@ -782,6 +809,9 @@ impl FromProto<node::ConsensusMessageBody> for ConsensusMessageBody {
                 let msg = MonetaryBlockProposal::from_proto(msg)?;
                 ConsensusMessageBody::MonetaryBlockProposal(msg)
             }
+            Some(node::ConsensusMessageBody_oneof_body::block_acceptance(ref _msg)) => {
+                ConsensusMessageBody::BlockAcceptance
+            }
             None => {
                 return Err(ProtoError::MissingField("body".to_string(), "body".to_string()).into());
             }
@@ -793,6 +823,7 @@ impl FromProto<node::ConsensusMessageBody> for ConsensusMessageBody {
 impl IntoProto<node::ConsensusMessage> for ConsensusMessage {
     fn into_proto(&self) -> node::ConsensusMessage {
         let mut proto = node::ConsensusMessage::new();
+        proto.set_block_hash(self.block_hash.into_proto());
         proto.set_body(self.body.into_proto());
         proto.set_sig(self.sig.into_proto());
         proto.set_pkey(self.pkey.into_proto());
@@ -802,10 +833,16 @@ impl IntoProto<node::ConsensusMessage> for ConsensusMessage {
 
 impl FromProto<node::ConsensusMessage> for ConsensusMessage {
     fn from_proto(proto: &node::ConsensusMessage) -> Result<Self, Error> {
+        let block_hash = Hash::from_proto(proto.get_block_hash())?;
         let body = ConsensusMessageBody::from_proto(proto.get_body())?;
         let sig = SecureSignature::from_proto(proto.get_sig())?;
         let pkey = SecurePublicKey::from_proto(proto.get_pkey())?;
-        Ok(ConsensusMessage { body, sig, pkey })
+        Ok(ConsensusMessage {
+            block_hash,
+            body,
+            sig,
+            pkey,
+        })
     }
 }
 
@@ -959,37 +996,59 @@ mod tests {
             outputs_range_hash: Hash::digest(&2u64),
         };
 
-        let monetary_block_proposal = ConsensusMessage::new_block_proposal(
+        let monetary_block_proposal = ConsensusMessage::new_monetary_block_proposal(
             &cosi_skey,
             &cosi_pkey,
-            txs.clone(),
-            Some(fee_output),
             block_hash,
             block_header.clone(),
+            Some(fee_output),
+            txs.clone(),
         );
         roundtrip(&monetary_block_proposal);
 
-        let monetary_block_proposal = ConsensusMessage::new_block_proposal(
+        let monetary_block_proposal = ConsensusMessage::new_monetary_block_proposal(
             &cosi_skey,
             &cosi_pkey,
-            txs.clone(),
-            None,
             block_hash,
             block_header.clone(),
+            None,
+            txs.clone(),
         );
         roundtrip(&monetary_block_proposal);
     }
 
     #[test]
+    fn block_proposal_acceptance() {
+        let (cosi_skey, cosi_pkey, _cosi_sig) = make_secure_random_keys();
+        let block_hash = Hash::digest(&1u64);
+
+        let block_acceptance =
+            ConsensusMessage::new_block_acceptance(&cosi_skey, &cosi_pkey, block_hash);
+        roundtrip(&block_acceptance);
+    }
+
+    #[test]
     fn key_blocks() {
-        let (_skey0, pkey0, _sig0) = make_secure_random_keys();
+        let (_skey0, pkey0, sig0) = make_secure_random_keys();
 
         let version: u64 = 1;
         let epoch: u64 = 1;
         let timestamp = Utc::now().timestamp() as u64;
         let previous = Hash::digest(&"test".to_string());
 
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+        let mut base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+        roundtrip(&sig0);
+        base.multisig = sig0;
+        base.multisigmap.insert(1);
+        base.multisigmap.insert(13);
+        base.multisigmap.insert(44);
+        let base2 = roundtrip(&base);
+        assert_eq!(base.multisig, base2.multisig);
+        assert_eq!(base.multisigmap, base2.multisigmap);
+        assert!(!base.multisigmap.contains(0));
+        assert!(base.multisigmap.contains(1));
+        assert!(base.multisigmap.contains(13));
+        assert!(base.multisigmap.contains(44));
 
         let witnesses: BTreeSet<SecurePublicKey> = [pkey0].iter().cloned().collect();
         let leader = pkey0.clone();
@@ -1024,7 +1083,9 @@ mod tests {
         let gamma = gamma0 - gamma1;
 
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
-        roundtrip(&base);
+        let base2 = roundtrip(&base);
+        assert_eq!(base.multisig, base2.multisig);
+        assert_eq!(base.multisigmap, base2.multisigmap);
 
         let block = MonetaryBlock::new(base, gamma, &inputs1, &outputs1);
         roundtrip(&block.header);

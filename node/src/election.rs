@@ -74,6 +74,7 @@ pub fn choose_validators(
     max_group_size: usize,
 ) -> (Vec<(SecurePublicKey, i64)>, SecurePublicKey) {
     assert!(!stakers.is_empty());
+    assert!(max_group_size > 0);
     let mut group = Vec::new();
 
     let mut seed = [0u8; 32];

@@ -43,9 +43,16 @@ pub struct MonetaryBlockProposal {
     pub txs: Vec<Transaction>,
 }
 
+/// Monetary Block Proposal Message.
+#[derive(Clone, Debug)]
+pub struct KeyBlockProposal {
+    pub block_header: KeyBlockHeader,
+}
+
 /// Payload.
 #[derive(Clone, Debug)]
 pub enum ConsensusMessageBody {
+    KeyBlockProposal(KeyBlockProposal),
     MonetaryBlockProposal(MonetaryBlockProposal),
     BlockAcceptance,
 }
@@ -77,10 +84,17 @@ impl Hashable for MonetaryBlockProposal {
     }
 }
 
+impl Hashable for KeyBlockProposal {
+    fn hash(&self, state: &mut Hasher) {
+        self.block_header.hash(state);
+    }
+}
+
 impl Hashable for ConsensusMessageBody {
     fn hash(&self, state: &mut Hasher) {
         match self {
             ConsensusMessageBody::MonetaryBlockProposal(message) => message.hash(state),
+            ConsensusMessageBody::KeyBlockProposal(message) => message.hash(state),
             ConsensusMessageBody::BlockAcceptance => {}
         }
     }
@@ -111,6 +125,27 @@ impl ConsensusMessage {
         ConsensusMessage {
             block_hash,
             body: ConsensusMessageBody::MonetaryBlockProposal(body),
+            pkey: pkey.clone(),
+            sig,
+        }
+    }
+
+    /// Creates propose for new key block.
+    pub fn new_key_block_proposal(
+        skey: &SecureSecretKey,
+        pkey: &SecurePublicKey,
+        block_hash: Hash,
+        block_header: KeyBlockHeader,
+    ) -> ConsensusMessage {
+        let body = KeyBlockProposal { block_header };
+        let mut hasher = Hasher::new();
+        block_hash.hash(&mut hasher);
+        body.hash(&mut hasher);
+        let hash = hasher.result();
+        let sig = secure_sign_hash(&hash, skey);
+        ConsensusMessage {
+            block_hash,
+            body: ConsensusMessageBody::KeyBlockProposal(body),
             pkey: pkey.clone(),
             sig,
         }

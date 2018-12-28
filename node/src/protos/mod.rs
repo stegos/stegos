@@ -767,6 +767,14 @@ impl IntoProto<node::MonetaryBlockProposal> for MonetaryBlockProposal {
     }
 }
 
+impl IntoProto<node::KeyBlockProposal> for KeyBlockProposal {
+    fn into_proto(&self) -> node::KeyBlockProposal {
+        let mut proto = node::KeyBlockProposal::new();
+        proto.set_block_header(self.block_header.into_proto());
+        proto
+    }
+}
+
 impl FromProto<node::MonetaryBlockProposal> for MonetaryBlockProposal {
     fn from_proto(proto: &node::MonetaryBlockProposal) -> Result<Self, Error> {
         let mut txs = Vec::with_capacity(proto.txs.len());
@@ -787,12 +795,22 @@ impl FromProto<node::MonetaryBlockProposal> for MonetaryBlockProposal {
     }
 }
 
+impl FromProto<node::KeyBlockProposal> for KeyBlockProposal {
+    fn from_proto(proto: &node::KeyBlockProposal) -> Result<Self, Error> {
+        let block_header = KeyBlockHeader::from_proto(proto.get_block_header())?;
+        Ok(KeyBlockProposal { block_header })
+    }
+}
+
 impl IntoProto<node::ConsensusMessageBody> for ConsensusMessageBody {
     fn into_proto(&self) -> node::ConsensusMessageBody {
         let mut proto = node::ConsensusMessageBody::new();
         match self {
             ConsensusMessageBody::MonetaryBlockProposal(msg) => {
                 proto.set_monetary_block_proposal(msg.into_proto())
+            }
+            ConsensusMessageBody::KeyBlockProposal(msg) => {
+                proto.set_key_block_proposal(msg.into_proto())
             }
             ConsensusMessageBody::BlockAcceptance => {
                 proto.set_block_acceptance(node::BlockAcceptance::new())
@@ -808,6 +826,10 @@ impl FromProto<node::ConsensusMessageBody> for ConsensusMessageBody {
             Some(node::ConsensusMessageBody_oneof_body::monetary_block_proposal(ref msg)) => {
                 let msg = MonetaryBlockProposal::from_proto(msg)?;
                 ConsensusMessageBody::MonetaryBlockProposal(msg)
+            }
+            Some(node::ConsensusMessageBody_oneof_body::key_block_proposal(ref msg)) => {
+                let msg = KeyBlockProposal::from_proto(msg)?;
+                ConsensusMessageBody::KeyBlockProposal(msg)
             }
             Some(node::ConsensusMessageBody_oneof_body::block_acceptance(ref _msg)) => {
                 ConsensusMessageBody::BlockAcceptance

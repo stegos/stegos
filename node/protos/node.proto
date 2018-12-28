@@ -139,6 +139,10 @@ message Block {
     }
 }
 
+message KeyBlockProposal {
+    KeyBlockHeader block_header = 1;
+}
+
 message MonetaryBlockProposal {
     MonetaryBlockHeader block_header = 1;
     Output fee_output = 2;
@@ -151,6 +155,7 @@ message ConsensusMessageBody {
     oneof body {
         MonetaryBlockProposal monetary_block_proposal = 1;
         BlockAcceptance block_acceptance = 2;
+        KeyBlockProposal key_block_proposal = 3;
     }
 }
 

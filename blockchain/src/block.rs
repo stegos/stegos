@@ -198,6 +198,11 @@ impl KeyBlock {
         KeyBlock { header }
     }
 
+    /// Create block from known header.
+    pub fn new_from_header(header: KeyBlockHeader) -> Self {
+        KeyBlock { header }
+    }
+
     /// Validate basic properties of KeyBlock.
     pub fn validate(&self) -> Result<(), Error> {
         if self.header.witnesses.is_empty() {

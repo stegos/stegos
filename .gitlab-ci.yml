@@ -6,6 +6,7 @@ stages:
 
 before_script:
   - ci-scripts/install-deps.sh
+  - rustup component add rustfmt
 .build:
   stage: build
   script:
@@ -30,6 +31,7 @@ build:linux:
   stage: test
   script:
     - cargo test --all -- --nocapture
+    - cargo fmt --all -- --check
   artifacts:
     expire_in: 1 week
     paths:

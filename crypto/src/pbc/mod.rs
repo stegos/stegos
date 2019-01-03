@@ -266,6 +266,16 @@ pub mod tests {
         assert!(secure::check_keying(&pkey, &sig), "Invalid keying");
         fast::G2::generator();
     }
+
+    #[test]
+    fn check_vrf() {
+        let (skey, pkey, sig) = secure::make_deterministic_keys(b"Testing");
+        assert!(secure::check_keying(&pkey, &sig));
+        let hseed = Hash::from_str("VRF_Seed");
+        let vrf = secure::make_VRF(&skey, &hseed);
+        assert!(secure::validate_VRF_randomness(&vrf));
+        assert!(secure::validate_VRF_source(&vrf, &pkey, &hseed));
+    }
 }
 
 // ---------------------------------------------------------------------

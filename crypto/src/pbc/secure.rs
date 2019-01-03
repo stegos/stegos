@@ -1018,6 +1018,64 @@ pub fn ibe_decrypt(pack: &EncryptedPacket, skey: &SecretKey) -> Option<Vec<u8>> 
 }
 
 // -------------------------------------------------------
+// VRF's provable, unforgeable, deterministic randomness
+
+pub struct VRF {
+    pub rand: Hash, // hash digest of generated randomness in pairing field
+    pub proof: G1,  // proof on randomness
+}
+
+pub fn make_VRF(skey: &SecretKey, seed: &Hash) -> VRF {
+    // whatever the source of the seed, it should all be
+    // pre-hashed before calling this function
+    let proof = G1::zero();
+    unsafe {
+        rust_libpbc::make_secret_subkey(
+            *CONTEXT_FR256,
+            proof.base_vector().as_ptr() as *mut _,
+            skey.base_vector().as_ptr() as *mut _,
+            seed.base_vector().as_ptr() as *mut _,
+            HASH_SIZE as u64,
+        );
+    }
+    let rand = compute_pairing(&proof, &G2::generator());
+    VRF {
+        rand: Hash::digest(&rand),
+        proof: proof,
+    }
+}
+
+pub fn validate_VRF_randomness(vrf: &VRF) -> bool {
+    // Public validation - anyone can validate the randomness
+    // knowing only its value and the accompanying proof.
+    let rand = compute_pairing(&vrf.proof, &G2::generator());
+    vrf.rand == Hash::digest(&rand)
+}
+
+pub fn validate_VRF_source(vrf: &VRF, pkey: &PublicKey, seed: &Hash) -> bool {
+    // whatever the source of the seed, it should all be
+    // pre-hashed before calling this function.
+    //
+    // Anyone knowing the pkey of the originator, and the seed that
+    // was used, can verify that the randomness originated from the
+    // holder of the corresponding secret key and that seed.
+    //
+    let pk = G2::zero();
+    unsafe {
+        rust_libpbc::make_public_subkey(
+            *CONTEXT_FR256,
+            pk.base_vector().as_ptr() as *mut _,
+            pkey.base_vector().as_ptr() as *mut _,
+            seed.base_vector().as_ptr() as *mut _,
+            HASH_SIZE as u64,
+        );
+    }
+    let p1 = compute_pairing(&vrf.proof, &pk);
+    let p2 = compute_pairing(&G1::generator(), &G2::generator());
+    p1 == p2
+}
+
+// -------------------------------------------------------
 // primitives
 
 pub fn add_G1_G1(a: &G1, b: &G1) -> G1 {
@@ -1038,6 +1096,19 @@ pub fn add_G2_G2(a: &G2, b: &G2) -> G2 {
         rust_libpbc::add_G2_pts(
             *CONTEXT_FR256,
             ans.base_vector().as_ptr() as *mut _,
+            b.base_vector().as_ptr() as *mut _,
+        );
+    }
+    ans
+}
+
+pub fn compute_pairing(a: &G1, b: &G2) -> GT {
+    let ans = GT::new();
+    unsafe {
+        rust_libpbc::compute_pairing(
+            *CONTEXT_FR256,
+            ans.base_vector().as_ptr() as *mut _,
+            a.base_vector().as_ptr() as *mut _,
             b.base_vector().as_ptr() as *mut _,
         );
     }

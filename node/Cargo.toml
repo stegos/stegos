@@ -12,7 +12,6 @@ stegos_crypto = { path = "../crypto" }
 stegos_blockchain = { path = "../blockchain" }
 stegos_network = { path = "../network" }
 stegos_keychain = { path = "../keychain" }
-stegos_randhound = { path = "../randhound" }
 
 log = "0.4"
 failure = "0.1"
@@ -29,6 +28,7 @@ simple_logger = "1.0"
 clap = "2.32"
 lazy_static = "1.1"
 bitvector = "0.1"
+linked-hash-map = "0.5"
 
 [build-dependencies]
 protobuf-codegen-pure = "2.2"

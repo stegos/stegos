@@ -41,7 +41,6 @@ use stegos_config::{Config, ConfigError};
 use stegos_keychain::*;
 use stegos_network::Network;
 use stegos_node::{genesis_dev, Node};
-use stegos_randhound::*;
 use tokio::runtime::Runtime;
 
 use crate::console::*;
@@ -122,18 +121,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut rt = Runtime::new()?;
     let (network, network_service, broker) = Network::new(&cfg.network, &keychain)?;
 
-    // Initialize randhound
-    let (randhound_service, randhound) = RandHound::new(
-        broker.clone(),
-        network.clone(),
-        &keychain,
-        rt.executor().clone(),
-    )?;
-    rt.spawn(randhound_service);
-
     // Initialize node
     let genesis = genesis_dev().expect("failed to load genesis block");
-    let (node_service, node) = Node::new(keychain.clone(), genesis, broker.clone(), randhound)?;
+    let (node_service, node) = Node::new(keychain.clone(), genesis, broker.clone())?;
     rt.spawn(node_service);
 
     // Don't initialize REPL if stdin is not a TTY device

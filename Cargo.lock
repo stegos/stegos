@@ -2405,7 +2405,6 @@ dependencies = [
  "stegos_crypto 0.1.0",
  "stegos_keychain 0.1.0",
  "stegos_network 0.1.0",
- "stegos_randhound 0.1.0",
  "tokio-timer 0.2.7 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 

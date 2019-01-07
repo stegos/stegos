@@ -12,7 +12,6 @@ stegos_crypto = { path = "../crypto" }
 stegos_blockchain = { path = "../blockchain" }
 stegos_network = { path = "../network" }
 stegos_keychain = { path = "../keychain" }
-stegos_randhound = { path = "../randhound" }
 
 log = "0.4"
 failure = "0.1"

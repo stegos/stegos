@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use stegos_crypto::hash::*;
 use stegos_crypto::pbc::*;
 
 // ------------------------------------------------------------------------
@@ -64,4 +65,14 @@ fn main() {
     println!("skey = {}", skey);
     println!("pkey = {}", pkey);
     println!("sig = {}", sig);
+
+    // -----------------------------------------
+    let (skey, pkey, sig) = secure::make_deterministic_keys(b"Testing");
+    assert!(secure::check_keying(&pkey, &sig));
+    let hseed = Hash::from_str("VRF_Seed");
+    let vrf = secure::make_VRF(&skey, &hseed);
+    println!("VRF Rand: {:}", vrf.rand);
+    println!("VRF Proof: {:}", vrf.proof);
+    assert!(secure::validate_VRF_randomness(&vrf));
+    assert!(secure::validate_VRF_source(&vrf, &pkey, &hseed));
 }

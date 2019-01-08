@@ -179,3 +179,14 @@ message SealedBlockMessage {
     SecurePublicKey pkey = 2;
     SecureSignature sig = 3;
 }
+
+message VRF {
+    Hash rand = 1;
+    G1 proof = 2;
+}
+
+message VRFTicket {
+    VRF random = 1;
+    SecurePublicKey pkey = 3;
+    SecureSignature sig = 4;
+}

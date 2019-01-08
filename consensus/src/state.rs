@@ -107,6 +107,7 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
         validators: BTreeMap<SecurePublicKey, i64>,
     ) -> Self {
         debug!("=> Propose: height={:?}", height);
+        assert!(validators.contains_key(&pkey));
         let state = ConsensusState::Propose;
         let prevote_accepts: BTreeMap<SecurePublicKey, SecureSignature> = BTreeMap::new();
         let precommit_accepts: BTreeMap<SecurePublicKey, SecureSignature> = BTreeMap::new();
@@ -509,6 +510,20 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
     ///
     pub fn is_leader(&self) -> bool {
         self.pkey == self.leader
+    }
+
+    ///
+    /// Returns public key of the current leader.
+    ///
+    pub fn leader(&self) -> SecurePublicKey {
+        self.leader
+    }
+
+    ///
+    /// Returns snapshot of the consensus group.
+    ///
+    pub fn validators(&self) -> &BTreeMap<SecurePublicKey, i64> {
+        &self.validators
     }
 
     ///

@@ -24,6 +24,8 @@
 pub mod node;
 
 use crate::consensus::{BlockProof, MonetaryBlockProof, SealedBlockMessage};
+
+use crate::VRFTicket;
 use bitvector::BitVector;
 use failure::{Error, Fail};
 use std::collections::BTreeSet;
@@ -38,6 +40,7 @@ use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
 use stegos_crypto::pbc::secure::Signature as SecureSignature;
 use stegos_crypto::pbc::secure::G1;
 use stegos_crypto::pbc::secure::G2;
+use stegos_crypto::pbc::secure::VRF;
 use stegos_crypto::CryptoError;
 
 #[derive(Debug, Fail)]
@@ -886,6 +889,46 @@ impl FromProto<node::SealedBlockMessage> for SealedBlockMessage {
     }
 }
 
+//
+// VRF types
+//
+
+impl IntoProto<node::VRF> for VRF {
+    fn into_proto(&self) -> node::VRF {
+        let mut proto = node::VRF::new();
+        proto.set_rand(self.rand.into_proto());
+        proto.set_proof(self.proof.into_proto());
+        proto
+    }
+}
+
+impl FromProto<node::VRF> for VRF {
+    fn from_proto(proto: &node::VRF) -> Result<Self, Error> {
+        let rand = Hash::from_proto(proto.get_rand())?;
+        let proof = G1::from_proto(proto.get_proof())?;
+        Ok(VRF { rand, proof })
+    }
+}
+
+impl IntoProto<node::VRFTicket> for VRFTicket {
+    fn into_proto(&self) -> node::VRFTicket {
+        let mut proto = node::VRFTicket::new();
+        proto.set_random(self.random.into_proto());
+        proto.set_pkey(self.pkey.into_proto());
+        proto.set_sig(self.sig.into_proto());
+        proto
+    }
+}
+
+impl FromProto<node::VRFTicket> for VRFTicket {
+    fn from_proto(proto: &node::VRFTicket) -> Result<Self, Error> {
+        let random = VRF::from_proto(proto.get_random())?;
+        let pkey = SecurePublicKey::from_proto(proto.get_pkey())?;
+        let sig = SecureSignature::from_proto(proto.get_sig())?;
+        Ok(VRFTicket { random, pkey, sig })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1158,5 +1201,14 @@ mod tests {
             proof,
         };
         roundtrip(&proposal);
+    }
+
+    #[test]
+    fn vrf_tickets() {
+        let seed = Hash::digest(&"test".to_string());
+        let (skey1, pkey1, _sig1) = make_secure_random_keys();
+
+        let vrf = VRFTicket::new(seed, pkey1, &skey1);
+        roundtrip(&vrf);
     }
 }

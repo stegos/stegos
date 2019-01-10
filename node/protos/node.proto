@@ -140,28 +140,42 @@ message Block {
 }
 
 message KeyBlockProposal {
-    KeyBlockHeader block_header = 1;
+    KeyBlock block = 1;
 }
 
 message MonetaryBlockProposal {
-    MonetaryBlockHeader block_header = 1;
+    MonetaryBlock block = 1;
     Output fee_output = 2;
-    repeated Transaction txs = 3;
+    Fr gamma = 3;
+    repeated Hash tx_hashes = 4;
 }
 
-message BlockAcceptance {}
+message Prevote {}
+
+message Precommit {
+    SecureSignature request_hash_sig = 1;
+}
 
 message ConsensusMessageBody {
     oneof body {
-        MonetaryBlockProposal monetary_block_proposal = 1;
-        BlockAcceptance block_acceptance = 2;
-        KeyBlockProposal key_block_proposal = 3;
+        Prevote prevote = 1;
+        Precommit precommit= 2;
+
+        KeyBlockProposal key_block_proposal = 11;
+        MonetaryBlockProposal monetary_block_proposal = 12;
     }
 }
 
 message ConsensusMessage {
-    Hash block_hash = 1;
-    ConsensusMessageBody body = 2;
-    SecurePublicKey pkey = 3;
-    SecureSignature sig = 4;
+    uint64 height = 1;
+    Hash request_hash = 2;
+    ConsensusMessageBody body = 3;
+    SecurePublicKey pkey = 4;
+    SecureSignature sig = 5;
+}
+
+message SealedBlockMessage {
+    Block block = 1;
+    SecurePublicKey pkey = 2;
+    SecureSignature sig = 3;
 }

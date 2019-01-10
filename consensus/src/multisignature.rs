@@ -1,4 +1,4 @@
-//! BLS MultiSignature.
+//! pBFT Consensus - BLS Multisignature.
 
 //
 // Copyright (c) 2018 Stegos
@@ -23,8 +23,6 @@
 
 use bitvector::BitVector;
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use stegos_blockchain::WITNESSES_MAX;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure::check_hash as secure_check_hash;
 use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
@@ -32,17 +30,32 @@ use stegos_crypto::pbc::secure::Signature as SecureSignature;
 use stegos_crypto::pbc::secure::G1;
 use stegos_crypto::pbc::secure::G2;
 
+/// The maximum number of nodes in multi-signature.
+/// Please synchronize this number with stegos_blockchain::WITNESSES_MAX.
+const WITNESSES_MAX: usize = 128;
+
+///
+/// Return true if supermajority of votes has been collected.
+///
+pub(crate) fn check_supermajority(got_votes: usize, total_votes: usize) -> bool {
+    assert!(got_votes <= total_votes);
+    let need_votes = (total_votes * 2 + 3) / 3;
+    (got_votes >= need_votes)
+}
+
 ///
 /// Create a new multi-signature from individual signatures
 ///
-pub fn create_multi_signature(
-    witnesses: &BTreeSet<SecurePublicKey>,
+pub(crate) fn create_multi_signature(
+    witnesses: &BTreeMap<SecurePublicKey, i64>,
     signatures: &BTreeMap<SecurePublicKey, SecureSignature>,
 ) -> (SecureSignature, BitVector) {
+    assert!(check_supermajority(signatures.len(), witnesses.len()));
+
     let mut multisig = G1::zero();
     let mut multisigmap = BitVector::new(WITNESSES_MAX);
     let mut count: usize = 0;
-    for (bit, pkey) in witnesses.iter().enumerate() {
+    for (bit, (pkey, _stake)) in witnesses.iter().enumerate() {
         let sig = match signatures.get(pkey) {
             Some(sig) => *sig,
             None => continue,
@@ -66,18 +79,21 @@ pub fn check_multi_signature(
     hash: &Hash,
     multisig: &SecureSignature,
     multisigmap: &BitVector,
-    witnesses: &BTreeSet<SecurePublicKey>,
+    witnesses: &BTreeMap<SecurePublicKey, i64>,
     leader: &SecurePublicKey,
 ) -> bool {
     let mut has_leader = false;
     let mut multisigpkey = G2::zero();
-    for (bit, pkey) in witnesses.iter().enumerate() {
+
+    let mut count: usize = 0;
+    for (bit, pkey) in witnesses.keys().enumerate() {
         if !multisigmap.contains(bit) {
             continue;
         }
         has_leader = has_leader || (pkey == leader);
         let pkey: G2 = pkey.clone().into();
         multisigpkey += pkey;
+        count += 1;
     }
 
     // Multi-signature must contain leader's key.
@@ -85,6 +101,12 @@ pub fn check_multi_signature(
         return false;
     }
 
+    // Multi-signature must be signed by the supermajority of witnesses.
+    if !check_supermajority(count, witnesses.len()) {
+        return false;
+    }
+
+    // The hash must match the signature.
     let multipkey: SecurePublicKey = multisigpkey.into();
     secure_check_hash(&hash, &multisig, &multipkey)
 }

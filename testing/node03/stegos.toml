@@ -10,10 +10,10 @@ node_id = "node03"
 bind_ip = "127.0.0.1"
 bind_port = 10057
 advertise_local_ips = false
-broadcast_topic = "chat"
 
 seed_nodes = [
     "/ip4/127.0.0.1/tcp/10055",
+    "/ip4/127.0.0.1/tcp/10056",
 ]
 
 advertised_addresses = [

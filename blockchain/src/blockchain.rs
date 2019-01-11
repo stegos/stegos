@@ -128,6 +128,11 @@ impl Blockchain {
         self.blocks.last().unwrap()
     }
 
+    /// Return the current blockchain height.
+    pub fn height(&self) -> usize {
+        self.blocks().len()
+    }
+
     //----------------------------------------------------------------------------------------------
 
     pub fn register_key_block(&mut self, block: KeyBlock) -> Result<(), BlockchainError> {

@@ -21,17 +21,18 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+mod consensus;
 mod election;
 pub mod protos;
 
+use crate::consensus::*;
 use crate::protos::{FromProto, IntoProto};
-
+use bitvector::BitVector;
 use chrono::Utc;
 use failure::{Error, Fail};
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::{Async, Future, Poll, Stream};
 use futures_stream_select_all_send::select_all;
-use lazy_static::lazy_static;
 use linked_hash_map::LinkedHashMap;
 use log::*;
 use protobuf;
@@ -41,9 +42,10 @@ use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use stegos_blockchain::*;
-use stegos_consensus::*;
+use stegos_consensus::check_multi_signature;
 use stegos_crypto::bulletproofs::validate_range_proof;
 use stegos_crypto::curve1174::cpt::PublicKey;
+use stegos_crypto::curve1174::cpt::SecretKey;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
@@ -170,14 +172,12 @@ const MONETARY_FEE: i64 = 1;
 const DATA_UNIT: usize = 1024;
 /// Fee for one DATA_UNIT.
 const DATA_UNIT_FEE: i64 = 1;
-/// How often check CoSi state.
-const CONSENSUS_TIMER: u64 = 5; // seconds
-/// How long wait for CoSi answers.
-const CONSENSUS_TIMEOUT: u64 = 15; // seconds
-lazy_static! {
-    /// Some time in the future which never can be reached.
-    static ref INSTANT_INFINITY: Instant = Instant::now() + Duration::new(60u64 * 60  * 24 * 365 * 100, 0);
-}
+/// How long wait for transactions before starting to create a new block.
+const TX_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long wait for sealed block.
+const SEALED_BLOCK_TIMEOUT: Duration = Duration::from_secs(120);
+/// How often to check the consensus state.
+const CONSENSUS_TIMER: Duration = Duration::from_secs(10);
 
 type Mempool = LinkedHashMap<Hash, Transaction>;
 
@@ -242,15 +242,11 @@ pub enum NodeError {
     BlockAlreadyRegistered(Hash),
     #[fail(display = "Failed to validate block: expected={}, got={}", _0, _1)]
     InvalidBlockHash(Hash, Hash),
-    #[fail(display = "Out of order block proposal received: block={}", _0)]
-    OutOfOrderBlockProposal(Hash),
-    #[fail(display = "Out of order block acceptance received: block={}", _0)]
-    OutOfOrderBlockAcceptance(Hash),
     #[fail(
-        display = "Block Proposal from non-leader: block={}, expected={}, got={}",
+        display = "Sealed Block from non-leader: block={}, expected={}, got={}",
         _0, _1, _2
     )]
-    BlockProposalFromNonLeader(Hash, SecurePublicKey, SecurePublicKey),
+    SealedBlockFromNonLeader(Hash, SecurePublicKey, SecurePublicKey),
     #[fail(display = "Invalid block BLS multisignature: block={}", _0)]
     InvalidBlockSignature(Hash),
     #[fail(display = "Transaction missing in mempool: {}.", _0)]
@@ -279,24 +275,21 @@ struct NodeService {
     //
     // Consensus
     //
-    /// Current epoch leader.
-    leader: SecurePublicKey,
-    /// The list of witnesses public keys.
-    witnesses: BTreeSet<SecurePublicKey>,
     /// Map of all actual nodes stakes.
+    /// Actual stakes.
     stakes: HashMap<SecurePublicKey, i64>,
-    /// Hash of a block proposed by CoSi protocol.
-    proposed_block_hash: Option<Hash>,
-    /// A block proposed by CoSi protocol.
-    /// Sic: this field is only used by leader.
-    proposed_block: Option<Block>,
-    /// Collected signatures for CoSi.
-    signatures: BTreeMap<SecurePublicKey, SecureSignature>,
-    /// A deadline when CoSi state must be changed.
-    consensus_deadline: Instant,
+    /// Snapshot of selected leader from the latest key block.
+    leader: SecurePublicKey,
+    /// Snapshot of validators with stakes from the latest key block.
+    validators: BTreeMap<SecurePublicKey, i64>,
 
     /// Memory pool of pending transactions.
     mempool: Mempool,
+    /// Proof-of-stake consensus.
+    consensus: Option<BlockConsensus>,
+    /// A timestamp when the last sealed block was received.
+    last_block_timestamp: Instant,
+
     /// Network interface.
     broker: Broker,
     /// Triggered when balance is changed.
@@ -323,15 +316,14 @@ impl NodeService {
         let unspent = HashMap::new();
         let epoch: u64 = 1;
 
-        let leader: SecurePublicKey = G2::generator().into(); // some fake key
-        let witnesses = BTreeSet::<SecurePublicKey>::new();
         let stakes = HashMap::new();
-        let proposed_block = None;
-        let proposed_block_hash = None;
-        let signatures = BTreeMap::<SecurePublicKey, SecureSignature>::new();
-        let consensus_deadline = *INSTANT_INFINITY;
 
+        let leader: SecurePublicKey = G2::generator().into(); // some fake key
+        let validators = BTreeMap::<SecurePublicKey, i64>::new();
         let mempool = Mempool::new();
+        let consensus = None;
+        let last_block_timestamp = Instant::now();
+
         let on_balance_changed = Vec::<UnboundedSender<i64>>::new();
         let on_epoch_changed = Vec::<UnboundedSender<EpochNotification>>::new();
         let on_message_received = Vec::<UnboundedSender<MessageNotification>>::new();
@@ -360,7 +352,7 @@ impl NodeService {
         streams.push(Box::new(block_rx));
 
         // CoSi timer events
-        let duration = Duration::from_secs(CONSENSUS_TIMER); // every second
+        let duration = CONSENSUS_TIMER; // every second
         let timer = Interval::new_interval(duration)
             .map(|i| NodeMessage::ConsensusTimer(i))
             .map_err(|_e| ()); // ignore transient timer errors
@@ -376,14 +368,12 @@ impl NodeService {
             epoch,
             max_group_size,
             election_round,
-            leader,
-            witnesses,
             stakes,
-            proposed_block,
-            proposed_block_hash,
-            signatures,
-            consensus_deadline,
+            leader,
+            validators,
             mempool,
+            consensus,
+            last_block_timestamp,
             broker,
             on_balance_changed,
             on_epoch_changed,
@@ -433,6 +423,13 @@ impl NodeService {
                 }
             }
         }
+
+        if let Some(consensus) = &mut self.consensus {
+            // Move to the next height.
+            consensus.reset(self.chain.height() as u64);
+        }
+
+        self.last_block_timestamp = Instant::now();
 
         Ok(())
     }
@@ -529,19 +526,39 @@ impl NodeService {
 
         let monetary_block2 = monetary_block.clone();
         let inputs = self.chain.register_monetary_block(monetary_block)?;
+
+        // TODO: implement proper handling of mempool.
+        self.mempool.clear();
+
         self.on_monetary_block_registered(&monetary_block2, &inputs);
         Ok(())
     }
 
     /// Handle incoming blocks received from network.
     fn handle_sealed_block_request(&mut self, msg: Vec<u8>) -> Result<(), Error> {
-        let block: protos::node::Block = protobuf::parse_from_bytes(&msg)?;
-        let block = Block::from_proto(&block)?;
+        let msg: protos::node::SealedBlockMessage = protobuf::parse_from_bytes(&msg)?;
+        let msg = SealedBlockMessage::from_proto(&msg)?;
 
-        // TODO: check that message is signed by leader
+        // Check signature and content.
+        msg.validate()?;
 
+        let block = msg.block;
         let block_hash = Hash::digest(&block);
-        info!("Received block: hash={}", &block_hash);
+        info!(
+            "Received sealed block: hash={}, current_height={}",
+            &block_hash,
+            self.chain.height()
+        );
+
+        // Check that message is signed by current leader.
+        if msg.pkey != self.leader {
+            return Err(NodeError::SealedBlockFromNonLeader(
+                block_hash,
+                self.leader.clone(),
+                msg.pkey,
+            )
+            .into());
+        }
 
         // Check that block is not registered yet.
         if let Some(_) = self.chain.block_by_hash(&block_hash) {
@@ -568,38 +585,46 @@ impl NodeService {
                 return Ok(());
             }
 
-            // TODO: check signature for KeyBlocks
-            if let Block::MonetaryBlock(_block) = &block {
-                // Check BLS multi-signature.
-                // Sic: double-hash of block is used for signature.
-                let block_hash_hash = Hash::digest(&block_hash);
-                if !check_multi_signature(
-                    &block_hash_hash,
-                    &header.multisig,
-                    &header.multisigmap,
-                    &self.witnesses,
-                    &self.leader,
-                ) {
-                    return Err(NodeError::InvalidBlockSignature(block_hash).into());
-                }
+            // Check BLS multi-signature.
+            if !check_multi_signature(
+                &block_hash,
+                &header.multisig,
+                &header.multisigmap,
+                &self.validators,
+                &self.leader,
+            ) {
+                return Err(NodeError::InvalidBlockSignature(block_hash).into());
             }
         }
 
-        if self.is_witness() {
-            if let Some(proposed_block_hash) = self.proposed_block_hash {
-                if block_hash != proposed_block_hash {
-                    return Err(NodeError::InvalidBlockHash(proposed_block_hash, block_hash).into());
+        if let Some(consensus) = &mut self.consensus {
+            if consensus.should_commit() {
+                // Commit the block and move to the next height.
+                let (block, _proof) = consensus.get_proposal();
+                let consensus_block_hash = Hash::digest(block);
+                if block_hash != consensus_block_hash {
+                    panic!(
+                        "Network fork: received_block={:?}, consensus_block={:?}",
+                        &block_hash, &consensus_block_hash
+                    );
                 }
-                self.discard_proposed_block();
             }
         }
 
         match block {
-            Block::KeyBlock(key_block) => self.handle_sealed_key_block_request(key_block),
+            Block::KeyBlock(key_block) => self.handle_sealed_key_block_request(key_block)?,
             Block::MonetaryBlock(monetary_block) => {
-                self.handle_sealed_monetary_block_request(monetary_block)
+                self.handle_sealed_monetary_block_request(monetary_block)?
             }
         }
+
+        if let Some(consensus) = &mut self.consensus {
+            // Move to the next height.
+            consensus.reset(self.chain.height() as u64);
+        }
+        self.last_block_timestamp = Instant::now();
+
+        Ok(())
     }
 
     /// Handler for NodeMessage::SubscribeBalance.
@@ -617,7 +642,7 @@ impl NodeService {
         let msg = EpochNotification {
             epoch: self.epoch,
             leader: self.leader.clone(),
-            witnesses: self.witnesses.clone(),
+            witnesses: self.validators.keys().cloned().collect(),
         };
         tx.unbounded_send(msg)?;
         self.on_epoch_changed.push(tx);
@@ -667,28 +692,9 @@ impl NodeService {
         let block_hash = Hash::digest(&block);
         debug!("Created block: hash={}", block_hash);
 
-        let block_proposal = ConsensusMessage::new_key_block_proposal(
-            &self.keys.cosi_skey,
-            &self.keys.cosi_pkey,
-            block_hash,
-            block.header.clone(),
-        );
-        debug!(
-            "Created block proposal: hash={}",
-            Hash::digest(&block_proposal.body)
-        );
+        // TODO: propose block
 
-        // Self-sign and remember proposed block.
-        let ack = ConsensusMessage::new_block_acceptance(
-            &self.keys.cosi_skey,
-            &self.keys.cosi_pkey,
-            block_hash,
-        );
-        self.prepare_proposed_block(block_hash, Some(Block::KeyBlock(block)));
-        self.sign_proposed_block(&block_hash, ack.pkey, ack.sig)?;
-
-        // Send block proposal.
-        self.send_consensus_message(block_proposal)
+        Ok(())
     }
 
     /// Returns new active nodes list.
@@ -733,33 +739,44 @@ impl NodeService {
         stake
     }
 
-    /// Returns true if current node is leader.
-    fn is_leader(&self) -> bool {
-        self.keys.cosi_pkey == self.leader
-    }
-
-    /// Returns true if current node is validator.
-    fn is_witness(&self) -> bool {
-        self.witnesses.contains(&self.keys.cosi_pkey)
-    }
-
     /// Called when a new key block is registered.
     fn on_key_block_registered(&mut self, key_block: &KeyBlock) -> Result<(), Error> {
-        self.leader = key_block.header.leader.clone();
         self.epoch = self.epoch + 1;
-        self.witnesses = key_block.header.witnesses.clone();
-        assert!(self.witnesses.contains(&self.leader));
-        for validator in self.witnesses.iter() {
-            assert!(self.stakes.get(validator).is_some());
+
+        self.leader = key_block.header.leader.clone();
+        let mut validators = BTreeMap::<SecurePublicKey, i64>::new();
+        for validator in &key_block.header.witnesses {
+            let stake = self
+                .stakes
+                .get(validator)
+                .expect("all staked nodes have stake");
+            validators.insert(validator.clone(), *stake);
+        }
+        self.validators = validators;
+
+        if self.validators.contains_key(&self.keys.cosi_pkey) {
+            // Promote to Validator role
+            let consensus = BlockConsensus::new(
+                self.chain.height() as u64,
+                self.keys.cosi_skey.clone(),
+                self.keys.cosi_pkey.clone(),
+                self.leader.clone(),
+                self.validators.clone(),
+            );
+
+            if consensus.is_leader() {
+                info!("I'm leader");
+            } else {
+                info!("I'm validator, leader is {}", &self.leader);
+            }
+
+            self.consensus = Some(consensus);
+        } else {
+            // Resign from Validator role.
+            info!("I'm regular node");
+            self.consensus = None;
         }
 
-        if self.is_leader() {
-            info!("I'm leader");
-        } else if self.is_witness() {
-            info!("I'm witness, leader is {}", &self.leader);
-        } else {
-            info!("Leader is {}", &self.leader);
-        }
         Ok(())
     }
 
@@ -854,7 +871,8 @@ impl NodeService {
     /// Send block to network.
     fn send_sealed_block(&mut self, block: Block) -> Result<(), Error> {
         info!("Sending block: hash={}", Hash::digest(&block));
-        let proto = block.into_proto();
+        let msg = SealedBlockMessage::new(&self.keys.cosi_skey, &self.keys.cosi_pkey, block);
+        let proto = msg.into_proto();
         let data = proto.write_to_bytes()?;
         // Don't send block to myself.
         self.broker.publish(&SEALED_BLOCK_TOPIC.to_string(), data)?;
@@ -1088,28 +1106,19 @@ impl NodeService {
     ///
     /// Process transactions in mempool and create a new MonetaryBlockProposal.
     ///
-    fn process_mempool(&mut self) -> Result<(), Error> {
-        // Mempool is processed exclusively by leader.
-        if !self.is_leader() {
-            return Ok(());
-        }
-
-        // There are not pending CoSi requests.
-        if let Some(_) = self.proposed_block_hash {
-            return Ok(());
-        }
-
-        // Mempool is not empty.
-        if self.mempool.is_empty() {
-            return Ok(());
-        }
-
+    fn process_mempool(
+        mempool: &mut Mempool,
+        chain: &mut Blockchain,
+        epoch: u64,
+        skey: &SecretKey,
+        pkey: &PublicKey,
+    ) -> Result<((Block, BlockProof)), Error> {
         // TODO: limit the block size.
-        let tx_count = self.mempool.len();
+        let tx_count = mempool.len();
         info!(
             "Processing {}/{} transactions from mempool",
             tx_count,
-            self.mempool.len()
+            mempool.len()
         );
 
         let timestamp = Utc::now().timestamp() as u64;
@@ -1119,15 +1128,15 @@ impl NodeService {
         let mut inputs_hashes = BTreeSet::<Hash>::new();
         let mut outputs = Vec::<Output>::new();
         let mut outputs_hashes = BTreeSet::<Hash>::new();
-        let mut txs = Vec::with_capacity(tx_count);
-        for entry in self.mempool.entries() {
+        let mut tx_hashes = Vec::<Hash>::with_capacity(tx_count);
+        for entry in mempool.entries() {
             let tx_hash = entry.key();
             let tx = entry.get();
             assert_eq!(tx_hash, &Hash::digest(&tx.body));
             debug!("Processing transaction: hash={}", &tx_hash);
 
             // Check that transaction's inputs are exists.
-            let tx_inputs = match self.chain.outputs_by_hashes(&tx.body.txins) {
+            let tx_inputs = match chain.outputs_by_hashes(&tx.body.txins) {
                 Ok(tx_inputs) => tx_inputs,
                 Err(e) => {
                     error!("Discarding invalid transaction: tx={}, hash={}", tx_hash, e);
@@ -1147,7 +1156,7 @@ impl NodeService {
             // Check transaction's outputs.
             for tx_output in &tx.body.txouts {
                 let tx_output_hash = Hash::digest(tx_output);
-                if let Some(_) = self.chain.output_by_hash(&tx_output_hash) {
+                if let Some(_) = chain.output_by_hash(&tx_output_hash) {
                     return Err(BlockchainError::OutputHashCollision(tx_output_hash).into());
                 }
                 if !outputs_hashes.insert(tx_output_hash.clone()) {
@@ -1164,7 +1173,7 @@ impl NodeService {
 
             gamma += tx.body.gamma;
             fee += tx.body.fee;
-            txs.push(tx.clone());
+            tx_hashes.push(tx_hash.clone());
 
             inputs.extend(tx_inputs.clone());
             outputs.extend(tx.body.txouts.clone());
@@ -1173,12 +1182,7 @@ impl NodeService {
         // Create transaction for fee
         let output_fee = if fee > 0 {
             debug!("Creating UTXO for fee: amount={}", fee);
-            let (output_fee, gamma_fee) = Output::new_monetary(
-                timestamp,
-                &self.keys.wallet_skey,
-                &self.keys.wallet_pkey,
-                fee,
-            )?;
+            let (output_fee, gamma_fee) = Output::new_monetary(timestamp, skey, pkey, fee)?;
             gamma -= gamma_fee;
             outputs.push(output_fee.clone());
             Some(output_fee)
@@ -1193,18 +1197,16 @@ impl NodeService {
         let inputs_hashes: Vec<Hash> = inputs_hashes.into_iter().collect();
 
         let previous = {
-            let last = self.chain.last_block();
+            let last = chain.last_block();
             let previous = Hash::digest(last);
             previous
         };
-        let epoch = self.epoch;
 
         let base = BaseBlockHeader::new(VERSION, previous, epoch, timestamp);
-        let block = MonetaryBlock::new(base, gamma, &inputs_hashes, &outputs);
+        let block = MonetaryBlock::new(base, gamma.clone(), &inputs_hashes, &outputs);
 
         // Double-check the monetary balance of created block.
-        let inputs = self
-            .chain
+        let inputs = chain
             .outputs_by_hashes(&block.body.inputs)
             .expect("transactions valid");
         block.validate(&inputs)?;
@@ -1212,91 +1214,35 @@ impl NodeService {
         let block_hash = Hash::digest(&block);
         debug!("Created block: hash={}", block_hash);
 
-        debug!("Creating monetary block proposal");
-        let block_proposal = ConsensusMessage::new_monetary_block_proposal(
-            &self.keys.cosi_skey,
-            &self.keys.cosi_pkey,
-            block_hash,
-            block.header.clone(),
-            output_fee,
-            txs,
-        );
-        debug!(
-            "Created block proposal: hash={}",
-            Hash::digest(&block_proposal.body)
-        );
+        let proof = MonetaryBlockProof {
+            fee_output: output_fee,
+            gamma,
+            tx_hashes,
+        };
+        let proof = BlockProof::MonetaryBlockProof(proof);
+        let block = Block::MonetaryBlock(block);
 
-        // Self-sign and remember proposed block.
-        let ack = ConsensusMessage::new_block_acceptance(
-            &self.keys.cosi_skey,
-            &self.keys.cosi_pkey,
-            block_hash,
-        );
-
-        self.prepare_proposed_block(block_hash, Some(Block::MonetaryBlock(block)));
-        self.sign_proposed_block(&block_hash, ack.pkey, ack.sig)?;
-
-        // Send block proposal.
-        self.send_consensus_message(block_proposal)?;
-
-        Ok(())
+        Ok((block, proof))
     }
 
     //----------------------------------------------------------------------------------------------
-    // Consensus (CoSi)
+    // Consensus
     //----------------------------------------------------------------------------------------------
 
     ///
-    /// Called periodically every CONSENSUS_TIMER seconds.
+    /// Try to commit a new block if consensus is in an appropriate state.
     ///
-    fn handle_consensus_timer(&mut self) -> Result<(), Error> {
-        // Ignore consensus on non-witnesses.
-        if !self.is_witness() {
-            return Ok(());
+    fn flush_consensus_messages(
+        consensus: &mut BlockConsensus,
+        broker: &mut Broker,
+    ) -> Result<(), Error> {
+        // Flush message queue.
+        let outbox = std::mem::replace(&mut consensus.outbox, Vec::new());
+        for msg in outbox {
+            let proto = msg.into_proto();
+            let data = proto.write_to_bytes()?;
+            broker.publish(&CONSENSUS_TOPIC.to_string(), data)?;
         }
-
-        self.process_mempool()?;
-
-        // Consensus is not started yet.
-        if let None = self.proposed_block_hash {
-            return Ok(());
-        }
-
-        let block_hash = self.proposed_block_hash.unwrap();
-
-        // Check if leader has 2/3 of signatures to commit a block.
-        if self.is_leader() && self.has_supermajority() {
-            debug!("CoSi supermajority reached: block={}", block_hash);
-            self.commit_proposed_block();
-            return Ok(());
-        }
-
-        // Timed out. Discard proposed block and reset CoSi state.
-        // Works both for leader and witnesses.
-        if self.consensus_deadline <= Instant::now() {
-            self.discard_proposed_block();
-        }
-
-        return Ok(());
-    }
-
-    ///
-    /// Returns true if supermajority of votes collected.
-    ///
-    fn has_supermajority(&self) -> bool {
-        let has = self.signatures.len();
-        let need = (self.witnesses.len() * 2 + 3) / 3;
-        debug!("Supermajority: has={}, need={}", has, need);
-        (has >= need)
-    }
-
-    ///
-    /// Sends consensus message to the network.
-    ///
-    fn send_consensus_message(&mut self, msg: ConsensusMessage) -> Result<(), Error> {
-        let proto = msg.into_proto();
-        let data = proto.write_to_bytes()?;
-        self.broker.publish(&CONSENSUS_TOPIC.to_string(), data)?;
         Ok(())
     }
 
@@ -1304,76 +1250,123 @@ impl NodeService {
     /// Handles incoming consensus requests received from network.
     ///
     fn handle_consensus_message(&mut self, msg: Vec<u8>) -> Result<(), Error> {
-        // Ignore message if we are not witness.
-        if !self.is_witness() {
+        if self.consensus.is_none() {
             return Ok(());
         }
 
-        // Decode incoming message.
+        // Process incoming message.
+        let consensus = self.consensus.as_mut().unwrap();
         let msg: protos::node::ConsensusMessage = protobuf::parse_from_bytes(&msg)?;
-        let msg = ConsensusMessage::from_proto(&msg)?;
-        let msg_hash = Hash::digest(&msg);
+        let msg = BlockConsensusMessage::from_proto(&msg)?;
+        consensus.feed_message(msg)?;
+        // Flush pending messages.
+        NodeService::flush_consensus_messages(consensus, &mut self.broker)?;
 
-        // Ignore messages from non-witnesses.
-        if !self.witnesses.contains(&msg.pkey) {
-            debug!("CoSi message from unknown peer: hash={}", &msg_hash);
-            return Ok(());
+        // Check if we can prevote for a block.
+        if !consensus.is_leader() && consensus.should_prevote() {
+            self.prevote_block();
         }
 
-        // Validate signature of CoSi message.
-        msg.validate()?;
-        debug!("CoSi message is valid: hash={}", &msg_hash);
+        // Check if we can commit a block.
+        let consensus = self.consensus.as_ref().unwrap();
+        if consensus.is_leader() && consensus.should_commit() {
+            let (block, _proof, multisig, multisigmap) =
+                self.consensus.as_mut().unwrap().sign_and_commit();
+            self.commit_proposed_block(block, multisig, multisigmap);
+        }
 
-        match msg.body {
-            ConsensusMessageBody::MonetaryBlockProposal(proposal) => {
-                self.handle_monetary_block_proposal(msg.pkey, msg.block_hash, proposal)
+        Ok(())
+    }
+
+    ///
+    /// Called periodically every CONSENSUS_TIMER seconds.
+    ///
+    fn handle_consensus_timer(&mut self) -> Result<(), Error> {
+        let elapsed = self.last_block_timestamp.elapsed();
+
+        // Check that a new monetary block should be proposed.
+        if self.consensus.is_some()
+            && self.consensus.as_ref().unwrap().should_propose()
+            && elapsed >= TX_WAIT_TIMEOUT
+        {
+            self.propose_monetary_block()?;
+        }
+
+        // Check that consensus is alive.
+        if elapsed >= SEALED_BLOCK_TIMEOUT {
+            panic!("consensus is not alive");
+            // TODO: form a new validator group and elect a new leader using VRF
+        }
+
+        Ok(())
+    }
+
+    ///
+    /// Propose a new monetary block.
+    ///
+    fn propose_monetary_block(&mut self) -> Result<(), Error> {
+        assert!(self.consensus.as_ref().unwrap().should_propose());
+
+        // Create a new monetary block from mempool.
+        let (block, proof) = NodeService::process_mempool(
+            &mut self.mempool,
+            &mut self.chain,
+            self.epoch,
+            &self.keys.wallet_skey,
+            &self.keys.wallet_pkey,
+        )?;
+
+        // Propose this block.
+        let request_hash = Hash::digest(&block);
+        let consensus = self.consensus.as_mut().unwrap();
+        consensus.propose(block, proof);
+        // Prevote for this block.
+        consensus.prevote(request_hash);
+        // Flush pending messages.
+        NodeService::flush_consensus_messages(consensus, &mut self.broker)?;
+        Ok(())
+    }
+
+    ///
+    /// Pre-vote for a block.
+    ///
+    fn prevote_block(&mut self) {
+        let consensus = self.consensus.as_ref().unwrap();
+        assert!(!consensus.is_leader() && consensus.should_prevote());
+
+        let (block, proof) = consensus.get_proposal();
+        let request_hash = Hash::digest(block);
+        debug!("Validating block: block={}", &request_hash);
+        match NodeService::validate_block(&self.mempool, &self.chain, self.epoch, block, proof) {
+            Ok(()) => {
+                let consensus = self.consensus.as_mut().unwrap();
+                consensus.prevote(request_hash);
+                NodeService::flush_consensus_messages(consensus, &mut self.broker).unwrap();
             }
-            ConsensusMessageBody::KeyBlockProposal(proposal) => {
-                self.handle_key_block_proposal(msg.pkey, msg.block_hash, proposal)
-            }
-            ConsensusMessageBody::BlockAcceptance => {
-                self.handle_block_acceptance(msg.pkey, msg.sig, msg.block_hash)
+            Err(e) => {
+                error!(
+                    "Invalid block proposed: block={:?}, error={:?}",
+                    &request_hash, e
+                );
             }
         }
     }
 
-    /// Process MonetaryBlockProposal CoSi message.
-    fn handle_monetary_block_proposal(
-        &mut self,
-        pkey: SecurePublicKey,
-        block_hash: Hash,
-        proposal: MonetaryBlockProposal,
+    ///
+    /// Validate proposed block.
+    ///
+    fn validate_block(
+        mempool: &Mempool,
+        chain: &Blockchain,
+        epoch: u64,
+        block: &Block,
+        proof: &BlockProof,
     ) -> Result<(), Error> {
-        // Ignore message send to myself.
-        if self.is_leader() {
-            return Ok(());
-        }
-
-        // Check that messages send by the current leader.
-        if pkey != self.leader {
-            debug!("CoSi block proposal from non-leader: block={}", &block_hash);
-            return Err(NodeError::BlockProposalFromNonLeader(
-                block_hash,
-                self.leader.clone(),
-                pkey,
-            )
-            .into());
-        }
-
-        // Check that there are no pending blocks.
-        if let Some(pending_block_hash) = self.proposed_block_hash {
-            debug!(
-                "CoSi block proposal having a pending block: requested={}, pending={}",
-                block_hash, pending_block_hash
-            );
-            return Err(NodeError::OutOfOrderBlockProposal(block_hash).into());
-        }
-
-        // Validate proposed monetary block.
-        let base_header = proposal.block_header.base;
+        let block_hash = Hash::digest(block);
+        let base_header = block.base_header();
 
         // Check block hash uniqueness.
-        if let Some(_) = self.chain.block_by_hash(&block_hash) {
+        if let Some(_) = chain.block_by_hash(&block_hash) {
             return Err(NodeError::BlockAlreadyRegistered(block_hash).into());
         }
 
@@ -1385,7 +1378,7 @@ impl NodeService {
         }
 
         // Check previous hash.
-        let previous_hash = Hash::digest(self.chain.last_block());
+        let previous_hash = Hash::digest(chain.last_block());
         if previous_hash != base_header.previous {
             return Err(NodeError::OutOfOrderBlockHash(
                 block_hash,
@@ -1396,28 +1389,59 @@ impl NodeService {
         }
 
         // Check epoch.
-        if self.epoch != base_header.epoch {
+        if epoch != base_header.epoch {
             return Err(
-                NodeError::OutOfOrderBlockEpoch(block_hash, self.epoch, base_header.epoch).into(),
+                NodeError::OutOfOrderBlockEpoch(block_hash, epoch, base_header.epoch).into(),
             );
         }
 
+        match (block, proof) {
+            (Block::MonetaryBlock(block), BlockProof::MonetaryBlockProof(proof)) => {
+                NodeService::validate_monetary_block(
+                    mempool,
+                    chain,
+                    block_hash,
+                    &block,
+                    &proof.fee_output,
+                    &proof.gamma,
+                    &proof.tx_hashes,
+                )
+            }
+            (Block::KeyBlock(block), BlockProof::KeyBlockProof) => {
+                NodeService::validate_key_block(block_hash, block)
+            }
+            (_, _) => unreachable!(),
+        }
+    }
+
+    /// Process MonetaryBlockProposal CoSi message.
+    fn validate_monetary_block(
+        mempool: &Mempool,
+        chain: &Blockchain,
+        block_hash: Hash,
+        block: &MonetaryBlock,
+        fee_output: &Option<Output>,
+        gamma: &Fr,
+        tx_hashes: &Vec<Hash>,
+    ) -> Result<(), Error> {
         // Check transactions.
         let mut inputs = Vec::<Output>::new();
         let mut inputs_hashes = BTreeSet::<Hash>::new();
         let mut outputs = Vec::<Output>::new();
         let mut outputs_hashes = BTreeSet::<Hash>::new();
-        for tx in proposal.txs {
-            let tx_hash = Hash::digest(&tx.body);
+        for tx_hash in tx_hashes {
             debug!("Processing transaction: hash={}", &tx_hash);
 
             // Check that transaction is present in mempool.
-            if !self.mempool.contains_key(&tx_hash) {
-                return Err(NodeError::TransactionMissingInMempool(tx_hash).into());
+            let tx = mempool.get(&tx_hash);
+            if tx.is_none() {
+                return Err(NodeError::TransactionMissingInMempool(*tx_hash).into());
             }
 
+            let tx = tx.unwrap();
+
             // Check that transaction's inputs are exists.
-            let tx_inputs = self.chain.outputs_by_hashes(&tx.body.txins)?;
+            let tx_inputs = chain.outputs_by_hashes(&tx.body.txins)?;
 
             // Check transaction's signature, monetary balance, fee and others.
             tx.validate(&tx_inputs)?;
@@ -1434,7 +1458,7 @@ impl NodeService {
             // Check transaction's outputs.
             for tx_output in &tx.body.txouts {
                 let tx_output_hash = Hash::digest(tx_output);
-                if let Some(_) = self.chain.output_by_hash(&tx_output_hash) {
+                if let Some(_) = chain.output_by_hash(&tx_output_hash) {
                     return Err(BlockchainError::OutputHashCollision(tx_output_hash).into());
                 }
                 if !outputs_hashes.insert(tx_output_hash.clone()) {
@@ -1442,13 +1466,13 @@ impl NodeService {
                 }
             }
 
-            inputs.extend(tx_inputs);
-            outputs.extend(tx.body.txouts);
+            inputs.extend(tx_inputs.iter().cloned());
+            outputs.extend(tx.body.txouts.iter().cloned());
         }
 
-        if let Some(output_fee) = proposal.fee_output {
-            let tx_output_hash = Hash::digest(&output_fee);
-            if let Some(_) = self.chain.output_by_hash(&tx_output_hash) {
+        if let Some(output_fee) = fee_output {
+            let tx_output_hash = Hash::digest(output_fee);
+            if let Some(_) = chain.output_by_hash(&tx_output_hash) {
                 return Err(BlockchainError::OutputHashCollision(tx_output_hash).into());
             }
             if !outputs_hashes.insert(tx_output_hash.clone()) {
@@ -1463,251 +1487,51 @@ impl NodeService {
                 }
                 Output::DataOutput(_o) => {}
             };
-            outputs.push(output_fee);
+            outputs.push(output_fee.clone());
         }
 
         drop(outputs_hashes);
 
-        debug!("Creating monetary block");
+        debug!("Validating monetary block");
 
         let inputs_hashes: Vec<Hash> = inputs_hashes.into_iter().collect();
-        let gamma = proposal.block_header.gamma;
 
-        let block = MonetaryBlock::new(base_header, gamma, &inputs_hashes, &outputs);
-        let inputs = self
-            .chain
+        let base_header = block.header.base.clone();
+        let block = MonetaryBlock::new(base_header, gamma.clone(), &inputs_hashes, &outputs);
+        let inputs = chain
             .outputs_by_hashes(&block.body.inputs)
             .expect("check above");
         block.validate(&inputs)?;
 
+        // TODO: block hash doesn't cover inputs and outputs
         let block_hash2 = Hash::digest(&block);
 
         if block_hash != block_hash2 {
             return Err(NodeError::InvalidBlockHash(block_hash, block_hash2).into());
         }
 
-        debug!(
-            "CoSi block proposal is valid: block={}, from={}",
-            block_hash, pkey
-        );
+        debug!("Block proposal is valid: block={}", block_hash);
 
-        // Remember proposed block.
-        self.prepare_proposed_block(block_hash, None);
-
-        // Send ack.
-        let msg = ConsensusMessage::new_block_acceptance(
-            &self.keys.cosi_skey,
-            &self.keys.cosi_pkey,
-            block_hash,
-        );
-        self.send_consensus_message(msg)?;
         Ok(())
     }
 
     /// Process MonetaryBlockProposal CoSi message.
-    fn handle_key_block_proposal(
-        &mut self,
-        pkey: SecurePublicKey,
-        block_hash: Hash,
-        proposal: KeyBlockProposal,
-    ) -> Result<(), Error> {
-        // Ignore message send to myself.
-        if self.is_leader() {
-            return Ok(());
-        }
-
-        // Check that messages send by the current leader.
-        if pkey != self.leader {
-            debug!("CoSi block proposal from non-leader: block={}", &block_hash);
-            return Err(NodeError::BlockProposalFromNonLeader(
-                block_hash,
-                self.leader.clone(),
-                pkey,
-            )
-            .into());
-        }
-
-        // Check that there are no pending blocks.
-        if let Some(pending_block_hash) = self.proposed_block_hash {
-            debug!(
-                "CoSi block proposal having a pending block: requested={}, pending={}",
-                block_hash, pending_block_hash
-            );
-            return Err(NodeError::OutOfOrderBlockProposal(block_hash).into());
-        }
-
-        // Validate proposed key block.
-        let block_header = proposal.block_header;
-
-        // Check block hash uniqueness.
-        if let Some(_) = self.chain.block_by_hash(&block_hash) {
-            return Err(NodeError::BlockAlreadyRegistered(block_hash).into());
-        }
-
-        // Check block version.
-        if VERSION != block_header.base.version {
-            return Err(NodeError::InvalidBlockVersion(
-                block_hash,
-                VERSION,
-                block_header.base.version,
-            )
-            .into());
-        }
-
-        // Check previous hash.
-        let previous_hash = Hash::digest(self.chain.last_block());
-        if previous_hash != block_header.base.previous {
-            return Err(NodeError::OutOfOrderBlockHash(
-                block_hash,
-                previous_hash,
-                block_header.base.previous,
-            )
-            .into());
-        }
-
-        // Check epoch.
-        if self.epoch != block_header.base.epoch {
-            return Err(NodeError::OutOfOrderBlockEpoch(
-                block_hash,
-                self.epoch,
-                block_header.base.epoch,
-            )
-            .into());
-        }
-
-        debug!("Creating key block");
-
-        let block = KeyBlock::new_from_header(block_header);
+    fn validate_key_block(block_hash: Hash, block: &KeyBlock) -> Result<(), Error> {
         block.validate()?;
-
-        let block_hash2 = Hash::digest(&block);
-
-        if block_hash != block_hash2 {
-            return Err(NodeError::InvalidBlockHash(block_hash, block_hash2).into());
-        }
-
-        debug!(
-            "CoSi block proposal is valid: block={}, from={}",
-            block_hash, pkey
-        );
-
-        // Remember proposed block.
-        self.prepare_proposed_block(block_hash, None);
-
-        // Send ack.
-        let msg = ConsensusMessage::new_block_acceptance(
-            &self.keys.cosi_skey,
-            &self.keys.cosi_pkey,
-            block_hash,
-        );
-        self.send_consensus_message(msg)?;
+        debug!("Key block proposal is valid: block={}", block_hash);
         Ok(())
-    }
-
-    /// Process BlockAcceptance CoSi message.
-    fn handle_block_acceptance(
-        &mut self,
-        pkey: SecurePublicKey,
-        sig: SecureSignature,
-        block_hash: Hash,
-    ) -> Result<(), Error> {
-        // This message is only actual on leader.
-        if !self.is_leader() {
-            return Ok(());
-        }
-        assert!(self.witnesses.contains(&pkey), "message from witness");
-
-        debug!(
-            "CoSi blo1ck acceptance: block={}, from={}",
-            &block_hash, pkey
-        );
-        match self.proposed_block_hash {
-            Some(proposed_block_hash) if proposed_block_hash == block_hash => {
-                self.sign_proposed_block(&proposed_block_hash, pkey, sig)?;
-            }
-            _ => {
-                return Err(NodeError::OutOfOrderBlockAcceptance(block_hash).into());
-            }
-        }
-        Ok(())
-    }
-
-    ///
-    /// Prepare proposed block and initialize CoSi state.
-    ///
-    fn prepare_proposed_block(&mut self, block_hash: Hash, block: Option<Block>) {
-        debug!("Prepared proposed block: block={}", &block_hash);
-        self.proposed_block_hash = Some(block_hash);
-        self.proposed_block = block;
-        self.consensus_deadline = Instant::now() + Duration::new(CONSENSUS_TIMEOUT, 0);
-        self.signatures.clear();
-    }
-
-    ///
-    /// Sign proposed block.
-    ///
-    fn sign_proposed_block(
-        &mut self,
-        block_hash: &Hash,
-        pkey: SecurePublicKey,
-        sig: SecureSignature,
-    ) -> Result<(), Error> {
-        debug!("Got signature: block={}, from={}", block_hash, &pkey);
-        assert_eq!(&self.proposed_block_hash.unwrap(), block_hash);
-        // Sic: double-hash of block is used for signature.
-        self.signatures.insert(pkey, sig);
-        self.handle_consensus_timer()?; // wake up consensus
-        Ok(())
-    }
-
-    ///
-    /// Discard proposed block and reset CoSi state.
-    ///
-    fn discard_proposed_block(&mut self) {
-        debug!(
-            "Discarded proposed block: block={}",
-            self.proposed_block_hash.unwrap()
-        );
-        self.proposed_block = None;
-        self.proposed_block_hash = None;
-        self.consensus_deadline = *INSTANT_INFINITY;
-        self.signatures.clear();
     }
 
     ///
     /// Commit sealed block into blockchain and send it to the network.
     /// NOTE: commit must never fail. Please don't use Result<(), Error> here.
     ///
-    fn commit_proposed_block(&mut self) {
-        let block = self.proposed_block.take().unwrap();
-        let block_hash = self.proposed_block_hash.take().unwrap();
-        assert_eq!(Hash::digest(&block), block_hash);
-        assert!(self.has_supermajority());
-        self.consensus_deadline = *INSTANT_INFINITY;
-
-        debug!("Creating BLS multi-signature: block={}", &block_hash);
-
-        // Create multi-signature.
-        let (multisig, multisigmap) = create_multi_signature(&self.witnesses, &self.signatures);
-        self.signatures.clear();
-
-        // Sic: double-hash of block is used for signature.
-        let block_hash_hash = Hash::digest(&block_hash);
-        if !check_multi_signature(
-            &block_hash_hash,
-            &multisig,
-            &multisigmap,
-            &self.witnesses,
-            &self.leader,
-        ) {
-            panic!("Invalid block multisignature");
-        }
-
-        debug!("BLS multi-signature is valid: block={}", block_hash);
-
-        // TODO: implement proper handling of mempool.
-        self.mempool.clear();
-
+    fn commit_proposed_block(
+        &mut self,
+        block: Block,
+        multisig: SecureSignature,
+        multisigmap: BitVector,
+    ) {
         match block {
             Block::KeyBlock(mut key_block) => {
                 key_block.header.base.multisig = multisig;
@@ -1729,6 +1553,8 @@ impl NodeService {
                     .chain
                     .register_monetary_block(monetary_block)
                     .expect("block is validated before");
+                // TODO: implement proper handling of mempool.
+                self.mempool.clear();
                 self.on_monetary_block_registered(&monetary_block2, &pruned);
                 self.send_sealed_block(Block::MonetaryBlock(monetary_block2))
                     .expect("failed to send sealed monetary block");
@@ -1767,7 +1593,7 @@ impl Future for NodeService {
                         NodeMessage::SealedBlockRequest(msg) => {
                             self.handle_sealed_block_request(msg)
                         }
-                        NodeMessage::ConsensusTimer(_instant) => self.handle_consensus_timer(),
+                        NodeMessage::ConsensusTimer(_now) => self.handle_consensus_timer(),
                     };
                     if let Err(e) = result {
                         error!("Error: {}", e);
@@ -1783,6 +1609,7 @@ impl Future for NodeService {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use stegos_crypto::pbc::secure::sign_hash as secure_sign_hash;
 
     #[test]
     pub fn init() {
@@ -1802,7 +1629,7 @@ pub mod tests {
         assert_eq!(node.mempool.len(), 0);
         assert_eq!(node.epoch, 1);
         assert_ne!(node.leader, keys.cosi_pkey);
-        assert!(node.witnesses.is_empty());
+        assert!(node.validators.is_empty());
 
         let amount: i64 = 3_000_000;
         let genesis = genesis(&[keys.clone()], amount);
@@ -1814,8 +1641,25 @@ pub mod tests {
         assert_eq!(node.mempool.len(), 0);
         assert_eq!(node.epoch, 2);
         assert_eq!(node.leader, keys.cosi_pkey);
-        assert_eq!(node.witnesses.len(), 1);
-        assert_eq!(node.witnesses.iter().next().unwrap(), &node.leader);
+        assert_eq!(node.validators.len(), 1);
+        assert_eq!(node.validators.keys().next().unwrap(), &node.leader);
+    }
+
+    fn simulate_consensus(node: &mut NodeService) {
+        let (block, _proof) = NodeService::process_mempool(
+            &mut node.mempool,
+            &mut node.chain,
+            node.epoch,
+            &node.keys.wallet_skey,
+            &node.keys.wallet_pkey,
+        )
+        .unwrap();
+
+        let block_hash = Hash::digest(&block);
+        let multisig = secure_sign_hash(&block_hash, &node.keys.cosi_skey);
+        let mut multisigmap = BitVector::new(1);
+        multisigmap.insert(0);
+        node.commit_proposed_block(block, multisig, multisigmap);
     }
 
     #[test]
@@ -1862,7 +1706,7 @@ pub mod tests {
         node.handle_payment_request(&keys.wallet_pkey, total - MONETARY_FEE)
             .unwrap();
         assert_eq!(node.mempool.len(), 1);
-        node.process_mempool().unwrap();
+        simulate_consensus(&mut node);
         assert_eq!(node.mempool.len(), 0);
         assert_eq!(node.balance, total); // fee is returned back
         assert_eq!(node.unspent.len(), 2);
@@ -1884,7 +1728,7 @@ pub mod tests {
         // Payment with a change.
         node.handle_payment_request(&keys.wallet_pkey, 100).unwrap();
         assert_eq!(node.mempool.len(), 1);
-        node.process_mempool().unwrap();
+        simulate_consensus(&mut node);
         assert_eq!(node.mempool.len(), 0);
         assert_eq!(node.balance, total); // fee is returned back
         assert_eq!(node.unspent.len(), 3);
@@ -1938,7 +1782,7 @@ pub mod tests {
         // Change money for the next test.
         node.handle_payment_request(&keys.wallet_pkey, data_fee)
             .unwrap();
-        node.process_mempool().unwrap();
+        simulate_consensus(&mut node);
         assert_eq!(node.mempool.len(), 0);
         assert_eq!(node.balance, total); // fee is returned back
         assert_eq!(node.unspent.len(), 3);
@@ -1966,7 +1810,7 @@ pub mod tests {
         node.handle_message_request(&keys.wallet_pkey, ttl, data)
             .unwrap();
         assert_eq!(node.mempool.len(), 1);
-        node.process_mempool().unwrap();
+        simulate_consensus(&mut node);
         assert_eq!(node.mempool.len(), 1); // mempool contains "ack" for data
         assert_eq!(node.balance, total); // fee is returned back
         assert_eq!(node.chain.blocks().len(), block_count + 1);
@@ -1992,7 +1836,7 @@ pub mod tests {
         // Spent data transaction.
         let unspent_len = node.chain.unspent().len();
         assert_eq!(node.mempool.len(), 1);
-        node.process_mempool().unwrap();
+        simulate_consensus(&mut node);
         assert_eq!(node.mempool.len(), 0);
         assert_eq!(node.chain.unspent().len(), unspent_len - 1);
         assert_eq!(node.chain.blocks().len(), block_count + 1);
@@ -2005,7 +1849,7 @@ pub mod tests {
         node.handle_message_request(&keys.wallet_pkey, ttl, data)
             .unwrap();
         assert_eq!(node.mempool.len(), 1);
-        node.process_mempool().unwrap();
+        simulate_consensus(&mut node);
         assert_eq!(node.mempool.len(), 1); // mempool contains "ack" for data
         assert_eq!(node.balance, total); // fee is returned back
         assert_eq!(node.chain.blocks().len(), block_count + 1);
@@ -2027,7 +1871,7 @@ pub mod tests {
         // Spent data a transaction.
         let unspent_len = node.chain.unspent().len();
         assert_eq!(node.mempool.len(), 1);
-        node.process_mempool().unwrap();
+        simulate_consensus(&mut node);
         assert_eq!(node.mempool.len(), 0);
         assert_eq!(node.chain.unspent().len(), unspent_len - 1);
         assert_eq!(node.chain.blocks().len(), block_count + 1);

@@ -556,6 +556,29 @@ impl NodeService {
         Ok(())
     }
 
+    fn validate_fork(&mut self, block: &Block, pkey: &SecurePublicKey) -> Result<(), Error> {
+        // For both blocks, our fork resolution algorithm
+        // should decide which block on the same height we should accept.
+        match block {
+            // TODO: How check is keyblock a valid fork?
+            // We can accept any keyblock if we on bootstraping phase.
+            Block::KeyBlock(_key_block) => {}
+            Block::MonetaryBlock(_monetary_block) => {
+                // For monetary block, consensus is stable, and we can just check leader.
+                // Check that message is signed by current leader.
+                if *pkey != self.leader {
+                    return Err(NodeError::SealedBlockFromNonLeader(
+                        Hash::digest(block),
+                        self.leader.clone(),
+                        *pkey,
+                    )
+                    .into());
+                }
+            }
+        };
+        Ok(())
+    }
+
     /// Handle incoming blocks received from network.
     fn handle_sealed_block_request(&mut self, msg: Vec<u8>) -> Result<(), Error> {
         let msg: protos::node::SealedBlockMessage = protobuf::parse_from_bytes(&msg)?;
@@ -572,15 +595,7 @@ impl NodeService {
             self.chain.height()
         );
 
-        // Check that message is signed by current leader.
-        if msg.pkey != self.leader {
-            return Err(NodeError::SealedBlockFromNonLeader(
-                block_hash,
-                self.leader.clone(),
-                msg.pkey,
-            )
-            .into());
-        }
+        self.validate_fork(&block, &msg.pkey)?;
 
         // Check that block is not registered yet.
         if let Some(_) = self.chain.block_by_hash(&block_hash) {
@@ -632,7 +647,6 @@ impl NodeService {
                 }
             }
         };
-        let block_hash = Hash::digest(&block);
         match block {
             Block::KeyBlock(key_block) => self.handle_sealed_key_block_request(key_block)?,
             Block::MonetaryBlock(monetary_block) => {

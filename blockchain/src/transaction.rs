@@ -102,7 +102,7 @@ impl Transaction {
         assert!(inputs.len() > 0 || outputs.len() > 0);
 
         //
-        // Compute S_eff = N * S_M + \sum{\delta_i} + \sum{\gamma_i} - \sum{gamma_j},
+        // Compute S_eff = N * S_M + \sum{\delta_i * gamma_i} + \sum{\gamma_i} - \sum{gamma_j},
         // where i in txins, j in txouts
         //
 
@@ -122,7 +122,7 @@ impl Transaction {
             txins.push(hash);
 
             tx_gamma += gamma;
-            eff_skey += delta;
+            eff_skey += delta * gamma;
             eff_skey += gamma;
         }
         drop(txins_set);

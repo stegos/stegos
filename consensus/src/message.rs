@@ -64,6 +64,8 @@ impl<Request: Hashable, Proof: Hashable> Hashable for ConsensusMessageBody<Reque
 pub struct ConsensusMessage<Request, Proof> {
     /// Current height.
     pub height: u64,
+    /// Current epoch.
+    pub epoch: u64,
     /// Hash of proposed request.
     pub request_hash: Hash,
     /// Message Body.
@@ -90,6 +92,7 @@ impl<Request: Hashable, Proof: Hashable> ConsensusMessage<Request, Proof> {
     ///
     pub fn new(
         height: u64,
+        epoch: u64,
         request_hash: Hash,
         skey: &SecureSecretKey,
         pkey: &SecurePublicKey,
@@ -97,12 +100,14 @@ impl<Request: Hashable, Proof: Hashable> ConsensusMessage<Request, Proof> {
     ) -> ConsensusMessage<Request, Proof> {
         let mut hasher = Hasher::new();
         height.hash(&mut hasher);
+        epoch.hash(&mut hasher);
         request_hash.hash(&mut hasher);
         body.hash(&mut hasher);
         let hash = hasher.result();
         let sig = secure_sign_hash(&hash, skey);
         ConsensusMessage {
             height,
+            epoch,
             request_hash,
             body,
             pkey: pkey.clone(),
@@ -116,6 +121,7 @@ impl<Request: Hashable, Proof: Hashable> ConsensusMessage<Request, Proof> {
     pub fn validate(&self) -> Result<(), ConsensusError> {
         let mut hasher = Hasher::new();
         self.height.hash(&mut hasher);
+        self.epoch.hash(&mut hasher);
         self.request_hash.hash(&mut hasher);
         self.body.hash(&mut hasher);
         let hash = hasher.result();
@@ -130,6 +136,7 @@ impl<Request: Hashable, Proof: Hashable> ConsensusMessage<Request, Proof> {
 impl<Request: Hashable, Proof: Hashable> Hashable for ConsensusMessage<Request, Proof> {
     fn hash(&self, state: &mut Hasher) {
         self.height.hash(state);
+        self.epoch.hash(state);
         self.request_hash.hash(state);
         self.body.hash(state);
         self.pkey.hash(state);

@@ -168,10 +168,11 @@ message ConsensusMessageBody {
 
 message ConsensusMessage {
     uint64 height = 1;
-    Hash request_hash = 2;
-    ConsensusMessageBody body = 3;
-    SecurePublicKey pkey = 4;
-    SecureSignature sig = 5;
+    uint64 epoch = 2;
+    Hash request_hash = 3;
+    ConsensusMessageBody body = 4;
+    SecurePublicKey pkey = 5;
+    SecureSignature sig = 6;
 }
 
 message SealedBlockMessage {

@@ -73,6 +73,8 @@ pub struct Consensus<Request, Proof> {
     state: ConsensusState,
     /// Identifier of current session.
     height: u64,
+    /// Current epoch number.
+    epoch: u64,
     /// Proposed request.
     request: Option<Request>,
     /// A proof need to validate request.
@@ -101,6 +103,7 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
     ///
     pub fn new(
         height: u64,
+        epoch: u64,
         skey: SecureSecretKey,
         pkey: SecurePublicKey,
         leader: SecurePublicKey,
@@ -122,6 +125,7 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
             validators,
             state,
             height,
+            epoch,
             request,
             proof,
             prevotes: prevote_accepts,
@@ -169,7 +173,14 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
             &request_hash
         );
         let body = ConsensusMessageBody::Proposal { request, proof };
-        let msg = ConsensusMessage::new(self.height, request_hash, &self.skey, &self.pkey, body);
+        let msg = ConsensusMessage::new(
+            self.height,
+            self.epoch,
+            request_hash,
+            &self.skey,
+            &self.pkey,
+            body,
+        );
         self.outbox.push(msg.clone());
         self.feed_message(msg).expect("message is valid");
     }
@@ -194,7 +205,14 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
             &request_hash
         );
         let body = ConsensusMessageBody::Prevote {};
-        let msg = ConsensusMessage::new(self.height, request_hash, &self.skey, &self.pkey, body);
+        let msg = ConsensusMessage::new(
+            self.height,
+            self.epoch,
+            request_hash,
+            &self.skey,
+            &self.pkey,
+            body,
+        );
         self.outbox.push(msg.clone());
         self.feed_message(msg).expect("message is valid");
     }
@@ -219,7 +237,14 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
         );
         let request_hash_sig = secure_sign_hash(&request_hash, &self.skey);
         let body = ConsensusMessageBody::Precommit { request_hash_sig };
-        let msg = ConsensusMessage::new(self.height, request_hash, &self.skey, &self.pkey, body);
+        let msg = ConsensusMessage::new(
+            self.height,
+            self.epoch,
+            request_hash,
+            &self.skey,
+            &self.pkey,
+            body,
+        );
         self.outbox.push(msg.clone());
         self.feed_message(msg).expect("message is valid");
     }
@@ -517,6 +542,13 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
     ///
     pub fn leader(&self) -> SecurePublicKey {
         self.leader
+    }
+
+    ///
+    /// Returns number of current consensus epoch.
+    ///
+    pub fn epoch(&self) -> u64 {
+        self.epoch
     }
 
     ///

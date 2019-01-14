@@ -279,6 +279,11 @@ struct NodeService {
     /// And allow to change validators in case of epoch change.
     vrf_system: TicketsSystem,
 
+    /// A queue of consensus message from the future epoch.
+    // TODO: Add orphan SealedBlock to the queue.
+    // TODO: Resolve unknown blocks using requests-responses.
+    future_consensus_messages: Vec<Vec<u8>>,
+
     //
     // Consensus
     //
@@ -326,6 +331,7 @@ impl NodeService {
 
         let leader: SecurePublicKey = G2::generator().into(); // some fake key
         let validators = BTreeMap::<SecurePublicKey, i64>::new();
+        let future_consensus_messages = Vec::new();
         //TODO: Calculate viewchange on node restart by timeout since last known block.
         let vrf_system = TicketsSystem::new(WITNESSES_MAX, 0, 0, keys.cosi_pkey, keys.cosi_skey);
 
@@ -355,10 +361,10 @@ impl NodeService {
         streams.push(Box::new(consensus_rx));
 
         // VRF Requests
-        let consensus_rx = broker
+        let ticket_system_rx = broker
             .subscribe(&tickets::VRF_TICKETS_TOPIC.to_string())?
             .map(|m| NodeMessage::VRFMessage(m));
-        streams.push(Box::new(consensus_rx));
+        streams.push(Box::new(ticket_system_rx));
 
         // Block Requests
         let block_rx = broker
@@ -383,6 +389,7 @@ impl NodeService {
         let events = select_all(streams);
 
         let service = NodeService {
+            future_consensus_messages,
             sealed_block_num,
             vrf_system,
             chain,
@@ -644,6 +651,7 @@ impl NodeService {
             // Check previous hash.
             let previous_hash = Hash::digest(self.chain.last_block());
             if previous_hash != header.previous {
+                //TODO: Add orphan blocks to the self.future_consensus_messages;
                 error!("Invalid or out-of-order block received: hash={}, expected_previous={}, got_previous={}",
                        &block_hash, &previous_hash, &header.previous);
                 return Ok(());
@@ -822,6 +830,7 @@ impl NodeService {
             // Promote to Validator role
             let consensus = BlockConsensus::new(
                 self.chain.height() as u64,
+                self.epoch,
                 self.keys.cosi_skey.clone(),
                 self.keys.cosi_pkey.clone(),
                 self.leader.clone(),
@@ -835,11 +844,14 @@ impl NodeService {
             }
 
             self.consensus = Some(consensus);
+            self.on_new_consensus();
         } else {
             // Resign from Validator role.
             info!("I'm regular node");
             self.consensus = None;
         }
+        // clear consensus messages when new epoch starts
+        self.future_consensus_messages.clear();
 
         Ok(())
     }
@@ -1299,17 +1311,18 @@ impl NodeService {
         if self.validators.contains_key(&self.keys.cosi_pkey) {
             let consensus = BlockConsensus::new(
                 self.chain.height() as u64,
+                self.epoch + 1,
                 self.keys.cosi_skey.clone(),
                 self.keys.cosi_pkey.clone(),
                 self.leader.clone(),
                 self.validators.clone(),
             );
             self.consensus = Some(consensus);
-
             let consensus = self.consensus.as_ref().unwrap();
             if consensus.is_leader() {
                 self.on_create_new_epoch()?;
             }
+            self.on_new_consensus();
         } else {
             self.consensus = None;
         }
@@ -1319,6 +1332,18 @@ impl NodeService {
     //----------------------------------------------------------------------------------------------
     // Consensus
     //----------------------------------------------------------------------------------------------
+
+    ///
+    /// Try to process messages with new consensus.
+    ///
+    fn on_new_consensus(&mut self) {
+        let outbox = std::mem::replace(&mut self.future_consensus_messages, Vec::new());
+        for msg in outbox {
+            if let Err(e) = self.handle_consensus_message(msg) {
+                debug!("Error in future consensus message: {}", e);
+            }
+        }
+    }
 
     ///
     /// Try to commit a new block if consensus is in an appropriate state.
@@ -1340,15 +1365,18 @@ impl NodeService {
     ///
     /// Handles incoming consensus requests received from network.
     ///
-    fn handle_consensus_message(&mut self, msg: Vec<u8>) -> Result<(), Error> {
-        if self.consensus.is_none() {
+    fn handle_consensus_message(&mut self, buffer: Vec<u8>) -> Result<(), Error> {
+        // Process incoming message.
+        let msg: protos::node::ConsensusMessage = protobuf::parse_from_bytes(&buffer)?;
+        let msg = BlockConsensusMessage::from_proto(&msg)?;
+
+        // if our consensus state is outdated, push message to future_consensus_messages.
+        // TODO: remove queue and use request-responses to get message from other nodes.
+        if self.consensus.is_none() || self.consensus.as_ref().unwrap().epoch() == msg.epoch + 1 {
+            self.future_consensus_messages.push(buffer);
             return Ok(());
         }
-
-        // Process incoming message.
         let consensus = self.consensus.as_mut().unwrap();
-        let msg: protos::node::ConsensusMessage = protobuf::parse_from_bytes(&msg)?;
-        let msg = BlockConsensusMessage::from_proto(&msg)?;
         consensus.feed_message(msg)?;
         // Flush pending messages.
         NodeService::flush_consensus_messages(consensus, &mut self.broker)?;
@@ -1751,7 +1779,7 @@ pub mod tests {
         assert_eq!(node.balance, 0);
         assert_eq!(node.unspent.len(), 0);
         assert_eq!(node.mempool.len(), 0);
-        assert_eq!(node.epoch, 1);
+        assert_eq!(node.epoch, 0);
         assert_ne!(node.leader, keys.cosi_pkey);
         assert!(node.validators.is_empty());
 

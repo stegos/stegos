@@ -319,7 +319,7 @@ impl NodeService {
         let chain = Blockchain::new();
         let balance = 0i64;
         let unspent = HashMap::new();
-        let epoch: u64 = 1;
+        let epoch: u64 = 0;
         let sealed_block_num = 0;
 
         let stakes = BTreeMap::new();
@@ -522,6 +522,38 @@ impl NodeService {
 
     /// Handle incoming KeyBlock
     fn handle_sealed_key_block_request(&mut self, key_block: KeyBlock) -> Result<(), Error> {
+        // TODO: How check is keyblock a valid fork?
+        // We can accept any keyblock if we on bootstraping phase.
+        let block_hash = Hash::digest(&key_block);
+        // Check epoch.
+        if self.epoch + 1 != key_block.header.base.epoch {
+            error!(
+                "Invalid or out-of-order block received: hash={}, expected_epoch={}, got_epoch={}",
+                &block_hash, self.epoch, key_block.header.base.epoch
+            );
+            return Ok(());
+        }
+        let leader = key_block.header.leader.clone();
+        let mut validators = BTreeMap::<SecurePublicKey, i64>::new();
+        for validator in &key_block.header.witnesses {
+            let stake = self
+                .stakes
+                .get(validator)
+                .expect("all staked nodes have stake");
+            validators.insert(validator.clone(), *stake);
+        }
+
+        // Check BLS multi-signature.
+        if !check_multi_signature(
+            &block_hash,
+            &key_block.header.base.multisig,
+            &key_block.header.base.multisigmap,
+            &validators,
+            &leader,
+        ) {
+            return Err(NodeError::InvalidBlockSignature(block_hash).into());
+        }
+
         key_block.validate()?;
         let key_block2 = key_block.clone();
         self.chain.register_key_block(key_block)?;
@@ -529,12 +561,39 @@ impl NodeService {
         Ok(())
     }
 
-    /// Handle incoming KeyBlock
+    /// Handle incoming MonetaryBlock
     fn handle_sealed_monetary_block_request(
         &mut self,
         monetary_block: MonetaryBlock,
+        pkey: &SecurePublicKey,
     ) -> Result<(), Error> {
         let block_hash = Hash::digest(&monetary_block);
+        // For monetary block, consensus is stable, and we can just check leader.
+        // Check that message is signed by current leader.
+        if *pkey != self.leader {
+            return Err(
+                NodeError::SealedBlockFromNonLeader(block_hash, self.leader.clone(), *pkey).into(),
+            );
+        }
+        // Check epoch.
+        if self.epoch != monetary_block.header.base.epoch {
+            error!(
+                "Invalid or out-of-order block received: hash={}, expected_epoch={}, got_epoch={}",
+                &block_hash, self.epoch, monetary_block.header.base.epoch
+            );
+            return Ok(());
+        }
+
+        // Check BLS multi-signature.
+        if !check_multi_signature(
+            &block_hash,
+            &monetary_block.header.base.multisig,
+            &monetary_block.header.base.multisigmap,
+            &self.validators,
+            &self.leader,
+        ) {
+            return Err(NodeError::InvalidBlockSignature(block_hash).into());
+        }
 
         debug!("Validating block monetary balance: hash={}..", &block_hash);
 
@@ -556,29 +615,6 @@ impl NodeService {
         Ok(())
     }
 
-    fn validate_fork(&mut self, block: &Block, pkey: &SecurePublicKey) -> Result<(), Error> {
-        // For both blocks, our fork resolution algorithm
-        // should decide which block on the same height we should accept.
-        match block {
-            // TODO: How check is keyblock a valid fork?
-            // We can accept any keyblock if we on bootstraping phase.
-            Block::KeyBlock(_key_block) => {}
-            Block::MonetaryBlock(_monetary_block) => {
-                // For monetary block, consensus is stable, and we can just check leader.
-                // Check that message is signed by current leader.
-                if *pkey != self.leader {
-                    return Err(NodeError::SealedBlockFromNonLeader(
-                        Hash::digest(block),
-                        self.leader.clone(),
-                        *pkey,
-                    )
-                    .into());
-                }
-            }
-        };
-        Ok(())
-    }
-
     /// Handle incoming blocks received from network.
     fn handle_sealed_block_request(&mut self, msg: Vec<u8>) -> Result<(), Error> {
         let msg: protos::node::SealedBlockMessage = protobuf::parse_from_bytes(&msg)?;
@@ -594,8 +630,6 @@ impl NodeService {
             &block_hash,
             self.chain.height()
         );
-
-        self.validate_fork(&block, &msg.pkey)?;
 
         // Check that block is not registered yet.
         if let Some(_) = self.chain.block_by_hash(&block_hash) {
@@ -613,24 +647,6 @@ impl NodeService {
                 error!("Invalid or out-of-order block received: hash={}, expected_previous={}, got_previous={}",
                        &block_hash, &previous_hash, &header.previous);
                 return Ok(());
-            }
-
-            // Check epoch.
-            if self.epoch != header.epoch {
-                error!("Invalid or out-of-order block received: hash={}, expected_epoch={}, got_epoch={}",
-                       &block_hash, self.epoch, header.epoch);
-                return Ok(());
-            }
-
-            // Check BLS multi-signature.
-            if !check_multi_signature(
-                &block_hash,
-                &header.multisig,
-                &header.multisigmap,
-                &self.validators,
-                &self.leader,
-            ) {
-                return Err(NodeError::InvalidBlockSignature(block_hash).into());
             }
         }
 
@@ -650,7 +666,7 @@ impl NodeService {
         match block {
             Block::KeyBlock(key_block) => self.handle_sealed_key_block_request(key_block)?,
             Block::MonetaryBlock(monetary_block) => {
-                self.handle_sealed_monetary_block_request(monetary_block)?
+                self.handle_sealed_monetary_block_request(monetary_block, &msg.pkey)?
             }
         };
         self.on_next_block(block_hash)
@@ -716,12 +732,12 @@ impl NodeService {
         let last = self.chain.last_block();
         let previous = Hash::digest(last);
         let timestamp = Utc::now().timestamp() as u64;
-        let epoch = self.epoch;
+        let epoch = self.epoch + 1;
 
         let base = BaseBlockHeader::new(VERSION, previous, epoch, timestamp);
         debug!(
             "Creating a new epoch proposal: {}, with leader = {}",
-            epoch + 1,
+            epoch,
             consensus.leader()
         );
 
@@ -787,6 +803,7 @@ impl NodeService {
 
     /// Called when a new key block is registered.
     fn on_key_block_registered(&mut self, key_block: &KeyBlock) -> Result<(), Error> {
+        assert_eq!(self.epoch + 1, key_block.header.base.epoch);
         self.epoch = self.epoch + 1;
 
         self.sealed_block_num = 0;
@@ -1463,15 +1480,17 @@ impl NodeService {
             .into());
         }
 
-        // Check epoch.
-        if epoch != base_header.epoch {
-            return Err(
-                NodeError::OutOfOrderBlockEpoch(block_hash, epoch, base_header.epoch).into(),
-            );
-        }
-
         match (block, proof) {
             (Block::MonetaryBlock(block), BlockProof::MonetaryBlockProof(proof)) => {
+                // We can validate witnesses of MonetaryBlock only in current epoch.
+                if epoch != base_header.epoch {
+                    return Err(NodeError::OutOfOrderBlockEpoch(
+                        block_hash,
+                        epoch,
+                        base_header.epoch,
+                    )
+                    .into());
+                }
                 NodeService::validate_monetary_block(
                     mempool,
                     chain,
@@ -1483,6 +1502,15 @@ impl NodeService {
                 )
             }
             (Block::KeyBlock(block), BlockProof::KeyBlockProof) => {
+                // Epoch of the KeyBlock should be next our epoch.
+                if epoch + 1 != base_header.epoch {
+                    return Err(NodeError::OutOfOrderBlockEpoch(
+                        block_hash,
+                        epoch,
+                        base_header.epoch,
+                    )
+                    .into());
+                }
                 NodeService::validate_key_block(consensus, block_hash, block)
             }
             (_, _) => unreachable!(),

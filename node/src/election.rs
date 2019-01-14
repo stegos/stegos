@@ -22,12 +22,20 @@
 //! Leader election and group formation algorithms and tests.
 
 use log::error;
-use stegos_crypto::hash::{Hash, Hashable, Hasher};
+use stegos_crypto::hash::Hash;
 
 use rand::{Rng, SeedableRng};
 use rand_isaac::IsaacRng;
 
 use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
+
+pub type StakersGroup = Vec<(SecurePublicKey, i64)>;
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct ConsensusGroup {
+    pub witnesses: StakersGroup,
+    pub leader: SecurePublicKey,
+}
 
 /// Choose random validator, based on `random_number`.
 /// Accepts list of validators stakes consistently sorted on all participants,
@@ -68,17 +76,16 @@ where
 ///
 /// Returns Group of validators, and new leader
 pub fn choose_validators(
-    mut stakers: Vec<(SecurePublicKey, i64)>,
-    round: u32,
+    mut stakers: StakersGroup,
     random: Hash,
     max_group_size: usize,
-) -> (Vec<(SecurePublicKey, i64)>, SecurePublicKey) {
+) -> ConsensusGroup {
     assert!(!stakers.is_empty());
     assert!(max_group_size > 0);
-    let mut group = Vec::new();
+    let mut witnesses = Vec::new();
 
     let mut seed = [0u8; 32];
-    seed.copy_from_slice(mix(random, round).base_vector());
+    seed.copy_from_slice(random.base_vector());
 
     let mut rng = IsaacRng::from_seed(seed);
 
@@ -87,23 +94,16 @@ pub fn choose_validators(
         let index = select_winner(stakers.iter().map(|(_k, stake)| stake), rand).unwrap();
 
         let winner = stakers.remove(index);
-        group.push(winner);
+        witnesses.push(winner);
 
         if stakers.is_empty() {
             break;
         }
     }
     let rand = rng.gen::<i64>();
-    let leader = select_winner(group.iter().map(|(_k, stake)| stake), rand).unwrap();
-    let leader = group[leader].0;
-    (group, leader)
-}
-
-fn mix(random: Hash, round: u32) -> Hash {
-    let mut hasher = Hasher::new();
-    random.hash(&mut hasher);
-    round.hash(&mut hasher);
-    hasher.result()
+    let leader = select_winner(witnesses.iter().map(|(_k, stake)| stake), rand).unwrap();
+    let leader = witnesses[leader].0;
+    ConsensusGroup { witnesses, leader }
 }
 
 #[cfg(test)]
@@ -214,13 +214,17 @@ mod test {
         let keys = vec![(key, 1), (key, 2), (key, 3), (key, 4)];
         for i in 1..5 {
             assert_eq!(
-                choose_validators(keys.clone(), 0, Hash::zero(), i).0.len(),
+                choose_validators(keys.clone(), Hash::zero(), i)
+                    .witnesses
+                    .len(),
                 i
             )
         }
         for i in 5..10 {
             assert_eq!(
-                choose_validators(keys.clone(), 0, Hash::zero(), i).0.len(),
+                choose_validators(keys.clone(), Hash::zero(), i)
+                    .witnesses
+                    .len(),
                 4
             )
         }

@@ -1019,10 +1019,17 @@ pub fn ibe_decrypt(pack: &EncryptedPacket, skey: &SecretKey) -> Option<Vec<u8>> 
 
 // -------------------------------------------------------
 // VRF's provable, unforgeable, deterministic randomness
-
+#[derive(Eq, PartialEq, Debug, Clone, Copy)]
 pub struct VRF {
     pub rand: Hash, // hash digest of generated randomness in pairing field
     pub proof: G1,  // proof on randomness
+}
+
+impl Hashable for VRF {
+    fn hash(&self, state: &mut Hasher) {
+        self.rand.hash(state);
+        self.proof.hash(state);
+    }
 }
 
 pub fn make_VRF(skey: &SecretKey, seed: &Hash) -> VRF {

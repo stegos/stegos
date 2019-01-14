@@ -3,6 +3,7 @@ name = "stegos"
 version = "0.1.0"
 authors = ["Stegos AG <info@stegos.cc>"]
 edition = "2018"
+build = "build.rs"
 
 [[bin]]
 name = "stegos"
@@ -58,6 +59,7 @@ regex = "1.0"
 simple_logger = "1.0"
 
 [build-dependencies]
+vergen = "3.0.4"
 
 [profile.dev]
 opt-level = 2

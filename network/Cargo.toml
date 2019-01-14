@@ -26,7 +26,7 @@ tokio-io = "0.1"
 tokio-stdin = "0.1"
 unsigned-varint = "0.2"
 
-libp2p = { git = "https://github.com/libp2p/rust-libp2p.git", rev = "e179951c74cb0c8916d27329f2dfd78917dddfb2" }
+libp2p = { git = "https://github.com/stegos/rust-libp2p", rev = "stegos-0.0.1" }
 
 [dev-dependencies]
 simple_logger = "1.0"

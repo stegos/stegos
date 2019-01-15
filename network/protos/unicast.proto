@@ -1,0 +1,8 @@
+syntax = "proto2";
+package unicast.pb;
+
+message Message {
+    required bytes from = 1;
+    required bytes to = 2;
+    required bytes data = 3;
+}

@@ -305,7 +305,9 @@ impl Network {
             }
         });
 
-        let (broker_service, broker) = broker::Broker::new(floodsub_rx, floodsub_ctl.clone());
+        let local_pkey = inner.read().public_key.clone();
+        let (broker_service, broker) =
+            broker::Broker::new(local_pkey, floodsub_rx, floodsub_ctl.clone());
         {
             let mut inner = inner.write();
             inner.dial_ncp_tx = Some(dial_ncp_tx);

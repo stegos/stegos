@@ -33,6 +33,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::thread;
 use stegos_crypto::curve1174::cpt::PublicKey;
+use stegos_crypto::pbc::secure;
 use stegos_network::{Broker, Network};
 use stegos_node::*;
 
@@ -69,6 +70,8 @@ lazy_static! {
     static ref MSG_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<msg>.+)$").unwrap();
     /// Regex to parse "publish" command.
     static ref PUBLISH_COMMAND_RE: Regex = Regex::new(r"\s*(?P<topic>[0-9A-Za-z]+)\s+(?P<msg>.*)$").unwrap();
+    /// Regex to parse "send" command.
+    static ref SEND_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<msg>.+)$").unwrap();
 }
 
 /// Console (stdin) service.
@@ -159,6 +162,7 @@ impl ConsoleService {
         println!("Usage:");
         println!("pay PUBLICKEY AMOUNT - send money");
         println!("msg PUBLICKEY MESSAGE - send data");
+        // println!("send PUBLICKEY MESSAGE - send unicast message");
         // println!("connect MULTIADDR - connect to a node");
         // println!("publish TOPIC MESSAGE - publish a message");
         println!("");
@@ -192,6 +196,13 @@ impl ConsoleService {
         println!("");
     }
 
+    fn help_send() {
+        println!("Usage: send PUBLICKEY MESSAGE");
+        println!(" - PUBLICKEY recipient's public key in HEX format");
+        println!(" - MESSAGE some message");
+        println!("");
+    }
+
     /// Called when line is typed on standard input.
     fn on_input(&mut self, msg: &str) {
         if msg.starts_with("connect ") {
@@ -222,6 +233,25 @@ impl ConsoleService {
             info!("Publish: topic='{}', msg='{}'", topic, msg);
             self.broker
                 .publish(&topic, msg.as_bytes().to_vec())
+                .unwrap();
+        } else if msg.starts_with("send ") {
+            let caps = match SEND_COMMAND_RE.captures(&msg[5..]) {
+                Some(c) => c,
+                None => return ConsoleService::help_publish(),
+            };
+
+            let recipient = caps.name("recipient").unwrap().as_str();
+            let recipient = match secure::PublicKey::try_from_hex(recipient) {
+                Ok(r) => r,
+                Err(e) => {
+                    println!("Invalid public key '{}': {}", recipient, e);
+                    return ConsoleService::help_send();
+                }
+            };
+            let msg = caps.name("msg").unwrap().as_str();
+            info!("Send: to='{}', msg='{}'", recipient.into_hex(), msg);
+            self.broker
+                .send(recipient, msg.as_bytes().to_vec())
                 .unwrap();
         } else if msg.starts_with("pay ") {
             let caps = match PAY_COMMAND_RE.captures(&msg[4..]) {

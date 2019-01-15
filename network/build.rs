@@ -43,4 +43,16 @@ fn main() {
         })
         .expect("protoc");
     }
+
+    if check_for_regen("protos/unicast.proto", "src/node/broker/unicast.rs") {
+        protobuf_codegen_pure::run(Args {
+            out_dir: &"src/node/broker",
+            input: &["protos/unicast.proto"],
+            includes: &["protos"],
+            customize: Customize {
+                ..Default::default()
+            },
+        })
+        .expect("protoc");
+    }
 }

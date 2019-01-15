@@ -5,27 +5,29 @@ refresh_rate = "30 seconds"
 [appenders.console]
 kind = "console"
 [appenders.console.encoder]
-pattern = "{d(%Y-%m-%d %H:%M:%S)(local)} [{t}] {h({l})} {M}:{m}{n}"
+pattern = "{d(%Y-%m-%d %H:%M:%S)(local)} {h({l})} [{M}] {m}{n}"
 [[appenders.console.filters]]
 kind = "threshold"
-level = "debug"
+level = "trace"
 
 [appenders.file]
 kind = "file"
 path = "logs/error.log"
 [appenders.file.encoder]
-pattern = "{d} [{t}] {l} {M}:{m}{n}"
+pattern = "{d} [{t}] {l} [{M}] {m}{n}"
 
 [root]
-level = "warn"
+level = "info"
 appenders = ["console"]
 
+[loggers."stegos_node"]
+level = "info"
+
+[loggers."stegos_blockchain"]
+level = "info"
+
 [loggers."stegos_network"]
+level = "info"
+
+[loggers."stegos_consensus"]
 level = "debug"
-# appenders = ["console"]
-
-# [loggers."stegos::network"]
-# level = "error"
-# appenders = ["file"]
-# additive = false
-

@@ -101,10 +101,10 @@ impl KeyChain {
             fs::write(skey_path, pem::encode(&skey_pem))?;
             fs::write(pkey_path, pem::encode(&pkey_pem))?;
 
-            info!("Generated {}", pkey);
+            debug!("Generated {}", pkey);
             (skey, pkey, sig)
         } else {
-            info!(
+            debug!(
                 "Loading existing key pair from {} and {}...",
                 cfg.private_key, cfg.public_key
             );
@@ -135,11 +135,13 @@ impl KeyChain {
             let hkey = Hash::digest(&pkey);
             let sig = cpt::sign_hash(&hkey, &skey);
 
-            info!("Loaded {}", pkey);
             (skey, pkey, sig)
         };
 
         let (cosi_skey, cosi_pkey, cosi_sig) = wallet_to_cosi_keys(&wallet_skey);
+
+        info!("My wallet key: {}", &wallet_pkey.into_hex());
+        debug!("My secure key: {}", &cosi_pkey.into_hex());
 
         let keychain = KeyChain {
             wallet_skey,

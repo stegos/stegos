@@ -109,9 +109,9 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
         leader: SecurePublicKey,
         validators: BTreeMap<SecurePublicKey, i64>,
     ) -> Self {
-        debug!("=> Propose: height={:?}", height);
         assert!(validators.contains_key(&pkey));
         let state = ConsensusState::Propose;
+        debug!("New => {}({})", state.name(), height);
         let prevote_accepts: BTreeMap<SecurePublicKey, SecureSignature> = BTreeMap::new();
         let precommit_accepts: BTreeMap<SecurePublicKey, SecureSignature> = BTreeMap::new();
         let request = None;
@@ -145,7 +145,7 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
     pub fn reset(&mut self, height: u64) {
         self.height = height;
         self.state = ConsensusState::Propose;
-        debug!("=> {}({})", self.state.name(), height);
+        debug!("New => {}({})", self.state.name(), height);
         self.prevotes.clear();
         self.precommits.clear();
         self.request = None;
@@ -424,12 +424,13 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
                 assert!(self.request.is_none());
                 assert!(self.proof.is_none());
                 debug!(
-                    "{}({}) => {}({}): request={:?}",
-                    &msg.request_hash,
+                    "{}({}) => {}({}): received a new proposal hash={}, from={}",
                     self.state.name(),
                     self.height,
                     ConsensusState::Prevote.name(),
-                    self.height
+                    self.height,
+                    &msg.request_hash,
+                    &msg.pkey
                 );
                 self.state = ConsensusState::Prevote;
                 self.request = Some(request);

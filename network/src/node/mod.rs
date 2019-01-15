@@ -359,7 +359,7 @@ fn floodsub_handler(
         let peer_id = inner.remote_connections.get(&addr).unwrap().peer_id.clone();
         inner.floodsub_connections.insert(peer_id);
     }
-    info!("Successfully negotiated floodsub protocol with: {}", addr);
+    debug!("Successfully negotiated floodsub protocol with: {}", addr);
     // Request peers list from remote
     //
     {

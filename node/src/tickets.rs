@@ -51,11 +51,11 @@ pub const VRF_TICKETS_TOPIC: &'static str = "vrf_tickets";
 pub const TIMER: Duration = Duration::from_secs(5);
 
 /// If no new block was provided between this interval - we should start vrf system.
-const RESTART_CONSENSUS_TIMER: Duration = Duration::from_secs(60);
+const RESTART_CONSENSUS_TIMER: Duration = Duration::from_secs(600);
 
 /// How long we should collect the tickets.
 /// This value represent initial timeout, at view_change timeout exponentialy increasing.
-const COLLECTING_TICKETS_TIMER: Duration = Duration::from_secs(60);
+const COLLECTING_TICKETS_TIMER: Duration = Duration::from_secs(600);
 
 /// Minumum count of tickets that we need to collect.
 const LOWER_TICKETS_COUNT: usize = 3;

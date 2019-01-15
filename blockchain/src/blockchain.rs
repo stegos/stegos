@@ -159,12 +159,15 @@ impl Blockchain {
         // Alright, starting transaction.
         // -----------------------------------------------------------------------------------------
 
-        info!("Register Key Block: hash={}", this_hash);
+        info!(
+            "Registered key block: height={}, hash={}",
+            self.blocks.len() + 1,
+            this_hash
+        );
 
         if let Some(_) = self.block_by_hash.insert(this_hash.clone(), block_id) {
             panic!("Block hash collision");
         }
-
         self.blocks.push(Block::KeyBlock(block));
 
         Ok(())
@@ -233,13 +236,19 @@ impl Blockchain {
         // -----------------------------------------------------------------------------------------
         // Alright, starting transaction.
         // -----------------------------------------------------------------------------------------
-        info!("Register Monetary Block: hash={}", this_hash);
+        info!(
+            "Registered monetary block: height={}, hash={}, inputs={}, outputs={}",
+            self.blocks.len() + 1,
+            this_hash,
+            block.body.inputs.len(),
+            outputs_pathes.len()
+        );
 
         let mut pruned: Vec<Output> = Vec::with_capacity(block.body.inputs.len());
 
         // Remove spent outputs.
         for output_hash in &block.body.inputs {
-            info!("Prune UXTO: hash={}", output_hash);
+            info!("Pruned UXTO: hash={}", output_hash);
             // Remove from the set of unspent outputs.
             if let Some(OutputKey { block_id, path }) = self.output_by_hash.remove(output_hash) {
                 let block = &mut self.blocks[block_id];
@@ -260,7 +269,7 @@ impl Blockchain {
 
         // Register create unspent outputs.
         for (hash, path) in outputs_pathes {
-            info!("Register UXTO: hash={}", &hash);
+            info!("Registered UXTO: hash={}", &hash);
 
             // Create the new unspent output
             let output_key = OutputKey { block_id, path };

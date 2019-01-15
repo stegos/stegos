@@ -24,7 +24,6 @@ mod consts;
 
 use atty;
 use clap;
-use clap::crate_version;
 use clap::{App, Arg, ArgMatches};
 use dirs;
 use log::*;
@@ -94,8 +93,16 @@ fn initialize_logger(cfg: &Config) -> Result<LogHandle, LogError> {
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
-    let args = App::new("Stegos")
-        .version(crate_version!())
+    let name = "Stegos";
+    let version = format!(
+        "{} ({} {})",
+        env!("VERGEN_SEMVER"),
+        env!("VERGEN_SHA_SHORT"),
+        env!("VERGEN_BUILD_DATE")
+    );
+
+    let args = App::new(name)
+        .version(&version[..])
         .author("Stegos AG <info@stegos.cc>")
         .about("Stegos is a completely anonymous and confidential cryptocurrency.")
         .arg(
@@ -113,6 +120,9 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     // Initialize logger
     initialize_logger(&cfg)?;
+
+    // Print welcome message
+    info!("{} {}", name, version);
 
     // Initialize keychain
     let keychain = KeyChain::new(&cfg.keychain)?;

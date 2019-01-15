@@ -841,6 +841,7 @@ impl IntoProto<node::ConsensusMessage> for ConsensusMessage<Block, BlockProof> {
     fn into_proto(&self) -> node::ConsensusMessage {
         let mut proto = node::ConsensusMessage::new();
         proto.set_height(self.height);
+        proto.set_epoch(self.epoch);
         proto.set_request_hash(self.request_hash.into_proto());
         proto.set_body(self.body.into_proto());
         proto.set_sig(self.sig.into_proto());
@@ -852,12 +853,14 @@ impl IntoProto<node::ConsensusMessage> for ConsensusMessage<Block, BlockProof> {
 impl FromProto<node::ConsensusMessage> for ConsensusMessage<Block, BlockProof> {
     fn from_proto(proto: &node::ConsensusMessage) -> Result<Self, Error> {
         let height = proto.get_height();
+        let epoch = proto.get_epoch();
         let request_hash = Hash::from_proto(proto.get_request_hash())?;
         let body = ConsensusMessageBody::from_proto(proto.get_body())?;
         let sig = SecureSignature::from_proto(proto.get_sig())?;
         let pkey = SecurePublicKey::from_proto(proto.get_pkey())?;
         Ok(ConsensusMessage {
             height,
+            epoch,
             request_hash,
             body,
             sig,
@@ -1061,13 +1064,13 @@ mod tests {
         let (cosi_skey, cosi_pkey, cosi_sig) = make_secure_random_keys();
 
         let body = ConsensusMessageBody::Prevote {};
-        let msg = ConsensusMessage::new(1, Hash::digest(&1u64), &cosi_skey, &cosi_pkey, body);
+        let msg = ConsensusMessage::new(1, 1, Hash::digest(&1u64), &cosi_skey, &cosi_pkey, body);
         roundtrip(&msg);
 
         let body = ConsensusMessageBody::Precommit {
             request_hash_sig: cosi_sig,
         };
-        let msg = ConsensusMessage::new(1, Hash::digest(&1u64), &cosi_skey, &cosi_pkey, body);
+        let msg = ConsensusMessage::new(1, 1, Hash::digest(&1u64), &cosi_skey, &cosi_pkey, body);
         roundtrip(&msg);
     }
 

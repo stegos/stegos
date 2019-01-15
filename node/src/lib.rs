@@ -279,6 +279,11 @@ struct NodeService {
     /// And allow to change validators in case of epoch change.
     vrf_system: TicketsSystem,
 
+    /// A queue of consensus message from the future epoch.
+    // TODO: Add orphan SealedBlock to the queue.
+    // TODO: Resolve unknown blocks using requests-responses.
+    future_consensus_messages: Vec<Vec<u8>>,
+
     //
     // Consensus
     //
@@ -319,13 +324,14 @@ impl NodeService {
         let chain = Blockchain::new();
         let balance = 0i64;
         let unspent = HashMap::new();
-        let epoch: u64 = 1;
+        let epoch: u64 = 0;
         let sealed_block_num = 0;
 
         let stakes = BTreeMap::new();
 
         let leader: SecurePublicKey = G2::generator().into(); // some fake key
         let validators = BTreeMap::<SecurePublicKey, i64>::new();
+        let future_consensus_messages = Vec::new();
         //TODO: Calculate viewchange on node restart by timeout since last known block.
         let vrf_system = TicketsSystem::new(WITNESSES_MAX, 0, 0, keys.cosi_pkey, keys.cosi_skey);
 
@@ -355,10 +361,10 @@ impl NodeService {
         streams.push(Box::new(consensus_rx));
 
         // VRF Requests
-        let consensus_rx = broker
+        let ticket_system_rx = broker
             .subscribe(&tickets::VRF_TICKETS_TOPIC.to_string())?
             .map(|m| NodeMessage::VRFMessage(m));
-        streams.push(Box::new(consensus_rx));
+        streams.push(Box::new(ticket_system_rx));
 
         // Block Requests
         let block_rx = broker
@@ -383,6 +389,7 @@ impl NodeService {
         let events = select_all(streams);
 
         let service = NodeService {
+            future_consensus_messages,
             sealed_block_num,
             vrf_system,
             chain,
@@ -522,6 +529,38 @@ impl NodeService {
 
     /// Handle incoming KeyBlock
     fn handle_sealed_key_block_request(&mut self, key_block: KeyBlock) -> Result<(), Error> {
+        // TODO: How check is keyblock a valid fork?
+        // We can accept any keyblock if we on bootstraping phase.
+        let block_hash = Hash::digest(&key_block);
+        // Check epoch.
+        if self.epoch + 1 != key_block.header.base.epoch {
+            error!(
+                "Invalid or out-of-order block received: hash={}, expected_epoch={}, got_epoch={}",
+                &block_hash, self.epoch, key_block.header.base.epoch
+            );
+            return Ok(());
+        }
+        let leader = key_block.header.leader.clone();
+        let mut validators = BTreeMap::<SecurePublicKey, i64>::new();
+        for validator in &key_block.header.witnesses {
+            let stake = self
+                .stakes
+                .get(validator)
+                .expect("all staked nodes have stake");
+            validators.insert(validator.clone(), *stake);
+        }
+
+        // Check BLS multi-signature.
+        if !check_multi_signature(
+            &block_hash,
+            &key_block.header.base.multisig,
+            &key_block.header.base.multisigmap,
+            &validators,
+            &leader,
+        ) {
+            return Err(NodeError::InvalidBlockSignature(block_hash).into());
+        }
+
         key_block.validate()?;
         let key_block2 = key_block.clone();
         self.chain.register_key_block(key_block)?;
@@ -529,12 +568,39 @@ impl NodeService {
         Ok(())
     }
 
-    /// Handle incoming KeyBlock
+    /// Handle incoming MonetaryBlock
     fn handle_sealed_monetary_block_request(
         &mut self,
         monetary_block: MonetaryBlock,
+        pkey: &SecurePublicKey,
     ) -> Result<(), Error> {
         let block_hash = Hash::digest(&monetary_block);
+        // For monetary block, consensus is stable, and we can just check leader.
+        // Check that message is signed by current leader.
+        if *pkey != self.leader {
+            return Err(
+                NodeError::SealedBlockFromNonLeader(block_hash, self.leader.clone(), *pkey).into(),
+            );
+        }
+        // Check epoch.
+        if self.epoch != monetary_block.header.base.epoch {
+            error!(
+                "Invalid or out-of-order block received: hash={}, expected_epoch={}, got_epoch={}",
+                &block_hash, self.epoch, monetary_block.header.base.epoch
+            );
+            return Ok(());
+        }
+
+        // Check BLS multi-signature.
+        if !check_multi_signature(
+            &block_hash,
+            &monetary_block.header.base.multisig,
+            &monetary_block.header.base.multisigmap,
+            &self.validators,
+            &self.leader,
+        ) {
+            return Err(NodeError::InvalidBlockSignature(block_hash).into());
+        }
 
         debug!("Validating block monetary balance: hash={}..", &block_hash);
 
@@ -556,29 +622,6 @@ impl NodeService {
         Ok(())
     }
 
-    fn validate_fork(&mut self, block: &Block, pkey: &SecurePublicKey) -> Result<(), Error> {
-        // For both blocks, our fork resolution algorithm
-        // should decide which block on the same height we should accept.
-        match block {
-            // TODO: How check is keyblock a valid fork?
-            // We can accept any keyblock if we on bootstraping phase.
-            Block::KeyBlock(_key_block) => {}
-            Block::MonetaryBlock(_monetary_block) => {
-                // For monetary block, consensus is stable, and we can just check leader.
-                // Check that message is signed by current leader.
-                if *pkey != self.leader {
-                    return Err(NodeError::SealedBlockFromNonLeader(
-                        Hash::digest(block),
-                        self.leader.clone(),
-                        *pkey,
-                    )
-                    .into());
-                }
-            }
-        };
-        Ok(())
-    }
-
     /// Handle incoming blocks received from network.
     fn handle_sealed_block_request(&mut self, msg: Vec<u8>) -> Result<(), Error> {
         let msg: protos::node::SealedBlockMessage = protobuf::parse_from_bytes(&msg)?;
@@ -595,8 +638,6 @@ impl NodeService {
             self.chain.height()
         );
 
-        self.validate_fork(&block, &msg.pkey)?;
-
         // Check that block is not registered yet.
         if let Some(_) = self.chain.block_by_hash(&block_hash) {
             info!("Block is already registered: hash={}", &block_hash);
@@ -610,27 +651,10 @@ impl NodeService {
             // Check previous hash.
             let previous_hash = Hash::digest(self.chain.last_block());
             if previous_hash != header.previous {
+                //TODO: Add orphan blocks to the self.future_consensus_messages;
                 error!("Invalid or out-of-order block received: hash={}, expected_previous={}, got_previous={}",
                        &block_hash, &previous_hash, &header.previous);
                 return Ok(());
-            }
-
-            // Check epoch.
-            if self.epoch != header.epoch {
-                error!("Invalid or out-of-order block received: hash={}, expected_epoch={}, got_epoch={}",
-                       &block_hash, self.epoch, header.epoch);
-                return Ok(());
-            }
-
-            // Check BLS multi-signature.
-            if !check_multi_signature(
-                &block_hash,
-                &header.multisig,
-                &header.multisigmap,
-                &self.validators,
-                &self.leader,
-            ) {
-                return Err(NodeError::InvalidBlockSignature(block_hash).into());
             }
         }
 
@@ -650,7 +674,7 @@ impl NodeService {
         match block {
             Block::KeyBlock(key_block) => self.handle_sealed_key_block_request(key_block)?,
             Block::MonetaryBlock(monetary_block) => {
-                self.handle_sealed_monetary_block_request(monetary_block)?
+                self.handle_sealed_monetary_block_request(monetary_block, &msg.pkey)?
             }
         };
         self.on_next_block(block_hash)
@@ -716,12 +740,12 @@ impl NodeService {
         let last = self.chain.last_block();
         let previous = Hash::digest(last);
         let timestamp = Utc::now().timestamp() as u64;
-        let epoch = self.epoch;
+        let epoch = self.epoch + 1;
 
         let base = BaseBlockHeader::new(VERSION, previous, epoch, timestamp);
         debug!(
             "Creating a new epoch proposal: {}, with leader = {}",
-            epoch + 1,
+            epoch,
             consensus.leader()
         );
 
@@ -787,6 +811,7 @@ impl NodeService {
 
     /// Called when a new key block is registered.
     fn on_key_block_registered(&mut self, key_block: &KeyBlock) -> Result<(), Error> {
+        assert_eq!(self.epoch + 1, key_block.header.base.epoch);
         self.epoch = self.epoch + 1;
 
         self.sealed_block_num = 0;
@@ -805,6 +830,7 @@ impl NodeService {
             // Promote to Validator role
             let consensus = BlockConsensus::new(
                 self.chain.height() as u64,
+                self.epoch,
                 self.keys.cosi_skey.clone(),
                 self.keys.cosi_pkey.clone(),
                 self.leader.clone(),
@@ -818,11 +844,14 @@ impl NodeService {
             }
 
             self.consensus = Some(consensus);
+            self.on_new_consensus();
         } else {
             // Resign from Validator role.
             info!("I'm regular node");
             self.consensus = None;
         }
+        // clear consensus messages when new epoch starts
+        self.future_consensus_messages.clear();
 
         Ok(())
     }
@@ -1282,17 +1311,18 @@ impl NodeService {
         if self.validators.contains_key(&self.keys.cosi_pkey) {
             let consensus = BlockConsensus::new(
                 self.chain.height() as u64,
+                self.epoch + 1,
                 self.keys.cosi_skey.clone(),
                 self.keys.cosi_pkey.clone(),
                 self.leader.clone(),
                 self.validators.clone(),
             );
             self.consensus = Some(consensus);
-
             let consensus = self.consensus.as_ref().unwrap();
             if consensus.is_leader() {
                 self.on_create_new_epoch()?;
             }
+            self.on_new_consensus();
         } else {
             self.consensus = None;
         }
@@ -1302,6 +1332,18 @@ impl NodeService {
     //----------------------------------------------------------------------------------------------
     // Consensus
     //----------------------------------------------------------------------------------------------
+
+    ///
+    /// Try to process messages with new consensus.
+    ///
+    fn on_new_consensus(&mut self) {
+        let outbox = std::mem::replace(&mut self.future_consensus_messages, Vec::new());
+        for msg in outbox {
+            if let Err(e) = self.handle_consensus_message(msg) {
+                debug!("Error in future consensus message: {}", e);
+            }
+        }
+    }
 
     ///
     /// Try to commit a new block if consensus is in an appropriate state.
@@ -1323,15 +1365,18 @@ impl NodeService {
     ///
     /// Handles incoming consensus requests received from network.
     ///
-    fn handle_consensus_message(&mut self, msg: Vec<u8>) -> Result<(), Error> {
-        if self.consensus.is_none() {
+    fn handle_consensus_message(&mut self, buffer: Vec<u8>) -> Result<(), Error> {
+        // Process incoming message.
+        let msg: protos::node::ConsensusMessage = protobuf::parse_from_bytes(&buffer)?;
+        let msg = BlockConsensusMessage::from_proto(&msg)?;
+
+        // if our consensus state is outdated, push message to future_consensus_messages.
+        // TODO: remove queue and use request-responses to get message from other nodes.
+        if self.consensus.is_none() || self.consensus.as_ref().unwrap().epoch() == msg.epoch + 1 {
+            self.future_consensus_messages.push(buffer);
             return Ok(());
         }
-
-        // Process incoming message.
         let consensus = self.consensus.as_mut().unwrap();
-        let msg: protos::node::ConsensusMessage = protobuf::parse_from_bytes(&msg)?;
-        let msg = BlockConsensusMessage::from_proto(&msg)?;
         consensus.feed_message(msg)?;
         // Flush pending messages.
         NodeService::flush_consensus_messages(consensus, &mut self.broker)?;
@@ -1463,15 +1508,17 @@ impl NodeService {
             .into());
         }
 
-        // Check epoch.
-        if epoch != base_header.epoch {
-            return Err(
-                NodeError::OutOfOrderBlockEpoch(block_hash, epoch, base_header.epoch).into(),
-            );
-        }
-
         match (block, proof) {
             (Block::MonetaryBlock(block), BlockProof::MonetaryBlockProof(proof)) => {
+                // We can validate witnesses of MonetaryBlock only in current epoch.
+                if epoch != base_header.epoch {
+                    return Err(NodeError::OutOfOrderBlockEpoch(
+                        block_hash,
+                        epoch,
+                        base_header.epoch,
+                    )
+                    .into());
+                }
                 NodeService::validate_monetary_block(
                     mempool,
                     chain,
@@ -1483,6 +1530,15 @@ impl NodeService {
                 )
             }
             (Block::KeyBlock(block), BlockProof::KeyBlockProof) => {
+                // Epoch of the KeyBlock should be next our epoch.
+                if epoch + 1 != base_header.epoch {
+                    return Err(NodeError::OutOfOrderBlockEpoch(
+                        block_hash,
+                        epoch,
+                        base_header.epoch,
+                    )
+                    .into());
+                }
                 NodeService::validate_key_block(consensus, block_hash, block)
             }
             (_, _) => unreachable!(),
@@ -1723,7 +1779,7 @@ pub mod tests {
         assert_eq!(node.balance, 0);
         assert_eq!(node.unspent.len(), 0);
         assert_eq!(node.mempool.len(), 0);
-        assert_eq!(node.epoch, 1);
+        assert_eq!(node.epoch, 0);
         assert_ne!(node.leader, keys.cosi_pkey);
         assert!(node.validators.is_empty());
 
@@ -1735,7 +1791,7 @@ pub mod tests {
         assert_eq!(node.balance, amount);
         assert_eq!(node.unspent.len(), 1);
         assert_eq!(node.mempool.len(), 0);
-        assert_eq!(node.epoch, 2);
+        assert_eq!(node.epoch, 1);
         assert_eq!(node.leader, keys.cosi_pkey);
         assert_eq!(node.validators.len(), 1);
         assert_eq!(node.validators.keys().next().unwrap(), &node.leader);

@@ -179,7 +179,7 @@ impl TicketsSystem {
                 .on_view_change(last_block_hash)
                 .map(Feedback::BroadcastTicket),
             State::CollectingTickets(ref state, start)
-                if state.tickets_count() > LOWER_TICKETS_COUNT
+                if state.tickets_count() >= LOWER_TICKETS_COUNT
                     && time.duration_since(start) > COLLECTING_TICKETS_TIMER * self.view_change =>
             {
                 self.on_collection_end(stakers).map(Feedback::ChangeGroup)

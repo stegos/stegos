@@ -69,4 +69,9 @@ fn main() {
     for ix in 0..33 {
         assert!(x[ix] == xx[ix], "Mismatch on wordlist conversion");
     }
+
+    let fval = fields::Fr::from(123);
+    let pwr = 9;
+    let ans = fval.expi(pwr);
+    println!("fval = {}, fval^{} = {}", fval, pwr, ans);
 }

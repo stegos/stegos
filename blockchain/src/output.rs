@@ -112,6 +112,7 @@ pub enum Output {
 fn cloak_key(
     sender_skey: &SecretKey,
     recipient_pkey: &PublicKey,
+    gamma: &Fr,
     timestamp: u64,
 ) -> Result<(PublicKey, Fr), CryptoError> {
     // h is the digest of the recipients actual public key mixed with a timestamp.
@@ -129,7 +130,14 @@ fn cloak_key(
 
     let pt = Pt::from(*recipient_pkey);
     let pt = ECp::decompress(pt)?;
-    let cloaked_pkey = PublicKey::from(pt + delta * (*G));
+    let cloaked_pt = {
+        if (*gamma) == Fr::zero() {
+            pt + delta * (*G)
+        } else {
+            pt + (*gamma) * delta * (*G)
+        }
+    };
+    let cloaked_pkey = PublicKey::from(cloaked_pt);
     Ok((cloaked_pkey, delta))
 }
 
@@ -141,11 +149,11 @@ impl MonetaryOutput {
         recipient_pkey: &PublicKey,
         amount: i64,
     ) -> Result<(Self, Fr), Error> {
-        // Clock recipient public key
-        let (cloaked_pkey, delta) = cloak_key(sender_skey, recipient_pkey, timestamp)?;
-
         // Create range proofs.
         let (proof, gamma) = make_range_proof(amount);
+
+        // Clock recipient public key
+        let (cloaked_pkey, delta) = cloak_key(sender_skey, recipient_pkey, &gamma, timestamp)?;
 
         // NOTE: real public key should be used to encrypt payload
         let payload = Self::encrypt_payload(delta, gamma, amount, recipient_pkey)?;
@@ -230,12 +238,12 @@ impl DataOutput {
         assert!(ttl > 0);
         assert!(data.len() > 0);
 
-        // Clock recipient public key
-        let (cloaked_pkey, delta) = cloak_key(sender_skey, recipient_pkey, timestamp)?;
-
         // Create pedersen commitment
         let (vcmt, gamma) = pedersen_commitment(0);
         let vcmt = vcmt.compress();
+
+        // Clock recipient public key
+        let (cloaked_pkey, delta) = cloak_key(sender_skey, recipient_pkey, &gamma, timestamp)?;
 
         // NOTE: real public key should be used to encrypt payload
         let payload = Self::encrypt_payload(delta, gamma, data, recipient_pkey)?;

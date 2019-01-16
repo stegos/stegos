@@ -365,6 +365,7 @@ impl fmt::Display for Output {
 
 impl Hashable for MonetaryOutput {
     fn hash(&self, state: &mut Hasher) {
+        "Monetary".hash(state);
         self.recipient.hash(state);
         self.proof.hash(state);
         self.payload.hash(state);
@@ -373,6 +374,7 @@ impl Hashable for MonetaryOutput {
 
 impl Hashable for DataOutput {
     fn hash(&self, state: &mut Hasher) {
+        "Data".hash(state);
         self.recipient.hash(state);
         self.vcmt.hash(state);
         self.ttl.hash(state);

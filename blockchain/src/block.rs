@@ -105,6 +105,7 @@ pub struct KeyBlockHeader {
 
 impl Hashable for KeyBlockHeader {
     fn hash(&self, state: &mut Hasher) {
+        "Key".hash(state);
         self.base.hash(state);
         self.leader.hash(state);
         for witness in self.witnesses.iter() {
@@ -132,6 +133,7 @@ pub struct MonetaryBlockHeader {
 
 impl Hashable for MonetaryBlockHeader {
     fn hash(&self, state: &mut Hasher) {
+        "Monetary".hash(state);
         self.base.hash(state);
         self.gamma.hash(state);
         self.inputs_range_hash.hash(state);
@@ -160,6 +162,7 @@ impl Eq for MonetaryBlockBody {}
 
 impl Hashable for MonetaryBlockBody {
     fn hash(&self, state: &mut Hasher) {
+        "Monetary".hash(state);
         let inputs_count: u64 = self.inputs.len() as u64;
         inputs_count.hash(state);
         for input in &self.inputs {

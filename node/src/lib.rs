@@ -181,6 +181,8 @@ const TX_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const CONSENSUS_TIMER: Duration = Duration::from_secs(30);
 /// Max count of sealed block in epoch.
 const SEALED_BLOCK_IN_EPOCH: usize = 5;
+/// Max difference in timestamps of leader and witnesses.
+const TIME_TO_RECEIVE_BLOCK: u64 = 10 * 60;
 
 type Mempool = LinkedHashMap<Hash, Transaction>;
 
@@ -257,6 +259,11 @@ pub enum NodeError {
     TransactionMissingInMempool(Hash),
     #[fail(display = "Transaction already exists in mempool: {}.", _0)]
     TransactionAlreadyExists(Hash),
+    #[fail(
+        display = "Found a block proposal with timestamp: {} that differ with our timestamp: {}.",
+        _0, _1
+    )]
+    UnsynchronizedBlock(u64, u64),
 }
 
 struct NodeService {
@@ -644,7 +651,6 @@ impl NodeService {
 
         {
             let header = block.base_header();
-
             // Check previous hash.
             let previous_hash = Hash::digest(self.chain.last_block());
             if previous_hash != header.previous {
@@ -1606,6 +1612,13 @@ impl NodeService {
                 base_header.previous,
             )
             .into());
+        }
+
+        let timestamp = Utc::now().timestamp() as u64;
+        if base_header.timestamp.saturating_sub(timestamp) > TIME_TO_RECEIVE_BLOCK
+            || timestamp.saturating_sub(base_header.timestamp) > TIME_TO_RECEIVE_BLOCK
+        {
+            return Err(NodeError::UnsynchronizedBlock(base_header.timestamp, timestamp).into());
         }
 
         match (block, proof) {

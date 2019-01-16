@@ -20,6 +20,8 @@ failure = "0.1"
 protobuf = "2.2"
 stegos_serialization = {path = "../serialization"}
 bitvector = "0.1"
+rayon = "1.0"
 
 [build-dependencies]
 stegos_serialization = {path = "../serialization"}
+cc = "1.0"

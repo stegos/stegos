@@ -188,28 +188,6 @@ impl U256 {
         }
     }
 
-    // modular exponentiation of self by small integer power
-    pub fn exp_mod(&mut self, expon: u64, modulo: &U256, inv: u64) {
-        let mut ebits = expon >> 1;
-        let mut x = *self;
-        let mut ans = {
-            if (expon & 1) != 0 {
-                *self
-            } else {
-                Self::one()
-            }
-        };
-        while ebits != 0 {
-            let tmp = x;
-            x.mul_mod(&tmp, modulo, inv);
-            if (ebits & 1) != 0 {
-                ans.mul_mod(&x, modulo, inv);
-            }
-            ebits >>= 1;
-        }
-        *self = ans;
-    }
-
     #[inline]
     pub fn is_even(&self) -> bool {
         self.0[0] & 1 == 0

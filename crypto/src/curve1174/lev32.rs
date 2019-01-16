@@ -23,11 +23,12 @@
 
 use super::*;
 use crate::CryptoError;
+use std::cmp::Ordering;
 
 // -----------------------------------------------------------------
 // type Lev32 represents a 256-bit bignum as a little-endian 32-byte vector
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Lev32(pub [u8; 32]);
 
 impl Lev32 {
@@ -86,5 +87,24 @@ impl Lev32 {
 impl fmt::Display for Lev32 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Lev32({})", self.nbr_str())
+    }
+}
+
+impl Ord for Lev32 {
+    fn cmp(&self, other: &Lev32) -> Ordering {
+        for (a, b) in self.0.iter().zip(other.0.iter()).rev() {
+            if *a < *b {
+                return Ordering::Less;
+            } else if *a > *b {
+                return Ordering::Greater;
+            }
+        }
+        Ordering::Equal
+    }
+}
+
+impl PartialOrd for Lev32 {
+    fn partial_cmp(&self, other: &Lev32) -> Option<Ordering> {
+        Some(Self::cmp(self, other))
     }
 }

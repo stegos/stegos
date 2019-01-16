@@ -31,9 +31,14 @@ use std::cmp::Ordering;
 
 pub fn hexstr_to_bev_u8(s: &str, x: &mut [u8]) -> Result<(), CryptoError> {
     // collect a big-endian vector of 8-bit values from a hex string.
-    let v = hex::decode(s)?;
+    let mut sx = String::from(s);
+    if (s.len() & 1) != 0 {
+        // we have an odd number of hex digits.
+        sx.insert(0, '0');
+    }
+    let v = hex::decode(sx)?;
     let nel = x.len();
-    if nel != v.len() {
+    if nel < v.len() {
         return Err(CryptoError::InvalidHexLength);
     }
     let mut ix = 0; // this seems dumb... isn't there a better way?
@@ -41,17 +46,33 @@ pub fn hexstr_to_bev_u8(s: &str, x: &mut [u8]) -> Result<(), CryptoError> {
         x[ix] = b;
         ix += 1;
     }
+    while ix < nel {
+        x[ix] = 0;
+        ix += 1;
+    }
     Ok(())
 }
 
 pub fn hexstr_to_lev_u8(s: &str, x: &mut [u8]) -> Result<bool, CryptoError> {
     // collect a little-endian vector of 8-bit values from a hex string.
-    let v = hex::decode(s)?;
+    let mut sx = String::from(s);
+    if (s.len() & 1) != 0 {
+        // we have an odd number of hex digits.
+        sx.insert(0, '0');
+    }
+    let v = hex::decode(sx)?;
     let nel = x.len();
-    if nel != v.len() {
+    if nel < v.len() {
         return Err(CryptoError::InvalidHexLength);
     }
-    let mut ix = nel; // this seems dumb... isn't there a better way?
+
+    let mut ix = nel;
+    // allow for shorter answer than room allotted for it.
+    // zero pad the MSB's
+    for _ in v.len()..nel {
+        ix -= 1;
+        x[ix] = 0;
+    }
     for b in v {
         ix -= 1;
         x[ix] = b;

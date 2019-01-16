@@ -70,8 +70,10 @@ fn main() {
         assert!(x[ix] == xx[ix], "Mismatch on wordlist conversion");
     }
 
+    /*
     let fval = fields::Fr::from(123);
     let pwr = 9;
     let ans = fval.expi(pwr);
     println!("fval = {}, fval^{} = {}", fval, pwr, ans);
+    */
 }

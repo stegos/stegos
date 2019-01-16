@@ -144,11 +144,21 @@ macro_rules! field_impl {
                 }
             }
 
+            /*
             pub fn expi(self, expon: u64) -> Self {
-                let mut tmp = self.scaled_bits();
-                U256::exp_mod(&mut tmp, expon, &(*$modulus), $inv);
-                $name::Scaled(tmp)
+                let mut tmp = Self::one();
+                let mut x = self;
+                let mut ebits = expon;
+                while ebits > 0 {
+                    if (ebits & 1) != 0 {
+                        tmp *= x;
+                    }
+                    ebits >>= 1;
+                    x *= x;
+                }
+                tmp
             }
+            */
 
             fn make_same_type(self, val: U256) -> Self {
                 match self {

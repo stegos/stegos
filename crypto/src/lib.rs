@@ -21,6 +21,7 @@
 
 pub mod bulletproofs;
 pub mod curve1174;
+pub mod dicemix;
 pub mod hash;
 pub mod keying;
 pub mod pbc;

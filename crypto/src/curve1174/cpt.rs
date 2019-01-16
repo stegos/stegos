@@ -30,6 +30,7 @@ use crypto::aes::KeySize::KeySize128;
 use crypto::aesni;
 use crypto::aessafe;
 use crypto::symmetriccipher::{BlockDecryptor, BlockEncryptor};
+use std::cmp::Ordering;
 use std::hash as stdhash;
 
 // ------------------------------------------------------------------------------------------
@@ -111,6 +112,18 @@ impl Hashable for Pt {
 impl From<ECp> for Pt {
     fn from(pt: ECp) -> Pt {
         pt.compress()
+    }
+}
+
+impl Ord for Pt {
+    fn cmp(&self, other: &Pt) -> Ordering {
+        Lev32(self.into_bytes()).cmp(&Lev32(other.into_bytes()))
+    }
+}
+
+impl PartialOrd for Pt {
+    fn partial_cmp(&self, other: &Pt) -> Option<Ordering> {
+        Some(Self::cmp(self, other))
     }
 }
 
@@ -256,6 +269,18 @@ impl From<SecretKey> for PublicKey {
     fn from(skey: SecretKey) -> Self {
         let pt = Fr::from(skey) * *G;
         Self::from(pt)
+    }
+}
+
+impl Ord for PublicKey {
+    fn cmp(&self, other: &PublicKey) -> Ordering {
+        Pt::from(*self).cmp(&Pt::from(*other))
+    }
+}
+
+impl PartialOrd for PublicKey {
+    fn partial_cmp(&self, other: &PublicKey) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 

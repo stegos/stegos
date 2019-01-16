@@ -28,7 +28,7 @@ use bitvector::BitVector;
 use failure::Error;
 use std::collections::BTreeSet;
 use std::collections::HashSet;
-use stegos_crypto::bulletproofs::validate_range_proof;
+use stegos_crypto::bulletproofs::{fee_a, validate_range_proof};
 use stegos_crypto::curve1174::cpt::Pt;
 use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
@@ -341,12 +341,17 @@ impl MonetaryBlock {
             if !txins_set.insert(*txin_hash) {
                 return Err(BlockchainError::DuplicateBlockInput(*txin_hash).into());
             }
-            let pedersen_commitment = match txin {
-                Output::MonetaryOutput(o) => o.proof.vcmt,
-                Output::DataOutput(o) => o.vcmt,
+            match txin {
+                Output::MonetaryOutput(o) => {
+                    pedersen_commitment_diff += Pt::decompress(o.proof.vcmt)?;
+                }
+                Output::DataOutput(o) => {
+                    pedersen_commitment_diff += Pt::decompress(o.vcmt)?;
+                }
+                Output::EscrowOutput(o) => {
+                    pedersen_commitment_diff += fee_a(o.amount);
+                }
             };
-            let pedersen_commitment: ECp = Pt::decompress(pedersen_commitment)?;
-            pedersen_commitment_diff += pedersen_commitment;
         }
         drop(txins_set);
 
@@ -357,18 +362,24 @@ impl MonetaryBlock {
             if !txouts_set.insert(txout_hash) {
                 return Err(BlockchainError::DuplicateBlockOutput(txout_hash).into());
             }
-            let pedersen_commitment = match **txout {
+            match **txout {
                 Output::MonetaryOutput(ref o) => {
                     // Check bulletproofs of created outputs
                     if !validate_range_proof(&o.proof) {
                         return Err(BlockchainError::InvalidBulletProof.into());
                     }
-                    o.proof.vcmt
+                    pedersen_commitment_diff -= Pt::decompress(o.proof.vcmt)?;
                 }
-                Output::DataOutput(ref o) => o.vcmt,
+                Output::DataOutput(ref o) => {
+                    pedersen_commitment_diff -= Pt::decompress(o.vcmt)?;
+                }
+                Output::EscrowOutput(ref o) => {
+                    if o.amount <= 0 {
+                        return Err(BlockchainError::InvalidStake.into());
+                    }
+                    pedersen_commitment_diff -= fee_a(o.amount);
+                }
             };
-            let pedersen_commitment: ECp = Pt::decompress(pedersen_commitment)?;
-            pedersen_commitment_diff -= pedersen_commitment;
         }
         drop(txouts_set);
 
@@ -605,6 +616,111 @@ pub mod tests {
             };
             block.body.outputs = bad_outputs;
             block.header.outputs_range_hash = bad_outputs_range_hash;
+        }
+    }
+
+    #[test]
+    fn create_validate_monetary_block_with_escrow() {
+        let (skey0, _pkey0, _sig0) = make_random_keys();
+        let (skey1, pkey1, _sig1) = make_random_keys();
+        let (_secure_skey1, secure_pkey1, _secure_sig1) = make_secure_random_keys();
+
+        let version: u64 = 1;
+        let epoch: u64 = 1;
+        let timestamp = Utc::now().timestamp() as u64;
+        let amount: i64 = 1_000_000;
+        let previous = Hash::digest(&"test".to_string());
+
+        //
+        // Escrow as an input.
+        //
+        {
+            let input = Output::new_escrow(timestamp, &skey0, &pkey1, &secure_pkey1, amount)
+                .expect("keys are valid");
+            let input_hashes = [Hash::digest(&input)];
+            let inputs = [input];
+            let inputs_gamma = Fr::zero();
+            let (output, outputs_gamma) =
+                Output::new_monetary(timestamp, &skey1, &pkey1, amount).expect("keys are valid");
+            let outputs = [output];
+            let gamma = inputs_gamma - outputs_gamma;
+
+            let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+            let block = MonetaryBlock::new(base, gamma, &input_hashes[..], &outputs[..]);
+            block.validate(&inputs).expect("block is valid");
+        }
+
+        //
+        // Escrow as an output.
+        //
+        {
+            let (input, inputs_gamma) =
+                Output::new_monetary(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
+            let input_hashes = [Hash::digest(&input)];
+            let inputs = [input];
+            let output = Output::new_escrow(timestamp, &skey1, &pkey1, &secure_pkey1, amount)
+                .expect("keys are valid");
+            let outputs_gamma = Fr::zero();
+            let outputs = [output];
+            let gamma = inputs_gamma - outputs_gamma;
+
+            let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+            let block = MonetaryBlock::new(base, gamma, &input_hashes[..], &outputs[..]);
+            block.validate(&inputs).expect("block is valid");
+        }
+
+        //
+        // Invalid monetary balance.
+        //
+        {
+            let (input, inputs_gamma) =
+                Output::new_monetary(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
+            let input_hashes = [Hash::digest(&input)];
+            let inputs = [input];
+            let mut output = EscrowOutput::new(timestamp, &skey1, &pkey1, &secure_pkey1, amount)
+                .expect("keys are valid");
+            output.amount = amount - 1;
+            let output = Output::EscrowOutput(output);
+            let outputs_gamma = Fr::zero();
+            let outputs = [output];
+            let gamma = inputs_gamma - outputs_gamma;
+
+            let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+            let block = MonetaryBlock::new(base, gamma, &input_hashes[..], &outputs[..]);
+            match block.validate(&inputs) {
+                Err(e) => match e.downcast::<BlockchainError>().unwrap() {
+                    BlockchainError::InvalidBlockBalance => {}
+                    _ => panic!(),
+                },
+                _ => panic!(),
+            };
+        }
+
+        //
+        // Invalid stake.
+        //
+        {
+            let (input, inputs_gamma) =
+                Output::new_monetary(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
+            let input_hashes = [Hash::digest(&input)];
+            let inputs = [input];
+            let mut output = EscrowOutput::new(timestamp, &skey1, &pkey1, &secure_pkey1, amount)
+                .expect("keys are valid");
+            output.amount = 0;
+            let output = Output::EscrowOutput(output);
+            let outputs_gamma = Fr::zero();
+            let outputs = [output];
+            let gamma = inputs_gamma - outputs_gamma;
+
+            let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+            let block = MonetaryBlock::new(base, gamma, &input_hashes[..], &outputs[..]);
+            match block.validate(&inputs) {
+                Err(e) => match e.downcast::<BlockchainError>().unwrap() {
+                    BlockchainError::InvalidStake => {}
+                    _ => panic!(),
+                },
+                _ => panic!(),
+            };
         }
     }
 }

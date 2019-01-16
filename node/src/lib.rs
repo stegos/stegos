@@ -171,6 +171,8 @@ const CONSENSUS_TOPIC: &'static str = "consensus";
 const SEALED_BLOCK_TOPIC: &'static str = "block";
 /// Fixed fee for monetary transactions.
 const MONETARY_FEE: i64 = 1;
+/// Fixed fee for escrow transactions.
+const ESCROW_FEE: i64 = 1;
 /// Data unit used to calculate fee.
 const DATA_UNIT: usize = 1024;
 /// Fee for one DATA_UNIT.
@@ -258,6 +260,8 @@ pub enum NodeError {
         _0, _1, _2
     )]
     SealedBlockFromNonLeader(Hash, SecurePublicKey, SecurePublicKey),
+    #[fail(display = "Invalid fee UTXO: hash={}", _0)]
+    InvalidFeeUTXO(Hash),
     #[fail(display = "Invalid block BLS multisignature: block={}", _0)]
     InvalidBlockSignature(Hash),
     #[fail(display = "Transaction missing in mempool: {}.", _0)]
@@ -278,6 +282,9 @@ struct NodeService {
     keys: KeyChain,
     /// Node's UXTO.
     unspent: HashMap<Hash, i64>,
+    /// Node's stakes.
+    unspent_stakes: HashMap<Hash, i64>,
+
     /// Calculated Node's balance.
     balance: i64,
     /// A monotonically increasing value that represents the heights of the blockchain,
@@ -336,6 +343,7 @@ impl NodeService {
         let chain = Blockchain::new();
         let balance = 0i64;
         let unspent = HashMap::new();
+        let unspent_stakes = HashMap::new();
         let epoch: u64 = 0;
         let sealed_block_num = 0;
 
@@ -408,6 +416,7 @@ impl NodeService {
             keys,
             balance,
             unspent,
+            unspent_stakes,
             epoch,
             leader,
             stakes,
@@ -925,6 +934,16 @@ impl NodeService {
                     self.send_transaction(tx).ok();
                 }
             }
+            Output::EscrowOutput(output) => {
+                if let Ok(_delta) = output.decrypt_payload(&self.keys.wallet_skey) {
+                    info!(
+                        "Staked money to escrow: hash={}, amount={}",
+                        hash, output.amount
+                    );
+                    let missing = self.unspent_stakes.insert(hash, output.amount);
+                    assert_eq!(missing, None);
+                }
+            }
         }
     }
 
@@ -947,6 +966,14 @@ impl NodeService {
                         "Pruned data UTXO: hash={}, msg={}",
                         hash,
                         String::from_utf8_lossy(&data)
+                    );
+                }
+            }
+            Output::EscrowOutput(output) => {
+                if let Ok(_delta) = output.decrypt_payload(&self.keys.wallet_skey) {
+                    info!(
+                        "Unstaked money from escrow: hash={}, amount={}",
+                        hash, output.amount
                     );
                 }
             }
@@ -992,6 +1019,7 @@ impl NodeService {
         for txout in &tx.body.txouts {
             min_fee += match txout {
                 Output::MonetaryOutput(_o) => MONETARY_FEE,
+                Output::EscrowOutput(_o) => ESCROW_FEE,
                 Output::DataOutput(o) => NodeService::data_fee(o.data_size(), o.ttl),
             };
         }
@@ -1734,7 +1762,9 @@ impl NodeService {
                         return Err(BlockchainError::InvalidBulletProof.into());
                     }
                 }
-                Output::DataOutput(_o) => {}
+                _ => {
+                    return Err(NodeError::InvalidFeeUTXO(tx_output_hash).into());
+                }
             };
             outputs.push(output_fee.clone());
         }

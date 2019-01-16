@@ -86,10 +86,18 @@ message DataOutput {
     EncryptedPayload payload = 4;
 }
 
+message EscrowOutput {
+    PublicKey recipient = 1;
+    SecurePublicKey validator = 2;
+    int64 amount = 3;
+    EncryptedPayload payload = 4;
+}
+
 message Output {
     oneof output {
         MonetaryOutput monetary_output = 1;
         DataOutput data_output = 2;
+        EscrowOutput escrow_output = 3;
     }
 }
 

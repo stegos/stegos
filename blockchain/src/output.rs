@@ -32,6 +32,7 @@ use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::curve1174::G;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
+use stegos_crypto::pbc::secure;
 use stegos_crypto::CryptoError;
 
 /// A magic value used to encode/decode payload.
@@ -45,6 +46,12 @@ const DATA_PAYLOAD_MAGIC: [u8; 4] = [100, 97, 116, 97]; // "data"
 
 /// Data payload size.
 const DATA_PAYLOAD_LEN: usize = 68;
+
+/// A magic value used to encode/decode payload.
+const ESCROW_PAYLOAD_MAGIC: [u8; 4] = [101, 115, 99, 114]; // "escr"
+
+/// Escrow payload size.
+const ESCROW_PAYLOAD_LEN: usize = 36;
 
 /// Errors.
 #[derive(Debug, Fail)]
@@ -101,11 +108,28 @@ pub struct DataOutput {
     pub payload: EncryptedPayload,
 }
 
+/// Escrow UTXO.
+#[derive(Debug, Clone)]
+pub struct EscrowOutput {
+    /// Cloaked wallet key of validator.
+    pub recipient: PublicKey,
+
+    /// Uncloaked secure key of validator.
+    pub validator: secure::PublicKey,
+
+    /// Amount to stake.
+    pub amount: i64,
+
+    /// Encrypted payload.
+    pub payload: EncryptedPayload,
+}
+
 /// Blockchain UTXO - either monetary or data.
 #[derive(Debug, Clone)]
 pub enum Output {
     MonetaryOutput(MonetaryOutput),
     DataOutput(DataOutput),
+    EscrowOutput(EscrowOutput),
 }
 
 /// Cloak recipient's public key.
@@ -319,6 +343,70 @@ impl DataOutput {
     }
 }
 
+impl EscrowOutput {
+    /// Constructor for Escrow UTXO.
+    pub fn new(
+        timestamp: u64,
+        sender_skey: &SecretKey,
+        recipient_pkey: &PublicKey,
+        validator_pkey: &secure::PublicKey,
+        amount: i64,
+    ) -> Result<Self, Error> {
+        // Cloak recipient public key.
+        let gamma = Fr::zero();
+        let (cloaked_pkey, delta) = cloak_key(sender_skey, recipient_pkey, &gamma, timestamp)?;
+
+        // Encrypt payload.
+        let payload = Self::encrypt_payload(delta, recipient_pkey)?;
+
+        let output = EscrowOutput {
+            recipient: cloaked_pkey,
+            validator: validator_pkey.clone(),
+            amount,
+            payload,
+        };
+
+        Ok(output)
+    }
+
+    /// Create a new monetary transaction.
+    fn encrypt_payload(delta: Fr, pkey: &PublicKey) -> Result<EncryptedPayload, CryptoError> {
+        let delta_bytes: [u8; 32] = delta.to_lev_u8();
+
+        let payload: Vec<u8> = [&ESCROW_PAYLOAD_MAGIC[..], &delta_bytes[..]].concat();
+
+        // Ensure that the total length of package is valid.
+        assert_eq!(payload.len(), ESCROW_PAYLOAD_LEN);
+
+        // Encrypt payload it.
+        aes_encrypt(&payload, &pkey)
+    }
+
+    /// Decrypt monetary transaction.
+    pub fn decrypt_payload(&self, skey: &SecretKey) -> Result<Fr, Error> {
+        let payload: Vec<u8> = aes_decrypt(&self.payload, &skey)?;
+
+        if payload.len() != ESCROW_PAYLOAD_LEN {
+            // Invalid payload or invalid secret key supplied.
+            return Err(OutputError::PayloadDecryptionError.into());
+        }
+
+        let mut magic: [u8; 4] = [0u8; 4];
+        let mut delta_bytes: [u8; 32] = [0u8; 32];
+        magic.copy_from_slice(&payload[0..4]);
+        delta_bytes.copy_from_slice(&payload[4..36]);
+
+        if magic != ESCROW_PAYLOAD_MAGIC {
+            // Invalid payload or invalid secret key supplied.
+            return Err(OutputError::PayloadDecryptionError.into());
+        }
+
+        let delta: Fr = Fr::from_lev_u8(delta_bytes);
+
+        Ok(delta)
+    }
+}
+
 impl Output {
     /// Create a new monetary transaction.
     pub fn new_monetary(
@@ -343,17 +431,22 @@ impl Output {
         Ok((Output::DataOutput(output), delta))
     }
 
-    pub fn decrypt_payload(&self, skey: &SecretKey) -> Result<(Fr, Fr), Error> {
-        match self {
-            Output::MonetaryOutput(monetary) => {
-                let (delta, gamma, _amount) = monetary.decrypt_payload(skey)?;
-                Ok((delta, gamma))
-            }
-            Output::DataOutput(data) => {
-                let (delta, gamma, _data) = data.decrypt_payload(skey)?;
-                Ok((delta, gamma))
-            }
-        }
+    /// Create a new escrow transaction.
+    pub fn new_escrow(
+        timestamp: u64,
+        sender_skey: &SecretKey,
+        recipient_pkey: &PublicKey,
+        validator_pkey: &secure::PublicKey,
+        amount: i64,
+    ) -> Result<Self, Error> {
+        let output = EscrowOutput::new(
+            timestamp,
+            sender_skey,
+            recipient_pkey,
+            validator_pkey,
+            amount,
+        )?;
+        Ok(Output::EscrowOutput(output))
     }
 }
 
@@ -382,11 +475,22 @@ impl Hashable for DataOutput {
     }
 }
 
+impl Hashable for EscrowOutput {
+    fn hash(&self, state: &mut Hasher) {
+        "Escrow".hash(state);
+        self.recipient.hash(state);
+        self.validator.hash(state);
+        self.amount.hash(state);
+        self.payload.hash(state);
+    }
+}
+
 impl Hashable for Output {
     fn hash(&self, state: &mut Hasher) {
         match self {
             Output::MonetaryOutput(monetary) => monetary.hash(state),
             Output::DataOutput(data) => data.hash(state),
+            Output::EscrowOutput(escrow) => escrow.hash(state),
         }
     }
 }
@@ -421,6 +525,32 @@ pub mod tests {
 
         assert_eq!(amount, amount2);
         assert_eq!(gamma, gamma2);
+
+        // Error handling
+        if let Err(e) = output.decrypt_payload(&skey1) {
+            match e.downcast::<OutputError>() {
+                Ok(OutputError::PayloadDecryptionError) => (),
+                _ => assert!(false),
+            };
+        } else {
+            assert!(false);
+        }
+    }
+
+    #[test]
+    pub fn escrow_encrypt_decrypt() {
+        let (skey1, _pkey1, _sig1) = make_random_keys();
+        let (skey2, pkey2, _sig2) = make_random_keys();
+        let (_secure_skey1, secure_pkey1, _secure_sig1) = secure::make_random_keys();
+
+        let timestamp = Utc::now().timestamp() as u64;
+        let amount: i64 = 100500;
+
+        let output = EscrowOutput::new(timestamp, &skey1, &pkey2, &secure_pkey1, amount)
+            .expect("encryption successful");
+        let _delta2 = output
+            .decrypt_payload(&skey2)
+            .expect("decryption successful");
 
         // Error handling
         if let Err(e) = output.decrypt_payload(&skey1) {

@@ -115,15 +115,29 @@ impl Transaction {
 
         let mut txins_set: HashSet<Hash> = HashSet::new();
         for txin in inputs {
-            let (delta, gamma) = txin.decrypt_payload(skey)?;
+            match txin {
+                Output::MonetaryOutput(o) => {
+                    let (delta, gamma, _amount) = o.decrypt_payload(skey)?;
+                    tx_gamma += gamma;
+                    eff_skey += delta * gamma;
+                    eff_skey += gamma;
+                }
+                Output::DataOutput(o) => {
+                    let (delta, gamma, _data) = o.decrypt_payload(skey)?;
+                    tx_gamma += gamma;
+                    eff_skey += delta * gamma;
+                    eff_skey += gamma;
+                }
+                Output::EscrowOutput(o) => {
+                    let delta = o.decrypt_payload(skey)?;
+                    eff_skey += delta;
+                }
+            }
+
             let hash = Hasher::digest(txin);
-
-            assert!(txins_set.insert(hash), "inputs must be unique");
+            let uniq = txins_set.insert(hash);
+            assert!(uniq, "inputs must be unique");
             txins.push(hash);
-
-            tx_gamma += gamma;
-            eff_skey += delta * gamma;
-            eff_skey += gamma;
         }
         drop(txins_set);
 
@@ -191,12 +205,17 @@ impl Transaction {
             if !txins_set.insert(*txin_hash) {
                 return Err(BlockchainError::DuplicateTransactionInput(*txin_hash).into());
             }
-            let pedersen_commitment = match txin {
-                Output::MonetaryOutput(o) => o.proof.vcmt,
-                Output::DataOutput(o) => o.vcmt,
+            match txin {
+                Output::MonetaryOutput(o) => {
+                    pedersen_commitment_diff += Pt::decompress(o.proof.vcmt)?;
+                }
+                Output::DataOutput(o) => {
+                    pedersen_commitment_diff += Pt::decompress(o.vcmt)?;
+                }
+                Output::EscrowOutput(o) => {
+                    pedersen_commitment_diff += fee_a(o.amount);
+                }
             };
-            let pedersen_commitment: ECp = Pt::decompress(pedersen_commitment)?;
-            pedersen_commitment_diff += pedersen_commitment;
         }
         drop(txins_set);
 
@@ -207,18 +226,24 @@ impl Transaction {
             if !txouts_set.insert(txout_hash) {
                 return Err(BlockchainError::DuplicateTransactionOutput(txout_hash).into());
             }
-            let pedersen_commitment = match txout {
+            match txout {
                 Output::MonetaryOutput(o) => {
                     // Check bulletproofs of created outputs
                     if !validate_range_proof(&o.proof) {
                         return Err(BlockchainError::InvalidBulletProof.into());
                     }
-                    o.proof.vcmt
+                    pedersen_commitment_diff -= Pt::decompress(o.proof.vcmt)?;
                 }
-                Output::DataOutput(o) => o.vcmt,
+                Output::DataOutput(o) => {
+                    pedersen_commitment_diff -= Pt::decompress(o.vcmt)?;
+                }
+                Output::EscrowOutput(o) => {
+                    if o.amount <= 0 {
+                        return Err(BlockchainError::InvalidStake.into());
+                    }
+                    pedersen_commitment_diff -= fee_a(o.amount);
+                }
             };
-            let pedersen_commitment: ECp = Pt::decompress(pedersen_commitment)?;
-            pedersen_commitment_diff -= pedersen_commitment;
         }
         drop(txouts_set);
 
@@ -237,6 +262,7 @@ impl Transaction {
             let recipient = match txin {
                 Output::MonetaryOutput(o) => o.recipient,
                 Output::DataOutput(o) => o.recipient,
+                Output::EscrowOutput(o) => o.recipient,
             };
             let recipient: Pt = recipient.into();
             let recipient: ECp = Pt::decompress(recipient)?;
@@ -266,6 +292,7 @@ pub mod tests {
 
     use chrono::Utc;
     use stegos_crypto::curve1174::cpt::make_random_keys;
+    use stegos_crypto::pbc::secure;
 
     /// Check transaction signing and validation.
     #[test]
@@ -365,6 +392,84 @@ pub mod tests {
         match tx.validate(&inputs1) {
             Err(e) => match e.downcast::<BlockchainError>().unwrap() {
                 BlockchainError::InvalidTransactionBalance => {}
+                _ => panic!(),
+            },
+            _ => panic!(),
+        };
+    }
+
+    #[test]
+    pub fn escrow_create_validate() {
+        let (skey0, _pkey0, _sig0) = make_random_keys();
+        let (skey1, pkey1, _sig1) = make_random_keys();
+        let (_secure_skey1, secure_pkey1, _secure_sig1) = secure::make_random_keys();
+
+        let timestamp = Utc::now().timestamp() as u64;
+        let amount: i64 = 1_000_000;
+        let fee: i64 = 1;
+
+        //
+        // Escrow as an input.
+        //
+        let input = Output::new_escrow(timestamp, &skey0, &pkey1, &secure_pkey1, amount)
+            .expect("keys are valid");
+        let inputs = [input];
+        let (output, outputs_gamma) =
+            Output::new_monetary(timestamp, &skey1, &pkey1, amount - fee).expect("keys are valid");
+        let tx = Transaction::new(&skey1, &inputs, &[output], outputs_gamma, fee)
+            .expect("keys are valid");
+        tx.validate(&inputs).expect("tx is valid");
+
+        //
+        // Escrow as an output.
+        //
+        let (input, _inputs_gamma) =
+            Output::new_monetary(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
+        let inputs = [input];
+        let output = Output::new_escrow(timestamp, &skey1, &pkey1, &secure_pkey1, amount - fee)
+            .expect("keys are valid");
+        let outputs_gamma = Fr::zero();
+        let tx = Transaction::new(&skey1, &inputs, &[output], outputs_gamma, fee)
+            .expect("keys are valid");
+        tx.validate(&inputs).expect("tx is valid");
+
+        //
+        // Invalid monetary balance.
+        //
+        let (input, _inputs_gamma) =
+            Output::new_monetary(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
+        let inputs = [input];
+        let mut output = EscrowOutput::new(timestamp, &skey1, &pkey1, &secure_pkey1, amount - fee)
+            .expect("keys are valid");
+        output.amount = amount - fee - 1;
+        let output = Output::EscrowOutput(output);
+        let outputs_gamma = Fr::zero();
+        let tx = Transaction::new(&skey1, &inputs, &[output], outputs_gamma, fee)
+            .expect("keys are valid");
+        match tx.validate(&inputs) {
+            Err(e) => match e.downcast::<BlockchainError>().unwrap() {
+                BlockchainError::InvalidTransactionBalance => {}
+                _ => panic!(),
+            },
+            _ => panic!(),
+        };
+
+        //
+        // Invalid stake.
+        //
+        let (input, _inputs_gamma) =
+            Output::new_monetary(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
+        let inputs = [input];
+        let mut output = EscrowOutput::new(timestamp, &skey1, &pkey1, &secure_pkey1, amount - fee)
+            .expect("keys are valid");
+        output.amount = 0;
+        let output = Output::EscrowOutput(output);
+        let outputs_gamma = Fr::zero();
+        let tx = Transaction::new(&skey1, &inputs, &[output], outputs_gamma, fee)
+            .expect("keys are valid");
+        match tx.validate(&inputs) {
+            Err(e) => match e.downcast::<BlockchainError>().unwrap() {
+                BlockchainError::InvalidStake => {}
                 _ => panic!(),
             },
             _ => panic!(),

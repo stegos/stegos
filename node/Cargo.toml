@@ -14,6 +14,7 @@ stegos_network = { path = "../network" }
 stegos_keychain = { path = "../keychain" }
 
 log = "0.4"
+lazy_static = "1.1"
 failure = "0.1"
 futures = "0.1"
 futures-stream-select-all-send = "0.1"

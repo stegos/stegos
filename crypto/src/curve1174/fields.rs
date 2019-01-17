@@ -144,6 +144,12 @@ macro_rules! field_impl {
                 }
             }
 
+            pub fn expi(self, expon: u64) -> Self {
+                let mut tmp = self.scaled_bits();
+                U256::exp_mod(&mut tmp, expon, &(*$modulus), $inv);
+                $name::Scaled(tmp)
+            }
+
             fn make_same_type(self, val: U256) -> Self {
                 match self {
                     $name::Unscaled(_) => $name::Unscaled(val),

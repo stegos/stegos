@@ -268,6 +268,17 @@ mod tests {
             "Random generator not working in the expected manner"
         );
     }
+
+    #[test]
+    fn chk_modexp() {
+        let mut x1 = Fr::random();
+        let x2 = Fr::expi(x1, 9);
+        let mut x3 = Fr::from(1);
+        for i in 0..9 {
+            x3 *= x1;
+        }
+        assert_eq!(x3, x2);
+    }
 }
 
 // ------------------------------------------------------------------------------------------

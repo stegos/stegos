@@ -18,6 +18,7 @@ before_script:
       # Auto-generated protobuf Rust code
       - network/src/ncp/ncp.rs
       - network/src/node/heartbeat/heartbeat_proto.rs
+      - network/src/node/broker/unicast.rs
       - randhound/src/randhound_proto.rs
       - node/src/protos/node.rs
 

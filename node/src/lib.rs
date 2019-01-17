@@ -802,7 +802,7 @@ impl NodeService {
         let mut min_fee: i64 = 0;
         for txout in &tx.body.txouts {
             min_fee += match txout {
-                Output::MonetaryOutput(_o) => MONETARY_FEE,
+                Output::PaymentOutput(_o) => PAYMENT_FEE,
                 Output::EscrowOutput(_o) => ESCROW_FEE,
                 Output::DataOutput(o) => NodeService::data_fee(o.data_size(), o.ttl),
             };
@@ -902,7 +902,7 @@ impl NodeService {
         // Create transaction for fee
         let output_fee = if fee > 0 {
             trace!("Creating fee UTXO...");
-            let (output_fee, gamma_fee) = Output::new_monetary(timestamp, skey, pkey, fee)?;
+            let (output_fee, gamma_fee) = Output::new_payment(timestamp, skey, pkey, fee)?;
             gamma -= gamma_fee;
             info!(
                 "Created fee UTXO: hash={}, amount={}",
@@ -1271,7 +1271,7 @@ impl NodeService {
                 return Err(BlockchainError::DuplicateTransactionOutput(tx_output_hash).into());
             }
             match &output_fee {
-                Output::MonetaryOutput(o) => {
+                Output::PaymentOutput(o) => {
                     // Check bulletproofs of created outputs
                     if !validate_range_proof(&o.proof) {
                         return Err(BlockchainError::InvalidBulletProof.into());
@@ -1413,7 +1413,7 @@ pub mod tests {
     use std::collections::HashMap;
     use stegos_crypto::pbc::secure::sign_hash as secure_sign_hash;
     use stegos_wallet::create_data_transaction;
-    use stegos_wallet::create_monetary_transaction;
+    use stegos_wallet::create_payment_transaction;
 
     #[test]
     pub fn init() {
@@ -1462,11 +1462,11 @@ pub mod tests {
         node.commit_proposed_block(block, multisig, multisigmap);
     }
 
-    fn unspent(node: &NodeService) -> HashMap<Hash, (MonetaryOutput, i64)> {
-        let mut unspent: HashMap<Hash, (MonetaryOutput, i64)> = HashMap::new();
+    fn unspent(node: &NodeService) -> HashMap<Hash, (PaymentOutput, i64)> {
+        let mut unspent: HashMap<Hash, (PaymentOutput, i64)> = HashMap::new();
         for hash in node.chain.unspent() {
             let output = node.chain.output_by_hash(&hash).unwrap();
-            if let Output::MonetaryOutput(o) = output {
+            if let Output::PaymentOutput(o) = output {
                 let (_delta, _gamma, amount) = o.decrypt_payload(&node.keys.wallet_skey).unwrap();
                 unspent.insert(hash, (o.clone(), amount));
             }
@@ -1475,7 +1475,7 @@ pub mod tests {
     }
 
     fn simulate_payment(node: &mut NodeService, amount: i64) -> Result<(), Error> {
-        let tx = create_monetary_transaction(
+        let tx = create_payment_transaction(
             &node.keys.wallet_skey,
             &node.keys.wallet_pkey,
             &node.keys.wallet_pkey,
@@ -1507,7 +1507,7 @@ pub mod tests {
         let mut balance: i64 = 0;
         for hash in node.chain.unspent() {
             let output = node.chain.output_by_hash(&hash).unwrap();
-            if let Output::MonetaryOutput(o) = output {
+            if let Output::PaymentOutput(o) = output {
                 let (_delta, _gamma, amount) = o.decrypt_payload(&node.keys.wallet_skey).unwrap();
                 balance += amount;
             }
@@ -1533,7 +1533,7 @@ pub mod tests {
         let mut block_count = node.chain.blocks().len();
 
         // Payment without a change.
-        simulate_payment(&mut node, total - MONETARY_FEE).unwrap();
+        simulate_payment(&mut node, total - PAYMENT_FEE).unwrap();
         assert_eq!(node.mempool.len(), 1);
         simulate_consensus(&mut node);
         assert_eq!(node.mempool.len(), 0);
@@ -1541,7 +1541,7 @@ pub mod tests {
         let mut amounts = Vec::new();
         for unspent in node.chain.unspent() {
             match node.chain.output_by_hash(&unspent) {
-                Some(Output::MonetaryOutput(o)) => {
+                Some(Output::PaymentOutput(o)) => {
                     let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
                 }
@@ -1549,7 +1549,7 @@ pub mod tests {
             }
         }
         amounts.sort();
-        assert_eq!(amounts, vec![MONETARY_FEE, total - MONETARY_FEE]);
+        assert_eq!(amounts, vec![PAYMENT_FEE, total - PAYMENT_FEE]);
         block_count += 1;
 
         // Payment with a change.
@@ -1561,7 +1561,7 @@ pub mod tests {
         let mut amounts = Vec::new();
         for unspent in node.chain.unspent() {
             match node.chain.output_by_hash(&unspent) {
-                Some(Output::MonetaryOutput(o)) => {
+                Some(Output::PaymentOutput(o)) => {
                     let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
                 }
@@ -1569,7 +1569,7 @@ pub mod tests {
             }
         }
         amounts.sort();
-        let expected = vec![2 * MONETARY_FEE, 100, total - 100 - 2 * MONETARY_FEE];
+        let expected = vec![2 * PAYMENT_FEE, 100, total - 100 - 2 * PAYMENT_FEE];
         assert_eq!(amounts, expected);
 
         assert_eq!(block_count, 3);
@@ -1605,7 +1605,7 @@ pub mod tests {
         let mut amounts = Vec::new();
         for unspent in node.chain.unspent() {
             match node.chain.output_by_hash(&unspent) {
-                Some(Output::MonetaryOutput(o)) => {
+                Some(Output::PaymentOutput(o)) => {
                     let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
                 }
@@ -1614,9 +1614,9 @@ pub mod tests {
         }
         amounts.sort();
         let expected = vec![
-            2 * MONETARY_FEE,
+            2 * PAYMENT_FEE,
             data_fee,
-            total - data_fee - 2 * MONETARY_FEE,
+            total - data_fee - 2 * PAYMENT_FEE,
         ];
         assert_eq!(amounts, expected);
         block_count += 1;
@@ -1632,7 +1632,7 @@ pub mod tests {
         let mut unspent_data: usize = 0;
         for unspent in node.chain.unspent() {
             match node.chain.output_by_hash(&unspent) {
-                Some(Output::MonetaryOutput(o)) => {
+                Some(Output::PaymentOutput(o)) => {
                     let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
                 }
@@ -1645,9 +1645,9 @@ pub mod tests {
         assert_eq!(unspent_data, 1);
         amounts.sort();
         let expected = vec![
-            2 * MONETARY_FEE,
+            2 * PAYMENT_FEE,
             data_fee,
-            total - data_fee - 2 * MONETARY_FEE,
+            total - data_fee - 2 * PAYMENT_FEE,
         ];
         assert_eq!(amounts, expected);
         block_count += 1;
@@ -1666,7 +1666,7 @@ pub mod tests {
         let mut unspent_data: usize = 0;
         for unspent in node.chain.unspent() {
             match node.chain.output_by_hash(&unspent) {
-                Some(Output::MonetaryOutput(o)) => {
+                Some(Output::PaymentOutput(o)) => {
                     let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
                 }
@@ -1678,7 +1678,7 @@ pub mod tests {
         }
         assert_eq!(unspent_data, 2);
         amounts.sort();
-        let expected = vec![MONETARY_FEE + data_fee2, total - MONETARY_FEE - data_fee2];
+        let expected = vec![PAYMENT_FEE + data_fee2, total - PAYMENT_FEE - data_fee2];
         assert_eq!(amounts, expected);
     }
 

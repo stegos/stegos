@@ -342,7 +342,7 @@ impl MonetaryBlock {
                 return Err(BlockchainError::DuplicateBlockInput(*txin_hash).into());
             }
             match txin {
-                Output::MonetaryOutput(o) => {
+                Output::PaymentOutput(o) => {
                     pedersen_commitment_diff += Pt::decompress(o.proof.vcmt)?;
                 }
                 Output::DataOutput(o) => {
@@ -363,7 +363,7 @@ impl MonetaryBlock {
                 return Err(BlockchainError::DuplicateBlockOutput(txout_hash).into());
             }
             match **txout {
-                Output::MonetaryOutput(ref o) => {
+                Output::PaymentOutput(ref o) => {
                     // Check bulletproofs of created outputs
                     if !validate_range_proof(&o.proof) {
                         return Err(BlockchainError::InvalidBulletProof.into());
@@ -488,12 +488,10 @@ pub mod tests {
         // Valid block with transaction from 1 to 2
         //
         {
-            let (output0, gamma0) =
-                Output::new_monetary(timestamp, &skey0, &pkey1, amount).unwrap();
+            let (output0, gamma0) = Output::new_payment(timestamp, &skey0, &pkey1, amount).unwrap();
             let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
             let inputs1 = [Hash::digest(&output0)];
-            let (output1, gamma1) =
-                Output::new_monetary(timestamp, &skey1, &pkey2, amount).unwrap();
+            let (output1, gamma1) = Output::new_payment(timestamp, &skey1, &pkey2, amount).unwrap();
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
             let block = MonetaryBlock::new(base, gamma, &inputs1, &outputs1);
@@ -504,12 +502,11 @@ pub mod tests {
         // Block with invalid monetary balance
         //
         {
-            let (output0, gamma0) =
-                Output::new_monetary(timestamp, &skey0, &pkey1, amount).unwrap();
+            let (output0, gamma0) = Output::new_payment(timestamp, &skey0, &pkey1, amount).unwrap();
             let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
             let inputs1 = [Hash::digest(&output0)];
             let (output1, gamma1) =
-                Output::new_monetary(timestamp, &skey1, &pkey2, amount - 1).unwrap();
+                Output::new_payment(timestamp, &skey1, &pkey2, amount - 1).unwrap();
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
             let block = MonetaryBlock::new(base, gamma, &inputs1, &outputs1);
@@ -526,12 +523,10 @@ pub mod tests {
         // Valid block with invalid inputs/outputs.
         //
         {
-            let (output0, gamma0) =
-                Output::new_monetary(timestamp, &skey0, &pkey1, amount).unwrap();
+            let (output0, gamma0) = Output::new_payment(timestamp, &skey0, &pkey1, amount).unwrap();
             let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
             let inputs1 = [Hash::digest(&output0)];
-            let (output1, gamma1) =
-                Output::new_monetary(timestamp, &skey1, &pkey2, amount).unwrap();
+            let (output1, gamma1) = Output::new_payment(timestamp, &skey1, &pkey2, amount).unwrap();
             let outputs1 = [output1.clone()];
             let gamma = gamma0 - gamma1;
             let mut block = MonetaryBlock::new(base, gamma, &inputs1, &outputs1);
@@ -641,7 +636,7 @@ pub mod tests {
             let inputs = [input];
             let inputs_gamma = Fr::zero();
             let (output, outputs_gamma) =
-                Output::new_monetary(timestamp, &skey1, &pkey1, amount).expect("keys are valid");
+                Output::new_payment(timestamp, &skey1, &pkey1, amount).expect("keys are valid");
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;
 
@@ -655,7 +650,7 @@ pub mod tests {
         //
         {
             let (input, inputs_gamma) =
-                Output::new_monetary(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
+                Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
             let input_hashes = [Hash::digest(&input)];
             let inputs = [input];
             let output = Output::new_escrow(timestamp, &skey1, &pkey1, &secure_pkey1, amount)
@@ -674,7 +669,7 @@ pub mod tests {
         //
         {
             let (input, inputs_gamma) =
-                Output::new_monetary(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
+                Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
             let input_hashes = [Hash::digest(&input)];
             let inputs = [input];
             let mut output = EscrowOutput::new(timestamp, &skey1, &pkey1, &secure_pkey1, amount)
@@ -701,7 +696,7 @@ pub mod tests {
         //
         {
             let (input, inputs_gamma) =
-                Output::new_monetary(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
+                Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
             let input_hashes = [Hash::digest(&input)];
             let inputs = [input];
             let mut output = EscrowOutput::new(timestamp, &skey1, &pkey1, &secure_pkey1, amount)

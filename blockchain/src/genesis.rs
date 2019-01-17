@@ -68,7 +68,7 @@ pub fn genesis(keychains: &[KeyChain], amount: i64) -> Vec<Block> {
         let sender_skey = &keychains[0].wallet_skey;
         let recipient_pkey = &keychains[0].wallet_pkey;
 
-        let (output, gamma) = Output::new_monetary(timestamp, sender_skey, recipient_pkey, amount)
+        let (output, gamma) = Output::new_payment(timestamp, sender_skey, recipient_pkey, amount)
             .expect("genesis has valid public keys");
         let outputs = [output];
 

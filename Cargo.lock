@@ -2281,6 +2281,7 @@ dependencies = [
  "stegos_runtime 0.1.0",
  "stegos_storage 0.1.0",
  "stegos_txpool 0.1.0",
+ "stegos_wallet 0.1.0",
  "tokio 0.1.14 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio-io 0.1.11 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio-timer 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2416,6 +2417,7 @@ dependencies = [
  "stegos_crypto 0.1.0",
  "stegos_keychain 0.1.0",
  "stegos_network 0.1.0",
+ "stegos_wallet 0.1.0",
  "tokio-timer 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -2457,6 +2459,18 @@ version = "0.1.0"
 [[package]]
 name = "stegos_txpool"
 version = "0.1.0"
+
+[[package]]
+name = "stegos_wallet"
+version = "0.1.0"
+dependencies = [
+ "chrono 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "failure 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "stegos_blockchain 0.1.0",
+ "stegos_config 0.1.0",
+ "stegos_crypto 0.1.0",
+]
 
 [[package]]
 name = "stream-cipher"

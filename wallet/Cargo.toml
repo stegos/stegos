@@ -1,0 +1,13 @@
+[package]
+name = "stegos_wallet"
+version = "0.1.0"
+authors = ["Stegos AG <info@stegos.cc>"]
+edition = "2018"
+
+[dependencies]
+stegos_crypto = { path = "../crypto" }
+stegos_blockchain = { path = "../blockchain" }
+stegos_config = { path = "../config" }
+log = "0.4"
+failure = "0.1"
+chrono = "0.4"

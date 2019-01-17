@@ -30,6 +30,9 @@ clap = "2.32"
 bitvector = "0.1"
 linked-hash-map = "0.5"
 
+[dev-dependencies]
+stegos_wallet = { path = "../wallet" }
+
 [build-dependencies]
 protobuf-codegen-pure = "2.2"
 

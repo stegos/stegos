@@ -37,6 +37,17 @@ use std::path::Path;
 use std::result::Result;
 use toml;
 
+// TODO: move fee constants to appropriate place.
+
+/// Fixed fee for monetary transactions.
+pub const MONETARY_FEE: i64 = 1;
+/// Fixed fee for escrow transactions.
+pub const ESCROW_FEE: i64 = 1;
+/// Data unit used to calculate fee.
+pub const DATA_UNIT: usize = 1024;
+/// Fee for one DATA_UNIT.
+pub const DATA_UNIT_FEE: i64 = 1;
+
 ///
 /// Load configuration file
 ///

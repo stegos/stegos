@@ -73,12 +73,32 @@ message BulletProof {
     Fr z = 12;
 }
 
-message Output {
+message MonetaryOutput {
     PublicKey recipient = 1;
     BulletProof proof = 2;
-    Pt vcmt = 4;
-    uint64 ttl = 5;
     EncryptedPayload payload = 3;
+}
+
+message DataOutput {
+    PublicKey recipient = 1;
+    Pt vcmt = 2;
+    uint64 ttl = 3;
+    EncryptedPayload payload = 4;
+}
+
+message EscrowOutput {
+    PublicKey recipient = 1;
+    SecurePublicKey validator = 2;
+    int64 amount = 3;
+    EncryptedPayload payload = 4;
+}
+
+message Output {
+    oneof output {
+        MonetaryOutput monetary_output = 1;
+        DataOutput data_output = 2;
+        EscrowOutput escrow_output = 3;
+    }
 }
 
 message Transaction {

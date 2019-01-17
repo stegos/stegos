@@ -40,6 +40,8 @@ pub enum BlockchainError {
     InvalidTransactionBalance,
     #[fail(display = "Invalid transaction fee.")]
     InvalidTransactionFee,
+    #[fail(display = "Invalid stake.")]
+    InvalidStake,
     #[fail(display = "Duplicate transaction input: {}.", _0)]
     DuplicateTransactionInput(Hash),
     #[fail(display = "Duplicate transaction output: {}.", _0)]

@@ -368,10 +368,9 @@ impl FromProto<node::BulletProof> for BulletProof {
     }
 }
 
-impl IntoProto<node::Output> for MonetaryOutput {
-    fn into_proto(&self) -> node::Output {
-        let mut proto = node::Output::new();
-        proto.set_ttl(0);
+impl IntoProto<node::MonetaryOutput> for MonetaryOutput {
+    fn into_proto(&self) -> node::MonetaryOutput {
+        let mut proto = node::MonetaryOutput::new();
         proto.set_recipient(self.recipient.into_proto());
         proto.set_proof(self.proof.into_proto());
         proto.set_payload(self.payload.into_proto());
@@ -379,10 +378,9 @@ impl IntoProto<node::Output> for MonetaryOutput {
     }
 }
 
-impl IntoProto<node::Output> for DataOutput {
-    fn into_proto(&self) -> node::Output {
-        let mut proto = node::Output::new();
-        assert!(self.ttl > 0);
+impl IntoProto<node::DataOutput> for DataOutput {
+    fn into_proto(&self) -> node::DataOutput {
+        let mut proto = node::DataOutput::new();
         proto.set_recipient(self.recipient.into_proto());
         proto.set_ttl(self.ttl);
         proto.set_vcmt(self.vcmt.into_proto());
@@ -391,18 +389,31 @@ impl IntoProto<node::Output> for DataOutput {
     }
 }
 
-impl IntoProto<node::Output> for Output {
-    fn into_proto(&self) -> node::Output {
-        match self {
-            Output::MonetaryOutput(monetary) => monetary.into_proto(),
-            Output::DataOutput(data) => data.into_proto(),
-        }
+impl IntoProto<node::EscrowOutput> for EscrowOutput {
+    fn into_proto(&self) -> node::EscrowOutput {
+        let mut proto = node::EscrowOutput::new();
+        proto.set_recipient(self.recipient.into_proto());
+        proto.set_validator(self.validator.into_proto());
+        proto.set_amount(self.amount);
+        proto.set_payload(self.payload.into_proto());
+        proto
     }
 }
 
-impl FromProto<node::Output> for MonetaryOutput {
-    fn from_proto(proto: &node::Output) -> Result<Self, Error> {
-        assert_eq!(proto.ttl, 0);
+impl IntoProto<node::Output> for Output {
+    fn into_proto(&self) -> node::Output {
+        let mut proto = node::Output::new();
+        match self {
+            Output::MonetaryOutput(output) => proto.set_monetary_output(output.into_proto()),
+            Output::DataOutput(output) => proto.set_data_output(output.into_proto()),
+            Output::EscrowOutput(output) => proto.set_escrow_output(output.into_proto()),
+        }
+        proto
+    }
+}
+
+impl FromProto<node::MonetaryOutput> for MonetaryOutput {
+    fn from_proto(proto: &node::MonetaryOutput) -> Result<Self, Error> {
         let recipient = PublicKey::from_proto(proto.get_recipient())?;
         let proof = BulletProof::from_proto(proto.get_proof())?;
         let payload = EncryptedPayload::from_proto(proto.get_payload())?;
@@ -414,9 +425,8 @@ impl FromProto<node::Output> for MonetaryOutput {
     }
 }
 
-impl FromProto<node::Output> for DataOutput {
-    fn from_proto(proto: &node::Output) -> Result<Self, Error> {
-        assert_ne!(proto.ttl, 0);
+impl FromProto<node::DataOutput> for DataOutput {
+    fn from_proto(proto: &node::DataOutput) -> Result<Self, Error> {
         let recipient = PublicKey::from_proto(proto.get_recipient())?;
         let ttl = proto.ttl;
         let vcmt = Pt::from_proto(proto.get_vcmt())?;
@@ -430,13 +440,39 @@ impl FromProto<node::Output> for DataOutput {
     }
 }
 
+impl FromProto<node::EscrowOutput> for EscrowOutput {
+    fn from_proto(proto: &node::EscrowOutput) -> Result<Self, Error> {
+        let recipient = PublicKey::from_proto(proto.get_recipient())?;
+        let validator = SecurePublicKey::from_proto(proto.get_validator())?;
+        let amount = proto.get_amount();
+        let payload = EncryptedPayload::from_proto(proto.get_payload())?;
+        Ok(EscrowOutput {
+            recipient,
+            validator,
+            amount,
+            payload,
+        })
+    }
+}
+
 impl FromProto<node::Output> for Output {
     fn from_proto(proto: &node::Output) -> Result<Self, Error> {
-        let ttl = proto.get_ttl();
-        if ttl == 0 {
-            Ok(Output::MonetaryOutput(MonetaryOutput::from_proto(proto)?))
-        } else {
-            Ok(Output::DataOutput(DataOutput::from_proto(proto)?))
+        match proto.output {
+            Some(node::Output_oneof_output::monetary_output(ref output)) => {
+                let output = MonetaryOutput::from_proto(output)?;
+                Ok(Output::MonetaryOutput(output))
+            }
+            Some(node::Output_oneof_output::data_output(ref output)) => {
+                let output = DataOutput::from_proto(output)?;
+                Ok(Output::DataOutput(output))
+            }
+            Some(node::Output_oneof_output::escrow_output(ref output)) => {
+                let output = EscrowOutput::from_proto(output)?;
+                Ok(Output::EscrowOutput(output))
+            }
+            None => {
+                Err(ProtoError::MissingField("output".to_string(), "output".to_string()).into())
+            }
         }
     }
 }
@@ -1013,6 +1049,29 @@ mod tests {
         let (bp, gamma) = make_range_proof(100);
         roundtrip(&bp);
         roundtrip(&gamma);
+    }
+
+    #[test]
+    fn outputs() {
+        let (skey0, _pkey0, _sig0) = make_random_keys();
+        let (skey1, pkey1, _sig1) = make_random_keys();
+        let (_secure_skey1, secure_pkey1, _secure_sig1) = make_secure_random_keys();
+
+        let amount = 1_000_000;
+        let timestamp = Utc::now().timestamp() as u64;
+
+        let (output, _gamma) =
+            Output::new_monetary(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
+        roundtrip(&output);
+
+        let data = b"hello";
+        let (output, _gamma) =
+            Output::new_data(timestamp, &skey0, &pkey1, 1, data).expect("keys are valid");
+        roundtrip(&output);
+
+        let output = Output::new_escrow(timestamp, &skey1, &pkey1, &secure_pkey1, amount)
+            .expect("keys are valid");
+        roundtrip(&output);
     }
 
     fn mktransaction() -> Transaction {

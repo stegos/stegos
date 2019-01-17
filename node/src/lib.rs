@@ -23,6 +23,7 @@
 
 mod consensus;
 mod election;
+mod error;
 pub mod protos;
 mod tickets;
 
@@ -31,9 +32,10 @@ use crate::protos::{FromProto, IntoProto};
 use bitvector::BitVector;
 
 use crate::election::ConsensusGroup;
+use crate::error::*;
 pub use crate::tickets::{TicketsSystem, VRFTicket};
 use chrono::Utc;
-use failure::{ensure, Error, Fail};
+use failure::{ensure, Error};
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::{Async, Future, Poll, Stream};
 use futures_stream_select_all_send::select_all;
@@ -200,49 +202,6 @@ enum NodeMessage {
     Init { genesis: Vec<Block> },
     ConsensusTimer(Instant),
     VRFTimer(Instant),
-}
-
-#[derive(Debug, Fail, PartialEq, Eq)]
-pub enum NodeError {
-    #[fail(display = "Fee is to low: min={}, got={}", _0, _1)]
-    TooLowFee(i64, i64),
-    #[fail(
-        display = "Invalid block version: block={}, expected={}, got={}",
-        _0, _1, _2
-    )]
-    InvalidBlockVersion(Hash, u64, u64),
-    #[fail(
-        display = "Invalid or out-of-order previous block: block={}, expected={}, got={}",
-        _0, _1, _2
-    )]
-    OutOfOrderBlockHash(Hash, Hash, Hash),
-    #[fail(
-        display = "Invalid or out-of-order epoch: block={}, expected={}, got={}",
-        _0, _1, _2
-    )]
-    OutOfOrderBlockEpoch(Hash, u64, u64),
-    #[fail(display = "Block is already registered: hash={}", _0)]
-    BlockAlreadyRegistered(Hash),
-    #[fail(display = "Failed to validate block: expected={}, got={}", _0, _1)]
-    InvalidBlockHash(Hash, Hash),
-    #[fail(
-        display = "Sealed Block from non-leader: block={}, expected={}, got={}",
-        _0, _1, _2
-    )]
-    SealedBlockFromNonLeader(Hash, SecurePublicKey, SecurePublicKey),
-    #[fail(display = "Invalid fee UTXO: hash={}", _0)]
-    InvalidFeeUTXO(Hash),
-    #[fail(display = "Invalid block BLS multisignature: block={}", _0)]
-    InvalidBlockSignature(Hash),
-    #[fail(display = "Transaction missing in mempool: {}.", _0)]
-    TransactionMissingInMempool(Hash),
-    #[fail(display = "Transaction already exists in mempool: {}.", _0)]
-    TransactionAlreadyExists(Hash),
-    #[fail(
-        display = "Found a block proposal with timestamp: {} that differ with our timestamp: {}.",
-        _0, _1
-    )]
-    UnsynchronizedBlock(u64, u64),
 }
 
 struct NodeService {

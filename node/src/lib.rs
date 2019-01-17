@@ -229,11 +229,15 @@ enum NodeMessage {
 }
 
 #[derive(Debug, Fail, PartialEq, Eq)]
-pub enum NodeError {
-    #[fail(display = "Amount should be greater than zero.")]
-    ZeroOrNegativeAmount,
+pub enum WalletError {
     #[fail(display = "Not enough money.")]
     NotEnoughMoney,
+    #[fail(display = "Amount should be greater than zero.")]
+    ZeroOrNegativeAmount,
+}
+
+#[derive(Debug, Fail, PartialEq, Eq)]
+pub enum NodeError {
     #[fail(display = "Fee is to low: min={}, got={}", _0, _1)]
     TooLowFee(i64, i64),
     #[fail(
@@ -281,9 +285,9 @@ struct NodeService {
     /// Key Chain.
     keys: KeyChain,
     /// Node's UXTO.
-    unspent: HashMap<Hash, i64>,
+    unspent: HashMap<Hash, (MonetaryOutput, i64)>,
     /// Node's stakes.
-    unspent_stakes: HashMap<Hash, i64>,
+    unspent_stakes: HashMap<Hash, EscrowOutput>,
 
     /// Calculated Node's balance.
     balance: i64,
@@ -472,7 +476,7 @@ impl NodeService {
                     );
                     let monetary_block2 = monetary_block.clone();
                     let inputs = self.chain.register_monetary_block(monetary_block)?;
-                    self.on_monetary_block_registered(&monetary_block2, &inputs);
+                    self.on_monetary_block_registered(&monetary_block2, inputs);
                 }
             }
         }
@@ -489,7 +493,13 @@ impl NodeService {
 
     /// Handler for NodeMessage::Payment.
     fn handle_payment(&mut self, recipient: &PublicKey, amount: i64) -> Result<(), Error> {
-        let tx = self.create_monetary_transaction(recipient, amount)?;
+        let tx = NodeService::create_monetary_transaction(
+            &self.keys.wallet_skey,
+            &self.keys.wallet_pkey,
+            recipient,
+            &self.unspent,
+            amount,
+        )?;
         self.send_transaction(tx)
     }
 
@@ -506,7 +516,14 @@ impl NodeService {
             String::from_utf8_lossy(&data)
         );
 
-        let tx = self.create_data_transaction(recipient, ttl, data)?;
+        let tx = NodeService::create_data_transaction(
+            &self.keys.wallet_skey,
+            &self.keys.wallet_pkey,
+            recipient,
+            &self.unspent,
+            ttl,
+            data,
+        )?;
         self.send_transaction(tx)
     }
 
@@ -636,7 +653,7 @@ impl NodeService {
         // TODO: implement proper handling of mempool.
         self.mempool.clear();
 
-        self.on_monetary_block_registered(&monetary_block2, &inputs);
+        self.on_monetary_block_registered(&monetary_block2, inputs);
         Ok(())
     }
 
@@ -876,21 +893,35 @@ impl NodeService {
     }
 
     /// Called when a new key block is registered.
-    fn on_monetary_block_registered(&mut self, monetary_block: &MonetaryBlock, inputs: &[Output]) {
+    fn on_monetary_block_registered(
+        &mut self,
+        monetary_block: &MonetaryBlock,
+        inputs: Vec<Output>,
+    ) {
         //
         // Notify subscribers.
         //
 
+        let outputs = monetary_block
+            .body
+            .outputs
+            .leafs()
+            .drain(..)
+            .map(|(o, _path)| *o.clone())
+            .collect();
+        self.on_outputs_changed(inputs, outputs);
+    }
+
+    /// Called when outputs registered and/or pruned.
+    fn on_outputs_changed(&mut self, inputs: Vec<Output>, outputs: Vec<Output>) {
         let saved_balance = self.balance;
 
         for input in inputs {
-            let hash = Hash::digest(input);
-            self.on_output_pruned(hash, input);
+            self.on_output_pruned(input);
         }
 
-        for (output, _) in monetary_block.body.outputs.leafs() {
-            let hash = Hash::digest(output);
-            self.on_output_created(hash, output);
+        for output in outputs {
+            self.on_output_created(output);
         }
 
         if saved_balance != self.balance {
@@ -901,20 +932,20 @@ impl NodeService {
     }
 
     /// Called when UTXO is created.
-    fn on_output_created(&mut self, hash: Hash, output: &Output) {
+    fn on_output_created(&mut self, output: Output) {
+        let hash = Hash::digest(&output);
         match output {
-            Output::MonetaryOutput(output) => {
-                if let Ok((_delta, _gamma, amount)) = output.decrypt_payload(&self.keys.wallet_skey)
-                {
+            Output::MonetaryOutput(o) => {
+                if let Ok((_delta, _gamma, amount)) = o.decrypt_payload(&self.keys.wallet_skey) {
                     info!("Received monetary UTXO: hash={}, amount={}", hash, amount);
-                    let missing = self.unspent.insert(hash, amount);
-                    assert_eq!(missing, None);
+                    let missing = self.unspent.insert(hash, (o, amount));
+                    assert!(missing.is_none());
                     assert!(amount >= 0);
                     self.balance += amount;
                 }
             }
-            Output::DataOutput(output) => {
-                if let Ok((_delta, _gamma, data)) = output.decrypt_payload(&self.keys.wallet_skey) {
+            Output::DataOutput(o) => {
+                if let Ok((_delta, _gamma, data)) = o.decrypt_payload(&self.keys.wallet_skey) {
                     info!(
                         "Received data UTXO: hash={}, msg={}",
                         hash,
@@ -927,41 +958,38 @@ impl NodeService {
 
                     // Send a prune request.
                     debug!("Pruning data");
-                    let tx = self
-                        .create_data_pruning_transaction(output.clone())
-                        .expect("cannot fail");
+                    let tx =
+                        NodeService::create_data_pruning_transaction(&self.keys.wallet_skey, o)
+                            .expect("cannot fail");
                     debug!("Created transaction: hash={}", Hash::digest(&tx.body));
                     self.send_transaction(tx).ok();
                 }
             }
-            Output::EscrowOutput(output) => {
-                if let Ok(_delta) = output.decrypt_payload(&self.keys.wallet_skey) {
-                    info!(
-                        "Staked money to escrow: hash={}, amount={}",
-                        hash, output.amount
-                    );
-                    let missing = self.unspent_stakes.insert(hash, output.amount);
-                    assert_eq!(missing, None);
+            Output::EscrowOutput(o) => {
+                if let Ok(_delta) = o.decrypt_payload(&self.keys.wallet_skey) {
+                    info!("Staked money to escrow: hash={}, amount={}", hash, o.amount);
+                    let missing = self.unspent_stakes.insert(hash, o);
+                    assert!(missing.is_none());
                 }
             }
         }
     }
 
     /// Called when UTXO is spent.
-    fn on_output_pruned(&mut self, hash: Hash, output: &Output) {
+    fn on_output_pruned(&mut self, output: Output) {
+        let hash = Hash::digest(&output);
         match output {
-            Output::MonetaryOutput(output) => {
-                if let Ok((_delta, _gamma, amount)) = output.decrypt_payload(&self.keys.wallet_skey)
-                {
+            Output::MonetaryOutput(o) => {
+                if let Ok((_delta, _gamma, amount)) = o.decrypt_payload(&self.keys.wallet_skey) {
                     info!("Spent monetary UTXO: hash={}, amount={}", hash, amount);
                     let exists = self.unspent.remove(&hash);
-                    assert_eq!(exists, Some(amount));
+                    assert!(exists.is_some());
                     self.balance -= amount;
                     assert!(self.balance >= 0);
                 }
             }
-            Output::DataOutput(output) => {
-                if let Ok((_delta, _gamma, data)) = output.decrypt_payload(&self.keys.wallet_skey) {
+            Output::DataOutput(o) => {
+                if let Ok((_delta, _gamma, data)) = o.decrypt_payload(&self.keys.wallet_skey) {
                     info!(
                         "Pruned data UTXO: hash={}, msg={}",
                         hash,
@@ -969,11 +997,11 @@ impl NodeService {
                     );
                 }
             }
-            Output::EscrowOutput(output) => {
-                if let Ok(_delta) = output.decrypt_payload(&self.keys.wallet_skey) {
+            Output::EscrowOutput(o) => {
+                if let Ok(_delta) = o.decrypt_payload(&self.keys.wallet_skey) {
                     info!(
                         "Unstaked money from escrow: hash={}, amount={}",
-                        hash, output.amount
+                        hash, o.amount
                     );
                 }
             }
@@ -1032,43 +1060,44 @@ impl NodeService {
     }
 
     /// Find UTXO with exact value.
-    fn find_utxo_exact(unspent: &HashMap<Hash, i64>, sum: i64) -> Option<Hash> {
-        for (hash, amount) in unspent.iter() {
+    fn find_utxo_exact<T: Clone>(unspent: &HashMap<Hash, (T, i64)>, sum: i64) -> Option<T> {
+        for (hash, (output, amount)) in unspent {
             if *amount == sum {
                 debug!("Use UTXO: hash={}, amount={}", hash, amount);
-                return Some(hash.clone());
+                return Some(output.clone());
             }
         }
         None
     }
 
     /// Find appropriate UTXO to spent and calculate a change.
-    fn find_utxo(
-        unspent: &HashMap<Hash, i64>,
+    fn find_utxo<T: Clone>(
+        unspent: &HashMap<Hash, (T, i64)>,
         mut sum: i64,
-    ) -> Result<(Vec<Hash>, i64), NodeError> {
+    ) -> Result<(Vec<T>, i64), WalletError> {
         assert!(sum >= 0);
-        let mut unspent: Vec<(i64, Hash)> = unspent
+        let mut sorted: Vec<(i64, Hash)> = unspent
             .iter()
-            .map(|(hash, amount)| (*amount, hash.clone()))
+            .map(|(hash, (_output, amount))| (*amount, hash.clone()))
             .collect();
         // Sort ascending in order to eliminate as much outputs as possible
-        unspent.sort_by_key(|(amount, _hash)| *amount);
+        sorted.sort_by_key(|(amount, _hash)| *amount);
 
         // Naive algorithm - try to spent as much UTXO as possible.
-        let mut spent = Vec::new();
-        for (amount, hash) in unspent.drain(..) {
+        let mut spent = Vec::<T>::new();
+        for (amount, hash) in sorted.drain(..) {
             if sum <= 0 {
                 break;
             }
             sum -= amount;
-            spent.push(hash);
+            let (output, _amount) = unspent.get(&hash).unwrap();
+            spent.push(output.clone());
             debug!("Use UTXO: hash={}, amount={}", hash, amount);
         }
         drop(unspent);
 
         if sum > 0 {
-            return Err(NodeError::NotEnoughMoney);
+            return Err(WalletError::NotEnoughMoney);
         }
 
         let change = -sum;
@@ -1077,12 +1106,14 @@ impl NodeService {
 
     /// Create monetary transaction.
     fn create_monetary_transaction(
-        &self,
+        sender_skey: &SecretKey,
+        sender_pkey: &PublicKey,
         recipient: &PublicKey,
+        unspent: &HashMap<Hash, (MonetaryOutput, i64)>,
         amount: i64,
     ) -> Result<Transaction, Error> {
         if amount <= 0 {
-            return Err(NodeError::ZeroOrNegativeAmount.into());
+            return Err(WalletError::ZeroOrNegativeAmount.into());
         }
 
         debug!(
@@ -1098,21 +1129,23 @@ impl NodeService {
 
         // Try to find exact sum plus fee, without a change.
         let (fee, change, inputs) =
-            match NodeService::find_utxo_exact(&self.unspent, amount + MONETARY_FEE) {
-                Some(inputs) => {
+            match NodeService::find_utxo_exact(unspent, amount + MONETARY_FEE) {
+                Some(input) => {
                     // If found, then charge the minimal fee.
                     let fee = MONETARY_FEE;
-                    let inputs = self.chain.outputs_by_hashes(&[inputs])?;
-                    (fee, 0i64, inputs)
+                    (fee, 0i64, vec![input])
                 }
                 None => {
                     // Otherwise, charge the double fee.
                     let fee = 2 * MONETARY_FEE;
-                    let (inputs, change) = NodeService::find_utxo(&self.unspent, amount + fee)?;
-                    let inputs = self.chain.outputs_by_hashes(&inputs)?;
+                    let (inputs, change) = NodeService::find_utxo(&unspent, amount + fee)?;
                     (fee, change, inputs)
                 }
             };
+        let inputs: Vec<Output> = inputs
+            .into_iter()
+            .map(|o| Output::MonetaryOutput(o))
+            .collect();
 
         debug!(
             "Transaction preview: recipient={}, amount={}, withdrawn={}, change={}, fee={}",
@@ -1126,9 +1159,6 @@ impl NodeService {
         //
         // Create outputs
         //
-
-        let sender_skey = &self.keys.wallet_skey;
-        let sender_pkey = &self.keys.wallet_pkey;
 
         let timestamp = Utc::now().timestamp() as u64;
         let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
@@ -1178,8 +1208,10 @@ impl NodeService {
 
     /// Create data transaction.
     fn create_data_transaction(
-        &self,
+        sender_skey: &SecretKey,
+        sender_pkey: &PublicKey,
         recipient: &PublicKey,
+        unspent: &HashMap<Hash, (MonetaryOutput, i64)>,
         ttl: u64,
         data: Vec<u8>,
     ) -> Result<Transaction, Error> {
@@ -1196,20 +1228,22 @@ impl NodeService {
 
         let fee = NodeService::data_fee(data.len(), ttl);
         // Try to find exact sum plus fee, without a change.
-        let (fee, change, inputs) = match NodeService::find_utxo_exact(&self.unspent, fee) {
-            Some(inputs) => {
+        let (fee, change, inputs) = match NodeService::find_utxo_exact(unspent, fee) {
+            Some(input) => {
                 // If found, then charge the minimal fee.
-                let inputs = self.chain.outputs_by_hashes(&[inputs])?;
-                (fee, 0i64, inputs)
+                (fee, 0i64, vec![input])
             }
             None => {
                 // Otherwise, charge the double fee.
                 let fee = fee + MONETARY_FEE;
-                let (inputs, change) = NodeService::find_utxo(&self.unspent, fee)?;
-                let inputs = self.chain.outputs_by_hashes(&inputs)?;
+                let (inputs, change) = NodeService::find_utxo(&unspent, fee)?;
                 (fee, change, inputs)
             }
         };
+        let inputs: Vec<Output> = inputs
+            .into_iter()
+            .map(|o| Output::MonetaryOutput(o))
+            .collect();
 
         debug!(
             "Transaction preview: recipient={}, ttl={}, withdrawn={}, change={}, fee={}",
@@ -1223,9 +1257,6 @@ impl NodeService {
         //
         // Create outputs
         //
-
-        let sender_skey = &self.keys.wallet_skey;
-        let sender_pkey = &self.keys.wallet_pkey;
 
         let timestamp = Utc::now().timestamp() as u64;
         let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
@@ -1274,15 +1305,16 @@ impl NodeService {
     }
 
     /// Create a transaction to prune data.
-    fn create_data_pruning_transaction(&self, output: DataOutput) -> Result<Transaction, Error> {
+    fn create_data_pruning_transaction(
+        sender_skey: &SecretKey,
+        output: DataOutput,
+    ) -> Result<Transaction, Error> {
         let output_hash = Hash::digest(&output);
 
         debug!(
             "Creating a data pruning transaction: data_utxo={}",
             output_hash
         );
-
-        let sender_skey = &self.keys.wallet_skey;
 
         let inputs = [Output::DataOutput(output)];
         let outputs = [];
@@ -1853,7 +1885,7 @@ impl NodeService {
                     .expect("block is validated before");
                 // TODO: implement proper handling of mempool.
                 self.mempool.clear();
-                self.on_monetary_block_registered(&monetary_block2, &pruned);
+                self.on_monetary_block_registered(&monetary_block2, pruned);
                 self.send_sealed_block(Block::MonetaryBlock(monetary_block2))
                     .expect("failed to send sealed monetary block");
             }
@@ -1958,6 +1990,18 @@ pub mod tests {
         node.commit_proposed_block(block, multisig, multisigmap);
     }
 
+    fn simulate_payment(node: &mut NodeService, amount: i64) -> Result<(), Error> {
+        let tx = NodeService::create_monetary_transaction(
+            &node.keys.wallet_skey,
+            &node.keys.wallet_pkey,
+            &node.keys.wallet_pkey,
+            &node.unspent,
+            amount,
+        )?;
+        node.send_transaction(tx)?;
+        Ok(())
+    }
+
     #[test]
     pub fn monetary_requests() {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
@@ -1976,25 +2020,24 @@ pub mod tests {
         let mut block_count = node.chain.blocks().len();
 
         // Invalid requests.
-        let e = node.handle_payment(&keys.wallet_pkey, -1).unwrap_err();
+        let e = simulate_payment(&mut node, -1).unwrap_err();
         assert_eq!(
-            e.downcast::<NodeError>().unwrap(),
-            NodeError::ZeroOrNegativeAmount
+            e.downcast::<WalletError>().unwrap(),
+            WalletError::ZeroOrNegativeAmount
         );
-        let e = node.handle_payment(&keys.wallet_pkey, 0).unwrap_err();
+        let e = simulate_payment(&mut node, 0).unwrap_err();
         assert_eq!(
-            e.downcast::<NodeError>().unwrap(),
-            NodeError::ZeroOrNegativeAmount
+            e.downcast::<WalletError>().unwrap(),
+            WalletError::ZeroOrNegativeAmount
         );
-        let e = node.handle_payment(&keys.wallet_pkey, total).unwrap_err();
+        let e = simulate_payment(&mut node, total).unwrap_err();
         assert_eq!(
-            e.downcast::<NodeError>().unwrap(),
-            NodeError::NotEnoughMoney
+            e.downcast::<WalletError>().unwrap(),
+            WalletError::NotEnoughMoney
         );
 
         // Payment without a change.
-        node.handle_payment(&keys.wallet_pkey, total - MONETARY_FEE)
-            .unwrap();
+        simulate_payment(&mut node, total - MONETARY_FEE).unwrap();
         assert_eq!(node.mempool.len(), 1);
         simulate_consensus(&mut node);
         assert_eq!(node.mempool.len(), 0);
@@ -2016,7 +2059,7 @@ pub mod tests {
         block_count += 1;
 
         // Payment with a change.
-        node.handle_payment(&keys.wallet_pkey, 100).unwrap();
+        simulate_payment(&mut node, 100).unwrap();
         assert_eq!(node.mempool.len(), 1);
         simulate_consensus(&mut node);
         assert_eq!(node.mempool.len(), 0);
@@ -2061,8 +2104,8 @@ pub mod tests {
             .handle_message(&keys.wallet_pkey, 100500, b"hello".to_vec())
             .unwrap_err();
         assert_eq!(
-            e.downcast::<NodeError>().unwrap(),
-            NodeError::NotEnoughMoney
+            e.downcast::<WalletError>().unwrap(),
+            WalletError::NotEnoughMoney
         );
 
         let data = b"hello".to_vec();
@@ -2167,10 +2210,11 @@ pub mod tests {
     /// Check transaction signing and validation.
     #[test]
     pub fn find_utxo() {
-        let mut unspent = HashMap::<Hash, i64>::new();
+        let mut unspent = HashMap::<Hash, (Hash, i64)>::new();
         let amounts: [i64; 5] = [100, 50, 10, 2, 1];
         for amount in amounts.iter() {
-            unspent.insert(Hash::digest(amount), *amount);
+            let hash = Hash::digest(amount);
+            unspent.insert(hash, (hash.clone(), *amount));
         }
 
         let (spent, change) = NodeService::find_utxo(&unspent, 1).unwrap();

@@ -383,7 +383,7 @@ impl NodeService {
                     );
                     let monetary_block2 = monetary_block.clone();
                     let inputs = self.chain.register_monetary_block(monetary_block)?;
-                    self.on_monetary_block_registered(&monetary_block2, inputs);
+                    self.on_monetary_block_registered(&monetary_block2, inputs)?;
                 }
             }
         }
@@ -524,8 +524,7 @@ impl NodeService {
         // TODO: implement proper handling of mempool.
         self.mempool.clear();
 
-        self.on_monetary_block_registered(&monetary_block2, inputs);
-        Ok(())
+        self.on_monetary_block_registered(&monetary_block2, inputs)
     }
 
     /// Handle incoming blocks received from network.
@@ -577,24 +576,27 @@ impl NodeService {
             }
         };
         match block {
-            Block::KeyBlock(key_block) => self.handle_sealed_key_block(key_block)?,
+            Block::KeyBlock(key_block) => self.handle_sealed_key_block(key_block),
             Block::MonetaryBlock(monetary_block) => {
-                self.handle_sealed_monetary_block(monetary_block, &msg.pkey)?
+                self.handle_sealed_monetary_block(monetary_block, &msg.pkey)
             }
-        };
-        self.on_next_block(block_hash)
+        }
     }
 
+    /// Count sealed block in epoch, restarts timers and all systems
+    /// related to block timeout.
+    ///
+    /// Returns error on sending message failure.
     fn on_next_block(&mut self, block_hash: Hash) -> Result<(), Error> {
         self.sealed_block_num += 1;
+
+        self.vrf_system.handle_sealed_block();
+
         // epoch ended, disable consensus and start vrf system.
         if self.sealed_block_num >= SEALED_BLOCK_IN_EPOCH {
             self.consensus = None;
-            let ticket = self.vrf_system.handle_epoch_end(block_hash)?;
+            let ticket = self.vrf_system.handle_epoch_end(block_hash);
             self.broadcast_vrf_ticket(ticket)?;
-        } else {
-            // restart vrf system timer on new block.
-            self.vrf_system.handle_sealed_block();
         }
 
         if let Some(consensus) = &mut self.consensus {
@@ -752,8 +754,8 @@ impl NodeService {
 
         // clear consensus messages when new epoch starts
         self.future_consensus_messages.clear();
-
-        Ok(())
+        let block_hash = Hash::digest(key_block);
+        self.on_next_block(block_hash)
     }
 
     /// Called when a new key block is registered.
@@ -761,11 +763,10 @@ impl NodeService {
         &mut self,
         monetary_block: &MonetaryBlock,
         inputs: Vec<Output>,
-    ) {
+    ) -> Result<(), Error> {
         //
         // Notify subscribers.
         //
-
         let outputs = monetary_block
             .body
             .outputs
@@ -776,6 +777,8 @@ impl NodeService {
         let msg = OutputsNotification { inputs, outputs };
         self.on_outputs_changed
             .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
+        let block_hash = Hash::digest(monetary_block);
+        self.on_next_block(block_hash)
     }
 
     /// Send block to network.
@@ -1044,9 +1047,7 @@ impl NodeService {
         if consensus.is_leader() && consensus.should_commit() {
             let (block, _proof, multisig, multisigmap) =
                 self.consensus.as_mut().unwrap().sign_and_commit();
-            let block_hash = Hash::digest(&block);
             self.commit_proposed_block(block, multisig, multisigmap);
-            self.on_next_block(block_hash)?;
         }
         Ok(())
     }
@@ -1368,7 +1369,8 @@ impl NodeService {
                     .expect("block is validated before");
                 // TODO: implement proper handling of mempool.
                 self.mempool.clear();
-                self.on_monetary_block_registered(&monetary_block2, pruned);
+                self.on_monetary_block_registered(&monetary_block2, pruned)
+                    .expect("internal error");
                 self.send_sealed_block(Block::MonetaryBlock(monetary_block2))
                     .expect("failed to send sealed monetary block");
             }

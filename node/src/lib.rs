@@ -175,6 +175,11 @@ const MONETARY_FEE: i64 = 1;
 const DATA_UNIT: usize = 1024;
 /// Fee for one DATA_UNIT.
 const DATA_UNIT_FEE: i64 = 1;
+/// Time delta in which our messages should be delivered, or forgeted.
+const MESSAGE_TIMEOUT: Duration = Duration::from_secs(60);
+/// Estimated time of block validation.
+// tx_count * verify_tx = 1500 * 20ms
+const BLOCK_VALIDATION_TIME: Duration = Duration::from_secs(30);
 /// How long wait for transactions before starting to create a new block.
 const TX_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 /// How often to check the consensus state.

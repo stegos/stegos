@@ -27,6 +27,8 @@ use stegos_crypto::pbc::secure::{
     VRF,
 };
 
+use lazy_static::lazy_static;
+
 use crate::election::{self, ConsensusGroup, StakersGroup};
 use crate::protos::{self, FromProto, IntoProto};
 use crate::NodeService;
@@ -50,12 +52,16 @@ pub const VRF_TICKETS_TOPIC: &'static str = "vrf_tickets";
 /// How often to check VRF system state.
 pub const TIMER: Duration = Duration::from_secs(5);
 
-/// If no new block was provided between this interval - we should start vrf system.
-const RESTART_CONSENSUS_TIMER: Duration = Duration::from_secs(600);
-
+lazy_static! {
+    /// If no new block was provided between this interval - we should start vrf system.
+    static ref RESTART_CONSENSUS_TIMER: Duration = crate::MESSAGE_TIMEOUT * 4 + // 4 consensus message
+                                          crate::BLOCK_VALIDATION_TIME * 2 + // form block on leader and
+                                                                              // validate on witness
+                                          crate::TX_WAIT_TIMEOUT; // Propose timeout
+}
 /// How long we should collect the tickets.
 /// This value represent initial timeout, at view_change timeout exponentialy increasing.
-const COLLECTING_TICKETS_TIMER: Duration = Duration::from_secs(600);
+const COLLECTING_TICKETS_TIMER: Duration = crate::MESSAGE_TIMEOUT;
 
 /// Minumum count of tickets that we need to collect.
 const LOWER_TICKETS_COUNT: usize = 3;
@@ -175,7 +181,7 @@ impl TicketsSystem {
         trace!("Handle vrf system tick");
 
         match self.state {
-            State::Sleeping(start) if time.duration_since(start) > RESTART_CONSENSUS_TIMER => self
+            State::Sleeping(start) if time.duration_since(start) > *RESTART_CONSENSUS_TIMER => self
                 .on_view_change(last_block_hash)
                 .map(Feedback::BroadcastTicket),
             State::CollectingTickets(ref state, start)

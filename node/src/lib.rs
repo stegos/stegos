@@ -23,6 +23,7 @@
 
 mod consensus;
 mod election;
+mod error;
 pub mod protos;
 mod tickets;
 
@@ -31,9 +32,10 @@ use crate::protos::{FromProto, IntoProto};
 use bitvector::BitVector;
 
 use crate::election::ConsensusGroup;
+use crate::error::*;
 pub use crate::tickets::{TicketsSystem, VRFTicket};
 use chrono::Utc;
-use failure::{ensure, Error, Fail};
+use failure::{ensure, Error};
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::{Async, Future, Poll, Stream};
 use futures_stream_select_all_send::select_all;
@@ -43,9 +45,9 @@ use protobuf;
 use protobuf::Message;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use stegos_blockchain::*;
+use stegos_config::*;
 use stegos_consensus::check_multi_signature;
 use stegos_crypto::bulletproofs::validate_range_proof;
 use stegos_crypto::curve1174::cpt::PublicKey;
@@ -58,6 +60,7 @@ use stegos_crypto::pbc::secure::G2;
 use stegos_keychain::KeyChain;
 use stegos_network::Broker;
 use tokio_timer::Interval;
+
 // ----------------------------------------------------------------
 // Public API.
 // ----------------------------------------------------------------
@@ -80,32 +83,42 @@ pub fn genesis_dev() -> Result<Vec<Block>, Error> {
 #[derive(Clone, Debug)]
 pub struct Node {
     outbox: UnboundedSender<NodeMessage>,
+    broker: Broker,
 }
 
 impl Node {
     /// Create a new blockchain node.
     pub fn new(
         keys: KeyChain,
-        genesis: Vec<Block>,
         broker: Broker,
     ) -> Result<(impl Future<Item = (), Error = ()>, Node), Error> {
         let (outbox, inbox) = unbounded();
 
-        let msg = NodeMessage::Init { genesis };
-        outbox.unbounded_send(msg)?;
-
-        let service = NodeService::new(keys, broker, inbox)?;
-        let handler = Node { outbox };
+        let service = NodeService::new(keys, broker.clone(), inbox)?;
+        let handler = Node { outbox, broker };
 
         Ok((service, handler))
     }
 
-    /// Subscribe to balance changes.
-    pub fn subscribe_balance(&self) -> Result<UnboundedReceiver<i64>, Error> {
-        let (tx, rx) = unbounded();
-        let msg = NodeMessage::SubscribeBalance(tx);
+    /// Initialize blockchain.
+    pub fn init(&self, genesis: Vec<Block>) -> Result<(), Error> {
+        let msg = NodeMessage::Init { genesis };
         self.outbox.unbounded_send(msg)?;
-        Ok(rx)
+        Ok(())
+    }
+
+    /// Send transaction to node and to the network.
+    pub fn send_transaction(&self, tx: Transaction) -> Result<(), Error> {
+        let proto = tx.into_proto();
+        let data = proto.write_to_bytes()?;
+        self.broker.publish(&TX_TOPIC.to_string(), data.clone())?;
+        info!(
+            "Sent transaction to the network: hash={}",
+            Hash::digest(&tx.body)
+        );
+        let msg = NodeMessage::Transaction(data);
+        self.outbox.unbounded_send(msg)?;
+        Ok(())
     }
 
     /// Subscribe to epoch changes.
@@ -116,30 +129,12 @@ impl Node {
         Ok(rx)
     }
 
-    /// Subscribe to messages.
-    pub fn subscribe_messages(&self) -> Result<UnboundedReceiver<MessageNotification>, Error> {
+    /// Subscribe to outputs.
+    pub fn subscribe_outputs(&self) -> Result<UnboundedReceiver<OutputsNotification>, Error> {
         let (tx, rx) = unbounded();
-        let msg = NodeMessage::SubscribeMessage(tx);
+        let msg = NodeMessage::SubscribeOutputs(tx);
         self.outbox.unbounded_send(msg)?;
         Ok(rx)
-    }
-
-    /// Send money.
-    pub fn payment(&self, recipient: PublicKey, amount: i64) -> Result<(), Error> {
-        let msg = NodeMessage::Payment { recipient, amount };
-        self.outbox.unbounded_send(msg)?;
-        Ok(())
-    }
-
-    /// Send message.
-    pub fn message(&self, recipient: PublicKey, ttl: u64, data: Vec<u8>) -> Result<(), Error> {
-        let msg = NodeMessage::Message {
-            recipient,
-            ttl,
-            data,
-        };
-        self.outbox.unbounded_send(msg)?;
-        Ok(())
     }
 }
 
@@ -151,10 +146,11 @@ pub struct EpochNotification {
     pub witnesses: BTreeSet<SecurePublicKey>,
 }
 
-/// Send when message is received.
+/// Send when outputs created and/or pruned.
 #[derive(Debug, Clone)]
-pub struct MessageNotification {
-    pub data: Vec<u8>,
+pub struct OutputsNotification {
+    pub inputs: Vec<Output>,
+    pub outputs: Vec<Output>,
 }
 
 // ----------------------------------------------------------------
@@ -169,14 +165,6 @@ const TX_TOPIC: &'static str = "tx";
 const CONSENSUS_TOPIC: &'static str = "consensus";
 /// Topic used for sending sealed blocks.
 const SEALED_BLOCK_TOPIC: &'static str = "block";
-/// Fixed fee for monetary transactions.
-const MONETARY_FEE: i64 = 1;
-/// Fixed fee for escrow transactions.
-const ESCROW_FEE: i64 = 1;
-/// Data unit used to calculate fee.
-const DATA_UNIT: usize = 1024;
-/// Fee for one DATA_UNIT.
-const DATA_UNIT_FEE: i64 = 1;
 /// Time delta in which our messages should be delivered, or forgeted.
 const MESSAGE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Estimated time of block validation.
@@ -198,18 +186,8 @@ enum NodeMessage {
     //
     // Public API
     //
-    Payment {
-        recipient: PublicKey,
-        amount: i64,
-    },
-    Message {
-        recipient: PublicKey,
-        ttl: u64,
-        data: Vec<u8>,
-    },
-    SubscribeBalance(UnboundedSender<i64>),
     SubscribeEpoch(UnboundedSender<EpochNotification>),
-    SubscribeMessage(UnboundedSender<MessageNotification>),
+    SubscribeOutputs(UnboundedSender<OutputsNotification>),
 
     //
     // Network Events
@@ -221,58 +199,9 @@ enum NodeMessage {
     //
     // Internal Events
     //
-    Init {
-        genesis: Vec<Block>,
-    },
+    Init { genesis: Vec<Block> },
     ConsensusTimer(Instant),
     VRFTimer(Instant),
-}
-
-#[derive(Debug, Fail, PartialEq, Eq)]
-pub enum NodeError {
-    #[fail(display = "Amount should be greater than zero.")]
-    ZeroOrNegativeAmount,
-    #[fail(display = "Not enough money.")]
-    NotEnoughMoney,
-    #[fail(display = "Fee is to low: min={}, got={}", _0, _1)]
-    TooLowFee(i64, i64),
-    #[fail(
-        display = "Invalid block version: block={}, expected={}, got={}",
-        _0, _1, _2
-    )]
-    InvalidBlockVersion(Hash, u64, u64),
-    #[fail(
-        display = "Invalid or out-of-order previous block: block={}, expected={}, got={}",
-        _0, _1, _2
-    )]
-    OutOfOrderBlockHash(Hash, Hash, Hash),
-    #[fail(
-        display = "Invalid or out-of-order epoch: block={}, expected={}, got={}",
-        _0, _1, _2
-    )]
-    OutOfOrderBlockEpoch(Hash, u64, u64),
-    #[fail(display = "Block is already registered: hash={}", _0)]
-    BlockAlreadyRegistered(Hash),
-    #[fail(display = "Failed to validate block: expected={}, got={}", _0, _1)]
-    InvalidBlockHash(Hash, Hash),
-    #[fail(
-        display = "Sealed Block from non-leader: block={}, expected={}, got={}",
-        _0, _1, _2
-    )]
-    SealedBlockFromNonLeader(Hash, SecurePublicKey, SecurePublicKey),
-    #[fail(display = "Invalid fee UTXO: hash={}", _0)]
-    InvalidFeeUTXO(Hash),
-    #[fail(display = "Invalid block BLS multisignature: block={}", _0)]
-    InvalidBlockSignature(Hash),
-    #[fail(display = "Transaction missing in mempool: {}.", _0)]
-    TransactionMissingInMempool(Hash),
-    #[fail(display = "Transaction already exists in mempool: {}.", _0)]
-    TransactionAlreadyExists(Hash),
-    #[fail(
-        display = "Found a block proposal with timestamp: {} that differ with our timestamp: {}.",
-        _0, _1
-    )]
-    UnsynchronizedBlock(u64, u64),
 }
 
 struct NodeService {
@@ -280,13 +209,7 @@ struct NodeService {
     chain: Blockchain,
     /// Key Chain.
     keys: KeyChain,
-    /// Node's UXTO.
-    unspent: HashMap<Hash, i64>,
-    /// Node's stakes.
-    unspent_stakes: HashMap<Hash, i64>,
 
-    /// Calculated Node's balance.
-    balance: i64,
     /// A monotonically increasing value that represents the heights of the blockchain,
     /// starting from genesis block (=0).
     epoch: u64,
@@ -323,12 +246,10 @@ struct NodeService {
 
     /// Network interface.
     broker: Broker,
-    /// Triggered when balance is changed.
-    on_balance_changed: Vec<UnboundedSender<i64>>,
     /// Triggered when epoch is changed.
     on_epoch_changed: Vec<UnboundedSender<EpochNotification>>,
-    /// Triggered when message is received.
-    on_message_received: Vec<UnboundedSender<MessageNotification>>,
+    /// Triggered when outputs created and/or pruned.
+    on_outputs_changed: Vec<UnboundedSender<OutputsNotification>>,
     /// Aggregated stream of events.
     events: Box<Stream<Item = NodeMessage, Error = ()> + Send>,
 }
@@ -341,14 +262,9 @@ impl NodeService {
         inbox: UnboundedReceiver<NodeMessage>,
     ) -> Result<Self, Error> {
         let chain = Blockchain::new();
-        let balance = 0i64;
-        let unspent = HashMap::new();
-        let unspent_stakes = HashMap::new();
         let epoch: u64 = 0;
         let sealed_block_num = 0;
-
         let stakes = BTreeMap::new();
-
         let leader: SecurePublicKey = G2::generator().into(); // some fake key
         let validators = BTreeMap::<SecurePublicKey, i64>::new();
         let future_consensus_messages = Vec::new();
@@ -359,9 +275,8 @@ impl NodeService {
         let consensus = None;
         let last_block_timestamp = Instant::now();
 
-        let on_balance_changed = Vec::<UnboundedSender<i64>>::new();
         let on_epoch_changed = Vec::<UnboundedSender<EpochNotification>>::new();
-        let on_message_received = Vec::<UnboundedSender<MessageNotification>>::new();
+        let on_outputs_received = Vec::<UnboundedSender<OutputsNotification>>::new();
 
         let mut streams = Vec::<Box<Stream<Item = NodeMessage, Error = ()> + Send>>::new();
 
@@ -414,9 +329,6 @@ impl NodeService {
             vrf_system,
             chain,
             keys,
-            balance,
-            unspent,
-            unspent_stakes,
             epoch,
             leader,
             stakes,
@@ -425,9 +337,8 @@ impl NodeService {
             consensus,
             last_block_timestamp,
             broker,
-            on_balance_changed,
             on_epoch_changed,
-            on_message_received,
+            on_outputs_changed: on_outputs_received,
             events,
         };
 
@@ -472,7 +383,7 @@ impl NodeService {
                     );
                     let monetary_block2 = monetary_block.clone();
                     let inputs = self.chain.register_monetary_block(monetary_block)?;
-                    self.on_monetary_block_registered(&monetary_block2, &inputs);
+                    self.on_monetary_block_registered(&monetary_block2, inputs);
                 }
             }
         }
@@ -485,29 +396,6 @@ impl NodeService {
         self.last_block_timestamp = Instant::now();
 
         Ok(())
-    }
-
-    /// Handler for NodeMessage::Payment.
-    fn handle_payment(&mut self, recipient: &PublicKey, amount: i64) -> Result<(), Error> {
-        let tx = self.create_monetary_transaction(recipient, amount)?;
-        self.send_transaction(tx)
-    }
-
-    /// Handler for NodeMessage::Data.
-    fn handle_message(
-        &mut self,
-        recipient: &PublicKey,
-        ttl: u64,
-        data: Vec<u8>,
-    ) -> Result<(), Error> {
-        debug!(
-            "Received message request: to={}, data={}",
-            recipient,
-            String::from_utf8_lossy(&data)
-        );
-
-        let tx = self.create_data_transaction(recipient, ttl, data)?;
-        self.send_transaction(tx)
     }
 
     /// Handle incoming transactions received from network.
@@ -636,7 +524,7 @@ impl NodeService {
         // TODO: implement proper handling of mempool.
         self.mempool.clear();
 
-        self.on_monetary_block_registered(&monetary_block2, &inputs);
+        self.on_monetary_block_registered(&monetary_block2, inputs);
         Ok(())
     }
 
@@ -718,13 +606,6 @@ impl NodeService {
         Ok(())
     }
 
-    /// Handler for NodeMessage::SubscribeBalance.
-    fn handle_subscribe_balance(&mut self, tx: UnboundedSender<i64>) -> Result<(), Error> {
-        tx.unbounded_send(self.balance)?;
-        self.on_balance_changed.push(tx);
-        Ok(())
-    }
-
     /// Handler for NodeMessage::SubscribeEpoch.
     fn handle_subscribe_epoch(
         &mut self,
@@ -740,12 +621,12 @@ impl NodeService {
         Ok(())
     }
 
-    /// Handler for NodeMessage::SubscribeMessage.
-    fn handle_subscribe_message(
+    /// Handler for NodeMessage::SubscribeOutputs.
+    fn handle_subscribe_outputs(
         &mut self,
-        tx: UnboundedSender<MessageNotification>,
+        tx: UnboundedSender<OutputsNotification>,
     ) -> Result<(), Error> {
-        self.on_message_received.push(tx);
+        self.on_outputs_changed.push(tx);
         Ok(())
     }
 
@@ -876,122 +757,25 @@ impl NodeService {
     }
 
     /// Called when a new key block is registered.
-    fn on_monetary_block_registered(&mut self, monetary_block: &MonetaryBlock, inputs: &[Output]) {
+    fn on_monetary_block_registered(
+        &mut self,
+        monetary_block: &MonetaryBlock,
+        inputs: Vec<Output>,
+    ) {
         //
         // Notify subscribers.
         //
 
-        let saved_balance = self.balance;
-
-        for input in inputs {
-            let hash = Hash::digest(input);
-            self.on_output_pruned(hash, input);
-        }
-
-        for (output, _) in monetary_block.body.outputs.leafs() {
-            let hash = Hash::digest(output);
-            self.on_output_created(hash, output);
-        }
-
-        if saved_balance != self.balance {
-            let balance = self.balance;
-            self.on_balance_changed
-                .retain(move |tx| tx.unbounded_send(balance).is_ok())
-        }
-    }
-
-    /// Called when UTXO is created.
-    fn on_output_created(&mut self, hash: Hash, output: &Output) {
-        match output {
-            Output::MonetaryOutput(output) => {
-                if let Ok((_delta, _gamma, amount)) = output.decrypt_payload(&self.keys.wallet_skey)
-                {
-                    info!("Received monetary UTXO: hash={}, amount={}", hash, amount);
-                    let missing = self.unspent.insert(hash, amount);
-                    assert_eq!(missing, None);
-                    assert!(amount >= 0);
-                    self.balance += amount;
-                }
-            }
-            Output::DataOutput(output) => {
-                if let Ok((_delta, _gamma, data)) = output.decrypt_payload(&self.keys.wallet_skey) {
-                    info!(
-                        "Received data UTXO: hash={}, msg={}",
-                        hash,
-                        String::from_utf8_lossy(&data)
-                    );
-                    // Notify subscribers.
-                    let msg = MessageNotification { data };
-                    self.on_message_received
-                        .retain(move |tx| tx.unbounded_send(msg.clone()).is_ok());
-
-                    // Send a prune request.
-                    debug!("Pruning data");
-                    let tx = self
-                        .create_data_pruning_transaction(output.clone())
-                        .expect("cannot fail");
-                    debug!("Created transaction: hash={}", Hash::digest(&tx.body));
-                    self.send_transaction(tx).ok();
-                }
-            }
-            Output::EscrowOutput(output) => {
-                if let Ok(_delta) = output.decrypt_payload(&self.keys.wallet_skey) {
-                    info!(
-                        "Staked money to escrow: hash={}, amount={}",
-                        hash, output.amount
-                    );
-                    let missing = self.unspent_stakes.insert(hash, output.amount);
-                    assert_eq!(missing, None);
-                }
-            }
-        }
-    }
-
-    /// Called when UTXO is spent.
-    fn on_output_pruned(&mut self, hash: Hash, output: &Output) {
-        match output {
-            Output::MonetaryOutput(output) => {
-                if let Ok((_delta, _gamma, amount)) = output.decrypt_payload(&self.keys.wallet_skey)
-                {
-                    info!("Spent monetary UTXO: hash={}, amount={}", hash, amount);
-                    let exists = self.unspent.remove(&hash);
-                    assert_eq!(exists, Some(amount));
-                    self.balance -= amount;
-                    assert!(self.balance >= 0);
-                }
-            }
-            Output::DataOutput(output) => {
-                if let Ok((_delta, _gamma, data)) = output.decrypt_payload(&self.keys.wallet_skey) {
-                    info!(
-                        "Pruned data UTXO: hash={}, msg={}",
-                        hash,
-                        String::from_utf8_lossy(&data)
-                    );
-                }
-            }
-            Output::EscrowOutput(output) => {
-                if let Ok(_delta) = output.decrypt_payload(&self.keys.wallet_skey) {
-                    info!(
-                        "Unstaked money from escrow: hash={}, amount={}",
-                        hash, output.amount
-                    );
-                }
-            }
-        }
-    }
-
-    /// Send transaction to network.
-    fn send_transaction(&mut self, tx: Transaction) -> Result<(), Error> {
-        let proto = tx.into_proto();
-        let data = proto.write_to_bytes()?;
-        self.broker.publish(&TX_TOPIC.to_string(), data.clone())?;
-        info!(
-            "Sent transaction to the network: hash={}",
-            Hash::digest(&tx.body)
-        );
-        // Sic: broadcast messages are not delivered to sender itself.
-        self.handle_transaction(data)?;
-        Ok(())
+        let outputs = monetary_block
+            .body
+            .outputs
+            .leafs()
+            .drain(..)
+            .map(|(o, _path)| *o.clone())
+            .collect();
+        let msg = OutputsNotification { inputs, outputs };
+        self.on_outputs_changed
+            .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
     }
 
     /// Send block to network.
@@ -1029,275 +813,6 @@ impl NodeService {
             return Err(NodeError::TooLowFee(min_fee, tx.body.fee));
         }
         Ok(())
-    }
-
-    /// Find UTXO with exact value.
-    fn find_utxo_exact(unspent: &HashMap<Hash, i64>, sum: i64) -> Option<Hash> {
-        for (hash, amount) in unspent.iter() {
-            if *amount == sum {
-                debug!("Use UTXO: hash={}, amount={}", hash, amount);
-                return Some(hash.clone());
-            }
-        }
-        None
-    }
-
-    /// Find appropriate UTXO to spent and calculate a change.
-    fn find_utxo(
-        unspent: &HashMap<Hash, i64>,
-        mut sum: i64,
-    ) -> Result<(Vec<Hash>, i64), NodeError> {
-        assert!(sum >= 0);
-        let mut unspent: Vec<(i64, Hash)> = unspent
-            .iter()
-            .map(|(hash, amount)| (*amount, hash.clone()))
-            .collect();
-        // Sort ascending in order to eliminate as much outputs as possible
-        unspent.sort_by_key(|(amount, _hash)| *amount);
-
-        // Naive algorithm - try to spent as much UTXO as possible.
-        let mut spent = Vec::new();
-        for (amount, hash) in unspent.drain(..) {
-            if sum <= 0 {
-                break;
-            }
-            sum -= amount;
-            spent.push(hash);
-            debug!("Use UTXO: hash={}, amount={}", hash, amount);
-        }
-        drop(unspent);
-
-        if sum > 0 {
-            return Err(NodeError::NotEnoughMoney);
-        }
-
-        let change = -sum;
-        return Ok((spent, change));
-    }
-
-    /// Create monetary transaction.
-    fn create_monetary_transaction(
-        &self,
-        recipient: &PublicKey,
-        amount: i64,
-    ) -> Result<Transaction, Error> {
-        if amount <= 0 {
-            return Err(NodeError::ZeroOrNegativeAmount.into());
-        }
-
-        debug!(
-            "Creating a monetary transaction: recipient={}, amount={}",
-            recipient, amount
-        );
-
-        //
-        // Find inputs
-        //
-
-        trace!("Checking for available funds in the wallet...");
-
-        // Try to find exact sum plus fee, without a change.
-        let (fee, change, inputs) =
-            match NodeService::find_utxo_exact(&self.unspent, amount + MONETARY_FEE) {
-                Some(inputs) => {
-                    // If found, then charge the minimal fee.
-                    let fee = MONETARY_FEE;
-                    let inputs = self.chain.outputs_by_hashes(&[inputs])?;
-                    (fee, 0i64, inputs)
-                }
-                None => {
-                    // Otherwise, charge the double fee.
-                    let fee = 2 * MONETARY_FEE;
-                    let (inputs, change) = NodeService::find_utxo(&self.unspent, amount + fee)?;
-                    let inputs = self.chain.outputs_by_hashes(&inputs)?;
-                    (fee, change, inputs)
-                }
-            };
-
-        debug!(
-            "Transaction preview: recipient={}, amount={}, withdrawn={}, change={}, fee={}",
-            recipient,
-            amount,
-            amount + change + fee,
-            change,
-            fee
-        );
-
-        //
-        // Create outputs
-        //
-
-        let sender_skey = &self.keys.wallet_skey;
-        let sender_pkey = &self.keys.wallet_pkey;
-
-        let timestamp = Utc::now().timestamp() as u64;
-        let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
-
-        // Create an output for payment
-        trace!("Creating change UTXO...");
-        let (output1, gamma1) = Output::new_monetary(timestamp, sender_skey, recipient, amount)?;
-        info!(
-            "Created monetary UTXO: hash={}, recipient={}, amount={}",
-            Hash::digest(&output1),
-            recipient,
-            amount
-        );
-        outputs.push(output1);
-        let mut gamma = gamma1;
-
-        if change > 0 {
-            // Create an output for change
-            trace!("Creating change UTXO...");
-            let (output2, gamma2) =
-                Output::new_monetary(timestamp, sender_skey, sender_pkey, change)?;
-            info!(
-                "Created change UTXO: hash={}, recipient={}, change={}",
-                Hash::digest(&output2),
-                sender_pkey,
-                change
-            );
-            outputs.push(output2);
-            gamma += gamma2;
-        }
-
-        trace!("Signing transaction...");
-        let tx = Transaction::new(sender_skey, &inputs, &outputs, gamma, fee)?;
-        let tx_hash = Hash::digest(&tx);
-        info!(
-            "Signed monetary transaction: hash={}, recipient={}, amount={}, withdrawn={}, change={}, fee={}",
-            tx_hash,
-            recipient,
-            amount,
-            amount + change + fee,
-            change,
-            fee
-        );
-
-        Ok(tx)
-    }
-
-    /// Create data transaction.
-    fn create_data_transaction(
-        &self,
-        recipient: &PublicKey,
-        ttl: u64,
-        data: Vec<u8>,
-    ) -> Result<Transaction, Error> {
-        debug!(
-            "Creating a data transaction: recipient={}, ttl={}",
-            recipient, ttl
-        );
-
-        //
-        // Find inputs
-        //
-
-        trace!("Checking for available funds in the wallet...");
-
-        let fee = NodeService::data_fee(data.len(), ttl);
-        // Try to find exact sum plus fee, without a change.
-        let (fee, change, inputs) = match NodeService::find_utxo_exact(&self.unspent, fee) {
-            Some(inputs) => {
-                // If found, then charge the minimal fee.
-                let inputs = self.chain.outputs_by_hashes(&[inputs])?;
-                (fee, 0i64, inputs)
-            }
-            None => {
-                // Otherwise, charge the double fee.
-                let fee = fee + MONETARY_FEE;
-                let (inputs, change) = NodeService::find_utxo(&self.unspent, fee)?;
-                let inputs = self.chain.outputs_by_hashes(&inputs)?;
-                (fee, change, inputs)
-            }
-        };
-
-        debug!(
-            "Transaction preview: recipient={}, ttl={}, withdrawn={}, change={}, fee={}",
-            recipient,
-            ttl,
-            change + fee,
-            change,
-            fee
-        );
-
-        //
-        // Create outputs
-        //
-
-        let sender_skey = &self.keys.wallet_skey;
-        let sender_pkey = &self.keys.wallet_pkey;
-
-        let timestamp = Utc::now().timestamp() as u64;
-        let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
-
-        // Create an output for payment
-        trace!("Creating data UTXO...");
-        let (output1, gamma1) = Output::new_data(timestamp, sender_skey, recipient, ttl, &data)?;
-        info!(
-            "Created data UTXO: hash={}, recipient={}, ttl={}",
-            Hash::digest(&output1),
-            recipient,
-            ttl
-        );
-        outputs.push(output1);
-        let mut gamma = gamma1;
-
-        if change > 0 {
-            // Create an output for change
-            trace!("Creating change UTXO...");
-            let (output2, gamma2) =
-                Output::new_monetary(timestamp, sender_skey, sender_pkey, change)?;
-            info!(
-                "Created change UTXO: hash={}, recipient={}, change={}",
-                Hash::digest(&output2),
-                recipient,
-                change
-            );
-            outputs.push(output2);
-            gamma += gamma2;
-        }
-
-        trace!("Signing transaction...");
-        let tx = Transaction::new(sender_skey, &inputs, &outputs, gamma, fee)?;
-        let tx_hash = Hash::digest(&tx);
-        info!(
-            "Signed data transaction: hash={}, recipient={}, ttl={}, spent={}, change={}, fee={}",
-            tx_hash,
-            recipient,
-            ttl,
-            change + fee,
-            change,
-            fee
-        );
-
-        Ok(tx)
-    }
-
-    /// Create a transaction to prune data.
-    fn create_data_pruning_transaction(&self, output: DataOutput) -> Result<Transaction, Error> {
-        let output_hash = Hash::digest(&output);
-
-        debug!(
-            "Creating a data pruning transaction: data_utxo={}",
-            output_hash
-        );
-
-        let sender_skey = &self.keys.wallet_skey;
-
-        let inputs = [Output::DataOutput(output)];
-        let outputs = [];
-        let adjustment = Fr::zero();
-        let fee: i64 = 0;
-
-        trace!("Signing transaction...");
-        let tx = Transaction::new(sender_skey, &inputs, &outputs, adjustment, fee)?;
-        let tx_hash = Hash::digest(&tx);
-        info!(
-            "Signed data pruning transaction: hash={}, data_utxo={}, fee={}",
-            tx_hash, output_hash, fee
-        );
-
-        Ok(tx)
     }
 
     ///
@@ -1853,7 +1368,7 @@ impl NodeService {
                     .expect("block is validated before");
                 // TODO: implement proper handling of mempool.
                 self.mempool.clear();
-                self.on_monetary_block_registered(&monetary_block2, &pruned);
+                self.on_monetary_block_registered(&monetary_block2, pruned);
                 self.send_sealed_block(Block::MonetaryBlock(monetary_block2))
                     .expect("failed to send sealed monetary block");
             }
@@ -1872,18 +1387,8 @@ impl Future for NodeService {
                 Async::Ready(Some(event)) => {
                     let result: Result<(), Error> = match event {
                         NodeMessage::Init { genesis } => self.handle_init(genesis),
-                        NodeMessage::Payment { recipient, amount } => {
-                            self.handle_payment(&recipient, amount)
-                        }
-                        NodeMessage::Message {
-                            recipient,
-                            ttl,
-                            data,
-                        } => self.handle_message(&recipient, ttl, data),
-                        NodeMessage::SubscribeBalance(tx) => self.handle_subscribe_balance(tx),
                         NodeMessage::SubscribeEpoch(tx) => self.handle_subscribe_epoch(tx),
-                        NodeMessage::SubscribeMessage(tx) => self.handle_subscribe_message(tx),
-
+                        NodeMessage::SubscribeOutputs(tx) => self.handle_subscribe_outputs(tx),
                         NodeMessage::Transaction(msg) => self.handle_transaction(msg),
                         NodeMessage::Consensus(msg) => self.handle_consensus_message(msg),
                         NodeMessage::SealedBlock(msg) => self.handle_sealed_block(msg),
@@ -1905,7 +1410,10 @@ impl Future for NodeService {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use std::collections::HashMap;
     use stegos_crypto::pbc::secure::sign_hash as secure_sign_hash;
+    use stegos_wallet::create_data_transaction;
+    use stegos_wallet::create_monetary_transaction;
 
     #[test]
     pub fn init() {
@@ -1920,8 +1428,6 @@ pub mod tests {
         let mut node = NodeService::new(keys.clone(), broker, inbox).unwrap();
 
         assert_eq!(node.chain.blocks().len(), 0);
-        assert_eq!(node.balance, 0);
-        assert_eq!(node.unspent.len(), 0);
         assert_eq!(node.mempool.len(), 0);
         assert_eq!(node.epoch, 0);
         assert_ne!(node.leader, keys.cosi_pkey);
@@ -1932,8 +1438,6 @@ pub mod tests {
         let genesis_count = genesis.len();
         node.handle_init(genesis).unwrap();
         assert_eq!(node.chain.blocks().len(), genesis_count);
-        assert_eq!(node.balance, amount);
-        assert_eq!(node.unspent.len(), 1);
         assert_eq!(node.mempool.len(), 0);
         assert_eq!(node.epoch, 1);
         assert_eq!(node.leader, keys.cosi_pkey);
@@ -1958,6 +1462,59 @@ pub mod tests {
         node.commit_proposed_block(block, multisig, multisigmap);
     }
 
+    fn unspent(node: &NodeService) -> HashMap<Hash, (MonetaryOutput, i64)> {
+        let mut unspent: HashMap<Hash, (MonetaryOutput, i64)> = HashMap::new();
+        for hash in node.chain.unspent() {
+            let output = node.chain.output_by_hash(&hash).unwrap();
+            if let Output::MonetaryOutput(o) = output {
+                let (_delta, _gamma, amount) = o.decrypt_payload(&node.keys.wallet_skey).unwrap();
+                unspent.insert(hash, (o.clone(), amount));
+            }
+        }
+        unspent
+    }
+
+    fn simulate_payment(node: &mut NodeService, amount: i64) -> Result<(), Error> {
+        let tx = create_monetary_transaction(
+            &node.keys.wallet_skey,
+            &node.keys.wallet_pkey,
+            &node.keys.wallet_pkey,
+            &unspent(node),
+            amount,
+        )?;
+        let proto = tx.into_proto();
+        let data = proto.write_to_bytes()?;
+        node.handle_transaction(data)?;
+        Ok(())
+    }
+
+    fn simulate_message(node: &mut NodeService, ttl: u64, msg: Vec<u8>) -> Result<(), Error> {
+        let tx = create_data_transaction(
+            &node.keys.wallet_skey,
+            &node.keys.wallet_pkey,
+            &node.keys.wallet_pkey,
+            &unspent(node),
+            ttl,
+            msg,
+        )?;
+        let proto = tx.into_proto();
+        let data = proto.write_to_bytes()?;
+        node.handle_transaction(data)?;
+        Ok(())
+    }
+
+    fn balance(node: &NodeService) -> i64 {
+        let mut balance: i64 = 0;
+        for hash in node.chain.unspent() {
+            let output = node.chain.output_by_hash(&hash).unwrap();
+            if let Output::MonetaryOutput(o) = output {
+                let (_delta, _gamma, amount) = o.decrypt_payload(&node.keys.wallet_skey).unwrap();
+                balance += amount;
+            }
+        }
+        balance
+    }
+
     #[test]
     pub fn monetary_requests() {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
@@ -1975,35 +1532,15 @@ pub mod tests {
         node.handle_init(genesis).unwrap();
         let mut block_count = node.chain.blocks().len();
 
-        // Invalid requests.
-        let e = node.handle_payment(&keys.wallet_pkey, -1).unwrap_err();
-        assert_eq!(
-            e.downcast::<NodeError>().unwrap(),
-            NodeError::ZeroOrNegativeAmount
-        );
-        let e = node.handle_payment(&keys.wallet_pkey, 0).unwrap_err();
-        assert_eq!(
-            e.downcast::<NodeError>().unwrap(),
-            NodeError::ZeroOrNegativeAmount
-        );
-        let e = node.handle_payment(&keys.wallet_pkey, total).unwrap_err();
-        assert_eq!(
-            e.downcast::<NodeError>().unwrap(),
-            NodeError::NotEnoughMoney
-        );
-
         // Payment without a change.
-        node.handle_payment(&keys.wallet_pkey, total - MONETARY_FEE)
-            .unwrap();
+        simulate_payment(&mut node, total - MONETARY_FEE).unwrap();
         assert_eq!(node.mempool.len(), 1);
         simulate_consensus(&mut node);
         assert_eq!(node.mempool.len(), 0);
-        assert_eq!(node.balance, total); // fee is returned back
-        assert_eq!(node.unspent.len(), 2);
         assert_eq!(node.chain.blocks().len(), block_count + 1);
         let mut amounts = Vec::new();
-        for (unspent, _) in node.unspent.iter() {
-            match node.chain.output_by_hash(unspent) {
+        for unspent in node.chain.unspent() {
+            match node.chain.output_by_hash(&unspent) {
                 Some(Output::MonetaryOutput(o)) => {
                     let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
@@ -2016,16 +1553,14 @@ pub mod tests {
         block_count += 1;
 
         // Payment with a change.
-        node.handle_payment(&keys.wallet_pkey, 100).unwrap();
+        simulate_payment(&mut node, 100).unwrap();
         assert_eq!(node.mempool.len(), 1);
         simulate_consensus(&mut node);
         assert_eq!(node.mempool.len(), 0);
-        assert_eq!(node.balance, total); // fee is returned back
-        assert_eq!(node.unspent.len(), 3);
         assert_eq!(node.chain.blocks().len(), block_count + 1);
         let mut amounts = Vec::new();
-        for (unspent, _) in node.unspent.iter() {
-            match node.chain.output_by_hash(unspent) {
+        for unspent in node.chain.unspent() {
+            match node.chain.output_by_hash(&unspent) {
                 Some(Output::MonetaryOutput(o)) => {
                     let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
@@ -2056,29 +1591,20 @@ pub mod tests {
         node.handle_init(genesis).unwrap();
         let mut block_count = node.chain.blocks().len();
 
-        // Invalid requests.
-        let e = node
-            .handle_message(&keys.wallet_pkey, 100500, b"hello".to_vec())
-            .unwrap_err();
-        assert_eq!(
-            e.downcast::<NodeError>().unwrap(),
-            NodeError::NotEnoughMoney
-        );
-
         let data = b"hello".to_vec();
         let ttl = 3;
         let data_fee = NodeService::data_fee(data.len(), ttl);
 
         // Change money for the next test.
-        node.handle_payment(&keys.wallet_pkey, data_fee).unwrap();
+        simulate_payment(&mut node, data_fee).unwrap();
         simulate_consensus(&mut node);
         assert_eq!(node.mempool.len(), 0);
-        assert_eq!(node.balance, total); // fee is returned back
-        assert_eq!(node.unspent.len(), 3);
+        assert_eq!(balance(&node), total); // fee is returned back
+        assert_eq!(node.chain.unspent().len(), 3);
         assert_eq!(node.chain.blocks().len(), block_count + 1);
         let mut amounts = Vec::new();
-        for (unspent, _) in node.unspent.iter() {
-            match node.chain.output_by_hash(unspent) {
+        for unspent in node.chain.unspent() {
+            match node.chain.output_by_hash(&unspent) {
                 Some(Output::MonetaryOutput(o)) => {
                     let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
@@ -2096,22 +1622,27 @@ pub mod tests {
         block_count += 1;
 
         // Send data without a change.
-        node.handle_message(&keys.wallet_pkey, ttl, data).unwrap();
+        simulate_message(&mut node, ttl, data).unwrap();
         assert_eq!(node.mempool.len(), 1);
         simulate_consensus(&mut node);
-        assert_eq!(node.mempool.len(), 1); // mempool contains "ack" for data
-        assert_eq!(node.balance, total); // fee is returned back
+        assert_eq!(node.mempool.len(), 0);
+        assert_eq!(balance(&node), total); // fee is returned back
         assert_eq!(node.chain.blocks().len(), block_count + 1);
         let mut amounts = Vec::new();
-        for (unspent, _) in node.unspent.iter() {
-            match node.chain.output_by_hash(unspent) {
+        let mut unspent_data: usize = 0;
+        for unspent in node.chain.unspent() {
+            match node.chain.output_by_hash(&unspent) {
                 Some(Output::MonetaryOutput(o)) => {
                     let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
                 }
+                Some(Output::DataOutput(_o)) => {
+                    unspent_data += 1;
+                }
                 _ => panic!(),
             }
         }
+        assert_eq!(unspent_data, 1);
         amounts.sort();
         let expected = vec![
             2 * MONETARY_FEE,
@@ -2121,91 +1652,34 @@ pub mod tests {
         assert_eq!(amounts, expected);
         block_count += 1;
 
-        // Spent data transaction.
-        let unspent_len = node.chain.unspent().len();
-        assert_eq!(node.mempool.len(), 1);
-        simulate_consensus(&mut node);
-        assert_eq!(node.mempool.len(), 0);
-        assert_eq!(node.chain.unspent().len(), unspent_len - 1);
-        assert_eq!(node.chain.blocks().len(), block_count + 1);
-        block_count += 1;
-
         // Send data with a change.
         let data = b"hello".to_vec();
         let ttl = 10;
         let data_fee2 = NodeService::data_fee(data.len(), ttl);
-        node.handle_message(&keys.wallet_pkey, ttl, data).unwrap();
+        simulate_message(&mut node, ttl, data).unwrap();
         assert_eq!(node.mempool.len(), 1);
         simulate_consensus(&mut node);
-        assert_eq!(node.mempool.len(), 1); // mempool contains "ack" for data
-        assert_eq!(node.balance, total); // fee is returned back
+        assert_eq!(node.mempool.len(), 0);
+        assert_eq!(balance(&node), total); // fee is returned back
         assert_eq!(node.chain.blocks().len(), block_count + 1);
         let mut amounts = Vec::new();
-        for (unspent, _) in node.unspent.iter() {
-            match node.chain.output_by_hash(unspent) {
+        let mut unspent_data: usize = 0;
+        for unspent in node.chain.unspent() {
+            match node.chain.output_by_hash(&unspent) {
                 Some(Output::MonetaryOutput(o)) => {
                     let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
                 }
+                Some(Output::DataOutput(_o)) => {
+                    unspent_data += 1;
+                }
                 _ => panic!(),
             }
         }
+        assert_eq!(unspent_data, 2);
         amounts.sort();
         let expected = vec![MONETARY_FEE + data_fee2, total - MONETARY_FEE - data_fee2];
         assert_eq!(amounts, expected);
-        block_count += 1;
-
-        // Spent data a transaction.
-        let unspent_len = node.chain.unspent().len();
-        assert_eq!(node.mempool.len(), 1);
-        simulate_consensus(&mut node);
-        assert_eq!(node.mempool.len(), 0);
-        assert_eq!(node.chain.unspent().len(), unspent_len - 1);
-        assert_eq!(node.chain.blocks().len(), block_count + 1);
-    }
-
-    /// Check transaction signing and validation.
-    #[test]
-    pub fn find_utxo() {
-        let mut unspent = HashMap::<Hash, i64>::new();
-        let amounts: [i64; 5] = [100, 50, 10, 2, 1];
-        for amount in amounts.iter() {
-            unspent.insert(Hash::digest(amount), *amount);
-        }
-
-        let (spent, change) = NodeService::find_utxo(&unspent, 1).unwrap();
-        assert_eq!(spent, vec![Hash::digest(&1i64)]);
-        assert_eq!(change, 0);
-
-        let (spent, change) = NodeService::find_utxo(&unspent, 2).unwrap();
-        assert_eq!(spent, vec![Hash::digest(&1i64), Hash::digest(&2i64)]);
-        assert_eq!(change, 1);
-
-        let (spent, change) = NodeService::find_utxo(&unspent, 5).unwrap();
-        assert_eq!(
-            spent,
-            vec![
-                Hash::digest(&1i64),
-                Hash::digest(&2i64),
-                Hash::digest(&10i64)
-            ]
-        );
-        assert_eq!(change, 8);
-
-        let (spent, change) = NodeService::find_utxo(&unspent, 163).unwrap();
-        assert_eq!(
-            spent,
-            vec![
-                Hash::digest(&1i64),
-                Hash::digest(&2i64),
-                Hash::digest(&10i64),
-                Hash::digest(&50i64),
-                Hash::digest(&100i64),
-            ]
-        );
-        assert_eq!(change, 0);
-
-        assert!(NodeService::find_utxo(&unspent, 164).is_err());
     }
 
     /// Check data fee calculation.

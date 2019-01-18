@@ -38,6 +38,7 @@ stegos_randhound = { path = "./randhound" }
 stegos_runtime = { path = "./runtime" }
 stegos_storage = { path = "./storage" }
 stegos_txpool = { path = "./txpool" }
+stegos_wallet = { path = "./wallet" }
 
 clap = "2.32"
 dirs = "1.0"

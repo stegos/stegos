@@ -19,6 +19,7 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+use crate::consts;
 use dirs;
 use failure::Error;
 use futures::sync::mpsc::UnboundedReceiver;
@@ -34,10 +35,10 @@ use std::str::FromStr;
 use std::thread;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::pbc::secure;
+use stegos_keychain::KeyChain;
 use stegos_network::{Broker, Network};
 use stegos_node::*;
-
-use crate::consts;
+use stegos_wallet::{Wallet, WalletNotification};
 
 // ----------------------------------------------------------------
 // Public API.
@@ -49,11 +50,12 @@ pub struct Console {}
 impl Console {
     /// Create a new Console Service.
     pub fn new(
+        keys: &KeyChain,
         network: Network,
         broker: Broker,
         node: Node,
     ) -> Result<impl Future<Item = (), Error = ()>, Error> {
-        ConsoleService::new(network, broker, node)
+        ConsoleService::new(keys, network, broker, node)
     }
 }
 
@@ -76,6 +78,8 @@ lazy_static! {
 
 /// Console (stdin) service.
 struct ConsoleService {
+    /// Wallet.
+    wallet: Wallet,
     /// Network node.
     network: Network,
     /// Network message broker.
@@ -86,28 +90,31 @@ struct ConsoleService {
     stdin: Receiver<String>,
     /// A thread used for readline.
     stdin_th: thread::JoinHandle<()>,
-    /// A channel to receive notification about balance changes.
-    balance_rx: UnboundedReceiver<i64>,
-    /// A channel to receive notification about new messages..
-    message_rx: UnboundedReceiver<MessageNotification>,
+    /// A channel to receive notification about UTXO changes.
+    outputs_rx: UnboundedReceiver<OutputsNotification>,
 }
 
 impl ConsoleService {
     /// Constructor.
-    fn new(network: Network, broker: Broker, node: Node) -> Result<ConsoleService, Error> {
+    fn new(
+        keys: &KeyChain,
+        network: Network,
+        broker: Broker,
+        node: Node,
+    ) -> Result<ConsoleService, Error> {
+        let wallet = Wallet::new(keys.wallet_skey.clone(), keys.wallet_pkey.clone());
         let (tx, rx) = channel::<String>(1);
         let stdin_th = thread::spawn(move || ConsoleService::readline_thread_f(tx));
         let stdin = rx;
-        let balance_rx = node.subscribe_balance()?;
-        let message_rx = node.subscribe_messages()?;
+        let outputs_rx = node.subscribe_outputs()?;
         let service = ConsoleService {
+            wallet,
             network,
             broker,
             node,
             stdin,
             stdin_th,
-            balance_rx,
-            message_rx,
+            outputs_rx,
         };
         Ok(service)
     }
@@ -271,7 +278,11 @@ impl ConsoleService {
             let amount = amount.parse::<i64>().unwrap(); // check by regex
 
             info!("Sending {} STG to {}", amount, recipient.into_hex());
-            if let Err(e) = self.node.payment(recipient, amount) {
+            if let Err(e) = self
+                .wallet
+                .payment(&recipient, amount)
+                .and_then(move |tx| self.node.send_transaction(tx))
+            {
                 error!("Request failed: {}", e);
             }
         } else if msg.starts_with("msg ") {
@@ -290,11 +301,17 @@ impl ConsoleService {
             };
             let data = caps.name("msg").unwrap().as_str();
             assert!(data.len() > 0);
+            let data = data.as_bytes().to_vec();
 
             info!("Sending message to {}", recipient.into_hex());
-            // TODO: allow to chose ttl
+            // TODO: allow to choose ttl
             let ttl = 10;
-            if let Err(e) = self.node.message(recipient, ttl, data.as_bytes().to_vec()) {
+
+            if let Err(e) = self
+                .wallet
+                .message(&recipient, ttl, data)
+                .and_then(move |tx| self.node.send_transaction(tx))
+            {
                 error!("Request failed: {}", e);
             }
         } else {
@@ -306,12 +323,19 @@ impl ConsoleService {
         std::process::exit(0);
     }
 
-    fn on_balance_changed(&self, balance: i64) {
-        info!("Balance is {} STG", balance);
-    }
-
-    fn on_message_received(&self, msg: MessageNotification) {
-        info!("Incoming message: {}", String::from_utf8_lossy(&msg.data));
+    fn on_notification(&mut self, notifications: Vec<WalletNotification>) -> Result<(), Error> {
+        for notification in notifications {
+            match notification {
+                WalletNotification::BalanceChanged { balance } => {
+                    info!("Balance is {} STG", balance);
+                }
+                WalletNotification::MessageReceived { msg, prune_tx } => {
+                    info!("Incoming message: {}", String::from_utf8_lossy(&msg));
+                    self.node.send_transaction(prune_tx)?;
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -335,17 +359,13 @@ impl Future for ConsoleService {
         }
 
         loop {
-            match self.balance_rx.poll() {
-                Ok(Async::Ready(Some(balance))) => self.on_balance_changed(balance),
-                Ok(Async::Ready(None)) => self.on_exit(),
-                Ok(Async::NotReady) => break, // fall through
-                Err(()) => panic!("Wallet failure"),
-            }
-        }
-
-        loop {
-            match self.message_rx.poll() {
-                Ok(Async::Ready(Some(msg))) => self.on_message_received(msg),
+            match self.outputs_rx.poll() {
+                Ok(Async::Ready(Some(msg))) => {
+                    let notifications = self.wallet.on_outputs_changed(msg.inputs, msg.outputs);
+                    if let Err(e) = self.on_notification(notifications) {
+                        error!("Error: {}", e);
+                    }
+                }
                 Ok(Async::Ready(None)) => self.on_exit(),
                 Ok(Async::NotReady) => break, // fall through
                 Err(()) => panic!("Wallet failure"),

@@ -38,6 +38,7 @@ use stegos_blockchain::Transaction;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::curve1174::cpt::SecretKey;
 use stegos_crypto::hash::Hash;
+use stegos_crypto::pbc::secure;
 
 pub enum WalletNotification {
     BalanceChanged { balance: i64 },
@@ -88,6 +89,38 @@ impl Wallet {
     ) -> Result<Transaction, Error> {
         let tx =
             create_data_transaction(&self.skey, &self.pkey, recipient, &self.unspent, ttl, data)?;
+        Ok(tx)
+    }
+
+    /// Stake money into the escrow.
+    pub fn stake(
+        &self,
+        validator_pkey: &secure::PublicKey,
+        amount: i64,
+    ) -> Result<Transaction, Error> {
+        let tx = create_staking_transaction(
+            &self.skey,
+            &self.pkey,
+            validator_pkey,
+            &self.unspent,
+            amount,
+        )?;
+        Ok(tx)
+    }
+
+    /// Unstake money from the escrow.
+    pub fn unstake(
+        &self,
+        validator_pkey: &secure::PublicKey,
+        amount: i64,
+    ) -> Result<Transaction, Error> {
+        let tx = create_unstaking_transaction(
+            &self.skey,
+            &self.pkey,
+            validator_pkey,
+            &self.unspent_stakes,
+            amount,
+        )?;
         Ok(tx)
     }
 

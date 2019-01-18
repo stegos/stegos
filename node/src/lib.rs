@@ -679,28 +679,37 @@ impl NodeService {
             .collect()
     }
 
-    /// Returns stake from database.
-    /// Called when witnesses list was changed.
-    #[allow(dead_code)]
-    fn validator_stake(&self, validator: &SecurePublicKey) -> i64 {
-        self.stakes.get(validator).cloned().unwrap_or(0)
-    }
-
     /// Adds some stake to node full stake.
     /// Returns new stake.
-    #[allow(dead_code)]
     fn add_stake(&mut self, node: &SecurePublicKey, stake: i64) -> i64 {
         let old_stake = self.stakes.entry(*node).or_insert(0);
         *old_stake += stake;
+        info!(
+            "Stake: validator={}, staked={}, total={}",
+            node, stake, *old_stake
+        );
         *old_stake
     }
 
     /// Take nodes stake.
     /// Returns value of stake;
-    #[allow(dead_code)]
-    fn take_stake(&mut self, node: &SecurePublicKey) -> i64 {
-        let stake = self.stakes.remove(node).unwrap_or(0);
-        stake
+    fn take_stake(&mut self, node: &SecurePublicKey, stake: i64) -> i64 {
+        let old_stake = self
+            .stakes
+            .entry(*node)
+            .or_insert_with(|| panic!("Missing stake"));
+        let result = *old_stake;
+        *old_stake -= stake;
+        info!(
+            "Unstake: validator={}, unstaked={}, total={}",
+            node, stake, *old_stake
+        );
+        if *old_stake < 0 {
+            panic!("Stake underflow");
+        } else if *old_stake == 0 {
+            self.stakes.remove(node);
+        }
+        result
     }
 
     /// Called when a new key block is registered.
@@ -767,13 +776,27 @@ impl NodeService {
         //
         // Notify subscribers.
         //
-        let outputs = monetary_block
+
+        let outputs: Vec<Output> = monetary_block
             .body
             .outputs
             .leafs()
             .drain(..)
             .map(|(o, _path)| *o.clone())
             .collect();
+
+        for input in &inputs {
+            if let Output::EscrowOutput(o) = input {
+                self.take_stake(&o.validator, o.amount);
+            }
+        }
+
+        for output in &outputs {
+            if let Output::EscrowOutput(o) = output {
+                self.add_stake(&o.validator, o.amount);
+            }
+        }
+
         let msg = OutputsNotification { inputs, outputs };
         self.on_outputs_changed
             .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());

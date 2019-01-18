@@ -73,7 +73,7 @@ message BulletProof {
     Fr z = 12;
 }
 
-message MonetaryOutput {
+message PaymentOutput {
     PublicKey recipient = 1;
     BulletProof proof = 2;
     EncryptedPayload payload = 3;
@@ -95,7 +95,7 @@ message EscrowOutput {
 
 message Output {
     oneof output {
-        MonetaryOutput monetary_output = 1;
+        PaymentOutput payment_output = 1;
         DataOutput data_output = 2;
         EscrowOutput escrow_output = 3;
     }

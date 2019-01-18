@@ -368,9 +368,9 @@ impl FromProto<node::BulletProof> for BulletProof {
     }
 }
 
-impl IntoProto<node::MonetaryOutput> for MonetaryOutput {
-    fn into_proto(&self) -> node::MonetaryOutput {
-        let mut proto = node::MonetaryOutput::new();
+impl IntoProto<node::PaymentOutput> for PaymentOutput {
+    fn into_proto(&self) -> node::PaymentOutput {
+        let mut proto = node::PaymentOutput::new();
         proto.set_recipient(self.recipient.into_proto());
         proto.set_proof(self.proof.into_proto());
         proto.set_payload(self.payload.into_proto());
@@ -404,7 +404,7 @@ impl IntoProto<node::Output> for Output {
     fn into_proto(&self) -> node::Output {
         let mut proto = node::Output::new();
         match self {
-            Output::MonetaryOutput(output) => proto.set_monetary_output(output.into_proto()),
+            Output::PaymentOutput(output) => proto.set_payment_output(output.into_proto()),
             Output::DataOutput(output) => proto.set_data_output(output.into_proto()),
             Output::EscrowOutput(output) => proto.set_escrow_output(output.into_proto()),
         }
@@ -412,12 +412,12 @@ impl IntoProto<node::Output> for Output {
     }
 }
 
-impl FromProto<node::MonetaryOutput> for MonetaryOutput {
-    fn from_proto(proto: &node::MonetaryOutput) -> Result<Self, Error> {
+impl FromProto<node::PaymentOutput> for PaymentOutput {
+    fn from_proto(proto: &node::PaymentOutput) -> Result<Self, Error> {
         let recipient = PublicKey::from_proto(proto.get_recipient())?;
         let proof = BulletProof::from_proto(proto.get_proof())?;
         let payload = EncryptedPayload::from_proto(proto.get_payload())?;
-        Ok(MonetaryOutput {
+        Ok(PaymentOutput {
             recipient,
             proof,
             payload,
@@ -458,9 +458,9 @@ impl FromProto<node::EscrowOutput> for EscrowOutput {
 impl FromProto<node::Output> for Output {
     fn from_proto(proto: &node::Output) -> Result<Self, Error> {
         match proto.output {
-            Some(node::Output_oneof_output::monetary_output(ref output)) => {
-                let output = MonetaryOutput::from_proto(output)?;
-                Ok(Output::MonetaryOutput(output))
+            Some(node::Output_oneof_output::payment_output(ref output)) => {
+                let output = PaymentOutput::from_proto(output)?;
+                Ok(Output::PaymentOutput(output))
             }
             Some(node::Output_oneof_output::data_output(ref output)) => {
                 let output = DataOutput::from_proto(output)?;
@@ -1061,7 +1061,7 @@ mod tests {
         let timestamp = Utc::now().timestamp() as u64;
 
         let (output, _gamma) =
-            Output::new_monetary(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
+            Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
         roundtrip(&output);
 
         let data = b"hello";
@@ -1087,12 +1087,12 @@ mod tests {
 
         // "genesis" output by 0
         let (output0, _delta0) =
-            Output::new_monetary(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
+            Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
 
         // Transaction from 1 to 2
         let inputs1 = [output0];
         let (output11, gamma11) =
-            Output::new_monetary(timestamp, &skey1, &pkey2, amount).expect("keys are valid");
+            Output::new_payment(timestamp, &skey1, &pkey2, amount).expect("keys are valid");
         let (output12, gamma12) =
             Output::new_data(timestamp, &skey1, &pkey2, ttl, data).expect("keys are valid");
 
@@ -1210,11 +1210,11 @@ mod tests {
         let previous = Hash::digest(&"test".to_string());
 
         // "genesis" output by 0
-        let (output0, gamma0) = Output::new_monetary(timestamp, &skey0, &pkey1, amount).unwrap();
+        let (output0, gamma0) = Output::new_payment(timestamp, &skey0, &pkey1, amount).unwrap();
 
         // Transaction from 1 to 2
         let inputs1 = [Hash::digest(&output0)];
-        let (output1, gamma1) = Output::new_monetary(timestamp, &skey1, &pkey2, amount).unwrap();
+        let (output1, gamma1) = Output::new_payment(timestamp, &skey1, &pkey2, amount).unwrap();
         let outputs1 = [output1];
         let gamma = gamma0 - gamma1;
 
@@ -1236,7 +1236,7 @@ mod tests {
         //
 
         let (fee_output, _fee_gamma) =
-            Output::new_monetary(timestamp, &skey1, &pkey1, 100).expect("keys are valid");
+            Output::new_payment(timestamp, &skey1, &pkey1, 100).expect("keys are valid");
         let mut tx_hashes = Vec::new();
         tx_hashes.push(Hash::digest(&1u64));
         let proof = MonetaryBlockProof {

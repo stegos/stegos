@@ -32,8 +32,8 @@ use failure::Error;
 use log::*;
 use std::collections::HashMap;
 use stegos_blockchain::EscrowOutput;
-use stegos_blockchain::MonetaryOutput;
 use stegos_blockchain::Output;
+use stegos_blockchain::PaymentOutput;
 use stegos_blockchain::Transaction;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::curve1174::cpt::SecretKey;
@@ -49,8 +49,8 @@ pub struct Wallet {
     skey: SecretKey,
     /// Public Key.
     pkey: PublicKey,
-    /// Unspent Monetary UXTO.
-    unspent: HashMap<Hash, (MonetaryOutput, i64)>,
+    /// Unspent Payment UXTO.
+    unspent: HashMap<Hash, (PaymentOutput, i64)>,
     /// Unspent Escrow UTXO.
     unspent_stakes: HashMap<Hash, EscrowOutput>,
     /// Calculated Node's balance.
@@ -60,7 +60,7 @@ pub struct Wallet {
 impl Wallet {
     /// Create a new wallet.
     pub fn new(skey: SecretKey, pkey: PublicKey) -> Self {
-        let unspent: HashMap<Hash, (MonetaryOutput, i64)> = HashMap::new();
+        let unspent: HashMap<Hash, (PaymentOutput, i64)> = HashMap::new();
         let unspent_stakes: HashMap<Hash, EscrowOutput> = HashMap::new();
         let balance: i64 = 0;
         Wallet {
@@ -75,7 +75,7 @@ impl Wallet {
     /// Send money.
     pub fn payment(&self, recipient: &PublicKey, amount: i64) -> Result<Transaction, Error> {
         let tx =
-            create_monetary_transaction(&self.skey, &self.pkey, recipient, &self.unspent, amount)?;
+            create_payment_transaction(&self.skey, &self.pkey, recipient, &self.unspent, amount)?;
         Ok(tx)
     }
 
@@ -124,9 +124,9 @@ impl Wallet {
     fn on_output_created(&mut self, output: Output) -> Option<WalletNotification> {
         let hash = Hash::digest(&output);
         match output {
-            Output::MonetaryOutput(o) => {
+            Output::PaymentOutput(o) => {
                 if let Ok((_delta, _gamma, amount)) = o.decrypt_payload(&self.skey) {
-                    info!("Received monetary UTXO: hash={}, amount={}", hash, amount);
+                    info!("Received payment UTXO: hash={}, amount={}", hash, amount);
                     let missing = self.unspent.insert(hash, (o, amount));
                     assert!(missing.is_none());
                     assert!(amount >= 0);
@@ -167,9 +167,9 @@ impl Wallet {
     fn on_output_pruned(&mut self, output: Output) {
         let hash = Hash::digest(&output);
         match output {
-            Output::MonetaryOutput(o) => {
+            Output::PaymentOutput(o) => {
                 if let Ok((_delta, _gamma, amount)) = o.decrypt_payload(&self.skey) {
-                    info!("Spent monetary UTXO: hash={}, amount={}", hash, amount);
+                    info!("Spent payment UTXO: hash={}, amount={}", hash, amount);
                     let exists = self.unspent.remove(&hash);
                     assert!(exists.is_some());
                     self.balance -= amount;

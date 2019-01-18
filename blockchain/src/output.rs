@@ -36,10 +36,10 @@ use stegos_crypto::pbc::secure;
 use stegos_crypto::CryptoError;
 
 /// A magic value used to encode/decode payload.
-const MONETARY_PAYLOAD_MAGIC: [u8; 4] = [112, 97, 121, 109]; // "paym"
+const PAYMENT_PAYLOAD_MAGIC: [u8; 4] = [112, 97, 121, 109]; // "paym"
 
-/// Monetary payload size.
-const MONETARY_PAYLOAD_LEN: usize = 76;
+/// Payment payload size.
+const PAYMENT_PAYLOAD_LEN: usize = 76;
 
 /// A magic value used to encode/decode payload.
 const DATA_PAYLOAD_MAGIC: [u8; 4] = [100, 97, 116, 97]; // "data"
@@ -60,11 +60,11 @@ pub enum OutputError {
     PayloadDecryptionError,
 }
 
-/// Monetary UTXO.
+/// Payment UTXO.
 /// Transaction output.
 /// (ID, P_{M, δ}, Bp, E_M(x, γ, δ))
 #[derive(Debug, Clone)]
-pub struct MonetaryOutput {
+pub struct PaymentOutput {
     /// Clocked public key of recipient.
     /// P_M + δG
     pub recipient: PublicKey,
@@ -124,10 +124,10 @@ pub struct EscrowOutput {
     pub payload: EncryptedPayload,
 }
 
-/// Blockchain UTXO - either monetary or data.
+/// Blockchain UTXO.
 #[derive(Debug, Clone)]
 pub enum Output {
-    MonetaryOutput(MonetaryOutput),
+    PaymentOutput(PaymentOutput),
     DataOutput(DataOutput),
     EscrowOutput(EscrowOutput),
 }
@@ -165,8 +165,8 @@ fn cloak_key(
     Ok((cloaked_pkey, delta))
 }
 
-impl MonetaryOutput {
-    /// Constructor for monetary UTXO.
+impl PaymentOutput {
+    /// Create a new PaymentOutput.
     pub fn new(
         timestamp: u64,
         sender_skey: &SecretKey,
@@ -182,7 +182,7 @@ impl MonetaryOutput {
         // NOTE: real public key should be used to encrypt payload
         let payload = Self::encrypt_payload(delta, gamma, amount, recipient_pkey)?;
 
-        let output = MonetaryOutput {
+        let output = PaymentOutput {
             recipient: cloaked_pkey,
             proof,
             payload,
@@ -191,7 +191,7 @@ impl MonetaryOutput {
         Ok((output, gamma))
     }
 
-    /// Create a new monetary transaction.
+    /// Encrypt payload for PaymentOutput.
     fn encrypt_payload(
         delta: Fr,
         gamma: Fr,
@@ -205,7 +205,7 @@ impl MonetaryOutput {
         let delta_bytes: [u8; 32] = delta.to_lev_u8();
 
         let payload: Vec<u8> = [
-            &MONETARY_PAYLOAD_MAGIC[..],
+            &PAYMENT_PAYLOAD_MAGIC[..],
             &amount_bytes[..],
             &delta_bytes[..],
             &gamma_bytes[..],
@@ -213,17 +213,17 @@ impl MonetaryOutput {
         .concat();
 
         // Ensure that the total length of package is 76 bytes.
-        assert_eq!(payload.len(), MONETARY_PAYLOAD_LEN);
+        assert_eq!(payload.len(), PAYMENT_PAYLOAD_LEN);
 
         // String together a gamma, delta, and Amount (i64) all in one long vector and encrypt it.
         aes_encrypt(&payload, &pkey)
     }
 
-    /// Decrypt monetary transaction.
+    /// Decrypt payload of PaymentOutput.
     pub fn decrypt_payload(&self, skey: &SecretKey) -> Result<(Fr, Fr, i64), Error> {
         let payload: Vec<u8> = aes_decrypt(&self.payload, &skey)?;
 
-        if payload.len() != MONETARY_PAYLOAD_LEN {
+        if payload.len() != PAYMENT_PAYLOAD_LEN {
             // Invalid payload or invalid secret key supplied.
             return Err(OutputError::PayloadDecryptionError.into());
         }
@@ -237,7 +237,7 @@ impl MonetaryOutput {
         delta_bytes.copy_from_slice(&payload[12..44]);
         gamma_bytes.copy_from_slice(&payload[44..76]);
 
-        if magic != MONETARY_PAYLOAD_MAGIC {
+        if magic != PAYMENT_PAYLOAD_MAGIC {
             // Invalid payload or invalid secret key supplied.
             return Err(OutputError::PayloadDecryptionError.into());
         }
@@ -251,7 +251,7 @@ impl MonetaryOutput {
 }
 
 impl DataOutput {
-    /// Constructor for data UTXO.
+    /// Create a new DataOutput.
     pub fn new(
         timestamp: u64,
         sender_skey: &SecretKey,
@@ -282,7 +282,7 @@ impl DataOutput {
         Ok((output, gamma))
     }
 
-    /// Encrypt data payload.
+    /// Encrypt payload for DataOutput.
     fn encrypt_payload(
         delta: Fr,
         gamma: Fr,
@@ -309,7 +309,7 @@ impl DataOutput {
         Ok(payload)
     }
 
-    /// Decrypt data payload.
+    /// Decrypt payload of DataOutput.
     pub fn decrypt_payload(&self, skey: &SecretKey) -> Result<(Fr, Fr, Vec<u8>), Error> {
         let payload: Vec<u8> = aes_decrypt(&self.payload, &skey)?;
 
@@ -344,7 +344,7 @@ impl DataOutput {
 }
 
 impl EscrowOutput {
-    /// Constructor for Escrow UTXO.
+    /// Create a new EscrowOutput.
     pub fn new(
         timestamp: u64,
         sender_skey: &SecretKey,
@@ -369,7 +369,7 @@ impl EscrowOutput {
         Ok(output)
     }
 
-    /// Create a new monetary transaction.
+    /// Encrypt payload for EscrowOutput.
     fn encrypt_payload(delta: Fr, pkey: &PublicKey) -> Result<EncryptedPayload, CryptoError> {
         let delta_bytes: [u8; 32] = delta.to_lev_u8();
 
@@ -382,7 +382,7 @@ impl EscrowOutput {
         aes_encrypt(&payload, &pkey)
     }
 
-    /// Decrypt monetary transaction.
+    /// Decrypt payload of EscrowOutput.
     pub fn decrypt_payload(&self, skey: &SecretKey) -> Result<Fr, Error> {
         let payload: Vec<u8> = aes_decrypt(&self.payload, &skey)?;
 
@@ -408,18 +408,18 @@ impl EscrowOutput {
 }
 
 impl Output {
-    /// Create a new monetary transaction.
-    pub fn new_monetary(
+    /// Create a new payment UTXO.
+    pub fn new_payment(
         timestamp: u64,
         sender_skey: &SecretKey,
         recipient_pkey: &PublicKey,
         amount: i64,
     ) -> Result<(Self, Fr), Error> {
-        let (output, delta) = MonetaryOutput::new(timestamp, sender_skey, recipient_pkey, amount)?;
-        Ok((Output::MonetaryOutput(output), delta))
+        let (output, delta) = PaymentOutput::new(timestamp, sender_skey, recipient_pkey, amount)?;
+        Ok((Output::PaymentOutput(output), delta))
     }
 
-    /// Create a new data transaction.
+    /// Create a new data UTXO.
     pub fn new_data(
         timestamp: u64,
         sender_skey: &SecretKey,
@@ -456,7 +456,7 @@ impl fmt::Display for Output {
     }
 }
 
-impl Hashable for MonetaryOutput {
+impl Hashable for PaymentOutput {
     fn hash(&self, state: &mut Hasher) {
         "Monetary".hash(state);
         self.recipient.hash(state);
@@ -488,7 +488,7 @@ impl Hashable for EscrowOutput {
 impl Hashable for Output {
     fn hash(&self, state: &mut Hasher) {
         match self {
-            Output::MonetaryOutput(monetary) => monetary.hash(state),
+            Output::PaymentOutput(monetary) => monetary.hash(state),
             Output::DataOutput(data) => data.hash(state),
             Output::EscrowOutput(escrow) => escrow.hash(state),
         }
@@ -510,7 +510,7 @@ pub mod tests {
     use stegos_crypto::curve1174::cpt::make_random_keys;
 
     #[test]
-    pub fn monetary_encrypt_decrypt() {
+    pub fn payment_encrypt_decrypt() {
         let (skey1, _pkey1, _sig1) = make_random_keys();
         let (skey2, pkey2, _sig2) = make_random_keys();
 
@@ -518,7 +518,7 @@ pub mod tests {
         let amount: i64 = 100500;
 
         let (output, gamma) =
-            MonetaryOutput::new(timestamp, &skey1, &pkey2, amount).expect("encryption successful");
+            PaymentOutput::new(timestamp, &skey1, &pkey2, amount).expect("encryption successful");
         let (_delta2, gamma2, amount2) = output
             .decrypt_payload(&skey2)
             .expect("decryption successful");

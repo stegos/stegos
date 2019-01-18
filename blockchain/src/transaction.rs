@@ -116,7 +116,7 @@ impl Transaction {
         let mut txins_set: HashSet<Hash> = HashSet::new();
         for txin in inputs {
             match txin {
-                Output::MonetaryOutput(o) => {
+                Output::PaymentOutput(o) => {
                     let (delta, gamma, _amount) = o.decrypt_payload(skey)?;
                     tx_gamma += gamma;
                     eff_skey += delta * gamma;
@@ -206,7 +206,7 @@ impl Transaction {
                 return Err(BlockchainError::DuplicateTransactionInput(*txin_hash).into());
             }
             match txin {
-                Output::MonetaryOutput(o) => {
+                Output::PaymentOutput(o) => {
                     pedersen_commitment_diff += Pt::decompress(o.proof.vcmt)?;
                 }
                 Output::DataOutput(o) => {
@@ -227,7 +227,7 @@ impl Transaction {
                 return Err(BlockchainError::DuplicateTransactionOutput(txout_hash).into());
             }
             match txout {
-                Output::MonetaryOutput(o) => {
+                Output::PaymentOutput(o) => {
                     // Check bulletproofs of created outputs
                     if !validate_range_proof(&o.proof) {
                         return Err(BlockchainError::InvalidBulletProof.into());
@@ -260,7 +260,7 @@ impl Transaction {
         // +\sum{P_i} for i in txins
         for txin in inputs.iter() {
             let recipient = match txin {
-                Output::MonetaryOutput(o) => o.recipient,
+                Output::PaymentOutput(o) => o.recipient,
                 Output::DataOutput(o) => o.recipient,
                 Output::EscrowOutput(o) => o.recipient,
             };
@@ -307,14 +307,14 @@ pub mod tests {
 
         // "genesis" output by 0
         let (output0, _gamma0) =
-            Output::new_monetary(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
+            Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
 
         //
         // Valid transaction from 1 to 2
         //
         let inputs1 = [output0.clone()];
         let (output1, gamma1) =
-            Output::new_monetary(timestamp, &skey1, &pkey2, amount - fee).expect("keys are valid");
+            Output::new_payment(timestamp, &skey1, &pkey2, amount - fee).expect("keys are valid");
         let outputs_gamma = gamma1;
         let mut tx = Transaction::new(&skey1, &inputs1, &[output1], outputs_gamma, fee)
             .expect("keys are valid");
@@ -384,7 +384,7 @@ pub mod tests {
         // Invalid monetary balance
         //
         let (output_invalid1, gamma_invalid1) =
-            Output::new_monetary(timestamp, &skey1, &pkey2, amount - fee - 1)
+            Output::new_payment(timestamp, &skey1, &pkey2, amount - fee - 1)
                 .expect("keys are valid");
         let outputs_gamma = gamma_invalid1;
         let tx = Transaction::new(&skey1, &inputs1, &[output_invalid1], outputs_gamma, fee)
@@ -415,7 +415,7 @@ pub mod tests {
             .expect("keys are valid");
         let inputs = [input];
         let (output, outputs_gamma) =
-            Output::new_monetary(timestamp, &skey1, &pkey1, amount - fee).expect("keys are valid");
+            Output::new_payment(timestamp, &skey1, &pkey1, amount - fee).expect("keys are valid");
         let tx = Transaction::new(&skey1, &inputs, &[output], outputs_gamma, fee)
             .expect("keys are valid");
         tx.validate(&inputs).expect("tx is valid");
@@ -424,7 +424,7 @@ pub mod tests {
         // Escrow as an output.
         //
         let (input, _inputs_gamma) =
-            Output::new_monetary(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
+            Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
         let inputs = [input];
         let output = Output::new_escrow(timestamp, &skey1, &pkey1, &secure_pkey1, amount - fee)
             .expect("keys are valid");
@@ -437,7 +437,7 @@ pub mod tests {
         // Invalid monetary balance.
         //
         let (input, _inputs_gamma) =
-            Output::new_monetary(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
+            Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
         let inputs = [input];
         let mut output = EscrowOutput::new(timestamp, &skey1, &pkey1, &secure_pkey1, amount - fee)
             .expect("keys are valid");
@@ -458,7 +458,7 @@ pub mod tests {
         // Invalid stake.
         //
         let (input, _inputs_gamma) =
-            Output::new_monetary(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
+            Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
         let inputs = [input];
         let mut output = EscrowOutput::new(timestamp, &skey1, &pkey1, &secure_pkey1, amount - fee)
             .expect("keys are valid");

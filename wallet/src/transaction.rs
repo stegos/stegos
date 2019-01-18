@@ -28,8 +28,8 @@ use failure::Error;
 use log::*;
 use std::collections::HashMap;
 use stegos_blockchain::DataOutput;
-use stegos_blockchain::MonetaryOutput;
 use stegos_blockchain::Output;
+use stegos_blockchain::PaymentOutput;
 use stegos_blockchain::Transaction;
 use stegos_config::*;
 use stegos_crypto::curve1174::cpt::PublicKey;
@@ -46,13 +46,13 @@ fn data_fee(size: usize, ttl: u64) -> i64 {
     (units as i64) * (ttl as i64) * DATA_UNIT_FEE
 }
 
-/// Create monetary transaction.
+/// Create a new payment transaction.
 /// Sic: used by unit tests in NodeService.
-pub fn create_monetary_transaction(
+pub fn create_payment_transaction(
     sender_skey: &SecretKey,
     sender_pkey: &PublicKey,
     recipient: &PublicKey,
-    unspent: &HashMap<Hash, (MonetaryOutput, i64)>,
+    unspent: &HashMap<Hash, (PaymentOutput, i64)>,
     amount: i64,
 ) -> Result<Transaction, Error> {
     if amount <= 0 {
@@ -60,7 +60,7 @@ pub fn create_monetary_transaction(
     }
 
     debug!(
-        "Creating a monetary transaction: recipient={}, amount={}",
+        "Creating a payment transaction: recipient={}, amount={}",
         recipient, amount
     );
 
@@ -71,22 +71,22 @@ pub fn create_monetary_transaction(
     trace!("Checking for available funds in the wallet...");
 
     // Try to find exact sum plus fee, without a change.
-    let (fee, change, inputs) = match find_utxo_exact(unspent, amount + MONETARY_FEE) {
+    let (fee, change, inputs) = match find_utxo_exact(unspent, amount + PAYMENT_FEE) {
         Some(input) => {
             // If found, then charge the minimal fee.
-            let fee = MONETARY_FEE;
+            let fee = PAYMENT_FEE;
             (fee, 0i64, vec![input])
         }
         None => {
             // Otherwise, charge the double fee.
-            let fee = 2 * MONETARY_FEE;
+            let fee = 2 * PAYMENT_FEE;
             let (inputs, change) = find_utxo(&unspent, amount + fee)?;
             (fee, change, inputs)
         }
     };
     let inputs: Vec<Output> = inputs
         .into_iter()
-        .map(|o| Output::MonetaryOutput(o))
+        .map(|o| Output::PaymentOutput(o))
         .collect();
 
     debug!(
@@ -107,9 +107,9 @@ pub fn create_monetary_transaction(
 
     // Create an output for payment
     trace!("Creating change UTXO...");
-    let (output1, gamma1) = Output::new_monetary(timestamp, sender_skey, recipient, amount)?;
+    let (output1, gamma1) = Output::new_payment(timestamp, sender_skey, recipient, amount)?;
     info!(
-        "Created monetary UTXO: hash={}, recipient={}, amount={}",
+        "Created payment UTXO: hash={}, recipient={}, amount={}",
         Hash::digest(&output1),
         recipient,
         amount
@@ -120,7 +120,7 @@ pub fn create_monetary_transaction(
     if change > 0 {
         // Create an output for change
         trace!("Creating change UTXO...");
-        let (output2, gamma2) = Output::new_monetary(timestamp, sender_skey, sender_pkey, change)?;
+        let (output2, gamma2) = Output::new_payment(timestamp, sender_skey, sender_pkey, change)?;
         info!(
             "Created change UTXO: hash={}, recipient={}, change={}",
             Hash::digest(&output2),
@@ -135,7 +135,7 @@ pub fn create_monetary_transaction(
     let tx = Transaction::new(sender_skey, &inputs, &outputs, gamma, fee)?;
     let tx_hash = Hash::digest(&tx);
     info!(
-        "Signed monetary transaction: hash={}, recipient={}, amount={}, withdrawn={}, change={}, fee={}",
+        "Signed payment transaction: hash={}, recipient={}, amount={}, withdrawn={}, change={}, fee={}",
         tx_hash,
         recipient,
         amount,
@@ -147,13 +147,13 @@ pub fn create_monetary_transaction(
     Ok(tx)
 }
 
-/// Create data transaction.
+/// Create a new data transaction.
 /// Sic: used by unit tests in NodeService.
 pub fn create_data_transaction(
     sender_skey: &SecretKey,
     sender_pkey: &PublicKey,
     recipient: &PublicKey,
-    unspent: &HashMap<Hash, (MonetaryOutput, i64)>,
+    unspent: &HashMap<Hash, (PaymentOutput, i64)>,
     ttl: u64,
     data: Vec<u8>,
 ) -> Result<Transaction, Error> {
@@ -177,14 +177,14 @@ pub fn create_data_transaction(
         }
         None => {
             // Otherwise, charge the double fee.
-            let fee = fee + MONETARY_FEE;
+            let fee = fee + PAYMENT_FEE;
             let (inputs, change) = find_utxo(&unspent, fee)?;
             (fee, change, inputs)
         }
     };
     let inputs: Vec<Output> = inputs
         .into_iter()
-        .map(|o| Output::MonetaryOutput(o))
+        .map(|o| Output::PaymentOutput(o))
         .collect();
 
     debug!(
@@ -218,7 +218,7 @@ pub fn create_data_transaction(
     if change > 0 {
         // Create an output for change
         trace!("Creating change UTXO...");
-        let (output2, gamma2) = Output::new_monetary(timestamp, sender_skey, sender_pkey, change)?;
+        let (output2, gamma2) = Output::new_payment(timestamp, sender_skey, sender_pkey, change)?;
         info!(
             "Created change UTXO: hash={}, recipient={}, change={}",
             Hash::digest(&output2),
@@ -245,7 +245,7 @@ pub fn create_data_transaction(
     Ok(tx)
 }
 
-/// Create a transaction to prune data.
+/// Create a new transaction to prune data.
 pub(crate) fn create_data_pruning_transaction(
     sender_skey: &SecretKey,
     output: DataOutput,

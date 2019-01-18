@@ -23,10 +23,6 @@
 
 // #![deny(warnings)]
 
-use log;
-use protobuf;
-use rand;
-
 mod echo;
 mod ncp;
 mod node;

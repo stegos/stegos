@@ -24,7 +24,6 @@
 pub mod pem;
 
 use failure::{format_err, Error, Fail};
-use lazy_static;
 use log::*;
 use std::fs;
 use std::path::Path;

@@ -26,16 +26,8 @@ pub mod keying;
 pub mod pbc;
 pub mod utils;
 
-use crypto;
 use failure::Fail;
-use gmp;
 use hex;
-use lazy_static;
-use log;
-use parking_lot;
-use rand;
-use rust_libpbc;
-use sha3;
 
 #[derive(Debug, Fail)]
 pub enum CryptoError {

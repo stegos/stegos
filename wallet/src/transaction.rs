@@ -69,24 +69,13 @@ pub fn create_payment_transaction(
     //
 
     trace!("Checking for available funds in the wallet...");
-
-    // Try to find exact sum plus fee, without a change.
-    let (fee, change, inputs) = match find_utxo_exact(unspent, amount + PAYMENT_FEE) {
-        Some(input) => {
-            // If found, then charge the minimal fee.
-            let fee = PAYMENT_FEE;
-            (fee, 0i64, vec![input])
-        }
-        None => {
-            // Otherwise, charge the double fee.
-            let fee = 2 * PAYMENT_FEE;
-            let (inputs, change) = find_utxo(&unspent, amount + fee)?;
-            (fee, change, inputs)
-        }
-    };
+    let fee = PAYMENT_FEE;
+    let fee_change = fee + PAYMENT_FEE;
+    let unspent_iter = unspent.values().map(|(o, a)| (o, *a));
+    let (inputs, fee, change) = find_utxo(unspent_iter, amount, fee, fee_change)?;
     let inputs: Vec<Output> = inputs
         .into_iter()
-        .map(|o| Output::PaymentOutput(o))
+        .map(|o| Output::PaymentOutput(o.clone()))
         .collect();
 
     debug!(
@@ -97,6 +86,9 @@ pub fn create_payment_transaction(
         change,
         fee
     );
+    for input in &inputs {
+        debug!("Use UTXO: hash={}", Hash::digest(input));
+    }
 
     //
     // Create outputs
@@ -169,22 +161,12 @@ pub fn create_data_transaction(
     trace!("Checking for available funds in the wallet...");
 
     let fee = data_fee(data.len(), ttl);
-    // Try to find exact sum plus fee, without a change.
-    let (fee, change, inputs) = match find_utxo_exact(unspent, fee) {
-        Some(input) => {
-            // If found, then charge the minimal fee.
-            (fee, 0i64, vec![input])
-        }
-        None => {
-            // Otherwise, charge the double fee.
-            let fee = fee + PAYMENT_FEE;
-            let (inputs, change) = find_utxo(&unspent, fee)?;
-            (fee, change, inputs)
-        }
-    };
+    let fee_change = fee + PAYMENT_FEE;
+    let unspent_iter = unspent.values().map(|(o, a)| (o, *a));
+    let (inputs, fee, change) = find_utxo(unspent_iter, 0, fee, fee_change)?;
     let inputs: Vec<Output> = inputs
         .into_iter()
-        .map(|o| Output::PaymentOutput(o))
+        .map(|o| Output::PaymentOutput(o.clone()))
         .collect();
 
     debug!(
@@ -195,6 +177,9 @@ pub fn create_data_transaction(
         change,
         fee
     );
+    for input in &inputs {
+        debug!("Use UTXO: hash={}", Hash::digest(input));
+    }
 
     //
     // Create outputs

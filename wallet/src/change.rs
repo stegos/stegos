@@ -22,101 +22,110 @@
 // SOFTWARE.
 
 use crate::error::*;
-use log::*;
-use std::collections::HashMap;
-use stegos_crypto::hash::Hash;
 
-/// Find UTXO with exact value.
-pub(crate) fn find_utxo_exact<T: Clone>(unspent: &HashMap<Hash, (T, i64)>, sum: i64) -> Option<T> {
-    for (hash, (output, amount)) in unspent {
-        if *amount == sum {
-            debug!("Use UTXO: hash={}, amount={}", hash, amount);
-            return Some(output.clone());
-        }
-    }
-    None
-}
-
-/// Find appropriate UTXO to spent and calculate a change.
-pub(crate) fn find_utxo<T: Clone>(
-    unspent: &HashMap<Hash, (T, i64)>,
-    mut sum: i64,
-) -> Result<(Vec<T>, i64), WalletError> {
+/// Find appropriate inputs.
+pub(crate) fn find_utxo<'a, I, T>(
+    unspent_iter: I,
+    sum: i64,
+    fee: i64,
+    fee_change: i64,
+) -> Result<(Vec<&'a T>, i64, i64), WalletError>
+where
+    I: IntoIterator<Item = (&'a T, i64)>,
+{
     assert!(sum >= 0);
-    let mut sorted: Vec<(i64, Hash)> = unspent
-        .iter()
-        .map(|(hash, (_output, amount))| (*amount, hash.clone()))
-        .collect();
+    assert!(fee >= 0);
+    assert!(fee_change >= 0);
+    let mut sorted: Vec<(i64, &T)> = Vec::new();
+    for (output, amount) in unspent_iter {
+        if amount == sum + fee {
+            return Ok((vec![output], fee, 0i64));
+        }
+        sorted.push((amount, output));
+    }
+
     // Sort ascending in order to eliminate as much outputs as possible
-    sorted.sort_by_key(|(amount, _hash)| *amount);
+    sorted.sort_by_key(|(amount, _output)| *amount);
 
     // Naive algorithm - try to spent as much UTXO as possible.
-    let mut spent = Vec::<T>::new();
-    for (amount, hash) in sorted.drain(..) {
+    let mut sum: i64 = sum + fee_change;
+    let mut spent: Vec<&T> = Vec::new();
+    for (amount, output) in sorted {
         if sum <= 0 {
             break;
         }
         sum -= amount;
-        let (output, _amount) = unspent.get(&hash).unwrap();
-        spent.push(output.clone());
-        debug!("Use UTXO: hash={}, amount={}", hash, amount);
+        spent.push(output);
     }
-    drop(unspent);
 
     if sum > 0 {
         return Err(WalletError::NotEnoughMoney);
     }
 
     let change = -sum;
-    return Ok((spent, change));
+    return Ok((spent, fee_change, change));
 }
 
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use stegos_crypto::hash::Hash;
 
     /// Check transaction signing and validation.
     #[test]
     pub fn test_find_utxo() {
-        let mut unspent = HashMap::<Hash, (Hash, i64)>::new();
+        let mut unspent: Vec<(Hash, i64)> = Vec::new();
         let amounts: [i64; 5] = [100, 50, 10, 2, 1];
         for amount in amounts.iter() {
             let hash = Hash::digest(amount);
-            unspent.insert(hash, (hash.clone(), *amount));
+            unspent.push((hash, *amount));
         }
 
-        let (spent, change) = find_utxo(&unspent, 1).unwrap();
-        assert_eq!(spent, vec![Hash::digest(&1i64)]);
+        const FEE: i64 = 1;
+        const FEE_CHANGE: i64 = 2 * FEE;
+
+        // Without change.
+        let unspent_iter = unspent.iter().map(|(h, a)| (h, *a));
+        let (spent, fee, change) = find_utxo(unspent_iter, 49, FEE, FEE_CHANGE).unwrap();
+        assert_eq!(spent, vec![&Hash::digest(&50i64)]);
+        assert_eq!(fee, FEE);
         assert_eq!(change, 0);
 
-        let (spent, change) = find_utxo(&unspent, 2).unwrap();
-        assert_eq!(spent, vec![Hash::digest(&1i64), Hash::digest(&2i64)]);
-        assert_eq!(change, 1);
-
-        let (spent, change) = find_utxo(&unspent, 5).unwrap();
+        // With change.
+        let unspent_iter = unspent.iter().map(|(h, a)| (h, *a));
+        let (spent, fee, change) = find_utxo(unspent_iter, 5, FEE, FEE_CHANGE).unwrap();
         assert_eq!(
             spent,
             vec![
-                Hash::digest(&1i64),
-                Hash::digest(&2i64),
-                Hash::digest(&10i64)
+                &Hash::digest(&1i64),
+                &Hash::digest(&2i64),
+                &Hash::digest(&10i64),
             ]
         );
-        assert_eq!(change, 8);
+        assert_eq!(fee, FEE_CHANGE);
+        assert_eq!(change, 6);
 
-        let (spent, change) = find_utxo(&unspent, 163).unwrap();
+        // With zero change.
+        let unspent_iter = unspent.iter().map(|(h, a)| (h, *a));
+        let (spent, fee, change) = find_utxo(unspent_iter, 161, FEE, FEE_CHANGE).unwrap();
         assert_eq!(
             spent,
             vec![
-                Hash::digest(&1i64),
-                Hash::digest(&2i64),
-                Hash::digest(&10i64),
-                Hash::digest(&50i64),
-                Hash::digest(&100i64),
+                &Hash::digest(&1i64),
+                &Hash::digest(&2i64),
+                &Hash::digest(&10i64),
+                &Hash::digest(&50i64),
+                &Hash::digest(&100i64),
             ]
         );
+        assert_eq!(fee, FEE_CHANGE);
         assert_eq!(change, 0);
 
-        assert!(find_utxo(&unspent, 164).is_err());
+        // NotEnoughMoney
+        let unspent_iter = unspent.iter().map(|(h, a)| (h, *a));
+        match find_utxo(unspent_iter, 164, FEE, FEE_CHANGE) {
+            Err(WalletError::NotEnoughMoney) => {}
+            _ => panic!(),
+        };
     }
 }

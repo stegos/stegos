@@ -3,10 +3,8 @@ package ncp.pb;
 
 message Message {
 	enum MessageType {
-		PING = 0;
-        PONG = 1;
-		GET_PEERS_REQ = 2;
-		GET_PEERS_RES = 3;
+		GET_PEERS_REQ = 1;
+		GET_PEERS_RES = 2;
     }
     
     message PeerInfo {
@@ -18,7 +16,5 @@ message Message {
 	optional MessageType type = 1;
 
 	// defines what coral cluster level this query/response belongs to.
-    optional bytes pingData = 2;
-    optional bool last_chunk = 3;
     repeated PeerInfo peers = 4;
 }

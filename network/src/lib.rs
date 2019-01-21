@@ -1,7 +1,7 @@
 //
 // MIT License
 //
-// Copyright (c) 2018 Stegos
+// Copyright (c) 2018-2019 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -21,15 +21,39 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-// #![deny(warnings)]
-
-mod echo;
+mod dummy_network;
+mod libp2p_network;
 mod ncp;
-mod node;
-mod types;
+mod peerstore;
 
-pub use crate::echo::protocol::{EchoMiddleware, EchoUpgrade};
-pub use crate::ncp::protocol;
-pub use crate::node::broker::Broker;
-pub use crate::node::heartbeat::{HeartbeatUpdate, HeartbeatUpdateMessage};
-pub use crate::node::{Network, NetworkError};
+use failure::Error;
+use futures::sync::mpsc;
+use libp2p::core::{topology::Topology, Multiaddr, PeerId};
+use stegos_crypto::pbc::secure;
+
+pub use self::dummy_network::DummyNetwork;
+pub use self::libp2p_network::Libp2pNetwork;
+pub use self::peerstore::MemoryPeerstore;
+
+pub trait NetworkProvider {
+    /// Subscribe to topic, returns Stream<Vec<u8>> of messages incoming to topic
+    fn subscribe<S>(&self, topic: &S) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error>
+    where
+        S: Into<String> + Clone;
+
+    /// Published message to topic
+    fn publish<S>(&self, topic: &S, data: Vec<u8>) -> Result<(), Error>
+    where
+        S: Into<String> + Clone;
+
+    /// Subscribe to unicast messages, returns Stream<Vec<u8>> of messages incoming to topic
+    fn subscribe_unicast(&self) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error>;
+
+    /// Send unicast message to peer identified by cosi public key
+    fn send(&self, dest: secure::PublicKey, data: Vec<u8>) -> Result<(), Error>;
+}
+
+pub trait PeerStore: Topology {
+    fn store_address(&mut self, peer: PeerId, addr: Multiaddr);
+    fn peers(&self) -> Vec<&PeerId>;
+}

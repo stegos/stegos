@@ -58,7 +58,7 @@ use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
 use stegos_crypto::pbc::secure::Signature as SecureSignature;
 use stegos_crypto::pbc::secure::G2;
 use stegos_keychain::KeyChain;
-use stegos_network::Broker;
+use stegos_network::NetworkProvider;
 use tokio_timer::Interval;
 
 // ----------------------------------------------------------------
@@ -81,17 +81,23 @@ pub fn genesis_dev() -> Result<Vec<Block>, Error> {
 
 /// Blockchain Node.
 #[derive(Clone, Debug)]
-pub struct Node {
+pub struct Node<Network>
+where
+    Network: NetworkProvider,
+{
     outbox: UnboundedSender<NodeMessage>,
-    broker: Broker,
+    broker: Network,
 }
 
-impl Node {
+impl<Network> Node<Network>
+where
+    Network: NetworkProvider + Clone,
+{
     /// Create a new blockchain node.
     pub fn new(
         keys: KeyChain,
-        broker: Broker,
-    ) -> Result<(impl Future<Item = (), Error = ()>, Node), Error> {
+        broker: Network,
+    ) -> Result<(impl Future<Item = (), Error = ()>, Node<Network>), Error> {
         let (outbox, inbox) = unbounded();
 
         let service = NodeService::new(keys, broker.clone(), inbox)?;
@@ -204,7 +210,7 @@ enum NodeMessage {
     VRFTimer(Instant),
 }
 
-struct NodeService {
+struct NodeService<Network> {
     /// Blockchain.
     chain: Blockchain,
     /// Key Chain.
@@ -245,7 +251,7 @@ struct NodeService {
     last_block_timestamp: Instant,
 
     /// Network interface.
-    broker: Broker,
+    broker: Network,
     /// Triggered when epoch is changed.
     on_epoch_changed: Vec<UnboundedSender<EpochNotification>>,
     /// Triggered when outputs created and/or pruned.
@@ -254,11 +260,14 @@ struct NodeService {
     events: Box<Stream<Item = NodeMessage, Error = ()> + Send>,
 }
 
-impl NodeService {
+impl<Network> NodeService<Network>
+where
+    Network: NetworkProvider,
+{
     /// Constructor.
     fn new(
         keys: KeyChain,
-        broker: Broker,
+        broker: Network,
         inbox: UnboundedReceiver<NodeMessage>,
     ) -> Result<Self, Error> {
         let chain = Blockchain::new();
@@ -418,7 +427,7 @@ impl NodeService {
         }
 
         // Check fee.
-        NodeService::check_acceptable_fee(&tx)?;
+        NodeService::<Network>::check_acceptable_fee(&tx)?;
 
         // Resolve inputs.
         let inputs = self.chain.outputs_by_hashes(&tx.body.txins)?;
@@ -830,7 +839,7 @@ impl NodeService {
             min_fee += match txout {
                 Output::PaymentOutput(_o) => PAYMENT_FEE,
                 Output::EscrowOutput(_o) => ESCROW_FEE,
-                Output::DataOutput(o) => NodeService::data_fee(o.data_size(), o.ttl),
+                Output::DataOutput(o) => NodeService::<Network>::data_fee(o.data_size(), o.ttl),
             };
         }
 
@@ -1030,8 +1039,11 @@ impl NodeService {
     ///
     fn flush_consensus_messages(
         consensus: &mut BlockConsensus,
-        broker: &mut Broker,
-    ) -> Result<(), Error> {
+        broker: &mut Network,
+    ) -> Result<(), Error>
+    where
+        Network: NetworkProvider,
+    {
         // Flush message queue.
         let outbox = std::mem::replace(&mut consensus.outbox, Vec::new());
         for msg in outbox {
@@ -1098,7 +1110,7 @@ impl NodeService {
         assert!(self.consensus.as_ref().unwrap().should_propose());
 
         // Create a new payment block from mempool.
-        let (block, proof) = NodeService::process_mempool(
+        let (block, proof) = NodeService::<Network>::process_mempool(
             &mut self.mempool,
             &mut self.chain,
             self.epoch,
@@ -1127,7 +1139,7 @@ impl NodeService {
         let (block, proof) = consensus.get_proposal();
         let request_hash = Hash::digest(block);
         debug!("Validating block: block={}", &request_hash);
-        match NodeService::validate_block(
+        match NodeService::<Network>::validate_block(
             consensus,
             &self.mempool,
             &self.chain,
@@ -1204,7 +1216,7 @@ impl NodeService {
                     )
                     .into());
                 }
-                NodeService::validate_monetary_block(
+                NodeService::<Network>::validate_monetary_block(
                     mempool,
                     chain,
                     block_hash,
@@ -1224,7 +1236,7 @@ impl NodeService {
                     )
                     .into());
                 }
-                NodeService::validate_key_block(consensus, block_hash, block)
+                NodeService::<Network>::validate_key_block(consensus, block_hash, block)
             }
             (_, _) => unreachable!(),
         }
@@ -1402,7 +1414,10 @@ impl NodeService {
 }
 
 // Event loop.
-impl Future for NodeService {
+impl<Network> Future for NodeService<Network>
+where
+    Network: NetworkProvider,
+{
     type Item = ();
     type Error = ();
 
@@ -1437,6 +1452,7 @@ pub mod tests {
     use super::*;
     use std::collections::HashMap;
     use stegos_crypto::pbc::secure::sign_hash as secure_sign_hash;
+    use stegos_network::DummyNetwork;
     use stegos_wallet::create_data_transaction;
     use stegos_wallet::create_payment_transaction;
 
@@ -1445,10 +1461,7 @@ pub mod tests {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
         let keys = KeyChain::new_mem();
         let (_outbox, inbox) = unbounded();
-        let (broker_tx, _broker_rx) = unbounded();
-        let broker = Broker {
-            upstream: broker_tx,
-        };
+        let (broker, _service) = DummyNetwork::new();
 
         let mut node = NodeService::new(keys.clone(), broker, inbox).unwrap();
 
@@ -1470,8 +1483,11 @@ pub mod tests {
         assert_eq!(node.validators.keys().next().unwrap(), &node.leader);
     }
 
-    fn simulate_consensus(node: &mut NodeService) {
-        let (block, _proof) = NodeService::process_mempool(
+    fn simulate_consensus<Network>(node: &mut NodeService<Network>)
+    where
+        Network: NetworkProvider,
+    {
+        let (block, _proof) = NodeService::<Network>::process_mempool(
             &mut node.mempool,
             &mut node.chain,
             node.epoch,
@@ -1487,7 +1503,10 @@ pub mod tests {
         node.commit_proposed_block(block, multisig, multisigmap);
     }
 
-    fn unspent(node: &NodeService) -> HashMap<Hash, (PaymentOutput, i64)> {
+    fn unspent<Network>(node: &NodeService<Network>) -> HashMap<Hash, (PaymentOutput, i64)>
+    where
+        Network: NetworkProvider,
+    {
         let mut unspent: HashMap<Hash, (PaymentOutput, i64)> = HashMap::new();
         for hash in node.chain.unspent() {
             let output = node.chain.output_by_hash(&hash).unwrap();
@@ -1499,7 +1518,10 @@ pub mod tests {
         unspent
     }
 
-    fn simulate_payment(node: &mut NodeService, amount: i64) -> Result<(), Error> {
+    fn simulate_payment<Network>(node: &mut NodeService<Network>, amount: i64) -> Result<(), Error>
+    where
+        Network: NetworkProvider,
+    {
         let tx = create_payment_transaction(
             &node.keys.wallet_skey,
             &node.keys.wallet_pkey,
@@ -1513,7 +1535,14 @@ pub mod tests {
         Ok(())
     }
 
-    fn simulate_message(node: &mut NodeService, ttl: u64, msg: Vec<u8>) -> Result<(), Error> {
+    fn simulate_message<Network>(
+        node: &mut NodeService<Network>,
+        ttl: u64,
+        msg: Vec<u8>,
+    ) -> Result<(), Error>
+    where
+        Network: NetworkProvider,
+    {
         let tx = create_data_transaction(
             &node.keys.wallet_skey,
             &node.keys.wallet_pkey,
@@ -1528,7 +1557,10 @@ pub mod tests {
         Ok(())
     }
 
-    fn balance(node: &NodeService) -> i64 {
+    fn balance<Network>(node: &NodeService<Network>) -> i64
+    where
+        Network: NetworkProvider,
+    {
         let mut balance: i64 = 0;
         for hash in node.chain.unspent() {
             let output = node.chain.output_by_hash(&hash).unwrap();
@@ -1545,10 +1577,7 @@ pub mod tests {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
         let keys = KeyChain::new_mem();
         let (_outbox, inbox) = unbounded();
-        let (broker_tx, _broker_rx) = unbounded();
-        let broker = Broker {
-            upstream: broker_tx,
-        };
+        let (broker, _service) = DummyNetwork::new();
 
         let mut node = NodeService::new(keys.clone(), broker, inbox).unwrap();
 
@@ -1605,10 +1634,8 @@ pub mod tests {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
         let keys = KeyChain::new_mem();
         let (_outbox, inbox) = unbounded();
-        let (broker_tx, _broker_rx) = unbounded();
-        let broker = Broker {
-            upstream: broker_tx,
-        };
+        let (broker, _service) = DummyNetwork::new();
+
         let mut node = NodeService::new(keys.clone(), broker, inbox).unwrap();
 
         let total: i64 = 100;
@@ -1618,7 +1645,7 @@ pub mod tests {
 
         let data = b"hello".to_vec();
         let ttl = 3;
-        let data_fee = NodeService::data_fee(data.len(), ttl);
+        let data_fee = NodeService::<DummyNetwork>::data_fee(data.len(), ttl);
 
         // Change money for the next test.
         simulate_payment(&mut node, data_fee).unwrap();
@@ -1680,7 +1707,7 @@ pub mod tests {
         // Send data with a change.
         let data = b"hello".to_vec();
         let ttl = 10;
-        let data_fee2 = NodeService::data_fee(data.len(), ttl);
+        let data_fee2 = NodeService::<DummyNetwork>::data_fee(data.len(), ttl);
         simulate_message(&mut node, ttl, data).unwrap();
         assert_eq!(node.mempool.len(), 1);
         simulate_consensus(&mut node);
@@ -1710,13 +1737,34 @@ pub mod tests {
     /// Check data fee calculation.
     #[test]
     pub fn data_fee() {
-        assert_eq!(NodeService::data_fee(1, 1), DATA_UNIT_FEE);
-        assert_eq!(NodeService::data_fee(1, 2), 2 * DATA_UNIT_FEE);
-        assert_eq!(NodeService::data_fee(DATA_UNIT - 1, 1), DATA_UNIT_FEE);
-        assert_eq!(NodeService::data_fee(DATA_UNIT - 1, 2), 2 * DATA_UNIT_FEE);
-        assert_eq!(NodeService::data_fee(DATA_UNIT, 1), DATA_UNIT_FEE);
-        assert_eq!(NodeService::data_fee(DATA_UNIT, 2), 2 * DATA_UNIT_FEE);
-        assert_eq!(NodeService::data_fee(DATA_UNIT + 1, 1), 2 * DATA_UNIT_FEE);
-        assert_eq!(NodeService::data_fee(DATA_UNIT + 1, 2), 4 * DATA_UNIT_FEE);
+        assert_eq!(NodeService::<DummyNetwork>::data_fee(1, 1), DATA_UNIT_FEE);
+        assert_eq!(
+            NodeService::<DummyNetwork>::data_fee(1, 2),
+            2 * DATA_UNIT_FEE
+        );
+        assert_eq!(
+            NodeService::<DummyNetwork>::data_fee(DATA_UNIT - 1, 1),
+            DATA_UNIT_FEE
+        );
+        assert_eq!(
+            NodeService::<DummyNetwork>::data_fee(DATA_UNIT - 1, 2),
+            2 * DATA_UNIT_FEE
+        );
+        assert_eq!(
+            NodeService::<DummyNetwork>::data_fee(DATA_UNIT, 1),
+            DATA_UNIT_FEE
+        );
+        assert_eq!(
+            NodeService::<DummyNetwork>::data_fee(DATA_UNIT, 2),
+            2 * DATA_UNIT_FEE
+        );
+        assert_eq!(
+            NodeService::<DummyNetwork>::data_fee(DATA_UNIT + 1, 1),
+            2 * DATA_UNIT_FEE
+        );
+        assert_eq!(
+            NodeService::<DummyNetwork>::data_fee(DATA_UNIT + 1, 2),
+            4 * DATA_UNIT_FEE
+        );
     }
 }

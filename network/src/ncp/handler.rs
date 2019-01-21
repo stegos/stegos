@@ -1,7 +1,7 @@
 //
 // MIT License
 //
-// Copyright (c) 2018 Stegos
+// Copyright (c) 2018-2019 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -21,110 +21,238 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use super::super::node::Inner;
-use super::protocol::{GetPeersResponse, NcpMsg, NcpStreamSink, PeerInfo};
-use futures::future;
-use futures::future::{loop_fn, Loop};
-use futures::{Future, IntoFuture, Sink, Stream};
-use libp2p::core::{Endpoint, Multiaddr};
-use libp2p::peerstore::{PeerAccess, Peerstore};
-use log::*;
-use parking_lot::RwLock;
-use std::io::Error as IoError;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio_io::{AsyncRead, AsyncWrite};
+use crate::ncp::protocol::{NcpCodec, NcpConfig, NcpMessage};
+use futures::prelude::*;
+use libp2p::core::{
+    protocols_handler::ProtocolsHandlerUpgrErr,
+    upgrade::{InboundUpgrade, OutboundUpgrade},
+    ProtocolsHandler, ProtocolsHandlerEvent,
+};
+use smallvec::SmallVec;
+use std::{fmt, io};
+use tokio::codec::Framed;
+use tokio::io::{AsyncRead, AsyncWrite};
 
-pub(crate) fn ncp_handler<S>(
-    socket: NcpStreamSink<S>,
-    endpoint: Endpoint,
-    _addr: Multiaddr,
-    node: Arc<RwLock<Inner>>,
-) -> Box<dyn Future<Item = (), Error = IoError> + Send>
+/// Protocol handler that handles communication with the remote for the NCP protocol.
+///
+/// The handler will automatically open a substream with the remote for each request we make.
+///
+/// It also handles requests made by the remote.
+pub struct NcpHandler<TSubstream>
 where
-    S: AsyncRead + AsyncWrite + Send + 'static,
+    TSubstream: AsyncRead + AsyncWrite,
 {
-    let inner = node.clone();
+    /// Configuration for the Ncp protocol.
+    config: NcpConfig,
 
-    // If we are dialing, send request for peers list
-    // TODO: handle possible error
-    let sock = match endpoint {
-        Endpoint::Dialer => socket.send(NcpMsg::GetPeersRequest).wait().unwrap(),
-        Endpoint::Listener => socket,
-    };
+    /// If true, we are trying to shut down the existing NCP substream and should refuse any
+    /// incoming connection.
+    shutting_down: bool,
 
-    let fut = loop_fn(sock, {
-        let inner = inner.clone();
-        move |socket| {
-            socket.into_future().map_err(|(e, _)| e).and_then({
-                let inner = inner.clone();
-                move |(msg, rest)| {
-                    if let Some(msg) = msg {
-                        // One message has been received. We send it back to the client.
-                        debug!("Received a message: {:?}", msg);
-                        match msg {
-                            NcpMsg::Ping { ping_data } => {
-                                let resp = NcpMsg::Pong { ping_data };
-                                Box::new(rest.send(resp).map(|m| Loop::Continue(m)))
-                                    as Box<dyn Future<Item = _, Error = _> + Send>
-                            }
-                            NcpMsg::Pong { ping_data: _ } => {
-                                Box::new(future::ok(Loop::Continue(rest)))
-                                    as Box<dyn Future<Item = _, Error = _> + Send>
-                            }
-                            NcpMsg::GetPeersRequest => {
-                                let mut response = GetPeersResponse {
-                                    last_chunk: true,
-                                    peers: vec![],
-                                };
+    /// The active substreams.
+    // TODO: add a limit to the number of allowed substreams
+    substreams: Vec<SubstreamState<TSubstream>>,
 
-                                let inner = inner.read();
-                                let peerstore = (&*inner).peer_store.clone();
+    /// Queue of values that we want to send to the remote.
+    send_queue: SmallVec<[NcpMessage; 16]>,
+}
 
-                                for peer in peerstore.peers() {
-                                    let peerstore = peerstore.clone();
-                                    let mut peer_info = PeerInfo::new(&peer);
-                                    for addr in peerstore.peer_or_create(&peer).addrs() {
-                                        peer_info.addresses.push(addr);
-                                    }
-                                    response.peers.push(peer_info);
-                                }
+/// State of an active substream, opened either by us or by the remote.
+enum SubstreamState<TSubstream>
+where
+    TSubstream: AsyncRead + AsyncWrite,
+{
+    /// Waiting for a message from the remote.
+    WaitingInput(Framed<TSubstream, NcpCodec>),
+    /// Waiting to send a message to the remote.
+    PendingSend(Framed<TSubstream, NcpCodec>, NcpMessage),
+    /// Waiting to flush the substream so that the data arrives to the remote.
+    PendingFlush(Framed<TSubstream, NcpCodec>),
+    /// The substream is being closed.
+    Closing(Framed<TSubstream, NcpCodec>),
+}
 
-                                Box::new(
-                                    rest.send(NcpMsg::GetPeersResponse { response })
-                                        .map(|m| Loop::Continue(m)),
-                                )
-                                    as Box<dyn Future<Item = _, Error = _> + Send>
-                            }
-                            NcpMsg::GetPeersResponse { response } => {
-                                let inner = inner.read();
-                                let peerstore = (&*inner).peer_store.clone();
-                                let hour = Duration::from_secs(3600);
+impl<TSubstream> SubstreamState<TSubstream>
+where
+    TSubstream: AsyncRead + AsyncWrite,
+{
+    /// Consumes this state and produces the substream.
+    fn into_substream(self) -> Framed<TSubstream, NcpCodec> {
+        match self {
+            SubstreamState::WaitingInput(substream) => substream,
+            SubstreamState::PendingSend(substream, _) => substream,
+            SubstreamState::PendingFlush(substream) => substream,
+            SubstreamState::Closing(substream) => substream,
+        }
+    }
+}
 
-                                for peer in response.peers.into_iter() {
-                                    peerstore
-                                        .peer_or_create(&peer.peer_id)
-                                        .add_addrs(peer.addresses, hour);
-                                }
-                                if response.last_chunk {
-                                    Box::new(Ok(Loop::Break(())).into_future())
-                                        as Box<dyn Future<Item = _, Error = _> + Send>
-                                } else {
-                                    Box::new(future::ok(Loop::Continue(rest)))
-                                        as Box<dyn Future<Item = _, Error = _> + Send>
-                                }
+impl<TSubstream> NcpHandler<TSubstream>
+where
+    TSubstream: AsyncRead + AsyncWrite,
+{
+    /// Builds a new `NcpHandler`.
+    pub fn new() -> Self {
+        NcpHandler {
+            config: NcpConfig::new(),
+            shutting_down: false,
+            substreams: Vec::new(),
+            send_queue: SmallVec::new(),
+        }
+    }
+}
+
+impl<TSubstream> ProtocolsHandler for NcpHandler<TSubstream>
+where
+    TSubstream: AsyncRead + AsyncWrite,
+{
+    type InEvent = NcpMessage;
+    type OutEvent = NcpMessage;
+    type Error = io::Error;
+    type Substream = TSubstream;
+    type InboundProtocol = NcpConfig;
+    type OutboundProtocol = NcpConfig;
+    type OutboundOpenInfo = NcpMessage;
+
+    #[inline]
+    fn listen_protocol(&self) -> Self::InboundProtocol {
+        self.config.clone()
+    }
+
+    fn inject_fully_negotiated_inbound(
+        &mut self,
+        protocol: <Self::InboundProtocol as InboundUpgrade<TSubstream>>::Output,
+    ) {
+        if self.shutting_down {
+            return ();
+        }
+        self.substreams.push(SubstreamState::WaitingInput(protocol))
+    }
+
+    fn inject_fully_negotiated_outbound(
+        &mut self,
+        protocol: <Self::OutboundProtocol as OutboundUpgrade<TSubstream>>::Output,
+        message: Self::OutboundOpenInfo,
+    ) {
+        if self.shutting_down {
+            return;
+        }
+        self.substreams
+            .push(SubstreamState::PendingSend(protocol, message))
+    }
+
+    #[inline]
+    fn inject_event(&mut self, message: NcpMessage) {
+        self.send_queue.push(message);
+    }
+
+    #[inline]
+    fn inject_inbound_closed(&mut self) {}
+
+    #[inline]
+    fn inject_dial_upgrade_error(
+        &mut self,
+        _: Self::OutboundOpenInfo,
+        _: ProtocolsHandlerUpgrErr<
+            <Self::OutboundProtocol as OutboundUpgrade<Self::Substream>>::Error,
+        >,
+    ) {
+    }
+
+    #[inline]
+    fn connection_keep_alive(&self) -> bool {
+        true
+    }
+
+    #[inline]
+    fn shutdown(&mut self) {
+        self.shutting_down = true;
+        for n in (0..self.substreams.len()).rev() {
+            let substream = self.substreams.swap_remove(n);
+            self.substreams
+                .push(SubstreamState::Closing(substream.into_substream()));
+        }
+    }
+
+    fn poll(
+        &mut self,
+    ) -> Poll<
+        ProtocolsHandlerEvent<Self::OutboundProtocol, Self::OutboundOpenInfo, Self::OutEvent>,
+        io::Error,
+    > {
+        if !self.send_queue.is_empty() {
+            let message = self.send_queue.remove(0);
+            return Ok(Async::Ready(
+                ProtocolsHandlerEvent::OutboundSubstreamRequest {
+                    info: message,
+                    upgrade: self.config.clone(),
+                },
+            ));
+        }
+
+        for n in (0..self.substreams.len()).rev() {
+            let mut substream = self.substreams.swap_remove(n);
+            loop {
+                substream = match substream {
+                    SubstreamState::WaitingInput(mut substream) => match substream.poll() {
+                        Ok(Async::Ready(Some(message))) => {
+                            self.substreams
+                                .push(SubstreamState::WaitingInput(substream));
+                            return Ok(Async::Ready(ProtocolsHandlerEvent::Custom(message)));
+                        }
+                        Ok(Async::Ready(None)) => SubstreamState::Closing(substream),
+                        Ok(Async::NotReady) => {
+                            self.substreams
+                                .push(SubstreamState::WaitingInput(substream));
+                            return Ok(Async::NotReady);
+                        }
+                        Err(_) => SubstreamState::Closing(substream),
+                    },
+                    SubstreamState::PendingSend(mut substream, message) => {
+                        match substream.start_send(message)? {
+                            AsyncSink::Ready => SubstreamState::PendingFlush(substream),
+                            AsyncSink::NotReady(message) => {
+                                self.substreams
+                                    .push(SubstreamState::PendingSend(substream, message));
+                                return Ok(Async::NotReady);
                             }
                         }
-                    } else {
-                        // End of stream. Connection closed. Breaking the loop.
-                        debug!("Received EOF\n => Dropping connection");
-                        Box::new(Ok(Loop::Break(())).into_future())
-                            as Box<dyn Future<Item = _, Error = _> + Send>
                     }
+                    SubstreamState::PendingFlush(mut substream) => {
+                        match substream.poll_complete()? {
+                            Async::Ready(()) => SubstreamState::Closing(substream),
+                            Async::NotReady => {
+                                self.substreams
+                                    .push(SubstreamState::PendingFlush(substream));
+                                return Ok(Async::NotReady);
+                            }
+                        }
+                    }
+                    SubstreamState::Closing(mut substream) => match substream.close() {
+                        Ok(Async::Ready(())) => break,
+                        Ok(Async::NotReady) => {
+                            self.substreams.push(SubstreamState::Closing(substream));
+                            return Ok(Async::NotReady);
+                        }
+                        Err(_) => return Ok(Async::Ready(ProtocolsHandlerEvent::Shutdown)),
+                    },
                 }
-            })
+            }
         }
-    });
 
-    Box::new(fut) as Box<dyn Future<Item = _, Error = _> + Send>
+        Ok(Async::NotReady)
+    }
+}
+
+impl<TSubstream> fmt::Debug for NcpHandler<TSubstream>
+where
+    TSubstream: AsyncRead + AsyncWrite,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        f.debug_struct("NcpHandler")
+            .field("shutting_down", &self.shutting_down)
+            .field("substreams", &self.substreams.len())
+            .field("send_queue", &self.send_queue.len())
+            .finish()
+    }
 }

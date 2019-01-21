@@ -37,7 +37,7 @@ use std::process;
 use stegos_config;
 use stegos_config::{Config, ConfigError};
 use stegos_keychain::*;
-use stegos_network::Network;
+use stegos_network::Libp2pNetwork;
 use stegos_node::{genesis_dev, Node};
 use tokio::runtime::Runtime;
 
@@ -128,7 +128,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     // Initialize network
     let mut rt = Runtime::new()?;
-    let (network, network_service, broker) = Network::new(&cfg.network, &keychain)?;
+    let (broker, network) = Libp2pNetwork::new(&cfg.network, &keychain)?;
 
     // Initialize node
     let genesis = genesis_dev().expect("failed to load genesis block");
@@ -138,8 +138,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     // Don't initialize REPL if stdin is not a TTY device
     if atty::is(atty::Stream::Stdin) {
         // Initialize console
-        let console_service =
-            Console::new(&keychain, network.clone(), broker.clone(), node.clone())?;
+        let console_service = Console::new(&keychain, broker.clone(), node.clone())?;
         rt.spawn(console_service);
     }
 
@@ -147,8 +146,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     node.init(genesis).unwrap();
 
     // Start main event loop
-    rt.block_on(network_service)
-        .expect("errors are handled earlier");
+    rt.block_on(network).expect("errors are handled earlier");
 
     Ok(())
 }

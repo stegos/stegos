@@ -26,17 +26,16 @@ use futures::sync::mpsc::UnboundedReceiver;
 use futures::sync::mpsc::{channel, Receiver, Sender};
 use futures::{Async, Future, Poll, Sink, Stream};
 use lazy_static::*;
-use libp2p::Multiaddr;
 use log::*;
 use regex::Regex;
 use rustyline as rl;
+use std::marker::PhantomData;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::thread;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
-use stegos_network::{Broker, Network};
+use stegos_network::NetworkProvider;
 use stegos_node::*;
 use stegos_wallet::{Wallet, WalletNotification};
 
@@ -45,17 +44,21 @@ use stegos_wallet::{Wallet, WalletNotification};
 // ----------------------------------------------------------------
 
 /// Console - command-line interface.
-pub struct Console {}
+pub struct Console<T: NetworkProvider> {
+    marker: PhantomData<T>,
+}
 
-impl Console {
+impl<Network> Console<Network>
+where
+    Network: NetworkProvider + Clone,
+{
     /// Create a new Console Service.
     pub fn new(
         keys: &KeyChain,
-        network: Network,
-        broker: Broker,
-        node: Node,
+        broker: Network,
+        node: Node<Network>,
     ) -> Result<impl Future<Item = (), Error = ()>, Error> {
-        ConsoleService::new(keys, network, broker, node)
+        ConsoleService::new(keys, broker, node)
     }
 }
 
@@ -64,8 +67,6 @@ impl Console {
 // ----------------------------------------------------------------
 
 lazy_static! {
-    /// Regex to parse "connect" command.
-    static ref CONNECT_COMMAND_RE: Regex = Regex::new(r"\s*(?P<address>\S+)\s*$").unwrap();
     /// Regex to parse "pay" command.
     static ref PAY_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<amount>[0-9]{1,19})\s*$").unwrap();
     /// Regex to parse "msg" command.
@@ -79,16 +80,17 @@ lazy_static! {
 }
 
 /// Console (stdin) service.
-struct ConsoleService {
+struct ConsoleService<Network>
+where
+    Network: NetworkProvider + Clone,
+{
     /// Wallet.
     wallet: Wallet,
-    /// Network node.
-    network: Network,
     /// Network message broker.
-    broker: Broker,
+    broker: Network,
     /// Blockchain Node.
-    node: Node,
-    /// Validator's public key,
+    node: Node<Network>,
+    /// Validator's public key
     validator_pkey: secure::PublicKey,
     /// A channel to receive message from stdin thread.
     stdin: Receiver<String>,
@@ -98,23 +100,24 @@ struct ConsoleService {
     outputs_rx: UnboundedReceiver<OutputsNotification>,
 }
 
-impl ConsoleService {
+impl<Network> ConsoleService<Network>
+where
+    Network: NetworkProvider + Clone,
+{
     /// Constructor.
     fn new(
         keys: &KeyChain,
-        network: Network,
-        broker: Broker,
-        node: Node,
-    ) -> Result<ConsoleService, Error> {
+        broker: Network,
+        node: Node<Network>,
+    ) -> Result<ConsoleService<Network>, Error> {
         let wallet = Wallet::new(keys.wallet_skey.clone(), keys.wallet_pkey.clone());
         let validator_pkey = keys.cosi_pkey.clone();
         let (tx, rx) = channel::<String>(1);
-        let stdin_th = thread::spawn(move || ConsoleService::readline_thread_f(tx));
+        let stdin_th = thread::spawn(move || ConsoleService::<Network>::readline_thread_f(tx));
         let stdin = rx;
         let outputs_rx = node.subscribe_outputs()?;
         let service = ConsoleService {
             wallet,
-            network,
             broker,
             node,
             validator_pkey,
@@ -157,7 +160,7 @@ impl ConsoleService {
                     thread::park();
                 }
                 Err(rl::error::ReadlineError::Interrupted) | Err(rl::error::ReadlineError::Eof) => {
-                    break
+                    break;
                 }
                 Err(e) => {
                     error!("CLI I/O Error: {}", e);
@@ -180,12 +183,6 @@ impl ConsoleService {
         // println!("send PUBLICKEY MESSAGE - send unicast message");
         // println!("connect MULTIADDR - connect to a node");
         // println!("publish TOPIC MESSAGE - publish a message");
-        println!("");
-    }
-
-    fn help_connect() {
-        println!("Usage: connect MULTIADDRESS");
-        println!(" - MULTIADDRESS - multiaddress, e.g. '/ip4/1.2.3.4/tcp/12345'");
         println!("");
     }
 
@@ -232,27 +229,10 @@ impl ConsoleService {
 
     /// Called when line is typed on standard input.
     fn on_input(&mut self, msg: &str) {
-        if msg.starts_with("connect ") {
-            let caps = match CONNECT_COMMAND_RE.captures(&msg[8..]) {
-                Some(c) => c,
-                None => return ConsoleService::help_connect(),
-            };
-
-            let address = caps.name("address").unwrap().as_str();
-            let address = match Multiaddr::from_str(address) {
-                Ok(a) => a,
-                Err(e) => {
-                    println!("Invalid multiaddress '{}: {}", address, e);
-                    return ConsoleService::help_connect();
-                }
-            };
-
-            info!("Connect: address={}", address);
-            self.network.dial(address).unwrap();
-        } else if msg.starts_with("publish ") {
+        if msg.starts_with("publish ") {
             let caps = match PUBLISH_COMMAND_RE.captures(&msg[8..]) {
                 Some(c) => c,
-                None => return ConsoleService::help_publish(),
+                None => return ConsoleService::<Network>::help_publish(),
             };
 
             let topic = caps.name("topic").unwrap().as_str();
@@ -264,7 +244,7 @@ impl ConsoleService {
         } else if msg.starts_with("send ") {
             let caps = match SEND_COMMAND_RE.captures(&msg[5..]) {
                 Some(c) => c,
-                None => return ConsoleService::help_publish(),
+                None => return ConsoleService::<Network>::help_publish(),
             };
 
             let recipient = caps.name("recipient").unwrap().as_str();
@@ -272,7 +252,7 @@ impl ConsoleService {
                 Ok(r) => r,
                 Err(e) => {
                     println!("Invalid public key '{}': {}", recipient, e);
-                    return ConsoleService::help_send();
+                    return ConsoleService::<Network>::help_send();
                 }
             };
             let msg = caps.name("msg").unwrap().as_str();
@@ -283,7 +263,7 @@ impl ConsoleService {
         } else if msg.starts_with("pay ") {
             let caps = match PAY_COMMAND_RE.captures(&msg[4..]) {
                 Some(c) => c,
-                None => return ConsoleService::help_pay(),
+                None => return ConsoleService::<Network>::help_pay(),
             };
 
             let recipient = caps.name("recipient").unwrap().as_str();
@@ -291,7 +271,7 @@ impl ConsoleService {
                 Ok(r) => r,
                 Err(e) => {
                     println!("Invalid public key '{}': {}", recipient, e);
-                    return ConsoleService::help_pay();
+                    return ConsoleService::<Network>::help_pay();
                 }
             };
             let amount = caps.name("amount").unwrap().as_str();
@@ -308,7 +288,7 @@ impl ConsoleService {
         } else if msg.starts_with("msg ") {
             let caps = match MSG_COMMAND_RE.captures(&msg[4..]) {
                 Some(c) => c,
-                None => return ConsoleService::help_msg(),
+                None => return ConsoleService::<Network>::help_msg(),
             };
 
             let recipient = caps.name("recipient").unwrap().as_str();
@@ -316,7 +296,7 @@ impl ConsoleService {
                 Ok(r) => r,
                 Err(e) => {
                     println!("Invalid public key '{}': {}", recipient, e);
-                    return ConsoleService::help_msg();
+                    return ConsoleService::<Network>::help_msg();
                 }
             };
             let data = caps.name("msg").unwrap().as_str();
@@ -337,7 +317,7 @@ impl ConsoleService {
         } else if msg.starts_with("stake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[6..]) {
                 Some(c) => c,
-                None => return ConsoleService::help_stake(),
+                None => return ConsoleService::<Network>::help_stake(),
             };
 
             let amount = caps.name("amount").unwrap().as_str();
@@ -354,7 +334,7 @@ impl ConsoleService {
         } else if msg.starts_with("unstake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[8..]) {
                 Some(c) => c,
-                None => return ConsoleService::help_unstake(),
+                None => return ConsoleService::<Network>::help_unstake(),
             };
 
             let amount = caps.name("amount").unwrap().as_str();
@@ -369,7 +349,7 @@ impl ConsoleService {
                 error!("Request failed: {}", e);
             }
         } else {
-            return ConsoleService::help();
+            return ConsoleService::<Network>::help();
         }
     }
 
@@ -394,7 +374,10 @@ impl ConsoleService {
 }
 
 // Event loop.
-impl Future for ConsoleService {
+impl<Network> Future for ConsoleService<Network>
+where
+    Network: NetworkProvider + Clone,
+{
     type Item = ();
     type Error = ();
 

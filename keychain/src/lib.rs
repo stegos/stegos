@@ -23,7 +23,7 @@
 
 pub mod pem;
 
-use failure::{format_err, Error, Fail};
+use failure::{Error, Fail};
 use log::*;
 use std::fs;
 use std::path::Path;
@@ -189,7 +189,6 @@ impl KeyChain {
         let mut rng = ChaChaRng::from_seed(&seed_converted);
 
         let sec = secp256k1::Secp256k1::new();
-        sec.generate_keypair(&mut rng)
-            .map_err(|e| format_err!("Couldn't produce sec256k1 key, reason = {}", e))
+        Ok(sec.generate_keypair(&mut rng))
     }
 }

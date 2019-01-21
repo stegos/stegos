@@ -1,7 +1,7 @@
 //
 // MIT License
 //
-// Copyright (c) 2018 Stegos
+// Copyright (c) 2018-2019 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -21,6 +21,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub(crate) mod handler;
-mod ncp;
-pub mod protocol;
+mod handler;
+pub mod layer;
+mod ncp_proto;
+mod protocol;
+
+pub use self::layer::Ncp;

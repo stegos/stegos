@@ -31,7 +31,6 @@ use log4rs::append::console::ConsoleAppender;
 use log4rs::config::{Appender, Config as LogConfig, Logger, Root};
 use log4rs::encode::pattern::PatternEncoder;
 use log4rs::{Error as LogError, Handle as LogHandle};
-use rustyline;
 use std::error::Error;
 use std::path::PathBuf;
 use std::process;

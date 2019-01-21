@@ -29,7 +29,6 @@ mod types;
 
 pub use crate::error::*;
 pub use crate::types::*;
-use serde_derive;
 use std::fs::File;
 use std::io::ErrorKind;
 use std::io::Read;

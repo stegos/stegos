@@ -36,5 +36,3 @@ pub use crate::genesis::*;
 pub use crate::merkle::*;
 pub use crate::output::*;
 pub use crate::transaction::*;
-
-use log;

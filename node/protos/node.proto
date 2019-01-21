@@ -208,6 +208,7 @@ message VRF {
 
 message VRFTicket {
     VRF random = 1;
+    uint64 height = 2;
     SecurePublicKey pkey = 3;
     SecureSignature sig = 4;
 }

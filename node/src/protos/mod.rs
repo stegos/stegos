@@ -953,6 +953,7 @@ impl IntoProto<node::VRFTicket> for VRFTicket {
     fn into_proto(&self) -> node::VRFTicket {
         let mut proto = node::VRFTicket::new();
         proto.set_random(self.random.into_proto());
+        proto.set_height(self.height);
         proto.set_pkey(self.pkey.into_proto());
         proto.set_sig(self.sig.into_proto());
         proto
@@ -962,9 +963,15 @@ impl IntoProto<node::VRFTicket> for VRFTicket {
 impl FromProto<node::VRFTicket> for VRFTicket {
     fn from_proto(proto: &node::VRFTicket) -> Result<Self, Error> {
         let random = VRF::from_proto(proto.get_random())?;
+        let height = proto.get_height();
         let pkey = SecurePublicKey::from_proto(proto.get_pkey())?;
         let sig = SecureSignature::from_proto(proto.get_sig())?;
-        Ok(VRFTicket { random, pkey, sig })
+        Ok(VRFTicket {
+            random,
+            height,
+            pkey,
+            sig,
+        })
     }
 }
 
@@ -1270,7 +1277,7 @@ mod tests {
         let seed = Hash::digest(&"test".to_string());
         let (skey1, pkey1, _sig1) = make_secure_random_keys();
 
-        let vrf = VRFTicket::new(seed, pkey1, &skey1);
+        let vrf = VRFTicket::new(seed, 0, pkey1, &skey1);
         roundtrip(&vrf);
     }
 }

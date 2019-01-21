@@ -741,6 +741,7 @@ where
 
         self.sealed_block_num = 0;
         self.leader = key_block.header.leader.clone();
+        self.facilitator = key_block.header.facilitator.clone();
         self.validators = self.escrow.multiget(&key_block.header.witnesses);
 
         if self.validators.contains_key(&self.keys.cosi_pkey) {

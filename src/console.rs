@@ -37,6 +37,7 @@ use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
 use stegos_network::NetworkProvider;
 use stegos_node::*;
+use stegos_txpool::TransactionPool;
 use stegos_wallet::{Wallet, WalletNotification};
 
 // ----------------------------------------------------------------
@@ -57,8 +58,9 @@ where
         keys: &KeyChain,
         broker: Network,
         node: Node<Network>,
+        txpool: TransactionPool,
     ) -> Result<impl Future<Item = (), Error = ()>, Error> {
-        ConsoleService::new(keys, broker, node)
+        ConsoleService::new(keys, broker, node, txpool)
     }
 }
 
@@ -77,6 +79,8 @@ lazy_static! {
     static ref PUBLISH_COMMAND_RE: Regex = Regex::new(r"\s*(?P<topic>[0-9A-Za-z]+)\s+(?P<msg>.*)$").unwrap();
     /// Regex to parse "send" command.
     static ref SEND_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<msg>.+)$").unwrap();
+    /// Regex to parse "txpool" command.
+    static ref TXPOOL_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)$").unwrap();
 }
 
 /// Console (stdin) service.
@@ -86,6 +90,8 @@ where
 {
     /// Wallet.
     wallet: Wallet,
+    /// Transaction pool
+    txpool: TransactionPool,
     /// Network message broker.
     broker: Network,
     /// Blockchain Node.
@@ -98,6 +104,8 @@ where
     stdin_th: thread::JoinHandle<()>,
     /// A channel to receive notification about UTXO changes.
     outputs_rx: UnboundedReceiver<OutputsNotification>,
+    /// A channel to receive notification about Epoch changes.
+    epoch_rx: UnboundedReceiver<EpochNotification>,
 }
 
 impl<Network> ConsoleService<Network>
@@ -109,6 +117,7 @@ where
         keys: &KeyChain,
         broker: Network,
         node: Node<Network>,
+        txpool: TransactionPool,
     ) -> Result<ConsoleService<Network>, Error> {
         let wallet = Wallet::new(keys.wallet_skey.clone(), keys.wallet_pkey.clone());
         let validator_pkey = keys.cosi_pkey.clone();
@@ -116,14 +125,18 @@ where
         let stdin_th = thread::spawn(move || ConsoleService::<Network>::readline_thread_f(tx));
         let stdin = rx;
         let outputs_rx = node.subscribe_outputs()?;
+        let epoch_rx = node.subscribe_epoch()?;
+
         let service = ConsoleService {
             wallet,
+            txpool,
             broker,
             node,
             validator_pkey,
             stdin,
             stdin_th,
             outputs_rx,
+            epoch_rx,
         };
         Ok(service)
     }
@@ -228,6 +241,13 @@ where
         println!("");
     }
 
+    fn help_txpool() {
+        println!("Adds public key into pool, just for tests.");
+        println!("Usage: txpool PUBLICKEY");
+        println!(" - PUBLICKEY recipient's public key in HEX format");
+        println!("");
+    }
+
     /// Called when line is typed on standard input.
     fn on_input(&mut self, msg: &str) {
         if msg.starts_with("publish ") {
@@ -242,6 +262,22 @@ where
             self.broker
                 .publish(&topic, msg.as_bytes().to_vec())
                 .unwrap();
+        } else if msg.starts_with("txpool ") {
+            let caps = match TXPOOL_COMMAND_RE.captures(&msg[7..]) {
+                Some(c) => c,
+                None => return ConsoleService::<Network>::help_txpool(),
+            };
+
+            let node = caps.name("recipient").unwrap().as_str();
+            let node = match secure::PublicKey::try_from_hex(node) {
+                Ok(r) => r,
+                Err(e) => {
+                    println!("Invalid public key '{}': {}", node, e);
+                    return ConsoleService::<Network>::help_txpool();
+                }
+            };
+            info!("Trying add into pool: pk='{}'", node);
+            self.txpool.add_message(node).unwrap();
         } else if msg.starts_with("send ") {
             let caps = match SEND_COMMAND_RE.captures(&msg[5..]) {
                 Some(c) => c,
@@ -413,6 +449,30 @@ where
                         error!("Error: {}", e);
                     }
                 }
+                Ok(Async::Ready(None)) => self.on_exit(),
+                Ok(Async::NotReady) => break, // fall through
+                Err(()) => panic!("Wallet failure"),
+            }
+        }
+
+        loop {
+            // Transfer epoch notification into txpool
+            match self.epoch_rx.poll() {
+                Ok(Async::Ready(Some(msg))) => {
+                    let facilitator = msg.facilitator;
+                    if let Err(e) = self.txpool.change_facilitator(facilitator) {
+                        error!("Error in sending message to txpool: {}", e);
+                    }
+                }
+                Ok(Async::Ready(None)) => self.on_exit(),
+                Ok(Async::NotReady) => break, // fall through
+                Err(()) => panic!("Wallet failure"),
+            }
+        }
+
+        loop {
+            match self.txpool.feedback_receiver.poll() {
+                Ok(Async::Ready(Some(msg))) => debug!("Received message from txpool {:?}", msg),
                 Ok(Async::Ready(None)) => self.on_exit(),
                 Ok(Async::NotReady) => break, // fall through
                 Err(()) => panic!("Wallet failure"),

@@ -39,6 +39,7 @@ use stegos_config::{Config, ConfigError};
 use stegos_keychain::*;
 use stegos_network::Libp2pNetwork;
 use stegos_node::{genesis_dev, Node};
+use stegos_txpool::TransactionPoolService;
 use tokio::runtime::Runtime;
 
 use crate::console::*;
@@ -130,15 +131,16 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut rt = Runtime::new()?;
     let (broker, network) = Libp2pNetwork::new(&cfg.network, &keychain)?;
 
+    let (pool, manager) = TransactionPoolService::with_manager(&keychain, broker.clone());
+    rt.spawn(pool);
     // Initialize node
     let genesis = genesis_dev().expect("failed to load genesis block");
     let (node_service, node) = Node::new(keychain.clone(), broker.clone())?;
     rt.spawn(node_service);
-
     // Don't initialize REPL if stdin is not a TTY device
     if atty::is(atty::Stream::Stdin) {
         // Initialize console
-        let console_service = Console::new(&keychain, broker.clone(), node.clone())?;
+        let console_service = Console::new(&keychain, broker.clone(), node.clone(), manager)?;
         rt.spawn(console_service);
     }
 

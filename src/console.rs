@@ -70,6 +70,8 @@ lazy_static! {
     static ref PAY_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<amount>[0-9]{1,19})\s*$").unwrap();
     /// Regex to parse "msg" command.
     static ref MSG_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<msg>.+)$").unwrap();
+    /// Regex to parse "stake/unstake" command.
+    static ref STAKE_COMMAND_RE: Regex = Regex::new(r"\s*(?P<amount>[0-9]{1,19})\s*$").unwrap();
     /// Regex to parse "publish" command.
     static ref PUBLISH_COMMAND_RE: Regex = Regex::new(r"\s*(?P<topic>[0-9A-Za-z]+)\s+(?P<msg>.*)$").unwrap();
     /// Regex to parse "send" command.
@@ -86,6 +88,8 @@ struct ConsoleService {
     broker: Broker,
     /// Blockchain Node.
     node: Node,
+    /// Validator's public key,
+    validator_pkey: secure::PublicKey,
     /// A channel to receive message from stdin thread.
     stdin: Receiver<String>,
     /// A thread used for readline.
@@ -103,6 +107,7 @@ impl ConsoleService {
         node: Node,
     ) -> Result<ConsoleService, Error> {
         let wallet = Wallet::new(keys.wallet_skey.clone(), keys.wallet_pkey.clone());
+        let validator_pkey = keys.cosi_pkey.clone();
         let (tx, rx) = channel::<String>(1);
         let stdin_th = thread::spawn(move || ConsoleService::readline_thread_f(tx));
         let stdin = rx;
@@ -112,6 +117,7 @@ impl ConsoleService {
             network,
             broker,
             node,
+            validator_pkey,
             stdin,
             stdin_th,
             outputs_rx,
@@ -169,6 +175,8 @@ impl ConsoleService {
         println!("Usage:");
         println!("pay PUBLICKEY AMOUNT - send money");
         println!("msg PUBLICKEY MESSAGE - send data");
+        println!("stake AMOUNT - stake money");
+        println!("unstake AMOUNT - unstake money");
         // println!("send PUBLICKEY MESSAGE - send unicast message");
         // println!("connect MULTIADDR - connect to a node");
         // println!("publish TOPIC MESSAGE - publish a message");
@@ -192,6 +200,18 @@ impl ConsoleService {
         println!("Usage: pay PUBLICKEY AMOUNT");
         println!(" - PUBLICKEY recipient's public key in HEX format");
         println!(" - AMOUNT amount in tokens");
+        println!("");
+    }
+
+    fn help_stake() {
+        println!("Usage: stake AMOUNT");
+        println!(" - AMOUNT amount to stake into escrow, in tokens");
+        println!("");
+    }
+
+    fn help_unstake() {
+        println!("Usage: stake AMOUNT");
+        println!(" - AMOUNT amount to unstake from escrow, in tokens");
         println!("");
     }
 
@@ -310,6 +330,40 @@ impl ConsoleService {
             if let Err(e) = self
                 .wallet
                 .message(&recipient, ttl, data)
+                .and_then(move |tx| self.node.send_transaction(tx))
+            {
+                error!("Request failed: {}", e);
+            }
+        } else if msg.starts_with("stake ") {
+            let caps = match STAKE_COMMAND_RE.captures(&msg[6..]) {
+                Some(c) => c,
+                None => return ConsoleService::help_stake(),
+            };
+
+            let amount = caps.name("amount").unwrap().as_str();
+            let amount = amount.parse::<i64>().unwrap(); // check by regex
+
+            info!("Staking {} STG into escrow", amount);
+            if let Err(e) = self
+                .wallet
+                .stake(&self.validator_pkey, amount)
+                .and_then(move |tx| self.node.send_transaction(tx))
+            {
+                error!("Request failed: {}", e);
+            }
+        } else if msg.starts_with("unstake ") {
+            let caps = match STAKE_COMMAND_RE.captures(&msg[8..]) {
+                Some(c) => c,
+                None => return ConsoleService::help_unstake(),
+            };
+
+            let amount = caps.name("amount").unwrap().as_str();
+            let amount = amount.parse::<i64>().unwrap(); // check by regex
+
+            info!("Unstaking {} STG from escrow", amount);
+            if let Err(e) = self
+                .wallet
+                .unstake(&self.validator_pkey, amount)
                 .and_then(move |tx| self.node.send_transaction(tx))
             {
                 error!("Request failed: {}", e);

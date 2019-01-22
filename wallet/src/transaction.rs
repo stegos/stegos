@@ -28,6 +28,7 @@ use failure::Error;
 use log::*;
 use std::collections::HashMap;
 use stegos_blockchain::DataOutput;
+use stegos_blockchain::EscrowOutput;
 use stegos_blockchain::Output;
 use stegos_blockchain::PaymentOutput;
 use stegos_blockchain::Transaction;
@@ -36,6 +37,7 @@ use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::curve1174::cpt::SecretKey;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
+use stegos_crypto::pbc::secure;
 
 /// Calculate fee for data transaction.
 /// Sic: this method was copy-pasted from NodeService to avoid
@@ -69,24 +71,13 @@ pub fn create_payment_transaction(
     //
 
     trace!("Checking for available funds in the wallet...");
-
-    // Try to find exact sum plus fee, without a change.
-    let (fee, change, inputs) = match find_utxo_exact(unspent, amount + PAYMENT_FEE) {
-        Some(input) => {
-            // If found, then charge the minimal fee.
-            let fee = PAYMENT_FEE;
-            (fee, 0i64, vec![input])
-        }
-        None => {
-            // Otherwise, charge the double fee.
-            let fee = 2 * PAYMENT_FEE;
-            let (inputs, change) = find_utxo(&unspent, amount + fee)?;
-            (fee, change, inputs)
-        }
-    };
+    let fee = PAYMENT_FEE;
+    let fee_change = fee + PAYMENT_FEE;
+    let unspent_iter = unspent.values().map(|(o, a)| (o, *a));
+    let (inputs, fee, change) = find_utxo(unspent_iter, amount, fee, fee_change)?;
     let inputs: Vec<Output> = inputs
         .into_iter()
-        .map(|o| Output::PaymentOutput(o))
+        .map(|o| Output::PaymentOutput(o.clone()))
         .collect();
 
     debug!(
@@ -97,6 +88,9 @@ pub fn create_payment_transaction(
         change,
         fee
     );
+    for input in &inputs {
+        debug!("Use UTXO: hash={}", Hash::digest(input));
+    }
 
     //
     // Create outputs
@@ -169,22 +163,12 @@ pub fn create_data_transaction(
     trace!("Checking for available funds in the wallet...");
 
     let fee = data_fee(data.len(), ttl);
-    // Try to find exact sum plus fee, without a change.
-    let (fee, change, inputs) = match find_utxo_exact(unspent, fee) {
-        Some(input) => {
-            // If found, then charge the minimal fee.
-            (fee, 0i64, vec![input])
-        }
-        None => {
-            // Otherwise, charge the double fee.
-            let fee = fee + PAYMENT_FEE;
-            let (inputs, change) = find_utxo(&unspent, fee)?;
-            (fee, change, inputs)
-        }
-    };
+    let fee_change = fee + PAYMENT_FEE;
+    let unspent_iter = unspent.values().map(|(o, a)| (o, *a));
+    let (inputs, fee, change) = find_utxo(unspent_iter, 0, fee, fee_change)?;
     let inputs: Vec<Output> = inputs
         .into_iter()
-        .map(|o| Output::PaymentOutput(o))
+        .map(|o| Output::PaymentOutput(o.clone()))
         .collect();
 
     debug!(
@@ -195,6 +179,9 @@ pub fn create_data_transaction(
         change,
         fee
     );
+    for input in &inputs {
+        debug!("Use UTXO: hash={}", Hash::digest(input));
+    }
 
     //
     // Create outputs
@@ -268,6 +255,183 @@ pub(crate) fn create_data_pruning_transaction(
     info!(
         "Signed data pruning transaction: hash={}, data_utxo={}, fee={}",
         tx_hash, output_hash, fee
+    );
+
+    Ok(tx)
+}
+
+/// Create a new staking transaction.
+pub fn create_staking_transaction(
+    sender_skey: &SecretKey,
+    sender_pkey: &PublicKey,
+    validator_pkey: &secure::PublicKey,
+    unspent: &HashMap<Hash, (PaymentOutput, i64)>,
+    amount: i64,
+) -> Result<Transaction, Error> {
+    if amount <= ESCROW_FEE + PAYMENT_FEE {
+        return Err(WalletError::ZeroOrNegativeAmount.into());
+    }
+
+    debug!(
+        "Creating a staking transaction: validator={}, amount={}",
+        validator_pkey, amount
+    );
+
+    //
+    // Find inputs
+    //
+
+    trace!("Checking for available funds in the wallet...");
+    let fee = ESCROW_FEE;
+    let fee_change = fee + PAYMENT_FEE;
+    let unspent_iter = unspent.values().map(|(o, a)| (o, *a));
+    let (inputs, fee, change) = find_utxo(unspent_iter, amount, fee, fee_change)?;
+    let inputs: Vec<Output> = inputs
+        .into_iter()
+        .map(|o| Output::PaymentOutput(o.clone()))
+        .collect();
+
+    debug!(
+        "Transaction preview: recipient={}, validator={}, stake={}, withdrawn={}, change={}, fee={}",
+        sender_pkey,
+        validator_pkey,
+        amount,
+        amount + change + fee,
+        change,
+        fee
+    );
+    for input in &inputs {
+        debug!("Use UTXO: hash={}", Hash::digest(input));
+    }
+
+    //
+    // Create outputs
+    //
+
+    let timestamp = Utc::now().timestamp() as u64;
+    let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
+
+    // Create an output for escrow
+    trace!("Creating escrow UTXO...");
+    let output1 = Output::new_escrow(timestamp, sender_skey, sender_pkey, validator_pkey, amount)?;
+    info!(
+        "Created escrow UTXO: hash={}, recipient={}, validator={}, amount={}",
+        Hash::digest(&output1),
+        sender_pkey,
+        validator_pkey,
+        amount
+    );
+    outputs.push(output1);
+    let mut gamma = Fr::zero();
+
+    if change > 0 {
+        // Create an output for change
+        trace!("Creating change UTXO...");
+        let (output2, gamma2) = Output::new_payment(timestamp, sender_skey, sender_pkey, change)?;
+        info!(
+            "Created change UTXO: hash={}, recipient={}, change={}",
+            Hash::digest(&output2),
+            sender_pkey,
+            change
+        );
+        outputs.push(output2);
+        gamma += gamma2;
+    }
+
+    trace!("Signing transaction...");
+    let tx = Transaction::new(sender_skey, &inputs, &outputs, gamma, fee)?;
+    let tx_hash = Hash::digest(&tx);
+    info!(
+        "Signed stake transaction: hash={}, validator={}, stake={}, withdrawn={}, change={}, fee={}",
+        tx_hash,
+        validator_pkey,
+        amount,
+        amount + change + fee,
+        change,
+        fee
+    );
+
+    Ok(tx)
+}
+
+/// Create a new unstaking transaction.
+pub fn create_unstaking_transaction(
+    sender_skey: &SecretKey,
+    sender_pkey: &PublicKey,
+    validator_pkey: &secure::PublicKey,
+    unspent: &HashMap<Hash, EscrowOutput>,
+    amount: i64,
+) -> Result<Transaction, Error> {
+    if amount <= 0 {
+        return Err(WalletError::ZeroOrNegativeAmount.into());
+    }
+
+    debug!(
+        "Creating a unstaking transaction: recipient={}, validator={}, amount={}",
+        sender_pkey, validator_pkey, amount
+    );
+
+    //
+    // Find inputs
+    //
+
+    trace!("Checking for staked money in the wallet...");
+    let fee = PAYMENT_FEE;
+    let fee_change = fee + ESCROW_FEE;
+    let unspent_iter = unspent.values().map(|o| (o, o.amount));
+    let (inputs, fee, change) = find_utxo(unspent_iter, amount, fee, fee_change)?;
+    let inputs: Vec<Output> = inputs
+        .into_iter()
+        .map(|o| Output::EscrowOutput(o.clone()))
+        .collect();
+
+    debug!(
+        "Transaction preview: recipient={}, validator={}, unstake={}, stake={}, fee={}",
+        sender_pkey, validator_pkey, amount, change, fee
+    );
+    for input in &inputs {
+        debug!("Use escrow UTXO: hash={}", Hash::digest(input));
+    }
+
+    //
+    // Create outputs
+    //
+
+    let timestamp = Utc::now().timestamp() as u64;
+    let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
+
+    // Create an output for payment
+    trace!("Creating payment UTXO...");
+    let (output1, gamma1) = Output::new_payment(timestamp, sender_skey, sender_pkey, amount)?;
+    info!(
+        "Created payment UTXO: hash={}, recipient={}, amount={}",
+        Hash::digest(&output1),
+        sender_pkey,
+        amount
+    );
+    outputs.push(output1);
+    let gamma = gamma1;
+
+    if change > 0 {
+        // Create an output for escrow
+        trace!("Creating escrow UTXO...");
+        let output2 =
+            Output::new_escrow(timestamp, sender_skey, sender_pkey, validator_pkey, change)?;
+        info!(
+            "Created escrow UTXO: hash={}, validator={}, amount={}",
+            Hash::digest(&output2),
+            validator_pkey,
+            change
+        );
+        outputs.push(output2);
+    }
+
+    trace!("Signing transaction...");
+    let tx = Transaction::new(sender_skey, &inputs, &outputs, gamma, fee)?;
+    let tx_hash = Hash::digest(&tx);
+    info!(
+        "Signed unstake transaction: hash={}, validator={}, unstake={}, stake={}, fee={}",
+        tx_hash, validator_pkey, amount, change, fee
     );
 
     Ok(tx)

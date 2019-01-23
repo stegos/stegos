@@ -109,6 +109,7 @@ impl Wallet {
     }
 
     /// Unstake money from the escrow.
+    /// NOTE: amount must include PAYMENT_FEE.
     pub fn unstake(
         &self,
         validator_pkey: &secure::PublicKey,

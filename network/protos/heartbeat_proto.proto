@@ -1,9 +1,0 @@
-syntax = "proto2";
-package heartbeat.pb;
-
-message Message {
-    required bytes public_key = 1;
-    repeated bytes addrs = 2;
-    optional bytes extra_info = 3;
-    required bytes signature = 4;
-}

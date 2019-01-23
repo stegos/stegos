@@ -17,37 +17,25 @@ fn check_for_regen(src: &str, dst: &str) -> bool {
 }
 
 fn main() {
+    if check_for_regen("protos/ncp_proto.proto", "src/ncp/ncp_proto.rs") {
+        protobuf_codegen_pure::run(Args {
+            out_dir: &"src/ncp/",
+            input: &["protos/ncp_proto.proto"],
+            includes: &["protos"],
+            customize: Customize {
+                ..Default::default()
+            },
+        })
+        .expect("protoc");
+    }
+
     if check_for_regen(
-        "protos/heartbeat_proto.proto",
-        "src/node/heartbeat/heartbeat_proto.rs",
+        "protos/unicast_proto.proto",
+        "src/libp2p_network/unicast_proto.rs",
     ) {
         protobuf_codegen_pure::run(Args {
-            out_dir: &"src/node/heartbeat",
-            input: &["protos/heartbeat_proto.proto"],
-            includes: &["protos"],
-            customize: Customize {
-                ..Default::default()
-            },
-        })
-        .expect("protoc");
-    }
-
-    if check_for_regen("protos/ncp.proto", "src/ncp/ncp.rs") {
-        protobuf_codegen_pure::run(Args {
-            out_dir: &"src/ncp",
-            input: &["protos/ncp.proto"],
-            includes: &["protos"],
-            customize: Customize {
-                ..Default::default()
-            },
-        })
-        .expect("protoc");
-    }
-
-    if check_for_regen("protos/unicast.proto", "src/node/broker/unicast.rs") {
-        protobuf_codegen_pure::run(Args {
-            out_dir: &"src/node/broker",
-            input: &["protos/unicast.proto"],
+            out_dir: &"src/libp2p_network/",
+            input: &["protos/unicast_proto.proto"],
             includes: &["protos"],
             customize: Customize {
                 ..Default::default()

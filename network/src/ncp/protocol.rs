@@ -1,7 +1,7 @@
 //
 // MIT License
 //
-// Copyright (c) 2018 Stegos
+// Copyright (c) 2018-2019 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -20,106 +20,185 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-#![allow(dead_code)]
 
-use super::ncp as ncp_proto;
-use bytes::{Bytes, BytesMut};
-use futures::{future, sink, stream, Sink, Stream};
-use libp2p::core::{ConnectionUpgrade, Endpoint, Multiaddr, PeerId};
-use protobuf::{self, Message};
-use std::io::Error as IoError;
-use std::iter;
-use tokio_codec::Framed;
-use tokio_io::{AsyncRead, AsyncWrite};
+use bytes::{BufMut, BytesMut};
+use futures::future;
+use libp2p::core::{InboundUpgrade, OutboundUpgrade, PeerId, UpgradeInfo};
+use libp2p::Multiaddr;
+use protobuf::Message;
+use std::{io, iter};
+use tokio::codec::{Decoder, Encoder, Framed};
+use tokio::io::{AsyncRead, AsyncWrite};
 use unsigned_varint::codec;
 
-/// Configuration for a Kademlia connection upgrade. When applied to a connection, turns this
-/// connection into a `Stream + Sink` whose items are of type `NcpMsg`.
-#[derive(Debug, Default, Copy, Clone)]
-pub struct NcpProtocolConfig;
+use super::ncp_proto;
 
-impl<C, Maf> ConnectionUpgrade<C, Maf> for NcpProtocolConfig
-where
-    C: AsyncRead + AsyncWrite + 'static, // TODO: 'static :-/
-{
-    type Output = (Endpoint, NcpStreamSink<C>);
-    type MultiaddrFuture = Maf;
-    type Future = future::FutureResult<((Self::Output), Self::MultiaddrFuture), IoError>;
-    type NamesIter = iter::Once<(Bytes, ())>;
-    type UpgradeIdentifier = ();
+/// Implementation of `ConnectionUpgrade` for the floodsub protocol.
+#[derive(Debug, Clone)]
+pub struct NcpConfig {}
 
+impl NcpConfig {
+    /// Builds a new `NcpConfig`.
     #[inline]
-    fn protocol_names(&self) -> Self::NamesIter {
-        iter::once(("/stegos/ncp/1.0.0".into(), ()))
-    }
-
-    #[inline]
-    fn upgrade(self, incoming: C, _: (), e: Endpoint, addr: Maf) -> Self::Future {
-        future::ok(((e, ncp_protocol(incoming)), addr))
+    pub fn new() -> NcpConfig {
+        NcpConfig {}
     }
 }
 
-pub type NcpStreamSink<S> = stream::AndThen<
-    sink::With<
-        stream::FromErr<Framed<S, codec::UviBytes<Vec<u8>>>, IoError>,
-        NcpMsg,
-        fn(NcpMsg) -> Result<Vec<u8>, IoError>,
-        Result<Vec<u8>, IoError>,
-    >,
-    fn(BytesMut) -> Result<NcpMsg, IoError>,
-    Result<NcpMsg, IoError>,
->;
+impl UpgradeInfo for NcpConfig {
+    type Info = &'static [u8];
+    type InfoIter = iter::Once<Self::Info>;
 
-// Upgrades a socket to use the NCP protocol.
-fn ncp_protocol<S>(socket: S) -> NcpStreamSink<S>
+    #[inline]
+    fn protocol_info(&self) -> Self::InfoIter {
+        iter::once(b"/stegos/ncp/1.0.0")
+    }
+}
+
+impl<TSocket> InboundUpgrade<TSocket> for NcpConfig
 where
-    S: AsyncRead + AsyncWrite,
+    TSocket: AsyncRead + AsyncWrite,
 {
-    Framed::new(socket, codec::UviBytes::default())
-        .from_err::<IoError>()
-        .with::<_, fn(_) -> _, _>(|request| -> Result<_, IoError> {
-            let proto_struct = msg_to_proto(request);
-            Ok(proto_struct.write_to_bytes().unwrap()) // TODO: error?
-        })
-        .and_then::<fn(_) -> _, _>(|bytes| {
-            let response = protobuf::parse_from_bytes(&bytes)?;
-            proto_to_msg(response)
-        })
+    type Output = Framed<TSocket, NcpCodec>;
+    type Error = io::Error;
+    type Future = future::FutureResult<Self::Output, Self::Error>;
+
+    #[inline]
+    fn upgrade_inbound(self, socket: TSocket, _: Self::Info) -> Self::Future {
+        future::ok(Framed::new(
+            socket,
+            NcpCodec {
+                length_prefix: Default::default(),
+            },
+        ))
+    }
+}
+
+impl<TSocket> OutboundUpgrade<TSocket> for NcpConfig
+where
+    TSocket: AsyncRead + AsyncWrite,
+{
+    type Output = Framed<TSocket, NcpCodec>;
+    type Error = io::Error;
+    type Future = future::FutureResult<Self::Output, Self::Error>;
+
+    #[inline]
+    fn upgrade_outbound(self, socket: TSocket, _: Self::Info) -> Self::Future {
+        future::ok(Framed::new(
+            socket,
+            NcpCodec {
+                length_prefix: Default::default(),
+            },
+        ))
+    }
+}
+
+/// Implementation of `tokio_codec::Codec`.
+pub struct NcpCodec {
+    /// The codec for encoding/decoding the length prefix of messages.
+    length_prefix: codec::UviBytes,
+}
+
+impl Encoder for NcpCodec {
+    type Item = NcpMessage;
+    type Error = io::Error;
+
+    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        let proto = match item {
+            NcpMessage::GetPeersRequest => {
+                let mut msg = ncp_proto::Message::new();
+                msg.set_field_type(ncp_proto::Message_MessageType::GET_PEERS_REQ);
+                msg
+            }
+            NcpMessage::GetPeersResponse { response } => {
+                let mut msg = ncp_proto::Message::new();
+                msg.set_field_type(ncp_proto::Message_MessageType::GET_PEERS_RES);
+
+                for peer in response.peers.into_iter() {
+                    let mut peer_info = ncp_proto::Message_PeerInfo::new();
+                    peer_info.set_peer_id(peer.peer_id.into_bytes());
+                    for addr in peer.addresses.into_iter() {
+                        peer_info.mut_addrs().push(addr.into_bytes());
+                    }
+                    msg.mut_peers().push(peer_info);
+                }
+
+                msg
+            }
+        };
+
+        let msg_size = proto.compute_size();
+        // Reserve enough space for the data and the length. The length has a maximum of 32 bits,
+        // which means that 5 bytes is enough for the variable-length integer.
+        dst.reserve(msg_size as usize + 5);
+
+        proto
+            .write_length_delimited_to_writer(&mut dst.by_ref().writer())
+            .expect(
+                "there is no situation in which the protobuf message can be invalid, and \
+                 writing to a BytesMut never fails as we reserved enough space beforehand",
+            );
+        Ok(())
+    }
+}
+
+impl Decoder for NcpCodec {
+    type Item = NcpMessage;
+    type Error = io::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let packet = match self.length_prefix.decode(src)? {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+
+        let message: ncp_proto::Message = protobuf::parse_from_bytes(&packet)?;
+
+        match message.get_field_type() {
+            ncp_proto::Message_MessageType::GET_PEERS_REQ => Ok(Some(NcpMessage::GetPeersRequest)),
+
+            ncp_proto::Message_MessageType::GET_PEERS_RES => {
+                let mut response = GetPeersResponse { peers: vec![] };
+                for peer in message.get_peers().into_iter() {
+                    if let Ok(peer_id) = PeerId::from_bytes(peer.get_peer_id().to_vec()) {
+                        let mut peer_info = PeerInfo {
+                            peer_id,
+                            addresses: vec![],
+                        };
+                        for addr in peer.get_addrs().into_iter() {
+                            if let Ok(addr_) = Multiaddr::from_bytes(addr.to_vec()) {
+                                peer_info.addresses.push(addr_);
+                            }
+                        }
+                        response.peers.push(peer_info);
+                    }
+                }
+                Ok(Some(NcpMessage::GetPeersResponse { response }))
+            }
+        }
+    }
 }
 
 /// Message that we can send to a peer or received from a peer.
-// TODO: document the rest
 #[derive(Debug, Clone, PartialEq)]
-pub enum NcpMsg {
-    /// Ping request
-    Ping {
-        ping_data: Vec<u8>,
-    },
-
-    /// Ping request
-    Pong {
-        ping_data: Vec<u8>,
-    },
+pub enum NcpMessage {
     GetPeersRequest,
-    GetPeersResponse {
-        response: GetPeersResponse,
-    },
+    GetPeersResponse { response: GetPeersResponse },
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct PeerInfo {
-    pub(crate) peer_id: PeerId,
-    pub(crate) addresses: Vec<Multiaddr>,
+pub struct PeerInfo {
+    pub peer_id: PeerId,
+    pub addresses: Vec<Multiaddr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GetPeersResponse {
-    pub(crate) last_chunk: bool,
-    pub(crate) peers: Vec<PeerInfo>,
+    pub peers: Vec<PeerInfo>,
 }
 
 impl PeerInfo {
-    pub(crate) fn new(peer_id: &PeerId) -> Self {
+    pub fn new(peer_id: &PeerId) -> Self {
         Self {
             peer_id: peer_id.clone(),
             addresses: vec![],
@@ -127,124 +206,20 @@ impl PeerInfo {
     }
 }
 
-// Turns a type-safe NCP message into the corresponding row protobuf message.
-fn msg_to_proto(ncp_msg: NcpMsg) -> ncp_proto::Message {
-    match ncp_msg {
-        NcpMsg::Ping { ping_data } => {
-            let mut msg = ncp_proto::Message::new();
-            msg.set_field_type(ncp_proto::Message_MessageType::PING);
-            msg.set_pingData(ping_data);
-            msg
-        }
-        NcpMsg::Pong { ping_data } => {
-            let mut msg = ncp_proto::Message::new();
-            msg.set_field_type(ncp_proto::Message_MessageType::PONG);
-            msg.set_pingData(ping_data);
-            msg
-        }
-        NcpMsg::GetPeersRequest => {
-            let mut msg = ncp_proto::Message::new();
-            msg.set_field_type(ncp_proto::Message_MessageType::GET_PEERS_REQ);
-            msg
-        }
-        NcpMsg::GetPeersResponse { response } => {
-            let mut msg = ncp_proto::Message::new();
-            msg.set_field_type(ncp_proto::Message_MessageType::GET_PEERS_RES);
-            msg.set_last_chunk(response.last_chunk);
-
-            for peer in response.peers.into_iter() {
-                let mut peer_info = ncp_proto::Message_PeerInfo::new();
-                peer_info.set_peer_id(peer.peer_id.into_bytes());
-                for addr in peer.addresses.into_iter() {
-                    peer_info.mut_addrs().push(addr.into_bytes());
-                }
-                msg.mut_peers().push(peer_info);
-            }
-
-            msg
-        }
-    }
-}
-
-/// Turns a raw NCP message into a type-safe message.
-fn proto_to_msg(mut message: ncp_proto::Message) -> Result<NcpMsg, IoError> {
-    match message.get_field_type() {
-        ncp_proto::Message_MessageType::PING => {
-            let ping_data = message.take_pingData();
-            Ok(NcpMsg::Ping { ping_data })
-        }
-
-        ncp_proto::Message_MessageType::PONG => {
-            let ping_data = message.take_pingData();
-            Ok(NcpMsg::Pong { ping_data })
-        }
-
-        ncp_proto::Message_MessageType::GET_PEERS_REQ => Ok(NcpMsg::GetPeersRequest),
-
-        ncp_proto::Message_MessageType::GET_PEERS_RES => {
-            let mut response = GetPeersResponse {
-                last_chunk: message.get_last_chunk(),
-                peers: vec![],
-            };
-            for peer in message.get_peers().into_iter() {
-                if let Ok(peer_id) = PeerId::from_bytes(peer.get_peer_id().to_vec()) {
-                    let mut peer_info = PeerInfo {
-                        peer_id,
-                        addresses: vec![],
-                    };
-                    for addr in peer.get_addrs().into_iter() {
-                        if let Ok(addr_) = Multiaddr::from_bytes(addr.to_vec()) {
-                            peer_info.addresses.push(addr_);
-                        }
-                    }
-                    response.peers.push(peer_info);
-                }
-            }
-            Ok(NcpMsg::GetPeersResponse { response })
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::ncp::protocol::{GetPeersResponse, NcpMsg, NcpProtocolConfig, PeerInfo};
-
+    use super::{GetPeersResponse, NcpConfig, NcpMessage, PeerInfo};
     use futures::{Future, Sink, Stream};
-    use libp2p;
-    use libp2p::core::{PeerId, PublicKey, Transport};
-    use libp2p::tcp::TcpConfig;
-    use log::*;
-    use rand;
-    use simple_logger;
-    use std::sync::mpsc;
-    use std::thread;
-    use tokio_current_thread;
-
-    #[test]
-    fn log_test() {
-        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
-        info!("log test");
-        assert_eq!(2 + 2, 4);
-    }
+    use libp2p::core::upgrade::{InboundUpgrade, OutboundUpgrade};
+    use libp2p::core::{PeerId, PublicKey};
+    use tokio::net::{TcpListener, TcpStream};
 
     #[test]
     fn correct_transfer() {
-        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
-        info!("transfer test");
-        // We open a server and a client, send a message between the two, and check that they were
-        // successfully received.
+        test_one(NcpMessage::GetPeersRequest);
 
-        test_one(NcpMsg::Ping {
-            ping_data: vec![1, 2, 3, 4, 5],
-        });
-        test_one(NcpMsg::Pong {
-            ping_data: vec![1, 2, 3, 4, 5],
-        });
-        test_one(NcpMsg::GetPeersRequest);
-
-        let msg = NcpMsg::GetPeersResponse {
+        let msg = NcpMessage::GetPeersResponse {
             response: GetPeersResponse {
-                last_chunk: true,
                 peers: vec![PeerInfo {
                     peer_id: random_peerid(),
                     addresses: vec![
@@ -257,55 +232,43 @@ mod tests {
         };
 
         test_one(msg);
+    }
 
-        // TODO: all messages
+    fn random_peerid() -> PeerId {
+        let key = (0..2048).map(|_| rand::random::<u8>()).collect::<Vec<_>>();
+        PeerId::from_public_key(PublicKey::Rsa(key))
+    }
 
-        fn random_peerid() -> PeerId {
-            let key = (0..2048).map(|_| rand::random::<u8>()).collect::<Vec<_>>();
-            PeerId::from_public_key(PublicKey::Rsa(key))
-        }
+    fn test_one(msg: NcpMessage) {
+        let msg_server = msg.clone();
+        let msg_client = msg.clone();
 
-        fn test_one(msg_server: NcpMsg) {
-            let msg_client = msg_server.clone();
-            let (tx, rx) = mpsc::channel();
+        let listener = TcpListener::bind(&"127.0.0.1:0".parse().unwrap()).unwrap();
+        let listener_addr = listener.local_addr().unwrap();
 
-            let bg_thread = thread::spawn(move || {
-                let transport = TcpConfig::new().with_upgrade(NcpProtocolConfig);
-
-                let (listener, addr) = transport
-                    .listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap())
-                    .unwrap();
-                tx.send(addr).unwrap();
-
-                let future = listener
-                    .into_future()
-                    .map_err(|(err, _)| err)
-                    .and_then(|(client, _)| client.unwrap().map(|v| v.0))
-                    .and_then(|proto| {
-                        proto
-                            .1
-                            .into_future()
-                            .map_err(|(err, _)| err)
-                            .map(|(v, _)| v)
-                    })
-                    .map(|recv_msg| {
-                        assert_eq!(recv_msg.unwrap(), msg_server);
+        let server = listener
+            .incoming()
+            .into_future()
+            .map_err(|(e, _)| e)
+            .and_then(|(c, _)| NcpConfig::new().upgrade_inbound(c.unwrap(), b"/stegos/ncp/1.0.0"))
+            .and_then({
+                let msg_server = msg_server.clone();
+                move |s| {
+                    s.into_future().map_err(|(err, _)| err).map(move |(v, _)| {
+                        assert_eq!(v.unwrap(), msg_server);
                         ()
-                    });
-
-                let _ = tokio_current_thread::block_on_all(future).unwrap();
+                    })
+                }
             });
 
-            let transport = TcpConfig::new().with_upgrade(NcpProtocolConfig);
+        let client = TcpStream::connect(&listener_addr)
+            .and_then(|c| NcpConfig::new().upgrade_outbound(c, b"/stegos/ncp/1.0.0"))
+            .and_then(|s| s.send(msg_client))
+            .map(|_| ());
 
-            let future = transport
-                .dial(rx.recv().unwrap())
-                .unwrap_or_else(|_| panic!())
-                .and_then(|proto| (proto.0).1.send(msg_client))
-                .map(|_| ());
-
-            let _ = tokio_current_thread::block_on_all(future).unwrap();
-            bg_thread.join().unwrap();
-        }
+        let mut runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime
+            .block_on(server.select(client).map_err(|_| panic!()))
+            .unwrap();
     }
 }

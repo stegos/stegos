@@ -16,9 +16,8 @@ before_script:
     paths:
       - target/
       # Auto-generated protobuf Rust code
-      - network/src/ncp/ncp.rs
-      - network/src/node/heartbeat/heartbeat_proto.rs
-      - network/src/node/broker/unicast.rs
+      - network/src/ncp/ncp_proto.rs
+      - network/src/libp2p_network/unicast_proto.rs
       - randhound/src/randhound_proto.rs
       - node/src/protos/node.rs
 

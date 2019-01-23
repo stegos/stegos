@@ -1,7 +1,7 @@
 #!/bin/sh
 
 set -e
-NUM_KEYS=${1:-3}
+export NUM_KEYS=${1:-3}
 
 rm -f stegos*.pkey stegos*.skey public-key.der private-key.pk8 genesis*.bin
 

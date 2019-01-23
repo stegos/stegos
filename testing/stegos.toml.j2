@@ -13,7 +13,9 @@ advertise_local_ips = false
 broadcast_topic = "chat"
 seed_nodes = [
 {%- for k in range(NUM_KEYS|int) %}
+{%- if 1+k|int != NODE_ID|int %}
     "/ip4/127.0.0.1/tcp/{{10055 + k|int}}",
+{%- endif -%}
 {%- endfor %}
 ]
 advertised_addresses = [

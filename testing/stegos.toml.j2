@@ -11,11 +11,11 @@ bind_ip = "127.0.0.1"
 bind_port = {{ NODE_ID|int + 10054 }}
 advertise_local_ips = false
 broadcast_topic = "chat"
-{% if NODE_ID != "01" %}
 seed_nodes = [
-    "/ip4/127.0.0.1/tcp/10055",
+{%- for k in range(NUM_KEYS|int) %}
+    "/ip4/127.0.0.1/tcp/{{10055 + k|int}}",
+{%- endfor %}
 ]
-{% endif %}
 advertised_addresses = [
     "/ip4/127.0.0.1/tcp/{{ NODE_ID|int + 10054 }}",
 ]

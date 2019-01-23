@@ -342,7 +342,7 @@ pub mod tests {
             KeyChain::new_mem(),
         ];
 
-        let blocks = genesis(&keychains, 1_000_000);
+        let blocks = genesis(&keychains, 100, 1_000_000);
 
         let mut blockchain = Blockchain::new();
         for block in blocks {

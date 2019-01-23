@@ -125,6 +125,15 @@ impl Wallet {
         Ok(tx)
     }
 
+    /// Unstake all of the money from the escrow.
+    pub fn unstake_all(&self, validator_pkey: &secure::PublicKey) -> Result<Transaction, Error> {
+        let mut amount: i64 = 0;
+        for output in self.unspent_stakes.values() {
+            amount += output.amount;
+        }
+        self.unstake(validator_pkey, amount)
+    }
+
     /// Called when outputs registered and/or pruned.
     pub fn on_outputs_changed(
         &mut self,

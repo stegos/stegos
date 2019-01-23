@@ -207,8 +207,9 @@ where
     }
 
     fn help_unstake() {
-        println!("Usage: stake AMOUNT");
+        println!("Usage: unstake [AMOUNT]");
         println!(" - AMOUNT amount to unstake from escrow, in tokens");
+        println!("   if not specified, unstakes all of the money.");
         println!("");
     }
 
@@ -327,6 +328,15 @@ where
             if let Err(e) = self
                 .wallet
                 .stake(&self.validator_pkey, amount)
+                .and_then(move |tx| self.node.send_transaction(tx))
+            {
+                error!("Request failed: {}", e);
+            }
+        } else if msg == "unstake" {
+            info!("Unstaking all of the money from escrow");
+            if let Err(e) = self
+                .wallet
+                .unstake_all(&self.validator_pkey)
                 .and_then(move |tx| self.node.send_transaction(tx))
             {
                 error!("Request failed: {}", e);

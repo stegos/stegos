@@ -39,24 +39,10 @@ pub fn genesis(keychains: &[KeyChain], amount: i64) -> Vec<Block> {
     let timestamp = Utc::now().timestamp() as u64;;
 
     //
-    // Create initial Key Block.
+    // Create initial Monetary Block.
     //
     let block1 = {
         let previous = Hash::digest(&"genesis".to_string());
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
-
-        let witnesses: BTreeSet<cosi_keys::PublicKey> =
-            keychains.iter().map(|p| p.cosi_pkey.clone()).collect();
-        let leader = witnesses.iter().next().unwrap().clone();
-
-        KeyBlock::new(base, leader, witnesses)
-    };
-
-    //
-    // Create initial Monetary Block.
-    //
-    let block2 = {
-        let previous = Hash::digest(&block1);
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
 
         // Genesis doesn't have inputs
@@ -75,8 +61,22 @@ pub fn genesis(keychains: &[KeyChain], amount: i64) -> Vec<Block> {
         MonetaryBlock::new(base, gamma, &inputs, &outputs)
     };
 
-    blocks.push(Block::KeyBlock(block1));
-    blocks.push(Block::MonetaryBlock(block2));
+    //
+    // Create initial Key Block.
+    //
+    let block2 = {
+        let previous = Hash::digest(&block1);
+        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+
+        let witnesses: BTreeSet<cosi_keys::PublicKey> =
+            keychains.iter().map(|p| p.cosi_pkey.clone()).collect();
+        let leader = witnesses.iter().next().unwrap().clone();
+
+        KeyBlock::new(base, leader, witnesses)
+    };
+
+    blocks.push(Block::MonetaryBlock(block1));
+    blocks.push(Block::KeyBlock(block2));
 
     blocks
 }

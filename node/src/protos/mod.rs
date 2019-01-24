@@ -585,6 +585,7 @@ impl IntoProto<node::KeyBlockHeader> for KeyBlockHeader {
         let mut proto = node::KeyBlockHeader::new();
         proto.set_base(self.base.into_proto());
         proto.set_leader(self.leader.into_proto());
+        proto.set_facilitator(self.facilitator.into_proto());
         for witness in &self.witnesses {
             proto.witnesses.push(witness.into_proto());
         }
@@ -596,6 +597,7 @@ impl FromProto<node::KeyBlockHeader> for KeyBlockHeader {
     fn from_proto(proto: &node::KeyBlockHeader) -> Result<Self, Error> {
         let base = BaseBlockHeader::from_proto(proto.get_base())?;
         let leader = SecurePublicKey::from_proto(proto.get_leader())?;
+        let facilitator = SecurePublicKey::from_proto(proto.get_facilitator())?;
         let mut witnesses = BTreeSet::new();
         for witness in proto.witnesses.iter() {
             if !witnesses.insert(SecurePublicKey::from_proto(witness)?) {
@@ -606,6 +608,7 @@ impl FromProto<node::KeyBlockHeader> for KeyBlockHeader {
         Ok(KeyBlockHeader {
             base,
             leader,
+            facilitator,
             witnesses,
         })
     }
@@ -1152,8 +1155,9 @@ mod tests {
 
         let witnesses: BTreeSet<SecurePublicKey> = [pkey0].iter().cloned().collect();
         let leader = pkey0.clone();
+        let facilitator = pkey0.clone();
 
-        let block = Block::KeyBlock(KeyBlock::new(base, leader, witnesses));
+        let block = Block::KeyBlock(KeyBlock::new(base, leader, facilitator, witnesses));
 
         let sealed_block = SealedBlockMessage::new(&skey0, &pkey0, block);
         sealed_block.validate().unwrap();
@@ -1185,8 +1189,9 @@ mod tests {
 
         let witnesses: BTreeSet<SecurePublicKey> = [pkey0].iter().cloned().collect();
         let leader = pkey0.clone();
+        let facilitator = pkey0.clone();
 
-        let block = KeyBlock::new(base, leader, witnesses);
+        let block = KeyBlock::new(base, leader, facilitator, witnesses);
         roundtrip(&block.header);
         roundtrip(&block);
 

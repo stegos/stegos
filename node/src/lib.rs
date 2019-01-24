@@ -149,7 +149,8 @@ where
 pub struct EpochNotification {
     pub epoch: u64,
     pub leader: SecurePublicKey,
-    pub witnesses: BTreeSet<SecurePublicKey>,
+    pub facilitator: SecurePublicKey,
+    pub validators: BTreeMap<SecurePublicKey, i64>,
 }
 
 /// Send when outputs created and/or pruned.
@@ -240,6 +241,8 @@ struct NodeService<Network> {
     stakes: BTreeMap<SecurePublicKey, i64>,
     /// Snapshot of selected leader from the latest key block.
     leader: SecurePublicKey,
+    /// Snapshot of selected facilitator from the latest key block.
+    facilitator: SecurePublicKey,
     /// Snapshot of validators with stakes from the latest key block.
     validators: BTreeMap<SecurePublicKey, i64>,
 
@@ -275,6 +278,7 @@ where
         let sealed_block_num = 0;
         let stakes = BTreeMap::new();
         let leader: SecurePublicKey = G2::generator().into(); // some fake key
+        let facilitator: SecurePublicKey = G2::generator().into(); // some fake key
         let validators = BTreeMap::<SecurePublicKey, i64>::new();
         let future_consensus_messages = Vec::new();
         //TODO: Calculate viewchange on node restart by timeout since last known block.
@@ -340,6 +344,7 @@ where
             keys,
             epoch,
             leader,
+            facilitator,
             stakes,
             validators,
             mempool,
@@ -616,7 +621,8 @@ where
         let msg = EpochNotification {
             epoch: self.epoch,
             leader: self.leader.clone(),
-            witnesses: self.validators.keys().cloned().collect(),
+            facilitator: self.facilitator.clone(),
+            validators: self.validators.clone(),
         };
         tx.unbounded_send(msg)?;
         self.on_epoch_changed.push(tx);
@@ -635,7 +641,7 @@ where
     /// Handler for new epoch creation procedure.
     /// This method called only on leader side, and when consensus is active.
     /// Leader should create a KeyBlock based on last random provided by VRF.
-    fn on_create_new_epoch(&mut self) -> Result<(), Error> {
+    fn on_create_new_epoch(&mut self, facilitator: SecurePublicKey) -> Result<(), Error> {
         let consensus = self.consensus.as_mut().unwrap();
         let last = self.chain.last_block();
         let previous = Hash::digest(last);
@@ -652,6 +658,7 @@ where
         let block = KeyBlock::new(
             base,
             consensus.leader(),
+            facilitator,
             consensus.validators().iter().map(|(k, _s)| *k).collect(),
         );
 
@@ -761,6 +768,15 @@ where
         }
         debug!("Validators: {:?}", &self.validators);
 
+        debug!("Broadcast new epoch event.");
+        let msg = EpochNotification {
+            epoch: self.epoch,
+            leader: self.leader,
+            validators: self.validators.clone(),
+            facilitator: self.facilitator,
+        };
+        self.on_epoch_changed
+            .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
         // clear consensus messages when new epoch starts
         self.future_consensus_messages.clear();
         let block_hash = Hash::digest(key_block);
@@ -987,6 +1003,7 @@ where
     fn on_change_group(&mut self, group: ConsensusGroup) -> Result<(), Error> {
         info!("Changing group, new group leader = {:?}", group.leader);
         self.leader = group.leader;
+        self.facilitator = group.facilitator;
         self.validators = group.witnesses.iter().cloned().collect();
         if self.validators.contains_key(&self.keys.cosi_pkey) {
             let consensus = BlockConsensus::new(
@@ -1000,7 +1017,7 @@ where
             self.consensus = Some(consensus);
             let consensus = self.consensus.as_ref().unwrap();
             if consensus.is_leader() {
-                self.on_create_new_epoch()?;
+                self.on_create_new_epoch(self.facilitator)?;
             }
             self.on_new_consensus();
         } else {

@@ -145,7 +145,8 @@ message MonetaryBlock {
 message KeyBlockHeader {
     BaseBlockHeader base = 1;
     SecurePublicKey leader = 2;
-    repeated SecurePublicKey witnesses = 3;
+    SecurePublicKey facilitator = 3;
+    repeated SecurePublicKey witnesses = 4;
 }
 
 message KeyBlock {

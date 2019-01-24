@@ -97,10 +97,11 @@ pub struct KeyBlockHeader {
     /// Leader public key.
     pub leader: SecurePublicKey,
 
+    /// Facilitator of Transaction Pool.
+    pub facilitator: SecurePublicKey,
+
     /// Ordered list of witnesses public keys.
     pub witnesses: BTreeSet<SecurePublicKey>,
-    // TODO: pooled transactions facilitator public key (which kind?).
-    // pub facilitator: SecurePublicKey,
 }
 
 impl Hashable for KeyBlockHeader {
@@ -108,6 +109,7 @@ impl Hashable for KeyBlockHeader {
         "Key".hash(state);
         self.base.hash(state);
         self.leader.hash(state);
+        self.facilitator.hash(state);
         for witness in self.witnesses.iter() {
             witness.hash(state);
         }
@@ -183,6 +185,7 @@ impl KeyBlock {
     pub fn new(
         base: BaseBlockHeader,
         leader: SecurePublicKey,
+        facilitator: SecurePublicKey,
         witnesses: BTreeSet<SecurePublicKey>,
     ) -> Self {
         assert!(!witnesses.is_empty(), "witnesses is not empty");
@@ -196,6 +199,7 @@ impl KeyBlock {
         let header = KeyBlockHeader {
             base,
             leader,
+            facilitator,
             witnesses,
         };
 
@@ -443,8 +447,9 @@ pub mod tests {
 
         let witnesses: BTreeSet<SecurePublicKey> = [pkey0].iter().cloned().collect();
         let leader = pkey0.clone();
+        let facilitator = pkey0.clone();
 
-        let mut block = KeyBlock::new(base, leader, witnesses);
+        let mut block = KeyBlock::new(base, leader, facilitator, witnesses);
         block.validate().expect("block is valid");
 
         // Missing witnesses.

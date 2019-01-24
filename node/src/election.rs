@@ -33,8 +33,12 @@ pub type StakersGroup = Vec<(SecurePublicKey, i64)>;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct ConsensusGroup {
+    /// List of Validators
     pub witnesses: StakersGroup,
+    /// Leader public key
     pub leader: SecurePublicKey,
+    /// Facilitator of the transaction pool
+    pub facilitator: SecurePublicKey,
 }
 
 /// Choose random validator, based on `random_number`.
@@ -102,8 +106,17 @@ pub fn choose_validators(
     }
     let rand = rng.gen::<i64>();
     let leader = select_winner(witnesses.iter().map(|(_k, stake)| stake), rand).unwrap();
+
+    let rand = rng.gen::<i64>();
+    let facilitator = select_winner(witnesses.iter().map(|(_k, stake)| stake), rand).unwrap();
+
     let leader = witnesses[leader].0;
-    ConsensusGroup { witnesses, leader }
+    let facilitator = witnesses[facilitator].0;
+    ConsensusGroup {
+        witnesses,
+        leader,
+        facilitator,
+    }
 }
 
 #[cfg(test)]

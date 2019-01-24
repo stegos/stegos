@@ -23,6 +23,7 @@
 
 use crate::error::*;
 use crate::output::*;
+use chrono::Utc;
 use failure::Error;
 use std::collections::HashSet;
 use stegos_crypto::bulletproofs::{fee_a, validate_range_proof};
@@ -277,6 +278,42 @@ impl Transaction {
             false => Err(BlockchainError::InvalidTransactionSignature.into()),
         }
     }
+
+    /// Used only for tests.
+    //#[cfg(test)]
+    #[doc(hidden)]
+    pub fn new_test(
+        skey: &SecretKey,
+        pkey: &PublicKey,
+        input_amount: i64,
+        input_count: usize,
+        output_amount: i64,
+        output_count: usize,
+        fee: i64,
+    ) -> (Transaction, Vec<Output>, Vec<Output>) {
+        let mut inputs: Vec<Output> = Vec::with_capacity(input_count);
+        let mut outputs: Vec<Output> = Vec::with_capacity(output_count);
+
+        let timestamp = Utc::now().timestamp() as u64;
+
+        for _ in 0..input_count {
+            let (input, _gamma) =
+                Output::new_payment(timestamp, &skey, &pkey, input_amount).expect("keys are valid");
+            inputs.push(input);
+        }
+
+        let mut outputs_gamma: Fr = Fr::zero();
+        for _ in 0..output_count {
+            let (output, gamma) = Output::new_payment(timestamp, &skey, &pkey, output_amount)
+                .expect("keys are valid");
+            outputs.push(output);
+            outputs_gamma += gamma;
+        }
+
+        let tx =
+            Transaction::new(&skey, &inputs, &outputs, outputs_gamma, fee).expect("keys are valid");
+        (tx, inputs, outputs)
+    }
 }
 
 impl Hashable for Transaction {
@@ -290,9 +327,16 @@ impl Hashable for Transaction {
 pub mod tests {
     use super::*;
 
-    use chrono::Utc;
     use stegos_crypto::curve1174::cpt::make_random_keys;
     use stegos_crypto::pbc::secure;
+
+    /// Check transaction signing and validation.
+    #[test]
+    pub fn basic() {
+        let (skey, pkey, _sig) = make_random_keys();
+        let (tx, inputs, _outputs) = Transaction::new_test(&skey, &pkey, 100, 2, 200, 1, 0);
+        tx.validate(&inputs).expect("transaction is valid");
+    }
 
     /// Check transaction signing and validation.
     #[test]

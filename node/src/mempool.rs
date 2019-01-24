@@ -25,6 +25,7 @@ use chrono::Utc;
 use linked_hash_map::LinkedHashMap;
 use log::*;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use stegos_blockchain::*;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::curve1174::cpt::SecretKey;
@@ -87,21 +88,53 @@ impl Mempool {
     pub fn push_tx(&mut self, tx_hash: Hash, tx: Transaction) {
         assert_eq!(&tx_hash, &Hash::digest(&tx.body));
         for input_hash in &tx.body.txins {
-            self.inputs.insert(input_hash.clone(), tx_hash.clone());
+            let exists = self.inputs.insert(input_hash.clone(), tx_hash.clone());
+            assert!(exists.is_none());
         }
         for output in &tx.body.txouts {
             let output_hash = Hash::digest(output);
-            self.outputs.insert(output_hash, tx_hash.clone());
+            let exists = self.outputs.insert(output_hash, tx_hash.clone());
+            assert!(exists.is_none());
         }
-        self.pool.insert(tx_hash, tx);
+        let exists = self.pool.insert(tx_hash, tx);
+        assert!(exists.is_none());
     }
 
     /// Prune old transactions contains tx_hash from the mempool.
-    pub fn prune(&mut self, _input_hashes: &[Hash], _output_hashes: &[Hash]) {
-        // TODO: prune all transactions contains tx_hash.
-        self.pool.clear();
-        self.inputs.clear();
-        self.outputs.clear();
+    pub fn prune(&mut self, input_hashes: &[Hash], output_hashes: &[Hash]) {
+        let mut tx_hashes: HashSet<Hash> = HashSet::new();
+
+        // Collect transactions affected by inputs.
+        for input_hash in input_hashes {
+            if let Some(tx_hash) = self.inputs.remove(&input_hash) {
+                tx_hashes.insert(tx_hash);
+            }
+        }
+
+        // Collect transactions affected by outputs.
+        for output_hash in output_hashes {
+            if let Some(tx_hash) = self.outputs.remove(&output_hash) {
+                tx_hashes.insert(tx_hash);
+            }
+        }
+
+        // Prune transactions.
+        for tx_hash in tx_hashes {
+            let tx = self.pool.remove(&tx_hash).expect("transaction exists");
+
+            for input_hash in tx.body.txins {
+                if self.inputs.contains_key(&input_hash) {
+                    panic!("Inconsistent mempool pruning");
+                }
+            }
+
+            for output in tx.body.txouts {
+                let output_hash = Hash::digest(&output);
+                if self.outputs.contains_key(&output_hash) {
+                    panic!("Inconsistent mempool pruning");
+                }
+            }
+        }
     }
 
     ///
@@ -172,5 +205,141 @@ impl Mempool {
         let block = MonetaryBlock::new(base, gamma, &inputs, &outputs);
 
         (block, output_fee, tx_hashes)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use std::collections::BTreeMap;
+    use stegos_crypto::curve1174::cpt::make_random_keys;
+
+    #[test]
+    fn basic() {
+        let (skey, pkey, _sig) = make_random_keys();
+        let mut mempool = Mempool::new();
+
+        let (tx1, inputs1, outputs1) = Transaction::new_test(&skey, &pkey, 100, 2, 200, 1, 0);
+        let (tx2, inputs2, outputs2) = Transaction::new_test(&skey, &pkey, 300, 1, 100, 3, 0);
+        let tx_hash1 = Hash::digest(&tx1.body);
+        let tx_hash2 = Hash::digest(&tx2.body);
+
+        mempool.push_tx(tx_hash1.clone(), tx1.clone());
+        mempool.push_tx(tx_hash2.clone(), tx2.clone());
+        assert!(mempool.contains_tx(&tx_hash1));
+        assert!(mempool.contains_tx(&tx_hash2));
+        assert_eq!(mempool.len(), 2);
+
+        for input in inputs1.iter().chain(inputs2.iter()) {
+            let input_hash = Hash::digest(input);
+            assert!(mempool.contains_input(&input_hash));
+        }
+
+        for output in outputs1.iter().chain(outputs2.iter()) {
+            let output_hash = Hash::digest(output);
+            assert!(mempool.contains_output(&output_hash));
+        }
+
+        //
+        // Pruning.
+        //
+        let input1_hashes: Vec<Hash> = inputs1.iter().map(|o| Hash::digest(o)).collect();
+        let output1_hashes: Vec<Hash> = outputs1.iter().map(|o| Hash::digest(o)).collect();
+        mempool.prune(&input1_hashes, &output1_hashes);
+        assert!(!mempool.contains_tx(&tx_hash1));
+        for input in &inputs1 {
+            let input_hash = Hash::digest(input);
+            assert!(!mempool.contains_input(&input_hash));
+        }
+        for output in &outputs1 {
+            let output_hash = Hash::digest(output);
+            assert!(!mempool.contains_output(&output_hash));
+        }
+        assert!(mempool.contains_tx(&tx_hash2));
+        for input in &inputs2 {
+            let input_hash = Hash::digest(input);
+            assert!(mempool.contains_input(&input_hash));
+        }
+        for output in &outputs2 {
+            let output_hash = Hash::digest(output);
+            assert!(mempool.contains_output(&output_hash));
+        }
+        assert_eq!(mempool.len(), 1);
+
+        mempool.push_tx(tx_hash1.clone(), tx1.clone());
+        assert!(mempool.contains_tx(&tx_hash1));
+        assert_eq!(mempool.len(), 2);
+
+        // Prune nothing.
+        mempool.prune(&vec![Hash::digest(&1u64)], &vec![Hash::digest(&1u64)]);
+        assert!(mempool.contains_tx(&tx_hash1));
+        assert!(mempool.contains_tx(&tx_hash2));
+        assert_eq!(mempool.len(), 2);
+    }
+
+    #[test]
+    #[should_panic]
+    pub fn inconsistent_pruning1() {
+        let (skey, pkey, _sig) = make_random_keys();
+        let mut mempool = Mempool::new();
+
+        let (tx, inputs, _outputs) = Transaction::new_test(&skey, &pkey, 100, 1, 100, 1, 0);
+        let tx_hash = Hash::digest(&tx.body);
+        mempool.push_tx(tx_hash.clone(), tx.clone());
+        mempool.prune(&vec![Hash::digest(&inputs[0])], &vec![]);
+    }
+
+    #[test]
+    #[should_panic]
+    pub fn inconsistent_pruning2() {
+        let (skey, pkey, _sig) = make_random_keys();
+        let mut mempool = Mempool::new();
+
+        let (tx, _inputs, outputs) = Transaction::new_test(&skey, &pkey, 100, 1, 100, 1, 0);
+        let tx_hash = Hash::digest(&tx.body);
+        mempool.push_tx(tx_hash.clone(), tx.clone());
+        mempool.prune(&vec![], &vec![Hash::digest(&outputs[0])]);
+    }
+
+    #[test]
+    fn create_block() {
+        let (skey, pkey, _sig) = make_random_keys();
+        let mut mempool = Mempool::new();
+
+        let (tx1, inputs1, _outputs1) = Transaction::new_test(&skey, &pkey, 3, 2, 2, 1, 4);
+        tx1.validate(&inputs1).expect("transaction is valid");
+        let (tx2, inputs2, _outputs2) = Transaction::new_test(&skey, &pkey, 6, 1, 2, 2, 2);
+        tx2.validate(&inputs2).expect("transaction is valid");
+
+        let tx_hash1 = Hash::digest(&tx1.body);
+        let tx_hash2 = Hash::digest(&tx2.body);
+        mempool.push_tx(tx_hash1.clone(), tx1.clone());
+        mempool.push_tx(tx_hash2.clone(), tx2.clone());
+
+        let previous = Hash::digest(&1u64);
+        let version = 1;
+        let epoch = 1;
+        let (block, output_fee, tx_hashes) =
+            mempool.create_block(previous, version, epoch, &skey, &pkey);
+
+        // Used transactions.
+        assert_eq!(tx_hashes, vec![tx_hash1, tx_hash2]);
+
+        // Monetary balance.
+        let mut inputs: BTreeMap<Hash, Output> = BTreeMap::new();
+        for input in inputs1.iter().chain(inputs2.iter()) {
+            let input_hash = Hash::digest(input);
+            inputs.insert(input_hash, input.clone());
+        }
+        let inputs: Vec<Output> = inputs.values().cloned().collect();
+        block.validate(&inputs).expect("block is valid");
+
+        // Fee.
+        if let Some(Output::PaymentOutput(o)) = output_fee {
+            let (_, _, fee) = o.decrypt_payload(&skey).expect("keys are valid");
+            assert_eq!(fee, 6);
+        } else {
+            unreachable!();
+        }
     }
 }

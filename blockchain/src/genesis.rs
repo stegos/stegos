@@ -93,8 +93,9 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64) -> Vec<Block> {
         let witnesses: BTreeSet<cosi_keys::PublicKey> =
             keychains.iter().map(|p| p.cosi_pkey.clone()).collect();
         let leader = keychains[0].cosi_pkey.clone();
+        let facilitator = keychains[0].cosi_pkey.clone();
 
-        KeyBlock::new(base, leader, witnesses)
+        KeyBlock::new(base, leader, facilitator, witnesses)
     };
 
     blocks.push(Block::MonetaryBlock(block1));

@@ -45,6 +45,7 @@ use protobuf;
 use protobuf::Message;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use stegos_blockchain::*;
 use stegos_config::*;
@@ -248,6 +249,8 @@ struct NodeService<Network> {
 
     /// Memory pool of pending transactions.
     mempool: Mempool,
+    mempool_inputs: HashMap<Hash, Hash>,
+    mempool_outputs: HashMap<Hash, Hash>,
     /// Proof-of-stake consensus.
     consensus: Option<BlockConsensus>,
     /// A timestamp when the last sealed block was received.
@@ -285,6 +288,8 @@ where
         let vrf_system = TicketsSystem::new(WITNESSES_MAX, 0, 0, keys.cosi_pkey, keys.cosi_skey);
 
         let mempool = Mempool::new();
+        let mempool_inputs = HashMap::new();
+        let mempool_outputs = HashMap::new();
         let consensus = None;
         let last_block_timestamp = Instant::now();
 
@@ -348,6 +353,8 @@ where
             stakes,
             validators,
             mempool,
+            mempool_inputs,
+            mempool_outputs,
             consensus,
             last_block_timestamp,
             broker,
@@ -417,6 +424,23 @@ where
             tx.body.fee
         );
 
+        //
+        // Validation checklist:
+        //
+        // - TX hash is unique
+        // - Fee is acceptable.
+        // - Inputs can be resolved.
+        // - Inputs have not been spent by blocks.
+        // - Inputs are not claimed by other transactions in mempool.
+        // - Inputs are unique.
+        // - Outputs are unique.
+        // - Outputs don't overlap with other transactions in mempool.
+        // - Bulletpoofs/amounts are valid.
+        // - UTXO-specific checks.
+        // - Monetary balance is valid.
+        // - Signature is valid.
+        //
+
         // Check that transaction exists in the mempool.
         if self.mempool.contains_key(&tx_hash) {
             return Err(NodeError::TransactionAlreadyExists(tx_hash).into());
@@ -425,14 +449,52 @@ where
         // Check fee.
         NodeService::<Network>::check_acceptable_fee(&tx)?;
 
-        // Resolve inputs.
-        let inputs = self.chain.outputs_by_hashes(&tx.body.txins)?;
+        // Validate inputs.
+        let mut inputs: Vec<Output> = Vec::new();
+        for input_hash in &tx.body.txins {
+            // Check that the input can be resolved.
+            // TODO: check outputs created by mempool transactions.
+            match self.chain.output_by_hash(input_hash) {
+                Some(tx_input) => {
+                    inputs.push(tx_input.clone());
+                }
+                None => return Err(BlockchainError::MissingUTXO(input_hash.clone()).into()),
+            };
 
-        // Validate monetary balance and signature.
+            // Check that the input is not claimed by other transactions.
+            if self.mempool_inputs.contains_key(input_hash) {
+                return Err(BlockchainError::MissingUTXO(input_hash.clone()).into());
+            }
+        }
+
+        // Check outputs.
+        for output in &tx.body.txouts {
+            let output_hash = Hash::digest(output);
+
+            // Check that the output is unique and don't overlap with other transactions.
+            if self.mempool_outputs.contains_key(&output_hash)
+                || self.chain.output_by_hash(&output_hash).is_some()
+            {
+                return Err(BlockchainError::OutputHashCollision(output_hash).into());
+            }
+        }
+
+        // Check the monetary balance, Bulletpoofs/amounts and signature.
         tx.validate(&inputs)?;
+
+        // Transaction is fully valid.
+        //--------------------------------------------------------------------------------------
 
         // Queue to mempool.
         info!("Transaction is valid, adding to mempool: hash={}", &tx_hash);
+        for input_hash in &tx.body.txins {
+            self.mempool_inputs
+                .insert(input_hash.clone(), tx_hash.clone());
+        }
+        for output in &tx.body.txouts {
+            let output_hash = Hash::digest(output);
+            self.mempool_outputs.insert(output_hash, tx_hash.clone());
+        }
         self.mempool.insert(tx_hash, tx);
 
         Ok(())
@@ -528,6 +590,8 @@ where
 
         // TODO: implement proper handling of mempool.
         self.mempool.clear();
+        self.mempool_inputs.clear();
+        self.mempool_outputs.clear();
 
         self.on_monetary_block_registered(&monetary_block2, inputs)
     }
@@ -862,13 +926,11 @@ where
     ///
     fn process_mempool(
         mempool: &mut Mempool,
-        chain: &mut Blockchain,
+        previous: Hash,
         epoch: u64,
         skey: &SecretKey,
         pkey: &PublicKey,
-    ) -> Result<((Block, BlockProof)), Error> {
-        info!("I'm leader, proposing a new monetary block");
-
+    ) -> (MonetaryBlock, Option<Output>, Vec<Hash>) {
         // TODO: limit the block size.
         let tx_count = mempool.len();
         debug!(
@@ -880,71 +942,27 @@ where
         let timestamp = Utc::now().timestamp() as u64;
         let mut gamma = Fr::zero();
         let mut fee = 0i64;
-        let mut inputs = Vec::<Output>::new();
-        let mut inputs_hashes = BTreeSet::<Hash>::new();
-        let mut outputs = Vec::<Output>::new();
-        let mut outputs_hashes = BTreeSet::<Hash>::new();
-        let mut tx_hashes = Vec::<Hash>::with_capacity(tx_count);
+        let mut inputs: Vec<Hash> = Vec::new();
+        let mut outputs: Vec<Output> = Vec::new();
+        let mut tx_hashes: Vec<Hash> = Vec::with_capacity(tx_count);
         for entry in mempool.entries() {
             let tx_hash = entry.key();
             let tx = entry.get();
             assert_eq!(tx_hash, &Hash::digest(&tx.body));
+
             debug!("Processing transaction: hash={}", &tx_hash);
-
-            // Check that transaction's inputs are exists.
-            let tx_inputs = match chain.outputs_by_hashes(&tx.body.txins) {
-                Ok(tx_inputs) => tx_inputs,
-                Err(e) => {
-                    error!(
-                        "Discarded invalid transaction: hash={}, error={}",
-                        tx_hash, e
-                    );
-                    continue;
-                }
-            };
-
-            // Check that transaction's inputs are not used yet.
-            for tx_input_hash in &tx.body.txins {
-                if !inputs_hashes.insert(tx_input_hash.clone()) {
-                    let e = BlockchainError::MissingUTXO(tx_input_hash.clone());
-                    error!(
-                        "Discarded invalid transaction: hash={}, error={}",
-                        tx_hash, e
-                    );
-                    continue;
-                }
-            }
-
-            // Check transaction's outputs.
-            for tx_output in &tx.body.txouts {
-                let tx_output_hash = Hash::digest(tx_output);
-                if let Some(_) = chain.output_by_hash(&tx_output_hash) {
-                    return Err(BlockchainError::OutputHashCollision(tx_output_hash).into());
-                }
-                if !outputs_hashes.insert(tx_output_hash.clone()) {
-                    return Err(BlockchainError::DuplicateTransactionOutput(tx_output_hash).into());
-                }
-            }
-
-            // Check transaction's signature, monetary balance, fee and others
-            debug_assert!(tx.validate(&tx_inputs).is_ok()); // checked when added to mempool
-
-            //
-            // Transaction is valid
-            //--------------------------------------------------------------------------------------
-
+            tx_hashes.push(tx_hash.clone());
+            inputs.extend(tx.body.txins.iter().cloned());
+            outputs.extend(tx.body.txouts.iter().cloned());
             gamma += tx.body.gamma;
             fee += tx.body.fee;
-            tx_hashes.push(tx_hash.clone());
-
-            inputs.extend(tx_inputs.clone());
-            outputs.extend(tx.body.txouts.clone());
         }
 
-        // Create transaction for fee
+        // Create an output for fee.
         let output_fee = if fee > 0 {
             trace!("Creating fee UTXO...");
-            let (output_fee, gamma_fee) = Output::new_payment(timestamp, skey, pkey, fee)?;
+            let (output_fee, gamma_fee) =
+                Output::new_payment(timestamp, skey, pkey, fee).expect("invalid keys");
             gamma -= gamma_fee;
             info!(
                 "Created fee UTXO: hash={}, amount={}",
@@ -957,44 +975,11 @@ where
             None
         };
 
-        //
-        // Create a monetary block
-        //
-        trace!("Creating a monetary block...");
-        let inputs_hashes: Vec<Hash> = inputs_hashes.into_iter().collect();
-
-        let previous = {
-            let last = chain.last_block();
-            let previous = Hash::digest(last);
-            previous
-        };
-
+        // Create a new monetary block.
         let base = BaseBlockHeader::new(VERSION, previous, epoch, timestamp);
-        let block = MonetaryBlock::new(base, gamma, &inputs_hashes, &outputs);
+        let block = MonetaryBlock::new(base, gamma, &inputs, &outputs);
 
-        // Double-check the monetary balance of created block.
-        let inputs = chain
-            .outputs_by_hashes(&block.body.inputs)
-            .expect("transactions valid");
-        block.validate(&inputs)?;
-
-        let block_hash = Hash::digest(&block);
-        info!(
-            "Created monetary block: height={}, hash={}, inputs={}, outputs={}",
-            chain.height() + 1,
-            block_hash,
-            inputs_hashes.len(),
-            outputs.len()
-        );
-
-        let proof = MonetaryBlockProof {
-            fee_output: output_fee,
-            tx_hashes,
-        };
-        let proof = BlockProof::MonetaryBlockProof(proof);
-        let block = Block::MonetaryBlock(block);
-
-        Ok((block, proof))
+        (block, output_fee, tx_hashes)
     }
 
     /// Request for changing group received from VRF system.
@@ -1116,23 +1101,54 @@ where
     fn propose_monetary_block(&mut self) -> Result<(), Error> {
         assert!(self.consensus.as_ref().unwrap().should_propose());
 
-        // Create a new payment block from mempool.
-        let (block, proof) = NodeService::<Network>::process_mempool(
+        let height = self.chain.height() + 1;
+        let previous = Hash::digest(self.chain.last_block());
+        info!(
+            "I'm leader, proposing a new monetary block: height={}, previous={}",
+            height, previous
+        );
+
+        // Create a new monetary block from the mempool.
+        let (block, fee_output, tx_hashes) = NodeService::<Network>::process_mempool(
             &mut self.mempool,
-            &mut self.chain,
+            previous,
             self.epoch,
             &self.keys.wallet_skey,
             &self.keys.wallet_pkey,
-        )?;
+        );
+
+        // Validating the block (just double-checking).
+        self.chain
+            .outputs_by_hashes(&block.body.inputs)
+            .map_err(|e| e.into())
+            .and_then(|inputs| block.validate(&inputs))
+            .expect("a valid block created from the mempool");
+
+        // Log info.
+        let block_hash = Hash::digest(&block);
+        info!(
+            "Created monetary block: height={}, hash={}",
+            height + 1,
+            &block_hash,
+        );
+        // TODO: log the number of inputs/outputs
 
         // Propose this block.
-        let request_hash = Hash::digest(&block);
+        let proof = MonetaryBlockProof {
+            fee_output,
+            tx_hashes,
+        };
+        let proof = BlockProof::MonetaryBlockProof(proof);
+        let block = Block::MonetaryBlock(block);
         let consensus = self.consensus.as_mut().unwrap();
         consensus.propose(block, proof);
+
         // Prevote for this block.
-        consensus.prevote(request_hash);
+        consensus.prevote(block_hash);
+
         // Flush pending messages.
         NodeService::flush_consensus_messages(consensus, &mut self.broker)?;
+
         Ok(())
     }
 
@@ -1414,6 +1430,8 @@ where
                     .expect("block is validated before");
                 // TODO: implement proper handling of mempool.
                 self.mempool.clear();
+                self.mempool_inputs.clear();
+                self.mempool_outputs.clear();
                 self.on_monetary_block_registered(&monetary_block2, pruned)
                     .expect("internal error");
                 self.send_sealed_block(Block::MonetaryBlock(monetary_block2))
@@ -1496,15 +1514,16 @@ pub mod tests {
     where
         Network: NetworkProvider,
     {
-        let (block, _proof) = NodeService::<Network>::process_mempool(
+        let previous = Hash::digest(node.chain.last_block());
+        let (block, _fee_output, _tx_hashes) = NodeService::<Network>::process_mempool(
             &mut node.mempool,
-            &mut node.chain,
+            previous,
             node.epoch,
             &node.keys.wallet_skey,
             &node.keys.wallet_pkey,
-        )
-        .unwrap();
+        );
 
+        let block = Block::MonetaryBlock(block);
         let block_hash = Hash::digest(&block);
         let multisig = secure_sign_hash(&block_hash, &node.keys.cosi_skey);
         let mut multisigmap = BitVector::new(1);

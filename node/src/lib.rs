@@ -372,15 +372,6 @@ where
                         Hash::digest(&key_block)
                     );
                     let key_block2 = key_block.clone();
-
-                    // TODO: remove stakes initialisation.
-                    let mut sum_dev_stake = key_block.header.witnesses.len() as i64 * 10;
-                    for node in &key_block.header.witnesses {
-                        sum_dev_stake /= 2;
-                        let stake = sum_dev_stake;
-                        self.stakes.insert(*node, stake);
-                    }
-
                     self.chain.register_key_block(key_block)?;
                     self.on_key_block_registered(&key_block2)?;
                 }
@@ -1471,8 +1462,7 @@ pub mod tests {
         assert_ne!(node.leader, keys.cosi_pkey);
         assert!(node.validators.is_empty());
 
-        let amount: i64 = 3_000_000;
-        let genesis = genesis(&[keys.clone()], amount);
+        let genesis = genesis(&[keys.clone()], 100, 3_000_000);
         let genesis_count = genesis.len();
         node.handle_init(genesis).unwrap();
         assert_eq!(node.chain.blocks().len(), genesis_count);
@@ -1582,12 +1572,13 @@ pub mod tests {
         let mut node = NodeService::new(keys.clone(), broker, inbox).unwrap();
 
         let total: i64 = 3_000_000;
-        let genesis = genesis(&[keys.clone()], total);
+        let stake: i64 = 100;
+        let genesis = genesis(&[keys.clone()], stake, total);
         node.handle_init(genesis).unwrap();
         let mut block_count = node.chain.blocks().len();
 
         // Payment without a change.
-        simulate_payment(&mut node, total - PAYMENT_FEE).unwrap();
+        simulate_payment(&mut node, total - stake - PAYMENT_FEE).unwrap();
         assert_eq!(node.mempool.len(), 1);
         simulate_consensus(&mut node);
         assert_eq!(node.mempool.len(), 0);
@@ -1599,11 +1590,14 @@ pub mod tests {
                     let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
                 }
+                Some(Output::EscrowOutput(o)) => {
+                    assert_eq!(o.amount, stake);
+                }
                 _ => panic!(),
             }
         }
         amounts.sort();
-        assert_eq!(amounts, vec![PAYMENT_FEE, total - PAYMENT_FEE]);
+        assert_eq!(amounts, vec![PAYMENT_FEE, total - stake - PAYMENT_FEE]);
         block_count += 1;
 
         // Payment with a change.
@@ -1619,11 +1613,14 @@ pub mod tests {
                     let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
                 }
+                Some(Output::EscrowOutput(o)) => {
+                    assert_eq!(o.amount, stake);
+                }
                 _ => panic!(),
             }
         }
         amounts.sort();
-        let expected = vec![2 * PAYMENT_FEE, 100, total - 100 - 2 * PAYMENT_FEE];
+        let expected = vec![2 * PAYMENT_FEE, 100, total - stake - 100 - 2 * PAYMENT_FEE];
         assert_eq!(amounts, expected);
 
         assert_eq!(block_count, 3);
@@ -1639,7 +1636,8 @@ pub mod tests {
         let mut node = NodeService::new(keys.clone(), broker, inbox).unwrap();
 
         let total: i64 = 100;
-        let genesis = genesis(&[keys.clone()], total);
+        let stake: i64 = 1;
+        let genesis = genesis(&[keys.clone()], stake, total);
         node.handle_init(genesis).unwrap();
         let mut block_count = node.chain.blocks().len();
 
@@ -1651,8 +1649,8 @@ pub mod tests {
         simulate_payment(&mut node, data_fee).unwrap();
         simulate_consensus(&mut node);
         assert_eq!(node.mempool.len(), 0);
-        assert_eq!(balance(&node), total); // fee is returned back
-        assert_eq!(node.chain.unspent().len(), 3);
+        assert_eq!(balance(&node), total - stake); // fee is returned back
+        assert_eq!(node.chain.unspent().len(), 4);
         assert_eq!(node.chain.blocks().len(), block_count + 1);
         let mut amounts = Vec::new();
         for unspent in node.chain.unspent() {
@@ -1661,6 +1659,9 @@ pub mod tests {
                     let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
                 }
+                Some(Output::EscrowOutput(o)) => {
+                    assert_eq!(o.amount, stake);
+                }
                 _ => panic!(),
             }
         }
@@ -1668,7 +1669,7 @@ pub mod tests {
         let expected = vec![
             2 * PAYMENT_FEE,
             data_fee,
-            total - data_fee - 2 * PAYMENT_FEE,
+            total - stake - data_fee - 2 * PAYMENT_FEE,
         ];
         assert_eq!(amounts, expected);
         block_count += 1;
@@ -1678,7 +1679,7 @@ pub mod tests {
         assert_eq!(node.mempool.len(), 1);
         simulate_consensus(&mut node);
         assert_eq!(node.mempool.len(), 0);
-        assert_eq!(balance(&node), total); // fee is returned back
+        assert_eq!(balance(&node), total - stake); // fee is returned back
         assert_eq!(node.chain.blocks().len(), block_count + 1);
         let mut amounts = Vec::new();
         let mut unspent_data: usize = 0;
@@ -1691,6 +1692,9 @@ pub mod tests {
                 Some(Output::DataOutput(_o)) => {
                     unspent_data += 1;
                 }
+                Some(Output::EscrowOutput(o)) => {
+                    assert_eq!(o.amount, stake);
+                }
                 _ => panic!(),
             }
         }
@@ -1699,7 +1703,7 @@ pub mod tests {
         let expected = vec![
             2 * PAYMENT_FEE,
             data_fee,
-            total - data_fee - 2 * PAYMENT_FEE,
+            total - stake - data_fee - 2 * PAYMENT_FEE,
         ];
         assert_eq!(amounts, expected);
         block_count += 1;
@@ -1712,7 +1716,7 @@ pub mod tests {
         assert_eq!(node.mempool.len(), 1);
         simulate_consensus(&mut node);
         assert_eq!(node.mempool.len(), 0);
-        assert_eq!(balance(&node), total); // fee is returned back
+        assert_eq!(balance(&node), total - stake); // fee is returned back
         assert_eq!(node.chain.blocks().len(), block_count + 1);
         let mut amounts = Vec::new();
         let mut unspent_data: usize = 0;
@@ -1725,12 +1729,18 @@ pub mod tests {
                 Some(Output::DataOutput(_o)) => {
                     unspent_data += 1;
                 }
+                Some(Output::EscrowOutput(o)) => {
+                    assert_eq!(o.amount, stake);
+                }
                 _ => panic!(),
             }
         }
         assert_eq!(unspent_data, 2);
         amounts.sort();
-        let expected = vec![PAYMENT_FEE + data_fee2, total - PAYMENT_FEE - data_fee2];
+        let expected = vec![
+            PAYMENT_FEE + data_fee2,
+            total - stake - PAYMENT_FEE - data_fee2,
+        ];
         assert_eq!(amounts, expected);
     }
 

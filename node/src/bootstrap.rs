@@ -50,7 +50,15 @@ fn main() {
                 .short("c")
                 .long("coins")
                 .value_name("NUMBER")
-                .help("Number of coins to create.")
+                .help("Total number of coins to create.")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("stake")
+                .short("s")
+                .long("stake")
+                .value_name("NUMBER")
+                .help("Stake per each validator.")
                 .takes_value(true),
         )
         .get_matches();
@@ -75,12 +83,12 @@ fn main() {
 
     let coins = if let Some(coins) = args.value_of("coins") {
         match coins.parse::<i64>() {
-            Ok(keys) => {
-                if keys < 100 {
+            Ok(coins) => {
+                if coins < 100 {
                     eprintln!("Invalid number of coins: must be greater than 100");
                     process::exit(1);
                 };
-                keys
+                coins
             }
             Err(e) => {
                 eprintln!("Invalid number of coins: {}", e);
@@ -88,7 +96,25 @@ fn main() {
             }
         }
     } else {
-        1_000_000
+        1_000_000_000i64
+    };
+
+    let stake = if let Some(stake) = args.value_of("stake") {
+        match stake.parse::<i64>() {
+            Ok(stake) => {
+                if stake < 1 {
+                    eprintln!("Invalid stake: must be greater than 1");
+                    process::exit(1);
+                };
+                stake
+            }
+            Err(e) => {
+                eprintln!("Invalid stake: {}", e);
+                process::exit(1);
+            }
+        }
+    } else {
+        100i64
     };
 
     info!("Generating genesis keys...");
@@ -111,7 +137,7 @@ fn main() {
     }
 
     info!("Generating genesis blocks...");
-    let blocks = genesis(&keychains, coins);
+    let blocks = genesis(&keychains, stake, coins);
     for (i, block) in blocks.iter().enumerate() {
         let block_data = block.into_proto();
         let block_data = block_data.write_to_bytes().unwrap();

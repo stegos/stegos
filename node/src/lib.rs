@@ -25,10 +25,12 @@ mod consensus;
 mod election;
 mod error;
 mod escrow;
+mod mempool;
 pub mod protos;
 mod tickets;
 
 use crate::consensus::*;
+use crate::mempool::Mempool;
 use crate::protos::{FromProto, IntoProto};
 use bitvector::BitVector;
 
@@ -41,21 +43,16 @@ use failure::{ensure, Error};
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::{Async, Future, Poll, Stream};
 use futures_stream_select_all_send::select_all;
-use linked_hash_map::LinkedHashMap;
 use log::*;
 use protobuf;
 use protobuf::Message;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use stegos_blockchain::*;
 use stegos_config::*;
 use stegos_consensus::check_multi_signature;
 use stegos_crypto::bulletproofs::validate_range_proof;
-use stegos_crypto::curve1174::cpt::PublicKey;
-use stegos_crypto::curve1174::cpt::SecretKey;
-use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
 use stegos_crypto::pbc::secure::Signature as SecureSignature;
@@ -191,8 +188,6 @@ const TIME_TO_RECEIVE_BLOCK: u64 = 10 * 60;
 /// Time to lock EscrowOutput.
 const BONDING_TIME: u64 = 2592000; // 30 days
 
-type Mempool = LinkedHashMap<Hash, Transaction>;
-
 #[derive(Clone, Debug)]
 enum NodeMessage {
     //
@@ -252,8 +247,7 @@ struct NodeService<Network> {
 
     /// Memory pool of pending transactions.
     mempool: Mempool,
-    mempool_inputs: HashMap<Hash, Hash>,
-    mempool_outputs: HashMap<Hash, Hash>,
+
     /// Proof-of-stake consensus.
     consensus: Option<BlockConsensus>,
     /// A timestamp when the last sealed block was received.
@@ -291,8 +285,6 @@ where
         let vrf_system = TicketsSystem::new(WITNESSES_MAX, 0, 0, keys.cosi_pkey, keys.cosi_skey);
 
         let mempool = Mempool::new();
-        let mempool_inputs = HashMap::new();
-        let mempool_outputs = HashMap::new();
         let consensus = None;
         let last_block_timestamp = Instant::now();
 
@@ -356,8 +348,6 @@ where
             escrow,
             validators,
             mempool,
-            mempool_inputs,
-            mempool_outputs,
             consensus,
             last_block_timestamp,
             broker,
@@ -447,7 +437,7 @@ where
         let timestamp = Utc::now().timestamp() as u64;
 
         // Check that transaction exists in the mempool.
-        if self.mempool.contains_key(&tx_hash) {
+        if self.mempool.contains_tx(&tx_hash) {
             return Err(NodeError::TransactionAlreadyExists(tx_hash).into());
         }
 
@@ -465,7 +455,7 @@ where
             };
 
             // Check that the input is not claimed by other transactions.
-            if self.mempool_inputs.contains_key(input_hash) {
+            if self.mempool.contains_input(input_hash) {
                 return Err(BlockchainError::MissingUTXO(input_hash.clone()).into());
             }
 
@@ -483,7 +473,7 @@ where
             let output_hash = Hash::digest(output);
 
             // Check that the output is unique and don't overlap with other transactions.
-            if self.mempool_outputs.contains_key(&output_hash)
+            if self.mempool.contains_output(&output_hash)
                 || self.chain.output_by_hash(&output_hash).is_some()
             {
                 return Err(BlockchainError::OutputHashCollision(output_hash).into());
@@ -498,15 +488,7 @@ where
 
         // Queue to mempool.
         info!("Transaction is valid, adding to mempool: hash={}", &tx_hash);
-        for input_hash in &tx.body.txins {
-            self.mempool_inputs
-                .insert(input_hash.clone(), tx_hash.clone());
-        }
-        for output in &tx.body.txouts {
-            let output_hash = Hash::digest(output);
-            self.mempool_outputs.insert(output_hash, tx_hash.clone());
-        }
-        self.mempool.insert(tx_hash, tx);
+        self.mempool.push_tx(tx_hash, tx);
 
         Ok(())
     }
@@ -603,12 +585,6 @@ where
 
         let monetary_block2 = monetary_block.clone();
         let inputs = self.chain.register_monetary_block(monetary_block)?;
-
-        // TODO: implement proper handling of mempool.
-        self.mempool.clear();
-        self.mempool_inputs.clear();
-        self.mempool_outputs.clear();
-
         self.on_monetary_block_registered(&monetary_block2, inputs)
     }
 
@@ -852,6 +828,11 @@ where
             }
         }
 
+        // Remove old transactions from the mempool.
+        let input_hashes: Vec<Hash> = inputs.iter().map(|o| Hash::digest(o)).collect();
+        let output_hashes: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
+        self.mempool.prune(&input_hashes, &output_hashes);
+
         let msg = OutputsNotification { inputs, outputs };
         self.on_outputs_changed
             .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
@@ -894,67 +875,6 @@ where
             return Err(NodeError::TooLowFee(min_fee, tx.body.fee));
         }
         Ok(())
-    }
-
-    ///
-    /// Process transactions in mempool and create a new MonetaryBlockProposal.
-    ///
-    fn process_mempool(
-        mempool: &mut Mempool,
-        previous: Hash,
-        epoch: u64,
-        skey: &SecretKey,
-        pkey: &PublicKey,
-    ) -> (MonetaryBlock, Option<Output>, Vec<Hash>) {
-        // TODO: limit the block size.
-        let tx_count = mempool.len();
-        debug!(
-            "Processing {}/{} transactions from mempool",
-            tx_count,
-            mempool.len()
-        );
-
-        let timestamp = Utc::now().timestamp() as u64;
-        let mut gamma = Fr::zero();
-        let mut fee = 0i64;
-        let mut inputs: Vec<Hash> = Vec::new();
-        let mut outputs: Vec<Output> = Vec::new();
-        let mut tx_hashes: Vec<Hash> = Vec::with_capacity(tx_count);
-        for entry in mempool.entries() {
-            let tx_hash = entry.key();
-            let tx = entry.get();
-            assert_eq!(tx_hash, &Hash::digest(&tx.body));
-
-            debug!("Processing transaction: hash={}", &tx_hash);
-            tx_hashes.push(tx_hash.clone());
-            inputs.extend(tx.body.txins.iter().cloned());
-            outputs.extend(tx.body.txouts.iter().cloned());
-            gamma += tx.body.gamma;
-            fee += tx.body.fee;
-        }
-
-        // Create an output for fee.
-        let output_fee = if fee > 0 {
-            trace!("Creating fee UTXO...");
-            let (output_fee, gamma_fee) =
-                Output::new_payment(timestamp, skey, pkey, fee).expect("invalid keys");
-            gamma -= gamma_fee;
-            info!(
-                "Created fee UTXO: hash={}, amount={}",
-                Hash::digest(&output_fee),
-                fee
-            );
-            outputs.push(output_fee.clone());
-            Some(output_fee)
-        } else {
-            None
-        };
-
-        // Create a new monetary block.
-        let base = BaseBlockHeader::new(VERSION, previous, epoch, timestamp);
-        let block = MonetaryBlock::new(base, gamma, &inputs, &outputs);
-
-        (block, output_fee, tx_hashes)
     }
 
     /// Request for changing group received from VRF system.
@@ -1084,9 +1004,9 @@ where
         );
 
         // Create a new monetary block from the mempool.
-        let (block, fee_output, tx_hashes) = NodeService::<Network>::process_mempool(
-            &mut self.mempool,
+        let (block, fee_output, tx_hashes) = self.mempool.create_block(
             previous,
+            VERSION,
             self.epoch,
             &self.keys.wallet_skey,
             &self.keys.wallet_pkey,
@@ -1257,7 +1177,7 @@ where
             debug!("Processing transaction: hash={}", &tx_hash);
 
             // Check that transaction is present in mempool.
-            let tx = mempool.get(&tx_hash);
+            let tx = mempool.get_tx(&tx_hash);
             if tx.is_none() {
                 return Err(NodeError::TransactionMissingInMempool(*tx_hash).into());
             }
@@ -1403,10 +1323,6 @@ where
                     .chain
                     .register_monetary_block(monetary_block)
                     .expect("block is validated before");
-                // TODO: implement proper handling of mempool.
-                self.mempool.clear();
-                self.mempool_inputs.clear();
-                self.mempool_outputs.clear();
                 self.on_monetary_block_registered(&monetary_block2, pruned)
                     .expect("internal error");
                 self.send_sealed_block(Block::MonetaryBlock(monetary_block2))
@@ -1490,9 +1406,9 @@ pub mod tests {
         Network: NetworkProvider,
     {
         let previous = Hash::digest(node.chain.last_block());
-        let (block, _fee_output, _tx_hashes) = NodeService::<Network>::process_mempool(
-            &mut node.mempool,
+        let (block, _fee_output, _tx_hashes) = node.mempool.create_block(
             previous,
+            VERSION,
             node.epoch,
             &node.keys.wallet_skey,
             &node.keys.wallet_pkey,

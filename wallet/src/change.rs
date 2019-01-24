@@ -44,26 +44,45 @@ where
         sorted.push((amount, output));
     }
 
-    // Sort ascending in order to eliminate as much outputs as possible
+    // TODO: brute-force all possible solutions.
+
+    //
+    // Naive algorithm - try to spent as much UTXO as possible.
+    //
+
+    // Sort in ascending order to eliminate as much outputs as possible
     sorted.sort_by_key(|(amount, _output)| *amount);
 
-    // Naive algorithm - try to spent as much UTXO as possible.
-    let mut sum: i64 = sum + fee_change;
+    // Try to spend without a change.
     let mut spent: Vec<&T> = Vec::new();
-    for (amount, output) in sorted {
-        if sum <= 0 {
+    let mut change: i64 = sum + fee;
+    for (amount, output) in sorted.iter() {
+        change -= *amount;
+        spent.push(*output);
+        if change <= 0 {
             break;
         }
-        sum -= amount;
-        spent.push(output);
+    }
+    if change == 0 {
+        return Ok((spent, fee, 0));
     }
 
-    if sum > 0 {
+    // Try to spend with a change.
+    spent.clear();
+    let mut change: i64 = sum + fee_change;
+    for (amount, output) in sorted.iter() {
+        change -= *amount;
+        spent.push(*output);
+        if change <= 0 {
+            break;
+        }
+    }
+
+    if change > 0 {
         return Err(WalletError::NotEnoughMoney);
     }
 
-    let change = -sum;
-    return Ok((spent, fee_change, change));
+    return Ok((spent, fee_change, -change));
 }
 
 #[cfg(test)]
@@ -88,6 +107,36 @@ pub mod tests {
         let unspent_iter = unspent.iter().map(|(h, a)| (h, *a));
         let (spent, fee, change) = find_utxo(unspent_iter, 49, FEE, FEE_CHANGE).unwrap();
         assert_eq!(spent, vec![&Hash::digest(&50i64)]);
+        assert_eq!(fee, FEE);
+        assert_eq!(change, 0);
+
+        // Without change.
+        let unspent_iter = unspent.iter().map(|(h, a)| (h, *a));
+        let (spent, fee, change) = find_utxo(unspent_iter, 13 - FEE, FEE, FEE_CHANGE).unwrap();
+        assert_eq!(
+            spent,
+            vec![
+                &Hash::digest(&1i64),
+                &Hash::digest(&2i64),
+                &Hash::digest(&10i64)
+            ]
+        );
+        assert_eq!(fee, FEE);
+        assert_eq!(change, 0);
+
+        // Without change.
+        let unspent_iter = unspent.iter().map(|(h, a)| (h, *a));
+        let (spent, fee, change) = find_utxo(unspent_iter, 163 - FEE, FEE, FEE_CHANGE).unwrap();
+        assert_eq!(
+            spent,
+            vec![
+                &Hash::digest(&1i64),
+                &Hash::digest(&2i64),
+                &Hash::digest(&10i64),
+                &Hash::digest(&50i64),
+                &Hash::digest(&100i64),
+            ]
+        );
         assert_eq!(fee, FEE);
         assert_eq!(change, 0);
 

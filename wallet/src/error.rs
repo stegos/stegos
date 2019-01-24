@@ -28,4 +28,6 @@ pub enum WalletError {
     NotEnoughMoney,
     #[fail(display = "Amount should be greater than zero.")]
     ZeroOrNegativeAmount,
+    #[fail(display = "Insufficient stake: min={}, got={}.", _0, _1)]
+    InsufficientStake(i64, i64),
 }

@@ -173,6 +173,8 @@ impl PaymentOutput {
         recipient_pkey: &PublicKey,
         amount: i64,
     ) -> Result<(Self, Fr), Error> {
+        assert!(amount > 0);
+
         // Create range proofs.
         let (proof, gamma) = make_range_proof(amount);
 
@@ -352,6 +354,8 @@ impl EscrowOutput {
         validator_pkey: &secure::PublicKey,
         amount: i64,
     ) -> Result<Self, Error> {
+        assert!(amount > 0);
+
         // Cloak recipient public key.
         let gamma = Fr::zero();
         let (cloaked_pkey, delta) = cloak_key(sender_skey, recipient_pkey, &gamma, timestamp)?;

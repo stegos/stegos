@@ -11,3 +11,6 @@ stegos_config = { path = "../config" }
 log = "0.4"
 failure = "0.1"
 chrono = "0.4"
+
+[dev-dependencies]
+simple_logger = "1.0"

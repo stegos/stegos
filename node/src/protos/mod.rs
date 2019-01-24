@@ -815,7 +815,6 @@ impl IntoProto<node::ConsensusMessageBody> for ConsensusMessageBody<Block, Block
                     if let Some(ref fee_output) = proof.fee_output {
                         proposal.set_fee_output(fee_output.into_proto());
                     }
-                    proposal.set_gamma(proof.gamma.into_proto());
                     proto.set_monetary_block_proposal(proposal);
                 }
                 _ => unreachable!(),
@@ -843,14 +842,12 @@ impl FromProto<node::ConsensusMessageBody> for ConsensusMessageBody<Block, Block
                 } else {
                     None
                 };
-                let gamma = Fr::from_proto(msg.get_gamma())?;
                 let mut tx_hashes = Vec::with_capacity(msg.tx_hashes.len());
                 for tx_hash in msg.tx_hashes.iter() {
                     tx_hashes.push(Hash::from_proto(tx_hash)?);
                 }
                 let proof = MonetaryBlockProof {
                     fee_output,
-                    gamma,
                     tx_hashes,
                 };
                 let proof = BlockProof::MonetaryBlockProof(proof);
@@ -1235,7 +1232,7 @@ mod tests {
         assert_eq!(base.multisig, base2.multisig);
         assert_eq!(base.multisigmap, base2.multisigmap);
 
-        let block = MonetaryBlock::new(base, gamma.clone(), &inputs1, &outputs1);
+        let block = MonetaryBlock::new(base, gamma, &inputs1, &outputs1);
         roundtrip(&block.header);
         roundtrip(&block.body);
         roundtrip(&block);
@@ -1253,7 +1250,6 @@ mod tests {
         tx_hashes.push(Hash::digest(&1u64));
         let proof = MonetaryBlockProof {
             fee_output: Some(fee_output),
-            gamma: gamma.clone(),
             tx_hashes,
         };
         let proof = BlockProof::MonetaryBlockProof(proof);
@@ -1266,7 +1262,6 @@ mod tests {
 
         let proof = MonetaryBlockProof {
             fee_output: None,
-            gamma: gamma.clone(),
             tx_hashes: Vec::new(),
         };
         let proof = BlockProof::MonetaryBlockProof(proof);

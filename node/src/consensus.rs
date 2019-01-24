@@ -23,7 +23,6 @@
 
 use stegos_blockchain::*;
 use stegos_consensus::{Consensus, ConsensusError, ConsensusMessage};
-use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure::check_hash as secure_check_hash;
 use stegos_crypto::pbc::secure::sign_hash as secure_sign_hash;
@@ -35,7 +34,6 @@ use stegos_crypto::pbc::secure::Signature as SecureSignature;
 #[derive(Clone, Debug)]
 pub struct MonetaryBlockProof {
     pub fee_output: Option<Output>,
-    pub gamma: Fr,
     pub tx_hashes: Vec<Hash>,
 }
 
@@ -50,7 +48,6 @@ impl Hashable for MonetaryBlockProof {
     fn hash(&self, state: &mut Hasher) {
         "MonetaryBlockProof".hash(state);
         self.fee_output.hash(state);
-        self.gamma.hash(state);
         let txs_count: u64 = self.tx_hashes.len() as u64;
         txs_count.hash(state);
         for tx_hashes in &self.tx_hashes {

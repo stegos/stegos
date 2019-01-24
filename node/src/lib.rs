@@ -970,7 +970,7 @@ where
         };
 
         let base = BaseBlockHeader::new(VERSION, previous, epoch, timestamp);
-        let block = MonetaryBlock::new(base, gamma.clone(), &inputs_hashes, &outputs);
+        let block = MonetaryBlock::new(base, gamma, &inputs_hashes, &outputs);
 
         // Double-check the monetary balance of created block.
         let inputs = chain
@@ -989,7 +989,6 @@ where
 
         let proof = MonetaryBlockProof {
             fee_output: output_fee,
-            gamma,
             tx_hashes,
         };
         let proof = BlockProof::MonetaryBlockProof(proof);
@@ -1230,7 +1229,6 @@ where
                     block_hash,
                     &block,
                     &proof.fee_output,
-                    &proof.gamma,
                     &proof.tx_hashes,
                 )
             }
@@ -1257,7 +1255,6 @@ where
         block_hash: Hash,
         block: &MonetaryBlock,
         fee_output: &Option<Output>,
-        gamma: &Fr,
         tx_hashes: &Vec<Hash>,
     ) -> Result<(), Error> {
         // Check transactions.
@@ -1335,7 +1332,12 @@ where
         let inputs_hashes: Vec<Hash> = inputs_hashes.into_iter().collect();
 
         let base_header = block.header.base.clone();
-        let block = MonetaryBlock::new(base_header, gamma.clone(), &inputs_hashes, &outputs);
+        let block = MonetaryBlock::new(
+            base_header,
+            block.header.gamma.clone(),
+            &inputs_hashes,
+            &outputs,
+        );
         let inputs = chain
             .outputs_by_hashes(&block.body.inputs)
             .expect("check above");

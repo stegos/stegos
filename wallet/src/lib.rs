@@ -225,6 +225,8 @@ impl Wallet {
                         "Unstaked money from escrow: hash={}, amount={}",
                         hash, o.amount
                     );
+                    let exists = self.unspent_stakes.remove(&hash);
+                    assert!(exists.is_some());
                 }
             }
         }

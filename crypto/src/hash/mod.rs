@@ -106,6 +106,12 @@ impl Hash {
         bits.copy_from_slice(bytes);
         Ok(Hash(bits))
     }
+
+    /// Return minimal and maximal value of hash.
+    /// Used for BTreeSet iteration.
+    pub fn bounds() -> (Hash, Hash) {
+        (Hash([0u8; HASH_SIZE]), Hash([255u8; HASH_SIZE]))
+    }
 }
 
 impl fmt::Debug for Hash {

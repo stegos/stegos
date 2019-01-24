@@ -24,6 +24,7 @@
 mod consensus;
 mod election;
 mod error;
+mod escrow;
 pub mod protos;
 mod tickets;
 
@@ -33,6 +34,7 @@ use bitvector::BitVector;
 
 use crate::election::ConsensusGroup;
 use crate::error::*;
+use crate::escrow::*;
 pub use crate::tickets::{TicketsSystem, VRFTicket};
 use chrono::Utc;
 use failure::{ensure, Error};
@@ -186,6 +188,8 @@ const CONSENSUS_TIMER: Duration = Duration::from_secs(30);
 const SEALED_BLOCK_IN_EPOCH: usize = 5;
 /// Max difference in timestamps of leader and witnesses.
 const TIME_TO_RECEIVE_BLOCK: u64 = 10 * 60;
+/// Time to lock EscrowOutput.
+const BONDING_TIME: u64 = 2592000; // 30 days
 
 type Mempool = LinkedHashMap<Hash, Transaction>;
 
@@ -237,9 +241,8 @@ struct NodeService<Network> {
     //
     // Consensus
     //
-    /// Map of all actual nodes stakes.
-    /// Actual stakes.
-    stakes: BTreeMap<SecurePublicKey, i64>,
+    /// Escrow
+    escrow: Escrow,
     /// Snapshot of selected leader from the latest key block.
     leader: SecurePublicKey,
     /// Snapshot of selected facilitator from the latest key block.
@@ -279,7 +282,7 @@ where
         let chain = Blockchain::new();
         let epoch: u64 = 0;
         let sealed_block_num = 0;
-        let stakes = BTreeMap::new();
+        let escrow = Escrow::new();
         let leader: SecurePublicKey = G2::generator().into(); // some fake key
         let facilitator: SecurePublicKey = G2::generator().into(); // some fake key
         let validators = BTreeMap::<SecurePublicKey, i64>::new();
@@ -350,7 +353,7 @@ where
             epoch,
             leader,
             facilitator,
-            stakes,
+            escrow,
             validators,
             mempool,
             mempool_inputs,
@@ -441,6 +444,8 @@ where
         // - Signature is valid.
         //
 
+        let timestamp = Utc::now().timestamp() as u64;
+
         // Check that transaction exists in the mempool.
         if self.mempool.contains_key(&tx_hash) {
             return Err(NodeError::TransactionAlreadyExists(tx_hash).into());
@@ -454,10 +459,8 @@ where
         for input_hash in &tx.body.txins {
             // Check that the input can be resolved.
             // TODO: check outputs created by mempool transactions.
-            match self.chain.output_by_hash(input_hash) {
-                Some(tx_input) => {
-                    inputs.push(tx_input.clone());
-                }
+            let input = match self.chain.output_by_hash(input_hash) {
+                Some(tx_input) => tx_input,
                 None => return Err(BlockchainError::MissingUTXO(input_hash.clone()).into()),
             };
 
@@ -465,6 +468,14 @@ where
             if self.mempool_inputs.contains_key(input_hash) {
                 return Err(BlockchainError::MissingUTXO(input_hash.clone()).into());
             }
+
+            // Check escrow.
+            if let Output::EscrowOutput(input) = input {
+                self.escrow
+                    .validate_unstake(&input.validator, input_hash, timestamp)?;
+            }
+
+            inputs.push(input.clone());
         }
 
         // Check outputs.
@@ -514,14 +525,7 @@ where
             return Ok(());
         }
         let leader = key_block.header.leader.clone();
-        let mut validators = BTreeMap::<SecurePublicKey, i64>::new();
-        for validator in &key_block.header.witnesses {
-            let stake = self
-                .stakes
-                .get(validator)
-                .expect("all staked nodes have stake");
-            validators.insert(validator.clone(), *stake);
-        }
+        let validators = self.escrow.multiget(&key_block.header.witnesses);
 
         // Check BLS multi-signature.
         if !check_multi_signature(
@@ -547,6 +551,8 @@ where
         monetary_block: MonetaryBlock,
         pkey: &SecurePublicKey,
     ) -> Result<(), Error> {
+        let timestamp = Utc::now().timestamp() as u64;
+
         let block_hash = Hash::digest(&monetary_block);
         // For monetary block, consensus is stable, and we can just check leader.
         // Check that message is signed by current leader.
@@ -579,6 +585,16 @@ where
 
         // Resolve inputs.
         let inputs = self.chain.outputs_by_hashes(&monetary_block.body.inputs)?;
+
+        // Validate inputs.
+        for input in inputs.iter() {
+            // Check unstaking.
+            if let Output::EscrowOutput(input) = input {
+                let input_hash = Hash::digest(input);
+                self.escrow
+                    .validate_unstake(&input.validator, &input_hash, timestamp)?;
+            }
+        }
 
         // Validate monetary balance.
         monetary_block.validate(&inputs)?;
@@ -742,47 +758,6 @@ where
         NodeService::flush_consensus_messages(consensus, &mut self.broker)
     }
 
-    /// Returns new active nodes list.
-    fn active_stakers(&self) -> Vec<(SecurePublicKey, i64)> {
-        self.stakes
-            .iter()
-            .filter_map(|(k, v)| if *v > 0 { Some((*k, *v)) } else { None })
-            .collect()
-    }
-
-    /// Adds some stake to node full stake.
-    /// Returns new stake.
-    fn add_stake(&mut self, node: &SecurePublicKey, stake: i64) -> i64 {
-        let old_stake = self.stakes.entry(*node).or_insert(0);
-        *old_stake += stake;
-        info!(
-            "Stake: validator={}, staked={}, total={}",
-            node, stake, *old_stake
-        );
-        *old_stake
-    }
-
-    /// Take nodes stake.
-    /// Returns value of stake;
-    fn take_stake(&mut self, node: &SecurePublicKey, stake: i64) -> i64 {
-        let old_stake = self
-            .stakes
-            .entry(*node)
-            .or_insert_with(|| panic!("Missing stake"));
-        let result = *old_stake;
-        *old_stake -= stake;
-        info!(
-            "Unstake: validator={}, unstaked={}, total={}",
-            node, stake, *old_stake
-        );
-        if *old_stake < 0 {
-            panic!("Stake underflow");
-        } else if *old_stake == 0 {
-            self.stakes.remove(node);
-        }
-        result
-    }
-
     /// Called when a new key block is registered.
     fn on_key_block_registered(&mut self, key_block: &KeyBlock) -> Result<(), Error> {
         assert_eq!(self.epoch + 1, key_block.header.base.epoch);
@@ -790,15 +765,7 @@ where
 
         self.sealed_block_num = 0;
         self.leader = key_block.header.leader.clone();
-        let mut validators = BTreeMap::<SecurePublicKey, i64>::new();
-        for validator in &key_block.header.witnesses {
-            let stake = self
-                .stakes
-                .get(validator)
-                .expect("all staked nodes have stake");
-            validators.insert(validator.clone(), *stake);
-        }
-        self.validators = validators;
+        self.validators = self.escrow.multiget(&key_block.header.witnesses);
 
         if self.validators.contains_key(&self.keys.cosi_pkey) {
             // Promote to Validator role
@@ -865,15 +832,23 @@ where
             .map(|(o, _path)| *o.clone())
             .collect();
 
+        let current_timestamp = Utc::now().timestamp() as u64;
+
         for input in &inputs {
             if let Output::EscrowOutput(o) = input {
-                self.take_stake(&o.validator, o.amount);
+                let output_hash = Hash::digest(o);
+                self.escrow
+                    .unstake(o.validator, output_hash, current_timestamp);
             }
         }
 
         for output in &outputs {
             if let Output::EscrowOutput(o) = output {
-                self.add_stake(&o.validator, o.amount);
+                let output_hash = Hash::digest(o);
+                let block_timestamp = monetary_block.header.base.timestamp;
+                let bonding_timestamp = block_timestamp + BONDING_TIME;
+                self.escrow
+                    .stake(o.validator, output_hash, bonding_timestamp, o.amount);
             }
         }
 

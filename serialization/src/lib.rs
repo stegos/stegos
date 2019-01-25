@@ -1,7 +1,5 @@
-//! pBFT Consensus.
-
 //
-// Copyright (c) 2018 Stegos
+// Copyright (c) 2019 Stegos
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -21,17 +19,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#![deny(warnings)]
+//!
+//! This crate collect a pack of utilityes to work with protobuf.
+//! - Module `build_script` contain a methods that should be used in `build.rs`.
+//! This methods will generate a valid protobuf wrappers in `OUT_DIR`
+//! - Module `traits` contain a trait for additional structural consistency verifying.
+//!
 
-mod blockchain;
-mod error;
-mod message;
-mod multisignature;
-pub mod protos;
-mod state;
-
-pub use crate::blockchain::*;
-pub use crate::error::*;
-pub use crate::message::*;
-pub use crate::multisignature::*;
-pub use crate::state::*;
+pub mod build_script;
+pub mod traits;

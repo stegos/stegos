@@ -3,15 +3,23 @@ name = "stegos_blockchain"
 version = "0.1.0"
 authors = ["Stegos AG <info@stegos.cc>"]
 edition = "2018"
+links = "stegos_blockchain"
+build = "build.rs"
 
 [dependencies]
 stegos_keychain = { path = "../keychain" }
 stegos_crypto = { path = "../crypto" }
+stegos_serialization = {path = "../serialization"}
 chrono = "0.4"
 rand = "0.6"
 log = "0.4"
 failure = "0.1"
 bitvector = "0.1"
+protobuf = "2.2"
 
 [dev-dependencies]
+chrono = "0.4"
 simple_logger = "1.0"
+
+[build-dependencies]
+stegos_serialization = {path = "../serialization"}

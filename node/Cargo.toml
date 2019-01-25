@@ -2,6 +2,7 @@
 name = "stegos_node"
 version = "0.1.0"
 authors = ["Stegos AG <info@stegos.cc>"]
+links = "stegos_node"
 build = "build.rs"
 edition = "2018"
 
@@ -12,6 +13,7 @@ stegos_crypto = { path = "../crypto" }
 stegos_blockchain = { path = "../blockchain" }
 stegos_network = { path = "../network" }
 stegos_keychain = { path = "../keychain" }
+stegos_serialization = {path = "../serialization"}
 
 log = "0.4"
 lazy_static = "1.1"
@@ -34,7 +36,7 @@ linked-hash-map = "0.5"
 stegos_wallet = { path = "../wallet" }
 
 [build-dependencies]
-protobuf-codegen-pure = "2.2"
+stegos_serialization = {path = "../serialization"}
 
 [[bin]]
 name = "bootstrap"

@@ -28,7 +28,7 @@ use std::process;
 use stegos_blockchain::genesis;
 use stegos_config::ConfigKeyChain;
 use stegos_keychain::KeyChain;
-use stegos_node::protos::IntoProto;
+use stegos_serialization::traits::ProtoConvert;
 
 fn main() {
     simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();

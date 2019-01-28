@@ -167,7 +167,6 @@ message KeyBlockProposal {
 message MonetaryBlockProposal {
     MonetaryBlock block = 1;
     Output fee_output = 2;
-    Fr gamma = 3;
     repeated Hash tx_hashes = 4;
 }
 

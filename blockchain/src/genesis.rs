@@ -44,14 +44,10 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64) -> Vec<Block> {
     let block1 = {
         let previous = Hash::digest(&"genesis".to_string());
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
-
-        //
-        // Genesis doesn't have inputs
-        //
-        let inputs = Vec::<Hash>::new();
-
         //
         // Genesis has one PaymentOutput + N * StakeOutput, where N is the number of validators.
+        //
+
         // Node #1 receives all moneys except stakes.
         // All nodes gets `stake` money staked.
         //
@@ -61,8 +57,9 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64) -> Vec<Block> {
         let sender_skey = &keychains[0].wallet_skey;
         let recipient_pkey = &keychains[0].wallet_pkey;
         let mut coins1: i64 = coins - keychains.len() as i64 * stake;
-        let (output, gamma) = Output::new_payment(timestamp, sender_skey, recipient_pkey, coins1)
-            .expect("genesis has valid public keys");
+        let (output, outputs_gamma) =
+            Output::new_payment(timestamp, sender_skey, recipient_pkey, coins1)
+                .expect("genesis has valid public keys");
         outputs.push(output);
 
         // Create StakeOutput for each node.
@@ -78,10 +75,12 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64) -> Vec<Block> {
             coins1 += stake;
             outputs.push(output);
         }
-
         assert_eq!(coins, coins1);
-        MonetaryBlock::new(base, gamma, &inputs, &outputs)
+
+        let gamma = -outputs_gamma;
+        MonetaryBlock::new(base, gamma, coins, &[], &outputs)
     };
+    block1.validate(&[]).expect("genesis is valid");
 
     //
     // Create initial Key Block.

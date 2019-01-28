@@ -153,6 +153,7 @@ impl Mempool {
         previous: Hash,
         version: u64,
         epoch: u64,
+        reward: i64,
         skey: &SecretKey,
         pkey: &PublicKey,
     ) -> (MonetaryBlock, Option<Output>, Vec<Hash>) {
@@ -183,16 +184,19 @@ impl Mempool {
             fee += tx.body.fee;
         }
 
+        let monetary_adjustment: i64 = reward;
+
         // Create an output for fee.
-        let output_fee = if fee > 0 {
-            trace!("Creating fee UTXO...");
+        let output_fee = if fee + reward > 0 {
+            trace!("Creating fee/reward UTXO...");
             let (output_fee, gamma_fee) =
-                Output::new_payment(timestamp, skey, pkey, fee).expect("invalid keys");
+                Output::new_payment(timestamp, skey, pkey, fee + reward).expect("invalid keys");
             gamma -= gamma_fee;
             info!(
-                "Created fee UTXO: hash={}, amount={}",
+                "Created fee/reward UTXO: hash={}, fee={}, reward={}",
                 Hash::digest(&output_fee),
-                fee
+                fee,
+                reward
             );
             outputs.push(output_fee.clone());
             Some(output_fee)
@@ -202,7 +206,7 @@ impl Mempool {
 
         // Create a new monetary block.
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
-        let block = MonetaryBlock::new(base, gamma, &inputs, &outputs);
+        let block = MonetaryBlock::new(base, gamma, monetary_adjustment, &inputs, &outputs);
 
         (block, output_fee, tx_hashes)
     }
@@ -320,7 +324,7 @@ mod test {
         let version = 1;
         let epoch = 1;
         let (block, output_fee, tx_hashes) =
-            mempool.create_block(previous, version, epoch, &skey, &pkey);
+            mempool.create_block(previous, version, epoch, 0, &skey, &pkey);
 
         // Used transactions.
         assert_eq!(tx_hashes, vec![tx_hash1, tx_hash2]);

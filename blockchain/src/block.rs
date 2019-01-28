@@ -126,6 +126,11 @@ pub struct MonetaryBlockHeader {
     /// Includes the γ_adj from the leader's fee distribution transaction.
     pub gamma: Fr,
 
+    /// Adjustment of the global monetary balance.
+    /// Positive value means that money has been created.
+    /// Negative value means that money has been burned.
+    pub monetary_adjustment: i64,
+
     /// Merklish root of all range proofs for inputs.
     pub inputs_range_hash: Hash,
 
@@ -138,6 +143,7 @@ impl Hashable for MonetaryBlockHeader {
         "Monetary".hash(state);
         self.base.hash(state);
         self.gamma.hash(state);
+        self.monetary_adjustment.hash(state);
         self.inputs_range_hash.hash(state);
         self.outputs_range_hash.hash(state);
     }
@@ -244,6 +250,7 @@ impl MonetaryBlock {
     pub fn new(
         base: BaseBlockHeader,
         gamma: Fr,
+        monetary_adjustment: i64,
         inputs: &[Hash],
         outputs: &[Output],
     ) -> MonetaryBlock {
@@ -286,6 +293,7 @@ impl MonetaryBlock {
         let header = MonetaryBlockHeader {
             base,
             gamma,
+            monetary_adjustment,
             inputs_range_hash,
             outputs_range_hash,
         };
@@ -333,10 +341,10 @@ impl MonetaryBlock {
         //
         // Calculate the pedersen commitment difference in order to check the monetary balance:
         //
-        //     pedersen_commitment_diff = \sum C_i - \sum C_o
+        //     pedersen_commitment_diff = monetary_adjustment + \sum C_i - \sum C_o
         //
 
-        let mut pedersen_commitment_diff = ECp::inf();
+        let mut pedersen_commitment_diff: ECp = fee_a(self.header.monetary_adjustment);
 
         // +\sum{C_i} for i in txins
         let mut txins_set: HashSet<Hash> = HashSet::new();
@@ -499,7 +507,7 @@ pub mod tests {
             let (output1, gamma1) = Output::new_payment(timestamp, &skey1, &pkey2, amount).unwrap();
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
-            let block = MonetaryBlock::new(base, gamma, &inputs1, &outputs1);
+            let block = MonetaryBlock::new(base, gamma, 0, &inputs1, &outputs1);
             block.validate(&[output0]).expect("block is valid");
         }
 
@@ -514,7 +522,7 @@ pub mod tests {
                 Output::new_payment(timestamp, &skey1, &pkey2, amount - 1).unwrap();
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
-            let block = MonetaryBlock::new(base, gamma, &inputs1, &outputs1);
+            let block = MonetaryBlock::new(base, gamma, 0, &inputs1, &outputs1);
             match block.validate(&[output0]) {
                 Err(e) => match e.downcast::<BlockchainError>().unwrap() {
                     BlockchainError::InvalidBlockBalance => {}
@@ -534,7 +542,7 @@ pub mod tests {
             let (output1, gamma1) = Output::new_payment(timestamp, &skey1, &pkey2, amount).unwrap();
             let outputs1 = [output1.clone()];
             let gamma = gamma0 - gamma1;
-            let mut block = MonetaryBlock::new(base, gamma, &inputs1, &outputs1);
+            let mut block = MonetaryBlock::new(base, gamma, 0, &inputs1, &outputs1);
             let inputs = [output0.clone()];
 
             // Invalid inputs_range_hash.
@@ -636,7 +644,7 @@ pub mod tests {
         let (output, gamma1) = Output::new_payment(timestamp, &skey, &pkey, amount).unwrap();
         let outputs = [output];
         let gamma = gamma0 - gamma1;
-        let block = MonetaryBlock::new(base, gamma, &input_hashes, &outputs);
+        let block = MonetaryBlock::new(base, gamma, 0, &input_hashes, &outputs);
         block.validate(&inputs).expect("block is valid");
 
         {
@@ -694,7 +702,7 @@ pub mod tests {
             let gamma = inputs_gamma - outputs_gamma;
 
             let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
-            let block = MonetaryBlock::new(base, gamma, &input_hashes[..], &outputs[..]);
+            let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..]);
             block.validate(&inputs).expect("block is valid");
         }
 
@@ -713,7 +721,7 @@ pub mod tests {
             let gamma = inputs_gamma - outputs_gamma;
 
             let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
-            let block = MonetaryBlock::new(base, gamma, &input_hashes[..], &outputs[..]);
+            let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..]);
             block.validate(&inputs).expect("block is valid");
         }
 
@@ -734,7 +742,7 @@ pub mod tests {
             let gamma = inputs_gamma - outputs_gamma;
 
             let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
-            let block = MonetaryBlock::new(base, gamma, &input_hashes[..], &outputs[..]);
+            let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..]);
             match block.validate(&inputs) {
                 Err(e) => match e.downcast::<BlockchainError>().unwrap() {
                     BlockchainError::InvalidBlockBalance => {}
@@ -761,7 +769,7 @@ pub mod tests {
             let gamma = inputs_gamma - outputs_gamma;
 
             let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
-            let block = MonetaryBlock::new(base, gamma, &input_hashes[..], &outputs[..]);
+            let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..]);
             match block.validate(&inputs) {
                 Err(e) => match e.downcast::<BlockchainError>().unwrap() {
                     BlockchainError::InvalidStake => {}
@@ -771,4 +779,38 @@ pub mod tests {
             };
         }
     }
+
+    fn create_burn_money(input_amount: i64, output_amount: i64) {
+        let (skey, pkey, _sig) = make_random_keys();
+
+        let version: u64 = 1;
+        let epoch: u64 = 1;
+        let timestamp = Utc::now().timestamp() as u64;
+        let previous = Hash::digest(&"test".to_string());
+
+        let monetary_adjustment: i64 = output_amount - input_amount;
+
+        let (input, input_gamma) =
+            Output::new_payment(timestamp, &skey, &pkey, input_amount).unwrap();
+        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+        let input_hashes = [Hash::digest(&input)];
+        let inputs = [input];
+        let (output, output_gamma) =
+            Output::new_payment(timestamp, &skey, &pkey, output_amount).unwrap();
+        let outputs = [output];
+        let gamma = input_gamma - output_gamma;
+        let block = MonetaryBlock::new(base, gamma, monetary_adjustment, &input_hashes, &outputs);
+        block.validate(&inputs).expect("block is valid");
+    }
+
+    #[test]
+    fn create_money() {
+        create_burn_money(100, 200);
+    }
+
+    #[test]
+    fn burn_money() {
+        create_burn_money(200, 100);
+    }
+
 }

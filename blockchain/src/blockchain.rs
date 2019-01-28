@@ -327,7 +327,7 @@ pub mod tests {
             Output::new_payment(timestamp, &skey, &pkey, amount).expect("tests have valid keys");
         let outputs = [output];
 
-        let block = MonetaryBlock::new(base, gamma, &inputs, &outputs);
+        let block = MonetaryBlock::new(base, gamma, 0, &inputs, &outputs);
 
         blockchain.register_monetary_block(block)?;
 

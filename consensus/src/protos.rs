@@ -226,7 +226,7 @@ mod tests {
 
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
 
-        let block = MonetaryBlock::new(base, gamma.clone(), &inputs1, &outputs1);
+        let block = MonetaryBlock::new(base, gamma.clone(), 0, &inputs1, &outputs1);
 
         let block = Block::MonetaryBlock(block);
 

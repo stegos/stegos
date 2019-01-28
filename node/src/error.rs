@@ -68,4 +68,11 @@ pub enum NodeError {
         _0, _1
     )]
     UnsynchronizedBlock(u64, u64),
+    #[fail(display = "No such stake: validator={}, stake={}", _0, _1)]
+    NoSuchStake(SecurePublicKey, Hash),
+    #[fail(
+        display = "Stake is locked: validator={}, stake={}, bonding_time={}, current_time={}",
+        _0, _1, _2, _3
+    )]
+    StakeIsLocked(SecurePublicKey, Hash, u64, u64),
 }

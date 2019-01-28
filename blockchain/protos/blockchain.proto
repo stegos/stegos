@@ -1,0 +1,91 @@
+syntax = "proto3";
+package stegos.blockchain;
+
+import "crypto.proto";
+
+message PaymentOutput {
+    stegos.crypto.PublicKey recipient = 1;
+    stegos.crypto.BulletProof proof = 2;
+    stegos.crypto.EncryptedPayload payload = 3;
+}
+
+message DataOutput {
+    stegos.crypto.PublicKey recipient = 1;
+    stegos.crypto.Pt vcmt = 2;
+    uint64 ttl = 3;
+    stegos.crypto.EncryptedPayload payload = 4;
+}
+
+message EscrowOutput {
+    stegos.crypto.PublicKey recipient = 1;
+    stegos.crypto.SecurePublicKey validator = 2;
+    int64 amount = 3;
+    stegos.crypto.EncryptedPayload payload = 4;
+}
+
+message Output {
+    oneof output {
+        PaymentOutput payment_output = 1;
+        DataOutput data_output = 2;
+        EscrowOutput escrow_output = 3;
+    }
+}
+
+message Transaction {
+    repeated stegos.crypto.Hash txins = 1;
+    repeated Output txouts = 2;
+    stegos.crypto.Fr gamma = 3;
+    int64 fee = 4;
+    stegos.crypto.SchnorrSig sig = 5;
+}
+
+message BaseBlockHeader {
+    uint64 version = 1;
+    stegos.crypto.Hash previous = 2;
+    uint64 epoch = 3;
+    uint64 timestamp = 4;
+    stegos.crypto.SecureSignature sig = 5;
+    repeated bool sigmap = 6;
+}
+
+message MonetaryBlockHeader {
+    BaseBlockHeader base = 1;
+    stegos.crypto.Fr gamma = 2;
+    stegos.crypto.Hash inputs_range_hash = 3;
+    stegos.crypto.Hash outputs_range_hash = 4;
+}
+
+message MerkleNode {
+    stegos.crypto.Hash hash = 1;
+    uint64 left = 2;
+    uint64 right = 3;
+    Output value = 4;
+}
+
+message MonetaryBlockBody {
+    repeated stegos.crypto.Hash inputs = 1;
+    repeated MerkleNode outputs = 2;
+}
+
+message MonetaryBlock {
+    MonetaryBlockHeader header = 1;
+    MonetaryBlockBody body = 2;
+}
+
+message KeyBlockHeader {
+    BaseBlockHeader base = 1;
+    stegos.crypto.SecurePublicKey leader = 2;
+    stegos.crypto.SecurePublicKey facilitator = 3;
+    repeated stegos.crypto.SecurePublicKey witnesses = 4;
+}
+
+message KeyBlock {
+    KeyBlockHeader header = 1;
+}
+
+message Block {
+    oneof block {
+        KeyBlock key_block = 1;
+        MonetaryBlock monetary_block = 2;
+    }
+}

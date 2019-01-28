@@ -1,0 +1,11 @@
+[package]
+name = "stegos_serialization"
+version = "0.1.0"
+authors = ["Stegos AG <info@stegos.cc>"]
+edition = "2018"
+
+[dependencies]
+failure = "0.1"
+protobuf = "2.2"
+protobuf-codegen-pure = "2.2"
+walkdir = "2.2.7"

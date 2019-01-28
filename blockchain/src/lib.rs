@@ -27,6 +27,7 @@ mod error;
 mod genesis;
 mod merkle;
 mod output;
+pub mod protos;
 mod transaction;
 
 pub use crate::block::*;

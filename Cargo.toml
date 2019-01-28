@@ -21,7 +21,8 @@ members = [
     "node",
     "runtime",
     "storage",
-    "txpool"
+    "txpool",
+    "serialization"
 ]
 
 [dependencies]
@@ -37,6 +38,7 @@ stegos_runtime = { path = "./runtime" }
 stegos_storage = { path = "./storage" }
 stegos_txpool = { path = "./txpool" }
 stegos_wallet = { path = "./wallet" }
+stegos_serialization = { path = "./serialization" }
 
 clap = "2.32"
 dirs = "1.0"

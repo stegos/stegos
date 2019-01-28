@@ -24,6 +24,7 @@ pub mod curve1174;
 pub mod hash;
 pub mod keying;
 pub mod pbc;
+pub mod protos;
 pub mod utils;
 
 use failure::Fail;

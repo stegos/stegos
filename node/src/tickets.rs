@@ -27,13 +27,12 @@ use stegos_crypto::pbc::secure::{
     VRF,
 };
 use stegos_network::NetworkProvider;
+use stegos_serialization::traits::ProtoConvert;
 
 use lazy_static::lazy_static;
 
 use crate::election::{self, ConsensusGroup, StakersGroup};
-use crate::protos::{self, FromProto, IntoProto};
 use crate::NodeService;
-use protobuf::Message;
 
 use failure::{Error, Fail};
 use log::{debug, info, trace};
@@ -287,16 +286,14 @@ where
             debug!("Trying to broadcast ticket but our node is not staker.");
             return Ok(());
         }
-        let proto = ticket.into_proto();
-        let data = proto.write_to_bytes()?;
+        let data = ticket.into_buffer()?;
         self.broker.publish(&VRF_TICKETS_TOPIC.to_string(), data)?;
         Ok(())
     }
 
     pub(crate) fn handle_vrf_message(&mut self, msg: Vec<u8>) -> Result<(), Error> {
         // Decode incoming message.
-        let msg: protos::node::VRFTicket = protobuf::parse_from_bytes(&msg)?;
-        let msg = VRFTicket::from_proto(&msg)?;
+        let msg = VRFTicket::from_buffer(&msg)?;
         if self.escrow.get(&msg.pkey) > 0 {
             self.vrf_system.hanle_process_ticket(msg)?;
         } else {

@@ -31,7 +31,6 @@ mod tickets;
 
 use crate::consensus::*;
 use crate::mempool::Mempool;
-use crate::protos::{FromProto, IntoProto};
 use bitvector::BitVector;
 
 use crate::election::ConsensusGroup;
@@ -51,7 +50,9 @@ use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 use stegos_blockchain::*;
 use stegos_config::*;
-use stegos_consensus::check_multi_signature;
+use stegos_consensus::{
+    check_multi_signature, BlockConsensus, BlockConsensusMessage, BlockProof, MonetaryBlockProof,
+};
 use stegos_crypto::bulletproofs::validate_range_proof;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
@@ -59,6 +60,7 @@ use stegos_crypto::pbc::secure::Signature as SecureSignature;
 use stegos_crypto::pbc::secure::G2;
 use stegos_keychain::KeyChain;
 use stegos_network::NetworkProvider;
+use stegos_serialization::traits::ProtoConvert;
 use tokio_timer::Interval;
 
 // ----------------------------------------------------------------
@@ -72,8 +74,7 @@ pub fn genesis_dev() -> Result<Vec<Block>, Error> {
     let block2 = include_bytes!("../data/genesis1.bin");
     let mut blocks = Vec::<Block>::new();
     for block in &[&block1[..], &block2[..]] {
-        let block: protos::node::Block = protobuf::parse_from_bytes(block)?;
-        let block = Block::from_proto(&block)?;
+        let block = Block::from_buffer(&block)?;
         blocks.push(block);
     }
     Ok(blocks)
@@ -405,8 +406,7 @@ where
 
     /// Handle incoming transactions received from network.
     fn handle_transaction(&mut self, msg: Vec<u8>) -> Result<(), Error> {
-        let tx: protos::node::Transaction = protobuf::parse_from_bytes(&msg)?;
-        let tx = Transaction::from_proto(&tx)?;
+        let tx = Transaction::from_buffer(&msg)?;
 
         let tx_hash = Hash::digest(&tx.body);
         info!(
@@ -946,8 +946,7 @@ where
     ///
     fn handle_consensus_message(&mut self, buffer: Vec<u8>) -> Result<(), Error> {
         // Process incoming message.
-        let msg: protos::node::ConsensusMessage = protobuf::parse_from_bytes(&buffer)?;
-        let msg = BlockConsensusMessage::from_proto(&msg)?;
+        let msg = BlockConsensusMessage::from_buffer(&buffer)?;
 
         // if our consensus state is outdated, push message to future_consensus_messages.
         // TODO: remove queue and use request-responses to get message from other nodes.

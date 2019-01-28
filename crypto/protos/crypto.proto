@@ -1,0 +1,79 @@
+syntax = "proto3";
+package stegos.crypto;
+
+message Pt {
+    bytes data = 1;
+}
+
+message Fr {
+    bytes data = 1;
+}
+
+message G1 {
+    bytes data = 1;
+}
+
+message G2 {
+    bytes data = 1;
+}
+
+message Hash {
+    bytes data = 1;
+}
+
+message PublicKey {
+    Pt point = 1;
+}
+
+message SchnorrSig {
+    Fr u = 1;
+    Pt K = 2;
+}
+
+message SecurePublicKey {
+    G2 point = 1;
+}
+
+message SecureSignature {
+    G1 point = 1;
+}
+
+message EncryptedPayload {
+    Pt apkg = 1;
+    Pt ag = 2;
+    bytes ctxt = 3;
+}
+
+message LR {
+    Fr x = 1;
+    Pt l = 2;
+    Pt r = 3;
+};
+
+message DotProof {
+    Pt u = 1;
+    Pt pcmt = 2;
+    Fr a = 3;
+    Fr b = 4;
+    repeated LR xlrs = 5;
+};
+
+message BulletProof {
+    Pt vcmt = 1;
+    Pt acmt = 2;
+    Pt scmt = 3;
+    Pt t1_cmt = 4;
+    Pt t2_cmt = 5;
+    Fr tau_x = 6;
+    Fr mu = 7;
+    Fr t_hat = 8;
+    DotProof dot_proof = 9;
+    Fr x = 10;
+    Fr y = 11;
+    Fr z = 12;
+}
+
+message VRF {
+    stegos.crypto.Hash rand = 1;
+    stegos.crypto.G1 proof = 2;
+}

@@ -1,0 +1,42 @@
+syntax = "proto3";
+package stegos.consensus;
+
+import "crypto.proto";
+import "blockchain.proto";
+
+
+message KeyBlockProposal {
+    stegos.blockchain.KeyBlock block = 1;
+}
+
+message MonetaryBlockProposal {
+    stegos.blockchain.MonetaryBlock block = 1;
+    stegos.blockchain.Output fee_output = 2;
+    repeated stegos.crypto.Hash tx_hashes = 4;
+}
+
+message Prevote {}
+
+message Precommit {
+    stegos.crypto.SecureSignature request_hash_sig = 1;
+}
+
+message ConsensusMessageBody {
+    oneof body {
+        Prevote prevote = 1;
+        Precommit precommit= 2;
+
+        KeyBlockProposal key_block_proposal = 11;
+        MonetaryBlockProposal monetary_block_proposal = 12;
+    }
+}
+
+message ConsensusMessage {
+    uint64 height = 1;
+    uint64 epoch = 2;
+    stegos.crypto.Hash request_hash = 3;
+    ConsensusMessageBody body = 4;
+    stegos.crypto.SecurePublicKey pkey = 5;
+    stegos.crypto.SecureSignature sig = 6;
+}
+

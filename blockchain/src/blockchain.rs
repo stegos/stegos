@@ -25,9 +25,15 @@ use crate::block::*;
 use crate::error::*;
 use crate::merkle::*;
 use crate::output::*;
+use failure::Error;
 use log::*;
 use std::collections::HashMap;
 use std::vec::Vec;
+use stegos_crypto::bulletproofs::fee_a;
+use stegos_crypto::curve1174::cpt::Pt;
+use stegos_crypto::curve1174::ecpt::ECp;
+use stegos_crypto::curve1174::fields::Fr;
+use stegos_crypto::curve1174::G;
 use stegos_crypto::hash::*;
 
 type BlockId = usize;
@@ -49,6 +55,14 @@ pub struct Blockchain {
     block_by_hash: HashMap<Hash, BlockId>,
     /// Unspent outputs by hash.
     output_by_hash: HashMap<Hash, OutputKey>,
+    /// The total sum of money created.
+    created: ECp,
+    /// The total sum of money burned.
+    burned: ECp,
+    /// The total sum of gamma adjustments.
+    gamma: Fr,
+    /// The total sum of monetary adjustments.
+    monetary_adjustment: i64,
 }
 
 impl Blockchain {
@@ -60,10 +74,18 @@ impl Blockchain {
         let blocks = Vec::new();
         let block_by_hash = HashMap::<Hash, BlockId>::new();
         let output_by_hash = HashMap::<Hash, OutputKey>::new();
+        let created = ECp::inf();
+        let burned = ECp::inf();
+        let gamma = Fr::zero();
+        let monetary_adjustment: i64 = 0;
         let blockchain = Blockchain {
             blocks,
             block_by_hash,
             output_by_hash,
+            created,
+            burned,
+            gamma,
+            monetary_adjustment,
         };
         blockchain
     }
@@ -176,7 +198,7 @@ impl Blockchain {
     pub fn register_monetary_block(
         &mut self,
         mut block: MonetaryBlock,
-    ) -> Result<(Vec<Output>), BlockchainError> {
+    ) -> Result<(Vec<Output>), Error> {
         let block_id = self.blocks.len();
 
         // Check previous hash.
@@ -186,15 +208,19 @@ impl Blockchain {
                 return Err(BlockchainError::PreviousHashMismatch(
                     previous_hash,
                     block.header.base.previous,
-                ));
+                )
+                .into());
             }
         }
 
         // Check new hash.
         let this_hash = Hash::digest(&block);
         if let Some(_) = self.block_by_hash.get(&this_hash) {
-            return Err(BlockchainError::BlockHashCollision(this_hash));
+            return Err(BlockchainError::BlockHashCollision(this_hash).into());
         }
+
+        let mut burned = ECp::inf();
+        let mut created = ECp::inf();
 
         // Check all inputs.
         for output_hash in &block.body.inputs {
@@ -205,6 +231,19 @@ impl Blockchain {
                     if let Some(output) = body.outputs.lookup(&path) {
                         // Check that hash is the same.
                         assert_eq!(Hash::digest(output), *output_hash);
+
+                        // Calculate balance.
+                        match output.as_ref() {
+                            Output::PaymentOutput(o) => {
+                                burned += Pt::decompress(o.proof.vcmt)?;
+                            }
+                            Output::DataOutput(o) => {
+                                burned += Pt::decompress(o.vcmt)?;
+                            }
+                            Output::StakeOutput(o) => {
+                                burned += fee_a(o.amount);
+                            }
+                        }
                     } else {
                         // Internal database inconsistency - missing UTXO in block.
                         unreachable!();
@@ -215,22 +254,46 @@ impl Blockchain {
                 }
             } else {
                 // Cannot find UTXO referred by block.
-                return Err(BlockchainError::MissingUTXO(*output_hash));
+                return Err(BlockchainError::MissingUTXO(*output_hash).into());
             }
         }
 
         // Check all outputs.
-        let outputs_pathes = block
-            .body
-            .outputs
-            .leafs()
-            .iter()
-            .map(|(o, path)| (Hash::digest(*o), *path))
-            .collect::<Vec<(Hash, MerklePath)>>();
-        for (hash, _path) in &outputs_pathes {
-            if let Some(_) = self.output_by_hash.get(hash) {
-                return Err(BlockchainError::OutputHashCollision(*hash));
+        let mut outputs_pathes: Vec<(Hash, MerklePath)> = Vec::new();
+        for (output, path) in block.body.outputs.leafs() {
+            // Check that hash is unique.
+            let output_hash = Hash::digest(output.as_ref());
+            if let Some(_) = self.output_by_hash.get(&output_hash) {
+                return Err(BlockchainError::OutputHashCollision(output_hash).into());
             }
+            outputs_pathes.push((output_hash, path));
+
+            // Calculate balance.
+            match output.as_ref() {
+                Output::PaymentOutput(o) => {
+                    created += Pt::decompress(o.proof.vcmt)?;
+                }
+                Output::DataOutput(o) => {
+                    created += Pt::decompress(o.vcmt)?;
+                }
+                Output::StakeOutput(o) => {
+                    created += fee_a(o.amount);
+                }
+            }
+        }
+
+        // Check the block monetary balance.
+        if fee_a(block.header.monetary_adjustment) + burned - created != block.header.gamma * (*G) {
+            return Err(BlockchainError::InvalidBlockBalance.into());
+        }
+
+        // Check the global monetary balance.
+        let created: ECp = self.created + created;
+        let burned: ECp = self.burned + burned;
+        let gamma: Fr = self.gamma + block.header.gamma;
+        let monetary_adjustment: i64 = self.monetary_adjustment + block.header.monetary_adjustment;
+        if fee_a(monetary_adjustment) + burned - created != gamma * (*G) {
+            panic!("Invalid global monetary balance");
         }
 
         // -----------------------------------------------------------------------------------------
@@ -289,6 +352,12 @@ impl Blockchain {
         // Must be the last line to make Rust happy.
         self.blocks.push(Block::MonetaryBlock(block));
 
+        // Save the global balance.
+        self.created = created;
+        self.burned = burned;
+        self.gamma = gamma;
+        self.monetary_adjustment = monetary_adjustment;
+
         Ok(pruned)
     }
 }
@@ -300,10 +369,28 @@ pub mod tests {
     use chrono::prelude::Utc;
 
     use crate::genesis::genesis;
-    use stegos_crypto::curve1174::cpt::make_random_keys;
+    use stegos_crypto::curve1174::cpt::*;
     use stegos_keychain::KeyChain;
 
-    pub fn iterate(blockchain: &mut Blockchain) -> Result<(), BlockchainError> {
+    fn unspent(blockchain: &Blockchain, skey: &SecretKey) -> (Output, Fr, i64) {
+        for input_hash in blockchain.unspent() {
+            let input = blockchain.output_by_hash(&input_hash).unwrap();
+            match input {
+                Output::PaymentOutput(o) => {
+                    let (_delta, gamma, amount) = o.decrypt_payload(skey).expect("keys are valid");
+                    return (input.clone(), gamma, amount);
+                }
+                _ => {}
+            }
+        }
+        unreachable!();
+    }
+
+    fn iterate(
+        blockchain: &mut Blockchain,
+        skey: &SecretKey,
+        pkey: &PublicKey,
+    ) -> Result<(), Error> {
         let version = 1;
         let timestamp = Utc::now().timestamp() as u64;
         let (epoch, previous) = {
@@ -316,19 +403,17 @@ pub mod tests {
 
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
 
-        let (skey, pkey, _sig) = make_random_keys();
-
-        let output_hash = blockchain.output_by_hash.keys().next().unwrap().clone();
-        let input = output_hash.clone();
+        let (input, input_gamma, amount) = unspent(blockchain, skey);
+        let input_hashes = [Hash::digest(&input)];
         let inputs = [input];
 
-        let amount: i64 = 112;
-        let (output, gamma) =
-            Output::new_payment(timestamp, &skey, &pkey, amount).expect("tests have valid keys");
+        let (output, output_gamma) =
+            Output::new_payment(timestamp, skey, pkey, amount).expect("tests have valid keys");
         let outputs = [output];
 
-        let block = MonetaryBlock::new(base, gamma, 0, &inputs, &outputs);
-
+        let gamma = input_gamma - output_gamma;
+        let block = MonetaryBlock::new(base, gamma, 0, &input_hashes, &outputs);
+        block.validate(&inputs).expect("block is valid");
         blockchain.register_monetary_block(block)?;
 
         Ok(())
@@ -346,7 +431,6 @@ pub mod tests {
         ];
 
         let blocks = genesis(&keychains, 100, 1_000_000);
-
         let mut blockchain = Blockchain::new();
         for block in blocks {
             match block {
@@ -357,9 +441,11 @@ pub mod tests {
             }
         }
 
+        let skey = &keychains[0].wallet_skey;
+        let pkey = &keychains[0].wallet_pkey;
         assert!(blockchain.blocks().len() > 0);
-        iterate(&mut blockchain).unwrap();
-        iterate(&mut blockchain).unwrap();
-        iterate(&mut blockchain).unwrap();
+        for _ in 0..3 {
+            iterate(&mut blockchain, skey, pkey).unwrap();
+        }
     }
 }

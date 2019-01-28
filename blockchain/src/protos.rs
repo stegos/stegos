@@ -557,16 +557,6 @@ mod tests {
 
         let block = Block::KeyBlock(block);
         roundtrip(&block);
-
-        //        //
-        //        // KeyBlockProposal
-        //        //
-        //        let proof = BlockProof::KeyBlockProof;
-        //        let proposal = ConsensusMessageBody::Proposal {
-        //            request: block.clone(),
-        //            proof,
-        //        };
-        //        roundtrip(&proposal);
     }
 
     #[test]
@@ -602,38 +592,5 @@ mod tests {
 
         let block = Block::MonetaryBlock(block);
         roundtrip(&block);
-
-        //        //
-        //        // Monetary block proposal
-        //        //
-        //
-        //        let (fee_output, _fee_gamma) =
-        //            Output::new_payment(timestamp, &skey1, &pkey1, 100).expect("keys are valid");
-        //        let mut tx_hashes = Vec::new();
-        //        tx_hashes.push(Hash::digest(&1u64));
-        //        let proof = MonetaryBlockProof {
-        //            fee_output: Some(fee_output),
-        //            gamma: gamma.clone(),
-        //            tx_hashes,
-        //        };
-        //        let proof = BlockProof::MonetaryBlockProof(proof);
-        //
-        //        let proposal = ConsensusMessageBody::Proposal {
-        //            request: block.clone(),
-        //            proof,
-        //        };
-        //        roundtrip(&proposal);
-        //
-        //        let proof = MonetaryBlockProof {
-        //            fee_output: None,
-        //            gamma: gamma.clone(),
-        //            tx_hashes: Vec::new(),
-        //        };
-        //        let proof = BlockProof::MonetaryBlockProof(proof);
-        //        let proposal = ConsensusMessageBody::Proposal {
-        //            request: block.clone(),
-        //            proof,
-        //        };
-        //        roundtrip(&proposal);
     }
 }

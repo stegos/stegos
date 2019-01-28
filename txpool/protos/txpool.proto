@@ -1,0 +1,14 @@
+syntax = "proto3";
+package stegis.txpool;
+
+import "crypto.proto";
+
+message Message {
+    stegos.crypto.SecurePublicKey pkey = 1;
+}
+
+message PoolInfo {
+    repeated Message accumulator = 1;
+    stegos.crypto.SecurePublicKey pkey = 2;
+    stegos.crypto.SecureSignature sig = 3;
+}

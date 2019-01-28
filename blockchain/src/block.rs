@@ -620,6 +620,54 @@ pub mod tests {
     }
 
     #[test]
+    fn validate_pruned_monetary_block() {
+        let (skey, pkey, _sig) = make_random_keys();
+
+        let version: u64 = 1;
+        let epoch: u64 = 1;
+        let timestamp = Utc::now().timestamp() as u64;
+        let amount: i64 = 1_000_000;
+        let previous = Hash::digest(&"test".to_string());
+
+        let (input, gamma0) = Output::new_payment(timestamp, &skey, &pkey, amount).unwrap();
+        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+        let input_hashes = [Hash::digest(&input)];
+        let inputs = [input];
+        let (output, gamma1) = Output::new_payment(timestamp, &skey, &pkey, amount).unwrap();
+        let outputs = [output];
+        let gamma = gamma0 - gamma1;
+        let block = MonetaryBlock::new(base, gamma, &input_hashes, &outputs);
+        block.validate(&inputs).expect("block is valid");
+
+        {
+            // Prune an output.
+            let mut block2 = block.clone();
+            let (_output, path) = block2.body.outputs.leafs()[0];
+            block2.body.outputs.prune(&path).expect("output exists");
+            match block2.validate(&inputs) {
+                Err(e) => match e.downcast::<BlockchainError>().unwrap() {
+                    BlockchainError::InvalidBlockBalance => {}
+                    _ => panic!(),
+                },
+                _ => panic!(),
+            }
+        }
+
+        {
+            // Prune inputs.
+            let mut block2 = block.clone();
+            block2.body.inputs.clear();
+            match block2.validate(&[]) {
+                Err(e) => match e.downcast::<BlockchainError>().unwrap() {
+                    BlockchainError::InvalidBlockInputsHash(_, _) => {}
+                    _ => panic!(),
+                },
+                _ => panic!(),
+            }
+        }
+    }
+
+    #[test]
     fn create_validate_monetary_block_with_escrow() {
         let (skey0, _pkey0, _sig0) = make_random_keys();
         let (skey1, pkey1, _sig1) = make_random_keys();

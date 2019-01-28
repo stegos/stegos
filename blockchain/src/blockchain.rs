@@ -175,7 +175,7 @@ impl Blockchain {
 
     pub fn register_monetary_block(
         &mut self,
-        block: MonetaryBlock,
+        mut block: MonetaryBlock,
     ) -> Result<(Vec<Output>), BlockchainError> {
         let block_id = self.blocks.len();
 
@@ -267,7 +267,10 @@ impl Blockchain {
             }
         }
 
-        // Register create unspent outputs.
+        // Prune inputs.
+        block.body.inputs.clear();
+
+        // Register created unspent outputs.
         for (hash, path) in outputs_pathes {
             info!("Registered UXTO: hash={}", &hash);
 

@@ -286,6 +286,7 @@ where
         let vrf_system = TicketsSystem::new(WITNESSES_MAX, 0, 0, keys.cosi_pkey, keys.cosi_skey);
 
         let mempool = Mempool::new();
+
         let consensus = None;
         let last_block_timestamp = Instant::now();
 
@@ -422,6 +423,7 @@ where
         //
         // - TX hash is unique
         // - Fee is acceptable.
+        // - At least one input or output is present.
         // - Inputs can be resolved.
         // - Inputs have not been spent by blocks.
         // - Inputs are not claimed by other transactions in mempool.
@@ -443,6 +445,11 @@ where
 
         // Check fee.
         NodeService::<Network>::check_acceptable_fee(&tx)?;
+
+        // Check transaction
+        if tx.body.txins.is_empty() && tx.body.txouts.is_empty() {
+            return Err(BlockchainError::EmptyTransaction(tx_hash).into());
+        }
 
         // Validate inputs.
         let mut inputs: Vec<Output> = Vec::new();

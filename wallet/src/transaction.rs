@@ -28,9 +28,9 @@ use failure::Error;
 use log::*;
 use std::collections::HashMap;
 use stegos_blockchain::DataOutput;
-use stegos_blockchain::EscrowOutput;
 use stegos_blockchain::Output;
 use stegos_blockchain::PaymentOutput;
+use stegos_blockchain::StakeOutput;
 use stegos_blockchain::Transaction;
 use stegos_config::*;
 use stegos_crypto::curve1174::cpt::PublicKey;
@@ -285,7 +285,7 @@ pub fn create_staking_transaction(
     //
 
     trace!("Checking for available funds in the wallet...");
-    let fee = ESCROW_FEE;
+    let fee = STAKE_FEE;
     let fee_change = fee + PAYMENT_FEE;
     let unspent_iter = unspent.values().map(|(o, a)| (o, *a));
     let (inputs, fee, change) = find_utxo(unspent_iter, amount, fee, fee_change)?;
@@ -314,11 +314,11 @@ pub fn create_staking_transaction(
     let timestamp = Utc::now().timestamp() as u64;
     let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
 
-    // Create an output for escrow
-    trace!("Creating escrow UTXO...");
-    let output1 = Output::new_escrow(timestamp, sender_skey, sender_pkey, validator_pkey, amount)?;
+    // Create an output for staking.
+    trace!("Creating stake UTXO...");
+    let output1 = Output::new_stake(timestamp, sender_skey, sender_pkey, validator_pkey, amount)?;
     info!(
-        "Created escrow UTXO: hash={}, recipient={}, validator={}, amount={}",
+        "Created stake UTXO: hash={}, recipient={}, validator={}, amount={}",
         Hash::digest(&output1),
         sender_pkey,
         validator_pkey,
@@ -363,7 +363,7 @@ pub fn create_unstaking_transaction(
     sender_skey: &SecretKey,
     sender_pkey: &PublicKey,
     validator_pkey: &secure::PublicKey,
-    unspent: &HashMap<Hash, EscrowOutput>,
+    unspent: &HashMap<Hash, StakeOutput>,
     amount: i64,
 ) -> Result<Transaction, Error> {
     if amount <= PAYMENT_FEE {
@@ -383,10 +383,10 @@ pub fn create_unstaking_transaction(
     let unspent_iter = unspent.values().map(|o| (o, o.amount));
     let amount = amount - PAYMENT_FEE;
     let (inputs, fee, change) =
-        find_utxo(unspent_iter, amount, PAYMENT_FEE, PAYMENT_FEE + ESCROW_FEE)?;
+        find_utxo(unspent_iter, amount, PAYMENT_FEE, PAYMENT_FEE + STAKE_FEE)?;
     let inputs: Vec<Output> = inputs
         .into_iter()
-        .map(|o| Output::EscrowOutput(o.clone()))
+        .map(|o| Output::StakeOutput(o.clone()))
         .collect();
     if fee > PAYMENT_FEE && change <= PAYMENT_FEE {
         // Stake must be > PAYMENT_FEE.
@@ -398,7 +398,7 @@ pub fn create_unstaking_transaction(
         sender_pkey, validator_pkey, amount, change, fee
     );
     for input in &inputs {
-        debug!("Use escrow UTXO: hash={}", Hash::digest(input));
+        debug!("Use stake UTXO: hash={}", Hash::digest(input));
     }
 
     //
@@ -421,13 +421,13 @@ pub fn create_unstaking_transaction(
     let gamma = gamma1;
 
     if change > 0 {
-        // Create an output for escrow
-        assert_eq!(fee, PAYMENT_FEE + ESCROW_FEE);
-        trace!("Creating escrow UTXO...");
+        // Create an output for staking.
+        assert_eq!(fee, PAYMENT_FEE + STAKE_FEE);
+        trace!("Creating stake UTXO...");
         let output2 =
-            Output::new_escrow(timestamp, sender_skey, sender_pkey, validator_pkey, change)?;
+            Output::new_stake(timestamp, sender_skey, sender_pkey, validator_pkey, change)?;
         info!(
-            "Created escrow UTXO: hash={}, validator={}, amount={}",
+            "Created stake UTXO: hash={}, validator={}, amount={}",
             Hash::digest(&output2),
             validator_pkey,
             change
@@ -455,7 +455,7 @@ pub mod tests {
     /// Check transaction signing and validation.
     #[test]
     fn unstaking_transactions() {
-        assert!(PAYMENT_FEE > 0 && ESCROW_FEE > 0);
+        assert!(PAYMENT_FEE > 0 && STAKE_FEE > 0);
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
         let (skey, pkey, _sig0) = make_random_keys();
@@ -465,12 +465,12 @@ pub mod tests {
         let stake: i64 = 100;
 
         // Stake money.
-        let escrow = EscrowOutput::new(timestamp, &skey, &pkey, &validator_pkey, stake)
+        let output = StakeOutput::new(timestamp, &skey, &pkey, &validator_pkey, stake)
             .expect("keys are valid");
-        let escrow_hash = Hash::digest(&escrow);
-        let inputs = [Output::EscrowOutput(escrow.clone())];
-        let mut unspent: HashMap<Hash, EscrowOutput> = HashMap::new();
-        unspent.insert(escrow_hash, escrow);
+        let output_hash = Hash::digest(&output);
+        let inputs = [Output::StakeOutput(output.clone())];
+        let mut unspent: HashMap<Hash, StakeOutput> = HashMap::new();
+        unspent.insert(output_hash, output);
 
         // Unstake all of the money.
         let tx = create_unstaking_transaction(&skey, &pkey, &validator_pkey, &unspent, stake)
@@ -491,7 +491,7 @@ pub mod tests {
         let tx = create_unstaking_transaction(&skey, &pkey, &validator_pkey, &unspent, unstake)
             .expect("tx is created");
         tx.validate(&inputs).expect("tx is valid");
-        assert_eq!(tx.body.fee, PAYMENT_FEE + ESCROW_FEE);
+        assert_eq!(tx.body.fee, PAYMENT_FEE + STAKE_FEE);
         assert_eq!(tx.body.txouts.len(), 2);
         match &tx.body.txouts[0] {
             Output::PaymentOutput(o) => {
@@ -501,8 +501,8 @@ pub mod tests {
             _ => panic!("invalid tx"),
         }
         match &tx.body.txouts[1] {
-            Output::EscrowOutput(o) => {
-                assert_eq!(o.amount, stake - unstake - ESCROW_FEE);
+            Output::StakeOutput(o) => {
+                assert_eq!(o.amount, stake - unstake - STAKE_FEE);
             }
             _ => panic!("invalid tx"),
         }
@@ -525,7 +525,7 @@ pub mod tests {
         }
 
         // Try to re-stake zero.
-        let unstake = stake - ESCROW_FEE;
+        let unstake = stake - STAKE_FEE;
         let e = create_unstaking_transaction(&skey, &pkey, &validator_pkey, &unspent, unstake)
             .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {
@@ -537,7 +537,7 @@ pub mod tests {
         }
 
         // Try to re-stake PAYMENT_FEE.
-        let unstake = stake - PAYMENT_FEE - ESCROW_FEE;
+        let unstake = stake - PAYMENT_FEE - STAKE_FEE;
         let e = create_unstaking_transaction(&skey, &pkey, &validator_pkey, &unspent, unstake)
             .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {

@@ -92,10 +92,10 @@ impl ProtoConvert for DataOutput {
     }
 }
 
-impl ProtoConvert for EscrowOutput {
-    type Proto = blockchain::EscrowOutput;
+impl ProtoConvert for StakeOutput {
+    type Proto = blockchain::StakeOutput;
     fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::EscrowOutput::new();
+        let mut proto = blockchain::StakeOutput::new();
         proto.set_recipient(self.recipient.into_proto());
         proto.set_validator(self.validator.into_proto());
         proto.set_amount(self.amount);
@@ -108,7 +108,7 @@ impl ProtoConvert for EscrowOutput {
         let validator = SecurePublicKey::from_proto(proto.get_validator())?;
         let amount = proto.get_amount();
         let payload = EncryptedPayload::from_proto(proto.get_payload())?;
-        Ok(EscrowOutput {
+        Ok(StakeOutput {
             recipient,
             validator,
             amount,
@@ -124,7 +124,7 @@ impl ProtoConvert for Output {
         match self {
             Output::PaymentOutput(output) => proto.set_payment_output(output.into_proto()),
             Output::DataOutput(output) => proto.set_data_output(output.into_proto()),
-            Output::EscrowOutput(output) => proto.set_escrow_output(output.into_proto()),
+            Output::StakeOutput(output) => proto.set_stake_output(output.into_proto()),
         }
         proto
     }
@@ -139,9 +139,9 @@ impl ProtoConvert for Output {
                 let output = DataOutput::from_proto(output)?;
                 Ok(Output::DataOutput(output))
             }
-            Some(blockchain::Output_oneof_output::escrow_output(ref output)) => {
-                let output = EscrowOutput::from_proto(output)?;
-                Ok(Output::EscrowOutput(output))
+            Some(blockchain::Output_oneof_output::stake_output(ref output)) => {
+                let output = StakeOutput::from_proto(output)?;
+                Ok(Output::StakeOutput(output))
             }
             None => {
                 Err(ProtoError::MissingField("output".to_string(), "output".to_string()).into())
@@ -355,7 +355,7 @@ impl ProtoConvert for MonetaryBlockHeader {
         let outputs_range_hash = Hash::from_proto(proto.get_outputs_range_hash())?;
         Ok(MonetaryBlockHeader {
             base,
-            gamma: gamma,
+            gamma,
             inputs_range_hash,
             outputs_range_hash,
         })
@@ -475,7 +475,7 @@ mod tests {
             Output::new_data(timestamp, &skey0, &pkey1, 1, data).expect("keys are valid");
         roundtrip(&output);
 
-        let output = Output::new_escrow(timestamp, &skey1, &pkey1, &secure_pkey1, amount)
+        let output = Output::new_stake(timestamp, &skey1, &pkey1, &secure_pkey1, amount)
             .expect("keys are valid");
         roundtrip(&output);
     }

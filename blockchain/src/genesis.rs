@@ -51,7 +51,7 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64) -> Vec<Block> {
         let inputs = Vec::<Hash>::new();
 
         //
-        // Genesis has one PaymentOutput + N * EscrowOutput, where N is the number of validators.
+        // Genesis has one PaymentOutput + N * StakeOutput, where N is the number of validators.
         // Node #1 receives all moneys except stakes.
         // All nodes gets `stake` money staked.
         //
@@ -65,9 +65,9 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64) -> Vec<Block> {
             .expect("genesis has valid public keys");
         outputs.push(output);
 
-        // Create EscrowOutput for each node.
+        // Create StakeOutput for each node.
         for keys in keychains {
-            let output = Output::new_escrow(
+            let output = Output::new_stake(
                 timestamp,
                 &keys.wallet_skey,
                 &keys.wallet_pkey,

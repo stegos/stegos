@@ -16,7 +16,7 @@ message DataOutput {
     stegos.crypto.EncryptedPayload payload = 4;
 }
 
-message EscrowOutput {
+message StakeOutput {
     stegos.crypto.PublicKey recipient = 1;
     stegos.crypto.SecurePublicKey validator = 2;
     int64 amount = 3;
@@ -27,7 +27,7 @@ message Output {
     oneof output {
         PaymentOutput payment_output = 1;
         DataOutput data_output = 2;
-        EscrowOutput escrow_output = 3;
+        StakeOutput stake_output = 3;
     }
 }
 

@@ -31,9 +31,9 @@ pub use crate::transaction::*;
 use failure::Error;
 use log::*;
 use std::collections::HashMap;
-use stegos_blockchain::EscrowOutput;
 use stegos_blockchain::Output;
 use stegos_blockchain::PaymentOutput;
+use stegos_blockchain::StakeOutput;
 use stegos_blockchain::Transaction;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::curve1174::cpt::SecretKey;
@@ -52,8 +52,8 @@ pub struct Wallet {
     pkey: PublicKey,
     /// Unspent Payment UXTO.
     unspent: HashMap<Hash, (PaymentOutput, i64)>,
-    /// Unspent Escrow UTXO.
-    unspent_stakes: HashMap<Hash, EscrowOutput>,
+    /// Unspent Stake UTXO.
+    unspent_stakes: HashMap<Hash, StakeOutput>,
     /// Calculated Node's balance.
     balance: i64,
 }
@@ -62,7 +62,7 @@ impl Wallet {
     /// Create a new wallet.
     pub fn new(skey: SecretKey, pkey: PublicKey) -> Self {
         let unspent: HashMap<Hash, (PaymentOutput, i64)> = HashMap::new();
-        let unspent_stakes: HashMap<Hash, EscrowOutput> = HashMap::new();
+        let unspent_stakes: HashMap<Hash, StakeOutput> = HashMap::new();
         let balance: i64 = 0;
         Wallet {
             skey,
@@ -195,7 +195,7 @@ impl Wallet {
                     return Some(notification);
                 }
             }
-            Output::EscrowOutput(o) => {
+            Output::StakeOutput(o) => {
                 if let Ok(_delta) = o.decrypt_payload(&self.skey) {
                     info!("Staked money to escrow: hash={}, amount={}", hash, o.amount);
                     let missing = self.unspent_stakes.insert(hash, o);
@@ -228,7 +228,7 @@ impl Wallet {
                     );
                 }
             }
-            Output::EscrowOutput(o) => {
+            Output::StakeOutput(o) => {
                 if let Ok(_delta) = o.decrypt_payload(&self.skey) {
                     info!(
                         "Unstaked money from escrow: hash={}, amount={}",

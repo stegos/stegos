@@ -186,7 +186,7 @@ const CONSENSUS_TIMER: Duration = Duration::from_secs(30);
 const SEALED_BLOCK_IN_EPOCH: usize = 5;
 /// Max difference in timestamps of leader and witnesses.
 const TIME_TO_RECEIVE_BLOCK: u64 = 10 * 60;
-/// Time to lock EscrowOutput.
+/// Time to lock StakeOutput.
 const BONDING_TIME: u64 = 2592000; // 30 days
 
 #[derive(Clone, Debug)]
@@ -460,7 +460,7 @@ where
             }
 
             // Check escrow.
-            if let Output::EscrowOutput(input) = input {
+            if let Output::StakeOutput(input) = input {
                 self.escrow
                     .validate_unstake(&input.validator, input_hash, timestamp)?;
             }
@@ -571,7 +571,7 @@ where
         // Validate inputs.
         for input in inputs.iter() {
             // Check unstaking.
-            if let Output::EscrowOutput(input) = input {
+            if let Output::StakeOutput(input) = input {
                 let input_hash = Hash::digest(input);
                 self.escrow
                     .validate_unstake(&input.validator, &input_hash, timestamp)?;
@@ -811,7 +811,7 @@ where
         let current_timestamp = Utc::now().timestamp() as u64;
 
         for input in &inputs {
-            if let Output::EscrowOutput(o) = input {
+            if let Output::StakeOutput(o) = input {
                 let output_hash = Hash::digest(o);
                 self.escrow
                     .unstake(o.validator, output_hash, current_timestamp);
@@ -819,7 +819,7 @@ where
         }
 
         for output in &outputs {
-            if let Output::EscrowOutput(o) = output {
+            if let Output::StakeOutput(o) = output {
                 let output_hash = Hash::digest(o);
                 let block_timestamp = monetary_block.header.base.timestamp;
                 let bonding_timestamp = block_timestamp + BONDING_TIME;
@@ -865,7 +865,7 @@ where
         for txout in &tx.body.txouts {
             min_fee += match txout {
                 Output::PaymentOutput(_o) => PAYMENT_FEE,
-                Output::EscrowOutput(_o) => ESCROW_FEE,
+                Output::StakeOutput(_o) => STAKE_FEE,
                 Output::DataOutput(o) => NodeService::<Network>::data_fee(o.data_size(), o.ttl),
             };
         }
@@ -1518,7 +1518,7 @@ pub mod tests {
                     let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
                 }
-                Some(Output::EscrowOutput(o)) => {
+                Some(Output::StakeOutput(o)) => {
                     assert_eq!(o.amount, stake);
                 }
                 _ => panic!(),
@@ -1541,7 +1541,7 @@ pub mod tests {
                     let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
                 }
-                Some(Output::EscrowOutput(o)) => {
+                Some(Output::StakeOutput(o)) => {
                     assert_eq!(o.amount, stake);
                 }
                 _ => panic!(),
@@ -1587,7 +1587,7 @@ pub mod tests {
                     let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
                 }
-                Some(Output::EscrowOutput(o)) => {
+                Some(Output::StakeOutput(o)) => {
                     assert_eq!(o.amount, stake);
                 }
                 _ => panic!(),
@@ -1620,7 +1620,7 @@ pub mod tests {
                 Some(Output::DataOutput(_o)) => {
                     unspent_data += 1;
                 }
-                Some(Output::EscrowOutput(o)) => {
+                Some(Output::StakeOutput(o)) => {
                     assert_eq!(o.amount, stake);
                 }
                 _ => panic!(),
@@ -1657,7 +1657,7 @@ pub mod tests {
                 Some(Output::DataOutput(_o)) => {
                     unspent_data += 1;
                 }
-                Some(Output::EscrowOutput(o)) => {
+                Some(Output::StakeOutput(o)) => {
                     assert_eq!(o.amount, stake);
                 }
                 _ => panic!(),

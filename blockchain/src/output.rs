@@ -48,10 +48,10 @@ const DATA_PAYLOAD_MAGIC: [u8; 4] = [100, 97, 116, 97]; // "data"
 const DATA_PAYLOAD_LEN: usize = 68;
 
 /// A magic value used to encode/decode payload.
-const ESCROW_PAYLOAD_MAGIC: [u8; 4] = [101, 115, 99, 114]; // "escr"
+const STAKE_PAYLOAD_MAGIC: [u8; 4] = [101, 115, 99, 114]; // "escr"
 
 /// Escrow payload size.
-const ESCROW_PAYLOAD_LEN: usize = 36;
+const STAKE_PAYLOAD_LEN: usize = 36;
 
 /// Errors.
 #[derive(Debug, Fail)]
@@ -110,7 +110,7 @@ pub struct DataOutput {
 
 /// Escrow UTXO.
 #[derive(Debug, Clone)]
-pub struct EscrowOutput {
+pub struct StakeOutput {
     /// Cloaked wallet key of validator.
     pub recipient: PublicKey,
 
@@ -129,7 +129,7 @@ pub struct EscrowOutput {
 pub enum Output {
     PaymentOutput(PaymentOutput),
     DataOutput(DataOutput),
-    EscrowOutput(EscrowOutput),
+    StakeOutput(StakeOutput),
 }
 
 /// Cloak recipient's public key.
@@ -345,8 +345,8 @@ impl DataOutput {
     }
 }
 
-impl EscrowOutput {
-    /// Create a new EscrowOutput.
+impl StakeOutput {
+    /// Create a new StakeOutput.
     pub fn new(
         timestamp: u64,
         sender_skey: &SecretKey,
@@ -363,7 +363,7 @@ impl EscrowOutput {
         // Encrypt payload.
         let payload = Self::encrypt_payload(delta, recipient_pkey)?;
 
-        let output = EscrowOutput {
+        let output = StakeOutput {
             recipient: cloaked_pkey,
             validator: validator_pkey.clone(),
             amount,
@@ -373,24 +373,24 @@ impl EscrowOutput {
         Ok(output)
     }
 
-    /// Encrypt payload for EscrowOutput.
+    /// Encrypt payload for StakeOutput.
     fn encrypt_payload(delta: Fr, pkey: &PublicKey) -> Result<EncryptedPayload, CryptoError> {
         let delta_bytes: [u8; 32] = delta.to_lev_u8();
 
-        let payload: Vec<u8> = [&ESCROW_PAYLOAD_MAGIC[..], &delta_bytes[..]].concat();
+        let payload: Vec<u8> = [&STAKE_PAYLOAD_MAGIC[..], &delta_bytes[..]].concat();
 
         // Ensure that the total length of package is valid.
-        assert_eq!(payload.len(), ESCROW_PAYLOAD_LEN);
+        assert_eq!(payload.len(), STAKE_PAYLOAD_LEN);
 
         // Encrypt payload it.
         aes_encrypt(&payload, &pkey)
     }
 
-    /// Decrypt payload of EscrowOutput.
+    /// Decrypt payload of StakeOutput.
     pub fn decrypt_payload(&self, skey: &SecretKey) -> Result<Fr, Error> {
         let payload: Vec<u8> = aes_decrypt(&self.payload, &skey)?;
 
-        if payload.len() != ESCROW_PAYLOAD_LEN {
+        if payload.len() != STAKE_PAYLOAD_LEN {
             // Invalid payload or invalid secret key supplied.
             return Err(OutputError::PayloadDecryptionError.into());
         }
@@ -400,7 +400,7 @@ impl EscrowOutput {
         magic.copy_from_slice(&payload[0..4]);
         delta_bytes.copy_from_slice(&payload[4..36]);
 
-        if magic != ESCROW_PAYLOAD_MAGIC {
+        if magic != STAKE_PAYLOAD_MAGIC {
             // Invalid payload or invalid secret key supplied.
             return Err(OutputError::PayloadDecryptionError.into());
         }
@@ -436,21 +436,21 @@ impl Output {
     }
 
     /// Create a new escrow transaction.
-    pub fn new_escrow(
+    pub fn new_stake(
         timestamp: u64,
         sender_skey: &SecretKey,
         recipient_pkey: &PublicKey,
         validator_pkey: &secure::PublicKey,
         amount: i64,
     ) -> Result<Self, Error> {
-        let output = EscrowOutput::new(
+        let output = StakeOutput::new(
             timestamp,
             sender_skey,
             recipient_pkey,
             validator_pkey,
             amount,
         )?;
-        Ok(Output::EscrowOutput(output))
+        Ok(Output::StakeOutput(output))
     }
 }
 
@@ -479,7 +479,7 @@ impl Hashable for DataOutput {
     }
 }
 
-impl Hashable for EscrowOutput {
+impl Hashable for StakeOutput {
     fn hash(&self, state: &mut Hasher) {
         "Escrow".hash(state);
         self.recipient.hash(state);
@@ -494,7 +494,7 @@ impl Hashable for Output {
         match self {
             Output::PaymentOutput(monetary) => monetary.hash(state),
             Output::DataOutput(data) => data.hash(state),
-            Output::EscrowOutput(escrow) => escrow.hash(state),
+            Output::StakeOutput(escrow) => escrow.hash(state),
         }
     }
 }
@@ -550,7 +550,7 @@ pub mod tests {
         let timestamp = Utc::now().timestamp() as u64;
         let amount: i64 = 100500;
 
-        let output = EscrowOutput::new(timestamp, &skey1, &pkey2, &secure_pkey1, amount)
+        let output = StakeOutput::new(timestamp, &skey1, &pkey2, &secure_pkey1, amount)
             .expect("encryption successful");
         let _delta2 = output
             .decrypt_payload(&skey2)

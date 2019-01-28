@@ -352,7 +352,7 @@ impl MonetaryBlock {
                 Output::DataOutput(o) => {
                     pedersen_commitment_diff += Pt::decompress(o.vcmt)?;
                 }
-                Output::EscrowOutput(o) => {
+                Output::StakeOutput(o) => {
                     pedersen_commitment_diff += fee_a(o.amount);
                 }
             };
@@ -377,7 +377,7 @@ impl MonetaryBlock {
                 Output::DataOutput(ref o) => {
                     pedersen_commitment_diff -= Pt::decompress(o.vcmt)?;
                 }
-                Output::EscrowOutput(ref o) => {
+                Output::StakeOutput(ref o) => {
                     if o.amount <= 0 {
                         return Err(BlockchainError::InvalidStake.into());
                     }
@@ -635,7 +635,7 @@ pub mod tests {
         // Escrow as an input.
         //
         {
-            let input = Output::new_escrow(timestamp, &skey0, &pkey1, &secure_pkey1, amount)
+            let input = Output::new_stake(timestamp, &skey0, &pkey1, &secure_pkey1, amount)
                 .expect("keys are valid");
             let input_hashes = [Hash::digest(&input)];
             let inputs = [input];
@@ -658,7 +658,7 @@ pub mod tests {
                 Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
             let input_hashes = [Hash::digest(&input)];
             let inputs = [input];
-            let output = Output::new_escrow(timestamp, &skey1, &pkey1, &secure_pkey1, amount)
+            let output = Output::new_stake(timestamp, &skey1, &pkey1, &secure_pkey1, amount)
                 .expect("keys are valid");
             let outputs_gamma = Fr::zero();
             let outputs = [output];
@@ -677,10 +677,10 @@ pub mod tests {
                 Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
             let input_hashes = [Hash::digest(&input)];
             let inputs = [input];
-            let mut output = EscrowOutput::new(timestamp, &skey1, &pkey1, &secure_pkey1, amount)
+            let mut output = StakeOutput::new(timestamp, &skey1, &pkey1, &secure_pkey1, amount)
                 .expect("keys are valid");
             output.amount = amount - 1;
-            let output = Output::EscrowOutput(output);
+            let output = Output::StakeOutput(output);
             let outputs_gamma = Fr::zero();
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;
@@ -704,10 +704,10 @@ pub mod tests {
                 Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
             let input_hashes = [Hash::digest(&input)];
             let inputs = [input];
-            let mut output = EscrowOutput::new(timestamp, &skey1, &pkey1, &secure_pkey1, amount)
+            let mut output = StakeOutput::new(timestamp, &skey1, &pkey1, &secure_pkey1, amount)
                 .expect("keys are valid");
             output.amount = 0;
-            let output = Output::EscrowOutput(output);
+            let output = Output::StakeOutput(output);
             let outputs_gamma = Fr::zero();
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;

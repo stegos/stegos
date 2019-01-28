@@ -40,8 +40,8 @@ use toml;
 
 /// Fixed fee for payment transactions.
 pub const PAYMENT_FEE: i64 = 1;
-/// Fixed fee for escrow transactions.
-pub const ESCROW_FEE: i64 = 1;
+/// Fixed fee for the stake transactions.
+pub const STAKE_FEE: i64 = 1;
 /// Data unit used to calculate fee.
 pub const DATA_UNIT: usize = 1024;
 /// Fee for one DATA_UNIT.

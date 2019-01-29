@@ -188,6 +188,8 @@ const SEALED_BLOCK_IN_EPOCH: usize = 5;
 const TIME_TO_RECEIVE_BLOCK: u64 = 10 * 60;
 /// Time to lock StakeOutput.
 const BONDING_TIME: u64 = 2592000; // 30 days
+/// Fixed reward per block.
+const BLOCK_REWARD: i64 = 60;
 
 #[derive(Clone, Debug)]
 enum NodeMessage {
@@ -388,6 +390,9 @@ where
                         self.chain.height() + 1,
                         Hash::digest(&monetary_block)
                     );
+                    monetary_block
+                        .validate(&[])
+                        .expect("monetary balance is ok");
                     let monetary_block2 = monetary_block.clone();
                     let inputs = self.chain.register_monetary_block(monetary_block)?;
                     self.on_monetary_block_registered(&monetary_block2, inputs)?;
@@ -1015,6 +1020,7 @@ where
             previous,
             VERSION,
             self.epoch,
+            BLOCK_REWARD,
             &self.keys.wallet_skey,
             &self.keys.wallet_pkey,
         );
@@ -1175,6 +1181,16 @@ where
         fee_output: &Option<Output>,
         tx_hashes: &Vec<Hash>,
     ) -> Result<(), Error> {
+        if block.header.monetary_adjustment != BLOCK_REWARD {
+            // TODO: support slashing.
+            return Err(NodeError::InvalidBlockReward(
+                block_hash,
+                block.header.monetary_adjustment,
+                BLOCK_REWARD,
+            )
+            .into());
+        }
+
         // Check transactions.
         let mut inputs = Vec::<Output>::new();
         let mut inputs_hashes = BTreeSet::<Hash>::new();
@@ -1253,6 +1269,7 @@ where
         let block = MonetaryBlock::new(
             base_header,
             block.header.gamma.clone(),
+            block.header.monetary_adjustment,
             &inputs_hashes,
             &outputs,
         );
@@ -1417,6 +1434,7 @@ pub mod tests {
             previous,
             VERSION,
             node.epoch,
+            0,
             &node.keys.wallet_skey,
             &node.keys.wallet_pkey,
         );

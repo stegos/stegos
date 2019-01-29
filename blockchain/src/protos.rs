@@ -343,6 +343,7 @@ impl ProtoConvert for MonetaryBlockHeader {
         let mut proto = blockchain::MonetaryBlockHeader::new();
         proto.set_base(self.base.into_proto());
         proto.set_gamma(self.gamma.into_proto());
+        proto.set_monetary_adjustment(self.monetary_adjustment);
         proto.set_inputs_range_hash(self.inputs_range_hash.into_proto());
         proto.set_outputs_range_hash(self.outputs_range_hash.into_proto());
         proto
@@ -351,11 +352,13 @@ impl ProtoConvert for MonetaryBlockHeader {
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let base = BaseBlockHeader::from_proto(proto.get_base())?;
         let gamma = Fr::from_proto(proto.get_gamma())?;
+        let monetary_adjustment = proto.get_monetary_adjustment();
         let inputs_range_hash = Hash::from_proto(proto.get_inputs_range_hash())?;
         let outputs_range_hash = Hash::from_proto(proto.get_outputs_range_hash())?;
         Ok(MonetaryBlockHeader {
             base,
             gamma,
+            monetary_adjustment,
             inputs_range_hash,
             outputs_range_hash,
         })
@@ -585,7 +588,7 @@ mod tests {
         assert_eq!(base.multisig, base2.multisig);
         assert_eq!(base.multisigmap, base2.multisigmap);
 
-        let block = MonetaryBlock::new(base, gamma.clone(), &inputs1, &outputs1);
+        let block = MonetaryBlock::new(base, gamma.clone(), 0, &inputs1, &outputs1);
         roundtrip(&block.header);
         roundtrip(&block.body);
         roundtrip(&block);

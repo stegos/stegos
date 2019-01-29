@@ -51,6 +51,11 @@ pub enum NodeError {
     #[fail(display = "Failed to validate block: expected={}, got={}", _0, _1)]
     InvalidBlockHash(Hash, Hash),
     #[fail(
+        display = "Invalid block reward: hash={}, expected={}, got={}",
+        _0, _1, _2
+    )]
+    InvalidBlockReward(Hash, i64, i64),
+    #[fail(
         display = "Sealed Block from non-leader: block={}, expected={}, got={}",
         _0, _1, _2
     )]

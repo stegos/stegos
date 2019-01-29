@@ -51,8 +51,9 @@ message BaseBlockHeader {
 message MonetaryBlockHeader {
     BaseBlockHeader base = 1;
     stegos.crypto.Fr gamma = 2;
-    stegos.crypto.Hash inputs_range_hash = 3;
-    stegos.crypto.Hash outputs_range_hash = 4;
+    int64 monetary_adjustment = 3;
+    stegos.crypto.Hash inputs_range_hash = 4;
+    stegos.crypto.Hash outputs_range_hash = 5;
 }
 
 message MerkleNode {

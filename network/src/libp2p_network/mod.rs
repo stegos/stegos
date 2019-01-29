@@ -26,9 +26,14 @@ use futures::prelude::*;
 use futures::sync::mpsc;
 use ipnetwork::IpNetwork;
 use libp2p::{
-    core::swarm::NetworkBehaviourEventProcess, core::topology::Topology, core::PublicKey, floodsub,
-    kad::{KademliaOut, KademliaTopology}, multiaddr::Protocol, multiaddr::ToMultiaddr, multihash, secio, Multiaddr,
-    NetworkBehaviour, PeerId,
+    core::swarm::NetworkBehaviourEventProcess,
+    core::topology::Topology,
+    core::PublicKey,
+    floodsub,
+    kad::{KademliaOut, KademliaTopology},
+    multiaddr::Protocol,
+    multiaddr::ToMultiaddr,
+    multihash, secio, Multiaddr, NetworkBehaviour, PeerId,
 };
 use log::*;
 use pnet::datalink;
@@ -116,8 +121,11 @@ fn new_service(
     ),
     Error,
 > {
-    let (secp256k1_key, _) = keychain.generate_secp256k1_keypair().expect("Couldn't generate secp256k1 keypair for network communications");
-    let local_key = secio::SecioKeyPair::secp256k1_raw_key(&secp256k1_key[..]).expect("converting from raw key shoyld never fail");
+    let (secp256k1_key, _) = keychain
+        .generate_secp256k1_keypair()
+        .expect("Couldn't generate secp256k1 keypair for network communications");
+    let local_key = secio::SecioKeyPair::secp256k1_raw_key(&secp256k1_key[..])
+        .expect("converting from raw key shoyld never fail");
     let local_pub_key = local_key.to_public_key();
     let peer_id = local_pub_key.clone().into_peer_id();
 
@@ -391,8 +399,11 @@ fn new_peerstore(
 
     debug!("My adverised addresses: {:#?}", my_addresses);
     peerstore.add_local_external_addrs(my_addresses.into_iter());
-    let cosi_pkey_hash = multihash::encode(multihash::Hash::SHA2256, &keychain.cosi_pkey.clone().into_bytes())
-        .expect("hashing with SHA2256 never fails");
+    let cosi_pkey_hash = multihash::encode(
+        multihash::Hash::SHA2256,
+        &keychain.cosi_pkey.clone().into_bytes(),
+    )
+    .expect("hashing with SHA2256 never fails");
     peerstore.add_provider(cosi_pkey_hash, peer_id);
     peerstore
 }

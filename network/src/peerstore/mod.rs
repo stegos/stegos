@@ -39,7 +39,6 @@ pub struct MemoryPeerstore {
     local_public_key: PublicKey,
 }
 
-
 impl MemoryPeerstore {
     /// Creates an empty topology.
     #[inline]
@@ -84,7 +83,10 @@ impl MemoryPeerstore {
 
 impl Topology for MemoryPeerstore {
     fn addresses_of_peer(&mut self, peer: &PeerId) -> Vec<Multiaddr> {
-        self.peers.get(peer).map(|v| v.clone()).unwrap_or(Vec::new())
+        self.peers
+            .get(peer)
+            .map(|v| v.clone())
+            .unwrap_or(Vec::new())
     }
 
     fn add_local_external_addrs<TIter>(&mut self, addrs: TIter)
@@ -161,7 +163,11 @@ impl KademliaTopology for MemoryPeerstore {
     /// Get known providers for the key
     fn get_providers(&mut self, key: &Multihash) -> Self::GetProvidersIter {
         if let Ok(key_id) = PeerId::from_multihash(key.clone()) {
-            self.nodes.get(&key_id).map(|v| v.clone()).unwrap_or(Vec::new()).into_iter()
+            self.nodes
+                .get(&key_id)
+                .map(|v| v.clone())
+                .unwrap_or(Vec::new())
+                .into_iter()
         } else {
             Vec::new().into_iter()
         }

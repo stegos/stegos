@@ -1,11 +1,12 @@
 [package]
 name = "stegos_network"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Stegos AG <info@stegos.cc>"]
 edition = "2018"
 build = "build.rs"
 
 [dependencies]
+bs58 = "0.2"
 bytes = "0.4"
 failure = "0.1"
 futures = "0.1"

@@ -2234,7 +2234,7 @@ dependencies = [
  "stegos_consensus 0.1.0",
  "stegos_crypto 0.1.0",
  "stegos_keychain 0.1.0",
- "stegos_network 0.2.0",
+ "stegos_network 0.3.0",
  "stegos_node 0.1.0",
  "stegos_runtime 0.1.0",
  "stegos_serialization 0.1.0",
@@ -2333,8 +2333,9 @@ dependencies = [
 
 [[package]]
 name = "stegos_network"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
+ "bs58 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "bytes 0.4.11 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "failure 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2382,7 +2383,7 @@ dependencies = [
  "stegos_consensus 0.1.0",
  "stegos_crypto 0.1.0",
  "stegos_keychain 0.1.0",
- "stegos_network 0.2.0",
+ "stegos_network 0.3.0",
  "stegos_serialization 0.1.0",
  "stegos_wallet 0.1.0",
  "tokio-timer 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2420,7 +2421,7 @@ dependencies = [
  "protobuf 2.2.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "stegos_crypto 0.1.0",
  "stegos_keychain 0.1.0",
- "stegos_network 0.2.0",
+ "stegos_network 0.3.0",
  "stegos_serialization 0.1.0",
  "tokio-timer 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
 ]

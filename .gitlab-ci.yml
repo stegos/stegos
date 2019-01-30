@@ -18,7 +18,7 @@ before_script:
 
 build:linux:
   extends: .build
-  image: rust:1.31
+  image: rust:1.32
   tags:
     - linux
 
@@ -34,7 +34,7 @@ build:linux:
 
 test:linux:
   extends: .test
-  image: rust:1.31
+  image: rust:1.32
   dependencies:
     - build:linux
   tags:
@@ -42,7 +42,7 @@ test:linux:
 
 code_coverage:
   stage: code_coverage
-  image: rust:1.31
+  image: rust:1.32
   script:
     - ci-scripts/coverage.sh
   dependencies:
@@ -68,7 +68,7 @@ code_coverage:
 
 release:linux:
   extends: .release
-  image: rust:1.31
+  image: rust:1.32
   tags:
     - linux
 

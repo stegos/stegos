@@ -23,7 +23,9 @@ install_deps_linux() {
 }
 
 install_deps_macos() {
-    brew install gmp mpfr pbc protobuf zlib cmake pkg-config
+    brew install gmp mpfr protobuf zlib cmake pkg-config
+    (cd /usr/local && curl -L https://github.com/stegos/stegos-external-libs/releases/download/v0.3/stegos-external-libs-osx.tgz |
+        tar xvfz -)
 }
 
 case $(uname -s) in

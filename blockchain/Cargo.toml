@@ -18,7 +18,6 @@ bitvector = "0.1"
 protobuf = "2.2"
 
 [dev-dependencies]
-chrono = "0.4"
 simple_logger = "1.0"
 
 [build-dependencies]

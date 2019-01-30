@@ -24,7 +24,6 @@
 mod consensus;
 mod election;
 mod error;
-mod escrow;
 mod mempool;
 pub mod protos;
 mod tickets;
@@ -35,7 +34,6 @@ use bitvector::BitVector;
 
 use crate::election::ConsensusGroup;
 use crate::error::*;
-use crate::escrow::*;
 pub use crate::tickets::{TicketsSystem, VRFTicket};
 use chrono::Utc;
 use failure::{ensure, Error};
@@ -57,7 +55,6 @@ use stegos_crypto::bulletproofs::validate_range_proof;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
 use stegos_crypto::pbc::secure::Signature as SecureSignature;
-use stegos_crypto::pbc::secure::G2;
 use stegos_keychain::KeyChain;
 use stegos_network::NetworkProvider;
 use stegos_serialization::traits::ProtoConvert;
@@ -186,8 +183,6 @@ const CONSENSUS_TIMER: Duration = Duration::from_secs(30);
 const SEALED_BLOCK_IN_EPOCH: usize = 5;
 /// Max difference in timestamps of leader and witnesses.
 const TIME_TO_RECEIVE_BLOCK: u64 = 10 * 60;
-/// Time to lock StakeOutput.
-const BONDING_TIME: u64 = 2592000; // 30 days
 /// Fixed reward per block.
 const BLOCK_REWARD: i64 = 60;
 
@@ -220,10 +215,6 @@ struct NodeService<Network> {
     /// Key Chain.
     keys: KeyChain,
 
-    /// A monotonically increasing value that represents the heights of the blockchain,
-    /// starting from genesis block (=0).
-    epoch: u64,
-
     /// Number of sealed block processed during epoch,
     sealed_block_num: usize,
 
@@ -239,23 +230,15 @@ struct NodeService<Network> {
     //
     // Consensus
     //
-    /// Escrow
-    escrow: Escrow,
-    /// Snapshot of selected leader from the latest key block.
-    leader: SecurePublicKey,
-    /// Snapshot of selected facilitator from the latest key block.
-    facilitator: SecurePublicKey,
-    /// Snapshot of validators with stakes from the latest key block.
-    validators: BTreeMap<SecurePublicKey, i64>,
-
     /// Memory pool of pending transactions.
     mempool: Mempool,
 
     /// Proof-of-stake consensus.
     consensus: Option<BlockConsensus>,
-    /// A timestamp when the last sealed block was received.
-    last_block_timestamp: Instant,
 
+    //
+    // Communication with environment.
+    //
     /// Network interface.
     broker: Network,
     /// Triggered when epoch is changed.
@@ -277,12 +260,7 @@ where
         inbox: UnboundedReceiver<NodeMessage>,
     ) -> Result<Self, Error> {
         let chain = Blockchain::new();
-        let epoch: u64 = 0;
         let sealed_block_num = 0;
-        let escrow = Escrow::new();
-        let leader: SecurePublicKey = G2::generator().into(); // some fake key
-        let facilitator: SecurePublicKey = G2::generator().into(); // some fake key
-        let validators = BTreeMap::<SecurePublicKey, i64>::new();
         let future_consensus_messages = Vec::new();
         //TODO: Calculate viewchange on node restart by timeout since last known block.
         let vrf_system = TicketsSystem::new(WITNESSES_MAX, 0, 0, keys.cosi_pkey, keys.cosi_skey);
@@ -290,7 +268,6 @@ where
         let mempool = Mempool::new();
 
         let consensus = None;
-        let last_block_timestamp = Instant::now();
 
         let on_epoch_changed = Vec::<UnboundedSender<EpochNotification>>::new();
         let on_outputs_received = Vec::<UnboundedSender<OutputsNotification>>::new();
@@ -346,14 +323,8 @@ where
             vrf_system,
             chain,
             keys,
-            epoch,
-            leader,
-            facilitator,
-            escrow,
-            validators,
             mempool,
             consensus,
-            last_block_timestamp,
             broker,
             on_epoch_changed,
             on_outputs_changed: on_outputs_received,
@@ -394,8 +365,8 @@ where
                         .validate(&[])
                         .expect("monetary balance is ok");
                     let monetary_block2 = monetary_block.clone();
-                    let inputs = self.chain.register_monetary_block(monetary_block)?;
-                    self.on_monetary_block_registered(&monetary_block2, inputs)?;
+                    let (inputs, outputs) = self.chain.register_monetary_block(monetary_block)?;
+                    self.on_monetary_block_registered(&monetary_block2, inputs, outputs)?;
                 }
             }
         }
@@ -404,8 +375,6 @@ where
             // Move to the next height.
             consensus.reset(self.chain.height() as u64);
         }
-
-        self.last_block_timestamp = Instant::now();
 
         Ok(())
     }
@@ -473,7 +442,8 @@ where
 
             // Check escrow.
             if let Output::StakeOutput(input) = input {
-                self.escrow
+                self.chain
+                    .escrow
                     .validate_unstake(&input.validator, input_hash, timestamp)?;
             }
 
@@ -511,15 +481,15 @@ where
         // We can accept any keyblock if we on bootstraping phase.
         let block_hash = Hash::digest(&key_block);
         // Check epoch.
-        if self.epoch + 1 != key_block.header.base.epoch {
+        if self.chain.epoch + 1 != key_block.header.base.epoch {
             error!(
                 "Invalid or out-of-order block received: hash={}, expected_epoch={}, got_epoch={}",
-                &block_hash, self.epoch, key_block.header.base.epoch
+                &block_hash, self.chain.epoch, key_block.header.base.epoch
             );
             return Ok(());
         }
         let leader = key_block.header.leader.clone();
-        let validators = self.escrow.multiget(&key_block.header.witnesses);
+        let validators = self.chain.escrow.multiget(&key_block.header.witnesses);
 
         // Check BLS multi-signature.
         if !check_multi_signature(
@@ -550,16 +520,19 @@ where
         let block_hash = Hash::digest(&monetary_block);
         // For monetary block, consensus is stable, and we can just check leader.
         // Check that message is signed by current leader.
-        if *pkey != self.leader {
-            return Err(
-                NodeError::SealedBlockFromNonLeader(block_hash, self.leader.clone(), *pkey).into(),
-            );
+        if *pkey != self.chain.leader {
+            return Err(NodeError::SealedBlockFromNonLeader(
+                block_hash,
+                self.chain.leader.clone(),
+                *pkey,
+            )
+            .into());
         }
         // Check epoch.
-        if self.epoch != monetary_block.header.base.epoch {
+        if self.chain.epoch != monetary_block.header.base.epoch {
             error!(
                 "Invalid or out-of-order block received: hash={}, expected_epoch={}, got_epoch={}",
-                &block_hash, self.epoch, monetary_block.header.base.epoch
+                &block_hash, self.chain.epoch, monetary_block.header.base.epoch
             );
             return Ok(());
         }
@@ -569,8 +542,8 @@ where
             &block_hash,
             &monetary_block.header.base.multisig,
             &monetary_block.header.base.multisigmap,
-            &self.validators,
-            &self.leader,
+            &self.chain.validators,
+            &self.chain.leader,
         ) {
             return Err(NodeError::InvalidBlockSignature(block_hash).into());
         }
@@ -585,7 +558,8 @@ where
             // Check unstaking.
             if let Output::StakeOutput(input) = input {
                 let input_hash = Hash::digest(input);
-                self.escrow
+                self.chain
+                    .escrow
                     .validate_unstake(&input.validator, &input_hash, timestamp)?;
             }
         }
@@ -596,8 +570,8 @@ where
         info!("Monetary block is valid: hash={}", &block_hash);
 
         let monetary_block2 = monetary_block.clone();
-        let inputs = self.chain.register_monetary_block(monetary_block)?;
-        self.on_monetary_block_registered(&monetary_block2, inputs)
+        let (inputs, outputs) = self.chain.register_monetary_block(monetary_block)?;
+        self.on_monetary_block_registered(&monetary_block2, inputs, outputs)
     }
 
     /// Handle incoming blocks received from network.
@@ -661,8 +635,6 @@ where
     ///
     /// Returns error on sending message failure.
     fn on_next_block(&mut self, block_hash: Hash) -> Result<(), Error> {
-        self.sealed_block_num += 1;
-
         self.vrf_system.handle_sealed_block();
 
         // epoch ended, disable consensus and start vrf system.
@@ -676,7 +648,6 @@ where
             // Move to the next height.
             consensus.reset(self.chain.height() as u64);
         }
-        self.last_block_timestamp = Instant::now();
 
         Ok(())
     }
@@ -687,10 +658,10 @@ where
         tx: UnboundedSender<EpochNotification>,
     ) -> Result<(), Error> {
         let msg = EpochNotification {
-            epoch: self.epoch,
-            leader: self.leader.clone(),
-            facilitator: self.facilitator.clone(),
-            validators: self.validators.clone(),
+            epoch: self.chain.epoch,
+            leader: self.chain.leader.clone(),
+            facilitator: self.chain.facilitator.clone(),
+            validators: self.chain.validators.clone(),
         };
         tx.unbounded_send(msg)?;
         self.on_epoch_changed.push(tx);
@@ -714,7 +685,7 @@ where
         let last = self.chain.last_block();
         let previous = Hash::digest(last);
         let timestamp = Utc::now().timestamp() as u64;
-        let epoch = self.epoch + 1;
+        let epoch = self.chain.epoch + 1;
 
         let base = BaseBlockHeader::new(VERSION, previous, epoch, timestamp);
         debug!(
@@ -748,31 +719,24 @@ where
 
     /// Called when a new key block is registered.
     fn on_key_block_registered(&mut self, key_block: &KeyBlock) -> Result<(), Error> {
-        assert_eq!(self.epoch + 1, key_block.header.base.epoch);
-        self.epoch = self.epoch + 1;
-
         self.sealed_block_num = 0;
-        self.leader = key_block.header.leader.clone();
-        self.facilitator = key_block.header.facilitator.clone();
-        self.validators = self.escrow.multiget(&key_block.header.witnesses);
-
-        if self.validators.contains_key(&self.keys.cosi_pkey) {
+        if self.chain.validators.contains_key(&self.keys.cosi_pkey) {
             // Promote to Validator role
             let consensus = BlockConsensus::new(
                 self.chain.height() as u64,
-                self.epoch,
+                self.chain.epoch,
                 self.keys.cosi_skey.clone(),
                 self.keys.cosi_pkey.clone(),
-                self.leader.clone(),
-                self.validators.clone(),
+                self.chain.leader.clone(),
+                self.chain.validators.clone(),
             );
 
             if consensus.is_leader() {
-                info!("I'm leader: epoch={}", self.epoch);
+                info!("I'm leader: epoch={}", self.chain.epoch);
             } else {
                 info!(
                     "I'm validator: epoch={}, leader={}",
-                    self.epoch, self.leader
+                    self.chain.epoch, self.chain.leader
                 );
             }
 
@@ -782,18 +746,18 @@ where
             // Resign from Validator role.
             info!(
                 "I'm regular node: epoch={}, leader={}",
-                self.epoch, self.leader
+                self.chain.epoch, self.chain.leader
             );
             self.consensus = None;
         }
-        debug!("Validators: {:?}", &self.validators);
+        debug!("Validators: {:?}", &self.chain.validators);
 
         debug!("Broadcast new epoch event.");
         let msg = EpochNotification {
-            epoch: self.epoch,
-            leader: self.leader,
-            validators: self.validators.clone(),
-            facilitator: self.facilitator,
+            epoch: self.chain.epoch,
+            leader: self.chain.leader,
+            validators: self.chain.validators.clone(),
+            facilitator: self.chain.facilitator,
         };
         self.on_epoch_changed
             .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
@@ -808,44 +772,15 @@ where
         &mut self,
         monetary_block: &MonetaryBlock,
         inputs: Vec<Output>,
+        outputs: Vec<Output>,
     ) -> Result<(), Error> {
-        //
-        // Notify subscribers.
-        //
-
-        let outputs: Vec<Output> = monetary_block
-            .body
-            .outputs
-            .leafs()
-            .drain(..)
-            .map(|(o, _path)| *o.clone())
-            .collect();
-
-        let current_timestamp = Utc::now().timestamp() as u64;
-
-        for input in &inputs {
-            if let Output::StakeOutput(o) = input {
-                let output_hash = Hash::digest(o);
-                self.escrow
-                    .unstake(o.validator, output_hash, current_timestamp);
-            }
-        }
-
-        for output in &outputs {
-            if let Output::StakeOutput(o) = output {
-                let output_hash = Hash::digest(o);
-                let block_timestamp = monetary_block.header.base.timestamp;
-                let bonding_timestamp = block_timestamp + BONDING_TIME;
-                self.escrow
-                    .stake(o.validator, output_hash, bonding_timestamp, o.amount);
-            }
-        }
-
         // Remove old transactions from the mempool.
         let input_hashes: Vec<Hash> = inputs.iter().map(|o| Hash::digest(o)).collect();
         let output_hashes: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
         self.mempool.prune(&input_hashes, &output_hashes);
-
+        //
+        // Notify subscribers.
+        //
         let msg = OutputsNotification { inputs, outputs };
         self.on_outputs_changed
             .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
@@ -894,22 +829,24 @@ where
     /// Restars consensus with new params, and send new keyblock.
     fn on_change_group(&mut self, group: ConsensusGroup) -> Result<(), Error> {
         info!("Changing group, new group leader = {:?}", group.leader);
-        self.leader = group.leader;
-        self.facilitator = group.facilitator;
-        self.validators = group.witnesses.iter().cloned().collect();
-        if self.validators.contains_key(&self.keys.cosi_pkey) {
+        self.chain.change_group(
+            group.leader,
+            group.facilitator,
+            group.witnesses.iter().cloned().collect(),
+        );
+        if self.chain.validators.contains_key(&self.keys.cosi_pkey) {
             let consensus = BlockConsensus::new(
                 self.chain.height() as u64,
-                self.epoch + 1,
+                self.chain.epoch + 1,
                 self.keys.cosi_skey.clone(),
                 self.keys.cosi_pkey.clone(),
-                self.leader.clone(),
-                self.validators.clone(),
+                self.chain.leader.clone(),
+                self.chain.validators.clone(),
             );
             self.consensus = Some(consensus);
             let consensus = self.consensus.as_ref().unwrap();
             if consensus.is_leader() {
-                self.on_create_new_epoch(self.facilitator)?;
+                self.on_create_new_epoch(self.chain.facilitator)?;
             }
             self.on_new_consensus();
         } else {
@@ -990,7 +927,7 @@ where
     /// Called periodically every CONSENSUS_TIMER seconds.
     ///
     fn handle_consensus_timer(&mut self) -> Result<(), Error> {
-        let elapsed = self.last_block_timestamp.elapsed();
+        let elapsed = self.chain.last_block_timestamp.elapsed();
 
         // Check that a new payment block should be proposed.
         if self.consensus.is_some()
@@ -1019,7 +956,7 @@ where
         let (block, fee_output, tx_hashes) = self.mempool.create_block(
             previous,
             VERSION,
-            self.epoch,
+            self.chain.epoch,
             BLOCK_REWARD,
             &self.keys.wallet_skey,
             &self.keys.wallet_pkey,
@@ -1070,14 +1007,7 @@ where
         let (block, proof) = consensus.get_proposal();
         let request_hash = Hash::digest(block);
         debug!("Validating block: block={}", &request_hash);
-        match NodeService::<Network>::validate_block(
-            consensus,
-            &self.mempool,
-            &self.chain,
-            self.epoch,
-            block,
-            proof,
-        ) {
+        match Self::validate_block(consensus, &self.mempool, &self.chain, block, proof) {
             Ok(()) => {
                 let consensus = self.consensus.as_mut().unwrap();
                 consensus.prevote(request_hash);
@@ -1099,12 +1029,12 @@ where
         consensus: &BlockConsensus,
         mempool: &Mempool,
         chain: &Blockchain,
-        epoch: u64,
         block: &Block,
         proof: &BlockProof,
     ) -> Result<(), Error> {
         let block_hash = Hash::digest(block);
         let base_header = block.base_header();
+        let epoch = chain.epoch;
 
         // Check block hash uniqueness.
         if let Some(_) = chain.block_by_hash(&block_hash) {
@@ -1343,11 +1273,11 @@ where
                 monetary_block.header.base.multisig = multisig;
                 monetary_block.header.base.multisigmap = multisigmap;
                 let monetary_block2 = monetary_block.clone();
-                let pruned = self
+                let (inputs, outputs) = self
                     .chain
                     .register_monetary_block(monetary_block)
                     .expect("block is validated before");
-                self.on_monetary_block_registered(&monetary_block2, pruned)
+                self.on_monetary_block_registered(&monetary_block2, inputs, outputs)
                     .expect("internal error");
                 self.send_sealed_block(Block::MonetaryBlock(monetary_block2))
                     .expect("failed to send sealed monetary block");
@@ -1410,19 +1340,22 @@ pub mod tests {
 
         assert_eq!(node.chain.blocks().len(), 0);
         assert_eq!(node.mempool.len(), 0);
-        assert_eq!(node.epoch, 0);
-        assert_ne!(node.leader, keys.cosi_pkey);
-        assert!(node.validators.is_empty());
+        assert_eq!(node.chain.epoch, 0);
+        assert_ne!(node.chain.leader, keys.cosi_pkey);
+        assert!(node.chain.validators.is_empty());
 
         let genesis = genesis(&[keys.clone()], 100, 3_000_000);
         let genesis_count = genesis.len();
         node.handle_init(genesis).unwrap();
         assert_eq!(node.chain.blocks().len(), genesis_count);
         assert_eq!(node.mempool.len(), 0);
-        assert_eq!(node.epoch, 1);
-        assert_eq!(node.leader, keys.cosi_pkey);
-        assert_eq!(node.validators.len(), 1);
-        assert_eq!(node.validators.keys().next().unwrap(), &node.leader);
+        assert_eq!(node.chain.epoch, 1);
+        assert_eq!(node.chain.leader, keys.cosi_pkey);
+        assert_eq!(node.chain.validators.len(), 1);
+        assert_eq!(
+            node.chain.validators.keys().next().unwrap(),
+            &node.chain.leader
+        );
     }
 
     fn simulate_consensus<Network>(node: &mut NodeService<Network>)
@@ -1433,7 +1366,7 @@ pub mod tests {
         let (block, _fee_output, _tx_hashes) = node.mempool.create_block(
             previous,
             VERSION,
-            node.epoch,
+            node.chain.epoch,
             0,
             &node.keys.wallet_skey,
             &node.keys.wallet_pkey,

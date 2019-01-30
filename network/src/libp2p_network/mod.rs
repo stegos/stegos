@@ -26,8 +26,14 @@ use futures::prelude::*;
 use futures::sync::mpsc;
 use ipnetwork::IpNetwork;
 use libp2p::{
-    core::swarm::NetworkBehaviourEventProcess, core::topology::Topology, core::PublicKey, floodsub,
-    multiaddr::Protocol, multiaddr::ToMultiaddr, secio, Multiaddr, NetworkBehaviour, PeerId,
+    core::swarm::NetworkBehaviourEventProcess,
+    core::topology::Topology,
+    core::PublicKey,
+    floodsub,
+    kad::{KademliaOut, KademliaTopology},
+    multiaddr::Protocol,
+    multiaddr::ToMultiaddr,
+    multihash, secio, Multiaddr, NetworkBehaviour, PeerId,
 };
 use log::*;
 use pnet::datalink;
@@ -41,6 +47,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{ncp, MemoryPeerstore, NetworkProvider};
 
+mod kad_discovery;
 mod unicast_proto;
 
 #[derive(Clone, Debug)]
@@ -114,8 +121,11 @@ fn new_service(
     ),
     Error,
 > {
-    // let peer_id = cosi_pkey2peer_id(&keychain.cosi_pkey);
-    let local_key = secio::SecioKeyPair::ed25519_generated().unwrap();
+    let (secp256k1_key, _) = keychain
+        .generate_secp256k1_keypair()
+        .expect("Couldn't generate secp256k1 keypair for network communications");
+    let local_key = secio::SecioKeyPair::secp256k1_raw_key(&secp256k1_key[..])
+        .expect("converting from raw key shoyld never fail");
     let local_pub_key = local_key.to_public_key();
     let peer_id = local_pub_key.clone().into_peer_id();
 
@@ -130,7 +140,7 @@ fn new_service(
         libp2p::Swarm::new(
             transport,
             behaviour,
-            new_peerstore(config, peer_id, local_pub_key),
+            new_peerstore(config, keychain, peer_id, local_pub_key),
         )
     };
 
@@ -169,6 +179,7 @@ fn new_service(
 pub struct Libp2pBehaviour<TSubstream: AsyncRead + AsyncWrite> {
     floodsub: floodsub::Floodsub<TSubstream>,
     ncp: ncp::Ncp<TSubstream>,
+    kad: kad_discovery::KadBehaviour<TSubstream>,
     #[behaviour(ignore)]
     consumers: HashMap<floodsub::TopicHash, SmallVec<[mpsc::UnboundedSender<Vec<u8>>; 3]>>,
     #[behaviour(ignore)]
@@ -182,9 +193,12 @@ where
     TSubstream: AsyncRead + AsyncWrite,
 {
     pub fn new(config: &ConfigNetwork, keychain: &KeyChain, peer_id: PeerId) -> Self {
+        let mut kad = kad_discovery::KadBehaviour::new(peer_id.clone());
+        kad.add_providing(cosi_pkey2peer_id(&keychain.cosi_pkey));
         let mut behaviour = Libp2pBehaviour {
             floodsub: floodsub::Floodsub::new(peer_id.clone()),
             ncp: ncp::layer::Ncp::new(config),
+            kad,
             consumers: HashMap::new(),
             unicast_consumers: Vec::new(),
             my_pkey: keychain.cosi_pkey.clone(),
@@ -293,6 +307,30 @@ where
     }
 }
 
+impl<TSubstream> NetworkBehaviourEventProcess<KademliaOut> for Libp2pBehaviour<TSubstream>
+where
+    TSubstream: AsyncRead + AsyncWrite,
+{
+    fn inject_event(&mut self, out: KademliaOut) {
+        match out {
+            KademliaOut::FindNodeResult { key, closer_peers } => {
+                debug!(
+                    "Kademlia query for {:?} yielded {:?} results",
+                    key,
+                    closer_peers.len()
+                );
+            }
+            KademliaOut::GetProvidersResult {
+                key,
+                closer_peers: _,
+                provider_peers,
+            } => {
+                debug!("Got providers: {:#?} for key: {:#?}", provider_peers, key);
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum ControlMessage {
     Subscribe {
@@ -312,12 +350,19 @@ pub enum ControlMessage {
     },
 }
 
+fn cosi_pkey2peer_id(key: &secure::PublicKey) -> PeerId {
+    let hash = multihash::encode(multihash::Hash::SHA2256, &key.clone().into_bytes())
+        .expect("should never fail");
+    PeerId::from_multihash(hash).expect("hash is properly formed on prev step")
+}
+
 fn new_peerstore(
     config: &ConfigNetwork,
+    keychain: &KeyChain,
     peer_id: PeerId,
     local_pub_key: PublicKey,
 ) -> MemoryPeerstore {
-    let mut peerstore = MemoryPeerstore::empty(peer_id, local_pub_key);
+    let mut peerstore = MemoryPeerstore::empty(peer_id.clone(), local_pub_key);
     let ifaces = datalink::interfaces();
     let mut my_addresses: Vec<Multiaddr> = vec![];
 
@@ -354,6 +399,12 @@ fn new_peerstore(
 
     debug!("My adverised addresses: {:#?}", my_addresses);
     peerstore.add_local_external_addrs(my_addresses.into_iter());
+    let cosi_pkey_hash = multihash::encode(
+        multihash::Hash::SHA2256,
+        &keychain.cosi_pkey.clone().into_bytes(),
+    )
+    .expect("hashing with SHA2256 never fails");
+    peerstore.add_provider(cosi_pkey_hash, peer_id);
     peerstore
 }
 

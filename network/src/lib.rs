@@ -55,5 +55,6 @@ pub trait NetworkProvider {
 
 pub trait PeerStore: Topology {
     fn store_address(&mut self, peer: PeerId, addr: Multiaddr);
+    /// Returns a list of all the known peers in the topology.
     fn peers(&self) -> Vec<&PeerId>;
 }

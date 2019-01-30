@@ -22,13 +22,19 @@
 // SOFTWARE.
 
 use crate::PeerStore;
+use bs58;
 use libp2p::core::topology::Topology;
-use libp2p::{core::PublicKey, Multiaddr, PeerId};
+use libp2p::kad::kbucket::KBucketsPeerId;
+use libp2p::kad::{KadConnectionType, KademliaTopology};
+use libp2p::{core::PublicKey, multihash::Multihash, Multiaddr, PeerId};
+use log::*;
 use std::collections::HashMap;
+use std::vec;
 
 /// Topology of the network stored in memory.
 pub struct MemoryPeerstore {
-    list: HashMap<PeerId, Vec<Multiaddr>>,
+    peers: HashMap<PeerId, Vec<Multiaddr>>,
+    nodes: HashMap<PeerId, Vec<PeerId>>,
     local_peer_id: PeerId,
     local_public_key: PublicKey,
 }
@@ -38,8 +44,9 @@ impl MemoryPeerstore {
     #[inline]
     pub fn empty(peer_id: PeerId, pubkey: PublicKey) -> MemoryPeerstore {
         MemoryPeerstore {
-            list: Default::default(),
-            local_peer_id: peer_id,
+            peers: Default::default(),
+            nodes: Default::default(),
+            local_peer_id: peer_id.clone(),
             local_public_key: pubkey,
         }
     }
@@ -47,22 +54,28 @@ impl MemoryPeerstore {
     /// Returns true if the topology is empty.
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.list.is_empty()
+        self.peers.is_empty()
     }
 
     /// Adds an address to the topology.
     #[inline]
     pub fn add_address(&mut self, peer: PeerId, addr: Multiaddr) {
-        let addrs = self.list.entry(peer).or_insert_with(|| Vec::new());
+        let addrs = self.peers.entry(peer).or_insert_with(|| Vec::new());
         if addrs.iter().all(|a| a != &addr) {
             addrs.push(addr);
         }
     }
 
+    /// Returns a list of all the known peers in the topology.
+    #[inline]
+    fn get_peers(&self) -> impl Iterator<Item = &PeerId> {
+        self.peers.keys()
+    }
+
     /// Returns an iterator to all the entries in the topology.
     #[inline]
     pub fn iter(&self) -> impl Iterator<Item = (&PeerId, &Multiaddr)> {
-        self.list
+        self.peers
             .iter()
             .flat_map(|(p, l)| l.iter().map(move |ma| (p, ma)))
     }
@@ -70,7 +83,10 @@ impl MemoryPeerstore {
 
 impl Topology for MemoryPeerstore {
     fn addresses_of_peer(&mut self, peer: &PeerId) -> Vec<Multiaddr> {
-        self.list.get(peer).map(|v| v.clone()).unwrap_or(Vec::new())
+        self.peers
+            .get(peer)
+            .map(|v| v.clone())
+            .unwrap_or(Vec::new())
     }
 
     fn add_local_external_addrs<TIter>(&mut self, addrs: TIter)
@@ -99,10 +115,61 @@ impl PeerStore for MemoryPeerstore {
     fn store_address(&mut self, peer: PeerId, addr: Multiaddr) {
         self.add_address(peer, addr);
     }
-
-    /// Returns a list of all the known peers in the topology.
     #[inline]
     fn peers(&self) -> Vec<&PeerId> {
-        self.list.keys().collect()
+        self.peers.keys().collect()
+    }
+}
+
+impl KademliaTopology for MemoryPeerstore {
+    type ClosestPeersIter = vec::IntoIter<PeerId>;
+    type GetProvidersIter = vec::IntoIter<PeerId>;
+
+    fn add_kad_discovered_address(&mut self, peer: PeerId, addr: Multiaddr, _: KadConnectionType) {
+        debug!("Kad discovered peer: {}", peer.to_base58());
+        if &peer != self.local_peer_id() {
+            self.add_address(peer, addr)
+        }
+    }
+
+    fn closest_peers(&mut self, target: &Multihash, _: usize) -> Self::ClosestPeersIter {
+        let mut list = self.get_peers().cloned().collect::<Vec<_>>();
+        list.sort_by(|a, b| {
+            target
+                .distance_with(b.as_ref())
+                .cmp(&target.distance_with(a.as_ref()))
+        });
+        list.into_iter()
+    }
+
+    /// Add known provider for the key
+    /// TODO: Add TTL
+    fn add_provider(&mut self, key: Multihash, peer: PeerId) {
+        debug!(
+            "The key: {} is provided by: {}",
+            bs58::encode(key.as_bytes()).into_string(),
+            peer.to_base58()
+        );
+        if let Ok(key_id) = PeerId::from_multihash(key) {
+            let peers = self.nodes.entry(key_id).or_insert(Vec::new());
+            if peers.iter().all(|a| a != &peer) {
+                peers.push(peer);
+            }
+        } else {
+            warn!("Received ADD_PROVIDER with unsupported Hash scheme");
+        }
+    }
+
+    /// Get known providers for the key
+    fn get_providers(&mut self, key: &Multihash) -> Self::GetProvidersIter {
+        if let Ok(key_id) = PeerId::from_multihash(key.clone()) {
+            self.nodes
+                .get(&key_id)
+                .map(|v| v.clone())
+                .unwrap_or(Vec::new())
+                .into_iter()
+        } else {
+            Vec::new().into_iter()
+        }
     }
 }

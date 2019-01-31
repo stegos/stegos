@@ -65,15 +65,23 @@ impl NetworkProvider for DummyNetwork {
     }
 
     // Subscribe to unicast messages
-    fn subscribe_unicast(&self) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error> {
-        let (tx, rx) = mpsc::unbounded();
+    fn subscribe_unicast(
+        &self,
+        _protocol_id: String,
+    ) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error> {
+        let (tx, rx) = mpsc::unbounded::<Vec<u8>>();
         let msg = ControlMessage::SubscribeUnicast { consumer: tx };
         self.control_tx.unbounded_send(msg)?;
         Ok(rx)
     }
 
     // Send direct message to public key
-    fn send(&self, to: secure::PublicKey, data: Vec<u8>) -> Result<(), Error> {
+    fn send(
+        &self,
+        to: secure::PublicKey,
+        _protocol_id: String,
+        data: Vec<u8>,
+    ) -> Result<(), Error> {
         let msg = ControlMessage::SendUnicast { to, data };
         self.control_tx.unbounded_send(msg)?;
         Ok(())
@@ -88,6 +96,7 @@ impl DummyNetworkService {
         mpsc::UnboundedSender<ControlMessage>,
     ) {
         let mut consumers: Vec<mpsc::UnboundedSender<Vec<u8>>> = Vec::new();
+        let mut unicast_consumers: Vec<mpsc::UnboundedSender<Vec<u8>>> = Vec::new();
         let (tx, mut rx) = mpsc::unbounded();
 
         let fut = futures::future::poll_fn(move || -> Result<_, ()> {
@@ -96,7 +105,9 @@ impl DummyNetworkService {
                     Ok(Async::Ready(Some(msg))) => match msg {
                         ControlMessage::Publish { topic: _, data: _ } => (),
                         ControlMessage::Subscribe { topic: _, handler } => consumers.push(handler),
-                        ControlMessage::SubscribeUnicast { consumer } => consumers.push(consumer),
+                        ControlMessage::SubscribeUnicast { consumer } => {
+                            unicast_consumers.push(consumer)
+                        }
                         ControlMessage::SendUnicast { to: _, data: _ } => (),
                     },
                     Ok(Async::Ready(None)) => return Ok(Async::Ready(())),

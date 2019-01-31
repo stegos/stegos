@@ -20,6 +20,7 @@ pub mod protos;
 //TODO: introduce session id for splitting different pools.
 
 const BROADCAST_POOL_MESSAGES: &'static str = "broadcast-transaction-pool";
+const UNICAST_PROTOCOL_ID: &'static str = "txpool";
 
 const MESSAGE_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -82,7 +83,9 @@ impl<Network: NetworkProvider> TransactionPoolService<Network> {
 
             //TODO: unsubscribe unicast.
             // Unicast messages from other nodes
-            let unicast_message = broker.subscribe_unicast()?.map(|m| PoolEvent::Message(m));
+            let unicast_message = broker
+                .subscribe_unicast(UNICAST_PROTOCOL_ID.to_string())?
+                .map(|m| PoolEvent::Message(m));
             streams.push(Box::new(unicast_message));
 
             // Messages from console
@@ -180,7 +183,11 @@ impl<Network: NetworkProvider> TransactionPoolService<Network> {
             NodeRole::Regular => {
                 debug!("Send message to facilitator = {:?}.", self.facilitator_pkey);
                 let buffer = message.into_buffer()?;
-                self.broker.send(self.facilitator_pkey, buffer)?;
+                self.broker.send(
+                    self.facilitator_pkey,
+                    UNICAST_PROTOCOL_ID.to_string(),
+                    buffer,
+                )?;
             }
             NodeRole::Facilitator(ref mut state) => {
                 debug!("Add message = {:?}, into pool.", message);

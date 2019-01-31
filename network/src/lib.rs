@@ -26,7 +26,7 @@ mod libp2p_network;
 mod ncp;
 mod peerstore;
 
-use failure::Error;
+use failure::{Error, Fail};
 use futures::sync::mpsc;
 use libp2p::core::{topology::Topology, Multiaddr, PeerId};
 use stegos_crypto::pbc::secure;
@@ -47,14 +47,30 @@ pub trait NetworkProvider {
         S: Into<String> + Clone;
 
     /// Subscribe to unicast messages, returns Stream<Vec<u8>> of messages incoming to topic
-    fn subscribe_unicast(&self) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error>;
+    fn subscribe_unicast(
+        &self,
+        protocol_id: String,
+    ) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error>;
 
     /// Send unicast message to peer identified by cosi public key
-    fn send(&self, dest: secure::PublicKey, data: Vec<u8>) -> Result<(), Error>;
+    fn send(
+        &self,
+        dest: secure::PublicKey,
+        protocol_id: String,
+        data: Vec<u8>,
+    ) -> Result<(), Error>;
 }
 
 pub trait PeerStore: Topology {
     fn store_address(&mut self, peer: PeerId, addr: Multiaddr);
     /// Returns a list of all the known peers in the topology.
     fn peers(&self) -> Vec<&PeerId>;
+}
+
+/// Placeholder for NetworkError definitions
+/// TODO: Add/implement real errors
+#[derive(Clone, Debug, Fail, PartialEq, Eq)]
+pub enum NetworkError {
+    #[fail(display = "Generic network error talking to node: {:#?}", _0)]
+    GenericError(secure::PublicKey),
 }

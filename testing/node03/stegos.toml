@@ -1,5 +1,6 @@
 [general]
 log4rs_config = "stegos-log4rs.toml"
+database_path = "testing/node03/database"
 
 [keychain]
 private_key = "testing/node03/stegos.skey"

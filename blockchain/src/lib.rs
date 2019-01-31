@@ -29,6 +29,7 @@ mod genesis;
 mod merkle;
 mod output;
 pub mod protos;
+mod storage;
 mod transaction;
 
 pub use crate::block::*;
@@ -37,4 +38,5 @@ pub use crate::error::*;
 pub use crate::genesis::*;
 pub use crate::merkle::*;
 pub use crate::output::*;
+pub use crate::storage::*;
 pub use crate::transaction::*;

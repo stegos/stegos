@@ -10,12 +10,16 @@ build = "build.rs"
 stegos_keychain = { path = "../keychain" }
 stegos_crypto = { path = "../crypto" }
 stegos_serialization = {path = "../serialization"}
+rocksdb = "0.11.0"
+byteorder = "1.3.1"
+
 chrono = "0.4"
 rand = "0.6"
 log = "0.4"
 failure = "0.1"
 bitvector = "0.1"
 protobuf = "2.2"
+tempdir = "0.3"
 
 [dev-dependencies]
 simple_logger = "1.0"

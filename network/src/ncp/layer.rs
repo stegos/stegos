@@ -21,7 +21,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::config::NetworkConfig;
 use futures::prelude::*;
 use libp2p::core::{
     protocols_handler::ProtocolsHandler,
@@ -29,6 +28,8 @@ use libp2p::core::{
     Multiaddr, PeerId,
 };
 use log::*;
+use lru::LruCache;
+use smallvec::SmallVec;
 use std::{
     collections::{HashSet, VecDeque},
     marker::PhantomData,
@@ -38,21 +39,26 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::timer::Interval;
 use void::Void;
 
+use crate::config::NetworkConfig;
 use crate::ncp::handler::NcpHandler;
 use crate::ncp::protocol::{GetPeersResponse, NcpMessage, PeerInfo};
-use crate::PeerStore;
+
+const KNOWN_PEERS_TABLE_SIZE: usize = 1024;
 
 /// Network behaviour that automatically identifies nodes periodically, and returns information
 /// about them.
 pub struct Ncp<TSubstream> {
     /// Events that need to be yielded to the outside when polling.
     events: VecDeque<NcpEvent>,
-
     /// List of connected peers
     connected_peers: HashSet<PeerId>,
-
+    /// Known peers
+    known_peers: LruCache<PeerId, SmallVec<[Multiaddr; 16]>>,
+    /// Maximum connections allowd
     max_connections: usize,
+    /// Minimum connections to keep
     min_connections: usize,
+    /// AT which interval check established connections and dialout, if necessary
     monitor: Interval,
 
     /// Marker to pin the generics.
@@ -79,6 +85,7 @@ impl<TSubstream> Ncp<TSubstream> {
         Ncp {
             events,
             connected_peers: HashSet::new(),
+            known_peers: LruCache::new(KNOWN_PEERS_TABLE_SIZE),
             max_connections: config.max_connections,
             min_connections: config.min_connections,
             monitor: Interval::new_interval(Duration::from_secs(config.monitoring_interval)),
@@ -87,16 +94,25 @@ impl<TSubstream> Ncp<TSubstream> {
     }
 }
 
-impl<TSubstream, TTopology> NetworkBehaviour<TTopology> for Ncp<TSubstream>
+impl<TSubstream> NetworkBehaviour for Ncp<TSubstream>
 where
     TSubstream: AsyncRead + AsyncWrite,
-    TTopology: PeerStore,
 {
     type ProtocolsHandler = NcpHandler<TSubstream>;
     type OutEvent = Void;
 
     fn new_handler(&mut self) -> Self::ProtocolsHandler {
         NcpHandler::new()
+    }
+
+    fn addresses_of_peer(&mut self, peer: &PeerId) -> Vec<Multiaddr> {
+        let small = self
+            .known_peers
+            .get(peer)
+            .map(|v| v.clone())
+            .unwrap_or(SmallVec::new());
+        let addresses: Vec<Multiaddr> = small.iter().map(|v| v.clone()).collect();
+        addresses
     }
 
     fn inject_connected(&mut self, id: PeerId, _: ConnectedPoint) {
@@ -129,7 +145,7 @@ where
 
     fn poll(
         &mut self,
-        poll_parameters: &mut PollParameters<TTopology>,
+        poll_parameters: &mut PollParameters,
     ) -> Async<
         NetworkBehaviourAction<
             <Self::ProtocolsHandler as ProtocolsHandler>::InEvent,
@@ -141,24 +157,30 @@ where
             match self.monitor.poll() {
                 Ok(Async::Ready(Some(_))) => {
                     trace!("Monitor event fired!");
+                    // refresh peers in known peers, so they wouldn't be purged
+                    for p in self.connected_peers.iter() {
+                        let _ = self.known_peers.get(p);
+                    }
                     if self.connected_peers.len() >= self.max_connections {
                         // Already have max connected_peers
                         continue;
                     }
                     if self.connected_peers.len() < self.min_connections {
-                        let topology = poll_parameters.topology();
-                        let peers = topology.peers();
-                        trace!("Known peers: {:#?}", peers);
                         trace!("Connected peers: {:#?}", self.connected_peers);
-
-                        for p in peers.into_iter() {
-                            if topology.local_peer_id() == p || self.connected_peers.contains(p) {
+                        let mut seen_peers: Vec<PeerId> = Vec::new();
+                        for (peer, _addresses) in self.known_peers.iter() {
+                            seen_peers.push(peer.clone());
+                            if peer == poll_parameters.local_peer_id()
+                                || self.connected_peers.contains(peer)
+                            {
                                 continue;
-                            };
-                            trace!("Dialing peer: {:#?}", p);
-                            self.events
-                                .push_back(NcpEvent::DialPeer { peer_id: p.clone() });
+                            }
+                            trace!("Dialing peer: {:#?}", peer);
+                            self.events.push_back(NcpEvent::DialPeer {
+                                peer_id: peer.clone(),
+                            });
                         }
+                        trace!("Known peers: {:#?}", seen_peers);
                     };
                     // Share our connected peers info with others.
                     for p in self.connected_peers.iter() {
@@ -186,33 +208,34 @@ where
                     return Async::Ready(NetworkBehaviourAction::DialPeer { peer_id });
                 }
                 NcpEvent::StorePeers { message } => {
-                    let topology = poll_parameters.topology();
-
                     for peer in message.peers.into_iter() {
-                        if peer.peer_id != *topology.local_peer_id() {
+                        if peer.peer_id != *poll_parameters.local_peer_id() {
                             for addr in peer.addresses.into_iter() {
                                 let id = peer.peer_id.clone();
-                                topology.store_address(id, addr);
+                                if !self.known_peers.contains(&id) {
+                                    self.known_peers.put(id.clone(), SmallVec::new());
+                                }
+                                // Safe to unwrap, since we initalized entry on previous step
+                                self.known_peers.get_mut(&id).unwrap().push(addr);
                             }
                         }
                     }
                 }
                 NcpEvent::SendPeers { peer_id } => {
-                    let topology = poll_parameters.topology();
                     let mut response = GetPeersResponse { peers: vec![] };
-
-                    for peer in self.connected_peers.iter() {
+                    let mut connected = self.connected_peers.clone();
+                    for peer in connected.drain() {
                         let mut peer_info = PeerInfo::new(&peer);
-                        for addr in topology.addresses_of_peer(&peer) {
+                        for addr in self.addresses_of_peer(&peer) {
                             peer_info.addresses.push(addr);
                         }
                         if peer_info.addresses.len() > 0 {
                             response.peers.push(peer_info);
                         }
                     }
-                    let peer = topology.local_peer_id().clone();
+                    let peer = poll_parameters.local_peer_id().clone();
                     let mut peer_info = PeerInfo::new(&peer);
-                    for addr in topology.addresses_of_peer(&peer) {
+                    for addr in self.addresses_of_peer(&peer) {
                         peer_info.addresses.push(addr);
                     }
                     response.peers.push(peer_info);

@@ -25,60 +25,25 @@ use futures::prelude::*;
 use libp2p::core::{
     protocols_handler::ProtocolsHandler,
     swarm::{ConnectedPoint, NetworkBehaviour, NetworkBehaviourAction, PollParameters},
-    PeerId,
+    PeerId, Multiaddr,
 };
 use log::*;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     marker::PhantomData,
-    time::Duration,
 };
 use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::timer::{delay_queue, DelayQueue};
 
 use crate::unicast_send::handler::UnicastHandler;
 use crate::unicast_send::{
     UnicastDataMessage, UnicastOutEvent, UnicastSendError, UnicastSendMessage,
 };
-use crate::PeerStore;
-
-/// HashMap (used as HashSet) with TTL of peers
-struct PeersQueue {
-    ttl: Duration,
-    entries: HashMap<PeerId, delay_queue::Key>,
-    expirations: DelayQueue<PeerId>,
-}
+use crate::ExpiringQueue;
 
 /// One minute dialout timeout
 const DIAL_OUT_TIMEOUT: u64 = 60;
-
-impl PeersQueue {
-    fn new(ttl: Duration) -> Self {
-        PeersQueue {
-            ttl,
-            entries: HashMap::new(),
-            expirations: DelayQueue::new(),
-        }
-    }
-
-    fn insert(&mut self, key: PeerId) {
-        let delay = self.expirations.insert(key.clone(), self.ttl);
-
-        self.entries.insert(key, delay);
-    }
-
-    fn contains(&self, key: &PeerId) -> bool {
-        self.entries.contains_key(key)
-    }
-
-    fn remove(&mut self, key: &PeerId) {
-        if let Some(cache_key) = self.entries.remove(key) {
-            self.expirations.remove(&cache_key);
-        }
-    }
-}
 
 pub struct UnicastSend<TSubstream> {
     /// Events that need to be yielded to the outside when polling.
@@ -88,13 +53,17 @@ pub struct UnicastSend<TSubstream> {
     connected_peers: HashSet<PeerId>,
 
     /// List of peers with timeouts we are currently trying to connect to
-    dialouts: PeersQueue,
+    dialouts: ExpiringQueue<PeerId>,
 
     /// Map PeerId to pbc::secure::PublicKey
     peers_pkeys: HashMap<PeerId, secure::PublicKey>,
 
     /// Per Peer queues for sending messages
     sending_queues: HashMap<PeerId, VecDeque<UnicastDataMessage>>,
+
+    /// PeerStore
+    /// TODO: use KBucketsTable to store peers information
+    peer_store: HashMap<PeerId, Vec<Multiaddr>>,
 
     /// pbc::secure Public key of this node
     local_pkey: secure::PublicKey,
@@ -112,9 +81,10 @@ impl<TSubstream> UnicastSend<TSubstream> {
         UnicastSend {
             events: VecDeque::new(),
             connected_peers: HashSet::new(),
-            dialouts: PeersQueue::new(Duration::from_secs(DIAL_OUT_TIMEOUT)),
+            dialouts: ExpiringQueue::new(DIAL_OUT_TIMEOUT),
             sending_queues: HashMap::new(),
             peers_pkeys: HashMap::new(),
+            peer_store: HashMap::new(),
             local_pkey: keychain.network_pkey.clone(),
             local_skey: keychain.network_skey.clone(),
             marker: PhantomData,
@@ -135,24 +105,34 @@ impl<TSubstream> UnicastSend<TSubstream> {
                 .push_back(message);
 
             if !self.dialouts.contains(&peer_id) {
-                self.dialouts.insert(peer_id.clone());
+                self.dialouts.insert(&peer_id);
                 self.events
                     .push_back(UnicastBehaviorEvent::DialPeer { peer_id });
             }
         }
     }
+
+    pub fn add_known_addresses(&mut self, peer_id: &PeerId, addresses: &Vec<Multiaddr>) {
+        self.peer_store.entry(peer_id.clone()).or_insert(Vec::new()).extend_from_slice(&addresses);
+    }
 }
 
-impl<TSubstream, TTopology> NetworkBehaviour<TTopology> for UnicastSend<TSubstream>
+impl<TSubstream> NetworkBehaviour for UnicastSend<TSubstream>
 where
     TSubstream: AsyncRead + AsyncWrite,
-    TTopology: PeerStore,
 {
     type ProtocolsHandler = UnicastHandler<TSubstream>;
     type OutEvent = UnicastOutEvent;
 
     fn new_handler(&mut self) -> Self::ProtocolsHandler {
         UnicastHandler::new(self.local_pkey.clone(), self.local_skey.clone())
+    }
+
+    fn addresses_of_peer(&mut self, peer: &PeerId) -> Vec<Multiaddr> {
+        self.peer_store
+            .get(peer)
+            .map(|v| v.clone())
+            .unwrap_or(Vec::new())
     }
 
     fn inject_connected(&mut self, id: PeerId, _: ConnectedPoint) {
@@ -189,7 +169,7 @@ where
 
     fn poll(
         &mut self,
-        poll_parameters: &mut PollParameters<TTopology>,
+        _poll_parameters: &mut PollParameters,
     ) -> Async<
         NetworkBehaviourAction<
             <Self::ProtocolsHandler as ProtocolsHandler>::InEvent,
@@ -199,22 +179,15 @@ where
         trace!("Unicast poll function");
         // Purge failed dialouts
         loop {
-            match self.dialouts.expirations.poll() {
-                Ok(Async::Ready(Some(entry))) => {
-                    let peer_id = entry.get_ref().clone();
-                    debug!("Peer {} dialout timeout!", peer_id.to_base58());
+            match self.dialouts.poll() {
+                Ok(Async::Ready(ref entry)) => {
+                    debug!("Peer {} dialout timeout!", entry.clone().to_base58());
                     // Drop sending queue for the peer
-                    self.sending_queues.remove(&peer_id);
-                    self.dialouts.remove(&peer_id);
+                    self.sending_queues.remove(entry);
                     self.events.push_back(UnicastBehaviorEvent::DataOrResult {
-                        peer_id: peer_id.clone(),
+                        peer_id: entry.clone(),
                         event: UnicastSendMessage::Error(UnicastSendError::DialoutTimeout),
                     });
-                    let topology = poll_parameters.topology();
-                    topology.mark_as_failed(&peer_id);
-                }
-                Ok(Async::Ready(None)) => {
-                    break;
                 }
                 Ok(Async::NotReady) => break,
                 Err(e) => {
@@ -228,11 +201,9 @@ where
             match event {
                 UnicastBehaviorEvent::DialPeer { peer_id } => {
                     debug!("Dialing peer: {:#?}", peer_id);
-                    let topology = poll_parameters.topology();
-                    if !topology.known_failed(&peer_id) {
-                        debug!("Peer is not failing");
-                        let addresses = topology.addresses_of_peer(&peer_id);
-                        debug!("Peer known addresses: {:#?}", addresses);
+                    let addresses = self.addresses_of_peer(&peer_id);
+                    debug!("Peer known addresses: {:#?}", addresses);
+                    if addresses.len() > 0 {
                         return Async::Ready(NetworkBehaviourAction::DialPeer { peer_id });
                     } else {
                         // remove peer from dialout queue and clear its queue

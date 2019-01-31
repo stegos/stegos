@@ -12,6 +12,10 @@ links = "stegos_network"
 repository = "https://github.com/stegos/stegos"
 description = "Stegos - Network Library"
 
+[features]
+default = ["unicast_floodsub"]
+unicast_floodsub = []
+
 [dependencies]
 stegos_crypto = { version = "0.2.0", path = "../crypto" }
 stegos_keychain = { version = "0.2.0", path = "../keychain" }
@@ -21,11 +25,12 @@ bytes = "0.4"
 env_logger = "0.6.0"
 failure = "0.1"
 futures = "0.1"
-ipnetwork = "0.12"
-libp2p = { version = "0.2", default-features = false, features = ["secio-secp256k1"] }
+ipnetwork = "0.14"
+libp2p = { version = "0.4", default-features = false, features = ["secio-secp256k1"] }
 log = "0.4"
-pnet = "0.21"
-protobuf = "2.3"
+lru = "0.1"
+pnet = "0.22.0"
+protobuf = "2.4"
 rand = "0.6"
 serde = "1.0"
 serde_derive = "1.0"

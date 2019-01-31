@@ -21,4 +21,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-include!(concat!(env!("OUT_DIR"), "/unicast_proto/mod.rs"));
+pub mod expiring_queue;
+
+pub use expiring_queue::ExpiringQueue;

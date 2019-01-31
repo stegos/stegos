@@ -1,0 +1,24 @@
+[package]
+name = "stegos-pubsub"
+edition = "2018"
+description = "Forked/modified Floodsub protocol from rust-libp2p"
+version = "0.1.0"
+authors = ["Stegos AG <info@stegos.com>"]
+license = "MIT"
+repository = "https://github.com/stegos/stegos"
+keywords = ["peer-to-peer", "libp2p", "networking"]
+categories = ["network-programming", "asynchronous"]
+
+[dependencies]
+bs58 = "0.2.2"
+bytes = "0.4"
+cuckoofilter = "0.3.2"
+fnv = "1.0"
+futures = "0.1"
+libp2p = { version = "0.4", default-features = false, features = ["secio-secp256k1"] }
+protobuf = "2.4.0"
+rand = "0.6"
+smallvec = "0.6.9"
+tokio-codec = "0.1"
+tokio-io = "0.1"
+unsigned-varint = { version = "0.2.2", features = ["codec"] }

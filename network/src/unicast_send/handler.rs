@@ -30,19 +30,20 @@ use crate::unicast_send::protocol::{
 use crate::unicast_send::{UnicastDataMessage, UnicastSendError, UnicastSendMessage};
 use futures::prelude::*;
 use libp2p::core::{
-    protocols_handler::ProtocolsHandlerUpgrErr,
+    protocols_handler::{ProtocolsHandlerUpgrErr, KeepAlive},
     upgrade::{InboundUpgrade, OutboundUpgrade},
     ProtocolsHandler, ProtocolsHandlerEvent,
 };
 use log::*;
 use smallvec::SmallVec;
 use std::{fmt, io};
+use std::time::{Instant, Duration};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure;
 use tokio::codec::Framed;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-/// Protocol handler that handles communication with the remote for the NCP protocol.
+/// Protocol handler that handles communication with the remote for the Unicast protocol.
 ///
 /// The handler will automatically open a substream with the remote for each request we make.
 ///
@@ -51,17 +52,14 @@ pub struct UnicastHandler<TSubstream>
 where
     TSubstream: AsyncRead + AsyncWrite,
 {
-    /// Configuration for the Ncp protocol.
+    /// Configuration for the Unicast protocol.
     config: UnicastSendConfig,
-
-    /// If true, we are trying to shut down the existing NCP substream and should refuse any
+    /// If true, we are trying to shut down the existing Unicast substream and should refuse any
     /// incoming connection.
     shutting_down: bool,
-
     /// The active substreams.
     // TODO: add a limit to the number of allowed substreams
     substreams: Vec<SubstreamState<TSubstream>>,
-
     /// Queue of values that we want to send to the remote.
     send_queue: SmallVec<[UnicastDataMessage; 16]>,
     /// Local pbc public key
@@ -190,8 +188,12 @@ where
 
     // TODO: After upgrading to libp2p v0.3 set reasonable time
     #[inline]
-    fn connection_keep_alive(&self) -> bool {
-        !self.substreams.is_empty()
+    fn connection_keep_alive(&self) -> KeepAlive {
+        if !self.substreams.is_empty() {
+            KeepAlive::Forever
+        } else {
+            KeepAlive::Until(Instant::now() + Duration::from_secs(10))
+        }
     }
 
     #[inline]

@@ -24,7 +24,7 @@
 use crate::ncp::protocol::{NcpCodec, NcpConfig, NcpMessage};
 use futures::prelude::*;
 use libp2p::core::{
-    protocols_handler::ProtocolsHandlerUpgrErr,
+    protocols_handler::{ProtocolsHandlerUpgrErr, KeepAlive},
     upgrade::{InboundUpgrade, OutboundUpgrade},
     ProtocolsHandler, ProtocolsHandlerEvent,
 };
@@ -160,8 +160,8 @@ where
     }
 
     #[inline]
-    fn connection_keep_alive(&self) -> bool {
-        true
+    fn connection_keep_alive(&self) -> KeepAlive {
+        KeepAlive::Forever
     }
 
     #[inline]

@@ -161,7 +161,7 @@ impl KademliaTopology for MemoryPeerstore {
     }
 
     /// Get known providers for the key
-    fn get_providers(&mut self, key: &Multihash) -> Self::GetProvidersIter {
+    fn get_providers(&mut self, key: &Multihash) -> vec::IntoIter<PeerId> {
         if let Ok(key_id) = PeerId::from_multihash(key.clone()) {
             self.nodes
                 .get(&key_id)

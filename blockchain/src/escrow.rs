@@ -23,12 +23,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::error::*;
+use failure::Fail;
 use log::*;
 use std::collections::BTreeMap;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
-
 #[derive(PartialEq, Eq, Ord, PartialOrd)]
 struct EscrowKey {
     validator_pkey: SecurePublicKey,
@@ -39,6 +38,9 @@ struct EscrowValue {
     bonding_timestamp: u64,
     amount: i64,
 }
+
+/// Time to lock StakeOutput.
+pub const BONDING_TIME: u64 = 2592000; // 30 days
 
 type EscrowMap = BTreeMap<EscrowKey, EscrowValue>;
 
@@ -95,7 +97,7 @@ impl Escrow {
         validator_pkey: &SecurePublicKey,
         output_hash: &Hash,
         timestamp: u64,
-    ) -> Result<(), NodeError> {
+    ) -> Result<(), EscrowError> {
         let key = EscrowKey {
             validator_pkey: validator_pkey.clone(),
             output_hash: output_hash.clone(),
@@ -103,13 +105,16 @@ impl Escrow {
 
         let val = match self.escrow.get(&key) {
             None => {
-                return Err(NodeError::NoSuchStake(key.validator_pkey, key.output_hash));
+                return Err(EscrowError::NoSuchStake(
+                    key.validator_pkey,
+                    key.output_hash,
+                ));
             }
             Some(e) => e,
         };
 
         if val.bonding_timestamp >= timestamp {
-            return Err(NodeError::StakeIsLocked(
+            return Err(EscrowError::StakeIsLocked(
                 key.validator_pkey,
                 key.output_hash,
                 val.bonding_timestamp,
@@ -191,4 +196,15 @@ impl Escrow {
         }
         stakes
     }
+}
+
+#[derive(Debug, Fail, PartialEq, Eq)]
+pub enum EscrowError {
+    #[fail(display = "No such stake: validator={}, stake={}", _0, _1)]
+    NoSuchStake(SecurePublicKey, Hash),
+    #[fail(
+        display = "Stake is locked: validator={}, stake={}, bonding_time={}, current_time={}",
+        _0, _1, _2, _3
+    )]
+    StakeIsLocked(SecurePublicKey, Hash, u64, u64),
 }

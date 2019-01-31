@@ -23,18 +23,22 @@
 
 use crate::block::*;
 use crate::error::*;
+use crate::escrow::*;
 use crate::merkle::*;
 use crate::output::*;
+use chrono::Utc;
 use failure::Error;
 use log::*;
+use std::collections::BTreeMap;
 use std::collections::HashMap;
-use std::vec::Vec;
+use std::time::Instant;
 use stegos_crypto::bulletproofs::fee_a;
 use stegos_crypto::curve1174::cpt::Pt;
 use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::curve1174::G;
 use stegos_crypto::hash::*;
+use stegos_crypto::pbc::secure::{PublicKey as SecurePublicKey, G2};
 
 type BlockId = usize;
 
@@ -48,6 +52,7 @@ struct OutputKey {
 
 /// The Blockchain.
 pub struct Blockchain {
+    // General state.
     /// Blockchain blocks stored in-memory.
     /// Position in this vector is short BlockId = usize.
     blocks: Vec<Block>,
@@ -55,6 +60,29 @@ pub struct Blockchain {
     block_by_hash: HashMap<Hash, BlockId>,
     /// Unspent outputs by hash.
     output_by_hash: HashMap<Hash, OutputKey>,
+
+    //
+    // Last blockchain info:
+    // 1) Stake
+    // 2) consensus group
+    // 3) last block time
+    // 4) epoch
+    //
+    /// Escrow
+    pub escrow: Escrow,
+    /// Snapshot of selected leader from the latest key block.
+    pub leader: SecurePublicKey,
+    /// Snapshot of selected facilitator from the latest key block.
+    pub facilitator: SecurePublicKey,
+    /// Snapshot of validators with stakes from the latest key block.
+    pub validators: BTreeMap<SecurePublicKey, i64>,
+    /// A timestamp when the last sealed block was received.
+    pub last_block_timestamp: Instant,
+    /// A monotonically increasing value that represents the epoch of the blockchain,
+    /// starting from genesis block (=0).
+    pub epoch: u64,
+
+    // Monetary info
     /// The total sum of money created.
     created: ECp,
     /// The total sum of money burned.
@@ -74,6 +102,13 @@ impl Blockchain {
         let blocks = Vec::new();
         let block_by_hash = HashMap::<Hash, BlockId>::new();
         let output_by_hash = HashMap::<Hash, OutputKey>::new();
+        let epoch: u64 = 0;
+        let escrow = Escrow::new();
+        let leader: SecurePublicKey = G2::generator().into(); // some fake key
+        let facilitator: SecurePublicKey = G2::generator().into(); // some fake key
+        let validators = BTreeMap::<SecurePublicKey, i64>::new();
+        let last_block_timestamp = Instant::now();
+
         let created = ECp::inf();
         let burned = ECp::inf();
         let gamma = Fr::zero();
@@ -82,6 +117,12 @@ impl Blockchain {
             blocks,
             block_by_hash,
             output_by_hash,
+            escrow,
+            leader,
+            facilitator,
+            validators,
+            epoch,
+            last_block_timestamp,
             created,
             burned,
             gamma,
@@ -157,6 +198,23 @@ impl Blockchain {
 
     //----------------------------------------------------------------------------------------------
 
+    /// Force consensus group changes.
+    pub fn change_group(
+        &mut self,
+        leader: SecurePublicKey,
+        facilitator: SecurePublicKey,
+        validators: BTreeMap<SecurePublicKey, i64>,
+    ) {
+        self.leader = leader;
+        self.facilitator = facilitator;
+        self.validators = validators;
+    }
+
+    pub fn register_new_block(&mut self, block: Block) {
+        self.last_block_timestamp = Instant::now();
+        self.blocks.push(block);
+    }
+
     pub fn register_key_block(&mut self, block: KeyBlock) -> Result<(), BlockchainError> {
         let block_id = self.blocks.len();
 
@@ -190,7 +248,15 @@ impl Blockchain {
         if let Some(_) = self.block_by_hash.insert(this_hash.clone(), block_id) {
             panic!("Block hash collision");
         }
-        self.blocks.push(Block::KeyBlock(block));
+
+        assert_eq!(self.epoch + 1, block.header.base.epoch);
+        self.epoch = self.epoch + 1;
+
+        self.leader = block.header.leader.clone();
+        self.facilitator = block.header.facilitator.clone();
+        self.validators = self.escrow.multiget(&block.header.witnesses);
+
+        self.register_new_block(Block::KeyBlock(block));
 
         Ok(())
     }
@@ -198,7 +264,7 @@ impl Blockchain {
     pub fn register_monetary_block(
         &mut self,
         mut block: MonetaryBlock,
-    ) -> Result<(Vec<Output>), Error> {
+    ) -> Result<(Vec<Output>, Vec<Output>), Error> {
         let block_id = self.blocks.len();
 
         // Check previous hash.
@@ -349,8 +415,37 @@ impl Blockchain {
             unreachable!();
         }
 
+        let outputs: Vec<Output> = block
+            .body
+            .outputs
+            .leafs()
+            .drain(..)
+            .map(|(o, _path)| *o.clone())
+            .collect();
+
+        let current_timestamp = Utc::now().timestamp() as u64;
+
+        // remove pruned outputs
+        for input in &pruned {
+            if let Output::StakeOutput(o) = input {
+                let output_hash = Hash::digest(o);
+                self.escrow
+                    .unstake(o.validator, output_hash, current_timestamp);
+            }
+        }
+
+        // register new outputs
+        for output in &outputs {
+            if let Output::StakeOutput(o) = output {
+                let output_hash = Hash::digest(o);
+                let block_timestamp = block.header.base.timestamp;
+                let bonding_timestamp = block_timestamp + crate::escrow::BONDING_TIME;
+                self.escrow
+                    .stake(o.validator, output_hash, bonding_timestamp, o.amount);
+            }
+        }
         // Must be the last line to make Rust happy.
-        self.blocks.push(Block::MonetaryBlock(block));
+        self.register_new_block(Block::MonetaryBlock(block));
 
         // Save the global balance.
         self.created = created;
@@ -358,7 +453,7 @@ impl Blockchain {
         self.gamma = gamma;
         self.monetary_adjustment = monetary_adjustment;
 
-        Ok(pruned)
+        Ok((pruned, outputs))
     }
 }
 

@@ -24,6 +24,7 @@
 mod block;
 mod blockchain;
 mod error;
+mod escrow;
 mod genesis;
 mod merkle;
 mod output;

@@ -282,7 +282,7 @@ where
     Network: NetworkProvider,
 {
     pub(crate) fn broadcast_vrf_ticket(&mut self, ticket: VRFTicket) -> Result<(), Error> {
-        if !self.escrow.get(&self.keys.cosi_pkey) > 0 {
+        if !self.chain.escrow.get(&self.keys.cosi_pkey) > 0 {
             debug!("Trying to broadcast ticket but our node is not staker.");
             return Ok(());
         }
@@ -294,7 +294,7 @@ where
     pub(crate) fn handle_vrf_message(&mut self, msg: Vec<u8>) -> Result<(), Error> {
         // Decode incoming message.
         let msg = VRFTicket::from_buffer(&msg)?;
-        if self.escrow.get(&msg.pkey) > 0 {
+        if self.chain.escrow.get(&msg.pkey) > 0 {
             self.vrf_system.hanle_process_ticket(msg)?;
         } else {
             debug!("Received message from unknown peer = {:?}", msg.pkey);
@@ -304,7 +304,7 @@ where
 
     pub(crate) fn handle_vrf_timer(&mut self) -> Result<(), Error> {
         let previous_hash = Hash::digest(self.chain.last_block());
-        let all_stakers: StakersGroup = self.escrow.getall().into_iter().collect();
+        let all_stakers: StakersGroup = self.chain.escrow.getall().into_iter().collect();
         let result = self
             .vrf_system
             .handle_tick(Instant::now(), all_stakers, previous_hash)?;

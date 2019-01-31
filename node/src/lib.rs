@@ -93,12 +93,13 @@ where
 {
     /// Create a new blockchain node.
     pub fn new(
+        cfg: &Config,
         keys: KeyChain,
         broker: Network,
     ) -> Result<(impl Future<Item = (), Error = ()>, Node<Network>), Error> {
         let (outbox, inbox) = unbounded();
 
-        let service = NodeService::new(keys, broker.clone(), inbox)?;
+        let service = NodeService::new(cfg, keys, broker.clone(), inbox)?;
         let handler = Node { outbox, broker };
 
         Ok((service, handler))
@@ -215,9 +216,6 @@ struct NodeService<Network> {
     /// Key Chain.
     keys: KeyChain,
 
-    /// Number of sealed block processed during epoch,
-    sealed_block_num: usize,
-
     /// A system that restart consensus in case of fault or partition.
     /// And allow to change validators in case of epoch change.
     vrf_system: TicketsSystem,
@@ -255,14 +253,32 @@ where
 {
     /// Constructor.
     fn new(
+        cfg: &Config,
         keys: KeyChain,
         broker: Network,
         inbox: UnboundedReceiver<NodeMessage>,
     ) -> Result<Self, Error> {
-        let chain = Blockchain::new();
-        let sealed_block_num = 0;
+        let chain = Blockchain::new(&cfg.general);
+        Self::with_blockchain(chain, keys, broker, inbox)
+    }
+
+    #[cfg(test)]
+    fn testing(
+        keys: KeyChain,
+        broker: Network,
+        inbox: UnboundedReceiver<NodeMessage>,
+    ) -> Result<Self, Error> {
+        let chain = Blockchain::testing();
+        Self::with_blockchain(chain, keys, broker, inbox)
+    }
+
+    fn with_blockchain(
+        chain: Blockchain,
+        keys: KeyChain,
+        broker: Network,
+        inbox: UnboundedReceiver<NodeMessage>,
+    ) -> Result<Self, Error> {
         let future_consensus_messages = Vec::new();
-        //TODO: Calculate viewchange on node restart by timeout since last known block.
         let vrf_system = TicketsSystem::new(WITNESSES_MAX, 0, 0, keys.cosi_pkey, keys.cosi_skey);
 
         let mempool = Mempool::new();
@@ -319,7 +335,6 @@ where
 
         let service = NodeService {
             future_consensus_messages,
-            sealed_block_num,
             vrf_system,
             chain,
             keys,
@@ -336,8 +351,19 @@ where
 
     /// Handler for NodeMessage::Init.
     fn handle_init(&mut self, genesis: Vec<Block>) -> Result<(), Error> {
+        // skip handling genesis if blockchain is not empty
+        if self.chain.blocks().len() > 0 {
+            //rather recover state
+            self.recover_state();
+            let last_hash = Hash::digest(self.chain.last_block());
+            info!(
+                "Node successfully recovered from persistent storage: height={}, hash= {:?}",
+                self.chain.blocks().len(),
+                last_hash
+            );
+            return Ok(());
+        }
         debug!("Registering genesis blocks...");
-
         //
         // Sic: genesis block has invalid monetary balance, so handle_monetary_block()
         // can't be used here.
@@ -379,6 +405,86 @@ where
         Ok(())
     }
 
+    fn recover_state(&mut self) {
+        assert!(self.chain.blocks().len() > 0);
+        let len = self.chain.blocks().len() as u64;
+        debug!("Recovering consensus state");
+        self.on_new_epoch();
+        debug!("Recovering vrf system.");
+        //TODO: Calculate viewchange on node restart by timeout since last known block. For this we need to track last_block time in storage.
+        //Recreate vrf system
+        self.vrf_system = TicketsSystem::new(
+            WITNESSES_MAX,
+            0,
+            len,
+            self.keys.cosi_pkey,
+            self.keys.cosi_skey,
+        );
+        // epoch ended, disable consensus and start vrf system.
+        if self.chain.blocks_in_epoch() >= SEALED_BLOCK_IN_EPOCH {
+            debug!("Recover at end of epoch, trying to force vrf to start.");
+            self.consensus = None;
+            let block_hash = Hash::digest(self.chain.last_block());
+            let ticket = self.vrf_system.handle_epoch_end(block_hash);
+            let _ = self.broadcast_vrf_ticket(ticket);
+        }
+
+        debug!("Broadcast unspent outputs.");
+
+        let unspent = self.chain.unspent();
+        let outputs = self
+            .chain
+            .outputs_by_hashes(&unspent)
+            .expect("Cannot find unspent outputs.");
+        let inputs = Vec::new();
+        let msg = OutputsNotification { inputs, outputs };
+        self.on_outputs_changed
+            .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
+    }
+
+    /// Update consensus state, if chain has other view of consensus group.
+    fn on_new_epoch(&mut self) {
+        if self.chain.validators.contains_key(&self.keys.cosi_pkey) {
+            // Promote to Validator role
+            let consensus = BlockConsensus::new(
+                self.chain.height() as u64,
+                self.chain.epoch,
+                self.keys.cosi_skey.clone(),
+                self.keys.cosi_pkey.clone(),
+                self.chain.leader.clone(),
+                self.chain.validators.clone(),
+            );
+
+            if consensus.is_leader() {
+                info!("I'm leader: epoch={}", self.chain.epoch);
+            } else {
+                info!(
+                    "I'm validator: epoch={}, leader={}",
+                    self.chain.epoch, self.chain.leader
+                );
+            }
+
+            self.consensus = Some(consensus);
+            self.on_new_consensus();
+        } else {
+            // Resign from Validator role.
+            info!(
+                "I'm regular node: epoch={}, leader={}",
+                self.chain.epoch, self.chain.leader
+            );
+            self.consensus = None;
+        }
+
+        debug!("Broadcast new epoch event.");
+        let msg = EpochNotification {
+            epoch: self.chain.epoch,
+            leader: self.chain.leader,
+            validators: self.chain.validators.clone(),
+            facilitator: self.chain.facilitator,
+        };
+        self.on_epoch_changed
+            .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
+    }
     /// Handle incoming transactions received from network.
     fn handle_transaction(&mut self, msg: Vec<u8>) -> Result<(), Error> {
         let tx = Transaction::from_buffer(&msg)?;
@@ -638,7 +744,7 @@ where
         self.vrf_system.handle_sealed_block();
 
         // epoch ended, disable consensus and start vrf system.
-        if self.sealed_block_num >= SEALED_BLOCK_IN_EPOCH {
+        if self.chain.blocks_in_epoch() >= SEALED_BLOCK_IN_EPOCH {
             self.consensus = None;
             let ticket = self.vrf_system.handle_epoch_end(block_hash);
             self.broadcast_vrf_ticket(ticket)?;
@@ -680,7 +786,7 @@ where
     /// Handler for new epoch creation procedure.
     /// This method called only on leader side, and when consensus is active.
     /// Leader should create a KeyBlock based on last random provided by VRF.
-    fn on_create_new_epoch(&mut self, facilitator: SecurePublicKey) -> Result<(), Error> {
+    fn create_new_epoch(&mut self, facilitator: SecurePublicKey) -> Result<(), Error> {
         let consensus = self.consensus.as_mut().unwrap();
         let last = self.chain.last_block();
         let previous = Hash::digest(last);
@@ -719,38 +825,7 @@ where
 
     /// Called when a new key block is registered.
     fn on_key_block_registered(&mut self, key_block: &KeyBlock) -> Result<(), Error> {
-        self.sealed_block_num = 0;
-        if self.chain.validators.contains_key(&self.keys.cosi_pkey) {
-            // Promote to Validator role
-            let consensus = BlockConsensus::new(
-                self.chain.height() as u64,
-                self.chain.epoch,
-                self.keys.cosi_skey.clone(),
-                self.keys.cosi_pkey.clone(),
-                self.chain.leader.clone(),
-                self.chain.validators.clone(),
-            );
-
-            if consensus.is_leader() {
-                info!("I'm leader: epoch={}", self.chain.epoch);
-            } else {
-                info!(
-                    "I'm validator: epoch={}, leader={}",
-                    self.chain.epoch, self.chain.leader
-                );
-            }
-
-            self.consensus = Some(consensus);
-            self.on_new_consensus();
-        } else {
-            // Resign from Validator role.
-            info!(
-                "I'm regular node: epoch={}, leader={}",
-                self.chain.epoch, self.chain.leader
-            );
-            self.consensus = None;
-        }
-        debug!("Validators: {:?}", &self.chain.validators);
+        self.on_new_epoch();
 
         debug!("Broadcast new epoch event.");
         let msg = EpochNotification {
@@ -846,7 +921,7 @@ where
             self.consensus = Some(consensus);
             let consensus = self.consensus.as_ref().unwrap();
             if consensus.is_leader() {
-                self.on_create_new_epoch(self.chain.facilitator)?;
+                self.create_new_epoch(self.chain.facilitator)?;
             }
             self.on_new_consensus();
         } else {
@@ -973,8 +1048,7 @@ where
         let block_hash = Hash::digest(&block);
         info!(
             "Created monetary block: height={}, hash={}",
-            height + 1,
-            &block_hash,
+            height, &block_hash,
         );
         // TODO: log the number of inputs/outputs
 
@@ -1336,7 +1410,7 @@ pub mod tests {
         let (_outbox, inbox) = unbounded();
         let (broker, _service) = DummyNetwork::new();
 
-        let mut node = NodeService::new(keys.clone(), broker, inbox).unwrap();
+        let mut node = NodeService::testing(keys.clone(), broker, inbox).unwrap();
 
         assert_eq!(node.chain.blocks().len(), 0);
         assert_eq!(node.mempool.len(), 0);
@@ -1456,7 +1530,7 @@ pub mod tests {
         let (_outbox, inbox) = unbounded();
         let (broker, _service) = DummyNetwork::new();
 
-        let mut node = NodeService::new(keys.clone(), broker, inbox).unwrap();
+        let mut node = NodeService::testing(keys.clone(), broker, inbox).unwrap();
 
         let total: i64 = 3_000_000;
         let stake: i64 = 100;
@@ -1520,7 +1594,7 @@ pub mod tests {
         let (_outbox, inbox) = unbounded();
         let (broker, _service) = DummyNetwork::new();
 
-        let mut node = NodeService::new(keys.clone(), broker, inbox).unwrap();
+        let mut node = NodeService::testing(keys.clone(), broker, inbox).unwrap();
 
         let total: i64 = 100;
         let stake: i64 = 1;

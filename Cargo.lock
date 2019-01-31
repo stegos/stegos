@@ -2389,6 +2389,7 @@ dependencies = [
  "rand 0.6.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "rocksdb 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "simple_logger 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "stegos_config 0.1.0",
  "stegos_crypto 0.1.0",
  "stegos_keychain 0.1.0",
  "stegos_serialization 0.1.0",

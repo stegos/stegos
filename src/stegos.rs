@@ -135,7 +135,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     rt.spawn(pool);
     // Initialize node
     let genesis = genesis_dev().expect("failed to load genesis block");
-    let (node_service, node) = Node::new(keychain.clone(), broker.clone())?;
+    let (node_service, node) = Node::new(&cfg, keychain.clone(), broker.clone())?;
     rt.spawn(node_service);
     // Don't initialize REPL if stdin is not a TTY device
     if atty::is(atty::Stream::Stdin) {

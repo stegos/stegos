@@ -151,7 +151,6 @@ impl Decoder for NcpCodec {
             Some(p) => p,
             None => return Ok(None),
         };
-
         let message: ncp_proto::Message = protobuf::parse_from_bytes(&packet)?;
 
         match message.get_field_type() {
@@ -211,7 +210,7 @@ mod tests {
     use super::{GetPeersResponse, NcpConfig, NcpMessage, PeerInfo};
     use futures::{Future, Sink, Stream};
     use libp2p::core::upgrade::{InboundUpgrade, OutboundUpgrade};
-    use libp2p::core::{PeerId, PublicKey};
+    use libp2p::core::PeerId;
     use tokio::net::{TcpListener, TcpStream};
 
     #[test]
@@ -221,7 +220,7 @@ mod tests {
         let msg = NcpMessage::GetPeersResponse {
             response: GetPeersResponse {
                 peers: vec![PeerInfo {
-                    peer_id: random_peerid(),
+                    peer_id: PeerId::random(),
                     addresses: vec![
                         "/ip4/1.2.3.4/tcp/1111".parse().unwrap(),
                         "/ip4/1.2.3.4/tcp/1231".parse().unwrap(),
@@ -232,11 +231,6 @@ mod tests {
         };
 
         test_one(msg);
-    }
-
-    fn random_peerid() -> PeerId {
-        let key = (0..2048).map(|_| rand::random::<u8>()).collect::<Vec<_>>();
-        PeerId::from_public_key(PublicKey::Rsa(key))
     }
 
     fn test_one(msg: NcpMessage) {

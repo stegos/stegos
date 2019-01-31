@@ -26,5 +26,5 @@ use stegos_serialization::build_script;
 fn main() {
     build_script::build_protobuf("protos/ncp_proto.proto", "ncp_proto", &[]);
     build_script::build_protobuf("protos/unicast_proto.proto", "unicast_proto", &[]);
-    build_script::build_protobuf("protos/unicast_wire_proto.proto", "unicast_wire_proto", &[]);
+    build_script::build_protobuf("protos/pubsub_proto.proto", "pubsub", &[]);
 }

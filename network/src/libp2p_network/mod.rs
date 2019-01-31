@@ -21,20 +21,16 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::config::NetworkConfig;
 use failure::{format_err, Error};
 use futures::prelude::*;
 use futures::sync::mpsc;
 use ipnetwork::IpNetwork;
 use libp2p::{
     core::swarm::NetworkBehaviourEventProcess,
-    core::topology::Topology,
-    core::PublicKey,
-    floodsub,
-    kad::{KademliaOut, KademliaTopology},
+    core::{identity, identity::secp256k1},
     multiaddr::Protocol,
     multiaddr::ToMultiaddr,
-    multihash, secio, Multiaddr, NetworkBehaviour, PeerId,
+    Multiaddr, NetworkBehaviour, PeerId, Swarm,
 };
 use log::*;
 use pnet::datalink;
@@ -46,9 +42,10 @@ use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{ncp, MemoryPeerstore, Network, NetworkProvider, UnicastMessage};
+use crate::config::NetworkConfig;
+use crate::pubsub::{Floodsub, FloodsubEvent, TopicBuilder, TopicHash};
+use crate::{ncp::Ncp, Network, NetworkProvider, UnicastMessage};
 
-mod kad_discovery;
 mod proto;
 
 use self::proto::unicast_proto;
@@ -138,9 +135,12 @@ fn new_service(
     let (secp256k1_key, _) = keychain
         .generate_secp256k1_keypair()
         .expect("Couldn't generate secp256k1 keypair for network communications");
-    let local_key = secio::SecioKeyPair::secp256k1_raw_key(&secp256k1_key[..])
-        .expect("converting from raw key shoyld never fail");
-    let local_pub_key = local_key.to_public_key();
+    let local_key = identity::Keypair::Secp256k1(secp256k1::Keypair::from(
+        secp256k1::SecretKey::from_bytes(secp256k1_key[..].to_vec())
+            .expect("converting from raw key should never fail"),
+    ));
+
+    let local_pub_key = local_key.public();
     let peer_id = local_pub_key.clone().into_peer_id();
 
     // Set up a an encrypted DNS-enabled TCP Transport over the Mplex and Yamux protocols
@@ -151,12 +151,13 @@ fn new_service(
         let behaviour =
             Libp2pBehaviour::new(config, keychain, local_pub_key.clone().into_peer_id());
 
-        libp2p::Swarm::new(
-            transport,
-            behaviour,
-            new_peerstore(config, keychain, peer_id, local_pub_key),
-        )
+        libp2p::Swarm::new(transport, behaviour, peer_id)
     };
+
+    let mut my_addresses = my_external_address(config);
+    for a in my_addresses.drain(..).into_iter() {
+        Swarm::add_external_address(&mut swarm, a);
+    }
 
     let mut bind_ip = Multiaddr::from(Protocol::Ip4(config.bind_ip.clone().parse()?));
     bind_ip.append(Protocol::Tcp(config.bind_port));
@@ -191,11 +192,10 @@ fn new_service(
 
 #[derive(NetworkBehaviour)]
 pub struct Libp2pBehaviour<TSubstream: AsyncRead + AsyncWrite> {
-    floodsub: floodsub::Floodsub<TSubstream>,
-    ncp: ncp::Ncp<TSubstream>,
-    kad: kad_discovery::KadBehaviour<TSubstream>,
+    floodsub: Floodsub<TSubstream>,
+    ncp: Ncp<TSubstream>,
     #[behaviour(ignore)]
-    consumers: HashMap<floodsub::TopicHash, SmallVec<[mpsc::UnboundedSender<Vec<u8>>; 3]>>,
+    consumers: HashMap<TopicHash, SmallVec<[mpsc::UnboundedSender<Vec<u8>>; 3]>>,
     #[behaviour(ignore)]
     unicast_consumers: HashMap<String, SmallVec<[mpsc::UnboundedSender<UnicastMessage>; 3]>>,
     #[behaviour(ignore)]
@@ -203,7 +203,7 @@ pub struct Libp2pBehaviour<TSubstream: AsyncRead + AsyncWrite> {
     #[behaviour(ignore)]
     my_skey: secure::SecretKey,
     #[behaviour(ignore)]
-    topics_map: HashMap<floodsub::TopicHash, String>,
+    topics_map: HashMap<TopicHash, String>,
 }
 
 impl<TSubstream> Libp2pBehaviour<TSubstream>
@@ -211,32 +211,29 @@ where
     TSubstream: AsyncRead + AsyncWrite,
 {
     pub fn new(config: &NetworkConfig, keychain: &KeyChain, peer_id: PeerId) -> Self {
-        let mut kad = kad_discovery::KadBehaviour::new(peer_id.clone());
-        kad.add_providing(network_pkey_to_peer_id(&keychain.network_pkey));
         let mut behaviour = Libp2pBehaviour {
-            floodsub: floodsub::Floodsub::new(peer_id.clone()),
-            ncp: ncp::layer::Ncp::new(config),
-            kad,
+            floodsub: Floodsub::new(peer_id.clone()),
+            ncp: Ncp::new(config),
             consumers: HashMap::new(),
             unicast_consumers: HashMap::new(),
             my_pkey: keychain.network_pkey.clone(),
             my_skey: keychain.network_skey.clone(),
             topics_map: HashMap::new(),
         };
-        let unicast_topic = floodsub::TopicBuilder::new(UNICAST_TOPIC).build();
+        let unicast_topic = TopicBuilder::new(UNICAST_TOPIC).build();
         behaviour.floodsub.subscribe(unicast_topic);
-        debug!(target: "stegos_network::floodsub",
-            "Listening for unicast message: my_key={}",
+        debug!(target: "stegos_network::pubsub",
+            "Listening for unicast message: my_key={:?}",
             behaviour.my_pkey.clone().to_string()
         );
         behaviour
     }
 
-    pub fn process_event(&mut self, msg: ControlMessage) {
+    fn process_event(&mut self, msg: ControlMessage) {
         trace!("Control event: {:#?}", msg);
         match msg {
             ControlMessage::Subscribe { topic, handler } => {
-                let floodsub_topic = floodsub::TopicBuilder::new(topic.clone()).build();
+                let floodsub_topic = TopicBuilder::new(topic.clone()).build();
                 let topic_hash = floodsub_topic.hash();
                 self.topics_map.insert(topic_hash.clone(), topic);
                 self.consumers
@@ -246,12 +243,12 @@ where
                 self.floodsub.subscribe(floodsub_topic);
             }
             ControlMessage::Publish { topic, data } => {
-                debug!(target: "stegos_network::floodsub",
+                debug!(target: "stegos_network::pubsub",
                     "Sending broadcast message: topic={}, size={}",
                     topic,
                     data.len(),
                 );
-                let floodsub_topic = floodsub::TopicBuilder::new(topic).build();
+                let floodsub_topic = TopicBuilder::new(topic).build();
                 self.floodsub.publish(floodsub_topic, data)
             }
             ControlMessage::SubscribeUnicast {
@@ -268,7 +265,7 @@ where
                 protocol_id,
                 data,
             } => {
-                debug!(target: "stegos_network::floodsub",
+                debug!(target: "stegos_network::pubsub",
                     "Sending unicast message: to={}, from={}, protocol={}, size={}",
                     to,
                     self.my_pkey,
@@ -295,7 +292,7 @@ where
                             }
                         })
                 } else {
-                    let floodsub_topic = floodsub::TopicBuilder::new(UNICAST_TOPIC).build();
+                    let floodsub_topic = TopicBuilder::new(UNICAST_TOPIC).build();
                     let msg =
                         encode_unicast(self.my_pkey.clone(), to, protocol_id, data, &self.my_skey);
                     self.floodsub.publish(floodsub_topic, msg);
@@ -314,23 +311,22 @@ where
     }
 }
 
-impl<TSubstream> NetworkBehaviourEventProcess<floodsub::FloodsubEvent>
-    for Libp2pBehaviour<TSubstream>
+impl<TSubstream> NetworkBehaviourEventProcess<FloodsubEvent> for Libp2pBehaviour<TSubstream>
 where
     TSubstream: AsyncRead + AsyncWrite,
 {
     // Called when `floodsub` produces an event.
     // Send received message to consumers.
-    fn inject_event(&mut self, message: libp2p::floodsub::FloodsubEvent) {
-        if let libp2p::floodsub::FloodsubEvent::Message(message) = message {
-            let floodsub_topic = floodsub::TopicBuilder::new(UNICAST_TOPIC).build();
+    fn inject_event(&mut self, message: FloodsubEvent) {
+        if let FloodsubEvent::Message(message) = message {
+            let floodsub_topic = TopicBuilder::new(UNICAST_TOPIC).build();
             let unicast_topic_hash = floodsub_topic.hash();
             if message.topics.iter().any(|t| t == unicast_topic_hash) {
                 match decode_unicast(message.data.clone()) {
                     Ok((from, to, protocol_id, data)) => {
                         // send unicast message upstream
                         if to == self.my_pkey {
-                            debug!(target: "stegos_network::floodsub",
+                            debug!(target: "stegos_network::pubsub",
                                 "Received unicast message: from={}, protocol={} size={}",
                                 from,
                                 protocol_id,
@@ -343,7 +339,7 @@ where
                                 .retain({
                                     move |c| {
                                         if let Err(e) = c.unbounded_send(msg.clone()) {
-                                            error!(target:"stegos_network::floodsub", "Error sending data to consumer: {}", e);
+                                            error!(target:"stegos_network::pubsub", "Error sending data to consumer: {}", e);
                                             false
                                         } else {
                                             true
@@ -362,7 +358,7 @@ where
                     None => "Unknown".to_string(),
                 };
 
-                debug!(target: "stegos_network::floodsub",
+                debug!(target: "stegos_network::pubsub",
                     "Received broadcast message: topic={}, size={}",
                     topic,
                     message.data.len(),
@@ -372,37 +368,13 @@ where
                     let data = &message.data;
                     move |c| {
                         if let Err(e) = c.unbounded_send(data.clone()) {
-                            error!(target: "stegos_network::floodsub", "Error sending data to consumer: {}", e);
+                            error!(target: "stegos_network::pubsub", "Error sending data to consumer: {}", e);
                             false
                         } else {
                             true
                         }
                     }
                 })
-            }
-        }
-    }
-}
-
-impl<TSubstream> NetworkBehaviourEventProcess<KademliaOut> for Libp2pBehaviour<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite,
-{
-    fn inject_event(&mut self, out: KademliaOut) {
-        match out {
-            KademliaOut::FindNodeResult { key, closer_peers } => {
-                debug!(target: "stegos_network::kademlia",
-                    "Kademlia query for {:?} yielded {:?} results",
-                    key,
-                    closer_peers.len()
-                );
-            }
-            KademliaOut::GetProvidersResult {
-                key,
-                closer_peers: _,
-                provider_peers,
-            } => {
-                debug!(target: "stegos_network::kademlia", "Got providers: {:#?} for key: {:#?}", provider_peers, key);
             }
         }
     }
@@ -429,19 +401,7 @@ pub enum ControlMessage {
     },
 }
 
-fn network_pkey_to_peer_id(key: &secure::PublicKey) -> PeerId {
-    let hash =
-        multihash::encode(multihash::Hash::SHA2256, &key.to_bytes()).expect("should never fail");
-    PeerId::from_multihash(hash).expect("hash is properly formed on prev step")
-}
-
-fn new_peerstore(
-    config: &NetworkConfig,
-    keychain: &KeyChain,
-    peer_id: PeerId,
-    local_pub_key: PublicKey,
-) -> MemoryPeerstore {
-    let mut peerstore = MemoryPeerstore::empty(peer_id.clone(), local_pub_key);
+fn my_external_address(config: &NetworkConfig) -> Vec<Multiaddr> {
     let ifaces = datalink::interfaces();
     let mut my_addresses: Vec<Multiaddr> = vec![];
 
@@ -477,12 +437,7 @@ fn new_peerstore(
     }
 
     debug!("My adverised addresses: {:#?}", my_addresses);
-    peerstore.add_local_external_addrs(my_addresses.into_iter());
-    let network_pkey_hash =
-        multihash::encode(multihash::Hash::SHA2256, &keychain.network_pkey.to_bytes())
-            .expect("hashing with SHA2256 never fails");
-    peerstore.add_provider(network_pkey_hash, peer_id);
-    peerstore
+    my_addresses
 }
 
 // Encode unicast message

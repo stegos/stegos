@@ -93,8 +93,10 @@ pub enum TicketsError {
     InvalidTicket(VRFTicket),
     #[fail(display = "No tickets was received in time.")]
     NoTickets,
-    #[fail(display = "Trying to process tickets not in collection phase.")]
-    OutOfOrderTicketsProcessing,
+    #[fail(
+        display = "Trying to process tickets but tickets count is smaller that LOWER_TICKETS_COUNT."
+    )]
+    NotEnoughTicketsCount,
     #[fail(display = "Receiving multiple tickets from {:?}.", _0)]
     MultipleTickets(SecurePublicKey),
 }
@@ -188,9 +190,8 @@ impl TicketsSystem {
                 let ticket = self.on_view_change(last_block_hash);
                 Ok(Feedback::BroadcastTicket(ticket))
             }
-            State::CollectingTickets(ref state, start)
-                if state.tickets_count() >= LOWER_TICKETS_COUNT
-                    && time.duration_since(start) > COLLECTING_TICKETS_TIMER * self.view_change =>
+            State::CollectingTickets(_, start)
+                if time.duration_since(start) > COLLECTING_TICKETS_TIMER * self.view_change =>
             {
                 self.on_collection_end(stakers).map(Feedback::ChangeGroup)
             }
@@ -265,13 +266,17 @@ impl TicketsSystem {
         info!("Collecting tickets stoped, producing new group.");
         match mem::replace(&mut self.state, State::default()) {
             State::CollectingTickets(state, _) => {
+                // Cannot produce reliable group with low count of tickets, so just restart system.
+                if state.tickets_count() < LOWER_TICKETS_COUNT {
+                    return Err(TicketsError::NotEnoughTicketsCount);
+                }
                 let ticket = state.lowest()?;
                 debug!("New random calculated = {:?}.", ticket);
                 let group = election::choose_validators(stakers, ticket.rand, self.max_group_size);
                 debug!("Obtaining new group = {:?}.", group);
                 Ok(group)
             }
-            _ => Err(TicketsError::OutOfOrderTicketsProcessing),
+            _ => unreachable!(),
         }
     }
 }

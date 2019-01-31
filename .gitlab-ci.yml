@@ -22,6 +22,11 @@ build:linux:
   tags:
     - linux
 
+build:macos:
+  extends: .build
+  tags:
+    - macos
+
 .test:
   stage: test
   script:
@@ -39,6 +44,13 @@ test:linux:
     - build:linux
   tags:
     - linux
+
+test:macos:
+  extends: .test
+  dependencies:
+    - build:macos
+  tags:
+    - macos
 
 code_coverage:
   stage: code_coverage
@@ -72,3 +84,7 @@ release:linux:
   tags:
     - linux
 
+release:macos:
+  extends: .release
+  tags:
+    - macos

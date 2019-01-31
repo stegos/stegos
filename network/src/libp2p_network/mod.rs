@@ -48,7 +48,9 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use crate::{ncp, MemoryPeerstore, Network, NetworkProvider, UnicastMessage};
 
 mod kad_discovery;
-mod unicast_proto;
+mod proto;
+
+use self::proto::unicast_proto;
 
 #[derive(Clone, Debug)]
 pub struct Libp2pNetwork {

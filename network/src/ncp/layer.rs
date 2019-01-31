@@ -60,7 +60,7 @@ pub struct Ncp<TSubstream> {
 }
 
 impl<TSubstream> Ncp<TSubstream> {
-    /// Creates a `Floodsub`.
+    /// Creates a NetworkBehaviour for NCP.
     pub fn new(config: &ConfigNetwork) -> Self {
         let mut events = VecDeque::new();
 

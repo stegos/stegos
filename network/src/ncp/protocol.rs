@@ -31,7 +31,7 @@ use tokio::codec::{Decoder, Encoder, Framed};
 use tokio::io::{AsyncRead, AsyncWrite};
 use unsigned_varint::codec;
 
-use super::ncp_proto;
+use super::proto::ncp_proto;
 
 /// Implementation of `ConnectionUpgrade` for the floodsub protocol.
 #[derive(Debug, Clone)]

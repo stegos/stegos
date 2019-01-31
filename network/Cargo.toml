@@ -2,6 +2,7 @@
 name = "stegos_network"
 version = "0.3.0"
 authors = ["Stegos AG <info@stegos.cc>"]
+links = "stegos_network"
 edition = "2018"
 build = "build.rs"
 
@@ -14,7 +15,7 @@ env_logger = "0.6.0"
 ipnetwork = "0.12"
 log = "0.4"
 pnet = "0.21"
-protobuf = "2.2"
+protobuf = "2.3"
 rand = "0.6"
 smallvec = "0.6"
 stegos_config = { path = "../config"}
@@ -29,4 +30,5 @@ void = "1.0"
 libp2p = "0.2"
 
 [build-dependencies]
-protobuf-codegen-pure = "2.2"
+# protobuf-codegen-pure = "2.3"
+stegos_serialization = { path = "../serialization"}

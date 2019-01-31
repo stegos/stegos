@@ -46,7 +46,7 @@ impl MemoryPeerstore {
         MemoryPeerstore {
             peers: Default::default(),
             nodes: Default::default(),
-            local_peer_id: peer_id.clone(),
+            local_peer_id: peer_id,
             local_public_key: pubkey,
         }
     }

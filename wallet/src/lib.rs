@@ -39,7 +39,7 @@ use stegos_crypto::pbc::secure;
 
 pub enum WalletNotification {
     BalanceChanged { balance: i64 },
-    MessageReceived { msg: Vec<u8>, prune_tx: Transaction },
+    PaymentReceived { amount: i64, comment: String },
 }
 
 pub struct Wallet {
@@ -71,21 +71,21 @@ impl Wallet {
     }
 
     /// Send money.
-    pub fn payment(&self, recipient: &PublicKey, amount: i64) -> Result<Transaction, Error> {
-        let tx =
-            create_payment_transaction(&self.skey, &self.pkey, recipient, &self.unspent, amount)?;
-        Ok(tx)
-    }
-
-    /// Send message.
-    pub fn message(
+    pub fn payment(
         &self,
         recipient: &PublicKey,
-        ttl: u64,
-        data: Vec<u8>,
+        amount: i64,
+        comment: String,
     ) -> Result<Transaction, Error> {
-        let tx =
-            create_data_transaction(&self.skey, &self.pkey, recipient, &self.unspent, ttl, data)?;
+        let data = PaymentPayloadData::Comment(comment);
+        let tx = create_payment_transaction(
+            &self.skey,
+            &self.pkey,
+            recipient,
+            &self.unspent,
+            amount,
+            data,
+        )?;
         Ok(tx)
     }
 
@@ -165,12 +165,23 @@ impl Wallet {
         let hash = Hash::digest(&output);
         match output {
             Output::PaymentOutput(o) => {
-                if let Ok(PaymentPayload { amount, .. }) = o.decrypt_payload(&self.skey) {
-                    info!("Received payment UTXO: hash={}, amount={}", hash, amount);
+                if let Ok(PaymentPayload { amount, data, .. }) = o.decrypt_payload(&self.skey) {
+                    info!(
+                        "Received UTXO: hash={}, amount={}, data={:?}",
+                        hash, amount, data
+                    );
+                    let comment = match data {
+                        PaymentPayloadData::Comment(comment) => comment,
+                        PaymentPayloadData::ContentHash(hash) => hash.into_hex(),
+                    };
                     let missing = self.unspent.insert(hash, (o, amount));
                     assert!(missing.is_none());
                     assert!(amount >= 0);
-                    self.balance += amount
+                    self.balance += amount;
+
+                    // Notify subscribers.
+                    let notification = WalletNotification::PaymentReceived { amount, comment };
+                    return Some(notification);
                 }
             }
             Output::DataOutput(o) => {
@@ -180,16 +191,6 @@ impl Wallet {
                         hash,
                         String::from_utf8_lossy(&msg)
                     );
-
-                    // Send a prune transaction.
-                    debug!("Pruning data");
-                    let prune_tx =
-                        create_data_pruning_transaction(&self.skey, o).expect("cannot fail");
-                    debug!("Created transaction: hash={}", Hash::digest(&prune_tx.body));
-
-                    // Notify subscribers.
-                    let notification = WalletNotification::MessageReceived { msg, prune_tx };
-                    return Some(notification);
                 }
             }
             Output::StakeOutput(o) => {
@@ -208,8 +209,11 @@ impl Wallet {
         let hash = Hash::digest(&output);
         match output {
             Output::PaymentOutput(o) => {
-                if let Ok(PaymentPayload { amount, .. }) = o.decrypt_payload(&self.skey) {
-                    info!("Spent payment UTXO: hash={}, amount={}", hash, amount);
+                if let Ok(PaymentPayload { amount, data, .. }) = o.decrypt_payload(&self.skey) {
+                    info!(
+                        "Spent UTXO: hash={}, amount={}, data={:?}",
+                        hash, amount, data
+                    );
                     let exists = self.unspent.remove(&hash);
                     assert!(exists.is_some());
                     self.balance -= amount;

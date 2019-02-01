@@ -52,9 +52,10 @@ pub fn create_payment_transaction(
     recipient: &PublicKey,
     unspent: &HashMap<Hash, (PaymentOutput, i64)>,
     amount: i64,
+    data: PaymentPayloadData,
 ) -> Result<Transaction, Error> {
-    if amount <= 0 {
-        return Err(WalletError::ZeroOrNegativeAmount.into());
+    if amount < 0 {
+        return Err(WalletError::NegativeAmount(amount).into());
     }
 
     debug!(
@@ -97,27 +98,30 @@ pub fn create_payment_transaction(
 
     // Create an output for payment
     trace!("Creating change UTXO...");
-    let (output1, gamma1) = Output::new_payment(timestamp, sender_skey, recipient, amount)?;
+    let (output1, gamma1) =
+        PaymentOutput::with_payload(timestamp, sender_skey, recipient, amount, data.clone())?;
+    let output1_hash = Hash::digest(&output1);
     info!(
-        "Created payment UTXO: hash={}, recipient={}, amount={}",
-        Hash::digest(&output1),
-        recipient,
-        amount
+        "Created payment UTXO: hash={}, recipient={}, amount={}, data={:?}",
+        output1_hash, recipient, amount, data
     );
-    outputs.push(output1);
+    outputs.push(Output::PaymentOutput(output1));
     let mut gamma = gamma1;
 
     if change > 0 {
         // Create an output for change
         trace!("Creating change UTXO...");
-        let (output2, gamma2) = Output::new_payment(timestamp, sender_skey, sender_pkey, change)?;
+        let data = PaymentPayloadData::Comment("Change".to_string());
+        let (output2, gamma2) =
+            PaymentOutput::with_payload(timestamp, sender_skey, sender_pkey, change, data.clone())?;
         info!(
-            "Created change UTXO: hash={}, recipient={}, change={}",
+            "Created change UTXO: hash={}, recipient={}, change={}, data={:?}",
             Hash::digest(&output2),
             sender_pkey,
-            change
+            change,
+            data
         );
-        outputs.push(output2);
+        outputs.push(Output::PaymentOutput(output2));
         gamma += gamma2;
     }
 
@@ -229,6 +233,7 @@ pub fn create_data_transaction(
 }
 
 /// Create a new transaction to prune data.
+#[allow(dead_code)]
 pub(crate) fn create_data_pruning_transaction(
     sender_skey: &SecretKey,
     output: DataOutput,
@@ -264,8 +269,8 @@ pub fn create_staking_transaction(
     unspent: &HashMap<Hash, (PaymentOutput, i64)>,
     amount: i64,
 ) -> Result<Transaction, Error> {
-    if amount <= 0 {
-        return Err(WalletError::ZeroOrNegativeAmount.into());
+    if amount < 0 {
+        return Err(WalletError::NegativeAmount(amount).into());
     } else if amount <= PAYMENT_FEE {
         // Stake must be > PAYMENT_FEE.
         return Err(WalletError::InsufficientStake(PAYMENT_FEE + 1, amount).into());
@@ -363,7 +368,7 @@ pub fn create_unstaking_transaction(
     amount: i64,
 ) -> Result<Transaction, Error> {
     if amount <= PAYMENT_FEE {
-        return Err(WalletError::ZeroOrNegativeAmount.into());
+        return Err(WalletError::NegativeAmount(amount - PAYMENT_FEE).into());
     }
 
     debug!(
@@ -508,7 +513,7 @@ pub mod tests {
             create_unstaking_transaction(&skey, &pkey, &validator_pkey, &unspent, PAYMENT_FEE - 1)
                 .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {
-            WalletError::ZeroOrNegativeAmount => {}
+            WalletError::NegativeAmount(_amount) => {}
             _ => panic!(),
         }
 
@@ -516,7 +521,7 @@ pub mod tests {
         let e = create_unstaking_transaction(&skey, &pkey, &validator_pkey, &unspent, PAYMENT_FEE)
             .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {
-            WalletError::ZeroOrNegativeAmount => {}
+            WalletError::NegativeAmount(_amount) => {}
             _ => panic!(),
         }
 

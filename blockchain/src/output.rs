@@ -180,7 +180,7 @@ fn cloak_key(
 }
 
 /// Unpacked data field of PaymentPayload.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub enum PaymentPayloadData {
     /// A string up to PAYLOAD_DATA_LEN - 2 bytes inclusive.
     Comment(String),
@@ -343,7 +343,7 @@ impl PaymentPayload {
 
 impl PaymentOutput {
     /// Create a new PaymentOutput with generic payload.
-    fn with_payload(
+    pub fn with_payload(
         timestamp: u64,
         sender_skey: &SecretKey,
         recipient_pkey: &PublicKey,

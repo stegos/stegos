@@ -70,7 +70,7 @@ where
 
 lazy_static! {
     /// Regex to parse "pay" command.
-    static ref PAY_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<amount>[0-9]{1,19})\s*$").unwrap();
+    static ref PAY_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<amount>[0-9]{1,19})(\s+(?P<comment>.+))?\s*$").unwrap();
     /// Regex to parse "msg" command.
     static ref MSG_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<msg>.+)$").unwrap();
     /// Regex to parse "stake/unstake" command.
@@ -207,9 +207,10 @@ where
     }
 
     fn help_pay() {
-        println!("Usage: pay PUBLICKEY AMOUNT");
+        println!("Usage: pay PUBLICKEY AMOUNT [COMMENT]");
         println!(" - PUBLICKEY recipient's public key in HEX format");
         println!(" - AMOUNT amount in tokens");
+        println!(" - COMMENT purpose of payment");
         println!("");
     }
 
@@ -313,11 +314,16 @@ where
             };
             let amount = caps.name("amount").unwrap().as_str();
             let amount = amount.parse::<i64>().unwrap(); // check by regex
+            let comment = if let Some(m) = caps.name("comment") {
+                m.as_str().to_string()
+            } else {
+                String::new()
+            };
 
             info!("Sending {} STG to {}", amount, recipient.into_hex());
             if let Err(e) = self
                 .wallet
-                .payment(&recipient, amount)
+                .payment(&recipient, amount, comment)
                 .and_then(move |tx| self.node.send_transaction(tx))
             {
                 error!("Request failed: {}", e);
@@ -336,17 +342,15 @@ where
                     return ConsoleService::<Network>::help_msg();
                 }
             };
-            let data = caps.name("msg").unwrap().as_str();
-            assert!(data.len() > 0);
-            let data = data.as_bytes().to_vec();
+            let amount: i64 = 0;
+            let comment = caps.name("msg").unwrap().as_str().to_string();
+            assert!(comment.len() > 0);
 
             info!("Sending message to {}", recipient.into_hex());
-            // TODO: allow to choose ttl
-            let ttl = 10;
 
             if let Err(e) = self
                 .wallet
-                .message(&recipient, ttl, data)
+                .payment(&recipient, amount, comment)
                 .and_then(move |tx| self.node.send_transaction(tx))
             {
                 error!("Request failed: {}", e);
@@ -403,19 +407,19 @@ where
         std::process::exit(0);
     }
 
-    fn on_notification(&mut self, notifications: Vec<WalletNotification>) -> Result<(), Error> {
+    fn on_notification(&mut self, notifications: Vec<WalletNotification>) {
         for notification in notifications {
             match notification {
                 WalletNotification::BalanceChanged { balance } => {
                     info!("Balance is {} STG", balance);
                 }
-                WalletNotification::MessageReceived { msg, prune_tx } => {
-                    info!("Incoming message: {}", String::from_utf8_lossy(&msg));
-                    self.node.send_transaction(prune_tx)?;
+                WalletNotification::PaymentReceived { amount, comment } => {
+                    if amount == 0 && !comment.is_empty() {
+                        info!("Incoming message: {}", comment);
+                    }
                 }
             }
         }
-        Ok(())
     }
 }
 
@@ -445,9 +449,7 @@ where
             match self.outputs_rx.poll() {
                 Ok(Async::Ready(Some(msg))) => {
                     let notifications = self.wallet.on_outputs_changed(msg.inputs, msg.outputs);
-                    if let Err(e) = self.on_notification(notifications) {
-                        error!("Error: {}", e);
-                    }
+                    self.on_notification(notifications)
                 }
                 Ok(Async::Ready(None)) => self.on_exit(),
                 Ok(Async::NotReady) => break, // fall through

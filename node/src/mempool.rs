@@ -188,18 +188,21 @@ impl Mempool {
 
         // Create an output for fee.
         let output_fee = if fee + reward > 0 {
-            trace!("Creating fee/reward UTXO...");
+            trace!("Creating reward UTXO...");
+            let data = PaymentPayloadData::Comment("Block reward".to_string());
             let (output_fee, gamma_fee) =
-                Output::new_payment(timestamp, skey, pkey, fee + reward).expect("invalid keys");
+                PaymentOutput::with_payload(timestamp, skey, pkey, fee + reward, data.clone())
+                    .expect("invalid keys");
             gamma -= gamma_fee;
             info!(
-                "Created fee/reward UTXO: hash={}, fee={}, reward={}",
+                "Created reward UTXO: hash={}, fee={}, reward={}, data={:?}",
                 Hash::digest(&output_fee),
                 fee,
-                reward
+                reward,
+                data
             );
-            outputs.push(output_fee.clone());
-            Some(output_fee)
+            outputs.push(Output::PaymentOutput(output_fee.clone()));
+            Some(Output::PaymentOutput(output_fee))
         } else {
             None
         };

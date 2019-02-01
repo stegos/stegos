@@ -1463,6 +1463,7 @@ pub mod tests {
             &node.keys.wallet_pkey,
             &unspent(node),
             amount,
+            PaymentPayloadData::Comment("Test".to_string()),
         )?;
         let proto = tx.into_proto();
         let data = proto.write_to_bytes()?;

@@ -27,7 +27,6 @@ use bitvector::BitVector;
 use crate::*;
 use std::collections::BTreeSet;
 use stegos_crypto::bulletproofs::BulletProof;
-use stegos_crypto::curve1174::cpt::Pt;
 use stegos_crypto::curve1174::cpt::{EncryptedPayload, PublicKey, SchnorrSig};
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
@@ -68,30 +67,6 @@ impl ProtoConvert for PaymentOutput {
     }
 }
 
-impl ProtoConvert for DataOutput {
-    type Proto = blockchain::DataOutput;
-    fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::DataOutput::new();
-        proto.set_recipient(self.recipient.into_proto());
-        proto.set_ttl(self.ttl);
-        proto.set_vcmt(self.vcmt.into_proto());
-        proto.set_payload(self.payload.into_proto());
-        proto
-    }
-    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let recipient = PublicKey::from_proto(proto.get_recipient())?;
-        let ttl = proto.ttl;
-        let vcmt = Pt::from_proto(proto.get_vcmt())?;
-        let payload = EncryptedPayload::from_proto(proto.get_payload())?;
-        Ok(DataOutput {
-            recipient,
-            ttl,
-            vcmt,
-            payload,
-        })
-    }
-}
-
 impl ProtoConvert for StakeOutput {
     type Proto = blockchain::StakeOutput;
     fn into_proto(&self) -> Self::Proto {
@@ -123,7 +98,6 @@ impl ProtoConvert for Output {
         let mut proto = blockchain::Output::new();
         match self {
             Output::PaymentOutput(output) => proto.set_payment_output(output.into_proto()),
-            Output::DataOutput(output) => proto.set_data_output(output.into_proto()),
             Output::StakeOutput(output) => proto.set_stake_output(output.into_proto()),
         }
         proto
@@ -134,10 +108,6 @@ impl ProtoConvert for Output {
             Some(blockchain::Output_oneof_output::payment_output(ref output)) => {
                 let output = PaymentOutput::from_proto(output)?;
                 Ok(Output::PaymentOutput(output))
-            }
-            Some(blockchain::Output_oneof_output::data_output(ref output)) => {
-                let output = DataOutput::from_proto(output)?;
-                Ok(Output::DataOutput(output))
             }
             Some(blockchain::Output_oneof_output::stake_output(ref output)) => {
                 let output = StakeOutput::from_proto(output)?;
@@ -473,11 +443,6 @@ mod tests {
             Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
         roundtrip(&output);
 
-        let data = b"hello";
-        let (output, _gamma) =
-            Output::new_data(timestamp, &skey0, &pkey1, 1, data).expect("keys are valid");
-        roundtrip(&output);
-
         let output = Output::new_stake(timestamp, &skey1, &pkey1, &secure_pkey1, amount)
             .expect("keys are valid");
         roundtrip(&output);
@@ -490,9 +455,7 @@ mod tests {
 
         let timestamp = Utc::now().timestamp() as u64;
         let amount: i64 = 1_000_000;
-        let data = b"hello";
         let fee: i64 = 0;
-        let ttl = 10;
 
         // "genesis" output by 0
         let (output0, _delta0) =
@@ -502,17 +465,13 @@ mod tests {
         let inputs1 = [output0];
         let (output11, gamma11) =
             Output::new_payment(timestamp, &skey1, &pkey2, amount).expect("keys are valid");
-        let (output12, gamma12) =
-            Output::new_data(timestamp, &skey1, &pkey2, ttl, data).expect("keys are valid");
 
         roundtrip(&output11);
         roundtrip(&gamma11);
-        roundtrip(&output12);
-        roundtrip(&gamma12);
 
-        let outputs_gamma = gamma11 + gamma12;
+        let outputs_gamma = gamma11;
 
-        let tx = Transaction::new(&skey1, &inputs1, &[output11, output12], outputs_gamma, fee)
+        let tx = Transaction::new(&skey1, &inputs1, &[output11], outputs_gamma, fee)
             .expect("keys are valid");
         tx.validate(&inputs1).unwrap();
 

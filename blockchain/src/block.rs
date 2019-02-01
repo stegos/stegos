@@ -357,9 +357,6 @@ impl MonetaryBlock {
                 Output::PaymentOutput(o) => {
                     pedersen_commitment_diff += Pt::decompress(o.proof.vcmt)?;
                 }
-                Output::DataOutput(o) => {
-                    pedersen_commitment_diff += Pt::decompress(o.vcmt)?;
-                }
                 Output::StakeOutput(o) => {
                     pedersen_commitment_diff += fee_a(o.amount);
                 }
@@ -388,9 +385,6 @@ impl MonetaryBlock {
                         .into());
                     }
                     pedersen_commitment_diff -= Pt::decompress(o.proof.vcmt)?;
-                }
-                Output::DataOutput(ref o) => {
-                    pedersen_commitment_diff -= Pt::decompress(o.vcmt)?;
                 }
                 Output::StakeOutput(ref o) => {
                     if o.amount <= 0 {

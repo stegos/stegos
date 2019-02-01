@@ -123,12 +123,6 @@ impl Transaction {
                     eff_skey += payload.delta * payload.gamma;
                     eff_skey += payload.gamma;
                 }
-                Output::DataOutput(o) => {
-                    let (delta, gamma, _data) = o.decrypt_payload(skey)?;
-                    tx_gamma += gamma;
-                    eff_skey += delta * gamma;
-                    eff_skey += gamma;
-                }
                 Output::StakeOutput(o) => {
                     let delta = o.decrypt_payload(skey)?;
                     eff_skey += delta;
@@ -210,9 +204,6 @@ impl Transaction {
                 Output::PaymentOutput(o) => {
                     pedersen_commitment_diff += Pt::decompress(o.proof.vcmt)?;
                 }
-                Output::DataOutput(o) => {
-                    pedersen_commitment_diff += Pt::decompress(o.vcmt)?;
-                }
                 Output::StakeOutput(o) => {
                     pedersen_commitment_diff += fee_a(o.amount);
                 }
@@ -241,9 +232,6 @@ impl Transaction {
                         .into());
                     }
                     pedersen_commitment_diff -= Pt::decompress(o.proof.vcmt)?;
-                }
-                Output::DataOutput(o) => {
-                    pedersen_commitment_diff -= Pt::decompress(o.vcmt)?;
                 }
                 Output::StakeOutput(o) => {
                     if o.amount <= 0 {
@@ -276,7 +264,6 @@ impl Transaction {
         for txin in inputs.iter() {
             let recipient = match txin {
                 Output::PaymentOutput(o) => o.recipient,
-                Output::DataOutput(o) => o.recipient,
                 Output::StakeOutput(o) => o.recipient,
             };
             let recipient: Pt = recipient.into();

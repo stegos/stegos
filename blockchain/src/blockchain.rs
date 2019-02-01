@@ -370,9 +370,6 @@ impl Blockchain {
                             Output::PaymentOutput(o) => {
                                 burned += Pt::decompress(o.proof.vcmt)?;
                             }
-                            Output::DataOutput(o) => {
-                                burned += Pt::decompress(o.vcmt)?;
-                            }
                             Output::StakeOutput(o) => {
                                 burned += fee_a(o.amount);
                             }
@@ -405,9 +402,6 @@ impl Blockchain {
             match output.as_ref() {
                 Output::PaymentOutput(o) => {
                     created += Pt::decompress(o.proof.vcmt)?;
-                }
-                Output::DataOutput(o) => {
-                    created += Pt::decompress(o.vcmt)?;
                 }
                 Output::StakeOutput(o) => {
                     created += fee_a(o.amount);

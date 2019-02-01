@@ -24,7 +24,7 @@
 use failure::{Error, Fail};
 use std::fmt;
 use std::mem::transmute;
-use stegos_crypto::bulletproofs::{make_range_proof, pedersen_commitment, BulletProof};
+use stegos_crypto::bulletproofs::{make_range_proof, BulletProof};
 use stegos_crypto::curve1174::cpt::{
     aes_decrypt, aes_encrypt, EncryptedPayload, Pt, PublicKey, SecretKey,
 };
@@ -44,12 +44,6 @@ pub const PAYMENT_PAYLOAD_LEN: usize = 1024;
 /// Maximum length of data field of encrypted payload of PaymentOutput.
 /// Equals to PAYMENT_PAYLOAD_LEN - magic - delta - gamma - amount.
 pub const PAYMENT_DATA_LEN: usize = PAYMENT_PAYLOAD_LEN - 4 - 32 - 32 - 8;
-
-/// A magic value used to encode/decode payload.
-const DATA_PAYLOAD_MAGIC: [u8; 4] = [100, 97, 116, 97]; // "data"
-
-/// Data payload size.
-const DATA_PAYLOAD_LEN: usize = 68;
 
 /// A magic value used to encode/decode payload.
 const STAKE_PAYLOAD_MAGIC: [u8; 4] = [115, 116, 107, 101]; // "stke"
@@ -98,30 +92,6 @@ pub struct PaymentOutput {
     pub payload: EncryptedPayload,
 }
 
-/// Data UTXO.
-#[derive(Debug, Clone)]
-pub struct DataOutput {
-    /// Clocked public key of recipient.
-    /// P_M + δG
-    pub recipient: PublicKey,
-
-    /// Pedersen commitment to zero.
-    pub vcmt: Pt,
-
-    /// The number of blocks for which this UTXO should be kept on the blockchain since
-    /// it has been added to it.
-    pub ttl: u64,
-
-    /// Encrypted payload.
-    ///
-    /// E_M(x, γ, δ)
-    /// Represents an encrypted packet contain the information about x, γ, δ
-    /// that only receiver can red
-    /// Size is approx 137 Bytes =
-    ///     (R-val 65B, crypto-text 72B = (amount 8B, gamma 32B, delta 32B))
-    pub payload: EncryptedPayload,
-}
-
 /// Escrow UTXO.
 #[derive(Debug, Clone)]
 pub struct StakeOutput {
@@ -142,7 +112,6 @@ pub struct StakeOutput {
 #[derive(Debug, Clone)]
 pub enum Output {
     PaymentOutput(PaymentOutput),
-    DataOutput(DataOutput),
     StakeOutput(StakeOutput),
 }
 
@@ -393,99 +362,6 @@ impl PaymentOutput {
     }
 }
 
-impl DataOutput {
-    /// Create a new DataOutput.
-    pub fn new(
-        timestamp: u64,
-        sender_skey: &SecretKey,
-        recipient_pkey: &PublicKey,
-        ttl: u64,
-        data: &[u8],
-    ) -> Result<(Self, Fr), Error> {
-        assert!(ttl > 0);
-        assert!(data.len() > 0);
-
-        // Create pedersen commitment
-        let (vcmt, gamma) = pedersen_commitment(0);
-        let vcmt = vcmt.compress();
-
-        // Clock recipient public key
-        let (cloaked_pkey, delta) = cloak_key(sender_skey, recipient_pkey, &gamma, timestamp)?;
-
-        // NOTE: real public key should be used to encrypt payload
-        let payload = Self::encrypt_payload(delta, gamma, data, recipient_pkey)?;
-
-        let output = DataOutput {
-            recipient: cloaked_pkey,
-            ttl,
-            vcmt,
-            payload,
-        };
-
-        Ok((output, gamma))
-    }
-
-    /// Encrypt payload for DataOutput.
-    fn encrypt_payload(
-        delta: Fr,
-        gamma: Fr,
-        data: &[u8],
-        pkey: &PublicKey,
-    ) -> Result<EncryptedPayload, CryptoError> {
-        let gamma_bytes: [u8; 32] = gamma.to_lev_u8();
-        let delta_bytes: [u8; 32] = delta.to_lev_u8();
-
-        let payload: Vec<u8> = [
-            &DATA_PAYLOAD_MAGIC[..],
-            &delta_bytes[..],
-            &gamma_bytes[..],
-            &data[..],
-        ]
-        .concat();
-
-        // Ensure that the total length of package is 68 bytes + data.len().
-        assert_eq!(payload.len(), DATA_PAYLOAD_LEN + data.len());
-
-        // Encrypt the payload.
-        let payload = aes_encrypt(&payload, &pkey)?;
-        assert_eq!(payload.ctxt.len(), DATA_PAYLOAD_LEN + data.len());
-        Ok(payload)
-    }
-
-    /// Decrypt payload of DataOutput.
-    pub fn decrypt_payload(&self, skey: &SecretKey) -> Result<(Fr, Fr, Vec<u8>), Error> {
-        let payload: Vec<u8> = aes_decrypt(&self.payload, &skey)?;
-
-        if payload.len() < DATA_PAYLOAD_LEN {
-            // Invalid payload or invalid secret key supplied.
-            return Err(OutputError::PayloadDecryptionError.into());
-        }
-
-        let mut magic: [u8; 4] = [0u8; 4];
-        let mut delta_bytes: [u8; 32] = [0u8; 32];
-        let mut gamma_bytes: [u8; 32] = [0u8; 32];
-        magic.copy_from_slice(&payload[0..4]);
-        delta_bytes.copy_from_slice(&payload[4..36]);
-        gamma_bytes.copy_from_slice(&payload[36..68]);
-        let data = payload[68..].to_vec(); // the rest is data
-
-        if magic != DATA_PAYLOAD_MAGIC {
-            // Invalid payload or invalid secret key supplied.
-            return Err(OutputError::PayloadDecryptionError.into());
-        }
-
-        let gamma: Fr = Fr::from_lev_u8(gamma_bytes);
-        let delta: Fr = Fr::from_lev_u8(delta_bytes);
-
-        Ok((delta, gamma, data))
-    }
-
-    pub fn data_size(&self) -> usize {
-        assert!(self.payload.ctxt.len() > DATA_PAYLOAD_LEN);
-        (self.payload.ctxt.len() - DATA_PAYLOAD_LEN)
-    }
-}
-
 impl StakeOutput {
     /// Create a new StakeOutput.
     pub fn new(
@@ -567,18 +443,6 @@ impl Output {
         Ok((Output::PaymentOutput(output), delta))
     }
 
-    /// Create a new data UTXO.
-    pub fn new_data(
-        timestamp: u64,
-        sender_skey: &SecretKey,
-        recipient_pkey: &PublicKey,
-        ttl: u64,
-        data: &[u8],
-    ) -> Result<(Self, Fr), Error> {
-        let (output, delta) = DataOutput::new(timestamp, sender_skey, recipient_pkey, ttl, data)?;
-        Ok((Output::DataOutput(output), delta))
-    }
-
     /// Create a new escrow transaction.
     pub fn new_stake(
         timestamp: u64,
@@ -613,16 +477,6 @@ impl Hashable for PaymentOutput {
     }
 }
 
-impl Hashable for DataOutput {
-    fn hash(&self, state: &mut Hasher) {
-        "Data".hash(state);
-        self.recipient.hash(state);
-        self.vcmt.hash(state);
-        self.ttl.hash(state);
-        self.payload.hash(state);
-    }
-}
-
 impl Hashable for StakeOutput {
     fn hash(&self, state: &mut Hasher) {
         "Stake".hash(state);
@@ -637,7 +491,6 @@ impl Hashable for Output {
     fn hash(&self, state: &mut Hasher) {
         match self {
             Output::PaymentOutput(monetary) => monetary.hash(state),
-            Output::DataOutput(data) => data.hash(state),
             Output::StakeOutput(escrow) => escrow.hash(state),
         }
     }
@@ -863,35 +716,6 @@ pub mod tests {
         let _delta2 = output
             .decrypt_payload(&skey2)
             .expect("decryption successful");
-
-        // Error handling
-        if let Err(e) = output.decrypt_payload(&skey1) {
-            match e.downcast::<OutputError>() {
-                Ok(OutputError::PayloadDecryptionError) => (),
-                _ => assert!(false),
-            };
-        } else {
-            assert!(false);
-        }
-    }
-
-    #[test]
-    pub fn data_encrypt_decrypt() {
-        let (skey1, _pkey1, _sig1) = make_random_keys();
-        let (skey2, pkey2, _sig2) = make_random_keys();
-
-        let timestamp = Utc::now().timestamp() as u64;
-        let data = b"hello";
-        let ttl = 5;
-
-        let (output, gamma) =
-            DataOutput::new(timestamp, &skey1, &pkey2, ttl, data).expect("encryption successful");
-        let (_delta2, gamma2, data2) = output
-            .decrypt_payload(&skey2)
-            .expect("decryption successful");
-
-        assert_eq!(data.to_vec(), data2);
-        assert_eq!(gamma, gamma2);
 
         // Error handling
         if let Err(e) = output.decrypt_payload(&skey1) {

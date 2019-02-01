@@ -184,15 +184,6 @@ impl Wallet {
                     return Some(notification);
                 }
             }
-            Output::DataOutput(o) => {
-                if let Ok((_delta, _gamma, msg)) = o.decrypt_payload(&self.skey) {
-                    info!(
-                        "Received data UTXO: hash={}, msg={}",
-                        hash,
-                        String::from_utf8_lossy(&msg)
-                    );
-                }
-            }
             Output::StakeOutput(o) => {
                 if let Ok(_delta) = o.decrypt_payload(&self.skey) {
                     info!("Staked money to escrow: hash={}, amount={}", hash, o.amount);
@@ -218,15 +209,6 @@ impl Wallet {
                     assert!(exists.is_some());
                     self.balance -= amount;
                     assert!(self.balance >= 0);
-                }
-            }
-            Output::DataOutput(o) => {
-                if let Ok((_delta, _gamma, data)) = o.decrypt_payload(&self.skey) {
-                    info!(
-                        "Pruned data UTXO: hash={}, msg={}",
-                        hash,
-                        String::from_utf8_lossy(&data)
-                    );
                 }
             }
             Output::StakeOutput(o) => {

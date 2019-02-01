@@ -32,7 +32,7 @@ use stegos_crypto::curve1174::cpt;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
 
-use rand::{ChaChaRng, SeedableRng};
+use secp256k1::rand::{ChaChaRng, SeedableRng};
 
 /// Create deterministic CoSi keys from Wallet Keys.
 ///

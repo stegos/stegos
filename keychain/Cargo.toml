@@ -12,7 +12,6 @@ lazy_static = "1.1"
 regex = "1.0"
 
 secp256k1 = { version = "0.12", features = ["rand"] }
-rand = "0.4"
 
 stegos_config = { path = "../config" }
 stegos_crypto = { path = "../crypto" }

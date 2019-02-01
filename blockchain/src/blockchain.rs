@@ -538,8 +538,8 @@ pub mod tests {
             let input = blockchain.output_by_hash(&input_hash).unwrap();
             match input {
                 Output::PaymentOutput(o) => {
-                    let (_delta, gamma, amount) = o.decrypt_payload(skey).expect("keys are valid");
-                    return (input.clone(), gamma, amount);
+                    let payload = o.decrypt_payload(skey).expect("keys are valid");
+                    return (input.clone(), payload.gamma, payload.amount);
                 }
                 _ => {}
             }

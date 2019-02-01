@@ -340,8 +340,8 @@ mod test {
 
         // Fee.
         if let Some(Output::PaymentOutput(o)) = output_fee {
-            let (_, _, fee) = o.decrypt_payload(&skey).expect("keys are valid");
-            assert_eq!(fee, 6);
+            let PaymentPayload { amount, .. } = o.decrypt_payload(&skey).expect("keys are valid");
+            assert_eq!(amount, 6);
         } else {
             unreachable!();
         }

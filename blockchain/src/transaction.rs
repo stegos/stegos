@@ -118,10 +118,10 @@ impl Transaction {
         for txin in inputs {
             match txin {
                 Output::PaymentOutput(o) => {
-                    let (delta, gamma, _amount) = o.decrypt_payload(skey)?;
-                    tx_gamma += gamma;
-                    eff_skey += delta * gamma;
-                    eff_skey += gamma;
+                    let payload = o.decrypt_payload(skey)?;
+                    tx_gamma += payload.gamma;
+                    eff_skey += payload.delta * payload.gamma;
+                    eff_skey += payload.gamma;
                 }
                 Output::DataOutput(o) => {
                     let (delta, gamma, _data) = o.decrypt_payload(skey)?;
@@ -233,6 +233,13 @@ impl Transaction {
                     if !validate_range_proof(&o.proof) {
                         return Err(BlockchainError::InvalidBulletProof.into());
                     }
+                    if o.payload.ctxt.len() != PAYMENT_PAYLOAD_LEN {
+                        return Err(OutputError::InvalidPayloadLength(
+                            PAYMENT_PAYLOAD_LEN,
+                            o.payload.ctxt.len(),
+                        )
+                        .into());
+                    }
                     pedersen_commitment_diff -= Pt::decompress(o.proof.vcmt)?;
                 }
                 Output::DataOutput(o) => {
@@ -241,6 +248,13 @@ impl Transaction {
                 Output::StakeOutput(o) => {
                     if o.amount <= 0 {
                         return Err(BlockchainError::InvalidStake.into());
+                    }
+                    if o.payload.ctxt.len() != STAKE_PAYLOAD_LEN {
+                        return Err(OutputError::InvalidPayloadLength(
+                            STAKE_PAYLOAD_LEN,
+                            o.payload.ctxt.len(),
+                        )
+                        .into());
                     }
                     pedersen_commitment_diff -= fee_a(o.amount);
                 }

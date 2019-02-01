@@ -27,11 +27,7 @@ use chrono::Utc;
 use failure::Error;
 use log::*;
 use std::collections::HashMap;
-use stegos_blockchain::DataOutput;
-use stegos_blockchain::Output;
-use stegos_blockchain::PaymentOutput;
-use stegos_blockchain::StakeOutput;
-use stegos_blockchain::Transaction;
+use stegos_blockchain::*;
 use stegos_config::*;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::curve1174::cpt::SecretKey;
@@ -480,7 +476,7 @@ pub mod tests {
         assert_eq!(tx.body.txouts.len(), 1);
         match &tx.body.txouts.first().unwrap() {
             Output::PaymentOutput(o) => {
-                let (_, _, amount) = o.decrypt_payload(&skey).expect("key is valid");
+                let PaymentPayload { amount, .. } = o.decrypt_payload(&skey).expect("key is valid");
                 assert_eq!(amount, stake - PAYMENT_FEE);
             }
             _ => panic!("invalid tx"),
@@ -495,7 +491,7 @@ pub mod tests {
         assert_eq!(tx.body.txouts.len(), 2);
         match &tx.body.txouts[0] {
             Output::PaymentOutput(o) => {
-                let (_, _, amount) = o.decrypt_payload(&skey).expect("key is valid");
+                let PaymentPayload { amount, .. } = o.decrypt_payload(&skey).expect("key is valid");
                 assert_eq!(amount, unstake - PAYMENT_FEE);
             }
             _ => panic!("invalid tx"),

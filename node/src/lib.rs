@@ -1445,7 +1445,8 @@ pub mod tests {
         for hash in node.chain.unspent() {
             let output = node.chain.output_by_hash(&hash).unwrap();
             if let Output::PaymentOutput(o) = output {
-                let (_delta, _gamma, amount) = o.decrypt_payload(&node.keys.wallet_skey).unwrap();
+                let PaymentPayload { amount, .. } =
+                    o.decrypt_payload(&node.keys.wallet_skey).unwrap();
                 unspent.insert(hash, (o.clone(), amount));
             }
         }
@@ -1499,7 +1500,8 @@ pub mod tests {
         for hash in node.chain.unspent() {
             let output = node.chain.output_by_hash(&hash).unwrap();
             if let Output::PaymentOutput(o) = output {
-                let (_delta, _gamma, amount) = o.decrypt_payload(&node.keys.wallet_skey).unwrap();
+                let PaymentPayload { amount, .. } =
+                    o.decrypt_payload(&node.keys.wallet_skey).unwrap();
                 balance += amount;
             }
         }
@@ -1531,7 +1533,8 @@ pub mod tests {
         for unspent in node.chain.unspent() {
             match node.chain.output_by_hash(&unspent) {
                 Some(Output::PaymentOutput(o)) => {
-                    let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
+                    let PaymentPayload { amount, .. } =
+                        o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
                 }
                 Some(Output::StakeOutput(o)) => {
@@ -1554,7 +1557,8 @@ pub mod tests {
         for unspent in node.chain.unspent() {
             match node.chain.output_by_hash(&unspent) {
                 Some(Output::PaymentOutput(o)) => {
-                    let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
+                    let PaymentPayload { amount, .. } =
+                        o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
                 }
                 Some(Output::StakeOutput(o)) => {
@@ -1600,7 +1604,8 @@ pub mod tests {
         for unspent in node.chain.unspent() {
             match node.chain.output_by_hash(&unspent) {
                 Some(Output::PaymentOutput(o)) => {
-                    let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
+                    let PaymentPayload { amount, .. } =
+                        o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
                 }
                 Some(Output::StakeOutput(o)) => {
@@ -1630,7 +1635,8 @@ pub mod tests {
         for unspent in node.chain.unspent() {
             match node.chain.output_by_hash(&unspent) {
                 Some(Output::PaymentOutput(o)) => {
-                    let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
+                    let PaymentPayload { amount, .. } =
+                        o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
                 }
                 Some(Output::DataOutput(_o)) => {
@@ -1667,7 +1673,8 @@ pub mod tests {
         for unspent in node.chain.unspent() {
             match node.chain.output_by_hash(&unspent) {
                 Some(Output::PaymentOutput(o)) => {
-                    let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
+                    let PaymentPayload { amount, .. } =
+                        o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
                 }
                 Some(Output::DataOutput(_o)) => {

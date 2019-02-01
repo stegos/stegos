@@ -31,10 +31,7 @@ pub use crate::transaction::*;
 use failure::Error;
 use log::*;
 use std::collections::HashMap;
-use stegos_blockchain::Output;
-use stegos_blockchain::PaymentOutput;
-use stegos_blockchain::StakeOutput;
-use stegos_blockchain::Transaction;
+use stegos_blockchain::*;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::curve1174::cpt::SecretKey;
 use stegos_crypto::hash::Hash;
@@ -168,7 +165,7 @@ impl Wallet {
         let hash = Hash::digest(&output);
         match output {
             Output::PaymentOutput(o) => {
-                if let Ok((_delta, _gamma, amount)) = o.decrypt_payload(&self.skey) {
+                if let Ok(PaymentPayload { amount, .. }) = o.decrypt_payload(&self.skey) {
                     info!("Received payment UTXO: hash={}, amount={}", hash, amount);
                     let missing = self.unspent.insert(hash, (o, amount));
                     assert!(missing.is_none());
@@ -211,7 +208,7 @@ impl Wallet {
         let hash = Hash::digest(&output);
         match output {
             Output::PaymentOutput(o) => {
-                if let Ok((_delta, _gamma, amount)) = o.decrypt_payload(&self.skey) {
+                if let Ok(PaymentPayload { amount, .. }) = o.decrypt_payload(&self.skey) {
                     info!("Spent payment UTXO: hash={}, amount={}", hash, amount);
                     let exists = self.unspent.remove(&hash);
                     assert!(exists.is_some());

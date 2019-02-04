@@ -1,0 +1,20 @@
+syntax = "proto3";
+package stegos.loader;
+
+import "crypto.proto";
+import "blockchain.proto";
+
+message RequestBlocks {
+    stegos.crypto.Hash start_block = 1;
+}
+
+message ResponseBlocks {
+    repeated stegos.blockchain.Block blocks = 1;
+}
+
+message ChainLoaderMessage {
+    oneof body {
+        RequestBlocks request = 1;
+        ResponseBlocks response = 2;
+    }
+}

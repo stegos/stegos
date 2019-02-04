@@ -24,6 +24,7 @@
 mod consensus;
 mod election;
 mod error;
+mod loader;
 mod mempool;
 pub mod protos;
 mod tickets;
@@ -34,6 +35,7 @@ use bitvector::BitVector;
 
 use crate::election::ConsensusGroup;
 use crate::error::*;
+use crate::loader::ChainLoader;
 pub use crate::tickets::{TicketsSystem, VRFTicket};
 use chrono::Utc;
 use failure::{ensure, Error};
@@ -57,6 +59,7 @@ use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
 use stegos_crypto::pbc::secure::Signature as SecureSignature;
 use stegos_keychain::KeyChain;
 use stegos_network::Network;
+use stegos_network::UnicastMessage;
 use stegos_serialization::traits::ProtoConvert;
 use tokio_timer::Interval;
 
@@ -196,6 +199,7 @@ enum NodeMessage {
     Consensus(Vec<u8>),
     SealedBlock(Vec<u8>),
     VRFMessage(Vec<u8>),
+    ChainLoaderMessage(UnicastMessage),
     //
     // Internal Events
     //
@@ -214,8 +218,9 @@ struct NodeService {
     /// And allow to change validators in case of epoch change.
     vrf_system: TicketsSystem,
 
+    chain_loader: ChainLoader,
+
     /// A queue of consensus message from the future epoch.
-    // TODO: Add orphan SealedBlock to the queue.
     // TODO: Resolve unknown blocks using requests-responses.
     future_consensus_messages: Vec<Vec<u8>>,
 
@@ -271,7 +276,7 @@ impl NodeService {
     ) -> Result<Self, Error> {
         let future_consensus_messages = Vec::new();
         let vrf_system = TicketsSystem::new(WITNESSES_MAX, 0, 0, keys.cosi_pkey, keys.cosi_skey);
-
+        let chain_loader = ChainLoader::new();
         let mempool = Mempool::new();
 
         let consensus = None;
@@ -302,11 +307,17 @@ impl NodeService {
             .map(|m| NodeMessage::VRFMessage(m));
         streams.push(Box::new(ticket_system_rx));
 
-        // Block Requests
+        // Sealed blocks broadcast topic.
         let block_rx = network
             .subscribe(&SEALED_BLOCK_TOPIC)?
             .map(|m| NodeMessage::SealedBlock(m));
         streams.push(Box::new(block_rx));
+
+        // Chain loader messages.
+        let requests_rx = network
+            .subscribe_unicast(loader::CHAIN_LOADER_TOPIC)?
+            .map(NodeMessage::ChainLoaderMessage);
+        streams.push(Box::new(requests_rx));
 
         // CoSi timer events
         let duration = CONSENSUS_TIMER; // every second
@@ -325,6 +336,7 @@ impl NodeService {
         let events = select_all(streams);
 
         let service = NodeService {
+            chain_loader,
             future_consensus_messages,
             vrf_system,
             chain,
@@ -609,24 +621,11 @@ impl NodeService {
     }
 
     /// Handle incoming MonetaryBlock
-    fn handle_sealed_monetary_block(
-        &mut self,
-        monetary_block: MonetaryBlock,
-        pkey: &SecurePublicKey,
-    ) -> Result<(), Error> {
+    fn handle_sealed_monetary_block(&mut self, monetary_block: MonetaryBlock) -> Result<(), Error> {
         let timestamp = Utc::now().timestamp() as u64;
 
         let block_hash = Hash::digest(&monetary_block);
-        // For monetary block, consensus is stable, and we can just check leader.
-        // Check that message is signed by current leader.
-        if *pkey != self.chain.leader {
-            return Err(NodeError::SealedBlockFromNonLeader(
-                block_hash,
-                self.chain.leader.clone(),
-                *pkey,
-            )
-            .into());
-        }
+
         // Check epoch.
         if self.chain.epoch != monetary_block.header.base.epoch {
             error!(
@@ -674,14 +673,44 @@ impl NodeService {
     }
 
     /// Handle incoming blocks received from network.
-    fn handle_sealed_block(&mut self, msg: Vec<u8>) -> Result<(), Error> {
-        let msg: protos::node::SealedBlockMessage = protobuf::parse_from_bytes(&msg)?;
-        let msg = SealedBlockMessage::from_proto(&msg)?;
-
+    fn handle_sealed_block(&mut self, msg: SealedBlockMessage) -> Result<(), Error> {
         // Check signature and content.
         msg.validate()?;
 
+        let ref block = msg.block;
+        let block_hash = Hash::digest(block);
+
+        if let Block::MonetaryBlock(_) = block {
+            // TODO: Should this check exist? We can send block as response, and it would be validated without this check.
+
+            // For monetary block, consensus is stable, and we can just check leader.
+            // Check that message is signed by current leader.
+            if msg.pkey != self.chain.leader {
+                return Err(NodeError::SealedBlockFromNonLeader(
+                    block_hash,
+                    self.chain.leader.clone(),
+                    msg.pkey,
+                )
+                .into());
+            }
+        }
+
+        let header = block.base_header();
+        // Check previous hash.
+        let previous_hash = Hash::digest(self.chain.last_block());
+        if previous_hash != header.previous {
+            debug!(
+                "Received orphan block: hash={}, expected_previous={}, got_previous={}",
+                &block_hash, &previous_hash, &header.previous
+            );
+            return self.on_orphan_block(msg);
+        }
+
         let block = msg.block;
+        self.apply_new_block(block)
+    }
+
+    fn apply_new_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
         info!(
             "Received sealed block from the network: hash={}, current_height={}",
@@ -694,18 +723,6 @@ impl NodeService {
             warn!("Block has been already registered: hash={}", &block_hash);
             // Already registered, skip.
             return Ok(());
-        }
-
-        {
-            let header = block.base_header();
-            // Check previous hash.
-            let previous_hash = Hash::digest(self.chain.last_block());
-            if previous_hash != header.previous {
-                //TODO: Add orphan blocks to the self.future_consensus_messages;
-                error!("Invalid or out-of-order block received: hash={}, expected_previous={}, got_previous={}",
-                       &block_hash, &previous_hash, &header.previous);
-                return Ok(());
-            }
         }
 
         if let Some(consensus) = &mut self.consensus {
@@ -721,10 +738,11 @@ impl NodeService {
                 }
             }
         };
+
         match block {
             Block::KeyBlock(key_block) => self.handle_sealed_key_block(key_block),
             Block::MonetaryBlock(monetary_block) => {
-                self.handle_sealed_monetary_block(monetary_block, &msg.pkey)
+                self.handle_sealed_monetary_block(monetary_block)
             }
         }
     }
@@ -943,6 +961,8 @@ impl NodeService {
             return Ok(());
         }
         let consensus = self.consensus.as_mut().unwrap();
+        // Validate signature and content.
+        msg.validate()?;
         consensus.feed_message(msg)?;
         // Flush pending messages.
         NodeService::flush_consensus_messages(consensus, &mut self.network)?;
@@ -1338,9 +1358,14 @@ impl Future for NodeService {
                         NodeMessage::SubscribeOutputs(tx) => self.handle_subscribe_outputs(tx),
                         NodeMessage::Transaction(msg) => self.handle_transaction(msg),
                         NodeMessage::Consensus(msg) => self.handle_consensus_message(msg),
-                        NodeMessage::SealedBlock(msg) => self.handle_sealed_block(msg),
+                        NodeMessage::SealedBlock(msg) => SealedBlockMessage::from_buffer(&msg)
+                            .and_then(|msg| self.handle_sealed_block(msg)),
                         NodeMessage::ConsensusTimer(_now) => self.handle_consensus_timer(),
                         NodeMessage::VRFMessage(msg) => self.handle_vrf_message(msg),
+                        NodeMessage::ChainLoaderMessage(msg) => {
+                            loader::ChainLoaderMessage::from_buffer(&msg.data)
+                                .and_then(|data| self.handle_chain_loader_message(msg.from, data))
+                        }
                         NodeMessage::VRFTimer(_instant) => self.handle_vrf_timer(),
                     };
                     if let Err(e) = result {

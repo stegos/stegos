@@ -4,5 +4,6 @@ package unicast.pb;
 message Message {
     required bytes from = 1;
     required bytes to = 2;
-    required bytes data = 3;
+    required bytes protocol_id = 3;
+    required bytes data = 4;
 }

@@ -96,16 +96,26 @@ impl NetworkProvider for Libp2pNetwork {
     }
 
     // Subscribe to unicast messages
-    fn subscribe_unicast(&self) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error> {
-        let (tx, rx) = mpsc::unbounded();
-        let msg = ControlMessage::SubscribeUnicast { consumer: tx };
+    fn subscribe_unicast(
+        &self,
+        protocol_id: String,
+    ) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error> {
+        let (tx, rx) = mpsc::unbounded::<Vec<u8>>();
+        let msg = ControlMessage::SubscribeUnicast {
+            protocol_id,
+            consumer: tx,
+        };
         self.control_tx.unbounded_send(msg)?;
         Ok(rx)
     }
 
     // Send direct message to public key
-    fn send(&self, to: secure::PublicKey, data: Vec<u8>) -> Result<(), Error> {
-        let msg = ControlMessage::SendUnicast { to, data };
+    fn send(&self, to: secure::PublicKey, protocol_id: String, data: Vec<u8>) -> Result<(), Error> {
+        let msg = ControlMessage::SendUnicast {
+            to,
+            protocol_id,
+            data,
+        };
         self.control_tx.unbounded_send(msg)?;
         Ok(())
     }
@@ -183,7 +193,7 @@ pub struct Libp2pBehaviour<TSubstream: AsyncRead + AsyncWrite> {
     #[behaviour(ignore)]
     consumers: HashMap<floodsub::TopicHash, SmallVec<[mpsc::UnboundedSender<Vec<u8>>; 3]>>,
     #[behaviour(ignore)]
-    unicast_consumers: Vec<mpsc::UnboundedSender<Vec<u8>>>,
+    unicast_consumers: HashMap<String, SmallVec<[mpsc::UnboundedSender<Vec<u8>>; 3]>>,
     #[behaviour(ignore)]
     my_pkey: secure::PublicKey,
 }
@@ -200,7 +210,7 @@ where
             ncp: ncp::layer::Ncp::new(config),
             kad,
             consumers: HashMap::new(),
-            unicast_consumers: Vec::new(),
+            unicast_consumers: HashMap::new(),
             my_pkey: keychain.cosi_pkey.clone(),
         };
         let unicast_topic = floodsub::TopicBuilder::new(UNICAST_TOPIC).build();
@@ -228,12 +238,22 @@ where
                 let floodsub_topic = floodsub::TopicBuilder::new(topic).build();
                 self.floodsub.publish(floodsub_topic, data)
             }
-            ControlMessage::SubscribeUnicast { consumer } => {
-                self.unicast_consumers.push(consumer);
+            ControlMessage::SubscribeUnicast {
+                protocol_id,
+                consumer,
+            } => {
+                self.unicast_consumers
+                    .entry(protocol_id)
+                    .or_insert(SmallVec::new())
+                    .push(consumer);
             }
-            ControlMessage::SendUnicast { to, data } => {
+            ControlMessage::SendUnicast {
+                to,
+                protocol_id,
+                data,
+            } => {
                 let floodsub_topic = floodsub::TopicBuilder::new(UNICAST_TOPIC).build();
-                let msg = encode_unicast(self.my_pkey.clone(), to, data);
+                let msg = encode_unicast(self.my_pkey.clone(), to, protocol_id, data);
                 self.floodsub.publish(floodsub_topic, msg);
             }
         }
@@ -262,24 +282,28 @@ where
             let unicast_topic_hash = floodsub_topic.hash();
             if message.topics.iter().any(|t| t == unicast_topic_hash) {
                 match decode_unicast(message.data.clone()) {
-                    Ok((from, to, data)) => {
+                    Ok((from, to, protocol_id, data)) => {
                         // send unicast message upstream
                         if to == self.my_pkey {
                             debug!(
-                                "Received unicast message from: {}\n\tdata: {}",
+                                "Received unicast message with protocol id: {} from: {}\n\tdata: {}",
+                                protocol_id,
                                 from,
                                 String::from_utf8_lossy(&data)
                             );
-                            self.unicast_consumers.retain({
-                                move |c| {
-                                    if let Err(e) = c.unbounded_send(data.clone()) {
-                                        error!("Error sending data to consumer: {}", e);
-                                        false
-                                    } else {
-                                        true
+                            self.unicast_consumers
+                                .entry(protocol_id)
+                                .or_insert(SmallVec::new())
+                                .retain({
+                                    move |c| {
+                                        if let Err(e) = c.unbounded_send(data.clone()) {
+                                            error!("Error sending data to consumer: {}", e);
+                                            false
+                                        } else {
+                                            true
+                                        }
                                     }
-                                }
-                            })
+                                })
                         }
                     }
                     Err(e) => error!("Failure decoding unicast message: {}", e),
@@ -343,9 +367,11 @@ pub enum ControlMessage {
     },
     SendUnicast {
         to: secure::PublicKey,
+        protocol_id: String,
         data: Vec<u8>,
     },
     SubscribeUnicast {
+        protocol_id: String,
         consumer: mpsc::UnboundedSender<Vec<u8>>,
     },
 }
@@ -409,10 +435,16 @@ fn new_peerstore(
 }
 
 // Encode unicast message
-fn encode_unicast(from: secure::PublicKey, to: secure::PublicKey, data: Vec<u8>) -> Vec<u8> {
+fn encode_unicast(
+    from: secure::PublicKey,
+    to: secure::PublicKey,
+    protocol_id: String,
+    data: Vec<u8>,
+) -> Vec<u8> {
     let mut msg = unicast_proto::Message::new();
     msg.set_from(from.into_bytes().to_vec());
     msg.set_to(to.into_bytes().to_vec());
+    msg.set_protocol_id(protocol_id.into_bytes().to_vec());
     msg.set_data(data);
 
     msg.write_to_bytes()
@@ -421,14 +453,16 @@ fn encode_unicast(from: secure::PublicKey, to: secure::PublicKey, data: Vec<u8>)
 
 fn decode_unicast(
     input: Vec<u8>,
-) -> Result<(secure::PublicKey, secure::PublicKey, Vec<u8>), Error> {
+) -> Result<(secure::PublicKey, secure::PublicKey, String, Vec<u8>), Error> {
     let mut msg: unicast_proto::Message = protobuf::parse_from_bytes(&input)?;
 
     let from = secure::PublicKey::try_from_bytes(&msg.take_from().to_vec())?;
     let to = secure::PublicKey::try_from_bytes(&msg.take_to().to_vec())?;
+    let protocol_id_bytes = &msg.get_protocol_id();
+    let protocol_id = String::from_utf8(protocol_id_bytes.to_vec())?;
     let data = msg.take_data().to_vec();
 
-    Ok((from, to, data))
+    Ok((from, to, protocol_id, data))
 }
 
 #[cfg(test)]
@@ -439,13 +473,15 @@ mod tests {
     fn encode_decode() {
         let from = secure::PublicKey::try_from_bytes(&random_vec(65)).unwrap();
         let to = secure::PublicKey::try_from_bytes(&random_vec(65)).unwrap();
+        let protocol_id = "the quick brown fox".to_string();
         let data = random_vec(1024);
 
-        let encoded = super::encode_unicast(from, to, data.clone());
-        let (from_2, to_2, data_2) = super::decode_unicast(encoded).unwrap();
+        let encoded = super::encode_unicast(from, to, protocol_id.clone(), data.clone());
+        let (from_2, to_2, protocol_id_2, data_2) = super::decode_unicast(encoded).unwrap();
 
         assert_eq!(from, from_2);
         assert_eq!(to, to_2);
+        assert_eq!(protocol_id, protocol_id_2);
         assert_eq!(data, data_2);
     }
 

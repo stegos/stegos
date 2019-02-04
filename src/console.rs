@@ -295,7 +295,7 @@ where
             let msg = caps.name("msg").unwrap().as_str();
             info!("Send: to='{}', msg='{}'", recipient.into_hex(), msg);
             self.broker
-                .send(recipient, msg.as_bytes().to_vec())
+                .send(recipient, "console".to_string(), msg.as_bytes().to_vec())
                 .unwrap();
         } else if msg.starts_with("pay ") {
             let caps = match PAY_COMMAND_RE.captures(&msg[4..]) {

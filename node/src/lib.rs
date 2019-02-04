@@ -484,6 +484,8 @@ where
         };
         self.on_epoch_changed
             .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
+        // clear consensus messages when new epoch starts
+        self.future_consensus_messages.clear();
     }
     /// Handle incoming transactions received from network.
     fn handle_transaction(&mut self, msg: Vec<u8>) -> Result<(), Error> {
@@ -763,13 +765,6 @@ where
         &mut self,
         tx: UnboundedSender<EpochNotification>,
     ) -> Result<(), Error> {
-        let msg = EpochNotification {
-            epoch: self.chain.epoch,
-            leader: self.chain.leader.clone(),
-            facilitator: self.chain.facilitator.clone(),
-            validators: self.chain.validators.clone(),
-        };
-        tx.unbounded_send(msg)?;
         self.on_epoch_changed.push(tx);
         Ok(())
     }
@@ -826,18 +821,6 @@ where
     /// Called when a new key block is registered.
     fn on_key_block_registered(&mut self, key_block: &KeyBlock) -> Result<(), Error> {
         self.on_new_epoch();
-
-        debug!("Broadcast new epoch event.");
-        let msg = EpochNotification {
-            epoch: self.chain.epoch,
-            leader: self.chain.leader,
-            validators: self.chain.validators.clone(),
-            facilitator: self.chain.facilitator,
-        };
-        self.on_epoch_changed
-            .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
-        // clear consensus messages when new epoch starts
-        self.future_consensus_messages.clear();
         let block_hash = Hash::digest(key_block);
         self.on_next_block(block_hash)
     }

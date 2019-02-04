@@ -60,12 +60,15 @@ impl Default for Config {
 pub struct ConfigGeneral {
     /// Log4RS configuration file
     pub log4rs_config: String,
+    /// Database path
+    pub database_path: String,
 }
 
 impl Default for ConfigGeneral {
     fn default() -> Self {
         ConfigGeneral {
             log4rs_config: "stegos-log4rs.toml".to_string(),
+            database_path: "database".to_string(),
         }
     }
 }

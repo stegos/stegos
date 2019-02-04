@@ -26,12 +26,14 @@ use crate::error::*;
 use crate::escrow::*;
 use crate::merkle::*;
 use crate::output::*;
+use crate::storage::ListDb;
 use chrono::Utc;
 use failure::Error;
 use log::*;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::time::Instant;
+use stegos_config::ConfigGeneral;
 use stegos_crypto::bulletproofs::fee_a;
 use stegos_crypto::curve1174::cpt::Pt;
 use stegos_crypto::curve1174::ecpt::ECp;
@@ -52,6 +54,9 @@ struct OutputKey {
 
 /// The Blockchain.
 pub struct Blockchain {
+    /// Database.
+    database: ListDb,
+
     // General state.
     /// Blockchain blocks stored in-memory.
     /// Position in this vector is short BlockId = usize.
@@ -61,6 +66,7 @@ pub struct Blockchain {
     /// Unspent outputs by hash.
     output_by_hash: HashMap<Hash, OutputKey>,
 
+    //TODO: most of this fields is just duplication of keyblock. Save keyblock rather then copy of fields.
     //
     // Last blockchain info:
     // 1) Stake
@@ -81,6 +87,8 @@ pub struct Blockchain {
     /// A monotonically increasing value that represents the epoch of the blockchain,
     /// starting from genesis block (=0).
     pub epoch: u64,
+    /// Last height where epoch was changed.
+    pub last_epoch_change: usize,
 
     // Monetary info
     /// The total sum of money created.
@@ -98,7 +106,17 @@ impl Blockchain {
     // Public API
     //----------------------------------------------------------------------------------------------
 
-    pub fn new() -> Blockchain {
+    pub fn new(config: &ConfigGeneral) -> Blockchain {
+        let database = ListDb::new(&config.database_path);
+        Self::with_db(database)
+    }
+
+    pub fn testing() -> Blockchain {
+        let database = ListDb::testing();
+        Self::with_db(database)
+    }
+
+    fn with_db(database: ListDb) -> Blockchain {
         let blocks = Vec::new();
         let block_by_hash = HashMap::<Hash, BlockId>::new();
         let output_by_hash = HashMap::<Hash, OutputKey>::new();
@@ -113,7 +131,9 @@ impl Blockchain {
         let burned = ECp::inf();
         let gamma = Fr::zero();
         let monetary_adjustment: i64 = 0;
-        let blockchain = Blockchain {
+        let last_epoch_change = 0;
+        let mut blockchain = Blockchain {
+            database,
             blocks,
             block_by_hash,
             output_by_hash,
@@ -122,13 +142,58 @@ impl Blockchain {
             facilitator,
             validators,
             epoch,
+            last_epoch_change,
             last_block_timestamp,
             created,
             burned,
             gamma,
             monetary_adjustment,
         };
+        blockchain.load_blockchain();
         blockchain
+    }
+
+    fn load_blockchain(&mut self) {
+        let mut blocks = self.database.iter();
+
+        let block = blocks.next();
+        let block = if let Some(block) = block {
+            block
+        } else {
+            debug!("Creating a new blockchain.");
+            return;
+        };
+
+        info!("Loading blockchain from database.");
+
+        self.handle_block(block);
+        for block in blocks {
+            self.handle_block(block);
+        }
+    }
+
+    fn handle_block(&mut self, block: Block) {
+        debug!(
+            "load saved block hash = {:?}, block = {:?}",
+            Hash::digest(&block),
+            block
+        );
+        match block {
+            Block::MonetaryBlock(block) => {
+                let _ = self
+                    .register_monetary_block(block)
+                    .expect("error processing saved monetary block.");
+            }
+            Block::KeyBlock(block) => {
+                self.register_key_block(block)
+                    .expect("error processing saved key block.");
+            }
+        }
+    }
+
+    /// Returns count of blocks in current epoch.
+    pub fn blocks_in_epoch(&self) -> usize {
+        self.blocks.len() - self.last_epoch_change
     }
 
     /// Returns an iterator over UTXO hashes.
@@ -210,13 +275,10 @@ impl Blockchain {
         self.validators = validators;
     }
 
-    pub fn register_new_block(&mut self, block: Block) {
-        self.last_block_timestamp = Instant::now();
-        self.blocks.push(block);
-    }
-
-    pub fn register_key_block(&mut self, block: KeyBlock) -> Result<(), BlockchainError> {
+    pub fn register_key_block(&mut self, block: KeyBlock) -> Result<(), Error> {
         let block_id = self.blocks.len();
+        self.database
+            .insert(block_id as u64, Block::KeyBlock(block.clone()))?;
 
         // Check previous hash.
         if let Some(previous_block) = self.blocks.last() {
@@ -225,14 +287,15 @@ impl Blockchain {
                 return Err(BlockchainError::PreviousHashMismatch(
                     previous_hash,
                     block.header.base.previous,
-                ));
+                )
+                .into());
             }
         }
 
         // Check new hash.
         let this_hash = Hash::digest(&block);
         if let Some(_) = self.block_by_hash.get(&this_hash) {
-            return Err(BlockchainError::BlockHashCollision(this_hash));
+            return Err(BlockchainError::BlockHashCollision(this_hash).into());
         }
 
         // -----------------------------------------------------------------------------------------
@@ -251,13 +314,15 @@ impl Blockchain {
 
         assert_eq!(self.epoch + 1, block.header.base.epoch);
         self.epoch = self.epoch + 1;
+        self.last_epoch_change = self.blocks().len();
 
         self.leader = block.header.leader.clone();
         self.facilitator = block.header.facilitator.clone();
         self.validators = self.escrow.multiget(&block.header.witnesses);
 
-        self.register_new_block(Block::KeyBlock(block));
-
+        self.last_block_timestamp = Instant::now();
+        self.blocks.push(Block::KeyBlock(block));
+        debug!("Validators: {:?}", &self.validators);
         Ok(())
     }
 
@@ -266,6 +331,8 @@ impl Blockchain {
         mut block: MonetaryBlock,
     ) -> Result<(Vec<Output>, Vec<Output>), Error> {
         let block_id = self.blocks.len();
+        self.database
+            .insert(block_id as u64, Block::MonetaryBlock(block.clone()))?;
 
         // Check previous hash.
         if let Some(previous_block) = self.blocks.last() {
@@ -444,15 +511,14 @@ impl Blockchain {
                     .stake(o.validator, output_hash, bonding_timestamp, o.amount);
             }
         }
-        // Must be the last line to make Rust happy.
-        self.register_new_block(Block::MonetaryBlock(block));
 
         // Save the global balance.
         self.created = created;
         self.burned = burned;
         self.gamma = gamma;
         self.monetary_adjustment = monetary_adjustment;
-
+        self.last_block_timestamp = Instant::now();
+        self.blocks.push(Block::MonetaryBlock(block));
         Ok((pruned, outputs))
     }
 }
@@ -518,7 +584,6 @@ pub mod tests {
     fn basic() {
         use simple_logger;
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
-
         let keychains = [
             KeyChain::new_mem(),
             KeyChain::new_mem(),
@@ -526,7 +591,7 @@ pub mod tests {
         ];
 
         let blocks = genesis(&keychains, 100, 1_000_000);
-        let mut blockchain = Blockchain::new();
+        let mut blockchain = Blockchain::testing();
         for block in blocks {
             match block {
                 Block::KeyBlock(block) => blockchain.register_key_block(block).unwrap(),

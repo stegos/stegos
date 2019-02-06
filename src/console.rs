@@ -29,13 +29,12 @@ use lazy_static::*;
 use log::*;
 use regex::Regex;
 use rustyline as rl;
-use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::thread;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
-use stegos_network::NetworkProvider;
+use stegos_network::Network;
 use stegos_node::*;
 use stegos_txpool::TransactionPool;
 use stegos_wallet::{Wallet, WalletNotification};
@@ -45,22 +44,17 @@ use stegos_wallet::{Wallet, WalletNotification};
 // ----------------------------------------------------------------
 
 /// Console - command-line interface.
-pub struct Console<T: NetworkProvider> {
-    marker: PhantomData<T>,
-}
+pub struct Console {}
 
-impl<Network> Console<Network>
-where
-    Network: NetworkProvider + Clone,
-{
+impl Console {
     /// Create a new Console Service.
     pub fn new(
         keys: &KeyChain,
-        broker: Network,
-        node: Node<Network>,
+        network: Network,
+        node: Node,
         txpool: TransactionPool,
     ) -> Result<impl Future<Item = (), Error = ()>, Error> {
-        ConsoleService::new(keys, broker, node, txpool)
+        ConsoleService::new(keys, network, node, txpool)
     }
 }
 
@@ -84,18 +78,15 @@ lazy_static! {
 }
 
 /// Console (stdin) service.
-struct ConsoleService<Network>
-where
-    Network: NetworkProvider + Clone,
-{
+struct ConsoleService {
     /// Wallet.
     wallet: Wallet,
     /// Transaction pool
     txpool: TransactionPool,
     /// Network message broker.
-    broker: Network,
+    network: Network,
     /// Blockchain Node.
-    node: Node<Network>,
+    node: Node,
     /// Validator's public key
     validator_pkey: secure::PublicKey,
     /// A channel to receive message from stdin thread.
@@ -108,21 +99,18 @@ where
     epoch_rx: UnboundedReceiver<EpochNotification>,
 }
 
-impl<Network> ConsoleService<Network>
-where
-    Network: NetworkProvider + Clone,
-{
+impl ConsoleService {
     /// Constructor.
     fn new(
         keys: &KeyChain,
-        broker: Network,
-        node: Node<Network>,
+        network: Network,
+        node: Node,
         txpool: TransactionPool,
-    ) -> Result<ConsoleService<Network>, Error> {
+    ) -> Result<ConsoleService, Error> {
         let wallet = Wallet::new(keys.wallet_skey.clone(), keys.wallet_pkey.clone());
         let validator_pkey = keys.cosi_pkey.clone();
         let (tx, rx) = channel::<String>(1);
-        let stdin_th = thread::spawn(move || ConsoleService::<Network>::readline_thread_f(tx));
+        let stdin_th = thread::spawn(move || ConsoleService::readline_thread_f(tx));
         let stdin = rx;
         let outputs_rx = node.subscribe_outputs()?;
         let epoch_rx = node.subscribe_epoch()?;
@@ -130,7 +118,7 @@ where
         let service = ConsoleService {
             wallet,
             txpool,
-            broker,
+            network,
             node,
             validator_pkey,
             stdin,
@@ -254,19 +242,19 @@ where
         if msg.starts_with("publish ") {
             let caps = match PUBLISH_COMMAND_RE.captures(&msg[8..]) {
                 Some(c) => c,
-                None => return ConsoleService::<Network>::help_publish(),
+                None => return ConsoleService::help_publish(),
             };
 
             let topic = caps.name("topic").unwrap().as_str();
             let msg = caps.name("msg").unwrap().as_str();
             info!("Publish: topic='{}', msg='{}'", topic, msg);
-            self.broker
+            self.network
                 .publish(&topic, msg.as_bytes().to_vec())
                 .unwrap();
         } else if msg.starts_with("txpool ") {
             let caps = match TXPOOL_COMMAND_RE.captures(&msg[7..]) {
                 Some(c) => c,
-                None => return ConsoleService::<Network>::help_txpool(),
+                None => return ConsoleService::help_txpool(),
             };
 
             let node = caps.name("recipient").unwrap().as_str();
@@ -274,7 +262,7 @@ where
                 Ok(r) => r,
                 Err(e) => {
                     println!("Invalid public key '{}': {}", node, e);
-                    return ConsoleService::<Network>::help_txpool();
+                    return ConsoleService::help_txpool();
                 }
             };
             info!("Trying add into pool: pk='{}'", node);
@@ -282,7 +270,7 @@ where
         } else if msg.starts_with("send ") {
             let caps = match SEND_COMMAND_RE.captures(&msg[5..]) {
                 Some(c) => c,
-                None => return ConsoleService::<Network>::help_publish(),
+                None => return ConsoleService::help_publish(),
             };
 
             let recipient = caps.name("recipient").unwrap().as_str();
@@ -290,18 +278,18 @@ where
                 Ok(r) => r,
                 Err(e) => {
                     println!("Invalid public key '{}': {}", recipient, e);
-                    return ConsoleService::<Network>::help_send();
+                    return ConsoleService::help_send();
                 }
             };
             let msg = caps.name("msg").unwrap().as_str();
             info!("Send: to='{}', msg='{}'", recipient.into_hex(), msg);
-            self.broker
-                .send(recipient, "console".to_string(), msg.as_bytes().to_vec())
+            self.network
+                .send(recipient, "console", msg.as_bytes().to_vec())
                 .unwrap();
         } else if msg.starts_with("pay ") {
             let caps = match PAY_COMMAND_RE.captures(&msg[4..]) {
                 Some(c) => c,
-                None => return ConsoleService::<Network>::help_pay(),
+                None => return ConsoleService::help_pay(),
             };
 
             let recipient = caps.name("recipient").unwrap().as_str();
@@ -309,7 +297,7 @@ where
                 Ok(r) => r,
                 Err(e) => {
                     println!("Invalid public key '{}': {}", recipient, e);
-                    return ConsoleService::<Network>::help_pay();
+                    return ConsoleService::help_pay();
                 }
             };
             let amount = caps.name("amount").unwrap().as_str();
@@ -331,7 +319,7 @@ where
         } else if msg.starts_with("msg ") {
             let caps = match MSG_COMMAND_RE.captures(&msg[4..]) {
                 Some(c) => c,
-                None => return ConsoleService::<Network>::help_msg(),
+                None => return ConsoleService::help_msg(),
             };
 
             let recipient = caps.name("recipient").unwrap().as_str();
@@ -339,7 +327,7 @@ where
                 Ok(r) => r,
                 Err(e) => {
                     println!("Invalid public key '{}': {}", recipient, e);
-                    return ConsoleService::<Network>::help_msg();
+                    return ConsoleService::help_msg();
                 }
             };
             let amount: i64 = 0;
@@ -358,7 +346,7 @@ where
         } else if msg.starts_with("stake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[6..]) {
                 Some(c) => c,
-                None => return ConsoleService::<Network>::help_stake(),
+                None => return ConsoleService::help_stake(),
             };
 
             let amount = caps.name("amount").unwrap().as_str();
@@ -384,7 +372,7 @@ where
         } else if msg.starts_with("unstake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[8..]) {
                 Some(c) => c,
-                None => return ConsoleService::<Network>::help_unstake(),
+                None => return ConsoleService::help_unstake(),
             };
 
             let amount = caps.name("amount").unwrap().as_str();
@@ -399,7 +387,7 @@ where
                 error!("Request failed: {}", e);
             }
         } else {
-            return ConsoleService::<Network>::help();
+            return ConsoleService::help();
         }
     }
 
@@ -424,10 +412,7 @@ where
 }
 
 // Event loop.
-impl<Network> Future for ConsoleService<Network>
-where
-    Network: NetworkProvider + Clone,
-{
+impl Future for ConsoleService {
     type Item = ();
     type Error = ();
 

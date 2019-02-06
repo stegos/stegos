@@ -26,7 +26,6 @@ use stegos_crypto::pbc::secure::{
     self, PublicKey as SecurePublicKey, SecretKey as SecureSecretKey, Signature as SecureSignature,
     VRF,
 };
-use stegos_network::NetworkProvider;
 use stegos_serialization::traits::ProtoConvert;
 
 use lazy_static::lazy_static;
@@ -282,17 +281,14 @@ impl TicketsSystem {
 }
 
 ///Node service extension for VrfTicketSystem
-impl<Network> NodeService<Network>
-where
-    Network: NetworkProvider,
-{
+impl NodeService {
     pub(crate) fn broadcast_vrf_ticket(&mut self, ticket: VRFTicket) -> Result<(), Error> {
         if !self.chain.escrow.get(&self.keys.cosi_pkey) > 0 {
             debug!("Trying to broadcast ticket but our node is not staker.");
             return Ok(());
         }
         let data = ticket.into_buffer()?;
-        self.broker.publish(&VRF_TICKETS_TOPIC.to_string(), data)?;
+        self.network.publish(&VRF_TICKETS_TOPIC, data)?;
         Ok(())
     }
 

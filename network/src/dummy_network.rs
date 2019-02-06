@@ -21,31 +21,28 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::NetworkProvider;
+use crate::{Network, NetworkProvider};
 use failure::Error;
 use futures::prelude::*;
 use futures::sync::mpsc;
 use log::*;
 use stegos_crypto::pbc::secure;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct DummyNetwork {
     control_tx: mpsc::UnboundedSender<ControlMessage>,
 }
 
 impl DummyNetwork {
-    pub fn new() -> (Self, impl Future<Item = (), Error = ()>) {
+    pub fn new() -> (Network, impl Future<Item = (), Error = ()>) {
         let (service, control_tx) = DummyNetworkService::new();
-        (DummyNetwork { control_tx }, service)
+        (Box::new(DummyNetwork { control_tx }), service)
     }
 }
 
 impl NetworkProvider for DummyNetwork {
     /// Subscribe to topic, returns Stream<Vec<u8>> of messages incoming to topic
-    fn subscribe<S>(&self, topic: &S) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error>
-    where
-        S: Into<String> + Clone,
-    {
+    fn subscribe(&self, topic: &str) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error> {
         let topic: String = topic.clone().into();
         let (tx, rx) = mpsc::unbounded();
         self.control_tx
@@ -54,10 +51,7 @@ impl NetworkProvider for DummyNetwork {
     }
 
     /// Published message to topic
-    fn publish<S>(&self, topic: &S, data: Vec<u8>) -> Result<(), Error>
-    where
-        S: Into<String> + Clone,
-    {
+    fn publish(&self, topic: &str, data: Vec<u8>) -> Result<(), Error> {
         let topic: String = topic.clone().into();
         self.control_tx
             .unbounded_send(ControlMessage::Publish { topic, data })?;
@@ -67,7 +61,7 @@ impl NetworkProvider for DummyNetwork {
     // Subscribe to unicast messages
     fn subscribe_unicast(
         &self,
-        _protocol_id: String,
+        _protocol_id: &str,
     ) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error> {
         let (tx, rx) = mpsc::unbounded::<Vec<u8>>();
         let msg = ControlMessage::SubscribeUnicast { consumer: tx };
@@ -76,15 +70,15 @@ impl NetworkProvider for DummyNetwork {
     }
 
     // Send direct message to public key
-    fn send(
-        &self,
-        to: secure::PublicKey,
-        _protocol_id: String,
-        data: Vec<u8>,
-    ) -> Result<(), Error> {
+    fn send(&self, to: secure::PublicKey, _protocol_id: &str, data: Vec<u8>) -> Result<(), Error> {
         let msg = ControlMessage::SendUnicast { to, data };
         self.control_tx.unbounded_send(msg)?;
         Ok(())
+    }
+
+    // Clone self as a box
+    fn box_clone(&self) -> Network {
+        Box::new((*self).clone())
     }
 }
 

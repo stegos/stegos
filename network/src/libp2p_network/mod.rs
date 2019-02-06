@@ -45,7 +45,7 @@ use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{ncp, MemoryPeerstore, NetworkProvider};
+use crate::{ncp, MemoryPeerstore, Network, NetworkProvider};
 
 mod kad_discovery;
 mod unicast_proto;
@@ -61,19 +61,16 @@ impl Libp2pNetwork {
     pub fn new(
         config: &ConfigNetwork,
         keychain: &KeyChain,
-    ) -> Result<(Self, impl Future<Item = (), Error = ()>), Error> {
+    ) -> Result<(Network, impl Future<Item = (), Error = ()>), Error> {
         let (service, control_tx) = new_service(config, keychain)?;
         let network = Libp2pNetwork { control_tx };
-        Ok((network, service))
+        Ok((Box::new(network), service))
     }
 }
 
 impl NetworkProvider for Libp2pNetwork {
     /// Subscribe to topic, returns Stream<Vec<u8>> of messages incoming to topic
-    fn subscribe<S>(&self, topic: &S) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error>
-    where
-        S: Into<String> + Clone,
-    {
+    fn subscribe(&self, topic: &str) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error> {
         let topic: String = topic.clone().into();
         let (tx, rx) = mpsc::unbounded();
         let msg = ControlMessage::Subscribe { topic, handler: tx };
@@ -82,10 +79,7 @@ impl NetworkProvider for Libp2pNetwork {
     }
 
     /// Published message to topic
-    fn publish<S>(&self, topic: &S, data: Vec<u8>) -> Result<(), Error>
-    where
-        S: Into<String> + Clone,
-    {
+    fn publish(&self, topic: &str, data: Vec<u8>) -> Result<(), Error> {
         let topic: String = topic.clone().into();
         let msg = ControlMessage::Publish {
             topic: topic.clone().into(),
@@ -98,8 +92,9 @@ impl NetworkProvider for Libp2pNetwork {
     // Subscribe to unicast messages
     fn subscribe_unicast(
         &self,
-        protocol_id: String,
+        protocol_id: &str,
     ) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error> {
+        let protocol_id: String = protocol_id.clone().into();
         let (tx, rx) = mpsc::unbounded::<Vec<u8>>();
         let msg = ControlMessage::SubscribeUnicast {
             protocol_id,
@@ -110,7 +105,8 @@ impl NetworkProvider for Libp2pNetwork {
     }
 
     // Send direct message to public key
-    fn send(&self, to: secure::PublicKey, protocol_id: String, data: Vec<u8>) -> Result<(), Error> {
+    fn send(&self, to: secure::PublicKey, protocol_id: &str, data: Vec<u8>) -> Result<(), Error> {
+        let protocol_id: String = protocol_id.clone().into();
         let msg = ControlMessage::SendUnicast {
             to,
             protocol_id,
@@ -118,6 +114,11 @@ impl NetworkProvider for Libp2pNetwork {
         };
         self.control_tx.unbounded_send(msg)?;
         Ok(())
+    }
+
+    // Clone self as a box
+    fn box_clone(&self) -> Network {
+        Box::new((*self).clone())
     }
 }
 

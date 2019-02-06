@@ -29,36 +29,42 @@ mod peerstore;
 use failure::{Error, Fail};
 use futures::sync::mpsc;
 use libp2p::core::{topology::Topology, Multiaddr, PeerId};
+use std::fmt;
 use stegos_crypto::pbc::secure;
 
 pub use self::dummy_network::DummyNetwork;
 pub use self::libp2p_network::Libp2pNetwork;
 pub use self::peerstore::MemoryPeerstore;
 
-pub trait NetworkProvider {
+pub type Network = Box<dyn NetworkProvider + Send>;
+
+pub trait NetworkProvider
+where
+    Self: fmt::Debug,
+{
     /// Subscribe to topic, returns Stream<Vec<u8>> of messages incoming to topic
-    fn subscribe<S>(&self, topic: &S) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error>
-    where
-        S: Into<String> + Clone;
+    fn subscribe(&self, topic: &str) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error>;
 
     /// Published message to topic
-    fn publish<S>(&self, topic: &S, data: Vec<u8>) -> Result<(), Error>
-    where
-        S: Into<String> + Clone;
+    fn publish(&self, topic: &str, data: Vec<u8>) -> Result<(), Error>;
 
     /// Subscribe to unicast messages, returns Stream<Vec<u8>> of messages incoming to topic
     fn subscribe_unicast(
         &self,
-        protocol_id: String,
+        protocol_id: &str,
     ) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error>;
 
     /// Send unicast message to peer identified by cosi public key
-    fn send(
-        &self,
-        dest: secure::PublicKey,
-        protocol_id: String,
-        data: Vec<u8>,
-    ) -> Result<(), Error>;
+    fn send(&self, dest: secure::PublicKey, protocol_id: &str, data: Vec<u8>) -> Result<(), Error>;
+
+    /// Helper for cloning boxed object
+    fn box_clone(&self) -> Network;
+}
+
+impl Clone for Network {
+    fn clone(&self) -> Network {
+        self.box_clone()
+    }
 }
 
 pub trait PeerStore: Topology {

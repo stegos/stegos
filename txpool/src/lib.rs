@@ -1,6 +1,6 @@
 use stegos_crypto::pbc::secure::{self, G2};
 use stegos_keychain::KeyChain;
-use stegos_network::NetworkProvider;
+use stegos_network::Network;
 
 use std::time::{Duration, Instant};
 
@@ -49,11 +49,11 @@ enum NodeRole {
     Regular,
 }
 
-pub struct TransactionPoolService<Network> {
+pub struct TransactionPoolService {
     facilitator_pkey: secure::PublicKey,
     pkey: secure::PublicKey,
     skey: secure::SecretKey,
-    broker: Network,
+    network: Network,
     role: NodeRole,
     timer: Option<Delay>,
 
@@ -61,11 +61,11 @@ pub struct TransactionPoolService<Network> {
     events: Box<Stream<Item = PoolEvent, Error = ()> + Send>,
 }
 
-impl<Network: NetworkProvider> TransactionPoolService<Network> {
+impl TransactionPoolService {
     /// Crates new TransactionPool.
     pub fn new(
         keychain: &KeyChain,
-        broker: Network,
+        network: Network,
         receiver: UnboundedReceiver<PoolEvent>,
         sender: UnboundedSender<PoolFeedback>,
     ) -> Self {
@@ -76,15 +76,15 @@ impl<Network: NetworkProvider> TransactionPoolService<Network> {
             let mut streams = Vec::<Box<Stream<Item = PoolEvent, Error = ()> + Send>>::new();
 
             // Broadcast messages from facilitator
-            let broadcast_message = broker
+            let broadcast_message = network
                 .subscribe(&BROADCAST_POOL_MESSAGES)?
                 .map(|m| PoolEvent::PoolInfo(m));
             streams.push(Box::new(broadcast_message));
 
             //TODO: unsubscribe unicast.
             // Unicast messages from other nodes
-            let unicast_message = broker
-                .subscribe_unicast(UNICAST_PROTOCOL_ID.to_string())?
+            let unicast_message = network
+                .subscribe_unicast(UNICAST_PROTOCOL_ID)?
                 .map(|m| PoolEvent::Message(m));
             streams.push(Box::new(unicast_message));
 
@@ -98,7 +98,7 @@ impl<Network: NetworkProvider> TransactionPoolService<Network> {
         TransactionPoolService {
             facilitator_pkey,
             role: NodeRole::Regular,
-            broker,
+            network,
             pkey,
             skey,
             _sender: sender,
@@ -108,7 +108,7 @@ impl<Network: NetworkProvider> TransactionPoolService<Network> {
     }
 
     /// Creates TransactionPool with TransactionPoolManager
-    pub fn with_manager(keychain: &KeyChain, broker: Network) -> (Self, TransactionPool) {
+    pub fn with_manager(keychain: &KeyChain, network: Network) -> (Self, TransactionPool) {
         let (events_sender, events_receiver) = mpsc::unbounded();
         let (feedback_sender, feedback_receiver) = mpsc::unbounded();
         let manager = TransactionPool {
@@ -116,7 +116,7 @@ impl<Network: NetworkProvider> TransactionPoolService<Network> {
             events_sender,
         };
         (
-            Self::new(keychain, broker, events_receiver, feedback_sender),
+            Self::new(keychain, network, events_receiver, feedback_sender),
             manager,
         )
     }
@@ -146,7 +146,7 @@ impl<Network: NetworkProvider> TransactionPoolService<Network> {
                 let pool = PoolInfo::new(accumulator, self.pkey, &self.skey);
                 //TODO:: remove clone
                 let data = pool.clone().into_buffer()?;
-                self.broker.publish(&BROADCAST_POOL_MESSAGES, data)?;
+                self.network.publish(&BROADCAST_POOL_MESSAGES, data)?;
                 self.handle_receive_pool_info(pool)?;
             }
             NodeRole::Regular => {
@@ -183,11 +183,8 @@ impl<Network: NetworkProvider> TransactionPoolService<Network> {
             NodeRole::Regular => {
                 debug!("Send message to facilitator = {:?}.", self.facilitator_pkey);
                 let buffer = message.into_buffer()?;
-                self.broker.send(
-                    self.facilitator_pkey,
-                    UNICAST_PROTOCOL_ID.to_string(),
-                    buffer,
-                )?;
+                self.network
+                    .send(self.facilitator_pkey, UNICAST_PROTOCOL_ID, buffer)?;
             }
             NodeRole::Facilitator(ref mut state) => {
                 debug!("Add message = {:?}, into pool.", message);
@@ -198,7 +195,7 @@ impl<Network: NetworkProvider> TransactionPoolService<Network> {
     }
 }
 
-impl<Network: NetworkProvider> Future for TransactionPoolService<Network> {
+impl Future for TransactionPoolService {
     type Item = ();
     type Error = ();
 
@@ -213,7 +210,7 @@ impl<Network: NetworkProvider> Future for TransactionPoolService<Network> {
     }
 }
 
-impl<Network: NetworkProvider> TransactionPoolService<Network> {
+impl TransactionPoolService {
     /// Polls event queue, stop on errors
     fn poll_events(&mut self) -> Async<()> {
         match self.events.poll().expect("all errors are already handled") {

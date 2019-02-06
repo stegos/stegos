@@ -129,18 +129,18 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     // Initialize network
     let mut rt = Runtime::new()?;
-    let (broker, network) = Libp2pNetwork::new(&cfg.network, &keychain)?;
+    let (network, network_service) = Libp2pNetwork::new(&cfg.network, &keychain)?;
 
-    let (pool, manager) = TransactionPoolService::with_manager(&keychain, broker.clone());
+    let (pool, manager) = TransactionPoolService::with_manager(&keychain, network.clone());
     rt.spawn(pool);
     // Initialize node
     let genesis = genesis_dev().expect("failed to load genesis block");
-    let (node_service, node) = Node::new(&cfg, keychain.clone(), broker.clone())?;
+    let (node_service, node) = Node::new(&cfg, keychain.clone(), network.clone())?;
     rt.spawn(node_service);
     // Don't initialize REPL if stdin is not a TTY device
     if atty::is(atty::Stream::Stdin) {
         // Initialize console
-        let console_service = Console::new(&keychain, broker.clone(), node.clone(), manager)?;
+        let console_service = Console::new(&keychain, network.clone(), node.clone(), manager)?;
         rt.spawn(console_service);
     }
 
@@ -148,7 +148,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     node.init(genesis).unwrap();
 
     // Start main event loop
-    rt.block_on(network).expect("errors are handled earlier");
+    rt.block_on(network_service)
+        .expect("errors are handled earlier");
 
     Ok(())
 }

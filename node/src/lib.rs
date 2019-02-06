@@ -56,7 +56,7 @@ use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
 use stegos_crypto::pbc::secure::Signature as SecureSignature;
 use stegos_keychain::KeyChain;
-use stegos_network::NetworkProvider;
+use stegos_network::Network;
 use stegos_serialization::traits::ProtoConvert;
 use tokio_timer::Interval;
 
@@ -79,28 +79,22 @@ pub fn genesis_dev() -> Result<Vec<Block>, Error> {
 
 /// Blockchain Node.
 #[derive(Clone, Debug)]
-pub struct Node<Network>
-where
-    Network: NetworkProvider,
-{
+pub struct Node {
     outbox: UnboundedSender<NodeMessage>,
-    broker: Network,
+    network: Network,
 }
 
-impl<Network> Node<Network>
-where
-    Network: NetworkProvider + Clone,
-{
+impl Node {
     /// Create a new blockchain node.
     pub fn new(
         cfg: &Config,
         keys: KeyChain,
-        broker: Network,
-    ) -> Result<(impl Future<Item = (), Error = ()>, Node<Network>), Error> {
+        network: Network,
+    ) -> Result<(impl Future<Item = (), Error = ()>, Node), Error> {
         let (outbox, inbox) = unbounded();
 
-        let service = NodeService::new(cfg, keys, broker.clone(), inbox)?;
-        let handler = Node { outbox, broker };
+        let service = NodeService::new(cfg, keys, network.clone(), inbox)?;
+        let handler = Node { outbox, network };
 
         Ok((service, handler))
     }
@@ -116,7 +110,7 @@ where
     pub fn send_transaction(&self, tx: Transaction) -> Result<(), Error> {
         let proto = tx.into_proto();
         let data = proto.write_to_bytes()?;
-        self.broker.publish(&TX_TOPIC.to_string(), data.clone())?;
+        self.network.publish(&TX_TOPIC, data.clone())?;
         info!(
             "Sent transaction to the network: hash={}",
             Hash::digest(&tx.body)
@@ -210,7 +204,7 @@ enum NodeMessage {
     VRFTimer(Instant),
 }
 
-struct NodeService<Network> {
+struct NodeService {
     /// Blockchain.
     chain: Blockchain,
     /// Key Chain.
@@ -238,7 +232,7 @@ struct NodeService<Network> {
     // Communication with environment.
     //
     /// Network interface.
-    broker: Network,
+    network: Network,
     /// Triggered when epoch is changed.
     on_epoch_changed: Vec<UnboundedSender<EpochNotification>>,
     /// Triggered when outputs created and/or pruned.
@@ -247,35 +241,32 @@ struct NodeService<Network> {
     events: Box<Stream<Item = NodeMessage, Error = ()> + Send>,
 }
 
-impl<Network> NodeService<Network>
-where
-    Network: NetworkProvider,
-{
+impl NodeService {
     /// Constructor.
     fn new(
         cfg: &Config,
         keys: KeyChain,
-        broker: Network,
+        network: Network,
         inbox: UnboundedReceiver<NodeMessage>,
     ) -> Result<Self, Error> {
         let chain = Blockchain::new(&cfg.general);
-        Self::with_blockchain(chain, keys, broker, inbox)
+        Self::with_blockchain(chain, keys, network, inbox)
     }
 
     #[cfg(test)]
     fn testing(
         keys: KeyChain,
-        broker: Network,
+        network: Network,
         inbox: UnboundedReceiver<NodeMessage>,
     ) -> Result<Self, Error> {
         let chain = Blockchain::testing();
-        Self::with_blockchain(chain, keys, broker, inbox)
+        Self::with_blockchain(chain, keys, network, inbox)
     }
 
     fn with_blockchain(
         chain: Blockchain,
         keys: KeyChain,
-        broker: Network,
+        network: Network,
         inbox: UnboundedReceiver<NodeMessage>,
     ) -> Result<Self, Error> {
         let future_consensus_messages = Vec::new();
@@ -294,26 +285,26 @@ where
         streams.push(Box::new(inbox));
 
         // Transaction Requests
-        let transaction_rx = broker
-            .subscribe(&TX_TOPIC.to_string())?
+        let transaction_rx = network
+            .subscribe(&TX_TOPIC)?
             .map(|m| NodeMessage::Transaction(m));
         streams.push(Box::new(transaction_rx));
 
         // Consensus Requests
-        let consensus_rx = broker
-            .subscribe(&CONSENSUS_TOPIC.to_string())?
+        let consensus_rx = network
+            .subscribe(&CONSENSUS_TOPIC)?
             .map(|m| NodeMessage::Consensus(m));
         streams.push(Box::new(consensus_rx));
 
         // VRF Requests
-        let ticket_system_rx = broker
-            .subscribe(&tickets::VRF_TICKETS_TOPIC.to_string())?
+        let ticket_system_rx = network
+            .subscribe(&tickets::VRF_TICKETS_TOPIC)?
             .map(|m| NodeMessage::VRFMessage(m));
         streams.push(Box::new(ticket_system_rx));
 
         // Block Requests
-        let block_rx = broker
-            .subscribe(&SEALED_BLOCK_TOPIC.to_string())?
+        let block_rx = network
+            .subscribe(&SEALED_BLOCK_TOPIC)?
             .map(|m| NodeMessage::SealedBlock(m));
         streams.push(Box::new(block_rx));
 
@@ -340,7 +331,7 @@ where
             keys,
             mempool,
             consensus,
-            broker,
+            network,
             on_epoch_changed,
             on_outputs_changed: on_outputs_received,
             events,
@@ -526,7 +517,7 @@ where
         }
 
         // Check fee.
-        NodeService::<Network>::check_acceptable_fee(&tx)?;
+        NodeService::check_acceptable_fee(&tx)?;
 
         // Check transaction
         if tx.body.txins.is_empty() && tx.body.txouts.is_empty() {
@@ -815,7 +806,7 @@ where
         consensus.propose(block, proof);
         // Prevote for this block.
         consensus.prevote(block_hash);
-        NodeService::flush_consensus_messages(consensus, &mut self.broker)
+        NodeService::flush_consensus_messages(consensus, &mut self.network)
     }
 
     /// Called when a new key block is registered.
@@ -853,7 +844,7 @@ where
         let proto = msg.into_proto();
         let data = proto.write_to_bytes()?;
         // Don't send block to myself.
-        self.broker.publish(&SEALED_BLOCK_TOPIC.to_string(), data)?;
+        self.network.publish(&SEALED_BLOCK_TOPIC, data)?;
         info!("Sent sealed block to the network: hash={}", block_hash);
         Ok(())
     }
@@ -926,17 +917,14 @@ where
     ///
     fn flush_consensus_messages(
         consensus: &mut BlockConsensus,
-        broker: &mut Network,
-    ) -> Result<(), Error>
-    where
-        Network: NetworkProvider,
-    {
+        network: &mut Network,
+    ) -> Result<(), Error> {
         // Flush message queue.
         let outbox = std::mem::replace(&mut consensus.outbox, Vec::new());
         for msg in outbox {
             let proto = msg.into_proto();
             let data = proto.write_to_bytes()?;
-            broker.publish(&CONSENSUS_TOPIC.to_string(), data)?;
+            network.publish(&CONSENSUS_TOPIC, data)?;
         }
         Ok(())
     }
@@ -957,7 +945,7 @@ where
         let consensus = self.consensus.as_mut().unwrap();
         consensus.feed_message(msg)?;
         // Flush pending messages.
-        NodeService::flush_consensus_messages(consensus, &mut self.broker)?;
+        NodeService::flush_consensus_messages(consensus, &mut self.network)?;
 
         // Check if we can prevote for a block.
         if !consensus.is_leader() && consensus.should_prevote() {
@@ -1041,7 +1029,7 @@ where
         consensus.prevote(block_hash);
 
         // Flush pending messages.
-        NodeService::flush_consensus_messages(consensus, &mut self.broker)?;
+        NodeService::flush_consensus_messages(consensus, &mut self.network)?;
 
         Ok(())
     }
@@ -1060,7 +1048,7 @@ where
             Ok(()) => {
                 let consensus = self.consensus.as_mut().unwrap();
                 consensus.prevote(request_hash);
-                NodeService::flush_consensus_messages(consensus, &mut self.broker).unwrap();
+                NodeService::flush_consensus_messages(consensus, &mut self.network).unwrap();
             }
             Err(e) => {
                 error!(
@@ -1126,7 +1114,7 @@ where
                     )
                     .into());
                 }
-                NodeService::<Network>::validate_monetary_block(
+                NodeService::validate_monetary_block(
                     mempool,
                     chain,
                     block_hash,
@@ -1145,7 +1133,7 @@ where
                     )
                     .into());
                 }
-                NodeService::<Network>::validate_key_block(consensus, block_hash, block)
+                NodeService::validate_key_block(consensus, block_hash, block)
             }
             (_, _) => unreachable!(),
         }
@@ -1336,10 +1324,7 @@ where
 }
 
 // Event loop.
-impl<Network> Future for NodeService<Network>
-where
-    Network: NetworkProvider,
-{
+impl Future for NodeService {
     type Item = ();
     type Error = ();
 
@@ -1382,9 +1367,9 @@ pub mod tests {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
         let keys = KeyChain::new_mem();
         let (_outbox, inbox) = unbounded();
-        let (broker, _service) = DummyNetwork::new();
+        let (network, _service) = DummyNetwork::new();
 
-        let mut node = NodeService::testing(keys.clone(), broker, inbox).unwrap();
+        let mut node = NodeService::testing(keys.clone(), network, inbox).unwrap();
 
         assert_eq!(node.chain.blocks().len(), 0);
         assert_eq!(node.mempool.len(), 0);
@@ -1406,10 +1391,7 @@ pub mod tests {
         );
     }
 
-    fn simulate_consensus<Network>(node: &mut NodeService<Network>)
-    where
-        Network: NetworkProvider,
-    {
+    fn simulate_consensus(node: &mut NodeService) {
         let previous = Hash::digest(node.chain.last_block());
         let (block, _fee_output, _tx_hashes) = node.mempool.create_block(
             previous,
@@ -1428,10 +1410,7 @@ pub mod tests {
         node.commit_proposed_block(block, multisig, multisigmap);
     }
 
-    fn unspent<Network>(node: &NodeService<Network>) -> HashMap<Hash, (PaymentOutput, i64)>
-    where
-        Network: NetworkProvider,
-    {
+    fn unspent(node: &NodeService) -> HashMap<Hash, (PaymentOutput, i64)> {
         let mut unspent: HashMap<Hash, (PaymentOutput, i64)> = HashMap::new();
         for hash in node.chain.unspent() {
             let output = node.chain.output_by_hash(&hash).unwrap();
@@ -1444,10 +1423,7 @@ pub mod tests {
         unspent
     }
 
-    fn simulate_payment<Network>(node: &mut NodeService<Network>, amount: i64) -> Result<(), Error>
-    where
-        Network: NetworkProvider,
-    {
+    fn simulate_payment(node: &mut NodeService, amount: i64) -> Result<(), Error> {
         let tx = create_payment_transaction(
             &node.keys.wallet_skey,
             &node.keys.wallet_pkey,
@@ -1467,9 +1443,9 @@ pub mod tests {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
         let keys = KeyChain::new_mem();
         let (_outbox, inbox) = unbounded();
-        let (broker, _service) = DummyNetwork::new();
+        let (network, _service) = DummyNetwork::new();
 
-        let mut node = NodeService::testing(keys.clone(), broker, inbox).unwrap();
+        let mut node = NodeService::testing(keys.clone(), network, inbox).unwrap();
 
         let total: i64 = 3_000_000;
         let stake: i64 = 100;

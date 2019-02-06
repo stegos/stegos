@@ -9,13 +9,6 @@ message PaymentOutput {
     stegos.crypto.EncryptedPayload payload = 3;
 }
 
-message DataOutput {
-    stegos.crypto.PublicKey recipient = 1;
-    stegos.crypto.Pt vcmt = 2;
-    uint64 ttl = 3;
-    stegos.crypto.EncryptedPayload payload = 4;
-}
-
 message StakeOutput {
     stegos.crypto.PublicKey recipient = 1;
     stegos.crypto.SecurePublicKey validator = 2;
@@ -26,7 +19,6 @@ message StakeOutput {
 message Output {
     oneof output {
         PaymentOutput payment_output = 1;
-        DataOutput data_output = 2;
         StakeOutput stake_output = 3;
     }
 }

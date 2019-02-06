@@ -370,9 +370,6 @@ impl Blockchain {
                             Output::PaymentOutput(o) => {
                                 burned += Pt::decompress(o.proof.vcmt)?;
                             }
-                            Output::DataOutput(o) => {
-                                burned += Pt::decompress(o.vcmt)?;
-                            }
                             Output::StakeOutput(o) => {
                                 burned += fee_a(o.amount);
                             }
@@ -405,9 +402,6 @@ impl Blockchain {
             match output.as_ref() {
                 Output::PaymentOutput(o) => {
                     created += Pt::decompress(o.proof.vcmt)?;
-                }
-                Output::DataOutput(o) => {
-                    created += Pt::decompress(o.vcmt)?;
                 }
                 Output::StakeOutput(o) => {
                     created += fee_a(o.amount);
@@ -538,8 +532,8 @@ pub mod tests {
             let input = blockchain.output_by_hash(&input_hash).unwrap();
             match input {
                 Output::PaymentOutput(o) => {
-                    let (_delta, gamma, amount) = o.decrypt_payload(skey).expect("keys are valid");
-                    return (input.clone(), gamma, amount);
+                    let payload = o.decrypt_payload(skey).expect("keys are valid");
+                    return (input.clone(), payload.gamma, payload.amount);
                 }
                 _ => {}
             }

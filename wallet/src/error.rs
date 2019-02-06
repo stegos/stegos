@@ -26,8 +26,8 @@ use failure::Fail;
 pub enum WalletError {
     #[fail(display = "Not enough money.")]
     NotEnoughMoney,
-    #[fail(display = "Amount should be greater than zero.")]
-    ZeroOrNegativeAmount,
+    #[fail(display = "Negative amount: amount={}", _0)]
+    NegativeAmount(i64),
     #[fail(display = "Insufficient stake: min={}, got={}.", _0, _1)]
     InsufficientStake(i64, i64),
 }

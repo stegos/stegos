@@ -357,9 +357,6 @@ impl MonetaryBlock {
                 Output::PaymentOutput(o) => {
                     pedersen_commitment_diff += Pt::decompress(o.proof.vcmt)?;
                 }
-                Output::DataOutput(o) => {
-                    pedersen_commitment_diff += Pt::decompress(o.vcmt)?;
-                }
                 Output::StakeOutput(o) => {
                     pedersen_commitment_diff += fee_a(o.amount);
                 }
@@ -380,14 +377,25 @@ impl MonetaryBlock {
                     if !validate_range_proof(&o.proof) {
                         return Err(BlockchainError::InvalidBulletProof.into());
                     }
+                    if o.payload.ctxt.len() != PAYMENT_PAYLOAD_LEN {
+                        return Err(OutputError::InvalidPayloadLength(
+                            PAYMENT_PAYLOAD_LEN,
+                            o.payload.ctxt.len(),
+                        )
+                        .into());
+                    }
                     pedersen_commitment_diff -= Pt::decompress(o.proof.vcmt)?;
-                }
-                Output::DataOutput(ref o) => {
-                    pedersen_commitment_diff -= Pt::decompress(o.vcmt)?;
                 }
                 Output::StakeOutput(ref o) => {
                     if o.amount <= 0 {
                         return Err(BlockchainError::InvalidStake.into());
+                    }
+                    if o.payload.ctxt.len() != STAKE_PAYLOAD_LEN {
+                        return Err(OutputError::InvalidPayloadLength(
+                            STAKE_PAYLOAD_LEN,
+                            o.payload.ctxt.len(),
+                        )
+                        .into());
                     }
                     pedersen_commitment_diff -= fee_a(o.amount);
                 }

@@ -858,13 +858,6 @@ where
         Ok(())
     }
 
-    /// Calculate fee for data transaction.
-    fn data_fee(size: usize, ttl: u64) -> i64 {
-        assert!(size > 0);
-        let units: usize = (size + (DATA_UNIT - 1)) / DATA_UNIT;
-        (units as i64) * (ttl as i64) * DATA_UNIT_FEE
-    }
-
     /// Check minimal acceptable fee for transaction.
     fn check_acceptable_fee(tx: &Transaction) -> Result<(), NodeError> {
         let mut min_fee: i64 = 0;
@@ -872,7 +865,6 @@ where
             min_fee += match txout {
                 Output::PaymentOutput(_o) => PAYMENT_FEE,
                 Output::StakeOutput(_o) => STAKE_FEE,
-                Output::DataOutput(o) => NodeService::<Network>::data_fee(o.data_size(), o.ttl),
             };
         }
 
@@ -1383,7 +1375,6 @@ pub mod tests {
     use std::collections::HashMap;
     use stegos_crypto::pbc::secure::sign_hash as secure_sign_hash;
     use stegos_network::DummyNetwork;
-    use stegos_wallet::create_data_transaction;
     use stegos_wallet::create_payment_transaction;
 
     #[test]
@@ -1445,7 +1436,8 @@ pub mod tests {
         for hash in node.chain.unspent() {
             let output = node.chain.output_by_hash(&hash).unwrap();
             if let Output::PaymentOutput(o) = output {
-                let (_delta, _gamma, amount) = o.decrypt_payload(&node.keys.wallet_skey).unwrap();
+                let PaymentPayload { amount, .. } =
+                    o.decrypt_payload(&node.keys.wallet_skey).unwrap();
                 unspent.insert(hash, (o.clone(), amount));
             }
         }
@@ -1462,48 +1454,12 @@ pub mod tests {
             &node.keys.wallet_pkey,
             &unspent(node),
             amount,
+            PaymentPayloadData::Comment("Test".to_string()),
         )?;
         let proto = tx.into_proto();
         let data = proto.write_to_bytes()?;
         node.handle_transaction(data)?;
         Ok(())
-    }
-
-    fn simulate_message<Network>(
-        node: &mut NodeService<Network>,
-        ttl: u64,
-        msg: Vec<u8>,
-    ) -> Result<(), Error>
-    where
-        Network: NetworkProvider,
-    {
-        let tx = create_data_transaction(
-            &node.keys.wallet_skey,
-            &node.keys.wallet_pkey,
-            &node.keys.wallet_pkey,
-            &unspent(node),
-            ttl,
-            msg,
-        )?;
-        let proto = tx.into_proto();
-        let data = proto.write_to_bytes()?;
-        node.handle_transaction(data)?;
-        Ok(())
-    }
-
-    fn balance<Network>(node: &NodeService<Network>) -> i64
-    where
-        Network: NetworkProvider,
-    {
-        let mut balance: i64 = 0;
-        for hash in node.chain.unspent() {
-            let output = node.chain.output_by_hash(&hash).unwrap();
-            if let Output::PaymentOutput(o) = output {
-                let (_delta, _gamma, amount) = o.decrypt_payload(&node.keys.wallet_skey).unwrap();
-                balance += amount;
-            }
-        }
-        balance
     }
 
     #[test]
@@ -1531,7 +1487,8 @@ pub mod tests {
         for unspent in node.chain.unspent() {
             match node.chain.output_by_hash(&unspent) {
                 Some(Output::PaymentOutput(o)) => {
-                    let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
+                    let PaymentPayload { amount, .. } =
+                        o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
                 }
                 Some(Output::StakeOutput(o)) => {
@@ -1554,7 +1511,8 @@ pub mod tests {
         for unspent in node.chain.unspent() {
             match node.chain.output_by_hash(&unspent) {
                 Some(Output::PaymentOutput(o)) => {
-                    let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
+                    let PaymentPayload { amount, .. } =
+                        o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amounts.push(amount);
                 }
                 Some(Output::StakeOutput(o)) => {
@@ -1568,157 +1526,5 @@ pub mod tests {
         assert_eq!(amounts, expected);
 
         assert_eq!(block_count, 3);
-    }
-
-    #[test]
-    pub fn data_requests() {
-        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
-        let keys = KeyChain::new_mem();
-        let (_outbox, inbox) = unbounded();
-        let (broker, _service) = DummyNetwork::new();
-
-        let mut node = NodeService::testing(keys.clone(), broker, inbox).unwrap();
-
-        let total: i64 = 100;
-        let stake: i64 = 1;
-        let genesis = genesis(&[keys.clone()], stake, total);
-        node.handle_init(genesis).unwrap();
-        let mut block_count = node.chain.blocks().len();
-
-        let data = b"hello".to_vec();
-        let ttl = 3;
-        let data_fee = NodeService::<DummyNetwork>::data_fee(data.len(), ttl);
-
-        // Change money for the next test.
-        simulate_payment(&mut node, data_fee).unwrap();
-        simulate_consensus(&mut node);
-        assert_eq!(node.mempool.len(), 0);
-        assert_eq!(balance(&node), total - stake); // fee is returned back
-        assert_eq!(node.chain.unspent().len(), 4);
-        assert_eq!(node.chain.blocks().len(), block_count + 1);
-        let mut amounts = Vec::new();
-        for unspent in node.chain.unspent() {
-            match node.chain.output_by_hash(&unspent) {
-                Some(Output::PaymentOutput(o)) => {
-                    let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
-                    amounts.push(amount);
-                }
-                Some(Output::StakeOutput(o)) => {
-                    assert_eq!(o.amount, stake);
-                }
-                _ => panic!(),
-            }
-        }
-        amounts.sort();
-        let expected = vec![
-            2 * PAYMENT_FEE,
-            data_fee,
-            total - stake - data_fee - 2 * PAYMENT_FEE,
-        ];
-        assert_eq!(amounts, expected);
-        block_count += 1;
-
-        // Send data without a change.
-        simulate_message(&mut node, ttl, data).unwrap();
-        assert_eq!(node.mempool.len(), 1);
-        simulate_consensus(&mut node);
-        assert_eq!(node.mempool.len(), 0);
-        assert_eq!(balance(&node), total - stake); // fee is returned back
-        assert_eq!(node.chain.blocks().len(), block_count + 1);
-        let mut amounts = Vec::new();
-        let mut unspent_data: usize = 0;
-        for unspent in node.chain.unspent() {
-            match node.chain.output_by_hash(&unspent) {
-                Some(Output::PaymentOutput(o)) => {
-                    let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
-                    amounts.push(amount);
-                }
-                Some(Output::DataOutput(_o)) => {
-                    unspent_data += 1;
-                }
-                Some(Output::StakeOutput(o)) => {
-                    assert_eq!(o.amount, stake);
-                }
-                _ => panic!(),
-            }
-        }
-        assert_eq!(unspent_data, 1);
-        amounts.sort();
-        let expected = vec![
-            2 * PAYMENT_FEE,
-            data_fee,
-            total - stake - data_fee - 2 * PAYMENT_FEE,
-        ];
-        assert_eq!(amounts, expected);
-        block_count += 1;
-
-        // Send data with a change.
-        let data = b"hello".to_vec();
-        let ttl = 10;
-        let data_fee2 = NodeService::<DummyNetwork>::data_fee(data.len(), ttl);
-        simulate_message(&mut node, ttl, data).unwrap();
-        assert_eq!(node.mempool.len(), 1);
-        simulate_consensus(&mut node);
-        assert_eq!(node.mempool.len(), 0);
-        assert_eq!(balance(&node), total - stake); // fee is returned back
-        assert_eq!(node.chain.blocks().len(), block_count + 1);
-        let mut amounts = Vec::new();
-        let mut unspent_data: usize = 0;
-        for unspent in node.chain.unspent() {
-            match node.chain.output_by_hash(&unspent) {
-                Some(Output::PaymentOutput(o)) => {
-                    let (_, _, amount) = o.decrypt_payload(&keys.wallet_skey).unwrap();
-                    amounts.push(amount);
-                }
-                Some(Output::DataOutput(_o)) => {
-                    unspent_data += 1;
-                }
-                Some(Output::StakeOutput(o)) => {
-                    assert_eq!(o.amount, stake);
-                }
-                _ => panic!(),
-            }
-        }
-        assert_eq!(unspent_data, 2);
-        amounts.sort();
-        let expected = vec![
-            PAYMENT_FEE + data_fee2,
-            total - stake - PAYMENT_FEE - data_fee2,
-        ];
-        assert_eq!(amounts, expected);
-    }
-
-    /// Check data fee calculation.
-    #[test]
-    pub fn data_fee() {
-        assert_eq!(NodeService::<DummyNetwork>::data_fee(1, 1), DATA_UNIT_FEE);
-        assert_eq!(
-            NodeService::<DummyNetwork>::data_fee(1, 2),
-            2 * DATA_UNIT_FEE
-        );
-        assert_eq!(
-            NodeService::<DummyNetwork>::data_fee(DATA_UNIT - 1, 1),
-            DATA_UNIT_FEE
-        );
-        assert_eq!(
-            NodeService::<DummyNetwork>::data_fee(DATA_UNIT - 1, 2),
-            2 * DATA_UNIT_FEE
-        );
-        assert_eq!(
-            NodeService::<DummyNetwork>::data_fee(DATA_UNIT, 1),
-            DATA_UNIT_FEE
-        );
-        assert_eq!(
-            NodeService::<DummyNetwork>::data_fee(DATA_UNIT, 2),
-            2 * DATA_UNIT_FEE
-        );
-        assert_eq!(
-            NodeService::<DummyNetwork>::data_fee(DATA_UNIT + 1, 1),
-            2 * DATA_UNIT_FEE
-        );
-        assert_eq!(
-            NodeService::<DummyNetwork>::data_fee(DATA_UNIT + 1, 2),
-            4 * DATA_UNIT_FEE
-        );
     }
 }

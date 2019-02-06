@@ -31,7 +31,7 @@ use log::*;
 use std::{
     collections::{HashSet, VecDeque},
     marker::PhantomData,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use stegos_config::ConfigNetwork;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -84,9 +84,6 @@ impl<TSubstream> Ncp<TSubstream> {
             monitor: Interval::new_interval(Duration::from_secs(config.monitoring_interval)),
             marker: PhantomData,
         }
-    }
-    pub fn on_timer(&self, instant: Instant) {
-        println!("Tick: {:#?}!", instant);
     }
 }
 

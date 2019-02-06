@@ -27,26 +27,13 @@ use chrono::Utc;
 use failure::Error;
 use log::*;
 use std::collections::HashMap;
-use stegos_blockchain::DataOutput;
-use stegos_blockchain::Output;
-use stegos_blockchain::PaymentOutput;
-use stegos_blockchain::StakeOutput;
-use stegos_blockchain::Transaction;
+use stegos_blockchain::*;
 use stegos_config::*;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::curve1174::cpt::SecretKey;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
-
-/// Calculate fee for data transaction.
-/// Sic: this method was copy-pasted from NodeService to avoid
-/// Wallet <-> NodeService dependency.
-fn data_fee(size: usize, ttl: u64) -> i64 {
-    assert!(size > 0);
-    let units: usize = (size + (DATA_UNIT - 1)) / DATA_UNIT;
-    (units as i64) * (ttl as i64) * DATA_UNIT_FEE
-}
 
 /// Create a new payment transaction.
 /// Sic: used by unit tests in NodeService.
@@ -56,9 +43,10 @@ pub fn create_payment_transaction(
     recipient: &PublicKey,
     unspent: &HashMap<Hash, (PaymentOutput, i64)>,
     amount: i64,
+    data: PaymentPayloadData,
 ) -> Result<Transaction, Error> {
-    if amount <= 0 {
-        return Err(WalletError::ZeroOrNegativeAmount.into());
+    if amount < 0 {
+        return Err(WalletError::NegativeAmount(amount).into());
     }
 
     debug!(
@@ -101,27 +89,30 @@ pub fn create_payment_transaction(
 
     // Create an output for payment
     trace!("Creating change UTXO...");
-    let (output1, gamma1) = Output::new_payment(timestamp, sender_skey, recipient, amount)?;
+    let (output1, gamma1) =
+        PaymentOutput::with_payload(timestamp, sender_skey, recipient, amount, data.clone())?;
+    let output1_hash = Hash::digest(&output1);
     info!(
-        "Created payment UTXO: hash={}, recipient={}, amount={}",
-        Hash::digest(&output1),
-        recipient,
-        amount
+        "Created payment UTXO: hash={}, recipient={}, amount={}, data={:?}",
+        output1_hash, recipient, amount, data
     );
-    outputs.push(output1);
+    outputs.push(Output::PaymentOutput(output1));
     let mut gamma = gamma1;
 
     if change > 0 {
         // Create an output for change
         trace!("Creating change UTXO...");
-        let (output2, gamma2) = Output::new_payment(timestamp, sender_skey, sender_pkey, change)?;
+        let data = PaymentPayloadData::Comment("Change".to_string());
+        let (output2, gamma2) =
+            PaymentOutput::with_payload(timestamp, sender_skey, sender_pkey, change, data.clone())?;
         info!(
-            "Created change UTXO: hash={}, recipient={}, change={}",
+            "Created change UTXO: hash={}, recipient={}, change={}, data={:?}",
             Hash::digest(&output2),
             sender_pkey,
-            change
+            change,
+            data
         );
-        outputs.push(output2);
+        outputs.push(Output::PaymentOutput(output2));
         gamma += gamma2;
     }
 
@@ -141,125 +132,6 @@ pub fn create_payment_transaction(
     Ok(tx)
 }
 
-/// Create a new data transaction.
-/// Sic: used by unit tests in NodeService.
-pub fn create_data_transaction(
-    sender_skey: &SecretKey,
-    sender_pkey: &PublicKey,
-    recipient: &PublicKey,
-    unspent: &HashMap<Hash, (PaymentOutput, i64)>,
-    ttl: u64,
-    data: Vec<u8>,
-) -> Result<Transaction, Error> {
-    debug!(
-        "Creating a data transaction: recipient={}, ttl={}",
-        recipient, ttl
-    );
-
-    //
-    // Find inputs
-    //
-
-    trace!("Checking for available funds in the wallet...");
-
-    let fee = data_fee(data.len(), ttl);
-    let fee_change = fee + PAYMENT_FEE;
-    let unspent_iter = unspent.values().map(|(o, a)| (o, *a));
-    let (inputs, fee, change) = find_utxo(unspent_iter, 0, fee, fee_change)?;
-    let inputs: Vec<Output> = inputs
-        .into_iter()
-        .map(|o| Output::PaymentOutput(o.clone()))
-        .collect();
-
-    debug!(
-        "Transaction preview: recipient={}, ttl={}, withdrawn={}, change={}, fee={}",
-        recipient,
-        ttl,
-        change + fee,
-        change,
-        fee
-    );
-    for input in &inputs {
-        debug!("Use UTXO: hash={}", Hash::digest(input));
-    }
-
-    //
-    // Create outputs
-    //
-
-    let timestamp = Utc::now().timestamp() as u64;
-    let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
-
-    // Create an output for payment
-    trace!("Creating data UTXO...");
-    let (output1, gamma1) = Output::new_data(timestamp, sender_skey, recipient, ttl, &data)?;
-    info!(
-        "Created data UTXO: hash={}, recipient={}, ttl={}",
-        Hash::digest(&output1),
-        recipient,
-        ttl
-    );
-    outputs.push(output1);
-    let mut gamma = gamma1;
-
-    if change > 0 {
-        // Create an output for change
-        trace!("Creating change UTXO...");
-        let (output2, gamma2) = Output::new_payment(timestamp, sender_skey, sender_pkey, change)?;
-        info!(
-            "Created change UTXO: hash={}, recipient={}, change={}",
-            Hash::digest(&output2),
-            recipient,
-            change
-        );
-        outputs.push(output2);
-        gamma += gamma2;
-    }
-
-    trace!("Signing transaction...");
-    let tx = Transaction::new(sender_skey, &inputs, &outputs, gamma, fee)?;
-    let tx_hash = Hash::digest(&tx);
-    info!(
-        "Signed data transaction: hash={}, recipient={}, ttl={}, spent={}, change={}, fee={}",
-        tx_hash,
-        recipient,
-        ttl,
-        change + fee,
-        change,
-        fee
-    );
-
-    Ok(tx)
-}
-
-/// Create a new transaction to prune data.
-pub(crate) fn create_data_pruning_transaction(
-    sender_skey: &SecretKey,
-    output: DataOutput,
-) -> Result<Transaction, Error> {
-    let output_hash = Hash::digest(&output);
-
-    debug!(
-        "Creating a data pruning transaction: data_utxo={}",
-        output_hash
-    );
-
-    let inputs = [Output::DataOutput(output)];
-    let outputs = [];
-    let adjustment = Fr::zero();
-    let fee: i64 = 0;
-
-    trace!("Signing transaction...");
-    let tx = Transaction::new(sender_skey, &inputs, &outputs, adjustment, fee)?;
-    let tx_hash = Hash::digest(&tx);
-    info!(
-        "Signed data pruning transaction: hash={}, data_utxo={}, fee={}",
-        tx_hash, output_hash, fee
-    );
-
-    Ok(tx)
-}
-
 /// Create a new staking transaction.
 pub fn create_staking_transaction(
     sender_skey: &SecretKey,
@@ -268,8 +140,8 @@ pub fn create_staking_transaction(
     unspent: &HashMap<Hash, (PaymentOutput, i64)>,
     amount: i64,
 ) -> Result<Transaction, Error> {
-    if amount <= 0 {
-        return Err(WalletError::ZeroOrNegativeAmount.into());
+    if amount < 0 {
+        return Err(WalletError::NegativeAmount(amount).into());
     } else if amount <= PAYMENT_FEE {
         // Stake must be > PAYMENT_FEE.
         return Err(WalletError::InsufficientStake(PAYMENT_FEE + 1, amount).into());
@@ -367,7 +239,7 @@ pub fn create_unstaking_transaction(
     amount: i64,
 ) -> Result<Transaction, Error> {
     if amount <= PAYMENT_FEE {
-        return Err(WalletError::ZeroOrNegativeAmount.into());
+        return Err(WalletError::NegativeAmount(amount - PAYMENT_FEE).into());
     }
 
     debug!(
@@ -480,7 +352,7 @@ pub mod tests {
         assert_eq!(tx.body.txouts.len(), 1);
         match &tx.body.txouts.first().unwrap() {
             Output::PaymentOutput(o) => {
-                let (_, _, amount) = o.decrypt_payload(&skey).expect("key is valid");
+                let PaymentPayload { amount, .. } = o.decrypt_payload(&skey).expect("key is valid");
                 assert_eq!(amount, stake - PAYMENT_FEE);
             }
             _ => panic!("invalid tx"),
@@ -495,7 +367,7 @@ pub mod tests {
         assert_eq!(tx.body.txouts.len(), 2);
         match &tx.body.txouts[0] {
             Output::PaymentOutput(o) => {
-                let (_, _, amount) = o.decrypt_payload(&skey).expect("key is valid");
+                let PaymentPayload { amount, .. } = o.decrypt_payload(&skey).expect("key is valid");
                 assert_eq!(amount, unstake - PAYMENT_FEE);
             }
             _ => panic!("invalid tx"),
@@ -512,7 +384,7 @@ pub mod tests {
             create_unstaking_transaction(&skey, &pkey, &validator_pkey, &unspent, PAYMENT_FEE - 1)
                 .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {
-            WalletError::ZeroOrNegativeAmount => {}
+            WalletError::NegativeAmount(_amount) => {}
             _ => panic!(),
         }
 
@@ -520,7 +392,7 @@ pub mod tests {
         let e = create_unstaking_transaction(&skey, &pkey, &validator_pkey, &unspent, PAYMENT_FEE)
             .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {
-            WalletError::ZeroOrNegativeAmount => {}
+            WalletError::NegativeAmount(_amount) => {}
             _ => panic!(),
         }
 

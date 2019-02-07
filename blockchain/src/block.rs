@@ -38,8 +38,7 @@ use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
 use stegos_crypto::pbc::secure::Signature as SecureSignature;
 
 /// The maximum number of nodes in multi-signature.
-/// Please synchronize this number with stegos_consensus::WITNESSES_MAX.
-pub const WITNESSES_MAX: usize = 128;
+pub const WITNESSES_MAX: usize = 512;
 
 /// General Block Header.
 #[derive(Debug, Clone)]

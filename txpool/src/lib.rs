@@ -4,29 +4,34 @@ pub use crate::messages::*;
 pub mod protos;
 
 use failure::Error;
-use futures::{task, Async, Future, Poll, Stream};
+use futures::{Async, Future, Poll, Stream};
 use futures_stream_select_all_send::select_all;
 use log::*;
 use std::collections::HashSet;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use stegos_crypto::pbc::secure::{self, G2};
 use stegos_keychain::KeyChain;
 use stegos_network::Network;
 use stegos_node::EpochNotification;
 use stegos_node::Node;
 use stegos_serialization::traits::*;
-use tokio_timer::Delay;
+use tokio_timer::Interval;
 
 const MESSAGE_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct FacilitatorState {
     participants: HashSet<secure::PublicKey>,
+    timer: Interval,
 }
 
 impl FacilitatorState {
     fn new() -> Self {
+        let mut timer = Interval::new_interval(MESSAGE_TIMEOUT);
+        // register new timer to the current task.
+        let _ = timer.poll();
         FacilitatorState {
             participants: HashSet::new(),
+            timer,
         }
     }
 
@@ -62,7 +67,6 @@ pub struct TransactionPoolService {
     pkey: secure::PublicKey,
     network: Network,
     role: NodeRole,
-    timer: Option<Delay>,
 
     events: Box<Stream<Item = PoolEvent, Error = ()> + Send>,
 }
@@ -95,7 +99,6 @@ impl TransactionPoolService {
             role: NodeRole::Regular,
             network,
             pkey,
-            timer: None,
             events,
         }
     }
@@ -104,12 +107,8 @@ impl TransactionPoolService {
         debug!("Changed facilitator: facilitator={:?}", epoch.facilitator);
         let role = if epoch.facilitator == self.pkey {
             info!("I am facilitator.");
-            self.timer = Some(Delay::new(Instant::now() + MESSAGE_TIMEOUT));
-            task::current().notify();
-
             NodeRole::Facilitator(FacilitatorState::new())
         } else {
-            self.timer = None;
             NodeRole::Regular
         };
         self.role = role;
@@ -199,20 +198,17 @@ impl TransactionPoolService {
     }
 
     fn poll_timer(&mut self) -> Async<()> {
-        if self.timer.is_none() {
-            // we don't need to call `notify`, there,
-            // because this timer is oneshot, and cannot recover.
-            return Async::NotReady;
-        }
-
-        let timer = self.timer.as_mut().unwrap();
+        let timer = match self.role {
+            NodeRole::Facilitator(ref mut state) => &mut state.timer,
+            NodeRole::Regular => return Async::NotReady,
+        };
         match timer.poll().expect("timer fails") {
-            Async::Ready(()) => {
+            Async::Ready(Some(_)) => {
                 if let Err(e) = self.handle_timer() {
                     error!("Error: {}", e);
                 }
-                self.timer = None;
             }
+            Async::Ready(None) => panic!("Timer fails."),
             _ => {}
         }
         Async::NotReady

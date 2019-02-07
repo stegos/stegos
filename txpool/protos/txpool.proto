@@ -3,12 +3,8 @@ package stegis.txpool;
 
 import "crypto.proto";
 
-message Message {
-    stegos.crypto.SecurePublicKey pkey = 1;
-}
+message PoolJoin {}
 
 message PoolInfo {
-    repeated Message accumulator = 1;
-    stegos.crypto.SecurePublicKey pkey = 2;
-    stegos.crypto.SecureSignature sig = 3;
+    repeated stegos.crypto.SecurePublicKey participants = 1;
 }

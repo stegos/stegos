@@ -8,9 +8,15 @@ edition = "2018"
 stegos_crypto = { path = "../crypto" }
 stegos_blockchain = { path = "../blockchain" }
 stegos_config = { path = "../config" }
+stegos_txpool = { path = "../txpool" }
+stegos_network = { path = "../network" }
+stegos_node = { path = "../node" }
+stegos_serialization = { path = "../serialization" }
 log = "0.4"
 failure = "0.1"
 chrono = "0.4"
+futures = "0.1"
+futures-stream-select-all-send = "0.1"
 
 [dev-dependencies]
 simple_logger = "1.0"

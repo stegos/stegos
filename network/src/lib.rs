@@ -52,13 +52,19 @@ where
     fn subscribe_unicast(
         &self,
         protocol_id: &str,
-    ) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error>;
+    ) -> Result<mpsc::UnboundedReceiver<UnicastMessage>, Error>;
 
     /// Send unicast message to peer identified by cosi public key
     fn send(&self, dest: secure::PublicKey, protocol_id: &str, data: Vec<u8>) -> Result<(), Error>;
 
     /// Helper for cloning boxed object
     fn box_clone(&self) -> Network;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnicastMessage {
+    pub from: secure::PublicKey,
+    pub data: Vec<u8>,
 }
 
 impl Clone for Network {

@@ -253,9 +253,29 @@ where
                 protocol_id,
                 data,
             } => {
-                let floodsub_topic = floodsub::TopicBuilder::new(UNICAST_TOPIC).build();
-                let msg = encode_unicast(self.my_pkey.clone(), to, protocol_id, data);
-                self.floodsub.publish(floodsub_topic, msg);
+                if to == self.my_pkey {
+                    let msg = UnicastMessage {
+                        from: to.clone(),
+                        data,
+                    };
+                    self.unicast_consumers
+                        .entry(protocol_id)
+                        .or_insert(SmallVec::new())
+                        .retain({
+                            move |c| {
+                                if let Err(e) = c.unbounded_send(msg.clone()) {
+                                    error!("Error sending data to consumer: {}", e);
+                                    false
+                                } else {
+                                    true
+                                }
+                            }
+                        })
+                } else {
+                    let floodsub_topic = floodsub::TopicBuilder::new(UNICAST_TOPIC).build();
+                    let msg = encode_unicast(self.my_pkey.clone(), to, protocol_id, data);
+                    self.floodsub.publish(floodsub_topic, msg);
+                }
             }
         }
     }

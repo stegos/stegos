@@ -34,7 +34,7 @@ use std::thread;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
-use stegos_network::Network;
+use stegos_network::{Network, UnicastMessage};
 use stegos_node::*;
 use stegos_txpool::TransactionPool;
 use stegos_wallet::{Wallet, WalletNotification};
@@ -77,6 +77,8 @@ lazy_static! {
     static ref TXPOOL_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)$").unwrap();
 }
 
+const CONSOLE_PROTOCOL_ID: &'static str = "console";
+
 /// Console (stdin) service.
 struct ConsoleService {
     /// Wallet.
@@ -97,6 +99,8 @@ struct ConsoleService {
     outputs_rx: UnboundedReceiver<OutputsNotification>,
     /// A channel to receive notification about Epoch changes.
     epoch_rx: UnboundedReceiver<EpochNotification>,
+    /// A channel to receive unicast messages
+    unicast_rx: UnboundedReceiver<UnicastMessage>,
 }
 
 impl ConsoleService {
@@ -114,6 +118,7 @@ impl ConsoleService {
         let stdin = rx;
         let outputs_rx = node.subscribe_outputs()?;
         let epoch_rx = node.subscribe_epoch()?;
+        let unicast_rx = network.subscribe_unicast(CONSOLE_PROTOCOL_ID)?;
 
         let service = ConsoleService {
             wallet,
@@ -125,6 +130,7 @@ impl ConsoleService {
             stdin_th,
             outputs_rx,
             epoch_rx,
+            unicast_rx,
         };
         Ok(service)
     }
@@ -454,6 +460,22 @@ impl Future for ConsoleService {
                 Ok(Async::Ready(None)) => self.on_exit(),
                 Ok(Async::NotReady) => break, // fall through
                 Err(()) => panic!("Wallet failure"),
+            }
+        }
+
+        loop {
+            // Process unicast messages
+            match self.unicast_rx.poll() {
+                Ok(Async::Ready(Some(msg))) => {
+                    info!(
+                        "Received unicast message: from: {}, data: {}",
+                        msg.from,
+                        String::from_utf8_lossy(&msg.data)
+                    );
+                }
+                Ok(Async::Ready(None)) => self.on_exit(),
+                Ok(Async::NotReady) => break, // fall through
+                Err(()) => panic!("Unicast failure"),
             }
         }
 

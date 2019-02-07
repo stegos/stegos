@@ -216,7 +216,7 @@ impl TransactionPoolService {
         match self.events.poll().expect("all errors are already handled") {
             Async::Ready(Some(event)) => {
                 let result = match event {
-                    PoolEvent::Message(data) => Message::from_buffer(&data)
+                    PoolEvent::Message(unicast_msg) => Message::from_buffer(&unicast_msg.data)
                         .and_then(|data| self.handle_receive_message(data)),
                     PoolEvent::InternalMessage(msg) => self.handle_internal_message(msg),
                     PoolEvent::PoolInfo(data) => PoolInfo::from_buffer(&data)

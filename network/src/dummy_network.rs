@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::{Network, NetworkProvider};
+use crate::{Network, NetworkProvider, UnicastMessage};
 use failure::Error;
 use futures::prelude::*;
 use futures::sync::mpsc;
@@ -62,8 +62,8 @@ impl NetworkProvider for DummyNetwork {
     fn subscribe_unicast(
         &self,
         _protocol_id: &str,
-    ) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error> {
-        let (tx, rx) = mpsc::unbounded::<Vec<u8>>();
+    ) -> Result<mpsc::UnboundedReceiver<UnicastMessage>, Error> {
+        let (tx, rx) = mpsc::unbounded::<UnicastMessage>();
         let msg = ControlMessage::SubscribeUnicast { consumer: tx };
         self.control_tx.unbounded_send(msg)?;
         Ok(rx)
@@ -90,7 +90,7 @@ impl DummyNetworkService {
         mpsc::UnboundedSender<ControlMessage>,
     ) {
         let mut consumers: Vec<mpsc::UnboundedSender<Vec<u8>>> = Vec::new();
-        let mut unicast_consumers: Vec<mpsc::UnboundedSender<Vec<u8>>> = Vec::new();
+        let mut unicast_consumers: Vec<mpsc::UnboundedSender<UnicastMessage>> = Vec::new();
         let (tx, mut rx) = mpsc::unbounded();
 
         let fut = futures::future::poll_fn(move || -> Result<_, ()> {
@@ -130,6 +130,6 @@ pub enum ControlMessage {
         data: Vec<u8>,
     },
     SubscribeUnicast {
-        consumer: mpsc::UnboundedSender<Vec<u8>>,
+        consumer: mpsc::UnboundedSender<UnicastMessage>,
     },
 }

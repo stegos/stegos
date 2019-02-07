@@ -45,7 +45,7 @@ use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{ncp, MemoryPeerstore, Network, NetworkProvider};
+use crate::{ncp, MemoryPeerstore, Network, NetworkProvider, UnicastMessage};
 
 mod kad_discovery;
 mod unicast_proto;
@@ -93,9 +93,9 @@ impl NetworkProvider for Libp2pNetwork {
     fn subscribe_unicast(
         &self,
         protocol_id: &str,
-    ) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error> {
+    ) -> Result<mpsc::UnboundedReceiver<UnicastMessage>, Error> {
         let protocol_id: String = protocol_id.clone().into();
-        let (tx, rx) = mpsc::unbounded::<Vec<u8>>();
+        let (tx, rx) = mpsc::unbounded::<UnicastMessage>();
         let msg = ControlMessage::SubscribeUnicast {
             protocol_id,
             consumer: tx,
@@ -194,7 +194,7 @@ pub struct Libp2pBehaviour<TSubstream: AsyncRead + AsyncWrite> {
     #[behaviour(ignore)]
     consumers: HashMap<floodsub::TopicHash, SmallVec<[mpsc::UnboundedSender<Vec<u8>>; 3]>>,
     #[behaviour(ignore)]
-    unicast_consumers: HashMap<String, SmallVec<[mpsc::UnboundedSender<Vec<u8>>; 3]>>,
+    unicast_consumers: HashMap<String, SmallVec<[mpsc::UnboundedSender<UnicastMessage>; 3]>>,
     #[behaviour(ignore)]
     my_pkey: secure::PublicKey,
 }
@@ -292,12 +292,13 @@ where
                                 from,
                                 String::from_utf8_lossy(&data)
                             );
+                            let msg = UnicastMessage { from, data };
                             self.unicast_consumers
                                 .entry(protocol_id)
                                 .or_insert(SmallVec::new())
                                 .retain({
                                     move |c| {
-                                        if let Err(e) = c.unbounded_send(data.clone()) {
+                                        if let Err(e) = c.unbounded_send(msg.clone()) {
                                             error!("Error sending data to consumer: {}", e);
                                             false
                                         } else {
@@ -373,7 +374,7 @@ pub enum ControlMessage {
     },
     SubscribeUnicast {
         protocol_id: String,
-        consumer: mpsc::UnboundedSender<Vec<u8>>,
+        consumer: mpsc::UnboundedSender<UnicastMessage>,
     },
 }
 

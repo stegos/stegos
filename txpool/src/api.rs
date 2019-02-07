@@ -20,6 +20,7 @@
 // SOFTWARE.
 
 use stegos_crypto::pbc::secure;
+use stegos_network::UnicastMessage;
 
 use failure::Error;
 use futures::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -28,7 +29,7 @@ use crate::messages::Message;
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum PoolEvent {
-    Message(Vec<u8>),
+    Message(UnicastMessage),
     InternalMessage(Message),
     PoolInfo(Vec<u8>),
     ChangeFacilitator(secure::PublicKey),

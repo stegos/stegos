@@ -27,6 +27,7 @@ mod api;
 mod change;
 mod error;
 mod transaction;
+mod valueshuffle;
 
 pub use crate::api::*;
 pub use crate::transaction::*;

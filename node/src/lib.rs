@@ -1424,7 +1424,7 @@ pub mod tests {
     }
 
     fn simulate_payment(node: &mut NodeService, amount: i64) -> Result<(), Error> {
-        let tx = create_payment_transaction(
+        let (inputs, outputs, gamma, fee) = create_payment_transaction(
             &node.keys.wallet_skey,
             &node.keys.wallet_pkey,
             &node.keys.wallet_pkey,
@@ -1432,6 +1432,7 @@ pub mod tests {
             amount,
             PaymentPayloadData::Comment("Test".to_string()),
         )?;
+        let tx = Transaction::new(&node.keys.wallet_skey, &inputs, &outputs, gamma, fee)?;
         let proto = tx.into_proto();
         let data = proto.write_to_bytes()?;
         node.handle_transaction(data)?;

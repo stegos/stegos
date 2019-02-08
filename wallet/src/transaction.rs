@@ -36,7 +36,6 @@ use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
 
 /// Create a new payment transaction.
-/// Sic: used by unit tests in NodeService.
 pub fn create_payment_transaction(
     sender_skey: &SecretKey,
     sender_pkey: &PublicKey,
@@ -44,7 +43,7 @@ pub fn create_payment_transaction(
     unspent: &HashMap<Hash, (PaymentOutput, i64)>,
     amount: i64,
     data: PaymentPayloadData,
-) -> Result<Transaction, Error> {
+) -> Result<(Vec<Output>, Vec<Output>, Fr, i64), Error> {
     if amount < 0 {
         return Err(WalletError::NegativeAmount(amount).into());
     }
@@ -116,12 +115,8 @@ pub fn create_payment_transaction(
         gamma += gamma2;
     }
 
-    trace!("Signing transaction...");
-    let tx = Transaction::new(sender_skey, &inputs, &outputs, gamma, fee)?;
-    let tx_hash = Hash::digest(&tx);
     info!(
-        "Signed payment transaction: hash={}, recipient={}, amount={}, withdrawn={}, change={}, fee={}",
-        tx_hash,
+        "Created payment transaction: recipient={}, amount={}, withdrawn={}, change={}, fee={}",
         recipient,
         amount,
         amount + change + fee,
@@ -129,7 +124,7 @@ pub fn create_payment_transaction(
         fee
     );
 
-    Ok(tx)
+    Ok((inputs, outputs, gamma, fee))
 }
 
 /// Create a new staking transaction.

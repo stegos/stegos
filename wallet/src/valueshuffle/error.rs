@@ -1,3 +1,5 @@
+//! error.rs - ValueShuffle Errors.
+
 //
 // Copyright (c) 2019 Stegos
 //
@@ -18,38 +20,30 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+//
 
-use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::pbc::secure;
+use failure::Fail;
 
-/// A topic used for Join requests.
-pub const POOL_JOIN_TOPIC: &'static str = "txpool_join";
-/// A topic for PoolInfo messages.
-pub const POOL_ANNOUNCE_TOPIC: &'static str = "txpool_announce";
+// Possible Error return codes
 
-/// Send when node wants to join TxPool.
-#[derive(Debug, Clone)]
-pub struct PoolJoin {}
-
-/// Sent when a new transaction pool is formed.
-#[derive(Debug, Clone)]
-pub struct PoolInfo {
-    pub participants: Vec<secure::PublicKey>,
-    pub session_id: Hash,
-}
-
-impl Hashable for PoolJoin {
-    fn hash(&self, state: &mut Hasher) {
-        "PoolJoin".hash(state);
-    }
-}
-
-impl Hashable for PoolInfo {
-    fn hash(&self, state: &mut Hasher) {
-        "PoolInfo".hash(state);
-        for participant in &self.participants {
-            participant.hash(state);
-        }
-        self.session_id.hash(state);
-    }
+#[derive(Debug, Fail)]
+pub enum VsError {
+    #[fail(display = "Can't form SuperTransaction")]
+    VsFail, // if can't achieve any result in ValueShuffle session
+    #[fail(display = "Too many UTXOs proposed")]
+    VsTooManyUTXO,
+    #[fail(display = "Bad PublicKey")]
+    VsBadPubKey,
+    #[fail(display = "Bad Keying")]
+    VsBadKeying,
+    #[fail(display = "Bad Signature Kval")]
+    VsBadSigK,
+    #[fail(display = "Bad SuperTransaction")]
+    VsBadSuperTransaction,
+    #[fail(display = "Bad UTXO Encrypted Payload Keying")]
+    VsBadUTXO, // UTXO has bad encryption keying on payload
+    #[fail(display = "Bad TXIN Reference")]
+    VsBadTXIN, // TXIN not accessible with provided ownership sig
+    #[fail(display = "Bad Transaction Attempted")]
+    VsBadTransaction, // user output plus fee not equal TXIN input
 }

@@ -27,10 +27,11 @@ mod api;
 mod change;
 mod error;
 mod transaction;
+mod valueshuffle;
 
 pub use crate::api::*;
 pub use crate::transaction::*;
-use failure::format_err;
+use crate::valueshuffle::ValueShuffle;
 use failure::Error;
 use futures::sync::mpsc::unbounded;
 use futures::sync::mpsc::UnboundedSender;
@@ -46,16 +47,9 @@ use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::curve1174::cpt::SecretKey;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
-use stegos_crypto::pbc::secure::G2;
 use stegos_network::Network;
-use stegos_node::EpochNotification;
 use stegos_node::Node;
 use stegos_node::OutputsNotification;
-use stegos_serialization::traits::ProtoConvert;
-use stegos_txpool::PoolInfo;
-use stegos_txpool::PoolJoin;
-use stegos_txpool::POOL_ANNOUNCE_TOPIC;
-use stegos_txpool::POOL_JOIN_TOPIC;
 
 pub struct WalletService {
     /// Secret Key.
@@ -64,18 +58,15 @@ pub struct WalletService {
     pkey: PublicKey,
     /// Validator's public key
     validator_pkey: secure::PublicKey,
-    /// Faciliator's public key
-    facilitator_pkey: secure::PublicKey,
     /// Unspent Payment UXTO.
     unspent: HashMap<Hash, (PaymentOutput, i64)>,
     /// Unspent Stake UTXO.
     unspent_stakes: HashMap<Hash, StakeOutput>,
     /// Calculated Node's balance.
     balance: i64,
+    /// ValueShuffle State.
+    vs: ValueShuffle,
 
-    /// Network API.
-    #[allow(unused)]
-    network: Network,
     /// Node API.
     node: Node,
 
@@ -98,10 +89,16 @@ impl WalletService {
         //
         // State.
         //
-        let facilitator_pkey: secure::PublicKey = G2::generator().into(); // some fake key
         let unspent: HashMap<Hash, (PaymentOutput, i64)> = HashMap::new();
         let unspent_stakes: HashMap<Hash, StakeOutput> = HashMap::new();
         let balance: i64 = 0;
+        let vs = ValueShuffle::new(
+            skey.clone(),
+            pkey.clone(),
+            validator_pkey.clone(),
+            network.clone(),
+            node.clone(),
+        );
 
         //
         // Subscriptions.
@@ -117,13 +114,6 @@ impl WalletService {
         let (outbox, inbox) = unbounded::<WalletEvent>();
         events.push(Box::new(inbox));
 
-        // Key blocks from node.
-        let node_epochs = node
-            .subscribe_epoch()
-            .expect("connected")
-            .map(|epoch| WalletEvent::NodeEpochChanged(epoch));
-        events.push(Box::new(node_epochs));
-
         // Monetary blocks from node.
         let node_outputs = node
             .subscribe_outputs()
@@ -131,24 +121,16 @@ impl WalletService {
             .map(|outputs| WalletEvent::NodeOutputsChanged(outputs));
         events.push(Box::new(node_outputs));
 
-        // Pool formation.
-        let pool_formation = network
-            .subscribe_unicast(POOL_ANNOUNCE_TOPIC)
-            .expect("connected")
-            .map(|m| WalletEvent::PoolInfo(m.from, m.data));
-        events.push(Box::new(pool_formation));
-
         let events = select_all(events);
 
         let service = WalletService {
             skey,
             pkey,
             validator_pkey,
-            facilitator_pkey,
             unspent,
             unspent_stakes,
             balance,
-            network,
+            vs,
             node,
             subscribers,
             events,
@@ -162,7 +144,7 @@ impl WalletService {
     /// Send money.
     fn payment(&self, recipient: &PublicKey, amount: i64, comment: String) -> Result<(), Error> {
         let data = PaymentPayloadData::Comment(comment);
-        let tx = create_payment_transaction(
+        let (inputs, outputs, gamma, fee) = create_payment_transaction(
             &self.skey,
             &self.pkey,
             recipient,
@@ -170,6 +152,8 @@ impl WalletService {
             amount,
             data,
         )?;
+
+        let tx = Transaction::new(&self.skey, &inputs, &outputs, gamma, fee)?;
         self.node.send_transaction(tx)?;
         Ok(())
     }
@@ -177,20 +161,21 @@ impl WalletService {
     /// Send money using value shuffle.
     fn secure_payment(
         &mut self,
-        _recipient: &PublicKey,
-        _amount: i64,
-        _comment: String,
+        recipient: &PublicKey,
+        amount: i64,
+        comment: String,
     ) -> Result<(), Error> {
-        let join = PoolJoin {};
-        let msg = join.into_buffer()?;
-        self.network
-            .send(self.facilitator_pkey, POOL_JOIN_TOPIC, msg)?;
-        info!(
-            "Sent pool join request facilitator={:?}",
-            self.facilitator_pkey
-        );
-        // TODO: implement valueshuffle
-        error!("unimplemented");
+        let data = PaymentPayloadData::Comment(comment);
+        let (inputs, outputs, gamma, fee) = create_payment_transaction(
+            &self.skey,
+            &self.pkey,
+            recipient,
+            &self.unspent,
+            amount,
+            data,
+        )?;
+
+        self.vs.queue_transaction(inputs, outputs, gamma, fee)?;
         Ok(())
     }
 
@@ -313,15 +298,6 @@ impl WalletService {
             }
         }
     }
-
-    /// Called then txpool has been formed.
-    fn on_pool_formed(&mut self, members: Vec<secure::PublicKey>) -> Result<(), Error> {
-        info!("Formed txpool: members={}", members.len());
-        for pkey in members {
-            info!("{}", pkey);
-        }
-        Ok(())
-    }
 }
 
 // Event loop.
@@ -330,6 +306,12 @@ impl Future for WalletService {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        loop {
+            if let Async::NotReady = self.vs.poll().expect("all errors are already handled") {
+                break;
+            }
+        }
+
         loop {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => {
@@ -358,25 +340,6 @@ impl Future for WalletService {
                         }) => {
                             self.on_outputs_changed(inputs, outputs);
                             Ok(())
-                        }
-                        WalletEvent::NodeEpochChanged(EpochNotification {
-                            facilitator, ..
-                        }) => {
-                            debug!("Changed facilitator: facilitator={:?}", facilitator);
-                            self.facilitator_pkey = facilitator;
-                            Ok(())
-                        }
-                        WalletEvent::PoolInfo(from, msg) => {
-                            if from != self.facilitator_pkey {
-                                Err(format_err!(
-                                    "Invalid facilitator: expected={:?}, got={:?}",
-                                    self.facilitator_pkey,
-                                    from
-                                ))
-                            } else {
-                                PoolInfo::from_buffer(&msg)
-                                    .and_then(|pool| self.on_pool_formed(pool.participants))
-                            }
                         }
                     };
                     if let Err(error) = result {

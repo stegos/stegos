@@ -242,7 +242,7 @@ where
 // ---------------------------------------------------------
 // Pedersen Commitments
 
-fn simple_commit(blind: Int, val: Int) -> Point {
+pub fn simple_commit(blind: Int, val: Int) -> Point {
     // blinding on G, value on H
     blind * BP.G + val * BP.H
 }

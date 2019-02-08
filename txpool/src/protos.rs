@@ -20,6 +20,7 @@
 // SOFTWARE.
 
 use failure::Error;
+use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
 use stegos_serialization::traits::*;
 
@@ -45,6 +46,7 @@ impl ProtoConvert for PoolInfo {
         for msg in &self.participants {
             proto.participants.push(msg.into_proto());
         }
+        proto.set_session_id(self.session_id.into_proto());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
@@ -53,7 +55,11 @@ impl ProtoConvert for PoolInfo {
             let pkey = secure::PublicKey::from_proto(msg)?;
             participants.push(pkey);
         }
-        Ok(PoolInfo { participants })
+        let session_id = Hash::from_proto(proto.get_session_id())?;
+        Ok(PoolInfo {
+            participants,
+            session_id,
+        })
     }
 }
 
@@ -83,10 +89,14 @@ mod tests {
         let (_, pkey, _) = secure::make_random_keys();
         let (_, pkey1, _) = secure::make_random_keys();
 
+        let session_id = Hash::digest(&1u64);
         let mut participants: Vec<secure::PublicKey> = Vec::new();
         participants.push(pkey.clone());
         participants.push(pkey1);
-        let pool = PoolInfo { participants };
+        let pool = PoolInfo {
+            participants,
+            session_id,
+        };
         roundtrip(&pool);
     }
 }

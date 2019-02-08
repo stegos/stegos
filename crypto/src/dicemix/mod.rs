@@ -29,6 +29,7 @@ mod ffi;
 use crate::bulletproofs::*;
 use crate::curve1174;
 use crate::hash::{Hash, Hashable, Hasher};
+use crate::pbc;
 use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
@@ -89,6 +90,7 @@ type Fr = curve1174::fields::Fr;
 type Pt = curve1174::cpt::Pt;
 type ECp = curve1174::ecpt::ECp;
 
+type ParticipantID = pbc::secure::PublicKey;
 type PublicKey = curve1174::cpt::PublicKey;
 type SecretKey = curve1174::cpt::SecretKey;
 type SchnorrSig = curve1174::cpt::SchnorrSig;
@@ -232,9 +234,9 @@ pub fn dc_encode_sheet(
     sheet: usize,
     max_chunks: usize,
     msg: &[u8],
-    participants: &Vec<PublicKey>,
-    my_pkey: &PublicKey,
-    share_cloaks: &HashMap<PublicKey, Hash>,
+    participants: &Vec<ParticipantID>,
+    my_id: &ParticipantID,
+    share_cloaks: &HashMap<ParticipantID, Hash>,
 ) -> DcSheet {
     // Accept a byte string message and split into chunks.
     // Form a row for each chunk, and plant modular power of chunk^(col+1),
@@ -246,9 +248,9 @@ pub fn dc_encode_sheet(
     // Return a 2-D vector of result.
 
     // remove ourself from the participants list, if present
-    let parts: Vec<PublicKey> = participants
+    let parts: Vec<ParticipantID> = participants
         .iter()
-        .filter(|p| **p != *my_pkey)
+        .filter(|p| **p != *my_id)
         .map(|p| p.clone())
         .collect();
     let nparts = parts.len() + 1; // one row for each of us, including me
@@ -260,7 +262,7 @@ pub fn dc_encode_sheet(
             let mut row = exp_vec(chunks[*r_ix], nparts as u64);
             for c_ix in 0..nparts {
                 let seed_str = gen_cell_seed(sheet, *r_ix, c_ix + 1);
-                row[c_ix] += dc_slot_pad(&parts, &my_pkey, share_cloaks, &seed_str);
+                row[c_ix] += dc_slot_pad(&parts, &my_id, share_cloaks, &seed_str);
             }
             row
         })
@@ -268,14 +270,14 @@ pub fn dc_encode_sheet(
 }
 
 fn dc_slot_pad(
-    participants: &Vec<PublicKey>,
-    my_pkey: &PublicKey,
-    share_cloaks: &HashMap<PublicKey, Hash>,
+    participants: &Vec<ParticipantID>,
+    my_id: &ParticipantID,
+    share_cloaks: &HashMap<ParticipantID, Hash>,
     seed: &Vec<u8>,
 ) -> Fr {
     // construct a self-cancelling cloaking factor based on the seed.
     let mut sum = Fr::zero();
-    for p_other in participants.iter().filter(|p| **p != *my_pkey) {
+    for p_other in participants.iter().filter(|p| **p != *my_id) {
         // excluding ourself, which would have no effect anyway,
         // but would probably not have a share_cloaks entry for ourself.
         let mut state = Hasher::new();
@@ -284,9 +286,9 @@ fn dc_slot_pad(
         (*seed).hash(&mut state);
         let h = state.result();
         let val = Fr::from(h);
-        if my_pkey < p_other {
+        if my_id < p_other {
             sum -= val;
-        } else if my_pkey > p_other {
+        } else if my_id > p_other {
             sum += val;
         }
     }
@@ -303,13 +305,13 @@ fn stuff_msg(out: &mut Vec<u8>, seg: &[u8; 32], start: usize, nel: usize) {
 }
 
 pub fn dc_decode(
-    participants: &Vec<PublicKey>,
-    mats: &HashMap<PublicKey, DcMatrix>,
-    my: &PublicKey,
+    participants: &Vec<ParticipantID>,
+    mats: &HashMap<ParticipantID, DcMatrix>,
+    my_id: &ParticipantID,
     nsheets: usize,
     nchunks: usize,
-    p_excl: &Vec<PublicKey>,
-    k_excl: &HashMap<PublicKey, HashMap<PublicKey, Hash>>,
+    p_excl: &Vec<ParticipantID>,
+    k_excl: &HashMap<ParticipantID, HashMap<ParticipantID, Hash>>,
 ) -> Vec<Vec<u8>> {
     // Accept a 4-D array (vector of 3-D vectors) containing
     // modular powers of cloaked chunks. Split along first dimension,
@@ -435,12 +437,12 @@ pub fn dc_decode(
 }
 
 fn dc_open(
-    mats: &HashMap<PublicKey, DcMatrix>,
+    mats: &HashMap<ParticipantID, DcMatrix>,
     sheet: usize,
     row: usize,
     col: usize,
-    p_excl: &Vec<PublicKey>,
-    k_excl: &HashMap<PublicKey, HashMap<PublicKey, Hash>>,
+    p_excl: &Vec<ParticipantID>,
+    k_excl: &HashMap<ParticipantID, HashMap<ParticipantID, Hash>>,
 ) -> Fr {
     let mut pwrsum = Fr::zero();
     for (_, mat) in mats {
@@ -523,21 +525,21 @@ fn dc_solve(col: &mut Vec<Fr>) -> Vec<Fr> {
 // ---------------------------------------------------------------------------
 
 pub fn dc_keys(
-    participants: &Vec<PublicKey>,
-    sess_pkeys: &HashMap<PublicKey, PublicKey>,
-    my_pkey: &PublicKey,
+    participants: &Vec<ParticipantID>,
+    sess_pkeys: &HashMap<ParticipantID, PublicKey>,
+    my_id: &ParticipantID,
     my_sess_skey: &SecretKey, // our session secret key value
     sess: &Hash,
-) -> HashMap<PublicKey, Hash> {
+) -> HashMap<ParticipantID, Hash> {
     // Return a hashmap of participant key to shared cloaking hash value
     //
-    // my_pkey is the node public key used for all rounds
+    // my_id is the node public key used for all rounds
     // my_sess_pkey is the public key invented for each specific session round
     // my_sess_skey is the secret key invented for each specific session round
     //
     let mut out = HashMap::new();
     let alpha = Fr::from(*my_sess_skey);
-    for pkey in participants.iter().filter(|p| **p != *my_pkey) {
+    for pkey in participants.iter().filter(|p| **p != *my_id) {
         let sess_pkey = sess_pkeys.get(pkey).unwrap();
         let cpt = Pt::from(*sess_pkey);
         let ecpt = ECp::decompress(cpt).unwrap();
@@ -555,26 +557,30 @@ pub fn dc_keys(
     out
 }
 
-pub type ValidatorFn = fn(&PublicKey, &Vec<Vec<u8>>, Fr) -> bool;
+pub type ValidatorFn<T> = fn(&ParticipantID, &Vec<Vec<u8>>, Fr, &T) -> bool;
 
-pub fn dc_reconstruct(
-    participants: &Vec<PublicKey>,
-    sess_pkeys: &HashMap<PublicKey, PublicKey>,
-    my_pkey: &PublicKey,
-    sess_skeys: &HashMap<PublicKey, SecretKey>,
-    dc: &HashMap<PublicKey, DcMatrix>,
-    sum_dc: &HashMap<PublicKey, Fr>,
+pub fn dc_reconstruct<T>(
+    participants: &Vec<ParticipantID>,
+    sess_pkeys: &HashMap<ParticipantID, PublicKey>,
+    my_id: &ParticipantID,
+    sess_skeys: &HashMap<ParticipantID, SecretKey>,
+    dc: &HashMap<ParticipantID, DcMatrix>,
+    sum_dc: &HashMap<ParticipantID, Fr>,
     sess: &Hash,
-    p_excl: &Vec<PublicKey>,
-    k_excl: &HashMap<PublicKey, HashMap<PublicKey, Hash>>,
-    vfn: ValidatorFn,
-) -> Vec<PublicKey> {
+    p_excl: &Vec<ParticipantID>,
+    k_excl: &HashMap<ParticipantID, HashMap<ParticipantID, Hash>>,
+    vfn: ValidatorFn<T>,
+    data: &T,
+) -> Vec<ParticipantID>
+where
+    T: Sync,
+{
     // Take a collection of matrices from each participant
     // and uncloak them to reconstruct the original messages.
     //
     // Then reconstruct each sheet to see if/where there is disagreement
     //
-    let opts: Vec<Option<PublicKey>> = participants
+    let opts: Vec<Option<ParticipantID>> = participants
         .par_iter()
         .map(|pkey| {
             // p_all is every participant including me,
@@ -583,8 +589,8 @@ pub fn dc_reconstruct(
             let mut p_all = participants.clone();
             let mut p_ex = p_excl.clone();
             p_all.append(&mut p_ex);
-            p_all.retain(|p| *p != *my_pkey);
-            p_all.push(*my_pkey);
+            p_all.retain(|p| *p != *my_id);
+            p_all.push(*my_id);
             p_all.retain(|p| *p != *pkey);
 
             let sk = sess_skeys.get(pkey).unwrap();
@@ -639,7 +645,7 @@ pub fn dc_reconstruct(
                 let seed_str = format!("sum").into_bytes();
                 let r_adj = *sum_dc.get(pkey).unwrap()
                     - dc_slot_pad(participants, pkey, &cloaks, &seed_str);
-                pkey_fail = !vfn(&pkey, &msgs, r_adj);
+                pkey_fail = !vfn(&pkey, &msgs, r_adj, data);
             }
 
             if !pkey_fail {
@@ -660,7 +666,7 @@ pub fn dc_reconstruct(
             }
         })
         .collect();
-    let mut out = Vec::<PublicKey>::new();
+    let mut out = Vec::<ParticipantID>::new();
     for opt in opts {
         match opt {
             None => (),
@@ -672,11 +678,15 @@ pub fn dc_reconstruct(
     out
 }
 
+fn scalar_open_seed() -> Vec<u8> {
+    format!("sum").into_bytes()
+}
+
 pub fn dc_encode_scalar(
     x: Fr,
-    participants: &Vec<PublicKey>,
-    my_pkey: &PublicKey,
-    share_cloaks: &HashMap<PublicKey, Hash>,
+    participants: &Vec<ParticipantID>,
+    my_id: &ParticipantID,
+    share_cloaks: &HashMap<ParticipantID, Hash>,
 ) -> Fr {
     // cloak a scalar, x, a member of field Fr, so that
     // it can be anonymously shared into a running sum
@@ -685,8 +695,25 @@ pub fn dc_encode_scalar(
     // For now we assume there is only one such item, and use the
     // constant cloaking seed "sum". This is also assumed in the
     // dc_reconstruct() code used for blame discovery.
-    let seed_str = format!("sum").into_bytes();
-    x + dc_slot_pad(participants, my_pkey, &share_cloaks, &seed_str)
+    let seed_str = scalar_open_seed();
+    x + dc_slot_pad(participants, my_id, &share_cloaks, &seed_str)
+}
+
+pub fn dc_scalar_open(
+    elts: &HashMap<ParticipantID, Fr>,
+    p_excl: &Vec<ParticipantID>,
+    k_excl: &HashMap<ParticipantID, HashMap<ParticipantID, Hash>>,
+) -> Fr {
+    let mut pwrsum = Fr::zero();
+    // add contribs from all users to remove cloaking
+    // and form power sum
+    elts.iter().for_each(|(&_, &elt)| pwrsum += elt);
+    let seed_str = scalar_open_seed();
+    for p in p_excl {
+        let kxs = k_excl.get(p).unwrap();
+        pwrsum -= dc_slot_pad(p_excl, &p, &kxs, &seed_str);
+    }
+    pwrsum
 }
 
 // -------------------------------------------------------------------------
@@ -763,9 +790,9 @@ mod tests {
 
     #[test]
     fn tst_sheet_gen() {
-        let (sk1, pk1, _) = curve1174::cpt::make_deterministic_keys(b"User1");
-        let (sk2, pk2, _) = curve1174::cpt::make_deterministic_keys(b"User2");
-        let (sk3, pk3, _) = curve1174::cpt::make_deterministic_keys(b"User3");
+        let (sk1, pk1, _) = pbc::secure::make_deterministic_keys(b"User1");
+        let (sk2, pk2, _) = pbc::secure::make_deterministic_keys(b"User2");
+        let (sk3, pk3, _) = pbc::secure::make_deterministic_keys(b"User3");
         let all_participants = vec![pk1, pk2, pk3];
         dbg!(&all_participants);
 
@@ -911,8 +938,8 @@ mod tests {
         mats.insert(pk2, vec![sheet_2.clone()]);
         mats.insert(pk3, vec![sheet_3.clone()]);
 
-        let p_excl = Vec::<PublicKey>::new();
-        let k_excl: HashMap<PublicKey, HashMap<PublicKey, Hash>> = HashMap::new();
+        let p_excl = Vec::<ParticipantID>::new();
+        let k_excl: HashMap<ParticipantID, HashMap<ParticipantID, Hash>> = HashMap::new();
 
         // interim test - try opening every cell of the sum sheet
         // result should be same as our direct sum sheet created above.
@@ -1016,16 +1043,14 @@ mod tests {
         assert!(1 <= nutxo && nutxo <= 5);
 
         // first generate participants - simulated wallets
-        let mut participants = Vec::<PublicKey>::new();
-        let mut skeys = Vec::<SecretKey>::new();
+        let mut participants = Vec::<ParticipantID>::new();
         for ix in 0..nparts {
             let seed = format!("User_{}", ix).into_bytes();
-            let (sk, pk, _) = curve1174::cpt::make_deterministic_keys(&seed);
-            skeys.push(sk);
+            let (sk, pk, _) = pbc::secure::make_deterministic_keys(&seed);
+            // skeys.push(sk);
             participants.push(pk);
         }
-        let my_pkey = participants[0];
-        let my_skey = skeys[0];
+        let my_id = participants[0];
 
         // ------------------------------------------------------------
         // simulated start of VS session at one node
@@ -1043,8 +1068,8 @@ mod tests {
             sess_pkeys.insert(p, pk);
             sess_skeys.insert(p, sk);
         }
-        let my_sess_pkey = sess_pkeys.get(&my_pkey).unwrap();
-        let my_sess_skey = sess_skeys.get(&my_pkey).unwrap();
+        let my_sess_pkey = sess_pkeys.get(&my_id).unwrap();
+        let my_sess_skey = sess_skeys.get(&my_id).unwrap();
         let timing = start.elapsed();
         println!("Keying time = {:?}", timing);
 
@@ -1052,7 +1077,7 @@ mod tests {
         // generate shared secret cloaking - each node would do this
         let start = SystemTime::now();
         let sess = Hash::from_str("Session 1");
-        let shared_cloaking = dc_keys(&participants, &sess_pkeys, &my_pkey, &my_sess_skey, &sess);
+        let shared_cloaking = dc_keys(&participants, &sess_pkeys, &my_id, &my_sess_skey, &sess);
         let timinig = start.elapsed();
         println!("Shared Cloaking Gen = {:?}", timing);
 
@@ -1075,7 +1100,7 @@ mod tests {
                 max_cells.unwrap(),
                 &utxo[..],
                 &participants,
-                &my_pkey,
+                &my_id,
                 &shared_cloaking,
             );
             matrix.push(sheet);
@@ -1099,18 +1124,17 @@ mod tests {
         // since all nodes are doing this in parallel.
         println!("Generate matrices from other nodes");
         let start = SystemTime::now();
-        let mut matrices: HashMap<PublicKey, DcMatrix> = HashMap::new();
+        let mut matrices: HashMap<ParticipantID, DcMatrix> = HashMap::new();
         fn gen_matrix(
             ix_p: usize,
             nutxo: usize,
             utxo_len: usize,
             max_cells: usize,
-            // matrices: &mut HashMap<PublicKey, DcMatrix>,
-            participants: &Vec<PublicKey>,
-            sess_skeys: &HashMap<PublicKey, SecretKey>,
-            sess_pkeys: &HashMap<PublicKey, PublicKey>,
+            participants: &Vec<ParticipantID>,
+            sess_skeys: &HashMap<ParticipantID, SecretKey>,
+            sess_pkeys: &HashMap<ParticipantID, PublicKey>,
             sess: &Hash,
-        ) -> (PublicKey, DcMatrix) {
+        ) -> (ParticipantID, DcMatrix) {
             let mut matrix = Vec::<DcSheet>::new();
             let p = participants[ix_p];
             let s = sess_skeys.get(&p).unwrap();
@@ -1138,7 +1162,7 @@ mod tests {
         for ix in 0..nparts - 1 {
             indices[ix] = ix + 1;
         }
-        let mut mats: Vec<(PublicKey, DcMatrix)> = indices
+        let mut mats: Vec<(ParticipantID, DcMatrix)> = indices
             .par_iter()
             .map(|ix_p| {
                 gen_matrix(
@@ -1154,7 +1178,7 @@ mod tests {
             })
             .collect();
 
-        matrices.insert(my_pkey, matrix.clone());
+        matrices.insert(my_id, matrix.clone());
         for (p, m) in mats {
             matrices.insert(p, m);
         }
@@ -1166,8 +1190,8 @@ mod tests {
         // Now solve for all the anonymously shared UTXO's
         println!("Start solving for UTXOs");
         let start = SystemTime::now();
-        let p_excl = Vec::<PublicKey>::new();
-        let mut k_excl: HashMap<PublicKey, HashMap<PublicKey, Hash>> = HashMap::new();
+        let p_excl = Vec::<ParticipantID>::new();
+        let mut k_excl: HashMap<ParticipantID, HashMap<ParticipantID, Hash>> = HashMap::new();
         for ix in 0..nparts {
             let p = participants[ix];
             k_excl.insert(p, HashMap::new());
@@ -1175,7 +1199,7 @@ mod tests {
         let msgs = dc_decode(
             &participants,
             &matrices,
-            &my_pkey,
+            &my_id,
             nsheets,
             max_cells,
             &p_excl,
@@ -1249,7 +1273,12 @@ mod tests {
             gamma_adjs.insert(p, Fr::zero());
         }
 
-        fn dum_validate_payload(pkey: &PublicKey, msgs: &Vec<Vec<u8>>, r_adj: Fr) -> bool {
+        fn dum_validate_payload(
+            pkey: &ParticipantID,
+            msgs: &Vec<Vec<u8>>,
+            r_adj: Fr,
+            dum_data: &Vec<usize>,
+        ) -> bool {
             // deserialize msgs and check the validity of the components.
             // E.g., if each msg is a UTXO, validate the Bulletproofs
             // then check that sum of TXIN matches sum of TXOUT with
@@ -1259,10 +1288,11 @@ mod tests {
 
         println!("Start blame discovery");
         let start = SystemTime::now();
+        let dum_data = Vec::new();
         let pexcl = dc_reconstruct(
             &participants,
             &sess_pkeys,
-            &my_pkey,
+            &my_id,
             &sess_skeys,
             &matrices,
             &gamma_adjs,
@@ -1270,6 +1300,7 @@ mod tests {
             &p_excl,
             &k_excl,
             dum_validate_payload,
+            &dum_data,
         );
         let timing = start.elapsed();
         println!(

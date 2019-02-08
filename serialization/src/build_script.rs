@@ -36,8 +36,8 @@ fn create_protos_path_env(input_dir: &str) {
     println!("cargo:protos={}", path.to_str().unwrap());
 }
 
-fn get_includes(libs: &[&str]) -> Vec<String> {
-    let mut array = vec!["protos".to_string()];
+fn get_includes(input_dir: &str, libs: &[&str]) -> Vec<String> {
+    let mut array = vec![input_dir.to_string()];
 
     for lib in libs {
         let upper_lib = lib.to_uppercase();
@@ -97,7 +97,7 @@ pub fn build_protobuf(input_dir: &str, out_prefix: &str, deps: &[&str]) {
     let out_dir_str = out_dir.to_str().unwrap();
 
     let protos = get_protos(input_dir);
-    let includes = get_includes(deps);
+    let includes = get_includes(input_dir, deps);
 
     // Create folder for output rust modules.
 

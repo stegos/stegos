@@ -157,16 +157,14 @@ impl ProtoConvert for EncryptedPayload {
     type Proto = crypto::EncryptedPayload;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = crypto::EncryptedPayload::new();
-        proto.set_apkg(self.apkg.into_proto());
         proto.set_ag(self.ag.into_proto());
         proto.set_ctxt(self.ctxt.clone());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let apkg = Pt::from_proto(proto.get_apkg())?;
         let ag = Pt::from_proto(proto.get_ag())?;
         let ctxt = proto.get_ctxt().to_vec();
-        Ok(EncryptedPayload { apkg, ag, ctxt })
+        Ok(EncryptedPayload { ag, ctxt })
     }
 }
 

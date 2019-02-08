@@ -208,9 +208,12 @@ pub fn create_staking_transaction(
         gamma += gamma2;
     }
 
+    let inputsc : Vec<(Output,SecretKey)> = inputs.iter().map(|o| (o.clone(), sender_skey.clone())).collect();
+    
     trace!("Signing transaction...");
-    let tx = Transaction::new(sender_skey, &inputs, &outputs, gamma, fee)?;
+    let tx = Transaction::new(&inputsc, &outputs, gamma, fee)?;
     let tx_hash = Hash::digest(&tx);
+    
     info!(
         "Signed stake transaction: hash={}, validator={}, stake={}, withdrawn={}, change={}, fee={}",
         tx_hash,
@@ -303,7 +306,9 @@ pub fn create_unstaking_transaction(
     }
 
     trace!("Signing transaction...");
-    let tx = Transaction::new(sender_skey, &inputs, &outputs, gamma, fee)?;
+    let inputsc: Vec<(Output, SecretKey)> = inputs.iter().map(|o| (o.clone(), sender_skey.clone())).collect();
+
+    let tx = Transaction::new(&inputsc, &outputs, gamma, fee)?;
     let tx_hash = Hash::digest(&tx);
     info!(
         "Signed unstake transaction: hash={}, validator={}, unstake={}, stake={}, fee={}",

@@ -153,7 +153,9 @@ impl WalletService {
             data,
         )?;
 
-        let tx = Transaction::new(&self.skey, &inputs, &outputs, gamma, fee)?;
+        let inputsc : Vec<(Output, SecretKey)> = inputs.iter().map(|o| (o.clone(), self.skey.clone())).collect();
+
+        let tx = Transaction::new(&inputsc, &outputs, gamma, fee)?;
         self.node.send_transaction(tx)?;
         Ok(())
     }

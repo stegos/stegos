@@ -557,7 +557,7 @@ pub fn dc_keys(
     out
 }
 
-pub type ValidatorFn<T> = fn(&ParticipantID, &Vec<Vec<u8>>, Fr, &T) -> bool;
+pub type ValidatorFn<T> = fn(&ParticipantID, &Vec<Vec<u8>>, Fr, Fr, &T) -> bool;
 
 pub fn dc_reconstruct<T>(
     participants: &Vec<ParticipantID>,
@@ -565,7 +565,8 @@ pub fn dc_reconstruct<T>(
     my_id: &ParticipantID,
     sess_skeys: &HashMap<ParticipantID, SecretKey>,
     dc: &HashMap<ParticipantID, DcMatrix>,
-    sum_dc: &HashMap<ParticipantID, Fr>,
+    sum_dc1: &HashMap<ParticipantID, Fr>, // table of cloaked gamma_adj
+    sum_dc2: &HashMap<ParticipantID, Fr>, // table of cloaked fees
     sess: &Hash,
     p_excl: &Vec<ParticipantID>,
     k_excl: &HashMap<ParticipantID, HashMap<ParticipantID, Hash>>,
@@ -642,10 +643,12 @@ where
 
             if !pkey_fail {
                 // recover component of shared sum and validate the payload
-                let seed_str = format!("sum").into_bytes();
-                let r_adj = *sum_dc.get(pkey).unwrap()
+                let seed_str = scalar_open_seed();
+                let r_adj = *sum_dc1.get(pkey).expect("Can't access sum_dc1")
                     - dc_slot_pad(participants, pkey, &cloaks, &seed_str);
-                pkey_fail = !vfn(&pkey, &msgs, r_adj, data);
+                let fee = *sum_dc2.get(pkey).expect("Can't access sum_dc2")
+                    - dc_slot_pad(participants, pkey, &cloaks, &seed_str);
+                pkey_fail = !vfn(&pkey, &msgs, r_adj, fee, data);
             }
 
             if !pkey_fail {
@@ -1277,6 +1280,7 @@ mod tests {
             pkey: &ParticipantID,
             msgs: &Vec<Vec<u8>>,
             r_adj: Fr,
+            fee: Fr,
             dum_data: &Vec<usize>,
         ) -> bool {
             // deserialize msgs and check the validity of the components.
@@ -1295,6 +1299,7 @@ mod tests {
             &my_id,
             &sess_skeys,
             &matrices,
+            &gamma_adjs,
             &gamma_adjs,
             &sess,
             &p_excl,
@@ -1328,7 +1333,7 @@ mod tests {
     }
 
     #[test]
-    fn tst_10_15() {
+    fn tst_10_5() {
         tst_end_to_end(10, 5, 1350);
     }
 }

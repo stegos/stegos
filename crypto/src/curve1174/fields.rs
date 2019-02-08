@@ -181,6 +181,20 @@ macro_rules! field_impl {
                 Self::acceptable_random_rehash(x)
             }
 
+            /// Convert to positive i64 (if you can)
+            pub fn to_i64(self) -> Result<i64, CryptoError> {
+                let U256(uval) = U256::from(self.unscaled());
+                if uval[0] == 0
+                    && uval[1] == 0
+                    && uval[2] == 0
+                    && uval[3] < 0x8000_0000_0000_0000u64
+                {
+                    return Ok(uval[3] as i64);
+                } else {
+                    return Err(CryptoError::TooLarge);
+                }
+            }
+
             /// Convert into raw bytes.
             pub fn to_lev_u8(self) -> [u8; 32] {
                 self.bits().to_lev_u8()

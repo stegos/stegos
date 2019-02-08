@@ -462,7 +462,8 @@ mod tests {
             Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
 
         // Transaction from 1 to 2
-        let inputs1 = [output0];
+        let inputs1 = [output0.clone()];
+        let inputs1c = [(output0.clone(), skey1.clone())];
         let (output11, gamma11) =
             Output::new_payment(timestamp, &skey1, &pkey2, amount).expect("keys are valid");
 
@@ -471,8 +472,8 @@ mod tests {
 
         let outputs_gamma = gamma11;
 
-        let tx = Transaction::new(&skey1, &inputs1, &[output11], outputs_gamma, fee)
-            .expect("keys are valid");
+        let tx =
+            Transaction::new(&inputs1c, &[output11], outputs_gamma, fee).expect("keys are valid");
         tx.validate(&inputs1).unwrap();
 
         let tx2 = roundtrip(&tx);

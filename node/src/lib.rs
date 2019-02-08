@@ -1386,6 +1386,7 @@ impl Future for NodeService {
 pub mod tests {
     use super::*;
     use std::collections::HashMap;
+    use stegos_crypto::curve1174::cpt::SecretKey;
     use stegos_crypto::pbc::secure::sign_hash as secure_sign_hash;
     use stegos_network::DummyNetwork;
     use stegos_wallet::create_payment_transaction;
@@ -1460,7 +1461,11 @@ pub mod tests {
             amount,
             PaymentPayloadData::Comment("Test".to_string()),
         )?;
-        let tx = Transaction::new(&node.keys.wallet_skey, &inputs, &outputs, gamma, fee)?;
+        let inputsc: Vec<(Output, SecretKey)> = inputs
+            .iter()
+            .map(|o| (o.clone(), node.keys.wallet_skey.clone()))
+            .collect();
+        let tx = Transaction::new(&inputsc, &outputs, gamma, fee)?;
         let proto = tx.into_proto();
         let data = proto.write_to_bytes()?;
         node.handle_transaction(data)?;

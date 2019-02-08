@@ -9,6 +9,7 @@ edition = "2018"
 stegos_crypto = { path = "../crypto" }
 stegos_keychain = { path = "../keychain" }
 stegos_serialization = {path = "../serialization"}
+stegos_node = {path = "../node"}
 tokio-timer = "0.2"
 futures = "0.1"
 failure = "0.1"

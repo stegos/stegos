@@ -19,27 +19,22 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use failure::Error;
+use stegos_crypto::pbc::secure;
 use stegos_serialization::traits::*;
 
-use stegos_crypto::pbc::secure;
-
-use failure::Error;
-
-use crate::messages::{Message, PoolInfo};
+use crate::messages::{PoolInfo, PoolJoin};
 
 use stegos_crypto::protos::*;
 include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
 
-impl ProtoConvert for Message {
-    type Proto = txpool::Message;
+impl ProtoConvert for PoolJoin {
+    type Proto = txpool::PoolJoin;
     fn into_proto(&self) -> Self::Proto {
-        let mut proto = txpool::Message::new();
-        proto.set_pkey(self.pkey.into_proto());
-        proto
+        txpool::PoolJoin::new()
     }
-    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let pkey = secure::PublicKey::from_proto(proto.get_pkey())?;
-        Ok(Message { pkey })
+    fn from_proto(_proto: &Self::Proto) -> Result<Self, Error> {
+        Ok(PoolJoin {})
     }
 }
 
@@ -47,26 +42,18 @@ impl ProtoConvert for PoolInfo {
     type Proto = txpool::PoolInfo;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = txpool::PoolInfo::new();
-        proto.set_pkey(self.pkey.into_proto());
-        proto.set_sig(self.sig.into_proto());
-        for msg in &self.accumulator {
-            proto.accumulator.push(msg.into_proto());
+        for msg in &self.participants {
+            proto.participants.push(msg.into_proto());
         }
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let pkey = secure::PublicKey::from_proto(proto.get_pkey())?;
-        let sig = secure::Signature::from_proto(proto.get_sig())?;
-        let mut accumulator = Vec::new();
-        for msg in proto.get_accumulator().iter() {
-            let msg = Message::from_proto(msg)?;
-            accumulator.push(msg);
+        let mut participants = Vec::new();
+        for msg in proto.get_participants() {
+            let pkey = secure::PublicKey::from_proto(msg)?;
+            participants.push(pkey);
         }
-        Ok(PoolInfo {
-            pkey,
-            sig,
-            accumulator,
-        })
+        Ok(PoolInfo { participants })
     }
 }
 
@@ -87,26 +74,19 @@ mod tests {
 
     #[test]
     fn message() {
-        let (_, pkey0, _) = secure::make_random_keys();
-
-        let message = Message { pkey: pkey0 };
+        let message = PoolJoin {};
         roundtrip(&message);
     }
 
     #[test]
     fn pool_info() {
-        let (_, pkey0, _) = secure::make_random_keys();
+        let (_, pkey, _) = secure::make_random_keys();
+        let (_, pkey1, _) = secure::make_random_keys();
 
-        let message1 = Message { pkey: pkey0 };
-        let (_, pkey, sig) = secure::make_random_keys();
-
-        let message2 = Message { pkey };
-        let accumulator = vec![message1, message2];
-        let pool = PoolInfo {
-            pkey,
-            sig,
-            accumulator,
-        };
+        let mut participants: Vec<secure::PublicKey> = Vec::new();
+        participants.push(pkey.clone());
+        participants.push(pkey1);
+        let pool = PoolInfo { participants };
         roundtrip(&pool);
     }
 }

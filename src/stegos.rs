@@ -40,6 +40,7 @@ use stegos_keychain::*;
 use stegos_network::Libp2pNetwork;
 use stegos_node::{genesis_dev, Node};
 use stegos_txpool::TransactionPoolService;
+use stegos_wallet::WalletService;
 use tokio::runtime::Runtime;
 
 use crate::console::*;
@@ -131,16 +132,29 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut rt = Runtime::new()?;
     let (network, network_service) = Libp2pNetwork::new(&cfg.network, &keychain)?;
 
-    let (pool, manager) = TransactionPoolService::with_manager(&keychain, network.clone());
-    rt.spawn(pool);
     // Initialize node
     let genesis = genesis_dev().expect("failed to load genesis block");
     let (node_service, node) = Node::new(&cfg, keychain.clone(), network.clone())?;
     rt.spawn(node_service);
+
+    // Initialize TransactionPool.
+    let txpool_service = TransactionPoolService::new(&keychain, network.clone(), node.clone());
+    rt.spawn(txpool_service);
+
     // Don't initialize REPL if stdin is not a TTY device
     if atty::is(atty::Stream::Stdin) {
+        // Initialize Wallet.
+        let (wallet_service, wallet) = WalletService::new(
+            keychain.wallet_skey.clone(),
+            keychain.wallet_pkey.clone(),
+            keychain.cosi_pkey.clone(),
+            network.clone(),
+            node.clone(),
+        );
+        rt.spawn(wallet_service);
+
         // Initialize console
-        let console_service = Console::new(&keychain, network.clone(), node.clone(), manager)?;
+        let console_service = ConsoleService::new(network.clone(), wallet.clone())?;
         rt.spawn(console_service);
     }
 

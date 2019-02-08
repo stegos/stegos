@@ -33,30 +33,15 @@ use std::path::PathBuf;
 use std::thread;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::pbc::secure;
-use stegos_keychain::KeyChain;
-use stegos_network::{Network, UnicastMessage};
-use stegos_node::*;
-use stegos_txpool::TransactionPool;
+use stegos_network::Network;
+use stegos_network::UnicastMessage;
 use stegos_wallet::{Wallet, WalletNotification};
 
 // ----------------------------------------------------------------
 // Public API.
 // ----------------------------------------------------------------
 
-/// Console - command-line interface.
-pub struct Console {}
-
-impl Console {
-    /// Create a new Console Service.
-    pub fn new(
-        keys: &KeyChain,
-        network: Network,
-        node: Node,
-        txpool: TransactionPool,
-    ) -> Result<impl Future<Item = (), Error = ()>, Error> {
-        ConsoleService::new(keys, network, node, txpool)
-    }
-}
+// No public API provided.
 
 // ----------------------------------------------------------------
 // Internal Implementation.
@@ -73,63 +58,41 @@ lazy_static! {
     static ref PUBLISH_COMMAND_RE: Regex = Regex::new(r"\s*(?P<topic>[0-9A-Za-z]+)\s+(?P<msg>.*)$").unwrap();
     /// Regex to parse "send" command.
     static ref SEND_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<msg>.+)$").unwrap();
-    /// Regex to parse "txpool" command.
-    static ref TXPOOL_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)$").unwrap();
 }
 
 const CONSOLE_PROTOCOL_ID: &'static str = "console";
 
 /// Console (stdin) service.
-struct ConsoleService {
-    /// Wallet.
-    wallet: Wallet,
-    /// Transaction pool
-    txpool: TransactionPool,
-    /// Network message broker.
+pub struct ConsoleService {
+    /// Network API.
     network: Network,
-    /// Blockchain Node.
-    node: Node,
-    /// Validator's public key
-    validator_pkey: secure::PublicKey,
+    /// Wallet API.
+    wallet: Wallet,
+    /// Wallet events.
+    wallet_events: UnboundedReceiver<WalletNotification>,
     /// A channel to receive message from stdin thread.
     stdin: Receiver<String>,
     /// A thread used for readline.
     stdin_th: thread::JoinHandle<()>,
-    /// A channel to receive notification about UTXO changes.
-    outputs_rx: UnboundedReceiver<OutputsNotification>,
-    /// A channel to receive notification about Epoch changes.
-    epoch_rx: UnboundedReceiver<EpochNotification>,
     /// A channel to receive unicast messages
     unicast_rx: UnboundedReceiver<UnicastMessage>,
 }
 
 impl ConsoleService {
     /// Constructor.
-    fn new(
-        keys: &KeyChain,
-        network: Network,
-        node: Node,
-        txpool: TransactionPool,
-    ) -> Result<ConsoleService, Error> {
-        let wallet = Wallet::new(keys.wallet_skey.clone(), keys.wallet_pkey.clone());
-        let validator_pkey = keys.cosi_pkey.clone();
+    pub fn new(network: Network, wallet: Wallet) -> Result<ConsoleService, Error> {
         let (tx, rx) = channel::<String>(1);
+        let wallet_events = wallet.subscribe();
         let stdin_th = thread::spawn(move || ConsoleService::readline_thread_f(tx));
         let stdin = rx;
-        let outputs_rx = node.subscribe_outputs()?;
-        let epoch_rx = node.subscribe_epoch()?;
         let unicast_rx = network.subscribe_unicast(CONSOLE_PROTOCOL_ID)?;
 
         let service = ConsoleService {
-            wallet,
-            txpool,
             network,
-            node,
-            validator_pkey,
+            wallet,
+            wallet_events,
             stdin,
             stdin_th,
-            outputs_rx,
-            epoch_rx,
             unicast_rx,
         };
         Ok(service)
@@ -184,6 +147,7 @@ impl ConsoleService {
     fn help() {
         println!("Usage:");
         println!("pay PUBLICKEY AMOUNT - send money");
+        println!("spay PUBLICKEY AMOUNT - send money via ValueShuffle");
         println!("msg PUBLICKEY MESSAGE - send data");
         println!("stake AMOUNT - stake money");
         println!("unstake AMOUNT - unstake money");
@@ -202,6 +166,14 @@ impl ConsoleService {
 
     fn help_pay() {
         println!("Usage: pay PUBLICKEY AMOUNT [COMMENT]");
+        println!(" - PUBLICKEY recipient's public key in HEX format");
+        println!(" - AMOUNT amount in tokens");
+        println!(" - COMMENT purpose of payment");
+        println!("");
+    }
+
+    fn help_spay() {
+        println!("Usage: spay PUBLICKEY AMOUNT [COMMENT]");
         println!(" - PUBLICKEY recipient's public key in HEX format");
         println!(" - AMOUNT amount in tokens");
         println!(" - COMMENT purpose of payment");
@@ -236,13 +208,6 @@ impl ConsoleService {
         println!("");
     }
 
-    fn help_txpool() {
-        println!("Adds public key into pool, just for tests.");
-        println!("Usage: txpool PUBLICKEY");
-        println!(" - PUBLICKEY recipient's public key in HEX format");
-        println!("");
-    }
-
     /// Called when line is typed on standard input.
     fn on_input(&mut self, msg: &str) {
         if msg.starts_with("publish ") {
@@ -257,22 +222,6 @@ impl ConsoleService {
             self.network
                 .publish(&topic, msg.as_bytes().to_vec())
                 .unwrap();
-        } else if msg.starts_with("txpool ") {
-            let caps = match TXPOOL_COMMAND_RE.captures(&msg[7..]) {
-                Some(c) => c,
-                None => return ConsoleService::help_txpool(),
-            };
-
-            let node = caps.name("recipient").unwrap().as_str();
-            let node = match secure::PublicKey::try_from_hex(node) {
-                Ok(r) => r,
-                Err(e) => {
-                    println!("Invalid public key '{}': {}", node, e);
-                    return ConsoleService::help_txpool();
-                }
-            };
-            info!("Trying add into pool: pk='{}'", node);
-            self.txpool.add_message(node).unwrap();
         } else if msg.starts_with("send ") {
             let caps = match SEND_COMMAND_RE.captures(&msg[5..]) {
                 Some(c) => c,
@@ -315,13 +264,35 @@ impl ConsoleService {
             };
 
             info!("Sending {} STG to {}", amount, recipient.into_hex());
-            if let Err(e) = self
-                .wallet
-                .payment(&recipient, amount, comment)
-                .and_then(move |tx| self.node.send_transaction(tx))
-            {
-                error!("Request failed: {}", e);
-            }
+            self.wallet.payment(recipient, amount, comment);
+        } else if msg.starts_with("spay ") {
+            let caps = match PAY_COMMAND_RE.captures(&msg[5..]) {
+                Some(c) => c,
+                None => return Self::help_spay(),
+            };
+
+            let recipient = caps.name("recipient").unwrap().as_str();
+            let recipient = match PublicKey::try_from_hex(recipient) {
+                Ok(r) => r,
+                Err(e) => {
+                    println!("Invalid public key '{}': {}", recipient, e);
+                    return Self::help_pay();
+                }
+            };
+            let amount = caps.name("amount").unwrap().as_str();
+            let amount = amount.parse::<i64>().unwrap(); // check by regex
+            let comment = if let Some(m) = caps.name("comment") {
+                m.as_str().to_string()
+            } else {
+                String::new()
+            };
+
+            info!(
+                "Sending {} STG to {} via ValueShuffle",
+                amount,
+                recipient.into_hex()
+            );
+            self.wallet.secure_payment(recipient, amount, comment);
         } else if msg.starts_with("msg ") {
             let caps = match MSG_COMMAND_RE.captures(&msg[4..]) {
                 Some(c) => c,
@@ -341,14 +312,7 @@ impl ConsoleService {
             assert!(comment.len() > 0);
 
             info!("Sending message to {}", recipient.into_hex());
-
-            if let Err(e) = self
-                .wallet
-                .payment(&recipient, amount, comment)
-                .and_then(move |tx| self.node.send_transaction(tx))
-            {
-                error!("Request failed: {}", e);
-            }
+            self.wallet.payment(recipient, amount, comment);
         } else if msg.starts_with("stake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[6..]) {
                 Some(c) => c,
@@ -359,22 +323,10 @@ impl ConsoleService {
             let amount = amount.parse::<i64>().unwrap(); // check by regex
 
             info!("Staking {} STG into escrow", amount);
-            if let Err(e) = self
-                .wallet
-                .stake(&self.validator_pkey, amount)
-                .and_then(move |tx| self.node.send_transaction(tx))
-            {
-                error!("Request failed: {}", e);
-            }
+            self.wallet.stake(amount);
         } else if msg == "unstake" {
             info!("Unstaking all of the money from escrow");
-            if let Err(e) = self
-                .wallet
-                .unstake_all(&self.validator_pkey)
-                .and_then(move |tx| self.node.send_transaction(tx))
-            {
-                error!("Request failed: {}", e);
-            }
+            self.wallet.unstake_all();
         } else if msg.starts_with("unstake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[8..]) {
                 Some(c) => c,
@@ -385,13 +337,7 @@ impl ConsoleService {
             let amount = amount.parse::<i64>().unwrap(); // check by regex
 
             info!("Unstaking {} STG from escrow", amount);
-            if let Err(e) = self
-                .wallet
-                .unstake(&self.validator_pkey, amount)
-                .and_then(move |tx| self.node.send_transaction(tx))
-            {
-                error!("Request failed: {}", e);
-            }
+            self.wallet.unstake(amount);
         } else {
             return ConsoleService::help();
         }
@@ -401,17 +347,18 @@ impl ConsoleService {
         std::process::exit(0);
     }
 
-    fn on_notification(&mut self, notifications: Vec<WalletNotification>) {
-        for notification in notifications {
-            match notification {
-                WalletNotification::BalanceChanged { balance } => {
-                    info!("Balance is {} STG", balance);
+    fn on_notification(&mut self, notification: WalletNotification) {
+        match notification {
+            WalletNotification::BalanceChanged { balance } => {
+                info!("Balance is {} STG", balance);
+            }
+            WalletNotification::PaymentReceived { amount, comment } => {
+                if amount == 0 && !comment.is_empty() {
+                    info!("Incoming message: {}", comment);
                 }
-                WalletNotification::PaymentReceived { amount, comment } => {
-                    if amount == 0 && !comment.is_empty() {
-                        info!("Incoming message: {}", comment);
-                    }
-                }
+            }
+            WalletNotification::Error { error } => {
+                error!("Wallet error: {:?}", error);
             }
         }
     }
@@ -437,25 +384,9 @@ impl Future for ConsoleService {
         }
 
         loop {
-            match self.outputs_rx.poll() {
-                Ok(Async::Ready(Some(msg))) => {
-                    let notifications = self.wallet.on_outputs_changed(msg.inputs, msg.outputs);
-                    self.on_notification(notifications)
-                }
-                Ok(Async::Ready(None)) => self.on_exit(),
-                Ok(Async::NotReady) => break, // fall through
-                Err(()) => panic!("Wallet failure"),
-            }
-        }
-
-        loop {
-            // Transfer epoch notification into txpool
-            match self.epoch_rx.poll() {
-                Ok(Async::Ready(Some(msg))) => {
-                    let facilitator = msg.facilitator;
-                    if let Err(e) = self.txpool.change_facilitator(facilitator) {
-                        error!("Error in sending message to txpool: {}", e);
-                    }
+            match self.wallet_events.poll() {
+                Ok(Async::Ready(Some(notification))) => {
+                    self.on_notification(notification);
                 }
                 Ok(Async::Ready(None)) => self.on_exit(),
                 Ok(Async::NotReady) => break, // fall through
@@ -476,15 +407,6 @@ impl Future for ConsoleService {
                 Ok(Async::Ready(None)) => self.on_exit(),
                 Ok(Async::NotReady) => break, // fall through
                 Err(()) => panic!("Unicast failure"),
-            }
-        }
-
-        loop {
-            match self.txpool.feedback_receiver.poll() {
-                Ok(Async::Ready(Some(msg))) => debug!("Received message from txpool {:?}", msg),
-                Ok(Async::Ready(None)) => self.on_exit(),
-                Ok(Async::NotReady) => break, // fall through
-                Err(()) => panic!("Wallet failure"),
             }
         }
 

@@ -19,74 +19,35 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use failure::{bail, Error};
-use stegos_crypto::hash::{Hash, Hashable, Hasher};
+use stegos_crypto::hash::{Hashable, Hasher};
 use stegos_crypto::pbc::secure;
 
-/// Message that should be sended to facilitator.
-// TODO: Replace with real message
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
-pub struct Message {
-    pub pkey: secure::PublicKey,
-}
+/// A topic used for Join requests.
+pub const POOL_JOIN_TOPIC: &'static str = "txpool_join";
+/// A topic for PoolInfo messages.
+pub const POOL_ANNOUNCE_TOPIC: &'static str = "txpool_announce";
 
-/// Message that is broadcasted by facilitator, after timeout
-// TODO: Replace with real message
-#[derive(Debug, Eq, PartialEq, Clone)]
+/// Send when node wants to join TxPool.
+#[derive(Debug, Clone)]
+pub struct PoolJoin {}
+
+/// Sent when a new transaction pool is formed.
+#[derive(Debug, Clone)]
 pub struct PoolInfo {
-    pub accumulator: Vec<Message>,
-    pub pkey: secure::PublicKey,
-    pub sig: secure::Signature,
+    pub participants: Vec<secure::PublicKey>,
 }
 
-impl PoolInfo {
-    pub fn new(
-        accumulator: Vec<Message>,
-        pkey: secure::PublicKey,
-        skey: &secure::SecretKey,
-    ) -> Self {
-        let msg_hash = Self::hash(&accumulator, &pkey);
-        let sig = secure::sign_hash(&msg_hash, skey);
-        PoolInfo {
-            sig,
-            pkey,
-            accumulator,
-        }
-    }
-
-    fn hash(accumulator: &[Message], pkey: &secure::PublicKey) -> Hash {
-        let mut hasher = Hasher::new();
-        for m in accumulator {
-            m.hash(&mut hasher);
-        }
-        pkey.hash(&mut hasher);
-        hasher.result()
-    }
-
-    pub fn validate(&self) -> Result<(), Error> {
-        let hash = Self::hash(&self.accumulator, &self.pkey);
-        let msg_valid = secure::check_hash(&hash, &self.sig, &self.pkey);
-        if msg_valid {
-            Ok(())
-        } else {
-            bail!("Invalid Pool info received.")
-        }
+impl Hashable for PoolJoin {
+    fn hash(&self, state: &mut Hasher) {
+        "PoolJoin".hash(state);
     }
 }
 
 impl Hashable for PoolInfo {
     fn hash(&self, state: &mut Hasher) {
-        for message in &self.accumulator {
-            message.hash(state);
+        "PoolInfo".hash(state);
+        for participant in &self.participants {
+            participant.hash(state);
         }
-
-        self.pkey.hash(state);
-        self.sig.hash(state);
-    }
-}
-
-impl Hashable for Message {
-    fn hash(&self, state: &mut Hasher) {
-        self.pkey.hash(state);
     }
 }

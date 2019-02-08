@@ -1,46 +1,46 @@
+mod messages;
+pub use crate::messages::*;
+
+pub mod protos;
+
+use failure::Error;
+use futures::{Async, Future, Poll, Stream};
+use futures_stream_select_all_send::select_all;
+use log::*;
+use std::collections::HashSet;
+use std::time::Duration;
 use stegos_crypto::pbc::secure::{self, G2};
 use stegos_keychain::KeyChain;
 use stegos_network::Network;
-
-use std::time::{Duration, Instant};
-
-pub use crate::api::{PoolEvent, PoolFeedback, TransactionPool};
-use crate::messages::{Message, PoolInfo};
-use failure::Error;
-use futures::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
-use futures::{task, Async, Future, Poll, Stream};
-use futures_stream_select_all_send::select_all;
-use log::{debug, error, info};
+use stegos_node::EpochNotification;
+use stegos_node::Node;
 use stegos_serialization::traits::*;
-use tokio_timer::Delay;
-pub mod api;
-mod messages;
-pub mod protos;
-//TODO: on Drop, unsubscribe for messages topics.
-//TODO: introduce session id for splitting different pools.
+use tokio_timer::Interval;
 
-const BROADCAST_POOL_MESSAGES: &'static str = "broadcast-transaction-pool";
-const UNICAST_PROTOCOL_ID: &'static str = "txpool";
-
-const MESSAGE_TIMEOUT: Duration = Duration::from_secs(60);
+const MESSAGE_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct FacilitatorState {
-    accumulator: Vec<Message>,
+    participants: HashSet<secure::PublicKey>,
+    timer: Interval,
 }
 
 impl FacilitatorState {
     fn new() -> Self {
+        let mut timer = Interval::new_interval(MESSAGE_TIMEOUT);
+        // register new timer to the current task.
+        let _ = timer.poll();
         FacilitatorState {
-            accumulator: Vec::new(),
+            participants: HashSet::new(),
+            timer,
         }
     }
 
-    fn add_message(&mut self, message: Message) {
-        self.accumulator.push(message)
+    fn add_participant(&mut self, pkey: secure::PublicKey) -> bool {
+        self.participants.insert(pkey)
     }
 
-    fn take_pool(&self) -> Vec<Message> {
-        self.accumulator.clone()
+    fn take_pool(&mut self) -> HashSet<secure::PublicKey> {
+        std::mem::replace(&mut self.participants, HashSet::new())
     }
 }
 
@@ -49,47 +49,46 @@ enum NodeRole {
     Regular,
 }
 
+#[derive(Debug)]
+pub(crate) enum PoolEvent {
+    //
+    // Public API.
+    //
+    Join(secure::PublicKey, Vec<u8>),
+
+    //
+    // Internal events.
+    //
+    EpochChanged(EpochNotification),
+}
+
 pub struct TransactionPoolService {
     facilitator_pkey: secure::PublicKey,
     pkey: secure::PublicKey,
-    skey: secure::SecretKey,
     network: Network,
     role: NodeRole,
-    timer: Option<Delay>,
 
-    _sender: UnboundedSender<PoolFeedback>,
     events: Box<Stream<Item = PoolEvent, Error = ()> + Send>,
 }
 
 impl TransactionPoolService {
     /// Crates new TransactionPool.
-    pub fn new(
-        keychain: &KeyChain,
-        network: Network,
-        receiver: UnboundedReceiver<PoolEvent>,
-        sender: UnboundedSender<PoolFeedback>,
-    ) -> Self {
+    pub fn new(keychain: &KeyChain, network: Network, node: Node) -> TransactionPoolService {
         let pkey = keychain.cosi_pkey.clone();
-        let skey = keychain.cosi_skey.clone();
         let facilitator_pkey: secure::PublicKey = G2::generator().into(); // some fake key
+
         let events = || -> Result<_, Error> {
             let mut streams = Vec::<Box<Stream<Item = PoolEvent, Error = ()> + Send>>::new();
 
-            // Broadcast messages from facilitator
-            let broadcast_message = network
-                .subscribe(&BROADCAST_POOL_MESSAGES)?
-                .map(|m| PoolEvent::PoolInfo(m));
-            streams.push(Box::new(broadcast_message));
-
-            //TODO: unsubscribe unicast.
             // Unicast messages from other nodes
             let unicast_message = network
-                .subscribe_unicast(UNICAST_PROTOCOL_ID)?
-                .map(|m| PoolEvent::Message(m));
+                .subscribe_unicast(POOL_JOIN_TOPIC)?
+                .map(|m| PoolEvent::Join(m.from, m.data));
             streams.push(Box::new(unicast_message));
 
-            // Messages from console
-            streams.push(Box::new(receiver));
+            // Epoch Changes
+            let node_outputs = node.subscribe_epoch()?.map(|m| PoolEvent::EpochChanged(m));
+            streams.push(Box::new(node_outputs));
 
             Ok(select_all(streams))
         }()
@@ -100,41 +99,20 @@ impl TransactionPoolService {
             role: NodeRole::Regular,
             network,
             pkey,
-            skey,
-            _sender: sender,
-            timer: None,
             events,
         }
     }
 
-    /// Creates TransactionPool with TransactionPoolManager
-    pub fn with_manager(keychain: &KeyChain, network: Network) -> (Self, TransactionPool) {
-        let (events_sender, events_receiver) = mpsc::unbounded();
-        let (feedback_sender, feedback_receiver) = mpsc::unbounded();
-        let manager = TransactionPool {
-            feedback_receiver,
-            events_sender,
-        };
-        (
-            Self::new(keychain, network, events_receiver, feedback_sender),
-            manager,
-        )
-    }
-
-    fn change_facilitator(&mut self, facilitator_pkey: secure::PublicKey) -> Result<(), Error> {
-        debug!("Changing facilitator.");
-        let role = if facilitator_pkey == self.pkey {
+    fn handle_epoch(&mut self, epoch: EpochNotification) -> Result<(), Error> {
+        debug!("Changed facilitator: facilitator={:?}", epoch.facilitator);
+        let role = if epoch.facilitator == self.pkey {
             info!("I am facilitator.");
-            self.timer = Some(Delay::new(Instant::now() + MESSAGE_TIMEOUT));
-            task::current().notify();
-
             NodeRole::Facilitator(FacilitatorState::new())
         } else {
-            self.timer = None;
             NodeRole::Regular
         };
         self.role = role;
-        self.facilitator_pkey = facilitator_pkey;
+        self.facilitator_pkey = epoch.facilitator;
         Ok(())
     }
 
@@ -142,12 +120,17 @@ impl TransactionPoolService {
         match &mut self.role {
             NodeRole::Facilitator(state) => {
                 // after timeout facilitator should broadcast message to each node.
-                let accumulator = state.take_pool();
-                let pool = PoolInfo::new(accumulator, self.pkey, &self.skey);
-                //TODO:: remove clone
-                let data = pool.clone().into_buffer()?;
-                self.network.publish(&BROADCAST_POOL_MESSAGES, data)?;
-                self.handle_receive_pool_info(pool)?;
+                let participants: Vec<secure::PublicKey> = state.take_pool().into_iter().collect();
+                if participants.is_empty() {
+                    debug!("No requests received, skipping pool formation");
+                    return Ok(());
+                }
+                let info = PoolInfo { participants };
+                info!("Formed a new pool: participants={:?}", &info.participants);
+                let data = info.into_buffer()?;
+                for pkey in info.participants {
+                    self.network.send(pkey, POOL_ANNOUNCE_TOPIC, data.clone())?;
+                }
             }
             NodeRole::Regular => {
                 unreachable!();
@@ -156,39 +139,19 @@ impl TransactionPoolService {
         Ok(())
     }
 
-    pub fn handle_receive_pool_info(&mut self, message: PoolInfo) -> Result<(), Error> {
-        // TODO: After node receive pool info, it should start to communicate with other nodes?
-        debug!("Received pool info message {:?}", message);
-        message.validate()
-    }
-
     /// Receive message of other nodes from unicast channel.
-    pub fn handle_receive_message(&mut self, message: Message) -> Result<(), Error> {
-        debug!("Receiving new message = {:?}", message);
-        // TODO: message.validate()
-        match self.role {
-            NodeRole::Regular => {}
-            NodeRole::Facilitator(ref mut state) => {
-                debug!("Add message = {:?}, into pool.", message);
-                state.add_message(message);
-            }
-        }
-        Ok(())
-    }
-
-    /// Receive message of other nodes from unicast channel.
-    pub fn handle_internal_message(&mut self, message: Message) -> Result<(), Error> {
-        debug!("Trying to add message into pool = {:?}.", message);
+    pub fn handle_join_message(&mut self, from: secure::PublicKey) -> Result<(), Error> {
         match self.role {
             NodeRole::Regular => {
-                debug!("Send message to facilitator = {:?}.", self.facilitator_pkey);
-                let buffer = message.into_buffer()?;
-                self.network
-                    .send(self.facilitator_pkey, UNICAST_PROTOCOL_ID, buffer)?;
+                error!(
+                    "Received a join request on non-faciliator: from={:?}, facilitator={:?}",
+                    from, self.facilitator_pkey
+                );
             }
             NodeRole::Facilitator(ref mut state) => {
-                debug!("Add message = {:?}, into pool.", message);
-                state.add_message(message);
+                if state.add_participant(from) {
+                    info!("Added a new member: pkey={:?}", from);
+                }
             }
         }
         Ok(())
@@ -216,12 +179,11 @@ impl TransactionPoolService {
         match self.events.poll().expect("all errors are already handled") {
             Async::Ready(Some(event)) => {
                 let result = match event {
-                    PoolEvent::Message(unicast_msg) => Message::from_buffer(&unicast_msg.data)
-                        .and_then(|data| self.handle_receive_message(data)),
-                    PoolEvent::InternalMessage(msg) => self.handle_internal_message(msg),
-                    PoolEvent::PoolInfo(data) => PoolInfo::from_buffer(&data)
-                        .and_then(|data| self.handle_receive_pool_info(data)),
-                    PoolEvent::ChangeFacilitator(pk) => self.change_facilitator(pk),
+                    PoolEvent::Join(from, data) => {
+                        debug!("Received join message: from={:?}", from);
+                        PoolJoin::from_buffer(&data).and_then(|_| self.handle_join_message(from))
+                    }
+                    PoolEvent::EpochChanged(epoch) => self.handle_epoch(epoch),
                 };
 
                 if let Err(e) = result {
@@ -236,20 +198,17 @@ impl TransactionPoolService {
     }
 
     fn poll_timer(&mut self) -> Async<()> {
-        if self.timer.is_none() {
-            // we don't need to call `notify`, there,
-            // because this timer is oneshot, and cannot recover.
-            return Async::NotReady;
-        }
-
-        let timer = self.timer.as_mut().unwrap();
+        let timer = match self.role {
+            NodeRole::Facilitator(ref mut state) => &mut state.timer,
+            NodeRole::Regular => return Async::NotReady,
+        };
         match timer.poll().expect("timer fails") {
-            Async::Ready(()) => {
+            Async::Ready(Some(_)) => {
                 if let Err(e) = self.handle_timer() {
                     error!("Error: {}", e);
                 }
-                self.timer = None;
             }
+            Async::Ready(None) => panic!("Timer fails."),
             _ => {}
         }
         Async::NotReady

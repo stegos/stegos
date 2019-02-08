@@ -103,11 +103,8 @@ pub type DcMatrix = Vec<DcSheet>;
 
 const SLOT_BYTES: usize = 32; // must correspond to Fr bytes
 const MAX_BYTES: usize = 31; // for Fr we need < 249 bits
-const NPREF: usize = 4; // will this be long enough?
+const NPREF: usize = 3; // bytes - will 24 bits be long enough?
 const NCHUNK: usize = MAX_BYTES - NPREF; // nbr bytes of message in prefixed chunks
-
-pub const MAX_UTXOS: usize = 5;
-pub const MAX_CHUNKS: usize = 50; // max message transfer through DiceMix (?)
 
 // -------------------------------------------------
 
@@ -122,7 +119,7 @@ fn prep_pref(v: &mut [u8; 32]) {
     }
 }
 
-fn split_message(msg: &[u8], max_cols: Option<usize>) -> DcRow {
+pub fn split_message(msg: &[u8], max_cols: Option<usize>) -> DcRow {
     // split a long message into elements < |Fr|
     //
     // First element is used to compute an id hash

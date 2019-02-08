@@ -30,4 +30,8 @@ pub enum WalletError {
     NegativeAmount(i64),
     #[fail(display = "Insufficient stake: min={}, got={}.", _0, _1)]
     InsufficientStake(i64, i64),
+    #[fail(display = "Incorrect TXIN type")]
+    IncorrectTXINType,
+    #[fail(display = "Incorrect UTXO data")]
+    InvalidUTXOData,
 }

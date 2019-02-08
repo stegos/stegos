@@ -12,6 +12,7 @@ repository = "https://github.com/stegos/stegos"
 description = "Stegos - Transaction Pool Facilitator"
 
 [dependencies]
+stegos_blockchain = { version = "0.1.0", path = "../blockchain" }
 stegos_crypto = { version = "0.1.0", path = "../crypto" }
 stegos_keychain = { version = "0.1.0", path = "../keychain" }
 stegos_network = { version = "0.3.0", path = "../network" }

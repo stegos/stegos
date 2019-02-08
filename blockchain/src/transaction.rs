@@ -104,6 +104,18 @@ impl Hashable for Transaction {
 }
 
 impl Transaction {
+    pub fn dum() -> Self {
+        Transaction {
+            body: TransactionBody {
+                txins: Vec::new(),
+                txouts: Vec::new(),
+                gamma: Fr::zero(),
+                fee: 0,
+            },
+            sig: SchnorrSig::new(),
+        }
+    }
+
     /// Create a new transaction.
     ///
     /// # Arguments
@@ -190,17 +202,17 @@ impl Transaction {
     /// * - `inputs` - UTXOs referred by self.body.txins, in the same order as in self.body.txins.
     ///
     pub fn validate(&self, inputs: &[Output]) -> Result<(), Error> {
+        let tx_hash = Hash::digest(&self);
+
         assert_eq!(self.body.txins.len(), inputs.len());
 
         // Check that transaction has inputs.
         if self.body.txins.is_empty() {
-            let tx_hash = Hash::digest(&self);
             return Err(TransactionError::NoInputs(tx_hash).into());
         }
 
         // Check fee.
         if self.body.fee < 0 {
-            let tx_hash = Hash::digest(&self);
             return Err(TransactionError::NegativeFee(tx_hash).into());
         }
 
@@ -223,7 +235,6 @@ impl Transaction {
         for (txin_hash, txin) in self.body.txins.iter().zip(inputs) {
             assert_eq!(Hash::digest(txin), *txin_hash);
             if !txins_set.insert(*txin_hash) {
-                let tx_hash = Hash::digest(&self);
                 return Err(TransactionError::DuplicateInput(tx_hash, *txin_hash).into());
             }
             match txin {
@@ -246,7 +257,6 @@ impl Transaction {
         for txout in &self.body.txouts {
             let txout_hash = Hash::digest(txout);
             if !txouts_set.insert(txout_hash) {
-                let tx_hash = Hash::digest(&self);
                 return Err(TransactionError::DuplicateOutput(tx_hash, txout_hash).into());
             }
             match txout {
@@ -285,9 +295,8 @@ impl Transaction {
         }
         drop(txouts_set);
 
-        // C(fee, gamma_adj) = -(fee * A + gamma_adj * G)
+        // C(fee, gamma_adj) = fee * A + gamma_adj * G
         let adj = simple_commit(self.body.gamma, Fr::from(self.body.fee));
-        let tx_hash = Hash::digest(&self.body);
 
         // technically, this test is no longer needed since it has been
         // absorbed into the signature check...
@@ -342,40 +351,23 @@ impl Transaction {
         assert!(inputs.len() > 0 || outputs.len() > 0);
 
         let mut txins: Vec<Hash> = Vec::with_capacity(inputs.len());
-        let mut txouts: Vec<Output> = Vec::with_capacity(outputs.len());
         let mut sum_pkey = ECp::inf();
 
         // check that each TXIN is unique
-        let mut txins_set: HashSet<Hash> = HashSet::new();
         for txin in inputs {
             let hash = Hasher::digest(txin);
-            let uniq = txins_set.insert(hash);
-            assert!(uniq, "inputs must be unique");
             txins.push(hash);
             let pkey = match txin {
                 Output::PaymentOutput(o) => o.recipient,
                 Output::StakeOutput(o) => o.recipient,
             };
-            sum_pkey += match Pt::from(pkey).decompress() {
-                Ok(pt) => pt,
-                _ => ECp::inf(), // this will probably fail in transacton validation
-            };
+            sum_pkey += Pt::from(pkey).decompress()?;
         }
-        drop(txins_set);
-
-        // Clone created UTXOs
-        let mut txouts_set: HashSet<Hash> = HashSet::new();
-        for txout in outputs {
-            let hash = Hasher::digest(txout);
-            assert!(txouts_set.insert(hash), "inputs must be unique");
-            txouts.push(txout.clone());
-        }
-        drop(txouts_set);
 
         // Create a transaction body and calculate the hash.
         let body = TransactionBody {
             txins,
-            txouts,
+            txouts: outputs.to_vec(),
             gamma: gamma_adj,
             fee: total_fee,
         };

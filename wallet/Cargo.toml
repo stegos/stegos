@@ -25,6 +25,7 @@ futures = "0.1"
 futures-stream-select-all-send = "0.1"
 log = "0.4"
 protobuf = "2.2"
+tokio-timer = "0.2"
 
 [dev-dependencies]
 simple_logger = "1.0"

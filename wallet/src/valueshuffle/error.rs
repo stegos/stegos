@@ -46,4 +46,14 @@ pub enum VsError {
     VsBadTXIN, // TXIN not accessible with provided ownership sig
     #[fail(display = "Bad Transaction Attempted")]
     VsBadTransaction, // user output plus fee not equal TXIN input
+    #[fail(display = "We aren't a participant")]
+    VsNotInParticipantList,
+    #[fail(display = "ValueShuffle already started")]
+    VsBusy,
+    #[fail(display = "ValueShuffle not in session")]
+    VsNotInSession,
+    #[fail(display = "Invalid message")]
+    VsInvalidMessage,
+    #[fail(display = "Wrong Session")]
+    VsInvalidSession,
 }

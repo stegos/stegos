@@ -8,8 +8,68 @@ message Example {
     string payload = 1;
 }
 
+message DcRow {
+    repeated stegos.crypto.Fr cols = 1;
+}
+
+message DcSheet {
+    repeated DcRow rows = 1;
+}
+
+message DcMatrix {
+    repeated DcSheet sheets = 1;
+}
+
+
+message SharedKeying {
+    stegos.crypto.PublicKey pkey = 1;
+    stegos.crypto.Pt ksig = 2;
+}
+
+message Commitment {
+    stegos.crypto.Hash cmt = 1;
+}
+
+message CloakedVals {
+    DcMatrix matrix = 1;
+    stegos.crypto.Fr gamma_sum = 2;
+    stegos.crypto.Fr fee_sum = 3;
+    repeated stegos.crypto.SecurePublicKey parts = 4;
+    repeated stegos.crypto.Hash cloaks = 5;
+}
+
+message Signature {
+    stegos.crypto.SchnorrSig sig = 1;
+}
+
+message SecretKeying {
+    stegos.crypto.SecretKey skey = 1;
+}
+
+message VsPayload {
+    oneof body {
+        SharedKeying sharedkeying = 1;
+        Commitment commitment = 2;
+        CloakedVals cloakedvals = 3;
+        Signature signature = 4;
+        SecretKeying secretkeying = 5;
+    }
+}
+
+message VsMessage {
+    stegos.crypto.Hash sid = 1;
+    VsPayload payload = 3;
+}
+
+message VsRestart {
+    stegos.crypto.SecurePublicKey without_part = 1;
+    stegos.crypto.Hash session_id = 2;
+}
+
 message Message {
     oneof body {
         Example example = 1;
+        VsMessage vsmessage = 2;
+        VsRestart vsrestart = 3;
     }
 }

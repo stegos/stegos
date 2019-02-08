@@ -23,6 +23,7 @@
 
 use crate::change::*;
 use crate::error::*;
+use crate::valueshuffle::ProposedUTXO;
 use chrono::Utc;
 use failure::Error;
 use log::*;
@@ -35,6 +36,112 @@ use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
 use stegos_node::PAYMENT_FEE;
 use stegos_node::STAKE_FEE;
+
+/// Create a new ValueShuffle payment transaction. (no data)
+pub(crate) fn create_vs_payment_transaction(
+    sender_pkey: &PublicKey,
+    recipient: &PublicKey,
+    unspent: &HashMap<Hash, (PaymentOutput, i64)>,
+    amount: i64,
+    data: String,
+) -> Result<(Vec<(Hash, PaymentOutput)>, Vec<ProposedUTXO>, i64), Error> {
+    if amount < 0 {
+        return Err(WalletError::NegativeAmount(amount).into());
+    }
+
+    if data.len() > PAYMENT_DATA_LEN {
+        return Err(WalletError::InvalidUTXOData.into());
+    }
+
+    debug!(
+        "Creating a VS payment transaction: recipient={}, amount={}",
+        recipient, amount
+    );
+
+    //
+    // Find inputs
+    //
+
+    trace!("Checking for available funds in the wallet...");
+    let fee = PAYMENT_FEE;
+    let fee_change = fee + PAYMENT_FEE;
+    let unspent_iter = unspent.values().map(|(o, a)| (o, *a));
+    let (inputs, fee, change) = find_utxo(unspent_iter, amount, fee, fee_change)?;
+    let inputs: Vec<Output> = inputs
+        .into_iter()
+        .map(|o| Output::PaymentOutput(o.clone()))
+        .collect();
+    assert!(!inputs.is_empty());
+
+    debug!(
+        "Transaction preview: recipient={}, amount={}, withdrawn={}, change={}, fee={}",
+        recipient,
+        amount,
+        amount + change + fee,
+        change,
+        fee
+    );
+    let mut inputs_pairs = Vec::<(Hash, PaymentOutput)>::new();
+    for input in &inputs {
+        let h = Hash::digest(input);
+        match input {
+            Output::PaymentOutput(o) => {
+                inputs_pairs.push((h.clone(), o.clone()));
+            }
+            _ => {
+                return Err(WalletError::IncorrectTXINType.into());
+            }
+        }
+        debug!("Use UTXO: hash={}", h);
+    }
+
+    //
+    // Create outputs
+    //
+
+    let mut outputs: Vec<ProposedUTXO> = Vec::<ProposedUTXO>::with_capacity(2);
+
+    // Create an output for payment
+    trace!("Creating change UTXO...");
+    let output1 = ProposedUTXO {
+        recip: recipient.clone(),
+        amount: amount,
+        data: data,
+    };
+    outputs.push(output1);
+
+    info!(
+        "Created payment UTXO: recipient={}, amount={}",
+        recipient, amount,
+    );
+
+    if change > 0 {
+        // Create an output for change
+        trace!("Creating change UTXO...");
+        let data = "Change".to_string();
+        let output2 = ProposedUTXO {
+            recip: sender_pkey.clone(),
+            amount: change,
+            data: data.clone(),
+        };
+        info!(
+            "Created change UTXO: recipient={}, change={}, data={:?}",
+            sender_pkey, change, data
+        );
+        outputs.push(output2);
+    }
+
+    info!(
+        "Created payment transaction: recipient={}, amount={}, withdrawn={}, change={}, fee={}",
+        recipient,
+        amount,
+        amount + change + fee,
+        change,
+        fee
+    );
+
+    Ok((inputs_pairs, outputs, fee))
+}
 
 /// Create a new payment transaction.
 pub(crate) fn create_payment_transaction(
@@ -214,7 +321,7 @@ pub(crate) fn create_staking_transaction(
     }
 
     trace!("Signing transaction...");
-    let tx = Transaction::new(sender_skey, &inputs, &outputs, gamma, fee)?;
+    let tx = Transaction::new(&sender_skey, &inputs, &outputs, gamma, fee)?;
     let tx_hash = Hash::digest(&tx);
     info!(
         "Signed stake transaction: hash={}, validator={}, stake={}, withdrawn={}, change={}, fee={}",
@@ -308,7 +415,7 @@ pub(crate) fn create_unstaking_transaction(
     }
 
     trace!("Signing transaction...");
-    let tx = Transaction::new(sender_skey, &inputs, &outputs, gamma, fee)?;
+    let tx = Transaction::new(&sender_skey, &inputs, &outputs, gamma, fee)?;
     let tx_hash = Hash::digest(&tx);
     info!(
         "Signed unstake transaction: hash={}, validator={}, unstake={}, stake={}, fee={}",

@@ -157,7 +157,7 @@ impl ConsoleService {
     fn help() {
         println!("Usage:");
         println!("pay WALLET_PUBKEY AMOUNT [COMMENT] - send money");
-        //println!("spay WALLET_PUBKEY AMOUNT [COMMENT] - send money using ValueShuffle");
+        println!("spay WALLET_PUBKEY AMOUNT [COMMENT] - send money using ValueShuffle");
         println!("msg WALLET_PUBKEY MESSAGE - send a message via blockchain");
         println!("stake AMOUNT - stake money");
         println!("unstake AMOUNT - unstake money");

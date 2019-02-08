@@ -155,7 +155,7 @@ impl WalletService {
             amount,
             data,
         )?;
-
+        // Transaction TXINs can generally have different keying for each one
         let tx = Transaction::new(&self.skey, &inputs, &outputs, gamma, fee)?;
         self.node.send_transaction(tx)?;
         Ok(())
@@ -168,17 +168,9 @@ impl WalletService {
         amount: i64,
         comment: String,
     ) -> Result<(), Error> {
-        let data = PaymentPayloadData::Comment(comment);
-        let (inputs, outputs, gamma, fee) = create_payment_transaction(
-            &self.skey,
-            &self.pkey,
-            recipient,
-            &self.unspent,
-            amount,
-            data,
-        )?;
-
-        self.vs.queue_transaction(inputs, outputs, gamma, fee)?;
+        let (inputs, outputs, fee) =
+            create_vs_payment_transaction(&self.pkey, recipient, &self.unspent, amount, comment)?;
+        self.vs.queue_transaction(&inputs, &outputs, fee)?;
         Ok(())
     }
 
@@ -329,7 +321,6 @@ impl Future for WalletService {
                             amount,
                             comment,
                         } => self.secure_payment(&recipient, amount, comment),
-
                         WalletEvent::Stake { amount } => self.stake(amount),
                         WalletEvent::Unstake { amount } => self.unstake(amount),
                         WalletEvent::UnstakeAll {} => self.unstake_all(),

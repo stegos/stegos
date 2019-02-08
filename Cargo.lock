@@ -2468,6 +2468,7 @@ dependencies = [
  "futures-stream-select-all-send 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "protobuf 2.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "stegos_blockchain 0.1.0",
  "stegos_crypto 0.1.0",
  "stegos_keychain 0.1.0",
  "stegos_network 0.3.0",
@@ -2493,6 +2494,7 @@ dependencies = [
  "stegos_node 0.1.0",
  "stegos_serialization 0.1.0",
  "stegos_txpool 0.1.0",
+ "tokio-timer 0.2.10 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

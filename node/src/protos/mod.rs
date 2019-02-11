@@ -29,8 +29,10 @@ include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
 
 use crate::consensus::SealedBlockMessage;
 
+use crate::loader::{ChainLoaderMessage, RequestBlocks, ResponseBlocks};
 use crate::VRFTicket;
-use failure::Error;
+use failure::{format_err, Error};
+use protobuf::RepeatedField;
 use stegos_blockchain::*;
 use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
 use stegos_crypto::pbc::secure::Signature as SecureSignature;
@@ -74,6 +76,68 @@ impl ProtoConvert for VRFTicket {
             pkey,
             sig,
         })
+    }
+}
+
+impl ProtoConvert for RequestBlocks {
+    type Proto = loader::RequestBlocks;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = loader::RequestBlocks::new();
+        proto.set_start_block(self.start_block.into_proto());
+        proto
+    }
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let start_block = ProtoConvert::from_proto(proto.get_start_block())?;
+        Ok(RequestBlocks { start_block })
+    }
+}
+
+impl ProtoConvert for ResponseBlocks {
+    type Proto = loader::ResponseBlocks;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = loader::ResponseBlocks::new();
+        let blocks: Vec<_> = self.blocks.iter().map(ProtoConvert::into_proto).collect();
+        proto.set_blocks(RepeatedField::from_vec(blocks));
+        proto
+    }
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let blocks: Result<Vec<_>, _> = proto
+            .get_blocks()
+            .iter()
+            .map(ProtoConvert::from_proto)
+            .collect();
+        let blocks = blocks?;
+        Ok(ResponseBlocks {
+            //            range,
+            blocks,
+        })
+    }
+}
+
+impl ProtoConvert for ChainLoaderMessage {
+    type Proto = loader::ChainLoaderMessage;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = loader::ChainLoaderMessage::new();
+        match self {
+            ChainLoaderMessage::Request(r) => proto.set_request(r.into_proto()),
+            ChainLoaderMessage::Response(r) => proto.set_response(r.into_proto()),
+        }
+        proto
+    }
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let ref body = proto
+            .body
+            .as_ref()
+            .ok_or_else(|| format_err!("No variants in ChainLoaderMessage found"))?;
+        let chain_message = match body {
+            loader::ChainLoaderMessage_oneof_body::request(ref r) => {
+                ChainLoaderMessage::Request(RequestBlocks::from_proto(r)?)
+            }
+            loader::ChainLoaderMessage_oneof_body::response(ref r) => {
+                ChainLoaderMessage::Response(ResponseBlocks::from_proto(r)?)
+            }
+        };
+        Ok(chain_message)
     }
 }
 
@@ -122,5 +186,12 @@ mod tests {
 
         let vrf = VRFTicket::new(seed, 0, pkey1, &skey1);
         roundtrip(&vrf);
+    }
+
+    #[test]
+    fn chain_loader() {
+        let request =
+            ChainLoaderMessage::Request(RequestBlocks::new(Hash::digest(&"test".to_string())));
+        roundtrip(&request);
     }
 }

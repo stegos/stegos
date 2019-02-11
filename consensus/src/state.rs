@@ -278,9 +278,6 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
             return Err(ConsensusError::UnknownMessagePeer(msg.pkey));
         }
 
-        // Validate signature and content.
-        msg.validate()?;
-
         // Check round.
         if msg.height < self.height {
             debug!(
@@ -291,24 +288,15 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
             );
             // Discard this message.
             return Ok(());
-        } else if msg.height == self.height + 1 {
+        } else if msg.height > self.height {
             debug!(
-                "{}({}): message from the next round: msg={:?}",
+                "{}({}): message from the future: msg={:?}",
                 self.state.name(),
                 self.height,
                 &msg
             );
             // Queue the message for future processing.
             self.inbox.push(msg);
-            return Ok(());
-        } else if msg.height > self.height + 1 {
-            warn!(
-                "{}({}): message from the future: msg={:?}",
-                self.state.name(),
-                self.height,
-                &msg
-            );
-            // Discard this message.
             return Ok(());
         }
         assert_eq!(msg.height, self.height);

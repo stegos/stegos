@@ -25,8 +25,6 @@ use futures::sync::mpsc::unbounded;
 use futures::sync::mpsc::UnboundedReceiver;
 use futures::sync::mpsc::UnboundedSender;
 use stegos_crypto::curve1174::cpt::PublicKey;
-use stegos_crypto::pbc::secure;
-use stegos_node::EpochNotification;
 use stegos_node::OutputsNotification;
 
 //
@@ -73,8 +71,6 @@ pub(crate) enum WalletEvent {
     // Internal events.
     //
     NodeOutputsChanged(OutputsNotification),
-    NodeEpochChanged(EpochNotification),
-    PoolInfo(secure::PublicKey, Vec<u8>),
 }
 
 #[derive(Debug, Clone)]

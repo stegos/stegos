@@ -24,6 +24,8 @@
 use crate::utils::*;
 use crate::CryptoError;
 
+use rand::thread_rng;
+use rand::Rng;
 use sha3::{Digest, Sha3_256};
 use std::fmt;
 use std::hash as stdhash;
@@ -42,6 +44,11 @@ impl Hash {
     /// Return a hash with all zeros.
     pub fn zero() -> Self {
         Hash([0u8; HASH_SIZE])
+    }
+
+    /// Return an random hash.
+    pub fn random() -> Self {
+        Hash(thread_rng().gen::<[u8; HASH_SIZE]>())
     }
 
     pub fn base_vector(&self) -> &[u8] {

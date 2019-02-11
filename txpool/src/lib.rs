@@ -9,6 +9,7 @@ use futures_stream_select_all_send::select_all;
 use log::*;
 use std::collections::HashSet;
 use std::time::Duration;
+use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure::{self, G2};
 use stegos_keychain::KeyChain;
 use stegos_network::Network;
@@ -125,7 +126,12 @@ impl TransactionPoolService {
                     debug!("No requests received, skipping pool formation");
                     return Ok(());
                 }
-                let info = PoolInfo { participants };
+
+                let session_id = Hash::random();
+                let info = PoolInfo {
+                    participants,
+                    session_id,
+                };
                 info!("Formed a new pool: participants={:?}", &info.participants);
                 let data = info.into_buffer()?;
                 for pkey in info.participants {

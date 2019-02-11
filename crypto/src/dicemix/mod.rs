@@ -90,7 +90,7 @@ type Fr = curve1174::fields::Fr;
 type Pt = curve1174::cpt::Pt;
 type ECp = curve1174::ecpt::ECp;
 
-type ParticipantID = pbc::secure::PublicKey;
+pub type ParticipantID = pbc::secure::PublicKey;
 type PublicKey = curve1174::cpt::PublicKey;
 type SecretKey = curve1174::cpt::SecretKey;
 type SchnorrSig = curve1174::cpt::SchnorrSig;

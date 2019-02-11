@@ -7,4 +7,5 @@ message PoolJoin {}
 
 message PoolInfo {
     repeated stegos.crypto.SecurePublicKey participants = 1;
+    stegos.crypto.Hash session_id = 2;
 }

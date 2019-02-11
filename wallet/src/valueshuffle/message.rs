@@ -1,3 +1,5 @@
+//! message.rs - ValueShuffle Messages.
+
 //
 // Copyright (c) 2019 Stegos
 //
@@ -18,38 +20,31 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+//
 
-use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::pbc::secure;
+use std::collections::HashMap;
+use stegos_blockchain::Output;
+use stegos_crypto::curve1174::cpt::PublicKey;
+use stegos_crypto::curve1174::cpt::SchnorrSig;
+use stegos_crypto::curve1174::fields::Fr;
+use stegos_crypto::dicemix::DcMatrix;
+use stegos_crypto::dicemix::ParticipantID;
+use stegos_crypto::hash::Hash;
+use stegos_crypto::hash::Hashable;
+use stegos_crypto::hash::Hasher;
 
-/// A topic used for Join requests.
-pub const POOL_JOIN_TOPIC: &'static str = "txpool_join";
-/// A topic for PoolInfo messages.
-pub const POOL_ANNOUNCE_TOPIC: &'static str = "txpool_announce";
-
-/// Send when node wants to join TxPool.
-#[derive(Debug, Clone)]
-pub struct PoolJoin {}
-
-/// Sent when a new transaction pool is formed.
-#[derive(Debug, Clone)]
-pub struct PoolInfo {
-    pub participants: Vec<secure::PublicKey>,
-    pub session_id: Hash,
+#[derive(Debug)]
+pub(crate) enum Message {
+    Example { payload: String },
 }
 
-impl Hashable for PoolJoin {
+impl Hashable for Message {
     fn hash(&self, state: &mut Hasher) {
-        "PoolJoin".hash(state);
-    }
-}
-
-impl Hashable for PoolInfo {
-    fn hash(&self, state: &mut Hasher) {
-        "PoolInfo".hash(state);
-        for participant in &self.participants {
-            participant.hash(state);
+        match self {
+            Message::Example { payload } => {
+                "Example".hash(state);
+                payload.hash(state);
+            }
         }
-        self.session_id.hash(state);
     }
 }

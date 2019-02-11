@@ -1,0 +1,15 @@
+syntax = "proto3";
+package stegos.valueshuffle;
+
+import "crypto.proto";
+import "blockchain.proto";
+
+message Example {
+    string payload = 1;
+}
+
+message Message {
+    oneof body {
+        Example example = 1;
+    }
+}

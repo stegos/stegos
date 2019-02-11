@@ -3,6 +3,7 @@ name = "stegos_wallet"
 version = "0.1.0"
 authors = ["Stegos AG <info@stegos.cc>"]
 edition = "2018"
+build = "build.rs"
 
 [dependencies]
 stegos_crypto = { path = "../crypto" }
@@ -12,6 +13,7 @@ stegos_txpool = { path = "../txpool" }
 stegos_network = { path = "../network" }
 stegos_node = { path = "../node" }
 stegos_serialization = { path = "../serialization" }
+protobuf = "2.2"
 log = "0.4"
 failure = "0.1"
 chrono = "0.4"
@@ -20,3 +22,6 @@ futures-stream-select-all-send = "0.1"
 
 [dev-dependencies]
 simple_logger = "1.0"
+
+[build-dependencies]
+stegos_serialization = {path = "../serialization"}

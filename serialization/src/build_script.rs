@@ -22,9 +22,10 @@
 use protobuf_codegen_pure::{Args, Customize};
 use std::{
     env,
+    ffi::OsStr,
     fs::{self, File},
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 use walkdir::WalkDir;
 
@@ -56,17 +57,22 @@ fn get_includes(input_dir: &str, libs: &[&str]) -> Vec<String> {
 }
 
 fn get_protos(path: &str) -> Vec<PathBuf> {
-    WalkDir::new(path)
-        .into_iter()
-        .filter_map(|e| {
-            let e = e.ok()?;
-            if e.path().extension()? == "proto" {
-                Some(e.path().into())
-            } else {
-                None
-            }
-        })
-        .collect()
+    let path: &Path = path.as_ref();
+    if path.extension() == Some(OsStr::new("proto")) {
+        vec![path.into()]
+    } else {
+        WalkDir::new(path)
+            .into_iter()
+            .filter_map(|e| {
+                let e = e.ok()?;
+                if e.path().extension()? == "proto" {
+                    Some(e.path().into())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
 }
 
 fn generate_mod_rs(out_dir: &str, protos: &[PathBuf]) {

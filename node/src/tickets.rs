@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use stegos_blockchain::Escrow;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure::{
     self, PublicKey as SecurePublicKey, SecretKey as SecureSecretKey, Signature as SecureSignature,
@@ -62,9 +63,6 @@ lazy_static! {
 /// This value represent initial timeout, at view_change timeout exponentialy increasing.
 const COLLECTING_TICKETS_TIMER: Duration = crate::MESSAGE_TIMEOUT;
 
-/// Minumum count of tickets that we need to collect.
-const LOWER_TICKETS_COUNT: usize = 3;
-
 ///
 /// Data types
 ///
@@ -96,6 +94,8 @@ pub enum TicketsError {
         display = "Trying to process tickets but tickets count is smaller that LOWER_TICKETS_COUNT."
     )]
     NotEnoughTicketsCount,
+    #[fail(display = "Stakers majority group more then testnet hard limit.")]
+    TooManyStakers,
     #[fail(display = "Receiving multiple tickets from {:?}.", _0)]
     MultipleTickets(SecurePublicKey),
 }
@@ -179,7 +179,7 @@ impl TicketsSystem {
     pub fn handle_tick(
         &mut self,
         time: Instant,
-        stakers: StakersGroup,
+        escrow: &Escrow,
         last_block_hash: Hash,
     ) -> Result<Feedback, TicketsError> {
         trace!("Handle vrf system tick");
@@ -192,6 +192,7 @@ impl TicketsSystem {
             State::CollectingTickets(_, start)
                 if time.duration_since(start) > COLLECTING_TICKETS_TIMER * self.view_change =>
             {
+                let stakers: StakersGroup = escrow.get_stakers_majority().into_iter().collect();
                 self.on_collection_end(stakers).map(Feedback::ChangeGroup)
             }
             _ => Ok(Feedback::Nothing),
@@ -265,13 +266,18 @@ impl TicketsSystem {
         info!("Collecting tickets stoped, producing new group.");
         match mem::replace(&mut self.state, State::default()) {
             State::CollectingTickets(state, _) => {
+                let stakers_majority_count = 2 * stakers.len() / 3;
                 // Cannot produce reliable group with low count of tickets, so just restart system.
-                if state.tickets_count() < LOWER_TICKETS_COUNT {
+                if state.tickets_count() < stakers_majority_count {
                     return Err(TicketsError::NotEnoughTicketsCount);
+                }
+                if stakers.len() > self.max_group_size {
+                    return Err(TicketsError::TooManyStakers);
                 }
                 let ticket = state.lowest()?;
                 debug!("New random calculated = {:?}.", ticket);
-                let group = election::choose_validators(stakers, ticket.rand, self.max_group_size);
+                let group =
+                    election::choose_consensus_group(stakers, ticket.rand, self.max_group_size);
                 debug!("Obtaining new group = {:?}.", group);
                 Ok(group)
             }
@@ -305,10 +311,9 @@ impl NodeService {
 
     pub(crate) fn handle_vrf_timer(&mut self) -> Result<(), Error> {
         let previous_hash = Hash::digest(self.chain.last_block());
-        let all_stakers: StakersGroup = self.chain.escrow.getall().into_iter().collect();
-        let result = self
-            .vrf_system
-            .handle_tick(Instant::now(), all_stakers, previous_hash)?;
+        let result =
+            self.vrf_system
+                .handle_tick(Instant::now(), &self.chain.escrow, previous_hash)?;
         match result {
             Feedback::BroadcastTicket(ticket) => self.broadcast_vrf_ticket(ticket),
             Feedback::ChangeGroup(group) => self.on_change_group(group),

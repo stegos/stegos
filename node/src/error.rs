@@ -73,4 +73,6 @@ pub enum NodeError {
         _0, _1
     )]
     UnsynchronizedBlock(u64, u64),
+    #[fail(display = "KeyBlocks validators not equal to our stakers view.")]
+    ValidatorsNotEqualToOurStakers,
 }

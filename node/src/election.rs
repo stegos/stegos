@@ -34,7 +34,7 @@ pub type StakersGroup = Vec<(SecurePublicKey, i64)>;
 #[derive(Debug, Eq, PartialEq)]
 pub struct ConsensusGroup {
     /// List of Validators
-    pub witnesses: StakersGroup,
+    pub validators: StakersGroup,
     /// Leader public key
     pub leader: SecurePublicKey,
     /// Facilitator of the transaction pool
@@ -79,7 +79,8 @@ where
 /// Stakers array should not be empty, and every staker should have stake more than 0.
 ///
 /// Returns Group of validators, and new leader
-pub fn choose_validators(
+#[allow(dead_code)] // Save real group choosing for after testnet.
+pub fn choose_consensus_group_real(
     mut stakers: StakersGroup,
     random: Hash,
     max_group_size: usize,
@@ -113,7 +114,37 @@ pub fn choose_validators(
     let leader = witnesses[leader].0;
     let facilitator = witnesses[facilitator].0;
     ConsensusGroup {
-        witnesses,
+        validators: witnesses,
+        leader,
+        facilitator,
+    }
+}
+
+/// Choose validator and facilitator from stake group.
+pub fn choose_consensus_group(
+    stakers: StakersGroup,
+    random: Hash,
+    max_group_size: usize,
+) -> ConsensusGroup {
+    assert!(max_group_size > 0);
+    assert!(
+        stakers.len() <= max_group_size,
+        "stakers majority group more then testnet hard limit."
+    );
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(random.base_vector());
+    let validators = stakers;
+    let mut rng = IsaacRng::from_seed(seed);
+    let rand = rng.gen::<i64>();
+    let leader = select_winner(validators.iter().map(|(_k, stake)| stake), rand).unwrap();
+
+    let rand = rng.gen::<i64>();
+    let facilitator = select_winner(validators.iter().map(|(_k, stake)| stake), rand).unwrap();
+
+    let leader = validators[leader].0;
+    let facilitator = validators[facilitator].0;
+    ConsensusGroup {
+        validators,
         leader,
         facilitator,
     }
@@ -121,7 +152,7 @@ pub fn choose_validators(
 
 #[cfg(test)]
 mod test {
-    use super::{choose_validators, select_winner};
+    use super::{choose_consensus_group_real, select_winner};
     use std::collections::{HashMap, HashSet};
 
     use stegos_crypto::hash::Hash;
@@ -227,16 +258,16 @@ mod test {
         let keys = vec![(key, 1), (key, 2), (key, 3), (key, 4)];
         for i in 1..5 {
             assert_eq!(
-                choose_validators(keys.clone(), Hash::zero(), i)
-                    .witnesses
+                choose_consensus_group_real(keys.clone(), Hash::zero(), i)
+                    .validators
                     .len(),
                 i
             )
         }
         for i in 5..10 {
             assert_eq!(
-                choose_validators(keys.clone(), Hash::zero(), i)
-                    .witnesses
+                choose_consensus_group_real(keys.clone(), Hash::zero(), i)
+                    .validators
                     .len(),
                 4
             )

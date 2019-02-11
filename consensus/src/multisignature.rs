@@ -23,16 +23,13 @@
 
 use bitvector::BitVector;
 use std::collections::BTreeMap;
+use stegos_blockchain::WITNESSES_MAX;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure::check_hash as secure_check_hash;
 use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
 use stegos_crypto::pbc::secure::Signature as SecureSignature;
 use stegos_crypto::pbc::secure::G1;
 use stegos_crypto::pbc::secure::G2;
-
-/// The maximum number of nodes in multi-signature.
-/// Please synchronize this number with stegos_blockchain::WITNESSES_MAX.
-const WITNESSES_MAX: usize = 128;
 
 ///
 /// Return true if supermajority of votes has been collected.

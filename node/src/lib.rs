@@ -576,7 +576,6 @@ impl NodeService {
 
     /// Handle incoming KeyBlock
     fn handle_sealed_key_block(&mut self, key_block: KeyBlock) -> Result<(), Error> {
-        // TODO: How check is keyblock a valid fork?
         // We can accept any keyblock if we on bootstraping phase.
         let block_hash = Hash::digest(&key_block);
         // Check epoch.
@@ -589,7 +588,11 @@ impl NodeService {
         }
         let leader = key_block.header.leader.clone();
         let validators = self.chain.escrow.multiget(&key_block.header.witnesses);
-
+        // We didn't allows fork, this is done by forcing group to be the same as stakers count.
+        let stakers = self.chain.escrow.get_stakers_majority();
+        if stakers != validators {
+            return Err(NodeError::ValidatorsNotEqualToOurStakers.into());
+        }
         // Check BLS multi-signature.
         if !check_multi_signature(
             &block_hash,
@@ -873,7 +876,7 @@ impl NodeService {
         self.chain.change_group(
             group.leader,
             group.facilitator,
-            group.witnesses.iter().cloned().collect(),
+            group.validators.iter().cloned().collect(),
         );
         if self.chain.validators.contains_key(&self.keys.cosi_pkey) {
             let consensus = BlockConsensus::new(

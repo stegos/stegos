@@ -28,6 +28,10 @@ use log::*;
 use std::collections::BTreeMap;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
+
+/// Minimal stake a
+pub const MIN_STAKE_AMOUNT: i64 = 1;
+
 #[derive(PartialEq, Eq, Ord, PartialOrd)]
 struct EscrowKey {
     validator_pkey: SecurePublicKey,
@@ -187,14 +191,20 @@ impl Escrow {
 
     ///
     /// Get all staked values of all validators.
+    /// Filter out stakers with stake lower than MIN_STAKE_AMOUNT.
     ///
-    pub fn getall(&self) -> BTreeMap<SecurePublicKey, i64> {
+    pub fn get_stakers_majority(&self) -> BTreeMap<SecurePublicKey, i64> {
         let mut stakes: BTreeMap<SecurePublicKey, i64> = BTreeMap::new();
         for (k, v) in self.escrow.iter() {
             let entry = stakes.entry(k.validator_pkey).or_insert(0);
             *entry += v.amount;
         }
+
+        // filter out validators with low stake.
         stakes
+            .into_iter()
+            .filter(|(_, amount)| *amount >= MIN_STAKE_AMOUNT)
+            .collect()
     }
 }
 

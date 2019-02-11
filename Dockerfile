@@ -11,6 +11,7 @@ RUN cargo install --path . --root /usr/local
 FROM debian:stretch-slim
 RUN apt-get update && apt-get install -y \
     libgmp10 \
+    libmpfr4 \
     libssl1.1
 
 COPY --from=builder /usr/local/lib/libpbc* /usr/local/lib/

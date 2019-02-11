@@ -11,7 +11,6 @@ path = "src/stegos.rs"
 
 [workspace]
 members = [
-    "api",
     "blockchain",
     "config",
     "consensus",
@@ -19,14 +18,11 @@ members = [
     "keychain",
     "network",
     "node",
-    "runtime",
-    "storage",
     "txpool",
     "serialization"
 ]
 
 [dependencies]
-stegos_api = { path = "./api" }
 stegos_blockchain = { path = "./blockchain" }
 stegos_config = { path = "./config" }
 stegos_consensus = { path = "./consensus" }
@@ -34,8 +30,6 @@ stegos_crypto = { path = "./crypto" }
 stegos_keychain = { path = "./keychain" }
 stegos_network = { path = "./network" }
 stegos_node = { path = "./node" }
-stegos_runtime = { path = "./runtime" }
-stegos_storage = { path = "./storage" }
 stegos_txpool = { path = "./txpool" }
 stegos_wallet = { path = "./wallet" }
 stegos_serialization = { path = "./serialization" }

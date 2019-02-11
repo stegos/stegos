@@ -22,7 +22,6 @@
 use protobuf_codegen_pure::{Args, Customize};
 use std::{
     env,
-    ffi::OsStr,
     fs::{self, File},
     io::Write,
     path::{Path, PathBuf},
@@ -37,8 +36,8 @@ fn create_protos_path_env(input_dir: &str) {
     println!("cargo:protos={}", path.to_str().unwrap());
 }
 
-fn get_includes(input_dir: &str, libs: &[&str]) -> Vec<String> {
-    let mut array = vec![input_dir.to_string()];
+fn get_includes(input_path: &str, libs: &[&str]) -> Vec<String> {
+    let mut array = vec![input_path.to_string()];
 
     for lib in libs {
         let upper_lib = lib.to_uppercase();
@@ -58,21 +57,17 @@ fn get_includes(input_dir: &str, libs: &[&str]) -> Vec<String> {
 
 fn get_protos(path: &str) -> Vec<PathBuf> {
     let path: &Path = path.as_ref();
-    if path.extension() == Some(OsStr::new("proto")) {
-        vec![path.into()]
-    } else {
-        WalkDir::new(path)
-            .into_iter()
-            .filter_map(|e| {
-                let e = e.ok()?;
-                if e.path().extension()? == "proto" {
-                    Some(e.path().into())
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
+    WalkDir::new(path)
+        .into_iter()
+        .filter_map(|e| {
+            let e = e.ok()?;
+            if e.path().extension()? == "proto" {
+                Some(e.path().into())
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 fn generate_mod_rs(out_dir: &str, protos: &[PathBuf]) {
@@ -96,14 +91,21 @@ fn generate_mod_rs(out_dir: &str, protos: &[PathBuf]) {
         .expect("Unable to write data to file");
 }
 
-pub fn build_protobuf(input_dir: &str, out_prefix: &str, deps: &[&str]) {
+pub fn build_protobuf(input_path: &str, out_prefix: &str, deps: &[&str]) {
     let out_dir =
         PathBuf::from(env::var("OUT_DIR").expect("Unable to get OUT_DIR")).join(out_prefix);
 
     let out_dir_str = out_dir.to_str().unwrap();
 
-    let protos = get_protos(input_dir);
-    let includes = get_includes(input_dir, deps);
+    let mut path: &Path = input_path.as_ref();
+    let protos = if path.is_file() {
+        let out = vec![path.into()];
+        path = path.parent().unwrap();
+        out
+    } else {
+        get_protos(input_path)
+    };
+    let includes = get_includes(path.to_str().unwrap(), deps);
 
     // Create folder for output rust modules.
 
@@ -133,8 +135,8 @@ pub fn build_protobuf(input_dir: &str, out_prefix: &str, deps: &[&str]) {
     .expect("protoc");
 
     // Set cargo to rerun build.rs if proto files was changed.
-    println!("cargo:rerun-if-changed={}", input_dir);
+    println!("cargo:rerun-if-changed={}", input_path);
 
     // Set enviroment variable for link with dependent crates.
-    create_protos_path_env(input_dir);
+    create_protos_path_env(path.to_str().unwrap());
 }

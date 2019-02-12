@@ -1,0 +1,26 @@
+syntax = "proto3";
+package unicast_wire.pb;
+
+message Challenge {
+    uint64 challenge = 1;
+}
+
+message ChallengeReply {
+    bytes signature = 1;
+    uint64 sender_challenge = 2;
+}
+
+message Data {
+    bytes sender_pkey = 1;
+    bytes protocol_id = 2;
+    bytes data = 3;
+    bytes sender_signature = 4;
+}
+
+message Message {
+    oneof typ {
+        Challenge challenge = 2;
+        ChallengeReply reply = 3;
+        Data data = 4;
+    }
+}

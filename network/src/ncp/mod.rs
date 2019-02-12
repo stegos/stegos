@@ -23,7 +23,7 @@
 
 mod handler;
 pub mod layer;
-mod ncp_proto;
+mod proto;
 mod protocol;
 
 pub use self::layer::Ncp;

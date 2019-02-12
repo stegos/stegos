@@ -35,7 +35,7 @@ use bitvector::BitVector;
 
 use crate::election::ConsensusGroup;
 use crate::error::*;
-use crate::loader::ChainLoader;
+use crate::loader::{ChainLoader, ChainLoaderMessage};
 pub use crate::tickets::{TicketsSystem, VRFTicket};
 use chrono::Utc;
 use failure::{ensure, Error};
@@ -222,7 +222,7 @@ struct NodeService {
 
     /// A queue of consensus message from the future epoch.
     // TODO: Resolve unknown blocks using requests-responses.
-    future_consensus_messages: Vec<Vec<u8>>,
+    future_consensus_messages: Vec<BlockConsensusMessage>,
 
     //
     // Consensus
@@ -491,9 +491,7 @@ impl NodeService {
         self.future_consensus_messages.clear();
     }
     /// Handle incoming transactions received from network.
-    fn handle_transaction(&mut self, msg: Vec<u8>) -> Result<(), Error> {
-        let tx = Transaction::from_buffer(&msg)?;
-
+    fn handle_transaction(&mut self, tx: Transaction) -> Result<(), Error> {
         let tx_hash = Hash::digest(&tx.body);
         info!(
             "Received transaction from the network: hash={}, inputs={}, outputs={}, fee={}",
@@ -953,14 +951,11 @@ impl NodeService {
     ///
     /// Handles incoming consensus requests received from network.
     ///
-    fn handle_consensus_message(&mut self, buffer: Vec<u8>) -> Result<(), Error> {
-        // Process incoming message.
-        let msg = BlockConsensusMessage::from_buffer(&buffer)?;
-
+    fn handle_consensus_message(&mut self, msg: BlockConsensusMessage) -> Result<(), Error> {
         // if our consensus state is outdated, push message to future_consensus_messages.
         // TODO: remove queue and use request-responses to get message from other nodes.
         if self.consensus.is_none() || self.consensus.as_ref().unwrap().epoch() == msg.epoch + 1 {
-            self.future_consensus_messages.push(buffer);
+            self.future_consensus_messages.push(msg);
             return Ok(());
         }
         let consensus = self.consensus.as_mut().unwrap();
@@ -1359,16 +1354,20 @@ impl Future for NodeService {
                         NodeMessage::Init { genesis } => self.handle_init(genesis),
                         NodeMessage::SubscribeEpoch(tx) => self.handle_subscribe_epoch(tx),
                         NodeMessage::SubscribeOutputs(tx) => self.handle_subscribe_outputs(tx),
-                        NodeMessage::Transaction(msg) => self.handle_transaction(msg),
-                        NodeMessage::Consensus(msg) => self.handle_consensus_message(msg),
+                        NodeMessage::Transaction(msg) => Transaction::from_buffer(&msg)
+                            .and_then(|msg| self.handle_transaction(msg)),
+                        NodeMessage::Consensus(msg) => BlockConsensusMessage::from_buffer(&msg)
+                            .and_then(|msg| self.handle_consensus_message(msg)),
                         NodeMessage::SealedBlock(msg) => SealedBlockMessage::from_buffer(&msg)
                             .and_then(|msg| self.handle_sealed_block(msg)),
-                        NodeMessage::ConsensusTimer(_now) => self.handle_consensus_timer(),
-                        NodeMessage::VRFMessage(msg) => self.handle_vrf_message(msg),
+                        NodeMessage::VRFMessage(msg) => VRFTicket::from_buffer(&msg)
+                            .and_then(|msg| self.handle_vrf_message(msg)),
                         NodeMessage::ChainLoaderMessage(msg) => {
-                            loader::ChainLoaderMessage::from_buffer(&msg.data)
+                            ChainLoaderMessage::from_buffer(&msg.data)
                                 .and_then(|data| self.handle_chain_loader_message(msg.from, data))
                         }
+
+                        NodeMessage::ConsensusTimer(_now) => self.handle_consensus_timer(),
                         NodeMessage::VRFTimer(_instant) => self.handle_vrf_timer(),
                     };
                     if let Err(e) = result {
@@ -1461,9 +1460,7 @@ pub mod tests {
             PaymentPayloadData::Comment("Test".to_string()),
         )?;
         let tx = Transaction::new(&node.keys.wallet_skey, &inputs, &outputs, gamma, fee)?;
-        let proto = tx.into_proto();
-        let data = proto.write_to_bytes()?;
-        node.handle_transaction(data)?;
+        node.handle_transaction(tx)?;
         Ok(())
     }
 

@@ -298,9 +298,7 @@ impl NodeService {
         Ok(())
     }
 
-    pub(crate) fn handle_vrf_message(&mut self, msg: Vec<u8>) -> Result<(), Error> {
-        // Decode incoming message.
-        let msg = VRFTicket::from_buffer(&msg)?;
+    pub(crate) fn handle_vrf_message(&mut self, msg: VRFTicket) -> Result<(), Error> {
         if self.chain.escrow.get(&msg.pkey) > 0 {
             self.vrf_system.hanle_process_ticket(msg)?;
         } else {

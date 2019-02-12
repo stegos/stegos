@@ -25,3 +25,52 @@ pub mod time;
 
 pub use self::loopback::Loopback;
 pub use time::*;
+mod vrf_tickets;
+pub use vrf_tickets::VRFHelper;
+
+use crate::*;
+use stegos_keychain::KeyChain;
+
+pub struct SandboxConfig {
+    nodes_keychains: Vec<KeyChain>,
+    genesis: Vec<Block>,
+}
+
+impl SandboxConfig {
+    fn genesis(num_nodes: usize) -> Self {
+        let nodes_keychains: Vec<_> = (0..num_nodes).map(|_num| KeyChain::new_mem()).collect();
+        let genesis = stegos_blockchain::genesis(&nodes_keychains, 100, 1000000, 0);
+        Self {
+            genesis,
+            nodes_keychains,
+        }
+    }
+}
+
+struct NodeSandbox {
+    pub config: SandboxConfig,
+    pub manager: Loopback,
+    pub keychain: KeyChain,
+    pub outbox: UnboundedSender<NodeMessage>,
+    pub node_service: NodeService,
+}
+impl NodeSandbox {
+    fn new(num_nodes: usize) -> Self {
+        let config = SandboxConfig::genesis(num_nodes);
+        // init network
+        let (network_manager, network) = Loopback::new();
+
+        // Create node, with first node keychain.
+        let my_keychain = config.nodes_keychains.first().unwrap().clone();
+        let (outbox, inbox) = unbounded();
+        let mut node_service = NodeService::testing(my_keychain.clone(), network, inbox).unwrap();
+        node_service.handle_init(config.genesis.clone()).unwrap();
+        Self {
+            config,
+            manager: network_manager,
+            keychain: my_keychain,
+            outbox,
+            node_service,
+        }
+    }
+}

@@ -85,7 +85,7 @@ impl Hash {
         hasher.result()
     }
 
-    pub fn digest(msg: &dyn Hashable) -> Hash {
+    pub fn digest<T: Hashable + ?Sized>(msg: &T) -> Hash {
         // produce a Hash from a single Hashable
         let mut hasher = Hasher::new();
         msg.hash(&mut hasher);
@@ -142,6 +142,12 @@ impl stdhash::Hash for Hash {
 impl Hashable for Hash {
     fn hash(&self, state: &mut Hasher) {
         self.0.hash(state);
+    }
+}
+
+impl<'a, T: Hashable + ?Sized> Hashable for &'a T {
+    fn hash(&self, state: &mut Hasher) {
+        T::hash(self, state)
     }
 }
 

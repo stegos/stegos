@@ -358,7 +358,7 @@ impl ConsoleService {
                 }
             }
             WalletNotification::Error { error } => {
-                error!("Wallet error: {:?}", error);
+                error!("{}", error);
             }
         }
     }

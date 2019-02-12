@@ -41,6 +41,7 @@ use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::curve1174::G;
 use stegos_crypto::hash::*;
 use stegos_crypto::pbc::secure::{PublicKey as SecurePublicKey, G2};
+use tokio_timer::clock;
 
 type BlockId = usize;
 
@@ -125,7 +126,7 @@ impl Blockchain {
         let leader: SecurePublicKey = G2::generator().into(); // some fake key
         let facilitator: SecurePublicKey = G2::generator().into(); // some fake key
         let validators = BTreeMap::<SecurePublicKey, i64>::new();
-        let last_block_timestamp = Instant::now();
+        let last_block_timestamp = clock::now();
 
         let created = ECp::inf();
         let burned = ECp::inf();
@@ -334,7 +335,7 @@ impl Blockchain {
         self.facilitator = block.header.facilitator.clone();
         self.validators = self.escrow.multiget(&block.header.witnesses);
 
-        self.last_block_timestamp = Instant::now();
+        self.last_block_timestamp = clock::now();
         self.blocks.push(Block::KeyBlock(block));
         debug!("Validators: {:?}", &self.validators);
         Ok(())
@@ -525,7 +526,7 @@ impl Blockchain {
         self.burned = burned;
         self.gamma = gamma;
         self.monetary_adjustment = monetary_adjustment;
-        self.last_block_timestamp = Instant::now();
+        self.last_block_timestamp = clock::now();
         self.blocks.push(Block::MonetaryBlock(block));
         Ok((pruned, outputs))
     }

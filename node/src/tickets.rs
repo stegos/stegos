@@ -36,11 +36,9 @@ use crate::NodeService;
 
 use failure::{Error, Fail};
 use log::{debug, info, trace};
-use std::{
-    collections::HashMap,
-    mem,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
+use std::{collections::HashMap, mem};
+use tokio_timer::clock;
 
 ///
 /// Constants
@@ -258,7 +256,7 @@ impl TicketsSystem {
                 debug!("Error out of order ticket looks outdated {:?}", e);
             }
         }
-        self.state = State::CollectingTickets(collecting, Instant::now());
+        self.state = State::CollectingTickets(collecting, clock::now());
         ticket
     }
 
@@ -311,7 +309,7 @@ impl NodeService {
         let previous_hash = Hash::digest(self.chain.last_block());
         let result =
             self.vrf_system
-                .handle_tick(Instant::now(), &self.chain.escrow, previous_hash)?;
+                .handle_tick(clock::now(), &self.chain.escrow, previous_hash)?;
         match result {
             Feedback::BroadcastTicket(ticket) => self.broadcast_vrf_ticket(ticket),
             Feedback::ChangeGroup(group) => self.on_change_group(group),
@@ -433,7 +431,7 @@ impl CollectingState {
 
 impl Default for State {
     fn default() -> Self {
-        State::Sleeping(Instant::now())
+        State::Sleeping(clock::now())
     }
 }
 

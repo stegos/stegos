@@ -25,6 +25,8 @@ use futures::sync::mpsc::unbounded;
 use futures::sync::mpsc::UnboundedReceiver;
 use futures::sync::mpsc::UnboundedSender;
 use stegos_crypto::curve1174::cpt::PublicKey;
+use stegos_crypto::hash::Hash;
+use stegos_crypto::pbc::secure;
 use stegos_node::OutputsNotification;
 
 //
@@ -33,9 +35,27 @@ use stegos_node::OutputsNotification;
 
 #[derive(Debug, Clone)]
 pub enum WalletNotification {
-    BalanceChanged { balance: i64 },
-    PaymentReceived { amount: i64, comment: String },
-    Error { error: String },
+    BalanceChanged {
+        balance: i64,
+    },
+    PaymentReceived {
+        amount: i64,
+        comment: String,
+    },
+    BalanceInfo {
+        balance: i64,
+    },
+    KeysInfo {
+        wallet_pkey: PublicKey,
+        cosi_pkey: secure::PublicKey,
+    },
+    UnspentInfo {
+        unspent: Vec<(Hash, i64)>,
+        unspent_stakes: Vec<(Hash, i64)>,
+    },
+    Error {
+        error: String,
+    },
 }
 
 //
@@ -66,6 +86,10 @@ pub(crate) enum WalletEvent {
         amount: i64,
     },
     UnstakeAll {},
+
+    KeysInfo,
+    BalanceInfo,
+    UnspentInfo,
 
     //
     // Internal events.
@@ -117,6 +141,21 @@ impl Wallet {
 
     pub fn unstake_all(&self) {
         let msg = WalletEvent::UnstakeAll {};
+        self.outbox.unbounded_send(msg).expect("connected")
+    }
+
+    pub fn balance_info(&self) {
+        let msg = WalletEvent::BalanceInfo;
+        self.outbox.unbounded_send(msg).expect("connected")
+    }
+
+    pub fn keys_info(&self) {
+        let msg = WalletEvent::KeysInfo;
+        self.outbox.unbounded_send(msg).expect("connected")
+    }
+
+    pub fn unspent_info(&self) {
+        let msg = WalletEvent::UnspentInfo;
         self.outbox.unbounded_send(msg).expect("connected")
     }
 }

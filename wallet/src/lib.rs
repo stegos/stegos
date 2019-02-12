@@ -343,7 +343,7 @@ impl Future for WalletService {
                         }
                     };
                     if let Err(error) = result {
-                        let error = format!("{:?}", error);
+                        let error = format!("{}", error);
                         let msg = WalletNotification::Error { error };
                         self.subscribers
                             .retain(move |tx| tx.unbounded_send(msg.clone()).is_ok());

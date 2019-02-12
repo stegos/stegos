@@ -456,7 +456,7 @@ pub mod tests {
         let version: u64 = 1;
         let epoch: u64 = 1;
         let timestamp = Utc::now().timestamp() as u64;
-        let previous = Hash::digest(&"test".to_string());
+        let previous = Hash::digest("test");
 
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
 
@@ -502,7 +502,7 @@ pub mod tests {
         let epoch: u64 = 1;
         let timestamp = Utc::now().timestamp() as u64;
         let amount: i64 = 1_000_000;
-        let previous = Hash::digest(&"test".to_string());
+        let previous = Hash::digest("test");
 
         //
         // Valid block with transaction from 1 to 2
@@ -554,7 +554,7 @@ pub mod tests {
 
             // Invalid inputs_range_hash.
             let inputs_range_hash = block.header.inputs_range_hash.clone();
-            block.header.inputs_range_hash = Hash::digest(&"invalid".to_string());
+            block.header.inputs_range_hash = Hash::digest("invalid");
             match block.validate(&inputs) {
                 Err(e) => match e.downcast::<BlockchainError>().unwrap() {
                     BlockchainError::InvalidBlockInputsHash(expected, got) => {

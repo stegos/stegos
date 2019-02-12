@@ -165,7 +165,7 @@ mod tests {
         let version: u64 = 1;
         let epoch: u64 = 1;
         let timestamp = Utc::now().timestamp() as u64;
-        let previous = Hash::digest(&"test".to_string());
+        let previous = Hash::digest("test");
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
 
         let witnesses: BTreeSet<SecurePublicKey> = [pkey0].iter().cloned().collect();
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn vrf_tickets() {
-        let seed = Hash::digest(&"test".to_string());
+        let seed = Hash::digest("test");
         let (skey1, pkey1, _sig1) = make_secure_random_keys();
 
         let vrf = VRFTicket::new(seed, 0, pkey1, &skey1);
@@ -190,8 +190,7 @@ mod tests {
 
     #[test]
     fn chain_loader() {
-        let request =
-            ChainLoaderMessage::Request(RequestBlocks::new(Hash::digest(&"test".to_string())));
+        let request = ChainLoaderMessage::Request(RequestBlocks::new(Hash::digest("test")));
         roundtrip(&request);
     }
 }

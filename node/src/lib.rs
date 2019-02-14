@@ -532,15 +532,6 @@ impl NodeService {
             return self.on_orphan_block(msg);
         }
 
-        if header.epoch != self.chain.epoch {
-            let block_hash = Hash::digest(block);
-            debug!(
-                "Invalid or out-of-order block received: hash={}, expected_epoch={}, got_epoch={}",
-                &block_hash, self.chain.epoch, header.epoch
-            );
-            return self.on_orphan_block(msg);
-        }
-
         if let Block::MonetaryBlock(_) = block {
             // TODO: Should this check exist? We can send block as response, and it would be validated without this check.
 

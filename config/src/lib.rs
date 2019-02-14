@@ -42,6 +42,8 @@ use toml;
 pub const PAYMENT_FEE: i64 = 1;
 /// Fixed fee for the stake transactions.
 pub const STAKE_FEE: i64 = 1;
+/// Fixed reward per block.
+pub const BLOCK_REWARD: i64 = 60;
 
 ///
 /// Load configuration file

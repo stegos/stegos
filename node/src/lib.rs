@@ -30,6 +30,7 @@ pub mod protos;
 #[cfg(test)]
 mod test;
 mod tickets;
+mod validation;
 
 use crate::consensus::*;
 use crate::mempool::Mempool;
@@ -39,8 +40,9 @@ use crate::election::ConsensusGroup;
 use crate::error::*;
 use crate::loader::{ChainLoader, ChainLoaderMessage};
 pub use crate::tickets::{TicketsSystem, VRFTicket};
+use crate::validation::*;
 use chrono::Utc;
-use failure::{ensure, Error};
+use failure::Error;
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::{Async, Future, Poll, Stream};
 use futures_stream_select_all_send::select_all;
@@ -48,14 +50,10 @@ use log::*;
 use protobuf;
 use protobuf::Message;
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 use stegos_blockchain::*;
 use stegos_config::*;
-use stegos_consensus::{
-    check_multi_signature, BlockConsensus, BlockConsensusMessage, BlockProof, MonetaryBlockProof,
-};
-use stegos_crypto::bulletproofs::validate_range_proof;
+use stegos_consensus::{BlockConsensus, BlockConsensusMessage, BlockProof, MonetaryBlockProof};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
 use stegos_crypto::pbc::secure::Signature as SecureSignature;
@@ -183,8 +181,6 @@ const CONSENSUS_TIMER: Duration = Duration::from_secs(30);
 const SEALED_BLOCK_IN_EPOCH: usize = 5;
 /// Max difference in timestamps of leader and witnesses.
 const TIME_TO_RECEIVE_BLOCK: u64 = 10 * 60;
-/// Fixed reward per block.
-const BLOCK_REWARD: i64 = 60;
 
 #[derive(Clone, Debug)]
 enum NodeMessage {
@@ -503,76 +499,8 @@ impl NodeService {
             tx.body.fee
         );
 
-        //
-        // Validation checklist:
-        //
-        // - TX hash is unique
-        // - Fee is acceptable.
-        // - At least one input or output is present.
-        // - Inputs can be resolved.
-        // - Inputs have not been spent by blocks.
-        // - Inputs are not claimed by other transactions in mempool.
-        // - Inputs are unique.
-        // - Outputs are unique.
-        // - Outputs don't overlap with other transactions in mempool.
-        // - Bulletpoofs/amounts are valid.
-        // - UTXO-specific checks.
-        // - Monetary balance is valid.
-        // - Signature is valid.
-        //
-
-        let timestamp = Utc::now().timestamp() as u64;
-
-        // Check that transaction exists in the mempool.
-        if self.mempool.contains_tx(&tx_hash) {
-            return Err(NodeError::TransactionAlreadyExists(tx_hash).into());
-        }
-
-        // Check fee.
-        NodeService::check_acceptable_fee(&tx)?;
-
-        // Validate inputs.
-        let mut inputs: Vec<Output> = Vec::new();
-        for input_hash in &tx.body.txins {
-            // Check that the input can be resolved.
-            // TODO: check outputs created by mempool transactions.
-            let input = match self.chain.output_by_hash(input_hash) {
-                Some(tx_input) => tx_input,
-                None => return Err(BlockchainError::MissingUTXO(input_hash.clone()).into()),
-            };
-
-            // Check that the input is not claimed by other transactions.
-            if self.mempool.contains_input(input_hash) {
-                return Err(BlockchainError::MissingUTXO(input_hash.clone()).into());
-            }
-
-            // Check escrow.
-            if let Output::StakeOutput(input) = input {
-                self.chain
-                    .escrow
-                    .validate_unstake(&input.validator, input_hash, timestamp)?;
-            }
-
-            inputs.push(input.clone());
-        }
-
-        // Check outputs.
-        for output in &tx.body.txouts {
-            let output_hash = Hash::digest(output);
-
-            // Check that the output is unique and don't overlap with other transactions.
-            if self.mempool.contains_output(&output_hash)
-                || self.chain.output_by_hash(&output_hash).is_some()
-            {
-                return Err(BlockchainError::OutputHashCollision(output_hash).into());
-            }
-        }
-
-        // Check the monetary balance, Bulletpoofs/amounts and signature.
-        tx.validate(&inputs)?;
-
-        // Transaction is fully valid.
-        //--------------------------------------------------------------------------------------
+        // Validate transaction.
+        validate_transaction(&tx, &self.mempool, &self.chain)?;
 
         // Queue to mempool.
         info!("Transaction is valid, adding to mempool: hash={}", &tx_hash);
@@ -581,102 +509,33 @@ impl NodeService {
         Ok(())
     }
 
-    /// Handle incoming KeyBlock
-    fn handle_sealed_key_block(&mut self, key_block: KeyBlock) -> Result<(), Error> {
-        // We can accept any keyblock if we on bootstraping phase.
-        let block_hash = Hash::digest(&key_block);
-        // Check epoch.
-        if self.chain.epoch + 1 != key_block.header.base.epoch {
-            error!(
-                "Invalid or out-of-order block received: hash={}, expected_epoch={}, got_epoch={}",
-                &block_hash, self.chain.epoch, key_block.header.base.epoch
-            );
-            return Ok(());
-        }
-        let leader = key_block.header.leader.clone();
-        let validators = self.chain.escrow.multiget(&key_block.header.witnesses);
-        // We didn't allows fork, this is done by forcing group to be the same as stakers count.
-        let stakers = self.chain.escrow.get_stakers_majority();
-        if stakers != validators {
-            return Err(NodeError::ValidatorsNotEqualToOurStakers.into());
-        }
-        // Check BLS multi-signature.
-        if !check_multi_signature(
-            &block_hash,
-            &key_block.header.base.multisig,
-            &key_block.header.base.multisigmap,
-            &validators,
-            &leader,
-        ) {
-            return Err(NodeError::InvalidBlockSignature(block_hash).into());
-        }
-
-        key_block.validate()?;
-        let key_block2 = key_block.clone();
-        self.chain.register_key_block(key_block)?;
-        self.on_key_block_registered(&key_block2)?;
-        Ok(())
-    }
-
-    /// Handle incoming MonetaryBlock
-    fn handle_sealed_monetary_block(&mut self, monetary_block: MonetaryBlock) -> Result<(), Error> {
-        let timestamp = Utc::now().timestamp() as u64;
-
-        let block_hash = Hash::digest(&monetary_block);
-
-        // Check epoch.
-        if self.chain.epoch != monetary_block.header.base.epoch {
-            error!(
-                "Invalid or out-of-order block received: hash={}, expected_epoch={}, got_epoch={}",
-                &block_hash, self.chain.epoch, monetary_block.header.base.epoch
-            );
-            return Ok(());
-        }
-
-        // Check BLS multi-signature.
-        if !check_multi_signature(
-            &block_hash,
-            &monetary_block.header.base.multisig,
-            &monetary_block.header.base.multisigmap,
-            &self.chain.validators,
-            &self.chain.leader,
-        ) {
-            return Err(NodeError::InvalidBlockSignature(block_hash).into());
-        }
-
-        trace!("Validating block monetary balance: hash={}..", &block_hash);
-
-        // Resolve inputs.
-        let inputs = self.chain.outputs_by_hashes(&monetary_block.body.inputs)?;
-
-        // Validate inputs.
-        for input in inputs.iter() {
-            // Check unstaking.
-            if let Output::StakeOutput(input) = input {
-                let input_hash = Hash::digest(input);
-                self.chain
-                    .escrow
-                    .validate_unstake(&input.validator, &input_hash, timestamp)?;
-            }
-        }
-
-        // Validate monetary balance.
-        monetary_block.validate(&inputs)?;
-
-        info!("Monetary block is valid: hash={}", &block_hash);
-
-        let monetary_block2 = monetary_block.clone();
-        let (inputs, outputs) = self.chain.register_monetary_block(monetary_block)?;
-        self.on_monetary_block_registered(&monetary_block2, inputs, outputs)
-    }
-
     /// Handle incoming blocks received from network.
     fn handle_sealed_block(&mut self, msg: SealedBlockMessage) -> Result<(), Error> {
         // Check signature and content.
         msg.validate()?;
 
         let ref block = msg.block;
-        let block_hash = Hash::digest(block);
+
+        let header = block.base_header();
+        // Check previous hash.
+        let previous_hash = Hash::digest(self.chain.last_block());
+        if previous_hash != header.previous {
+            let block_hash = Hash::digest(block);
+            debug!(
+                "Received orphan block: hash={}, expected_previous={}, got_previous={}",
+                &block_hash, &previous_hash, &header.previous
+            );
+            return self.on_orphan_block(msg);
+        }
+
+        if header.epoch != self.chain.epoch {
+            let block_hash = Hash::digest(block);
+            debug!(
+                "Invalid or out-of-order block received: hash={}, expected_epoch={}, got_epoch={}",
+                &block_hash, self.chain.epoch, header.epoch
+            );
+            return self.on_orphan_block(msg);
+        }
 
         if let Block::MonetaryBlock(_) = block {
             // TODO: Should this check exist? We can send block as response, and it would be validated without this check.
@@ -684,6 +543,7 @@ impl NodeService {
             // For monetary block, consensus is stable, and we can just check leader.
             // Check that message is signed by current leader.
             if msg.pkey != self.chain.leader {
+                let block_hash = Hash::digest(block);
                 return Err(NodeError::SealedBlockFromNonLeader(
                     block_hash,
                     self.chain.leader.clone(),
@@ -691,17 +551,6 @@ impl NodeService {
                 )
                 .into());
             }
-        }
-
-        let header = block.base_header();
-        // Check previous hash.
-        let previous_hash = Hash::digest(self.chain.last_block());
-        if previous_hash != header.previous {
-            debug!(
-                "Received orphan block: hash={}, expected_previous={}, got_previous={}",
-                &block_hash, &previous_hash, &header.previous
-            );
-            return self.on_orphan_block(msg);
         }
 
         let block = msg.block;
@@ -738,11 +587,21 @@ impl NodeService {
         };
 
         match block {
-            Block::KeyBlock(key_block) => self.handle_sealed_key_block(key_block),
+            Block::KeyBlock(key_block) => {
+                validate_sealed_key_block(&key_block, &self.chain)?;
+                let key_block2 = key_block.clone();
+                self.chain.register_key_block(key_block)?;
+                self.on_key_block_registered(&key_block2)?;
+            }
             Block::MonetaryBlock(monetary_block) => {
-                self.handle_sealed_monetary_block(monetary_block)
+                validate_sealed_monetary_block(&monetary_block, &self.chain)?;
+                let monetary_block2 = monetary_block.clone();
+                let (inputs, outputs) = self.chain.register_monetary_block(monetary_block)?;
+                self.on_monetary_block_registered(&monetary_block2, inputs, outputs)?;
             }
         }
+
+        Ok(())
     }
 
     /// Count sealed block in epoch, restarts timers and all systems
@@ -862,23 +721,6 @@ impl NodeService {
         // Don't send block to myself.
         self.network.publish(&SEALED_BLOCK_TOPIC, data)?;
         info!("Sent sealed block to the network: hash={}", block_hash);
-        Ok(())
-    }
-
-    /// Check minimal acceptable fee for transaction.
-    fn check_acceptable_fee(tx: &Transaction) -> Result<(), NodeError> {
-        let mut min_fee: i64 = 0;
-        for txout in &tx.body.txouts {
-            min_fee += match txout {
-                Output::PaymentOutput(_o) => PAYMENT_FEE,
-                Output::StakeOutput(_o) => STAKE_FEE,
-            };
-        }
-
-        // Transaction's fee is too low.
-        if tx.body.fee < min_fee {
-            return Err(NodeError::TooLowFee(min_fee, tx.body.fee));
-        }
         Ok(())
     }
 
@@ -1129,7 +971,7 @@ impl NodeService {
                     )
                     .into());
                 }
-                NodeService::validate_monetary_block(
+                validate_proposed_monetary_block(
                     mempool,
                     chain,
                     block_hash,
@@ -1148,156 +990,10 @@ impl NodeService {
                     )
                     .into());
                 }
-                NodeService::validate_key_block(consensus, block_hash, block)
+                validate_proposed_key_block(consensus, block_hash, block)
             }
             (_, _) => unreachable!(),
         }
-    }
-
-    /// Process MonetaryBlockProposal CoSi message.
-    fn validate_monetary_block(
-        mempool: &Mempool,
-        chain: &Blockchain,
-        block_hash: Hash,
-        block: &MonetaryBlock,
-        fee_output: &Option<Output>,
-        tx_hashes: &Vec<Hash>,
-    ) -> Result<(), Error> {
-        if block.header.monetary_adjustment != BLOCK_REWARD {
-            // TODO: support slashing.
-            return Err(NodeError::InvalidBlockReward(
-                block_hash,
-                block.header.monetary_adjustment,
-                BLOCK_REWARD,
-            )
-            .into());
-        }
-
-        // Check transactions.
-        let mut inputs = Vec::<Output>::new();
-        let mut inputs_hashes = BTreeSet::<Hash>::new();
-        let mut outputs = Vec::<Output>::new();
-        let mut outputs_hashes = BTreeSet::<Hash>::new();
-        for tx_hash in tx_hashes {
-            debug!("Processing transaction: hash={}", &tx_hash);
-
-            // Check that transaction is present in mempool.
-            let tx = mempool.get_tx(&tx_hash);
-            if tx.is_none() {
-                return Err(NodeError::TransactionMissingInMempool(*tx_hash).into());
-            }
-
-            let tx = tx.unwrap();
-
-            // Check that transaction's inputs are exists.
-            let tx_inputs = chain.outputs_by_hashes(&tx.body.txins)
-                .expect("mempool transaction is valid");
-
-            // Check transaction's signature, monetary balance, fee and others.
-            tx.validate(&tx_inputs)
-                .expect("mempool transaction is valid");
-
-            // Check that transaction's inputs are not used yet.
-            for tx_input_hash in &tx.body.txins {
-                if !inputs_hashes.insert(tx_input_hash.clone()) {
-                    return Err(
-                        TransactionError::DuplicateInput(tx_hash.clone(), tx_input_hash.clone()).into(),
-                    );
-                }
-            }
-
-            // Check transaction's outputs.
-            for tx_output in &tx.body.txouts {
-                let tx_output_hash = Hash::digest(tx_output);
-                if let Some(_) = chain.output_by_hash(&tx_output_hash) {
-                    return Err(BlockchainError::OutputHashCollision(tx_output_hash).into());
-                }
-                if !outputs_hashes.insert(tx_output_hash.clone()) {
-                    return Err(TransactionError::DuplicateOutput(tx_hash.clone(), tx_output_hash).into());
-                }
-            }
-
-            inputs.extend(tx_inputs.iter().cloned());
-            outputs.extend(tx.body.txouts.iter().cloned());
-        }
-
-        if let Some(output_fee) = fee_output {
-            let tx_output_hash = Hash::digest(output_fee);
-            if let Some(_) = chain.output_by_hash(&tx_output_hash) {
-                return Err(BlockchainError::OutputHashCollision(tx_output_hash).into());
-            }
-            if !outputs_hashes.insert(tx_output_hash.clone()) {
-                return Err(BlockchainError::OutputHashCollision(tx_output_hash).into());
-            }
-            match &output_fee {
-                Output::PaymentOutput(o) => {
-                    // Check bulletproofs of created outputs
-                    if !validate_range_proof(&o.proof) {
-                        return Err(OutputError::InvalidBulletProof.into());
-                    }
-                }
-                _ => {
-                    return Err(NodeError::InvalidFeeUTXO(tx_output_hash).into());
-                }
-            };
-            outputs.push(output_fee.clone());
-        }
-
-        drop(outputs_hashes);
-
-        debug!("Validating monetary block");
-
-        let inputs_hashes: Vec<Hash> = inputs_hashes.into_iter().collect();
-
-        let base_header = block.header.base.clone();
-        let block = MonetaryBlock::new(
-            base_header,
-            block.header.gamma.clone(),
-            block.header.monetary_adjustment,
-            &inputs_hashes,
-            &outputs,
-        );
-        let inputs = chain
-            .outputs_by_hashes(&block.body.inputs)
-            .expect("check above");
-        block.validate(&inputs)?;
-
-        // TODO: block hash doesn't cover inputs and outputs
-        let block_hash2 = Hash::digest(&block);
-
-        if block_hash != block_hash2 {
-            return Err(NodeError::InvalidBlockHash(block_hash, block_hash2).into());
-        }
-
-        debug!("Block proposal is valid: block={}", block_hash);
-
-        Ok(())
-    }
-
-    /// Process MonetaryBlockProposal CoSi message.
-    fn validate_key_block(
-        consensus: &BlockConsensus,
-        block_hash: Hash,
-        block: &KeyBlock,
-    ) -> Result<(), Error> {
-        block.validate()?;
-        ensure!(
-            block.header.leader == consensus.leader(),
-            "Consensus leader different from our consensus group."
-        );
-        ensure!(
-            block.header.witnesses.len() == consensus.validators().len(),
-            "Received key block proposal with wrong consensus group"
-        );
-
-        for validator in &block.header.witnesses {
-            ensure!(
-                consensus.validators().contains_key(validator),
-                "Received Key block proposal with wrong consensus group."
-            );
-        }
-        debug!("Key block proposal is valid: block={}", block_hash);
-        Ok(())
     }
 
     ///

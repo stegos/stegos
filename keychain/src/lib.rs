@@ -139,9 +139,6 @@ impl KeyChain {
 
         let (cosi_skey, cosi_pkey, cosi_sig) = wallet_to_cosi_keys(&wallet_skey);
 
-        info!("My wallet key: {}", &wallet_pkey.into_hex());
-        debug!("My secure key: {}", &cosi_pkey.into_hex());
-
         let keychain = KeyChain {
             wallet_skey,
             wallet_pkey,

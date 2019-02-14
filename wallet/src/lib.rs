@@ -86,6 +86,9 @@ impl WalletService {
         network: Network,
         node: Node,
     ) -> (Self, Wallet) {
+        info!("My wallet key: {}", &pkey.into_hex());
+        debug!("My secure key: {}", &validator_pkey.into_hex());
+
         //
         // State.
         //
@@ -332,6 +335,42 @@ impl Future for WalletService {
                         WalletEvent::UnstakeAll {} => self.unstake_all(),
                         WalletEvent::Subscribe { tx } => {
                             self.subscribers.push(tx);
+                            Ok(())
+                        }
+                        WalletEvent::KeysInfo => {
+                            let notification = WalletNotification::KeysInfo {
+                                wallet_pkey: self.pkey,
+                                cosi_pkey: self.validator_pkey,
+                            };
+                            self.subscribers
+                                .retain(move |tx| tx.unbounded_send(notification.clone()).is_ok());
+                            Ok(())
+                        }
+                        WalletEvent::BalanceInfo => {
+                            let notification = WalletNotification::BalanceInfo {
+                                balance: self.balance,
+                            };
+                            self.subscribers
+                                .retain(move |tx| tx.unbounded_send(notification.clone()).is_ok());
+                            Ok(())
+                        }
+                        WalletEvent::UnspentInfo => {
+                            let unspent: Vec<(Hash, i64)> = self
+                                .unspent
+                                .iter()
+                                .map(|(hash, (_, amount))| (hash.clone(), *amount))
+                                .collect();
+                            let unspent_stakes: Vec<(Hash, i64)> = self
+                                .unspent_stakes
+                                .iter()
+                                .map(|(hash, o)| (hash.clone(), o.amount))
+                                .collect();
+                            let notification = WalletNotification::UnspentInfo {
+                                unspent,
+                                unspent_stakes,
+                            };
+                            self.subscribers
+                                .retain(move |tx| tx.unbounded_send(notification.clone()).is_ok());
                             Ok(())
                         }
                         WalletEvent::NodeOutputsChanged(OutputsNotification {

@@ -19,5 +19,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+pub mod loopback;
+mod simple_tests;
 pub mod time;
+
+pub use self::loopback::Loopback;
 pub use time::*;

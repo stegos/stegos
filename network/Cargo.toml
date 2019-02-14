@@ -28,6 +28,7 @@ tokio-timer = "0.2"
 unsigned-varint = "0.2"
 void = "1.0"
 libp2p = "0.2"
+stegos_serialization = { path = "../serialization"}
 
 [build-dependencies]
 stegos_serialization = { path = "../serialization"}

@@ -21,7 +21,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-mod dummy_network;
 mod libp2p_network;
 mod ncp;
 pub mod peerstore;
@@ -33,7 +32,6 @@ use libp2p::core::{topology::Topology, Multiaddr, PeerId};
 use std::fmt;
 use stegos_crypto::pbc::secure;
 
-pub use self::dummy_network::DummyNetwork;
 pub use self::libp2p_network::Libp2pNetwork;
 pub use self::peerstore::MemoryPeerstore;
 pub use self::unicast_send::{UnicastDataMessage, UnicastSend};

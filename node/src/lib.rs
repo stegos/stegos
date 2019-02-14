@@ -531,11 +531,6 @@ impl NodeService {
         // Check fee.
         NodeService::check_acceptable_fee(&tx)?;
 
-        // Check transaction
-        if tx.body.txins.is_empty() && tx.body.txouts.is_empty() {
-            return Err(BlockchainError::EmptyTransaction(tx_hash).into());
-        }
-
         // Validate inputs.
         let mut inputs: Vec<Output> = Vec::new();
         for input_hash in &tx.body.txins {
@@ -1195,16 +1190,18 @@ impl NodeService {
             let tx = tx.unwrap();
 
             // Check that transaction's inputs are exists.
-            let tx_inputs = chain.outputs_by_hashes(&tx.body.txins)?;
+            let tx_inputs = chain.outputs_by_hashes(&tx.body.txins)
+                .expect("mempool transaction is valid");
 
             // Check transaction's signature, monetary balance, fee and others.
-            tx.validate(&tx_inputs)?;
+            tx.validate(&tx_inputs)
+                .expect("mempool transaction is valid");
 
             // Check that transaction's inputs are not used yet.
             for tx_input_hash in &tx.body.txins {
                 if !inputs_hashes.insert(tx_input_hash.clone()) {
                     return Err(
-                        BlockchainError::DuplicateTransactionInput(tx_input_hash.clone()).into(),
+                        TransactionError::DuplicateInput(tx_hash.clone(), tx_input_hash.clone()).into(),
                     );
                 }
             }
@@ -1216,7 +1213,7 @@ impl NodeService {
                     return Err(BlockchainError::OutputHashCollision(tx_output_hash).into());
                 }
                 if !outputs_hashes.insert(tx_output_hash.clone()) {
-                    return Err(BlockchainError::DuplicateTransactionOutput(tx_output_hash).into());
+                    return Err(TransactionError::DuplicateOutput(tx_hash.clone(), tx_output_hash).into());
                 }
             }
 
@@ -1230,13 +1227,13 @@ impl NodeService {
                 return Err(BlockchainError::OutputHashCollision(tx_output_hash).into());
             }
             if !outputs_hashes.insert(tx_output_hash.clone()) {
-                return Err(BlockchainError::DuplicateTransactionOutput(tx_output_hash).into());
+                return Err(BlockchainError::OutputHashCollision(tx_output_hash).into());
             }
             match &output_fee {
                 Output::PaymentOutput(o) => {
                     // Check bulletproofs of created outputs
                     if !validate_range_proof(&o.proof) {
-                        return Err(BlockchainError::InvalidBulletProof.into());
+                        return Err(OutputError::InvalidBulletProof.into());
                     }
                 }
                 _ => {

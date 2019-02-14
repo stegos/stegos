@@ -51,18 +51,22 @@ const STAKE_PAYLOAD_MAGIC: [u8; 4] = [115, 116, 107, 101]; // "stke"
 /// Escrow payload size.
 pub const STAKE_PAYLOAD_LEN: usize = 36;
 
-/// Errors.
+/// UTXO errors.
 #[derive(Debug, Fail)]
 pub enum OutputError {
+    #[fail(display = "Invalid stake.")]
+    InvalidStake,
+    #[fail(display = "Invalid bulletproof.")]
+    InvalidBulletProof,
     #[fail(display = "Invalid payload length: expected={}, got={}", _0, _1)]
     InvalidPayloadLength(usize, usize),
     #[fail(display = "Failed to decrypt payload")]
     PayloadDecryptionError,
-    #[fail(display = "Data is too long: max={}, got={}.", _0, _1)]
+    #[fail(display = "Data is too long:  max={}, got={}.", _0, _1)]
     DataIsTooLong(usize, usize),
     #[fail(display = "Unsupported data type: typecode={}.", _0)]
     UnsupportedDataType(u8),
-    #[fail(display = "Trailing garbage in payload.")]
+    #[fail(display = "Trailing garbage in payload")]
     TrailingGarbage,
     #[fail(display = "Negative amount: amount={}", _0)]
     NegativeAmount(i64),

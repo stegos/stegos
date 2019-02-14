@@ -374,7 +374,7 @@ impl MonetaryBlock {
                 Output::PaymentOutput(ref o) => {
                     // Check bulletproofs of created outputs
                     if !validate_range_proof(&o.proof) {
-                        return Err(BlockchainError::InvalidBulletProof.into());
+                        return Err(OutputError::InvalidBulletProof.into());
                     }
                     if o.payload.ctxt.len() != PAYMENT_PAYLOAD_LEN {
                         return Err(OutputError::InvalidPayloadLength(
@@ -387,7 +387,7 @@ impl MonetaryBlock {
                 }
                 Output::StakeOutput(ref o) => {
                     if o.amount <= 0 {
-                        return Err(BlockchainError::InvalidStake.into());
+                        return Err(OutputError::InvalidStake.into());
                     }
                     if o.payload.ctxt.len() != STAKE_PAYLOAD_LEN {
                         return Err(OutputError::InvalidPayloadLength(
@@ -778,8 +778,8 @@ pub mod tests {
             let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
             let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..]);
             match block.validate(&inputs) {
-                Err(e) => match e.downcast::<BlockchainError>().unwrap() {
-                    BlockchainError::InvalidStake => {}
+                Err(e) => match e.downcast::<OutputError>().unwrap() {
+                    OutputError::InvalidStake => {}
                     _ => panic!(),
                 },
                 _ => panic!(),

@@ -21,10 +21,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::error::*;
 use crate::output::*;
 use chrono::Utc;
 use failure::Error;
+use failure::Fail;
 use std::collections::HashSet;
 use stegos_crypto::bulletproofs::{fee_a, validate_range_proof};
 use stegos_crypto::curve1174::cpt::{
@@ -34,6 +34,23 @@ use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::curve1174::G;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
+
+/// Transaction errors.
+#[derive(Debug, Fail)]
+pub enum TransactionError {
+    #[fail(display = "Invalid signature: tx={}", _0)]
+    InvalidSignature(Hash),
+    #[fail(display = "Invalid monetary balance: tx={}", _0)]
+    InvalidMonetaryBalance(Hash),
+    #[fail(display = "Negative fee: tx={}", _0)]
+    NegativeFee(Hash),
+    #[fail(display = "No inputs: tx={}", _0)]
+    NoInputs(Hash),
+    #[fail(display = "Duplicate input: tx={}, utxo={}", _0, _1)]
+    DuplicateInput(Hash, Hash),
+    #[fail(display = "Duplicate output: tx={}, utxo={}", _0, _1)]
+    DuplicateOutput(Hash, Hash),
+}
 
 /// Transaction body.
 #[derive(Clone, Debug)]
@@ -100,7 +117,7 @@ impl Transaction {
         fee: i64,
     ) -> Result<Self, Error> {
         assert!(fee >= 0);
-        assert!(inputs.len() > 0 || outputs.len() > 0);
+        assert!(inputs.len() > 0);
 
         //
         // Compute S_eff = N * S_M + \sum{\delta_i * gamma_i} + \sum{\gamma_i} - \sum{gamma_j},
@@ -176,9 +193,16 @@ impl Transaction {
     pub fn validate(&self, inputs: &[Output]) -> Result<(), Error> {
         assert_eq!(self.body.txins.len(), inputs.len());
 
+        // Check that transaction has inputs.
+        if self.body.txins.is_empty() {
+            let tx_hash = Hash::digest(&self.body);
+            return Err(TransactionError::NoInputs(tx_hash).into());
+        }
+
         // Check fee.
         if self.body.fee < 0 {
-            return Err(BlockchainError::InvalidTransactionFee.into());
+            let tx_hash = Hash::digest(&self.body);
+            return Err(TransactionError::NegativeFee(tx_hash).into());
         }
 
         //
@@ -198,7 +222,8 @@ impl Transaction {
         for (txin_hash, txin) in self.body.txins.iter().zip(inputs) {
             assert_eq!(Hash::digest(txin), *txin_hash);
             if !txins_set.insert(*txin_hash) {
-                return Err(BlockchainError::DuplicateTransactionInput(*txin_hash).into());
+                let tx_hash = Hash::digest(&self.body);
+                return Err(TransactionError::DuplicateInput(tx_hash, *txin_hash).into());
             }
             match txin {
                 Output::PaymentOutput(o) => {
@@ -216,13 +241,14 @@ impl Transaction {
         for txout in &self.body.txouts {
             let txout_hash = Hash::digest(txout);
             if !txouts_set.insert(txout_hash) {
-                return Err(BlockchainError::DuplicateTransactionOutput(txout_hash).into());
+                let tx_hash = Hash::digest(&self.body);
+                return Err(TransactionError::DuplicateOutput(tx_hash, txout_hash).into());
             }
             match txout {
                 Output::PaymentOutput(o) => {
                     // Check bulletproofs of created outputs
                     if !validate_range_proof(&o.proof) {
-                        return Err(BlockchainError::InvalidBulletProof.into());
+                        return Err(OutputError::InvalidBulletProof.into());
                     }
                     if o.payload.ctxt.len() != PAYMENT_PAYLOAD_LEN {
                         return Err(OutputError::InvalidPayloadLength(
@@ -235,7 +261,7 @@ impl Transaction {
                 }
                 Output::StakeOutput(o) => {
                     if o.amount <= 0 {
-                        return Err(BlockchainError::InvalidStake.into());
+                        return Err(OutputError::InvalidStake.into());
                     }
                     if o.payload.ctxt.len() != STAKE_PAYLOAD_LEN {
                         return Err(OutputError::InvalidPayloadLength(
@@ -255,7 +281,8 @@ impl Transaction {
 
         // Check the monetary balance
         if pedersen_commitment_diff != self.body.gamma * (*G) {
-            return Err(BlockchainError::InvalidTransactionBalance.into());
+            let tx_hash = Hash::digest(&self.body);
+            return Err(TransactionError::InvalidMonetaryBalance(tx_hash).into());
         }
 
         // Create public key and check signature
@@ -276,7 +303,7 @@ impl Transaction {
         // Check signature
         match validate_sig(&tx_hash, &self.sig, &eff_pkey)? {
             true => Ok(()),
-            false => Err(BlockchainError::InvalidTransactionSignature.into()),
+            false => Err(TransactionError::InvalidSignature(Hash::digest(&self.body)).into()),
         }
     }
 
@@ -331,24 +358,41 @@ pub mod tests {
     use stegos_crypto::curve1174::cpt::make_random_keys;
     use stegos_crypto::pbc::secure;
 
-    /// Check transaction signing and validation.
     #[test]
-    pub fn basic() {
+    pub fn no_inputs() {
         let (skey, pkey, _sig) = make_random_keys();
-        let (tx, inputs, _outputs) = Transaction::new_test(&skey, &pkey, 100, 2, 200, 1, 0);
+        let timestamp = Utc::now().timestamp() as u64;
+        let amount: i64 = 1_000_000;
+        let fee: i64 = amount;
+        let (input, _gamma1) =
+            Output::new_payment(timestamp, &skey, &pkey, amount).expect("keys are valid");
+        let inputs = [input];
+        let mut tx =
+            Transaction::new(&skey, &inputs, &[], Fr::zero(), fee).expect("keys are valid");
+        tx.body.txins.clear(); // remove all inputs
+        tx.validate(&[]).expect_err("tx is invalid");
+    }
+
+    #[test]
+    pub fn no_outputs() {
+        // No outputs
+        let (skey, pkey, _sig) = make_random_keys();
+        let (tx, inputs, _outputs) = Transaction::new_test(&skey, &pkey, 100, 1, 0, 0, 100);
         tx.validate(&inputs).expect("transaction is valid");
     }
 
-    /// Check transaction signing and validation.
     #[test]
-    pub fn create_validate() {
-        let (skey0, _pkey0, _sig0) = make_random_keys();
+    pub fn payment_utxo() {
+        let (skey0, pkey0, _sig0) = make_random_keys();
         let (skey1, pkey1, _sig1) = make_random_keys();
         let (_skey2, pkey2, _sig2) = make_random_keys();
 
         let timestamp = Utc::now().timestamp() as u64;
         let amount: i64 = 1_000_000;
         let fee: i64 = 1;
+
+        let (tx, inputs, _outputs) = Transaction::new_test(&skey0, &pkey0, 100, 2, 200, 1, 0);
+        tx.validate(&inputs).expect("transaction is valid");
 
         // "genesis" output by 0
         let (output0, _gamma0) =
@@ -373,8 +417,8 @@ pub mod tests {
         let fee = tx.body.fee;
         tx.body.fee = -1i64;
         match tx.validate(&inputs1) {
-            Err(e) => match e.downcast::<BlockchainError>().unwrap() {
-                BlockchainError::InvalidTransactionFee => {}
+            Err(e) => match e.downcast::<TransactionError>().unwrap() {
+                TransactionError::NegativeFee(_) => {}
                 _ => panic!(),
             },
             _ => panic!(),
@@ -387,15 +431,14 @@ pub mod tests {
         tx.body.txins.push(tx.body.txins.last().unwrap().clone());
         let inputs11 = &[output0.clone(), output0.clone()];
         match tx.validate(inputs11) {
-            Err(e) => match e.downcast::<BlockchainError>().unwrap() {
-                BlockchainError::DuplicateTransactionInput(txin_hash) => {
+            Err(e) => match e.downcast::<TransactionError>().unwrap() {
+                TransactionError::DuplicateInput(_tx_hash, txin_hash) => {
                     assert_eq!(&txin_hash, tx.body.txins.last().unwrap());
                 }
                 _ => panic!(),
             },
             _ => panic!(),
         };
-        drop(inputs11);
         tx.body.txins.pop().unwrap();
 
         //
@@ -403,8 +446,8 @@ pub mod tests {
         //
         tx.body.txouts.push(tx.body.txouts.last().unwrap().clone());
         match tx.validate(&inputs1) {
-            Err(e) => match e.downcast::<BlockchainError>().unwrap() {
-                BlockchainError::DuplicateTransactionOutput(txout_hash) => {
+            Err(e) => match e.downcast::<TransactionError>().unwrap() {
+                TransactionError::DuplicateOutput(_tx_hash, txout_hash) => {
                     assert_eq!(txout_hash, Hash::digest(tx.body.txouts.last().unwrap()));
                 }
                 _ => panic!(),
@@ -418,8 +461,22 @@ pub mod tests {
         //
         tx.sig.u = Fr::zero();
         match tx.validate(&inputs1) {
-            Err(e) => match e.downcast::<BlockchainError>().unwrap() {
-                BlockchainError::InvalidTransactionSignature => {}
+            Err(e) => match e.downcast::<TransactionError>().unwrap() {
+                TransactionError::InvalidSignature(_tx_hash) => {}
+                _ => panic!(),
+            },
+            _ => panic!(),
+        };
+
+        //
+        // Invalid gamma
+        //
+        let (mut tx, inputs, _outputs) = Transaction::new_test(&skey0, &pkey0, 100, 2, 200, 1, 0);
+        tx.validate(&inputs).expect("transaction is valid");
+        tx.body.gamma = Fr::random();
+        match tx.validate(&inputs) {
+            Err(e) => match e.downcast::<TransactionError>().unwrap() {
+                TransactionError::InvalidMonetaryBalance(_tx_hash) => {}
                 _ => panic!(),
             },
             _ => panic!(),
@@ -435,8 +492,8 @@ pub mod tests {
         let tx = Transaction::new(&skey1, &inputs1, &[output_invalid1], outputs_gamma, fee)
             .expect("keys are valid");
         match tx.validate(&inputs1) {
-            Err(e) => match e.downcast::<BlockchainError>().unwrap() {
-                BlockchainError::InvalidTransactionBalance => {}
+            Err(e) => match e.downcast::<TransactionError>().unwrap() {
+                TransactionError::InvalidMonetaryBalance(_tx_hash) => {}
                 _ => panic!(),
             },
             _ => panic!(),
@@ -444,7 +501,7 @@ pub mod tests {
     }
 
     #[test]
-    pub fn escrow_create_validate() {
+    pub fn stake_utxo() {
         let (skey0, _pkey0, _sig0) = make_random_keys();
         let (skey1, pkey1, _sig1) = make_random_keys();
         let (_secure_skey1, secure_pkey1, _secure_sig1) = secure::make_random_keys();
@@ -454,7 +511,7 @@ pub mod tests {
         let fee: i64 = 1;
 
         //
-        // Escrow as an input.
+        // StakeUTXO as an input.
         //
         let input = Output::new_stake(timestamp, &skey0, &pkey1, &secure_pkey1, amount)
             .expect("keys are valid");
@@ -466,7 +523,7 @@ pub mod tests {
         tx.validate(&inputs).expect("tx is valid");
 
         //
-        // Escrow as an output.
+        // StakeUTXO as an output.
         //
         let (input, _inputs_gamma) =
             Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
@@ -492,8 +549,8 @@ pub mod tests {
         let tx = Transaction::new(&skey1, &inputs, &[output], outputs_gamma, fee)
             .expect("keys are valid");
         match tx.validate(&inputs) {
-            Err(e) => match e.downcast::<BlockchainError>().unwrap() {
-                BlockchainError::InvalidTransactionBalance => {}
+            Err(e) => match e.downcast::<TransactionError>().unwrap() {
+                TransactionError::InvalidMonetaryBalance(_tx_hash) => {}
                 _ => panic!(),
             },
             _ => panic!(),
@@ -513,8 +570,8 @@ pub mod tests {
         let tx = Transaction::new(&skey1, &inputs, &[output], outputs_gamma, fee)
             .expect("keys are valid");
         match tx.validate(&inputs) {
-            Err(e) => match e.downcast::<BlockchainError>().unwrap() {
-                BlockchainError::InvalidStake => {}
+            Err(e) => match e.downcast::<OutputError>().unwrap() {
+                OutputError::InvalidStake => {}
                 _ => panic!(),
             },
             _ => panic!(),

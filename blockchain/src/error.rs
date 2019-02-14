@@ -34,20 +34,6 @@ pub enum BlockchainError {
     OutputHashCollision(Hash),
     #[fail(display = "Missing UXTO {}.", _0)]
     MissingUTXO(Hash),
-    #[fail(display = "Invalid transaction signature.")]
-    InvalidTransactionSignature,
-    #[fail(display = "Invalid transaction monetary balance.")]
-    InvalidTransactionBalance,
-    #[fail(display = "Invalid transaction fee.")]
-    InvalidTransactionFee,
-    #[fail(display = "Invalid stake.")]
-    InvalidStake,
-    #[fail(display = "Empty transaction: hash={}.", _0)]
-    EmptyTransaction(Hash),
-    #[fail(display = "Duplicate transaction input: {}.", _0)]
-    DuplicateTransactionInput(Hash),
-    #[fail(display = "Duplicate transaction output: {}.", _0)]
-    DuplicateTransactionOutput(Hash),
     #[fail(display = "Invalid block monetary balance.")]
     InvalidBlockBalance,
     #[fail(display = "Invalid block inputs: expected={}, got={}.", _0, _1)]
@@ -58,8 +44,6 @@ pub enum BlockchainError {
     DuplicateBlockInput(Hash),
     #[fail(display = "Duplicate block output: {}.", _0)]
     DuplicateBlockOutput(Hash),
-    #[fail(display = "Invalid UTXO bulletproof.")]
-    InvalidBulletProof,
     #[fail(display = "Block must contain at least one witness.")]
     MissingWitnesses,
     #[fail(display = "The leader must be witness.")]

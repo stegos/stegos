@@ -30,5 +30,4 @@ void = "1.0"
 libp2p = "0.2"
 
 [build-dependencies]
-# protobuf-codegen-pure = "2.3"
 stegos_serialization = { path = "../serialization"}

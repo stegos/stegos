@@ -1,7 +1,7 @@
 //! Blockchain Node.
 
 //
-// Copyright (c) 2018 Stegos
+// Copyright (c) 2019 Stegos
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -27,6 +27,8 @@ mod error;
 mod loader;
 mod mempool;
 pub mod protos;
+#[cfg(test)]
+mod test;
 mod tickets;
 
 use crate::consensus::*;

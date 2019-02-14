@@ -370,6 +370,7 @@ impl NodeService {
         // can't be used here.
         //
 
+        let current_timestamp = Utc::now().timestamp() as u64;
         for block in genesis {
             match block {
                 Block::KeyBlock(key_block) => {
@@ -392,7 +393,9 @@ impl NodeService {
                         .validate(&[])
                         .expect("monetary balance is ok");
                     let monetary_block2 = monetary_block.clone();
-                    let (inputs, outputs) = self.chain.register_monetary_block(monetary_block)?;
+                    let (inputs, outputs) = self
+                        .chain
+                        .register_monetary_block(monetary_block, current_timestamp)?;
                     self.on_monetary_block_registered(&monetary_block2, inputs, outputs)?;
                 }
             }
@@ -500,7 +503,8 @@ impl NodeService {
         );
 
         // Validate transaction.
-        validate_transaction(&tx, &self.mempool, &self.chain)?;
+        let current_timestamp = Utc::now().timestamp() as u64;
+        validate_transaction(&tx, &self.mempool, &self.chain, current_timestamp)?;
 
         // Queue to mempool.
         info!("Transaction is valid, adding to mempool: hash={}", &tx_hash);
@@ -594,9 +598,12 @@ impl NodeService {
                 self.on_key_block_registered(&key_block2)?;
             }
             Block::MonetaryBlock(monetary_block) => {
-                validate_sealed_monetary_block(&monetary_block, &self.chain)?;
+                let current_timestamp = Utc::now().timestamp() as u64;
+                validate_sealed_monetary_block(&monetary_block, &self.chain, current_timestamp)?;
                 let monetary_block2 = monetary_block.clone();
-                let (inputs, outputs) = self.chain.register_monetary_block(monetary_block)?;
+                let (inputs, outputs) = self
+                    .chain
+                    .register_monetary_block(monetary_block, current_timestamp)?;
                 self.on_monetary_block_registered(&monetary_block2, inputs, outputs)?;
             }
         }
@@ -1006,6 +1013,7 @@ impl NodeService {
         multisig: SecureSignature,
         multisigmap: BitVector,
     ) {
+        let current_timestamp = Utc::now().timestamp() as u64;
         match block {
             Block::KeyBlock(mut key_block) => {
                 key_block.header.base.multisig = multisig;
@@ -1025,7 +1033,7 @@ impl NodeService {
                 let monetary_block2 = monetary_block.clone();
                 let (inputs, outputs) = self
                     .chain
-                    .register_monetary_block(monetary_block)
+                    .register_monetary_block(monetary_block, current_timestamp)
                     .expect("block is validated before");
                 self.on_monetary_block_registered(&monetary_block2, inputs, outputs)
                     .expect("internal error");

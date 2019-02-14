@@ -150,11 +150,12 @@ impl Blockchain {
             gamma,
             monetary_adjustment,
         };
-        blockchain.load_blockchain();
+        let current_timestamp = Utc::now().timestamp() as u64;
+        blockchain.load_blockchain(current_timestamp);
         blockchain
     }
 
-    fn load_blockchain(&mut self) {
+    fn load_blockchain(&mut self, current_timestamp: u64) {
         let mut blocks = self.database.iter();
 
         let block = blocks.next();
@@ -167,13 +168,13 @@ impl Blockchain {
 
         info!("Loading blockchain from database.");
 
-        self.handle_block(block);
+        self.handle_block(block, current_timestamp);
         for block in blocks {
-            self.handle_block(block);
+            self.handle_block(block, current_timestamp);
         }
     }
 
-    fn handle_block(&mut self, block: Block) {
+    fn handle_block(&mut self, block: Block, current_timestamp: u64) {
         debug!(
             "load saved block hash = {:?}, block = {:?}",
             Hash::digest(&block),
@@ -182,7 +183,7 @@ impl Blockchain {
         match block {
             Block::MonetaryBlock(block) => {
                 let _ = self
-                    .register_monetary_block(block)
+                    .register_monetary_block(block, current_timestamp)
                     .expect("error processing saved monetary block.");
             }
             Block::KeyBlock(block) => {
@@ -344,6 +345,7 @@ impl Blockchain {
     pub fn register_monetary_block(
         &mut self,
         mut block: MonetaryBlock,
+        current_timestamp: u64,
     ) -> Result<(Vec<Output>, Vec<Output>), Error> {
         let block_id = self.blocks.len();
         self.database
@@ -499,8 +501,6 @@ impl Blockchain {
             .map(|(o, _path)| *o.clone())
             .collect();
 
-        let current_timestamp = Utc::now().timestamp() as u64;
-
         // remove pruned outputs
         for input in &pruned {
             if let Output::StakeOutput(o) = input {
@@ -584,7 +584,7 @@ pub mod tests {
         let gamma = input_gamma - output_gamma;
         let block = MonetaryBlock::new(base, gamma, 0, &input_hashes, &outputs);
         block.validate(&inputs).expect("block is valid");
-        blockchain.register_monetary_block(block)?;
+        blockchain.register_monetary_block(block, timestamp)?;
 
         Ok(())
     }
@@ -599,13 +599,16 @@ pub mod tests {
             KeyChain::new_mem(),
         ];
 
+        let current_timestamp = Utc::now().timestamp() as u64;
         let blocks = genesis(&keychains, 100, 1_000_000);
         let mut blockchain = Blockchain::testing();
         for block in blocks {
             match block {
                 Block::KeyBlock(block) => blockchain.register_key_block(block).unwrap(),
                 Block::MonetaryBlock(block) => {
-                    blockchain.register_monetary_block(block).unwrap();
+                    blockchain
+                        .register_monetary_block(block, current_timestamp)
+                        .unwrap();
                 }
             }
         }

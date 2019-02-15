@@ -23,7 +23,6 @@
 
 use crate::error::*;
 use crate::mempool::Mempool;
-use chrono::Utc;
 use failure::ensure;
 use failure::Error;
 use log::*;
@@ -51,6 +50,7 @@ pub(crate) fn validate_transaction(
     tx: &Transaction,
     mempool: &Mempool,
     chain: &Blockchain,
+    current_timestamp: u64,
 ) -> Result<(), Error> {
     //
     // Validation checklist:
@@ -71,8 +71,6 @@ pub(crate) fn validate_transaction(
     //
 
     let tx_hash = Hash::digest(tx);
-
-    let timestamp = Utc::now().timestamp() as u64;
 
     // Check that transaction exists in the mempool.
     if mempool.contains_tx(&tx_hash) {
@@ -110,7 +108,7 @@ pub(crate) fn validate_transaction(
         if let Output::StakeOutput(input) = input {
             chain
                 .escrow
-                .validate_unstake(&input.validator, input_hash, timestamp)?;
+                .validate_unstake(&input.validator, input_hash, current_timestamp)?;
         }
 
         inputs.push(input.clone());
@@ -165,10 +163,17 @@ pub(crate) fn validate_sealed_key_block(
     key_block: &KeyBlock,
     chain: &Blockchain,
 ) -> Result<(), Error> {
-    // We can accept any keyblock if we on bootstraping phase.
     let block_hash = Hash::digest(&key_block);
-    // Checked by upper levels.
-    assert_eq!(key_block.header.base.epoch, chain.epoch + 1);
+
+    // Check epoch.
+    if key_block.header.base.epoch != chain.epoch + 1 {
+        return Err(NodeError::OutOfOrderBlockEpoch(
+            block_hash,
+            chain.epoch + 1,
+            key_block.header.base.epoch,
+        )
+        .into());
+    }
 
     let leader = key_block.header.leader.clone();
     let validators = chain.escrow.multiget(&key_block.header.witnesses);
@@ -324,12 +329,19 @@ pub(crate) fn validate_proposed_monetary_block(
 pub(crate) fn validate_sealed_monetary_block(
     monetary_block: &MonetaryBlock,
     chain: &Blockchain,
+    current_timestamp: u64,
 ) -> Result<(), Error> {
-    let timestamp = Utc::now().timestamp() as u64;
     let block_hash = Hash::digest(&monetary_block);
 
-    // Checked by upper levels.
-    assert_eq!(monetary_block.header.base.epoch, chain.epoch);
+    // Check epoch.
+    if monetary_block.header.base.epoch != chain.epoch {
+        return Err(NodeError::OutOfOrderBlockEpoch(
+            block_hash,
+            chain.epoch,
+            monetary_block.header.base.epoch,
+        )
+        .into());
+    }
 
     // Check BLS multi-signature.
     if !check_multi_signature(
@@ -354,7 +366,7 @@ pub(crate) fn validate_sealed_monetary_block(
             let input_hash = Hash::digest(input);
             chain
                 .escrow
-                .validate_unstake(&input.validator, &input_hash, timestamp)?;
+                .validate_unstake(&input.validator, &input_hash, current_timestamp)?;
         }
     }
 

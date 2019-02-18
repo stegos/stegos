@@ -2,6 +2,7 @@
 FROM rust:1.32-slim-stretch AS builder
 LABEL maintainer="Stegos AG <info@stegos.cc>"
 
+RUN apt-get update && apt-get install -y git-core
 ADD . /usr/src/stegos
 WORKDIR /usr/src/stegos
 RUN ./ci-scripts/install-deps.sh

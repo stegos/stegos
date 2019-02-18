@@ -27,12 +27,12 @@ use atty;
 use clap;
 use clap::{App, Arg, ArgMatches};
 use dirs;
+use failure::Error;
 use log::*;
 use log4rs::append::console::ConsoleAppender;
 use log4rs::config::{Appender, Config as LogConfig, Logger, Root};
 use log4rs::encode::pattern::PatternEncoder;
 use log4rs::{Error as LogError, Handle as LogHandle};
-use std::error::Error;
 use std::path::PathBuf;
 use std::process;
 use stegos_keychain::*;
@@ -44,7 +44,7 @@ use tokio::runtime::Runtime;
 
 use crate::console::*;
 
-fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Box<dyn Error>> {
+fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
     if let Some(cfg_path) = args.value_of_os("config") {
         // Use --config argument for configuration.
         return Ok(config::from_file(cfg_path)?);
@@ -60,7 +60,7 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Box<dyn E
             match e {
                 // Don't raise an error on missing configuration file.
                 config::ConfigError::NotFoundError => Ok(Default::default()),
-                _ => return Err(Box::new(e)),
+                _ => return Err(e.into()),
             }
         }
     }
@@ -92,7 +92,7 @@ fn initialize_logger(cfg: &config::Config) -> Result<LogHandle, LogError> {
     Ok(handle)
 }
 
-fn run() -> Result<(), Box<dyn Error>> {
+fn run() -> Result<(), Error> {
     let name = "Stegos";
     let version = format!(
         "{} ({} {})",

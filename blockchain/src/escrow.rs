@@ -94,7 +94,11 @@ impl Escrow {
     }
 
     ///
-    /// Check that the stake can be unstaked.
+    /// Check that the stake is not locked.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stake doesn't exist.
     ///
     pub fn validate_unstake(
         &self,
@@ -107,16 +111,10 @@ impl Escrow {
             output_hash: output_hash.clone(),
         };
 
-        let val = match self.escrow.get(&key) {
-            None => {
-                return Err(EscrowError::NoSuchStake(
-                    key.validator_pkey,
-                    key.output_hash,
-                ));
-            }
-            Some(e) => e,
-        };
+        // The stake must exists.
+        let val = self.escrow.get(&key).expect("stake exists");
 
+        // Check bonding time.
         if val.bonding_timestamp >= timestamp {
             return Err(EscrowError::StakeIsLocked(
                 key.validator_pkey,
@@ -210,8 +208,6 @@ impl Escrow {
 
 #[derive(Debug, Fail, PartialEq, Eq)]
 pub enum EscrowError {
-    #[fail(display = "No such stake: validator={}, stake={}", _0, _1)]
-    NoSuchStake(SecurePublicKey, Hash),
     #[fail(
         display = "Stake is locked: validator={}, stake={}, bonding_time={}, current_time={}",
         _0, _1, _2, _3

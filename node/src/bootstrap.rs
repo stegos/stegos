@@ -19,6 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use chrono::Utc;
 use clap::{crate_version, App, Arg};
 use log::*;
 use protobuf::Message;
@@ -137,7 +138,8 @@ fn main() {
     }
 
     info!("Generating genesis blocks...");
-    let blocks = genesis(&keychains, stake, coins);
+    let timestamp = Utc::now().timestamp() as u64;
+    let blocks = genesis(&keychains, stake, coins, timestamp);
     for (i, block) in blocks.iter().enumerate() {
         let block_data = block.into_proto();
         let block_data = block_data.write_to_bytes().unwrap();

@@ -23,20 +23,18 @@
 
 use crate::block::*;
 use crate::output::*;
-use chrono::prelude::Utc;
 use std::collections::BTreeSet;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure as cosi_keys;
 use stegos_keychain::KeyChain;
 
 /// Genesis blocks.
-pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64) -> Vec<Block> {
+pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64, timestamp: u64) -> Vec<Block> {
     let mut blocks = Vec::with_capacity(2);
 
     // Both block are created at the same time in the same epoch.
     let version: u64 = 1;
     let epoch: u64 = 1;
-    let timestamp = Utc::now().timestamp() as u64;
 
     //
     // Create initial Monetary Block.

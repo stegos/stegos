@@ -117,7 +117,6 @@ impl Transaction {
         fee: i64,
     ) -> Result<Self, Error> {
         assert!(fee >= 0);
-        assert!(inputs.len() > 0);
 
         //
         // Compute S_eff = N * S_M + \sum{\delta_i * gamma_i} + \sum{\gamma_i} - \sum{gamma_j},
@@ -141,8 +140,8 @@ impl Transaction {
                     eff_skey += payload.gamma;
                 }
                 Output::StakeOutput(o) => {
-                    let delta = o.decrypt_payload(skey)?;
-                    eff_skey += delta;
+                    let payload = o.decrypt_payload(skey)?;
+                    eff_skey += payload.delta;
                 }
             }
 
@@ -195,13 +194,13 @@ impl Transaction {
 
         // Check that transaction has inputs.
         if self.body.txins.is_empty() {
-            let tx_hash = Hash::digest(&self.body);
+            let tx_hash = Hash::digest(&self);
             return Err(TransactionError::NoInputs(tx_hash).into());
         }
 
         // Check fee.
         if self.body.fee < 0 {
-            let tx_hash = Hash::digest(&self.body);
+            let tx_hash = Hash::digest(&self);
             return Err(TransactionError::NegativeFee(tx_hash).into());
         }
 
@@ -222,7 +221,7 @@ impl Transaction {
         for (txin_hash, txin) in self.body.txins.iter().zip(inputs) {
             assert_eq!(Hash::digest(txin), *txin_hash);
             if !txins_set.insert(*txin_hash) {
-                let tx_hash = Hash::digest(&self.body);
+                let tx_hash = Hash::digest(&self);
                 return Err(TransactionError::DuplicateInput(tx_hash, *txin_hash).into());
             }
             match txin {
@@ -241,7 +240,7 @@ impl Transaction {
         for txout in &self.body.txouts {
             let txout_hash = Hash::digest(txout);
             if !txouts_set.insert(txout_hash) {
-                let tx_hash = Hash::digest(&self.body);
+                let tx_hash = Hash::digest(&self);
                 return Err(TransactionError::DuplicateOutput(tx_hash, txout_hash).into());
             }
             match txout {
@@ -281,7 +280,7 @@ impl Transaction {
 
         // Check the monetary balance
         if pedersen_commitment_diff != self.body.gamma * (*G) {
-            let tx_hash = Hash::digest(&self.body);
+            let tx_hash = Hash::digest(&self);
             return Err(TransactionError::InvalidMonetaryBalance(tx_hash).into());
         }
 
@@ -303,7 +302,7 @@ impl Transaction {
         // Check signature
         match validate_sig(&tx_hash, &self.sig, &eff_pkey)? {
             true => Ok(()),
-            false => Err(TransactionError::InvalidSignature(Hash::digest(&self.body)).into()),
+            false => Err(TransactionError::InvalidSignature(Hash::digest(&self)).into()),
         }
     }
 
@@ -358,6 +357,9 @@ pub mod tests {
     use stegos_crypto::curve1174::cpt::make_random_keys;
     use stegos_crypto::pbc::secure;
 
+    ///
+    /// Tests that transactions without inputs are prohibited.
+    ///
     #[test]
     pub fn no_inputs() {
         let (skey, pkey, _sig) = make_random_keys();
@@ -373,6 +375,9 @@ pub mod tests {
         tx.validate(&[]).expect_err("tx is invalid");
     }
 
+    ///
+    /// Tests that transactions without outputs are allowed.
+    ///
     #[test]
     pub fn no_outputs() {
         // No outputs
@@ -381,6 +386,9 @@ pub mod tests {
         tx.validate(&inputs).expect("transaction is valid");
     }
 
+    ///
+    /// Tests validation of PaymentOutput.
+    ///
     #[test]
     pub fn payment_utxo() {
         let (skey0, pkey0, _sig0) = make_random_keys();
@@ -391,8 +399,57 @@ pub mod tests {
         let amount: i64 = 1_000_000;
         let fee: i64 = 1;
 
-        let (tx, inputs, _outputs) = Transaction::new_test(&skey0, &pkey0, 100, 2, 200, 1, 0);
-        tx.validate(&inputs).expect("transaction is valid");
+        //
+        // Zero amount.
+        //
+        {
+            let (tx, inputs, _outputs) = Transaction::new_test(&skey0, &pkey0, 0, 2, 0, 1, 0);
+            tx.validate(&inputs).expect("transaction is valid");
+        }
+
+        //
+        // Non-zero amount.
+        //
+        {
+            let (tx, inputs, _outputs) = Transaction::new_test(&skey0, &pkey0, 100, 2, 200, 1, 0);
+            tx.validate(&inputs).expect("transaction is valid");
+        }
+
+        //
+        // Negative amount.
+        //
+        {
+            let (tx, inputs, _outputs) = Transaction::new_test(&skey0, &pkey0, 0, 1, -1, 1, 0);
+            let e = tx.validate(&inputs).expect_err("transaction is invalid");
+            match e.downcast::<OutputError>().unwrap() {
+                OutputError::InvalidBulletProof => {}
+                _ => panic!(),
+            }
+        }
+
+        //
+        // Mutated recipient.
+        //
+        {
+            let (mut tx, inputs, _outputs) =
+                Transaction::new_test(&skey0, &pkey0, 100, 1, 100, 1, 0);
+            tx.validate(&inputs).expect("transaction is valid");
+            let output = &mut tx.body.txouts[0];
+            match output {
+                Output::PaymentOutput(ref mut o) => {
+                    let pt = Pt::random();
+                    o.recipient = pt.into();
+                }
+                _ => panic!(),
+            };
+            let e = tx.validate(&inputs).expect_err("transaction is invalid");
+            match e.downcast::<TransactionError>().unwrap() {
+                TransactionError::InvalidSignature(tx_hash) => {
+                    assert_eq!(tx_hash, Hash::digest(&tx))
+                }
+                _ => panic!(),
+            }
+        }
 
         // "genesis" output by 0
         let (output0, _gamma0) =
@@ -500,6 +557,9 @@ pub mod tests {
         };
     }
 
+    ///
+    /// Tests validation of StakeOutput.
+    ///
     #[test]
     pub fn stake_utxo() {
         let (skey0, _pkey0, _sig0) = make_random_keys();
@@ -576,5 +636,31 @@ pub mod tests {
             },
             _ => panic!(),
         };
+
+        //
+        // Mutated recipient.
+        //
+        let (input, _inputs_gamma) =
+            Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
+        let inputs = [input];
+        let output = Output::new_stake(timestamp, &skey1, &pkey1, &secure_pkey1, amount - fee)
+            .expect("keys are valid");
+        let outputs_gamma = Fr::zero();
+        let mut tx = Transaction::new(&skey1, &inputs, &[output], outputs_gamma, fee)
+            .expect("keys are valid");
+        tx.validate(&inputs).expect("tx is valid");
+        let output = &mut tx.body.txouts[0];
+        match output {
+            Output::StakeOutput(ref mut o) => {
+                let pt = Pt::random();
+                o.recipient = pt.into();
+            }
+            _ => panic!(),
+        };
+        let e = tx.validate(&inputs).expect_err("transaction is invalid");
+        match e.downcast::<TransactionError>().unwrap() {
+            TransactionError::InvalidSignature(tx_hash) => assert_eq!(tx_hash, Hash::digest(&tx)),
+            _ => panic!(),
+        }
     }
 }

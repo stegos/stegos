@@ -168,6 +168,21 @@ impl PaymentPayloadData {
             PaymentPayloadData::ContentHash(_) => 1,
         }
     }
+
+    pub fn validate(&self) -> Result<(), Error> {
+        match &self {
+            PaymentPayloadData::Comment(comment) => {
+                let data_bytes = comment.as_bytes();
+                if data_bytes.len() > PAYMENT_DATA_LEN - 2 {
+                    return Err(
+                        OutputError::DataIsTooLong(PAYMENT_DATA_LEN - 2, data_bytes.len()).into(),
+                    );
+                }
+            }
+            PaymentPayloadData::ContentHash(_hash) => {}
+        }
+        Ok(())
+    }
 }
 
 /// Unpacked encrypted payload of PaymentOutput.
@@ -180,7 +195,7 @@ pub struct PaymentPayload {
 }
 
 impl PaymentPayload {
-    /// Serialize and encrypt payload using AES.
+    /// Serialize and encrypt payload.
     fn encrypt(&self, pkey: &PublicKey) -> Result<EncryptedPayload, Error> {
         let mut payload: [u8; PAYMENT_PAYLOAD_LEN] = [0u8; PAYMENT_PAYLOAD_LEN];
         let mut pos: usize = 0;
@@ -200,9 +215,6 @@ impl PaymentPayload {
         pos += delta_bytes.len();
 
         // Amount.
-        if self.amount < 0 {
-            return Err(OutputError::NegativeAmount(self.amount).into());
-        }
         let amount_bytes: [u8; 8] = unsafe { transmute(self.amount.to_le()) };
         payload[pos..pos + amount_bytes.len()].copy_from_slice(&amount_bytes);
         pos += amount_bytes.len();
@@ -210,14 +222,11 @@ impl PaymentPayload {
         // Data.
         payload[pos] = self.data.discriminant();
         pos += 1;
+        self.data.validate().expect("is valid");
         match &self.data {
             PaymentPayloadData::Comment(comment) => {
                 let data_bytes = comment.as_bytes();
-                if data_bytes.len() > PAYMENT_DATA_LEN - 2 {
-                    return Err(
-                        OutputError::DataIsTooLong(PAYMENT_DATA_LEN - 2, data_bytes.len()).into(),
-                    );
-                }
+                assert!(data_bytes.len() <= PAYMENT_DATA_LEN - 2);
                 payload[pos..pos + data_bytes.len()].copy_from_slice(data_bytes);
                 pos += data_bytes.len();
             }
@@ -236,6 +245,7 @@ impl PaymentPayload {
         Ok(payload)
     }
 
+    /// Decrypt and deserialize payload.
     fn decrypt(payload: &EncryptedPayload, skey: &SecretKey) -> Result<Self, Error> {
         if payload.ctxt.len() != PAYMENT_PAYLOAD_LEN {
             return Err(
@@ -314,6 +324,61 @@ impl PaymentPayload {
     }
 }
 
+/// Unpacked encrypted payload of PaymentOutput.
+#[derive(Debug, Eq, PartialEq)]
+pub struct StakePayload {
+    pub delta: Fr,
+}
+
+impl StakePayload {
+    /// Serialize and encrypt payload.
+    fn encrypt(&self, pkey: &PublicKey) -> Result<EncryptedPayload, Error> {
+        // Delta.
+        let delta_bytes: [u8; 32] = self.delta.to_lev_u8();
+
+        let payload: Vec<u8> = [&STAKE_PAYLOAD_MAGIC[..], &delta_bytes[..]].concat();
+
+        // Ensure that the total length of package is valid.
+        assert_eq!(payload.len(), STAKE_PAYLOAD_LEN);
+
+        // Encrypt payload.
+        let payload = aes_encrypt(&payload, &pkey)?;
+        Ok(payload)
+    }
+
+    /// Decrypt and deserialize payload.
+    fn decrypt(payload: &EncryptedPayload, skey: &SecretKey) -> Result<Self, Error> {
+        if payload.ctxt.len() != STAKE_PAYLOAD_LEN {
+            return Err(
+                OutputError::InvalidPayloadLength(STAKE_PAYLOAD_LEN, payload.ctxt.len()).into(),
+            );
+        }
+        let payload: Vec<u8> = aes_decrypt(&payload, &skey)?;
+        assert_eq!(payload.len(), STAKE_PAYLOAD_LEN);
+        let mut pos: usize = 0;
+
+        // Magic.
+        let mut magic: [u8; 4] = [0u8; 4];
+        magic.copy_from_slice(&payload[pos..pos + 4]);
+        pos += 4;
+        if magic != STAKE_PAYLOAD_MAGIC {
+            // Invalid payload or invalid secret key supplied.
+            return Err(OutputError::PayloadDecryptionError.into());
+        }
+
+        // Delta.
+        let mut delta_bytes: [u8; 32] = [0u8; 32];
+        delta_bytes.copy_from_slice(&payload[pos..pos + 32]);
+        pos += delta_bytes.len();
+        let delta: Fr = Fr::from_lev_u8(delta_bytes);
+
+        assert_eq!(pos, STAKE_PAYLOAD_LEN);
+
+        let payload = StakePayload { delta };
+        Ok(payload)
+    }
+}
+
 impl PaymentOutput {
     /// Create a new PaymentOutput with generic payload.
     pub fn with_payload(
@@ -323,8 +388,6 @@ impl PaymentOutput {
         amount: i64,
         data: PaymentPayloadData,
     ) -> Result<(Self, Fr), Error> {
-        assert!(amount >= 0);
-
         // Create range proofs.
         let (proof, gamma) = make_range_proof(amount);
 
@@ -382,7 +445,9 @@ impl StakeOutput {
         let (cloaked_pkey, delta) = cloak_key(sender_skey, recipient_pkey, &gamma, timestamp)?;
 
         // Encrypt payload.
-        let payload = Self::encrypt_payload(delta, recipient_pkey)?;
+        let payload = StakePayload { delta };
+        // NOTE: real public key should be used to encrypt payload
+        let payload = payload.encrypt(recipient_pkey)?;
 
         let output = StakeOutput {
             recipient: cloaked_pkey,
@@ -394,44 +459,9 @@ impl StakeOutput {
         Ok(output)
     }
 
-    /// Encrypt payload for StakeOutput.
-    fn encrypt_payload(delta: Fr, pkey: &PublicKey) -> Result<EncryptedPayload, CryptoError> {
-        let delta_bytes: [u8; 32] = delta.to_lev_u8();
-
-        let payload: Vec<u8> = [&STAKE_PAYLOAD_MAGIC[..], &delta_bytes[..]].concat();
-
-        // Ensure that the total length of package is valid.
-        assert_eq!(payload.len(), STAKE_PAYLOAD_LEN);
-
-        // Encrypt payload it.
-        aes_encrypt(&payload, &pkey)
-    }
-
     /// Decrypt payload of StakeOutput.
-    pub fn decrypt_payload(&self, skey: &SecretKey) -> Result<Fr, Error> {
-        if self.payload.ctxt.len() != STAKE_PAYLOAD_LEN {
-            return Err(OutputError::InvalidPayloadLength(
-                STAKE_PAYLOAD_LEN,
-                self.payload.ctxt.len(),
-            )
-            .into());
-        }
-        let payload: Vec<u8> = aes_decrypt(&self.payload, &skey)?;
-        assert_eq!(payload.len(), STAKE_PAYLOAD_LEN);
-
-        let mut magic: [u8; 4] = [0u8; 4];
-        let mut delta_bytes: [u8; 32] = [0u8; 32];
-        magic.copy_from_slice(&payload[0..4]);
-        delta_bytes.copy_from_slice(&payload[4..36]);
-
-        if magic != STAKE_PAYLOAD_MAGIC {
-            // Invalid payload or invalid secret key supplied.
-            return Err(OutputError::PayloadDecryptionError.into());
-        }
-
-        let delta: Fr = Fr::from_lev_u8(delta_bytes);
-
-        Ok(delta)
+    pub fn decrypt_payload(&self, skey: &SecretKey) -> Result<StakePayload, Error> {
+        StakePayload::decrypt(&self.payload, skey)
     }
 }
 
@@ -520,6 +550,9 @@ pub mod tests {
         thread_rng().sample_iter(&Alphanumeric).take(len).collect()
     }
 
+    ///
+    /// Tests encoding/decoding of PaymentPayload used by PaymentOutput.
+    ///
     #[test]
     fn payment_payload() {
         use simple_logger;
@@ -573,17 +606,8 @@ pub mod tests {
         rt(&payload, &skey, &pkey);
 
         // Overflow.
-        let gamma: Fr = Fr::random();
-        let delta: Fr = Fr::random();
-        let amount: i64 = 100500;
         let data = PaymentPayloadData::Comment(random_string(PAYMENT_DATA_LEN - 1));
-        let payload = PaymentPayload {
-            delta,
-            gamma,
-            amount,
-            data,
-        };
-        let e = payload.encrypt(&pkey).unwrap_err();
+        let e = data.validate().unwrap_err();
         match e.downcast::<OutputError>().unwrap() {
             OutputError::DataIsTooLong(max, got) => {
                 assert_eq!(max, PAYMENT_DATA_LEN - 2);
@@ -678,6 +702,62 @@ pub mod tests {
         }
     }
 
+    ///
+    /// Tests encoding/decoding of StakePayload used by StakeOutput.
+    ///
+    #[test]
+    fn stake_payload() {
+        use simple_logger;
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+
+        fn rt(payload: &StakePayload, skey: &SecretKey, pkey: &PublicKey) {
+            let encrypted = payload.encrypt(&pkey).expect("keys are valid");
+            let payload2 = StakePayload::decrypt(&encrypted, &skey).expect("keys are valid");
+            assert_eq!(payload, &payload2);
+        }
+
+        let (skey, pkey, _sig) = make_random_keys();
+
+        // Basic.
+        let delta: Fr = Fr::random();
+        let payload = StakePayload { delta };
+        rt(&payload, &skey, &pkey);
+
+        //
+        // Corrupted payload.
+        //
+        let delta: Fr = Fr::random();
+        let payload = StakePayload { delta };
+        let encrypted = payload.encrypt(&pkey).expect("keys are valid");
+        let raw = aes_decrypt(&encrypted, &skey).expect("keys are valid");
+
+        // Invalid length.
+        let mut invalid = raw.clone();
+        invalid.push(0);
+        let invalid = aes_encrypt(&invalid, &pkey).expect("keys are valid");
+        let e = StakePayload::decrypt(&invalid, &skey).unwrap_err();
+        match e.downcast::<OutputError>().unwrap() {
+            OutputError::InvalidPayloadLength(expected, got) => {
+                assert_eq!(expected, STAKE_PAYLOAD_LEN);
+                assert_eq!(got, STAKE_PAYLOAD_LEN + 1);
+            }
+            _ => unreachable!(),
+        }
+
+        // Invalid magic.
+        let mut invalid = raw.clone();
+        invalid[3] = 5;
+        let invalid = aes_encrypt(&invalid, &pkey).expect("keys are valid");
+        let e = StakePayload::decrypt(&invalid, &skey).unwrap_err();
+        match e.downcast::<OutputError>().unwrap() {
+            OutputError::PayloadDecryptionError => {}
+            _ => unreachable!(),
+        }
+    }
+
+    ///
+    /// Tests PaymentOutput encryption/decryption.
+    ///
     #[test]
     pub fn payment_encrypt_decrypt() {
         let (skey1, _pkey1, _sig1) = make_random_keys();
@@ -706,8 +786,11 @@ pub mod tests {
         }
     }
 
+    ///
+    /// Tests StakeOutput encryption/decryption.
+    ///
     #[test]
-    pub fn escrow_encrypt_decrypt() {
+    pub fn stake_encrypt_decrypt() {
         let (skey1, _pkey1, _sig1) = make_random_keys();
         let (skey2, pkey2, _sig2) = make_random_keys();
         let (_secure_skey1, secure_pkey1, _secure_sig1) = secure::make_random_keys();
@@ -717,7 +800,7 @@ pub mod tests {
 
         let output = StakeOutput::new(timestamp, &skey1, &pkey2, &secure_pkey1, amount)
             .expect("encryption successful");
-        let _delta2 = output
+        let _payload = output
             .decrypt_payload(&skey2)
             .expect("decryption successful");
 

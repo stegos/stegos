@@ -264,7 +264,7 @@ impl WalletService {
                 }
             }
             Output::StakeOutput(o) => {
-                if let Ok(_delta) = o.decrypt_payload(&self.skey) {
+                if let Ok(_payload) = o.decrypt_payload(&self.skey) {
                     info!("Staked money to escrow: hash={}, amount={}", hash, o.amount);
                     let missing = self.unspent_stakes.insert(hash, o);
                     assert!(missing.is_none());
@@ -290,7 +290,7 @@ impl WalletService {
                 }
             }
             Output::StakeOutput(o) => {
-                if let Ok(_delta) = o.decrypt_payload(&self.skey) {
+                if let Ok(_payload) = o.decrypt_payload(&self.skey) {
                     info!(
                         "Unstaked money from escrow: hash={}, amount={}",
                         hash, o.amount

@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::config::NetworkConfig;
 use futures::prelude::*;
 use libp2p::core::{
     protocols_handler::ProtocolsHandler,
@@ -33,7 +34,6 @@ use std::{
     marker::PhantomData,
     time::Duration,
 };
-use stegos_config::ConfigNetwork;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::timer::Interval;
 use void::Void;
@@ -61,7 +61,7 @@ pub struct Ncp<TSubstream> {
 
 impl<TSubstream> Ncp<TSubstream> {
     /// Creates a NetworkBehaviour for NCP.
-    pub fn new(config: &ConfigNetwork) -> Self {
+    pub fn new(config: &NetworkConfig) -> Self {
         let mut events = VecDeque::new();
 
         for addr in config.seed_nodes.iter() {

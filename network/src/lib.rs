@@ -21,10 +21,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+mod config;
 mod libp2p_network;
 mod ncp;
 pub mod peerstore;
 pub mod unicast_send;
+pub use config::*;
 
 use failure::{Error, Fail};
 use futures::sync::mpsc;

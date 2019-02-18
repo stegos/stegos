@@ -7,7 +7,6 @@ build = "build.rs"
 edition = "2018"
 
 [dependencies]
-stegos_config = { path = "../config" }
 stegos_consensus = { path = "../consensus" }
 stegos_crypto = { path = "../crypto" }
 stegos_blockchain = { path = "../blockchain" }

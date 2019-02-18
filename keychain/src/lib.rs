@@ -21,13 +21,14 @@
 
 #![deny(warnings)]
 
+mod config;
 pub mod pem;
+pub use config::*;
 
 use failure::{Error, Fail};
 use log::*;
 use std::fs;
 use std::path::Path;
-use stegos_config::ConfigKeyChain;
 use stegos_crypto::curve1174::cpt;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
@@ -79,7 +80,7 @@ pub enum KeyChainError {
 }
 
 impl KeyChain {
-    pub fn new(cfg: &ConfigKeyChain) -> Result<Self, Error> {
+    pub fn new(cfg: &KeyChainConfig) -> Result<Self, Error> {
         let skey_path = Path::new(&cfg.private_key);
         let pkey_path = Path::new(&cfg.public_key);
 

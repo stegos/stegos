@@ -28,12 +28,13 @@ use failure::Error;
 use log::*;
 use std::collections::HashMap;
 use stegos_blockchain::*;
-use stegos_config::*;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::curve1174::cpt::SecretKey;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
+use stegos_node::PAYMENT_FEE;
+use stegos_node::STAKE_FEE;
 
 /// Create a new payment transaction.
 pub fn create_payment_transaction(

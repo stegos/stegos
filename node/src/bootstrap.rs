@@ -26,8 +26,8 @@ use simple_logger;
 use std::fs;
 use std::process;
 use stegos_blockchain::genesis;
-use stegos_config::ConfigKeyChain;
 use stegos_keychain::KeyChain;
+use stegos_keychain::KeyChainConfig;
 use stegos_serialization::traits::ProtoConvert;
 
 fn main() {
@@ -120,7 +120,7 @@ fn main() {
     info!("Generating genesis keys...");
     let mut keychains = Vec::<KeyChain>::new();
     for i in 0..keys {
-        let config = ConfigKeyChain {
+        let config = KeyChainConfig {
             private_key: format!("stegos{:02}.skey", i + 1),
             public_key: format!("stegos{:02}.pkey", i + 1),
         };

@@ -23,6 +23,9 @@
 
 use crate::error::*;
 use crate::mempool::Mempool;
+use crate::BLOCK_REWARD;
+use crate::PAYMENT_FEE;
+use crate::STAKE_FEE;
 use failure::ensure;
 use failure::Error;
 use log::*;
@@ -35,9 +38,6 @@ use stegos_blockchain::Output;
 use stegos_blockchain::OutputError;
 use stegos_blockchain::Transaction;
 use stegos_blockchain::TransactionError;
-use stegos_config::BLOCK_REWARD;
-use stegos_config::PAYMENT_FEE;
-use stegos_config::STAKE_FEE;
 use stegos_consensus::check_multi_signature;
 use stegos_consensus::BlockConsensus;
 use stegos_crypto::bulletproofs::validate_range_proof;

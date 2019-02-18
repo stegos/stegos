@@ -1,7 +1,7 @@
-//! Blockchain Implementation.
-
 //
-// Copyright (c) 2018 Stegos
+// MIT License
+//
+// Copyright (c) 2018-2019 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -21,25 +21,20 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-mod block;
-mod blockchain;
-mod config;
-mod error;
-mod escrow;
-mod genesis;
-mod merkle;
-mod output;
-pub mod protos;
-mod storage;
-mod transaction;
+use serde_derive::{Deserialize, Serialize};
 
-pub use crate::block::*;
-pub use crate::blockchain::*;
-pub use crate::config::*;
-pub use crate::error::*;
-pub use crate::escrow::*;
-pub use crate::genesis::*;
-pub use crate::merkle::*;
-pub use crate::output::*;
-pub use crate::storage::*;
-pub use crate::transaction::*;
+/// Storage configuration.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(default)]
+pub struct StorageConfig {
+    /// Database path
+    pub database_path: String,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        StorageConfig {
+            database_path: "database".to_string(),
+        }
+    }
+}

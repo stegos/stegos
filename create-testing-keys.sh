@@ -19,5 +19,5 @@ for i in `seq -f "%02g" 1 $NUM_KEYS`; do
 done
 
 # Genesis block
-mkdir -p node/data
-mv genesis0.bin genesis1.bin node/data/
+mkdir -p chains/dev/
+mv genesis0.bin genesis1.bin chains/dev/

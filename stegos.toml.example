@@ -2,6 +2,7 @@
 ## Sample configuration file for Stegos
 ##
 [general]
+chain = "testnet"
 log4rs_config = "stegos-log4rs.toml"
 
 [keychain]

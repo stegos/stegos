@@ -21,9 +21,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use failure::Fail;
 use serde_derive::{Deserialize, Serialize};
-use std::error;
-use std::fmt;
 use std::fs::File;
 use std::io;
 use std::io::ErrorKind;
@@ -71,6 +70,8 @@ impl Default for Config {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(default)]
 pub struct GeneralConfig {
+    /// Chain name.
+    pub chain: String,
     /// Log4RS configuration file
     pub log4rs_config: String,
 }
@@ -78,42 +79,24 @@ pub struct GeneralConfig {
 impl Default for GeneralConfig {
     fn default() -> Self {
         GeneralConfig {
+            chain: "testnet".to_string(),
             log4rs_config: "stegos-log4rs.toml".to_string(),
         }
     }
 }
 
 /// Error type for wrapping configuration errors.
-#[derive(Debug)]
+#[derive(Debug, Fail)]
 pub enum ConfigError {
     /// Caused if configuration file is missing.
+    #[fail(display = "Configuration file not found.")]
     NotFoundError,
     /// Caused on input/output errors.
+    #[fail(display = "Failed to read configuration file: {}.", _0)]
     IOError(io::Error),
     /// Caused by parse errors.
+    #[fail(display = "Failed to parse configuration file: {}.", _0)]
     ParseError(toml::de::Error),
-}
-
-/// Display implementation for ConfigError.
-impl fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ConfigError::NotFoundError => write!(f, "Configuration file not found"),
-            ConfigError::IOError(e) => write!(f, "Failed to read configuration file: {}", e),
-            ConfigError::ParseError(e) => write!(f, "Failed to parse configuration file: {}", e),
-        }
-    }
-}
-
-/// Error implementation for ConfigError.
-impl error::Error for ConfigError {
-    fn cause(&self) -> Option<&dyn error::Error> {
-        match *self {
-            ConfigError::IOError(ref e) => Some(e),
-            ConfigError::ParseError(ref e) => Some(e),
-            _ => None,
-        }
-    }
 }
 
 ///

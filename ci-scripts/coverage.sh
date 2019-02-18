@@ -11,17 +11,16 @@ make install
 cd ../..
 rm -rf kcov-36
 modules='stegos
-         stegos_api
          stegos_blockchain
-         stegos_config
          stegos_consensus
          stegos_crypto
          stegos_keychain
          stegos_network
-         stegos_randhound
-         stegos_runtime
-         stegos_storage
-         stegos_txpool'
+         stegos_node
+         stegos_serialization
+         stegos_txpool
+         stegos_wallet
+         '
 for m in ${modules}; do 
     for file in target/debug/${m}-*[^\.d]; do 
         mkdir -p "target/cov/$(basename $file)"

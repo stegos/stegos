@@ -52,7 +52,6 @@ use protobuf::Message;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 use stegos_blockchain::*;
-use stegos_config::*;
 use stegos_consensus::{BlockConsensus, BlockConsensusMessage, BlockProof, MonetaryBlockProof};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
@@ -90,7 +89,7 @@ pub struct Node {
 impl Node {
     /// Create a new blockchain node.
     pub fn new(
-        cfg: &Config,
+        cfg: &StorageConfig,
         keys: KeyChain,
         network: Network,
     ) -> Result<(impl Future<Item = (), Error = ()>, Node), Error> {
@@ -181,6 +180,12 @@ const CONSENSUS_TIMER: Duration = Duration::from_secs(30);
 const SEALED_BLOCK_IN_EPOCH: usize = 5;
 /// Max difference in timestamps of leader and witnesses.
 const TIME_TO_RECEIVE_BLOCK: u64 = 10 * 60;
+/// Fixed reward per block.
+const BLOCK_REWARD: i64 = 60;
+/// Fixed fee for payment transactions.
+pub const PAYMENT_FEE: i64 = 1;
+/// Fixed fee for the stake transactions.
+pub const STAKE_FEE: i64 = 1;
 
 #[derive(Clone, Debug)]
 enum NodeMessage {
@@ -247,12 +252,12 @@ struct NodeService {
 impl NodeService {
     /// Constructor.
     fn new(
-        cfg: &Config,
+        cfg: &StorageConfig,
         keys: KeyChain,
         network: Network,
         inbox: UnboundedReceiver<NodeMessage>,
     ) -> Result<Self, Error> {
-        let chain = Blockchain::new(&cfg.general);
+        let chain = Blockchain::new(&cfg);
         Self::with_blockchain(chain, keys, network, inbox)
     }
 

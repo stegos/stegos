@@ -18,7 +18,6 @@ pnet = "0.21"
 protobuf = "2.3"
 rand = "0.6"
 smallvec = "0.6"
-stegos_config = { path = "../config"}
 stegos_crypto = { path = "../crypto"}
 stegos_keychain = { path = "../keychain"}
 tokio = "0.1"
@@ -29,6 +28,8 @@ unsigned-varint = "0.2"
 void = "1.0"
 libp2p = "0.2"
 stegos_serialization = { path = "../serialization"}
+serde = "1.0"
+serde_derive = "1.0"
 
 [build-dependencies]
 stegos_serialization = { path = "../serialization"}

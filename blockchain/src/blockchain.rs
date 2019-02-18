@@ -22,6 +22,7 @@
 // SOFTWARE.
 
 use crate::block::*;
+use crate::config::*;
 use crate::error::*;
 use crate::escrow::*;
 use crate::merkle::*;
@@ -33,7 +34,6 @@ use log::*;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::time::Instant;
-use stegos_config::ConfigGeneral;
 use stegos_crypto::bulletproofs::fee_a;
 use stegos_crypto::curve1174::cpt::Pt;
 use stegos_crypto::curve1174::ecpt::ECp;
@@ -107,7 +107,7 @@ impl Blockchain {
     // Public API
     //----------------------------------------------------------------------------------------------
 
-    pub fn new(config: &ConfigGeneral) -> Blockchain {
+    pub fn new(config: &StorageConfig) -> Blockchain {
         let database = ListDb::new(&config.database_path);
         Self::with_db(database)
     }

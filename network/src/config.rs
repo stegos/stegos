@@ -1,5 +1,7 @@
 //
-// Copyright (c) 2018 Stegos
+// MIT License
+//
+// Copyright (c) 2018-2019 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -19,86 +21,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use rand::distributions::Alphanumeric;
-use rand::{thread_rng, Rng};
 use serde_derive::{Deserialize, Serialize};
-
-///! Configuration Structures.
-
-/// Configuration root
-///
-/// Every member of this structure is deserialized from corresponding section
-/// of stegos.toml file.
-///
-/// Don't forget to update stegos.toml.example after adding new options.
-///
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(default)]
-pub struct Config {
-    /// General settings
-    pub general: ConfigGeneral,
-    /// Network configuration.
-    pub network: ConfigNetwork,
-    /// Key Chain configuration.
-    pub keychain: ConfigKeyChain,
-}
-
-/// Default values for global configuration.
-impl Default for Config {
-    fn default() -> Config {
-        Config {
-            general: Default::default(),
-            network: Default::default(),
-            keychain: Default::default(),
-        }
-    }
-}
-
-/// General configuration.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(default)]
-pub struct ConfigGeneral {
-    /// Log4RS configuration file
-    pub log4rs_config: String,
-    /// Database path
-    pub database_path: String,
-}
-
-impl Default for ConfigGeneral {
-    fn default() -> Self {
-        ConfigGeneral {
-            log4rs_config: "stegos-log4rs.toml".to_string(),
-            database_path: "database".to_string(),
-        }
-    }
-}
-
-/// Key Chain Configuration.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(default)]
-pub struct ConfigKeyChain {
-    /// Path to Curve1174 secret key.
-    pub private_key: String,
-    /// Path to Curve1174 public key.
-    pub public_key: String,
-}
-
-impl Default for ConfigKeyChain {
-    fn default() -> Self {
-        ConfigKeyChain {
-            private_key: "stegos.skey".to_string(),
-            public_key: "stegos.pkey".to_string(),
-        }
-    }
-}
 
 /// Network configuration.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(default)]
-pub struct ConfigNetwork {
+pub struct NetworkConfig {
     /// Node ID
-    /// TODO: Replace with correct public key, now only for testing
-    pub node_id: String,
     /// Local IP address to bind to
     pub bind_ip: String,
     /// Local port to use for incoming connections
@@ -111,8 +40,6 @@ pub struct ConfigNetwork {
     pub heartbeat_interval: u64,
     /// List of nodes to connect to on startup.
     pub seed_nodes: Vec<String>,
-    /// Broadcast topit for FloodSub
-    pub broadcast_topic: String,
     /// Minimum active connections (try to keep at least so many established connections)
     pub min_connections: usize,
     /// Maximum active connections (Don't try to open more than max_connections connections)
@@ -122,18 +49,14 @@ pub struct ConfigNetwork {
 }
 
 /// Default values for network configuration.
-impl Default for ConfigNetwork {
-    fn default() -> ConfigNetwork {
-        let rand_string: String = thread_rng().sample_iter(&Alphanumeric).take(16).collect();
-
-        ConfigNetwork {
-            node_id: rand_string.clone(),
+impl Default for NetworkConfig {
+    fn default() -> NetworkConfig {
+        NetworkConfig {
             bind_port: 10203,
             seed_nodes: vec![],
             advertised_addresses: vec![],
             advertise_local_ips: true,
             bind_ip: "0.0.0.0".to_string(),
-            broadcast_topic: "stegos".to_string(),
             min_connections: 8,
             max_connections: 32,
             monitoring_interval: 5,

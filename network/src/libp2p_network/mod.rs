@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::config::NetworkConfig;
 use failure::Error;
 use futures::prelude::*;
 use futures::sync::mpsc;
@@ -40,7 +41,6 @@ use pnet::datalink;
 use protobuf::Message as ProtoMessage;
 use smallvec::SmallVec;
 use std::collections::HashMap;
-use stegos_config::ConfigNetwork;
 use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -61,7 +61,7 @@ const UNICAST_TOPIC: &'static str = "stegos-unicast";
 
 impl Libp2pNetwork {
     pub fn new(
-        config: &ConfigNetwork,
+        config: &NetworkConfig,
         keychain: &KeyChain,
     ) -> Result<(Network, impl Future<Item = (), Error = ()>), Error> {
         let (service, control_tx) = new_service(config, keychain)?;
@@ -125,7 +125,7 @@ impl NetworkProvider for Libp2pNetwork {
 }
 
 fn new_service(
-    config: &ConfigNetwork,
+    config: &NetworkConfig,
     keychain: &KeyChain,
 ) -> Result<
     (
@@ -205,7 +205,7 @@ impl<TSubstream> Libp2pBehaviour<TSubstream>
 where
     TSubstream: AsyncRead + AsyncWrite,
 {
-    pub fn new(config: &ConfigNetwork, keychain: &KeyChain, peer_id: PeerId) -> Self {
+    pub fn new(config: &NetworkConfig, keychain: &KeyChain, peer_id: PeerId) -> Self {
         let mut kad = kad_discovery::KadBehaviour::new(peer_id.clone());
         kad.add_providing(cosi_pkey2peer_id(&keychain.cosi_pkey));
         let mut behaviour = Libp2pBehaviour {
@@ -407,7 +407,7 @@ fn cosi_pkey2peer_id(key: &secure::PublicKey) -> PeerId {
 }
 
 fn new_peerstore(
-    config: &ConfigNetwork,
+    config: &NetworkConfig,
     keychain: &KeyChain,
     peer_id: PeerId,
     local_pub_key: PublicKey,

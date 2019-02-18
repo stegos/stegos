@@ -19,6 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+mod config;
 mod console;
 mod consts;
 
@@ -34,8 +35,6 @@ use log4rs::{Error as LogError, Handle as LogHandle};
 use std::error::Error;
 use std::path::PathBuf;
 use std::process;
-use stegos_config;
-use stegos_config::{Config, ConfigError};
 use stegos_keychain::*;
 use stegos_network::Libp2pNetwork;
 use stegos_node::{genesis_dev, Node};
@@ -45,29 +44,29 @@ use tokio::runtime::Runtime;
 
 use crate::console::*;
 
-fn load_configuration(args: &ArgMatches<'_>) -> Result<Config, Box<dyn Error>> {
+fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Box<dyn Error>> {
     if let Some(cfg_path) = args.value_of_os("config") {
         // Use --config argument for configuration.
-        return Ok(stegos_config::from_file(cfg_path)?);
+        return Ok(config::from_file(cfg_path)?);
     }
 
     // Use ~/.config/stegos.toml for configuration.
     let cfg_path = dirs::config_dir()
         .unwrap_or(PathBuf::from(r"."))
         .join(PathBuf::from(consts::CONFIG_FILE_NAME));
-    match stegos_config::from_file(cfg_path) {
+    match config::from_file(cfg_path) {
         Ok(cfg) => return Ok(cfg),
         Err(e) => {
             match e {
                 // Don't raise an error on missing configuration file.
-                ConfigError::NotFoundError => Ok(Default::default()),
+                config::ConfigError::NotFoundError => Ok(Default::default()),
                 _ => return Err(Box::new(e)),
             }
         }
     }
 }
 
-fn initialize_logger(cfg: &Config) -> Result<LogHandle, LogError> {
+fn initialize_logger(cfg: &config::Config) -> Result<LogHandle, LogError> {
     // Try to load log4rs config file
     let handle = match log4rs::load_config_file(
         PathBuf::from(&cfg.general.log4rs_config),
@@ -134,7 +133,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     // Initialize node
     let genesis = genesis_dev().expect("failed to load genesis block");
-    let (node_service, node) = Node::new(&cfg, keychain.clone(), network.clone())?;
+    let (node_service, node) = Node::new(&cfg.storage, keychain.clone(), network.clone())?;
     rt.spawn(node_service);
 
     // Initialize TransactionPool.

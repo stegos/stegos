@@ -25,14 +25,14 @@ use crate::{Consensus, ConsensusMessage};
 use stegos_blockchain::*;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 /// A proof for monetary block.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MonetaryBlockProof {
     pub fee_output: Option<Output>,
     pub tx_hashes: Vec<Hash>,
 }
 
 /// A proof for gblock.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BlockProof {
     KeyBlockProof,
     MonetaryBlockProof(MonetaryBlockProof),

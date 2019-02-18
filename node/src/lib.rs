@@ -812,7 +812,7 @@ impl NodeService {
     /// Called periodically every CONSENSUS_TIMER seconds.
     ///
     fn handle_consensus_timer(&mut self) -> Result<(), Error> {
-        let elapsed = self.chain.last_block_timestamp.elapsed();
+        let elapsed = tokio_timer::clock::now().duration_since(self.chain.last_block_timestamp);
 
         // Check that a new payment block should be proposed.
         if self.consensus.is_some()

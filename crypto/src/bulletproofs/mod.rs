@@ -296,7 +296,7 @@ fn poly_eval(poly: &[ScalarVect; 2], x: Int) -> ScalarVect {
 // DotProof = 4 * 32 + 6 * 96 = 704
 // BulletProof = 11 * 32 + 704 = 1056
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub struct BulletProof {
     pub vcmt: Pt, // main commitment value - used by transactions as "the" Pedersen commitment
     pub acmt: Pt, // commitment on the value bit pattern
@@ -312,7 +312,7 @@ pub struct BulletProof {
     pub z: Int,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct DotProof {
     // represents the composite proof on the dot product
     pub u: Pt,
@@ -322,7 +322,7 @@ pub struct DotProof {
     pub xlrs: [LR; L2_NBASIS],
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct LR {
     // represents one component of the proof for each power-of-2 folding
     pub x: Int,

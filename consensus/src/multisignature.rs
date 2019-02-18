@@ -43,7 +43,7 @@ pub(crate) fn check_supermajority(got_votes: usize, total_votes: usize) -> bool 
 ///
 /// Create a new multi-signature from individual signatures
 ///
-pub(crate) fn create_multi_signature(
+pub fn create_multi_signature(
     witnesses: &BTreeMap<SecurePublicKey, i64>,
     signatures: &BTreeMap<SecurePublicKey, SecureSignature>,
 ) -> (SecureSignature, BitVector) {

@@ -63,6 +63,19 @@ pub struct BaseBlockHeader {
     pub multisigmap: BitVector,
 }
 
+impl Eq for BaseBlockHeader {}
+
+impl PartialEq for BaseBlockHeader {
+    fn eq(&self, b: &Self) -> bool {
+        self.version == b.version
+            && self.previous == b.previous
+            && self.epoch == b.epoch
+            && self.timestamp == b.timestamp
+            && self.multisig == b.multisig
+            && self.multisigmap == b.multisigmap
+    }
+}
+
 impl BaseBlockHeader {
     pub fn new(version: u64, previous: Hash, epoch: u64, timestamp: u64) -> Self {
         let multisig = SecureSignature::zero();
@@ -88,7 +101,7 @@ impl Hashable for BaseBlockHeader {
 }
 
 /// Header for Key Blocks.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct KeyBlockHeader {
     /// Common header.
     pub base: BaseBlockHeader,
@@ -116,7 +129,7 @@ impl Hashable for KeyBlockHeader {
 }
 
 /// Monetary Block Header.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct MonetaryBlockHeader {
     /// Common header.
     pub base: BaseBlockHeader,
@@ -180,7 +193,7 @@ impl Hashable for MonetaryBlockBody {
 }
 
 /// Carries all cryptocurrency transactions.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct KeyBlock {
     /// Header.
     pub header: KeyBlockHeader,
@@ -237,7 +250,7 @@ impl Hashable for KeyBlock {
 }
 
 /// Carries administrative information to blockchain participants.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct MonetaryBlock {
     /// Header.
     pub header: MonetaryBlockHeader,
@@ -418,10 +431,17 @@ impl Hashable for MonetaryBlock {
 }
 
 /// Types of blocks supported by this blockchain.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq)]
 pub enum Block {
     KeyBlock(KeyBlock),
     MonetaryBlock(MonetaryBlock),
+}
+
+// TODO: Use hash to implement Eq, and PartialEq.
+impl PartialEq for Block {
+    fn eq(&self, other: &Block) -> bool {
+        Hash::digest(self) == Hash::digest(other)
+    }
 }
 
 impl Block {
@@ -429,6 +449,13 @@ impl Block {
         match self {
             Block::KeyBlock(KeyBlock { header }) => &header.base,
             Block::MonetaryBlock(MonetaryBlock { header, body: _ }) => &header.base,
+        }
+    }
+
+    pub fn base_header_mut(&mut self) -> &mut BaseBlockHeader {
+        match self {
+            Block::KeyBlock(KeyBlock { header }) => &mut header.base,
+            Block::MonetaryBlock(MonetaryBlock { header, body: _ }) => &mut header.base,
         }
     }
 }

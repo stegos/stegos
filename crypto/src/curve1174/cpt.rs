@@ -368,7 +368,7 @@ pub fn validate_sig(hmsg: &Hash, sig: &SchnorrSig, pkey: &PublicKey) -> Result<b
 
 use std::iter::repeat;
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct EncryptedPayload {
     pub apkg: Pt,
     pub ag: Pt,

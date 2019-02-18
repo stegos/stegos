@@ -32,7 +32,7 @@ use stegos_crypto::pbc::secure::SecretKey as SecureSecretKey;
 use stegos_crypto::pbc::secure::Signature as SecureSignature;
 
 /// Sealed Block with multi-signature.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SealedBlockMessage {
     /// Block.
     pub block: Block,

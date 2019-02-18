@@ -75,7 +75,7 @@ pub enum OutputError {
 /// Payment UTXO.
 /// Transaction output.
 /// (ID, P_{M, δ}, Bp, E_M(x, γ, δ))
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct PaymentOutput {
     /// Clocked public key of recipient.
     /// P_M + δG
@@ -97,7 +97,7 @@ pub struct PaymentOutput {
 }
 
 /// Escrow UTXO.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct StakeOutput {
     /// Cloaked wallet key of validator.
     pub recipient: PublicKey,
@@ -113,7 +113,7 @@ pub struct StakeOutput {
 }
 
 /// Blockchain UTXO.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Output {
     PaymentOutput(PaymentOutput),
     StakeOutput(StakeOutput),

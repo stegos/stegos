@@ -129,16 +129,42 @@ impl Loopback {
         assert!(state.queue.is_empty());
     }
 
-    pub fn assert_broadcast<M: ProtoConvert + Debug + PartialEq>(&mut self, topic: &str, data: M) {
+    pub fn assert_broadcast<M>(&mut self, topic: &str, data: M)
+    where
+        M: ProtoConvert + Debug + PartialEq,
+    {
         let ref mut state = self.state.lock().unwrap();
         if let MessageFromNode::Publish {
             topic: msg_topic,
             data: msg_data,
-        } = state.queue.pop_front().unwrap()
+        } = state.queue.pop_front().expect("No messages in queue")
         {
-            assert_eq!(topic, &msg_topic);
+            assert_eq!(topic, &msg_topic, "Received message from other topic.");
             let msg_data = M::from_buffer(&msg_data).unwrap();
-            assert_eq!(data, msg_data);
+            assert_eq!(
+                data, msg_data,
+                "Sended message differ from real node sended."
+            );
+        }
+    }
+
+    pub fn assert_broadcast_with<F, M>(&mut self, topic: &str, mut func: F)
+    where
+        F: FnMut(M) -> bool,
+        M: ProtoConvert + Debug + PartialEq,
+    {
+        let ref mut state = self.state.lock().unwrap();
+        if let MessageFromNode::Publish {
+            topic: msg_topic,
+            data: msg_data,
+        } = state.queue.pop_front().expect("No messages in queue")
+        {
+            assert_eq!(topic, &msg_topic, "Received message from other topic.");
+            let msg_data = M::from_buffer(&msg_data).unwrap();
+            assert!(
+                func(msg_data),
+                "Sended message differ from real node sended."
+            );
         }
     }
 

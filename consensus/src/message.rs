@@ -30,7 +30,7 @@ use stegos_crypto::pbc::secure::SecretKey as SecureSecretKey;
 use stegos_crypto::pbc::secure::Signature as SecureSignature;
 
 /// Consensus Message Payload.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConsensusMessageBody<Request, Proof> {
     /// Propose Message (preprepare).
     Proposal { request: Request, proof: Proof },
@@ -60,7 +60,7 @@ impl<Request: Hashable, Proof: Hashable> Hashable for ConsensusMessageBody<Reque
 }
 
 /// Consensus Message.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConsensusMessage<Request, Proof> {
     /// Current height.
     pub height: u64,

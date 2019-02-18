@@ -361,6 +361,19 @@ impl NodeService {
         if self.chain.blocks().len() > 0 {
             //rather recover state
             self.recover_state();
+            for ((height, genesis), chain) in genesis.iter().enumerate().zip(self.chain.blocks()) {
+                let genesis_hash = Hash::digest(genesis);
+                let chain_hash = Hash::digest(chain);
+                if genesis_hash != chain_hash {
+                    error!(
+                        "Found a saved chain that is not compatible to our genesis at height = {}, \
+                         genesis_block = {:?}, database_block = {:?}",
+                        height + 1, genesis_hash, chain_hash
+                    );
+                    std::process::exit(1);
+                }
+            }
+
             let last_hash = Hash::digest(self.chain.last_block());
             info!(
                 "Node successfully recovered from persistent storage: height={}, hash= {:?}",

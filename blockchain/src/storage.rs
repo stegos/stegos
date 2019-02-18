@@ -21,7 +21,7 @@
 
 //! Implementation of block list on rocksdb.
 
-use byteorder::{ByteOrder, LittleEndian};
+use byteorder::{BigEndian, ByteOrder};
 use failure::Error;
 use rocksdb::{IteratorMode, WriteBatch, DB};
 use stegos_serialization::traits::ProtoConvert;
@@ -70,7 +70,7 @@ impl ListDb {
 
         let mut batch = WriteBatch::default();
         // writebatch put fails if size exceeded u32::max, which is not our case.
-        batch.put(&Self::u64_to_bytes(height), &data)?;
+        batch.put(&Self::key_u64_to_bytes(height), &data)?;
         self.database.write(batch)?;
         Ok(())
     }
@@ -83,9 +83,9 @@ impl ListDb {
             .map(|(_, v)| Block::from_buffer(&*v).expect("couldn't deserialize block."))
     }
 
-    fn u64_to_bytes(len: u64) -> [u8; 8] {
+    fn key_u64_to_bytes(len: u64) -> [u8; 8] {
         let mut bytes = [0u8; 8];
-        LittleEndian::write_u64(&mut bytes, len);
+        BigEndian::write_u64(&mut bytes, len);
         bytes
     }
 }
@@ -133,6 +133,27 @@ mod test {
                 }
                 _ => panic!("different blocks found in database and generated."),
             }
+        }
+    }
+
+    #[test]
+    fn iter_order() {
+        let previous = Hash::digest(&"test".to_string());
+        let block1 = create_block(previous);
+
+        let mut blocks = vec![block1];
+        for _i in 0..257 {
+            let block = create_block(Hash::digest(blocks.last().unwrap()));
+            blocks.push(block);
+        }
+
+        let db = ListDb::testing();
+        for (height, block) in blocks.iter().enumerate() {
+            db.insert(height as u64, block.clone()).unwrap();
+        }
+
+        for (block, saved) in blocks.iter().zip(db.iter()) {
+            assert_eq!(Hash::digest(block), Hash::digest(&saved));
         }
     }
 }

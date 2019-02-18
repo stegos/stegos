@@ -1,4 +1,5 @@
 stages:
+  - fast_checks
   - build
   - test
   - code_coverage
@@ -7,6 +8,19 @@ stages:
 before_script:
   - ci-scripts/install-deps.sh
   - rustup component add rustfmt
+  - cargo install cargo-audit
+
+# Running fast-checks to notice an author that his pull-request fails our standatds.
+# This checks should not produce any artifacts
+fast_checks:
+  stage: fast_checks
+  script:
+    - cargo audit
+    - cargo fmt --all -- --check
+  tags:
+    - linux
+  image: rust:1.32
+
 .build:
   stage: build
   script:
@@ -15,6 +29,8 @@ before_script:
     expire_in: 1 week
     paths:
       - target/
+  dependencies:
+    - fast_checks
 
 build:linux:
   extends: .build
@@ -31,7 +47,6 @@ build:macos:
   stage: test
   script:
     - cargo test --all -- --nocapture
-    - cargo fmt --all -- --check
   artifacts:
     expire_in: 1 week
     paths:

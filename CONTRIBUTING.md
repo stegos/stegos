@@ -25,7 +25,7 @@ problems for other users, please feel free to open an issue.
 
 If any help is needed during your effort to contribute on this project,
 please don't hesitate to contact us:
-* [Discord Chat](https://discord.gg/VQdfZZZ)
+* [Telegram chat](https://t.me/stegos4privacy)
 
 ## Install rustfmt
 
@@ -45,11 +45,12 @@ or newer.
 You can run rustfmt (i.e. rustfmt-preview) on one file or on all files.
 
 For example:
+
 ```
 rustfmt client.rs
 ```
 
-You can also re-format enterely project by running `cargo fmt`:
+You can also re-format entirely project by running `cargo fmt`:
 
 ```
 cargo fmt
@@ -65,6 +66,39 @@ cargo fmt
    the format. Hope you're happy to contribute on this open source project!*
 
 3. And anyway please don't use ~~`cargo +nightly fmt`~~ if at all possible.
+
+
+## Install cargo audit
+
+In order to keep our dependencies secure,
+we using cargo audit as part of our CI.
+
+To install cargo audit use cargo install:
+
+```
+cargo install cargo-audit
+cargo audit --version
+```
+
+Verify that you using latest cargo-audit, it should be version `cargo-audit 0.6.1`
+or newer.
+
+## Using cargo audit
+
+Using cargo audit is simple. Just run:
+
+```
+cargo audit
+```
+
+And checks that it reports
+
+```
+Success No vulnerable packages found
+```
+
+If cargo audit found any vulnerable crate, it would be good to
+update crate version.
 
 ## Thanks for any contribution
 

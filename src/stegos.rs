@@ -24,9 +24,11 @@ mod console;
 mod consts;
 
 use atty;
+use chrono::NaiveDateTime;
 use clap;
 use clap::{App, Arg, ArgMatches};
 use dirs;
+use failure::format_err;
 use failure::Error;
 use log::*;
 use log4rs::append::console::ConsoleAppender;
@@ -35,9 +37,12 @@ use log4rs::encode::pattern::PatternEncoder;
 use log4rs::{Error as LogError, Handle as LogHandle};
 use std::path::PathBuf;
 use std::process;
+use stegos_blockchain::Block;
+use stegos_crypto::hash::Hash;
 use stegos_keychain::*;
 use stegos_network::Libp2pNetwork;
-use stegos_node::{genesis_dev, Node};
+use stegos_node::Node;
+use stegos_serialization::traits::*;
 use stegos_txpool::TransactionPoolService;
 use stegos_wallet::WalletService;
 use tokio::runtime::Runtime;
@@ -45,25 +50,37 @@ use tokio::runtime::Runtime;
 use crate::console::*;
 
 fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
-    if let Some(cfg_path) = args.value_of_os("config") {
+    let mut cfg = if let Some(cfg_path) = args.value_of_os("config") {
         // Use --config argument for configuration.
-        return Ok(config::from_file(cfg_path)?);
-    }
-
-    // Use ~/.config/stegos.toml for configuration.
-    let cfg_path = dirs::config_dir()
-        .unwrap_or(PathBuf::from(r"."))
-        .join(PathBuf::from(consts::CONFIG_FILE_NAME));
-    match config::from_file(cfg_path) {
-        Ok(cfg) => return Ok(cfg),
-        Err(e) => {
-            match e {
-                // Don't raise an error on missing configuration file.
-                config::ConfigError::NotFoundError => Ok(Default::default()),
-                _ => return Err(e.into()),
+        config::from_file(cfg_path)?
+    } else {
+        // Use ~/.config/stegos.toml for configuration.
+        let cfg_path = dirs::config_dir()
+            .unwrap_or(PathBuf::from(r"."))
+            .join(PathBuf::from(consts::CONFIG_FILE_NAME));
+        match config::from_file(cfg_path) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                match e {
+                    // Don't raise an error on missing configuration file.
+                    config::ConfigError::NotFoundError => Default::default(),
+                    _ => return Err(e.into()),
+                }
             }
         }
+    };
+
+    // Override global.chain via ENV.
+    if let Ok(chain) = std::env::var("STEGOS_CHAIN") {
+        cfg.general.chain = chain;
     }
+
+    // Override global.chain via command-line.
+    if let Some(chain) = args.value_of("chain") {
+        cfg.general.chain = chain.to_string();
+    }
+
+    Ok(cfg)
 }
 
 fn initialize_logger(cfg: &config::Config) -> Result<LogHandle, LogError> {
@@ -92,6 +109,38 @@ fn initialize_logger(cfg: &config::Config) -> Result<LogHandle, LogError> {
     Ok(handle)
 }
 
+fn initialize_genesis(cfg: &config::Config) -> Result<Vec<Block>, Error> {
+    let (block1, block2) = match cfg.general.chain.as_ref() {
+        "dev" => (
+            include_bytes!("../chains/dev/genesis0.bin"),
+            include_bytes!("../chains/dev/genesis1.bin"),
+        ),
+        "testnet" => (
+            include_bytes!("../chains/testnet/genesis0.bin"),
+            include_bytes!("../chains/testnet/genesis1.bin"),
+        ),
+        chain @ _ => {
+            return Err(format_err!("Unknown chain: {}", chain));
+        }
+    };
+    info!("Using genesis for '{}' chain", cfg.general.chain);
+    let mut blocks = Vec::<Block>::new();
+    for (i, block) in [block1.as_ref(), block2.as_ref()].iter().enumerate() {
+        let block = Block::from_buffer(&block)?;
+        let header = block.base_header();
+        let timestamp = NaiveDateTime::from_timestamp(header.timestamp as i64, 0);
+        info!(
+            "Block #{}: hash={}, version={}, timestamp={}",
+            i,
+            Hash::digest(&block),
+            header.version,
+            timestamp
+        );
+        blocks.push(block);
+    }
+    Ok(blocks)
+}
+
 fn run() -> Result<(), Error> {
     let name = "Stegos";
     let version = format!(
@@ -113,6 +162,14 @@ fn run() -> Result<(), Error> {
                 .help("Path to stegos.toml configuration file")
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("chain")
+                .short("n")
+                .long("chain")
+                .value_name("NAME")
+                .help("Specify chain to use: testnet or dev")
+                .takes_value(true),
+        )
         .get_matches();
 
     // Parse configuration
@@ -124,6 +181,9 @@ fn run() -> Result<(), Error> {
     // Print welcome message
     info!("{} {}", name, version);
 
+    // Initialize genesis
+    let genesis = initialize_genesis(&cfg)?;
+
     // Initialize keychain
     let keychain = KeyChain::new(&cfg.keychain)?;
 
@@ -132,7 +192,6 @@ fn run() -> Result<(), Error> {
     let (network, network_service) = Libp2pNetwork::new(&cfg.network, &keychain)?;
 
     // Initialize node
-    let genesis = genesis_dev().expect("failed to load genesis block");
     let (node_service, node) = Node::new(&cfg.storage, keychain.clone(), network.clone())?;
     rt.spawn(node_service);
 

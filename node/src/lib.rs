@@ -66,19 +66,6 @@ use tokio_timer::Interval;
 // Public API.
 // ----------------------------------------------------------------
 
-/// Load genesis blocks for tests and development.
-pub fn genesis_dev() -> Result<Vec<Block>, Error> {
-    // Load generated blocks
-    let block1 = include_bytes!("../data/genesis0.bin");
-    let block2 = include_bytes!("../data/genesis1.bin");
-    let mut blocks = Vec::<Block>::new();
-    for block in &[&block1[..], &block2[..]] {
-        let block = Block::from_buffer(&block)?;
-        blocks.push(block);
-    }
-    Ok(blocks)
-}
-
 /// Blockchain Node.
 #[derive(Clone, Debug)]
 pub struct Node {

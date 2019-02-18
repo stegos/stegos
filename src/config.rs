@@ -70,6 +70,8 @@ impl Default for Config {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(default)]
 pub struct GeneralConfig {
+    /// Chain name.
+    pub chain: String,
     /// Log4RS configuration file
     pub log4rs_config: String,
 }
@@ -77,6 +79,7 @@ pub struct GeneralConfig {
 impl Default for GeneralConfig {
     fn default() -> Self {
         GeneralConfig {
+            chain: "testnet".to_string(),
             log4rs_config: "stegos-log4rs.toml".to_string(),
         }
     }

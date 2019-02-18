@@ -1,4 +1,5 @@
 [general]
+chain = "dev"
 log4rs_config = "stegos-log4rs.toml"
 
 [storage]

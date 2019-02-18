@@ -417,7 +417,7 @@ impl ConsoleService {
                 unspent,
                 unspent_stakes,
             } => {
-                if !unspent.is_empty() && !unspent_stakes.is_empty() {
+                if !unspent.is_empty() || !unspent_stakes.is_empty() {
                     println!("Found {} UTXO(s):", unspent.len() + unspent_stakes.len());
                     for (hash, amount) in unspent {
                         println!("PaymentUTXO(hash={}, amount={})", hash.into_hex(), amount);

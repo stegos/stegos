@@ -23,7 +23,7 @@
 
 use byteorder::{BigEndian, ByteOrder};
 use failure::Error;
-use rocksdb::{IteratorMode, WriteBatch, DB};
+use rocksdb::{Direction, IteratorMode, WriteBatch, DB};
 use stegos_serialization::traits::ProtoConvert;
 use tempdir::TempDir;
 
@@ -75,11 +75,20 @@ impl ListDb {
         Ok(())
     }
 
-    /// Create iterator starting from BLOCKCHAIN_INDEX and going forward.
+    /// Create iterator that traverse fully block collection.
     pub fn iter(&self) -> impl Iterator<Item = Block> {
         let mode = IteratorMode::Start;
         self.database
             .full_iterator(mode)
+            .map(|(_, v)| Block::from_buffer(&*v).expect("couldn't deserialize block."))
+    }
+
+    /// Create iterator starting from height and going forward.
+    pub fn iter_starting(&self, height: u64) -> impl Iterator<Item = Block> {
+        let key = Self::key_u64_to_bytes(height);
+        let mode = IteratorMode::From(&key, Direction::Forward);
+        self.database
+            .iterator(mode)
             .map(|(_, v)| Block::from_buffer(&*v).expect("couldn't deserialize block."))
     }
 
@@ -136,6 +145,22 @@ mod test {
         }
     }
 
+    #[test]
+    fn iter_starting() {
+        let previous = Hash::digest(&"test".to_string());
+        let block1 = create_block(previous);
+        let block2 = create_block(Hash::digest(&block1));
+        let block3 = create_block(Hash::digest(&block2));
+        let blocks = vec![block1, block2, block3];
+
+        let db = ListDb::testing();
+        for (height, block) in blocks.iter().enumerate() {
+            db.insert(height as u64, block.clone()).unwrap();
+        }
+        for (block, saved) in blocks.iter().skip(2).zip(db.iter_starting(2)) {
+            assert_eq!(Hash::digest(block), Hash::digest(&saved));
+        }
+    }
     #[test]
     fn iter_order() {
         let previous = Hash::digest(&"test".to_string());

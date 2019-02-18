@@ -248,14 +248,14 @@ impl Blockchain {
     }
 
     /// Returns blocks history starting from block_hash, limited by count.
-    pub fn blocks_range(&self, starting_hash: &Hash, count: u64) -> Option<&[Block]> {
+    pub fn blocks_range(&self, starting_hash: &Hash, count: u64) -> Option<Vec<Block>> {
         if let Some(&block_id) = self.block_by_hash.get(starting_hash) {
             let block_id = block_id + 1;
             let len = self.blocks.len();
             let end_range = usize::min(len, block_id + count as usize);
 
             if block_id < end_range {
-                return Some(&self.blocks[block_id..end_range]);
+                return Some(self.database.iter_starting(block_id as u64).collect());
             }
         }
         return None;

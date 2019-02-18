@@ -110,7 +110,7 @@ fn initialize_logger(cfg: &config::Config) -> Result<LogHandle, LogError> {
 }
 
 fn initialize_genesis(cfg: &config::Config) -> Result<Vec<Block>, Error> {
-    let (block1, block2) = match cfg.general.chain.as_ref() {
+    let (block1, block2): (&[u8], &[u8]) = match cfg.general.chain.as_ref() {
         "dev" => (
             include_bytes!("../chains/dev/genesis0.bin"),
             include_bytes!("../chains/dev/genesis1.bin"),

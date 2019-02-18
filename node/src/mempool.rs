@@ -86,7 +86,7 @@ impl Mempool {
     /// Queues a transaction to the mempool.
     ///
     pub fn push_tx(&mut self, tx_hash: Hash, tx: Transaction) {
-        assert_eq!(&tx_hash, &Hash::digest(&tx.body));
+        debug_assert_eq!(&tx_hash, &Hash::digest(&tx));
         for input_hash in &tx.body.txins {
             let exists = self.inputs.insert(input_hash.clone(), tx_hash.clone());
             assert!(exists.is_none());
@@ -174,7 +174,7 @@ impl Mempool {
         for entry in self.pool.entries() {
             let tx_hash = entry.key();
             let tx = entry.get();
-            assert_eq!(tx_hash, &Hash::digest(&tx.body));
+            debug_assert_eq!(tx_hash, &Hash::digest(&tx));
 
             debug!("Processing transaction: hash={}", &tx_hash);
             tx_hashes.push(tx_hash.clone());
@@ -228,8 +228,8 @@ mod test {
 
         let (tx1, inputs1, outputs1) = Transaction::new_test(&skey, &pkey, 100, 2, 200, 1, 0);
         let (tx2, inputs2, outputs2) = Transaction::new_test(&skey, &pkey, 300, 1, 100, 3, 0);
-        let tx_hash1 = Hash::digest(&tx1.body);
-        let tx_hash2 = Hash::digest(&tx2.body);
+        let tx_hash1 = Hash::digest(&tx1);
+        let tx_hash2 = Hash::digest(&tx2);
 
         mempool.push_tx(tx_hash1.clone(), tx1.clone());
         mempool.push_tx(tx_hash2.clone(), tx2.clone());
@@ -291,7 +291,7 @@ mod test {
         let mut mempool = Mempool::new();
 
         let (tx, inputs, _outputs) = Transaction::new_test(&skey, &pkey, 100, 1, 100, 1, 0);
-        let tx_hash = Hash::digest(&tx.body);
+        let tx_hash = Hash::digest(&tx);
         mempool.push_tx(tx_hash.clone(), tx.clone());
         mempool.prune(&vec![Hash::digest(&inputs[0])], &vec![]);
     }
@@ -303,7 +303,7 @@ mod test {
         let mut mempool = Mempool::new();
 
         let (tx, _inputs, outputs) = Transaction::new_test(&skey, &pkey, 100, 1, 100, 1, 0);
-        let tx_hash = Hash::digest(&tx.body);
+        let tx_hash = Hash::digest(&tx);
         mempool.push_tx(tx_hash.clone(), tx.clone());
         mempool.prune(&vec![], &vec![Hash::digest(&outputs[0])]);
     }
@@ -318,8 +318,8 @@ mod test {
         let (tx2, inputs2, _outputs2) = Transaction::new_test(&skey, &pkey, 6, 1, 2, 2, 2);
         tx2.validate(&inputs2).expect("transaction is valid");
 
-        let tx_hash1 = Hash::digest(&tx1.body);
-        let tx_hash2 = Hash::digest(&tx2.body);
+        let tx_hash1 = Hash::digest(&tx1);
+        let tx_hash2 = Hash::digest(&tx2);
         mempool.push_tx(tx_hash1.clone(), tx1.clone());
         mempool.push_tx(tx_hash2.clone(), tx2.clone());
 

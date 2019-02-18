@@ -49,6 +49,8 @@ pub fn create_payment_transaction(
         return Err(WalletError::NegativeAmount(amount).into());
     }
 
+    data.validate()?;
+
     debug!(
         "Creating a payment transaction: recipient={}, amount={}",
         recipient, amount
@@ -67,6 +69,7 @@ pub fn create_payment_transaction(
         .into_iter()
         .map(|o| Output::PaymentOutput(o.clone()))
         .collect();
+    assert!(!inputs.is_empty());
 
     debug!(
         "Transaction preview: recipient={}, amount={}, withdrawn={}, change={}, fee={}",
@@ -161,6 +164,7 @@ pub fn create_staking_transaction(
         .into_iter()
         .map(|o| Output::PaymentOutput(o.clone()))
         .collect();
+    assert!(!inputs.is_empty());
 
     debug!(
         "Transaction preview: recipient={}, validator={}, stake={}, withdrawn={}, change={}, fee={}",

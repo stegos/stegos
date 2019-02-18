@@ -600,7 +600,7 @@ pub mod tests {
         ];
 
         let current_timestamp = Utc::now().timestamp() as u64;
-        let blocks = genesis(&keychains, 100, 1_000_000);
+        let blocks = genesis(&keychains, 100, 1_000_000, current_timestamp);
         let mut blockchain = Blockchain::testing();
         for block in blocks {
             match block {

@@ -21,6 +21,7 @@
 
 use super::Loopback;
 use crate::*;
+use chrono::Utc;
 use std::collections::HashMap;
 use stegos_crypto::pbc::secure::sign_hash as secure_sign_hash;
 use stegos_wallet::create_payment_transaction;
@@ -40,7 +41,8 @@ pub fn init() {
     assert_ne!(node.chain.leader, keys.cosi_pkey);
     assert!(node.chain.validators.is_empty());
 
-    let genesis = genesis(&[keys.clone()], 100, 3_000_000);
+    let current_timestamp = Utc::now().timestamp() as u64;
+    let genesis = genesis(&[keys.clone()], 100, 3_000_000, current_timestamp);
     let genesis_count = genesis.len();
     node.handle_init(genesis).unwrap();
     assert_eq!(node.chain.blocks().len(), genesis_count);
@@ -110,7 +112,8 @@ pub fn monetary_requests() {
 
     let total: i64 = 3_000_000;
     let stake: i64 = 100;
-    let genesis = genesis(&[keys.clone()], stake, total);
+    let current_timestamp = Utc::now().timestamp() as u64;
+    let genesis = genesis(&[keys.clone()], stake, total, current_timestamp);
     node.handle_init(genesis).unwrap();
     let mut block_count = node.chain.blocks().len();
 

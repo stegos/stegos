@@ -446,6 +446,10 @@ mod tests {
         let output = Output::new_stake(timestamp, &skey1, &pkey1, &secure_pkey1, amount)
             .expect("keys are valid");
         roundtrip(&output);
+
+        let mut buf = output.into_buffer().unwrap();
+        buf.pop();
+        Output::from_buffer(&buf).expect_err("error");
     }
 
     fn mktransaction() -> Transaction {
@@ -483,7 +487,12 @@ mod tests {
 
     #[test]
     fn transactions() {
-        mktransaction();
+        let tx = mktransaction();
+        roundtrip(&tx);
+
+        let mut buf = tx.into_buffer().unwrap();
+        buf.pop();
+        Transaction::from_buffer(&buf).expect_err("error");
     }
 
     #[test]

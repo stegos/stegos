@@ -115,7 +115,7 @@ impl Node {
         self.network.publish(&TX_TOPIC, data.clone())?;
         info!(
             "Sent transaction to the network: hash={}",
-            Hash::digest(&tx.body)
+            Hash::digest(&tx)
         );
         let msg = NodeMessage::Transaction(data);
         self.outbox.unbounded_send(msg)?;
@@ -498,7 +498,7 @@ impl NodeService {
     }
     /// Handle incoming transactions received from network.
     fn handle_transaction(&mut self, tx: Transaction) -> Result<(), Error> {
-        let tx_hash = Hash::digest(&tx.body);
+        let tx_hash = Hash::digest(&tx);
         info!(
             "Received transaction from the network: hash={}, inputs={}, outputs={}, fee={}",
             &tx_hash,

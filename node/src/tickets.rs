@@ -214,7 +214,7 @@ impl TicketsSystem {
     }
 
     /// Receive ticket from other nodes.
-    pub fn hanle_process_ticket(&mut self, ticket: VRFTicket) -> Result<(), TicketsError> {
+    pub fn handle_process_ticket(&mut self, ticket: VRFTicket) -> Result<(), TicketsError> {
         trace!("Receiving new ticket from = {:?}.", ticket.pkey);
 
         if ticket.height != self.height && ticket.height != self.height + 1 {
@@ -287,10 +287,11 @@ impl TicketsSystem {
 ///Node service extension for VrfTicketSystem
 impl NodeService {
     pub(crate) fn broadcast_vrf_ticket(&mut self, ticket: VRFTicket) -> Result<(), Error> {
-        if !self.chain.escrow.get(&self.keys.cosi_pkey) > 0 {
+        if self.chain.escrow.get(&self.keys.cosi_pkey) <= 0 {
             debug!("Trying to broadcast ticket but our node is not staker.");
             return Ok(());
         }
+        self.vrf_system.handle_process_ticket(ticket).unwrap();
         let data = ticket.into_buffer()?;
         self.network.publish(&VRF_TICKETS_TOPIC, data)?;
         Ok(())
@@ -298,7 +299,7 @@ impl NodeService {
 
     pub(crate) fn handle_vrf_message(&mut self, msg: VRFTicket) -> Result<(), Error> {
         if self.chain.escrow.get(&msg.pkey) > 0 {
-            self.vrf_system.hanle_process_ticket(msg)?;
+            self.vrf_system.handle_process_ticket(msg)?;
         } else {
             debug!("Received message from unknown peer = {:?}", msg.pkey);
         }
@@ -389,9 +390,7 @@ impl CollectingState {
         pkey: SecurePublicKey,
         skey: &SecureSecretKey,
     ) -> VRFTicket {
-        let ticket = VRFTicket::new(self.seed, height, pkey, skey);
-        self.process_ticket(ticket).unwrap();
-        ticket
+        VRFTicket::new(self.seed, height, pkey, skey)
     }
 
     /// Process ticket, return error if ticket was invalid, or some node produce multiple tickets.

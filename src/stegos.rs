@@ -30,6 +30,7 @@ use clap::{App, Arg, ArgMatches};
 use dirs;
 use failure::format_err;
 use failure::Error;
+use futures::Future;
 use log::*;
 use log4rs::append::console::ConsoleAppender;
 use log4rs::config::{Appender, Config as LogConfig, Logger, Root};
@@ -266,7 +267,15 @@ fn run() -> Result<(), Error> {
 
     // Register genesis block.
     node.init(genesis).unwrap();
+    // start node
+    let timer =
+        tokio_timer::Delay::new(tokio_timer::clock::now() + stegos_node::NETWORK_GRACE_TIMEOUT);
 
+    rt.spawn(
+        timer
+            .map(move |_| node.network_ready().unwrap())
+            .map_err(drop),
+    );
     // Start main event loop
     rt.block_on(network_service)
         .expect("errors are handled earlier");

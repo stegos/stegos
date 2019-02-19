@@ -21,6 +21,7 @@
 
 use failure::{Error, Fail};
 use log::{debug, info, warn};
+use rand::seq::IteratorRandom;
 use std::mem;
 
 use stegos_blockchain::Block;
@@ -109,6 +110,7 @@ impl ChainLoader {
 //TODO: Validate blocks signature out of order.
 
 impl NodeService {
+    /// Handle orphan block from network.
     pub fn on_orphan_block(&mut self, orphan: SealedBlockMessage) -> Result<(), Error> {
         if self.chain.epoch > orphan.block.base_header().epoch {
             debug!(
@@ -131,6 +133,28 @@ impl NodeService {
         let msg = ChainLoaderMessage::Request(RequestBlocks::new(last_hash));
         self.network
             .send(sender, CHAIN_LOADER_TOPIC, msg.into_buffer()?)
+    }
+
+    /// Request block history, from one of validators.
+    pub fn request_history(&mut self) -> Result<(), Error> {
+        let validators = self.chain.validators.iter().map(|(k, _)| k);
+        let validators = validators.filter(|key| &self.keys.cosi_pkey != *key);
+
+        let mut rng = rand::thread_rng();
+        let pkey = if let Some(pkey) = validators.choose(&mut rng) {
+            debug!(
+                "Starting chain loading, request blocks history from = {}",
+                pkey
+            );
+            pkey
+        } else {
+            debug!("Cannot choose one validator to request block history.");
+            return Ok(());
+        };
+        let last_hash = Hash::digest(self.chain.last_block());
+        let msg = ChainLoaderMessage::Request(RequestBlocks::new(last_hash));
+        self.network
+            .send(*pkey, CHAIN_LOADER_TOPIC, msg.into_buffer()?)
     }
 
     fn handle_request_blocks(

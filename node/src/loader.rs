@@ -62,10 +62,8 @@ impl Hashable for ResponseBlocks {
 }
 
 impl ResponseBlocks {
-    pub fn new(blocks: &[Block]) -> ResponseBlocks {
-        Self {
-            blocks: blocks.to_vec(),
-        }
+    pub fn new(blocks: Vec<Block>) -> ResponseBlocks {
+        Self { blocks }
     }
 }
 

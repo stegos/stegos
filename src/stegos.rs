@@ -49,26 +49,35 @@ use tokio::runtime::Runtime;
 
 use crate::console::*;
 
+fn load_configuration_file(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
+    // Use --config argument for configuration.
+    if let Some(cfg_path) = args.value_of_os("config") {
+        let cfg = config::from_file(cfg_path)?;
+        return Ok(cfg);
+    }
+
+    // Use $PWD/stegos.toml for configuration.
+    match config::from_file(consts::CONFIG_FILE_NAME) {
+        Ok(cfg) => return Ok(cfg),
+        Err(config::ConfigError::NotFoundError) => {} // fall through.
+        Err(e) => return Err(e.into()),
+    }
+
+    // Use ~/.config/stegos.toml for configuration.
+    let cfg_path = dirs::config_dir()
+        .unwrap_or(PathBuf::from(r"."))
+        .join(PathBuf::from(consts::CONFIG_FILE_NAME));
+    match config::from_file(cfg_path) {
+        Ok(cfg) => return Ok(cfg),
+        Err(config::ConfigError::NotFoundError) => {} // fall through.
+        Err(e) => return Err(e.into()),
+    }
+
+    Ok(Default::default())
+}
+
 fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
-    let mut cfg = if let Some(cfg_path) = args.value_of_os("config") {
-        // Use --config argument for configuration.
-        config::from_file(cfg_path)?
-    } else {
-        // Use ~/.config/stegos.toml for configuration.
-        let cfg_path = dirs::config_dir()
-            .unwrap_or(PathBuf::from(r"."))
-            .join(PathBuf::from(consts::CONFIG_FILE_NAME));
-        match config::from_file(cfg_path) {
-            Ok(cfg) => cfg,
-            Err(e) => {
-                match e {
-                    // Don't raise an error on missing configuration file.
-                    config::ConfigError::NotFoundError => Default::default(),
-                    _ => return Err(e.into()),
-                }
-            }
-        }
-    };
+    let mut cfg = load_configuration_file(args)?;
 
     // Override global.chain via ENV.
     if let Ok(chain) = std::env::var("STEGOS_CHAIN") {

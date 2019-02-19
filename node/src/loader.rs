@@ -149,8 +149,8 @@ impl NodeService {
             self.network
                 .send(pkey, CHAIN_LOADER_TOPIC, msg.into_buffer()?)?;
         } else {
-            warn!(
-                "Received request with unknown starting block hash, sender = {}.",
+            debug!(
+                "Received request with unknown starting block hash, or no more blocks found, sender = {}.",
                 pkey
             );
         }

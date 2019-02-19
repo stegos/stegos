@@ -35,6 +35,7 @@ use log4rs::append::console::ConsoleAppender;
 use log4rs::config::{Appender, Config as LogConfig, Logger, Root};
 use log4rs::encode::pattern::PatternEncoder;
 use log4rs::{Error as LogError, Handle as LogHandle};
+use resolve::{config::DnsConfig, record::Srv, resolver};
 use std::path::PathBuf;
 use std::process;
 use stegos_blockchain::Block;
@@ -79,7 +80,10 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
     if let Some(chain) = args.value_of("chain") {
         cfg.general.chain = chain.to_string();
     }
-
+    // Use default SRV record for testnet
+    if cfg.general.chain == "testnet" && cfg.network.seed_pool == "" {
+        cfg.network.seed_pool = "_stegos._tcp.tn0.aws.stegos.com".to_string();
+    }
     Ok(cfg)
 }
 
@@ -141,6 +145,28 @@ fn initialize_genesis(cfg: &config::Config) -> Result<Vec<Block>, Error> {
     Ok(blocks)
 }
 
+fn resolve_pool(cfg: &mut config::Config) -> Result<(), Error> {
+    if cfg.network.seed_pool == "" {
+        return Ok(());
+    }
+
+    let config = DnsConfig::load_default()?;
+    let resolver = resolver::DnsResolver::new(config)?;
+
+    let rrs: Vec<Srv> = resolver.resolve_record(&cfg.network.seed_pool)?;
+
+    for r in rrs.iter() {
+        if let Ok(addrs) = resolver.resolve_host(&r.target) {
+            for a in addrs {
+                let maddr = format!("/ip4/{}/tcp/{}", a.to_string(), r.port);
+                info!("Adding node from seed pool: {}", maddr);
+                cfg.network.seed_nodes.push(maddr);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn run() -> Result<(), Error> {
     let name = "Stegos";
     let version = format!(
@@ -173,7 +199,7 @@ fn run() -> Result<(), Error> {
         .get_matches();
 
     // Parse configuration
-    let cfg = load_configuration(&args)?;
+    let mut cfg = load_configuration(&args)?;
 
     // Initialize logger
     initialize_logger(&cfg)?;
@@ -186,6 +212,9 @@ fn run() -> Result<(), Error> {
 
     // Initialize keychain
     let keychain = KeyChain::new(&cfg.keychain)?;
+
+    // Resolve seed pool (works, if chain=='testent', does nothing otherwise)
+    resolve_pool(&mut cfg)?;
 
     // Initialize network
     let mut rt = Runtime::new()?;

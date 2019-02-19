@@ -36,8 +36,8 @@ pub struct NetworkConfig {
     pub advertised_addresses: Vec<String>,
     /// Advertise local active, non-loopback addresses
     pub advertise_local_ips: bool,
-    /// Heartbeat interval secs
-    pub heartbeat_interval: u64,
+    /// DNS name of pool of seed nodes
+    pub seed_pool: String,
     /// List of nodes to connect to on startup.
     pub seed_nodes: Vec<String>,
     /// Minimum active connections (try to keep at least so many established connections)
@@ -52,15 +52,15 @@ pub struct NetworkConfig {
 impl Default for NetworkConfig {
     fn default() -> NetworkConfig {
         NetworkConfig {
-            bind_port: 10203,
+            bind_port: 10055,
+            seed_pool: "".to_string(),
             seed_nodes: vec![],
             advertised_addresses: vec![],
             advertise_local_ips: true,
             bind_ip: "0.0.0.0".to_string(),
             min_connections: 8,
             max_connections: 32,
-            monitoring_interval: 5,
-            heartbeat_interval: 30,
+            monitoring_interval: 15,
         }
     }
 }

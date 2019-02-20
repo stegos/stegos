@@ -1,6 +1,6 @@
 //
 // Copyright (c) 2016-2017 Jonathan Creekmore
-// Copyright (c) 2018 Stegos
+// Copyright (c) 2018 Stegos AG
 //
 // Based on https://github.com/jcreekmore/pem-rs
 //

@@ -1,7 +1,7 @@
 //! Secure Pairings using BN Curve FR256 (type F, r approx 256 bits)
 
 //
-// Copyright (c) 2018 Stegos
+// Copyright (c) 2018 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal

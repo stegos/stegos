@@ -1,7 +1,7 @@
 STEGOS CODE OF CONDUCT
 =======================
 
-Contact: [info@stegos.cc](mailto:info@stegos.cc)
+Contact: [info@stegos.com](mailto:info@stegos.com)
 
 We are committed to providing a friendly, safe and welcoming environment for
 all, regardless of level of experience, gender, gender identity and expression,

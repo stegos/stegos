@@ -1,7 +1,7 @@
 [package]
 name = "stegos_blockchain"
 version = "0.1.0"
-authors = ["Stegos AG <info@stegos.cc>"]
+authors = ["Stegos AG <info@stegos.com>"]
 edition = "2018"
 links = "stegos_blockchain"
 build = "build.rs"

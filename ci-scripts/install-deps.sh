@@ -10,14 +10,13 @@ install_deps_linux() {
             libcurl4-openssl-dev \
             libdw-dev \
             libgmp-dev \
-            libmpfr-dev \
             libiberty-dev \
             libssl-dev \
             pkg-config \
             wget \
             zlib1g-dev
 
-    (cd /usr/local && curl -L https://github.com/stegos/stegos-external-libs/releases/download/v0.2/stegos-external-libs-linux.tgz |
+    (cd /usr/local && curl -L https://github.com/stegos/stegos-external-libs/releases/download/v0.4/stegos-external-libs-linux.tgz |
         tar xvfz -)
     ldconfig
 }

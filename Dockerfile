@@ -11,12 +11,9 @@ RUN cargo install --path . --root /usr/local
 # rust:x.yy-slim-stretch is based on debian:stretch-slim
 FROM debian:stretch-slim
 RUN apt-get update && apt-get install -y \
-    libgmp10 \
-    libmpfr4 \
     libssl1.1
 
-COPY --from=builder /usr/local/lib/libpbc* /usr/local/lib/
 COPY --from=builder /usr/local/bin/stegos /usr/local/bin/
-RUN ldconfig && stegos --version
+RUN stegos --version
 
 CMD ["stegos"]

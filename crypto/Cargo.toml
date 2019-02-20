@@ -1,27 +1,33 @@
 [package]
 name = "stegos_crypto"
 version = "0.1.0"
-edition = "2018"
 authors = ["Stegos AG <info@stegos.com>"]
-links = "stegos_crypto"
 build = "build.rs"
+categories = ["cryptography"]
+edition = "2018"
+homepage = "https://stegos.com"
+keywords = ["stegos", "blockchain", "cryptocurrency", "crypto", "privacy"]
+license = "MIT"
+links = "stegos_crypto"
+repository = "https://github.com/stegos/stegos"
+description = "Stegos - Crypto Library"
 
 [dependencies]
+stegos_serialization = { version = "0.1.0", path = "../serialization" }
+bitvector = "0.1"
+failure = "0.1"
 hex = "0.3"
 lazy_static = "1.1"
+log = "0.4"
 parking_lot = "0.6"
+protobuf = "2.2"
 rand = "0.6"
+rayon = "1.0"
 rust-crypto = "0.2"
 rust-gmp = "0.5"
-rust-libpbc = { git = "https://github.com/stegos/rust-pbcintf.git" }
+rust-libpbc = { version = "0.1.0", git = "https://github.com/stegos/rust-pbcintf.git" }
 sha3 = "0.8"
-log = "0.4"
-failure = "0.1"
-protobuf = "2.2"
-stegos_serialization = {path = "../serialization"}
-bitvector = "0.1"
-rayon = "1.0"
 
 [build-dependencies]
-stegos_serialization = {path = "../serialization"}
+stegos_serialization = { version = "0.1.0", path = "../serialization" }
 cc = "1.0"

@@ -112,13 +112,21 @@ fn initialize_logger(cfg: &config::Config) -> Result<LogHandle, LogError> {
 
     let stdout = ConsoleAppender::builder()
         .encoder(Box::new(PatternEncoder::new(
-            "{d(%Y-%m-%d %H:%M:%S)(local)} [{t}] {h({l})} {M}: {m}{n}",
+            "{d(%Y-%m-%d %H:%M:%S)(local)} {h({l})} [{M}] {m}{n}",
         )))
         .build();
     let config = LogConfig::builder()
         .appender(Appender::builder().build("stdout", Box::new(stdout)))
-        .logger(Logger::builder().build("stegos_network", LevelFilter::Debug))
-        .build(Root::builder().appender("stdout").build(LevelFilter::Info))
+        .logger(Logger::builder().build("stegos", LevelFilter::Info))
+        .logger(Logger::builder().build("stegos_blockchain", LevelFilter::Info))
+        .logger(Logger::builder().build("stegos_crypto", LevelFilter::Info))
+        .logger(Logger::builder().build("stegos_consensus", LevelFilter::Info))
+        .logger(Logger::builder().build("stegos_keychain", LevelFilter::Info))
+        .logger(Logger::builder().build("stegos_node", LevelFilter::Info))
+        .logger(Logger::builder().build("stegos_network", LevelFilter::Info))
+        .logger(Logger::builder().build("stegos_txpool", LevelFilter::Info))
+        .logger(Logger::builder().build("stegos_wallet", LevelFilter::Info))
+        .build(Root::builder().appender("stdout").build(LevelFilter::Warn))
         .expect("console logger should never fail");
 
     Ok(log4rs::init_config(config)?)

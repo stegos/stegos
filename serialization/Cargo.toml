@@ -2,10 +2,16 @@
 name = "stegos_serialization"
 version = "0.1.0"
 authors = ["Stegos AG <info@stegos.com>"]
+categories = ["encoding"]
 edition = "2018"
+homepage = "https://stegos.com"
+keywords = ["stegos", "blockchain", "cryptocurrency", "crypto", "privacy"]
+license = "MIT"
+repository = "https://github.com/stegos/stegos"
+description = "Stegos - Serialization Library"
 
 [dependencies]
 failure = "0.1"
 protobuf = "2.2"
 protobuf-codegen-pure = "2.2"
-walkdir = "2.2.7"
+walkdir = "2.2"

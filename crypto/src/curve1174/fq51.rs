@@ -23,9 +23,16 @@
 
 use super::*;
 use crate::CryptoError;
+use std::num::Wrapping;
 
-const BOT_51_BITS: i64 = ((1 << 51) - 1); // Fq51 frames contain 51 bits
-const BOT_47_BITS: i64 = ((1 << 47) - 1); // MSB frame only has 47 bits
+const BOT_51_BITS_64: i64 = ((1 << 51) - 1); // Fq51 frames contain 51 bits
+const BOT_47_BITS_64: i64 = ((1 << 47) - 1); // MSB frame only has 47 bits
+
+const BOT_51_BITS: i128 = BOT_51_BITS_64 as i128; // ((1 << 51) - 1); // Fq51 frames contain 51 bits
+const BOT_47_BITS: i128 = BOT_47_BITS_64 as i128; // MSB frame only has 47 bits
+
+const BOT_51_BITS_U: u128 = BOT_51_BITS_64 as u128; // ((1 << 51) - 1); // Fq51 frames contain 51 bits
+const BOT_47_BITS_U: u128 = BOT_47_BITS_64 as u128; // MSB frame only has 47 bits
 
 // -----------------------------------------------------------------
 // field Fq51 is Fq broken into 51-bit frames
@@ -271,181 +278,260 @@ impl PartialEq for Fq51 {
 // Group primitive operators
 
 pub fn gadd(x: &Fq51, y: &Fq51, w: &mut Fq51) {
-    w.0[0] = x.0[0] + y.0[0];
-    w.0[1] = x.0[1] + y.0[1];
-    w.0[2] = x.0[2] + y.0[2];
-    w.0[3] = x.0[3] + y.0[3];
-    w.0[4] = x.0[4] + y.0[4];
+    w.0[0] = x.0[0].wrapping_add(y.0[0]);
+    w.0[1] = x.0[1].wrapping_add(y.0[1]);
+    w.0[2] = x.0[2].wrapping_add(y.0[2]);
+    w.0[3] = x.0[3].wrapping_add(y.0[3]);
+    w.0[4] = x.0[4].wrapping_add(y.0[4]);
 }
 
 pub fn gsub(x: &Fq51, y: &Fq51, w: &mut Fq51) {
-    w.0[0] = x.0[0] - y.0[0];
-    w.0[1] = x.0[1] - y.0[1];
-    w.0[2] = x.0[2] - y.0[2];
-    w.0[3] = x.0[3] - y.0[3];
-    w.0[4] = x.0[4] - y.0[4];
+    w.0[0] = x.0[0].wrapping_sub(y.0[0]);
+    w.0[1] = x.0[1].wrapping_sub(y.0[1]);
+    w.0[2] = x.0[2].wrapping_sub(y.0[2]);
+    w.0[3] = x.0[3].wrapping_sub(y.0[3]);
+    w.0[4] = x.0[4].wrapping_sub(y.0[4]);
 }
 
 pub fn gdec(x: &Fq51, w: &mut Fq51) {
-    w.0[0] -= x.0[0];
-    w.0[1] -= x.0[1];
-    w.0[2] -= x.0[2];
-    w.0[3] -= x.0[3];
-    w.0[4] -= x.0[4];
+    w.0[0] = w.0[0].wrapping_sub(x.0[0]);
+    w.0[1] = w.0[1].wrapping_sub(x.0[1]);
+    w.0[2] = w.0[2].wrapping_sub(x.0[2]);
+    w.0[3] = w.0[3].wrapping_sub(x.0[3]);
+    w.0[4] = w.0[4].wrapping_sub(x.0[4]);
 }
 
 pub fn gneg(w: &Fq51, x: &mut Fq51) {
-    x.0[0] = -w.0[0];
-    x.0[1] = -w.0[1];
-    x.0[2] = -w.0[2];
-    x.0[3] = -w.0[3];
-    x.0[4] = -w.0[4];
+    x.0[0] = w.0[0].wrapping_neg();
+    x.0[1] = w.0[1].wrapping_neg();
+    x.0[2] = w.0[2].wrapping_neg();
+    x.0[3] = w.0[3].wrapping_neg();
+    x.0[4] = w.0[4].wrapping_neg();
 }
 
 // w*=2
 pub fn gmul2(w: &mut Fq51) {
-    w.0[0] *= 2;
-    w.0[1] *= 2;
-    w.0[2] *= 2;
-    w.0[3] *= 2;
-    w.0[4] *= 2;
+    w.0[0] = w.0[0].wrapping_mul(2);
+    w.0[1] = w.0[1].wrapping_mul(2);
+    w.0[2] = w.0[2].wrapping_mul(2);
+    w.0[3] = w.0[3].wrapping_mul(2);
+    w.0[4] = w.0[4].wrapping_mul(2);
 }
 
 // w-=2*x
 pub fn gsb2(x: &Fq51, w: &mut Fq51) {
-    w.0[0] -= 2 * x.0[0];
-    w.0[1] -= 2 * x.0[1];
-    w.0[2] -= 2 * x.0[2];
-    w.0[3] -= 2 * x.0[3];
-    w.0[4] -= 2 * x.0[4];
+    w.0[0] = w.0[0].wrapping_sub(x.0[0].wrapping_mul(2));
+    w.0[1] = w.0[1].wrapping_sub(x.0[1].wrapping_mul(2));
+    w.0[2] = w.0[2].wrapping_sub(x.0[2].wrapping_mul(2));
+    w.0[3] = w.0[3].wrapping_sub(x.0[3].wrapping_mul(2));
+    w.0[4] = w.0[4].wrapping_sub(x.0[4].wrapping_mul(2));
+}
+
+#[inline]
+fn bot51(x: i128) -> i64 {
+    (x & BOT_51_BITS) as i64
+}
+
+#[inline]
+fn bot47(x: i128) -> i64 {
+    (x & BOT_47_BITS) as i64
+}
+
+#[inline]
+fn bot51s(x: i64) -> i64 {
+    x & BOT_51_BITS_64
+}
+
+#[inline]
+fn bot47s(x: i64) -> i64 {
+    x & BOT_47_BITS_64
+}
+
+#[inline]
+fn bot51u(x: u128) -> i64 {
+    (x & BOT_51_BITS_U) as i64
+}
+
+#[inline]
+fn bot47u(x: u128) -> i64 {
+    (x & BOT_47_BITS_U) as i64
 }
 
 // reduce w - Short Coefficient Reduction
 pub fn scr(w: &mut Fq51) {
     let w0 = w.0[0];
-    let t0 = w0 & BOT_51_BITS;
+    let t0 = bot51s(w0);
 
-    let t1 = w.0[1] + (w0 >> 51);
-    w.0[1] = t1 & BOT_51_BITS;
+    let t1 = w.0[1].wrapping_add(w0 >> 51);
+    w.0[1] = bot51s(t1);
 
-    let t2 = w.0[2] + (t1 >> 51);
-    w.0[2] = t2 & BOT_51_BITS;
+    let t2 = w.0[2].wrapping_add(t1 >> 51);
+    w.0[2] = bot51s(t2);
 
-    let t3 = w.0[3] + (t2 >> 51);
-    w.0[3] = t3 & BOT_51_BITS;
+    let t3 = w.0[3].wrapping_add(t2 >> 51);
+    w.0[3] = bot51s(t3);
 
-    let t4 = w.0[4] + (t3 >> 51);
-    w.0[4] = t4 & BOT_47_BITS;
-    w.0[0] = t0 + 9 * (t4 >> 47);
+    let t4 = w.0[4].wrapping_add(t3 >> 51);
+    w.0[4] = bot47s(t4);
+    w.0[0] = t0.wrapping_add((t4 >> 47).wrapping_mul(9));
 }
 
 // multiply w by a constant, w*=i
 
 pub fn gmuli(w: &mut Fq51, i: i64) {
     let ii = i as i128;
-    let t0 = (w.0[0] as i128) * ii;
-    w.0[0] = (t0 as i64) & BOT_51_BITS;
+    let t0 = (w.0[0] as i128).wrapping_mul(ii);
+    let w0 = bot51(t0);
 
-    let t1 = (w.0[1] as i128) * ii + (t0 >> 51);
-    w.0[1] = (t1 as i64) & BOT_51_BITS;
+    let t1 = (w.0[1] as i128).wrapping_mul(ii).wrapping_add(t0 >> 51);
+    w.0[1] = bot51(t1);
 
-    let t2 = (w.0[2] as i128) * ii + (t1 >> 51);
-    w.0[2] = (t2 as i64) & BOT_51_BITS;
+    let t2 = (w.0[2] as i128).wrapping_mul(ii).wrapping_add(t1 >> 51);
+    w.0[2] = bot51(t2);
 
-    let t3 = (w.0[3] as i128) * ii + (t2 >> 51);
-    w.0[3] = (t3 as i64) & BOT_51_BITS;
+    let t3 = (w.0[3] as i128).wrapping_mul(ii).wrapping_add(t2 >> 51);
+    w.0[3] = bot51(t3);
 
-    let t4 = (w.0[4] as i128) * ii + (t3 >> 51);
-    w.0[4] = (t4 as i64) & BOT_47_BITS;
-    w.0[0] += (9 * (t4 >> 47)) as i64;
+    let t4 = (w.0[4] as i128).wrapping_mul(ii).wrapping_add(t3 >> 51);
+    w.0[4] = bot47(t4);
+    w.0[0] = w0.wrapping_add(((t4 >> 47) as i64).wrapping_mul(9));
 }
 
 // z=x^2
 
 #[inline(never)]
 pub fn gsqr(x: &Fq51, z: &mut Fq51) {
-    let t4 = 2 * ((x.0[0] as i128) * (x.0[4] as i128) + (x.0[1] as i128) * (x.0[3] as i128))
-        + (x.0[2] as i128) * (x.0[2] as i128);
-    z.0[4] = (t4 as i64) & BOT_47_BITS;
+    let x0 = x.0[0] as i128;
+    let x1 = x.0[1] as i128;
+    let x2 = x.0[2] as i128;
+    let x3 = x.0[3] as i128;
+    let x4 = x.0[4] as i128;
 
-    let t0 = (x.0[0] as i128) * (x.0[0] as i128)
-        + 288 * ((x.0[1] as i128) * (x.0[4] as i128) + (x.0[2] as i128) * (x.0[3] as i128))
-        + 9 * (t4 >> 47);
-    z.0[0] = (t0 as i64) & BOT_51_BITS;
+    let t4 = x0
+        .wrapping_mul(x4)
+        .wrapping_add(x1.wrapping_mul(x3))
+        .wrapping_mul(2)
+        .wrapping_add(x2.wrapping_mul(x2));
+    let z4 = bot47(t4);
 
-    let t1 = 2 * (x.0[0] as i128) * (x.0[1] as i128)
-        + 288 * (x.0[2] as i128) * (x.0[4] as i128)
-        + 144 * (x.0[3] as i128) * (x.0[3] as i128)
-        + (t0 >> 51);
-    z.0[1] = (t1 as i64) & BOT_51_BITS;
+    let t0 = x0
+        .wrapping_mul(x0)
+        .wrapping_add(
+            x1.wrapping_mul(x4)
+                .wrapping_add(x2.wrapping_mul(x3))
+                .wrapping_mul(288),
+        )
+        .wrapping_add((t4 >> 47).wrapping_mul(9));
+    let z0 = bot51(t0);
 
-    let t2 = (x.0[1] as i128) * (x.0[1] as i128)
-        + 2 * (x.0[0] as i128) * (x.0[2] as i128)
-        + 288 * (x.0[3] as i128) * (x.0[4] as i128)
-        + (t1 >> 51);
-    z.0[2] = (t2 as i64) & BOT_51_BITS;
+    let t1 = x0
+        .wrapping_mul(x1)
+        .wrapping_mul(2)
+        .wrapping_add(x2.wrapping_mul(x4).wrapping_mul(288))
+        .wrapping_add(x3.wrapping_mul(x3).wrapping_mul(144))
+        .wrapping_add(t0 >> 51);
+    z.0[1] = bot51(t1);
 
-    let t3 = 144 * (x.0[4] as i128) * (x.0[4] as i128)
-        + 2 * ((x.0[0] as i128) * (x.0[3] as i128) + (x.0[1] as i128) * (x.0[2] as i128))
-        + (t2 >> 51);
-    z.0[3] = (t3 as i64) & BOT_51_BITS;
+    let t2 = x1
+        .wrapping_mul(x1)
+        .wrapping_add(x0.wrapping_mul(x2).wrapping_mul(2))
+        .wrapping_add(x3.wrapping_mul(x4).wrapping_mul(288))
+        .wrapping_add(t1 >> 51);
+    z.0[2] = bot51(t2);
 
-    let t4 = (z.0[4] as i128) + (t3 >> 51);
-    z.0[4] = (t4 as i64) & BOT_47_BITS;
-    z.0[0] += (9 * (t4 >> 47)) as i64;
+    let t3 = x4
+        .wrapping_mul(x4)
+        .wrapping_mul(144)
+        .wrapping_add(
+            x0.wrapping_mul(x3)
+                .wrapping_add(x1.wrapping_mul(x2))
+                .wrapping_mul(2),
+        )
+        .wrapping_add(t2 >> 51);
+    z.0[3] = bot51(t3);
+
+    let t4 = (z4 as i128).wrapping_add(t3 >> 51);
+    z.0[4] = bot47(t4);
+    z.0[0] = z0.wrapping_add(((t4 >> 47) as i64).wrapping_mul(9));
 }
 
 #[inline(never)]
 pub fn gmul(x: &Fq51, y: &Fq51, z: &mut Fq51) {
+    let x0 = x.0[0] as i128;
+    let x1 = x.0[1] as i128;
+    let x2 = x.0[2] as i128;
+    let x3 = x.0[3] as i128;
+    let x4 = x.0[4] as i128;
+
+    let y0 = y.0[0] as i128;
+    let y1 = y.0[1] as i128;
+    let y2 = y.0[2] as i128;
+    let y3 = y.0[3] as i128;
+    let y4 = y.0[4] as i128;
+
     // 5M + 4A
-    let t4 = (x.0[0] as i128) * (y.0[4] as i128)
-        + (x.0[4] as i128) * (y.0[0] as i128)
-        + (x.0[1] as i128) * (y.0[3] as i128)
-        + (x.0[3] as i128) * (y.0[1] as i128)
-        + (x.0[2] as i128) * (y.0[2] as i128);
-    z.0[4] = (t4 as i64) & BOT_47_BITS;
+    let t4 = x0
+        .wrapping_mul(y4)
+        .wrapping_add(x4.wrapping_mul(y0))
+        .wrapping_add(x1.wrapping_mul(y3))
+        .wrapping_add(x3.wrapping_mul(y1))
+        .wrapping_add(x2.wrapping_mul(y2));
+    let z4 = bot47(t4);
 
     // 7M + 5A
-    let t0 = (x.0[0] as i128) * (y.0[0] as i128)
-        + 144
-            * ((x.0[1] as i128) * (y.0[4] as i128)
-                + (x.0[4] as i128) * (y.0[1] as i128)
-                + (x.0[2] as i128) * (y.0[3] as i128)
-                + (x.0[3] as i128) * (y.0[2] as i128))
-        + 9 * (t4 >> 47);
-    z.0[0] = (t0 as i64) & BOT_51_BITS;
+    let t0 = x0
+        .wrapping_mul(y0)
+        .wrapping_add(
+            x1.wrapping_mul(y4)
+                .wrapping_add(x4.wrapping_mul(y1))
+                .wrapping_add(x2.wrapping_mul(y3))
+                .wrapping_add(x3.wrapping_mul(y2))
+                .wrapping_mul(144),
+        )
+        .wrapping_add((t4 >> 47).wrapping_mul(9));
+    let z0 = bot51(t0);
 
     // 6M + 5A
-    let t1 = (x.0[0] as i128) * (y.0[1] as i128)
-        + (x.0[1] as i128) * (y.0[0] as i128)
-        + 144
-            * ((x.0[3] as i128) * (y.0[3] as i128)
-                + (x.0[2] as i128) * (y.0[4] as i128)
-                + (x.0[4] as i128) * (y.0[2] as i128))
-        + (t0 >> 51);
-    z.0[1] = (t1 as i64) & BOT_51_BITS;
+    let t1 = x0
+        .wrapping_mul(y1)
+        .wrapping_add(x1.wrapping_mul(y0))
+        .wrapping_add(
+            x3.wrapping_mul(y3)
+                .wrapping_add(x2.wrapping_mul(y4))
+                .wrapping_add(x4.wrapping_mul(y2))
+                .wrapping_mul(144),
+        )
+        .wrapping_add(t0 >> 51);
+    z.0[1] = bot51(t1);
 
     // 6M + 5A
-    let t2 = (x.0[1] as i128) * (y.0[1] as i128)
-        + (x.0[0] as i128) * (y.0[2] as i128)
-        + (x.0[2] as i128) * (y.0[0] as i128)
-        + 144 * ((x.0[3] as i128) * (y.0[4] as i128) + (x.0[4] as i128) * (y.0[3] as i128))
-        + (t1 >> 51);
-    z.0[2] = (t2 as i64) & BOT_51_BITS;
+    let t2 = x1
+        .wrapping_mul(y1)
+        .wrapping_add(x0.wrapping_mul(y2))
+        .wrapping_add(x2.wrapping_mul(y0))
+        .wrapping_add(
+            x3.wrapping_mul(y4)
+                .wrapping_add(x4.wrapping_mul(y3))
+                .wrapping_mul(144),
+        )
+        .wrapping_add(t1 >> 51);
+    z.0[2] = bot51(t2);
 
     // 6M + 5A
-    let t3 = 144 * ((x.0[4] as i128) * (y.0[4] as i128))
-        + (x.0[0] as i128) * (y.0[3] as i128)
-        + (x.0[3] as i128) * (y.0[0] as i128)
-        + (x.0[1] as i128) * (y.0[2] as i128)
-        + (x.0[2] as i128) * (y.0[1] as i128)
-        + (t2 >> 51);
-    z.0[3] = (t3 as i64) & BOT_51_BITS;
+    let t3 = x4
+        .wrapping_mul(y4)
+        .wrapping_mul(144)
+        .wrapping_add(x0.wrapping_mul(y3))
+        .wrapping_add(x3.wrapping_mul(y0))
+        .wrapping_add(x1.wrapping_mul(y2))
+        .wrapping_add(x2.wrapping_mul(y1))
+        .wrapping_add(t2 >> 51);
+    z.0[3] = bot51(t3);
 
     // -------- to this point = 30M + 24A => this clocks as faster than Granger's method for Curve1174
-    let t4 = (z.0[4] as i128) + (t3 >> 51);
-    z.0[4] = (t4 as i64) & BOT_47_BITS;
-    z.0[0] += (9 * (t4 >> 47)) as i64;
+    let t4 = (z4 as i128).wrapping_add(t3 >> 51);
+    z.0[4] = bot47(t4);
+    z.0[0] = z0.wrapping_add(((t4 >> 47) as i64).wrapping_mul(9));
 }
 
 // Inverse x = 1/x = x^(p-2) mod p
@@ -530,12 +616,12 @@ pub fn ginv(x: &mut Fq51) {
 }
 
 pub fn gdec2(x: &mut Fq51) {
-    x.0[0] -= 2;
+    x.0[0] = x.0[0].wrapping_sub(2);
 }
 
 #[inline(never)]
 pub fn gsqrt(x: &Fq51) -> Result<Fq51, CryptoError> {
-    // we need to perform (x^((q+1)/4) mod q)
+    // for Curve1174, |Fq| mod 4 == 3, so we need to perform (x^((q+1)/4) mod q)
     // for (q + 1)/4 = 0x01FF_FFFF_FFFF_FFFF__FFFF_FFFF_FFFF_FFFF__FFFF_FFFF_FFFF_FFFF__FFFF_FFFF_FFFF_FFFE
     //               = 2^(2*(248-1))
     // At end we will verify: sqrt(x)^2 mod q == x, bypassing usual check for Legendre symbol == +1.
@@ -644,16 +730,16 @@ pub fn gsqrt(x: &Fq51) -> Result<Fq51, CryptoError> {
 pub fn bin_to_elt(y: &U256, x: &mut Fq51) {
     {
         let mut s = y.0[0] as u128;
-        x.0[0] = (s as i64) & BOT_51_BITS;
+        x.0[0] = bot51u(s);
         s >>= 51;
-        s += (y.0[1] as u128) << (64 - 51);
-        x.0[1] = (s as i64) & BOT_51_BITS;
+        s = s.wrapping_add((y.0[1] as u128) << (64 - 51));
+        x.0[1] = bot51u(s);
         s >>= 51;
-        s += (y.0[2] as u128) << (128 - 2 * 51);
-        x.0[2] = (s as i64) & BOT_51_BITS;
+        s = s.wrapping_add((y.0[2] as u128) << (128 - 2 * 51));
+        x.0[2] = bot51u(s);
         s >>= 51;
-        s += (y.0[3] as u128) << (192 - 3 * 51);
-        x.0[3] = (s as i64) & BOT_51_BITS;
+        s = s.wrapping_add((y.0[3] as u128) << (192 - 3 * 51));
+        x.0[3] = bot51u(s);
         s >>= 51;
         x.0[4] = s as i64;
     }
@@ -688,16 +774,16 @@ fn clean_convert_Fq51_to_lev_u64(x: &Fq51, y: &mut [u64; 4]) {
     // convert an Fq51 that has already been scr()
     // to [u64;4] vector
     let mut s = x.0[0] as u128;
-    s += (x.0[1] as u128) << 51;
+    s = s.wrapping_add((x.0[1] as u128) << 51);
     y[0] = s as u64;
     s >>= 64;
-    s += (x.0[2] as u128) << (2 * 51 - 64);
+    s = s.wrapping_add((x.0[2] as u128) << (2 * 51 - 64));
     y[1] = s as u64;
     s >>= 64;
-    s += (x.0[3] as u128) << (3 * 51 - 128);
+    s = s.wrapping_add((x.0[3] as u128) << (3 * 51 - 128));
     y[2] = s as u64;
     s >>= 64;
-    s += (x.0[4] as u128) << (4 * 51 - 192);
+    s = s.wrapping_add((x.0[4] as u128) << (4 * 51 - 192));
     y[3] = s as u64;
 }
 

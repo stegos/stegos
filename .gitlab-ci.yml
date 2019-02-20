@@ -46,7 +46,7 @@ build:macos:
 .test:
   stage: test
   script:
-    - cargo test --all -- --nocapture
+    - RUST_MIN_STACK=8388608 cargo test --all -- --nocapture
   artifacts:
     expire_in: 1 week
     paths:

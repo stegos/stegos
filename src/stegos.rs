@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2018 Stegos
+// Copyright (c) 2018 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -187,7 +187,7 @@ fn run() -> Result<(), Error> {
 
     let args = App::new(name)
         .version(&version[..])
-        .author("Stegos AG <info@stegos.cc>")
+        .author("Stegos AG <info@stegos.com>")
         .about("Stegos is a completely anonymous and confidential cryptocurrency.")
         .arg(
             Arg::with_name("config")

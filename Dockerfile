@@ -1,6 +1,6 @@
 # Use multi-stage build to reduce image size
 FROM rust:1.32-slim-stretch AS builder
-LABEL maintainer="Stegos AG <info@stegos.cc>"
+LABEL maintainer="Stegos AG <info@stegos.com>"
 
 RUN apt-get update && apt-get install -y git-core
 ADD . /usr/src/stegos

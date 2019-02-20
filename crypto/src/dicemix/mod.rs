@@ -1,7 +1,7 @@
 //! mod.rs - DiceMix for secure and anonymous info exchange
 
 //
-// Copyright (c) 2019 Stegos
+// Copyright (c) 2019 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal

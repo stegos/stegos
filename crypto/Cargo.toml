@@ -2,7 +2,7 @@
 name = "stegos_crypto"
 version = "0.1.0"
 edition = "2018"
-authors = ["Stegos AG <info@stegos.cc>"]
+authors = ["Stegos AG <info@stegos.com>"]
 links = "stegos_crypto"
 build = "build.rs"
 

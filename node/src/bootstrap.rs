@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2018 Stegos
+// Copyright (c) 2018 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -36,7 +36,7 @@ fn main() {
 
     let args = App::new("Stegos Bootstrap Utility")
         .version(crate_version!())
-        .author("Stegos AG <info@stegos.cc>")
+        .author("Stegos AG <info@stegos.com>")
         .about("A tool to generate initial keys and genesis block.")
         .arg(
             Arg::with_name("keys")

@@ -1,7 +1,7 @@
 [package]
 name = "stegos_network"
 version = "0.3.0"
-authors = ["Stegos AG <info@stegos.cc>"]
+authors = ["Stegos AG <info@stegos.com>"]
 links = "stegos_network"
 edition = "2018"
 build = "build.rs"

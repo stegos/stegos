@@ -36,6 +36,7 @@ use log4rs::config::{Appender, Config as LogConfig, Logger, Root};
 use log4rs::encode::pattern::PatternEncoder;
 use log4rs::{Error as LogError, Handle as LogHandle};
 use resolve::{config::DnsConfig, record::Srv, resolver};
+use std::path::Path;
 use std::path::PathBuf;
 use std::process;
 use stegos_blockchain::Block;
@@ -98,28 +99,29 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
 
 fn initialize_logger(cfg: &config::Config) -> Result<LogHandle, LogError> {
     // Try to load log4rs config file
-    let handle = match log4rs::load_config_file(
-        PathBuf::from(&cfg.general.log4rs_config),
-        Default::default(),
-    ) {
-        Ok(config) => log4rs::init_config(config)?,
-        Err(e) => {
-            error!("Failed to read log4rs config file: {}", e);
-            println!("Failed to read log4rs config file: {}", e);
-            let stdout = ConsoleAppender::builder()
-                .encoder(Box::new(PatternEncoder::new(
-                    "{d(%Y-%m-%d %H:%M:%S)(local)} [{t}] {h({l})} {M}: {m}{n}",
-                )))
-                .build();
-            let config = LogConfig::builder()
-                .appender(Appender::builder().build("stdout", Box::new(stdout)))
-                .logger(Logger::builder().build("stegos_network", LevelFilter::Debug))
-                .build(Root::builder().appender("stdout").build(LevelFilter::Info))
-                .expect("console logger should never fail");
-            log4rs::init_config(config)?
+    let path = Path::new(&cfg.general.log4rs_config);
+    if !cfg.general.log4rs_config.is_empty() && path.is_file() {
+        match log4rs::load_config_file(path, Default::default()) {
+            Ok(config) => return Ok(log4rs::init_config(config)?),
+            Err(e) => {
+                error!("Failed to read log4rs config file: {}", e);
+                println!("Failed to read log4rs config file: {}", e);
+            }
         }
     };
-    Ok(handle)
+
+    let stdout = ConsoleAppender::builder()
+        .encoder(Box::new(PatternEncoder::new(
+            "{d(%Y-%m-%d %H:%M:%S)(local)} [{t}] {h({l})} {M}: {m}{n}",
+        )))
+        .build();
+    let config = LogConfig::builder()
+        .appender(Appender::builder().build("stdout", Box::new(stdout)))
+        .logger(Logger::builder().build("stegos_network", LevelFilter::Debug))
+        .build(Root::builder().appender("stdout").build(LevelFilter::Info))
+        .expect("console logger should never fail");
+
+    Ok(log4rs::init_config(config)?)
 }
 
 fn initialize_genesis(cfg: &config::Config) -> Result<Vec<Block>, Error> {

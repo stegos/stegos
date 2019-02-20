@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use failure::{Error, Fail};
+use failure::Error;
 use log::{debug, info, warn};
 use rand::seq::IteratorRandom;
 use std::mem;
@@ -91,10 +91,14 @@ impl Hashable for ChainLoaderMessage {
 
 /// Limit of blocks to download starting from current known blockchain state.
 const ORPHANS_BLOCK_LIMIT: u64 = 100;
+/// How many epoch epoch we can load without notifying user.
+const DIFF_IN_EPOCH_TO_NOTIFY: u64 = 10;
 pub const CHAIN_LOADER_TOPIC: &'static str = "chain-loader";
 
 //TODO: Support multiple blocks on each height.
 pub struct ChainLoader {
+    /// If we loading long chain, notify user.
+    loading_long_chain: bool,
     pub blocks_queue: Vec<SealedBlockMessage>,
 }
 
@@ -102,6 +106,7 @@ impl ChainLoader {
     pub fn new() -> Self {
         ChainLoader {
             blocks_queue: Vec::new(),
+            loading_long_chain: false,
         }
     }
 }
@@ -112,18 +117,27 @@ impl ChainLoader {
 impl NodeService {
     /// Handle orphan block from network.
     pub fn on_orphan_block(&mut self, orphan: SealedBlockMessage) -> Result<(), Error> {
-        if self.chain.epoch > orphan.block.base_header().epoch {
+        let block_epoch = orphan.block.base_header().epoch;
+        if self.chain.epoch > block_epoch {
             debug!(
                 "Skipping outdated block, with epoch = {}",
                 orphan.block.base_header().epoch
             );
             return Ok(());
         }
+        let epoch_dif = block_epoch - self.chain.epoch;
         if let Some(last) = self.chain_loader.blocks_queue.last() {
             if Hash::digest(last) != orphan.block.base_header().previous {
                 debug!("Skipping block that is not linked to the previous received.");
                 return Ok(());
             }
+        } else if epoch_dif > DIFF_IN_EPOCH_TO_NOTIFY {
+            info!(
+                "Received orphan block, starting loading chain from = {},\
+                 numbers of epoch to load = {}.",
+                orphan.pkey, epoch_dif
+            );
+            self.chain_loader.loading_long_chain = true;
         }
         let block_hash = Hash::digest(&orphan.block);
         let last_hash = Hash::digest(self.chain.last_block());
@@ -137,6 +151,9 @@ impl NodeService {
 
     /// Request block history, from one of validators.
     pub fn request_history(&mut self) -> Result<(), Error> {
+        if !self.chain_loader.blocks_queue.is_empty() {
+            debug!("Chain loading already in progress, skipping request from validator.");
+        }
         let validators = self.chain.validators.iter().map(|(k, _)| k);
         let validators = validators.filter(|key| &self.keys.cosi_pkey != *key);
 
@@ -183,20 +200,33 @@ impl NodeService {
 
     fn handle_response_blocks(
         &mut self,
-        _pkey: secure::PublicKey,
+        pkey: secure::PublicKey,
         response: ResponseBlocks,
     ) -> Result<(), Error> {
         assert!(self.chain.height() > 0);
 
-        let first_block = response
-            .blocks
-            .first()
-            .ok_or(ChainLoaderErrors::NoBlocksFound)?;
+        let first_block = if let Some(first_block) = response.blocks.first() {
+            first_block
+        } else {
+            // TODO: later add trigger to notify user, that we end loading.
+            debug!("No block in response found");
+            return Ok(());
+        };
 
         let last_block_hash = Hash::digest(self.chain.blocks().last().unwrap());
         if last_block_hash != first_block.base_header().previous {
-            return Err(ChainLoaderErrors::ResponseWithWrongParent.into());
+            // in current implementation we can ask multiple times for one block range.
+            debug!("Received response with first block not linked to our blockchain history.");
+            return Ok(());
         }
+
+        info!(
+            "Received {} blocks from = {} trying to apply them at height={}",
+            response.blocks.len(),
+            pkey,
+            self.chain.height()
+        );
+
         for block in response.blocks {
             // fail if some of blocks are invalid.
             self.apply_new_block(block)?
@@ -206,9 +236,15 @@ impl NodeService {
         let sealed_blocks = mem::replace(&mut self.chain_loader.blocks_queue, Vec::new());
         for block in sealed_blocks {
             if let Err(e) = self.handle_sealed_block(block) {
-                warn!("During processing outdated seald block, error: {}", e)
+                warn!("During processing outdated sealed block, error: {}", e)
             }
         }
+
+        if self.chain_loader.blocks_queue.is_empty() {
+            info!("Synchronized with actual network state.");
+            self.chain_loader.loading_long_chain = false;
+        }
+
         Ok(())
     }
 
@@ -222,11 +258,4 @@ impl NodeService {
             ChainLoaderMessage::Response(r) => self.handle_response_blocks(pkey, r),
         }
     }
-}
-#[derive(Debug, Fail, PartialEq, Eq)]
-pub enum ChainLoaderErrors {
-    #[fail(display = "Received response with first block not linked to our blockchain history.")]
-    ResponseWithWrongParent,
-    #[fail(display = "No block in response found.")]
-    NoBlocksFound,
 }

@@ -172,7 +172,7 @@ const TX_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 /// How often to check the consensus state.
 const CONSENSUS_TIMER: Duration = Duration::from_secs(30);
 /// How long we should wait for network stabilization.
-pub const NETWORK_GRACE_TIMEOUT: Duration = Duration::from_secs(5);
+pub const NETWORK_GRACE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Max count of sealed block in epoch.
 const SEALED_BLOCK_IN_EPOCH: usize = 5;
 /// Max difference in timestamps of leader and witnesses.
@@ -463,6 +463,7 @@ impl NodeService {
             let ticket = self.vrf_system.handle_epoch_end(block_hash);
             let _ = self.broadcast_vrf_ticket(ticket);
         }
+
         self.request_history()
     }
 
@@ -493,7 +494,7 @@ impl NodeService {
         } else {
             // Resign from Validator role.
             info!(
-                "I'm regular node: epoch={}, leader={}",
+                "I'm regular node, waiting for sealed block: epoch={}, leader={}",
                 self.chain.epoch, self.chain.leader
             );
             self.consensus = None;
@@ -540,11 +541,12 @@ impl NodeService {
 
         let ref block = msg.block;
 
+        let block_hash = Hash::digest(block);
+
         let header = block.base_header();
         // Check previous hash.
         let previous_hash = Hash::digest(self.chain.last_block());
         if previous_hash != header.previous {
-            let block_hash = Hash::digest(block);
             debug!(
                 "Received orphan block: hash={}, expected_previous={}, got_previous={}",
                 &block_hash, &previous_hash, &header.previous
@@ -568,17 +570,18 @@ impl NodeService {
             }
         }
 
+        info!(
+            "Received sealed block from the network: hash={}, current_height={}",
+            &block_hash,
+            self.chain.height()
+        );
+
         let block = msg.block;
         self.apply_new_block(block)
     }
 
     fn apply_new_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
-        info!(
-            "Received sealed block from the network: hash={}, current_height={}",
-            &block_hash,
-            self.chain.height()
-        );
 
         // Check that block is not registered yet.
         if let Some(_) = self.chain.block_by_hash(&block_hash) {

@@ -27,7 +27,6 @@ tokio-timer = "0.2"
 unsigned-varint = "0.2"
 void = "1.0"
 libp2p = "0.2"
-stegos_serialization = { path = "../serialization"}
 serde = "1.0"
 serde_derive = "1.0"
 

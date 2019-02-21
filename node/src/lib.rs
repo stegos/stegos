@@ -27,6 +27,7 @@ mod error;
 mod loader;
 mod mempool;
 pub mod protos;
+
 #[cfg(test)]
 mod test;
 mod tickets;
@@ -79,7 +80,7 @@ impl Node {
         cfg: &StorageConfig,
         keys: KeyChain,
         network: Network,
-    ) -> Result<(impl Future<Item = (), Error = ()>, Node), Error> {
+    ) -> Result<(NodeService, Node), Error> {
         let (outbox, inbox) = unbounded();
 
         let service = NodeService::new(cfg, keys, network.clone(), inbox)?;
@@ -198,7 +199,7 @@ enum NodeMessage {
     VRFTimer(Instant),
 }
 
-struct NodeService {
+pub struct NodeService {
     /// Blockchain.
     chain: Blockchain,
     /// Key Chain.

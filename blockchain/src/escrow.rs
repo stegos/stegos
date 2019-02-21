@@ -30,7 +30,7 @@ use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
 
 /// Minimal stake a
-pub const MIN_STAKE_AMOUNT: i64 = 1;
+pub const MIN_STAKE_AMOUNT: i64 = 1000;
 
 #[derive(PartialEq, Eq, Ord, PartialOrd)]
 struct EscrowKey {

@@ -103,10 +103,14 @@ fn main() {
     let stake = if let Some(stake) = args.value_of("stake") {
         match stake.parse::<i64>() {
             Ok(stake) => {
-                if stake < 1 {
-                    eprintln!("Invalid stake: must be greater than 1");
+                if stake < stegos_blockchain::MIN_STAKE_AMOUNT {
+                    eprintln!(
+                        "Invalid stake: must be greater than MIN_STAKE_AMOUNT = {}",
+                        stegos_blockchain::MIN_STAKE_AMOUNT
+                    );
                     process::exit(1);
                 };
+
                 stake
             }
             Err(e) => {
@@ -115,7 +119,7 @@ fn main() {
             }
         }
     } else {
-        100i64
+        stegos_blockchain::MIN_STAKE_AMOUNT
     };
 
     info!("Generating genesis keys...");

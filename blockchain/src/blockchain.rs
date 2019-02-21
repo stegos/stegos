@@ -251,12 +251,12 @@ impl Blockchain {
     pub fn blocks_range(&self, starting_hash: &Hash, count: u64) -> Option<Vec<Block>> {
         if let Some(&block_id) = self.block_by_hash.get(starting_hash) {
             let block_id = block_id + 1;
-            let len = self.blocks.len();
-            let end_range = usize::min(len, block_id + count as usize);
-
-            if block_id < end_range {
-                return Some(self.database.iter_starting(block_id as u64).collect());
-            }
+            return Some(
+                self.database
+                    .iter_starting(block_id as u64)
+                    .take(count as usize)
+                    .collect(),
+            );
         }
         return None;
     }
@@ -539,6 +539,7 @@ pub mod tests {
     use chrono::prelude::Utc;
 
     use crate::genesis::genesis;
+    use std::collections::BTreeSet;
     use stegos_crypto::curve1174::cpt::*;
     use stegos_keychain::KeyChain;
 
@@ -619,5 +620,56 @@ pub mod tests {
         for _ in 0..3 {
             iterate(&mut blockchain, skey, pkey).unwrap();
         }
+    }
+
+    #[test]
+    fn block_range_limit() {
+        use simple_logger;
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+        let keychains = [
+            KeyChain::new_mem(),
+            KeyChain::new_mem(),
+            KeyChain::new_mem(),
+        ];
+
+        let current_timestamp = Utc::now().timestamp() as u64;
+        let blocks = genesis(&keychains, 100, 1_000_000, current_timestamp);
+        let mut blockchain = Blockchain::testing();
+        for block in blocks {
+            match block {
+                Block::KeyBlock(block) => blockchain.register_key_block(block).unwrap(),
+                Block::MonetaryBlock(block) => {
+                    blockchain
+                        .register_monetary_block(block, current_timestamp)
+                        .unwrap();
+                }
+            }
+        }
+
+        let last_block = blockchain.last_block();
+        let start = Hash::digest(last_block);
+        // len of genesis
+        assert!(blockchain.blocks().len() > 0);
+        let version: u64 = 1;
+        for epoch in 2..12 {
+            let new_block = {
+                let previous = Hash::digest(&blockchain.last_block());
+                let base = BaseBlockHeader::new(version, previous, epoch, 0);
+
+                let witnesses: BTreeSet<SecurePublicKey> =
+                    keychains.iter().map(|p| p.cosi_pkey.clone()).collect();
+                let leader = keychains[0].cosi_pkey.clone();
+                let facilitator = keychains[0].cosi_pkey.clone();
+
+                KeyBlock::new(base, leader, facilitator, witnesses)
+            };
+            blockchain.register_key_block(new_block).unwrap();
+        }
+
+        assert_eq!(blockchain.blocks_range(&start, 1).unwrap().len(), 1);
+
+        assert_eq!(blockchain.blocks_range(&start, 4).unwrap().len(), 4);
+        // limit
+        assert_eq!(blockchain.blocks_range(&start, 20).unwrap().len(), 10);
     }
 }

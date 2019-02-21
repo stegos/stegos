@@ -30,7 +30,7 @@ mod transaction;
 mod valueshuffle;
 
 pub use crate::api::*;
-pub use crate::transaction::*;
+use crate::transaction::*;
 use crate::valueshuffle::ValueShuffle;
 use failure::Error;
 use futures::sync::mpsc::unbounded;

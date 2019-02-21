@@ -1,4 +1,10 @@
-# Stegos Blockchain [![pipeline status](https://gitlab.aws.emotiq.ch/Stegos/stegos/badges/dev/pipeline.svg)](https://gitlab.aws.emotiq.ch/Stegos/stegos/commits/dev)  [![Coverage Status](https://codecov.io/gh/stegos/stegos/branch/dev/graphs/badge.svg)](https://codecov.io/gh/stegos/stegos)
+# Stegos Blockchain
+
+[![Build Status][build-badge]][build-url]
+[![Coverage][coverage-badge]][coverage-url]
+[![Demo][demo-badge]][demo-url]
+[![Wiki][wiki-badge]][wiki-url]
+[![Telegram][telegram-badge]][telegram-url]
 
 Stegos is a completely private, confidential, and scalable cryptocurrency that’s friendly to the environment. Stegos builds and improves upon other privacy coins and can be used to send payments and data with complete confidentiality.
 
@@ -40,5 +46,15 @@ We encourage you to contribute in any way you can!
 
 Please see our [CONTRIBUTING GUIDE](https://github.com/stegos/stegos/blob/dev/CONTRIBUTING.md) and [CODE OF CONDUCT](https://github.com/stegos/stegos/blob/readme/CODE_OF_CONDUCT.md) for more information on contributing.
 
-
 Copyright (c) 2018-2019 Stegos AG
+
+[build-badge]: https://gitlab.aws.stegos.com/Stegos/stegos/badges/dev/pipeline.svg
+[build-url]: https://gitlab.aws.stegos.com/Stegos/stegos/commits/dev
+[coverage-badge]: https://codecov.io/gh/stegos/stegos/branch/dev/graphs/badge.svg
+[coverage-url]: https://codecov.io/gh/stegos/stegos
+[demo-badge]: https://img.shields.io/badge/YouTube-Demo-red.svg?style=flat
+[demo-url]: https://www.youtube.com/watch?v=wb4Q6wyezWM
+[wiki-badge]: https://img.shields.io/badge/Documentation-Wiki-orange.svg
+[wiki-url]: https://github.com/stegos/stegos/wiki
+[telegram-badge]: https://img.shields.io/badge/Telegram-Chat-blue.svg?style=flat
+[telegram-url]: https://t.me/stegos4privacy

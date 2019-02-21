@@ -2,8 +2,14 @@
 name = "stegos"
 version = "0.1.0"
 authors = ["Stegos AG <info@stegos.com>"]
-edition = "2018"
 build = "build.rs"
+categories = ["cryptography", "database-implementations", "command-line-utilities"]
+edition = "2018"
+homepage = "https://stegos.com"
+keywords = ["stegos", "blockchain", "cryptocurrency", "crypto", "privacy"]
+license = "MIT"
+repository = "https://github.com/stegos/stegos"
+description = "Stegos is a completely private, confidential, and scalable cryptocurrency that's friendly to the environment"
 
 [[bin]]
 name = "stegos"
@@ -17,40 +23,40 @@ members = [
     "keychain",
     "network",
     "node",
+    "serialization",
     "txpool",
-    "serialization"
+    "wallet"
 ]
 
 [dependencies]
-stegos_blockchain = { path = "./blockchain" }
-stegos_consensus = { path = "./consensus" }
-stegos_crypto = { path = "./crypto" }
-stegos_keychain = { path = "./keychain" }
-stegos_network = { path = "./network" }
-stegos_node = { path = "./node" }
-stegos_txpool = { path = "./txpool" }
-stegos_wallet = { path = "./wallet" }
-stegos_serialization = { path = "./serialization" }
-
+stegos_blockchain = { version = "0.1.0", path = "./blockchain" }
+stegos_consensus = { version = "0.1.0", path = "./consensus" }
+stegos_crypto = { version = "0.1.0", path = "./crypto" }
+stegos_keychain = { version = "0.1.0", path = "./keychain" }
+stegos_network = { version = "0.3.0", path = "./network" }
+stegos_node = { version = "0.1.0", path = "./node" }
+stegos_serialization = { version = "0.1.0", path = "./serialization" }
+stegos_txpool = { version = "0.1.0", path = "./txpool" }
+stegos_wallet = { version = "0.1.0", path = "./wallet" }
+atty = "0.2"
+chrono = "0.4"
 clap = "2.32"
 dirs = "1.0"
-futures = "0.1"
-tokio-io = "0.1"
-tokio-timer = "0.2"
-tokio = "0.1"
-log = "0.4"
-log4rs = { version = "0.8", features = ["all_components", "gzip", "file", "toml_format"]}
 failure = "0.1"
-rustyline = "2.1"
+futures = "0.1"
 lazy_static = "1.1"
-atty = "0.2"
+log = "0.4"
+log4rs = { version = "0.8", features = ["all_components", "gzip", "file", "toml_format"] }
+rand = "0.6"
 regex = "1.0"
 resolve = "0.2"
+rustyline = "2.1"
 serde = "1.0"
 serde_derive = "1.0"
+tokio = "0.1"
+tokio-io = "0.1"
+tokio-timer = "0.2"
 toml = "0.4"
-rand = "0.6"
-chrono = "0.4"
 
 [dev-dependencies]
 simple_logger = "1.0"
@@ -58,7 +64,17 @@ simple_logger = "1.0"
 [build-dependencies]
 vergen = "3.0.4"
 
+[profile.release]
+debug = 2
+
 [profile.dev]
 opt-level = 2
-debug = true
+debug = 2
 debug-assertions = true
+overflow-checks = false
+
+[profile.test]
+opt-level = 2
+debug = 2
+debug-assertions = true
+overflow-checks = false

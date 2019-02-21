@@ -2,24 +2,30 @@
 name = "stegos_consensus"
 version = "0.1.0"
 authors = ["Stegos AG <info@stegos.com>"]
-edition = "2018"
-links = "stegos_consensus"
 build = "build.rs"
+categories = ["network-programming"]
+edition = "2018"
+homepage = "https://stegos.com"
+keywords = ["stegos", "blockchain", "cryptocurrency", "crypto", "privacy"]
+license = "MIT"
+links = "stegos_consensus"
+repository = "https://github.com/stegos/stegos"
+description = "Stegos - Consensus Implementation"
 
 [dependencies]
-log = "0.4"
-failure = "0.1"
-stegos_crypto = { path = "../crypto" }
-stegos_serialization = {path = "../serialization"}
-stegos_blockchain = { path = "../blockchain" }
+stegos_blockchain = { version = "0.1.0", path = "../blockchain" }
+stegos_crypto = { version = "0.1.0", path = "../crypto" }
+stegos_serialization = { version = "0.1.0", path = "../serialization" }
 bitvector = "0.1"
+failure = "0.1"
+log = "0.4"
 protobuf = "2.2"
 
 [dev-dependencies]
-stegos_keychain = { path = "../keychain" }
-simple_logger = "1.0"
+stegos_keychain = { version = "0.1.0", path = "../keychain" }
 chrono = "0.4"
 rand = "0.6"
+simple_logger = "1.0"
 
 [build-dependencies]
-stegos_serialization = {path = "../serialization"}
+stegos_serialization = { version = "0.1.0", path = "../serialization" }

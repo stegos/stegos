@@ -22,9 +22,9 @@
 use super::Loopback;
 use crate::*;
 use chrono::Utc;
-use std::collections::HashMap;
+use stegos_blockchain::*;
+use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure::sign_hash as secure_sign_hash;
-use stegos_wallet::create_payment_transaction;
 
 #[test]
 pub fn init() {
@@ -75,28 +75,35 @@ fn simulate_consensus(node: &mut NodeService) {
     node.commit_proposed_block(block, multisig, multisigmap);
 }
 
-fn unspent(node: &NodeService) -> HashMap<Hash, (PaymentOutput, i64)> {
-    let mut unspent: HashMap<Hash, (PaymentOutput, i64)> = HashMap::new();
+fn simulate_payment(node: &mut NodeService, amount: i64) -> Result<(), Error> {
+    let sender_skey = &node.keys.wallet_skey;
+    let sender_pkey = &node.keys.wallet_pkey;
+    let mut inputs: Vec<Output> = Vec::new();
+    let mut inputs_amount: i64 = 0;
     for hash in node.chain.unspent() {
         let output = node.chain.output_by_hash(&hash).unwrap();
         if let Output::PaymentOutput(o) = output {
-            let PaymentPayload { amount, .. } = o.decrypt_payload(&node.keys.wallet_skey).unwrap();
-            unspent.insert(hash, (o.clone(), amount));
+            let PaymentPayload { amount, .. } = o.decrypt_payload(sender_skey).unwrap();
+            inputs.push(output.clone());
+            inputs_amount += amount;
         }
     }
-    unspent
-}
 
-fn simulate_payment(node: &mut NodeService, amount: i64) -> Result<(), Error> {
-    let (inputs, outputs, gamma, fee) = create_payment_transaction(
-        &node.keys.wallet_skey,
-        &node.keys.wallet_pkey,
-        &node.keys.wallet_pkey,
-        &unspent(node),
-        amount,
-        PaymentPayloadData::Comment("Test".to_string()),
-    )?;
-    let tx = Transaction::new(&node.keys.wallet_skey, &inputs, &outputs, gamma, fee)?;
+    let fee: i64 = PAYMENT_FEE * inputs.len() as i64;
+    assert!(inputs_amount >= amount + fee);
+    let change = inputs_amount - amount - fee;
+    let timestamp = Utc::now().timestamp() as u64;
+    let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
+    let (output1, gamma1) = PaymentOutput::new(timestamp, sender_skey, sender_pkey, amount)?;
+    outputs.push(Output::PaymentOutput(output1));
+    let mut outputs_gamma = gamma1;
+    if change > 0 {
+        let (output2, gamma2) = PaymentOutput::new(timestamp, sender_skey, sender_pkey, change)?;
+        outputs.push(Output::PaymentOutput(output2));
+        outputs_gamma += gamma2;
+    }
+
+    let tx = Transaction::new(sender_skey, &inputs, &outputs, outputs_gamma, fee)?;
     node.handle_transaction(tx)?;
     Ok(())
 }

@@ -2,15 +2,21 @@
 name = "stegos_keychain"
 version = "0.1.0"
 authors = ["Stegos AG <info@stegos.com>"]
+categories = ["cryptography", "config"]
 edition = "2018"
+homepage = "https://stegos.com"
+keywords = ["stegos", "blockchain", "cryptocurrency", "crypto", "privacy"]
+license = "MIT"
+repository = "https://github.com/stegos/stegos"
+description = "Stegos - Key Management"
 
 [dependencies]
-log = "0.4"
-failure = "0.1"
+stegos_crypto = { version="0.1.0", path = "../crypto" }
 base64 = "0.9"
+failure = "0.1"
 lazy_static = "1.1"
+log = "0.4"
 regex = "1.0"
 secp256k1 = { version = "0.12", features = ["rand"] }
-stegos_crypto = { path = "../crypto" }
 serde = "1.0"
 serde_derive = "1.0"

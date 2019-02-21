@@ -2,33 +2,40 @@
 name = "stegos_network"
 version = "0.3.0"
 authors = ["Stegos AG <info@stegos.com>"]
-links = "stegos_network"
-edition = "2018"
 build = "build.rs"
+categories = ["cryptography", "network-programming"]
+edition = "2018"
+homepage = "https://stegos.com"
+keywords = ["stegos", "blockchain", "cryptocurrency", "crypto", "privacy"]
+license = "MIT"
+links = "stegos_network"
+repository = "https://github.com/stegos/stegos"
+description = "Stegos - Network Library"
 
 [dependencies]
+stegos_crypto = { version = "0.1.0", path = "../crypto" }
+stegos_keychain = { version = "0.1.0", path = "../keychain" }
+stegos_serialization = { version = "0.1.0", path = "../serialization" }
 bs58 = "0.2"
 bytes = "0.4"
+env_logger = "0.6.0"
 failure = "0.1"
 futures = "0.1"
-env_logger = "0.6.0"
 ipnetwork = "0.12"
+libp2p = { version = "0.2", default-features = false, features = ["secio-secp256k1"] }
 log = "0.4"
 pnet = "0.21"
 protobuf = "2.3"
 rand = "0.6"
+serde = "1.0"
+serde_derive = "1.0"
 smallvec = "0.6"
-stegos_crypto = { path = "../crypto"}
-stegos_keychain = { path = "../keychain"}
 tokio = "0.1"
 tokio-codec = "0.1"
 tokio-stdin-stdout = "0.1"
 tokio-timer = "0.2"
 unsigned-varint = "0.2"
 void = "1.0"
-libp2p = "0.2"
-serde = "1.0"
-serde_derive = "1.0"
 
 [build-dependencies]
-stegos_serialization = { path = "../serialization"}
+stegos_serialization = { version = "0.1.0", path = "../serialization" }

@@ -37,7 +37,7 @@ use stegos_node::PAYMENT_FEE;
 use stegos_node::STAKE_FEE;
 
 /// Create a new payment transaction.
-pub fn create_payment_transaction(
+pub(crate) fn create_payment_transaction(
     sender_skey: &SecretKey,
     sender_pkey: &PublicKey,
     recipient: &PublicKey,
@@ -132,7 +132,7 @@ pub fn create_payment_transaction(
 }
 
 /// Create a new staking transaction.
-pub fn create_staking_transaction(
+pub(crate) fn create_staking_transaction(
     sender_skey: &SecretKey,
     sender_pkey: &PublicKey,
     validator_pkey: &secure::PublicKey,
@@ -231,7 +231,7 @@ pub fn create_staking_transaction(
 
 /// Create a new unstaking transaction.
 /// NOTE: amount must include PAYMENT_FEE.
-pub fn create_unstaking_transaction(
+pub(crate) fn create_unstaking_transaction(
     sender_skey: &SecretKey,
     sender_pkey: &PublicKey,
     validator_pkey: &secure::PublicKey,

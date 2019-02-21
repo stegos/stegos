@@ -300,7 +300,7 @@ impl TicketsSystem {
 ///Node service extension for VrfTicketSystem
 impl NodeService {
     pub(crate) fn broadcast_vrf_ticket(&mut self, ticket: VRFTicket) -> Result<(), Error> {
-        if self.chain.escrow.get(&self.keys.cosi_pkey) <= 0 {
+        if self.chain.escrow.get(&self.keys.cosi_pkey) < stegos_blockchain::MIN_STAKE_AMOUNT {
             debug!("Trying to broadcast ticket but our node is not staker.");
             return Ok(());
         }
@@ -311,10 +311,13 @@ impl NodeService {
     }
 
     pub(crate) fn handle_vrf_message(&mut self, msg: VRFTicket) -> Result<(), Error> {
-        if self.chain.escrow.get(&msg.pkey) > 0 {
+        if self.chain.escrow.get(&msg.pkey) >= stegos_blockchain::MIN_STAKE_AMOUNT {
             self.vrf_system.handle_process_ticket(msg)?;
         } else {
-            debug!("Received message from unknown peer = {:?}", msg.pkey);
+            debug!(
+                "Received message from peer that is not known staker = {:?}",
+                msg.pkey
+            );
         }
         Ok(())
     }

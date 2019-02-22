@@ -36,6 +36,8 @@ Issue tracker is at https://github.com/stegos/stegos/issues.
 
 Project boards are at https://github.com/orgs/stegos/projects.
 
+Latest release notes are at https://github.com/stegos/stegos/wiki/testnet-1-release-notes.
+
 ## Installing from Source
 
 Please, refer to [Building instructions](BUILD.md).

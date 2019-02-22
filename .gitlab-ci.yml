@@ -7,14 +7,14 @@ stages:
 
 before_script:
   - ci-scripts/install-deps.sh
-  - rustup component add rustfmt
-  - cargo install cargo-audit
 
 # Running fast-checks to notice an author that his pull-request fails our standatds.
 # This checks should not produce any artifacts
 fast_checks:
   stage: fast_checks
   script:
+    - rustup component add rustfmt
+    - cargo install cargo-audit
     - cargo audit
     - cargo fmt --all -- --check
   tags:
@@ -46,7 +46,7 @@ build:macos:
 .test:
   stage: test
   script:
-    - RUST_MIN_STACK=8388608 cargo test --all -- --nocapture
+    - cargo test --all -- --nocapture
   artifacts:
     expire_in: 1 week
     paths:
@@ -70,6 +70,7 @@ test:macos:
 code_coverage:
   stage: code_coverage
   image: rust:1.32
+  before_script:
   script:
     - ci-scripts/coverage.sh
   dependencies:
@@ -82,24 +83,30 @@ code_coverage:
 
 .release:
   stage: release
-  script:
-    - cargo build --release
   only:
     - dev
     - master
   when: manual
+  dependencies: []
   artifacts:
     expire_in: 1 week
     paths:
-      - target/
+      - release/
 
 release:linux:
   extends: .release
   image: rust:1.32
+  script:
+    - cargo install --path . --root /usr/local && strip /usr/local/bin/stegos
+    - mkdir -p release/linux && mv /usr/local/bin/stegos release/linux
   tags:
     - linux
 
 release:macos:
   extends: .release
+  script:
+    - sudo cargo install --path . --root /usr/local && sudo strip /usr/local/bin/stegos
+    - mkdir -p release/macos && mv /usr/local/bin/stegos release/macos
   tags:
     - macos
+

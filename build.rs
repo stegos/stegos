@@ -9,4 +9,10 @@ fn main() {
 
     // Generate the 'cargo:' key output
     generate_cargo_keys(ConstantsFlags::all()).expect("Unable to generate the cargo keys!");
+
+    // Link libstdc++ statically on Linux.
+    #[cfg(target_os = "linux")]
+    {
+        println!("cargo:rustc-link-lib=static=stdc++");
+    }
 }

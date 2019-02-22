@@ -42,25 +42,9 @@ Latest release notes are at https://github.com/stegos/stegos/wiki/testnet-1-rele
 
 Please, refer to [Building instructions](BUILD.md).
 
-## Testnet-1 Node Installation
+## Kicking the tires
 
-### Linux 64-bit:
-
-```bash
-curl -L https://github.com/stegos/stegos/releases/download/v0.1/stegos-linux-x64 -o stegos
-chmod a+x stegos
-./stegos
-```
-
-### macOS 64-bit:
-
-```bash
-curl -L https://github.com/stegos/stegos/releases/download/v0.1/stegos-macos-x64 -o stegos
-chmod a+x stegos
-./stegos
-```
-
-Right after the start the node will print a lot of `INFO` messages with debugging information regarding bootstrapping your node. Press `Enter` to get `stegos>` prompt. To get help enter `help` command at the prompt. To get support or collect testnet tokens, feel free to join our group on Telegram: https://t.me/stegos4privacy. 
+Please see the [latest release notes](https://github.com/stegos/stegos/wiki/testnet-1-release-notes) to play with the testnet.
 
 ## How To Contribute
 

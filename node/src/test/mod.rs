@@ -39,7 +39,7 @@ pub struct SandboxConfig {
 impl SandboxConfig {
     fn genesis(num_nodes: usize) -> Self {
         let nodes_keychains: Vec<_> = (0..num_nodes).map(|_num| KeyChain::new_mem()).collect();
-        let genesis = stegos_blockchain::genesis(&nodes_keychains, 100, 1000000, 0);
+        let genesis = stegos_blockchain::genesis(&nodes_keychains, 1000, 1000000, 0);
         Self {
             genesis,
             nodes_keychains,

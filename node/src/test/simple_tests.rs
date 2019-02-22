@@ -42,7 +42,7 @@ pub fn init() {
     assert!(node.chain.validators.is_empty());
 
     let current_timestamp = Utc::now().timestamp() as u64;
-    let genesis = genesis(&[keys.clone()], 100, 3_000_000, current_timestamp);
+    let genesis = genesis(&[keys.clone()], 1000, 3_000_000, current_timestamp);
     let genesis_count = genesis.len();
     node.handle_init(genesis).unwrap();
     assert_eq!(node.chain.blocks().len(), genesis_count);
@@ -118,7 +118,7 @@ pub fn monetary_requests() {
     let mut node = NodeService::testing(keys.clone(), network, inbox).unwrap();
 
     let total: i64 = 3_000_000;
-    let stake: i64 = 100;
+    let stake: i64 = 1000;
     let current_timestamp = Utc::now().timestamp() as u64;
     let genesis = genesis(&[keys.clone()], stake, total, current_timestamp);
     node.handle_init(genesis).unwrap();

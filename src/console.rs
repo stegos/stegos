@@ -156,7 +156,7 @@ impl ConsoleService {
         println!("show balance - print balance");
         println!("show utxo - print unspent outputs");
         println!("net publish TOPIC MESSAGE - publish a network message via floodsub");
-        println!("net send SECURE_PUBKEY MESSAGE - send a network message via unicast");
+        println!("net send NETWORK_PUBKEY MESSAGE - send a network message via unicast");
         println!();
     }
 
@@ -168,23 +168,23 @@ impl ConsoleService {
     }
 
     fn help_send() {
-        println!("Usage: net send SECUREKEY MESSAGE");
-        println!(" - SECUREKEY recipient's secure public key in HEX format");
+        println!("Usage: net send NETWORK_PUBKEY MESSAGE");
+        println!(" - NETWORK_PUBKEY recipient's network public key in HEX format");
         println!(" - MESSAGE some message");
         println!();
     }
 
     fn help_pay() {
-        println!("Usage: pay PUBLICKEY AMOUNT [COMMENT]");
-        println!(" - WALLETKEY recipient's wallet public key in HEX format");
+        println!("Usage: pay WALLET_PUBKEY AMOUNT [COMMENT]");
+        println!(" - WALLET_PUBKEY recipient's wallet public key in HEX format");
         println!(" - AMOUNT amount in tokens");
         println!(" - COMMENT purpose of payment");
         println!();
     }
 
     fn help_spay() {
-        println!("Usage: spay PUBLICKEY AMOUNT [COMMENT]");
-        println!(" - WALLETKEY recipient's wallet public key in HEX format");
+        println!("Usage: spay WALLET_PUBKEY AMOUNT [COMMENT]");
+        println!(" - WALLET_PUBKEY recipient's wallet public key in HEX format");
         println!(" - AMOUNT amount in tokens");
         println!(" - COMMENT purpose of payment");
         println!();
@@ -204,8 +204,8 @@ impl ConsoleService {
     }
 
     fn help_msg() {
-        println!("Usage: msg PUBLICKEY MESSAGE");
-        println!(" - PUBLICKEY recipient's public key in HEX format");
+        println!("Usage: msg WALLET_PUBKEY MESSAGE");
+        println!(" - WALLET_PUBKEY recipient's public key in HEX format");
         println!(" - MESSAGE some message");
         println!();
     }
@@ -240,7 +240,7 @@ impl ConsoleService {
             let recipient = match secure::PublicKey::try_from_hex(recipient) {
                 Ok(r) => r,
                 Err(e) => {
-                    println!("Invalid public key '{}': {}", recipient, e);
+                    println!("Invalid network public key '{}': {}", recipient, e);
                     Self::help_send();
                     return true;
                 }
@@ -263,7 +263,7 @@ impl ConsoleService {
             let recipient = match PublicKey::try_from_hex(recipient) {
                 Ok(r) => r,
                 Err(e) => {
-                    println!("Invalid public key '{}': {}", recipient, e);
+                    println!("Invalid wallet public key '{}': {}", recipient, e);
                     Self::help_pay();
                     return true;
                 }
@@ -291,7 +291,7 @@ impl ConsoleService {
             let recipient = match PublicKey::try_from_hex(recipient) {
                 Ok(r) => r,
                 Err(e) => {
-                    println!("Invalid public key '{}': {}", recipient, e);
+                    println!("Invalid wallet public key '{}': {}", recipient, e);
                     Self::help_pay();
                     return true;
                 }
@@ -323,7 +323,7 @@ impl ConsoleService {
             let recipient = match PublicKey::try_from_hex(recipient) {
                 Ok(r) => r,
                 Err(e) => {
-                    println!("Invalid public key '{}': {}", recipient, e);
+                    println!("Invalid wallet public key '{}': {}", recipient, e);
                     Self::help_msg();
                     return true;
                 }
@@ -407,10 +407,10 @@ impl ConsoleService {
             }
             WalletNotification::KeysInfo {
                 wallet_pkey,
-                cosi_pkey,
+                network_pkey,
             } => {
                 println!("My wallet key: {}", &wallet_pkey.into_hex());
-                println!("My secure key: {}", &cosi_pkey.into_hex());
+                println!("My network key: {}", &network_pkey.into_hex());
                 self.stdin_th.thread().unpark();
             }
             WalletNotification::UnspentInfo {

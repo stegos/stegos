@@ -87,7 +87,7 @@ impl WalletService {
         node: Node,
     ) -> (Self, Wallet) {
         info!("My wallet key: {}", &pkey.into_hex());
-        debug!("My secure key: {}", &validator_pkey.into_hex());
+        debug!("My network key: {}", &validator_pkey.into_hex());
 
         //
         // State.
@@ -340,7 +340,7 @@ impl Future for WalletService {
                         WalletEvent::KeysInfo => {
                             let notification = WalletNotification::KeysInfo {
                                 wallet_pkey: self.pkey,
-                                cosi_pkey: self.validator_pkey,
+                                network_pkey: self.validator_pkey,
                             };
                             self.subscribers
                                 .retain(move |tx| tx.unbounded_send(notification.clone()).is_ok());

@@ -161,16 +161,30 @@ mod tests {
 
     #[test]
     fn consensus() {
-        let (cosi_skey, cosi_pkey, cosi_sig) = make_secure_random_keys();
+        let (network_skey, network_pkey, network_sig) = make_secure_random_keys();
 
         let body = ConsensusMessageBody::Prevote {};
-        let msg = ConsensusMessage::new(1, 1, Hash::digest(&1u64), &cosi_skey, &cosi_pkey, body);
+        let msg = ConsensusMessage::new(
+            1,
+            1,
+            Hash::digest(&1u64),
+            &network_skey,
+            &network_pkey,
+            body,
+        );
         roundtrip(&msg);
 
         let body = ConsensusMessageBody::Precommit {
-            request_hash_sig: cosi_sig,
+            request_hash_sig: network_sig,
         };
-        let msg = ConsensusMessage::new(1, 1, Hash::digest(&1u64), &cosi_skey, &cosi_pkey, body);
+        let msg = ConsensusMessage::new(
+            1,
+            1,
+            Hash::digest(&1u64),
+            &network_skey,
+            &network_pkey,
+            body,
+        );
         roundtrip(&msg);
     }
 

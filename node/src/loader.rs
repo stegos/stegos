@@ -155,7 +155,7 @@ impl NodeService {
             debug!("Chain loading already in progress, skipping request from validator.");
         }
         let validators = self.chain.validators.iter().map(|(k, _)| k);
-        let validators = validators.filter(|key| &self.keys.cosi_pkey != *key);
+        let validators = validators.filter(|key| &self.keys.network_pkey != *key);
 
         let mut rng = rand::thread_rng();
         let pkey = if let Some(pkey) = validators.choose(&mut rng) {

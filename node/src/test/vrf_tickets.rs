@@ -49,8 +49,8 @@ impl VRFHelper {
             result.push(Self::node_ticket(
                 height,
                 seed,
-                keys.cosi_pkey,
-                &keys.cosi_skey,
+                keys.network_pkey,
+                &keys.network_skey,
             ));
         }
         result

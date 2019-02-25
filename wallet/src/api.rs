@@ -47,7 +47,7 @@ pub enum WalletNotification {
     },
     KeysInfo {
         wallet_pkey: PublicKey,
-        cosi_pkey: secure::PublicKey,
+        network_pkey: secure::PublicKey,
     },
     UnspentInfo {
         unspent: Vec<(Hash, i64)>,

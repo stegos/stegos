@@ -300,7 +300,7 @@ impl TicketsSystem {
 ///Node service extension for VrfTicketSystem
 impl NodeService {
     pub(crate) fn broadcast_vrf_ticket(&mut self, ticket: VRFTicket) -> Result<(), Error> {
-        if self.chain.escrow.get(&self.keys.cosi_pkey) < stegos_blockchain::MIN_STAKE_AMOUNT {
+        if self.chain.escrow.get(&self.keys.network_pkey) < stegos_blockchain::MIN_STAKE_AMOUNT {
             debug!("Trying to broadcast ticket but our node is not staker.");
             return Ok(());
         }

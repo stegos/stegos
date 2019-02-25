@@ -96,6 +96,13 @@ impl Node {
         Ok(())
     }
 
+    /// Network initialized.
+    pub fn network_ready(&self) -> Result<(), Error> {
+        let msg = NodeMessage::NetworkReady;
+        self.outbox.unbounded_send(msg)?;
+        Ok(())
+    }
+
     /// Send transaction to node and to the network.
     pub fn send_transaction(&self, tx: Transaction) -> Result<(), Error> {
         let proto = tx.into_proto();
@@ -164,6 +171,8 @@ const BLOCK_VALIDATION_TIME: Duration = Duration::from_secs(30);
 const TX_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 /// How often to check the consensus state.
 const CONSENSUS_TIMER: Duration = Duration::from_secs(30);
+/// How long we should wait for network stabilization.
+pub const NETWORK_GRACE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Max count of sealed block in epoch.
 const SEALED_BLOCK_IN_EPOCH: usize = 5;
 /// Max difference in timestamps of leader and witnesses.
@@ -195,6 +204,7 @@ enum NodeMessage {
     // Internal Events
     //
     Init { genesis: Vec<Block> },
+    NetworkReady,
     ConsensusTimer(Instant),
     VRFTimer(Instant),
 }
@@ -411,7 +421,6 @@ impl NodeService {
             // Move to the next height.
             consensus.reset(self.chain.height() as u64);
         }
-
         Ok(())
     }
 
@@ -430,14 +439,6 @@ impl NodeService {
             self.keys.cosi_pkey,
             self.keys.cosi_skey,
         );
-        // epoch ended, disable consensus and start vrf system.
-        if self.chain.blocks_in_epoch() >= SEALED_BLOCK_IN_EPOCH {
-            debug!("Recover at end of epoch, trying to force vrf to start.");
-            self.consensus = None;
-            let block_hash = Hash::digest(self.chain.last_block());
-            let ticket = self.vrf_system.handle_epoch_end(block_hash);
-            let _ = self.broadcast_vrf_ticket(ticket);
-        }
 
         debug!("Broadcast unspent outputs.");
 
@@ -450,6 +451,20 @@ impl NodeService {
         let msg = OutputsNotification { inputs, outputs };
         self.on_outputs_changed
             .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
+    }
+
+    /// Second init phase. Used to rebroadcast messages from VRF, Consensus and so on.
+    fn handle_network_ready(&mut self) -> Result<(), Error> {
+        // epoch ended, disable consensus and start vrf system.
+        if self.chain.blocks_in_epoch() >= SEALED_BLOCK_IN_EPOCH {
+            debug!("Recover at end of epoch, trying to force vrf to start.");
+            self.consensus = None;
+            let block_hash = Hash::digest(self.chain.last_block());
+            let ticket = self.vrf_system.handle_epoch_end(block_hash);
+            let _ = self.broadcast_vrf_ticket(ticket);
+        }
+
+        self.request_history()
     }
 
     /// Update consensus state, if chain has other view of consensus group.
@@ -479,7 +494,7 @@ impl NodeService {
         } else {
             // Resign from Validator role.
             info!(
-                "I'm regular node: epoch={}, leader={}",
+                "I'm regular node, waiting for sealed block: epoch={}, leader={}",
                 self.chain.epoch, self.chain.leader
             );
             self.consensus = None;
@@ -526,11 +541,12 @@ impl NodeService {
 
         let ref block = msg.block;
 
+        let block_hash = Hash::digest(block);
+
         let header = block.base_header();
         // Check previous hash.
         let previous_hash = Hash::digest(self.chain.last_block());
         if previous_hash != header.previous {
-            let block_hash = Hash::digest(block);
             debug!(
                 "Received orphan block: hash={}, expected_previous={}, got_previous={}",
                 &block_hash, &previous_hash, &header.previous
@@ -554,17 +570,18 @@ impl NodeService {
             }
         }
 
+        info!(
+            "Received sealed block from the network: hash={}, current_height={}",
+            &block_hash,
+            self.chain.height()
+        );
+
         let block = msg.block;
         self.apply_new_block(block)
     }
 
     fn apply_new_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
-        info!(
-            "Received sealed block from the network: hash={}, current_height={}",
-            &block_hash,
-            self.chain.height()
-        );
 
         // Check that block is not registered yet.
         if let Some(_) = self.chain.block_by_hash(&block_hash) {
@@ -1052,6 +1069,7 @@ impl Future for NodeService {
                 Async::Ready(Some(event)) => {
                     let result: Result<(), Error> = match event {
                         NodeMessage::Init { genesis } => self.handle_init(genesis),
+                        NodeMessage::NetworkReady => self.handle_network_ready(),
                         NodeMessage::SubscribeEpoch(tx) => self.handle_subscribe_epoch(tx),
                         NodeMessage::SubscribeOutputs(tx) => self.handle_subscribe_outputs(tx),
                         NodeMessage::Transaction(msg) => Transaction::from_buffer(&msg)

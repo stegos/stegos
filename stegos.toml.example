@@ -4,6 +4,7 @@
 [general]
 chain = "testnet"
 log4rs_config = "stegos-log4rs.toml"
+prometheus_endpoint = "0.0.0.0:9898"
 
 [keychain]
 # Path to a secret key in PEM format

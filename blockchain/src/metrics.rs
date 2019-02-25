@@ -1,4 +1,4 @@
-//! Blockchain Implementation.
+//! Blockchain definition.
 
 //
 // Copyright (c) 2018 Stegos AG
@@ -21,26 +21,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-mod block;
-mod blockchain;
-mod config;
-mod error;
-mod escrow;
-mod genesis;
-mod merkle;
-mod metrics;
-mod output;
-pub mod protos;
-mod storage;
-mod transaction;
+use lazy_static::lazy_static;
+use prometheus::*;
 
-pub use crate::block::*;
-pub use crate::blockchain::*;
-pub use crate::config::*;
-pub use crate::error::*;
-pub use crate::escrow::*;
-pub use crate::genesis::*;
-pub use crate::merkle::*;
-pub use crate::output::*;
-pub use crate::storage::*;
-pub use crate::transaction::*;
+lazy_static! {
+    pub static ref VALIDATOR_STAKE_GAUGEVEC: IntGaugeVec = register_int_gauge_vec!(
+        "stegos_stakes_vector",
+        "stakes per validator",
+        &["validator"]
+    )
+    .unwrap();
+}

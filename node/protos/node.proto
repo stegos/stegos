@@ -4,12 +4,6 @@ package stegos.node;
 import "crypto.proto";
 import "blockchain.proto";
 
-message SealedBlockMessage {
-    stegos.blockchain.Block block = 1;
-    stegos.crypto.SecurePublicKey pkey = 2;
-    stegos.crypto.SecureSignature sig = 3;
-}
-
 message VRFTicket {
     stegos.crypto.VRF random = 1;
     uint64 height = 2;

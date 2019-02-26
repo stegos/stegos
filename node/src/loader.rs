@@ -29,7 +29,6 @@ use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure;
 use stegos_serialization::traits::ProtoConvert;
 
-use crate::consensus::SealedBlockMessage;
 use crate::NodeService;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -91,87 +90,92 @@ impl Hashable for ChainLoaderMessage {
 
 /// Limit of blocks to download starting from current known blockchain state.
 const ORPHANS_BLOCK_LIMIT: u64 = 100;
-/// How many epoch epoch we can load without notifying user.
-const DIFF_IN_EPOCH_TO_NOTIFY: u64 = 10;
+/// Unicast topic for loading blocks.
 pub const CHAIN_LOADER_TOPIC: &'static str = "chain-loader";
 
-//TODO: Support multiple blocks on each height.
 pub struct ChainLoader {
-    /// If we loading long chain, notify user.
-    loading_long_chain: bool,
-    pub blocks_queue: Vec<SealedBlockMessage>,
+    pub blocks_queue: Vec<Block>,
 }
 
 impl ChainLoader {
     pub fn new() -> Self {
         ChainLoader {
             blocks_queue: Vec::new(),
-            loading_long_chain: false,
         }
     }
 }
 
-//TODO: Download blocks from different participant.
-//TODO: Validate blocks signature out of order.
-
 impl NodeService {
     /// Handle orphan block from network.
-    pub fn on_orphan_block(&mut self, orphan: SealedBlockMessage) -> Result<(), Error> {
-        let block_epoch = orphan.block.base_header().epoch;
+    pub fn on_orphan_block(&mut self, block: Block) -> Result<(), Error> {
+        let block_hash = Hash::digest(&block);
+        let block_epoch = block.base_header().epoch;
         if self.chain.epoch > block_epoch {
             debug!(
-                "Skipping outdated block, with epoch = {}",
-                orphan.block.base_header().epoch
+                "Skipping outdated sealed block: hash={}, epoch={}",
+                block_hash, block_epoch
             );
             return Ok(());
         }
-        let epoch_dif = block_epoch - self.chain.epoch;
+        // TODO: re-order blocks.
         if let Some(last) = self.chain_loader.blocks_queue.last() {
-            if Hash::digest(last) != orphan.block.base_header().previous {
-                debug!("Skipping block that is not linked to the previous received.");
+            let last_hash = Hash::digest(last);
+            if last_hash != block.base_header().previous {
+                debug!("Skipping orphan sealed block that is not linked to the previous received: hash={}, epoch={}, known_previous={}, got_previous={}",
+                        block_hash, block_epoch, last_hash, block.base_header().previous);
                 return Ok(());
             }
-        } else if epoch_dif > DIFF_IN_EPOCH_TO_NOTIFY {
-            info!(
-                "Received orphan block, starting loading chain from = {},\
-                 numbers of epoch to load = {}.",
-                orphan.pkey, epoch_dif
-            );
-            self.chain_loader.loading_long_chain = true;
         }
-        let block_hash = Hash::digest(&orphan.block);
-        let last_hash = Hash::digest(self.chain.last_block());
-        debug!("Add orphan block to the queue block_hash = {}", block_hash);
-        let sender = orphan.pkey;
-        self.chain_loader.blocks_queue.push(orphan);
-        let msg = ChainLoaderMessage::Request(RequestBlocks::new(last_hash));
-        self.network
-            .send(sender, CHAIN_LOADER_TOPIC, msg.into_buffer()?)
+
+        info!(
+            "Queued orphan sealed block: hash={}, epoch={}",
+            block_hash, block_epoch
+        );
+        self.chain_loader.blocks_queue.push(block);
+        self.request_history()
+    }
+
+    /// Choose a master node to download blocks from.
+    fn choose_master(&self) -> secure::PublicKey {
+        let mut rng = rand::thread_rng();
+        // Use the latest known key block.
+        for block in self.chain_loader.blocks_queue.iter().rev() {
+            if let Block::KeyBlock(key_block) = block {
+                let validators = key_block
+                    .header
+                    .validators
+                    .iter()
+                    .filter(|key| &self.keys.network_pkey != *key);
+                let master = validators.choose(&mut rng).unwrap().clone();
+                debug!("Selected a source node from the latest known orphan KeyBlock: hash={}, epoch={}, selected={}",
+                       Hash::digest(&block), key_block.header.base.epoch, &master);
+                return master;
+            }
+        }
+        let validators = self
+            .chain
+            .validators
+            .iter()
+            .map(|(k, _)| k)
+            .filter(|key| &self.keys.network_pkey != *key);
+        let master = validators.choose(&mut rng).unwrap().clone();
+        debug!(
+            "Selected a source node from the latest committed KeyBlock: hash={}, epoch={}, selected={}",
+            Hash::digest(self.chain.last_block()),
+            self.chain.epoch,
+            &master
+        );
+        return master;
     }
 
     /// Request block history, from one of validators.
     pub fn request_history(&mut self) -> Result<(), Error> {
-        if !self.chain_loader.blocks_queue.is_empty() {
-            debug!("Chain loading already in progress, skipping request from validator.");
-        }
-        let validators = self.chain.validators.iter().map(|(k, _)| k);
-        let validators = validators.filter(|key| &self.keys.network_pkey != *key);
-
-        let mut rng = rand::thread_rng();
-        let pkey = if let Some(pkey) = validators.choose(&mut rng) {
-            debug!(
-                "Starting chain loading, request blocks history from = {}",
-                pkey
-            );
-            pkey
-        } else {
-            debug!("Cannot choose one validator to request block history.");
-            return Ok(());
-        };
+        let master = self.choose_master();
+        info!("Downloading blocks: from={}", &master);
         let last_hash = Hash::digest(self.chain.last_block());
         let msg = ChainLoaderMessage::Request(RequestBlocks::new(last_hash));
         self.network
-            .send(*pkey, CHAIN_LOADER_TOPIC, msg.into_buffer()?)
+            .send(master, CHAIN_LOADER_TOPIC, msg.into_buffer()?)
     }
 
     fn handle_request_blocks(
@@ -182,10 +186,7 @@ impl NodeService {
         let start_hash = request.start_block;
         let blocks = self.chain.blocks_range(&start_hash, ORPHANS_BLOCK_LIMIT);
         if let Some(blocks) = blocks {
-            info!(
-                "Received blocks request, sending a response with {} blocks.",
-                blocks.len()
-            );
+            info!("Feeding blocks: to={}, num_blocks={}", pkey, blocks.len());
             let msg = ChainLoaderMessage::Response(ResponseBlocks::new(blocks));
             self.network
                 .send(pkey, CHAIN_LOADER_TOPIC, msg.into_buffer()?)?;
@@ -221,10 +222,9 @@ impl NodeService {
         }
 
         info!(
-            "Received {} blocks from = {} trying to apply them at height={}",
-            response.blocks.len(),
+            "Received blocks: from={}, num_blocks={}",
             pkey,
-            self.chain.height()
+            response.blocks.len()
         );
 
         for block in response.blocks {
@@ -242,7 +242,6 @@ impl NodeService {
 
         if self.chain_loader.blocks_queue.is_empty() {
             info!("Synchronized with actual network state.");
-            self.chain_loader.loading_long_chain = false;
         }
 
         Ok(())

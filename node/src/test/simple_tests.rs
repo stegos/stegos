@@ -38,7 +38,7 @@ pub fn init() {
     assert_eq!(node.chain.blocks().len(), 0);
     assert_eq!(node.mempool.len(), 0);
     assert_eq!(node.chain.epoch, 0);
-    assert_ne!(node.chain.leader, keys.cosi_pkey);
+    assert_ne!(node.chain.leader, keys.network_pkey);
     assert!(node.chain.validators.is_empty());
 
     let current_timestamp = Utc::now().timestamp() as u64;
@@ -48,7 +48,7 @@ pub fn init() {
     assert_eq!(node.chain.blocks().len(), genesis_count);
     assert_eq!(node.mempool.len(), 0);
     assert_eq!(node.chain.epoch, 1);
-    assert_eq!(node.chain.leader, keys.cosi_pkey);
+    assert_eq!(node.chain.leader, keys.network_pkey);
     assert_eq!(node.chain.validators.len(), 1);
     assert_eq!(
         node.chain.validators.keys().next().unwrap(),
@@ -69,7 +69,7 @@ fn simulate_consensus(node: &mut NodeService) {
 
     let block = Block::MonetaryBlock(block);
     let block_hash = Hash::digest(&block);
-    let multisig = secure_sign_hash(&block_hash, &node.keys.cosi_skey);
+    let multisig = secure_sign_hash(&block_hash, &node.keys.network_skey);
     let mut multisigmap = BitVector::new(1);
     multisigmap.insert(0);
     node.commit_proposed_block(block, multisig, multisigmap);

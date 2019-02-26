@@ -56,7 +56,7 @@ where
         protocol_id: &str,
     ) -> Result<mpsc::UnboundedReceiver<UnicastMessage>, Error>;
 
-    /// Send unicast message to peer identified by cosi public key
+    /// Send unicast message to peer identified by network public key
     fn send(&self, dest: secure::PublicKey, protocol_id: &str, data: Vec<u8>) -> Result<(), Error>;
 
     /// Helper for cloning boxed object

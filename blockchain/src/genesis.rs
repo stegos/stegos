@@ -25,7 +25,7 @@ use crate::block::*;
 use crate::output::*;
 use std::collections::BTreeSet;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure as cosi_keys;
+use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
 
 /// Genesis blocks.
@@ -66,7 +66,7 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64, timestamp: u64) -
                 timestamp,
                 &keys.wallet_skey,
                 &keys.wallet_pkey,
-                &keys.cosi_pkey,
+                &keys.network_pkey,
                 stake,
             )
             .expect("genesis has valid public keys");
@@ -87,10 +87,10 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64, timestamp: u64) -
         let previous = Hash::digest(&block1);
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
 
-        let witnesses: BTreeSet<cosi_keys::PublicKey> =
-            keychains.iter().map(|p| p.cosi_pkey.clone()).collect();
-        let leader = keychains[0].cosi_pkey.clone();
-        let facilitator = keychains[0].cosi_pkey.clone();
+        let witnesses: BTreeSet<secure::PublicKey> =
+            keychains.iter().map(|p| p.network_pkey.clone()).collect();
+        let leader = keychains[0].network_pkey.clone();
+        let facilitator = keychains[0].network_pkey.clone();
 
         KeyBlock::new(base, leader, facilitator, witnesses)
     };

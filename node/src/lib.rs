@@ -158,7 +158,7 @@ pub struct OutputsNotification {
 const VERSION: u64 = 1;
 /// Topic used for sending transactions.
 const TX_TOPIC: &'static str = "tx";
-/// Topic used for CoSi.
+/// Topic used for consensus.
 const CONSENSUS_TOPIC: &'static str = "consensus";
 /// Topic used for sending sealed blocks.
 const SEALED_BLOCK_TOPIC: &'static str = "block";
@@ -276,7 +276,8 @@ impl NodeService {
         inbox: UnboundedReceiver<NodeMessage>,
     ) -> Result<Self, Error> {
         let future_consensus_messages = Vec::new();
-        let vrf_system = TicketsSystem::new(WITNESSES_MAX, 0, 0, keys.cosi_pkey, keys.cosi_skey);
+        let vrf_system =
+            TicketsSystem::new(WITNESSES_MAX, 0, 0, keys.network_pkey, keys.network_skey);
         let chain_loader = ChainLoader::new();
         let mempool = Mempool::new();
 
@@ -320,7 +321,7 @@ impl NodeService {
             .map(NodeMessage::ChainLoaderMessage);
         streams.push(Box::new(requests_rx));
 
-        // CoSi timer events
+        // Consensus timer events
         let duration = CONSENSUS_TIMER; // every second
         let timer = Interval::new_interval(duration)
             .map(|i| NodeMessage::ConsensusTimer(i))
@@ -436,8 +437,8 @@ impl NodeService {
             WITNESSES_MAX,
             0,
             len,
-            self.keys.cosi_pkey,
-            self.keys.cosi_skey,
+            self.keys.network_pkey,
+            self.keys.network_skey,
         );
 
         debug!("Broadcast unspent outputs.");
@@ -469,13 +470,13 @@ impl NodeService {
 
     /// Update consensus state, if chain has other view of consensus group.
     fn on_new_epoch(&mut self) {
-        if self.chain.validators.contains_key(&self.keys.cosi_pkey) {
+        if self.chain.validators.contains_key(&self.keys.network_pkey) {
             // Promote to Validator role
             let consensus = BlockConsensus::new(
                 self.chain.height() as u64,
                 self.chain.epoch,
-                self.keys.cosi_skey.clone(),
-                self.keys.cosi_pkey.clone(),
+                self.keys.network_skey.clone(),
+                self.keys.network_pkey.clone(),
                 self.chain.leader.clone(),
                 self.chain.validators.clone(),
             );
@@ -736,7 +737,7 @@ impl NodeService {
     /// Send block to network.
     fn send_sealed_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
-        let msg = SealedBlockMessage::new(&self.keys.cosi_skey, &self.keys.cosi_pkey, block);
+        let msg = SealedBlockMessage::new(&self.keys.network_skey, &self.keys.network_pkey, block);
         let proto = msg.into_proto();
         let data = proto.write_to_bytes()?;
         // Don't send block to myself.
@@ -754,12 +755,12 @@ impl NodeService {
             group.facilitator,
             group.validators.iter().cloned().collect(),
         );
-        if self.chain.validators.contains_key(&self.keys.cosi_pkey) {
+        if self.chain.validators.contains_key(&self.keys.network_pkey) {
             let consensus = BlockConsensus::new(
                 self.chain.height() as u64,
                 self.chain.epoch + 1,
-                self.keys.cosi_skey.clone(),
-                self.keys.cosi_pkey.clone(),
+                self.keys.network_skey.clone(),
+                self.keys.network_pkey.clone(),
                 self.chain.leader.clone(),
                 self.chain.validators.clone(),
             );

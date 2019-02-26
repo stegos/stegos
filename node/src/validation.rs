@@ -130,7 +130,9 @@ pub(crate) fn validate_transaction(
     Ok(())
 }
 
-/// Process MonetaryBlockProposal CoSi message.
+///
+/// Validate proposed key block.
+///
 pub(crate) fn validate_proposed_key_block(
     consensus: &BlockConsensus,
     block_hash: Hash,
@@ -199,7 +201,7 @@ pub(crate) fn validate_sealed_key_block(
 }
 
 ///
-/// Process MonetaryBlockProposal CoSi message.
+/// Validate proposed monetary block.
 ///
 pub(crate) fn validate_proposed_monetary_block(
     mempool: &Mempool,
@@ -421,7 +423,7 @@ mod test {
 
         let skey = &keychain.wallet_skey;
         let pkey = &keychain.wallet_pkey;
-        let validator_pkey = &keychain.cosi_pkey;
+        let validator_pkey = &keychain.network_pkey;
 
         //
         // Valid transaction.

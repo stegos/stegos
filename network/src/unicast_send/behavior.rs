@@ -115,8 +115,8 @@ impl<TSubstream> UnicastSend<TSubstream> {
             dialouts: PeersQueue::new(Duration::from_secs(DIAL_OUT_TIMEOUT)),
             sending_queues: HashMap::new(),
             peers_pkeys: HashMap::new(),
-            local_pkey: keychain.cosi_pkey.clone(),
-            local_skey: keychain.cosi_skey.clone(),
+            local_pkey: keychain.network_pkey.clone(),
+            local_skey: keychain.network_skey.clone(),
             marker: PhantomData,
         }
     }
@@ -354,8 +354,8 @@ mod tests {
         };
 
         let msg = UnicastDataMessage {
-            to: keychain1.cosi_pkey.clone(),
-            from: keychain2.cosi_pkey.clone(),
+            to: keychain1.network_pkey.clone(),
+            from: keychain2.network_pkey.clone(),
             protocol_id: "testing".to_string(),
             data: b"Sunt est voluptate mollit duis elit excepteur do ad minim et exercitation. Duis nostrud veniam commodo labore ut. Voluptate magna laboris Lorem ullamco. Et irure consectetur qui quis aliquip excepteur. Aute elit commodo in laboris proident eu adipisicing pariatur do velit excepteur duis irure. Consectetur pariatur cillum et sit aliquip sit pariatur minim sint et duis.".to_vec(),
         };

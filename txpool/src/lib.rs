@@ -75,7 +75,7 @@ pub struct TransactionPoolService {
 impl TransactionPoolService {
     /// Crates new TransactionPool.
     pub fn new(keychain: &KeyChain, network: Network, node: Node) -> TransactionPoolService {
-        let pkey = keychain.cosi_pkey.clone();
+        let pkey = keychain.network_pkey.clone();
         let facilitator_pkey: secure::PublicKey = G2::generator().into(); // some fake key
 
         let events = || -> Result<_, Error> {

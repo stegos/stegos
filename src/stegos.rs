@@ -254,7 +254,7 @@ fn run() -> Result<(), Error> {
         let (wallet_service, wallet) = WalletService::new(
             keychain.wallet_skey.clone(),
             keychain.wallet_pkey.clone(),
-            keychain.cosi_pkey.clone(),
+            keychain.network_pkey.clone(),
             network.clone(),
             node.clone(),
         );

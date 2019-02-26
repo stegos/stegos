@@ -207,14 +207,14 @@ where
 {
     pub fn new(config: &NetworkConfig, keychain: &KeyChain, peer_id: PeerId) -> Self {
         let mut kad = kad_discovery::KadBehaviour::new(peer_id.clone());
-        kad.add_providing(cosi_pkey2peer_id(&keychain.cosi_pkey));
+        kad.add_providing(network_pkey_to_peer_id(&keychain.network_pkey));
         let mut behaviour = Libp2pBehaviour {
             floodsub: floodsub::Floodsub::new(peer_id.clone()),
             ncp: ncp::layer::Ncp::new(config),
             kad,
             consumers: HashMap::new(),
             unicast_consumers: HashMap::new(),
-            my_pkey: keychain.cosi_pkey.clone(),
+            my_pkey: keychain.network_pkey.clone(),
         };
         let unicast_topic = floodsub::TopicBuilder::new(UNICAST_TOPIC).build();
         behaviour.floodsub.subscribe(unicast_topic);
@@ -400,7 +400,7 @@ pub enum ControlMessage {
     },
 }
 
-fn cosi_pkey2peer_id(key: &secure::PublicKey) -> PeerId {
+fn network_pkey_to_peer_id(key: &secure::PublicKey) -> PeerId {
     let hash = multihash::encode(multihash::Hash::SHA2256, &key.clone().into_bytes())
         .expect("should never fail");
     PeerId::from_multihash(hash).expect("hash is properly formed on prev step")
@@ -449,12 +449,12 @@ fn new_peerstore(
 
     debug!("My adverised addresses: {:#?}", my_addresses);
     peerstore.add_local_external_addrs(my_addresses.into_iter());
-    let cosi_pkey_hash = multihash::encode(
+    let network_pkey_hash = multihash::encode(
         multihash::Hash::SHA2256,
-        &keychain.cosi_pkey.clone().into_bytes(),
+        &keychain.network_pkey.clone().into_bytes(),
     )
     .expect("hashing with SHA2256 never fails");
-    peerstore.add_provider(cosi_pkey_hash, peer_id);
+    peerstore.add_provider(network_pkey_hash, peer_id);
     peerstore
 }
 

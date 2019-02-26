@@ -102,7 +102,7 @@ pub struct StakeOutput {
     /// Cloaked wallet key of validator.
     pub recipient: PublicKey,
 
-    /// Uncloaked secure key of validator.
+    /// Uncloaked network key of validator.
     pub validator: secure::PublicKey,
 
     /// Amount to stake.

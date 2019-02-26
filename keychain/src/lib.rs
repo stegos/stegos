@@ -35,18 +35,18 @@ use stegos_crypto::pbc::secure;
 
 use secp256k1::rand::{ChaChaRng, SeedableRng};
 
-/// Create deterministic CoSi keys from Wallet Keys.
+/// Create deterministic Network keys from Wallet keys.
 ///
 /// # Arguments
 ///
 /// * `wallet_skey` - Wallet Secret Key.
 ///
-pub fn wallet_to_cosi_keys(
+pub fn wallet_to_network_keys(
     wallet_skey: &cpt::SecretKey,
 ) -> (secure::SecretKey, secure::PublicKey, secure::Signature) {
     let wallet_skey_hash = Hash::digest(wallet_skey);
-    let cosi_seed = wallet_skey_hash.base_vector();
-    secure::make_deterministic_keys(cosi_seed)
+    let network_seed = wallet_skey_hash.base_vector();
+    secure::make_deterministic_keys(network_seed)
 }
 
 /// PEM tag for secret key.
@@ -61,14 +61,10 @@ pub struct KeyChain {
     pub wallet_skey: cpt::SecretKey,
     /// Wallet Public Key.
     pub wallet_pkey: cpt::PublicKey,
-    /// Wallet Signature.
-    pub wallet_sig: cpt::SchnorrSig,
-    /// CoSi Secret Key.
-    pub cosi_skey: secure::SecretKey,
-    /// CoSi Public Key.
-    pub cosi_pkey: secure::PublicKey,
-    /// CoSi Signature.
-    pub cosi_sig: secure::Signature,
+    /// Network Secret Key.
+    pub network_skey: secure::SecretKey,
+    /// Network Public Key.
+    pub network_pkey: secure::PublicKey,
 }
 
 #[derive(Debug, Fail)]
@@ -84,9 +80,9 @@ impl KeyChain {
         let skey_path = Path::new(&cfg.private_key);
         let pkey_path = Path::new(&cfg.public_key);
 
-        let (wallet_skey, wallet_pkey, wallet_sig) = if !skey_path.exists() && !pkey_path.exists() {
+        let (wallet_skey, wallet_pkey) = if !skey_path.exists() && !pkey_path.exists() {
             info!("Generating a new key pair...");
-            let (skey, pkey, sig) = cpt::make_random_keys();
+            let (skey, pkey, _sig) = cpt::make_random_keys();
 
             let skey_pem = pem::Pem {
                 tag: SKEY_TAG.to_string(),
@@ -102,7 +98,7 @@ impl KeyChain {
             fs::write(pkey_path, pem::encode(&pkey_pem))?;
 
             debug!("Generated {}", pkey);
-            (skey, pkey, sig)
+            (skey, pkey)
         } else {
             debug!(
                 "Loading existing key pair from {} and {}...",
@@ -132,21 +128,16 @@ impl KeyChain {
                 return Err(KeyChainError::KeyValidateError.into());
             }
 
-            let hkey = Hash::digest(&pkey);
-            let sig = cpt::sign_hash(&hkey, &skey);
-
-            (skey, pkey, sig)
+            (skey, pkey)
         };
 
-        let (cosi_skey, cosi_pkey, cosi_sig) = wallet_to_cosi_keys(&wallet_skey);
+        let (network_skey, network_pkey, _network_sig) = wallet_to_network_keys(&wallet_skey);
 
         let keychain = KeyChain {
             wallet_skey,
             wallet_pkey,
-            wallet_sig,
-            cosi_skey,
-            cosi_pkey,
-            cosi_sig,
+            network_skey,
+            network_pkey,
         };
 
         Ok(keychain)
@@ -154,16 +145,14 @@ impl KeyChain {
 
     /// Temporary KeyChain for tests.
     pub fn new_mem() -> Self {
-        let (wallet_skey, wallet_pkey, wallet_sig) = cpt::make_random_keys();
-        let (cosi_skey, cosi_pkey, cosi_sig) = wallet_to_cosi_keys(&wallet_skey);
+        let (wallet_skey, wallet_pkey, _wallet_sig) = cpt::make_random_keys();
+        let (network_skey, network_pkey, _network_sig) = wallet_to_network_keys(&wallet_skey);
 
         let keychain = KeyChain {
             wallet_skey,
             wallet_pkey,
-            wallet_sig,
-            cosi_skey,
-            cosi_pkey,
-            cosi_sig,
+            network_skey,
+            network_pkey,
         };
 
         keychain

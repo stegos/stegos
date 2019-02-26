@@ -657,9 +657,9 @@ pub mod tests {
                 let base = BaseBlockHeader::new(version, previous, epoch, 0);
 
                 let witnesses: BTreeSet<SecurePublicKey> =
-                    keychains.iter().map(|p| p.cosi_pkey.clone()).collect();
-                let leader = keychains[0].cosi_pkey.clone();
-                let facilitator = keychains[0].cosi_pkey.clone();
+                    keychains.iter().map(|p| p.network_pkey.clone()).collect();
+                let leader = keychains[0].network_pkey.clone();
+                let facilitator = keychains[0].network_pkey.clone();
 
                 KeyBlock::new(base, leader, facilitator, witnesses)
             };

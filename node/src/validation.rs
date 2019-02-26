@@ -460,7 +460,7 @@ mod test {
             let fee = PAYMENT_FEE - 1;
             let (output, gamma) =
                 Output::new_payment(current_timestamp, &skey, &pkey, amount - fee).unwrap();
-            let tx = Transaction::new(&skey, &inputs, &[output], gamma, fee).unwrap();
+            let tx = Transaction::unchecked(&skey, &inputs, &[output], gamma, fee).unwrap();
             let e = validate_transaction(&tx, &mempool, &chain, current_timestamp)
                 .expect_err("transaction is not valid");
             match e.downcast::<NodeError>().unwrap() {
@@ -571,7 +571,7 @@ mod test {
             let output2 = Output::StakeOutput(output2);
             let outputs: Vec<Output> = vec![output1, output2];
             let outputs_gamma = gamma1;
-            let tx = Transaction::new(&skey, &inputs, &outputs, outputs_gamma, fee).unwrap();
+            let tx = Transaction::unchecked(&skey, &inputs, &outputs, outputs_gamma, fee).unwrap();
             let e = validate_transaction(&tx, &mempool, &chain, current_timestamp)
                 .expect_err("transaction is not valid");
             match e.downcast::<OutputError>().expect("proper error") {
@@ -587,7 +587,7 @@ mod test {
             let fee = PAYMENT_FEE;
             let (output, outputs_gamma) =
                 Output::new_payment(current_timestamp, &skey, &pkey, stake - fee).unwrap();
-            let tx = Transaction::new(&skey, &stakes, &[output], outputs_gamma, fee).unwrap();
+            let tx = Transaction::unchecked(&skey, &stakes, &[output], outputs_gamma, fee).unwrap();
             let e = validate_transaction(&tx, &mempool, &chain, current_timestamp)
                 .expect_err("transaction is not valid");
             match e.downcast::<EscrowError>().expect("proper error") {
@@ -617,10 +617,11 @@ mod test {
             let outputs: Vec<Output> = vec![output];
             let output_hashes: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
             // Claim output in mempool.
-            let claim_tx = Transaction::new(&skey, &[], &outputs, outputs_gamma, fee).unwrap();
+            let claim_tx =
+                Transaction::unchecked(&skey, &[], &outputs, outputs_gamma, fee).unwrap();
             mempool.push_tx(Hash::digest(&claim_tx), claim_tx);
 
-            let tx = Transaction::new(&skey, &inputs, &outputs, outputs_gamma, fee).unwrap();
+            let tx = Transaction::unchecked(&skey, &inputs, &outputs, outputs_gamma, fee).unwrap();
             let e = validate_transaction(&tx, &mempool, &chain, current_timestamp)
                 .expect_err("transaction is not valid");
             match e.downcast::<BlockchainError>().expect("proper error") {
@@ -654,8 +655,8 @@ mod test {
                 .register_monetary_block(block, current_timestamp)
                 .expect("block is valid");
 
-            let tx =
-                Transaction::new(&skey, &inputs, &[output.clone()], outputs_gamma, fee).unwrap();
+            let tx = Transaction::unchecked(&skey, &inputs, &[output.clone()], outputs_gamma, fee)
+                .unwrap();
             let e = validate_transaction(&tx, &mempool, &chain, current_timestamp)
                 .expect_err("transaction is not valid");
             match e.downcast::<BlockchainError>().expect("proper error") {

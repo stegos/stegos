@@ -57,6 +57,11 @@ pub enum CryptoError {
     /// length.
     #[fail(display = "Invalid hex string length")]
     InvalidHexLength,
+
+    // If someone requests a field value, e.g., Fr::to_i64() and number
+    // is too large to allow that conversion...
+    #[fail(display = "Field value is too large for requested conversion")]
+    TooLarge,
 }
 
 impl From<hex::FromHexError> for CryptoError {

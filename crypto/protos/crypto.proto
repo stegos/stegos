@@ -21,6 +21,10 @@ message Hash {
     bytes data = 1;
 }
 
+message SecretKey {
+    Fr skeyf = 1;
+}
+
 message PublicKey {
     Pt point = 1;
 }
@@ -39,9 +43,8 @@ message SecureSignature {
 }
 
 message EncryptedPayload {
-    Pt apkg = 1;
-    Pt ag = 2;
-    bytes ctxt = 3;
+    Pt ag = 1;
+    bytes ctxt = 2;
 }
 
 message LR {

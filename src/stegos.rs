@@ -91,9 +91,9 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
     if let Some(chain) = args.value_of("chain") {
         cfg.general.chain = chain.to_string();
     }
-    // Use default SRV record for testnet
-    if cfg.general.chain == "testnet" && cfg.network.seed_pool == "" {
-        cfg.network.seed_pool = "_stegos._tcp.tn0.aws.stegos.com".to_string();
+    // Use default SRV record for the chain
+    if cfg.general.chain != "dev" && cfg.network.seed_pool == "" {
+        cfg.network.seed_pool = format!("_stegos._tcp.{}.aws.stegos.com", cfg.general.chain).to_string();
     }
     Ok(cfg)
 }
@@ -142,6 +142,10 @@ fn initialize_genesis(cfg: &config::Config) -> Result<Vec<Block>, Error> {
         "testnet" => (
             include_bytes!("../chains/testnet/genesis0.bin"),
             include_bytes!("../chains/testnet/genesis1.bin"),
+        ),
+        "pretestnet" => (
+            include_bytes!("../chains/pretestnet/genesis0.bin"),
+            include_bytes!("../chains/pretestnet/genesis1.bin"),
         ),
         chain @ _ => {
             return Err(format_err!("Unknown chain: {}", chain));

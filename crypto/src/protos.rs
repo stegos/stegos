@@ -27,8 +27,7 @@ use crate::curve1174::cpt::Pt;
 use crate::curve1174::cpt::{EncryptedPayload, PublicKey, SchnorrSig};
 use crate::curve1174::fields::Fr;
 use crate::hash::Hash;
-use crate::pbc::secure::PublicKey as SecurePublicKey;
-use crate::pbc::secure::Signature as SecureSignature;
+use crate::pbc::secure;
 use crate::pbc::secure::G1;
 use crate::pbc::secure::G2;
 use crate::pbc::secure::VRF;
@@ -125,7 +124,7 @@ impl ProtoConvert for SchnorrSig {
     }
 }
 
-impl ProtoConvert for SecurePublicKey {
+impl ProtoConvert for secure::PublicKey {
     type Proto = crypto::SecurePublicKey;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = crypto::SecurePublicKey::new();
@@ -135,11 +134,11 @@ impl ProtoConvert for SecurePublicKey {
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let g: G2 = G2::from_proto(proto.get_point())?;
-        Ok(SecurePublicKey::from(g))
+        Ok(secure::PublicKey::from(g))
     }
 }
 
-impl ProtoConvert for SecureSignature {
+impl ProtoConvert for secure::Signature {
     type Proto = crypto::SecureSignature;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = crypto::SecureSignature::new();
@@ -149,7 +148,7 @@ impl ProtoConvert for SecureSignature {
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let g: G1 = G1::from_proto(proto.get_point())?;
-        Ok(SecureSignature::from(g))
+        Ok(secure::Signature::from(g))
     }
 }
 

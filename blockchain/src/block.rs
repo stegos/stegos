@@ -34,8 +34,7 @@ use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::curve1174::G;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
-use stegos_crypto::pbc::secure::Signature as SecureSignature;
+use stegos_crypto::pbc::secure;
 
 /// The maximum number of nodes in multi-signature.
 pub const WITNESSES_MAX: usize = 512;
@@ -57,7 +56,7 @@ pub struct BaseBlockHeader {
     pub timestamp: u64,
 
     /// BLS multi-signature
-    pub multisig: SecureSignature,
+    pub multisig: secure::Signature,
 
     /// Bitmap of signers in the multi-signature.
     pub multisigmap: BitVector,
@@ -65,7 +64,7 @@ pub struct BaseBlockHeader {
 
 impl BaseBlockHeader {
     pub fn new(version: u64, previous: Hash, epoch: u64, timestamp: u64) -> Self {
-        let multisig = SecureSignature::zero();
+        let multisig = secure::Signature::zero();
         let multisigmap = BitVector::new(WITNESSES_MAX);
         BaseBlockHeader {
             version,
@@ -94,13 +93,13 @@ pub struct KeyBlockHeader {
     pub base: BaseBlockHeader,
 
     /// Leader public key.
-    pub leader: SecurePublicKey,
+    pub leader: secure::PublicKey,
 
     /// Facilitator of Transaction Pool.
-    pub facilitator: SecurePublicKey,
+    pub facilitator: secure::PublicKey,
 
     /// Ordered list of witnesses public keys.
-    pub witnesses: BTreeSet<SecurePublicKey>,
+    pub witnesses: BTreeSet<secure::PublicKey>,
 }
 
 impl Hashable for KeyBlockHeader {
@@ -189,9 +188,9 @@ pub struct KeyBlock {
 impl KeyBlock {
     pub fn new(
         base: BaseBlockHeader,
-        leader: SecurePublicKey,
-        facilitator: SecurePublicKey,
-        witnesses: BTreeSet<SecurePublicKey>,
+        leader: secure::PublicKey,
+        facilitator: secure::PublicKey,
+        witnesses: BTreeSet<secure::PublicKey>,
     ) -> Self {
         assert!(!witnesses.is_empty(), "witnesses is not empty");
         assert!(
@@ -460,7 +459,7 @@ pub mod tests {
 
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
 
-        let witnesses: BTreeSet<SecurePublicKey> = [pkey0].iter().cloned().collect();
+        let witnesses: BTreeSet<secure::PublicKey> = [pkey0].iter().cloned().collect();
         let leader = pkey0.clone();
         let facilitator = pkey0.clone();
 

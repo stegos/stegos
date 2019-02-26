@@ -29,11 +29,7 @@ use log::*;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use stegos_crypto::hash::{Hash, Hashable};
-use stegos_crypto::pbc::secure::check_hash as secure_check_hash;
-use stegos_crypto::pbc::secure::sign_hash as secure_sign_hash;
-use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
-use stegos_crypto::pbc::secure::SecretKey as SecureSecretKey;
-use stegos_crypto::pbc::secure::Signature as SecureSignature;
+use stegos_crypto::pbc::secure;
 
 #[derive(Debug, PartialEq, Eq)]
 enum ConsensusState {
@@ -62,13 +58,13 @@ impl ConsensusState {
 /// Consensus State.
 pub struct Consensus<Request, Proof> {
     /// Public key of current node.
-    skey: SecureSecretKey,
+    skey: secure::SecretKey,
     /// Public key of current node.
-    pkey: SecurePublicKey,
+    pkey: secure::PublicKey,
     /// Public key of leader.
-    leader: SecurePublicKey,
+    leader: secure::PublicKey,
     /// Public keys and stakes of participating nodes.
-    validators: BTreeMap<SecurePublicKey, i64>,
+    validators: BTreeMap<secure::PublicKey, i64>,
     /// Consensus State.
     state: ConsensusState,
     /// Identifier of current session.
@@ -80,9 +76,9 @@ pub struct Consensus<Request, Proof> {
     /// A proof need to validate request.
     proof: Option<Proof>,
     /// Collected Prevotes.
-    prevotes: BTreeMap<SecurePublicKey, SecureSignature>,
+    prevotes: BTreeMap<secure::PublicKey, secure::Signature>,
     /// Collected Precommits.
-    precommits: BTreeMap<SecurePublicKey, SecureSignature>,
+    precommits: BTreeMap<secure::PublicKey, secure::Signature>,
     /// Pending messages.
     inbox: Vec<ConsensusMessage<Request, Proof>>,
     /// Outgoing messages.
@@ -104,16 +100,16 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
     pub fn new(
         height: u64,
         epoch: u64,
-        skey: SecureSecretKey,
-        pkey: SecurePublicKey,
-        leader: SecurePublicKey,
-        validators: BTreeMap<SecurePublicKey, i64>,
+        skey: secure::SecretKey,
+        pkey: secure::PublicKey,
+        leader: secure::PublicKey,
+        validators: BTreeMap<secure::PublicKey, i64>,
     ) -> Self {
         assert!(validators.contains_key(&pkey));
         let state = ConsensusState::Propose;
         debug!("New => {}({})", state.name(), height);
-        let prevote_accepts: BTreeMap<SecurePublicKey, SecureSignature> = BTreeMap::new();
-        let precommit_accepts: BTreeMap<SecurePublicKey, SecureSignature> = BTreeMap::new();
+        let prevote_accepts: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();
+        let precommit_accepts: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();
         let request = None;
         let proof = None;
         let inbox: Vec<ConsensusMessage<Request, Proof>> = Vec::new();
@@ -235,7 +231,7 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
             self.height,
             &request_hash
         );
-        let request_hash_sig = secure_sign_hash(&request_hash, &self.skey);
+        let request_hash_sig = secure::sign_hash(&request_hash, &self.skey);
         let body = ConsensusMessageBody::Precommit { request_hash_sig };
         let msg = ConsensusMessage::new(
             self.height,
@@ -442,7 +438,7 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
 
                 // Check signature.
                 let request_hash = Hash::digest(self.request.as_ref().unwrap());
-                if !secure_check_hash(&request_hash, &request_hash_sig, &msg.pkey) {
+                if !secure::check_hash(&request_hash, &request_hash_sig, &msg.pkey) {
                     error!(
                         "{}({}): a pre-commit signature is not valid: from={:?}",
                         self.state.name(),
@@ -529,7 +525,7 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
     ///
     /// Returns public key of the current leader.
     ///
-    pub fn leader(&self) -> SecurePublicKey {
+    pub fn leader(&self) -> secure::PublicKey {
         self.leader
     }
 
@@ -543,7 +539,7 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
     ///
     /// Returns snapshot of the consensus group.
     ///
-    pub fn validators(&self) -> &BTreeMap<SecurePublicKey, i64> {
+    pub fn validators(&self) -> &BTreeMap<secure::PublicKey, i64> {
         &self.validators
     }
 
@@ -582,7 +578,7 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
     ///
     /// Returns negotiated request with proof and created multisignature.
     ///
-    pub fn sign_and_commit(&mut self) -> (Request, Proof, SecureSignature, BitVector) {
+    pub fn sign_and_commit(&mut self) -> (Request, Proof, secure::Signature, BitVector) {
         assert!(self.should_commit());
 
         // Create multi-signature.
@@ -600,7 +596,10 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
     ///
     /// Checks that supermajority of votes has been collected.
     ///
-    fn check_supermajority(&self, accepts: &BTreeMap<SecurePublicKey, SecureSignature>) -> bool {
+    fn check_supermajority(
+        &self,
+        accepts: &BTreeMap<secure::PublicKey, secure::Signature>,
+    ) -> bool {
         trace!(
             "{}({}): check for supermajority: accepts={:?}, total={:?}",
             self.state.name(),

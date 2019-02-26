@@ -27,8 +27,7 @@ use crate::message::*;
 
 use stegos_blockchain::*;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
-use stegos_crypto::pbc::secure::Signature as SecureSignature;
+use stegos_crypto::pbc::secure;
 
 // link protobuf dependencies
 use stegos_blockchain::protos::*;
@@ -100,7 +99,7 @@ impl ProtoConvert for ConsensusMessageBody<Block, BlockProof> {
                 ConsensusMessageBody::Prevote {}
             }
             Some(consensus::ConsensusMessageBody_oneof_body::precommit(ref msg)) => {
-                let request_hash_sig = SecureSignature::from_proto(msg.get_request_hash_sig())?;
+                let request_hash_sig = secure::Signature::from_proto(msg.get_request_hash_sig())?;
                 ConsensusMessageBody::Precommit { request_hash_sig }
             }
             None => {
@@ -128,8 +127,8 @@ impl ProtoConvert for ConsensusMessage<Block, BlockProof> {
         let epoch = proto.get_epoch();
         let request_hash = Hash::from_proto(proto.get_request_hash())?;
         let body = ConsensusMessageBody::from_proto(proto.get_body())?;
-        let sig = SecureSignature::from_proto(proto.get_sig())?;
-        let pkey = SecurePublicKey::from_proto(proto.get_pkey())?;
+        let sig = secure::Signature::from_proto(proto.get_sig())?;
+        let pkey = secure::PublicKey::from_proto(proto.get_pkey())?;
         Ok(ConsensusMessage {
             height,
             epoch,
@@ -198,7 +197,7 @@ mod tests {
         let previous = Hash::digest(&"test".to_string());
 
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
-        let witnesses: BTreeSet<SecurePublicKey> = [pkey0].iter().cloned().collect();
+        let witnesses: BTreeSet<secure::PublicKey> = [pkey0].iter().cloned().collect();
         let leader = pkey0.clone();
         let facilitator = pkey0.clone();
 

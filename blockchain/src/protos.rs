@@ -30,8 +30,7 @@ use stegos_crypto::bulletproofs::BulletProof;
 use stegos_crypto::curve1174::cpt::{EncryptedPayload, PublicKey, SchnorrSig};
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
-use stegos_crypto::pbc::secure::Signature as SecureSignature;
+use stegos_crypto::pbc::secure;
 use stegos_crypto::CryptoError;
 
 #[derive(Debug, Fail)]
@@ -80,7 +79,7 @@ impl ProtoConvert for StakeOutput {
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let recipient = PublicKey::from_proto(proto.get_recipient())?;
-        let validator = SecurePublicKey::from_proto(proto.get_validator())?;
+        let validator = secure::PublicKey::from_proto(proto.get_validator())?;
         let amount = proto.get_amount();
         let payload = EncryptedPayload::from_proto(proto.get_payload())?;
         Ok(StakeOutput {
@@ -189,9 +188,9 @@ impl ProtoConvert for BaseBlockHeader {
         let epoch = proto.get_epoch();
         let timestamp = proto.get_timestamp();
         let sig = if proto.has_sig() {
-            SecureSignature::from_proto(proto.get_sig())?
+            secure::Signature::from_proto(proto.get_sig())?
         } else {
-            SecureSignature::zero()
+            secure::Signature::zero()
         };
         if proto.sigmap.len() > WITNESSES_MAX {
             return Err(CryptoError::InvalidBinaryLength(WITNESSES_MAX, proto.sigmap.len()).into());
@@ -228,11 +227,11 @@ impl ProtoConvert for KeyBlockHeader {
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let base = BaseBlockHeader::from_proto(proto.get_base())?;
-        let leader = SecurePublicKey::from_proto(proto.get_leader())?;
-        let facilitator = SecurePublicKey::from_proto(proto.get_facilitator())?;
+        let leader = secure::PublicKey::from_proto(proto.get_leader())?;
+        let facilitator = secure::PublicKey::from_proto(proto.get_facilitator())?;
         let mut witnesses = BTreeSet::new();
         for witness in proto.witnesses.iter() {
-            if !witnesses.insert(SecurePublicKey::from_proto(witness)?) {
+            if !witnesses.insert(secure::PublicKey::from_proto(witness)?) {
                 return Err(ProtoError::DuplicateValue("witnesses".to_string()).into());
             }
         }
@@ -518,7 +517,7 @@ mod tests {
         assert!(base.multisigmap.contains(13));
         assert!(base.multisigmap.contains(44));
 
-        let witnesses: BTreeSet<SecurePublicKey> = [pkey0].iter().cloned().collect();
+        let witnesses: BTreeSet<secure::PublicKey> = [pkey0].iter().cloned().collect();
         let leader = pkey0.clone();
         let facilitator = pkey0.clone();
 

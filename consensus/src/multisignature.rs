@@ -25,11 +25,7 @@ use bitvector::BitVector;
 use std::collections::BTreeMap;
 use stegos_blockchain::WITNESSES_MAX;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure::check_hash as secure_check_hash;
-use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
-use stegos_crypto::pbc::secure::Signature as SecureSignature;
-use stegos_crypto::pbc::secure::G1;
-use stegos_crypto::pbc::secure::G2;
+use stegos_crypto::pbc::secure;
 
 ///
 /// Return true if supermajority of votes has been collected.
@@ -44,12 +40,12 @@ pub(crate) fn check_supermajority(got_votes: usize, total_votes: usize) -> bool 
 /// Create a new multi-signature from individual signatures
 ///
 pub(crate) fn create_multi_signature(
-    witnesses: &BTreeMap<SecurePublicKey, i64>,
-    signatures: &BTreeMap<SecurePublicKey, SecureSignature>,
-) -> (SecureSignature, BitVector) {
+    witnesses: &BTreeMap<secure::PublicKey, i64>,
+    signatures: &BTreeMap<secure::PublicKey, secure::Signature>,
+) -> (secure::Signature, BitVector) {
     assert!(check_supermajority(signatures.len(), witnesses.len()));
 
-    let mut multisig = G1::zero();
+    let mut multisig = secure::G1::zero();
     let mut multisigmap = BitVector::new(WITNESSES_MAX);
     let mut count: usize = 0;
     for (bit, (pkey, _stake)) in witnesses.iter().enumerate() {
@@ -57,7 +53,7 @@ pub(crate) fn create_multi_signature(
             Some(sig) => *sig,
             None => continue,
         };
-        let sig: G1 = sig.into();
+        let sig: secure::G1 = sig.into();
         multisig += sig;
         let ok = multisigmap.insert(bit);
         assert!(ok);
@@ -65,7 +61,7 @@ pub(crate) fn create_multi_signature(
     }
     assert_eq!(count, signatures.len());
 
-    let multisig: SecureSignature = multisig.into();
+    let multisig: secure::Signature = multisig.into();
     (multisig, multisigmap)
 }
 
@@ -74,13 +70,13 @@ pub(crate) fn create_multi_signature(
 ///
 pub fn check_multi_signature(
     hash: &Hash,
-    multisig: &SecureSignature,
+    multisig: &secure::Signature,
     multisigmap: &BitVector,
-    witnesses: &BTreeMap<SecurePublicKey, i64>,
-    leader: &SecurePublicKey,
+    witnesses: &BTreeMap<secure::PublicKey, i64>,
+    leader: &secure::PublicKey,
 ) -> bool {
     let mut has_leader = false;
-    let mut multisigpkey = G2::zero();
+    let mut multisigpkey = secure::G2::zero();
 
     let mut count: usize = 0;
     for (bit, pkey) in witnesses.keys().enumerate() {
@@ -88,7 +84,7 @@ pub fn check_multi_signature(
             continue;
         }
         has_leader = has_leader || (pkey == leader);
-        let pkey: G2 = pkey.clone().into();
+        let pkey: secure::G2 = pkey.clone().into();
         multisigpkey += pkey;
         count += 1;
     }
@@ -104,6 +100,6 @@ pub fn check_multi_signature(
     }
 
     // The hash must match the signature.
-    let multipkey: SecurePublicKey = multisigpkey.into();
-    secure_check_hash(&hash, &multisig, &multipkey)
+    let multipkey: secure::PublicKey = multisigpkey.into();
+    secure::check_hash(&hash, &multisig, &multipkey)
 }

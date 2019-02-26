@@ -23,11 +23,7 @@
 
 use crate::error::*;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::pbc::secure::check_hash as secure_check_hash;
-use stegos_crypto::pbc::secure::sign_hash as secure_sign_hash;
-use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
-use stegos_crypto::pbc::secure::SecretKey as SecureSecretKey;
-use stegos_crypto::pbc::secure::Signature as SecureSignature;
+use stegos_crypto::pbc::secure;
 
 /// Consensus Message Payload.
 #[derive(Clone, Debug)]
@@ -37,7 +33,7 @@ pub enum ConsensusMessageBody<Request, Proof> {
     /// Pre-vote Message (prepare).
     Prevote {},
     /// Pre-commit Message (commit).
-    Precommit { request_hash_sig: SecureSignature },
+    Precommit { request_hash_sig: secure::Signature },
 }
 
 impl<Request: Hashable, Proof: Hashable> Hashable for ConsensusMessageBody<Request, Proof> {
@@ -71,9 +67,9 @@ pub struct ConsensusMessage<Request, Proof> {
     /// Message Body.
     pub body: ConsensusMessageBody<Request, Proof>,
     /// Sender of this message.
-    pub pkey: SecurePublicKey,
+    pub pkey: secure::PublicKey,
     /// Signature of this message.
-    pub sig: SecureSignature,
+    pub sig: secure::Signature,
 }
 
 impl<Request, Proof> ConsensusMessage<Request, Proof> {
@@ -94,8 +90,8 @@ impl<Request: Hashable, Proof: Hashable> ConsensusMessage<Request, Proof> {
         height: u64,
         epoch: u64,
         request_hash: Hash,
-        skey: &SecureSecretKey,
-        pkey: &SecurePublicKey,
+        skey: &secure::SecretKey,
+        pkey: &secure::PublicKey,
         body: ConsensusMessageBody<Request, Proof>,
     ) -> ConsensusMessage<Request, Proof> {
         let mut hasher = Hasher::new();
@@ -104,7 +100,7 @@ impl<Request: Hashable, Proof: Hashable> ConsensusMessage<Request, Proof> {
         request_hash.hash(&mut hasher);
         body.hash(&mut hasher);
         let hash = hasher.result();
-        let sig = secure_sign_hash(&hash, skey);
+        let sig = secure::sign_hash(&hash, skey);
         ConsensusMessage {
             height,
             epoch,
@@ -125,7 +121,7 @@ impl<Request: Hashable, Proof: Hashable> ConsensusMessage<Request, Proof> {
         self.request_hash.hash(&mut hasher);
         self.body.hash(&mut hasher);
         let hash = hasher.result();
-        if !secure_check_hash(&hash, &self.sig, &self.pkey) {
+        if !secure::check_hash(&hash, &self.sig, &self.pkey) {
             return Err(ConsensusError::InvalidMessageSignature);
         }
         Ok(())

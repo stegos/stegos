@@ -23,10 +23,8 @@
 
 use stegos_blockchain::Escrow;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::pbc::secure::{
-    self, PublicKey as SecurePublicKey, SecretKey as SecureSecretKey, Signature as SecureSignature,
-    VRF,
-};
+use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc::secure::VRF;
 use stegos_serialization::traits::ProtoConvert;
 
 use lazy_static::lazy_static;
@@ -74,9 +72,9 @@ pub struct VRFTicket {
     /// used to identify is this ticket is actual or not.
     pub height: u64,
     /// Sender public key.
-    pub pkey: SecurePublicKey,
+    pub pkey: secure::PublicKey,
     /// Signature of the message.
-    pub sig: SecureSignature,
+    pub sig: secure::Signature,
 }
 
 /// Possible Ticket System errors.
@@ -95,7 +93,7 @@ pub enum TicketsError {
     #[fail(display = "Stakers majority group more then testnet hard limit.")]
     TooManyStakers,
     #[fail(display = "Receiving multiple tickets from {:?}.", _0)]
-    MultipleTickets(SecurePublicKey),
+    MultipleTickets(secure::PublicKey),
 }
 
 ///
@@ -106,7 +104,7 @@ pub enum TicketsError {
 #[derive(Debug)]
 struct CollectingState {
     //TODO: Probably later we can keep in memory only lowest VRF ticket.
-    tickets: HashMap<SecurePublicKey, VRF>,
+    tickets: HashMap<secure::PublicKey, VRF>,
     seed: Hash,
 }
 
@@ -139,13 +137,13 @@ pub struct TicketsSystem {
     /// Debug value, could be removed.
     height: u64,
     /// Secret key of the current node. Used to create new Tickets.
-    skey: SecureSecretKey,
+    skey: secure::SecretKey,
     /// Public key of the current node. Used to create new Tickets.
-    pkey: SecurePublicKey,
+    pkey: secure::PublicKey,
     /// State of the Ticket system
     state: State,
     /// Queue of out-of-order messages.
-    queue: HashMap<SecurePublicKey, VRFTicket>,
+    queue: HashMap<secure::PublicKey, VRFTicket>,
 }
 
 #[derive(Eq, PartialEq, Debug)]
@@ -160,8 +158,8 @@ impl TicketsSystem {
         max_group_size: usize,
         view_change: u32,
         height: u64,
-        pkey: SecurePublicKey,
-        skey: SecureSecretKey,
+        pkey: secure::PublicKey,
+        skey: secure::SecretKey,
     ) -> TicketsSystem {
         TicketsSystem {
             max_group_size,
@@ -348,7 +346,7 @@ fn mix(random: Hash, round: u32) -> Hash {
 }
 
 impl VRFTicket {
-    pub fn new(seed: Hash, height: u64, pkey: SecurePublicKey, skey: &SecureSecretKey) -> Self {
+    pub fn new(seed: Hash, height: u64, pkey: secure::PublicKey, skey: &secure::SecretKey) -> Self {
         let random = secure::make_VRF(&skey, &seed);
         let msg_hash = Self::hash(&random, &pkey);
         let sig = secure::sign_hash(&msg_hash, skey);
@@ -361,7 +359,7 @@ impl VRFTicket {
         }
     }
 
-    fn hash(random: &VRF, pkey: &SecurePublicKey) -> Hash {
+    fn hash(random: &VRF, pkey: &secure::PublicKey) -> Hash {
         let mut hasher = Hasher::new();
         random.hash(&mut hasher);
         pkey.hash(&mut hasher);
@@ -403,8 +401,8 @@ impl CollectingState {
     fn produce_ticket(
         &mut self,
         height: u64,
-        pkey: SecurePublicKey,
-        skey: &SecureSecretKey,
+        pkey: secure::PublicKey,
+        skey: &secure::SecretKey,
     ) -> VRFTicket {
         VRFTicket::new(self.seed, height, pkey, skey)
     }

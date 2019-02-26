@@ -105,7 +105,7 @@ mod test {
     use crate::block::{BaseBlockHeader, KeyBlock};
     use std::collections::BTreeSet;
     use stegos_crypto::hash::Hash;
-    use stegos_crypto::pbc::secure::{self, PublicKey as SecurePublicKey};
+    use stegos_crypto::pbc::secure;
 
     fn create_block(previous: Hash) -> Block {
         let (_skey0, pkey0, _sig0) = secure::make_random_keys();
@@ -115,7 +115,7 @@ mod test {
 
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
 
-        let witnesses: BTreeSet<SecurePublicKey> = [pkey0].iter().cloned().collect();
+        let witnesses: BTreeSet<secure::PublicKey> = [pkey0].iter().cloned().collect();
         let leader = pkey0.clone();
         let facilitator = pkey0.clone();
 

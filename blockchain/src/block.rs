@@ -37,7 +37,7 @@ use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure;
 
 /// The maximum number of nodes in multi-signature.
-pub const WITNESSES_MAX: usize = 512;
+pub const VALIDATORS_MAX: usize = 512;
 
 /// General Block Header.
 #[derive(Debug, Clone)]
@@ -65,7 +65,7 @@ pub struct BaseBlockHeader {
 impl BaseBlockHeader {
     pub fn new(version: u64, previous: Hash, epoch: u64, timestamp: u64) -> Self {
         let multisig = secure::Signature::zero();
-        let multisigmap = BitVector::new(WITNESSES_MAX);
+        let multisigmap = BitVector::new(VALIDATORS_MAX);
         BaseBlockHeader {
             version,
             previous,
@@ -98,8 +98,8 @@ pub struct KeyBlockHeader {
     /// Facilitator of Transaction Pool.
     pub facilitator: secure::PublicKey,
 
-    /// Ordered list of witnesses public keys.
-    pub witnesses: BTreeSet<secure::PublicKey>,
+    /// Ordered list of validators public keys.
+    pub validators: BTreeSet<secure::PublicKey>,
 }
 
 impl Hashable for KeyBlockHeader {
@@ -108,8 +108,8 @@ impl Hashable for KeyBlockHeader {
         self.base.hash(state);
         self.leader.hash(state);
         self.facilitator.hash(state);
-        for witness in self.witnesses.iter() {
-            witness.hash(state);
+        for validator in self.validators.iter() {
+            validator.hash(state);
         }
     }
 }
@@ -190,21 +190,24 @@ impl KeyBlock {
         base: BaseBlockHeader,
         leader: secure::PublicKey,
         facilitator: secure::PublicKey,
-        witnesses: BTreeSet<secure::PublicKey>,
+        validators: BTreeSet<secure::PublicKey>,
     ) -> Self {
-        assert!(!witnesses.is_empty(), "witnesses is not empty");
+        assert!(!validators.is_empty(), "validators is not empty");
         assert!(
-            witnesses.contains(&leader),
-            "leader must present in witnesses array"
+            validators.contains(&leader),
+            "leader must present in validators array"
         );
-        assert!(witnesses.len() <= WITNESSES_MAX, "max number of witnesses");
+        assert!(
+            validators.len() <= VALIDATORS_MAX,
+            "max number of validators"
+        );
 
         // Create header
         let header = KeyBlockHeader {
             base,
             leader,
             facilitator,
-            witnesses,
+            validators,
         };
 
         // Create the block
@@ -218,12 +221,12 @@ impl KeyBlock {
 
     /// Validate basic properties of KeyBlock.
     pub fn validate(&self) -> Result<(), Error> {
-        if self.header.witnesses.is_empty() {
-            return Err(BlockchainError::MissingWitnesses.into());
+        if self.header.validators.is_empty() {
+            return Err(BlockchainError::MissingValidators.into());
         }
 
-        if !self.header.witnesses.contains(&self.header.leader) {
-            return Err(BlockchainError::InvalidLeaderIsNotWitness.into());
+        if !self.header.validators.contains(&self.header.leader) {
+            return Err(BlockchainError::LeaderIsNotValidator.into());
         }
         Ok(())
     }
@@ -459,31 +462,31 @@ pub mod tests {
 
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
 
-        let witnesses: BTreeSet<secure::PublicKey> = [pkey0].iter().cloned().collect();
+        let validators: BTreeSet<secure::PublicKey> = [pkey0].iter().cloned().collect();
         let leader = pkey0.clone();
         let facilitator = pkey0.clone();
 
-        let mut block = KeyBlock::new(base, leader, facilitator, witnesses);
+        let mut block = KeyBlock::new(base, leader, facilitator, validators);
         block.validate().expect("block is valid");
 
-        // Missing witnesses.
-        let mut witnesses = BTreeSet::new();
-        std::mem::swap(&mut block.header.witnesses, &mut witnesses);
+        // Missing validators.
+        let mut validators = BTreeSet::new();
+        std::mem::swap(&mut block.header.validators, &mut validators);
         match block.validate() {
             Err(e) => match e.downcast::<BlockchainError>().unwrap() {
-                BlockchainError::MissingWitnesses => {}
+                BlockchainError::MissingValidators => {}
                 _ => panic!(),
             },
             _ => panic!(),
         }
-        std::mem::swap(&mut block.header.witnesses, &mut witnesses);
+        std::mem::swap(&mut block.header.validators, &mut validators);
 
-        // Leader is not included to the list of witnesses.
+        // Leader is not included to the list of validators.
         let (_skey0, mut pkey1, _sig0) = make_secure_random_keys();
         std::mem::swap(&mut block.header.leader, &mut pkey1);
         match block.validate() {
             Err(e) => match e.downcast::<BlockchainError>().unwrap() {
-                BlockchainError::InvalidLeaderIsNotWitness => {}
+                BlockchainError::LeaderIsNotValidator => {}
                 _ => panic!(),
             },
             _ => panic!(),

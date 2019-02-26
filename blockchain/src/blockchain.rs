@@ -334,7 +334,7 @@ impl Blockchain {
 
         self.leader = block.header.leader.clone();
         self.facilitator = block.header.facilitator.clone();
-        self.validators = self.escrow.multiget(&block.header.witnesses);
+        self.validators = self.escrow.multiget(&block.header.validators);
 
         self.last_block_timestamp = clock::now();
         self.blocks.push(Block::KeyBlock(block));
@@ -656,12 +656,12 @@ pub mod tests {
                 let previous = Hash::digest(&blockchain.last_block());
                 let base = BaseBlockHeader::new(version, previous, epoch, 0);
 
-                let witnesses: BTreeSet<secure::PublicKey> =
+                let validators: BTreeSet<secure::PublicKey> =
                     keychains.iter().map(|p| p.network_pkey.clone()).collect();
                 let leader = keychains[0].network_pkey.clone();
                 let facilitator = keychains[0].network_pkey.clone();
 
-                KeyBlock::new(base, leader, facilitator, witnesses)
+                KeyBlock::new(base, leader, facilitator, validators)
             };
             blockchain.register_key_block(new_block).unwrap();
         }

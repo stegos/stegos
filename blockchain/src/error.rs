@@ -44,8 +44,8 @@ pub enum BlockchainError {
     DuplicateBlockInput(Hash),
     #[fail(display = "Duplicate block output: {}.", _0)]
     DuplicateBlockOutput(Hash),
-    #[fail(display = "Block must contain at least one witness.")]
-    MissingWitnesses,
-    #[fail(display = "The leader must be witness.")]
-    InvalidLeaderIsNotWitness,
+    #[fail(display = "Block must contain at least one validator.")]
+    MissingValidators,
+    #[fail(display = "The leader must be validator.")]
+    LeaderIsNotValidator,
 }

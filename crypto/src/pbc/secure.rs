@@ -580,7 +580,7 @@ impl PartialEq for PublicKey {
     }
 }
 
-// Needed to sort the list of witnesses
+// Needed to sort the list of validators
 impl Ord for PublicKey {
     fn cmp(&self, other: &PublicKey) -> Ordering {
         self.0.base_vector().cmp(&other.0.base_vector())

@@ -87,12 +87,12 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64, timestamp: u64) -
         let previous = Hash::digest(&block1);
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
 
-        let witnesses: BTreeSet<secure::PublicKey> =
+        let validators: BTreeSet<secure::PublicKey> =
             keychains.iter().map(|p| p.network_pkey.clone()).collect();
         let leader = keychains[0].network_pkey.clone();
         let facilitator = keychains[0].network_pkey.clone();
 
-        KeyBlock::new(base, leader, facilitator, witnesses)
+        KeyBlock::new(base, leader, facilitator, validators)
     };
 
     blocks.push(Block::MonetaryBlock(block1));

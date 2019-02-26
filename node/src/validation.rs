@@ -144,11 +144,11 @@ pub(crate) fn validate_proposed_key_block(
         "Consensus leader different from our consensus group."
     );
     ensure!(
-        block.header.witnesses.len() == consensus.validators().len(),
+        block.header.validators.len() == consensus.validators().len(),
         "Received key block proposal with wrong consensus group"
     );
 
-    for validator in &block.header.witnesses {
+    for validator in &block.header.validators {
         ensure!(
             consensus.validators().contains_key(validator),
             "Received Key block proposal with wrong consensus group."
@@ -178,7 +178,7 @@ pub(crate) fn validate_sealed_key_block(
     }
 
     let leader = key_block.header.leader.clone();
-    let validators = chain.escrow.multiget(&key_block.header.witnesses);
+    let validators = chain.escrow.multiget(&key_block.header.validators);
     // We didn't allows fork, this is done by forcing group to be the same as stakers count.
     let stakers = chain.escrow.get_stakers_majority();
     if stakers != validators {

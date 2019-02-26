@@ -394,7 +394,7 @@ pub fn dc_decode(
                 if frval != Fr::zero() {
                     // if leading chunk is zero, then no msg in this row
                     let mut msg = Vec::<u8>::new();
-                    let mut chunk1 = frval.into_bytes();
+                    let mut chunk1 = frval.to_bytes();
                     stuff_msg(&mut msg, &chunk1, 0, MAX_BYTES);
                     prep_pref(&mut chunk1);
                     for r in 1..dim_r {
@@ -405,7 +405,7 @@ pub fn dc_decode(
                             let frval = sheet[r][c];
                             if frval != Fr::zero() {
                                 // ignore zero chunk values
-                                let chunk = frval.into_bytes();
+                                let chunk = frval.to_bytes();
                                 if has_hash_prefix(&chunk, &chunk1) {
                                     stuff_msg(&mut msg, &chunk, NPREF, NCHUNK);
                                     sheet[r][c] = Fr::zero(); // shorten next peek
@@ -476,7 +476,7 @@ fn dc_solve(col: &mut Vec<Fr>) -> Vec<Fr> {
 
     let n = col.len();
 
-    let s_col: Vec<_> = col.iter().map(|sum| c_str(&sum.into_hex())).collect();
+    let s_col: Vec<_> = col.iter().map(|sum| c_str(&sum.to_hex())).collect();
     let s_col_ptrs: Vec<_> = s_col.iter().map(|s| s.as_ptr()).collect();
 
     let mut out_messages_hex = vec![vec![0u8; 65]; n];
@@ -538,7 +538,7 @@ pub fn dc_keys(
     // my_sess_skey is the secret key invented for each specific session round
     //
     let mut out = HashMap::new();
-    let alpha = Fr::from(*my_sess_skey);
+    let alpha = Fr::from(my_sess_skey.clone());
     for pkey in participants.iter().filter(|p| **p != *my_id) {
         let sess_pkey = sess_pkeys.get(pkey).unwrap();
         let cpt = Pt::from(*sess_pkey);
@@ -608,9 +608,8 @@ where
                 let sheet = &mat[s];
                 let mut msg = Vec::<u8>::new();
                 let seed_str = gen_cell_seed(s, 0, 1);
-                let mut chunk1 = (sheet[0][0]
-                    - dc_slot_pad(participants, pkey, &cloaks, &seed_str))
-                .into_bytes();
+                let mut chunk1 =
+                    (sheet[0][0] - dc_slot_pad(participants, pkey, &cloaks, &seed_str)).to_bytes();
                 stuff_msg(&mut msg, &chunk1, 0, MAX_BYTES);
 
                 let dim_r = sheet.len(); // nbr of chunks
@@ -618,7 +617,7 @@ where
                 for r in 1..dim_r {
                     let seed_str = gen_cell_seed(s, r, 1);
                     let chunk = (sheet[r][0] - dc_slot_pad(participants, pkey, &cloaks, &seed_str))
-                        .into_bytes();
+                        .to_bytes();
                     stuff_msg(&mut msg, &chunk, NPREF, NCHUNK);
                 }
 
@@ -739,7 +738,7 @@ mod tests {
         // show component chunks
         println!("v len = {}", v.len());
         for val in v.clone() {
-            println!("{}", val.into_hex());
+            println!("{}", val.to_hex());
         }
 
         // check that hash of first chunk is prefix of remaining chunks
@@ -775,7 +774,7 @@ mod tests {
             let ncols = row.len();
             println!("  ncols = {} [", ncols);
             for cell in row {
-                println!("    Fr({})", cell.into_hex());
+                println!("    Fr({})", cell.to_hex());
             }
             println!("  ]");
         }

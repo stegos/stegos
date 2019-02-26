@@ -115,7 +115,7 @@ impl ECp {
     /// Try to convert from a compressed point.
     #[inline]
     pub fn decompress(pt: Pt) -> Result<Self, CryptoError> {
-        let bytes = pt.into_bytes();
+        let bytes = pt.to_bytes();
         ECp::try_from_bytes(bytes)
     }
 
@@ -159,8 +159,8 @@ impl ECp {
     }
 
     /// Convert into raw bytes.
-    pub fn into_bytes(self) -> [u8; 32] {
-        let mut afpt = self;
+    pub fn to_bytes(&self) -> [u8; 32] {
+        let mut afpt = self.clone();
         norm(&mut afpt);
         let ptx = Fq::from(afpt.x);
         let mut x = U256::from(ptx).to_lev_u8();
@@ -208,7 +208,7 @@ impl Eq for ECp {}
 
 impl PartialEq for ECp {
     fn eq(&self, b: &Self) -> bool {
-        let tmp: [u8; 32] = (*self - *b).into_bytes();
+        let tmp: [u8; 32] = (*self - *b).to_bytes();
         tmp == [0u8; 32]
     }
 }

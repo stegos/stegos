@@ -114,7 +114,7 @@ impl Encoder for UnicastWireCodec {
             }
             UnicastWireMessage::ChallengeReply(msg) => {
                 let mut msg_typ = unicast_wire_proto::ChallengeReply::new();
-                msg_typ.set_signature(msg.signature.into_bytes().to_vec());
+                msg_typ.set_signature(msg.signature.to_bytes().to_vec());
                 msg_typ.set_sender_challenge(msg.sender_challenge);
                 let mut proto_msg = unicast_wire_proto::Message::new();
                 proto_msg.set_reply(msg_typ);
@@ -122,10 +122,10 @@ impl Encoder for UnicastWireCodec {
             }
             UnicastWireMessage::Data(msg) => {
                 let mut msg_typ = unicast_wire_proto::Data::new();
-                msg_typ.set_sender_pkey(msg.sender_pkey.into_bytes().to_vec());
+                msg_typ.set_sender_pkey(msg.sender_pkey.to_bytes().to_vec());
                 msg_typ.set_protocol_id(msg.protocol_id.into_bytes());
                 msg_typ.set_data(msg.data);
-                msg_typ.set_sender_signature(msg.sender_signature.into_bytes().to_vec());
+                msg_typ.set_sender_signature(msg.sender_signature.to_bytes().to_vec());
                 let mut proto_msg = unicast_wire_proto::Message::new();
                 proto_msg.set_data(msg_typ);
                 proto_msg

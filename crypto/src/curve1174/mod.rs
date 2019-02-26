@@ -340,7 +340,7 @@ pub fn curve1174_tests() {
     let delta_pkey = PublicKey::from(ept);
     println!("delta_key = {}", Pt::from(delta_pkey));
 
-    let delta_skey = SecretKey::from(Fr::from(skey) + delta);
+    let delta_skey = SecretKey::from(Fr::from(skey.clone()) + delta);
 
     let hmsg = Hash::try_from_hex(&HASH_CONSTS).unwrap();
     let sig = sign_hash(&hmsg, &skey);

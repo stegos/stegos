@@ -86,8 +86,8 @@ impl WalletService {
         network: Network,
         node: Node,
     ) -> (Self, Wallet) {
-        info!("My wallet key: {}", &pkey.into_hex());
-        debug!("My network key: {}", &validator_pkey.into_hex());
+        info!("My wallet key: {}", pkey.to_hex());
+        debug!("My network key: {}", validator_pkey.to_hex());
 
         //
         // State.
@@ -250,7 +250,7 @@ impl WalletService {
                     );
                     let comment = match data {
                         PaymentPayloadData::Comment(comment) => comment,
-                        PaymentPayloadData::ContentHash(hash) => hash.into_hex(),
+                        PaymentPayloadData::ContentHash(hash) => hash.to_hex(),
                     };
                     let missing = self.unspent.insert(hash, (o, amount));
                     assert!(missing.is_none());

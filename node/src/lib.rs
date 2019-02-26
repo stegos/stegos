@@ -273,8 +273,13 @@ impl NodeService {
         inbox: UnboundedReceiver<NodeMessage>,
     ) -> Result<Self, Error> {
         let future_consensus_messages = Vec::new();
-        let vrf_system =
-            TicketsSystem::new(VALIDATORS_MAX, 0, 0, keys.network_pkey, keys.network_skey);
+        let vrf_system = TicketsSystem::new(
+            VALIDATORS_MAX,
+            0,
+            0,
+            keys.network_pkey,
+            keys.network_skey.clone(),
+        );
         let chain_loader = ChainLoader::new();
         let mempool = Mempool::new();
 
@@ -435,7 +440,7 @@ impl NodeService {
             0,
             len,
             self.keys.network_pkey,
-            self.keys.network_skey,
+            self.keys.network_skey.clone(),
         );
 
         debug!("Broadcast unspent outputs.");

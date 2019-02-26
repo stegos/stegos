@@ -86,9 +86,9 @@ impl KeyChain {
 
             let skey_pem = pem::Pem {
                 tag: SKEY_TAG.to_string(),
-                contents: skey.into_bytes().to_vec(),
+                contents: skey.to_bytes().to_vec(),
             };
-            let pkey_bytes: [u8; 32] = pkey.into_bytes();
+            let pkey_bytes: [u8; 32] = pkey.to_bytes();
             let pkey_pem = pem::Pem {
                 tag: PKEY_TAG.to_string(),
                 contents: pkey_bytes.to_vec(),
@@ -122,7 +122,7 @@ impl KeyChain {
 
             let skey = cpt::SecretKey::try_from_bytes(&skey.contents)?;
             let pkey = cpt::PublicKey::try_from_bytes(&pkey.contents[..])?;
-            let pkey_check = skey.into();
+            let pkey_check = skey.clone().into();
 
             if pkey != pkey_check {
                 return Err(KeyChainError::KeyValidateError.into());
@@ -163,7 +163,7 @@ impl KeyChain {
         &self,
     ) -> Result<(secp256k1::key::SecretKey, secp256k1::key::PublicKey), Error> {
         // seed generator, with validator key.
-        let seed: [u8; 32] = self.wallet_skey.into_bytes();
+        let seed: [u8; 32] = self.wallet_skey.to_bytes();
         // convert seed to old rand version format.
         let mut seed_converted = [0u32; 4];
         for i in 0..4 {

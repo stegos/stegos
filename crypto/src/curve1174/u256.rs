@@ -36,7 +36,9 @@ use rand::Rng;
 // One must be careful to distinguish by context at this low level. Field values
 // should never be mixed without careful consideration.
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+use clear_on_drop::clear::Clear;
+
+#[derive(Default, Copy, Clone, Eq, PartialEq)]
 pub struct U256(pub [u64; 4]);
 
 impl U256 {
@@ -46,6 +48,10 @@ impl U256 {
 
     pub fn one() -> U256 {
         U256([1, 0, 0, 0])
+    }
+
+    pub fn zap(&mut self) {
+        self.0.clear()
     }
 
     pub fn bits(self) -> [u64; 4] {

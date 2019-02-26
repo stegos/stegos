@@ -27,6 +27,7 @@ rust-crypto = "0.2"
 rust-gmp = "0.5"
 rust-libpbc = { version = "0.1.0", git = "https://github.com/stegos/rust-pbcintf.git" }
 sha3 = "0.8"
+clear_on_drop = "0.2"
 
 [build-dependencies]
 stegos_serialization = { version = "0.1.0", path = "../serialization" }

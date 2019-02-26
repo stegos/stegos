@@ -60,7 +60,7 @@ impl Hash {
     }
 
     /// Convert into hex string.
-    pub fn into_hex(self) -> String {
+    pub fn to_hex(&self) -> String {
         u8v_to_hexstr(&self.0)
     }
 
@@ -101,7 +101,7 @@ impl Hash {
         state.result()
     }
 
-    pub fn into_bytes(self) -> [u8; HASH_SIZE] {
+    pub fn to_bytes(&self) -> [u8; HASH_SIZE] {
         self.0
     }
 
@@ -123,7 +123,7 @@ impl Hash {
 
 impl fmt::Debug for Hash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "H({})", self.into_hex())
+        write!(f, "H({})", self.to_hex())
     }
 }
 

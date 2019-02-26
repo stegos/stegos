@@ -246,7 +246,7 @@ impl ConsoleService {
                 }
             };
             let msg = caps.name("msg").unwrap().as_str();
-            info!("Send: to='{}', msg='{}'", recipient.into_hex(), msg);
+            info!("Send: to='{}', msg='{}'", recipient.to_hex(), msg);
             self.network
                 .send(recipient, "console", msg.as_bytes().to_vec())
                 .unwrap();
@@ -276,7 +276,7 @@ impl ConsoleService {
                 String::new()
             };
 
-            info!("Sending {} STG to {}", amount, recipient.into_hex());
+            info!("Sending {} STG to {}", amount, recipient.to_hex());
             self.wallet.payment(recipient, amount, comment);
         } else if msg.starts_with("spay ") {
             let caps = match PAY_COMMAND_RE.captures(&msg[5..]) {
@@ -307,7 +307,7 @@ impl ConsoleService {
             info!(
                 "Sending {} STG to {} via ValueShuffle",
                 amount,
-                recipient.into_hex()
+                recipient.to_hex()
             );
             self.wallet.secure_payment(recipient, amount, comment);
         } else if msg.starts_with("msg ") {
@@ -332,7 +332,7 @@ impl ConsoleService {
             let comment = caps.name("msg").unwrap().as_str().to_string();
             assert!(comment.len() > 0);
 
-            info!("Sending message to {}", recipient.into_hex());
+            info!("Sending message to {}", recipient.to_hex());
             self.wallet.payment(recipient, amount, comment);
         } else if msg.starts_with("stake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[6..]) {
@@ -409,8 +409,8 @@ impl ConsoleService {
                 wallet_pkey,
                 network_pkey,
             } => {
-                println!("My wallet key: {}", &wallet_pkey.into_hex());
-                println!("My network key: {}", &network_pkey.into_hex());
+                println!("My wallet key: {}", wallet_pkey.to_hex());
+                println!("My network key: {}", network_pkey.to_hex());
                 self.stdin_th.thread().unpark();
             }
             WalletNotification::UnspentInfo {
@@ -420,10 +420,10 @@ impl ConsoleService {
                 if !unspent.is_empty() || !unspent_stakes.is_empty() {
                     println!("Found {} UTXO(s):", unspent.len() + unspent_stakes.len());
                     for (hash, amount) in unspent {
-                        println!("PaymentUTXO(hash={}, amount={})", hash.into_hex(), amount);
+                        println!("PaymentUTXO(hash={}, amount={})", hash.to_hex(), amount);
                     }
                     for (hash, amount) in unspent_stakes {
-                        println!("  StakeUTXO(hash={}, amount={})", hash.into_hex(), amount);
+                        println!("  StakeUTXO(hash={}, amount={})", hash.to_hex(), amount);
                     }
                 } else {
                     println!("No UTXO found");

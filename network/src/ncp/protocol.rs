@@ -118,7 +118,7 @@ impl Encoder for NcpCodec {
                     let mut peer_info = ncp_proto::Message_PeerInfo::new();
                     peer_info.set_peer_id(peer.peer_id.into_bytes());
                     for addr in peer.addresses.into_iter() {
-                        peer_info.mut_addrs().push(addr.into_bytes());
+                        peer_info.mut_addrs().push(addr.to_bytes());
                     }
                     msg.mut_peers().push(peer_info);
                 }

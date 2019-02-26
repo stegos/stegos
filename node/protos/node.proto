@@ -15,4 +15,5 @@ message VRFTicket {
     uint64 height = 2;
     stegos.crypto.SecurePublicKey pkey = 3;
     stegos.crypto.SecureSignature sig = 4;
+    uint32 view_change = 5;
 }

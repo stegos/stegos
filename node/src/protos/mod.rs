@@ -60,6 +60,7 @@ impl ProtoConvert for VRFTicket {
         let mut proto = node::VRFTicket::new();
         proto.set_random(self.random.into_proto());
         proto.set_height(self.height);
+        proto.set_view_change(self.view_change);
         proto.set_pkey(self.pkey.into_proto());
         proto.set_sig(self.sig.into_proto());
         proto
@@ -67,11 +68,13 @@ impl ProtoConvert for VRFTicket {
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let random = VRF::from_proto(proto.get_random())?;
         let height = proto.get_height();
+        let view_change = proto.get_view_change();
         let pkey = secure::PublicKey::from_proto(proto.get_pkey())?;
         let sig = secure::Signature::from_proto(proto.get_sig())?;
         Ok(VRFTicket {
             random,
             height,
+            view_change,
             pkey,
             sig,
         })
@@ -183,7 +186,7 @@ mod tests {
         let seed = Hash::digest("test");
         let (skey1, pkey1, _sig1) = make_secure_random_keys();
 
-        let vrf = VRFTicket::new(seed, 0, pkey1, &skey1);
+        let vrf = VRFTicket::new(seed, 3, 12, pkey1, &skey1);
         roundtrip(&vrf);
     }
 

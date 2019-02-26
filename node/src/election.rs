@@ -27,18 +27,18 @@ use stegos_crypto::hash::Hash;
 use rand::{Rng, SeedableRng};
 use rand_isaac::IsaacRng;
 
-use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
+use stegos_crypto::pbc::secure;
 
-pub type StakersGroup = Vec<(SecurePublicKey, i64)>;
+pub type StakersGroup = Vec<(secure::PublicKey, i64)>;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct ConsensusGroup {
     /// List of Validators
     pub validators: StakersGroup,
     /// Leader public key
-    pub leader: SecurePublicKey,
+    pub leader: secure::PublicKey,
     /// Facilitator of the transaction pool
-    pub facilitator: SecurePublicKey,
+    pub facilitator: secure::PublicKey,
 }
 
 /// Choose random validator, based on `random_number`.
@@ -156,7 +156,7 @@ mod test {
     use std::collections::{HashMap, HashSet};
 
     use stegos_crypto::hash::Hash;
-    use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
+    use stegos_crypto::pbc::secure;
 
     fn broken_random(nums: i64) -> impl Iterator<Item = i64> {
         (0..nums).into_iter()
@@ -254,7 +254,7 @@ mod test {
     fn test_group_size() {
         const PUBLIC_KEY_SIZE: usize = 65;
 
-        let key = SecurePublicKey::try_from_bytes(&[0; PUBLIC_KEY_SIZE]).unwrap();
+        let key = secure::PublicKey::try_from_bytes(&[0; PUBLIC_KEY_SIZE]).unwrap();
         let keys = vec![(key, 1), (key, 2), (key, 3), (key, 4)];
         for i in 1..5 {
             assert_eq!(

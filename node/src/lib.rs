@@ -55,8 +55,7 @@ use std::time::{Duration, Instant};
 use stegos_blockchain::*;
 use stegos_consensus::{BlockConsensus, BlockConsensusMessage, BlockProof, MonetaryBlockProof};
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
-use stegos_crypto::pbc::secure::Signature as SecureSignature;
+use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
 use stegos_network::Network;
 use stegos_network::UnicastMessage;
@@ -138,9 +137,9 @@ impl Node {
 #[derive(Clone, Debug)]
 pub struct EpochNotification {
     pub epoch: u64,
-    pub leader: SecurePublicKey,
-    pub facilitator: SecurePublicKey,
-    pub validators: BTreeMap<SecurePublicKey, i64>,
+    pub leader: secure::PublicKey,
+    pub facilitator: secure::PublicKey,
+    pub validators: BTreeMap<secure::PublicKey, i64>,
 }
 
 /// Send when outputs created and/or pruned.
@@ -669,7 +668,7 @@ impl NodeService {
     /// Handler for new epoch creation procedure.
     /// This method called only on leader side, and when consensus is active.
     /// Leader should create a KeyBlock based on last random provided by VRF.
-    fn create_new_epoch(&mut self, facilitator: SecurePublicKey) -> Result<(), Error> {
+    fn create_new_epoch(&mut self, facilitator: secure::PublicKey) -> Result<(), Error> {
         let consensus = self.consensus.as_mut().unwrap();
         let last = self.chain.last_block();
         let previous = Hash::digest(last);
@@ -1025,7 +1024,7 @@ impl NodeService {
     fn commit_proposed_block(
         &mut self,
         block: Block,
-        multisig: SecureSignature,
+        multisig: secure::Signature,
         multisigmap: BitVector,
     ) {
         let current_timestamp = Utc::now().timestamp() as u64;

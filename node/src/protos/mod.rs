@@ -34,8 +34,7 @@ use crate::VRFTicket;
 use failure::{format_err, Error};
 use protobuf::RepeatedField;
 use stegos_blockchain::*;
-use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
-use stegos_crypto::pbc::secure::Signature as SecureSignature;
+use stegos_crypto::pbc::secure;
 use stegos_crypto::pbc::secure::VRF;
 
 impl ProtoConvert for SealedBlockMessage {
@@ -49,8 +48,8 @@ impl ProtoConvert for SealedBlockMessage {
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let block = Block::from_proto(proto.get_block())?;
-        let sig = SecureSignature::from_proto(proto.get_sig())?;
-        let pkey = SecurePublicKey::from_proto(proto.get_pkey())?;
+        let sig = secure::Signature::from_proto(proto.get_sig())?;
+        let pkey = secure::PublicKey::from_proto(proto.get_pkey())?;
         Ok(SealedBlockMessage { block, sig, pkey })
     }
 }
@@ -68,8 +67,8 @@ impl ProtoConvert for VRFTicket {
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let random = VRF::from_proto(proto.get_random())?;
         let height = proto.get_height();
-        let pkey = SecurePublicKey::from_proto(proto.get_pkey())?;
-        let sig = SecureSignature::from_proto(proto.get_sig())?;
+        let pkey = secure::PublicKey::from_proto(proto.get_pkey())?;
+        let sig = secure::Signature::from_proto(proto.get_sig())?;
         Ok(VRFTicket {
             random,
             height,
@@ -168,7 +167,7 @@ mod tests {
         let previous = Hash::digest("test");
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
 
-        let witnesses: BTreeSet<SecurePublicKey> = [pkey0].iter().cloned().collect();
+        let witnesses: BTreeSet<secure::PublicKey> = [pkey0].iter().cloned().collect();
         let leader = pkey0.clone();
         let facilitator = pkey0.clone();
 

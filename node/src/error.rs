@@ -25,7 +25,7 @@
 
 use failure::Fail;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
+use stegos_crypto::pbc::secure;
 
 #[derive(Debug, Fail, PartialEq, Eq)]
 pub enum NodeError {
@@ -59,7 +59,7 @@ pub enum NodeError {
         display = "Sealed Block from non-leader: block={}, expected={}, got={}",
         _0, _1, _2
     )]
-    SealedBlockFromNonLeader(Hash, SecurePublicKey, SecurePublicKey),
+    SealedBlockFromNonLeader(Hash, secure::PublicKey, secure::PublicKey),
     #[fail(display = "Invalid fee UTXO: hash={}", _0)]
     InvalidFeeUTXO(Hash),
     #[fail(display = "Invalid block BLS multisignature: block={}", _0)]

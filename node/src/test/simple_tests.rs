@@ -24,7 +24,7 @@ use crate::*;
 use chrono::Utc;
 use stegos_blockchain::*;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure::sign_hash as secure_sign_hash;
+use stegos_crypto::pbc::secure;
 
 #[test]
 pub fn init() {
@@ -69,7 +69,7 @@ fn simulate_consensus(node: &mut NodeService) {
 
     let block = Block::MonetaryBlock(block);
     let block_hash = Hash::digest(&block);
-    let multisig = secure_sign_hash(&block_hash, &node.keys.network_skey);
+    let multisig = secure::sign_hash(&block_hash, &node.keys.network_skey);
     let mut multisigmap = BitVector::new(1);
     multisigmap.insert(0);
     node.commit_proposed_block(block, multisig, multisigmap);

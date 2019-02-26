@@ -40,7 +40,7 @@ use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::curve1174::G;
 use stegos_crypto::hash::*;
-use stegos_crypto::pbc::secure::{PublicKey as SecurePublicKey, G2};
+use stegos_crypto::pbc::secure;
 use tokio_timer::clock;
 
 type BlockId = usize;
@@ -78,11 +78,11 @@ pub struct Blockchain {
     /// Escrow
     pub escrow: Escrow,
     /// Snapshot of selected leader from the latest key block.
-    pub leader: SecurePublicKey,
+    pub leader: secure::PublicKey,
     /// Snapshot of selected facilitator from the latest key block.
-    pub facilitator: SecurePublicKey,
+    pub facilitator: secure::PublicKey,
     /// Snapshot of validators with stakes from the latest key block.
-    pub validators: BTreeMap<SecurePublicKey, i64>,
+    pub validators: BTreeMap<secure::PublicKey, i64>,
     /// A timestamp when the last sealed block was received.
     pub last_block_timestamp: Instant,
     /// A monotonically increasing value that represents the epoch of the blockchain,
@@ -123,9 +123,9 @@ impl Blockchain {
         let output_by_hash = HashMap::<Hash, OutputKey>::new();
         let epoch: u64 = 0;
         let escrow = Escrow::new();
-        let leader: SecurePublicKey = G2::generator().into(); // some fake key
-        let facilitator: SecurePublicKey = G2::generator().into(); // some fake key
-        let validators = BTreeMap::<SecurePublicKey, i64>::new();
+        let leader: secure::PublicKey = secure::G2::generator().into(); // some fake key
+        let facilitator: secure::PublicKey = secure::G2::generator().into(); // some fake key
+        let validators = BTreeMap::<secure::PublicKey, i64>::new();
         let last_block_timestamp = clock::now();
 
         let created = ECp::inf();
@@ -282,9 +282,9 @@ impl Blockchain {
     /// Force consensus group changes.
     pub fn change_group(
         &mut self,
-        leader: SecurePublicKey,
-        facilitator: SecurePublicKey,
-        validators: BTreeMap<SecurePublicKey, i64>,
+        leader: secure::PublicKey,
+        facilitator: secure::PublicKey,
+        validators: BTreeMap<secure::PublicKey, i64>,
     ) {
         self.leader = leader;
         self.facilitator = facilitator;
@@ -656,7 +656,7 @@ pub mod tests {
                 let previous = Hash::digest(&blockchain.last_block());
                 let base = BaseBlockHeader::new(version, previous, epoch, 0);
 
-                let witnesses: BTreeSet<SecurePublicKey> =
+                let witnesses: BTreeSet<secure::PublicKey> =
                     keychains.iter().map(|p| p.network_pkey.clone()).collect();
                 let leader = keychains[0].network_pkey.clone();
                 let facilitator = keychains[0].network_pkey.clone();

@@ -27,14 +27,14 @@ use failure::Fail;
 use log::*;
 use std::collections::BTreeMap;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure::PublicKey as SecurePublicKey;
+use stegos_crypto::pbc::secure;
 
 /// Minimal stake a
 pub const MIN_STAKE_AMOUNT: i64 = 1000;
 
 #[derive(PartialEq, Eq, Ord, PartialOrd)]
 struct EscrowKey {
-    validator_pkey: SecurePublicKey,
+    validator_pkey: secure::PublicKey,
     output_hash: Hash,
 }
 
@@ -65,7 +65,7 @@ impl Escrow {
     ///
     pub fn stake(
         &mut self,
-        validator_pkey: SecurePublicKey,
+        validator_pkey: secure::PublicKey,
         output_hash: Hash,
         bonding_timestamp: u64,
         amount: i64,
@@ -102,7 +102,7 @@ impl Escrow {
     ///
     pub fn validate_unstake(
         &self,
-        validator_pkey: &SecurePublicKey,
+        validator_pkey: &secure::PublicKey,
         output_hash: &Hash,
         timestamp: u64,
     ) -> Result<(), EscrowError> {
@@ -130,7 +130,12 @@ impl Escrow {
     ///
     /// Unstake money from the escrow.
     ///
-    pub fn unstake(&mut self, validator_pkey: SecurePublicKey, output_hash: Hash, timestamp: u64) {
+    pub fn unstake(
+        &mut self,
+        validator_pkey: secure::PublicKey,
+        output_hash: Hash,
+        timestamp: u64,
+    ) {
         let key = EscrowKey {
             validator_pkey,
             output_hash,
@@ -151,7 +156,7 @@ impl Escrow {
     ///
     /// Get staked value for validator.
     ///
-    pub fn get(&self, validator_pkey: &SecurePublicKey) -> i64 {
+    pub fn get(&self, validator_pkey: &secure::PublicKey) -> i64 {
         let (hash_min, hash_max) = Hash::bounds();
         let key_min = EscrowKey {
             validator_pkey: validator_pkey.clone(),
@@ -174,12 +179,12 @@ impl Escrow {
     ///
     /// Get staked values for specified validators.
     ///
-    pub fn multiget<'a, I>(&self, validators: I) -> BTreeMap<SecurePublicKey, i64>
+    pub fn multiget<'a, I>(&self, validators: I) -> BTreeMap<secure::PublicKey, i64>
     where
-        I: IntoIterator<Item = &'a SecurePublicKey>,
+        I: IntoIterator<Item = &'a secure::PublicKey>,
     {
         // TODO: optimize using two iterator.
-        let mut stakes = BTreeMap::<SecurePublicKey, i64>::new();
+        let mut stakes = BTreeMap::<secure::PublicKey, i64>::new();
         for validator in validators {
             let stake = self.get(validator);
             stakes.insert(validator.clone(), stake);
@@ -191,8 +196,8 @@ impl Escrow {
     /// Get all staked values of all validators.
     /// Filter out stakers with stake lower than MIN_STAKE_AMOUNT.
     ///
-    pub fn get_stakers_majority(&self) -> BTreeMap<SecurePublicKey, i64> {
-        let mut stakes: BTreeMap<SecurePublicKey, i64> = BTreeMap::new();
+    pub fn get_stakers_majority(&self) -> BTreeMap<secure::PublicKey, i64> {
+        let mut stakes: BTreeMap<secure::PublicKey, i64> = BTreeMap::new();
         for (k, v) in self.escrow.iter() {
             let entry = stakes.entry(k.validator_pkey).or_insert(0);
             *entry += v.amount;
@@ -212,5 +217,5 @@ pub enum EscrowError {
         display = "Stake is locked: validator={}, stake={}, bonding_time={}, current_time={}",
         _0, _1, _2, _3
     )]
-    StakeIsLocked(SecurePublicKey, Hash, u64, u64),
+    StakeIsLocked(secure::PublicKey, Hash, u64, u64),
 }

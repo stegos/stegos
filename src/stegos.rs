@@ -93,7 +93,8 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
     }
     // Use default SRV record for the chain
     if cfg.general.chain != "dev" && cfg.network.seed_pool == "" {
-        cfg.network.seed_pool = format!("_stegos._tcp.{}.aws.stegos.com", cfg.general.chain).to_string();
+        cfg.network.seed_pool =
+            format!("_stegos._tcp.{}.aws.stegos.com", cfg.general.chain).to_string();
     }
     Ok(cfg)
 }

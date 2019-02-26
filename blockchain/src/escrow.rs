@@ -44,7 +44,7 @@ struct EscrowValue {
 }
 
 /// Time to lock StakeOutput.
-pub const BONDING_TIME: u64 = 2592000; // 30 days
+pub const BONDING_TIME: u64 = 900; // 15 minutes
 
 type EscrowMap = BTreeMap<EscrowKey, EscrowValue>;
 

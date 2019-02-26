@@ -144,9 +144,9 @@ fn initialize_genesis(cfg: &config::Config) -> Result<Vec<Block>, Error> {
             include_bytes!("../chains/testnet/genesis0.bin"),
             include_bytes!("../chains/testnet/genesis1.bin"),
         ),
-        "pretestnet" => (
-            include_bytes!("../chains/pretestnet/genesis0.bin"),
-            include_bytes!("../chains/pretestnet/genesis1.bin"),
+        "devnet" => (
+            include_bytes!("../chains/devnet/genesis0.bin"),
+            include_bytes!("../chains/devnet/genesis1.bin"),
         ),
         chain @ _ => {
             return Err(format_err!("Unknown chain: {}", chain));

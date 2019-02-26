@@ -123,7 +123,7 @@ impl Transaction {
         // where i in txins, j in txouts
         //
 
-        let skey_fr: Fr = (*skey).into();
+        let skey_fr: Fr = skey.clone().into();
         let mut eff_skey: Fr = skey_fr * (inputs.len() as i64); // N * s_M
 
         let mut tx_gamma: Fr = Fr::zero();

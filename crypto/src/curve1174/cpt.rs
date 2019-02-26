@@ -129,7 +129,7 @@ impl PartialOrd for Pt {
 
 // --------------------------------------------------------------------
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct SecretKey(Fr);
 
 impl SecretKey {
@@ -160,13 +160,19 @@ impl SecretKey {
 
 impl fmt::Display for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SKey({})", self.into_hex())
+        write!(f, "SKey({})", self.clone().into_hex())
     }
 }
 
 impl fmt::Debug for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SKey({})", self.into_hex())
+        write!(f, "SKey({})", self.clone().into_hex())
+    }
+}
+
+impl Drop for SecretKey {
+    fn drop(&mut self) {
+        self.0.zap();
     }
 }
 
@@ -342,9 +348,9 @@ pub fn sign_hash(hmsg: &Hash, skey: &SecretKey) -> SchnorrSig {
     // until its value lies within an acceptable range.
     let k = Fr::synthetic_random("sig-k", skey, hmsg);
     let K = k * *G;
-    let pkey = PublicKey::from(*skey);
+    let pkey = PublicKey::from(skey.clone());
     let h = Hash::digest_chain(&[&K, &pkey, hmsg]);
-    let u = k + Fr::from(h) * Fr::from(*skey);
+    let u = k + Fr::from(h) * Fr::from(skey.clone());
     SchnorrSig {
         u: u.unscaled(),
         K: Pt::from(K),
@@ -432,7 +438,7 @@ pub fn aes_encrypt(msg: &[u8], pkey: &PublicKey) -> Result<EncryptedPayload, Cry
 }
 
 pub fn aes_decrypt(payload: &EncryptedPayload, skey: &SecretKey) -> Result<Vec<u8>, CryptoError> {
-    let zr = Fr::from(*skey);
+    let zr = Fr::from(skey.clone());
     let apkg = ECp::decompress(payload.apkg)?; // could give CryptoError if corrupted payload
     let ag = ECp::decompress(payload.ag)?; // ... ditto ...
     let kg = apkg - zr * ag; // compute the actual key seed = k*G

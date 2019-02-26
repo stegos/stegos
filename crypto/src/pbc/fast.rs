@@ -74,6 +74,13 @@ impl Zr {
         Zr(v)
     }
 
+    pub fn zap(&mut self) {
+        let mut bytes = self.0;
+        for i in 0..bytes.len() {
+            bytes[i] = 0;
+        }
+    }
+
     pub fn acceptable_minval() -> Self {
         // approx sqrt modulus
         let mut x = [0u8; ZR_SIZE_AR160];
@@ -860,7 +867,7 @@ impl DivAssign<GT> for GT {
 }
 
 // -----------------------------------------
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct SecretKey(Zr);
 
 impl SecretKey {
@@ -876,7 +883,7 @@ impl SecretKey {
 
 impl fmt::Display for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FastSKey({})", self.into_hex())
+        write!(f, "FastSKey({})", self.clone().into_hex())
     }
 }
 
@@ -897,6 +904,12 @@ impl PartialEq for SecretKey {
 impl From<SecretKey> for Zr {
     fn from(skey: SecretKey) -> Zr {
         skey.0
+    }
+}
+
+impl Drop for SecretKey {
+    fn drop(&mut self) {
+        self.0.zap()
     }
 }
 

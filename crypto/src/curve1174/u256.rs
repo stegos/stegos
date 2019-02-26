@@ -48,6 +48,13 @@ impl U256 {
         U256([1, 0, 0, 0])
     }
 
+    pub fn zap(&mut self) {
+        let mut bytes = self.0;
+        for i in 0..bytes.len() {
+            bytes[i] = 0;
+        }
+    }
+
     pub fn bits(self) -> [u64; 4] {
         self.0
     }

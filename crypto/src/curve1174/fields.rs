@@ -78,6 +78,13 @@ macro_rules! field_impl {
                 $one
             }
 
+            pub fn zap(&mut self) {
+                match self {
+                    $name::Scaled(v) => v.zap(),
+                    $name::Unscaled(v) => v.zap(),
+                }
+            }
+
             pub fn bits(self) -> U256 {
                 match self {
                     $name::Unscaled(v) => v,

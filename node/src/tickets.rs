@@ -480,11 +480,11 @@ mod test {
         let height = 1;
         let view_change = 0;
         let (s, p, _sign) = secure::make_random_keys();
-        let mut tickets_system = TicketsSystem::new(100, view_change, height, p, s);
+        let mut tickets_system = TicketsSystem::new(100, view_change, height, p, s.clone());
 
         for i in 0..100 {
             let seed = mix(block_hash, view_change + i);
-            let ticket = VRFTicket::new(seed, height, p, &s);
+            let ticket = VRFTicket::new(seed, height, p, &s.clone());
             let _ = tickets_system.handle_process_ticket(ticket);
         }
 
@@ -502,7 +502,7 @@ mod test {
         let height = 1;
         let view_change = 0;
         let (s, p, _sign) = secure::make_random_keys();
-        let mut tickets_system = TicketsSystem::new(100, view_change, height, p, s);
+        let mut tickets_system = TicketsSystem::new(100, view_change, height, p, s.clone());
         let ticket = tickets_system.on_view_change(block_hash);
         let _ = tickets_system.handle_process_ticket(ticket);
         // receive self ticket
@@ -513,7 +513,7 @@ mod test {
         }
         for i in 0..10 {
             let seed = mix(block_hash, view_change + i + 1);
-            let ticket = VRFTicket::new(seed, height, p, &s);
+            let ticket = VRFTicket::new(seed, height, p, &s.clone());
             let _ = tickets_system.handle_process_ticket(ticket);
         }
 
@@ -533,7 +533,7 @@ mod test {
         let height = 1;
         let view_change = 0;
         let (s, p, _sign) = secure::make_random_keys();
-        let mut tickets_system = TicketsSystem::new(100, view_change, height, p, s);
+        let mut tickets_system = TicketsSystem::new(100, view_change, height, p, s.clone());
         let old_ticket = tickets_system.on_view_change(block_hash);
 
         // receive self ticket
@@ -544,7 +544,7 @@ mod test {
         }
 
         let seed = mix(block_hash, view_change + 1);
-        let ticket = VRFTicket::new(seed, height, p, &s);
+        let ticket = VRFTicket::new(seed, height, p, &s.clone());
 
         let _ = tickets_system.handle_process_ticket(ticket.clone());
         // receive self ticket

@@ -538,7 +538,7 @@ pub fn dc_keys(
     // my_sess_skey is the secret key invented for each specific session round
     //
     let mut out = HashMap::new();
-    let alpha = Fr::from(*my_sess_skey);
+    let alpha = Fr::from(my_sess_skey.clone());
     for pkey in participants.iter().filter(|p| **p != *my_id) {
         let sess_pkey = sess_pkeys.get(pkey).unwrap();
         let cpt = Pt::from(*sess_pkey);

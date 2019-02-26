@@ -59,6 +59,13 @@ impl Zr {
         &self.0
     }
 
+    pub fn zap(&mut self) {
+        let mut bytes = self.0;
+        for i in 0..bytes.len() {
+            bytes[i] = 0;
+        }
+    }
+
     pub fn acceptable_minval() -> Self {
         // approx sqrt modulus
         let mut x = [0u8; ZR_SIZE_FR256];
@@ -208,6 +215,13 @@ impl G1 {
     /// Check that binary representation consists of all zeros.
     pub fn is_zero(&self) -> bool {
         self.0[..] == G1::wv()[..]
+    }
+
+    pub fn zap(&mut self) {
+        let mut bytes = self.0;
+        for i in 0..bytes.len() {
+            bytes[i] = 0;
+        }
     }
 
     fn wv() -> [u8; G1_SIZE_FR256] {
@@ -460,7 +474,7 @@ impl PartialEq for GT {
 }
 
 // -----------------------------------------
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct SecretKey(Zr);
 
 impl SecretKey {
@@ -482,13 +496,13 @@ impl SecretKey {
 
 impl fmt::Display for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureSKey({})", self.into_hex())
+        write!(f, "SecureSKey({})", self.clone().into_hex())
     }
 }
 
 impl fmt::Debug for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureSKey({})", self.into_hex())
+        write!(f, "SecureSKey({})", self.clone().into_hex())
     }
 }
 
@@ -503,6 +517,12 @@ impl Eq for SecretKey {}
 impl PartialEq for SecretKey {
     fn eq(&self, b: &Self) -> bool {
         self.0 == b.0
+    }
+}
+
+impl Drop for SecretKey {
+    fn drop(&mut self) {
+        self.0.zap();
     }
 }
 
@@ -610,7 +630,7 @@ impl Add<PublicKey> for PublicKey {
 
 // -----------------------------------------
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct SecretSubKey(G1);
 
 impl SecretSubKey {
@@ -632,7 +652,7 @@ impl SecretSubKey {
 
 impl fmt::Display for SecretSubKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureSSubKey({})", self.into_hex())
+        write!(f, "SecureSSubKey({})", self.clone().into_hex())
     }
 }
 
@@ -647,6 +667,12 @@ impl Eq for SecretSubKey {}
 impl PartialEq for SecretSubKey {
     fn eq(&self, b: &Self) -> bool {
         self.0 == b.0
+    }
+}
+
+impl Drop for SecretSubKey {
+    fn drop(&mut self) {
+        self.0.zap();
     }
 }
 

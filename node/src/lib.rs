@@ -174,7 +174,7 @@ const CONSENSUS_TIMER: Duration = Duration::from_secs(30);
 pub const NETWORK_GRACE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Max count of sealed block in epoch.
 const SEALED_BLOCK_IN_EPOCH: usize = 5;
-/// Max difference in timestamps of leader and witnesses.
+/// Max difference in timestamps of leader and validators.
 const TIME_TO_RECEIVE_BLOCK: u64 = 10 * 60;
 /// Fixed reward per block.
 const BLOCK_REWARD: i64 = 60;
@@ -276,7 +276,7 @@ impl NodeService {
     ) -> Result<Self, Error> {
         let future_consensus_messages = Vec::new();
         let vrf_system =
-            TicketsSystem::new(WITNESSES_MAX, 0, 0, keys.network_pkey, keys.network_skey);
+            TicketsSystem::new(VALIDATORS_MAX, 0, 0, keys.network_pkey, keys.network_skey);
         let chain_loader = ChainLoader::new();
         let mempool = Mempool::new();
 
@@ -433,7 +433,7 @@ impl NodeService {
         //TODO: Calculate viewchange on node restart by timeout since last known block. For this we need to track last_block time in storage.
         //Recreate vrf system
         self.vrf_system = TicketsSystem::new(
-            WITNESSES_MAX,
+            VALIDATORS_MAX,
             0,
             len,
             self.keys.network_pkey,
@@ -983,7 +983,7 @@ impl NodeService {
 
         match (block, proof) {
             (Block::MonetaryBlock(block), BlockProof::MonetaryBlockProof(proof)) => {
-                // We can validate witnesses of MonetaryBlock only in current epoch.
+                // We can validate validators of MonetaryBlock only in current epoch.
                 if epoch != base_header.epoch {
                     return Err(NodeError::OutOfOrderBlockEpoch(
                         block_hash,

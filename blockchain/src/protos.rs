@@ -173,8 +173,8 @@ impl ProtoConvert for BaseBlockHeader {
             proto.set_sig(self.multisig.into_proto());
         }
         if !self.multisigmap.is_empty() {
-            assert!(self.multisigmap.len() <= WITNESSES_MAX);
-            proto.sigmap.resize(WITNESSES_MAX, false);
+            assert!(self.multisigmap.len() <= VALIDATORS_MAX);
+            proto.sigmap.resize(VALIDATORS_MAX, false);
             for bit in self.multisigmap.iter() {
                 proto.sigmap[bit] = true;
             }
@@ -192,10 +192,10 @@ impl ProtoConvert for BaseBlockHeader {
         } else {
             secure::Signature::zero()
         };
-        if proto.sigmap.len() > WITNESSES_MAX {
-            return Err(CryptoError::InvalidBinaryLength(WITNESSES_MAX, proto.sigmap.len()).into());
+        if proto.sigmap.len() > VALIDATORS_MAX {
+            return Err(CryptoError::InvalidBinaryLength(VALIDATORS_MAX, proto.sigmap.len()).into());
         }
-        let mut sigmap = BitVector::new(WITNESSES_MAX);
+        let mut sigmap = BitVector::new(VALIDATORS_MAX);
         for (bit, val) in proto.sigmap.iter().enumerate() {
             if *val {
                 sigmap.insert(bit);
@@ -219,8 +219,8 @@ impl ProtoConvert for KeyBlockHeader {
         proto.set_base(self.base.into_proto());
         proto.set_leader(self.leader.into_proto());
         proto.set_facilitator(self.facilitator.into_proto());
-        for witness in &self.witnesses {
-            proto.witnesses.push(witness.into_proto());
+        for validator in &self.validators {
+            proto.validators.push(validator.into_proto());
         }
         proto
     }
@@ -229,10 +229,10 @@ impl ProtoConvert for KeyBlockHeader {
         let base = BaseBlockHeader::from_proto(proto.get_base())?;
         let leader = secure::PublicKey::from_proto(proto.get_leader())?;
         let facilitator = secure::PublicKey::from_proto(proto.get_facilitator())?;
-        let mut witnesses = BTreeSet::new();
-        for witness in proto.witnesses.iter() {
-            if !witnesses.insert(secure::PublicKey::from_proto(witness)?) {
-                return Err(ProtoError::DuplicateValue("witnesses".to_string()).into());
+        let mut validators = BTreeSet::new();
+        for validator in proto.validators.iter() {
+            if !validators.insert(secure::PublicKey::from_proto(validator)?) {
+                return Err(ProtoError::DuplicateValue("validators".to_string()).into());
             }
         }
 
@@ -240,7 +240,7 @@ impl ProtoConvert for KeyBlockHeader {
             base,
             leader,
             facilitator,
-            witnesses,
+            validators,
         })
     }
 }
@@ -517,11 +517,11 @@ mod tests {
         assert!(base.multisigmap.contains(13));
         assert!(base.multisigmap.contains(44));
 
-        let witnesses: BTreeSet<secure::PublicKey> = [pkey0].iter().cloned().collect();
+        let validators: BTreeSet<secure::PublicKey> = [pkey0].iter().cloned().collect();
         let leader = pkey0.clone();
         let facilitator = pkey0.clone();
 
-        let block = KeyBlock::new(base, leader, facilitator, witnesses);
+        let block = KeyBlock::new(base, leader, facilitator, validators);
         roundtrip(&block.header);
         roundtrip(&block);
 

@@ -52,7 +52,7 @@ lazy_static! {
     /// If no new block was provided between this interval - we should start vrf system.
     pub static ref RESTART_CONSENSUS_TIMER: Duration = crate::MESSAGE_TIMEOUT * 4 + // 4 consensus message
                                           crate::BLOCK_VALIDATION_TIME * 2 + // form block on leader and
-                                                                              // validate on witness
+                                                                              // validate on validator
                                           crate::TX_WAIT_TIMEOUT; // Propose timeout
 }
 /// How long we should collect the tickets.

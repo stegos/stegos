@@ -23,7 +23,7 @@
 
 use bitvector::BitVector;
 use std::collections::BTreeMap;
-use stegos_blockchain::WITNESSES_MAX;
+use stegos_blockchain::VALIDATORS_MAX;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
 
@@ -40,15 +40,15 @@ pub(crate) fn check_supermajority(got_votes: usize, total_votes: usize) -> bool 
 /// Create a new multi-signature from individual signatures
 ///
 pub(crate) fn create_multi_signature(
-    witnesses: &BTreeMap<secure::PublicKey, i64>,
+    validators: &BTreeMap<secure::PublicKey, i64>,
     signatures: &BTreeMap<secure::PublicKey, secure::Signature>,
 ) -> (secure::Signature, BitVector) {
-    assert!(check_supermajority(signatures.len(), witnesses.len()));
+    assert!(check_supermajority(signatures.len(), validators.len()));
 
     let mut multisig = secure::G1::zero();
-    let mut multisigmap = BitVector::new(WITNESSES_MAX);
+    let mut multisigmap = BitVector::new(VALIDATORS_MAX);
     let mut count: usize = 0;
-    for (bit, (pkey, _stake)) in witnesses.iter().enumerate() {
+    for (bit, (pkey, _stake)) in validators.iter().enumerate() {
         let sig = match signatures.get(pkey) {
             Some(sig) => *sig,
             None => continue,
@@ -72,14 +72,14 @@ pub fn check_multi_signature(
     hash: &Hash,
     multisig: &secure::Signature,
     multisigmap: &BitVector,
-    witnesses: &BTreeMap<secure::PublicKey, i64>,
+    validators: &BTreeMap<secure::PublicKey, i64>,
     leader: &secure::PublicKey,
 ) -> bool {
     let mut has_leader = false;
     let mut multisigpkey = secure::G2::zero();
 
     let mut count: usize = 0;
-    for (bit, pkey) in witnesses.keys().enumerate() {
+    for (bit, pkey) in validators.keys().enumerate() {
         if !multisigmap.contains(bit) {
             continue;
         }
@@ -94,8 +94,8 @@ pub fn check_multi_signature(
         return false;
     }
 
-    // Multi-signature must be signed by the supermajority of witnesses.
-    if !check_supermajority(count, witnesses.len()) {
+    // Multi-signature must be signed by the supermajority of validators.
+    if !check_supermajority(count, validators.len()) {
         return false;
     }
 

@@ -87,7 +87,7 @@ pub fn choose_consensus_group_real(
 ) -> ConsensusGroup {
     assert!(!stakers.is_empty());
     assert!(max_group_size > 0);
-    let mut witnesses = Vec::new();
+    let mut validators = Vec::new();
 
     let mut seed = [0u8; 32];
     seed.copy_from_slice(random.base_vector());
@@ -99,22 +99,22 @@ pub fn choose_consensus_group_real(
         let index = select_winner(stakers.iter().map(|(_k, stake)| stake), rand).unwrap();
 
         let winner = stakers.remove(index);
-        witnesses.push(winner);
+        validators.push(winner);
 
         if stakers.is_empty() {
             break;
         }
     }
     let rand = rng.gen::<i64>();
-    let leader = select_winner(witnesses.iter().map(|(_k, stake)| stake), rand).unwrap();
+    let leader = select_winner(validators.iter().map(|(_k, stake)| stake), rand).unwrap();
 
     let rand = rng.gen::<i64>();
-    let facilitator = select_winner(witnesses.iter().map(|(_k, stake)| stake), rand).unwrap();
+    let facilitator = select_winner(validators.iter().map(|(_k, stake)| stake), rand).unwrap();
 
-    let leader = witnesses[leader].0;
-    let facilitator = witnesses[facilitator].0;
+    let leader = validators[leader].0;
+    let facilitator = validators[facilitator].0;
     ConsensusGroup {
-        validators: witnesses,
+        validators: validators,
         leader,
         facilitator,
     }

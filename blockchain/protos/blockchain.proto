@@ -69,7 +69,7 @@ message KeyBlockHeader {
     BaseBlockHeader base = 1;
     stegos.crypto.SecurePublicKey leader = 2;
     stegos.crypto.SecurePublicKey facilitator = 3;
-    repeated stegos.crypto.SecurePublicKey witnesses = 4;
+    repeated stegos.crypto.SecurePublicKey validators = 4;
 }
 
 message KeyBlock {

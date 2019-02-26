@@ -115,11 +115,11 @@ mod test {
 
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
 
-        let witnesses: BTreeSet<secure::PublicKey> = [pkey0].iter().cloned().collect();
+        let validators: BTreeSet<secure::PublicKey> = [pkey0].iter().cloned().collect();
         let leader = pkey0.clone();
         let facilitator = pkey0.clone();
 
-        let block = KeyBlock::new(base, leader, facilitator, witnesses);
+        let block = KeyBlock::new(base, leader, facilitator, validators);
         Block::KeyBlock(block)
     }
     #[test]

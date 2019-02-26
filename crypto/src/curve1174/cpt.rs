@@ -327,11 +327,43 @@ pub struct SchnorrSig {
     pub K: Pt,
 }
 
+impl SchnorrSig {
+    pub fn new() -> Self {
+        // construct a dummy signature
+        SchnorrSig {
+            u: Fr::zero(),
+            K: (*G).compress(),
+        }
+    }
+}
+
 impl Hashable for SchnorrSig {
     fn hash(&self, state: &mut Hasher) {
         "SchnorrSig".hash(state);
         self.u.hash(state);
         self.K.hash(state);
+    }
+}
+
+impl Add<SchnorrSig> for SchnorrSig {
+    type Output = Self;
+    fn add(self, other: Self) -> Self {
+        // user should have ensured that sig.K are valid
+        // before calling this operator
+        let errmsg = "Invalid SchnorrSig.K point";
+        let K_sum = self.K.decompress().expect(errmsg) + other.K.decompress().expect(errmsg);
+        SchnorrSig {
+            u: self.u + other.u,
+            K: K_sum.compress(),
+        }
+    }
+}
+
+impl AddAssign<SchnorrSig> for SchnorrSig {
+    fn add_assign(&mut self, other: Self) {
+        let sum_sig = *self + other;
+        self.u = sum_sig.u;
+        self.K = sum_sig.K;
     }
 }
 
@@ -347,6 +379,7 @@ pub fn sign_hash(hmsg: &Hash, skey: &SecretKey) -> SchnorrSig {
     // At the same time, we don't want k to be too small, making a brute force search on K feasible,
     // since that could also be used to find the secret key. So we rehash the k value, if necessary,
     // until its value lies within an acceptable range.
+    //
     let k = Fr::synthetic_random("sig-k", skey, hmsg);
     let K = k * *G;
     let pkey = PublicKey::from(skey.clone());
@@ -355,6 +388,47 @@ pub fn sign_hash(hmsg: &Hash, skey: &SecretKey) -> SchnorrSig {
     SchnorrSig {
         u: u.unscaled(),
         K: Pt::from(K),
+    }
+}
+
+pub fn sign_hash_with_kval(
+    hmsg: &Hash,
+    skey: &SecretKey,
+    k_val: Fr,
+    sumK: &ECp,
+    sumPKey: &ECp,
+) -> SchnorrSig {
+    // special signing primitive for use in generating multi-signatures
+    // k_val was previously selected, then shared as K_val = k_val*G.
+    //
+    // The sumK argument here should represent the sum all participating K_vals.
+    // The sumPKey argument should be the sum of all participating PublicKeys.
+    //
+    // We now form the u_val of the signature and return the completed
+    // Schorr signature. The grand sumK_val and sumPKey are used in computing
+    // the hash, but the returned K value in the signature represents only
+    // our portion.
+    //
+    // When all signatures are added together, the resulting sig.K value should
+    // be the same as the grand sum K_val used here.
+    //
+    // NOTE: Be Very Careful here... improper use of k_val can lead to Sony PS Attack.
+    // No two different messages should ever be signed using the same k_val. In general,
+    // it is safest to make k_val be deterministically random based on the message hash.
+    //
+    // Sony PS Attack: two different messages, same Pkey, same skey, and same k_val:
+    // Using simple algebra in the field Fr, we can discover user's skey (SecretKey) by
+    // subtracting the two sig.u_vals and dividing the difference by the difference in hash
+    // values of the two messages. The common k_val cancels out in the sig.u_val sibtraction.
+    // This is disastrous!
+    //
+    let my_K = k_val * *G;
+    let pkey = PublicKey::from(Pt::from(*sumPKey));
+    let h = Hash::digest_chain(&[sumK, &pkey, hmsg]);
+    let u = k_val + Fr::from(h) * Fr::from(skey.clone());
+    SchnorrSig {
+        u: u.unscaled(),
+        K: Pt::from(my_K),
     }
 }
 
@@ -368,29 +442,22 @@ pub fn validate_sig(hmsg: &Hash, sig: &SchnorrSig, pkey: &PublicKey) -> Result<b
 // ----------------------------------------------------------------
 // Encrypted payloads with unilateral keying
 //
-// Transmit key info as pair (alpha*P + k*G, a*G) so user can compute
-// keying seed k*G by subtracting s*(alpha*G) = alpha*P, from first tuple element.
-// Actual AES keying comes from Hash(k*G).
-// k and alpha are random Fr values.
+// Transmit key hint as alpha*G, so recipient can compute
+// keying seed alpha*P = s*(alpha*G)
+// Actual AES keying comes from Hash(s*alpha*G).
+// alpha is a random Fr value.
 
 use std::iter::repeat;
 
 #[derive(Clone)]
 pub struct EncryptedPayload {
-    pub apkg: Pt,
-    pub ag: Pt,
-    pub ctxt: Vec<u8>,
+    pub ag: Pt,        // key hint = alpha*G
+    pub ctxt: Vec<u8>, // ciphertext
 }
 
 impl fmt::Debug for EncryptedPayload {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "apkg={} ag={} cmsg={}",
-            self.apkg,
-            self.ag,
-            u8v_to_hexstr(&self.ctxt)
-        )
+        write!(f, "ag={} cmsg={}", self.ag, u8v_to_hexstr(&self.ctxt))
     }
 }
 
@@ -403,7 +470,6 @@ impl fmt::Display for EncryptedPayload {
 impl Hashable for EncryptedPayload {
     fn hash(&self, state: &mut Hasher) {
         "Encr".hash(state);
-        self.apkg.hash(state);
         self.ag.hash(state);
         self.ctxt[..].hash(state);
     }
@@ -424,15 +490,12 @@ fn aes_encrypt_with_key(msg: &[u8], key: &[u8; 32]) -> Vec<u8> {
 pub fn aes_encrypt(msg: &[u8], pkey: &PublicKey) -> Result<EncryptedPayload, CryptoError> {
     let h = Hash::from_vector(msg);
     let alpha = Fr::synthetic_random("encr-alpha", pkey, &h);
-    let k = Fr::synthetic_random("encr-k", pkey, &h);
     let ppt = ECp::decompress(Pt::from(*pkey))?; // could give CryptoError if invalid PublicKey
-    let apkg = alpha * ppt + k * *G; // generate key transfer cloaking pair, apkg and ag
+    let ap = alpha * ppt; // generate key (alpha*s*G = alpha*P), and hint ag = alpha*G
     let ag = alpha * *G;
-    let kg = k * *G; // the actual key seed
-    let key = Hash::digest(&kg);
+    let key = Hash::digest(&ap);
     let ctxt = aes_encrypt_with_key(msg, &key.bits());
     Ok(EncryptedPayload {
-        apkg: Pt::from(apkg),
         ag: Pt::from(ag),
         ctxt: ctxt,
     })
@@ -440,9 +503,8 @@ pub fn aes_encrypt(msg: &[u8], pkey: &PublicKey) -> Result<EncryptedPayload, Cry
 
 pub fn aes_decrypt(payload: &EncryptedPayload, skey: &SecretKey) -> Result<Vec<u8>, CryptoError> {
     let zr = Fr::from(skey.clone());
-    let apkg = ECp::decompress(payload.apkg)?; // could give CryptoError if corrupted payload
-    let ag = ECp::decompress(payload.ag)?; // ... ditto ...
-    let kg = apkg - zr * ag; // compute the actual key seed = k*G
-    let key = Hash::digest(&kg);
+    let ag = ECp::decompress(payload.ag)?; // could give CryptoError if corrupted payload
+    let asg = zr * ag; // compute the actual key seed = s*alpha*G
+    let key = Hash::digest(&asg);
     Ok(aes_encrypt_with_key(&payload.ctxt, &key.bits()))
 }

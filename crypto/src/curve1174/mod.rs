@@ -150,6 +150,7 @@ fn check_prng() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::dbg;
 
     #[test]
     fn tst_hex() {
@@ -198,6 +199,7 @@ mod tests {
         let gen_x = Fq::try_from_hex(sx).unwrap();
         let gen_y = Fq::try_from_hex(sy).unwrap();
         let pt1 = ECp::try_from_xy(&gen_x, &gen_y).unwrap();
+        dbg!((gen_x, gen_y, pt1));
 
         let gx = Fq::try_from_hex(&sx).unwrap();
         let gy = Fq::try_from_hex(&sy).unwrap();

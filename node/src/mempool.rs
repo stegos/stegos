@@ -226,8 +226,10 @@ mod test {
         let (skey, pkey, _sig) = make_random_keys();
         let mut mempool = Mempool::new();
 
-        let (tx1, inputs1, outputs1) = Transaction::new_test(&skey, &pkey, 100, 2, 200, 1, 0);
-        let (tx2, inputs2, outputs2) = Transaction::new_test(&skey, &pkey, 300, 1, 100, 3, 0);
+        let (tx1, inputs1, outputs1) =
+            Transaction::new_test(&skey, &pkey, 100, 2, 200, 1, 0).expect("transaction valid");
+        let (tx2, inputs2, outputs2) =
+            Transaction::new_test(&skey, &pkey, 300, 1, 100, 3, 0).expect("transaction valid");
         let tx_hash1 = Hash::digest(&tx1);
         let tx_hash2 = Hash::digest(&tx2);
 
@@ -290,7 +292,8 @@ mod test {
         let (skey, pkey, _sig) = make_random_keys();
         let mut mempool = Mempool::new();
 
-        let (tx, inputs, _outputs) = Transaction::new_test(&skey, &pkey, 100, 1, 100, 1, 0);
+        let (tx, inputs, _outputs) =
+            Transaction::new_test(&skey, &pkey, 100, 1, 100, 1, 0).expect("transaction valid");
         let tx_hash = Hash::digest(&tx);
         mempool.push_tx(tx_hash.clone(), tx.clone());
         mempool.prune(&vec![Hash::digest(&inputs[0])], &vec![]);
@@ -302,7 +305,8 @@ mod test {
         let (skey, pkey, _sig) = make_random_keys();
         let mut mempool = Mempool::new();
 
-        let (tx, _inputs, outputs) = Transaction::new_test(&skey, &pkey, 100, 1, 100, 1, 0);
+        let (tx, _inputs, outputs) =
+            Transaction::new_test(&skey, &pkey, 100, 1, 100, 1, 0).expect("transaction valid");
         let tx_hash = Hash::digest(&tx);
         mempool.push_tx(tx_hash.clone(), tx.clone());
         mempool.prune(&vec![], &vec![Hash::digest(&outputs[0])]);
@@ -313,10 +317,10 @@ mod test {
         let (skey, pkey, _sig) = make_random_keys();
         let mut mempool = Mempool::new();
 
-        let (tx1, inputs1, _outputs1) = Transaction::new_test(&skey, &pkey, 3, 2, 2, 1, 4);
-        tx1.validate(&inputs1).expect("transaction is valid");
-        let (tx2, inputs2, _outputs2) = Transaction::new_test(&skey, &pkey, 6, 1, 2, 2, 2);
-        tx2.validate(&inputs2).expect("transaction is valid");
+        let (tx1, inputs1, _outputs1) =
+            Transaction::new_test(&skey, &pkey, 3, 2, 2, 1, 4).expect("transaction valid");
+        let (tx2, inputs2, _outputs2) =
+            Transaction::new_test(&skey, &pkey, 6, 1, 2, 2, 2).expect("transaction valid");
 
         let tx_hash1 = Hash::digest(&tx1);
         let tx_hash2 = Hash::digest(&tx2);

@@ -24,7 +24,7 @@ use stegos_serialization::traits::*;
 
 use crate::bulletproofs::{BulletProof, DotProof, L2_NBASIS, LR};
 use crate::curve1174::cpt::Pt;
-use crate::curve1174::cpt::{EncryptedPayload, PublicKey, SchnorrSig};
+use crate::curve1174::cpt::{EncryptedPayload, PublicKey, SchnorrSig, SecretKey};
 use crate::curve1174::fields::Fr;
 use crate::hash::Hash;
 use crate::pbc::secure;
@@ -95,6 +95,20 @@ impl ProtoConvert for Hash {
     }
 }
 
+impl ProtoConvert for SecretKey {
+    type Proto = crypto::SecretKey;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = crypto::SecretKey::new();
+        let fval = Fr::from(self.clone());
+        proto.set_skeyf(fval.into_proto());
+        proto
+    }
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let fval = Fr::from_proto(proto.get_skeyf())?;
+        Ok(SecretKey::from(fval))
+    }
+}
+
 impl ProtoConvert for PublicKey {
     type Proto = crypto::PublicKey;
     fn into_proto(&self) -> Self::Proto {
@@ -156,16 +170,14 @@ impl ProtoConvert for EncryptedPayload {
     type Proto = crypto::EncryptedPayload;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = crypto::EncryptedPayload::new();
-        proto.set_apkg(self.apkg.into_proto());
         proto.set_ag(self.ag.into_proto());
         proto.set_ctxt(self.ctxt.clone());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let apkg = Pt::from_proto(proto.get_apkg())?;
         let ag = Pt::from_proto(proto.get_ag())?;
         let ctxt = proto.get_ctxt().to_vec();
-        Ok(EncryptedPayload { apkg, ag, ctxt })
+        Ok(EncryptedPayload { ag, ctxt })
     }
 }
 

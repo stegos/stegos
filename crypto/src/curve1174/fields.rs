@@ -195,7 +195,7 @@ macro_rules! field_impl {
 
             /// Convert into raw bytes.
             #[inline]
-            pub fn into_bytes(self) -> [u8; 32] {
+            pub fn to_bytes(&self) -> [u8; 32] {
                 self.to_lev_u8()
             }
 
@@ -216,7 +216,7 @@ macro_rules! field_impl {
             }
 
             /// Convert into hex string.
-            pub fn into_hex(self) -> String {
+            pub fn to_hex(&self) -> String {
                 let tmp = self.unscaled_bits();
                 format!("{}", tmp.nbr_str())
             }

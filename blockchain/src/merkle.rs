@@ -775,7 +775,7 @@ pub mod tests {
         // Check structure
         debug!("Tree: {:?}", tree);
         assert_eq!(
-            tree.roothash().into_hex(),
+            tree.roothash().to_hex(),
             "295cd1698c6ac5bd804a09e50f19f8549475e52db1c6ebd441ed0c7b256e1ddf"
         );
 
@@ -849,7 +849,7 @@ pub mod tests {
         // Check structure
         debug!("Tree: {:?}", tree);
         assert_eq!(
-            tree.roothash().into_hex(),
+            tree.roothash().to_hex(),
             "9cfc92fdc167efd8971ea01910586d551ab6f8a9bb9d56ee791fad27c0ec8da0"
         );
 

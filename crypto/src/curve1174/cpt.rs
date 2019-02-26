@@ -25,6 +25,7 @@
 use super::*;
 use crate::CryptoError;
 
+use clear_on_drop::clear::Clear;
 use crypto::aes;
 use crypto::aes::KeySize::KeySize128;
 use crypto::aesni;
@@ -46,7 +47,7 @@ impl Pt {
     }
 
     /// Convert into raw bytes.
-    pub fn into_bytes(self) -> [u8; 32] {
+    pub fn to_bytes(&self) -> [u8; 32] {
         return self.0;
     }
 
@@ -65,7 +66,7 @@ impl Pt {
     /// Create from an uncompressed point.
     #[inline]
     pub fn compress(ept: ECp) -> Pt {
-        let bytes = ECp::into_bytes(ept);
+        let bytes = ECp::to_bytes(&ept);
         Pt(bytes)
     }
 
@@ -76,7 +77,7 @@ impl Pt {
     }
 
     /// Convert into hex string.
-    pub fn into_hex(self) -> String {
+    pub fn to_hex(&self) -> String {
         let v = Lev32(self.0);
         basic_nbr_str(&v.to_lev_u64())
     }
@@ -92,13 +93,13 @@ impl Pt {
 
 impl fmt::Display for Pt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Pt({})", self.into_hex())
+        write!(f, "Pt({})", self.to_hex())
     }
 }
 
 impl fmt::Debug for Pt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Pt({})", self.into_hex())
+        write!(f, "Pt({})", self.to_hex())
     }
 }
 
@@ -117,7 +118,7 @@ impl From<ECp> for Pt {
 
 impl Ord for Pt {
     fn cmp(&self, other: &Pt) -> Ordering {
-        Lev32(self.into_bytes()).cmp(&Lev32(other.into_bytes()))
+        Lev32(self.to_bytes()).cmp(&Lev32(other.to_bytes()))
     }
 }
 
@@ -135,8 +136,8 @@ pub struct SecretKey(Fr);
 impl SecretKey {
     /// Convert into hex string.
     #[inline]
-    pub fn into_hex(self) -> String {
-        self.0.into_hex()
+    pub fn to_hex(&self) -> String {
+        self.0.to_hex()
     }
 
     /// Try to convert from hex string.
@@ -147,8 +148,8 @@ impl SecretKey {
 
     /// Convert into raw bytes.
     #[inline]
-    pub fn into_bytes(self) -> [u8; 32] {
-        self.0.into_bytes()
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.0.to_bytes()
     }
 
     /// Try to convert from raw bytes.
@@ -160,13 +161,13 @@ impl SecretKey {
 
 impl fmt::Display for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SKey({})", self.clone().into_hex())
+        write!(f, "SKey({})", self.to_hex())
     }
 }
 
 impl fmt::Debug for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SKey({})", self.clone().into_hex())
+        write!(f, "SKey({})", self.to_hex())
     }
 }
 
@@ -203,8 +204,8 @@ pub struct PublicKey(Pt);
 impl PublicKey {
     /// Convert into raw bytes.
     #[inline]
-    pub fn into_bytes(self) -> [u8; 32] {
-        self.0.into_bytes()
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.0.to_bytes()
     }
 
     /// Try to convert from raw bytes.
@@ -215,8 +216,8 @@ impl PublicKey {
 
     /// Convert into hex string.
     #[inline]
-    pub fn into_hex(self) -> String {
-        self.0.into_hex()
+    pub fn to_hex(&self) -> String {
+        self.0.to_hex()
     }
 
     /// Try to convert from hex string.
@@ -228,13 +229,13 @@ impl PublicKey {
 
 impl fmt::Display for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "PKey({})", self.into_hex())
+        write!(f, "PKey({})", self.to_hex())
     }
 }
 
 impl fmt::Debug for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "PKey({})", self.into_hex())
+        write!(f, "PKey({})", self.to_hex())
     }
 }
 
@@ -248,7 +249,7 @@ impl Hashable for PublicKey {
 impl stdhash::Hash for PublicKey {
     fn hash<H: stdhash::Hasher>(&self, state: &mut H) {
         stdhash::Hash::hash(&"PKey", state);
-        let bytes: [u8; 32] = self.into_bytes();
+        let bytes: [u8; 32] = self.to_bytes();
         stdhash::Hash::hash(&bytes, state);
     }
 }

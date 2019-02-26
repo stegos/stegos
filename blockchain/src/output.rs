@@ -231,7 +231,7 @@ impl PaymentPayload {
                 pos += data_bytes.len();
             }
             PaymentPayloadData::ContentHash(hash) => {
-                let data_bytes = &hash.into_bytes();
+                let data_bytes = &hash.to_bytes();
                 payload[pos..pos + data_bytes.len()].copy_from_slice(data_bytes);
                 pos += data_bytes.len();
             }

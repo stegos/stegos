@@ -42,6 +42,7 @@
 use super::*;
 use crate::CryptoError;
 
+use clear_on_drop::clear::Clear;
 use rand::rngs::ThreadRng;
 use rand::thread_rng;
 use rand::Rng;
@@ -75,10 +76,7 @@ impl Zr {
     }
 
     pub fn zap(&mut self) {
-        let mut bytes = self.0;
-        for i in 0..bytes.len() {
-            bytes[i] = 0;
-        }
+        self.0.clear();
     }
 
     pub fn acceptable_minval() -> Self {
@@ -133,7 +131,7 @@ impl Zr {
     }
 
     /// Convert into hex string.
-    pub fn into_hex(self) -> String {
+    pub fn to_hex(&self) -> String {
         u8v_to_hexstr(&self.0)
     }
 
@@ -182,13 +180,13 @@ impl From<i64> for Zr {
 
 impl fmt::Debug for Zr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FastZr({})", self.into_hex())
+        write!(f, "FastZr({})", self.to_hex())
     }
 }
 
 impl fmt::Display for Zr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FastZr({})", self.into_hex())
+        write!(f, "FastZr({})", self.to_hex())
     }
 }
 
@@ -384,7 +382,7 @@ impl G1 {
     }
 
     /// Convert into hex string.
-    pub fn into_hex(self) -> String {
+    pub fn to_hex(&self) -> String {
         u8v_to_hexstr(&self.0)
     }
 
@@ -395,7 +393,7 @@ impl G1 {
         Ok(G1(v))
     }
 
-    pub fn into_bytes(self) -> [u8; G1_SIZE_AR160] {
+    pub fn to_bytes(&self) -> [u8; G1_SIZE_AR160] {
         self.0
     }
 
@@ -445,13 +443,13 @@ impl PartialEq for G1 {
 
 impl fmt::Debug for G1 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FastG1({})", self.into_hex())
+        write!(f, "FastG1({})", self.to_hex())
     }
 }
 
 impl fmt::Display for G1 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FastG1({})", self.into_hex())
+        write!(f, "FastG1({})", self.to_hex())
     }
 }
 
@@ -598,7 +596,7 @@ impl G2 {
     }
 
     /// Convert into hex string.
-    pub fn into_hex(self) -> String {
+    pub fn to_hex(&self) -> String {
         u8v_to_hexstr(&self.0)
     }
 
@@ -609,7 +607,7 @@ impl G2 {
         Ok(G2(v))
     }
 
-    pub fn into_bytes(self) -> [u8; G2_SIZE_AR160] {
+    pub fn to_bytes(&self) -> [u8; G2_SIZE_AR160] {
         self.0
     }
 
@@ -659,13 +657,13 @@ impl PartialEq for G2 {
 
 impl fmt::Debug for G2 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FastG2({})", self.into_hex())
+        write!(f, "FastG2({})", self.to_hex())
     }
 }
 
 impl fmt::Display for G2 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FastG2({})", self.into_hex())
+        write!(f, "FastG2({})", self.to_hex())
     }
 }
 
@@ -815,14 +813,14 @@ impl GT {
     }
 
     /// Convert into hex string.
-    pub fn into_hex(self) -> String {
+    pub fn to_hex(&self) -> String {
         u8v_to_hexstr(&self.0)
     }
 }
 
 impl fmt::Display for GT {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FastGT({})", self.into_hex())
+        write!(f, "FastGT({})", self.to_hex())
     }
 }
 
@@ -876,14 +874,14 @@ impl SecretKey {
     }
 
     /// Convert into hex string.
-    pub fn into_hex(self) -> String {
-        self.0.into_hex()
+    pub fn to_hex(&self) -> String {
+        self.0.to_hex()
     }
 }
 
 impl fmt::Display for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FastSKey({})", self.clone().into_hex())
+        write!(f, "FastSKey({})", self.to_hex())
     }
 }
 
@@ -923,12 +921,12 @@ impl PublicKey {
     }
 
     /// Convert into hex string.
-    pub fn into_hex(self) -> String {
-        self.0.into_hex()
+    pub fn to_hex(&self) -> String {
+        self.0.to_hex()
     }
 
-    pub fn into_bytes(self) -> [u8; G2_SIZE_FR256] {
-        self.0.into_bytes()
+    pub fn to_bytes(&self) -> [u8; G2_SIZE_FR256] {
+        self.0.to_bytes()
     }
 
     pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
@@ -945,13 +943,13 @@ impl PartialEq for PublicKey {
 
 impl fmt::Debug for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FastPKey({})", self.into_hex())
+        write!(f, "FastPKey({})", self.to_hex())
     }
 }
 
 impl fmt::Display for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FastPKey({})", self.into_hex())
+        write!(f, "FastPKey({})", self.to_hex())
     }
 }
 
@@ -988,14 +986,14 @@ impl Signature {
     }
 
     /// Convert into hex string.
-    pub fn into_hex(self) -> String {
-        self.0.into_hex()
+    pub fn to_hex(&self) -> String {
+        self.0.to_hex()
     }
 }
 
 impl fmt::Display for Signature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FastSig({})", self.into_hex())
+        write!(f, "FastSig({})", self.to_hex())
     }
 }
 

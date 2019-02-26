@@ -401,8 +401,8 @@ pub enum ControlMessage {
 }
 
 fn network_pkey_to_peer_id(key: &secure::PublicKey) -> PeerId {
-    let hash = multihash::encode(multihash::Hash::SHA2256, &key.clone().into_bytes())
-        .expect("should never fail");
+    let hash =
+        multihash::encode(multihash::Hash::SHA2256, &key.to_bytes()).expect("should never fail");
     PeerId::from_multihash(hash).expect("hash is properly formed on prev step")
 }
 
@@ -449,11 +449,9 @@ fn new_peerstore(
 
     debug!("My adverised addresses: {:#?}", my_addresses);
     peerstore.add_local_external_addrs(my_addresses.into_iter());
-    let network_pkey_hash = multihash::encode(
-        multihash::Hash::SHA2256,
-        &keychain.network_pkey.clone().into_bytes(),
-    )
-    .expect("hashing with SHA2256 never fails");
+    let network_pkey_hash =
+        multihash::encode(multihash::Hash::SHA2256, &keychain.network_pkey.to_bytes())
+            .expect("hashing with SHA2256 never fails");
     peerstore.add_provider(network_pkey_hash, peer_id);
     peerstore
 }
@@ -466,8 +464,8 @@ fn encode_unicast(
     data: Vec<u8>,
 ) -> Vec<u8> {
     let mut msg = unicast_proto::Message::new();
-    msg.set_from(from.into_bytes().to_vec());
-    msg.set_to(to.into_bytes().to_vec());
+    msg.set_from(from.to_bytes().to_vec());
+    msg.set_to(to.to_bytes().to_vec());
     msg.set_protocol_id(protocol_id.into_bytes().to_vec());
     msg.set_data(data);
 

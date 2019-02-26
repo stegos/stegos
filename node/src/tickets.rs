@@ -373,7 +373,7 @@ impl VRFTicket {
         if msg_valid && vrf_checked {
             Ok(())
         } else {
-            Err(TicketsError::InvalidTicket(*self))
+            Err(TicketsError::InvalidTicket(self.clone()))
         }
     }
 
@@ -412,7 +412,7 @@ impl CollectingState {
         debug!("Processing ticket from = {:?}.", ticket.pkey);
         ticket.validate(self.seed)?;
         let random = ticket.random();
-        if let Some(old_random) = self.tickets.insert(ticket.pkey, random) {
+        if let Some(old_random) = self.tickets.insert(ticket.pkey, random.clone()) {
             if old_random != random {
                 return Err(TicketsError::MultipleTickets(ticket.pkey));
             }
@@ -484,7 +484,7 @@ mod test {
 
         for i in 0..100 {
             let seed = mix(block_hash, view_change + i);
-            let ticket = VRFTicket::new(seed, height, p, &s.clone());
+            let ticket = VRFTicket::new(seed, height, p, &s);
             let _ = tickets_system.handle_process_ticket(ticket);
         }
 
@@ -513,7 +513,7 @@ mod test {
         }
         for i in 0..10 {
             let seed = mix(block_hash, view_change + i + 1);
-            let ticket = VRFTicket::new(seed, height, p, &s.clone());
+            let ticket = VRFTicket::new(seed, height, p, &s);
             let _ = tickets_system.handle_process_ticket(ticket);
         }
 
@@ -544,7 +544,7 @@ mod test {
         }
 
         let seed = mix(block_hash, view_change + 1);
-        let ticket = VRFTicket::new(seed, height, p, &s.clone());
+        let ticket = VRFTicket::new(seed, height, p, &s);
 
         let _ = tickets_system.handle_process_ticket(ticket.clone());
         // receive self ticket

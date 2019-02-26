@@ -33,6 +33,7 @@
 use super::*;
 use crate::CryptoError;
 
+use clear_on_drop::clear::Clear;
 use rand::rngs::ThreadRng;
 use rand::thread_rng;
 use rand::Rng;
@@ -60,10 +61,7 @@ impl Zr {
     }
 
     pub fn zap(&mut self) {
-        let mut bytes = self.0;
-        for i in 0..bytes.len() {
-            bytes[i] = 0;
-        }
+        self.0.clear();
     }
 
     pub fn acceptable_minval() -> Self {
@@ -114,7 +112,7 @@ impl Zr {
     }
 
     /// Convert into hex string.
-    pub fn into_hex(self) -> String {
+    pub fn to_hex(&self) -> String {
         u8v_to_hexstr(&self.0)
     }
 
@@ -128,7 +126,7 @@ impl Zr {
     }
 
     /// Convert to raw bytes.
-    pub fn into_bytes(self) -> [u8; ZR_SIZE_FR256] {
+    pub fn to_bytes(&self) -> [u8; ZR_SIZE_FR256] {
         self.0
     }
 
@@ -179,7 +177,7 @@ impl PartialOrd for Zr {
 
 impl fmt::Display for Zr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureZr({})", self.into_hex())
+        write!(f, "SecureZr({})", self.to_hex())
     }
 }
 
@@ -218,10 +216,7 @@ impl G1 {
     }
 
     pub fn zap(&mut self) {
-        let mut bytes = self.0;
-        for i in 0..bytes.len() {
-            bytes[i] = 0;
-        }
+        self.0.clear();
     }
 
     fn wv() -> [u8; G1_SIZE_FR256] {
@@ -232,7 +227,7 @@ impl G1 {
     }
 
     /// Convert into hex string.
-    pub fn into_hex(self) -> String {
+    pub fn to_hex(&self) -> String {
         u8v_to_hexstr(&self.0)
     }
 
@@ -243,7 +238,7 @@ impl G1 {
         Ok(G1(v))
     }
 
-    pub fn into_bytes(self) -> [u8; G1_SIZE_FR256] {
+    pub fn to_bytes(&self) -> [u8; G1_SIZE_FR256] {
         self.0
     }
 
@@ -271,14 +266,14 @@ impl G1 {
 
 impl fmt::Debug for G1 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureG1({})", self.into_hex())
+        write!(f, "SecureG1({})", self.to_hex())
     }
 }
 
 impl fmt::Display for G1 {
     // for display of signatures
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureG1({})", self.into_hex())
+        write!(f, "SecureG1({})", self.to_hex())
     }
 }
 
@@ -334,7 +329,7 @@ impl G2 {
     }
 
     /// Convert into hex string.
-    pub fn into_hex(self) -> String {
+    pub fn to_hex(&self) -> String {
         u8v_to_hexstr(&self.0)
     }
 
@@ -346,7 +341,7 @@ impl G2 {
     }
 
     /// Convert to raw bytes.
-    pub fn into_bytes(self) -> [u8; G2_SIZE_FR256] {
+    pub fn to_bytes(&self) -> [u8; G2_SIZE_FR256] {
         self.0
     }
 
@@ -378,13 +373,13 @@ impl G2 {
 
 impl fmt::Debug for G2 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureG2({})", self.into_hex())
+        write!(f, "SecureG2({})", self.to_hex())
     }
 }
 
 impl fmt::Display for G2 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureG2({})", self.into_hex())
+        write!(f, "SecureG2({})", self.to_hex())
     }
 }
 
@@ -441,7 +436,7 @@ impl GT {
     }
 
     /// Convert into hex string.
-    pub fn into_hex(self) -> String {
+    pub fn to_hex(&self) -> String {
         u8v_to_hexstr(&self.0)
     }
 
@@ -455,7 +450,7 @@ impl GT {
 
 impl fmt::Display for GT {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureGT({})", self.into_hex())
+        write!(f, "SecureGT({})", self.to_hex())
     }
 }
 
@@ -483,8 +478,8 @@ impl SecretKey {
     }
 
     /// Convert into hex string.
-    pub fn into_hex(self) -> String {
-        self.0.into_hex()
+    pub fn to_hex(&self) -> String {
+        self.0.to_hex()
     }
 
     /// Try to convert from hex string.
@@ -496,13 +491,13 @@ impl SecretKey {
 
 impl fmt::Display for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureSKey({})", self.clone().into_hex())
+        write!(f, "SecureSKey({})", self.to_hex())
     }
 }
 
 impl fmt::Debug for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureSKey({})", self.clone().into_hex())
+        write!(f, "SecureSKey({})", self.to_hex())
     }
 }
 
@@ -538,8 +533,8 @@ impl PublicKey {
 
     /// Convert into hex string.
     #[inline]
-    pub fn into_hex(self) -> String {
-        self.0.into_hex()
+    pub fn to_hex(&self) -> String {
+        self.0.to_hex()
     }
 
     /// Try to convert from raw bytes.
@@ -551,8 +546,8 @@ impl PublicKey {
 
     /// Convert into hex string.
     #[inline]
-    pub fn into_bytes(self) -> [u8; G2_SIZE_FR256] {
-        self.0.into_bytes()
+    pub fn to_bytes(&self) -> [u8; G2_SIZE_FR256] {
+        self.0.to_bytes()
     }
 
     /// Try to convert from raw bytes.
@@ -564,13 +559,13 @@ impl PublicKey {
 
 impl fmt::Debug for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecurePKey({})", self.into_hex())
+        write!(f, "SecurePKey({})", self.to_hex())
     }
 }
 
 impl fmt::Display for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecurePKey({})", self.into_hex())
+        write!(f, "SecurePKey({})", self.to_hex())
     }
 }
 
@@ -639,8 +634,8 @@ impl SecretSubKey {
     }
 
     /// Convert into hex string.
-    pub fn into_hex(self) -> String {
-        self.0.into_hex()
+    pub fn to_hex(&self) -> String {
+        self.0.to_hex()
     }
 
     /// Try to convert form hex string
@@ -652,7 +647,7 @@ impl SecretSubKey {
 
 impl fmt::Display for SecretSubKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureSSubKey({})", self.clone().into_hex())
+        write!(f, "SecureSSubKey({})", self.to_hex())
     }
 }
 
@@ -677,7 +672,7 @@ impl Drop for SecretSubKey {
 }
 
 // -----------------------------------------
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct PublicSubKey(G2);
 
 impl PublicSubKey {
@@ -686,8 +681,8 @@ impl PublicSubKey {
     }
 
     /// Convert into hex string.
-    pub fn into_hex(self) -> String {
-        self.0.into_hex()
+    pub fn to_hex(&self) -> String {
+        self.0.to_hex()
     }
 
     /// Try to convert form hex string
@@ -699,7 +694,7 @@ impl PublicSubKey {
 
 impl fmt::Display for PublicSubKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecurePSubKey({})", self.into_hex())
+        write!(f, "SecurePSubKey({})", self.to_hex())
     }
 }
 
@@ -739,8 +734,8 @@ impl Signature {
     }
 
     /// Convert into hex string.
-    pub fn into_hex(self) -> String {
-        self.0.into_hex()
+    pub fn to_hex(&self) -> String {
+        self.0.to_hex()
     }
 
     /// Try to convert from hex string.
@@ -749,8 +744,8 @@ impl Signature {
         Ok(Signature(g))
     }
 
-    pub fn into_bytes(self) -> [u8; G1_SIZE_FR256] {
-        self.0.into_bytes()
+    pub fn to_bytes(&self) -> [u8; G1_SIZE_FR256] {
+        self.0.to_bytes()
     }
 
     pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
@@ -760,13 +755,13 @@ impl Signature {
 
 impl fmt::Debug for Signature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureSig({})", self.into_hex())
+        write!(f, "SecureSig({})", self.to_hex())
     }
 }
 
 impl fmt::Display for Signature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureSig({})", self.into_hex())
+        write!(f, "SecureSig({})", self.to_hex())
     }
 }
 
@@ -909,8 +904,8 @@ impl RVal {
     }
 
     /// Convert into hex string.
-    pub fn into_hex(self) -> String {
-        self.0.into_hex()
+    pub fn to_hex(&self) -> String {
+        self.0.to_hex()
     }
 
     /// Try to convert from hex string
@@ -922,7 +917,7 @@ impl RVal {
 
 impl fmt::Display for RVal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureRVal({})", self.into_hex())
+        write!(f, "SecureRVal({})", self.to_hex())
     }
 }
 

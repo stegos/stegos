@@ -39,7 +39,7 @@ impl ProtoConvert for Pt {
     type Proto = crypto::Pt;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = crypto::Pt::new();
-        proto.set_data(self.into_bytes().to_vec());
+        proto.set_data(self.to_bytes().to_vec());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
@@ -51,7 +51,7 @@ impl ProtoConvert for Fr {
     type Proto = crypto::Fr;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = crypto::Fr::new();
-        proto.set_data(self.into_bytes().to_vec());
+        proto.set_data(self.to_bytes().to_vec());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
@@ -63,7 +63,7 @@ impl ProtoConvert for G1 {
     type Proto = crypto::G1;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = crypto::G1::new();
-        proto.set_data(self.into_bytes().to_vec());
+        proto.set_data(self.to_bytes().to_vec());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
@@ -75,7 +75,7 @@ impl ProtoConvert for G2 {
     type Proto = crypto::G2;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = crypto::G2::new();
-        proto.set_data(self.into_bytes().to_vec());
+        proto.set_data(self.to_bytes().to_vec());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
@@ -87,7 +87,7 @@ impl ProtoConvert for Hash {
     type Proto = crypto::Hash;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = crypto::Hash::new();
-        proto.set_data(self.into_bytes().to_vec());
+        proto.set_data(self.to_bytes().to_vec());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {

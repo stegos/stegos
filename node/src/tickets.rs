@@ -33,7 +33,7 @@ use crate::election::{self, ConsensusGroup, StakersGroup};
 use crate::NodeService;
 
 use failure::{Error, Fail};
-use log::{debug, info, trace, warn};
+use log::{debug, info, trace};
 use std::time::{Duration, Instant};
 use std::{collections::HashMap, mem};
 use tokio_timer::clock;
@@ -66,11 +66,13 @@ pub const COLLECTING_TICKETS_TIMER: Duration = crate::MESSAGE_TIMEOUT;
 /// Represent VRFTicket message
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub struct VRFTicket {
-    /// Random value that can be verifyed.
+    /// Random value that can be verified.
     pub random: VRF,
     /// Height of blockchain at start of current voting process,
     /// used to identify is this ticket is actual or not.
     pub height: u64,
+    /// Count of retries.
+    pub view_change: u32,
     /// Sender public key.
     pub pkey: secure::PublicKey,
     /// Signature of the message.
@@ -179,7 +181,7 @@ impl TicketsSystem {
         escrow: &Escrow,
         last_block_hash: Hash,
     ) -> Result<Feedback, TicketsError> {
-        trace!("Handle vrf system tick.");
+        trace!("Handle vrf system tick");
         match self.state {
             State::Sleeping(start) if time.duration_since(start) >= *RESTART_CONSENSUS_TIMER => {
                 let ticket = self.on_view_change(last_block_hash);
@@ -203,7 +205,7 @@ impl TicketsSystem {
     /// On receiving valid block, trying to restart VRF system.
     pub fn handle_sealed_block(&mut self) {
         if let State::CollectingTickets(..) = self.state {
-            debug!("Stoping old ticket processing.");
+            debug!("Stoping old ticket processing");
         }
 
         self.view_change = 0;
@@ -213,27 +215,39 @@ impl TicketsSystem {
 
     /// Receive ticket from other nodes.
     pub fn handle_process_ticket(&mut self, ticket: VRFTicket) -> Result<(), TicketsError> {
-        trace!("Receiving new ticket from = {:?}.", ticket.pkey);
+        debug!(
+            "Receiving new ticket: from={:?}, ticket_view_change={}, \
+             our_view_change={}",
+            ticket.pkey, ticket.view_change, self.view_change
+        );
 
         if ticket.height != self.height && ticket.height != self.height + 1 {
             debug!(
-                "Skipping out of order ticket, our height = {}, ticket height = {}",
+                "Skipping out of order ticket: our_height={}, ticket_height={}",
                 self.height, ticket.height
             );
             return Ok(());
         }
 
         match &mut self.state {
-            State::CollectingTickets(ref mut state, _) => {
+            State::CollectingTickets(ref mut state, _)
+                if ticket.view_change == self.view_change =>
+            {
                 state.process_ticket(ticket)?;
             }
             _ => {
-                debug!("Received out of order ticket = {:?}", ticket);
+                debug!("Received out of order: ticket={:?}", ticket);
                 if let Some(found) = self.queue.get(&ticket.pkey) {
-                    trace!("Ignoring duplicate ticket from = {:?}.", ticket.pkey);
+                    trace!("Ignoring duplicate ticket: from={:?}", ticket.pkey);
 
-                    if ticket != *found {
-                        warn!("Received multiple tickets from user = {}", ticket.pkey);
+                    // keep only latest ticket.
+                    if ticket.view_change > found.view_change {
+                        debug!(
+                            "Found ticket with greater view_change: user={:?}  \
+                             view_change={}, old_view_change={}",
+                            ticket.pkey, ticket.view_change, found.view_change
+                        );
+                        self.queue.insert(ticket.pkey, ticket);
                     }
                 } else {
                     self.queue.insert(ticket.pkey, ticket);
@@ -245,21 +259,29 @@ impl TicketsSystem {
 
     fn on_view_change(&mut self, last_block_hash: Hash) -> VRFTicket {
         info!(
-            "Trying to start new ticket collecting, on height = {}, with hash = {:?}",
+            "Trying to start new ticket collecting: height={}, block_hash={:?}",
             self.height, last_block_hash
         );
         self.view_change += 1;
         let seed = mix(last_block_hash, self.view_change);
         debug!(
-            "Starting new ticket system seed = {:?}, retry = {}",
+            "Starting new ticket system: seed={:?}, retry={}",
             seed, self.view_change
         );
         let mut collecting = CollectingState::new(seed);
-        let ticket = collecting.produce_ticket(self.height, self.pkey, &self.skey);
-        for (_k, out_of_order_ticket) in self.queue.drain() {
+        let ticket =
+            collecting.produce_ticket(self.height, self.view_change, self.pkey, &self.skey);
+        let hm = mem::replace(&mut self.queue, HashMap::new());
+        for (k, out_of_order_ticket) in hm.into_iter() {
             trace!("Processing out of order ticket {:?}", out_of_order_ticket);
-            if let Err(e) = collecting.process_ticket(out_of_order_ticket) {
-                debug!("Error out of order ticket looks outdated {:?}", e);
+            if self.view_change == out_of_order_ticket.view_change {
+                if let Err(e) = collecting.process_ticket(out_of_order_ticket) {
+                    debug!("Error out of order ticket looks outdated: error={:?}", e);
+                }
+            } else if self.view_change < out_of_order_ticket.view_change {
+                self.queue
+                    .insert(k, out_of_order_ticket)
+                    .expect("no duplicates");
             }
         }
         self.state = State::CollectingTickets(collecting, clock::now());
@@ -267,7 +289,7 @@ impl TicketsSystem {
     }
 
     fn on_collection_end(&mut self, stakers: StakersGroup) -> Result<ConsensusGroup, TicketsError> {
-        info!("Collecting tickets stoped, producing new group.");
+        info!("Collecting tickets stoped, producing new group");
         match mem::replace(&mut self.state, State::default()) {
             State::CollectingTickets(state, _) => {
                 let stakers_majority_count = 2 * stakers.len() / 3;
@@ -279,10 +301,10 @@ impl TicketsSystem {
                     return Err(TicketsError::TooManyStakers);
                 }
                 let ticket = state.lowest()?;
-                debug!("New random calculated = {:?}.", ticket);
+                debug!("New random calculated: random={:?}", ticket);
                 let group =
                     election::choose_consensus_group(stakers, ticket.rand, self.max_group_size);
-                debug!("Obtaining new group = {:?}.", group);
+                debug!("Obtaining new group: group={:?}", group);
                 Ok(group)
             }
             _ => unreachable!(),
@@ -299,7 +321,7 @@ impl TicketsSystem {
 impl NodeService {
     pub(crate) fn broadcast_vrf_ticket(&mut self, ticket: VRFTicket) -> Result<(), Error> {
         if self.chain.escrow.get(&self.keys.network_pkey) < stegos_blockchain::MIN_STAKE_AMOUNT {
-            debug!("Trying to broadcast ticket but our node is not staker.");
+            debug!("Trying to broadcast ticket but our node is not staker");
             return Ok(());
         }
         self.vrf_system.handle_process_ticket(ticket).unwrap();
@@ -313,7 +335,7 @@ impl NodeService {
             self.vrf_system.handle_process_ticket(msg)?;
         } else {
             debug!(
-                "Received message from peer that is not known staker = {:?}",
+                "Received message from peer that is not known staker: pkey={:?}",
                 msg.pkey
             );
         }
@@ -346,7 +368,13 @@ fn mix(random: Hash, round: u32) -> Hash {
 }
 
 impl VRFTicket {
-    pub fn new(seed: Hash, height: u64, pkey: secure::PublicKey, skey: &secure::SecretKey) -> Self {
+    pub fn new(
+        seed: Hash,
+        height: u64,
+        view_change: u32,
+        pkey: secure::PublicKey,
+        skey: &secure::SecretKey,
+    ) -> Self {
         let random = secure::make_VRF(&skey, &seed);
         let msg_hash = Self::hash(&random, &pkey);
         let sig = secure::sign_hash(&msg_hash, skey);
@@ -354,6 +382,7 @@ impl VRFTicket {
         VRFTicket {
             random,
             height,
+            view_change,
             pkey,
             sig,
         }
@@ -401,15 +430,16 @@ impl CollectingState {
     fn produce_ticket(
         &mut self,
         height: u64,
+        view_change: u32,
         pkey: secure::PublicKey,
         skey: &secure::SecretKey,
     ) -> VRFTicket {
-        VRFTicket::new(self.seed, height, pkey, skey)
+        VRFTicket::new(self.seed, height, view_change, pkey, skey)
     }
 
     /// Process ticket, return error if ticket was invalid, or some node produce multiple tickets.
     fn process_ticket(&mut self, ticket: VRFTicket) -> Result<(), TicketsError> {
-        debug!("Processing ticket from = {:?}.", ticket.pkey);
+        trace!("Processing ticket from={:?}", ticket.pkey);
         ticket.validate(self.seed)?;
         let random = ticket.random();
         if let Some(old_random) = self.tickets.insert(ticket.pkey, random.clone()) {
@@ -483,8 +513,9 @@ mod test {
         let mut tickets_system = TicketsSystem::new(100, view_change, height, p, s.clone());
 
         for i in 0..100 {
-            let seed = mix(block_hash, view_change + i);
-            let ticket = VRFTicket::new(seed, height, p, &s);
+            let view_change = view_change + i;
+            let seed = mix(block_hash, view_change);
+            let ticket = VRFTicket::new(seed, height, view_change, p, &s);
             let _ = tickets_system.handle_process_ticket(ticket);
         }
 
@@ -509,18 +540,20 @@ mod test {
         if let State::CollectingTickets(ref s, _) = tickets_system.state {
             assert_eq!(s.tickets.len(), 1);
         } else {
-            panic!("Other state.")
+            panic!("Other state")
         }
         for i in 0..10 {
-            let seed = mix(block_hash, view_change + i + 1);
-            let ticket = VRFTicket::new(seed, height, p, &s);
+            let view_change = view_change + i;
+            let seed = mix(block_hash, view_change);
+            let ticket = VRFTicket::new(seed, height, view_change, p, &s);
             let _ = tickets_system.handle_process_ticket(ticket);
         }
 
         if let State::CollectingTickets(ref s, _) = tickets_system.state {
             assert_eq!(s.tickets.len(), 1);
+            assert_eq!(s.tickets.iter().next().unwrap().1, &ticket.random);
         } else {
-            panic!("Other state.")
+            panic!("Other state")
         }
     }
 
@@ -542,9 +575,10 @@ mod test {
         } else {
             panic!("Other state.")
         }
+        let view_change = view_change + 1;
 
-        let seed = mix(block_hash, view_change + 1);
-        let ticket = VRFTicket::new(seed, height, p, &s);
+        let seed = mix(block_hash, view_change);
+        let ticket = VRFTicket::new(seed, height, view_change, p, &s);
 
         let _ = tickets_system.handle_process_ticket(ticket.clone());
         // receive self ticket
@@ -557,8 +591,9 @@ mod test {
         let (s, p, _sign) = secure::make_random_keys();
 
         for i in 0..10 {
-            let seed = mix(block_hash, view_change + i + 1);
-            let ticket = VRFTicket::new(seed, height, p, &s);
+            let view_change = view_change + i;
+            let seed = mix(block_hash, view_change);
+            let ticket = VRFTicket::new(seed, height, view_change, p, &s);
             let _ = tickets_system.handle_process_ticket(ticket.clone());
             // duplicate creation and receiving
             let _ = tickets_system.handle_process_ticket(ticket);

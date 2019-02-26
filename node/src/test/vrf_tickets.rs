@@ -48,6 +48,7 @@ impl VRFHelper {
         for keys in keys.iter() {
             result.push(Self::node_ticket(
                 height,
+                view_change,
                 seed,
                 keys.network_pkey,
                 &keys.network_skey,
@@ -59,11 +60,12 @@ impl VRFHelper {
     /// Returns single node key, based on seed.
     pub fn node_ticket(
         height: u64,
+        view_change: u32,
         seed: Hash,
         pkey: secure::PublicKey,
         skey: &secure::SecretKey,
     ) -> VRFTicket {
-        VRFTicket::new(seed, height, pkey, skey)
+        VRFTicket::new(seed, height, view_change, pkey, skey)
     }
 
     /// Calculate seed from block_hash and view_change.

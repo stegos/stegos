@@ -21,7 +21,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-mod consensus;
 mod election;
 mod error;
 mod loader;
@@ -33,7 +32,6 @@ mod test;
 mod tickets;
 mod validation;
 
-use crate::consensus::*;
 use crate::mempool::Mempool;
 use bitvector::BitVector;
 
@@ -535,39 +533,17 @@ impl NodeService {
     }
 
     /// Handle incoming blocks received from network.
-    fn handle_sealed_block(&mut self, msg: SealedBlockMessage) -> Result<(), Error> {
-        // Check signature and content.
-        msg.validate()?;
-
-        let ref block = msg.block;
-
-        let block_hash = Hash::digest(block);
-
+    fn handle_sealed_block(&mut self, block: Block) -> Result<(), Error> {
+        let block_hash = Hash::digest(&block);
         let header = block.base_header();
         // Check previous hash.
         let previous_hash = Hash::digest(self.chain.last_block());
         if previous_hash != header.previous {
             debug!(
-                "Received orphan block: hash={}, expected_previous={}, got_previous={}",
-                &block_hash, &previous_hash, &header.previous
+                "Orphan sealed block: hash={}, epoch={}, expected_previous={}, got_previous={}",
+                &block_hash, header.epoch, &previous_hash, &header.previous
             );
-            return self.on_orphan_block(msg);
-        }
-
-        if let Block::MonetaryBlock(_) = block {
-            // TODO: Should this check exist? We can send block as response, and it would be validated without this check.
-
-            // For monetary block, consensus is stable, and we can just check leader.
-            // Check that message is signed by current leader.
-            if msg.pkey != self.chain.leader {
-                let block_hash = Hash::digest(block);
-                return Err(NodeError::SealedBlockFromNonLeader(
-                    block_hash,
-                    self.chain.leader.clone(),
-                    msg.pkey,
-                )
-                .into());
-            }
+            return self.on_orphan_block(block);
         }
 
         info!(
@@ -576,7 +552,6 @@ impl NodeService {
             self.chain.height()
         );
 
-        let block = msg.block;
         self.apply_new_block(block)
     }
 
@@ -736,9 +711,7 @@ impl NodeService {
     /// Send block to network.
     fn send_sealed_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
-        let msg = SealedBlockMessage::new(&self.keys.network_skey, &self.keys.network_pkey, block);
-        let proto = msg.into_proto();
-        let data = proto.write_to_bytes()?;
+        let data = block.into_buffer()?;
         // Don't send block to myself.
         self.network.publish(&SEALED_BLOCK_TOPIC, data)?;
         info!("Sent sealed block to the network: hash={}", block_hash);
@@ -1076,8 +1049,9 @@ impl Future for NodeService {
                             .and_then(|msg| self.handle_transaction(msg)),
                         NodeMessage::Consensus(msg) => BlockConsensusMessage::from_buffer(&msg)
                             .and_then(|msg| self.handle_consensus_message(msg)),
-                        NodeMessage::SealedBlock(msg) => SealedBlockMessage::from_buffer(&msg)
-                            .and_then(|msg| self.handle_sealed_block(msg)),
+                        NodeMessage::SealedBlock(msg) => {
+                            Block::from_buffer(&msg).and_then(|msg| self.handle_sealed_block(msg))
+                        }
                         NodeMessage::VRFMessage(msg) => VRFTicket::from_buffer(&msg)
                             .and_then(|msg| self.handle_vrf_message(msg)),
                         NodeMessage::ChainLoaderMessage(msg) => {

@@ -27,32 +27,12 @@ use stegos_blockchain::protos::*;
 use stegos_crypto::protos::*;
 include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
 
-use crate::consensus::SealedBlockMessage;
-
 use crate::loader::{ChainLoaderMessage, RequestBlocks, ResponseBlocks};
 use crate::VRFTicket;
 use failure::{format_err, Error};
 use protobuf::RepeatedField;
-use stegos_blockchain::*;
 use stegos_crypto::pbc::secure;
 use stegos_crypto::pbc::secure::VRF;
-
-impl ProtoConvert for SealedBlockMessage {
-    type Proto = node::SealedBlockMessage;
-    fn into_proto(&self) -> Self::Proto {
-        let mut proto = node::SealedBlockMessage::new();
-        proto.set_block(self.block.into_proto());
-        proto.set_sig(self.sig.into_proto());
-        proto.set_pkey(self.pkey.into_proto());
-        proto
-    }
-    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let block = Block::from_proto(proto.get_block())?;
-        let sig = secure::Signature::from_proto(proto.get_sig())?;
-        let pkey = secure::PublicKey::from_proto(proto.get_pkey())?;
-        Ok(SealedBlockMessage { block, sig, pkey })
-    }
-}
 
 impl ProtoConvert for VRFTicket {
     type Proto = node::VRFTicket;
@@ -143,8 +123,6 @@ impl ProtoConvert for ChainLoaderMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
-    use std::collections::BTreeSet;
     use stegos_crypto::hash::{Hash, Hashable};
     use stegos_crypto::pbc::secure::make_random_keys as make_secure_random_keys;
 
@@ -155,27 +133,6 @@ mod tests {
         let r = T::from_proto(&x.clone().into_proto()).unwrap();
         assert_eq!(Hash::digest(x), Hash::digest(&r));
         r
-    }
-
-    #[test]
-    fn sealed_block() {
-        let (skey0, pkey0, _sig) = make_secure_random_keys();
-
-        let version: u64 = 1;
-        let epoch: u64 = 1;
-        let timestamp = Utc::now().timestamp() as u64;
-        let previous = Hash::digest("test");
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
-
-        let validators: BTreeSet<secure::PublicKey> = [pkey0].iter().cloned().collect();
-        let leader = pkey0.clone();
-        let facilitator = pkey0.clone();
-
-        let block = Block::KeyBlock(KeyBlock::new(base, leader, facilitator, validators));
-
-        let sealed_block = SealedBlockMessage::new(&skey0, &pkey0, block);
-        sealed_block.validate().unwrap();
-        roundtrip(&sealed_block);
     }
 
     #[test]

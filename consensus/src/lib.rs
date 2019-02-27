@@ -26,12 +26,10 @@
 mod blockchain;
 mod error;
 mod message;
-mod multisignature;
 pub mod protos;
 mod state;
 
 pub use crate::blockchain::*;
 pub use crate::error::*;
 pub use crate::message::*;
-pub use crate::multisignature::*;
 pub use crate::state::*;

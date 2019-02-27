@@ -1,4 +1,4 @@
-//! pBFT Consensus - BLS Multisignature.
+//! BLS MultiSignature.
 
 //
 // Copyright (c) 2018 Stegos AG
@@ -21,16 +21,16 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::VALIDATORS_MAX;
 use bitvector::BitVector;
 use std::collections::BTreeMap;
-use stegos_blockchain::VALIDATORS_MAX;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
 
 ///
 /// Return true if supermajority of votes has been collected.
 ///
-pub(crate) fn check_supermajority(got_votes: usize, total_votes: usize) -> bool {
+pub fn check_supermajority(got_votes: usize, total_votes: usize) -> bool {
     assert!(got_votes <= total_votes);
     let need_votes = (total_votes * 2 + 3) / 3;
     (got_votes >= need_votes)
@@ -39,7 +39,7 @@ pub(crate) fn check_supermajority(got_votes: usize, total_votes: usize) -> bool 
 ///
 /// Create a new multi-signature from individual signatures
 ///
-pub(crate) fn create_multi_signature(
+pub fn create_multi_signature(
     validators: &BTreeMap<secure::PublicKey, i64>,
     signatures: &BTreeMap<secure::PublicKey, secure::Signature>,
 ) -> (secure::Signature, BitVector) {

@@ -23,11 +23,12 @@
 
 use crate::error::*;
 use crate::message::*;
-use crate::multisignature::*;
 use bitvector::BitVector;
 use log::*;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
+use stegos_blockchain::check_supermajority;
+use stegos_blockchain::create_multi_signature;
 use stegos_crypto::hash::{Hash, Hashable};
 use stegos_crypto::pbc::secure;
 

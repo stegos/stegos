@@ -26,6 +26,7 @@ use crate::config::*;
 use crate::error::*;
 use crate::escrow::*;
 use crate::merkle::*;
+use crate::metrics;
 use crate::output::*;
 use crate::storage::ListDb;
 use chrono::Utc;
@@ -339,6 +340,12 @@ impl Blockchain {
         self.last_block_timestamp = clock::now();
         self.blocks.push(Block::KeyBlock(block));
         debug!("Validators: {:?}", &self.validators);
+        for (key, stake) in self.validators.iter() {
+            let key_str = key.to_string();
+            metrics::VALIDATOR_STAKE_GAUGEVEC
+                .with_label_values(&[key_str.as_str()])
+                .set(*stake);
+        }
         Ok(())
     }
 

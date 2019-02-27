@@ -31,11 +31,15 @@ use dirs;
 use failure::format_err;
 use failure::Error;
 use futures::Future;
+use hyper::server::Server;
+use hyper::service::service_fn_ok;
+use hyper::{Body, Request, Response};
 use log::*;
 use log4rs::append::console::ConsoleAppender;
 use log4rs::config::{Appender, Config as LogConfig, Logger, Root};
 use log4rs::encode::pattern::PatternEncoder;
 use log4rs::{Error as LogError, Handle as LogHandle};
+use prometheus::{self, Encoder};
 use resolve::{config::DnsConfig, record::Srv, resolver};
 use std::path::Path;
 use std::path::PathBuf;
@@ -192,6 +196,19 @@ fn resolve_pool(cfg: &mut config::Config) -> Result<(), Error> {
     Ok(())
 }
 
+fn report_metrics(_req: Request<Body>) -> Response<Body> {
+    let mut response = Response::builder();
+    let encoder = prometheus::TextEncoder::new();
+    let metric_families = prometheus::gather();
+    let mut buffer = vec![];
+    encoder.encode(&metric_families, &mut buffer).unwrap();
+    let res = response
+        .header("Content-Type", encoder.format_type())
+        .body(Body::from(buffer))
+        .unwrap();
+    res
+}
+
 fn run() -> Result<(), Error> {
     let name = "Stegos";
     let version = format!(
@@ -281,6 +298,20 @@ fn run() -> Result<(), Error> {
             .map(move |_| node.network_ready().unwrap())
             .map_err(drop),
     );
+
+    if cfg.general.prometheus_endpoint != "" {
+        // Prepare HTTP service to export Prometheus metrics
+        let prom_serv = || service_fn_ok(report_metrics);
+        let addr = cfg.general.prometheus_endpoint.as_str().parse()?;
+
+        let hyper_service = Server::bind(&addr)
+            .serve(prom_serv)
+            .map_err(|e| error!("failed to bind prometheus exporter: {}", e));
+
+        // Run hyper server to export Prometheus metrics
+        rt.spawn(hyper_service);
+    }
+
     // Start main event loop
     rt.block_on(network_service)
         .expect("errors are handled earlier");

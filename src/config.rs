@@ -74,6 +74,8 @@ pub struct GeneralConfig {
     pub chain: String,
     /// Log4RS configuration file
     pub log4rs_config: String,
+    /// Prometheus exporter endpoint
+    pub prometheus_endpoint: String,
 }
 
 impl Default for GeneralConfig {
@@ -81,6 +83,7 @@ impl Default for GeneralConfig {
         GeneralConfig {
             chain: "testnet".to_string(),
             log4rs_config: "stegos-log4rs.toml".to_string(),
+            prometheus_endpoint: "".to_string(),
         }
     }
 }

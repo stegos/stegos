@@ -123,6 +123,7 @@ pub fn choose_consensus_group_real(
 /// Choose validator and facilitator from stake group.
 pub fn choose_consensus_group(
     stakers: StakersGroup,
+    leader: secure::PublicKey,
     random: Hash,
     max_group_size: usize,
 ) -> ConsensusGroup {
@@ -136,12 +137,8 @@ pub fn choose_consensus_group(
     let validators = stakers;
     let mut rng = IsaacRng::from_seed(seed);
     let rand = rng.gen::<i64>();
-    let leader = select_winner(validators.iter().map(|(_k, stake)| stake), rand).unwrap();
-
-    let rand = rng.gen::<i64>();
     let facilitator = select_winner(validators.iter().map(|(_k, stake)| stake), rand).unwrap();
 
-    let leader = validators[leader].0;
     let facilitator = validators[facilitator].0;
     ConsensusGroup {
         validators,

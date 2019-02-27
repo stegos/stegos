@@ -300,11 +300,11 @@ impl TicketsSystem {
                 if stakers.len() > self.max_group_size {
                     return Err(TicketsError::TooManyStakers);
                 }
-                let ticket = state.lowest()?;
-                debug!("New random calculated: random={:?}", ticket);
+                let (pk, ticket) = state.lowest()?;
+                debug!("New random calculated: random={:?}, pkey={:?}", ticket, pk);
                 let group =
-                    election::choose_consensus_group(stakers, ticket.rand, self.max_group_size);
-                debug!("Obtaining new group: group={:?}", group);
+                    election::choose_consensus_group(stakers, pk, ticket.rand, self.max_group_size);
+                debug!("Obtaining new group: group={:?}.", group);
                 Ok(group)
             }
             _ => unreachable!(),
@@ -452,22 +452,10 @@ impl CollectingState {
 
     /// Returns lowest VRF.
     /// Returns error if no ticket was collected during collection phase.
-    fn lowest(self) -> Result<VRF, TicketsError> {
+    fn lowest(self) -> Result<(secure::PublicKey, VRF), TicketsError> {
         self.tickets
             .into_iter()
-            .map(|(_k, v)| v)
-            .fold(None, |acc: Option<VRF>, item| {
-                let value = if let Some(acc) = acc {
-                    if item.rand < acc.rand {
-                        item
-                    } else {
-                        acc
-                    }
-                } else {
-                    item
-                };
-                Some(value)
-            })
+            .min_by_key(|item| item.1.rand)
             .ok_or(TicketsError::NoTickets)
     }
 }

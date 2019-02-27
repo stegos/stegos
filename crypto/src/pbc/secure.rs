@@ -1053,6 +1053,12 @@ impl Hashable for VRF {
     }
 }
 
+impl fmt::Display for VRF {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "VRF({})", self.rand.to_hex())
+    }
+}
+
 pub fn make_VRF(skey: &SecretKey, seed: &Hash) -> VRF {
     // whatever the source of the seed, it should all be
     // pre-hashed before calling this function

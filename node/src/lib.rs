@@ -114,10 +114,24 @@ impl Node {
         Ok(())
     }
 
+    /// Ask current state of the election.
+    pub fn election_info(&self) -> Result<(), Error> {
+        let msg = NodeMessage::ElectionInfo;
+        self.outbox.unbounded_send(msg)?;
+        Ok(())
+    }
     /// Subscribe to epoch changes.
     pub fn subscribe_epoch(&self) -> Result<UnboundedReceiver<EpochNotification>, Error> {
         let (tx, rx) = unbounded();
         let msg = NodeMessage::SubscribeEpoch(tx);
+        self.outbox.unbounded_send(msg)?;
+        Ok(rx)
+    }
+
+    /// Subscribe to information from node.
+    pub fn subscribe_info(&self) -> Result<UnboundedReceiver<InfoNotification>, Error> {
+        let (tx, rx) = unbounded();
+        let msg = NodeMessage::SubscribeInfo(tx);
         self.outbox.unbounded_send(msg)?;
         Ok(rx)
     }
@@ -129,6 +143,13 @@ impl Node {
         self.outbox.unbounded_send(msg)?;
         Ok(rx)
     }
+}
+
+/// Info from node.
+#[derive(Clone, Debug)]
+pub struct InfoNotification {
+    /// simple text output.
+    pub display: tickets::DisplayState,
 }
 
 /// Send when epoch is changed.
@@ -188,7 +209,8 @@ enum NodeMessage {
     //
     SubscribeEpoch(UnboundedSender<EpochNotification>),
     SubscribeOutputs(UnboundedSender<OutputsNotification>),
-
+    SubscribeInfo(UnboundedSender<InfoNotification>),
+    ElectionInfo,
     //
     // Network Events
     //
@@ -240,6 +262,8 @@ pub struct NodeService {
     on_epoch_changed: Vec<UnboundedSender<EpochNotification>>,
     /// Triggered when outputs created and/or pruned.
     on_outputs_changed: Vec<UnboundedSender<OutputsNotification>>,
+    /// Triggered on repl ask feedback.
+    on_info: Vec<UnboundedSender<InfoNotification>>,
     /// Aggregated stream of events.
     events: Box<Stream<Item = NodeMessage, Error = ()> + Send>,
 }
@@ -350,6 +374,7 @@ impl NodeService {
             network,
             on_epoch_changed,
             on_outputs_changed: on_outputs_received,
+            on_info: Vec::new(),
             events,
         };
 
@@ -645,6 +670,23 @@ impl NodeService {
         Ok(())
     }
 
+    /// Handler for NodeMessage::SubscribeInfo
+    fn handle_subscribe_info(
+        &mut self,
+        tx: UnboundedSender<InfoNotification>,
+    ) -> Result<(), Error> {
+        self.on_info.push(tx);
+        Ok(())
+    }
+
+    fn handle_election_info(&mut self) -> Result<(), Error> {
+        let msg = InfoNotification {
+            display: self.vrf_system.to_display(),
+        };
+        self.on_info
+            .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
+        Ok(())
+    }
     /// Handler for new epoch creation procedure.
     /// This method called only on leader side, and when consensus is active.
     /// Leader should create a KeyBlock based on last random provided by VRF.
@@ -1050,6 +1092,8 @@ impl Future for NodeService {
                         NodeMessage::NetworkReady => self.handle_network_ready(),
                         NodeMessage::SubscribeEpoch(tx) => self.handle_subscribe_epoch(tx),
                         NodeMessage::SubscribeOutputs(tx) => self.handle_subscribe_outputs(tx),
+                        NodeMessage::SubscribeInfo(tx) => self.handle_subscribe_info(tx),
+                        NodeMessage::ElectionInfo => self.handle_election_info(),
                         NodeMessage::Transaction(msg) => Transaction::from_buffer(&msg)
                             .and_then(|msg| self.handle_transaction(msg)),
                         NodeMessage::Consensus(msg) => BlockConsensusMessage::from_buffer(&msg)

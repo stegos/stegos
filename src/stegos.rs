@@ -266,7 +266,7 @@ fn run() -> Result<(), Error> {
         rt.spawn(wallet_service);
 
         // Initialize console
-        let console_service = ConsoleService::new(network.clone(), wallet.clone())?;
+        let console_service = ConsoleService::new(network.clone(), wallet.clone(), node.clone())?;
         rt.spawn(console_service);
     }
 

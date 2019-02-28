@@ -208,8 +208,7 @@ impl Eq for ECp {}
 
 impl PartialEq for ECp {
     fn eq(&self, b: &Self) -> bool {
-        let tmp: [u8; 32] = (*self - *b).to_bytes();
-        tmp == [0u8; 32]
+        self.x * b.z == self.z * b.x && self.y * b.z == self.z * b.y
     }
 }
 

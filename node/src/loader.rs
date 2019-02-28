@@ -160,7 +160,7 @@ impl NodeService {
             .filter(|key| &self.keys.network_pkey != *key);
         let master = validators.choose(&mut rng).unwrap().clone();
         debug!(
-            "Selected a source node from the latest committed KeyBlock: hash={}, epoch={}, selected={}",
+            "Selected a source node from the latest committed KeyBlock: hash={:?}, epoch={}, selected={:?}",
             Hash::digest(self.chain.last_block()),
             self.chain.epoch,
             &master

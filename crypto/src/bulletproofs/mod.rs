@@ -334,13 +334,7 @@ pub struct LR {
 
 impl Debug for BulletProof {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "BP(vcmt: {}, ...)", self.vcmt)
-    }
-}
-
-impl fmt::Display for BulletProof {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(self, f)
+        write!(f, "BP(vcmt: {:?}, ...)", self.vcmt)
     }
 }
 
@@ -700,11 +694,11 @@ pub mod tests {
 
     #[test]
     pub fn check_bp_init() {
-        debug!("G: {}", Point::compress(*G));
-        debug!("H: {}", Point::compress(BP.H));
+        debug!("G: {:?}", Point::compress(*G));
+        debug!("H: {:?}", Point::compress(BP.H));
         for ix in 0..NBASIS {
-            debug!("GV{} = {}", ix, Point::compress(BP.GV[ix]));
-            debug!("HV{} = {}", ix, Point::compress(BP.HV[ix]));
+            debug!("GV{} = {:?}", ix, Point::compress(BP.GV[ix]));
+            debug!("HV{} = {:?}", ix, Point::compress(BP.HV[ix]));
         }
     }
 
@@ -845,7 +839,7 @@ pub fn bulletproofs_tests() {
     let (proof, gamma) = make_range_proof(1234567890);
     let timing = start.elapsed();
     debug!("proof = {:#?}", proof);
-    debug!("gamma = {}", gamma);
+    debug!("gamma = {:?}", gamma);
     debug!("Time: {:?}", timing);
     debug!("");
     debug!("Start Validation");

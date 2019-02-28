@@ -184,12 +184,6 @@ impl fmt::Debug for Zr {
     }
 }
 
-impl fmt::Display for Zr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FastZr({})", self.to_hex())
-    }
-}
-
 impl Hashable for Zr {
     fn hash(&self, state: &mut Hasher) {
         "FastZr".hash(state);
@@ -447,12 +441,6 @@ impl fmt::Debug for G1 {
     }
 }
 
-impl fmt::Display for G1 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FastG1({})", self.to_hex())
-    }
-}
-
 impl Hashable for G1 {
     fn hash(&self, state: &mut Hasher) {
         "FastG1".hash(state);
@@ -661,12 +649,6 @@ impl fmt::Debug for G2 {
     }
 }
 
-impl fmt::Display for G2 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FastG2({})", self.to_hex())
-    }
-}
-
 impl Hashable for G2 {
     fn hash(&self, state: &mut Hasher) {
         "FastG2".hash(state);
@@ -818,12 +800,6 @@ impl GT {
     }
 }
 
-impl fmt::Display for GT {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FastGT({})", self.to_hex())
-    }
-}
-
 impl Eq for GT {}
 impl PartialEq for GT {
     fn eq(&self, b: &Self) -> bool {
@@ -879,12 +855,11 @@ impl SecretKey {
     }
 }
 
-impl fmt::Display for SecretKey {
+impl fmt::Debug for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FastSKey({})", self.to_hex())
+        f.write_str("FastSKey(*HIDDEN DATA*)")
     }
 }
-
 impl Hashable for SecretKey {
     fn hash(&self, state: &mut Hasher) {
         "FastSKey".hash(state);
@@ -949,7 +924,8 @@ impl fmt::Debug for PublicKey {
 
 impl fmt::Display for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FastPKey({})", self.to_hex())
+        // display only first 6 bytes.
+        write!(f, "{}", &self.to_hex()[0..12])
     }
 }
 
@@ -991,9 +967,9 @@ impl Signature {
     }
 }
 
-impl fmt::Display for Signature {
+impl fmt::Debug for Signature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FastSig({})", self.to_hex())
+        write!(f, "Signature({})", self.to_hex())
     }
 }
 

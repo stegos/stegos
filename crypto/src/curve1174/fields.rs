@@ -245,15 +245,6 @@ macro_rules! field_impl {
             }
         }
 
-        // -------------------------------------------
-
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                let tmp = (*self).unscaled_bits();
-                write!(f, $fmt, tmp.nbr_str())
-            }
-        }
-
         // --------------------------------------------------------
 
         impl Hashable for $name {

@@ -97,7 +97,7 @@ impl KeyChain {
             fs::write(skey_path, pem::encode(&skey_pem))?;
             fs::write(pkey_path, pem::encode(&pkey_pem))?;
 
-            debug!("Generated {}", pkey);
+            debug!("Generated {:?}", pkey);
             (skey, pkey)
         } else {
             debug!(

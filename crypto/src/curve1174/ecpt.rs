@@ -183,16 +183,6 @@ impl From<Hash> for ECp {
     }
 }
 
-impl fmt::Display for ECp {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "ECp {{\n x: {},\n y: {},\n z: {},\n t: {} }}",
-            self.x, self.y, self.z, self.t
-        )
-    }
-}
-
 // --------------------------------------------------------
 
 impl Hashable for ECp {
@@ -643,17 +633,14 @@ mod tests {
         let gen_y = Fq::try_from_hex(&sy)?;
 
         println!("The Generator Point");
-        println!("gen_x: {}", gen_x);
-        println!("gen_y: {}", gen_y);
+        println!("gen_x: {:?}", gen_x);
+        println!("gen_y: {:?}", gen_y);
 
         let mut pt1 = ECp::inf();
         for _ in 0..100 {
             pt1 = ECp::try_from_xy(&gen_x, &gen_y).unwrap();
             mul_to_proj(&w, &mut pt1);
         }
-
-        println!("Result as Bignums");
-        println!("pt: {}", pt1);
 
         println!("Result as Fq51s");
         println!("pt: {:#?}", pt1);

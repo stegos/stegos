@@ -52,7 +52,7 @@ pub(crate) fn create_payment_transaction(
     data.validate()?;
 
     debug!(
-        "Creating a payment transaction: recipient={}, amount={}",
+        "Creating a payment transaction: recipient={:?}, amount={}",
         recipient, amount
     );
 
@@ -72,7 +72,7 @@ pub(crate) fn create_payment_transaction(
     assert!(!inputs.is_empty());
 
     debug!(
-        "Transaction preview: recipient={}, amount={}, withdrawn={}, change={}, fee={}",
+        "Transaction preview: recipient={:?}, amount={}, withdrawn={}, change={}, fee={}",
         recipient,
         amount,
         amount + change + fee,
@@ -147,7 +147,7 @@ pub(crate) fn create_staking_transaction(
     }
 
     debug!(
-        "Creating a staking transaction: validator={}, amount={}",
+        "Creating a staking transaction: validator={:?}, amount={}",
         validator_pkey, amount
     );
 
@@ -167,7 +167,7 @@ pub(crate) fn create_staking_transaction(
     assert!(!inputs.is_empty());
 
     debug!(
-        "Transaction preview: recipient={}, validator={}, stake={}, withdrawn={}, change={}, fee={}",
+        "Transaction preview: recipient={:?}, validator={:?}, stake={}, withdrawn={}, change={}, fee={}",
         sender_pkey,
         validator_pkey,
         amount,
@@ -243,7 +243,7 @@ pub(crate) fn create_unstaking_transaction(
     }
 
     debug!(
-        "Creating a unstaking transaction: recipient={}, validator={}, amount={}",
+        "Creating a unstaking transaction: recipient={:?}, validator={:?}, amount={}",
         sender_pkey, validator_pkey, amount
     );
 
@@ -266,11 +266,11 @@ pub(crate) fn create_unstaking_transaction(
     }
 
     debug!(
-        "Transaction preview: recipient={}, validator={}, unstake={}, stake={}, fee={}",
+        "Transaction preview: recipient={:?}, validator={:?}, unstake={}, stake={}, fee={}",
         sender_pkey, validator_pkey, amount, change, fee
     );
     for input in &inputs {
-        debug!("Use stake UTXO: hash={}", Hash::digest(input));
+        debug!("Use stake UTXO: hash={:?}", Hash::digest(input));
     }
 
     //

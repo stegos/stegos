@@ -377,7 +377,7 @@ impl NodeService {
 
             let last_hash = Hash::digest(self.chain.last_block());
             info!(
-                "Node successfully recovered from persistent storage: height={}, hash= {:?}",
+                "Node successfully recovered from persistent storage: height={}, hash={}",
                 self.chain.blocks().len(),
                 last_hash
             );
@@ -394,7 +394,7 @@ impl NodeService {
             match block {
                 Block::KeyBlock(key_block) => {
                     debug!(
-                        "Genesis key block: height={}, hash={}",
+                        "Genesis key block: height={}, hash={:?}",
                         self.chain.height() + 1,
                         Hash::digest(&key_block)
                     );
@@ -404,7 +404,7 @@ impl NodeService {
                 }
                 Block::MonetaryBlock(monetary_block) => {
                     debug!(
-                        "Genesis payment block: height={}, hash={}",
+                        "Genesis payment block: height={}, hash={:?}",
                         self.chain.height() + 1,
                         Hash::digest(&monetary_block)
                     );
@@ -545,7 +545,7 @@ impl NodeService {
         let previous_hash = Hash::digest(self.chain.last_block());
         if previous_hash != header.previous {
             debug!(
-                "Orphan sealed block: hash={}, epoch={}, expected_previous={}, got_previous={}",
+                "Orphan sealed block: hash={}, epoch={}, expected_previous={:?}, got_previous={:?}",
                 &block_hash, header.epoch, &previous_hash, &header.previous
             );
             return self.on_orphan_block(block);
@@ -657,7 +657,7 @@ impl NodeService {
 
         let base = BaseBlockHeader::new(VERSION, previous, epoch, timestamp);
         debug!(
-            "Creating a new epoch proposal: {}, with leader = {}",
+            "Creating a new epoch proposal: {}, with leader = {:?}",
             epoch,
             consensus.leader()
         );
@@ -726,7 +726,7 @@ impl NodeService {
     /// Request for changing group received from VRF system.
     /// Restars consensus with new params, and send new keyblock.
     fn on_change_group(&mut self, group: ConsensusGroup) -> Result<(), Error> {
-        info!("Changing group, new group leader = {:?}", group.leader);
+        info!("Changing group, new group leader = {}", group.leader);
         self.chain.change_group(
             group.leader,
             group.facilitator,
@@ -899,7 +899,7 @@ impl NodeService {
 
         let (block, proof) = consensus.get_proposal();
         let request_hash = Hash::digest(block);
-        debug!("Validating block: block={}", &request_hash);
+        debug!("Validating block: block={:?}", &request_hash);
         match Self::validate_block(consensus, &self.mempool, &self.chain, block, proof) {
             Ok(()) => {
                 let consensus = self.consensus.as_mut().unwrap();

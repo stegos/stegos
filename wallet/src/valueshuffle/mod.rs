@@ -218,7 +218,7 @@ impl ValueShuffle {
         self.network
             .send(self.facilitator_pkey, POOL_JOIN_TOPIC, msg)?;
         info!(
-            "Sent pool join request facilitator={:?}",
+            "Sent pool join request facilitator={}",
             self.facilitator_pkey
         );
         Ok(())
@@ -289,7 +289,7 @@ impl ValueShuffle {
 
     /// Invoked when Example message is received.
     fn on_example_received(&mut self, from: ParticipantID, payload: String) -> Result<(), Error> {
-        info!("Example received: from={:?}, payload={}", from, payload);
+        info!("Example received: from={}, payload={}", from, payload);
         Ok(())
     }
 }

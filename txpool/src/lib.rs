@@ -156,7 +156,7 @@ impl TransactionPoolService {
             }
             NodeRole::Facilitator(ref mut state) => {
                 if state.add_participant(from) {
-                    info!("Added a new member: pkey={:?}", from);
+                    info!("Added a new member: pkey={}", from);
                 }
             }
         }

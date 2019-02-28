@@ -259,7 +259,7 @@ impl TicketsSystem {
 
     fn on_view_change(&mut self, last_block_hash: Hash) -> VRFTicket {
         info!(
-            "Trying to start new ticket collecting: height={}, block_hash={:?}",
+            "Trying to start new ticket collecting: height={}, block_hash={}",
             self.height, last_block_hash
         );
         self.view_change += 1;

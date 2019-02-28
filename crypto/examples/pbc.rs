@@ -28,51 +28,48 @@ use stegos_crypto::pbc::*;
 
 fn main() {
     let pt = fast::G1::generator() * fast::Zr::zero();
-    println!("pt = {}", pt);
+    println!("pt = {:?}", pt);
     // ------------------------------------------------------------
     // on Secure pairings
     // test PRNG
-    println!("rand Zr = {}", secure::Zr::random());
+    println!("rand Zr = {}", secure::Zr::random().to_hex());
 
     // test keying...
-    let (skey, pkey, sig) = secure::make_deterministic_keys(b"Testing");
-    println!("skey = {}", skey);
-    println!("pkey = {}", pkey);
-    println!("sig  = {}", sig);
+    let (_skey, pkey, sig) = secure::make_deterministic_keys(b"Testing");
+    println!("pkey = {:?}", pkey);
+    println!("sig  = {:?}", sig);
     assert!(secure::check_keying(&pkey, &sig));
     println!("");
 
     // -------------------------------------
     // on Fast pairings
     // test PRNG
-    println!("rand Zr = {}", fast::Zr::random());
+    println!("rand Zr = {:?}", fast::Zr::random());
 
     // test keying...
-    let (skey, pkey, sig) = fast::make_deterministic_keys(b"Testing");
-    println!("skey = {}", skey);
-    println!("pkey = {}", pkey);
-    println!("sig  = {}", sig);
+    let (_skey, pkey, sig) = fast::make_deterministic_keys(b"Testing");
+    println!("pkey = {:?}", pkey);
+    println!("sig  = {:?}", sig);
     assert!(fast::check_keying(&pkey, &sig));
 
     // -------------------------------------
     // check some arithmetic on the Fast curves
     let a = 0x123456789i64;
-    println!("chk Zr: 0x{:x} -> {}", a, fast::Zr::from(a));
-    println!("chk Zr: -1 -> {}", fast::Zr::from(-1));
-    println!("chk Zr: -1 + 1 -> {}", fast::Zr::from(-1) + 1);
+    println!("chk Zr: 0x{:x} -> {:?}", a, fast::Zr::from(a));
+    println!("chk Zr: -1 -> {:?}", fast::Zr::from(-1));
+    println!("chk Zr: -1 + 1 -> {:?}", fast::Zr::from(-1) + 1);
 
-    let (skey, pkey, sig) = secure::make_deterministic_keys(b"dev");
-    println!("skey = {}", skey);
-    println!("pkey = {}", pkey);
-    println!("sig = {}", sig);
+    let (_skey, pkey, sig) = secure::make_deterministic_keys(b"dev");
+    println!("pkey = {:?}", pkey);
+    println!("sig = {:?}", sig);
 
     // -----------------------------------------
     let (skey, pkey, sig) = secure::make_deterministic_keys(b"Testing");
     assert!(secure::check_keying(&pkey, &sig));
     let hseed = Hash::from_str("VRF_Seed");
     let vrf = secure::make_VRF(&skey, &hseed);
-    println!("VRF Rand: {:}", vrf.rand);
-    println!("VRF Proof: {:}", vrf.proof);
+    println!("VRF Rand: {:?}", vrf.rand);
+    println!("VRF Proof: {:?}", vrf.proof);
     assert!(secure::validate_VRF_randomness(&vrf));
     assert!(secure::validate_VRF_source(&vrf, &pkey, &hseed));
 }

@@ -22,7 +22,9 @@
 // SOFTWARE.
 
 use crate::block::*;
+use crate::multisignature::create_multi_signature;
 use crate::output::*;
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
@@ -34,12 +36,12 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64, timestamp: u64) -
 
     // Both block are created at the same time in the same epoch.
     let version: u64 = 1;
-    let epoch: u64 = 1;
 
     //
     // Create initial Monetary Block.
     //
     let block1 = {
+        let epoch: u64 = 0;
         let previous = Hash::digest(&"genesis".to_string());
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
         //
@@ -84,6 +86,7 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64, timestamp: u64) -
     // Create initial Key Block.
     //
     let block2 = {
+        let epoch: u64 = 1;
         let previous = Hash::digest(&block1);
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
 
@@ -92,7 +95,20 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64, timestamp: u64) -
         let leader = keychains[0].network_pkey.clone();
         let facilitator = keychains[0].network_pkey.clone();
 
-        KeyBlock::new(base, leader, facilitator, validators)
+        let mut block = KeyBlock::new(base, leader, facilitator, validators);
+        let block_hash = Hash::digest(&block);
+
+        let mut signatures: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();
+        let mut validators: BTreeMap<secure::PublicKey, i64> = BTreeMap::new();
+        for keychain in keychains.iter() {
+            let sig = secure::sign_hash(&block_hash, &keychain.network_skey);
+            signatures.insert(keychain.network_pkey.clone(), sig);
+            validators.insert(keychain.network_pkey.clone(), stake);
+        }
+        let (multisig, multisigmap) = create_multi_signature(&validators, &signatures);
+        block.header.base.multisig = multisig;
+        block.header.base.multisigmap = multisigmap;
+        block
     };
 
     blocks.push(Block::MonetaryBlock(block1));

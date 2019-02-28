@@ -6,4 +6,5 @@ message Message {
     required bytes to = 2;
     required bytes protocol_id = 3;
     required bytes data = 4;
+    required bytes signature = 5;
 }

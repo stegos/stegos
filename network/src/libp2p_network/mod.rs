@@ -22,7 +22,7 @@
 // SOFTWARE.
 
 use crate::config::NetworkConfig;
-use failure::Error;
+use failure::{format_err, Error};
 use futures::prelude::*;
 use futures::sync::mpsc;
 use ipnetwork::IpNetwork;
@@ -41,6 +41,7 @@ use pnet::datalink;
 use protobuf::Message as ProtoMessage;
 use smallvec::SmallVec;
 use std::collections::HashMap;
+use stegos_crypto::hash::{Hashable, Hasher};
 use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -199,6 +200,8 @@ pub struct Libp2pBehaviour<TSubstream: AsyncRead + AsyncWrite> {
     unicast_consumers: HashMap<String, SmallVec<[mpsc::UnboundedSender<UnicastMessage>; 3]>>,
     #[behaviour(ignore)]
     my_pkey: secure::PublicKey,
+    #[behaviour(ignore)]
+    my_skey: secure::SecretKey,
 }
 
 impl<TSubstream> Libp2pBehaviour<TSubstream>
@@ -215,6 +218,7 @@ where
             consumers: HashMap::new(),
             unicast_consumers: HashMap::new(),
             my_pkey: keychain.network_pkey.clone(),
+            my_skey: keychain.network_skey.clone(),
         };
         let unicast_topic = floodsub::TopicBuilder::new(UNICAST_TOPIC).build();
         behaviour.floodsub.subscribe(unicast_topic);
@@ -275,7 +279,8 @@ where
                         })
                 } else {
                     let floodsub_topic = floodsub::TopicBuilder::new(UNICAST_TOPIC).build();
-                    let msg = encode_unicast(self.my_pkey.clone(), to, protocol_id, data);
+                    let msg =
+                        encode_unicast(self.my_pkey.clone(), to, protocol_id, data, &self.my_skey);
                     self.floodsub.publish(floodsub_topic, msg);
                 }
             }
@@ -462,12 +467,22 @@ fn encode_unicast(
     to: secure::PublicKey,
     protocol_id: String,
     data: Vec<u8>,
+    sign_key: &secure::SecretKey,
 ) -> Vec<u8> {
+    let mut hasher = Hasher::new();
+    from.hash(&mut hasher);
+    to.hash(&mut hasher);
+    protocol_id.hash(&mut hasher);
+    data.hash(&mut hasher);
+    let hash = hasher.result();
+    let sig = secure::sign_hash(&hash, sign_key);
+
     let mut msg = unicast_proto::Message::new();
     msg.set_from(from.to_bytes().to_vec());
     msg.set_to(to.to_bytes().to_vec());
     msg.set_protocol_id(protocol_id.into_bytes().to_vec());
     msg.set_data(data);
+    msg.set_signature(sig.to_bytes().to_vec());
 
     msg.write_to_bytes()
         .expect("protobuf encoding should never fail")
@@ -480,11 +495,23 @@ fn decode_unicast(
 
     let from = secure::PublicKey::try_from_bytes(&msg.take_from().to_vec())?;
     let to = secure::PublicKey::try_from_bytes(&msg.take_to().to_vec())?;
+    let sig = secure::Signature::try_from_bytes(&msg.take_signature().to_vec())?;
     let protocol_id_bytes = &msg.get_protocol_id();
     let protocol_id = String::from_utf8(protocol_id_bytes.to_vec())?;
     let data = msg.take_data().to_vec();
 
-    Ok((from, to, protocol_id, data))
+    let mut hasher = Hasher::new();
+    from.hash(&mut hasher);
+    to.hash(&mut hasher);
+    protocol_id.hash(&mut hasher);
+    data.hash(&mut hasher);
+    let hash = hasher.result();
+
+    if secure::check_hash(&hash, &sig, &from) {
+        Ok((from, to, protocol_id, data))
+    } else {
+        Err(format_err!("Bad packet signature."))
+    }
 }
 
 #[cfg(test)]
@@ -493,12 +520,14 @@ mod tests {
 
     #[test]
     fn encode_decode() {
-        let from = secure::PublicKey::try_from_bytes(&random_vec(65)).unwrap();
+        let seed = random_vec(128);
+        let (from_skey, from, _signature) = secure::make_deterministic_keys(&seed);
         let to = secure::PublicKey::try_from_bytes(&random_vec(65)).unwrap();
         let protocol_id = "the quick brown fox".to_string();
         let data = random_vec(1024);
 
-        let encoded = super::encode_unicast(from, to, protocol_id.clone(), data.clone());
+        let encoded =
+            super::encode_unicast(from, to, protocol_id.clone(), data.clone(), &from_skey);
         let (from_2, to_2, protocol_id_2, data_2) = super::decode_unicast(encoded).unwrap();
 
         assert_eq!(from, from_2);

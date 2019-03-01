@@ -35,6 +35,8 @@ use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::pbc::secure;
 use stegos_network::Network;
 use stegos_network::UnicastMessage;
+use stegos_node::InfoNotification;
+use stegos_node::Node;
 use stegos_wallet::{Wallet, WalletNotification};
 
 // ----------------------------------------------------------------
@@ -68,8 +70,12 @@ pub struct ConsoleService {
     network: Network,
     /// Wallet API.
     wallet: Wallet,
+    /// Node API.
+    node: Node,
     /// Wallet events.
     wallet_events: UnboundedReceiver<WalletNotification>,
+    /// A channel to receive info from node.
+    node_events: UnboundedReceiver<InfoNotification>,
     /// A channel to receive message from stdin thread.
     stdin: Receiver<String>,
     /// A thread used for readline.
@@ -80,9 +86,10 @@ pub struct ConsoleService {
 
 impl ConsoleService {
     /// Constructor.
-    pub fn new(network: Network, wallet: Wallet) -> Result<ConsoleService, Error> {
+    pub fn new(network: Network, wallet: Wallet, node: Node) -> Result<ConsoleService, Error> {
         let (tx, rx) = channel::<String>(1);
         let wallet_events = wallet.subscribe();
+        let node_events = node.subscribe_info()?;
         let stdin_th = thread::spawn(move || Self::readline_thread_f(tx));
         let stdin = rx;
         let unicast_rx = network.subscribe_unicast(CONSOLE_PROTOCOL_ID)?;
@@ -94,6 +101,8 @@ impl ConsoleService {
             stdin,
             stdin_th,
             unicast_rx,
+            node_events,
+            node,
         };
         Ok(service)
     }
@@ -378,6 +387,9 @@ impl ConsoleService {
         } else if msg == "show balance" {
             self.wallet.balance_info();
             return false; // keep stdin parked until result is received.
+        } else if msg == "show election" {
+            self.node.election_info().unwrap();
+            return false; // keep stdin parked until result is received.
         } else if msg == "show utxo" {
             self.wallet.unspent_info();
             return false; // keep stdin parked until result is received.
@@ -390,7 +402,10 @@ impl ConsoleService {
     fn on_exit(&self) {
         std::process::exit(0);
     }
-
+    fn on_node_info(&mut self, info: InfoNotification) {
+        println!("Election state:\n{}", info.display);
+        self.stdin_th.thread().unpark();
+    }
     fn on_notification(&mut self, notification: WalletNotification) {
         match notification {
             WalletNotification::PaymentReceived { amount, comment } => {
@@ -460,6 +475,17 @@ impl Future for ConsoleService {
             match self.wallet_events.poll() {
                 Ok(Async::Ready(Some(notification))) => {
                     self.on_notification(notification);
+                }
+                Ok(Async::Ready(None)) => self.on_exit(),
+                Ok(Async::NotReady) => break, // fall through
+                Err(()) => panic!("Wallet failure"),
+            }
+        }
+
+        loop {
+            match self.node_events.poll() {
+                Ok(Async::Ready(Some(notification))) => {
+                    self.on_node_info(notification);
                 }
                 Ok(Async::Ready(None)) => self.on_exit(),
                 Ok(Async::NotReady) => break, // fall through

@@ -34,6 +34,7 @@ use crate::NodeService;
 
 use failure::{Error, Fail};
 use log::{debug, info, trace};
+use serde_derive::Serialize;
 use std::time::{Duration, Instant};
 use std::{collections::HashMap, mem};
 use tokio_timer::clock;
@@ -146,6 +147,24 @@ pub struct TicketsSystem {
     state: State,
     /// Queue of out-of-order messages.
     queue: HashMap<secure::PublicKey, VRFTicket>,
+}
+use std::fmt::{self, Display};
+
+/// User-friendly printable representation of state.
+#[derive(Serialize, Clone, Debug)]
+pub struct DisplayState {
+    height: u64,
+    view_change: u32,
+    state: &'static str,
+    timeout: String,
+    collected_tickets: Option<HashMap<String, String>>,
+}
+
+impl Display for DisplayState {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        //serialize as array, to visualize with space.
+        f.write_str(&serde_yaml::to_string(&[self]).map_err(|_| fmt::Error)?)
+    }
 }
 
 #[derive(Eq, PartialEq, Debug)]
@@ -314,6 +333,56 @@ impl TicketsSystem {
     /// Returns number of retries for the electing new group.
     pub fn view_change(&self) -> u32 {
         self.view_change
+    }
+    /// Returns object that represent printable part of state.
+    pub fn to_display(&self) -> DisplayState {
+        fn format_duration(timeout: Duration, max: Duration) -> String {
+            if max < timeout {
+                String::from("finished")
+            } else {
+                let elapsed = max - timeout;
+                let secs = elapsed.as_secs();
+                let min = secs / 60;
+                let secs = secs % 60;
+                let ms = elapsed.subsec_millis();
+                format!("{}min {}s {}ms", min, secs, ms)
+            }
+        }
+
+        match self.state {
+            State::CollectingTickets(ref state, instant) => {
+                let timeout = format_duration(
+                    clock::now().duration_since(instant),
+                    COLLECTING_TICKETS_TIMER,
+                );
+                DisplayState {
+                    height: self.height,
+                    view_change: self.view_change,
+                    timeout,
+                    state: "collecting",
+                    collected_tickets: Some(
+                        state
+                            .tickets
+                            .iter()
+                            .map(|(k, v)| (k.to_string(), v.to_string()))
+                            .collect(),
+                    ),
+                }
+            }
+            State::Sleeping(instant) => {
+                let timeout = format_duration(
+                    clock::now().duration_since(instant),
+                    *RESTART_CONSENSUS_TIMER,
+                );
+                DisplayState {
+                    height: self.height,
+                    view_change: self.view_change,
+                    timeout,
+                    state: "sleeping",
+                    collected_tickets: None,
+                }
+            }
+        }
     }
 }
 

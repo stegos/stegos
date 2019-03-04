@@ -91,12 +91,6 @@ impl Pt {
     }
 }
 
-impl fmt::Display for Pt {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Pt({})", self.to_hex())
-    }
-}
-
 impl fmt::Debug for Pt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Pt({})", self.to_hex())
@@ -159,15 +153,9 @@ impl SecretKey {
     }
 }
 
-impl fmt::Display for SecretKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SKey({})", self.to_hex())
-    }
-}
-
 impl fmt::Debug for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SKey({})", self.to_hex())
+        f.write_str("SKey(*HIDDEN DATA*)")
     }
 }
 
@@ -229,7 +217,8 @@ impl PublicKey {
 
 impl fmt::Display for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "PKey({})", self.to_hex())
+        // display only first 6 bytes.
+        write!(f, "{}", &self.to_hex()[0..12])
     }
 }
 
@@ -457,13 +446,7 @@ pub struct EncryptedPayload {
 
 impl fmt::Debug for EncryptedPayload {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ag={} cmsg={}", self.ag, u8v_to_hexstr(&self.ctxt))
-    }
-}
-
-impl fmt::Display for EncryptedPayload {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(self, f)
+        write!(f, "ag={:?} cmsg={}", self.ag, u8v_to_hexstr(&self.ctxt))
     }
 }
 

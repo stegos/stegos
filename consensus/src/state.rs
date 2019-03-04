@@ -227,7 +227,7 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
         assert_eq!(&request_hash, &expected_request_hash);
         assert!(!self.precommits.contains_key(&self.pkey));
         debug!(
-            "{}({}): pre-commit request={}",
+            "{}({}): pre-commit request={:?}",
             self.state.name(),
             self.height,
             &request_hash
@@ -409,7 +409,7 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
                 assert!(self.request.is_none());
                 assert!(self.proof.is_none());
                 debug!(
-                    "{}({}) => {}({}): received a new proposal hash={}, from={}",
+                    "{}({}) => {}({}): received a new proposal hash={:?}, from={:?}",
                     self.state.name(),
                     self.height,
                     ConsensusState::Prevote.name(),

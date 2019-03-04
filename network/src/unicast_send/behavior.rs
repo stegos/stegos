@@ -254,13 +254,13 @@ where
                 }
                 UnicastBehaviorEvent::DataOrResult { peer_id, event } => match event {
                     UnicastSendMessage::Data(msg) => {
-                        debug!("Received data message from node: {}", msg.from);
+                        debug!("Received data message from node: {:?}", msg.from);
                         return Async::Ready(NetworkBehaviourAction::GenerateEvent(
                             UnicastOutEvent::Data(msg),
                         ));
                     }
                     UnicastSendMessage::Success(pkey) => {
-                        debug!("Successfully sent message to node: {}", pkey);
+                        debug!("Successfully sent message to node: {:?}", pkey);
                         return Async::Ready(NetworkBehaviourAction::GenerateEvent(
                             UnicastOutEvent::Success(pkey),
                         ));

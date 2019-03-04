@@ -39,6 +39,7 @@ use stegos_crypto::hash::{Hash, Hashable, Hasher};
 /// ```
 
 /// Merkle Tree Node.
+#[derive(Clone, Debug)]
 struct Node<T> {
     /// Hash value.
     hash: Hash,
@@ -87,6 +88,7 @@ pub enum MerkleError {
 /// 2**256 is more than anyone needed.
 type Height = u8;
 
+#[derive(Clone)]
 pub struct Merkle<T: Hashable> {
     root: Box<Node<T>>,
 }
@@ -124,7 +126,7 @@ fn expected_height(n: usize) -> Height {
 
 // -------------------------------------
 
-impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
+impl<T: Hashable + fmt::Debug> Merkle<T> {
     pub fn roothash(&self) -> &Hash {
         &self.root.hash
     }
@@ -188,7 +190,10 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
     ///
     /// Returns the new tree.
     ///
-    pub fn from_array(src: &[T]) -> Merkle<T> {
+    pub fn from_array(src: &[T]) -> Merkle<T>
+    where
+        T: Clone,
+    {
         assert!(src.len() <= Path::max_value() as usize);
 
         // Special case - empty tree.
@@ -495,7 +500,10 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
     }
 
     /// A recursive helper for serialize().
-    fn serialize_r(r: &mut Vec<SerializedNode<T>>, node: &Node<T>) -> usize {
+    fn serialize_r(r: &mut Vec<SerializedNode<T>>, node: &Node<T>) -> usize
+    where
+        T: Clone,
+    {
         return match node {
             // An inner node with both subtrees
             Node {
@@ -577,14 +585,20 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
     }
 
     /// Linearize and serialize the tree.
-    pub fn serialize(&self) -> Vec<SerializedNode<T>> {
+    pub fn serialize(&self) -> Vec<SerializedNode<T>>
+    where
+        T: Clone,
+    {
         let mut r = Vec::<SerializedNode<T>>::new();
         Merkle::serialize_r(&mut r, &self.root);
         r
     }
 
     /// Create a Merkle Tree from serialized representation.
-    pub fn deserialize(snodes: &[SerializedNode<T>]) -> Result<Merkle<T>, MerkleError> {
+    pub fn deserialize(snodes: &[SerializedNode<T>]) -> Result<Merkle<T>, MerkleError>
+    where
+        T: Clone,
+    {
         if snodes.len() < 1 {
             return Err(MerkleError::InvalidStructure);
         }
@@ -667,7 +681,11 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
             } => {
                 // An inner node with only a left subtree
                 Merkle::fmt_r(f, &left, h + 1)?;
-                write!(f, "{}: Node({}, l={}, r=None)\n", h, node.hash, left.hash)
+                write!(
+                    f,
+                    "{}: Node({:?}, l={:?}, r=None)\n",
+                    h, node.hash, left.hash
+                )
             }
             Node {
                 left: None,
@@ -676,7 +694,7 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
                 ..
             } => {
                 // A leaf
-                write!(f, "{}: Leaf({}, value={})\n", h, &node.hash, &value)
+                write!(f, "{}: Leaf({:?}, value={:?})\n", h, &node.hash, &value)
             }
             Node {
                 left: None,
@@ -685,7 +703,7 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
                 ..
             } => {
                 // An empty leaf - can only happen if tree is empty
-                write!(f, "{}: Empty({})\n", h, &node.hash)
+                write!(f, "{:?}: Empty({:?})\n", h, &node.hash)
             }
             _ => unreachable!(), // No more cases
         }
@@ -698,16 +716,9 @@ impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Merkle<T> {
     }
 }
 
-impl<T: Hashable + Clone + fmt::Debug + fmt::Display> fmt::Debug for Merkle<T> {
+impl<T: Hashable + fmt::Debug> fmt::Debug for Merkle<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.fmt(f)
-    }
-}
-
-impl<T: Hashable + Clone + fmt::Debug + fmt::Display> Clone for Merkle<T> {
-    fn clone(&self) -> Merkle<T> {
-        let serialized = self.serialize();
-        Merkle::deserialize(&serialized).unwrap()
     }
 }
 

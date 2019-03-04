@@ -154,7 +154,7 @@ pub(crate) fn validate_proposed_key_block(
             "Received Key block proposal with wrong consensus group."
         );
     }
-    debug!("Key block proposal is valid: block={}", block_hash);
+    debug!("Key block proposal is valid: block={:?}", block_hash);
     Ok(())
 }
 
@@ -227,7 +227,7 @@ pub(crate) fn validate_proposed_monetary_block(
     let mut outputs = Vec::<Output>::new();
     let mut outputs_hashes = BTreeSet::<Hash>::new();
     for tx_hash in tx_hashes {
-        debug!("Processing transaction: hash={}", &tx_hash);
+        debug!("Processing transaction: hash={:?}", &tx_hash);
 
         // Check that transaction is present in mempool.
         let tx = mempool.get_tx(&tx_hash);
@@ -322,7 +322,7 @@ pub(crate) fn validate_proposed_monetary_block(
         return Err(NodeError::InvalidBlockHash(block_hash, block_hash2).into());
     }
 
-    debug!("Block proposal is valid: block={}", block_hash);
+    debug!("Block proposal is valid: block={:?}", block_hash);
 
     Ok(())
 }

@@ -287,20 +287,20 @@ pub fn curve1174_tests() {
         let pt1 = ECp::try_from_xy(&gx, &gy).unwrap();
         pt2 = pt1 * mx;
     }
-    println!("pt2: {}", pt2);
+    println!("pt2: {:?}", pt2);
 
     let pt1 = ECp::try_from_xy(&gx, &gy).unwrap();
     let pt2 = pt1 + pt1;
-    println!("ptsum {}", pt2);
+    println!("ptsum {:?}", pt2);
 
     let tmp = Fr::from(2);
     let tmp2 = 1 / tmp;
     // println!("1/mul: {}", 1/Fr::from(2));
     // println!("unity? {}", (1/Fr::from(2)) * 2);
-    println!("mul: {}", tmp);
-    println!("1/2 = {}", tmp2);
-    println!("R = {}", *R);
-    println!("mx: {}", tmp * tmp2);
+    println!("mul: {:?}", tmp);
+    println!("1/2 = {:?}", tmp2);
+    println!("R = {:?}", *R);
+    println!("mx: {:?}", tmp * tmp2);
     /* */
     let _ = StdRng::from_entropy();
     let mut r = StdRng::from_rng(thread_rng()).unwrap();
@@ -315,38 +315,37 @@ pub fn curve1174_tests() {
     let pt = ECp::try_from_xy(&gen_x, &gen_y).unwrap();
 
     println!("The Generator Point");
-    println!("gen_x: {}", gen_x);
-    println!("gen_y: {}", gen_y);
-    println!("gen_pt: {}", pt);
+    println!("gen_x: {:?}", gen_x);
+    println!("gen_y: {:?}", gen_y);
+    println!("gen_pt: {:?}", pt);
 
-    println!("x+y: {}", gen_x + gen_y);
+    println!("x+y: {:?}", gen_x + gen_y);
     /* */
     let ept = ECp::from(Hash::from_vector(b"Testing12")); // produces an odd Y
     let cpt = Pt::from(ept); // MSB should be set
     let ept2 = ECp::decompress(cpt).unwrap();
-    println!("hash -> {}", ept);
-    println!("hash -> {}", cpt);
-    println!("hash -> {}", ept2);
+    println!("hash -> {:?}", ept);
+    println!("hash -> {:?}", cpt);
+    println!("hash -> {:?}", ept2);
 
     // ---------------------------------------------------------------
     let (skey, pkey, sig) = make_deterministic_keys(b"Testing");
     println!("Key Check = {}", check_keying(&pkey, &sig).unwrap());
-    println!("skey = {}", skey);
-    println!("pkey = {}", pkey);
+    println!("pkey = {:?}", pkey);
 
     let delta = Fr::random();
-    println!("delta = {}", delta);
+    println!("delta = {:?}", delta);
 
     let cpt = Pt::from(pkey);
     let ept = ECp::decompress(cpt).unwrap() + delta * *G;
     let delta_pkey = PublicKey::from(ept);
-    println!("delta_key = {}", Pt::from(delta_pkey));
+    println!("delta_key = {:?}", Pt::from(delta_pkey));
 
     let delta_skey = SecretKey::from(Fr::from(skey.clone()) + delta);
 
     let hmsg = Hash::try_from_hex(&HASH_CONSTS).unwrap();
     let sig = sign_hash(&hmsg, &skey);
-    println!("sig = (u: {}, K: {})", sig.u, sig.K);
+    println!("sig = (u: {:?}, K: {:?})", sig.u, sig.K);
 
     use crate::hash;
     let msg = hash::hash_nbytes(72, b"This is a test");

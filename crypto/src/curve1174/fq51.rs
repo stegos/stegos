@@ -116,12 +116,6 @@ impl fmt::Debug for Fq51 {
     }
 }
 
-impl fmt::Display for Fq51 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Fq51({})", self.nbr_str())
-    }
-}
-
 impl Add<Fq51> for Fq51 {
     type Output = Fq51;
     fn add(self, other: Fq51) -> Fq51 {

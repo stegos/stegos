@@ -22,7 +22,6 @@
 // SOFTWARE.
 
 use failure::{Error, Fail};
-use std::fmt;
 use std::mem::transmute;
 use stegos_crypto::bulletproofs::{make_range_proof, BulletProof};
 use stegos_crypto::curve1174::cpt::{
@@ -493,12 +492,6 @@ impl Output {
             amount,
         )?;
         Ok(Output::StakeOutput(output))
-    }
-}
-
-impl fmt::Display for Output {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Output({})", Hash::digest(self))
     }
 }
 

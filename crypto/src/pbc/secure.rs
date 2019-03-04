@@ -175,12 +175,6 @@ impl PartialOrd for Zr {
     }
 }
 
-impl fmt::Display for Zr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureZr({})", self.to_hex())
-    }
-}
-
 impl Hashable for Zr {
     fn hash(&self, state: &mut Hasher) {
         "SecureZr".hash(state);
@@ -265,13 +259,6 @@ impl G1 {
 }
 
 impl fmt::Debug for G1 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureG1({})", self.to_hex())
-    }
-}
-
-impl fmt::Display for G1 {
-    // for display of signatures
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "SecureG1({})", self.to_hex())
     }
@@ -377,12 +364,6 @@ impl fmt::Debug for G2 {
     }
 }
 
-impl fmt::Display for G2 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureG2({})", self.to_hex())
-    }
-}
-
 impl Hashable for G2 {
     fn hash(&self, state: &mut Hasher) {
         "SecureG2".hash(state);
@@ -448,12 +429,6 @@ impl GT {
     }
 }
 
-impl fmt::Display for GT {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureGT({})", self.to_hex())
-    }
-}
-
 impl Hashable for GT {
     fn hash(&self, state: &mut Hasher) {
         "SecureGT".hash(state);
@@ -489,15 +464,9 @@ impl SecretKey {
     }
 }
 
-impl fmt::Display for SecretKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureSKey({})", self.to_hex())
-    }
-}
-
 impl fmt::Debug for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureSKey({})", self.to_hex())
+        f.write_str("SecureSKey(*HIDDEN DATA*)")
     }
 }
 
@@ -565,7 +534,8 @@ impl fmt::Debug for PublicKey {
 
 impl fmt::Display for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecurePKey({})", self.to_hex())
+        // display only first 6 bytes.
+        write!(f, "{}", &self.to_hex()[0..12])
     }
 }
 
@@ -645,9 +615,10 @@ impl SecretSubKey {
     }
 }
 
-impl fmt::Display for SecretSubKey {
+impl fmt::Debug for SecretSubKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureSSubKey({})", self.to_hex())
+        // display only first 6 bytes.
+        write!(f, "SecretSubKey(*HIDDEN DATA*)")
     }
 }
 
@@ -694,7 +665,8 @@ impl PublicSubKey {
 
 impl fmt::Display for PublicSubKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecurePSubKey({})", self.to_hex())
+        // display only first 6 bytes.
+        write!(f, "{}", &self.to_hex()[0..12])
     }
 }
 
@@ -754,12 +726,6 @@ impl Signature {
 }
 
 impl fmt::Debug for Signature {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureSig({})", self.to_hex())
-    }
-}
-
-impl fmt::Display for Signature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "SecureSig({})", self.to_hex())
     }
@@ -912,12 +878,6 @@ impl RVal {
     pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
         let g = G2::try_from_hex(s)?;
         Ok(RVal(g))
-    }
-}
-
-impl fmt::Display for RVal {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecureRVal({})", self.to_hex())
     }
 }
 

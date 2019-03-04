@@ -129,7 +129,8 @@ impl fmt::Debug for Hash {
 
 impl fmt::Display for Hash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(self, f)
+        // display only first 6 bytes.
+        write!(f, "{}", &self.to_hex()[0..12])
     }
 }
 

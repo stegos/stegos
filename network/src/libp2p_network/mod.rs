@@ -182,7 +182,7 @@ fn new_service(
                 Async::Ready(None) | Async::NotReady => break,
             }
         }
-        trace!("Finished Swatm poll!");
+        trace!("Finished Swarm poll!");
         Ok(Async::NotReady)
     });
 
@@ -202,6 +202,8 @@ pub struct Libp2pBehaviour<TSubstream: AsyncRead + AsyncWrite> {
     my_pkey: secure::PublicKey,
     #[behaviour(ignore)]
     my_skey: secure::SecretKey,
+    #[behaviour(ignore)]
+    topics_map: HashMap<floodsub::TopicHash, String>,
 }
 
 impl<TSubstream> Libp2pBehaviour<TSubstream>
@@ -219,11 +221,12 @@ where
             unicast_consumers: HashMap::new(),
             my_pkey: keychain.network_pkey.clone(),
             my_skey: keychain.network_skey.clone(),
+            topics_map: HashMap::new(),
         };
         let unicast_topic = floodsub::TopicBuilder::new(UNICAST_TOPIC).build();
         behaviour.floodsub.subscribe(unicast_topic);
-        debug!(
-            "Listening for unicast message for key: {}",
+        debug!(target: "stegos_network::floodsub",
+            "Listening for unicast message: my_key={}",
             behaviour.my_pkey.clone().to_string()
         );
         behaviour
@@ -233,8 +236,9 @@ where
         trace!("Control event: {:#?}", msg);
         match msg {
             ControlMessage::Subscribe { topic, handler } => {
-                let floodsub_topic = floodsub::TopicBuilder::new(topic).build();
+                let floodsub_topic = floodsub::TopicBuilder::new(topic.clone()).build();
                 let topic_hash = floodsub_topic.hash();
+                self.topics_map.insert(topic_hash.clone(), topic);
                 self.consumers
                     .entry(topic_hash.clone())
                     .or_insert(SmallVec::new())
@@ -242,6 +246,11 @@ where
                 self.floodsub.subscribe(floodsub_topic);
             }
             ControlMessage::Publish { topic, data } => {
+                debug!(target: "stegos_network::floodsub",
+                    "Sending broadcast message: topic={}, size={}",
+                    topic,
+                    data.len(),
+                );
                 let floodsub_topic = floodsub::TopicBuilder::new(topic).build();
                 self.floodsub.publish(floodsub_topic, data)
             }
@@ -259,6 +268,14 @@ where
                 protocol_id,
                 data,
             } => {
+                debug!(target: "stegos_network::floodsub",
+                    "Sending unicast message: to={}, from={}, protocol={}, size={}",
+                    to,
+                    self.my_pkey,
+                    protocol_id,
+                    data.len(),
+                );
+
                 if to == self.my_pkey {
                     let msg = UnicastMessage {
                         from: to.clone(),
@@ -313,11 +330,11 @@ where
                     Ok((from, to, protocol_id, data)) => {
                         // send unicast message upstream
                         if to == self.my_pkey {
-                            debug!(
-                                "Received unicast message with protocol id: {} from: {}\n\tdata: {}",
-                                protocol_id,
+                            debug!(target: "stegos_network::floodsub",
+                                "Received unicast message: from={}, protocol={} size={}",
                                 from,
-                                String::from_utf8_lossy(&data)
+                                protocol_id,
+                                data.len()
                             );
                             let msg = UnicastMessage { from, data };
                             self.unicast_consumers
@@ -326,7 +343,7 @@ where
                                 .retain({
                                     move |c| {
                                         if let Err(e) = c.unbounded_send(msg.clone()) {
-                                            error!("Error sending data to consumer: {}", e);
+                                            error!(target:"stegos_network::floodsub", "Error sending data to consumer: {}", e);
                                             false
                                         } else {
                                             true
@@ -339,16 +356,22 @@ where
                 }
             }
             for t in message.topics.into_iter() {
-                debug!(
-                    "Got message for topic {}, sending to consumers",
-                    t.clone().into_string()
+                let topic = match self.topics_map.get(&t) {
+                    Some(t) => t.clone(),
+                    None => "Unknown".to_string(),
+                };
+
+                debug!(target: "stegos_network::floodsub",
+                    "Received broadcast message: topic={}, size={}",
+                    topic,
+                    message.data.len(),
                 );
                 let consumers = self.consumers.entry(t).or_insert(SmallVec::new());
                 consumers.retain({
                     let data = &message.data;
                     move |c| {
                         if let Err(e) = c.unbounded_send(data.clone()) {
-                            error!("Error sending data to consumer: {}", e);
+                            error!(target: "stegos_network::floodsub", "Error sending data to consumer: {}", e);
                             false
                         } else {
                             true
@@ -367,7 +390,7 @@ where
     fn inject_event(&mut self, out: KademliaOut) {
         match out {
             KademliaOut::FindNodeResult { key, closer_peers } => {
-                debug!(
+                debug!(target: "stegos_network::kademlia",
                     "Kademlia query for {:?} yielded {:?} results",
                     key,
                     closer_peers.len()
@@ -378,7 +401,7 @@ where
                 closer_peers: _,
                 provider_peers,
             } => {
-                debug!("Got providers: {:#?} for key: {:#?}", provider_peers, key);
+                debug!(target: "stegos_network::kademlia", "Got providers: {:#?} for key: {:#?}", provider_peers, key);
             }
         }
     }

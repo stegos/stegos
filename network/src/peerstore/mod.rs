@@ -126,7 +126,7 @@ impl KademliaTopology for MemoryPeerstore {
     type GetProvidersIter = vec::IntoIter<PeerId>;
 
     fn add_kad_discovered_address(&mut self, peer: PeerId, addr: Multiaddr, _: KadConnectionType) {
-        debug!("Kad discovered peer: {}", peer.to_base58());
+        debug!(target: "stegos_network::kademlia", "Kad discovered peer: {}", peer.to_base58());
         if &peer != self.local_peer_id() {
             self.add_address(peer, addr)
         }
@@ -145,7 +145,7 @@ impl KademliaTopology for MemoryPeerstore {
     /// Add known provider for the key
     /// TODO: Add TTL
     fn add_provider(&mut self, key: Multihash, peer: PeerId) {
-        debug!(
+        debug!(target: "stegos_network::kademlia",
             "The key: {} is provided by: {}",
             bs58::encode(key.as_bytes()).into_string(),
             peer.to_base58()
@@ -156,7 +156,7 @@ impl KademliaTopology for MemoryPeerstore {
                 peers.push(peer);
             }
         } else {
-            warn!("Received ADD_PROVIDER with unsupported Hash scheme");
+            warn!(target: "stegos_network::kademlia", "Received ADD_PROVIDER with unsupported Hash scheme");
         }
     }
 

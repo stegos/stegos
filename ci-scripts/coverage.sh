@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
 
+apt-get update && apt-get install -y \
+    build-essential \
+    binutils-dev \
+    cmake \
+    libdw-dev \
+    libelf-dev \
+    libiberty-dev \
+    elfutils
+
 wget https://github.com/SimonKagstrom/kcov/archive/v36.tar.gz
 tar xzf v36.tar.gz
 cd kcov-36
 mkdir build
-cd build 
+cd build
 cmake ..
 make
 make install
@@ -21,8 +30,8 @@ modules='stegos
          stegos_txpool
          stegos_wallet
          '
-for m in ${modules}; do 
-    for file in target/debug/${m}-*[^\.d]; do 
+for m in ${modules}; do
+    for file in target/debug/${m}-*[^\.d]; do
         mkdir -p "target/cov/$(basename $file)"
         kcov --exclude-pattern=/.cargo,/usr/lib --verify "target/cov/$(basename $file)" "$file"
     done

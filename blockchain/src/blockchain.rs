@@ -346,6 +346,9 @@ impl Blockchain {
                 .with_label_values(&[key_str.as_str()])
                 .set(*stake);
         }
+
+        metrics::HEIGHT.inc();
+        metrics::EPOCH.inc();
         Ok(())
     }
 
@@ -535,6 +538,8 @@ impl Blockchain {
         self.monetary_adjustment = monetary_adjustment;
         self.last_block_timestamp = clock::now();
         self.blocks.push(Block::MonetaryBlock(block));
+        metrics::HEIGHT.inc();
+        metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
         Ok((pruned, outputs))
     }
 }

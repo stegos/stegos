@@ -26,6 +26,7 @@
 mod blockchain;
 mod error;
 mod message;
+pub mod metrics;
 pub mod protos;
 mod state;
 

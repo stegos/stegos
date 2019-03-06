@@ -23,6 +23,7 @@
 
 use crate::error::*;
 use crate::message::*;
+use crate::metrics;
 use bitvector::BitVector;
 use log::*;
 use std::collections::BTreeMap;
@@ -142,6 +143,7 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
     pub fn reset(&mut self, height: u64) {
         self.height = height;
         self.state = ConsensusState::Propose;
+        metrics::CONSENSUS_STATE.set(metrics::ConsensusState::Propose as i64);
         debug!("New => {}({})", self.state.name(), height);
         self.prevotes.clear();
         self.precommits.clear();
@@ -418,6 +420,7 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
                     &msg.pkey
                 );
                 self.state = ConsensusState::Prevote;
+                metrics::CONSENSUS_STATE.set(metrics::ConsensusState::Prevote as i64);
                 self.request = Some(request);
                 self.proof = Some(proof);
                 self.process_inbox();
@@ -472,6 +475,7 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
                     self.height
                 );
                 self.state = ConsensusState::Precommit;
+                metrics::CONSENSUS_STATE.set(metrics::ConsensusState::Precommit as i64);
                 if self.prevotes.contains_key(&self.pkey) {
                     // Send a pre-commit vote.
                     self.precommit(Hash::digest(&self.request));
@@ -495,6 +499,7 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
                     self.height
                 );
                 self.state = ConsensusState::Commit;
+                metrics::CONSENSUS_STATE.set(metrics::ConsensusState::Commit as i64);
             }
         }
 

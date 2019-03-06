@@ -32,6 +32,11 @@ pub enum BlockchainError {
     BlockHashCollision(Hash),
     #[fail(display = "UXTO hash collision: {}.", _0)]
     OutputHashCollision(Hash),
+    #[fail(
+        display = "Invalid or out-of-order epoch: block={}, expected={}, got={}",
+        _0, _1, _2
+    )]
+    OutOfOrderBlockEpoch(Hash, u64, u64),
     #[fail(display = "Missing UXTO {}.", _0)]
     MissingUTXO(Hash),
     #[fail(display = "Invalid block monetary balance.")]
@@ -48,4 +53,8 @@ pub enum BlockchainError {
     MissingValidators,
     #[fail(display = "The leader must be validator.")]
     LeaderIsNotValidator,
+    #[fail(display = "KeyBlocks validators not equal to our stakers view.")]
+    ValidatorsNotEqualToOurStakers,
+    #[fail(display = "Invalid block BLS multisignature: block={}", _0)]
+    InvalidBlockSignature(Hash),
 }

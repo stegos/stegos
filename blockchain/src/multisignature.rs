@@ -43,8 +43,6 @@ pub fn create_multi_signature(
     validators: &BTreeMap<secure::PublicKey, i64>,
     signatures: &BTreeMap<secure::PublicKey, secure::Signature>,
 ) -> (secure::Signature, BitVector) {
-    assert!(check_supermajority(signatures.len(), validators.len()));
-
     let mut multisig = secure::G1::zero();
     let mut multisigmap = BitVector::new(VALIDATORS_MAX);
     let mut count: usize = 0;
@@ -66,6 +64,21 @@ pub fn create_multi_signature(
 }
 
 ///
+/// Create a new self-signed multisignature.
+///
+pub fn create_initial_multi_signature(
+    hash: &Hash,
+    skey: &secure::SecretKey,
+    pkey: &secure::PublicKey,
+    validators: &BTreeMap<secure::PublicKey, i64>,
+) -> (secure::Signature, BitVector) {
+    let mut signatures: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();
+    let sig = secure::sign_hash(hash, skey);
+    signatures.insert(pkey.clone(), sig);
+    create_multi_signature(validators, &signatures)
+}
+
+///
 /// Check multi-signature
 ///
 pub fn check_multi_signature(
@@ -74,6 +87,7 @@ pub fn check_multi_signature(
     multisigmap: &BitVector,
     validators: &BTreeMap<secure::PublicKey, i64>,
     leader: &secure::PublicKey,
+    skip_supermajority: bool,
 ) -> bool {
     let mut has_leader = false;
     let mut multisigpkey = secure::G2::zero();
@@ -95,7 +109,7 @@ pub fn check_multi_signature(
     }
 
     // Multi-signature must be signed by the supermajority of validators.
-    if !check_supermajority(count, validators.len()) {
+    if !skip_supermajority && !check_supermajority(count, validators.len()) {
         return false;
     }
 

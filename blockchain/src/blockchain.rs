@@ -22,6 +22,7 @@
 // SOFTWARE.
 
 use crate::block::*;
+use crate::check_multi_signature;
 use crate::config::*;
 use crate::error::*;
 use crate::escrow::*;
@@ -34,8 +35,10 @@ use failure::Error;
 use log::*;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::time::Instant;
 use stegos_crypto::bulletproofs::fee_a;
+use stegos_crypto::bulletproofs::validate_range_proof;
 use stegos_crypto::curve1174::cpt::Pt;
 use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
@@ -177,19 +180,24 @@ impl Blockchain {
 
     fn handle_block(&mut self, block: Block, current_timestamp: u64) {
         debug!(
-            "load saved block hash = {:?}, block = {:?}",
-            Hash::digest(&block),
-            block
+            "Loading a block from the disk: hash={}",
+            Hash::digest(&block)
         );
+        // Skip validate_key_block()/validate_monetary_block().
         match block {
             Block::MonetaryBlock(block) => {
-                let _ = self
-                    .register_monetary_block(block, current_timestamp)
-                    .expect("error processing saved monetary block.");
+                if cfg!(debug_assertions) {
+                    self.validate_monetary_block(&block, false, current_timestamp)
+                        .expect("a monetary block from the disk is valid")
+                }
+                let _ = self.register_monetary_block(block, current_timestamp);
             }
             Block::KeyBlock(block) => {
-                self.register_key_block(block)
-                    .expect("error processing saved key block.");
+                if cfg!(debug_assertions) {
+                    self.validate_key_block(&block, false)
+                        .expect("a key block from the disk is valid")
+                }
+                self.register_key_block(block);
             }
         }
     }
@@ -292,10 +300,61 @@ impl Blockchain {
         self.validators = validators;
     }
 
-    pub fn register_key_block(&mut self, block: KeyBlock) -> Result<(), Error> {
+    //----------------------------------------------------------------------------------------------
+    // Key Blocks
+    //----------------------------------------------------------------------------------------------
+
+    ///
+    /// Add a new block into blockchain.
+    ///
+    pub fn push_key_block(&mut self, block: KeyBlock) -> Result<(), Error> {
         let block_id = self.blocks.len();
+
+        //
+        // Validate the key block.
+        //
+        self.validate_key_block(&block, false)?;
+
+        //
+        // Write the key block to the disk.
+        //
         self.database
             .insert(block_id as u64, Block::KeyBlock(block.clone()))?;
+
+        //
+        // Update in-memory indexes and metadata.
+        //
+        self.register_key_block(block);
+
+        Ok(())
+    }
+
+    ///
+    /// Validate sealed key block.
+    ///
+    /// # Arguments
+    ///
+    /// * `block` - block to validate.
+    /// * `skip_supermajority` - don't check for the supermajority of votes.
+    ///                          Used to validating block proposals.
+    ///
+    pub fn validate_key_block(
+        &self,
+        block: &KeyBlock,
+        skip_supermajority: bool,
+    ) -> Result<(), Error> {
+        let block_hash = Hash::digest(&block);
+        debug!("Validating a key block: hash={}", &block_hash);
+
+        // Check epoch.
+        if block.header.base.epoch != self.epoch + 1 {
+            return Err(BlockchainError::OutOfOrderBlockEpoch(
+                block_hash,
+                self.epoch + 1,
+                block.header.base.epoch,
+            )
+            .into());
+        }
 
         // Check previous hash.
         if let Some(previous_block) = self.blocks.last() {
@@ -310,35 +369,75 @@ impl Blockchain {
         }
 
         // Check new hash.
-        let this_hash = Hash::digest(&block);
-        if let Some(_) = self.block_by_hash.get(&this_hash) {
-            return Err(BlockchainError::BlockHashCollision(this_hash).into());
+        if let Some(_) = self.block_by_hash.get(&block_hash) {
+            return Err(BlockchainError::BlockHashCollision(block_hash).into());
         }
 
-        // -----------------------------------------------------------------------------------------
-        // Alright, starting transaction.
-        // -----------------------------------------------------------------------------------------
+        // Check validators.
+        if block.header.validators.is_empty() {
+            return Err(BlockchainError::MissingValidators.into());
+        }
+        if !block.header.validators.contains(&block.header.leader) {
+            return Err(BlockchainError::LeaderIsNotValidator.into());
+        }
+        let validators = self.escrow.multiget(&block.header.validators);
+        let stakers = self.escrow.get_stakers_majority();
+        // We didn't allows fork, this is done by forcing group to be the same as stakers count.
+        if stakers != validators {
+            return Err(BlockchainError::ValidatorsNotEqualToOurStakers.into());
+        }
 
-        info!(
-            "Registered key block: height={}, hash={}",
-            self.blocks.len() + 1,
-            this_hash
-        );
+        // Check multisignature.
+        if !check_multi_signature(
+            &block_hash,
+            &block.header.base.multisig,
+            &block.header.base.multisigmap,
+            &validators,
+            &block.header.leader,
+            skip_supermajority,
+        ) {
+            return Err(BlockchainError::InvalidBlockSignature(block_hash).into());
+        }
 
-        if let Some(_) = self.block_by_hash.insert(this_hash.clone(), block_id) {
+        debug!("The key block is valid: hash={}", &block_hash);
+        Ok(())
+    }
+
+    ///
+    /// Update indexes and metadata.
+    ///
+    fn register_key_block(&mut self, block: KeyBlock) {
+        let block_id = self.blocks.len();
+        let block_hash = Hash::digest(&block);
+
+        //
+        // Update indexes.
+        //
+        if let Some(_) = self.block_by_hash.insert(block_hash.clone(), block_id) {
             panic!("Block hash collision");
         }
 
-        assert_eq!(self.epoch + 1, block.header.base.epoch);
+        //
+        // Update metadata.
+        //
+        self.last_block_timestamp = clock::now();
         self.epoch = self.epoch + 1;
-        self.last_epoch_change = self.blocks().len();
-
+        self.last_epoch_change = block_id;
         self.leader = block.header.leader.clone();
         self.facilitator = block.header.facilitator.clone();
         self.validators = self.escrow.multiget(&block.header.validators);
+        metrics::HEIGHT.inc();
+        metrics::EPOCH.inc();
 
-        self.last_block_timestamp = clock::now();
+        //
+        // Save a copy to memory.
+        //
         self.blocks.push(Block::KeyBlock(block));
+
+        info!(
+            "Registered key block: height={}, hash={}",
+            block_id, block_hash
+        );
         debug!("Validators: {:?}", &self.validators);
         for (key, stake) in self.validators.iter() {
             let key_str = key.to_string();
@@ -346,20 +445,70 @@ impl Blockchain {
                 .with_label_values(&[key_str.as_str()])
                 .set(*stake);
         }
-
-        metrics::HEIGHT.inc();
-        metrics::EPOCH.inc();
-        Ok(())
     }
 
-    pub fn register_monetary_block(
+    // ---------------------------------------------------------------------------------------------
+    // Monetary blocks
+    // ---------------------------------------------------------------------------------------------
+
+    ///
+    /// Add a new monetary block into blockchain.
+    ///
+    pub fn push_monetary_block(
         &mut self,
-        mut block: MonetaryBlock,
+        block: MonetaryBlock,
         current_timestamp: u64,
     ) -> Result<(Vec<Output>, Vec<Output>), Error> {
         let block_id = self.blocks.len();
+
+        //
+        // Validate the monetary block.
+        //
+        self.validate_monetary_block(&block, false, current_timestamp)?;
+
+        //
+        // Write the monetary block to the disk.
+        //
         self.database
             .insert(block_id as u64, Block::MonetaryBlock(block.clone()))?;
+
+        //
+        // Update in-memory indexes and metadata.
+        //
+        let (inputs, outputs) = self.register_monetary_block(block, current_timestamp);
+
+        Ok((inputs, outputs))
+    }
+
+    ///
+    /// Validate sealed monetary block.
+    ///
+    /// # Arguments
+    ///
+    /// * `block` - block to validate.
+    /// * `skip_supermajority` - don't check for the supermajority of votes.
+    ///                          Used to validating block proposals.
+    /// * `current_timestamp` - current time.
+    ///                         Used to validating escrow.
+    ///
+    pub fn validate_monetary_block(
+        &self,
+        block: &MonetaryBlock,
+        skip_supermajority: bool,
+        current_timestamp: u64,
+    ) -> Result<(), Error> {
+        let block_hash = Hash::digest(&block);
+        debug!("Validating a monetary block: hash={}", &block_hash);
+
+        // Check epoch.
+        if block.header.base.epoch != self.epoch {
+            return Err(BlockchainError::OutOfOrderBlockEpoch(
+                block_hash,
+                self.epoch,
+                block.header.base.epoch,
+            )
+            .into());
+        }
 
         // Check previous hash.
         if let Some(previous_block) = self.blocks.last() {
@@ -374,74 +523,128 @@ impl Blockchain {
         }
 
         // Check new hash.
-        let this_hash = Hash::digest(&block);
-        if let Some(_) = self.block_by_hash.get(&this_hash) {
-            return Err(BlockchainError::BlockHashCollision(this_hash).into());
+        if let Some(_) = self.block_by_hash.get(&block_hash) {
+            return Err(BlockchainError::BlockHashCollision(block_hash).into());
+        }
+
+        // Check multisignature (exclude epoch == 0 for genesis).
+        if self.epoch > 0
+            && !check_multi_signature(
+                &block_hash,
+                &block.header.base.multisig,
+                &block.header.base.multisigmap,
+                &self.validators,
+                &self.leader,
+                skip_supermajority,
+            )
+        {
+            return Err(BlockchainError::InvalidBlockSignature(block_hash).into());
         }
 
         let mut burned = ECp::inf();
         let mut created = ECp::inf();
 
-        // Check all inputs.
-        for output_hash in &block.body.inputs {
-            if let Some(OutputKey { block_id, path }) = self.output_by_hash.get(output_hash) {
-                assert!(*block_id < self.blocks.len());
-                let block = &self.blocks[*block_id];
-                if let Block::MonetaryBlock(MonetaryBlock { header: _, body }) = block {
-                    if let Some(output) = body.outputs.lookup(&path) {
-                        // Check that hash is the same.
-                        assert_eq!(Hash::digest(output), *output_hash);
-
-                        // Calculate balance.
-                        match output.as_ref() {
-                            Output::PaymentOutput(o) => {
-                                burned += Pt::decompress(o.proof.vcmt)?;
-                            }
-                            Output::StakeOutput(o) => {
-                                burned += fee_a(o.amount);
-                            }
-                        }
-                    } else {
-                        // Internal database inconsistency - missing UTXO in block.
-                        unreachable!();
-                    }
-                } else {
-                    // Internal database inconsistency - invalid block type.
-                    unreachable!();
-                }
-            } else {
-                // Cannot find UTXO referred by block.
-                return Err(BlockchainError::MissingUTXO(*output_hash).into());
+        //
+        // Validate inputs.
+        //
+        let mut hasher = Hasher::new();
+        let inputs_count: u64 = block.body.inputs.len() as u64;
+        inputs_count.hash(&mut hasher);
+        let mut input_set: HashSet<Hash> = HashSet::new();
+        let inputs = self.outputs_by_hashes(&block.body.inputs)?;
+        for (input_hash, input) in block.body.inputs.iter().zip(inputs.iter()) {
+            debug_assert_eq!(Hash::digest(input), *input_hash);
+            // Check for the duplicate input.
+            if !input_set.insert(*input_hash) {
+                return Err(BlockchainError::DuplicateBlockInput(*input_hash).into());
             }
+            // Check UTXO.
+            match input {
+                Output::PaymentOutput(o) => {
+                    burned += Pt::decompress(o.proof.vcmt)?;
+                }
+                Output::StakeOutput(o) => {
+                    burned += fee_a(o.amount);
+                    self.escrow
+                        .validate_unstake(&o.validator, input_hash, current_timestamp)?;
+                }
+            }
+            input_hash.hash(&mut hasher);
         }
-
-        // Check all outputs.
-        let mut outputs_pathes: Vec<(Hash, MerklePath)> = Vec::new();
-        for (output, path) in block.body.outputs.leafs() {
+        drop(input_set);
+        let inputs_range_hash = hasher.result();
+        if block.header.inputs_range_hash != inputs_range_hash {
+            let expected = block.header.inputs_range_hash.clone();
+            let got = inputs_range_hash;
+            return Err(BlockchainError::InvalidBlockInputsHash(expected, got).into());
+        }
+        //
+        // Validate outputs.
+        //
+        let mut output_set: HashSet<Hash> = HashSet::new();
+        for (output, _path) in block.body.outputs.leafs() {
             // Check that hash is unique.
             let output_hash = Hash::digest(output.as_ref());
             if let Some(_) = self.output_by_hash.get(&output_hash) {
                 return Err(BlockchainError::OutputHashCollision(output_hash).into());
             }
-            outputs_pathes.push((output_hash, path));
-
-            // Calculate balance.
+            // Check for the duplicate output.
+            if !output_set.insert(output_hash) {
+                return Err(BlockchainError::DuplicateBlockOutput(output_hash).into());
+            }
+            // Check UTXO.
             match output.as_ref() {
                 Output::PaymentOutput(o) => {
+                    // Validate bullet proofs.
+                    if !validate_range_proof(&o.proof) {
+                        return Err(OutputError::InvalidBulletProof.into());
+                    }
+                    // Validate payload.
+                    if o.payload.ctxt.len() != PAYMENT_PAYLOAD_LEN {
+                        return Err(OutputError::InvalidPayloadLength(
+                            PAYMENT_PAYLOAD_LEN,
+                            o.payload.ctxt.len(),
+                        )
+                        .into());
+                    }
+                    // Update balance.
                     created += Pt::decompress(o.proof.vcmt)?;
                 }
                 Output::StakeOutput(o) => {
+                    // Validate amount.
+                    if o.amount <= 0 {
+                        return Err(OutputError::InvalidStake.into());
+                    }
+                    // Validate payload.
+                    if o.payload.ctxt.len() != STAKE_PAYLOAD_LEN {
+                        return Err(OutputError::InvalidPayloadLength(
+                            STAKE_PAYLOAD_LEN,
+                            o.payload.ctxt.len(),
+                        )
+                        .into());
+                    }
+                    // Update balance.
                     created += fee_a(o.amount);
                 }
             }
         }
+        drop(output_set);
+        if block.header.outputs_range_hash != *block.body.outputs.roothash() {
+            let expected = block.header.outputs_range_hash.clone();
+            let got = block.body.outputs.roothash().clone();
+            return Err(BlockchainError::InvalidBlockOutputsHash(expected, got).into());
+        }
 
-        // Check the block monetary balance.
+        //
+        // Validate block monetary balance.
+        //
         if fee_a(block.header.monetary_adjustment) + burned - created != block.header.gamma * (*G) {
             return Err(BlockchainError::InvalidBlockBalance.into());
         }
 
-        // Check the global monetary balance.
+        //
+        // Validate the global monetary balance.
+        //
         let created: ECp = self.created + created;
         let burned: ECp = self.burned + burned;
         let gamma: Fr = self.gamma + block.header.gamma;
@@ -450,97 +653,144 @@ impl Blockchain {
             panic!("Invalid global monetary balance");
         }
 
-        // -----------------------------------------------------------------------------------------
-        // Alright, starting transaction.
-        // -----------------------------------------------------------------------------------------
-        info!(
-            "Registered monetary block: height={}, hash={}, inputs={}, outputs={}",
-            self.blocks.len() + 1,
-            this_hash,
-            block.body.inputs.len(),
-            outputs_pathes.len()
-        );
+        debug!("The monetary block is valid: hash={}", &block_hash);
+        Ok(())
+    }
 
-        let mut pruned: Vec<Output> = Vec::with_capacity(block.body.inputs.len());
+    //
+    fn register_monetary_block(
+        &mut self,
+        mut block: MonetaryBlock,
+        current_timestamp: u64,
+    ) -> (Vec<Output>, Vec<Output>) {
+        let block_id = self.blocks.len();
+        let block_hash = Hash::digest(&block);
+        let block_timestamp = block.header.base.timestamp;
 
-        // Remove spent outputs.
-        for output_hash in &block.body.inputs {
-            info!("Pruned UXTO: hash={}", output_hash);
-            // Remove from the set of unspent outputs.
-            if let Some(OutputKey { block_id, path }) = self.output_by_hash.remove(output_hash) {
+        let mut burned = ECp::inf();
+        let mut created = ECp::inf();
+
+        //
+        // Process inputs.
+        //
+        let mut inputs: Vec<Output> = Vec::with_capacity(block.body.inputs.len());
+        for input_hash in &block.body.inputs {
+            if let Some(OutputKey { block_id, path }) = self.output_by_hash.remove(input_hash) {
                 let block = &mut self.blocks[block_id];
                 if let Block::MonetaryBlock(MonetaryBlock { header: _, body }) = block {
                     // Remove from the block.
-                    if let Some(output) = body.outputs.prune(&path) {
-                        pruned.push(*output);
-                    } else {
-                        unreachable!();
+                    match body.outputs.prune(&path) {
+                        Some(o) => {
+                            match o.as_ref() {
+                                Output::PaymentOutput(o) => {
+                                    burned += Pt::decompress(o.proof.vcmt)
+                                        .expect("pedersen commitment is valid");
+                                }
+                                Output::StakeOutput(o) => {
+                                    self.escrow.unstake(
+                                        o.validator,
+                                        input_hash.clone(),
+                                        current_timestamp,
+                                    );
+                                    burned += fee_a(o.amount);
+                                }
+                            }
+                            inputs.push(o.as_ref().clone());
+                        }
+                        None => {
+                            panic!(
+                                "Corrupted 'output_by_hash' index or block: utxo={}, block={}",
+                                &input_hash,
+                                Hash::digest(block)
+                            );
+                        }
                     }
                 } else {
-                    unreachable!();
+                    panic!("Corrupted 'output_by_hash' index: utxo={}", &input_hash);
                 }
             } else {
-                unreachable!();
+                panic!(
+                    "Missing input UTXO: block={}, hash={}",
+                    &block_hash, &input_hash
+                );
             }
+
+            info!("Pruned UXTO: hash={}", &input_hash);
         }
 
+        //
+        // Process outputs.
+        //
+        let mut outputs: Vec<Output> = Vec::new();
+        for (output, path) in block.body.outputs.leafs() {
+            let output_hash = Hash::digest(output.as_ref());
+
+            // Update indexes.
+            let output_key = OutputKey { block_id, path };
+            if let Some(_) = self.output_by_hash.insert(output_hash.clone(), output_key) {
+                panic!("UTXO hash collision: hash={}", output_hash);
+            }
+
+            match output.as_ref() {
+                Output::PaymentOutput(o) => {
+                    created += Pt::decompress(o.proof.vcmt).expect("pedersen commitment is valid");
+                }
+                Output::StakeOutput(o) => {
+                    created += fee_a(o.amount);
+                    let bonding_timestamp = block_timestamp + crate::escrow::BONDING_TIME;
+                    self.escrow
+                        .stake(o.validator, output_hash, bonding_timestamp, o.amount);
+                }
+            }
+
+            outputs.push(output.as_ref().clone());
+            info!("Registered UXTO: hash={}", &output_hash);
+        }
+
+        // Check the block monetary balance.
+        if fee_a(block.header.monetary_adjustment) + burned - created != block.header.gamma * (*G) {
+            panic!("Invalid block balance")
+        }
+
+        //
         // Prune inputs.
+        //
         block.body.inputs.clear();
 
-        // Register created unspent outputs.
-        for (hash, path) in outputs_pathes {
-            info!("Registered UXTO: hash={}", &hash);
+        //
+        // Update metadata.
+        //
 
-            // Create the new unspent output
-            let output_key = OutputKey { block_id, path };
-            if let Some(_) = self.output_by_hash.insert(hash, output_key) {
-                unreachable!();
-            }
+        // Global monetary balance.
+        let created: ECp = self.created + created;
+        let burned: ECp = self.burned + burned;
+        let gamma: Fr = self.gamma + block.header.gamma;
+        let monetary_adjustment: i64 = self.monetary_adjustment + block.header.monetary_adjustment;
+        if fee_a(monetary_adjustment) + burned - created != gamma * (*G) {
+            panic!("Invalid global monetary balance");
         }
-
-        // Register block
-        if let Some(_) = self.block_by_hash.insert(this_hash.clone(), block_id) {
-            unreachable!();
-        }
-
-        let outputs: Vec<Output> = block
-            .body
-            .outputs
-            .leafs()
-            .drain(..)
-            .map(|(o, _path)| *o.clone())
-            .collect();
-
-        // remove pruned outputs
-        for input in &pruned {
-            if let Output::StakeOutput(o) = input {
-                let output_hash = Hash::digest(o);
-                self.escrow
-                    .unstake(o.validator, output_hash, current_timestamp);
-            }
-        }
-
-        // register new outputs
-        for output in &outputs {
-            if let Output::StakeOutput(o) = output {
-                let output_hash = Hash::digest(o);
-                let block_timestamp = block.header.base.timestamp;
-                let bonding_timestamp = block_timestamp + crate::escrow::BONDING_TIME;
-                self.escrow
-                    .stake(o.validator, output_hash, bonding_timestamp, o.amount);
-            }
-        }
-
-        // Save the global balance.
         self.created = created;
         self.burned = burned;
         self.gamma = gamma;
         self.monetary_adjustment = monetary_adjustment;
         self.last_block_timestamp = clock::now();
-        self.blocks.push(Block::MonetaryBlock(block));
         metrics::HEIGHT.inc();
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
-        Ok((pruned, outputs))
+
+        //
+        // Save in-memory copy.
+        //
+        self.blocks.push(Block::MonetaryBlock(block));
+
+        info!(
+            "Registered monetary block: height={}, hash={}, inputs={}, outputs={}",
+            block_id,
+            block_hash,
+            inputs.len(),
+            outputs.len()
+        );
+
+        (inputs, outputs)
     }
 }
 
@@ -548,91 +798,11 @@ impl Blockchain {
 pub mod tests {
     use super::*;
 
-    use chrono::prelude::Utc;
-
     use crate::genesis::genesis;
+    use crate::multisignature::create_multi_signature;
+    use chrono::prelude::Utc;
     use std::collections::BTreeSet;
-    use stegos_crypto::curve1174::cpt::*;
     use stegos_keychain::KeyChain;
-
-    fn unspent(blockchain: &Blockchain, skey: &SecretKey) -> (Output, Fr, i64) {
-        for input_hash in blockchain.unspent() {
-            let input = blockchain.output_by_hash(&input_hash).unwrap();
-            match input {
-                Output::PaymentOutput(o) => {
-                    let payload = o.decrypt_payload(skey).expect("keys are valid");
-                    return (input.clone(), payload.gamma, payload.amount);
-                }
-                _ => {}
-            }
-        }
-        unreachable!();
-    }
-
-    fn iterate(
-        blockchain: &mut Blockchain,
-        skey: &SecretKey,
-        pkey: &PublicKey,
-    ) -> Result<(), Error> {
-        let version = 1;
-        let timestamp = Utc::now().timestamp() as u64;
-        let (epoch, previous) = {
-            let last = blockchain.last_block();
-            let base_header = last.base_header();
-            let epoch = base_header.epoch + 1;
-            let previous = Hash::digest(last);
-            (epoch, previous)
-        };
-
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
-
-        let (input, input_gamma, amount) = unspent(blockchain, skey);
-        let input_hashes = [Hash::digest(&input)];
-        let inputs = [input];
-
-        let (output, output_gamma) =
-            Output::new_payment(timestamp, skey, pkey, amount).expect("tests have valid keys");
-        let outputs = [output];
-
-        let gamma = input_gamma - output_gamma;
-        let block = MonetaryBlock::new(base, gamma, 0, &input_hashes, &outputs);
-        block.validate(&inputs).expect("block is valid");
-        blockchain.register_monetary_block(block, timestamp)?;
-
-        Ok(())
-    }
-
-    #[test]
-    fn basic() {
-        use simple_logger;
-        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
-        let keychains = [
-            KeyChain::new_mem(),
-            KeyChain::new_mem(),
-            KeyChain::new_mem(),
-        ];
-
-        let current_timestamp = Utc::now().timestamp() as u64;
-        let blocks = genesis(&keychains, 1000, 1_000_000, current_timestamp);
-        let mut blockchain = Blockchain::testing();
-        for block in blocks {
-            match block {
-                Block::KeyBlock(block) => blockchain.register_key_block(block).unwrap(),
-                Block::MonetaryBlock(block) => {
-                    blockchain
-                        .register_monetary_block(block, current_timestamp)
-                        .unwrap();
-                }
-            }
-        }
-
-        let skey = &keychains[0].wallet_skey;
-        let pkey = &keychains[0].wallet_pkey;
-        assert!(blockchain.blocks().len() > 0);
-        for _ in 0..3 {
-            iterate(&mut blockchain, skey, pkey).unwrap();
-        }
-    }
 
     #[test]
     fn block_range_limit() {
@@ -644,16 +814,17 @@ pub mod tests {
             KeyChain::new_mem(),
         ];
 
+        let stake = MIN_STAKE_AMOUNT;
         let current_timestamp = Utc::now().timestamp() as u64;
-        let blocks = genesis(&keychains, 1000, 1_000_000, current_timestamp);
+        let blocks = genesis(&keychains, stake, 1_000_000, current_timestamp);
         let mut blockchain = Blockchain::testing();
         for block in blocks {
             match block {
-                Block::KeyBlock(block) => blockchain.register_key_block(block).unwrap(),
+                Block::KeyBlock(block) => blockchain.register_key_block(block),
                 Block::MonetaryBlock(block) => {
                     blockchain
-                        .register_monetary_block(block, current_timestamp)
-                        .unwrap();
+                        .push_monetary_block(block, current_timestamp)
+                        .expect("block is valid");
                 }
             }
         }
@@ -664,7 +835,7 @@ pub mod tests {
         assert!(blockchain.blocks().len() > 0);
         let version: u64 = 1;
         for epoch in 2..12 {
-            let new_block = {
+            let mut block = {
                 let previous = Hash::digest(&blockchain.last_block());
                 let base = BaseBlockHeader::new(version, previous, epoch, 0);
 
@@ -675,7 +846,20 @@ pub mod tests {
 
                 KeyBlock::new(base, leader, facilitator, validators)
             };
-            blockchain.register_key_block(new_block).unwrap();
+            let block_hash = Hash::digest(&block);
+            let validators: BTreeMap<secure::PublicKey, i64> = keychains
+                .iter()
+                .map(|p| (p.network_pkey.clone(), stake))
+                .collect();
+            let mut signatures: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();
+            for keychain in &keychains {
+                let sig = secure::sign_hash(&block_hash, &keychain.network_skey);
+                signatures.insert(keychain.network_pkey.clone(), sig);
+            }
+            let (multisig, multisigmap) = create_multi_signature(&validators, &signatures);
+            block.header.base.multisig = multisig;
+            block.header.base.multisigmap = multisigmap;
+            blockchain.push_key_block(block).expect("block is valid");
         }
 
         assert_eq!(blockchain.blocks_range(&start, 1).unwrap().len(), 1);

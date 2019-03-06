@@ -80,7 +80,6 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64, timestamp: u64) -
         let gamma = -outputs_gamma;
         MonetaryBlock::new(base, gamma, coins, &[], &outputs)
     };
-    block1.validate(&[]).expect("genesis is valid");
 
     //
     // Create initial Key Block.

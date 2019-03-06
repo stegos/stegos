@@ -12,6 +12,7 @@ before_script:
 # This checks should not produce any artifacts
 fast_checks:
   stage: fast_checks
+  before_script: []
   script:
     - rustup component add rustfmt
     - cargo install cargo-audit
@@ -25,12 +26,6 @@ fast_checks:
   stage: build
   script:
     - cargo build
-  artifacts:
-    expire_in: 1 week
-    paths:
-      - target/
-  dependencies:
-    - fast_checks
 
 build:linux:
   extends: .build
@@ -47,6 +42,7 @@ build:macos:
   stage: test
   script:
     - cargo test --all -- --nocapture
+  dependencies: []
   artifacts:
     expire_in: 1 week
     paths:
@@ -55,22 +51,18 @@ build:macos:
 test:linux:
   extends: .test
   image: rust:1.32
-  dependencies:
-    - build:linux
   tags:
     - linux
 
 test:macos:
   extends: .test
-  dependencies:
-    - build:macos
   tags:
     - macos
 
 code_coverage:
   stage: code_coverage
   image: rust:1.32
-  before_script:
+  before_script: []
   script:
     - ci-scripts/coverage.sh
   dependencies:

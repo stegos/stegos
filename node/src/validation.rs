@@ -91,7 +91,7 @@ pub(crate) fn validate_transaction(
     for input_hash in &tx.body.txins {
         // Check that the input can be resolved.
         // TODO: check outputs created by mempool transactions.
-        let input = match chain.output_by_hash(input_hash) {
+        let input = match chain.output_by_hash(input_hash)? {
             Some(tx_input) => tx_input,
             None => return Err(BlockchainError::MissingUTXO(input_hash.clone()).into()),
         };
@@ -102,13 +102,13 @@ pub(crate) fn validate_transaction(
         }
 
         // Check escrow.
-        if let Output::StakeOutput(input) = input {
+        if let Output::StakeOutput(ref input) = input {
             chain
                 .escrow
                 .validate_unstake(&input.validator, input_hash, current_timestamp)?;
         }
 
-        inputs.push(input.clone());
+        inputs.push(input);
     }
 
     // Check outputs.
@@ -116,7 +116,7 @@ pub(crate) fn validate_transaction(
         let output_hash = Hash::digest(output);
 
         // Check that the output is unique and don't overlap with other transactions.
-        if mempool.contains_output(&output_hash) || chain.output_by_hash(&output_hash).is_some() {
+        if mempool.contains_output(&output_hash) || chain.contains_output(&output_hash) {
             return Err(BlockchainError::OutputHashCollision(output_hash).into());
         }
     }
@@ -250,6 +250,7 @@ pub(crate) fn validate_proposed_monetary_block(
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::VERSION;
     use chrono::Utc;
     use stegos_blockchain::*;
     use stegos_crypto::curve1174::fields::Fr;
@@ -510,10 +511,9 @@ mod test {
         {
             // Register one more UTXO.
             let fee = PAYMENT_FEE;
-            let last_block = chain.last_block();
-            let previous = Hash::digest(last_block);
-            let epoch = last_block.base_header().epoch;
-            let version = last_block.base_header().version;
+            let previous = chain.last_block_hash();
+            let epoch = chain.epoch;
+            let version = VERSION;
             let base = BaseBlockHeader::new(version, previous, epoch, current_timestamp);
             let (output, outputs_gamma) =
                 Output::new_payment(current_timestamp, skey, pkey, amount - fee)

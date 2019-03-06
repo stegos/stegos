@@ -39,6 +39,8 @@ pub enum BlockchainError {
     OutOfOrderBlockEpoch(Hash, u64, u64),
     #[fail(display = "Missing UXTO {}.", _0)]
     MissingUTXO(Hash),
+    #[fail(display = "Missing Block: height={}.", _0)]
+    MissingBlock(usize),
     #[fail(display = "Invalid block monetary balance.")]
     InvalidBlockBalance,
     #[fail(display = "Invalid block inputs: expected={}, got={}.", _0, _1)]

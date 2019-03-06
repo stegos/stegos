@@ -75,6 +75,15 @@ impl ListDb {
         Ok(())
     }
 
+    /// Get record by id.
+    pub fn get(&self, height: u64) -> Result<Option<Block>, Error> {
+        let key = Self::key_u64_to_bytes(height);
+        match self.database.get(&key)? {
+            Some(buffer) => Ok(Some(Block::from_buffer(&buffer)?)),
+            None => Ok(None),
+        }
+    }
+
     /// Create iterator that traverse fully block collection.
     pub fn iter(&self) -> impl Iterator<Item = Block> {
         let mode = IteratorMode::Start;

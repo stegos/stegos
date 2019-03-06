@@ -161,7 +161,7 @@ impl NodeService {
         let master = validators.choose(&mut rng).unwrap().clone();
         debug!(
             "Selected a source node from the latest committed KeyBlock: hash={:?}, epoch={}, selected={:?}",
-            Hash::digest(self.chain.last_block()),
+            self.chain.last_block_hash(),
             self.chain.epoch,
             &master
         );
@@ -172,7 +172,7 @@ impl NodeService {
     pub fn request_history(&mut self) -> Result<(), Error> {
         let master = self.choose_master();
         info!("Downloading blocks: from={}", &master);
-        let last_hash = Hash::digest(self.chain.last_block());
+        let last_hash = self.chain.last_block_hash();
         let msg = ChainLoaderMessage::Request(RequestBlocks::new(last_hash));
         self.network
             .send(master, CHAIN_LOADER_TOPIC, msg.into_buffer()?)
@@ -214,7 +214,7 @@ impl NodeService {
             return Ok(());
         };
 
-        let last_block_hash = Hash::digest(self.chain.blocks().last().unwrap());
+        let last_block_hash = self.chain.last_block_hash();
         if last_block_hash != first_block.base_header().previous {
             // in current implementation we can ask multiple times for one block range.
             debug!("Received response with first block not linked to our blockchain history.");

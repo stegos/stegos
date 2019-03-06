@@ -195,7 +195,7 @@ const CONSENSUS_TIMER: Duration = Duration::from_secs(30);
 /// How long we should wait for network stabilization.
 pub const NETWORK_GRACE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Max count of sealed block in epoch.
-const SEALED_BLOCK_IN_EPOCH: usize = 5;
+const SEALED_BLOCK_IN_EPOCH: u64 = 5;
 /// Max difference in timestamps of leader and validators.
 const TIME_TO_RECEIVE_BLOCK: u64 = 10 * 60;
 /// Fixed reward per block.
@@ -387,12 +387,12 @@ impl NodeService {
     /// Handler for NodeMessage::Init.
     fn handle_init(&mut self, genesis: Vec<Block>) -> Result<(), Error> {
         // skip handling genesis if blockchain is not empty
-        if self.chain.blocks().len() > 0 {
+        if self.chain.height() > 0 {
             //rather recover state
             self.recover_state();
             for ((height, genesis), chain) in genesis.iter().enumerate().zip(self.chain.blocks()) {
                 let genesis_hash = Hash::digest(genesis);
-                let chain_hash = Hash::digest(chain);
+                let chain_hash = Hash::digest(&chain);
                 if genesis_hash != chain_hash {
                     error!(
                         "Found a saved chain that is not compatible to our genesis at height = {}, \
@@ -403,10 +403,10 @@ impl NodeService {
                 }
             }
 
-            let last_hash = Hash::digest(self.chain.last_block());
+            let last_hash = self.chain.last_block_hash();
             info!(
                 "Node successfully recovered from persistent storage: height={}, hash={}",
-                self.chain.blocks().len(),
+                self.chain.height(),
                 last_hash
             );
             return Ok(());
@@ -453,8 +453,8 @@ impl NodeService {
     }
 
     fn recover_state(&mut self) {
-        assert!(self.chain.blocks().len() > 0);
-        let len = self.chain.blocks().len() as u64;
+        let len = self.chain.height();
+        assert!(len > 0);
         debug!("Recovering consensus state");
         self.on_new_epoch();
         debug!("Recovering vrf system.");
@@ -487,7 +487,7 @@ impl NodeService {
         if self.chain.blocks_in_epoch() >= SEALED_BLOCK_IN_EPOCH {
             debug!("Recover at end of epoch, trying to force vrf to start.");
             self.consensus = None;
-            let block_hash = Hash::digest(self.chain.last_block());
+            let block_hash = self.chain.last_block_hash();
             let ticket = self.vrf_system.handle_epoch_end(block_hash);
             let _ = self.broadcast_vrf_ticket(ticket);
         }
@@ -575,7 +575,7 @@ impl NodeService {
         let block_hash = Hash::digest(&block);
         let header = block.base_header();
         // Check previous hash.
-        let previous_hash = Hash::digest(self.chain.last_block());
+        let previous_hash = self.chain.last_block_hash();
         if previous_hash != header.previous {
             debug!(
                 "Orphan sealed block: hash={}, epoch={}, expected_previous={:?}, got_previous={:?}",
@@ -597,7 +597,7 @@ impl NodeService {
         let block_hash = Hash::digest(&block);
 
         // Check that block is not registered yet.
-        if let Some(_) = self.chain.block_by_hash(&block_hash) {
+        if self.chain.contains_block(&block_hash) {
             warn!("Block has been already registered: hash={}", &block_hash);
             // Already registered, skip.
             return Ok(());
@@ -698,8 +698,7 @@ impl NodeService {
     /// Leader should create a KeyBlock based on last random provided by VRF.
     fn create_new_epoch(&mut self, facilitator: secure::PublicKey) -> Result<(), Error> {
         let consensus = self.consensus.as_mut().unwrap();
-        let last = self.chain.last_block();
-        let previous = Hash::digest(last);
+        let previous = self.chain.last_block_hash();
         let timestamp = Utc::now().timestamp() as u64;
         let epoch = self.chain.epoch + 1;
         let leader = consensus.leader();
@@ -907,7 +906,7 @@ impl NodeService {
 
         let current_timestamp = Utc::now().timestamp() as u64;
         let height = self.chain.height() + 1;
-        let previous = Hash::digest(self.chain.last_block());
+        let previous = self.chain.last_block_hash();
         info!(
             "I'm leader, proposing a new monetary block: height={}, previous={}",
             height, previous
@@ -1005,7 +1004,7 @@ impl NodeService {
         let epoch = chain.epoch;
 
         // Check block hash uniqueness.
-        if let Some(_) = chain.block_by_hash(&block_hash) {
+        if chain.contains_block(&block_hash) {
             return Err(NodeError::BlockAlreadyRegistered(block_hash).into());
         }
 
@@ -1017,7 +1016,7 @@ impl NodeService {
         }
 
         // Check previous hash.
-        let previous_hash = Hash::digest(chain.last_block());
+        let previous_hash = chain.last_block_hash();
         if previous_hash != base_header.previous {
             return Err(NodeError::OutOfOrderBlockHash(
                 block_hash,

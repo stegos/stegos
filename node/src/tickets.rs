@@ -148,23 +148,15 @@ pub struct TicketsSystem {
     /// Queue of out-of-order messages.
     queue: HashMap<secure::PublicKey, VRFTicket>,
 }
-use std::fmt::{self, Display};
 
 /// User-friendly printable representation of state.
 #[derive(Serialize, Clone, Debug)]
-pub struct DisplayState {
+pub struct ElectionInfo {
     height: u64,
     view_change: u32,
     state: &'static str,
     timeout: String,
     collected_tickets: Option<HashMap<String, String>>,
-}
-
-impl Display for DisplayState {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        //serialize as array, to visualize with space.
-        f.write_str(&serde_yaml::to_string(&[self]).map_err(|_| fmt::Error)?)
-    }
 }
 
 #[derive(Eq, PartialEq, Debug)]
@@ -334,8 +326,9 @@ impl TicketsSystem {
     pub fn view_change(&self) -> u32 {
         self.view_change
     }
+
     /// Returns object that represent printable part of state.
-    pub fn to_display(&self) -> DisplayState {
+    pub fn info(&self) -> ElectionInfo {
         fn format_duration(timeout: Duration, max: Duration) -> String {
             if max < timeout {
                 String::from("finished")
@@ -355,7 +348,7 @@ impl TicketsSystem {
                     clock::now().duration_since(instant),
                     COLLECTING_TICKETS_TIMER,
                 );
-                DisplayState {
+                ElectionInfo {
                     height: self.height,
                     view_change: self.view_change,
                     timeout,
@@ -374,7 +367,7 @@ impl TicketsSystem {
                     clock::now().duration_since(instant),
                     *RESTART_CONSENSUS_TIMER,
                 );
-                DisplayState {
+                ElectionInfo {
                     height: self.height,
                     view_change: self.view_change,
                     timeout,

@@ -212,10 +212,12 @@ fn report_metrics(_req: Request<Body>) -> Response<Body> {
 fn run() -> Result<(), Error> {
     let name = "Stegos";
     let version = format!(
-        "{} ({} {})",
-        env!("VERGEN_SEMVER"),
-        env!("VERGEN_SHA_SHORT"),
-        env!("VERGEN_BUILD_DATE")
+        "{}.{}.{} ({} {})",
+        env!("VERSION_MAJOR"),
+        env!("VERSION_MINOR"),
+        env!("VERSION_PATCH"),
+        env!("VERSION_COMMIT"),
+        env!("VERSION_DATE")
     );
 
     let args = App::new(name)

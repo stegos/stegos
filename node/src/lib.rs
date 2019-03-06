@@ -427,7 +427,7 @@ impl NodeService {
                         Hash::digest(&key_block)
                     );
                     let key_block2 = key_block.clone();
-                    self.chain.register_key_block(key_block)?;
+                    self.chain.push_key_block(key_block)?;
                     self.on_key_block_registered(&key_block2)?;
                 }
                 Block::MonetaryBlock(monetary_block) => {
@@ -436,13 +436,10 @@ impl NodeService {
                         self.chain.height() + 1,
                         Hash::digest(&monetary_block)
                     );
-                    monetary_block
-                        .validate(&[])
-                        .expect("monetary balance is ok");
                     let monetary_block2 = monetary_block.clone();
                     let (inputs, outputs) = self
                         .chain
-                        .register_monetary_block(monetary_block, current_timestamp)?;
+                        .push_monetary_block(monetary_block, current_timestamp)?;
                     self.on_monetary_block_registered(&monetary_block2, inputs, outputs)?;
                 }
             }
@@ -622,18 +619,16 @@ impl NodeService {
 
         match block {
             Block::KeyBlock(key_block) => {
-                validate_sealed_key_block(&key_block, &self.chain)?;
                 let key_block2 = key_block.clone();
-                self.chain.register_key_block(key_block)?;
+                self.chain.push_key_block(key_block)?;
                 self.on_key_block_registered(&key_block2)?;
             }
             Block::MonetaryBlock(monetary_block) => {
                 let current_timestamp = Utc::now().timestamp() as u64;
-                validate_sealed_monetary_block(&monetary_block, &self.chain, current_timestamp)?;
                 let monetary_block2 = monetary_block.clone();
                 let (inputs, outputs) = self
                     .chain
-                    .register_monetary_block(monetary_block, current_timestamp)?;
+                    .push_monetary_block(monetary_block, current_timestamp)?;
                 self.on_monetary_block_registered(&monetary_block2, inputs, outputs)?;
             }
         }
@@ -707,6 +702,8 @@ impl NodeService {
         let previous = Hash::digest(last);
         let timestamp = Utc::now().timestamp() as u64;
         let epoch = self.chain.epoch + 1;
+        let leader = consensus.leader();
+        assert_eq!(&leader, &self.keys.network_pkey);
 
         let base = BaseBlockHeader::new(VERSION, previous, epoch, timestamp);
         debug!(
@@ -715,14 +712,30 @@ impl NodeService {
             consensus.leader()
         );
 
-        let block = KeyBlock::new(
+        let validators = consensus.validators();
+        let mut block = KeyBlock::new(
             base,
-            consensus.leader(),
+            leader,
             facilitator,
-            consensus.validators().iter().map(|(k, _s)| *k).collect(),
+            validators.iter().map(|(k, _s)| *k).collect(),
         );
 
         let block_hash = Hash::digest(&block);
+
+        // Create initial multi-signature.
+        let (multisig, multisigmap) = create_initial_multi_signature(
+            &block_hash,
+            &self.keys.network_skey,
+            &self.keys.network_pkey,
+            &validators,
+        );
+        block.header.base.multisig = multisig;
+        block.header.base.multisigmap = multisigmap;
+
+        // Validate the block via blockchain (just double-checking here).
+        self.chain
+            .validate_key_block(&block, true)
+            .expect("proposed key block is valid");
 
         info!(
             "Created key block block: height={}, hash={}",
@@ -892,6 +905,7 @@ impl NodeService {
     fn propose_monetary_block(&mut self) -> Result<(), Error> {
         assert!(self.consensus.as_ref().unwrap().should_propose());
 
+        let current_timestamp = Utc::now().timestamp() as u64;
         let height = self.chain.height() + 1;
         let previous = Hash::digest(self.chain.last_block());
         info!(
@@ -900,7 +914,7 @@ impl NodeService {
         );
 
         // Create a new monetary block from the mempool.
-        let (block, fee_output, tx_hashes) = self.mempool.create_block(
+        let (mut block, fee_output, tx_hashes) = self.mempool.create_block(
             previous,
             VERSION,
             self.chain.epoch,
@@ -908,16 +922,24 @@ impl NodeService {
             &self.keys.wallet_skey,
             &self.keys.wallet_pkey,
         );
+        let block_hash = Hash::digest(&block);
 
-        // Validating the block (just double-checking).
+        // Create initial multi-signature.
+        let (multisig, multisigmap) = create_initial_multi_signature(
+            &block_hash,
+            &self.keys.network_skey,
+            &self.keys.network_pkey,
+            &self.chain.validators,
+        );
+        block.header.base.multisig = multisig;
+        block.header.base.multisigmap = multisigmap;
+
+        // Validate the block via blockchain (just double-checking here).
         self.chain
-            .outputs_by_hashes(&block.body.inputs)
-            .map_err(|e| e.into())
-            .and_then(|inputs| block.validate(&inputs))
-            .expect("a valid block created from the mempool");
+            .validate_monetary_block(&block, true, current_timestamp)
+            .expect("proposed monetary block is validproposed monetary block is valid");
 
         // Log info.
-        let block_hash = Hash::digest(&block);
         info!(
             "Created monetary block: height={}, hash={}",
             height, &block_hash,
@@ -1016,7 +1038,7 @@ impl NodeService {
             (Block::MonetaryBlock(block), BlockProof::MonetaryBlockProof(proof)) => {
                 // We can validate validators of MonetaryBlock only in current epoch.
                 if epoch != base_header.epoch {
-                    return Err(NodeError::OutOfOrderBlockEpoch(
+                    return Err(BlockchainError::OutOfOrderBlockEpoch(
                         block_hash,
                         epoch,
                         base_header.epoch,
@@ -1030,19 +1052,11 @@ impl NodeService {
                     &block,
                     &proof.fee_output,
                     &proof.tx_hashes,
+                    timestamp,
                 )
             }
             (Block::KeyBlock(block), BlockProof::KeyBlockProof) => {
-                // Epoch of the KeyBlock should be next our epoch.
-                if epoch + 1 != base_header.epoch {
-                    return Err(NodeError::OutOfOrderBlockEpoch(
-                        block_hash,
-                        epoch,
-                        base_header.epoch,
-                    )
-                    .into());
-                }
-                validate_proposed_key_block(consensus, block_hash, block)
+                validate_proposed_key_block(chain, consensus, block_hash, block)
             }
             (_, _) => unreachable!(),
         }
@@ -1065,7 +1079,7 @@ impl NodeService {
                 key_block.header.base.multisigmap = multisigmap;
                 let key_block2 = key_block.clone();
                 self.chain
-                    .register_key_block(key_block)
+                    .push_key_block(key_block)
                     .expect("block is validated before");
                 self.on_key_block_registered(&key_block2)
                     .expect("internal error");
@@ -1078,7 +1092,7 @@ impl NodeService {
                 let monetary_block2 = monetary_block.clone();
                 let (inputs, outputs) = self
                     .chain
-                    .register_monetary_block(monetary_block, current_timestamp)
+                    .push_monetary_block(monetary_block, current_timestamp)
                     .expect("block is validated before");
                 self.on_monetary_block_registered(&monetary_block2, inputs, outputs)
                     .expect("internal error");

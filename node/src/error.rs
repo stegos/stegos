@@ -40,11 +40,6 @@ pub enum NodeError {
         _0, _1, _2
     )]
     OutOfOrderBlockHash(Hash, Hash, Hash),
-    #[fail(
-        display = "Invalid or out-of-order epoch: block={}, expected={}, got={}",
-        _0, _1, _2
-    )]
-    OutOfOrderBlockEpoch(Hash, u64, u64),
     #[fail(display = "Block is already registered: hash={}", _0)]
     BlockAlreadyRegistered(Hash),
     #[fail(display = "Failed to validate block: expected={}, got={}", _0, _1)]
@@ -56,8 +51,6 @@ pub enum NodeError {
     InvalidBlockReward(Hash, i64, i64),
     #[fail(display = "Invalid fee UTXO: hash={}", _0)]
     InvalidFeeUTXO(Hash),
-    #[fail(display = "Invalid block BLS multisignature: block={}", _0)]
-    InvalidBlockSignature(Hash),
     #[fail(display = "Transaction missing in mempool: {}.", _0)]
     TransactionMissingInMempool(Hash),
     #[fail(display = "Transaction already exists in mempool: {}.", _0)]
@@ -67,6 +60,4 @@ pub enum NodeError {
         _0, _1
     )]
     UnsynchronizedBlock(u64, u64),
-    #[fail(display = "KeyBlocks validators not equal to our stakers view.")]
-    ValidatorsNotEqualToOurStakers,
 }

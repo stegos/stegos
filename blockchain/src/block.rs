@@ -27,7 +27,6 @@ use crate::output::*;
 use bitvector::BitVector;
 use failure::Error;
 use std::collections::BTreeSet;
-use std::collections::HashSet;
 use stegos_crypto::bulletproofs::{fee_a, validate_range_proof};
 use stegos_crypto::curve1174::cpt::Pt;
 use stegos_crypto::curve1174::ecpt::ECp;
@@ -218,18 +217,6 @@ impl KeyBlock {
     pub fn new_from_header(header: KeyBlockHeader) -> Self {
         KeyBlock { header }
     }
-
-    /// Validate basic properties of KeyBlock.
-    pub fn validate(&self) -> Result<(), Error> {
-        if self.header.validators.is_empty() {
-            return Err(BlockchainError::MissingValidators.into());
-        }
-
-        if !self.header.validators.contains(&self.header.leader) {
-            return Err(BlockchainError::LeaderIsNotValidator.into());
-        }
-        Ok(())
-    }
 }
 
 impl Hashable for KeyBlock {
@@ -306,39 +293,17 @@ impl MonetaryBlock {
         block
     }
 
-    /// Validate block.
     ///
-    /// This functions validates monetary balance, bulletproofs, inputs and outputs.
-    /// Sic: only full untrimmed blocks are currently supported.
+    /// Validate the block monetary balance.
+    ///
+    /// This function is a lightweight version of Blockchain.validate_monetary_block().
+    /// The only monetary balance is validated. For test purposes only.
     ///
     /// # Arguments
     ///
     /// * - `inputs` - UTXOs referred by self.body.inputs, in the same order as in self.body.inputs.
     ///
-    pub fn validate(&self, inputs: &[Output]) -> Result<(), Error> {
-        // Validate inputs.
-        let inputs_range_hash = {
-            let mut hasher = Hasher::new();
-            let inputs_count: u64 = self.body.inputs.len() as u64;
-            inputs_count.hash(&mut hasher);
-            for input in &self.body.inputs {
-                input.hash(&mut hasher);
-            }
-            hasher.result()
-        };
-        if self.header.inputs_range_hash != inputs_range_hash {
-            let expected = self.header.inputs_range_hash.clone();
-            let got = inputs_range_hash;
-            return Err(BlockchainError::InvalidBlockInputsHash(expected, got).into());
-        }
-
-        // Validate outputs.
-        if self.header.outputs_range_hash != *self.body.outputs.roothash() {
-            let expected = self.header.outputs_range_hash.clone();
-            let got = self.body.outputs.roothash().clone();
-            return Err(BlockchainError::InvalidBlockOutputsHash(expected, got).into());
-        }
-
+    pub fn validate_balance(&self, inputs: &[Output]) -> Result<(), Error> {
         //
         // Calculate the pedersen commitment difference in order to check the monetary balance:
         //
@@ -348,12 +313,8 @@ impl MonetaryBlock {
         let mut pedersen_commitment_diff: ECp = fee_a(self.header.monetary_adjustment);
 
         // +\sum{C_i} for i in txins
-        let mut txins_set: HashSet<Hash> = HashSet::new();
         for (txin_hash, txin) in self.body.inputs.iter().zip(inputs) {
             assert_eq!(Hash::digest(txin), *txin_hash);
-            if !txins_set.insert(*txin_hash) {
-                return Err(BlockchainError::DuplicateBlockInput(*txin_hash).into());
-            }
             match txin {
                 Output::PaymentOutput(o) => {
                     pedersen_commitment_diff += Pt::decompress(o.proof.vcmt)?;
@@ -363,27 +324,14 @@ impl MonetaryBlock {
                 }
             };
         }
-        drop(txins_set);
 
         // -\sum{C_o} for o in txouts
-        let mut txouts_set: HashSet<Hash> = HashSet::new();
         for (txout, _) in self.body.outputs.leafs() {
-            let txout_hash = Hash::digest(txout);
-            if !txouts_set.insert(txout_hash) {
-                return Err(BlockchainError::DuplicateBlockOutput(txout_hash).into());
-            }
             match **txout {
                 Output::PaymentOutput(ref o) => {
                     // Check bulletproofs of created outputs
                     if !validate_range_proof(&o.proof) {
                         return Err(OutputError::InvalidBulletProof.into());
-                    }
-                    if o.payload.ctxt.len() != PAYMENT_PAYLOAD_LEN {
-                        return Err(OutputError::InvalidPayloadLength(
-                            PAYMENT_PAYLOAD_LEN,
-                            o.payload.ctxt.len(),
-                        )
-                        .into());
                     }
                     pedersen_commitment_diff -= Pt::decompress(o.proof.vcmt)?;
                 }
@@ -391,18 +339,10 @@ impl MonetaryBlock {
                     if o.amount <= 0 {
                         return Err(OutputError::InvalidStake.into());
                     }
-                    if o.payload.ctxt.len() != STAKE_PAYLOAD_LEN {
-                        return Err(OutputError::InvalidPayloadLength(
-                            STAKE_PAYLOAD_LEN,
-                            o.payload.ctxt.len(),
-                        )
-                        .into());
-                    }
                     pedersen_commitment_diff -= fee_a(o.amount);
                 }
             };
         }
-        drop(txouts_set);
 
         // Check the monetary balance
         if pedersen_commitment_diff != self.header.gamma * (*G) {
@@ -452,49 +392,6 @@ pub mod tests {
     use stegos_crypto::pbc::secure::make_random_keys as make_secure_random_keys;
 
     #[test]
-    fn create_validate_key_block() {
-        let (_skey0, pkey0, _sig0) = make_secure_random_keys();
-
-        let version: u64 = 1;
-        let epoch: u64 = 1;
-        let timestamp = Utc::now().timestamp() as u64;
-        let previous = Hash::digest("test");
-
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
-
-        let validators: BTreeSet<secure::PublicKey> = [pkey0].iter().cloned().collect();
-        let leader = pkey0.clone();
-        let facilitator = pkey0.clone();
-
-        let mut block = KeyBlock::new(base, leader, facilitator, validators);
-        block.validate().expect("block is valid");
-
-        // Missing validators.
-        let mut validators = BTreeSet::new();
-        std::mem::swap(&mut block.header.validators, &mut validators);
-        match block.validate() {
-            Err(e) => match e.downcast::<BlockchainError>().unwrap() {
-                BlockchainError::MissingValidators => {}
-                _ => panic!(),
-            },
-            _ => panic!(),
-        }
-        std::mem::swap(&mut block.header.validators, &mut validators);
-
-        // Leader is not included to the list of validators.
-        let (_skey0, mut pkey1, _sig0) = make_secure_random_keys();
-        std::mem::swap(&mut block.header.leader, &mut pkey1);
-        match block.validate() {
-            Err(e) => match e.downcast::<BlockchainError>().unwrap() {
-                BlockchainError::LeaderIsNotValidator => {}
-                _ => panic!(),
-            },
-            _ => panic!(),
-        }
-        std::mem::swap(&mut block.header.leader, &mut pkey1);
-    }
-
-    #[test]
     fn create_validate_monetary_block() {
         let (skey0, _pkey0, _sig0) = make_random_keys();
         let (skey1, pkey1, _sig1) = make_random_keys();
@@ -517,7 +414,7 @@ pub mod tests {
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
             let block = MonetaryBlock::new(base, gamma, 0, &inputs1, &outputs1);
-            block.validate(&[output0]).expect("block is valid");
+            block.validate_balance(&[output0]).expect("block is valid");
         }
 
         //
@@ -532,107 +429,13 @@ pub mod tests {
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
             let block = MonetaryBlock::new(base, gamma, 0, &inputs1, &outputs1);
-            match block.validate(&[output0]) {
+            match block.validate_balance(&[output0]) {
                 Err(e) => match e.downcast::<BlockchainError>().unwrap() {
                     BlockchainError::InvalidBlockBalance => {}
                     _ => panic!(),
                 },
                 _ => panic!(),
             }
-        }
-
-        //
-        // Valid block with invalid inputs/outputs.
-        //
-        {
-            let (output0, gamma0) = Output::new_payment(timestamp, &skey0, &pkey1, amount).unwrap();
-            let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
-            let inputs1 = [Hash::digest(&output0)];
-            let (output1, gamma1) = Output::new_payment(timestamp, &skey1, &pkey2, amount).unwrap();
-            let outputs1 = [output1.clone()];
-            let gamma = gamma0 - gamma1;
-            let mut block = MonetaryBlock::new(base, gamma, 0, &inputs1, &outputs1);
-            let inputs = [output0.clone()];
-
-            // Invalid inputs_range_hash.
-            let inputs_range_hash = block.header.inputs_range_hash.clone();
-            block.header.inputs_range_hash = Hash::digest("invalid");
-            match block.validate(&inputs) {
-                Err(e) => match e.downcast::<BlockchainError>().unwrap() {
-                    BlockchainError::InvalidBlockInputsHash(expected, got) => {
-                        assert_eq!(block.header.inputs_range_hash, expected);
-                        assert_eq!(inputs_range_hash, got);
-                    }
-                    _ => panic!(),
-                },
-                _ => panic!(),
-            }
-            block.header.inputs_range_hash = inputs_range_hash;
-
-            // Invalid outputs_range_hash.
-            let outputs_range_hash = block.header.outputs_range_hash.clone();
-            block.header.outputs_range_hash = Hash::digest(&"invalid".to_string());
-            match block.validate(&inputs) {
-                Err(e) => match e.downcast::<BlockchainError>().unwrap() {
-                    BlockchainError::InvalidBlockOutputsHash(expected, got) => {
-                        assert_eq!(block.header.outputs_range_hash, expected);
-                        assert_eq!(outputs_range_hash, got);
-                    }
-                    _ => panic!(),
-                },
-                _ => panic!(),
-            }
-            block.header.outputs_range_hash = outputs_range_hash;
-
-            // Duplicate input.
-            let bad_inputs = vec![output0.clone(), output0.clone()];
-            let mut bad_input_hashes = vec![Hash::digest(&output0), Hash::digest(&output0)];
-            let mut bad_inputs_range_hash: Hash = {
-                let mut hasher = Hasher::new();
-                let inputs_count: u64 = bad_inputs.len() as u64;
-                inputs_count.hash(&mut hasher);
-                for input in &bad_input_hashes {
-                    input.hash(&mut hasher);
-                }
-                hasher.result()
-            };
-            std::mem::swap(&mut block.body.inputs, &mut bad_input_hashes);
-            std::mem::swap(
-                &mut block.header.inputs_range_hash,
-                &mut bad_inputs_range_hash,
-            );
-            match block.validate(&bad_inputs) {
-                Err(e) => match e.downcast::<BlockchainError>().unwrap() {
-                    BlockchainError::DuplicateBlockInput(txin_hash) => {
-                        assert_eq!(txin_hash, bad_input_hashes[0]);
-                    }
-                    _ => panic!(),
-                },
-                _ => panic!(),
-            };
-            block.body.inputs = bad_input_hashes;
-            block.header.inputs_range_hash = bad_inputs_range_hash;
-
-            // Duplicate output.
-            let bad_outputs = vec![Box::new(output1.clone()), Box::new(output1.clone())];
-            let mut bad_outputs = Merkle::from_array(&bad_outputs);
-            let mut bad_outputs_range_hash = bad_outputs.roothash().clone();
-            std::mem::swap(&mut block.body.outputs, &mut bad_outputs);
-            std::mem::swap(
-                &mut block.header.outputs_range_hash,
-                &mut bad_outputs_range_hash,
-            );
-            match block.validate(&inputs) {
-                Err(e) => match e.downcast::<BlockchainError>().unwrap() {
-                    BlockchainError::DuplicateBlockOutput(hash) => {
-                        assert_eq!(hash, Hash::digest(&output1));
-                    }
-                    _ => panic!(),
-                },
-                _ => panic!(),
-            };
-            block.body.outputs = bad_outputs;
-            block.header.outputs_range_hash = bad_outputs_range_hash;
         }
     }
 
@@ -654,29 +457,16 @@ pub mod tests {
         let outputs = [output];
         let gamma = gamma0 - gamma1;
         let block = MonetaryBlock::new(base, gamma, 0, &input_hashes, &outputs);
-        block.validate(&inputs).expect("block is valid");
+        block.validate_balance(&inputs).expect("block is valid");
 
         {
             // Prune an output.
             let mut block2 = block.clone();
             let (_output, path) = block2.body.outputs.leafs()[0];
             block2.body.outputs.prune(&path).expect("output exists");
-            match block2.validate(&inputs) {
+            match block2.validate_balance(&inputs) {
                 Err(e) => match e.downcast::<BlockchainError>().unwrap() {
                     BlockchainError::InvalidBlockBalance => {}
-                    _ => panic!(),
-                },
-                _ => panic!(),
-            }
-        }
-
-        {
-            // Prune inputs.
-            let mut block2 = block.clone();
-            block2.body.inputs.clear();
-            match block2.validate(&[]) {
-                Err(e) => match e.downcast::<BlockchainError>().unwrap() {
-                    BlockchainError::InvalidBlockInputsHash(_, _) => {}
                     _ => panic!(),
                 },
                 _ => panic!(),
@@ -712,7 +502,7 @@ pub mod tests {
 
             let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
             let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..]);
-            block.validate(&inputs).expect("block is valid");
+            block.validate_balance(&inputs).expect("block is valid");
         }
 
         //
@@ -731,7 +521,7 @@ pub mod tests {
 
             let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
             let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..]);
-            block.validate(&inputs).expect("block is valid");
+            block.validate_balance(&inputs).expect("block is valid");
         }
 
         //
@@ -752,7 +542,7 @@ pub mod tests {
 
             let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
             let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..]);
-            match block.validate(&inputs) {
+            match block.validate_balance(&inputs) {
                 Err(e) => match e.downcast::<BlockchainError>().unwrap() {
                     BlockchainError::InvalidBlockBalance => {}
                     _ => panic!(),
@@ -779,7 +569,7 @@ pub mod tests {
 
             let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
             let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..]);
-            match block.validate(&inputs) {
+            match block.validate_balance(&inputs) {
                 Err(e) => match e.downcast::<OutputError>().unwrap() {
                     OutputError::InvalidStake => {}
                     _ => panic!(),
@@ -809,7 +599,7 @@ pub mod tests {
         let outputs = [output];
         let gamma = input_gamma - output_gamma;
         let block = MonetaryBlock::new(base, gamma, monetary_adjustment, &input_hashes, &outputs);
-        block.validate(&inputs).expect("block is valid");
+        block.validate_balance(&inputs).expect("block is valid");
     }
 
     #[test]

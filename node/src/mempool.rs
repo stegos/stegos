@@ -342,8 +342,9 @@ mod test {
             let input_hash = Hash::digest(input);
             inputs.insert(input_hash, input.clone());
         }
+
         let inputs: Vec<Output> = inputs.values().cloned().collect();
-        block.validate(&inputs).expect("block is valid");
+        block.validate_balance(&inputs).expect("block is valid");
 
         // Fee.
         if let Some(Output::PaymentOutput(o)) = output_fee {

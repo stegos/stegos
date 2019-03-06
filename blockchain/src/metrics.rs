@@ -1,7 +1,7 @@
 //! Blockchain definition.
 
 //
-// Copyright (c) 2018 Stegos AG
+// Copyright (c) 2019 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -31,4 +31,10 @@ lazy_static! {
         &["validator"]
     )
     .unwrap();
+    pub static ref EPOCH: IntCounter =
+        register_int_counter!("stegos_blockchain_epoch", "Current blockchain epoch").unwrap();
+    pub static ref HEIGHT: IntCounter =
+        register_int_counter!("stegos_blockchain_height", "Blockchain blocks count").unwrap();
+    pub static ref UTXO_LEN: IntGauge =
+        register_int_gauge!("stegos_blockchain_utxo", "Size of UTXO map").unwrap();
 }

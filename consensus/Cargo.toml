@@ -20,6 +20,8 @@ bitvector = "0.1"
 failure = "0.1"
 log = "0.4"
 protobuf = "2.2"
+lazy_static = "1.2"
+prometheus = "0.5"
 
 [dev-dependencies]
 stegos_keychain = { version = "0.1.0", path = "../keychain" }

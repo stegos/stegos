@@ -27,6 +27,7 @@ mod loader;
 mod mempool;
 pub mod protos;
 
+mod metrics;
 #[cfg(test)]
 mod test;
 mod tickets;
@@ -51,7 +52,9 @@ use protobuf::Message;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 use stegos_blockchain::*;
-use stegos_consensus::{BlockConsensus, BlockConsensusMessage, BlockProof, MonetaryBlockProof};
+use stegos_consensus::{
+    self as consensus, BlockConsensus, BlockConsensusMessage, BlockProof, MonetaryBlockProof,
+};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
@@ -509,8 +512,12 @@ impl NodeService {
             );
 
             if consensus.is_leader() {
+                consensus::metrics::CONSENSUS_ROLE
+                    .set(consensus::metrics::ConsensusRole::Leader as i64);
                 info!("I'm leader: epoch={}", self.chain.epoch);
             } else {
+                consensus::metrics::CONSENSUS_ROLE
+                    .set(consensus::metrics::ConsensusRole::Validator as i64);
                 info!(
                     "I'm validator: epoch={}, leader={}",
                     self.chain.epoch, self.chain.leader
@@ -520,12 +527,16 @@ impl NodeService {
             self.consensus = Some(consensus);
             self.on_new_consensus();
         } else {
+            consensus::metrics::CONSENSUS_ROLE
+                .set(consensus::metrics::ConsensusRole::Regular as i64);
             // Resign from Validator role.
             info!(
                 "I'm regular node, waiting for sealed block: epoch={}, leader={}",
                 self.chain.epoch, self.chain.leader
             );
             self.consensus = None;
+            consensus::metrics::CONSENSUS_STATE
+                .set(consensus::metrics::ConsensusState::NotInConsensus as i64);
         }
 
         debug!("Broadcast new epoch event.");

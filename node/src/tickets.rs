@@ -30,6 +30,7 @@ use stegos_serialization::traits::ProtoConvert;
 use lazy_static::lazy_static;
 
 use crate::election::{self, ConsensusGroup, StakersGroup};
+use crate::metrics;
 use crate::NodeService;
 
 use failure::{Error, Fail};
@@ -182,6 +183,11 @@ impl TicketsSystem {
         pkey: secure::PublicKey,
         skey: secure::SecretKey,
     ) -> TicketsSystem {
+        metrics::vrf::IS_ACTIVE.set(0);
+        metrics::vrf::VIEW_CHANGE.set(0);
+        metrics::vrf::TICKETS_HANDLED.set(0);
+        metrics::vrf::TICKETS_QUEUED.set(0);
+        metrics::vrf::TICKETS_COLLECTED.set(0);
         TicketsSystem {
             max_group_size,
             view_change,
@@ -230,6 +236,10 @@ impl TicketsSystem {
         self.view_change = 0;
         self.height += 1;
         self.state = State::default();
+        metrics::vrf::IS_ACTIVE.set(0);
+        metrics::vrf::VIEW_CHANGE.set(0);
+        metrics::vrf::TICKETS_HANDLED.set(0);
+        metrics::vrf::TICKETS_COLLECTED.set(0);
     }
 
     /// Receive ticket from other nodes.
@@ -239,7 +249,7 @@ impl TicketsSystem {
              our_view_change={}",
             ticket.pkey, ticket.view_change, self.view_change
         );
-
+        metrics::vrf::TICKETS_HANDLED.inc();
         if ticket.height != self.height && ticket.height != self.height + 1 {
             debug!(
                 "Skipping out of order ticket: our_height={}, ticket_height={}",
@@ -271,6 +281,8 @@ impl TicketsSystem {
                 } else {
                     self.queue.insert(ticket.pkey, ticket);
                 }
+
+                metrics::vrf::TICKETS_QUEUED.set(self.queue.len() as i64);
             }
         };
         Ok(())
@@ -298,17 +310,25 @@ impl TicketsSystem {
                     debug!("Error out of order ticket looks outdated: error={:?}", e);
                 }
             } else if self.view_change < out_of_order_ticket.view_change {
-                self.queue
-                    .insert(k, out_of_order_ticket)
-                    .expect("no duplicates");
+                assert!(
+                    self.queue.insert(k, out_of_order_ticket).is_none(),
+                    "expect no duplicates"
+                );
             }
         }
         self.state = State::CollectingTickets(collecting, clock::now());
+        metrics::vrf::IS_ACTIVE.set(1);
+        metrics::vrf::VIEW_CHANGE.set(self.view_change as i64);
+        metrics::vrf::TICKETS_QUEUED.set(self.queue.len() as i64);
         ticket
     }
 
     fn on_collection_end(&mut self, stakers: StakersGroup) -> Result<ConsensusGroup, TicketsError> {
         info!("Collecting tickets stoped, producing new group");
+
+        metrics::vrf::IS_ACTIVE.set(0);
+        metrics::vrf::TICKETS_HANDLED.set(0);
+        metrics::vrf::TICKETS_COLLECTED.set(0);
         match mem::replace(&mut self.state, State::default()) {
             State::CollectingTickets(state, _) => {
                 let stakers_majority_count = 2 * stakers.len() / 3;
@@ -516,6 +536,7 @@ impl CollectingState {
                 return Err(TicketsError::MultipleTickets(ticket.pkey));
             }
         }
+        metrics::vrf::TICKETS_COLLECTED.set(self.tickets.len() as i64);
         Ok(())
     }
 

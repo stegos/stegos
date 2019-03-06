@@ -376,10 +376,12 @@ impl ConsoleService {
             self.wallet.unstake(amount);
         } else if msg == "show version" {
             println!(
-                "Stegos {} ({} {})",
-                env!("VERGEN_SEMVER"),
-                env!("VERGEN_SHA_SHORT"),
-                env!("VERGEN_BUILD_DATE")
+                "Stegos {}.{}.{} ({} {})",
+                env!("VERSION_MAJOR"),
+                env!("VERSION_MINOR"),
+                env!("VERSION_PATCH"),
+                env!("VERSION_COMMIT"),
+                env!("VERSION_DATE")
             );
         } else if msg == "show keys" {
             self.wallet.keys_info();

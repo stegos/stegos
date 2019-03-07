@@ -354,6 +354,7 @@ where
                     }
                     Err(e) => error!("Failure decoding unicast message: {}", e),
                 }
+                return;
             }
             for t in message.topics.into_iter() {
                 let topic = match self.topics_map.get(&t) {

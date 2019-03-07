@@ -684,6 +684,13 @@ impl Blockchain {
         let block_hash = Hash::digest(&block);
         let block_timestamp = block.header.base.timestamp;
 
+        //
+        // Update indexes.
+        //
+        if let Some(_) = self.block_by_hash.insert(block_hash.clone(), block_id) {
+            panic!("Block hash collision");
+        }
+
         let mut burned = ECp::inf();
         let mut created = ECp::inf();
 

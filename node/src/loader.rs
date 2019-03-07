@@ -171,8 +171,11 @@ impl NodeService {
     /// Request block history, from one of validators.
     pub fn request_history(&mut self) -> Result<(), Error> {
         let master = self.choose_master();
-        info!("Downloading blocks: from={}", &master);
         let last_hash = self.chain.last_block_hash();
+        info!(
+            "Downloading blocks: from={}, last_hash = {}",
+            &master, last_hash
+        );
         let msg = ChainLoaderMessage::Request(RequestBlocks::new(last_hash));
         self.network
             .send(master, CHAIN_LOADER_TOPIC, msg.into_buffer()?)
@@ -192,8 +195,8 @@ impl NodeService {
                 .send(pkey, CHAIN_LOADER_TOPIC, msg.into_buffer()?)?;
         } else {
             debug!(
-                "Received request with unknown starting block hash, or no more blocks found, sender = {}.",
-                pkey
+                "Received request with unknown starting block hash, or no more blocks found: sender = {:?}, hash = {:?}",
+                pkey, start_hash
             );
         }
         Ok(())
@@ -215,6 +218,13 @@ impl NodeService {
         };
 
         let last_block_hash = self.chain.last_block_hash();
+        debug!(
+            "Received response: our last_block_hash = {}, \
+             block_previuos_hash = {}",
+            last_block_hash,
+            first_block.base_header().previous
+        );
+
         if last_block_hash != first_block.base_header().previous {
             // in current implementation we can ask multiple times for one block range.
             debug!("Received response with first block not linked to our blockchain history.");

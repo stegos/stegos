@@ -34,7 +34,7 @@ pub fn init() {
 
     let mut node = NodeService::testing(keys.clone(), network, inbox).unwrap();
 
-    assert_eq!(node.chain.blocks().len(), 0);
+    assert_eq!(node.chain.height(), 0);
     assert_eq!(node.mempool.len(), 0);
     assert_eq!(node.chain.epoch, 0);
     assert_ne!(node.chain.leader, keys.network_pkey);
@@ -42,9 +42,9 @@ pub fn init() {
 
     let current_timestamp = Utc::now().timestamp() as u64;
     let genesis = genesis(&[keys.clone()], 1000, 3_000_000, current_timestamp);
-    let genesis_count = genesis.len();
+    let genesis_count = genesis.len() as u64;
     node.handle_init(genesis).unwrap();
-    assert_eq!(node.chain.blocks().len(), genesis_count);
+    assert_eq!(node.chain.height(), genesis_count);
     assert_eq!(node.mempool.len(), 0);
     assert_eq!(node.chain.epoch, 1);
     assert_eq!(node.chain.leader, keys.network_pkey);
@@ -56,7 +56,7 @@ pub fn init() {
 }
 
 fn simulate_consensus(node: &mut NodeService) {
-    let previous = Hash::digest(node.chain.last_block());
+    let previous = node.chain.last_block_hash();
     let (mut block, _fee_output, _tx_hashes) = node.mempool.create_block(
         previous,
         VERSION,
@@ -85,10 +85,14 @@ fn simulate_payment(node: &mut NodeService, amount: i64) -> Result<(), Error> {
     let mut inputs: Vec<Output> = Vec::new();
     let mut inputs_amount: i64 = 0;
     for hash in node.chain.unspent() {
-        let output = node.chain.output_by_hash(&hash).unwrap();
-        if let Output::PaymentOutput(o) = output {
+        let output = node
+            .chain
+            .output_by_hash(&hash)
+            .expect("no disk errors")
+            .expect("utxo exists");
+        if let Output::PaymentOutput(ref o) = output {
             let PaymentPayload { amount, .. } = o.decrypt_payload(sender_skey).unwrap();
-            inputs.push(output.clone());
+            inputs.push(output);
             inputs_amount += amount;
         }
     }
@@ -126,17 +130,17 @@ pub fn monetary_requests() {
     let current_timestamp = Utc::now().timestamp() as u64;
     let genesis = genesis(&[keys.clone()], stake, total, current_timestamp);
     node.handle_init(genesis).unwrap();
-    let mut block_count = node.chain.blocks().len();
+    let mut block_count = node.chain.height();
 
     // Payment without a change.
     simulate_payment(&mut node, total - stake - PAYMENT_FEE).unwrap();
     assert_eq!(node.mempool.len(), 1);
     simulate_consensus(&mut node);
     assert_eq!(node.mempool.len(), 0);
-    assert_eq!(node.chain.blocks().len(), block_count + 1);
+    assert_eq!(node.chain.height(), block_count + 1);
     let mut amounts = Vec::new();
     for unspent in node.chain.unspent() {
-        match node.chain.output_by_hash(&unspent) {
+        match node.chain.output_by_hash(&unspent).expect("no disk errors") {
             Some(Output::PaymentOutput(o)) => {
                 let PaymentPayload { amount, .. } = o.decrypt_payload(&keys.wallet_skey).unwrap();
                 amounts.push(amount);
@@ -156,10 +160,10 @@ pub fn monetary_requests() {
     assert_eq!(node.mempool.len(), 1);
     simulate_consensus(&mut node);
     assert_eq!(node.mempool.len(), 0);
-    assert_eq!(node.chain.blocks().len(), block_count + 1);
+    assert_eq!(node.chain.height(), block_count + 1);
     let mut amounts = Vec::new();
     for unspent in node.chain.unspent() {
-        match node.chain.output_by_hash(&unspent) {
+        match node.chain.output_by_hash(&unspent).expect("no disk errors") {
             Some(Output::PaymentOutput(o)) => {
                 let PaymentPayload { amount, .. } = o.decrypt_payload(&keys.wallet_skey).unwrap();
                 amounts.push(amount);

@@ -432,7 +432,7 @@ impl NodeService {
     }
 
     pub(crate) fn handle_vrf_timer(&mut self) -> Result<(), Error> {
-        let previous_hash = Hash::digest(self.chain.last_block());
+        let previous_hash = self.chain.last_block_hash();
         let result =
             self.vrf_system
                 .handle_tick(clock::now(), &self.chain.escrow, previous_hash)?;

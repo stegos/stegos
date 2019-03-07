@@ -47,12 +47,10 @@ use stegos_crypto::hash::*;
 use stegos_crypto::pbc::secure;
 use tokio_timer::clock;
 
-type BlockId = usize;
-
 /// A help to find UTXO in this blockchain.
 struct OutputKey {
     /// The short block identifier.
-    pub block_id: BlockId,
+    pub block_id: u64,
     /// Merkle Tree path inside block.
     pub path: MerklePath,
 }
@@ -62,12 +60,8 @@ pub struct Blockchain {
     /// Database.
     database: ListDb,
 
-    // General state.
-    /// Blockchain blocks stored in-memory.
-    /// Position in this vector is short BlockId = usize.
-    blocks: Vec<Block>,
     /// Block by hash mapping.
-    block_by_hash: HashMap<Hash, BlockId>,
+    block_by_hash: HashMap<Hash, u64>,
     /// Unspent outputs by hash.
     output_by_hash: HashMap<Hash, OutputKey>,
 
@@ -89,11 +83,15 @@ pub struct Blockchain {
     pub validators: BTreeMap<secure::PublicKey, i64>,
     /// A timestamp when the last sealed block was received.
     pub last_block_timestamp: Instant,
+    /// The hash of the last block.
+    pub last_block_hash: Hash,
+    /// The number of blocks.
+    pub height: u64,
     /// A monotonically increasing value that represents the epoch of the blockchain,
     /// starting from genesis block (=0).
     pub epoch: u64,
     /// Last height where epoch was changed.
-    pub last_epoch_change: usize,
+    pub last_epoch_change: u64,
 
     // Monetary info
     /// The total sum of money created.
@@ -122,16 +120,16 @@ impl Blockchain {
     }
 
     fn with_db(database: ListDb) -> Blockchain {
-        let blocks = Vec::new();
-        let block_by_hash = HashMap::<Hash, BlockId>::new();
+        let block_by_hash = HashMap::<Hash, u64>::new();
         let output_by_hash = HashMap::<Hash, OutputKey>::new();
+        let height: u64 = 0;
         let epoch: u64 = 0;
         let escrow = Escrow::new();
         let leader: secure::PublicKey = secure::G2::generator().into(); // some fake key
         let facilitator: secure::PublicKey = secure::G2::generator().into(); // some fake key
         let validators = BTreeMap::<secure::PublicKey, i64>::new();
         let last_block_timestamp = clock::now();
-
+        let last_block_hash = Hash::digest("genesis");
         let created = ECp::inf();
         let burned = ECp::inf();
         let gamma = Fr::zero();
@@ -139,16 +137,17 @@ impl Blockchain {
         let last_epoch_change = 0;
         let mut blockchain = Blockchain {
             database,
-            blocks,
             block_by_hash,
             output_by_hash,
             escrow,
             leader,
             facilitator,
             validators,
+            height,
             epoch,
             last_epoch_change,
             last_block_timestamp,
+            last_block_hash,
             created,
             burned,
             gamma,
@@ -203,8 +202,8 @@ impl Blockchain {
     }
 
     /// Returns count of blocks in current epoch.
-    pub fn blocks_in_epoch(&self) -> usize {
-        self.blocks.len() - self.last_epoch_change
+    pub fn blocks_in_epoch(&self) -> u64 {
+        self.height - self.last_epoch_change
     }
 
     /// Returns an iterator over UTXO hashes.
@@ -213,32 +212,38 @@ impl Blockchain {
         self.output_by_hash.keys().cloned().collect()
     }
 
+    /// Returns true if blockchain contains unspent output.
+    pub fn contains_output(&self, output_hash: &Hash) -> bool {
+        if let Some(OutputKey { .. }) = self.output_by_hash.get(output_hash) {
+            return true;
+        }
+        return false;
+    }
+
     /// Find UTXO by its hash.
-    pub fn output_by_hash(&self, output_hash: &Hash) -> Option<&Output> {
+    pub fn output_by_hash(&self, output_hash: &Hash) -> Result<Option<Output>, Error> {
         if let Some(OutputKey { block_id, path }) = self.output_by_hash.get(output_hash) {
-            let block = &self.blocks[*block_id];
+            let block = self.block_by_id(*block_id)?;
             if let Block::MonetaryBlock(MonetaryBlock { header: _, body }) = block {
                 if let Some(output) = body.outputs.lookup(path) {
-                    return Some(&output);
+                    return Ok(Some(output.as_ref().clone()));
                 } else {
-                    return None;
+                    return Ok(None);
                 }
             } else {
                 unreachable!(); // Non-monetary block
             }
         }
-        return None;
+        return Ok(None);
     }
 
     /// Resolve UTXOs by its hashes.
-    pub fn outputs_by_hashes(
-        &self,
-        output_hashes: &[Hash],
-    ) -> Result<Vec<Output>, BlockchainError> {
+    pub fn outputs_by_hashes(&self, output_hashes: &[Hash]) -> Result<Vec<Output>, Error> {
         // Find appropriate UTXO in the database.
+        // TODO: optimize this function for batch processing.
         let mut outputs = Vec::<Output>::new();
         for output_hash in output_hashes {
-            let input = match self.output_by_hash(output_hash) {
+            let input = match self.output_by_hash(output_hash)? {
                 Some(o) => o.clone(),
                 None => return Err(BlockchainError::MissingUTXO(output_hash.clone()).into()),
             };
@@ -248,12 +253,23 @@ impl Blockchain {
         Ok(outputs)
     }
 
-    /// Find block by its hash
-    pub fn block_by_hash(&self, block_hash: &Hash) -> Option<&Block> {
-        if let Some(block_id) = self.block_by_hash.get(block_hash) {
-            return Some(&self.blocks[*block_id]);
+    /// Checks whether a block exists or not.
+    pub fn contains_block(&self, block_hash: &Hash) -> bool {
+        if let Some(_block_id) = self.block_by_hash.get(block_hash) {
+            return true;
         }
-        return None;
+        return false;
+    }
+
+    /// Get block by id.
+    fn block_by_id(&self, block_id: u64) -> Result<Block, Error> {
+        assert!(block_id < self.height);
+        Ok((self.database.get(block_id)?).expect("block exists"))
+    }
+
+    /// Return iterator over saved blocks.
+    pub fn blocks(&self) -> impl Iterator<Item = Block> {
+        self.database.iter()
     }
 
     /// Returns blocks history starting from block_hash, limited by count.
@@ -270,20 +286,24 @@ impl Blockchain {
         return None;
     }
 
-    /// Return all blocks.
-    pub fn blocks(&self) -> &[Block] {
-        self.blocks.as_slice()
+    /// Return the last block.
+    pub fn last_block(&self) -> Result<Block, Error> {
+        assert!(self.height > 0);
+        match self.database.get(self.height - 1) {
+            Ok(block) => Ok(block.expect("block exists")),
+            Err(e) => Err(e),
+        }
     }
 
-    /// Return the last block.
-    pub fn last_block(&self) -> &Block {
-        assert!(self.blocks.len() > 0);
-        self.blocks.last().unwrap()
+    /// Return the last block hash.
+    pub fn last_block_hash(&self) -> Hash {
+        assert!(self.height > 0);
+        self.last_block_hash.clone()
     }
 
     /// Return the current blockchain height.
-    pub fn height(&self) -> usize {
-        self.blocks().len()
+    pub fn height(&self) -> u64 {
+        self.height
     }
 
     //----------------------------------------------------------------------------------------------
@@ -308,7 +328,7 @@ impl Blockchain {
     /// Add a new block into blockchain.
     ///
     pub fn push_key_block(&mut self, block: KeyBlock) -> Result<(), Error> {
-        let block_id = self.blocks.len();
+        let block_id = self.height;
 
         //
         // Validate the key block.
@@ -357,8 +377,8 @@ impl Blockchain {
         }
 
         // Check previous hash.
-        if let Some(previous_block) = self.blocks.last() {
-            let previous_hash = Hash::digest(previous_block);
+        if self.height > 0 {
+            let previous_hash = self.last_block_hash();
             if previous_hash != block.header.base.previous {
                 return Err(BlockchainError::PreviousHashMismatch(
                     previous_hash,
@@ -407,7 +427,7 @@ impl Blockchain {
     /// Update indexes and metadata.
     ///
     fn register_key_block(&mut self, block: KeyBlock) {
-        let block_id = self.blocks.len();
+        let block_id = self.height;
         let block_hash = Hash::digest(&block);
 
         //
@@ -421,6 +441,8 @@ impl Blockchain {
         // Update metadata.
         //
         self.last_block_timestamp = clock::now();
+        self.last_block_hash = block_hash.clone();
+        self.height = self.height + 1;
         self.epoch = self.epoch + 1;
         self.last_epoch_change = block_id;
         self.leader = block.header.leader.clone();
@@ -428,11 +450,6 @@ impl Blockchain {
         self.validators = self.escrow.multiget(&block.header.validators);
         metrics::HEIGHT.inc();
         metrics::EPOCH.inc();
-
-        //
-        // Save a copy to memory.
-        //
-        self.blocks.push(Block::KeyBlock(block));
 
         info!(
             "Registered key block: height={}, hash={}",
@@ -459,7 +476,7 @@ impl Blockchain {
         block: MonetaryBlock,
         current_timestamp: u64,
     ) -> Result<(Vec<Output>, Vec<Output>), Error> {
-        let block_id = self.blocks.len();
+        let block_id = self.height;
 
         //
         // Validate the monetary block.
@@ -475,7 +492,7 @@ impl Blockchain {
         //
         // Update in-memory indexes and metadata.
         //
-        let (inputs, outputs) = self.register_monetary_block(block, current_timestamp);
+        let (inputs, outputs) = self.register_monetary_block(block, current_timestamp)?;
 
         Ok((inputs, outputs))
     }
@@ -511,8 +528,8 @@ impl Blockchain {
         }
 
         // Check previous hash.
-        if let Some(previous_block) = self.blocks.last() {
-            let previous_hash = Hash::digest(previous_block);
+        if self.height > 0 {
+            let previous_hash = self.last_block_hash();
             if previous_hash != block.header.base.previous {
                 return Err(BlockchainError::PreviousHashMismatch(
                     previous_hash,
@@ -662,8 +679,8 @@ impl Blockchain {
         &mut self,
         mut block: MonetaryBlock,
         current_timestamp: u64,
-    ) -> (Vec<Output>, Vec<Output>) {
-        let block_id = self.blocks.len();
+    ) -> Result<(Vec<Output>, Vec<Output>), Error> {
+        let block_id = self.height;
         let block_hash = Hash::digest(&block);
         let block_timestamp = block.header.base.timestamp;
 
@@ -676,10 +693,11 @@ impl Blockchain {
         let mut inputs: Vec<Output> = Vec::with_capacity(block.body.inputs.len());
         for input_hash in &block.body.inputs {
             if let Some(OutputKey { block_id, path }) = self.output_by_hash.remove(input_hash) {
-                let block = &mut self.blocks[block_id];
+                let block = self.block_by_id(block_id)?;
+                let block_hash = Hash::digest(&block);
                 if let Block::MonetaryBlock(MonetaryBlock { header: _, body }) = block {
                     // Remove from the block.
-                    match body.outputs.prune(&path) {
+                    match body.outputs.lookup(&path) {
                         Some(o) => {
                             match o.as_ref() {
                                 Output::PaymentOutput(o) => {
@@ -700,8 +718,7 @@ impl Blockchain {
                         None => {
                             panic!(
                                 "Corrupted 'output_by_hash' index or block: utxo={}, block={}",
-                                &input_hash,
-                                Hash::digest(block)
+                                &input_hash, block_hash,
                             );
                         }
                     }
@@ -774,13 +791,10 @@ impl Blockchain {
         self.gamma = gamma;
         self.monetary_adjustment = monetary_adjustment;
         self.last_block_timestamp = clock::now();
+        self.last_block_hash = block_hash.clone();
+        self.height = self.height + 1;
         metrics::HEIGHT.inc();
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
-
-        //
-        // Save in-memory copy.
-        //
-        self.blocks.push(Block::MonetaryBlock(block));
 
         info!(
             "Registered monetary block: height={}, hash={}, inputs={}, outputs={}",
@@ -790,7 +804,7 @@ impl Blockchain {
             outputs.len()
         );
 
-        (inputs, outputs)
+        Ok((inputs, outputs))
     }
 }
 
@@ -829,14 +843,13 @@ pub mod tests {
             }
         }
 
-        let last_block = blockchain.last_block();
-        let start = Hash::digest(last_block);
+        let start = blockchain.last_block_hash();
         // len of genesis
-        assert!(blockchain.blocks().len() > 0);
+        assert!(blockchain.height() > 0);
         let version: u64 = 1;
         for epoch in 2..12 {
             let mut block = {
-                let previous = Hash::digest(&blockchain.last_block());
+                let previous = blockchain.last_block_hash();
                 let base = BaseBlockHeader::new(version, previous, epoch, 0);
 
                 let validators: BTreeSet<secure::PublicKey> =

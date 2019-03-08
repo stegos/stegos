@@ -52,11 +52,11 @@ pub struct NetworkConfig {
 impl Default for NetworkConfig {
     fn default() -> NetworkConfig {
         NetworkConfig {
-            bind_port: 10055,
+            bind_port: 0,
             seed_pool: "".to_string(),
             seed_nodes: vec![],
             advertised_addresses: vec![],
-            advertise_local_ips: true,
+            advertise_local_ips: false,
             bind_ip: "0.0.0.0".to_string(),
             min_connections: 8,
             max_connections: 32,

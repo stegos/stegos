@@ -307,20 +307,6 @@ impl Blockchain {
     }
 
     //----------------------------------------------------------------------------------------------
-
-    /// Force consensus group changes.
-    pub fn change_group(
-        &mut self,
-        leader: secure::PublicKey,
-        facilitator: secure::PublicKey,
-        validators: BTreeMap<secure::PublicKey, i64>,
-    ) {
-        self.leader = leader;
-        self.facilitator = facilitator;
-        self.validators = validators;
-    }
-
-    //----------------------------------------------------------------------------------------------
     // Key Blocks
     //----------------------------------------------------------------------------------------------
 

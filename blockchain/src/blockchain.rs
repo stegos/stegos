@@ -822,12 +822,106 @@ pub mod tests {
     use crate::genesis::genesis;
     use crate::multisignature::create_multi_signature;
     use chrono::prelude::Utc;
+    use simple_logger;
     use std::collections::BTreeSet;
     use stegos_keychain::KeyChain;
 
     #[test]
+    fn basic() {
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+
+        let mut blockchain = Blockchain::testing();
+
+        assert_eq!(blockchain.height(), 0);
+        assert_eq!(blockchain.epoch, 0);
+        assert_eq!(blockchain.blocks_in_epoch(), 0);
+
+        let keychains = [KeyChain::new_mem()];
+        let current_timestamp = Utc::now().timestamp() as u64;
+        let blocks = genesis(&keychains, MIN_STAKE_AMOUNT, 1_000_000, current_timestamp);
+        assert_eq!(blocks.len(), 2);
+        let (block1, block2) = match &blocks[..] {
+            [Block::MonetaryBlock(block1), Block::KeyBlock(block2)] => (block1, block2),
+            _ => panic!(),
+        };
+        let (inputs2, outputs2) = blockchain
+            .push_monetary_block(block1.clone(), current_timestamp)
+            .unwrap();
+        blockchain.push_key_block(block2.clone()).unwrap();
+
+        let outputs: Vec<Output> = block1
+            .body
+            .outputs
+            .leafs()
+            .iter()
+            .map(|(o, _p)| o.as_ref().clone())
+            .collect();
+        assert_eq!(inputs2.len(), 0);
+        assert!(outputs2
+            .iter()
+            .map(|o| Hash::digest(o))
+            .eq(outputs.iter().map(|o| Hash::digest(o))));
+
+        let mut unspent: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
+        unspent.sort();
+        let mut unspent2: Vec<Hash> = blockchain.unspent();
+        unspent2.sort();
+        assert_eq!(unspent, unspent2);
+
+        assert_eq!(blockchain.height(), 2);
+        assert_eq!(blockchain.epoch, block2.header.base.epoch);
+        assert_eq!(blockchain.blocks_in_epoch(), 1);
+        assert_eq!(blockchain.leader, block2.header.leader);
+        assert_eq!(blockchain.facilitator, block2.header.facilitator);
+        let validators = blockchain.escrow.get_stakers_majority();
+        assert_eq!(validators.len(), keychains.len());
+        for keychain in &keychains {
+            let stake = validators.get(&keychain.network_pkey).expect("exists");
+            assert_eq!(*stake, MIN_STAKE_AMOUNT);
+        }
+        assert_eq!(blockchain.validators, validators);
+        assert_eq!(blockchain.last_block_hash(), Hash::digest(&block2));
+        assert_eq!(
+            Hash::digest(&blockchain.last_block().unwrap()),
+            Hash::digest(&block2)
+        );
+
+        let blocks2: Vec<Block> = blockchain.blocks().collect();
+        assert_eq!(blocks2.len(), 2);
+        assert_eq!(Hash::digest(&blocks2[0]), Hash::digest(&block1));
+        assert_eq!(Hash::digest(&blocks2[1]), Hash::digest(&block2));
+
+        assert!(blockchain.contains_block(&Hash::digest(&block1)));
+        assert!(blockchain.contains_block(&Hash::digest(&block2)));
+        assert!(!blockchain.contains_block(&Hash::digest("test")));
+
+        assert_eq!(
+            Hash::digest(&blockchain.block_by_id(0).unwrap()),
+            Hash::digest(&block1)
+        );
+        assert_eq!(
+            Hash::digest(&blockchain.block_by_id(1).unwrap()),
+            Hash::digest(&block2)
+        );
+
+        assert!(!blockchain.contains_output(&Hash::digest("test")));
+        assert!(blockchain
+            .output_by_hash(&Hash::digest("test"))
+            .unwrap()
+            .is_none());
+        for (output, _path) in block1.body.outputs.leafs() {
+            let output_hash = Hash::digest(&output);
+            let output2 = blockchain
+                .output_by_hash(&output_hash)
+                .unwrap()
+                .expect("exists");
+            assert_eq!(Hash::digest(&output2), output_hash);
+            assert!(blockchain.contains_output(&output_hash));
+        }
+    }
+
+    #[test]
     fn block_range_limit() {
-        use simple_logger;
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
         let keychains = [
             KeyChain::new_mem(),

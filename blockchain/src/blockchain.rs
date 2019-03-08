@@ -453,7 +453,7 @@ impl Blockchain {
 
         info!(
             "Registered key block: height={}, hash={}",
-            block_id, block_hash
+            self.height, block_hash
         );
         debug!("Validators: {:?}", &self.validators);
         for (key, stake) in self.validators.iter() {
@@ -805,7 +805,7 @@ impl Blockchain {
 
         info!(
             "Registered monetary block: height={}, hash={}, inputs={}, outputs={}",
-            block_id,
+            self.height,
             block_hash,
             inputs.len(),
             outputs.len()

@@ -168,9 +168,14 @@ impl NodeService {
         return master;
     }
 
-    /// Request block history, from one of validators.
+    /// Request the block history from an random node.
     pub fn request_history(&mut self) -> Result<(), Error> {
         let master = self.choose_master();
+        self.request_history_from(master)
+    }
+
+    /// Request the block history from specified node.
+    pub fn request_history_from(&mut self, master: secure::PublicKey) -> Result<(), Error> {
         let last_hash = self.chain.last_block_hash();
         info!(
             "Downloading blocks: from={}, last_hash = {}",

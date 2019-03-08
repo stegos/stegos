@@ -102,3 +102,16 @@ release:macos:
   tags:
     - macos
 
+release:linux:static:
+  extends: .release
+  image: stegos/rust-musl-builder:1.32
+  before_script: []
+  script:
+    - cargo install --path . --root /usr/local && strip /usr/local/bin/stegos
+    - mkdir -p release/linux && mv /usr/local/bin/stegos release/linux/stegos-static
+    - ldd release/linux/stegos-static >/tmp/out 2>&1 || true
+    - grep "Not a valid dynamic program" /tmp/out
+    - release/linux/stegos-static --version 
+  tags:
+    - linux
+

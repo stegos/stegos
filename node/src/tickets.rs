@@ -98,6 +98,8 @@ pub enum TicketsError {
     TooManyStakers,
     #[fail(display = "Receiving multiple tickets from {:?}.", _0)]
     MultipleTickets(secure::PublicKey),
+    #[fail(display = "Received ticket from future, sender {:?}.", _0)]
+    TicketFromFuture(secure::PublicKey, u64),
 }
 
 ///
@@ -255,7 +257,7 @@ impl TicketsSystem {
                 "Skipping out of order ticket: our_height={}, ticket_height={}",
                 self.height, ticket.height
             );
-            return Ok(());
+            return Err(TicketsError::TicketFromFuture(ticket.pkey, ticket.height));
         }
 
         match &mut self.state {
@@ -263,6 +265,7 @@ impl TicketsSystem {
                 if ticket.view_change == self.view_change =>
             {
                 state.process_ticket(ticket)?;
+                Ok(())
             }
             _ => {
                 debug!("Received out of order: ticket={:?}", ticket);
@@ -276,16 +279,17 @@ impl TicketsSystem {
                              view_change={}, old_view_change={}",
                             ticket.pkey, ticket.view_change, found.view_change
                         );
-                        self.queue.insert(ticket.pkey, ticket);
+                    } else {
+                        trace!("Received outdated or duplicate ticket.");
+                        return Ok(());
                     }
-                } else {
-                    self.queue.insert(ticket.pkey, ticket);
                 }
 
                 metrics::vrf::TICKETS_QUEUED.set(self.queue.len() as i64);
+                self.queue.insert(ticket.pkey, ticket);
+                Err(TicketsError::TicketFromFuture(ticket.pkey, ticket.height))
             }
-        };
-        Ok(())
+        }
     }
 
     fn on_view_change(&mut self, last_block_hash: Hash) -> VRFTicket {
@@ -421,7 +425,16 @@ impl NodeService {
 
     pub(crate) fn handle_vrf_message(&mut self, msg: VRFTicket) -> Result<(), Error> {
         if self.chain.escrow.get(&msg.pkey) >= stegos_blockchain::MIN_STAKE_AMOUNT {
-            self.vrf_system.handle_process_ticket(msg)?;
+            match self.vrf_system.handle_process_ticket(msg) {
+                Err(TicketsError::TicketFromFuture(pkey, height)) => {
+                    debug!(
+                        "Receiving a VRFTicket from the future, requesting blocks from that node: pkey={}, height={}",
+                        pkey, height
+                    );
+                    return self.request_history_from(pkey);
+                }
+                e => e?,
+            }
         } else {
             debug!(
                 "Received message from peer that is not known staker: pkey={:?}",

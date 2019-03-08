@@ -97,6 +97,12 @@ pub struct Transaction {
     pub sig: SchnorrSig,
 }
 
+impl Hashable for Transaction {
+    fn hash(&self, state: &mut Hasher) {
+        self.body.hash(state);
+    }
+}
+
 impl Transaction {
     /// Create a new transaction.
     ///
@@ -418,13 +424,6 @@ impl Transaction {
             Err(e) => Err(e),
             Ok(tx) => Ok((tx, inputs, outputs)),
         }
-    }
-}
-
-impl Hashable for Transaction {
-    fn hash(&self, state: &mut Hasher) {
-        self.body.hash(state);
-        self.sig.hash(state);
     }
 }
 

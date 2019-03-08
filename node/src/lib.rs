@@ -792,19 +792,16 @@ impl NodeService {
     /// Restars consensus with new params, and send new keyblock.
     fn on_change_group(&mut self, group: ConsensusGroup) -> Result<(), Error> {
         info!("Changing group, new group leader = {}", group.leader);
-        self.chain.change_group(
-            group.leader,
-            group.facilitator,
-            group.validators.iter().cloned().collect(),
-        );
-        if self.chain.validators.contains_key(&self.keys.network_pkey) {
+        let validators: BTreeMap<secure::PublicKey, i64> =
+            group.validators.iter().cloned().collect();
+        if validators.contains_key(&self.keys.network_pkey) {
             let consensus = BlockConsensus::new(
                 self.chain.height() as u64,
                 self.chain.epoch + 1,
                 self.keys.network_skey.clone(),
                 self.keys.network_pkey.clone(),
-                self.chain.leader.clone(),
-                self.chain.validators.clone(),
+                group.leader.clone(),
+                validators,
             );
             self.consensus = Some(consensus);
             let consensus = self.consensus.as_ref().unwrap();

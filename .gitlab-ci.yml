@@ -78,6 +78,7 @@ code_coverage:
   only:
     - dev
     - master
+    - tags
   when: manual
   dependencies: []
   artifacts:

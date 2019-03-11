@@ -28,7 +28,7 @@ use crate::CryptoError;
 
 macro_rules! field_impl {
     ($name: ident, $modulus: ident, $rsquared: ident, $rcubed: ident, $one: ident, $inv: ident, $hash: expr, $fmt: expr, $min: ident) => {
-        #[derive(Copy, Clone, Debug)]
+        #[derive(Copy, Clone)]
         pub enum $name {
             Unscaled(U256), // plain bits
             Scaled(U256),   // Montgomery scaling
@@ -191,12 +191,12 @@ macro_rules! field_impl {
             /// Convert to positive i64 (if you can)
             pub fn to_i64(self) -> Result<i64, CryptoError> {
                 let U256(uval) = U256::from(self.unscaled());
-                if uval[0] == 0
-                    && uval[1] == 0
+                if uval[3] == 0
                     && uval[2] == 0
-                    && uval[3] < 0x8000_0000_0000_0000u64
+                    && uval[1] == 0
+                    && uval[0] < 0x8000_0000_0000_0000u64
                 {
-                    return Ok(uval[3] as i64);
+                    return Ok(uval[0] as i64);
                 } else {
                     return Err(CryptoError::TooLarge);
                 }
@@ -478,6 +478,38 @@ macro_rules! field_impl {
         impl DivAssign<i64> for $name {
             fn div_assign(&mut self, other: i64) {
                 *self /= Self::from(other);
+            }
+        }
+
+        // -------------------------------------------
+
+        /*
+        // nobody wants to see this level of detail unless they are debugging
+        // a new implementation of field arithmetic...
+        impl fmt::Debug for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(
+                    f,
+                    "U256([{:016x}, {:016x}, {:016x}, {:016x}])",
+                    self.0[0] as u64, self.0[1] as u64, self.0[2] as u64, self.0[3] as u64
+                )
+            }
+        }
+        */
+
+        // show this instead...
+        // Problem with Rust: there needs to be more than one level of debug printout
+        impl fmt::Debug for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, $fmt, self.to_hex())
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                let bytes = self.to_hex();
+                let nel = bytes.len();
+                write!(f, "{}({}..{})", $hash, &bytes[0..7], &bytes[nel - 7..nel])
             }
         }
     };

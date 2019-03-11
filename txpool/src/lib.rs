@@ -7,8 +7,10 @@ use failure::Error;
 use futures::{Async, Future, Poll, Stream};
 use futures_stream_select_all_send::select_all;
 use log::*;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::time::Duration;
+use stegos_blockchain::PaymentOutput;
+use stegos_crypto::curve1174;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure::{self, G2};
 use stegos_keychain::KeyChain;
@@ -20,8 +22,13 @@ use tokio_timer::Interval;
 
 const MESSAGE_TIMEOUT: Duration = Duration::from_secs(30);
 
+type TXIN = Hash;
+type UTXO = PaymentOutput;
+type SchnorrSig = curve1174::cpt::SchnorrSig;
+type ParticipantID = secure::PublicKey;
+
 struct FacilitatorState {
-    participants: HashSet<secure::PublicKey>,
+    participants: HashMap<ParticipantID, (Vec<TXIN>, Vec<UTXO>, SchnorrSig)>,
     timer: Interval,
 }
 
@@ -31,17 +38,27 @@ impl FacilitatorState {
         // register new timer to the current task.
         let _ = timer.poll();
         FacilitatorState {
-            participants: HashSet::new(),
+            participants: HashMap::new(),
             timer,
         }
     }
 
-    fn add_participant(&mut self, pkey: secure::PublicKey) -> bool {
-        self.participants.insert(pkey)
+    fn add_participant(&mut self, pkey: ParticipantID, data: PoolJoin) -> bool {
+        match self
+            .participants
+            .insert(pkey, (data.txins, data.utxos, data.ownsig))
+        {
+            None => true,
+            _ => false,
+        }
     }
 
-    fn take_pool(&mut self) -> HashSet<secure::PublicKey> {
-        std::mem::replace(&mut self.participants, HashSet::new())
+    fn take_pool(&mut self) -> HashMap<ParticipantID, (Vec<TXIN>, Vec<UTXO>, SchnorrSig)> {
+        if self.participants.len() >= 3 {
+            std::mem::replace(&mut self.participants, HashMap::new())
+        } else {
+            HashMap::new()
+        }
     }
 }
 
@@ -55,7 +72,7 @@ pub(crate) enum PoolEvent {
     //
     // Public API.
     //
-    Join(secure::PublicKey, Vec<u8>),
+    Join(ParticipantID, Vec<u8>),
 
     //
     // Internal events.
@@ -64,8 +81,8 @@ pub(crate) enum PoolEvent {
 }
 
 pub struct TransactionPoolService {
-    facilitator_pkey: secure::PublicKey,
-    pkey: secure::PublicKey,
+    facilitator_pkey: ParticipantID,
+    pkey: ParticipantID,
     network: Network,
     role: NodeRole,
 
@@ -76,7 +93,7 @@ impl TransactionPoolService {
     /// Crates new TransactionPool.
     pub fn new(keychain: &KeyChain, network: Network, node: Node) -> TransactionPoolService {
         let pkey = keychain.network_pkey.clone();
-        let facilitator_pkey: secure::PublicKey = G2::generator().into(); // some fake key
+        let facilitator_pkey: ParticipantID = G2::generator().into(); // some fake key
 
         let events = || -> Result<_, Error> {
             let mut streams = Vec::<Box<Stream<Item = PoolEvent, Error = ()> + Send>>::new();
@@ -105,7 +122,7 @@ impl TransactionPoolService {
     }
 
     fn handle_epoch(&mut self, epoch: EpochNotification) -> Result<(), Error> {
-        debug!("Changed facilitator: facilitator={:?}", epoch.facilitator);
+        debug!("Changed facilitator: facilitator={}", epoch.facilitator);
         let role = if epoch.facilitator == self.pkey {
             info!("I am facilitator.");
             NodeRole::Facilitator(FacilitatorState::new())
@@ -121,21 +138,36 @@ impl TransactionPoolService {
         match &mut self.role {
             NodeRole::Facilitator(state) => {
                 // after timeout facilitator should broadcast message to each node.
-                let participants: Vec<secure::PublicKey> = state.take_pool().into_iter().collect();
-                if participants.is_empty() {
+                let parts = state.take_pool();
+                if parts.is_empty() {
                     debug!("No requests received, skipping pool formation");
                     return Ok(());
                 }
-
+                let mut participants = Vec::<ParticipantTXINMap>::new();
+                for (participant, (txins, utxos, ownsig)) in &parts {
+                    /*
+                    let mut utxos = Vec::<UTXO>::new();
+                    for txin in txins {
+                        utxos.push(get_utxo(txin)?);
+                    }
+                    */
+                    participants.push(ParticipantTXINMap {
+                        participant: participant.clone(),
+                        txins: txins.clone(),
+                        utxos: utxos.clone(),
+                        ownsig: ownsig.clone(),
+                    })
+                }
                 let session_id = Hash::random();
                 let info = PoolInfo {
-                    participants,
+                    participants: participants.clone(),
                     session_id,
                 };
                 info!("Formed a new pool: participants={:?}", &info.participants);
                 let data = info.into_buffer()?;
-                for pkey in info.participants {
-                    self.network.send(pkey, POOL_ANNOUNCE_TOPIC, data.clone())?;
+                for part in info.participants {
+                    self.network
+                        .send(part.participant, POOL_ANNOUNCE_TOPIC, data.clone())?;
                 }
             }
             NodeRole::Regular => {
@@ -146,7 +178,11 @@ impl TransactionPoolService {
     }
 
     /// Receive message of other nodes from unicast channel.
-    pub fn handle_join_message(&mut self, from: secure::PublicKey) -> Result<(), Error> {
+    pub fn handle_join_message(
+        &mut self,
+        data: PoolJoin,
+        from: ParticipantID,
+    ) -> Result<(), Error> {
         match self.role {
             NodeRole::Regular => {
                 error!(
@@ -155,7 +191,7 @@ impl TransactionPoolService {
                 );
             }
             NodeRole::Facilitator(ref mut state) => {
-                if state.add_participant(from) {
+                if state.add_participant(from, data) {
                     info!("Added a new member: pkey={}", from);
                 }
             }
@@ -186,8 +222,9 @@ impl TransactionPoolService {
             Async::Ready(Some(event)) => {
                 let result = match event {
                     PoolEvent::Join(from, data) => {
-                        debug!("Received join message: from={:?}", from);
-                        PoolJoin::from_buffer(&data).and_then(|_| self.handle_join_message(from))
+                        debug!("Received join message: from={}", from);
+                        PoolJoin::from_buffer(&data)
+                            .and_then(|pj_rec| self.handle_join_message(pj_rec, from))
                     }
                     PoolEvent::EpochChanged(epoch) => self.handle_epoch(epoch),
                 };

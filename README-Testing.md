@@ -46,3 +46,8 @@ tmux a -t node01
 ```shell
 ./stop-cluster.sh N
 ```
+
+## Reset database to initial conditions
+```shell
+./clear-database.sh
+```

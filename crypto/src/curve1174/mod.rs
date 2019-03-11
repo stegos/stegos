@@ -270,6 +270,17 @@ mod tests {
             "Random generator not working in the expected manner"
         );
     }
+
+    #[test]
+    fn chk_scalar_conversion() {
+        let x = 6i64;
+        let fx = Fr::from(x);
+        let uval = U256::from(fx.unscaled());
+        dbg!(&uval);
+        let xx = fx.to_i64();
+        dbg!(&xx);
+        assert!(xx.expect("Can't convert") == x);
+    }
 }
 
 // ------------------------------------------------------------------------------------------

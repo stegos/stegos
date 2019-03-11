@@ -26,18 +26,16 @@ use futures::prelude::*;
 use futures::sync::mpsc;
 use ipnetwork::IpNetwork;
 use libp2p::{
-    core::swarm::NetworkBehaviourEventProcess,
-    floodsub::{Floodsub, FloodsubEvent, TopicBuilder, TopicHash},
-    kad::KademliaOut,
-    multiaddr::Protocol,
-    multiaddr::ToMultiaddr,
-    multihash, secio, Multiaddr, NetworkBehaviour, PeerId, Swarm,
+    core::swarm::NetworkBehaviourEventProcess, kad::KademliaOut, multiaddr::Protocol,
+    multiaddr::ToMultiaddr, multihash, secio, Multiaddr, NetworkBehaviour, PeerId, Swarm,
 };
 use log::*;
 use pnet::datalink;
 use protobuf::Message as ProtoMessage;
 use smallvec::SmallVec;
 use std::collections::HashMap;
+use std::error;
+use std::time::Duration;
 use stegos_crypto::hash::{Hashable, Hasher};
 use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
@@ -45,6 +43,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::config::NetworkConfig;
 use crate::discovery::{DiscoveryBehaviour, DiscoveryOutEvent};
+use crate::pubsub::{Floodsub, FloodsubEvent, TopicBuilder, TopicHash};
 use crate::{
     ncp::Ncp, Network, NetworkProvider, UnicastDataMessage, UnicastMessage, UnicastOutEvent,
     UnicastSend,
@@ -195,7 +194,6 @@ fn new_service(
 pub struct Libp2pBehaviour<TSubstream: AsyncRead + AsyncWrite> {
     floodsub: Floodsub<TSubstream>,
     ncp: Ncp<TSubstream>,
-    discovery: DiscoveryBehaviour<TSubstream>,
     unicast_send: UnicastSend<TSubstream>,
     #[behaviour(ignore)]
     consumers: HashMap<TopicHash, SmallVec<[mpsc::UnboundedSender<Vec<u8>>; 3]>>,
@@ -209,18 +207,36 @@ pub struct Libp2pBehaviour<TSubstream: AsyncRead + AsyncWrite> {
     topics_map: HashMap<TopicHash, String>,
 }
 
+// #[derive(NetworkBehaviour)]
+// pub struct Libp2pBehaviour<TSubstream: AsyncRead + AsyncWrite> {
+//     floodsub: Floodsub<TSubstream>,
+//     ncp: Ncp<TSubstream>,
+//     // discovery: DiscoveryBehaviour<TSubstream>,
+//     unicast_send: UnicastSend<TSubstream>,
+//     #[behaviour(ignore)]
+//     consumers: HashMap<TopicHash, SmallVec<[mpsc::UnboundedSender<Vec<u8>>; 3]>>,
+//     #[behaviour(ignore)]
+//     unicast_consumers: HashMap<String, SmallVec<[mpsc::UnboundedSender<UnicastMessage>; 3]>>,
+//     #[behaviour(ignore)]
+//     my_pkey: secure::PublicKey,
+//     #[behaviour(ignore)]
+//     my_skey: secure::SecretKey,
+//     #[behaviour(ignore)]
+//     topics_map: HashMap<TopicHash, String>,
+// }
+
 impl<TSubstream> Libp2pBehaviour<TSubstream>
 where
     TSubstream: AsyncRead + AsyncWrite,
 {
     pub fn new(config: &NetworkConfig, keychain: &KeyChain, peer_id: PeerId) -> Self {
-        let mut discovery = DiscoveryBehaviour::new(peer_id.clone());
-        discovery.add_providing(network_pkey_to_peer_id(&keychain.network_pkey));
+        // let mut discovery = DiscoveryBehaviour::new(peer_id.clone());
+        // discovery.add_providing(network_pkey_to_peer_id(&keychain.network_pkey));
         let mut behaviour = Libp2pBehaviour {
             floodsub: Floodsub::new(peer_id.clone()),
             ncp: Ncp::new(config),
             unicast_send: UnicastSend::new(keychain),
-            discovery,
+            // discovery,
             consumers: HashMap::new(),
             unicast_consumers: HashMap::new(),
             my_pkey: keychain.network_pkey.clone(),
@@ -237,7 +253,7 @@ where
     }
 
     fn add_providing(&mut self, key: PeerId) {
-        self.discovery.add_providing(key);
+        // self.discovery.add_providing(key);
     }
 
     fn process_event(&mut self, msg: ControlMessage) {
@@ -320,7 +336,7 @@ where
                             protocol_id,
                             data,
                         };
-                        self.discovery.send(msg);
+                        // self.discovery.send(msg);
                     }
                 }
             }

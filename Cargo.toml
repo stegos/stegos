@@ -33,7 +33,7 @@ stegos_blockchain = { version = "0.2.0", path = "./blockchain" }
 stegos_consensus = { version = "0.2.0", path = "./consensus" }
 stegos_crypto = { version = "0.2.0", path = "./crypto" }
 stegos_keychain = { version = "0.2.0", path = "./keychain" }
-stegos_network = { version = "0.3.0", path = "./network" }
+stegos_network = { version = "0.4.0", path = "./network" }
 stegos_node = { version = "0.2.0", path = "./node" }
 stegos_serialization = { version = "0.2.0", path = "./serialization" }
 stegos_txpool = { version = "0.2.0", path = "./txpool" }
@@ -48,6 +48,7 @@ hyper = "0.12"
 lazy_static = "1.1"
 log = "0.4"
 log4rs = { version = "0.8", features = ["all_components", "gzip", "file", "toml_format"] }
+env_logger = "0.6"
 prometheus = "0.5"
 rand = "0.6"
 regex = "1.0"

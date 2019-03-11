@@ -18,14 +18,14 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::rpc_proto;
-use crate::topic::TopicHash;
-use libp2p_core::{InboundUpgrade, OutboundUpgrade, UpgradeInfo, PeerId, upgrade};
+use crate::pubsub::rpc_proto;
+use crate::pubsub::topic::TopicHash;
+use libp2p::core::{InboundUpgrade, OutboundUpgrade, UpgradeInfo, PeerId, upgrade};
 use protobuf::{ProtobufError, Message as ProtobufMessage};
 use std::{error, fmt, io, iter};
-use tokio_io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite};
 
-const PUBSUB_MAX_MESSAGE_SIZE: usize = 1024 * 1024;
+const PUBSUB_MAX_MESSAGE_SIZE: usize = 32 * 1024;
 
 /// Implementation of `ConnectionUpgrade` for the floodsub protocol.
 #[derive(Debug, Clone, Default)]
@@ -45,7 +45,7 @@ impl UpgradeInfo for FloodsubConfig {
 
     #[inline]
     fn protocol_info(&self) -> Self::InfoIter {
-        iter::once(b"/stegos-pubsub/1.0.0")
+        iter::once(b"/stegos/pubsub/1.0.0")
     }
 }
 

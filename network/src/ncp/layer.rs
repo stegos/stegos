@@ -222,6 +222,7 @@ where
                     }
                 }
                 NcpEvent::SendPeers { peer_id } => {
+                    debug!(target: "stegos_network::ncp", "sending peers info to peer: {}", peer_id.to_base58());
                     let mut response = GetPeersResponse { peers: vec![] };
                     let mut connected = self.connected_peers.clone();
                     for peer in connected.drain() {
@@ -245,6 +246,7 @@ where
                     });
                 }
                 NcpEvent::RequestPeers { peer_id } => {
+                    debug!(target: "stegos_network::ncp", "sending peers request to peer: {}", peer_id.to_base58());
                     return Async::Ready(NetworkBehaviourAction::SendEvent {
                         peer_id,
                         event: NcpMessage::GetPeersRequest,

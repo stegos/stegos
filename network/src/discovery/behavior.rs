@@ -135,10 +135,12 @@ where
     }
 
     fn inject_connected(&mut self, peer_id: PeerId, endpoint: ConnectedPoint) {
+        debug!(target: "stegos_network::discovery", "new peer connected: peer_id={}", peer_id.to_base58());
         NetworkBehaviour::inject_connected(&mut self.kademlia, peer_id, endpoint)
     }
 
     fn inject_disconnected(&mut self, peer_id: &PeerId, endpoint: ConnectedPoint) {
+        debug!(target: "stegos_network::discovery", "peer disconnected: peer_id={}", peer_id.to_base58());
         NetworkBehaviour::inject_disconnected(&mut self.kademlia, peer_id, endpoint)
     }
 

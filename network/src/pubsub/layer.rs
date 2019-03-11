@@ -18,8 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::protocol::{FloodsubConfig, FloodsubMessage, FloodsubRpc, FloodsubSubscription, FloodsubSubscriptionAction};
-use crate::topic::{Topic, TopicHash};
+use crate::pubsub::protocol::{FloodsubConfig, FloodsubMessage, FloodsubRpc, FloodsubSubscription, FloodsubSubscriptionAction};
+use crate::pubsub::topic::{Topic, TopicHash};
 use cuckoofilter::CuckooFilter;
 use fnv::FnvHashSet;
 use futures::prelude::*;
@@ -28,8 +28,9 @@ use libp2p::core::{protocols_handler::ProtocolsHandler, protocols_handler::OneSh
 use rand;
 use smallvec::SmallVec;
 use std::{collections::VecDeque, iter, marker::PhantomData};
+use log::debug;
 use std::collections::hash_map::{DefaultHasher, HashMap};
-use tokio_io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite};
 
 /// Network behaviour that automatically identifies nodes periodically, and returns information
 /// about them.
@@ -39,9 +40,6 @@ pub struct Floodsub<TSubstream> {
 
     /// Peer id of the local node. Used for the source of the messages that we publish.
     local_peer_id: PeerId,
-
-    /// List of peers to send messages to.
-    target_peers: FnvHashSet<PeerId>,
 
     /// List of peers the network is connected to, and the topics that they're subscribed to.
     // TODO: filter out peers that don't support floodsub, so that we avoid hammering them with
@@ -66,42 +64,11 @@ impl<TSubstream> Floodsub<TSubstream> {
         Floodsub {
             events: VecDeque::new(),
             local_peer_id,
-            target_peers: FnvHashSet::default(),
             connected_peers: HashMap::new(),
             subscribed_topics: SmallVec::new(),
             received: CuckooFilter::new(),
             marker: PhantomData,
         }
-    }
-
-    /// Add a node to the list of nodes to propagate messages to.
-    #[inline]
-    pub fn add_node_to_partial_view(&mut self, peer_id: PeerId) {
-        // Send our topics to this node if we're already connected to it.
-        if self.connected_peers.contains_key(&peer_id) {
-            for topic in self.subscribed_topics.iter() {
-                self.events.push_back(NetworkBehaviourAction::SendEvent {
-                    peer_id: peer_id.clone(),
-                    event: FloodsubRpc {
-                        messages: Vec::new(),
-                        subscriptions: vec![FloodsubSubscription {
-                            topic: topic.hash().clone(),
-                            action: FloodsubSubscriptionAction::Subscribe,
-                        }],
-                    },
-                });
-            }
-        }
-
-        if self.target_peers.insert(peer_id.clone()) {
-            self.events.push_back(NetworkBehaviourAction::DialPeer { peer_id });
-        }
-    }
-
-    /// Remove a node from the list of nodes to propagate messages to.
-    #[inline]
-    pub fn remove_node_from_partial_view(&mut self, peer_id: &PeerId) {
-        self.target_peers.remove(&peer_id);
     }
 }
 
@@ -222,34 +189,27 @@ where
     }
 
     fn inject_connected(&mut self, id: PeerId, _: ConnectedPoint) {
-        // We need to send our subscriptions to the newly-connected node.
-        if self.target_peers.contains(&id) {
-            for topic in self.subscribed_topics.iter() {
-                self.events.push_back(NetworkBehaviourAction::SendEvent {
-                    peer_id: id.clone(),
-                    event: FloodsubRpc {
-                        messages: Vec::new(),
-                        subscriptions: vec![FloodsubSubscription {
-                            topic: topic.hash().clone(),
-                            action: FloodsubSubscriptionAction::Subscribe,
-                        }],
-                    },
-                });
-            }
+        debug!(target: "stegos_network::floodsub", "New peer connected: {}", id.to_base58());
+        for topic in self.subscribed_topics.iter() {
+            self.events.push_back(NetworkBehaviourAction::SendEvent {
+                peer_id: id.clone(),
+                event: FloodsubRpc {
+                    messages: Vec::new(),
+                    subscriptions: vec![FloodsubSubscription {
+                        topic: topic.hash().clone(),
+                        action: FloodsubSubscriptionAction::Subscribe,
+                    }],
+                },
+            });
         }
 
         self.connected_peers.insert(id.clone(), SmallVec::new());
     }
 
     fn inject_disconnected(&mut self, id: &PeerId, _: ConnectedPoint) {
+        debug!(target: "stegos_network::floodsub", "Peer disconnected: {}", id.to_base58());
         let was_in = self.connected_peers.remove(id);
         debug_assert!(was_in.is_some());
-
-        // We can be disconnected by the remote in case of inactivity for example, so we always
-        // try to reconnect.
-        if self.target_peers.contains(id) {
-            self.events.push_back(NetworkBehaviourAction::DialPeer { peer_id: id.clone() });
-        }
     }
 
     fn inject_node_event(

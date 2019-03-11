@@ -248,6 +248,8 @@ fn run() -> Result<(), Error> {
     // Initialize logger
     initialize_logger(&cfg)?;
 
+    // env_logger::init();
+
     // Print welcome message
     info!("{} {}", name, version);
 

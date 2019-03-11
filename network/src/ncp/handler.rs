@@ -24,10 +24,11 @@
 use crate::ncp::protocol::{NcpCodec, NcpConfig, NcpMessage};
 use futures::prelude::*;
 use libp2p::core::{
-    protocols_handler::{ProtocolsHandlerUpgrErr, KeepAlive},
+    protocols_handler::{KeepAlive, ProtocolsHandlerUpgrErr},
     upgrade::{InboundUpgrade, OutboundUpgrade},
     ProtocolsHandler, ProtocolsHandlerEvent,
 };
+use log::debug;
 use smallvec::SmallVec;
 use std::{fmt, io};
 use tokio::codec::Framed;
@@ -123,6 +124,7 @@ where
         &mut self,
         protocol: <Self::InboundProtocol as InboundUpgrade<TSubstream>>::Output,
     ) {
+        debug!(target: "stegos_network::ncp", "successfully negotiated inbound!");
         if self.shutting_down {
             return ();
         }
@@ -134,6 +136,7 @@ where
         protocol: <Self::OutboundProtocol as OutboundUpgrade<TSubstream>>::Output,
         message: Self::OutboundOpenInfo,
     ) {
+        debug!(target: "stegos_network::ncp", "successfully negotiated outbound!");
         if self.shutting_down {
             return;
         }
@@ -161,6 +164,7 @@ where
 
     #[inline]
     fn connection_keep_alive(&self) -> KeepAlive {
+        debug!("queried for keep_alive");
         KeepAlive::Forever
     }
 

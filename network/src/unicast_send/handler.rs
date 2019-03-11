@@ -186,7 +186,7 @@ where
     ) {
     }
 
-    // TODO: After upgrading to libp2p v0.3 set reasonable time
+    // TODO: After upgrading to libp2p v0.4 set reasonable time
     #[inline]
     fn connection_keep_alive(&self) -> KeepAlive {
         if !self.substreams.is_empty() {

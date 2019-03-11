@@ -1,6 +1,6 @@
 [package]
 name = "stegos_wallet"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Stegos AG <info@stegos.com>"]
 build = "build.rs"
 categories = ["cryptography", "network-programming"]
@@ -13,12 +13,12 @@ repository = "https://github.com/stegos/stegos"
 description = "Stegos - Wallet"
 
 [dependencies]
-stegos_blockchain = { version = "0.1.0", path = "../blockchain" }
-stegos_crypto = { version = "0.1.0", path = "../crypto" }
+stegos_blockchain = { version = "0.2.0", path = "../blockchain" }
+stegos_crypto = { version = "0.2.0", path = "../crypto" }
 stegos_network = { version = "0.3.0", path = "../network" }
-stegos_node = { version = "0.1.0", path = "../node" }
-stegos_serialization = { version = "0.1.0", path = "../serialization" }
-stegos_txpool = { version = "0.1.0", path = "../txpool" }
+stegos_node = { version = "0.2.0", path = "../node" }
+stegos_serialization = { version = "0.2.0", path = "../serialization" }
+stegos_txpool = { version = "0.2.0", path = "../txpool" }
 chrono = "0.4"
 failure = "0.1"
 futures = "0.1"
@@ -31,4 +31,4 @@ tokio-timer = "0.2"
 simple_logger = "1.0"
 
 [build-dependencies]
-stegos_serialization = { version = "0.1.0", path = "../serialization" }
+stegos_serialization = { version = "0.2.0", path = "../serialization" }

@@ -13,9 +13,9 @@ repository = "https://github.com/stegos/stegos"
 description = "Stegos - Network Library"
 
 [dependencies]
-stegos_crypto = { version = "0.1.0", path = "../crypto" }
-stegos_keychain = { version = "0.1.0", path = "../keychain" }
-stegos_serialization = { version = "0.1.0", path = "../serialization" }
+stegos_crypto = { version = "0.2.0", path = "../crypto" }
+stegos_keychain = { version = "0.2.0", path = "../keychain" }
+stegos_serialization = { version = "0.2.0", path = "../serialization" }
 bs58 = "0.2"
 bytes = "0.4"
 env_logger = "0.6.0"
@@ -38,4 +38,4 @@ unsigned-varint = "0.2"
 void = "1.0"
 
 [build-dependencies]
-stegos_serialization = { version = "0.1.0", path = "../serialization" }
+stegos_serialization = { version = "0.2.0", path = "../serialization" }

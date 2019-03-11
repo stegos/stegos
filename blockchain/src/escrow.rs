@@ -23,13 +23,16 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use chrono::NaiveDateTime;
 use failure::Fail;
 use log::*;
+use serde_derive::Serialize;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
 
-/// Minimal stake a
+/// Minimal stake amount.
 pub const MIN_STAKE_AMOUNT: i64 = 1000;
 
 #[derive(PartialEq, Eq, Ord, PartialOrd)]
@@ -50,6 +53,25 @@ type EscrowMap = BTreeMap<EscrowKey, EscrowValue>;
 
 pub struct Escrow {
     escrow: EscrowMap,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct EscrowInfo {
+    pub validators: Vec<ValidatorInfo>,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct ValidatorInfo {
+    pub network_pkey: String,
+    pub total: i64,
+    pub stakes: Vec<StakeInfo>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct StakeInfo {
+    pub output_hash: String,
+    pub locked_until: String,
+    pub amount: i64,
 }
 
 impl Escrow {
@@ -208,6 +230,29 @@ impl Escrow {
             .into_iter()
             .filter(|(_, amount)| *amount >= MIN_STAKE_AMOUNT)
             .collect()
+    }
+
+    /// Returns an object that represent printable part of the state.
+    pub fn info(&self) -> EscrowInfo {
+        let mut validators: HashMap<String, ValidatorInfo> = HashMap::new();
+        for (k, v) in self.escrow.iter() {
+            let validator_pkey = format!("{}", &k.validator_pkey);
+            let entry = validators
+                .entry(validator_pkey.clone())
+                .or_insert(Default::default());
+            let locked_until = NaiveDateTime::from_timestamp(v.bonding_timestamp as i64, 0);
+            let stake = StakeInfo {
+                output_hash: format!("{}", &k.output_hash),
+                locked_until: format!("{}", &locked_until),
+                amount: v.amount,
+            };
+            (*entry).network_pkey = validator_pkey;
+            (*entry).stakes.push(stake);
+            (*entry).total += v.amount;
+        }
+        let mut validators: Vec<ValidatorInfo> = validators.into_iter().map(|(_k, v)| v).collect();
+        validators.sort_by_key(|x| -x.total);
+        EscrowInfo { validators }
     }
 }
 

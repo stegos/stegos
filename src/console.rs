@@ -29,6 +29,7 @@ use lazy_static::*;
 use log::*;
 use regex::Regex;
 use rustyline as rl;
+use std::fmt;
 use std::path::PathBuf;
 use std::thread;
 use stegos_crypto::curve1174::cpt::PublicKey;
@@ -164,6 +165,8 @@ impl ConsoleService {
         println!("show keys - print keys");
         println!("show balance - print balance");
         println!("show utxo - print unspent outputs");
+        println!("show election - print leader election state");
+        println!("show escrow - print escrow");
         println!("net publish TOPIC MESSAGE - publish a network message via floodsub");
         println!("net send NETWORK_PUBKEY MESSAGE - send a network message via unicast");
         println!();
@@ -392,6 +395,9 @@ impl ConsoleService {
         } else if msg == "show election" {
             self.node.election_info().unwrap();
             return false; // keep stdin parked until result is received.
+        } else if msg == "show escrow" {
+            self.node.escrow_info().unwrap();
+            return false; // keep stdin parked until result is received.
         } else if msg == "show utxo" {
             self.wallet.unspent_info();
             return false; // keep stdin parked until result is received.
@@ -404,10 +410,18 @@ impl ConsoleService {
     fn on_exit(&self) {
         std::process::exit(0);
     }
+
     fn on_node_info(&mut self, info: InfoNotification) {
-        println!("Election state:\n{}", info.display);
+        let output = match info {
+            InfoNotification::Election(info) => serde_yaml::to_string(&[info]),
+            InfoNotification::Escrow(info) => serde_yaml::to_string(&[info]),
+        }
+        .map_err(|_| fmt::Error)
+        .unwrap();
+        println!("{}\n...\n", output);
         self.stdin_th.thread().unpark();
     }
+
     fn on_notification(&mut self, notification: WalletNotification) {
         match notification {
             WalletNotification::PaymentReceived { amount, comment } => {

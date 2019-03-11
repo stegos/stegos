@@ -123,6 +123,14 @@ impl Node {
         self.outbox.unbounded_send(msg)?;
         Ok(())
     }
+
+    /// Ask current state of the election.
+    pub fn escrow_info(&self) -> Result<(), Error> {
+        let msg = NodeMessage::EscrowInfo;
+        self.outbox.unbounded_send(msg)?;
+        Ok(())
+    }
+
     /// Subscribe to epoch changes.
     pub fn subscribe_epoch(&self) -> Result<UnboundedReceiver<EpochNotification>, Error> {
         let (tx, rx) = unbounded();
@@ -150,9 +158,9 @@ impl Node {
 
 /// Info from node.
 #[derive(Clone, Debug)]
-pub struct InfoNotification {
-    /// simple text output.
-    pub display: tickets::DisplayState,
+pub enum InfoNotification {
+    Election(tickets::ElectionInfo),
+    Escrow(EscrowInfo),
 }
 
 /// Send when epoch is changed.
@@ -214,6 +222,7 @@ enum NodeMessage {
     SubscribeOutputs(UnboundedSender<OutputsNotification>),
     SubscribeInfo(UnboundedSender<InfoNotification>),
     ElectionInfo,
+    EscrowInfo,
     //
     // Network Events
     //
@@ -686,13 +695,19 @@ impl NodeService {
     }
 
     fn handle_election_info(&mut self) -> Result<(), Error> {
-        let msg = InfoNotification {
-            display: self.vrf_system.to_display(),
-        };
+        let msg = InfoNotification::Election(self.vrf_system.info());
         self.on_info
             .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
         Ok(())
     }
+
+    fn handle_escrow_info(&mut self) -> Result<(), Error> {
+        let msg = InfoNotification::Escrow(self.chain.escrow.info());
+        self.on_info
+            .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
+        Ok(())
+    }
+
     /// Handler for new epoch creation procedure.
     /// This method called only on leader side, and when consensus is active.
     /// Leader should create a KeyBlock based on last random provided by VRF.
@@ -1115,6 +1130,7 @@ impl Future for NodeService {
                         NodeMessage::SubscribeOutputs(tx) => self.handle_subscribe_outputs(tx),
                         NodeMessage::SubscribeInfo(tx) => self.handle_subscribe_info(tx),
                         NodeMessage::ElectionInfo => self.handle_election_info(),
+                        NodeMessage::EscrowInfo => self.handle_escrow_info(),
                         NodeMessage::Transaction(msg) => Transaction::from_buffer(&msg)
                             .and_then(|msg| self.handle_transaction(msg)),
                         NodeMessage::Consensus(msg) => BlockConsensusMessage::from_buffer(&msg)

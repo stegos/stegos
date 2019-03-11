@@ -1,6 +1,6 @@
 [package]
 name = "stegos_keychain"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Stegos AG <info@stegos.com>"]
 categories = ["cryptography", "config"]
 edition = "2018"
@@ -11,7 +11,7 @@ repository = "https://github.com/stegos/stegos"
 description = "Stegos - Key Management"
 
 [dependencies]
-stegos_crypto = { version="0.1.0", path = "../crypto" }
+stegos_crypto = { version = "0.2.0", path = "../crypto" }
 base64 = "0.9"
 failure = "0.1"
 lazy_static = "1.1"

@@ -200,7 +200,7 @@ lazy_static! {
 }
 
 #[derive(Clone, Debug)]
-enum NodeMessage {
+pub enum NodeMessage {
     //
     // Public API
     //
@@ -279,8 +279,7 @@ impl NodeService {
         Ok((service, handler))
     }
 
-    #[cfg(test)]
-    fn testing(
+    pub fn testing(
         keys: KeyChain,
         network: Network,
         genesis: Vec<Block>,
@@ -362,7 +361,7 @@ impl NodeService {
     }
 
     /// Handler for NodeMessage::Init.
-    fn handle_init(&mut self) -> Result<(), Error> {
+    pub fn handle_init(&mut self) -> Result<(), Error> {
         let len = self.chain.height();
         assert!(len > 0);
         debug!("Recovering consensus state");

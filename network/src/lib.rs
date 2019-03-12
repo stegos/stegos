@@ -25,6 +25,7 @@
 mod config;
 mod gatekeeper;
 mod libp2p_network;
+pub mod loopback;
 mod ncp;
 mod pubsub;
 

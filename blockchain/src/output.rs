@@ -76,13 +76,13 @@ pub enum OutputError {
 /// (ID, P_{M, δ}, Bp, E_M(x, γ, δ))
 #[derive(Debug, Clone)]
 pub struct PaymentOutput {
-    /// Clocked public key of recipient.
+    /// Cloacked public key of recipient.
     /// P_M + δG
     pub recipient: PublicKey,
 
     /// Bulletproof on range on amount x.
     /// Contains Pedersen commitment.
-    /// Size is approx. 3-5 KB (very structured data type).
+    /// Size is approx. 1 KB (very structured data type).
     pub proof: BulletProof,
 
     /// Encrypted payload.
@@ -420,6 +420,38 @@ impl PaymentOutput {
     ) -> Result<(Self, Fr), Error> {
         let data = PaymentPayloadData::Comment(String::new());
         Self::with_payload(timestamp, sender_skey, recipient_pkey, amount, data)
+    }
+
+    pub fn with_uncloaked_payload(
+        recipient_pkey: &PublicKey,
+        amount: i64,
+        data: PaymentPayloadData,
+    ) -> Result<(Self, Fr), Error> {
+        // Create range proofs.
+        let (proof, gamma) = make_range_proof(amount);
+
+        let payload = PaymentPayload {
+            delta: Fr::zero(),
+            gamma,
+            amount,
+            data,
+        };
+        // NOTE: dummy zero pubkey produces hint of Pt::zero()
+        // and unencrypted payload
+        let payload = payload.encrypt(&PublicKey::zero())?;
+
+        let output = PaymentOutput {
+            recipient: recipient_pkey.clone(),
+            proof,
+            payload,
+        };
+
+        Ok((output, gamma))
+    }
+
+    pub fn new_uncloaked(recipient_pkey: &PublicKey, amount: i64) -> Result<(Self, Fr), Error> {
+        let data = PaymentPayloadData::Comment(String::new());
+        Self::with_uncloaked_payload(recipient_pkey, amount, data)
     }
 
     /// Decrypt payload.
@@ -806,5 +838,23 @@ pub mod tests {
         } else {
             assert!(false);
         }
+    }
+
+    #[test]
+    pub fn unencrypted_payload() {
+        let (skey, pkey, _) = make_random_keys();
+        let amount: i64 = 0x1234567;
+
+        let (output, gamma) =
+            PaymentOutput::new_uncloaked(&pkey, amount).expect("Can't generate uncloaked UTXO");
+        assert!(output.recipient == pkey);
+        let rec = output
+            .decrypt_payload(&skey)
+            .expect("Can't decrypt unencrypted payload");
+        assert!(rec.amount == amount);
+        assert!(rec.delta == Fr::zero());
+        assert!(rec.gamma == gamma);
+        println!("gamma = {}", gamma);
+        println!("output = {:?}", output);
     }
 }

@@ -25,6 +25,7 @@ use bytes::{BufMut, BytesMut};
 use futures::future;
 use libp2p::core::{InboundUpgrade, OutboundUpgrade, PeerId, UpgradeInfo};
 use libp2p::Multiaddr;
+use log::debug;
 use protobuf::Message;
 use std::{io, iter};
 use tokio::codec::{Decoder, Encoder, Framed};
@@ -151,7 +152,6 @@ impl Decoder for NcpCodec {
             Some(p) => p,
             None => return Ok(None),
         };
-
         let message: ncp_proto::Message = protobuf::parse_from_bytes(&packet)?;
 
         match message.get_field_type() {

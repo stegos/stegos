@@ -40,6 +40,7 @@ use stegos_crypto::hash::{Hashable, Hasher};
 use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
 use tokio::io::{AsyncRead, AsyncWrite};
+// use libp2p::floodsub::{Floodsub, FloodsubEvent, TopicBuilder, TopicHash};
 
 use crate::config::NetworkConfig;
 use crate::discovery::{DiscoveryBehaviour, DiscoveryOutEvent};
@@ -194,7 +195,6 @@ fn new_service(
 pub struct Libp2pBehaviour<TSubstream: AsyncRead + AsyncWrite> {
     floodsub: Floodsub<TSubstream>,
     ncp: Ncp<TSubstream>,
-    unicast_send: UnicastSend<TSubstream>,
     #[behaviour(ignore)]
     consumers: HashMap<TopicHash, SmallVec<[mpsc::UnboundedSender<Vec<u8>>; 3]>>,
     #[behaviour(ignore)]
@@ -235,7 +235,7 @@ where
         let mut behaviour = Libp2pBehaviour {
             floodsub: Floodsub::new(peer_id.clone()),
             ncp: Ncp::new(config),
-            unicast_send: UnicastSend::new(keychain),
+            // unicast_send: UnicastSend::new(keychain),
             // discovery,
             consumers: HashMap::new(),
             unicast_consumers: HashMap::new(),
@@ -245,7 +245,7 @@ where
         };
         let unicast_topic = TopicBuilder::new(UNICAST_TOPIC).build();
         behaviour.floodsub.subscribe(unicast_topic);
-        debug!(target: "stegos_network::floodsub",
+        debug!(target: "stegos_network::pubsub",
             "Listening for unicast message: my_key={:?}",
             behaviour.my_pkey.clone().to_string()
         );
@@ -270,7 +270,7 @@ where
                 self.floodsub.subscribe(floodsub_topic);
             }
             ControlMessage::Publish { topic, data } => {
-                debug!(target: "stegos_network::floodsub",
+                debug!(target: "stegos_network::pubsub",
                     "Sending broadcast message: topic={}, size={}",
                     topic,
                     data.len(),
@@ -292,7 +292,7 @@ where
                 protocol_id,
                 data,
             } => {
-                debug!(target: "stegos_network::floodsub",
+                debug!(target: "stegos_network::pubsub",
                     "Sending unicast message: to={}, from={}, protocol={}, size={}",
                     to,
                     self.my_pkey,
@@ -368,7 +368,7 @@ where
                     Ok((from, to, protocol_id, data)) => {
                         // send unicast message upstream
                         if to == self.my_pkey {
-                            debug!(target: "stegos_network::floodsub",
+                            debug!(target: "stegos_network::pubsub",
                                 "Received unicast message: from={}, protocol={} size={}",
                                 from,
                                 protocol_id,
@@ -381,7 +381,7 @@ where
                                 .retain({
                                     move |c| {
                                         if let Err(e) = c.unbounded_send(msg.clone()) {
-                                            error!(target:"stegos_network::floodsub", "Error sending data to consumer: {}", e);
+                                            error!(target:"stegos_network::pubsub", "Error sending data to consumer: {}", e);
                                             false
                                         } else {
                                             true
@@ -400,7 +400,7 @@ where
                     None => "Unknown".to_string(),
                 };
 
-                debug!(target: "stegos_network::floodsub",
+                debug!(target: "stegos_network::pubsub",
                     "Received broadcast message: topic={}, size={}",
                     topic,
                     message.data.len(),
@@ -410,7 +410,7 @@ where
                     let data = &message.data;
                     move |c| {
                         if let Err(e) = c.unbounded_send(data.clone()) {
-                            error!(target: "stegos_network::floodsub", "Error sending data to consumer: {}", e);
+                            error!(target: "stegos_network::pubsub", "Error sending data to consumer: {}", e);
                             false
                         } else {
                             true
@@ -451,7 +451,7 @@ where
                     msg.to,
                     peer_id.to_base58()
                 );
-                self.unicast_send.send_message(peer_id, msg);
+                // self.unicast_send.send_message(peer_id, msg);
             }
         }
     }

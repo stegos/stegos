@@ -28,7 +28,7 @@ use libp2p::core::{
     upgrade::{InboundUpgrade, OutboundUpgrade},
     ProtocolsHandler, ProtocolsHandlerEvent,
 };
-use log::debug;
+use log::trace;
 use smallvec::SmallVec;
 use std::{fmt, io};
 use tokio::codec::Framed;
@@ -124,7 +124,7 @@ where
         &mut self,
         protocol: <Self::InboundProtocol as InboundUpgrade<TSubstream>>::Output,
     ) {
-        debug!(target: "stegos_network::ncp", "successfully negotiated inbound!");
+        trace!(target: "stegos_network::ncp", "successfully negotiated inbound substream");
         if self.shutting_down {
             return ();
         }
@@ -136,7 +136,7 @@ where
         protocol: <Self::OutboundProtocol as OutboundUpgrade<TSubstream>>::Output,
         message: Self::OutboundOpenInfo,
     ) {
-        debug!(target: "stegos_network::ncp", "successfully negotiated outbound!");
+        trace!(target: "stegos_network::ncp", "successfully negotiated outbound substream");
         if self.shutting_down {
             return;
         }
@@ -164,7 +164,6 @@ where
 
     #[inline]
     fn connection_keep_alive(&self) -> KeepAlive {
-        debug!("queried for keep_alive");
         KeepAlive::Forever
     }
 

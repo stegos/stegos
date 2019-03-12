@@ -25,7 +25,7 @@ use protobuf::{ProtobufError, Message as ProtobufMessage};
 use std::{error, fmt, io, iter};
 use tokio::io::{AsyncRead, AsyncWrite};
 
-const PUBSUB_MAX_MESSAGE_SIZE: usize = 32 * 1024;
+const PUBSUB_MAX_MESSAGE_SIZE: usize = 1024 * 1024;
 
 /// Implementation of `ConnectionUpgrade` for the floodsub protocol.
 #[derive(Debug, Clone, Default)]
@@ -59,7 +59,7 @@ where
 
     #[inline]
     fn upgrade_inbound(self, socket: TSocket, _: Self::Info) -> Self::Future {
-        upgrade::read_one_then(socket, PUBSUB_MAX_MESSAGE_SIZE, (), |packet, ()| {
+        upgrade::read_one_then(socket, 32767, (), |packet, ()| {
             let mut rpc: rpc_proto::RPC = protobuf::parse_from_bytes(&packet)?;
 
             let mut messages = Vec::with_capacity(rpc.get_publish().len());
@@ -160,7 +160,7 @@ impl UpgradeInfo for FloodsubRpc {
 
     #[inline]
     fn protocol_info(&self) -> Self::InfoIter {
-        iter::once(b"/floodsub/1.0.0")
+        iter::once(b"/stegos/pubsub/1.0.0")
     }
 }
 

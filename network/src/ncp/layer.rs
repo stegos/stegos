@@ -116,29 +116,29 @@ where
     }
 
     fn inject_connected(&mut self, id: PeerId, _: ConnectedPoint) {
-        debug!("Peer connected: {:#?}", id);
+        debug!(target: "stegos_network::ncp", "peer connected: peer_id={}", id.to_base58());
         // Send information about connected peers to the freshly connected peer.
         self.connected_peers.insert(id.clone());
         self.events.push_back(NcpEvent::SendPeers { peer_id: id });
     }
 
     fn inject_disconnected(&mut self, id: &PeerId, _: ConnectedPoint) {
-        debug!("Peer disconnected: {:#?}", id);
+        debug!(target: "stegos_network::ncp", "peer disconnected: peer_id={}", id.to_base58());
         self.connected_peers.remove(id);
     }
 
     fn inject_node_event(&mut self, propagation_source: PeerId, event: NcpMessage) {
         // Process received NCP message (passed from Handler as Custom(message))
-        debug!("Received a message: {:?}", event);
+        debug!(target: "stegos_network::ncp", "Received a message: {:?}", event);
         match event {
             NcpMessage::GetPeersRequest => {
                 self.events.push_back(NcpEvent::SendPeers {
-                    peer_id: propagation_source.clone(),
+                    peer_id: propagation_source,
                 });
             }
             NcpMessage::GetPeersResponse { response } => {
                 self.events
-                    .push_back(NcpEvent::StorePeers { message: response });
+                    .push_back(NcpEvent::StorePeers { from: propagation_source, message: response });
             }
         }
     }
@@ -152,11 +152,10 @@ where
             Self::OutEvent,
         >,
     > {
-        trace!("NCP poll function");
         loop {
             match self.monitor.poll() {
                 Ok(Async::Ready(Some(_))) => {
-                    trace!("Monitor event fired!");
+                    trace!(target: "stegos_network::ncp", "Monitor event fired!");
                     // refresh peers in known peers, so they wouldn't be purged
                     for p in self.connected_peers.iter() {
                         let _ = self.known_peers.get(p);
@@ -166,7 +165,7 @@ where
                         continue;
                     }
                     if self.connected_peers.len() < self.min_connections {
-                        trace!("Connected peers: {:#?}", self.connected_peers);
+                        trace!(target: "stegos_network::ncp", "Connected peers: {:#?}", self.connected_peers);
                         let mut seen_peers: Vec<PeerId> = Vec::new();
                         for (peer, _addresses) in self.known_peers.iter() {
                             seen_peers.push(peer.clone());
@@ -175,12 +174,12 @@ where
                             {
                                 continue;
                             }
-                            trace!("Dialing peer: {:#?}", peer);
+                            trace!(target: "stegos_network::ncp", "Dialing peer: {:#?}", peer);
                             self.events.push_back(NcpEvent::DialPeer {
                                 peer_id: peer.clone(),
                             });
                         }
-                        trace!("Known peers: {:#?}", seen_peers);
+                        trace!(target: "stegos_network::ncp", "Known peers: {:#?}", seen_peers);
                     };
                     // Share our connected peers info with others.
                     for p in self.connected_peers.iter() {
@@ -189,12 +188,12 @@ where
                     }
                 }
                 Ok(Async::Ready(None)) => {
-                    trace!("Time finished!");
+                    trace!(target: "stegos_network::ncp", "Timer finished!");
                     break;
                 }
                 Ok(Async::NotReady) => break,
                 Err(e) => {
-                    error!("Interval timer error: {}", e);
+                    error!(target: "stegos_network::ncp", "Interval timer error: {}", e);
                     break;
                 }
             }
@@ -207,7 +206,8 @@ where
                 NcpEvent::DialPeer { peer_id } => {
                     return Async::Ready(NetworkBehaviourAction::DialPeer { peer_id });
                 }
-                NcpEvent::StorePeers { message } => {
+                NcpEvent::StorePeers { from, message } => {
+                    debug!(target: "stegos_network::ncp", "received peers: from_peer={}", from.to_base58());
                     for peer in message.peers.into_iter() {
                         if peer.peer_id != *poll_parameters.local_peer_id() {
                             for addr in peer.addresses.into_iter() {
@@ -216,16 +216,21 @@ where
                                     self.known_peers.put(id.clone(), SmallVec::new());
                                 }
                                 // Safe to unwrap, since we initalized entry on previous step
-                                self.known_peers.get_mut(&id).unwrap().push(addr);
+                                if self.known_peers.get_mut(&id).unwrap().iter().all(|a| *a != addr) {
+                                    self.known_peers.get_mut(&id).unwrap().push(addr)
+                                }
                             }
                         }
                     }
                 }
                 NcpEvent::SendPeers { peer_id } => {
-                    debug!(target: "stegos_network::ncp", "sending peers info to peer: {}", peer_id.to_base58());
+                    debug!(target: "stegos_network::ncp", "sending peers info: to_peer={}", peer_id.to_base58());
                     let mut response = GetPeersResponse { peers: vec![] };
                     let mut connected = self.connected_peers.clone();
                     for peer in connected.drain() {
+                        if peer == peer_id {
+                            continue;
+                        }
                         let mut peer_info = PeerInfo::new(&peer);
                         for addr in self.addresses_of_peer(&peer) {
                             peer_info.addresses.push(addr);
@@ -236,7 +241,7 @@ where
                     }
                     let peer = poll_parameters.local_peer_id().clone();
                     let mut peer_info = PeerInfo::new(&peer);
-                    for addr in self.addresses_of_peer(&peer) {
+                    for addr in poll_parameters.external_addresses() {
                         peer_info.addresses.push(addr);
                     }
                     response.peers.push(peer_info);
@@ -246,7 +251,7 @@ where
                     });
                 }
                 NcpEvent::RequestPeers { peer_id } => {
-                    debug!(target: "stegos_network::ncp", "sending peers request to peer: {}", peer_id.to_base58());
+                    debug!(target: "stegos_network::ncp", "sending peers request: to_peer={}", peer_id.to_base58());
                     return Async::Ready(NetworkBehaviourAction::SendEvent {
                         peer_id,
                         event: NcpMessage::GetPeersRequest,
@@ -254,7 +259,6 @@ where
                 }
             }
         }
-        trace!("Finished NCP poll");
         Async::NotReady
     }
 }
@@ -263,7 +267,7 @@ where
 #[derive(Debug)]
 pub enum NcpEvent {
     /// Store peers information, received from the neighbor
-    StorePeers { message: GetPeersResponse },
+    StorePeers { from: PeerId, message: GetPeersResponse },
 
     /// Send info about connected peers.
     SendPeers { peer_id: PeerId },

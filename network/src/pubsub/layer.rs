@@ -189,7 +189,7 @@ where
     }
 
     fn inject_connected(&mut self, id: PeerId, _: ConnectedPoint) {
-        debug!(target: "stegos_network::floodsub", "New peer connected: {}", id.to_base58());
+        debug!(target: "stegos_network::pubsub", "peer connected: peer_id={}", id.to_base58());
         for topic in self.subscribed_topics.iter() {
             self.events.push_back(NetworkBehaviourAction::SendEvent {
                 peer_id: id.clone(),
@@ -207,7 +207,7 @@ where
     }
 
     fn inject_disconnected(&mut self, id: &PeerId, _: ConnectedPoint) {
-        debug!(target: "stegos_network::floodsub", "Peer disconnected: {}", id.to_base58());
+        debug!(target: "stegos_network::pubsub", "peer disconnected: peer_id={}", id.to_base58());
         let was_in = self.connected_peers.remove(id);
         debug_assert!(was_in.is_some());
     }

@@ -36,7 +36,7 @@ mod validation;
 use crate::mempool::Mempool;
 use bitvector::BitVector;
 
-use crate::election::ConsensusGroup;
+use crate::election::ElectionResult;
 use crate::error::*;
 use crate::loader::{ChainLoader, ChainLoaderMessage};
 pub use crate::tickets::{TicketsSystem, VRFTicket};
@@ -56,7 +56,7 @@ use stegos_consensus::{
     self as consensus, BlockConsensus, BlockConsensusMessage, BlockProof, MonetaryBlockProof,
 };
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc::secure::{self, VRF};
 use stegos_keychain::KeyChain;
 use stegos_network::Network;
 use stegos_network::UnicastMessage;
@@ -711,7 +711,11 @@ impl NodeService {
     /// Handler for new epoch creation procedure.
     /// This method called only on leader side, and when consensus is active.
     /// Leader should create a KeyBlock based on last random provided by VRF.
-    fn create_new_epoch(&mut self, facilitator: secure::PublicKey) -> Result<(), Error> {
+    fn create_new_epoch(
+        &mut self,
+        random: VRF,
+        facilitator: secure::PublicKey,
+    ) -> Result<(), Error> {
         let consensus = self.consensus.as_mut().unwrap();
         let previous = self.chain.last_block_hash();
         let timestamp = Utc::now().timestamp() as u64;
@@ -731,6 +735,7 @@ impl NodeService {
             base,
             leader,
             facilitator,
+            random,
             validators.iter().map(|(k, _s)| *k).collect(),
         );
 
@@ -805,7 +810,7 @@ impl NodeService {
 
     /// Request for changing group received from VRF system.
     /// Restars consensus with new params, and send new keyblock.
-    fn on_change_group(&mut self, group: ConsensusGroup) -> Result<(), Error> {
+    fn on_change_group(&mut self, group: ElectionResult) -> Result<(), Error> {
         info!("Changing group, new group leader = {}", group.leader);
         let validators: BTreeMap<secure::PublicKey, i64> =
             group.validators.iter().cloned().collect();
@@ -821,7 +826,7 @@ impl NodeService {
             self.consensus = Some(consensus);
             let consensus = self.consensus.as_ref().unwrap();
             if consensus.is_leader() {
-                self.create_new_epoch(self.chain.facilitator)?;
+                self.create_new_epoch(group.random, group.facilitator)?;
             }
             self.on_new_consensus();
         } else {

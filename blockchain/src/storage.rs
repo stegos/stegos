@@ -117,7 +117,7 @@ mod test {
     use stegos_crypto::pbc::secure;
 
     fn create_block(previous: Hash) -> Block {
-        let (_skey0, pkey0, _sig0) = secure::make_random_keys();
+        let (skey0, pkey0, _sig0) = secure::make_random_keys();
         let version: u64 = 1;
         let epoch: u64 = 1;
         let timestamp = 0;
@@ -127,8 +127,9 @@ mod test {
         let validators: BTreeSet<secure::PublicKey> = [pkey0].iter().cloned().collect();
         let leader = pkey0.clone();
         let facilitator = pkey0.clone();
+        let random = secure::make_VRF(&skey0, &Hash::digest("random"));
 
-        let block = KeyBlock::new(base, leader, facilitator, validators);
+        let block = KeyBlock::new(base, leader, facilitator, random, validators);
         Block::KeyBlock(block)
     }
     #[test]

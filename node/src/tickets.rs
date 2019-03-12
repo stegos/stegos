@@ -29,7 +29,7 @@ use stegos_serialization::traits::ProtoConvert;
 
 use lazy_static::lazy_static;
 
-use crate::election::{self, ConsensusGroup, StakersGroup};
+use crate::election::{self, ElectionResult, StakersGroup};
 use crate::metrics;
 use crate::NodeService;
 
@@ -165,7 +165,7 @@ pub struct ElectionInfo {
 #[derive(Eq, PartialEq, Debug)]
 pub enum Feedback {
     BroadcastTicket(VRFTicket),
-    ChangeGroup(ConsensusGroup),
+    ChangeGroup(ElectionResult),
     Nothing,
 }
 
@@ -319,7 +319,7 @@ impl TicketsSystem {
         ticket
     }
 
-    fn on_collection_end(&mut self, stakers: StakersGroup) -> Result<ConsensusGroup, TicketsError> {
+    fn on_collection_end(&mut self, stakers: StakersGroup) -> Result<ElectionResult, TicketsError> {
         info!("Collecting tickets stoped, producing new group");
 
         metrics::vrf::IS_ACTIVE.set(0);
@@ -338,7 +338,7 @@ impl TicketsSystem {
                 let (pk, ticket) = state.lowest()?;
                 debug!("New random calculated: random={:?}, pkey={:?}", ticket, pk);
                 let group =
-                    election::choose_consensus_group(stakers, pk, ticket.rand, self.max_group_size);
+                    election::choose_consensus_group(stakers, pk, ticket, self.max_group_size);
                 debug!("Obtaining new group: group={:?}.", group);
                 Ok(group)
             }

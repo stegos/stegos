@@ -22,17 +22,19 @@
 //! Leader election and group formation algorithms and tests.
 
 use log::error;
-use stegos_crypto::hash::Hash;
 
 use rand::{Rng, SeedableRng};
 use rand_isaac::IsaacRng;
 
 use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc::secure::VRF;
 
 pub type StakersGroup = Vec<(secure::PublicKey, i64)>;
 
 #[derive(Debug, Eq, PartialEq)]
-pub struct ConsensusGroup {
+pub struct ElectionResult {
+    /// Initial random of election
+    pub random: VRF,
     /// List of Validators
     pub validators: StakersGroup,
     /// Leader public key
@@ -82,15 +84,15 @@ where
 #[allow(dead_code)] // Save real group choosing for after testnet.
 pub fn choose_consensus_group_real(
     mut stakers: StakersGroup,
-    random: Hash,
+    random: VRF,
     max_group_size: usize,
-) -> ConsensusGroup {
+) -> ElectionResult {
     assert!(!stakers.is_empty());
     assert!(max_group_size > 0);
     let mut validators = Vec::new();
 
     let mut seed = [0u8; 32];
-    seed.copy_from_slice(random.base_vector());
+    seed.copy_from_slice(random.rand.base_vector());
 
     let mut rng = IsaacRng::from_seed(seed);
 
@@ -113,8 +115,9 @@ pub fn choose_consensus_group_real(
 
     let leader = validators[leader].0;
     let facilitator = validators[facilitator].0;
-    ConsensusGroup {
-        validators: validators,
+    ElectionResult {
+        validators,
+        random,
         leader,
         facilitator,
     }
@@ -124,23 +127,24 @@ pub fn choose_consensus_group_real(
 pub fn choose_consensus_group(
     stakers: StakersGroup,
     leader: secure::PublicKey,
-    random: Hash,
+    random: VRF,
     max_group_size: usize,
-) -> ConsensusGroup {
+) -> ElectionResult {
     assert!(max_group_size > 0);
     assert!(
         stakers.len() <= max_group_size,
         "stakers majority group more then testnet hard limit."
     );
     let mut seed = [0u8; 32];
-    seed.copy_from_slice(random.base_vector());
+    seed.copy_from_slice(random.rand.base_vector());
     let validators = stakers;
     let mut rng = IsaacRng::from_seed(seed);
     let rand = rng.gen::<i64>();
     let facilitator = select_winner(validators.iter().map(|(_k, stake)| stake), rand).unwrap();
 
     let facilitator = validators[facilitator].0;
-    ConsensusGroup {
+    ElectionResult {
+        random,
         validators,
         leader,
         facilitator,
@@ -251,11 +255,13 @@ mod test {
     fn test_group_size() {
         const PUBLIC_KEY_SIZE: usize = 65;
 
+        let (skey, _, _) = secure::make_random_keys();
         let key = secure::PublicKey::try_from_bytes(&[0; PUBLIC_KEY_SIZE]).unwrap();
         let keys = vec![(key, 1), (key, 2), (key, 3), (key, 4)];
+        let rand = secure::make_VRF(&skey, &Hash::zero());
         for i in 1..5 {
             assert_eq!(
-                choose_consensus_group_real(keys.clone(), Hash::zero(), i)
+                choose_consensus_group_real(keys.clone(), rand, i)
                     .validators
                     .len(),
                 i
@@ -263,7 +269,7 @@ mod test {
         }
         for i in 5..10 {
             assert_eq!(
-                choose_consensus_group_real(keys.clone(), Hash::zero(), i)
+                choose_consensus_group_real(keys.clone(), rand, i)
                     .validators
                     .len(),
                 4

@@ -85,6 +85,10 @@ pub struct Blockchain {
     pub last_block_timestamp: Instant,
     /// The hash of the last block.
     pub last_block_hash: Hash,
+
+    //TODO: Remove leader,facilitator,validators, and use save only last keyblock
+    /// Copy of rnadom from last keyblock.
+    pub last_random: Hash,
     /// The number of blocks.
     pub height: u64,
     /// A monotonically increasing value that represents the epoch of the blockchain,
@@ -148,6 +152,7 @@ impl Blockchain {
             last_epoch_change,
             last_block_timestamp,
             last_block_hash,
+            last_random: Hash::digest("random"),
             created,
             burned,
             gamma,
@@ -392,6 +397,9 @@ impl Blockchain {
         if stakers != validators {
             return Err(BlockchainError::ValidatorsNotEqualToOurStakers.into());
         }
+        if !secure::validate_VRF_randomness(&block.header.random) {
+            return Err(BlockchainError::IncorrectRandom.into());
+        }
 
         // Check multisignature.
         if !check_multi_signature(
@@ -431,6 +439,7 @@ impl Blockchain {
         self.height = self.height + 1;
         self.epoch = self.epoch + 1;
         self.last_epoch_change = block_id;
+        self.last_random = block.header.random.rand.clone();
         self.leader = block.header.leader.clone();
         self.facilitator = block.header.facilitator.clone();
         self.validators = self.escrow.multiget(&block.header.validators);
@@ -943,8 +952,9 @@ pub mod tests {
                     keychains.iter().map(|p| p.network_pkey.clone()).collect();
                 let leader = keychains[0].network_pkey.clone();
                 let facilitator = keychains[0].network_pkey.clone();
-
-                KeyBlock::new(base, leader, facilitator, validators)
+                let (skey, _, _) = secure::make_random_keys();
+                let random = secure::make_VRF(&skey, &Hash::digest("test"));
+                KeyBlock::new(base, leader, facilitator, random, validators)
             };
             let block_hash = Hash::digest(&block);
             let validators: BTreeMap<secure::PublicKey, i64> = keychains

@@ -35,6 +35,8 @@ pub type StakersGroup = Vec<(secure::PublicKey, i64)>;
 pub struct ElectionResult {
     /// Initial random of election
     pub random: VRF,
+    /// Count of retries, during creating new epoch.
+    pub view_change: u32,
     /// List of Validators
     pub validators: StakersGroup,
     /// Leader public key
@@ -118,6 +120,7 @@ pub fn choose_consensus_group_real(
     ElectionResult {
         validators,
         random,
+        view_change: 0,
         leader,
         facilitator,
     }
@@ -128,6 +131,7 @@ pub fn choose_consensus_group(
     stakers: StakersGroup,
     leader: secure::PublicKey,
     random: VRF,
+    view_change: u32,
     max_group_size: usize,
 ) -> ElectionResult {
     assert!(max_group_size > 0);
@@ -145,6 +149,7 @@ pub fn choose_consensus_group(
     let facilitator = validators[facilitator].0;
     ElectionResult {
         random,
+        view_change,
         validators,
         leader,
         facilitator,

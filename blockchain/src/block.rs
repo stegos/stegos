@@ -101,6 +101,9 @@ pub struct KeyBlockHeader {
     /// Initial seed of epoch.
     pub random: VRF,
 
+    /// Number of retries during creating a block.
+    pub view_change: u32,
+
     /// Ordered list of validators public keys.
     pub validators: BTreeSet<secure::PublicKey>,
 }
@@ -194,6 +197,7 @@ impl KeyBlock {
         leader: secure::PublicKey,
         facilitator: secure::PublicKey,
         random: VRF,
+        view_change: u32,
         validators: BTreeSet<secure::PublicKey>,
     ) -> Self {
         debug_assert!(
@@ -216,6 +220,7 @@ impl KeyBlock {
             leader,
             facilitator,
             random,
+            view_change,
             validators,
         };
 

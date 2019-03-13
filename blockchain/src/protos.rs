@@ -220,6 +220,7 @@ impl ProtoConvert for KeyBlockHeader {
         proto.set_leader(self.leader.into_proto());
         proto.set_facilitator(self.facilitator.into_proto());
         proto.set_random(self.random.into_proto());
+        proto.set_view_change(self.view_change);
         for validator in &self.validators {
             proto.validators.push(validator.into_proto());
         }
@@ -231,6 +232,7 @@ impl ProtoConvert for KeyBlockHeader {
         let leader = secure::PublicKey::from_proto(proto.get_leader())?;
         let facilitator = secure::PublicKey::from_proto(proto.get_facilitator())?;
         let random = secure::VRF::from_proto(proto.get_random())?;
+        let view_change = proto.get_view_change();
         let mut validators = BTreeSet::new();
         for validator in proto.validators.iter() {
             if !validators.insert(secure::PublicKey::from_proto(validator)?) {
@@ -243,6 +245,7 @@ impl ProtoConvert for KeyBlockHeader {
             leader,
             facilitator,
             random,
+            view_change,
             validators,
         })
     }
@@ -525,7 +528,7 @@ mod tests {
         let facilitator = pkey0.clone();
 
         let random = secure::make_VRF(&skey0, &Hash::digest("test"));
-        let block = KeyBlock::new(base, leader, facilitator, random, validators);
+        let block = KeyBlock::new(base, leader, facilitator, random, 0, validators);
         roundtrip(&block.header);
         roundtrip(&block);
 

@@ -496,8 +496,8 @@ impl NodeService {
         if self.chain.blocks_in_epoch() >= SEALED_BLOCK_IN_EPOCH {
             debug!("Recover at end of epoch, trying to force vrf to start.");
             self.consensus = None;
-            let block_hash = self.chain.last_block_hash();
-            let ticket = self.vrf_system.handle_epoch_end(block_hash);
+            let random = self.chain.last_random();
+            let ticket = self.vrf_system.handle_epoch_end(random);
             let _ = self.broadcast_vrf_ticket(ticket);
         }
 
@@ -649,13 +649,14 @@ impl NodeService {
     /// related to block timeout.
     ///
     /// Returns error on sending message failure.
-    fn on_next_block(&mut self, block_hash: Hash) -> Result<(), Error> {
+    fn on_next_block(&mut self) -> Result<(), Error> {
         self.vrf_system.handle_sealed_block();
 
         // epoch ended, disable consensus and start vrf system.
         if self.chain.blocks_in_epoch() >= SEALED_BLOCK_IN_EPOCH {
             self.consensus = None;
-            let ticket = self.vrf_system.handle_epoch_end(block_hash);
+            let random = self.chain.last_random();
+            let ticket = self.vrf_system.handle_epoch_end(random);
             self.broadcast_vrf_ticket(ticket)?;
         }
 
@@ -714,6 +715,7 @@ impl NodeService {
     fn create_new_epoch(
         &mut self,
         random: VRF,
+        view_change: u32,
         facilitator: secure::PublicKey,
     ) -> Result<(), Error> {
         let consensus = self.consensus.as_mut().unwrap();
@@ -736,6 +738,7 @@ impl NodeService {
             leader,
             facilitator,
             random,
+            view_change,
             validators.iter().map(|(k, _s)| *k).collect(),
         );
 
@@ -771,16 +774,15 @@ impl NodeService {
     }
 
     /// Called when a new key block is registered.
-    fn on_key_block_registered(&mut self, key_block: &KeyBlock) -> Result<(), Error> {
+    fn on_key_block_registered(&mut self, _key_block: &KeyBlock) -> Result<(), Error> {
         self.on_new_epoch();
-        let block_hash = Hash::digest(key_block);
-        self.on_next_block(block_hash)
+        self.on_next_block()
     }
 
     /// Called when a new key block is registered.
     fn on_monetary_block_registered(
         &mut self,
-        monetary_block: &MonetaryBlock,
+        _monetary_block: &MonetaryBlock,
         inputs: Vec<Output>,
         outputs: Vec<Output>,
     ) -> Result<(), Error> {
@@ -794,8 +796,7 @@ impl NodeService {
         let msg = OutputsNotification { inputs, outputs };
         self.on_outputs_changed
             .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
-        let block_hash = Hash::digest(monetary_block);
-        self.on_next_block(block_hash)
+        self.on_next_block()
     }
 
     /// Send block to network.
@@ -826,7 +827,7 @@ impl NodeService {
             self.consensus = Some(consensus);
             let consensus = self.consensus.as_ref().unwrap();
             if consensus.is_leader() {
-                self.create_new_epoch(group.random, group.facilitator)?;
+                self.create_new_epoch(group.random, group.view_change, group.facilitator)?;
             }
             self.on_new_consensus();
         } else {

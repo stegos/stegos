@@ -201,7 +201,7 @@ mod tests {
         let leader = pkey0.clone();
         let facilitator = pkey0.clone();
         let random = secure::make_VRF(&skey0, &Hash::digest("test"));
-        let block = KeyBlock::new(base, leader, facilitator, random, validators);
+        let block = KeyBlock::new(base, leader, facilitator, random, 0, validators);
 
         let block = Block::KeyBlock(block);
 

@@ -69,7 +69,9 @@ message KeyBlockHeader {
     BaseBlockHeader base = 1;
     stegos.crypto.SecurePublicKey leader = 2;
     stegos.crypto.SecurePublicKey facilitator = 3;
-    repeated stegos.crypto.SecurePublicKey validators = 4;
+    stegos.crypto.VRF random = 4;
+    uint32 view_change = 5;
+    repeated stegos.crypto.SecurePublicKey validators = 6;
 }
 
 message KeyBlock {

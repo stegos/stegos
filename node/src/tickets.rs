@@ -25,11 +25,12 @@ use stegos_blockchain::Escrow;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure;
 use stegos_crypto::pbc::secure::VRF;
+use stegos_crypto::utils;
 use stegos_serialization::traits::ProtoConvert;
 
 use lazy_static::lazy_static;
 
-use crate::election::{self, ConsensusGroup, StakersGroup};
+use crate::election::{self, ElectionResult, StakersGroup};
 use crate::metrics;
 use crate::NodeService;
 
@@ -165,7 +166,7 @@ pub struct ElectionInfo {
 #[derive(Eq, PartialEq, Debug)]
 pub enum Feedback {
     BroadcastTicket(VRFTicket),
-    ChangeGroup(ConsensusGroup),
+    ChangeGroup(ElectionResult),
     Nothing,
 }
 
@@ -198,12 +199,12 @@ impl TicketsSystem {
         &mut self,
         time: Instant,
         escrow: &Escrow,
-        last_block_hash: Hash,
+        last_random: Hash,
     ) -> Result<Feedback, TicketsError> {
         trace!("Handle vrf system tick");
         match self.state {
             State::Sleeping(start) if time.duration_since(start) >= *RESTART_CONSENSUS_TIMER => {
-                let ticket = self.on_view_change(last_block_hash);
+                let ticket = self.on_view_change(last_random);
                 Ok(Feedback::BroadcastTicket(ticket))
             }
             State::CollectingTickets(_, start)
@@ -217,8 +218,8 @@ impl TicketsSystem {
     }
 
     /// On epoch change, restart vrf system.
-    pub fn handle_epoch_end(&mut self, last_block_hash: Hash) -> VRFTicket {
-        self.on_view_change(last_block_hash)
+    pub fn handle_epoch_end(&mut self, last_random: Hash) -> VRFTicket {
+        self.on_view_change(last_random)
     }
 
     /// On receiving valid block, trying to restart VRF system.
@@ -284,13 +285,13 @@ impl TicketsSystem {
         }
     }
 
-    fn on_view_change(&mut self, last_block_hash: Hash) -> VRFTicket {
+    fn on_view_change(&mut self, last_random: Hash) -> VRFTicket {
         info!(
-            "Trying to start new ticket collecting: height={}, block_hash={}",
-            self.height, last_block_hash
+            "Trying to start new ticket collecting: height={}, last_random={}",
+            self.height, last_random
         );
         self.view_change += 1;
-        let seed = mix(last_block_hash, self.view_change);
+        let seed = mix(last_random, self.view_change);
         debug!(
             "Starting new ticket system: seed={:?}, retry={}",
             seed, self.view_change
@@ -319,7 +320,7 @@ impl TicketsSystem {
         ticket
     }
 
-    fn on_collection_end(&mut self, stakers: StakersGroup) -> Result<ConsensusGroup, TicketsError> {
+    fn on_collection_end(&mut self, stakers: StakersGroup) -> Result<ElectionResult, TicketsError> {
         info!("Collecting tickets stoped, producing new group");
 
         metrics::vrf::IS_ACTIVE.set(0);
@@ -337,8 +338,13 @@ impl TicketsSystem {
                 }
                 let (pk, ticket) = state.lowest()?;
                 debug!("New random calculated: random={:?}, pkey={:?}", ticket, pk);
-                let group =
-                    election::choose_consensus_group(stakers, pk, ticket.rand, self.max_group_size);
+                let group = election::choose_consensus_group(
+                    stakers,
+                    pk,
+                    ticket,
+                    self.view_change,
+                    self.max_group_size,
+                );
                 debug!("Obtaining new group: group={:?}.", group);
                 Ok(group)
             }
@@ -438,10 +444,10 @@ impl NodeService {
     }
 
     pub(crate) fn handle_vrf_timer(&mut self) -> Result<(), Error> {
-        let previous_hash = self.chain.last_block_hash();
-        let result =
-            self.vrf_system
-                .handle_tick(clock::now(), &self.chain.escrow, previous_hash)?;
+        let last_random = self.chain.last_random();
+        let result = self
+            .vrf_system
+            .handle_tick(clock::now(), &self.chain.escrow, last_random)?;
         match result {
             Feedback::BroadcastTicket(ticket) => self.broadcast_vrf_ticket(ticket),
             Feedback::ChangeGroup(group) => self.on_change_group(group),
@@ -449,10 +455,6 @@ impl NodeService {
         }
     }
 }
-
-///
-/// Helpers
-///
 
 /// Mix seed hash with round value to produce new hash.
 fn mix(random: Hash, round: u32) -> Hash {

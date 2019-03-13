@@ -28,6 +28,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
+use stegos_crypto::utils;
 use stegos_keychain::KeyChain;
 
 /// Genesis blocks.
@@ -86,6 +87,8 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64, timestamp: u64) -
     //
     let block2 = {
         let epoch: u64 = 1;
+        let init_random = Hash::digest("random");
+        let view_change = 0;
         let previous = Hash::digest(&block1);
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
 
@@ -94,7 +97,9 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64, timestamp: u64) -
         let leader = keychains[0].network_pkey.clone();
         let facilitator = keychains[0].network_pkey.clone();
 
-        let mut block = KeyBlock::new(base, leader, facilitator, validators);
+        let seed = utils::mix(init_random, view_change);
+        let random = secure::make_VRF(&keychains[0].network_skey.clone(), &seed);
+        let mut block = KeyBlock::new(base, leader, facilitator, random, view_change, validators);
         let block_hash = Hash::digest(&block);
 
         let mut signatures: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();

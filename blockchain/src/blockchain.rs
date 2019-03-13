@@ -45,6 +45,7 @@ use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::curve1174::G;
 use stegos_crypto::hash::*;
 use stegos_crypto::pbc::secure;
+use stegos_crypto::utils;
 use tokio_timer::clock;
 
 /// A help to find UTXO in this blockchain.
@@ -85,6 +86,9 @@ pub struct Blockchain {
     pub last_block_timestamp: Instant,
     /// The hash of the last block.
     pub last_block_hash: Hash,
+
+    /// Copy of rnadom from last keyblock.
+    pub last_random: Hash,
     /// The number of blocks.
     pub height: u64,
     /// A monotonically increasing value that represents the epoch of the blockchain,
@@ -130,6 +134,7 @@ impl Blockchain {
         let validators = BTreeMap::<secure::PublicKey, i64>::new();
         let last_block_timestamp = clock::now();
         let last_block_hash = Hash::digest("genesis");
+        let last_random = Hash::digest("random");
         let created = ECp::inf();
         let burned = ECp::inf();
         let gamma = Fr::zero();
@@ -148,6 +153,7 @@ impl Blockchain {
             last_epoch_change,
             last_block_timestamp,
             last_block_hash,
+            last_random,
             created,
             burned,
             gamma,
@@ -295,6 +301,11 @@ impl Blockchain {
         }
     }
 
+    /// Return the last random value.
+    pub fn last_random(&self) -> Hash {
+        self.last_random
+    }
+
     /// Return the last block hash.
     pub fn last_block_hash(&self) -> Hash {
         assert!(self.height > 0);
@@ -393,6 +404,11 @@ impl Blockchain {
             return Err(BlockchainError::ValidatorsNotEqualToOurStakers.into());
         }
 
+        let seed = mix(self.last_random, block.header.view_change);
+        if !secure::validate_VRF_source(&block.header.random, &block.header.leader, &seed) {
+            return Err(BlockchainError::IncorrectRandom.into());
+        }
+
         // Check multisignature.
         if !check_multi_signature(
             &block_hash,
@@ -431,6 +447,7 @@ impl Blockchain {
         self.height = self.height + 1;
         self.epoch = self.epoch + 1;
         self.last_epoch_change = block_id;
+        self.last_random = block.header.random.rand.clone();
         self.leader = block.header.leader.clone();
         self.facilitator = block.header.facilitator.clone();
         self.validators = self.escrow.multiget(&block.header.validators);
@@ -801,6 +818,14 @@ impl Blockchain {
     }
 }
 
+/// Mix seed hash with round value to produce new hash.
+fn mix(random: Hash, round: u32) -> Hash {
+    let mut hasher = Hasher::new();
+    random.hash(&mut hasher);
+    round.hash(&mut hasher);
+    hasher.result()
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -943,8 +968,9 @@ pub mod tests {
                     keychains.iter().map(|p| p.network_pkey.clone()).collect();
                 let leader = keychains[0].network_pkey.clone();
                 let facilitator = keychains[0].network_pkey.clone();
-
-                KeyBlock::new(base, leader, facilitator, validators)
+                let (skey, _, _) = secure::make_random_keys();
+                let random = secure::make_VRF(&skey, &Hash::digest("test"));
+                KeyBlock::new(base, leader, facilitator, random, 0, validators)
             };
             let block_hash = Hash::digest(&block);
             let validators: BTreeMap<secure::PublicKey, i64> = keychains

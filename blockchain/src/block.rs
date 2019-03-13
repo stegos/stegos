@@ -34,6 +34,7 @@ use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::curve1174::G;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc::secure::VRF;
 
 /// The maximum number of nodes in multi-signature.
 pub const VALIDATORS_MAX: usize = 512;
@@ -96,6 +97,12 @@ pub struct KeyBlockHeader {
 
     /// Facilitator of Transaction Pool.
     pub facilitator: secure::PublicKey,
+
+    /// Initial seed of epoch.
+    pub random: VRF,
+
+    /// Number of retries during creating a block.
+    pub view_change: u32,
 
     /// Ordered list of validators public keys.
     pub validators: BTreeSet<secure::PublicKey>,
@@ -189,8 +196,14 @@ impl KeyBlock {
         base: BaseBlockHeader,
         leader: secure::PublicKey,
         facilitator: secure::PublicKey,
+        random: VRF,
+        view_change: u32,
         validators: BTreeSet<secure::PublicKey>,
     ) -> Self {
+        debug_assert!(
+            secure::validate_VRF_randomness(&random),
+            "Cannot verify VRF."
+        );
         assert!(!validators.is_empty(), "validators is not empty");
         assert!(
             validators.contains(&leader),
@@ -206,6 +219,8 @@ impl KeyBlock {
             base,
             leader,
             facilitator,
+            random,
+            view_change,
             validators,
         };
 

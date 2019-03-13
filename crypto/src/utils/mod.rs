@@ -23,9 +23,9 @@
 
 use crate::CryptoError;
 
+use crate::hash::{Hash, Hashable, Hasher};
 use hex;
 use std::cmp::Ordering;
-
 // -------------------------------------------------------------------
 // general utility functions
 

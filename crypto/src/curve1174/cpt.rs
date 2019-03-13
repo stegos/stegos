@@ -41,6 +41,11 @@ use std::hash as stdhash;
 pub struct Pt([u8; 32]);
 
 impl Pt {
+    // return a totally invalid point of all zeros
+    pub fn zero() -> Self {
+        Pt([0u8; 32])
+    }
+
     /// Return random point on a curve.
     pub fn random() -> Self {
         ECp::random().compress()
@@ -190,6 +195,12 @@ impl From<SecretKey> for Fr {
 pub struct PublicKey(Pt);
 
 impl PublicKey {
+    // zero key - totally invalid point, but useful for
+    // universal encryption
+    pub fn zero() -> Self {
+        PublicKey(Pt::zero())
+    }
+
     /// Convert into raw bytes.
     #[inline]
     pub fn to_bytes(&self) -> [u8; 32] {
@@ -471,23 +482,38 @@ fn aes_encrypt_with_key(msg: &[u8], key: &[u8; 32]) -> Vec<u8> {
 }
 
 pub fn aes_encrypt(msg: &[u8], pkey: &PublicKey) -> Result<EncryptedPayload, CryptoError> {
-    let h = Hash::from_vector(msg);
-    let alpha = Fr::synthetic_random("encr-alpha", pkey, &h);
-    let ppt = ECp::decompress(Pt::from(*pkey))?; // could give CryptoError if invalid PublicKey
-    let ap = alpha * ppt; // generate key (alpha*s*G = alpha*P), and hint ag = alpha*G
-    let ag = alpha * *G;
-    let key = Hash::digest(&ap);
-    let ctxt = aes_encrypt_with_key(msg, &key.bits());
-    Ok(EncryptedPayload {
-        ag: Pt::from(ag),
-        ctxt: ctxt,
-    })
+    if *pkey == PublicKey::zero() {
+        // construct an unencrypted payload that anyone can read.
+        Ok(EncryptedPayload {
+            ag: Pt::zero(),
+            ctxt: msg.to_vec(),
+        })
+    } else {
+        // normal encrytion with keying hint
+        let h = Hash::from_vector(msg);
+        let alpha = Fr::synthetic_random("encr-alpha", pkey, &h);
+        let ppt = ECp::decompress(Pt::from(*pkey))?; // could give CryptoError if invalid PublicKey
+        let ap = alpha * ppt; // generate key (alpha*s*G = alpha*P), and hint ag = alpha*G
+        let ag = alpha * *G;
+        let key = Hash::digest(&ap);
+        let ctxt = aes_encrypt_with_key(msg, &key.bits());
+        Ok(EncryptedPayload {
+            ag: Pt::from(ag),
+            ctxt: ctxt,
+        })
+    }
 }
 
 pub fn aes_decrypt(payload: &EncryptedPayload, skey: &SecretKey) -> Result<Vec<u8>, CryptoError> {
-    let zr = Fr::from(skey.clone());
-    let ag = ECp::decompress(payload.ag)?; // could give CryptoError if corrupted payload
-    let asg = zr * ag; // compute the actual key seed = s*alpha*G
-    let key = Hash::digest(&asg);
-    Ok(aes_encrypt_with_key(&payload.ctxt, &key.bits()))
+    if payload.ag == Pt::zero() {
+        // universal unencrypted payload
+        Ok(payload.ctxt.clone())
+    } else {
+        // normal encryption, key = skey * AG
+        let zr = Fr::from(skey.clone());
+        let ag = ECp::decompress(payload.ag)?; // could give CryptoError if corrupted payload
+        let asg = zr * ag; // compute the actual key seed = s*alpha*G
+        let key = Hash::digest(&asg);
+        Ok(aes_encrypt_with_key(&payload.ctxt, &key.bits()))
+    }
 }

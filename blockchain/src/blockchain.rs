@@ -351,14 +351,10 @@ impl Blockchain {
     /// # Arguments
     ///
     /// * `block` - block to validate.
-    /// * `skip_supermajority` - don't check for the supermajority of votes.
+    /// * `is_proposal` - don't check for the supermajority of votes.
     ///                          Used to validating block proposals.
     ///
-    pub fn validate_key_block(
-        &self,
-        block: &KeyBlock,
-        skip_supermajority: bool,
-    ) -> Result<(), Error> {
+    pub fn validate_key_block(&self, block: &KeyBlock, is_proposal: bool) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
         debug!("Validating a key block: hash={}", &block_hash);
 
@@ -415,7 +411,7 @@ impl Blockchain {
             &block.header.base.multisigmap,
             &validators,
             &block.header.leader,
-            skip_supermajority,
+            is_proposal,
         ) {
             return Err(BlockchainError::InvalidBlockSignature(block_hash).into());
         }
@@ -505,7 +501,7 @@ impl Blockchain {
     /// # Arguments
     ///
     /// * `block` - block to validate.
-    /// * `skip_supermajority` - don't check for the supermajority of votes.
+    /// * `is_proposal` - don't check for the supermajority of votes.
     ///                          Used to validating block proposals.
     /// * `current_timestamp` - current time.
     ///                         Used to validating escrow.
@@ -513,7 +509,7 @@ impl Blockchain {
     pub fn validate_monetary_block(
         &self,
         block: &MonetaryBlock,
-        skip_supermajority: bool,
+        is_proposal: bool,
         current_timestamp: u64,
     ) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
@@ -554,7 +550,7 @@ impl Blockchain {
                 &block.header.base.multisigmap,
                 &self.validators,
                 &self.leader,
-                skip_supermajority,
+                is_proposal,
             )
         {
             return Err(BlockchainError::InvalidBlockSignature(block_hash).into());

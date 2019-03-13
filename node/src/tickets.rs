@@ -27,8 +27,6 @@ use stegos_crypto::pbc::secure;
 use stegos_crypto::pbc::secure::VRF;
 use stegos_serialization::traits::ProtoConvert;
 
-use lazy_static::lazy_static;
-
 use crate::election::{self, ElectionResult, StakersGroup};
 use crate::metrics;
 use crate::NodeService;
@@ -47,16 +45,6 @@ use tokio_timer::clock;
 /// Topic used for vrf system.
 pub const VRF_TICKETS_TOPIC: &'static str = "vrf_tickets";
 
-/// How often to check VRF system state.
-pub const TIMER: Duration = Duration::from_secs(5);
-
-lazy_static! {
-    /// If no new block was provided between this interval - we should start vrf system.
-    pub static ref RESTART_CONSENSUS_TIMER: Duration = crate::MESSAGE_TIMEOUT * 4 + // 4 consensus message
-                                          crate::BLOCK_VALIDATION_TIME * 2 + // form block on leader and
-                                                                              // validate on validator
-                                          crate::TX_WAIT_TIMEOUT; // Propose timeout
-}
 /// How long we should collect the tickets.
 /// This value represent initial timeout, at view_change timeout exponentialy increasing.
 pub const COLLECTING_TICKETS_TIMER: Duration = crate::MESSAGE_TIMEOUT;
@@ -202,7 +190,7 @@ impl TicketsSystem {
     ) -> Result<Feedback, TicketsError> {
         trace!("Handle vrf system tick");
         match self.state {
-            State::Sleeping(start) if time.duration_since(start) >= *RESTART_CONSENSUS_TIMER => {
+            State::Sleeping(start) if time.duration_since(start) >= *crate::BLOCK_TIMEOUT => {
                 let ticket = self.on_view_change(last_random);
                 Ok(Feedback::BroadcastTicket(ticket))
             }
@@ -392,10 +380,8 @@ impl TicketsSystem {
                 }
             }
             State::Sleeping(instant) => {
-                let timeout = format_duration(
-                    clock::now().duration_since(instant),
-                    *RESTART_CONSENSUS_TIMER,
-                );
+                let timeout =
+                    format_duration(clock::now().duration_since(instant), *crate::BLOCK_TIMEOUT);
                 ElectionInfo {
                     height: self.height,
                     view_change: self.view_change,

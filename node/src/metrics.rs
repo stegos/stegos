@@ -25,6 +25,11 @@ use prometheus::*;
 lazy_static! {
     pub static ref MEMPOOL_LEN: IntGauge =
         register_int_gauge!("stegos_blockchain_mempool", "Size of mempool.").unwrap();
+    pub static ref AUTOCOMMIT: IntCounter = register_int_counter!(
+        "stegos_consensus_autocommit",
+        "The number of auto-commits of proposed block"
+    )
+    .unwrap();
 }
 
 pub mod vrf {

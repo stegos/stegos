@@ -39,6 +39,7 @@ fn basic() {
         let mut s: Sandbox = Sandbox::new(NUM_NODES);
         let height = s.nodes[0].node_service.chain.height();
         let epoch = s.nodes[0].node_service.chain.epoch;
+        let last_block_hash = s.nodes[0].node_service.chain.last_block_hash();
 
         // Wait for TX_WAIT_TIMEOUT.
         wait(timer, crate::TX_WAIT_TIMEOUT);
@@ -122,19 +123,50 @@ fn basic() {
         let block_hash = Hash::digest(&block);
         assert_eq!(block_hash, proposal.request_hash);
         assert_eq!(block.base_header().epoch, epoch);
+        assert_eq!(block.base_header().previous, last_block_hash);
 
-        // Send this sealed block to other nodes.
-        for node in s.nodes.iter_mut().skip(1) {
+        // Send this sealed block to all other nodes expect the last one.
+        for node in s.nodes.iter_mut().take(NUM_NODES - 1).skip(1) {
             node.network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
         }
         s.poll();
 
-        // Check state.
-        for node in s.nodes.iter() {
+        // Check state of (0..NUM_NODES - 1) nodes.
+        for node in s.nodes.iter().take(NUM_NODES - 1) {
             assert_eq!(node.node_service.chain.height(), height + 1);
             assert_eq!(node.node_service.chain.epoch, epoch);
             assert_eq!(node.node_service.chain.last_block_hash(), block_hash);
         }
+
+        // The last node hasn't received sealed block.
+        assert_eq!(s.nodes[NUM_NODES - 1].node_service.chain.height(), height);
+        assert_eq!(s.nodes[NUM_NODES - 1].node_service.chain.epoch, epoch);
+        assert_eq!(
+            s.nodes[NUM_NODES - 1].node_service.chain.last_block_hash(),
+            last_block_hash
+        );
+
+        // Wait for TX_WAIT_TIMEOUT.
+        wait(timer, *crate::BLOCK_TIMEOUT);
+        s.nodes[NUM_NODES - 1].poll();
+
+        // Check that the last node has auto-committed the block.
+        assert_eq!(
+            s.nodes[NUM_NODES - 1].node_service.chain.height(),
+            height + 1
+        );
+        assert_eq!(s.nodes[NUM_NODES - 1].node_service.chain.epoch, epoch);
+        assert_eq!(
+            s.nodes[NUM_NODES - 1].node_service.chain.last_block_hash(),
+            block_hash
+        );
+
+        // Check that the auto-committed block has been sent to the network.
+        let block2: Block = s.nodes[NUM_NODES - 1]
+            .network_service
+            .get_broadcast(crate::SEALED_BLOCK_TOPIC);
+        let block_hash2 = Hash::digest(&block2);
+        assert_eq!(block_hash, block_hash2);
     });
 }

@@ -93,7 +93,7 @@ fn test_vrf_change_consensus() {
             VRFHelper::nodes_tickets(height, view_change, block_hash, &sandbox.nodes_keychains);
 
         // wait for restart consensus
-        wait(timer, *crate::tickets::RESTART_CONSENSUS_TIMER);
+        wait(timer, *crate::BLOCK_TIMEOUT);
         // node should broadcast ticket
 
         s.poll();
@@ -151,7 +151,7 @@ fn test_vrf_not_enought_tickets() {
             );
 
             // wait for restart consensus
-            wait(timer, *crate::tickets::RESTART_CONSENSUS_TIMER);
+            wait(timer, *crate::BLOCK_TIMEOUT);
             // node should broadcast ticket
 
             s.poll();
@@ -197,7 +197,7 @@ fn test_vrf_invalid_encoding() {
             VRFHelper::nodes_tickets(height, view_change, last_random, &sandbox.nodes_keychains);
 
         // wait for restart consensus
-        wait(timer, *crate::tickets::RESTART_CONSENSUS_TIMER);
+        wait(timer, *crate::BLOCK_TIMEOUT);
         // node should broadcast ticket
 
         s.poll();

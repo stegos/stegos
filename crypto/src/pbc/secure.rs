@@ -752,6 +752,12 @@ impl Add<Signature> for Signature {
     }
 }
 
+impl AddAssign<Signature> for Signature {
+    fn add_assign(&mut self, other: Self) {
+        self.0 += other.0;
+    }
+}
+
 impl From<Signature> for G1 {
     fn from(sig: Signature) -> Self {
         sig.0

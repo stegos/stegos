@@ -66,7 +66,7 @@ pub fn create_multi_signature(
 ///
 /// Create a new self-signed multisignature.
 ///
-pub fn create_initial_multi_signature(
+pub fn create_proposal_signature(
     hash: &Hash,
     skey: &secure::SecretKey,
     pkey: &secure::PublicKey,
@@ -87,8 +87,13 @@ pub fn check_multi_signature(
     multisigmap: &BitVector,
     validators: &BTreeMap<secure::PublicKey, i64>,
     leader: &secure::PublicKey,
-    skip_supermajority: bool,
+    is_proposal: bool,
 ) -> bool {
+    // Check for trailing bits in the bitmap.
+    if multisigmap.len() > validators.len() {
+        return false;
+    }
+
     let mut has_leader = false;
     let mut multisigpkey = secure::G2::zero();
 
@@ -108,12 +113,43 @@ pub fn check_multi_signature(
         return false;
     }
 
+    // Proposal must only be signed by the leader.
+    if is_proposal && count != 1 {
+        return false;
+    }
+
     // Multi-signature must be signed by the supermajority of validators.
-    if !skip_supermajority && !check_supermajority(count, validators.len()) {
+    if !is_proposal && !check_supermajority(count, validators.len()) {
         return false;
     }
 
     // The hash must match the signature.
     let multipkey: secure::PublicKey = multisigpkey.into();
+    debug_assert!(!is_proposal || &multipkey == leader);
     secure::check_hash(&hash, &multisig, &multipkey)
+}
+
+///
+/// Merge two multisignatures.
+///
+pub fn merge_multi_signature(
+    dst_multisig: &mut secure::Signature,
+    dst_multisigmap: &mut BitVector,
+    src_multisig: &secure::Signature,
+    src_multisigmap: &BitVector,
+) {
+    let orig_dst_len = dst_multisigmap.len();
+    dst_multisigmap.union_inplace(src_multisigmap);
+    let new_dst_len = dst_multisigmap.len();
+    if new_dst_len == orig_dst_len {
+        // src is a subset of dst - nothing to merge.
+        return;
+    } else if new_dst_len == orig_dst_len + src_multisigmap.len() {
+        // Non-intersecting sets.
+        *dst_multisig += src_multisig.clone();
+        return;
+    } else {
+        // Intersecting sets.
+        panic!("Can't merge n intersected multi-signatures")
+    }
 }

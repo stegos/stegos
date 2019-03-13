@@ -522,7 +522,7 @@ mod test {
             let gamma = -outputs_gamma;
             let mut block = MonetaryBlock::new(base, gamma, amount - fee, &[], &outputs);
             let block_hash = Hash::digest(&block);
-            let (multisig, multisigmap) = create_initial_multi_signature(
+            let (multisig, multisigmap) = create_proposal_signature(
                 &block_hash,
                 &validator_skey,
                 &validator_pkey,

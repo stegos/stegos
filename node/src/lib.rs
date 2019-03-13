@@ -61,6 +61,7 @@ use stegos_keychain::KeyChain;
 use stegos_network::Network;
 use stegos_network::UnicastMessage;
 use stegos_serialization::traits::ProtoConvert;
+use tokio_timer::clock;
 use tokio_timer::Interval;
 
 // ----------------------------------------------------------------
@@ -904,7 +905,8 @@ impl NodeService {
     /// Called periodically every CONSENSUS_TIMER seconds.
     ///
     fn handle_consensus_timer(&mut self) -> Result<(), Error> {
-        let elapsed = self.chain.last_block_timestamp.elapsed();
+        let now = clock::now();
+        let elapsed: Duration = now.duration_since(self.chain.last_block_timestamp);
 
         // Check that a new payment block should be proposed.
         if self.consensus.is_some()

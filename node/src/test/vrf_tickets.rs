@@ -35,12 +35,12 @@ impl VRFHelper {
     pub fn nodes_tickets(
         height: u64,
         view_change: u32,
-        block_hash: Hash,
+        last_random: Hash,
         keys: &[KeyChain],
     ) -> Vec<tickets::VRFTicket> {
-        let seed = Self::calculate_seed(block_hash, view_change);
+        let seed = Self::calculate_seed(last_random, view_change);
         let mut result = Vec::new();
-        debug!("block hash = {:?}", block_hash);
+        debug!("last random hash = {:?}", last_random);
         debug!(
             "create ticket for state: seed = {:?}, retry = {}",
             seed, view_change
@@ -85,7 +85,7 @@ fn test_vrf_change_consensus() {
     start_test(|timer| {
         let mut s = NodeSandbox::new(4);
         // Generate list of keys like in VRF.
-        let block_hash = s.node_service.chain.last_block_hash();
+        let block_hash = s.node_service.chain.last_random();
         let view_change = s.node_service.vrf_system.view_change() + 1;
         let height = s.node_service.chain.height();
         let tickets =
@@ -137,14 +137,14 @@ fn test_vrf_not_enought_tickets() {
         let mut s = NodeSandbox::new(4);
 
         // Generate list of keys like in VRF.
-        let block_hash = s.node_service.chain.last_block_hash();
+        let last_random = s.node_service.chain.last_random();
         for count in 1..2 {
             let view_change = s.node_service.vrf_system.view_change() + 1;
             let height = s.node_service.chain.height();
             let tickets = VRFHelper::nodes_tickets(
                 height,
                 view_change,
-                block_hash,
+                last_random,
                 &s.config.nodes_keychains,
             );
 
@@ -184,11 +184,11 @@ fn test_vrf_invalid_encoding() {
     start_test(|timer| {
         let mut s = NodeSandbox::new(4);
         // Generate list of keys like in VRF.
-        let block_hash = s.node_service.chain.last_block_hash();
+        let last_random = s.node_service.chain.last_random();
         let view_change = s.node_service.vrf_system.view_change() + 1;
         let height = s.node_service.chain.height();
         let tickets =
-            VRFHelper::nodes_tickets(height, view_change, block_hash, &s.config.nodes_keychains);
+            VRFHelper::nodes_tickets(height, view_change, last_random, &s.config.nodes_keychains);
 
         let mut tickets = tickets.into_iter();
 

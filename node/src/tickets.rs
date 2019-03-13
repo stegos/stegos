@@ -25,7 +25,6 @@ use stegos_blockchain::Escrow;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure;
 use stegos_crypto::pbc::secure::VRF;
-use stegos_crypto::utils;
 use stegos_serialization::traits::ProtoConvert;
 
 use lazy_static::lazy_static;

@@ -45,7 +45,6 @@ use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::curve1174::G;
 use stegos_crypto::hash::*;
 use stegos_crypto::pbc::secure;
-use stegos_crypto::utils;
 use tokio_timer::clock;
 
 /// A help to find UTXO in this blockchain.
@@ -819,7 +818,7 @@ impl Blockchain {
 }
 
 /// Mix seed hash with round value to produce new hash.
-fn mix(random: Hash, round: u32) -> Hash {
+pub(crate) fn mix(random: Hash, round: u32) -> Hash {
     let mut hasher = Hasher::new();
     random.hash(&mut hasher);
     round.hash(&mut hasher);
@@ -968,8 +967,8 @@ pub mod tests {
                     keychains.iter().map(|p| p.network_pkey.clone()).collect();
                 let leader = keychains[0].network_pkey.clone();
                 let facilitator = keychains[0].network_pkey.clone();
-                let (skey, _, _) = secure::make_random_keys();
-                let random = secure::make_VRF(&skey, &Hash::digest("test"));
+                let seed = mix(blockchain.last_random, 0);
+                let random = secure::make_VRF(&keychains[0].network_skey, &seed);
                 KeyBlock::new(base, leader, facilitator, random, 0, validators)
             };
             let block_hash = Hash::digest(&block);

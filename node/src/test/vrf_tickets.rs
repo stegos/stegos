@@ -113,17 +113,8 @@ fn test_vrf_change_consensus() {
         s.poll();
         assert_eq!(s.node_service.vrf_system.view_change(), 1);
 
-        assert_eq!(
-            s.node_service.consensus.as_ref().unwrap().epoch(),
-            s.node_service.chain.epoch
-        );
         wait(timer, crate::tickets::COLLECTING_TICKETS_TIMER);
         s.poll();
-        // check that consensus at new epoch
-        assert_eq!(
-            s.node_service.consensus.as_ref().unwrap().epoch(),
-            s.node_service.chain.epoch + 1
-        );
     });
 }
 
@@ -171,11 +162,6 @@ fn test_vrf_not_enought_tickets() {
             wait(timer, crate::tickets::COLLECTING_TICKETS_TIMER);
             s.poll();
             assert_eq!(s.node_service.vrf_system.view_change(), count as u32);
-            // check that consensus at old epoch
-            assert_eq!(
-                s.node_service.consensus.as_ref().unwrap().epoch(),
-                s.node_service.chain.epoch
-            );
         }
     });
 }
@@ -214,16 +200,7 @@ fn test_vrf_invalid_encoding() {
         s.poll();
         assert_eq!(s.node_service.vrf_system.view_change(), 1);
 
-        assert_eq!(
-            s.node_service.consensus.as_ref().unwrap().epoch(),
-            s.node_service.chain.epoch
-        );
         wait(timer, crate::tickets::COLLECTING_TICKETS_TIMER);
         s.poll();
-
-        assert_eq!(
-            s.node_service.consensus.as_ref().unwrap().epoch(),
-            s.node_service.chain.epoch
-        );
     });
 }

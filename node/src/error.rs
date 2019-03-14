@@ -31,30 +31,16 @@ pub enum NodeError {
     #[fail(display = "Fee is to low: min={}, got={}", _0, _1)]
     TooLowFee(i64, i64),
     #[fail(
-        display = "Invalid block version: block={}, expected={}, got={}",
-        _0, _1, _2
-    )]
-    InvalidBlockVersion(Hash, u64, u64),
-    #[fail(
-        display = "Invalid or out-of-order previous block: block={}, expected={}, got={}",
-        _0, _1, _2
-    )]
-    OutOfOrderBlockHash(Hash, Hash, Hash),
-    #[fail(display = "Block is already registered: hash={}", _0)]
-    BlockAlreadyRegistered(Hash),
-    #[fail(display = "Failed to validate block: expected={}, got={}", _0, _1)]
-    InvalidBlockHash(Hash, Hash),
-    #[fail(
         display = "Invalid block reward: hash={}, expected={}, got={}",
         _0, _1, _2
     )]
     InvalidBlockReward(Hash, i64, i64),
-    #[fail(display = "Invalid fee UTXO: hash={}", _0)]
-    InvalidFeeUTXO(Hash),
-    #[fail(display = "Transaction missing in mempool: {}.", _0)]
-    TransactionMissingInMempool(Hash),
     #[fail(display = "Transaction already exists in mempool: {}.", _0)]
     TransactionAlreadyExists(Hash),
+    #[fail(display = "Expected a key block, got monetary block: height={}.", _0)]
+    ExpectedKeyBlock(u64),
+    //#[fail(display = "Expected a monetary block, got key block: height={}.", _0)]
+    //ExpectedMonetaryBlock(u64),
     #[fail(
         display = "Found a block proposal with timestamp: {} that differ with our timestamp: {}.",
         _0, _1

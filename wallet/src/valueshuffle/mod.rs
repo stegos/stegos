@@ -73,7 +73,6 @@
 //
 // ========================================================================
 
-#![allow(unused)]
 #![deny(warnings)]
 #![allow(non_snake_case)]
 
@@ -84,9 +83,7 @@ mod message;
 use message::*;
 
 mod protos;
-use protos::*;
 
-use crate::error::*;
 use failure::format_err;
 use failure::Error;
 use futures::Async;
@@ -98,7 +95,7 @@ use log::*;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 use stegos_blockchain::Output;
 use stegos_blockchain::Transaction;
 use stegos_crypto::curve1174::cpt::Pt;
@@ -114,7 +111,6 @@ use stegos_crypto::pbc::secure;
 use stegos_network::Network;
 use stegos_node::Node;
 use stegos_serialization::traits::ProtoConvert;
-use stegos_txpool::ParticipantTXINMap;
 use stegos_txpool::PoolInfo;
 use stegos_txpool::PoolJoin;
 use stegos_txpool::POOL_ANNOUNCE_TOPIC;
@@ -125,7 +121,7 @@ use tokio_timer::Interval;
 use chrono::Utc;
 // use failure::Fail;
 use stegos_blockchain::{PaymentOutput, PaymentPayloadData};
-use stegos_crypto::bulletproofs::{fee_a, simple_commit, validate_range_proof};
+use stegos_crypto::bulletproofs::{simple_commit, validate_range_proof};
 use stegos_crypto::curve1174::cpt::{make_deterministic_keys, sign_hash, validate_sig};
 
 /// A topic used for ValueShuffle unicast communication.
@@ -137,8 +133,6 @@ const VS_TIMEOUT: i16 = 30; // sec, default for now
 pub const MAX_UTXOS: usize = 5; // max nbr of txout UTXO permitted
 
 // ==============================================================
-
-// -------------------------------------------------
 
 type ParticipantID = stegos_crypto::pbc::secure::PublicKey;
 
@@ -183,8 +177,6 @@ enum State {
 pub struct ValueShuffle {
     /// Wallet's Curve1174 Secret Key.
     skey: SecretKey,
-    /// Wallet's Curve1174 Public Key.
-    pkey: PublicKey,
     /// Faciliator's PBC public key
     facilitator_pkey: ParticipantID,
     /// State.
@@ -215,7 +207,13 @@ pub struct ValueShuffle {
     //   = sum(skey_i + gamma_i * delta_i) for i over TXINs
     my_signing_skey: SecretKey,
 
+    // FIFO queue of incoming messages not yet processed
     msg_queue: VecDeque<(ParticipantID, Hash, VsPayload)>,
+
+    // List of participants that should be excluded on startup
+    // normally empty, but could have resulted from restart pool
+    // message arriving out of order with respect to pool start message.
+    pending_removals: Vec<ParticipantID>,
 
     // --------------------------------------------
     // Items computed in vs_start()
@@ -386,7 +384,6 @@ impl ValueShuffle {
 
         ValueShuffle {
             skey: skey.clone(),
-            pkey,
             facilitator_pkey,
             state,
             participant_key,
@@ -428,6 +425,7 @@ impl ValueShuffle {
             msg_queue: VecDeque::new(),
             serialized_utxo_size: None,
             dicemix_nbr_utxo_chunks: None,
+            pending_removals: Vec::new(),
         }
     }
 
@@ -504,7 +502,7 @@ impl ValueShuffle {
     }
 
     fn reset_state(&mut self) {
-        self.waiting = 0;
+        self.waiting = 0; // reset timeout counter
         self.state = State::PoolFinished;
         self.msg_state = VsMsgType::None;
     }
@@ -536,7 +534,7 @@ impl ValueShuffle {
         debug!("pool = {:?}", pool_info);
 
         self.session_id = pool_info.session_id;
-        let mut part_info = pool_info.participants;
+        let part_info = pool_info.participants;
         self.participants = Vec::<ParticipantID>::new();
         for elt in &part_info {
             let mut pairs = Vec::<(TXIN, UTXO)>::new();
@@ -550,6 +548,10 @@ impl ValueShuffle {
                 debug!("Invalid ownership signature");
             }
         }
+        // handle enqueued requests from possible pool restart
+        // messages that arrived before we got the pool start message
+        self.exclude_participants(&self.pending_removals.clone());
+        self.pending_removals.clear();
 
         self.participants.sort();
         self.participants.dedup();
@@ -595,6 +597,10 @@ impl ValueShuffle {
         }
     }
 
+    fn exclude_participants(&mut self, p_excl: &Vec<ParticipantID>) {
+        self.participants.retain(|p| !p_excl.contains(p));
+    }
+
     fn try_on_restart_pool(
         &mut self,
         from: ParticipantID,
@@ -614,16 +620,18 @@ impl ValueShuffle {
                         // We aren't currently running, but we can restart with the
                         // participants left over from previous run.
                         // Facilitator should have already discarded our previous supertransaction.
-                        self.participants = all_excluding(&self.participants, &excl);
+                        self.exclude_participants(&excl);
+                        self.state = State::PoolFormed;
                         return self.vs_start();
                     }
                     _ => {
                         // We are pausing for incoming messages of some kind.
                         // Restart from the combined participants and pending_participants.
                         for p in &self.pending_participants {
+                            // copy over pending participants for restart
                             self.participants.push(*p);
                         }
-                        self.participants = all_excluding(&self.participants, &excl);
+                        self.exclude_participants(&excl);
                         // set state to reflect this division of participants list state
                         // in case we abort vs_start
                         self.msg_state = VsMsgType::None;
@@ -632,10 +640,11 @@ impl ValueShuffle {
                 }
             }
             _ => {
-                // We haven't even begun so just ignore this kind of message.
-                // Presumably, once asked to start up, the list of incoming
-                // participants will already have "without_part" removed...
-                //
+                // We haven't yet started. No participants are yet
+                // known. If this message arrived out of order with
+                // a pending startup message this request must be enqueued
+                // for use at startup.
+                self.pending_removals.push(without_part);
             }
         }
         Ok(())
@@ -664,7 +673,6 @@ impl ValueShuffle {
             Ok(message) => {
                 // debug!("on_message_received: successfully decoded network message!");
                 match message {
-                    Message::Example { payload } => self.on_example_received(from, payload),
                     Message::VsMessage { sid, payload } => {
                         self.on_vs_message_received(&from, &sid, &payload)
                     }
@@ -672,7 +680,6 @@ impl ValueShuffle {
                         without_part,
                         session_id,
                     } => self.on_restart_pool(from, without_part, session_id),
-                    _ => Ok(()),
                 }
             }
             Err(e) => {
@@ -680,24 +687,6 @@ impl ValueShuffle {
                 Err(e)
             }
         }
-    }
-
-    // ----------------------------------------------------------------------------------------------
-    // Example Stage
-    // ----------------------------------------------------------------------------------------------
-
-    /// Sends Example message.
-    fn send_example(&self, payload: String) -> Result<(), Error> {
-        let msg = Message::Example { payload };
-        self.send_message(msg)?;
-        debug!("Example sent");
-        Ok(())
-    }
-
-    /// Invoked when Example message is received.
-    fn on_example_received(&mut self, from: ParticipantID, payload: String) -> Result<(), Error> {
-        debug!("Example received: from={}, payload={}", from, payload);
-        Ok(())
     }
 }
 
@@ -938,10 +927,18 @@ impl ValueShuffle {
     }
 
     fn form_pooljoin_message(&mut self) -> Result<PoolJoin, Error> {
+        // Possible exits:
+        //   - normal exit
+        //   - ownership signing failure - can't open TXIN UTXO
+        //                               - or signature fails validation
+        //   - can't open TXIN UTXO
+        //   - assertion failure on zero gamma value
+
         // validate each TXIN and get my initial signature keying info
         let mut my_signing_skeyF = Fr::zero();
         self.txin_gamma_sum = Fr::zero();
         let utxos = self.my_txins.iter().map(|(_txin, u)| u.clone()).collect();
+        // signing error if we can't open the TXIN UTXO
         let own_sig = sign_utxos(&utxos, &self.skey)?;
 
         // double check our own TXINs
@@ -953,7 +950,6 @@ impl ValueShuffle {
         for utxo in utxos.clone() {
             let (gamma, delta, amount) = open_utxo(&utxo, &self.skey)?;
             assert!(gamma != Fr::zero());
-            assert!(delta != Fr::zero());
             amt_in += amount;
             self.txin_gamma_sum += gamma;
             my_signing_skeyF += Fr::from(self.skey.clone()) + gamma * delta;
@@ -1005,7 +1001,8 @@ impl ValueShuffle {
         self.waiting = timeout;
         self.msg_state = msgtype;
         debug!("In prep_rx(), state = {:?}", msgtype);
-        self.handle_enqueued_messages();
+        self.handle_enqueued_messages()
+            .expect("Can't handle enqueued messages");
     }
 
     fn vs_start(&mut self) -> Result<(), Error> {
@@ -1019,6 +1016,10 @@ impl ValueShuffle {
     }
 
     fn try_vs_start(&mut self) -> Result<(), Error> {
+        // Possible exits:
+        //   - fewer than 3 participants = protocol fail
+        //   - normal exit
+
         debug!("In vs_start()");
         if self.participants.len() < 3 {
             return Err(VsError::VsFail.into());
@@ -1104,6 +1105,10 @@ impl ValueShuffle {
     }
 
     fn try_vs_commit(&mut self) -> Result<(), Error> {
+        // Possible exits:
+        //   - normal exit
+        //   - fewer than 3 participants = protocol failure
+
         debug!("In vs_commit()");
         if self.participants.len() < 3 {
             return Err(VsError::VsFail.into());
@@ -1141,7 +1146,7 @@ impl ValueShuffle {
         }
 
         // -------------------------------------------------------------
-        // for debugging
+        // for debugging - check that our contribution produces zero balance
         {
             let mut cmt_sum = ECp::inf();
             for (_txin, u) in self.my_txins.clone() {
@@ -1213,6 +1218,11 @@ impl ValueShuffle {
     }
 
     fn try_vs_share_cloaked_data(&mut self) -> Result<(), Error> {
+        // Possible exits:
+        //   - normal exit
+        //   - fewer than 3 participants = protocol failure
+        //   - .expect() errors - should never happen in proper code
+
         debug!("In vs_share_cloaked_data()");
         if self.participants.len() < 3 {
             return Err(VsError::VsFail.into());
@@ -1293,6 +1303,10 @@ impl ValueShuffle {
     }
 
     fn try_vs_make_supertransaction(&mut self) -> Result<(), Error> {
+        // Possible exits:
+        //   - normal exit
+        //   - .expect() errors -> should never happen in proper code
+        //
         debug!("In vs_make_supertransaction()");
         if !self.pending_participants.is_empty() {
             // we can't do discovery on partial data
@@ -1392,6 +1406,8 @@ impl ValueShuffle {
             gamma_adj,
         );
         {
+            // for debugging - show the supertransaction hash at this node
+            // all nodes should agree on this
             let h = Hash::digest(&self.trans);
             debug!("hash: {}", h);
         }
@@ -1420,6 +1436,10 @@ impl ValueShuffle {
     }
 
     fn try_vs_sign_supertransaction(&mut self) -> Result<(), Error> {
+        // Possible exits:
+        //   - normal exit
+        //   - .expect() errors -> should never happen in correct code
+
         debug!("In vs_sign_supertransaction()");
         if !self.pending_participants.is_empty() {
             // we can't do discovery on partial data
@@ -1439,7 +1459,7 @@ impl ValueShuffle {
         debug!("total sig {:?}", self.trans.sig);
 
         if self.validate_transaction() {
-            let leader = leader_id(&self.participants);
+            let leader = self.leader_id();
             debug!("Leader = {}", leader);
             if self.participant_key == leader {
                 // if I'm leader, then send the completed super-transaction
@@ -1449,6 +1469,7 @@ impl ValueShuffle {
             }
             self.reset_state(); // indicate nothing more to follow, restartable
             self.msg_queue.clear();
+            self.session_round = 0; // for possible restarts
             debug!("Success in ValueShuffle!!");
             return Ok(());
         }
@@ -1485,6 +1506,9 @@ impl ValueShuffle {
     }
 
     fn try_vs_blame_discovery(&mut self) -> Result<(), Error> {
+        // Possible exits:
+        //   - normal exit
+
         debug!("In vs_blame_discovery()");
         if self.pending_participants.is_empty() {
             // everyone responded with their secret session key
@@ -1511,31 +1535,13 @@ impl ValueShuffle {
                 Self::validate_uncloaked_contrib,
                 &data,
             );
-            self.participants = all_excluding(&self.participants, &new_p_excl);
+            self.exclude_participants(&new_p_excl);
         }
         // and begin another round
         self.vs_start()
     }
 
     // -----------------------------------------------------------------
-
-    /*
-        fn collect_utxo_outputs(utxos: &Vec<UTXO>) -> Vec<Output> {
-            let mut outputs = Vec::<Output>::new();
-            let mut tbl : HashMap<PublicKey, UTXO> = HashMap::new();
-            let mut recips = Vec::<PublicKey>::new();
-            for utxo in utxos {
-                tbl.insert(utxo.recipient, utxo.clone());
-                recips.push(utxo.recipient);
-            }
-            recips.sort();
-            for r in recips {
-                let utxo = tbl.get(r).expect("Can't retrieve recipient UTXO");
-                outputs.push(Output::PaymentOutput(utxo.clone()));
-            }
-            outputs
-        }
-    */
 
     fn collect_txin_outputs(&self, txins: &Vec<TXIN>) -> Vec<Output> {
         // construct a lookup table TXIN -> UTXO
@@ -1603,8 +1609,7 @@ impl ValueShuffle {
 
         let mut txin_sum = ECp::inf();
         let mut eff_pkey = ECp::inf();
-        let mut state = Hasher::new();
-        for (txin, utxo) in data.all_txins.get(pid).expect("Can't access TXIN") {
+        for (_txin, utxo) in data.all_txins.get(pid).expect("Can't access TXIN") {
             // all txins have already been checked for validity
             // these expects should never happen
             let pkey_pt = Pt::from(utxo.recipient)
@@ -1715,11 +1720,11 @@ impl ValueShuffle {
     // -------------------------------------------------
 
     fn send_signed_message(&self, payload: &VsPayload) {
-        let mut msg = Message::VsMessage {
+        let msg = Message::VsMessage {
             payload: payload.clone(),
             sid: self.session_id,
         };
-        self.send_message(msg);
+        self.send_message(msg).expect("Can't send message");
     }
 
     fn send_session_pkey(&self, sess_pkey: &PublicKey, sess_KSig: &Pt) {
@@ -1825,7 +1830,39 @@ impl ValueShuffle {
 
     fn send_super_transaction(&self) {
         // send final superTransaction to blockchain
-        self.node.send_transaction(self.trans.clone());
+        self.node
+            .send_transaction(self.trans.clone())
+            .expect("Can't send super-transaction");
+    }
+
+    fn leader_id(&mut self) -> ParticipantID {
+        // select the leader as the public key having the lowest XOR between
+        // its key bits and the hash of all participant keys.
+        self.participants.sort(); // nodes can't agree on hash unless all keys in same order
+        let hash = {
+            let mut state = Hasher::new();
+            self.participants.iter().for_each(|p| p.hash(&mut state));
+            state.result()
+        };
+        let mut min_part = self.participants[0];
+        let mut min_xor = vec![0xffu8; HASH_SIZE];
+        self.participants.iter().for_each(|p| {
+            let pbits = p.base_vector();
+            let hbits = hash.bits();
+            let xor_bits: Vec<u8> = pbits
+                .iter()
+                .zip(hbits.iter())
+                .map(|(p, h)| *p ^ *h)
+                .collect();
+            for (hp, hm) in xor_bits.iter().zip(min_xor.iter()) {
+                if *hp < *hm {
+                    min_part = *p;
+                    min_xor = xor_bits;
+                    break;
+                }
+            }
+        });
+        min_part
     }
 }
 
@@ -1868,15 +1905,6 @@ fn open_utxo(utxo: &UTXO, skey: &SecretKey) -> Result<(Fr, Fr, i64), VsError> {
         _ => {
             return Err(VsError::VsBadTXIN);
         }
-    }
-}
-
-fn decompress_or_zero(pt: &Pt) -> ECp {
-    // try to decompress an ECC compressed point
-    // if it fails, return the point at infinity
-    match pt.decompress() {
-        Ok(ept) => ept,
-        _ => ECp::inf(),
     }
 }
 
@@ -1944,59 +1972,6 @@ fn times_G(val: Fr) -> ECp {
 
 // -----------------------------------------------------------------
 // Participation helpers...
-
-fn merge_excl(p_excl: &mut Vec<ParticipantID>, p_excl_new: &Vec<ParticipantID>) {
-    p_excl_new.iter().for_each(|&p| p_excl.push(p));
-}
-
-fn all_excluding(
-    participants: &Vec<ParticipantID>,
-    p_excl: &Vec<ParticipantID>,
-) -> Vec<ParticipantID> {
-    fn member(p: ParticipantID, pset: &Vec<ParticipantID>) -> bool {
-        for &px in pset {
-            if p == px {
-                return true;
-            }
-        }
-        false
-    }
-
-    let mut rem = participants.clone();
-    rem.retain(|&p| !member(p, p_excl));
-    rem
-}
-
-fn leader_id(participants: &Vec<ParticipantID>) -> ParticipantID {
-    // select the leader as the public key having the lowest XOR between
-    // its key bits and the hash of all participant keys.
-    let mut ps = participants.clone();
-    ps.sort();
-    let hash = {
-        let mut state = Hasher::new();
-        ps.iter().for_each(|p| p.hash(&mut state));
-        state.result()
-    };
-    let mut min_part = ps[0];
-    let mut min_xor = vec![0xffu8; HASH_SIZE];
-    ps.iter().for_each(|p| {
-        let pbits = p.base_vector();
-        let hbits = hash.bits();
-        let xor_bits: Vec<u8> = pbits
-            .iter()
-            .zip(hbits.iter())
-            .map(|(p, h)| *p ^ *h)
-            .collect();
-        for (hp, hm) in xor_bits.iter().zip(min_xor.iter()) {
-            if *hp < *hm {
-                min_part = *p;
-                min_xor = xor_bits;
-                break;
-            }
-        }
-    });
-    min_part
-}
 
 // ------------------------------------------------------------------
 

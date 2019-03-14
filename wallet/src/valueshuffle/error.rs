@@ -32,14 +32,6 @@ pub enum VsError {
     VsFail, // if can't achieve any result in ValueShuffle session
     #[fail(display = "Too many UTXOs proposed")]
     VsTooManyUTXO,
-    #[fail(display = "Bad PublicKey")]
-    VsBadPubKey,
-    #[fail(display = "Bad Keying")]
-    VsBadKeying,
-    #[fail(display = "Bad Signature Kval")]
-    VsBadSigK,
-    #[fail(display = "Bad SuperTransaction")]
-    VsBadSuperTransaction,
     #[fail(display = "Bad UTXO Encrypted Payload Keying")]
     VsBadUTXO, // UTXO has bad encryption keying on payload
     #[fail(display = "Bad TXIN Reference")]
@@ -54,6 +46,4 @@ pub enum VsError {
     VsNotInSession,
     #[fail(display = "Invalid message")]
     VsInvalidMessage,
-    #[fail(display = "Wrong Session")]
-    VsInvalidSession,
 }

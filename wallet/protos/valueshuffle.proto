@@ -4,10 +4,6 @@ package stegos.valueshuffle;
 import "crypto.proto";
 import "blockchain.proto";
 
-message Example {
-    string payload = 1;
-}
-
 message DcRow {
     repeated stegos.crypto.Fr cols = 1;
 }
@@ -68,8 +64,7 @@ message VsRestart {
 
 message Message {
     oneof body {
-        Example example = 1;
-        VsMessage vsmessage = 2;
-        VsRestart vsrestart = 3;
+        VsMessage vsmessage = 1;
+        VsRestart vsrestart = 2;
     }
 }

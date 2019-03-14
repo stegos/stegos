@@ -37,7 +37,6 @@ use stegos_crypto::hash::Hash;
 
 type DcRow = Vec<Fr>;
 type DcSheet = Vec<DcRow>;
-type DcMatrix = Vec<DcSheet>;
 type ParticipantID = stegos_crypto::pbc::secure::PublicKey;
 
 impl ProtoConvert for VsPayload {
@@ -160,11 +159,6 @@ impl ProtoConvert for Message {
     fn into_proto(&self) -> Self::Proto {
         let mut proto = valueshuffle::Message::new();
         match self {
-            Message::Example { payload } => {
-                let mut example = valueshuffle::Example::new();
-                example.set_payload(payload.clone());
-                proto.set_example(example);
-            }
             Message::VsMessage { sid, payload } => {
                 let mut msg = valueshuffle::VsMessage::new();
                 msg.set_sid(sid.into_proto());
@@ -180,17 +174,12 @@ impl ProtoConvert for Message {
                 msg.set_without_part(without_part.into_proto());
                 proto.set_vsrestart(msg);
             }
-            _ => {}
         }
         proto
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let msg = match proto.body {
-            Some(valueshuffle::Message_oneof_body::example(ref msg)) => {
-                let payload = msg.get_payload().to_string();
-                Message::Example { payload }
-            }
             Some(valueshuffle::Message_oneof_body::vsmessage(ref msg)) => Message::VsMessage {
                 sid: Hash::from_proto(msg.get_sid())?,
                 payload: VsPayload::from_proto(msg.get_payload())?,
@@ -207,18 +196,18 @@ impl ProtoConvert for Message {
     }
 }
 
+// -----------------------------------------------------------
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
     use std::dbg;
     use stegos_crypto::bulletproofs::simple_commit;
     use stegos_crypto::curve1174::cpt::make_random_keys;
-    use stegos_crypto::curve1174::cpt::sign_hash;
-    use stegos_crypto::pbc::secure;
 
     #[test]
     fn vs_serialization() {
-        let (skey, pkey, _) = make_random_keys();
+        let (_skey, pkey, _) = make_random_keys();
         let sid = Hash::digest("test");
         let ksig = simple_commit(Fr::from(1), Fr::zero()).compress();
         let msg = Message::VsMessage {

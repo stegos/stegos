@@ -70,9 +70,6 @@ pub(crate) enum VsPayload {
 
 #[derive(Debug)]
 pub(crate) enum Message {
-    Example {
-        payload: String,
-    },
     VsMessage {
         sid: Hash,
         payload: VsPayload,
@@ -92,12 +89,7 @@ impl fmt::Display for VsPayload {
                 pkey, ksig
             ),
             VsPayload::Commitment { cmt } => write!(f, "VsPayload::Commitment( cmt: {})", cmt),
-            VsPayload::CloakedVals {
-                matrix,
-                gamma_sum,
-                fee_sum,
-                cloaks,
-            } => write!(f, "VsPayload::CloakedVals(...)"),
+            VsPayload::CloakedVals { .. } => write!(f, "VsPayload::CloakedVals(...)"),
             VsPayload::Signature { sig } => write!(f, "VsPayload::Signature( sig: {:?})", sig),
             VsPayload::SecretKeying { skey } => {
                 write!(f, "VsPayload::SecretKeying( skey: {:?})", skey)
@@ -109,8 +101,7 @@ impl fmt::Display for VsPayload {
 impl fmt::Display for Message {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Message::Example { payload } => write!(f, "{}", payload),
-            Message::VsMessage { sid, payload } => write!(f, "{}", payload),
+            Message::VsMessage { payload, .. } => write!(f, "{}", payload),
             Message::VsRestart {
                 without_part,
                 session_id,
@@ -126,10 +117,6 @@ impl fmt::Display for Message {
 impl Hashable for Message {
     fn hash(&self, state: &mut Hasher) {
         match self {
-            Message::Example { payload } => {
-                "Example".hash(state);
-                payload.hash(state);
-            }
             Message::VsMessage { sid, payload } => {
                 "VsMessage".hash(state);
                 sid.hash(state);

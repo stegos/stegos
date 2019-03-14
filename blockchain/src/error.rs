@@ -59,6 +59,11 @@ pub enum BlockchainError {
     ValidatorsNotEqualToOurStakers,
     #[fail(display = "Invalid block BLS multisignature: block={}", _0)]
     InvalidBlockSignature(Hash),
+    #[fail(
+        display = "Invalid block version: block={}, expected={}, got={}",
+        _0, _1, _2
+    )]
+    InvalidBlockVersion(Hash, u64, u64),
     #[fail(display = "Received block with invalid random.")]
     IncorrectRandom,
 }

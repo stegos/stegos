@@ -23,7 +23,6 @@ use super::Loopback;
 use crate::*;
 use chrono::Utc;
 use stegos_blockchain::*;
-use stegos_crypto::hash::Hash;
 
 #[test]
 pub fn init() {
@@ -56,27 +55,7 @@ pub fn init() {
 }
 
 fn simulate_consensus(node: &mut NodeService) {
-    let previous = node.chain.last_block_hash();
-    let (mut block, _fee_output, _tx_hashes) = node.mempool.create_block(
-        previous,
-        VERSION,
-        node.chain.epoch,
-        0,
-        &node.keys.wallet_skey,
-        &node.keys.wallet_pkey,
-    );
-
-    let block_hash = Hash::digest(&block);
-    let (multisig, multisigmap) = create_proposal_signature(
-        &block_hash,
-        &node.keys.network_skey,
-        &node.keys.network_pkey,
-        &node.chain.validators,
-    );
-    block.header.base.multisig = multisig.clone();
-    block.header.base.multisigmap = multisigmap.clone();
-    let block = Block::MonetaryBlock(block);
-    node.commit_proposed_block(block, multisig, multisigmap);
+    node.create_monetary_block().unwrap();
 }
 
 fn simulate_payment(node: &mut NodeService, amount: i64) -> Result<(), Error> {
@@ -152,7 +131,10 @@ pub fn monetary_requests() {
         }
     }
     amounts.sort();
-    assert_eq!(amounts, vec![PAYMENT_FEE, total - stake - PAYMENT_FEE]);
+    assert_eq!(
+        amounts,
+        vec![PAYMENT_FEE + BLOCK_REWARD, total - stake - PAYMENT_FEE]
+    );
     block_count += 1;
 
     // Payment with a change.
@@ -175,7 +157,11 @@ pub fn monetary_requests() {
         }
     }
     amounts.sort();
-    let expected = vec![2 * PAYMENT_FEE, 100, total - stake - 100 - 2 * PAYMENT_FEE];
+    let expected = vec![
+        BLOCK_REWARD + 2 * PAYMENT_FEE,
+        100,
+        BLOCK_REWARD + total - stake - 100 - 2 * PAYMENT_FEE,
+    ];
     assert_eq!(amounts, expected);
 
     assert_eq!(block_count, 3);

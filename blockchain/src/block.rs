@@ -36,6 +36,8 @@ use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure;
 use stegos_crypto::pbc::secure::VRF;
 
+/// Blockchain version.
+pub const VERSION: u64 = 1;
 /// The maximum number of nodes in multi-signature.
 pub const VALIDATORS_MAX: usize = 512;
 

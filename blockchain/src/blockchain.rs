@@ -191,7 +191,7 @@ impl Blockchain {
         match block {
             Block::MonetaryBlock(block) => {
                 if cfg!(debug_assertions) {
-                    self.validate_monetary_block(&block, false, current_timestamp)
+                    self.validate_monetary_block(&block, current_timestamp)
                         .expect("a monetary block from the disk is valid")
                 }
                 let _ = self.register_monetary_block(block, current_timestamp);
@@ -358,6 +358,16 @@ impl Blockchain {
         let block_hash = Hash::digest(&block);
         debug!("Validating a key block: hash={}", &block_hash);
 
+        // Check block version.
+        if block.header.base.version != VERSION {
+            return Err(BlockchainError::InvalidBlockVersion(
+                block_hash,
+                VERSION,
+                block.header.base.version,
+            )
+            .into());
+        }
+
         // Check epoch.
         if block.header.base.epoch != self.epoch + 1 {
             return Err(BlockchainError::OutOfOrderBlockEpoch(
@@ -479,7 +489,7 @@ impl Blockchain {
         //
         // Validate the monetary block.
         //
-        self.validate_monetary_block(&block, false, current_timestamp)?;
+        self.validate_monetary_block(&block, current_timestamp)?;
 
         //
         // Write the monetary block to the disk.
@@ -509,11 +519,20 @@ impl Blockchain {
     pub fn validate_monetary_block(
         &self,
         block: &MonetaryBlock,
-        is_proposal: bool,
         current_timestamp: u64,
     ) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
         debug!("Validating a monetary block: hash={}", &block_hash);
+
+        // Check block version.
+        if block.header.base.version != VERSION {
+            return Err(BlockchainError::InvalidBlockVersion(
+                block_hash,
+                VERSION,
+                block.header.base.version,
+            )
+            .into());
+        }
 
         // Check epoch.
         if block.header.base.epoch != self.epoch {
@@ -550,7 +569,7 @@ impl Blockchain {
                 &block.header.base.multisigmap,
                 &self.validators,
                 &self.leader,
-                is_proposal,
+                true,
             )
         {
             return Err(BlockchainError::InvalidBlockSignature(block_hash).into());

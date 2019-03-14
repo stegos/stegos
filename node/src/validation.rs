@@ -23,21 +23,18 @@
 
 use crate::error::*;
 use crate::mempool::Mempool;
-use crate::BLOCK_REWARD;
 use crate::PAYMENT_FEE;
 use crate::STAKE_FEE;
+use chrono::Utc;
 use failure::ensure;
 use failure::Error;
 use log::*;
 use stegos_blockchain::Blockchain;
 use stegos_blockchain::BlockchainError;
 use stegos_blockchain::KeyBlock;
-use stegos_blockchain::MonetaryBlock;
 use stegos_blockchain::Output;
-use stegos_blockchain::OutputError;
 use stegos_blockchain::Transaction;
 use stegos_consensus::BlockConsensus;
-use stegos_crypto::bulletproofs::validate_range_proof;
 use stegos_crypto::hash::Hash;
 
 ///
@@ -136,7 +133,15 @@ pub(crate) fn validate_proposed_key_block(
     block_hash: Hash,
     block: &KeyBlock,
 ) -> Result<(), Error> {
-    chain.validate_key_block(block, true)?;
+    debug_assert_eq!(&Hash::digest(block), &block_hash);
+
+    let timestamp = Utc::now().timestamp() as u64;
+    if block.header.base.timestamp.saturating_sub(timestamp) > crate::TIME_TO_RECEIVE_BLOCK
+        || timestamp.saturating_sub(block.header.base.timestamp) > crate::TIME_TO_RECEIVE_BLOCK
+    {
+        return Err(NodeError::UnsynchronizedBlock(block.header.base.timestamp, timestamp).into());
+    }
+
     ensure!(
         block.header.leader == consensus.leader(),
         "Consensus leader different from our consensus group."
@@ -153,97 +158,9 @@ pub(crate) fn validate_proposed_key_block(
         );
     }
 
+    chain.validate_key_block(block, true)?;
+
     debug!("Key block proposal is valid: block={:?}", block_hash);
-    Ok(())
-}
-
-///
-/// Validate proposed monetary block.
-///
-pub(crate) fn validate_proposed_monetary_block(
-    mempool: &Mempool,
-    chain: &Blockchain,
-    block_hash: Hash,
-    block: &MonetaryBlock,
-    fee_output: &Option<Output>,
-    tx_hashes: &Vec<Hash>,
-    current_timestamp: u64,
-) -> Result<(), Error> {
-    if block.header.monetary_adjustment != BLOCK_REWARD {
-        // TODO: support slashing.
-        return Err(NodeError::InvalidBlockReward(
-            block_hash,
-            block.header.monetary_adjustment,
-            BLOCK_REWARD,
-        )
-        .into());
-    }
-
-    // Check transactions.
-    let mut inputs_hashes: Vec<Hash> = Vec::new();
-    let mut outputs: Vec<Output> = Vec::new();
-    for tx_hash in tx_hashes {
-        debug!("Processing transaction: hash={:?}", &tx_hash);
-
-        // Check that transaction is present in mempool.
-        let tx = mempool.get_tx(&tx_hash);
-        if tx.is_none() {
-            return Err(NodeError::TransactionMissingInMempool(*tx_hash).into());
-        }
-        let tx = tx.unwrap();
-
-        // All transactions in mempool are already valid.
-        if cfg!(debug_assert) {
-            // Check that transaction's inputs are exists.
-            let tx_inputs = chain
-                .outputs_by_hashes(&tx.body.txins)
-                .expect("mempool transaction is valid");
-
-            // Check transaction's signature, monetary balance, fee and others.
-            tx.validate(&tx_inputs)
-                .expect("mempool transaction is valid");
-        }
-
-        inputs_hashes.extend(tx.body.txins.iter().cloned());
-        outputs.extend(tx.body.txouts.iter().cloned());
-    }
-
-    // Check fee UTXO.
-    match fee_output {
-        Some(Output::PaymentOutput(o)) => {
-            // Check bulletproofs of created outputs
-            if !validate_range_proof(&o.proof) {
-                return Err(OutputError::InvalidBulletProof.into());
-            }
-            outputs.push(Output::PaymentOutput(o.clone()));
-        }
-        Some(o) => {
-            return Err(NodeError::InvalidFeeUTXO(Hash::digest(o)).into());
-        }
-        None => {
-            assert_eq!(block.header.monetary_adjustment, 0);
-        }
-    };
-
-    // Try to re-create the block.
-    let base_header = block.header.base.clone();
-    let block = MonetaryBlock::new(
-        base_header,
-        block.header.gamma.clone(),
-        block.header.monetary_adjustment,
-        &inputs_hashes,
-        &outputs,
-    );
-
-    // Check that we created the same block.
-    let block_hash2 = Hash::digest(&block);
-    if block_hash != block_hash2 {
-        return Err(NodeError::InvalidBlockHash(block_hash, block_hash2).into());
-    }
-
-    // Validate this block via blockchain.
-    chain.validate_monetary_block(&block, true, current_timestamp)?;
-
     Ok(())
 }
 

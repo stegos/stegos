@@ -303,6 +303,12 @@ impl<T: Hashable> Hashable for Option<T> {
     }
 }
 
+impl Hashable for () {
+    fn hash(&self, state: &mut Hasher) {
+        "none".hash(state);
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;

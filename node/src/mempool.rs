@@ -76,13 +76,6 @@ impl Mempool {
     }
 
     ///
-    /// Returns a transaction from the mempool.
-    ///
-    pub fn get_tx(&self, tx_hash: &Hash) -> Option<&Transaction> {
-        self.pool.get(tx_hash)
-    }
-
-    ///
     /// Queues a transaction to the mempool.
     ///
     pub fn push_tx(&mut self, tx_hash: Hash, tx: Transaction) {
@@ -146,7 +139,7 @@ impl Mempool {
     }
 
     ///
-    /// Process transactions in mempool and create a new MonetaryBlockProposal.
+    /// Process transactions in mempool and create a new monetary block.
     ///
     pub fn create_block(
         &mut self,

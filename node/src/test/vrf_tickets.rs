@@ -22,7 +22,6 @@
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
-use stegos_serialization::traits::ProtoConvert;
 
 use super::time::{start_test, wait};
 use super::*;
@@ -83,34 +82,35 @@ fn test_vrf_change_consensus() {
     use log::Level;
     let _ = simple_logger::init_with_level(Level::Trace);
     start_test(|timer| {
-        let mut s = NodeSandbox::new(4);
+        let mut sandbox = Sandbox::new(4);
+        let node_id = 1;
+        let s = &mut sandbox.nodes[node_id];
         // Generate list of keys like in VRF.
         let block_hash = s.node_service.chain.last_random();
         let view_change = s.node_service.vrf_system.view_change() + 1;
         let height = s.node_service.chain.height();
         let tickets =
-            VRFHelper::nodes_tickets(height, view_change, block_hash, &s.config.nodes_keychains);
-
-        let mut tickets = tickets.into_iter();
+            VRFHelper::nodes_tickets(height, view_change, block_hash, &sandbox.nodes_keychains);
 
         // wait for restart consensus
-        wait(timer, *crate::tickets::RESTART_CONSENSUS_TIMER);
+        wait(timer, *crate::BLOCK_TIMEOUT);
         // node should broadcast ticket
 
-        assert_eq!(s.node_service.poll(), Ok(Async::NotReady));
-        s.manager
-            .assert_broadcast(crate::tickets::VRF_TICKETS_TOPIC, tickets.next().unwrap());
+        s.poll();
+        s.network_service
+            .assert_broadcast(crate::tickets::VRF_TICKETS_TOPIC, tickets[node_id]);
         // receive messages from other nodes
-        for ticket in tickets {
-            s.manager.assert_empty_queue();
-            s.manager.receive_broadcast(
-                crate::tickets::VRF_TICKETS_TOPIC,
-                ticket.into_buffer().unwrap(),
-            );
+        for i in 0..tickets.len() {
+            if i == node_id {
+                continue;
+            }
+            s.network_service.assert_empty_queue();
+            s.network_service
+                .receive_broadcast(crate::tickets::VRF_TICKETS_TOPIC, tickets[i]);
         }
         // node should reelect leader after timeout
 
-        assert_eq!(s.node_service.poll(), Ok(Async::NotReady));
+        s.poll();
         assert_eq!(s.node_service.vrf_system.view_change(), 1);
 
         assert_eq!(
@@ -118,7 +118,7 @@ fn test_vrf_change_consensus() {
             s.node_service.chain.epoch
         );
         wait(timer, crate::tickets::COLLECTING_TICKETS_TIMER);
-        assert_eq!(s.node_service.poll(), Ok(Async::NotReady));
+        s.poll();
         // check that consensus at new epoch
         assert_eq!(
             s.node_service.consensus.as_ref().unwrap().epoch(),
@@ -134,7 +134,9 @@ fn test_vrf_not_enought_tickets() {
     use log::Level;
     let _ = simple_logger::init_with_level(Level::Trace);
     start_test(|timer| {
-        let mut s = NodeSandbox::new(4);
+        let mut sandbox = Sandbox::new(4);
+        let node_id = 1;
+        let s = &mut sandbox.nodes[node_id];
 
         // Generate list of keys like in VRF.
         let last_random = s.node_service.chain.last_random();
@@ -145,28 +147,29 @@ fn test_vrf_not_enought_tickets() {
                 height,
                 view_change,
                 last_random,
-                &s.config.nodes_keychains,
+                &sandbox.nodes_keychains,
             );
 
             // wait for restart consensus
-            wait(timer, *crate::tickets::RESTART_CONSENSUS_TIMER);
+            wait(timer, *crate::BLOCK_TIMEOUT);
             // node should broadcast ticket
 
-            assert_eq!(s.node_service.poll(), Ok(Async::NotReady));
-            s.manager
-                .assert_broadcast(crate::tickets::VRF_TICKETS_TOPIC, tickets[0].clone());
+            s.poll();
+            s.network_service
+                .assert_broadcast(crate::tickets::VRF_TICKETS_TOPIC, tickets[node_id].clone());
             // receive messages from other nodes
-            for i in 1..count + 1 {
-                s.manager.assert_empty_queue();
-                s.manager.receive_broadcast(
-                    crate::tickets::VRF_TICKETS_TOPIC,
-                    tickets[i].into_buffer().unwrap(),
-                );
+            for i in 0..tickets.len() {
+                if i == node_id {
+                    continue;
+                }
+                s.network_service.assert_empty_queue();
+                s.network_service
+                    .receive_broadcast(crate::tickets::VRF_TICKETS_TOPIC, tickets[i]);
             }
             // node should not init consensus, but change view_change
 
             wait(timer, crate::tickets::COLLECTING_TICKETS_TIMER);
-            assert_eq!(s.node_service.poll(), Ok(Async::NotReady));
+            s.poll();
             assert_eq!(s.node_service.vrf_system.view_change(), count as u32);
             // check that consensus at old epoch
             assert_eq!(
@@ -182,32 +185,33 @@ fn test_vrf_invalid_encoding() {
     use log::Level;
     let _ = simple_logger::init_with_level(Level::Trace);
     start_test(|timer| {
-        let mut s = NodeSandbox::new(4);
+        let mut sandbox = Sandbox::new(4);
+        let node_id = 1;
+        let s = &mut sandbox.nodes[node_id];
+
         // Generate list of keys like in VRF.
         let last_random = s.node_service.chain.last_random();
         let view_change = s.node_service.vrf_system.view_change() + 1;
         let height = s.node_service.chain.height();
         let tickets =
-            VRFHelper::nodes_tickets(height, view_change, last_random, &s.config.nodes_keychains);
-
-        let mut tickets = tickets.into_iter();
+            VRFHelper::nodes_tickets(height, view_change, last_random, &sandbox.nodes_keychains);
 
         // wait for restart consensus
-        wait(timer, *crate::tickets::RESTART_CONSENSUS_TIMER);
+        wait(timer, *crate::BLOCK_TIMEOUT);
         // node should broadcast ticket
 
-        assert_eq!(s.node_service.poll(), Ok(Async::NotReady));
-        s.manager
-            .assert_broadcast(crate::tickets::VRF_TICKETS_TOPIC, tickets.next().unwrap());
+        s.poll();
+        s.network_service
+            .assert_broadcast(crate::tickets::VRF_TICKETS_TOPIC, tickets[node_id]);
         // receive messages from other nodes
-        for _ticket in tickets {
-            s.manager.assert_empty_queue();
+        for _ in 1..tickets.len() {
+            s.network_service.assert_empty_queue();
             // send invalid data
-            s.manager
-                .receive_broadcast(crate::tickets::VRF_TICKETS_TOPIC, vec![88u8; 1222]);
+            s.network_service
+                .receive_broadcast_raw(crate::tickets::VRF_TICKETS_TOPIC, vec![88u8; 1222]);
         }
 
-        assert_eq!(s.node_service.poll(), Ok(Async::NotReady));
+        s.poll();
         assert_eq!(s.node_service.vrf_system.view_change(), 1);
 
         assert_eq!(
@@ -215,7 +219,7 @@ fn test_vrf_invalid_encoding() {
             s.node_service.chain.epoch
         );
         wait(timer, crate::tickets::COLLECTING_TICKETS_TIMER);
-        assert_eq!(s.node_service.poll(), Ok(Async::NotReady));
+        s.poll();
 
         assert_eq!(
             s.node_service.consensus.as_ref().unwrap().epoch(),

@@ -24,6 +24,7 @@
 use crate::{Consensus, ConsensusMessage};
 use stegos_blockchain::*;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
+
 /// A proof for monetary block.
 #[derive(Clone, Debug)]
 pub struct MonetaryBlockProof {

@@ -46,6 +46,7 @@ use failure::Error;
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::{Async, Future, Poll, Stream};
 use futures_stream_select_all_send::select_all;
+use lazy_static::lazy_static;
 use log::*;
 use protobuf;
 use protobuf::Message;
@@ -61,6 +62,7 @@ use stegos_keychain::KeyChain;
 use stegos_network::Network;
 use stegos_network::UnicastMessage;
 use stegos_serialization::traits::ProtoConvert;
+use tokio_timer::clock;
 use tokio_timer::Interval;
 
 // ----------------------------------------------------------------
@@ -199,7 +201,7 @@ const BLOCK_VALIDATION_TIME: Duration = Duration::from_secs(30);
 /// How long wait for transactions before starting to create a new block.
 const TX_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 /// How often to check the consensus state.
-const CONSENSUS_TIMER: Duration = Duration::from_secs(30);
+const CONSENSUS_TIMER: Duration = Duration::from_secs(5);
 /// How long we should wait for network stabilization.
 pub const NETWORK_GRACE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Max count of sealed block in epoch.
@@ -212,6 +214,12 @@ const BLOCK_REWARD: i64 = 60;
 pub const PAYMENT_FEE: i64 = 1;
 /// Fixed fee for the stake transactions.
 pub const STAKE_FEE: i64 = 1;
+lazy_static! {
+    /// If no new block was provided between this interval - we should start vrf system.
+    pub static ref BLOCK_TIMEOUT: Duration = crate::TX_WAIT_TIMEOUT + // propose timeout
+                                             crate::MESSAGE_TIMEOUT * 3 + // 3 consensus message
+                                             crate::BLOCK_VALIDATION_TIME * 3; // leader + validators + sealed block.
+}
 
 #[derive(Clone, Debug)]
 enum NodeMessage {
@@ -237,7 +245,6 @@ enum NodeMessage {
     Init { genesis: Vec<Block> },
     NetworkReady,
     ConsensusTimer(Instant),
-    VRFTimer(Instant),
 }
 
 pub struct NodeService {
@@ -363,13 +370,6 @@ impl NodeService {
         let duration = CONSENSUS_TIMER; // every second
         let timer = Interval::new_interval(duration)
             .map(|i| NodeMessage::ConsensusTimer(i))
-            .map_err(|_e| ()); // ignore transient timer errors
-        streams.push(Box::new(timer));
-
-        // VRF timer events
-        let duration = tickets::TIMER; // every second
-        let timer = Interval::new_interval(duration)
-            .map(|i| NodeMessage::VRFTimer(i))
             .map_err(|_e| ()); // ignore transient timer errors
         streams.push(Box::new(timer));
 
@@ -745,7 +745,7 @@ impl NodeService {
         let block_hash = Hash::digest(&block);
 
         // Create initial multi-signature.
-        let (multisig, multisigmap) = create_initial_multi_signature(
+        let (multisig, multisigmap) = create_proposal_signature(
             &block_hash,
             &self.keys.network_skey,
             &self.keys.network_pkey,
@@ -904,7 +904,8 @@ impl NodeService {
     /// Called periodically every CONSENSUS_TIMER seconds.
     ///
     fn handle_consensus_timer(&mut self) -> Result<(), Error> {
-        let elapsed = self.chain.last_block_timestamp.elapsed();
+        let now = clock::now();
+        let elapsed: Duration = now.duration_since(self.chain.last_block_timestamp);
 
         // Check that a new payment block should be proposed.
         if self.consensus.is_some()
@@ -913,7 +914,36 @@ impl NodeService {
         {
             self.propose_monetary_block()?;
         }
-        Ok(())
+
+        // Check that a block has been committed but haven't send by the leader.
+        if self.consensus.is_some()
+            && self.consensus.as_ref().unwrap().should_commit()
+            && elapsed >= *BLOCK_TIMEOUT
+        {
+            assert!(
+                !self.consensus.as_ref().unwrap().is_leader(),
+                "never happens on leader"
+            );
+            let (block, _proof, mut multisig, mut multisigmap) =
+                self.consensus.as_mut().unwrap().sign_and_commit();
+            let block_hash = Hash::digest(&block);
+            warn!("Timed out while waiting for the committed block from the leader, applying automatically: hash={}, height={}",
+                block_hash, self.chain.height
+            );
+            // Augment multi-signature by leader's signature from the proposal.
+            merge_multi_signature(
+                &mut multisig,
+                &mut multisigmap,
+                &block.base_header().multisig,
+                &block.base_header().multisigmap,
+            );
+            metrics::AUTOCOMMIT.inc();
+            // Auto-commit proposed block and send it to the network.
+            self.commit_proposed_block(block, multisig, multisigmap);
+        }
+
+        // Handle VRF.
+        self.handle_vrf_timer()
     }
 
     ///
@@ -942,7 +972,7 @@ impl NodeService {
         let block_hash = Hash::digest(&block);
 
         // Create initial multi-signature.
-        let (multisig, multisigmap) = create_initial_multi_signature(
+        let (multisig, multisigmap) = create_proposal_signature(
             &block_hash,
             &self.keys.network_skey,
             &self.keys.network_pkey,
@@ -1150,9 +1180,7 @@ impl Future for NodeService {
                             ChainLoaderMessage::from_buffer(&msg.data)
                                 .and_then(|data| self.handle_chain_loader_message(msg.from, data))
                         }
-
                         NodeMessage::ConsensusTimer(_now) => self.handle_consensus_timer(),
-                        NodeMessage::VRFTimer(_instant) => self.handle_vrf_timer(),
                     };
                     if let Err(e) = result {
                         error!("Error: {}", e);

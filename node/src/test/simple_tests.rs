@@ -67,7 +67,7 @@ fn simulate_consensus(node: &mut NodeService) {
     );
 
     let block_hash = Hash::digest(&block);
-    let (multisig, multisigmap) = create_initial_multi_signature(
+    let (multisig, multisigmap) = create_proposal_signature(
         &block_hash,
         &node.keys.network_skey,
         &node.keys.network_pkey,

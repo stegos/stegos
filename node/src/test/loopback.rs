@@ -134,11 +134,25 @@ impl Loopback {
         if let MessageFromNode::Publish {
             topic: msg_topic,
             data: msg_data,
-        } = state.queue.pop_front().unwrap()
+        } = state.queue.pop_front().expect("contains messages")
         {
             assert_eq!(topic, &msg_topic);
             let msg_data = M::from_buffer(&msg_data).unwrap();
             assert_eq!(data, msg_data);
+        }
+    }
+
+    pub fn get_broadcast<M: ProtoConvert>(&mut self, topic: &str) -> M {
+        let ref mut state = self.state.lock().unwrap();
+        if let MessageFromNode::Publish {
+            topic: msg_topic,
+            data: msg_data,
+        } = state.queue.pop_front().unwrap()
+        {
+            assert_eq!(topic, &msg_topic);
+            M::from_buffer(&msg_data).unwrap()
+        } else {
+            panic!("Unexpected message");
         }
     }
 
@@ -162,7 +176,7 @@ impl Loopback {
         }
     }
 
-    pub fn receive_broadcast(&mut self, topic: &str, data: Vec<u8>) {
+    pub fn receive_broadcast_raw(&mut self, topic: &str, data: Vec<u8>) {
         let ref mut state = self.state.lock().unwrap();
         let ref mut node = state
             .consumers
@@ -171,7 +185,11 @@ impl Loopback {
         node.unbounded_send(data).expect("channel error")
     }
 
-    pub fn receive_unicast(&mut self, peer: secure::PublicKey, topic: &str, data: Vec<u8>) {
+    pub fn receive_broadcast<M: ProtoConvert>(&mut self, topic: &str, msg: M) {
+        self.receive_broadcast_raw(topic, msg.into_buffer().unwrap());
+    }
+
+    pub fn receive_unicast_raw(&mut self, peer: secure::PublicKey, topic: &str, data: Vec<u8>) {
         let ref mut state = self.state.lock().unwrap();
         let ref mut node = state
             .unicast_consumers
@@ -179,6 +197,15 @@ impl Loopback {
             .expect("Node didn't subscribe to unicast");
         let message = UnicastMessage { from: peer, data };
         node.unbounded_send(message).expect("channel error")
+    }
+
+    pub fn receive_unicast<M: ProtoConvert>(
+        &mut self,
+        peer: secure::PublicKey,
+        topic: &str,
+        msg: M,
+    ) {
+        self.receive_unicast_raw(peer, topic, msg.into_buffer().unwrap());
     }
 }
 

@@ -24,19 +24,15 @@
 mod config;
 mod libp2p_network;
 mod ncp;
-pub mod peerstore;
-pub mod unicast_send;
-pub use config::*;
+mod pubsub;
 
 use failure::{Error, Fail};
 use futures::sync::mpsc;
-use libp2p::core::{topology::Topology, Multiaddr, PeerId};
 use std::fmt;
 use stegos_crypto::pbc::secure;
 
+pub use self::config::*;
 pub use self::libp2p_network::Libp2pNetwork;
-pub use self::peerstore::MemoryPeerstore;
-pub use self::unicast_send::{UnicastDataMessage, UnicastSend};
 
 pub type Network = Box<dyn NetworkProvider + Send>;
 
@@ -73,18 +69,6 @@ impl Clone for Network {
     fn clone(&self) -> Network {
         self.box_clone()
     }
-}
-
-pub trait PeerStore: Topology {
-    fn store_address(&mut self, peer: PeerId, addr: Multiaddr);
-    /// Returns a list of all the known peers in the topology.
-    fn peers(&self) -> Vec<&PeerId>;
-    // We know peer is failing, so don't try to connect to it...
-    fn known_failed(&self, _peer: &PeerId) -> bool {
-        false
-    }
-    // Mark peer as failed, so skip following attepts to dial it...
-    fn mark_as_failed(&mut self, _peer: &PeerId) {}
 }
 
 /// Placeholder for NetworkError definitions

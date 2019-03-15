@@ -188,8 +188,13 @@ fn resolve_pool(cfg: &mut config::Config) -> Result<(), Error> {
         if let Ok(addrs) = resolver.resolve_host(&r.target) {
             for a in addrs {
                 let maddr = format!("/ip4/{}/tcp/{}", a.to_string(), r.port);
-                info!("Adding node from seed pool: {}", maddr);
-                cfg.network.seed_nodes.push(maddr);
+                // don't try to connect to ourselves or already configured seed nodes
+                if cfg.network.advertised_addresses.iter().all(|a| *a != maddr)
+                    && cfg.network.seed_nodes.iter().all(|a| *a != maddr)
+                {
+                    info!(target: "stegos_network::ncp", "Adding node from seed pool: {}", maddr);
+                    cfg.network.seed_nodes.push(maddr);
+                }
             }
         }
     }

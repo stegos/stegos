@@ -1,6 +1,6 @@
 [package]
 name = "stegos_network"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Stegos AG <info@stegos.com>"]
 build = "build.rs"
 categories = ["cryptography", "network-programming"]
@@ -18,14 +18,17 @@ stegos_keychain = { version = "0.2.0", path = "../keychain" }
 stegos_serialization = { version = "0.2.0", path = "../serialization" }
 bs58 = "0.2"
 bytes = "0.4"
-env_logger = "0.6.0"
+cuckoofilter = "0.3"
+env_logger = "0.6"
 failure = "0.1"
+fnv = "1.0"
 futures = "0.1"
-ipnetwork = "0.12"
-libp2p = { version = "0.2", default-features = false, features = ["secio-secp256k1"] }
+ipnetwork = "0.14"
+libp2p = { version = "0.5", default-features = false, features = ["secio-secp256k1"] }
 log = "0.4"
-pnet = "0.21"
-protobuf = "2.3"
+lru_time_cache = "0.9"
+pnet = "0.22.0"
+protobuf = "2.4"
 rand = "0.6"
 serde = "1.0"
 serde_derive = "1.0"

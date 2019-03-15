@@ -60,7 +60,7 @@ impl Default for NetworkConfig {
             bind_ip: "0.0.0.0".to_string(),
             min_connections: 8,
             max_connections: 32,
-            monitoring_interval: 15,
+            monitoring_interval: 60,
         }
     }
 }

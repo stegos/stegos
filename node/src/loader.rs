@@ -155,9 +155,9 @@ impl NodeService {
         let validators = self
             .chain
             .validators()
-            .iter()
+            .into_iter()
             .map(|(k, _)| k)
-            .filter(|key| &self.keys.network_pkey != *key);
+            .filter(|key| self.keys.network_pkey != *key);
         let master = validators.choose(&mut rng).unwrap().clone();
         debug!(
             "Selected a source node from the latest committed KeyBlock: hash={:?}, epoch={}, selected={:?}",

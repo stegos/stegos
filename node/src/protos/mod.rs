@@ -28,38 +28,8 @@ use stegos_crypto::protos::*;
 include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
 
 use crate::loader::{ChainLoaderMessage, RequestBlocks, ResponseBlocks};
-use crate::VRFTicket;
 use failure::{format_err, Error};
 use protobuf::RepeatedField;
-use stegos_crypto::pbc::secure;
-use stegos_crypto::pbc::secure::VRF;
-
-impl ProtoConvert for VRFTicket {
-    type Proto = node::VRFTicket;
-    fn into_proto(&self) -> Self::Proto {
-        let mut proto = node::VRFTicket::new();
-        proto.set_random(self.random.into_proto());
-        proto.set_height(self.height);
-        proto.set_view_change(self.view_change);
-        proto.set_pkey(self.pkey.into_proto());
-        proto.set_sig(self.sig.into_proto());
-        proto
-    }
-    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let random = VRF::from_proto(proto.get_random())?;
-        let height = proto.get_height();
-        let view_change = proto.get_view_change();
-        let pkey = secure::PublicKey::from_proto(proto.get_pkey())?;
-        let sig = secure::Signature::from_proto(proto.get_sig())?;
-        Ok(VRFTicket {
-            random,
-            height,
-            view_change,
-            pkey,
-            sig,
-        })
-    }
-}
 
 impl ProtoConvert for RequestBlocks {
     type Proto = loader::RequestBlocks;
@@ -127,7 +97,6 @@ impl ProtoConvert for ChainLoaderMessage {
 mod tests {
     use super::*;
     use stegos_crypto::hash::{Hash, Hashable};
-    use stegos_crypto::pbc::secure::make_random_keys as make_secure_random_keys;
 
     fn roundtrip<T>(x: &T) -> T
     where
@@ -136,15 +105,6 @@ mod tests {
         let r = T::from_proto(&x.clone().into_proto()).unwrap();
         assert_eq!(Hash::digest(x), Hash::digest(&r));
         r
-    }
-
-    #[test]
-    fn vrf_tickets() {
-        let seed = Hash::digest("test");
-        let (skey1, pkey1, _sig1) = make_secure_random_keys();
-
-        let vrf = VRFTicket::new(seed, 3, 12, pkey1, &skey1);
-        roundtrip(&vrf);
     }
 
     #[test]

@@ -38,11 +38,14 @@ pub fn init() {
     assert_eq!(node.chain.height(), genesis_count);
     assert_eq!(node.mempool.len(), 0);
     assert_eq!(node.chain.epoch(), 1);
-    assert_eq!(node.chain.leader(), &keys.network_pkey);
+    assert_eq!(
+        node.chain.leader(),
+        keys.network_pkey
+    );
     assert_eq!(node.chain.validators().len(), 1);
     assert_eq!(
         node.chain.validators().keys().next().unwrap(),
-        node.chain.leader()
+        &node.chain.leader()
     );
 }
 

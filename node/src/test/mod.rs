@@ -24,13 +24,12 @@ mod simple_tests;
 pub mod time;
 pub use self::loopback::Loopback;
 pub use time::*;
-mod vrf_tickets;
-pub use vrf_tickets::VRFHelper;
 mod consensus;
 use crate::*;
 use assert_matches::assert_matches;
 use stegos_keychain::KeyChain;
 
+#[allow(unused)]
 pub struct Sandbox {
     nodes: Vec<NodeSandbox>,
     nodes_keychains: Vec<KeyChain>,

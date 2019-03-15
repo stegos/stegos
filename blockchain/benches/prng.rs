@@ -1,7 +1,3 @@
-//! Node - Errors.
-
-//
-// MIT License
 //
 // Copyright (c) 2018 Stegos AG
 //
@@ -23,27 +19,35 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use failure::Fail;
-use stegos_crypto::hash::Hash;
+#![cfg_attr(test, feature(test))]
+use rand::{Rng, SeedableRng};
+use rand_isaac::IsaacRng;
+use stegos_crypto::hash::{Hash, Hashable, Hasher};
+extern crate test;
+use test::Bencher;
 
-#[derive(Debug, Fail, PartialEq, Eq)]
-pub enum NodeError {
-    #[fail(display = "Fee is to low: min={}, got={}", _0, _1)]
-    TooLowFee(i64, i64),
-    #[fail(
-        display = "Invalid block reward: hash={}, expected={}, got={}",
-        _0, _1, _2
-    )]
-    InvalidBlockReward(Hash, i64, i64),
-    #[fail(display = "Transaction already exists in mempool: {}.", _0)]
-    TransactionAlreadyExists(Hash),
-    #[fail(display = "Expected a key block, got monetary block: height={}.", _0)]
-    ExpectedKeyBlock(u64),
-    #[fail(display = "Expected a monetary block, got key block: height={}.", _0)]
-    ExpectedMonetaryBlock(u64),
-    #[fail(
-        display = "Found a block proposal with timestamp: {} that differ with our timestamp: {}.",
-        _0, _1
-    )]
-    UnsynchronizedBlock(u64, u64),
+#[bench]
+fn isaac_prng(b: &mut Bencher) {
+    let random = Hash::digest("bla");
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(random.base_vector());
+    let mut rng = IsaacRng::from_seed(seed);
+    b.iter(|| {
+        for _ in 0..100 {
+            test::black_box(rng.gen::<i64>());
+        }
+    });
+}
+
+#[bench]
+fn hash_prng(b: &mut Bencher) {
+    let random = Hash::digest("bla");
+    b.iter(|| {
+        for i in 0..100u32 {
+            let mut hasher = Hasher::new();
+            random.hash(&mut hasher);
+            i.hash(&mut hasher);
+            test::black_box(hasher.result());
+        }
+    });
 }

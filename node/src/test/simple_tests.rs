@@ -31,26 +31,18 @@ pub fn init() {
     let (_outbox, inbox) = unbounded();
     let (_loopback, network) = Loopback::new();
 
-    let mut node = NodeService::testing(keys.clone(), network, inbox).unwrap();
-
-    assert_eq!(node.chain.height(), 0);
-    assert_eq!(node.mempool.len(), 0);
-    assert_eq!(node.chain.epoch, 0);
-    assert_ne!(node.chain.leader, keys.network_pkey);
-    assert!(node.chain.validators.is_empty());
-
     let current_timestamp = Utc::now().timestamp() as u64;
     let genesis = genesis(&[keys.clone()], 1000, 3_000_000, current_timestamp);
     let genesis_count = genesis.len() as u64;
-    node.handle_init(genesis).unwrap();
+    let node = NodeService::testing(keys.clone(), network, genesis, inbox).unwrap();
     assert_eq!(node.chain.height(), genesis_count);
     assert_eq!(node.mempool.len(), 0);
-    assert_eq!(node.chain.epoch, 1);
-    assert_eq!(node.chain.leader, keys.network_pkey);
-    assert_eq!(node.chain.validators.len(), 1);
+    assert_eq!(node.chain.epoch(), 1);
+    assert_eq!(node.chain.leader(), &keys.network_pkey);
+    assert_eq!(node.chain.validators().len(), 1);
     assert_eq!(
-        node.chain.validators.keys().next().unwrap(),
-        &node.chain.leader
+        node.chain.validators().keys().next().unwrap(),
+        node.chain.leader()
     );
 }
 
@@ -102,13 +94,11 @@ pub fn monetary_requests() {
     let (_outbox, inbox) = unbounded();
     let (_loopback, network) = Loopback::new();
 
-    let mut node = NodeService::testing(keys.clone(), network, inbox).unwrap();
-
     let total: i64 = 3_000_000;
     let stake: i64 = 1000;
     let current_timestamp = Utc::now().timestamp() as u64;
     let genesis = genesis(&[keys.clone()], stake, total, current_timestamp);
-    node.handle_init(genesis).unwrap();
+    let mut node = NodeService::testing(keys.clone(), network, genesis, inbox).unwrap();
     let mut block_count = node.chain.height();
 
     // Payment without a change.

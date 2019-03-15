@@ -48,7 +48,7 @@ use stegos_blockchain::Block;
 use stegos_crypto::hash::Hash;
 use stegos_keychain::*;
 use stegos_network::Libp2pNetwork;
-use stegos_node::Node;
+use stegos_node::NodeService;
 use stegos_serialization::traits::*;
 use stegos_txpool::TransactionPoolService;
 use stegos_wallet::WalletService;
@@ -270,7 +270,8 @@ fn run() -> Result<(), Error> {
     let (network, network_service) = Libp2pNetwork::new(&cfg.network, &keychain)?;
 
     // Initialize node
-    let (node_service, node) = Node::new(&cfg.storage, keychain.clone(), network.clone())?;
+    let (node_service, node) =
+        NodeService::new(&cfg.storage, keychain.clone(), genesis, network.clone())?;
     rt.spawn(node_service);
 
     // Initialize TransactionPool.
@@ -295,7 +296,7 @@ fn run() -> Result<(), Error> {
     }
 
     // Register genesis block.
-    node.init(genesis).unwrap();
+    node.init().unwrap();
     // start node
     let timer =
         tokio_timer::Delay::new(tokio_timer::clock::now() + stegos_node::NETWORK_GRACE_TIMEOUT);

@@ -70,9 +70,8 @@ impl NodeSandbox {
 
         // Create node, with first node keychain.
         let (outbox, inbox) = unbounded();
-        let mut node_service = NodeService::testing(keychain, network, inbox).unwrap();
-
-        node_service.handle_init(genesis).unwrap();
+        let mut node_service = NodeService::testing(keychain, network, genesis, inbox).unwrap();
+        node_service.handle_init().unwrap();
         Self {
             network_service,
             outbox,

@@ -74,27 +74,27 @@ pub struct Blockchain {
     // 4) epoch
     //
     /// Escrow
-    pub escrow: Escrow,
+    escrow: Escrow,
     /// Snapshot of selected leader from the latest key block.
-    pub leader: secure::PublicKey,
+    leader: secure::PublicKey,
     /// Snapshot of selected facilitator from the latest key block.
-    pub facilitator: secure::PublicKey,
+    facilitator: secure::PublicKey,
     /// Snapshot of validators with stakes from the latest key block.
-    pub validators: BTreeMap<secure::PublicKey, i64>,
+    validators: BTreeMap<secure::PublicKey, i64>,
     /// A timestamp when the last sealed block was received.
-    pub last_block_timestamp: Instant,
+    last_block_timestamp: Instant,
     /// The hash of the last block.
-    pub last_block_hash: Hash,
+    last_block_hash: Hash,
 
     /// Copy of rnadom from last keyblock.
-    pub last_random: Hash,
+    last_random: Hash,
     /// The number of blocks.
-    pub height: u64,
+    height: u64,
     /// A monotonically increasing value that represents the epoch of the blockchain,
     /// starting from genesis block (=0).
-    pub epoch: u64,
+    epoch: u64,
     /// Last height where epoch was changed.
-    pub last_epoch_change: u64,
+    last_epoch_change: u64,
 
     // Monetary info
     /// The total sum of money created.
@@ -112,17 +112,17 @@ impl Blockchain {
     // Public API
     //----------------------------------------------------------------------------------------------
 
-    pub fn new(config: &StorageConfig) -> Blockchain {
+    pub fn new(config: &StorageConfig, genesis: Vec<Block>) -> Blockchain {
         let database = ListDb::new(&config.database_path);
-        Self::with_db(database)
+        Self::with_db(database, genesis)
     }
 
-    pub fn testing() -> Blockchain {
+    pub fn testing(genesis: Vec<Block>) -> Blockchain {
         let database = ListDb::testing();
-        Self::with_db(database)
+        Self::with_db(database, genesis)
     }
 
-    fn with_db(database: ListDb) -> Blockchain {
+    fn with_db(database: ListDb, genesis: Vec<Block>) -> Blockchain {
         let block_by_hash = HashMap::<Hash, u64>::new();
         let output_by_hash = HashMap::<Hash, OutputKey>::new();
         let height: u64 = 0;
@@ -159,7 +159,49 @@ impl Blockchain {
             monetary_adjustment,
         };
         let current_timestamp = Utc::now().timestamp() as u64;
+
         blockchain.load_blockchain(current_timestamp);
+        if blockchain.height > 0 {
+            debug!("Loading blockchain from the disk...");
+            for ((height, genesis), chain) in genesis.iter().enumerate().zip(blockchain.blocks()) {
+                let genesis_hash = Hash::digest(genesis);
+                let chain_hash = Hash::digest(&chain);
+                if genesis_hash != chain_hash {
+                    error!(
+                        "Found a saved chain that is not compatible to our genesis at height = {}, \
+                         genesis_block = {:?}, database_block = {:?}",
+                        height + 1, genesis_hash, chain_hash
+                    );
+                    std::process::exit(1);
+                }
+            }
+
+            info!(
+                "Recovered blockchain from the disk: height={}, hash={}",
+                blockchain.height, blockchain.last_block_hash
+            );
+        } else {
+            debug!("Creating a new blockchain...");
+            for block in genesis {
+                match block {
+                    Block::MonetaryBlock(monetary_block) => {
+                        blockchain
+                            .push_monetary_block(monetary_block, current_timestamp)
+                            .expect("genesis is valid");
+                    }
+                    Block::KeyBlock(key_block) => {
+                        blockchain
+                            .push_key_block(key_block)
+                            .expect("genesis is valid");
+                    }
+                }
+            }
+            info!(
+                "Initialized a new blockchain: height={}, hash={}",
+                blockchain.height, blockchain.last_block_hash
+            );
+        }
+
         blockchain
     }
 
@@ -300,20 +342,59 @@ impl Blockchain {
         }
     }
 
+    /// Return the current epoch leader.
+    #[inline]
+    pub fn leader(&self) -> &secure::PublicKey {
+        &self.leader
+    }
+
+    /// Return the current epoch facilitator.
+    #[inline]
+    pub fn facilitator(&self) -> &secure::PublicKey {
+        &self.facilitator
+    }
+
+    /// Return the current epoch validators with their stakes.
+    #[inline]
+    pub fn validators(&self) -> &BTreeMap<secure::PublicKey, i64> {
+        &self.validators
+    }
+
+    /// Return the last block timestamp.
+    #[inline]
+    pub fn last_block_timestamp(&self) -> Instant {
+        self.last_block_timestamp
+    }
+
     /// Return the last random value.
+    #[inline]
     pub fn last_random(&self) -> Hash {
         self.last_random
     }
 
     /// Return the last block hash.
+    #[inline(always)]
     pub fn last_block_hash(&self) -> Hash {
         assert!(self.height > 0);
-        self.last_block_hash.clone()
+        self.last_block_hash
     }
 
     /// Return the current blockchain height.
+    #[inline(always)]
     pub fn height(&self) -> u64 {
         self.height
+    }
+
+    /// Return the current blockchain epoch.
+    #[inline(always)]
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    /// Returns escrow.
+    #[inline]
+    pub fn escrow(&self) -> &Escrow {
+        &self.escrow
     }
 
     //----------------------------------------------------------------------------------------------
@@ -855,12 +936,6 @@ pub mod tests {
     fn basic() {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
-        let mut blockchain = Blockchain::testing();
-
-        assert_eq!(blockchain.height(), 0);
-        assert_eq!(blockchain.epoch, 0);
-        assert_eq!(blockchain.blocks_in_epoch(), 0);
-
         let keychains = [KeyChain::new_mem()];
         let current_timestamp = Utc::now().timestamp() as u64;
         let blocks = genesis(&keychains, MIN_STAKE_AMOUNT, 1_000_000, current_timestamp);
@@ -869,11 +944,10 @@ pub mod tests {
             [Block::MonetaryBlock(block1), Block::KeyBlock(block2)] => (block1, block2),
             _ => panic!(),
         };
-        let (inputs2, outputs2) = blockchain
-            .push_monetary_block(block1.clone(), current_timestamp)
-            .unwrap();
-        blockchain.push_key_block(block2.clone()).unwrap();
-
+        let blockchain = Blockchain::testing(blocks.clone());
+        let outputs2 = blockchain
+            .outputs_by_hashes(&blockchain.unspent())
+            .expect("Cannot find unspent outputs.");
         let outputs: Vec<Output> = block1
             .body
             .outputs
@@ -881,12 +955,6 @@ pub mod tests {
             .iter()
             .map(|(o, _p)| o.as_ref().clone())
             .collect();
-        assert_eq!(inputs2.len(), 0);
-        assert!(outputs2
-            .iter()
-            .map(|o| Hash::digest(o))
-            .eq(outputs.iter().map(|o| Hash::digest(o))));
-
         let mut unspent: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
         unspent.sort();
         let mut unspent2: Vec<Hash> = blockchain.unspent();
@@ -957,18 +1025,7 @@ pub mod tests {
         let stake = MIN_STAKE_AMOUNT;
         let current_timestamp = Utc::now().timestamp() as u64;
         let blocks = genesis(&keychains, stake, 1_000_000, current_timestamp);
-        let mut blockchain = Blockchain::testing();
-        for block in blocks {
-            match block {
-                Block::KeyBlock(block) => blockchain.register_key_block(block),
-                Block::MonetaryBlock(block) => {
-                    blockchain
-                        .push_monetary_block(block, current_timestamp)
-                        .expect("block is valid");
-                }
-            }
-        }
-
+        let mut blockchain = Blockchain::testing(blocks);
         let start = blockchain.last_block_hash();
         // len of genesis
         assert!(blockchain.height() > 0);

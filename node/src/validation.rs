@@ -101,7 +101,7 @@ pub(crate) fn validate_transaction(
         // Check escrow.
         if let Output::StakeOutput(ref input) = input {
             chain
-                .escrow
+                .escrow()
                 .validate_unstake(&input.validator, input_hash, current_timestamp)?;
         }
 
@@ -181,24 +181,13 @@ mod test {
         let current_timestamp = Utc::now().timestamp() as u64;
         let keychain = KeyChain::new_mem();
         let mut mempool = Mempool::new();
-        let mut chain = Blockchain::testing();
-        for block in genesis(
+        let genesis = genesis(
             &[keychain.clone()],
             stake,
             amount + stake,
             current_timestamp,
-        ) {
-            match block {
-                Block::KeyBlock(key_block) => {
-                    chain.push_key_block(key_block).unwrap();
-                }
-                Block::MonetaryBlock(monetary_block) => {
-                    chain
-                        .push_monetary_block(monetary_block, current_timestamp)
-                        .unwrap();
-                }
-            }
-        }
+        );
+        let mut chain = Blockchain::testing(genesis);
         let mut inputs: Vec<Output> = Vec::new();
         let mut stakes: Vec<Output> = Vec::new();
         for output in chain.outputs_by_hashes(&chain.unspent()).unwrap() {
@@ -429,7 +418,7 @@ mod test {
             // Register one more UTXO.
             let fee = PAYMENT_FEE;
             let previous = chain.last_block_hash();
-            let epoch = chain.epoch;
+            let epoch = chain.epoch();
             let version = VERSION;
             let base = BaseBlockHeader::new(version, previous, epoch, current_timestamp);
             let (output, outputs_gamma) =
@@ -443,7 +432,7 @@ mod test {
                 &block_hash,
                 &validator_skey,
                 &validator_pkey,
-                &chain.validators,
+                &chain.validators(),
             );
             block.header.base.multisig = multisig;
             block.header.base.multisigmap = multisigmap;

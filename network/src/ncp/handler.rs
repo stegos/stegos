@@ -21,7 +21,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::ncp::protocol::{NcpCodec, NcpConfig, NcpMessage};
+use super::layer::NcpSendEvent;
+use super::protocol::{NcpCodec, NcpConfig, NcpMessage};
+
 use futures::prelude::*;
 use libp2p::core::{
     protocols_handler::{KeepAlive, ProtocolsHandlerUpgrErr},
@@ -121,7 +123,7 @@ impl<TSubstream> ProtocolsHandler for NcpHandler<TSubstream>
 where
     TSubstream: AsyncRead + AsyncWrite,
 {
-    type InEvent = NcpMessage;
+    type InEvent = NcpSendEvent;
     type OutEvent = NcpMessage;
     type Error = io::Error;
     type Substream = TSubstream;
@@ -159,8 +161,11 @@ where
     }
 
     #[inline]
-    fn inject_event(&mut self, message: NcpMessage) {
-        self.send_queue.push(message);
+    fn inject_event(&mut self, event: Self::InEvent) {
+        match event {
+            NcpSendEvent::Shutdown => self.shutdown(),
+            NcpSendEvent::Send(message) => self.send_queue.push(message),
+        }
     }
 
     #[inline]

@@ -110,6 +110,12 @@ impl<TSubstream> Ncp<TSubstream> {
             marker: PhantomData,
         }
     }
+
+    pub fn shutdown(&mut self, peer_id: &PeerId) {
+        self.events.push_back(NcpEvent::Shutdown {
+            peer_id: peer_id.clone(),
+        });
+    }
 }
 
 impl<TSubstream> NetworkBehaviour for Ncp<TSubstream>
@@ -297,15 +303,23 @@ where
                     response.peers.push(peer_info);
                     return Async::Ready(NetworkBehaviourAction::SendEvent {
                         peer_id,
-                        event: NcpMessage::GetPeersResponse { response },
+                        event: NcpSendEvent::Send(NcpMessage::GetPeersResponse { response }),
                     });
                 }
                 NcpEvent::RequestPeers { peer_id } => {
                     debug!(target: "stegos_network::ncp", "sending peers request: to_peer={}", peer_id.to_base58());
                     return Async::Ready(NetworkBehaviourAction::SendEvent {
                         peer_id,
-                        event: NcpMessage::GetPeersRequest,
+                        event: NcpSendEvent::Send(NcpMessage::GetPeersRequest),
                     });
+                }
+                NcpEvent::Shutdown { peer_id } => {
+                    if self.connected_peers.contains(&peer_id) {
+                        return Async::Ready(NetworkBehaviourAction::SendEvent {
+                            peer_id,
+                            event: NcpSendEvent::Shutdown,
+                        });
+                    }
                 }
             }
         }
@@ -338,6 +352,14 @@ pub enum NcpEvent {
         /// The peer to try reach.
         peer_id: PeerId,
     },
+    /// Shutdown connection to peer
+    Shutdown { peer_id: PeerId },
+}
+
+/// Event passed to protocol handler
+pub enum NcpSendEvent {
+    Shutdown,
+    Send(NcpMessage),
 }
 
 impl fmt::Debug for NcpEvent {
@@ -357,6 +379,9 @@ impl fmt::Debug for NcpEvent {
             }
             NcpEvent::DialAddress { address, .. } => {
                 write!(f, "NcpEvent::DialAddress: address={}", address)
+            }
+            NcpEvent::Shutdown { peer_id } => {
+                write!(f, "NcpEvent::Shutwodn: peer_id={}", peer_id.to_base58())
             }
         }
     }

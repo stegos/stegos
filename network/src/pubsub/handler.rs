@@ -18,6 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use super::layer::FloodsubSendEvent;
 use super::protocol::{FloodsubCodec, FloodsubConfig, FloodsubRpc};
 
 use futures::prelude::*;
@@ -119,7 +120,7 @@ impl<TSubstream> ProtocolsHandler for FloodsubHandler<TSubstream>
 where
     TSubstream: AsyncRead + AsyncWrite,
 {
-    type InEvent = FloodsubRpc;
+    type InEvent = FloodsubSendEvent;
     type OutEvent = FloodsubRpc;
     type Error = io::Error;
     type Substream = TSubstream;
@@ -155,8 +156,11 @@ where
     }
 
     #[inline]
-    fn inject_event(&mut self, message: FloodsubRpc) {
-        self.send_queue.push(message);
+    fn inject_event(&mut self, event: Self::InEvent) {
+        match event {
+            FloodsubSendEvent::Shutdown => self.shutdown(),
+            FloodsubSendEvent::Publish(message) => self.send_queue.push(message),
+        }
     }
 
     #[inline]

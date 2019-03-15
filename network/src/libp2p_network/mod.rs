@@ -300,6 +300,11 @@ where
             }
         }
     }
+
+    fn shutdown(&mut self, peer_id: &PeerId) {
+        self.ncp.shutdown(peer_id);
+        self.floodsub.shutdown(peer_id);
+    }
 }
 
 impl<TSubstream> NetworkBehaviourEventProcess<void::Void> for Libp2pBehaviour<TSubstream>

@@ -40,7 +40,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 /// about them.
 pub struct Floodsub<TSubstream> {
     /// Events that need to be yielded to the outside when polling.
-    events: VecDeque<NetworkBehaviourAction<FloodsubRpc, FloodsubEvent>>,
+    events: VecDeque<NetworkBehaviourAction<FloodsubSendEvent, FloodsubEvent>>,
 
     /// Peer id of the local node. Used for the source of the messages that we publish.
     local_peer_id: PeerId,
@@ -92,13 +92,13 @@ impl<TSubstream> Floodsub<TSubstream> {
         for peer in self.connected_peers.keys() {
             self.events.push_back(NetworkBehaviourAction::SendEvent {
                 peer_id: peer.clone(),
-                event: FloodsubRpc {
+                event: FloodsubSendEvent::Publish(FloodsubRpc {
                     messages: Vec::new(),
                     subscriptions: vec![FloodsubSubscription {
                         topic: topic.hash().clone(),
                         action: FloodsubSubscriptionAction::Subscribe,
                     }],
-                },
+                }),
             });
         }
 
@@ -153,12 +153,19 @@ impl<TSubstream> Floodsub<TSubstream> {
 
             self.events.push_back(NetworkBehaviourAction::SendEvent {
                 peer_id: peer_id.clone(),
-                event: FloodsubRpc {
+                event: FloodsubSendEvent::Publish(FloodsubRpc {
                     subscriptions: Vec::new(),
                     messages: vec![message.clone()],
-                },
+                }),
             });
         }
+    }
+
+    pub fn shutdown(&mut self, peer_id: &PeerId) {
+        self.events.push_back(NetworkBehaviourAction::SendEvent {
+            peer_id: peer_id.clone(),
+            event: FloodsubSendEvent::Shutdown,
+        });
     }
 }
 
@@ -182,13 +189,13 @@ where
         for topic in self.subscribed_topics.iter() {
             self.events.push_back(NetworkBehaviourAction::SendEvent {
                 peer_id: id.clone(),
-                event: FloodsubRpc {
+                event: FloodsubSendEvent::Publish(FloodsubRpc {
                     messages: Vec::new(),
                     subscriptions: vec![FloodsubSubscription {
                         topic: topic.hash().clone(),
                         action: FloodsubSubscriptionAction::Subscribe,
                     }],
-                },
+                }),
             });
         }
 
@@ -286,7 +293,7 @@ where
         for (peer_id, rpc) in rpcs_to_dispatch {
             self.events.push_back(NetworkBehaviourAction::SendEvent {
                 peer_id,
-                event: rpc,
+                event: FloodsubSendEvent::Publish(rpc),
             });
         }
     }
@@ -329,4 +336,13 @@ pub enum FloodsubEvent {
         /// The topic it has subscribed from.
         topic: TopicHash,
     },
+}
+
+#[derive(Debug)]
+/// Event passed to protocol handler
+pub enum FloodsubSendEvent {
+    /// Shutdown connection with peer
+    Shutdown,
+    /// Publish message
+    Publish(FloodsubRpc),
 }

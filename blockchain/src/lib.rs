@@ -30,6 +30,7 @@ mod genesis;
 mod merkle;
 mod metrics;
 mod multisignature;
+pub mod mvcc;
 mod output;
 pub mod protos;
 mod storage;

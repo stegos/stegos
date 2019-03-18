@@ -945,9 +945,6 @@ pub mod tests {
             _ => panic!(),
         };
         let blockchain = Blockchain::testing(blocks.clone());
-        let outputs2 = blockchain
-            .outputs_by_hashes(&blockchain.unspent())
-            .expect("Cannot find unspent outputs.");
         let outputs: Vec<Output> = block1
             .body
             .outputs

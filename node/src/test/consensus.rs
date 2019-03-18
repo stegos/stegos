@@ -41,9 +41,9 @@ fn basic() {
         let mut s: Sandbox = Sandbox::new(NUM_NODES);
         s.poll();
         for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height, 2);
+            assert_eq!(node.node_service.chain.height(), 2);
         }
-        let epoch = s.nodes[0].node_service.chain.epoch;
+        let epoch = s.nodes[0].node_service.chain.epoch();
         let leader_id = 0;
 
         // Process N monetary blocks.
@@ -65,7 +65,7 @@ fn basic() {
 
             height += 1;
             for node in s.nodes.iter() {
-                assert_eq!(node.node_service.chain.height, height);
+                assert_eq!(node.node_service.chain.height(), height);
             }
         }
         let last_block_hash = s.nodes[0].node_service.chain.last_block_hash();
@@ -162,13 +162,13 @@ fn basic() {
         // Check state of (0..NUM_NODES - 1) nodes.
         for node in s.nodes.iter().take(NUM_NODES - 1) {
             assert_eq!(node.node_service.chain.height(), height + 1);
-            assert_eq!(node.node_service.chain.epoch, epoch);
+            assert_eq!(node.node_service.chain.epoch(), epoch);
             assert_eq!(node.node_service.chain.last_block_hash(), block_hash);
         }
 
         // The last node hasn't received sealed block.
         assert_eq!(s.nodes[NUM_NODES - 1].node_service.chain.height(), height);
-        assert_eq!(s.nodes[NUM_NODES - 1].node_service.chain.epoch, epoch);
+        assert_eq!(s.nodes[NUM_NODES - 1].node_service.chain.epoch(), epoch);
         assert_eq!(
             s.nodes[NUM_NODES - 1].node_service.chain.last_block_hash(),
             last_block_hash
@@ -183,7 +183,7 @@ fn basic() {
             s.nodes[NUM_NODES - 1].node_service.chain.height(),
             height + 1
         );
-        assert_eq!(s.nodes[NUM_NODES - 1].node_service.chain.epoch, epoch);
+        assert_eq!(s.nodes[NUM_NODES - 1].node_service.chain.epoch(), epoch);
         assert_eq!(
             s.nodes[NUM_NODES - 1].node_service.chain.last_block_hash(),
             block_hash

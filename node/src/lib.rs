@@ -75,23 +75,9 @@ pub struct Node {
 }
 
 impl Node {
-    /// Create a new blockchain node.
-    pub fn new(
-        cfg: &StorageConfig,
-        keys: KeyChain,
-        network: Network,
-    ) -> Result<(NodeService, Node), Error> {
-        let (outbox, inbox) = unbounded();
-
-        let service = NodeService::new(cfg, keys, network.clone(), inbox)?;
-        let handler = Node { outbox, network };
-
-        Ok((service, handler))
-    }
-
     /// Initialize blockchain.
-    pub fn init(&self, genesis: Vec<Block>) -> Result<(), Error> {
-        let msg = NodeMessage::Init { genesis };
+    pub fn init(&self) -> Result<(), Error> {
+        let msg = NodeMessage::Init;
         self.outbox.unbounded_send(msg)?;
         Ok(())
     }
@@ -239,7 +225,7 @@ enum NodeMessage {
     //
     // Internal Events
     //
-    Init { genesis: Vec<Block> },
+    Init,
     NetworkReady,
     ConsensusTimer(Instant),
 }
@@ -286,23 +272,30 @@ pub struct NodeService {
 
 impl NodeService {
     /// Constructor.
-    fn new(
+    pub fn new(
         cfg: &StorageConfig,
         keys: KeyChain,
+        genesis: Vec<Block>,
         network: Network,
-        inbox: UnboundedReceiver<NodeMessage>,
-    ) -> Result<Self, Error> {
-        let chain = Blockchain::new(&cfg);
-        Self::with_blockchain(chain, keys, network, inbox)
+    ) -> Result<(Self, Node), Error> {
+        let (outbox, inbox) = unbounded();
+        let chain = Blockchain::new(&cfg, genesis);
+        let handler = Node {
+            outbox,
+            network: network.clone(),
+        };
+        let service = Self::with_blockchain(chain, keys, network, inbox)?;
+        Ok((service, handler))
     }
 
     #[cfg(test)]
     fn testing(
         keys: KeyChain,
         network: Network,
+        genesis: Vec<Block>,
         inbox: UnboundedReceiver<NodeMessage>,
     ) -> Result<Self, Error> {
-        let chain = Blockchain::testing();
+        let chain = Blockchain::testing(genesis);
         Self::with_blockchain(chain, keys, network, inbox)
     }
 
@@ -391,41 +384,7 @@ impl NodeService {
     }
 
     /// Handler for NodeMessage::Init.
-    fn handle_init(&mut self, genesis: Vec<Block>) -> Result<(), Error> {
-        // skip handling genesis if blockchain is not empty
-        if self.chain.height() > 0 {
-            //rather recover state
-            self.recover_state();
-            for ((height, genesis), chain) in genesis.iter().enumerate().zip(self.chain.blocks()) {
-                let genesis_hash = Hash::digest(genesis);
-                let chain_hash = Hash::digest(&chain);
-                if genesis_hash != chain_hash {
-                    error!(
-                        "Found a saved chain that is not compatible to our genesis at height = {}, \
-                         genesis_block = {:?}, database_block = {:?}",
-                        height + 1, genesis_hash, chain_hash
-                    );
-                    std::process::exit(1);
-                }
-            }
-
-            let last_hash = self.chain.last_block_hash();
-            info!(
-                "Node successfully recovered from persistent storage: height={}, hash={}",
-                self.chain.height(),
-                last_hash
-            );
-            return Ok(());
-        }
-        debug!("Registering genesis blocks...");
-        for block in genesis {
-            self.apply_new_block(block).expect("genesis is valid");
-        }
-
-        Ok(())
-    }
-
-    fn recover_state(&mut self) {
+    fn handle_init(&mut self) -> Result<(), Error> {
         let len = self.chain.height();
         assert!(len > 0);
         debug!("Recovering consensus state");
@@ -441,17 +400,19 @@ impl NodeService {
             self.keys.network_skey.clone(),
         );
 
-        debug!("Broadcast unspent outputs.");
-
+        // Sync wallet.
+        // TODO: this implementation can consume a lot of memory.
         let unspent = self.chain.unspent();
         let outputs = self
             .chain
             .outputs_by_hashes(&unspent)
             .expect("Cannot find unspent outputs.");
         let inputs = Vec::new();
+        debug!("Broadcast unspent outputs.");
         let msg = OutputsNotification { inputs, outputs };
         self.on_outputs_changed
             .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
+        Ok(())
     }
 
     /// Second init phase. Used to rebroadcast messages from VRF, Consensus and so on.
@@ -474,7 +435,8 @@ impl NodeService {
         // Resign from Validator role.
         info!(
             "I'm regular node, waiting for sealed block: epoch={}, leader={}",
-            self.chain.epoch, self.chain.leader
+            self.chain.epoch(),
+            self.chain.leader()
         );
         self.consensus = None;
         consensus::metrics::CONSENSUS_STATE
@@ -482,10 +444,10 @@ impl NodeService {
 
         debug!("Broadcast new epoch event.");
         let msg = EpochNotification {
-            epoch: self.chain.epoch,
-            leader: self.chain.leader,
-            validators: self.chain.validators.clone(),
-            facilitator: self.chain.facilitator,
+            epoch: self.chain.epoch(),
+            leader: self.chain.leader().clone(),
+            validators: self.chain.validators().clone(),
+            facilitator: self.chain.facilitator().clone(),
         };
         self.on_epoch_changed
             .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
@@ -584,7 +546,8 @@ impl NodeService {
                 let current_timestamp = Utc::now().timestamp() as u64;
 
                 // Check monetary adjustment.
-                if self.chain.epoch > 0 && monetary_block.header.monetary_adjustment != BLOCK_REWARD
+                if self.chain.epoch() > 0
+                    && monetary_block.header.monetary_adjustment != BLOCK_REWARD
                 {
                     // TODO: support slashing.
                     return Err(NodeError::InvalidBlockReward(
@@ -669,7 +632,7 @@ impl NodeService {
     }
 
     fn handle_escrow_info(&mut self) -> Result<(), Error> {
-        let msg = InfoNotification::Escrow(self.chain.escrow.info());
+        let msg = InfoNotification::Escrow(self.chain.escrow().info());
         self.on_info
             .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
         Ok(())
@@ -687,7 +650,7 @@ impl NodeService {
         let consensus = self.consensus.as_mut().unwrap();
         let previous = self.chain.last_block_hash();
         let timestamp = Utc::now().timestamp() as u64;
-        let epoch = self.chain.epoch + 1;
+        let epoch = self.chain.epoch() + 1;
         let leader = consensus.leader();
         assert_eq!(&leader, &self.keys.network_pkey);
 
@@ -757,7 +720,7 @@ impl NodeService {
         if validators.contains_key(&self.keys.network_pkey) {
             let consensus = BlockConsensus::new(
                 self.chain.height() as u64,
-                self.chain.epoch + 1,
+                self.chain.epoch() + 1,
                 self.keys.network_skey.clone(),
                 self.keys.network_pkey.clone(),
                 group.leader.clone(),
@@ -843,7 +806,7 @@ impl NodeService {
     /// Returns true if current node is a leader.
     ///
     fn is_leader(&self) -> bool {
-        self.chain.leader == self.keys.network_pkey
+        self.chain.leader() == &self.keys.network_pkey
     }
 
     ///
@@ -851,7 +814,7 @@ impl NodeService {
     ///
     fn handle_consensus_timer(&mut self) -> Result<(), Error> {
         let now = clock::now();
-        let elapsed: Duration = now.duration_since(self.chain.last_block_timestamp);
+        let elapsed: Duration = now.duration_since(self.chain.last_block_timestamp());
 
         // Check that a new payment block should be created.
         if self.consensus.is_none()
@@ -875,7 +838,7 @@ impl NodeService {
                 self.consensus.as_mut().unwrap().sign_and_commit();
             let block_hash = Hash::digest(&block);
             warn!("Timed out while waiting for the committed block from the leader, applying automatically: hash={}, height={}",
-                block_hash, self.chain.height
+                block_hash, self.chain.height()
             );
             // Augment multi-signature by leader's signature from the proposal.
             merge_multi_signature(
@@ -912,7 +875,7 @@ impl NodeService {
         let (mut block, _fee_output, _tx_hashes) = self.mempool.create_block(
             previous,
             VERSION,
-            self.chain.epoch,
+            self.chain.epoch(),
             BLOCK_REWARD,
             &self.keys.wallet_skey,
             &self.keys.wallet_pkey,
@@ -924,7 +887,7 @@ impl NodeService {
             &block_hash,
             &self.keys.network_skey,
             &self.keys.network_pkey,
-            &self.chain.validators,
+            &self.chain.validators(),
         );
         block.header.base.multisig = multisig;
         block.header.base.multisigmap = multisigmap;
@@ -1000,7 +963,7 @@ impl Future for NodeService {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => {
                     let result: Result<(), Error> = match event {
-                        NodeMessage::Init { genesis } => self.handle_init(genesis),
+                        NodeMessage::Init => self.handle_init(),
                         NodeMessage::NetworkReady => self.handle_network_ready(),
                         NodeMessage::SubscribeEpoch(tx) => self.handle_subscribe_epoch(tx),
                         NodeMessage::SubscribeOutputs(tx) => self.handle_subscribe_outputs(tx),

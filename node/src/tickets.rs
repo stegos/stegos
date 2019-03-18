@@ -397,7 +397,7 @@ impl TicketsSystem {
 ///Node service extension for VrfTicketSystem
 impl NodeService {
     pub(crate) fn broadcast_vrf_ticket(&mut self, ticket: VRFTicket) -> Result<(), Error> {
-        if self.chain.escrow.get(&self.keys.network_pkey) < stegos_blockchain::MIN_STAKE_AMOUNT {
+        if self.chain.escrow().get(&self.keys.network_pkey) < stegos_blockchain::MIN_STAKE_AMOUNT {
             debug!("Trying to broadcast ticket but our node is not staker");
             return Ok(());
         }
@@ -408,7 +408,7 @@ impl NodeService {
     }
 
     pub(crate) fn handle_vrf_message(&mut self, msg: VRFTicket) -> Result<(), Error> {
-        if self.chain.escrow.get(&msg.pkey) >= stegos_blockchain::MIN_STAKE_AMOUNT {
+        if self.chain.escrow().get(&msg.pkey) >= stegos_blockchain::MIN_STAKE_AMOUNT {
             match self.vrf_system.handle_process_ticket(msg) {
                 Err(TicketsError::TicketFromFuture(pkey, height)) => {
                     debug!(
@@ -432,7 +432,7 @@ impl NodeService {
         let last_random = self.chain.last_random();
         let result = self
             .vrf_system
-            .handle_tick(clock::now(), &self.chain.escrow, last_random)?;
+            .handle_tick(clock::now(), self.chain.escrow(), last_random)?;
         match result {
             Feedback::BroadcastTicket(ticket) => self.broadcast_vrf_ticket(ticket),
             Feedback::ChangeGroup(group) => self.on_change_group(group),

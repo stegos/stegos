@@ -110,7 +110,7 @@ impl NodeService {
     pub fn on_orphan_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
         let block_epoch = block.base_header().epoch;
-        if self.chain.epoch > block_epoch {
+        if self.chain.epoch() > block_epoch {
             debug!(
                 "Skipping outdated sealed block: hash={}, epoch={}",
                 block_hash, block_epoch
@@ -154,7 +154,7 @@ impl NodeService {
         }
         let validators = self
             .chain
-            .validators
+            .validators()
             .iter()
             .map(|(k, _)| k)
             .filter(|key| &self.keys.network_pkey != *key);
@@ -162,7 +162,7 @@ impl NodeService {
         debug!(
             "Selected a source node from the latest committed KeyBlock: hash={:?}, epoch={}, selected={:?}",
             self.chain.last_block_hash(),
-            self.chain.epoch,
+            self.chain.epoch(),
             &master
         );
         return master;

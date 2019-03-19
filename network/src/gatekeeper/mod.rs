@@ -1,7 +1,7 @@
 //
 // MIT License
 //
-// Copyright (c) 2018-2019 Stegos AG
+// Copyright (c) 2019 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -21,11 +21,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use stegos_serialization::build_script;
+pub mod behavior;
+mod handler;
+mod proto;
+mod protocol;
 
-fn main() {
-    build_script::build_protobuf("protos/ncp_proto.proto", "ncp_proto", &[]);
-    build_script::build_protobuf("protos/unicast_proto.proto", "unicast_proto", &[]);
-    build_script::build_protobuf("protos/pubsub_proto.proto", "pubsub", &[]);
-    build_script::build_protobuf("protos/gatekeeper_proto.proto", "gatekeeper_proto", &[]);
-}
+pub use behavior::{Gatekeeper, GatekeeperOutEvent, ProtocolUpdateEvent};

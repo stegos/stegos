@@ -21,9 +21,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+mod behavior;
 mod handler;
-pub mod layer;
 mod proto;
 mod protocol;
 
-pub use self::layer::Ncp;
+pub use self::behavior::{Ncp, NcpOutEvent};

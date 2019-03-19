@@ -30,6 +30,7 @@ use libp2p::core::swarm::{
     ConnectedPoint, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
 };
 use libp2p::core::{protocols_handler::ProtocolsHandler, Multiaddr, PeerId};
+use log::debug;
 use rand;
 use smallvec::SmallVec;
 use std::collections::hash_map::{DefaultHasher, HashMap};
@@ -161,10 +162,49 @@ impl<TSubstream> Floodsub<TSubstream> {
         }
     }
 
-    pub fn shutdown(&mut self, peer_id: &PeerId) {
+    pub fn enable_outgoing(&mut self, peer_id: &PeerId) {
+        debug!(target: "stegos_network::pubsub", "enabling pubsub dialer: peer_id={}", peer_id.to_base58());
+        if !self.connected_peers.contains_key(peer_id) {
+            return;
+        }
+
         self.events.push_back(NetworkBehaviourAction::SendEvent {
             peer_id: peer_id.clone(),
-            event: FloodsubSendEvent::Shutdown,
+            event: FloodsubSendEvent::EnableOutgoing,
+        });
+
+        // We need to send our subscriptions to the newly-enabled node.
+        for topic in self.subscribed_topics.iter() {
+            self.events.push_back(NetworkBehaviourAction::SendEvent {
+                peer_id: peer_id.clone(),
+                event: FloodsubSendEvent::Publish(FloodsubRpc {
+                    messages: Vec::new(),
+                    subscriptions: vec![FloodsubSubscription {
+                        topic: topic.hash().clone(),
+                        action: FloodsubSubscriptionAction::Subscribe,
+                    }],
+                }),
+            });
+        }
+    }
+
+    pub fn enable_incoming(&mut self, peer_id: &PeerId) {
+        debug!(target: "stegos_network::pubsub", "enabling pubsub listener: peer_id={}", peer_id.to_base58());
+        if !self.connected_peers.contains_key(peer_id) {
+            return;
+        }
+
+        self.events.push_back(NetworkBehaviourAction::SendEvent {
+            peer_id: peer_id.clone(),
+            event: FloodsubSendEvent::EnableIncoming,
+        });
+    }
+
+    pub fn disable(&mut self, peer_id: &PeerId) {
+        debug!(target: "stegos_network::pubsub", "disabling pubsub: peer_id={}", peer_id.to_base58());
+        self.events.push_back(NetworkBehaviourAction::SendEvent {
+            peer_id: peer_id.clone(),
+            event: FloodsubSendEvent::Disable,
         });
     }
 }
@@ -185,20 +225,6 @@ where
     }
 
     fn inject_connected(&mut self, id: PeerId, _: ConnectedPoint) {
-        // We need to send our subscriptions to the newly-connected node.
-        for topic in self.subscribed_topics.iter() {
-            self.events.push_back(NetworkBehaviourAction::SendEvent {
-                peer_id: id.clone(),
-                event: FloodsubSendEvent::Publish(FloodsubRpc {
-                    messages: Vec::new(),
-                    subscriptions: vec![FloodsubSubscription {
-                        topic: topic.hash().clone(),
-                        action: FloodsubSubscriptionAction::Subscribe,
-                    }],
-                }),
-            });
-        }
-
         self.connected_peers.insert(id.clone(), SmallVec::new());
     }
 
@@ -207,94 +233,122 @@ where
         debug_assert!(was_in.is_some());
     }
 
-    fn inject_node_event(&mut self, propagation_source: PeerId, event: FloodsubRpc) {
-        // Update connected peers topics
-        for subscription in event.subscriptions {
-            let remote_peer_topics = self.connected_peers
-                .get_mut(&propagation_source)
-                .expect("connected_peers is kept in sync with the peers we are connected to; we are guaranteed to only receive events from connected peers; QED");
-            match subscription.action {
-                FloodsubSubscriptionAction::Subscribe => {
-                    if !remote_peer_topics.contains(&subscription.topic) {
-                        remote_peer_topics.push(subscription.topic.clone());
+    fn inject_node_event(&mut self, propagation_source: PeerId, event: FloodsubRecvEvent) {
+        match event {
+            FloodsubRecvEvent::EnabledIncoming => {
+                self.events.push_back(NetworkBehaviourAction::GenerateEvent(
+                    FloodsubEvent::EnabledIncoming {
+                        peer_id: propagation_source,
+                    },
+                ));
+                return;
+            }
+            FloodsubRecvEvent::EnabledOutgoing => {
+                self.events.push_back(NetworkBehaviourAction::GenerateEvent(
+                    FloodsubEvent::EnabledOutgoing {
+                        peer_id: propagation_source,
+                    },
+                ));
+                return;
+            }
+            FloodsubRecvEvent::Disabled => {
+                self.events.push_back(NetworkBehaviourAction::GenerateEvent(
+                    FloodsubEvent::Disabled {
+                        peer_id: propagation_source,
+                    },
+                ));
+                return;
+            }
+            FloodsubRecvEvent::Message(event) => {
+                // Update connected peers topics
+                for subscription in event.subscriptions {
+                    let remote_peer_topics = self.connected_peers
+                        .get_mut(&propagation_source)
+                        .expect("connected_peers is kept in sync with the peers we are connected to; we are guaranteed to only receive events from connected peers; QED");
+                    match subscription.action {
+                        FloodsubSubscriptionAction::Subscribe => {
+                            if !remote_peer_topics.contains(&subscription.topic) {
+                                remote_peer_topics.push(subscription.topic.clone());
+                            }
+                            self.events.push_back(NetworkBehaviourAction::GenerateEvent(
+                                FloodsubEvent::Subscribed {
+                                    peer_id: propagation_source.clone(),
+                                    topic: subscription.topic,
+                                },
+                            ));
+                        }
+                        FloodsubSubscriptionAction::Unsubscribe => {
+                            if let Some(pos) = remote_peer_topics
+                                .iter()
+                                .position(|t| t == &subscription.topic)
+                            {
+                                remote_peer_topics.remove(pos);
+                            }
+                            self.events.push_back(NetworkBehaviourAction::GenerateEvent(
+                                FloodsubEvent::Unsubscribed {
+                                    peer_id: propagation_source.clone(),
+                                    topic: subscription.topic,
+                                },
+                            ));
+                        }
                     }
-                    self.events.push_back(NetworkBehaviourAction::GenerateEvent(
-                        FloodsubEvent::Subscribed {
-                            peer_id: propagation_source.clone(),
-                            topic: subscription.topic,
-                        },
-                    ));
                 }
-                FloodsubSubscriptionAction::Unsubscribe => {
-                    if let Some(pos) = remote_peer_topics
+
+                // List of messages we're going to propagate on the network.
+                let mut rpcs_to_dispatch: Vec<(PeerId, FloodsubRpc)> = Vec::new();
+
+                for message in event.messages {
+                    // Use `self.received` to skip the messages that we have already received in the past.
+                    // Note that this can false positive.
+                    if !self.received.test_and_add(&message) {
+                        continue;
+                    }
+
+                    // Add the message to be dispatched to the user.
+                    if self
+                        .subscribed_topics
                         .iter()
-                        .position(|t| t == &subscription.topic)
+                        .any(|t| message.topics.iter().any(|u| t.hash() == u))
                     {
-                        remote_peer_topics.remove(pos);
+                        let event = FloodsubEvent::Message(message.clone());
+                        self.events
+                            .push_back(NetworkBehaviourAction::GenerateEvent(event));
                     }
-                    self.events.push_back(NetworkBehaviourAction::GenerateEvent(
-                        FloodsubEvent::Unsubscribed {
-                            peer_id: propagation_source.clone(),
-                            topic: subscription.topic,
-                        },
-                    ));
-                }
-            }
-        }
 
-        // List of messages we're going to propagate on the network.
-        let mut rpcs_to_dispatch: Vec<(PeerId, FloodsubRpc)> = Vec::new();
+                    // Propagate the message to everyone else who is subscribed to any of the topics.
+                    for (peer_id, subscr_topics) in self.connected_peers.iter() {
+                        if peer_id == &propagation_source {
+                            continue;
+                        }
 
-        for message in event.messages {
-            // Use `self.received` to skip the messages that we have already received in the past.
-            // Note that this can false positive.
-            if !self.received.test_and_add(&message) {
-                continue;
-            }
+                        if !subscr_topics
+                            .iter()
+                            .any(|t| message.topics.iter().any(|u| t == u))
+                        {
+                            continue;
+                        }
 
-            // Add the message to be dispatched to the user.
-            if self
-                .subscribed_topics
-                .iter()
-                .any(|t| message.topics.iter().any(|u| t.hash() == u))
-            {
-                let event = FloodsubEvent::Message(message.clone());
-                self.events
-                    .push_back(NetworkBehaviourAction::GenerateEvent(event));
-            }
-
-            // Propagate the message to everyone else who is subscribed to any of the topics.
-            for (peer_id, subscr_topics) in self.connected_peers.iter() {
-                if peer_id == &propagation_source {
-                    continue;
+                        if let Some(pos) = rpcs_to_dispatch.iter().position(|(p, _)| p == peer_id) {
+                            rpcs_to_dispatch[pos].1.messages.push(message.clone());
+                        } else {
+                            rpcs_to_dispatch.push((
+                                peer_id.clone(),
+                                FloodsubRpc {
+                                    subscriptions: Vec::new(),
+                                    messages: vec![message.clone()],
+                                },
+                            ));
+                        }
+                    }
                 }
 
-                if !subscr_topics
-                    .iter()
-                    .any(|t| message.topics.iter().any(|u| t == u))
-                {
-                    continue;
-                }
-
-                if let Some(pos) = rpcs_to_dispatch.iter().position(|(p, _)| p == peer_id) {
-                    rpcs_to_dispatch[pos].1.messages.push(message.clone());
-                } else {
-                    rpcs_to_dispatch.push((
-                        peer_id.clone(),
-                        FloodsubRpc {
-                            subscriptions: Vec::new(),
-                            messages: vec![message.clone()],
-                        },
-                    ));
+                for (peer_id, rpc) in rpcs_to_dispatch {
+                    self.events.push_back(NetworkBehaviourAction::SendEvent {
+                        peer_id,
+                        event: FloodsubSendEvent::Publish(rpc),
+                    });
                 }
             }
-        }
-
-        for (peer_id, rpc) in rpcs_to_dispatch {
-            self.events.push_back(NetworkBehaviourAction::SendEvent {
-                peer_id,
-                event: FloodsubSendEvent::Publish(rpc),
-            });
         }
     }
 
@@ -336,13 +390,38 @@ pub enum FloodsubEvent {
         /// The topic it has subscribed from.
         topic: TopicHash,
     },
+    EnabledIncoming {
+        /// Enabled protocol for peer_id
+        peer_id: PeerId,
+    },
+    EnabledOutgoing {
+        /// Enabled protocol for peer_id
+        peer_id: PeerId,
+    },
+    Disabled {
+        /// Disabled protocol for peer_id
+        peer_id: PeerId,
+    },
 }
 
 #[derive(Debug)]
 /// Event passed to protocol handler
 pub enum FloodsubSendEvent {
-    /// Shutdown connection with peer
-    Shutdown,
+    /// Enable pubsub substreams from peer
+    EnableIncoming,
+    /// Enable pubsub substreams to peer
+    EnableOutgoing,
+    /// Disable floodsub with peer, and close all existing substreams
+    Disable,
     /// Publish message
     Publish(FloodsubRpc),
+}
+
+#[derive(Debug)]
+/// Event received from handler
+pub enum FloodsubRecvEvent {
+    EnabledIncoming,
+    EnabledOutgoing,
+    Disabled,
+    Message(FloodsubRpc),
 }

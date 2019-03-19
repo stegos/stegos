@@ -18,7 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use super::layer::FloodsubSendEvent;
+use super::behavior::{FloodsubRecvEvent, FloodsubSendEvent};
 use super::protocol::{FloodsubCodec, FloodsubConfig, FloodsubRpc};
 
 use futures::prelude::*;
@@ -27,8 +27,9 @@ use libp2p::core::{
     upgrade::{InboundUpgrade, OutboundUpgrade},
     ProtocolsHandler, ProtocolsHandlerEvent,
 };
-use log::warn;
+use log::{debug, warn};
 use smallvec::SmallVec;
+use std::collections::VecDeque;
 use std::{fmt, io};
 use tokio::codec::Framed;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -45,9 +46,11 @@ where
     /// Configuration for the floodsub protocol.
     config: FloodsubConfig,
 
-    /// If true, we are trying to shut down the existing floodsub substream and should refuse any
-    /// incoming connection.
-    shutting_down: bool,
+    /// Accept incoming substreams
+    enabled_incoming: bool,
+
+    /// Allow outgoing substreams
+    enabled_outgoing: bool,
 
     /// Substream failure happened, initialize shutting_down on next poll()
     internal_failure: bool,
@@ -58,6 +61,8 @@ where
 
     /// Queue of values that we want to send to the remote.
     send_queue: SmallVec<[FloodsubRpc; 16]>,
+    /// Events to send upstream
+    out_events: VecDeque<FloodsubRecvEvent>,
 }
 
 /// State of an active substream, opened either by us or by the remote.
@@ -98,16 +103,19 @@ where
     pub fn new() -> Self {
         FloodsubHandler {
             config: FloodsubConfig::new(),
-            shutting_down: false,
+            enabled_incoming: false,
+            enabled_outgoing: false,
             internal_failure: false,
             substreams: Vec::new(),
             send_queue: SmallVec::new(),
+            out_events: VecDeque::new(),
         }
     }
 
     #[inline]
-    fn shutdown(&mut self) {
-        self.shutting_down = true;
+    fn disable(&mut self) {
+        self.enabled_incoming = false;
+        self.enabled_outgoing = false;
         for n in (0..self.substreams.len()).rev() {
             let substream = self.substreams.swap_remove(n);
             self.substreams
@@ -121,7 +129,7 @@ where
     TSubstream: AsyncRead + AsyncWrite,
 {
     type InEvent = FloodsubSendEvent;
-    type OutEvent = FloodsubRpc;
+    type OutEvent = FloodsubRecvEvent;
     type Error = io::Error;
     type Substream = TSubstream;
     type InboundProtocol = FloodsubConfig;
@@ -137,7 +145,8 @@ where
         &mut self,
         protocol: <Self::InboundProtocol as InboundUpgrade<TSubstream>>::Output,
     ) {
-        if self.shutting_down {
+        if !self.enabled_incoming {
+            debug!(target: "stegos_network::pubsub", "protocol is disabled. dropping incoming substream");
             return ();
         }
         self.substreams.push(SubstreamState::WaitingInput(protocol))
@@ -148,7 +157,8 @@ where
         protocol: <Self::OutboundProtocol as OutboundUpgrade<TSubstream>>::Output,
         message: Self::OutboundOpenInfo,
     ) {
-        if self.shutting_down {
+        if !self.enabled_outgoing {
+            debug!(target: "stegos_network::pubsub", "protocol is disabled. dropping outgoing substream");
             return ();
         }
         self.substreams
@@ -158,7 +168,20 @@ where
     #[inline]
     fn inject_event(&mut self, event: Self::InEvent) {
         match event {
-            FloodsubSendEvent::Shutdown => self.shutdown(),
+            FloodsubSendEvent::EnableIncoming => {
+                self.enabled_incoming = true;
+                self.out_events
+                    .push_back(FloodsubRecvEvent::EnabledIncoming);
+            }
+            FloodsubSendEvent::EnableOutgoing => {
+                self.enabled_outgoing = true;
+                self.out_events
+                    .push_back(FloodsubRecvEvent::EnabledOutgoing);
+            }
+            FloodsubSendEvent::Disable => {
+                self.disable();
+                self.out_events.push_back(FloodsubRecvEvent::Disabled);
+            }
             FloodsubSendEvent::Publish(message) => self.send_queue.push(message),
         }
     }
@@ -171,11 +194,12 @@ where
             <Self::OutboundProtocol as OutboundUpgrade<Self::Substream>>::Error,
         >,
     ) {
+        self.enabled_outgoing = false;
     }
 
     #[inline]
     fn connection_keep_alive(&self) -> KeepAlive {
-        if !self.shutting_down || !self.substreams.is_empty() {
+        if self.enabled_incoming || self.enabled_outgoing || !self.substreams.is_empty() {
             KeepAlive::Forever
         } else {
             KeepAlive::Now
@@ -191,8 +215,13 @@ where
         if self.internal_failure {
             self.internal_failure = false;
             // let other substreams to be closed gracefully
-            self.shutdown();
+            self.disable();
             return Ok(Async::NotReady);
+        }
+
+        if !self.out_events.is_empty() {
+            let message = self.out_events.pop_front().unwrap();
+            return Ok(Async::Ready(ProtocolsHandlerEvent::Custom(message)));
         }
 
         if !self.send_queue.is_empty() {
@@ -213,7 +242,9 @@ where
                         Ok(Async::Ready(Some(message))) => {
                             self.substreams
                                 .push(SubstreamState::WaitingInput(substream));
-                            return Ok(Async::Ready(ProtocolsHandlerEvent::Custom(message)));
+                            return Ok(Async::Ready(ProtocolsHandlerEvent::Custom(
+                                FloodsubRecvEvent::Message(message),
+                            )));
                         }
                         Ok(Async::Ready(None)) => SubstreamState::Closing(substream),
                         Ok(Async::NotReady) => {
@@ -221,25 +252,36 @@ where
                                 .push(SubstreamState::WaitingInput(substream));
                             return Ok(Async::NotReady);
                         }
-                        Err(_) => SubstreamState::Closing(substream),
+                        Err(e) => {
+                            debug!(target: "stegos_network::pubsub", "error reading from substream: error={}", e);
+                            SubstreamState::Closing(substream)
+                        }
                     },
                     SubstreamState::PendingSend(mut substream, message) => {
-                        match substream.start_send(message)? {
-                            AsyncSink::Ready => SubstreamState::PendingFlush(substream),
-                            AsyncSink::NotReady(message) => {
+                        match substream.start_send(message) {
+                            Ok(AsyncSink::Ready) => SubstreamState::PendingFlush(substream),
+                            Ok(AsyncSink::NotReady(message)) => {
                                 self.substreams
                                     .push(SubstreamState::PendingSend(substream, message));
                                 return Ok(Async::NotReady);
                             }
+                            Err(e) => {
+                                debug!(target: "stegos_network::pubsub", "error sending to substream: error={}", e);
+                                SubstreamState::Closing(substream)
+                            }
                         }
                     }
                     SubstreamState::PendingFlush(mut substream) => {
-                        match substream.poll_complete()? {
-                            Async::Ready(()) => SubstreamState::Closing(substream),
-                            Async::NotReady => {
+                        match substream.poll_complete() {
+                            Ok(Async::Ready(())) => SubstreamState::Closing(substream),
+                            Ok(Async::NotReady) => {
                                 self.substreams
                                     .push(SubstreamState::PendingFlush(substream));
                                 return Ok(Async::NotReady);
+                            }
+                            Err(e) => {
+                                debug!(target: "stegos_network::pubsub", "error flushing substream: error={}", e);
+                                SubstreamState::Closing(substream)
                             }
                         }
                     }
@@ -272,7 +314,9 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         f.debug_struct("FloodsubHandler")
-            .field("shutting_down", &self.shutting_down)
+            .field("enabled_incoming", &self.enabled_incoming)
+            .field("enabled_outgoing", &self.enabled_outgoing)
+            .field("internal_failure", &self.internal_failure)
             .field("substreams", &self.substreams.len())
             .field("send_queue", &self.send_queue.len())
             .finish()

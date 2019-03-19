@@ -29,17 +29,15 @@ use libp2p::core::{
 };
 use log::*;
 use lru_time_cache::LruCache;
-use rand::{seq::SliceRandom, thread_rng, Rng};
+use rand::{thread_rng, Rng};
 use smallvec::SmallVec;
 use std::{
     collections::{HashSet, VecDeque},
-    fmt,
     marker::PhantomData,
     time::{Duration, Instant},
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::timer::Delay;
-use void::Void;
 
 use crate::config::NetworkConfig;
 use crate::ncp::handler::NcpHandler;
@@ -50,10 +48,14 @@ const KNOWN_PEERS_TABLE_SIZE: usize = 1024;
 /// Network behaviour that automatically identifies nodes periodically, and returns information
 /// about them.
 pub struct Ncp<TSubstream> {
-    /// Events that need to be yielded to the outside when polling.
+    /// Queue of internal events
     events: VecDeque<NcpEvent>,
-    /// List of connected peers
+    /// Events that need to be yielded to the outside when polling.
+    out_events: VecDeque<NcpOutEvent>,
+    /// List of connected peers (including disabled)
     connected_peers: HashSet<PeerId>,
+    /// Active peers (with which we exchange data)
+    active_peers: HashSet<PeerId>,
     /// Known peers
     known_peers: LruCache<Vec<u8>, SmallVec<[Multiaddr; 16]>>,
     /// Maximum connections allowd
@@ -72,30 +74,11 @@ pub struct Ncp<TSubstream> {
 impl<TSubstream> Ncp<TSubstream> {
     /// Creates a NetworkBehaviour for NCP.
     pub fn new(config: &NetworkConfig) -> Self {
-        let mut events = VecDeque::new();
-
-        // Randmoize seed nodes array
-        let mut rng = thread_rng();
-        let mut addrs = config.seed_nodes.clone();
-        addrs.shuffle(&mut rng);
-
-        for addr in addrs.iter() {
-            debug!(target: "stegos_network::ncp", "dialing peer with address {}", addr);
-            match addr.parse::<Multiaddr>() {
-                Ok(maddr) => {
-                    events.push_back(NcpEvent::DialAddress {
-                        address: maddr.clone(),
-                    });
-                }
-                Err(e) => {
-                    error!(target: "stegos_network::ncp", "failed to parse address: {}, error: {}", addr, e)
-                }
-            }
-        }
-
         Ncp {
-            events,
+            events: VecDeque::new(),
+            out_events: VecDeque::new(),
             connected_peers: HashSet::new(),
+            active_peers: HashSet::new(),
             known_peers: LruCache::<Vec<u8>, SmallVec<[Multiaddr; 16]>>::with_capacity(
                 KNOWN_PEERS_TABLE_SIZE,
             ),
@@ -111,10 +94,37 @@ impl<TSubstream> Ncp<TSubstream> {
         }
     }
 
-    pub fn shutdown(&mut self, peer_id: &PeerId) {
-        self.events.push_back(NcpEvent::Shutdown {
+    pub fn enable_outgoing(&mut self, peer_id: &PeerId) {
+        debug!(target: "stegos_network::ncp", "enabling ncp dialer: peer_id={}", peer_id.to_base58());
+        if !self.connected_peers.contains(peer_id) {
+            return;
+        }
+
+        self.events.push_back(NcpEvent::EnableOutgoing {
             peer_id: peer_id.clone(),
         });
+    }
+
+    pub fn enable_incoming(&mut self, peer_id: &PeerId) {
+        debug!(target: "stegos_network::ncp", "enabling ncp listener: peer_id={}", peer_id.to_base58());
+        if !self.connected_peers.contains(peer_id) {
+            return;
+        }
+
+        self.events.push_back(NcpEvent::EnableIncoming {
+            peer_id: peer_id.clone(),
+        });
+    }
+
+    pub fn disable(&mut self, peer_id: &PeerId) {
+        debug!(target: "stegos_network::ncp", "disabling ncp: peer_id={}", peer_id.to_base58());
+        self.events.push_back(NcpEvent::Disable {
+            peer_id: peer_id.clone(),
+        });
+    }
+
+    pub fn connected_peer(&mut self, peer_id: PeerId) {
+        self.active_peers.insert(peer_id);
     }
 }
 
@@ -123,7 +133,7 @@ where
     TSubstream: AsyncRead + AsyncWrite,
 {
     type ProtocolsHandler = NcpHandler<TSubstream>;
-    type OutEvent = Void;
+    type OutEvent = NcpOutEvent;
 
     fn new_handler(&mut self) -> Self::ProtocolsHandler {
         NcpHandler::new()
@@ -141,26 +151,45 @@ where
 
     fn inject_connected(&mut self, id: PeerId, _: ConnectedPoint) {
         debug!(target: "stegos_network::ncp", "peer connected: peer_id={}", id.to_base58());
-        // Send information about connected peers to the freshly connected peer.
-        self.connected_peers.insert(id.clone());
-        self.events.push_back(NcpEvent::SendPeers { peer_id: id });
+        self.connected_peers.insert(id);
+        // no action taken until negotiated
     }
 
     fn inject_disconnected(&mut self, id: &PeerId, _: ConnectedPoint) {
         debug!(target: "stegos_network::ncp", "peer disconnected: peer_id={}", id.to_base58());
         self.connected_peers.remove(id);
+        self.active_peers.remove(id);
     }
 
-    fn inject_node_event(&mut self, propagation_source: PeerId, event: NcpMessage) {
+    fn inject_node_event(&mut self, propagation_source: PeerId, event: NcpRecvEvent) {
         // Process received NCP message (passed from Handler as Custom(message))
         debug!(target: "stegos_network::ncp", "Received a message: {:?}", event);
         match event {
-            NcpMessage::GetPeersRequest => {
+            NcpRecvEvent::EnabledIncoming => {
+                debug!(target: "stegos_network::ncp", "enabled substream listener for peer: {}", propagation_source.to_base58());
+                self.out_events.push_back(NcpOutEvent::EnabledIncoming {
+                    peer_id: propagation_source,
+                });
+            }
+            NcpRecvEvent::EnabledOutgoing => {
+                debug!(target: "stegos_network::ncp", "enabled substream dialer for peer: {}", propagation_source.to_base58());
+                self.out_events.push_back(NcpOutEvent::EnabledOutgoing {
+                    peer_id: propagation_source.clone(),
+                });
                 self.events.push_back(NcpEvent::SendPeers {
                     peer_id: propagation_source,
                 });
             }
-            NcpMessage::GetPeersResponse { response } => {
+            NcpRecvEvent::Disabled => {
+                // Do we actually care?
+                debug!(target: "stegos_network::ncp", "disabled communications with peer: {}", propagation_source.to_base58());
+            }
+            NcpRecvEvent::Recv(NcpMessage::GetPeersRequest) => {
+                self.events.push_back(NcpEvent::SendPeers {
+                    peer_id: propagation_source,
+                });
+            }
+            NcpRecvEvent::Recv(NcpMessage::GetPeersResponse { response }) => {
                 self.events.push_back(NcpEvent::StorePeers {
                     from: propagation_source,
                     message: response,
@@ -178,6 +207,12 @@ where
             Self::OutEvent,
         >,
     > {
+        // Send out accumulated events
+        if let Some(event) = self.out_events.pop_front() {
+            return Async::Ready(NetworkBehaviourAction::GenerateEvent(event));
+        }
+
+        // Check established connections and request more, if needed.
         loop {
             match self.monitor_delay.poll() {
                 Ok(Async::Ready(_)) => {
@@ -207,7 +242,8 @@ where
                                     continue;
                                 }
                                 trace!(target: "stegos_network::ncp", "Dialing peer: {:#?}", peer);
-                                self.events.push_back(NcpEvent::DialPeer { peer_id: peer });
+                                self.out_events
+                                    .push_back(NcpOutEvent::DialPeer { peer_id: peer });
                             } else {
                                 bad_peer_ids.push(peer_bytes.clone());
                             }
@@ -249,12 +285,6 @@ where
         }
         if let Some(event) = self.events.pop_front() {
             match event {
-                NcpEvent::DialAddress { address } => {
-                    return Async::Ready(NetworkBehaviourAction::DialAddress { address });
-                }
-                NcpEvent::DialPeer { peer_id } => {
-                    return Async::Ready(NetworkBehaviourAction::DialPeer { peer_id });
-                }
                 NcpEvent::StorePeers { from, message } => {
                     debug!(target: "stegos_network::ncp", "received peers: from_peer={}", from.to_base58());
                     for peer in message.peers.into_iter() {
@@ -313,11 +343,26 @@ where
                         event: NcpSendEvent::Send(NcpMessage::GetPeersRequest),
                     });
                 }
-                NcpEvent::Shutdown { peer_id } => {
+                NcpEvent::EnableIncoming { peer_id } => {
+                    debug!(target: "stegos_network::ncp", "enable substream listener for messages from: peer_id={}", peer_id.to_base58());
+                    return Async::Ready(NetworkBehaviourAction::SendEvent {
+                        peer_id,
+                        event: NcpSendEvent::EnableIncoming,
+                    });
+                }
+                NcpEvent::EnableOutgoing { peer_id } => {
+                    debug!(target: "stegos_network::ncp", "enable substream dialer for messages to: peer_id={}", peer_id.to_base58());
+                    return Async::Ready(NetworkBehaviourAction::SendEvent {
+                        peer_id,
+                        event: NcpSendEvent::EnableOutgoing,
+                    });
+                }
+                NcpEvent::Disable { peer_id } => {
+                    debug!(target: "stegos_network::ncp", "disabline substream for: peer_id={}", peer_id.to_base58());
                     if self.connected_peers.contains(&peer_id) {
                         return Async::Ready(NetworkBehaviourAction::SendEvent {
                             peer_id,
-                            event: NcpSendEvent::Shutdown,
+                            event: NcpSendEvent::Disable,
                         });
                     }
                 }
@@ -328,61 +373,64 @@ where
 }
 
 /// Event that can happen on the floodsub behaviour.
+#[derive(Debug)]
 pub enum NcpEvent {
+    /// Enable substream listener for peer
+    EnableIncoming { peer_id: PeerId },
+    /// Enable substrem dialer for peer
+    EnableOutgoing { peer_id: PeerId },
+    /// Diable communications with peer
+    Disable { peer_id: PeerId },
     /// Store peers information, received from the neighbor
     StorePeers {
         from: PeerId,
         message: GetPeersResponse,
     },
-
     /// Send info about connected peers.
     SendPeers { peer_id: PeerId },
-
     /// Request list of connected peers from neighbor
     RequestPeers { peer_id: PeerId },
+}
 
+/// Events to send to upper level
+pub enum NcpOutEvent {
     /// Instructs the swarm to dial the given multiaddress without any expectation of a peer id.
     DialAddress {
         /// The address to dial.
         address: Multiaddr,
     },
-
     /// Instructs the swarm to try reach the given peer.
     DialPeer {
         /// The peer to try reach.
         peer_id: PeerId,
     },
-    /// Shutdown connection to peer
-    Shutdown { peer_id: PeerId },
+    EnabledIncoming {
+        /// Enabled protocol for peer_id
+        peer_id: PeerId,
+    },
+    EnabledOutgoing {
+        /// Enabled protocol for peer_id
+        peer_id: PeerId,
+    },
+    Disabled {
+        /// Disabled protocol for peer_id
+        peer_id: PeerId,
+    },
 }
 
 /// Event passed to protocol handler
 pub enum NcpSendEvent {
-    Shutdown,
+    EnableIncoming,
+    EnableOutgoing,
+    Disable,
     Send(NcpMessage),
 }
 
-impl fmt::Debug for NcpEvent {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        match self {
-            NcpEvent::StorePeers { from, .. } => {
-                write!(f, "NcpEvent::StorePeers: from={}", from.to_base58())
-            }
-            NcpEvent::SendPeers { peer_id, .. } => {
-                write!(f, "NcpEvent::SendPeers: to={}", peer_id.to_base58())
-            }
-            NcpEvent::RequestPeers { peer_id, .. } => {
-                write!(f, "NcpEvent::RequestPeers: from={}", peer_id.to_base58())
-            }
-            NcpEvent::DialPeer { peer_id, .. } => {
-                write!(f, "NcpEvent::DialPeer: peer={}", peer_id.to_base58())
-            }
-            NcpEvent::DialAddress { address, .. } => {
-                write!(f, "NcpEvent::DialAddress: address={}", address)
-            }
-            NcpEvent::Shutdown { peer_id } => {
-                write!(f, "NcpEvent::Shutwodn: peer_id={}", peer_id.to_base58())
-            }
-        }
-    }
+// Event received from protocol handler
+#[derive(Debug)]
+pub enum NcpRecvEvent {
+    EnabledIncoming,
+    EnabledOutgoing,
+    Disabled,
+    Recv(NcpMessage),
 }

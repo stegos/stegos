@@ -12,7 +12,7 @@ use std::time::Duration;
 use stegos_blockchain::PaymentOutput;
 use stegos_crypto::curve1174;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure::{self, G2};
+use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
 use stegos_network::Network;
 use stegos_node::EpochNotification;
@@ -93,7 +93,7 @@ impl TransactionPoolService {
     /// Crates new TransactionPool.
     pub fn new(keychain: &KeyChain, network: Network, node: Node) -> TransactionPoolService {
         let pkey = keychain.network_pkey.clone();
-        let facilitator_pkey: ParticipantID = G2::generator().into(); // some fake key
+        let facilitator_pkey: ParticipantID = ParticipantID::dum();
 
         let events = || -> Result<_, Error> {
             let mut streams = Vec::<Box<Stream<Item = PoolEvent, Error = ()> + Send>>::new();

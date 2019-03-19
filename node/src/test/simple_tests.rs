@@ -59,8 +59,7 @@ fn simulate_payment(node: &mut NodeService, amount: i64) -> Result<(), Error> {
         let output = node
             .chain
             .output_by_hash(&hash)
-            .expect("no disk errors")
-            .expect("utxo exists");
+            .expect("no errors and utxo exists");
         if let Output::PaymentOutput(ref o) = output {
             let PaymentPayload { amount, .. } = o.decrypt_payload(sender_skey).unwrap();
             inputs.push(output);
@@ -109,15 +108,18 @@ pub fn monetary_requests() {
     assert_eq!(node.chain.height(), block_count + 1);
     let mut amounts = Vec::new();
     for unspent in node.chain.unspent() {
-        match node.chain.output_by_hash(&unspent).expect("no disk errors") {
-            Some(Output::PaymentOutput(o)) => {
+        match node
+            .chain
+            .output_by_hash(&unspent)
+            .expect("exists and no disk errors ")
+        {
+            Output::PaymentOutput(o) => {
                 let PaymentPayload { amount, .. } = o.decrypt_payload(&keys.wallet_skey).unwrap();
                 amounts.push(amount);
             }
-            Some(Output::StakeOutput(o)) => {
+            Output::StakeOutput(o) => {
                 assert_eq!(o.amount, stake);
             }
-            _ => panic!(),
         }
     }
     amounts.sort();
@@ -135,15 +137,18 @@ pub fn monetary_requests() {
     assert_eq!(node.chain.height(), block_count + 1);
     let mut amounts = Vec::new();
     for unspent in node.chain.unspent() {
-        match node.chain.output_by_hash(&unspent).expect("no disk errors") {
-            Some(Output::PaymentOutput(o)) => {
+        match node
+            .chain
+            .output_by_hash(&unspent)
+            .expect("exists and no disk errors")
+        {
+            Output::PaymentOutput(o) => {
                 let PaymentPayload { amount, .. } = o.decrypt_payload(&keys.wallet_skey).unwrap();
                 amounts.push(amount);
             }
-            Some(Output::StakeOutput(o)) => {
+            Output::StakeOutput(o) => {
                 assert_eq!(o.amount, stake);
             }
-            _ => panic!(),
         }
     }
     amounts.sort();

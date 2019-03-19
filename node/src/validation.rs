@@ -88,10 +88,7 @@ pub(crate) fn validate_transaction(
     for input_hash in &tx.body.txins {
         // Check that the input can be resolved.
         // TODO: check outputs created by mempool transactions.
-        let input = match chain.output_by_hash(input_hash)? {
-            Some(tx_input) => tx_input,
-            None => return Err(BlockchainError::MissingUTXO(input_hash.clone()).into()),
-        };
+        let input = chain.output_by_hash(input_hash)?;
 
         // Check that the input is not claimed by other transactions.
         if mempool.contains_input(input_hash) {
@@ -187,10 +184,13 @@ mod test {
             amount + stake,
             current_timestamp,
         );
-        let mut chain = Blockchain::testing(genesis);
+        let mut chain = Blockchain::testing(genesis, current_timestamp);
         let mut inputs: Vec<Output> = Vec::new();
         let mut stakes: Vec<Output> = Vec::new();
-        for output in chain.outputs_by_hashes(&chain.unspent()).unwrap() {
+        for output_hash in chain.unspent() {
+            let output = chain
+                .output_by_hash(&output_hash)
+                .expect("exists and no disk errors");
             match output {
                 Output::PaymentOutput(ref _o) => inputs.push(output),
                 Output::StakeOutput(ref _o) => stakes.push(output),

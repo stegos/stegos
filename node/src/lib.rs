@@ -278,8 +278,9 @@ impl NodeService {
         genesis: Vec<Block>,
         network: Network,
     ) -> Result<(Self, Node), Error> {
+        let current_timestamp = Utc::now().timestamp() as u64;
         let (outbox, inbox) = unbounded();
-        let chain = Blockchain::new(&cfg, genesis);
+        let chain = Blockchain::new(&cfg, genesis, current_timestamp);
         let handler = Node {
             outbox,
             network: network.clone(),
@@ -295,7 +296,8 @@ impl NodeService {
         genesis: Vec<Block>,
         inbox: UnboundedReceiver<NodeMessage>,
     ) -> Result<Self, Error> {
-        let chain = Blockchain::testing(genesis);
+        let current_timestamp = Utc::now().timestamp() as u64;
+        let chain = Blockchain::testing(genesis, current_timestamp);
         Self::with_blockchain(chain, keys, network, inbox)
     }
 
@@ -402,7 +404,7 @@ impl NodeService {
 
         // Sync wallet.
         // TODO: this implementation can consume a lot of memory.
-        let unspent = self.chain.unspent();
+        let unspent: Vec<Hash> = self.chain.unspent().cloned().collect();
         let outputs = self
             .chain
             .outputs_by_hashes(&unspent)

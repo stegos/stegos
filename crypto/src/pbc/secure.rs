@@ -496,6 +496,11 @@ impl Drop for SecretKey {
 pub struct PublicKey(G2);
 
 impl PublicKey {
+    /// A some dummy key for initialization.
+    pub fn dum() -> Self {
+        G2::zero().into()
+    }
+
     pub fn base_vector(&self) -> &[u8] {
         self.0.base_vector()
     }

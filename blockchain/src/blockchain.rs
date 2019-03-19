@@ -30,7 +30,6 @@ use crate::merkle::*;
 use crate::metrics;
 use crate::output::*;
 use crate::storage::ListDb;
-use chrono::Utc;
 use failure::Error;
 use log::*;
 use std::collections::BTreeMap;
@@ -55,48 +54,51 @@ struct OutputKey {
     pub path: MerklePath,
 }
 
-/// The Blockchain.
+/// The blockchain database.
 pub struct Blockchain {
-    /// Database.
+    //
+    // Storage.
+    //
+    /// Persistent storage for blocks.
     database: ListDb,
-
-    /// Block by hash mapping.
+    /// In-memory index to lookup blocks by its hash.
     block_by_hash: HashMap<Hash, u64>,
-    /// Unspent outputs by hash.
+    /// In-memory index to lookup UTXO by its hash.
     output_by_hash: HashMap<Hash, OutputKey>,
-
-    //TODO: most of this fields is just duplication of keyblock. Save keyblock rather then copy of fields.
-    //
-    // Last blockchain info:
-    // 1) Stake
-    // 2) consensus group
-    // 3) last block time
-    // 4) epoch
-    //
-    /// Escrow
+    /// In-memory storage of stakes.
     escrow: Escrow,
+
+    //
+    // Epoch Information.
+    //
+    /// Monotonically increasing 1-indexed identifier of the current epoch.
+    /// Equals to the number of key blocks in the blockchain.
+    /// 1-based indexed - the genetic key block starts epoch #1.
+    epoch: u64,
+    /// Zero-indexed identifier of the last key block.
+    last_key_block_id: u64,
     /// Snapshot of selected leader from the latest key block.
     leader: secure::PublicKey,
     /// Snapshot of selected facilitator from the latest key block.
     facilitator: secure::PublicKey,
     /// Snapshot of validators with stakes from the latest key block.
     validators: BTreeMap<secure::PublicKey, i64>,
-    /// A timestamp when the last sealed block was received.
+    /// Copy of a random value from the latest key block.
+    last_random: Hash,
+
+    //
+    // Height Information.
+    //
+    /// The number of blocks in this blockchain.
+    height: u64,
+    /// Timestamp when the latest block was registered.
     last_block_timestamp: Instant,
-    /// The hash of the last block.
+    /// Copy of a block hash from the latest registered block.
     last_block_hash: Hash,
 
-    /// Copy of rnadom from last keyblock.
-    last_random: Hash,
-    /// The number of blocks.
-    height: u64,
-    /// A monotonically increasing value that represents the epoch of the blockchain,
-    /// starting from genesis block (=0).
-    epoch: u64,
-    /// Last height where epoch was changed.
-    last_epoch_change: u64,
-
-    // Monetary info
+    //
+    // Global Monetary Balance.
+    //
     /// The total sum of money created.
     created: ECp,
     /// The total sum of money burned.
@@ -109,122 +111,134 @@ pub struct Blockchain {
 
 impl Blockchain {
     //----------------------------------------------------------------------------------------------
-    // Public API
+    // Constructors.
     //----------------------------------------------------------------------------------------------
 
-    pub fn new(config: &StorageConfig, genesis: Vec<Block>) -> Blockchain {
+    pub fn new(config: &StorageConfig, genesis: Vec<Block>, current_timestamp: u64) -> Blockchain {
         let database = ListDb::new(&config.database_path);
-        Self::with_db(database, genesis)
+        Self::with_db(database, genesis, current_timestamp)
     }
 
-    pub fn testing(genesis: Vec<Block>) -> Blockchain {
+    pub fn testing(genesis: Vec<Block>, current_timestamp: u64) -> Blockchain {
         let database = ListDb::testing();
-        Self::with_db(database, genesis)
+        Self::with_db(database, genesis, current_timestamp)
     }
 
-    fn with_db(database: ListDb, genesis: Vec<Block>) -> Blockchain {
+    fn with_db(database: ListDb, genesis: Vec<Block>, current_timestamp: u64) -> Blockchain {
+        //
+        // Storage.
+        //
         let block_by_hash = HashMap::<Hash, u64>::new();
         let output_by_hash = HashMap::<Hash, OutputKey>::new();
-        let height: u64 = 0;
-        let epoch: u64 = 0;
         let escrow = Escrow::new();
-        let leader: secure::PublicKey = secure::G2::generator().into(); // some fake key
-        let facilitator: secure::PublicKey = secure::G2::generator().into(); // some fake key
-        let validators = BTreeMap::<secure::PublicKey, i64>::new();
+
+        //
+        // Epoch Information.
+        //
+        let epoch: u64 = 0;
+        let last_key_block_id: u64 = 0;
+        let leader = secure::PublicKey::dum();
+        let facilitator = secure::PublicKey::dum();
+        let validators: BTreeMap<secure::PublicKey, i64> = BTreeMap::new();
+        let last_random = Hash::digest("random");
+
+        //
+        // Height Information.
+        //
+        let height: u64 = 0;
         let last_block_timestamp = clock::now();
         let last_block_hash = Hash::digest("genesis");
-        let last_random = Hash::digest("random");
+
+        //
+        // Global Monetary Balance.
+        //
         let created = ECp::inf();
         let burned = ECp::inf();
         let gamma = Fr::zero();
         let monetary_adjustment: i64 = 0;
-        let last_epoch_change = 0;
+
         let mut blockchain = Blockchain {
             database,
             block_by_hash,
             output_by_hash,
             escrow,
+            epoch,
+            last_key_block_id,
             leader,
             facilitator,
             validators,
+            last_random,
             height,
-            epoch,
-            last_epoch_change,
             last_block_timestamp,
             last_block_hash,
-            last_random,
             created,
             burned,
             gamma,
             monetary_adjustment,
         };
-        let current_timestamp = Utc::now().timestamp() as u64;
 
-        blockchain.load_blockchain(current_timestamp);
-        if blockchain.height > 0 {
-            debug!("Loading blockchain from the disk...");
-            for ((height, genesis), chain) in genesis.iter().enumerate().zip(blockchain.blocks()) {
-                let genesis_hash = Hash::digest(genesis);
-                let chain_hash = Hash::digest(&chain);
-                if genesis_hash != chain_hash {
-                    error!(
-                        "Found a saved chain that is not compatible to our genesis at height = {}, \
-                         genesis_block = {:?}, database_block = {:?}",
-                        height + 1, genesis_hash, chain_hash
-                    );
-                    std::process::exit(1);
-                }
-            }
-
-            info!(
-                "Recovered blockchain from the disk: height={}, hash={}",
-                blockchain.height, blockchain.last_block_hash
-            );
-        } else {
-            debug!("Creating a new blockchain...");
-            for block in genesis {
-                match block {
-                    Block::MonetaryBlock(monetary_block) => {
-                        blockchain
-                            .push_monetary_block(monetary_block, current_timestamp)
-                            .expect("genesis is valid");
-                    }
-                    Block::KeyBlock(key_block) => {
-                        blockchain
-                            .push_key_block(key_block)
-                            .expect("genesis is valid");
-                    }
-                }
-            }
-            info!(
-                "Initialized a new blockchain: height={}, hash={}",
-                blockchain.height, blockchain.last_block_hash
-            );
-        }
-
+        blockchain.recover(genesis, current_timestamp);
         blockchain
     }
 
-    fn load_blockchain(&mut self, current_timestamp: u64) {
+    //----------------------------------------------------------------------------------------------
+    // Recovery.
+    //----------------------------------------------------------------------------------------------
+
+    fn recover(&mut self, genesis: Vec<Block>, current_timestamp: u64) {
         let mut blocks = self.database.iter();
 
         let block = blocks.next();
         let block = if let Some(block) = block {
             block
         } else {
-            debug!("Creating a new blockchain.");
+            debug!("Creating a new blockchain...");
+            for block in genesis {
+                match block {
+                    Block::MonetaryBlock(monetary_block) => {
+                        self.push_monetary_block(monetary_block, current_timestamp)
+                            .expect("genesis is valid");
+                    }
+                    Block::KeyBlock(key_block) => {
+                        self.push_key_block(key_block).expect("genesis is valid");
+                    }
+                }
+            }
+            info!(
+                "Initialized a new blockchain: height={}, hash={}",
+                self.height, self.last_block_hash
+            );
             return;
         };
 
         info!("Loading blockchain from database.");
-
-        self.handle_block(block, current_timestamp);
+        self.recover_block(block, current_timestamp);
         for block in blocks {
-            self.handle_block(block, current_timestamp);
+            self.recover_block(block, current_timestamp);
         }
+
+        for ((height, genesis), chain) in genesis.iter().enumerate().zip(self.blocks()) {
+            let genesis_hash = Hash::digest(genesis);
+            let chain_hash = Hash::digest(&chain);
+            if genesis_hash != chain_hash {
+                error!(
+                    "Found a saved chain that is not compatible to our genesis at height = {}, \
+                     genesis_block = {:?}, database_block = {:?}",
+                    height + 1,
+                    genesis_hash,
+                    chain_hash
+                );
+                std::process::exit(1);
+            }
+        }
+
+        info!(
+            "Recovered blockchain from the disk: height={}, hash={}",
+            self.height, self.last_block_hash
+        );
     }
 
-    fn handle_block(&mut self, block: Block, current_timestamp: u64) {
+    fn recover_block(&mut self, block: Block, current_timestamp: u64) {
         debug!(
             "Loading a block from the disk: hash={}",
             Hash::digest(&block)
@@ -248,15 +262,19 @@ impl Blockchain {
         }
     }
 
-    /// Returns count of blocks in current epoch.
+    //----------------------------------------------------------------------------------------------
+    // Database API.
+    //----------------------------------------------------------------------------------------------
+
+    /// Returns the number of blocks in the current epoch.
     pub fn blocks_in_epoch(&self) -> u64 {
-        self.height - self.last_epoch_change
+        // Include the key block itself.
+        self.height - self.last_key_block_id
     }
 
     /// Returns an iterator over UTXO hashes.
-    pub fn unspent(&self) -> Vec<Hash> {
-        // TODO: return iterator instead.
-        self.output_by_hash.keys().cloned().collect()
+    pub fn unspent(&self) -> impl Iterator<Item = &Hash> {
+        self.output_by_hash.keys()
     }
 
     /// Returns true if blockchain contains unspent output.
@@ -267,36 +285,31 @@ impl Blockchain {
         return false;
     }
 
-    /// Find UTXO by its hash.
-    pub fn output_by_hash(&self, output_hash: &Hash) -> Result<Option<Output>, Error> {
+    /// Resolve UTXO by hash.
+    pub fn output_by_hash(&self, output_hash: &Hash) -> Result<Output, Error> {
         if let Some(OutputKey { block_id, path }) = self.output_by_hash.get(output_hash) {
             let block = self.block_by_id(*block_id)?;
             if let Block::MonetaryBlock(MonetaryBlock { header: _, body }) = block {
                 if let Some(output) = body.outputs.lookup(path) {
-                    return Ok(Some(output.as_ref().clone()));
+                    return Ok(output.as_ref().clone());
                 } else {
-                    return Ok(None);
+                    return Err(BlockchainError::MissingUTXO(output_hash.clone()).into());
                 }
             } else {
                 unreachable!(); // Non-monetary block
             }
         }
-        return Ok(None);
+        return Err(BlockchainError::MissingUTXO(output_hash.clone()).into());
     }
 
-    /// Resolve UTXOs by its hashes.
+    /// Resolve the list of UTXOs by its hashes.
     pub fn outputs_by_hashes(&self, output_hashes: &[Hash]) -> Result<Vec<Output>, Error> {
-        // Find appropriate UTXO in the database.
         // TODO: optimize this function for batch processing.
-        let mut outputs = Vec::<Output>::new();
+        let mut outputs: Vec<Output> = Vec::new();
         for output_hash in output_hashes {
-            let input = match self.output_by_hash(output_hash)? {
-                Some(o) => o.clone(),
-                None => return Err(BlockchainError::MissingUTXO(output_hash.clone()).into()),
-            };
+            let input = self.output_by_hash(output_hash)?;
             outputs.push(input);
         }
-
         Ok(outputs)
     }
 
@@ -308,7 +321,7 @@ impl Blockchain {
         return false;
     }
 
-    /// Get block by id.
+    /// Get a block by id.
     fn block_by_id(&self, block_id: u64) -> Result<Block, Error> {
         assert!(block_id < self.height);
         Ok((self.database.get(block_id)?).expect("block exists"))
@@ -532,7 +545,7 @@ impl Blockchain {
         self.last_block_hash = block_hash.clone();
         self.height = self.height + 1;
         self.epoch = self.epoch + 1;
-        self.last_epoch_change = block_id;
+        self.last_key_block_id = block_id;
         self.last_random = block.header.random.rand.clone();
         self.leader = block.header.leader.clone();
         self.facilitator = block.header.facilitator.clone();
@@ -944,7 +957,7 @@ pub mod tests {
             [Block::MonetaryBlock(block1), Block::KeyBlock(block2)] => (block1, block2),
             _ => panic!(),
         };
-        let blockchain = Blockchain::testing(blocks.clone());
+        let blockchain = Blockchain::testing(blocks.clone(), current_timestamp);
         let outputs: Vec<Output> = block1
             .body
             .outputs
@@ -954,7 +967,7 @@ pub mod tests {
             .collect();
         let mut unspent: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
         unspent.sort();
-        let mut unspent2: Vec<Hash> = blockchain.unspent();
+        let mut unspent2: Vec<Hash> = blockchain.unspent().cloned().collect();
         unspent2.sort();
         assert_eq!(unspent, unspent2);
 
@@ -995,16 +1008,10 @@ pub mod tests {
         );
 
         assert!(!blockchain.contains_output(&Hash::digest("test")));
-        assert!(blockchain
-            .output_by_hash(&Hash::digest("test"))
-            .unwrap()
-            .is_none());
+        assert!(blockchain.output_by_hash(&Hash::digest("test")).is_err());
         for (output, _path) in block1.body.outputs.leafs() {
             let output_hash = Hash::digest(&output);
-            let output2 = blockchain
-                .output_by_hash(&output_hash)
-                .unwrap()
-                .expect("exists");
+            let output2 = blockchain.output_by_hash(&output_hash).expect("exists");
             assert_eq!(Hash::digest(&output2), output_hash);
             assert!(blockchain.contains_output(&output_hash));
         }
@@ -1022,7 +1029,7 @@ pub mod tests {
         let stake = MIN_STAKE_AMOUNT;
         let current_timestamp = Utc::now().timestamp() as u64;
         let blocks = genesis(&keychains, stake, 1_000_000, current_timestamp);
-        let mut blockchain = Blockchain::testing(blocks);
+        let mut blockchain = Blockchain::testing(blocks, current_timestamp);
         let start = blockchain.last_block_hash();
         // len of genesis
         assert!(blockchain.height() > 0);

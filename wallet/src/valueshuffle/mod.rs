@@ -107,7 +107,6 @@ use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::dicemix::*;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::hash::{Hashable, Hasher, HASH_SIZE};
-use stegos_crypto::pbc::secure;
 use stegos_network::Network;
 use stegos_node::Node;
 use stegos_serialization::traits::ProtoConvert;
@@ -342,7 +341,7 @@ impl ValueShuffle {
         //
         // State.
         //
-        let facilitator_pkey: ParticipantID = secure::G2::generator().into(); // some fake key
+        let facilitator_pkey: ParticipantID = ParticipantID::dum();
         let participants: Vec<ParticipantID> = Vec::new();
         let session_id: Hash = Hash::random();
         let state = State::Offline;

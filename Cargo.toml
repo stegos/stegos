@@ -75,7 +75,6 @@ chrono = "0.4"
 debug = 2
 
 [profile.dev]
-opt-level = 2
 debug = 2
 debug-assertions = true
 overflow-checks = false

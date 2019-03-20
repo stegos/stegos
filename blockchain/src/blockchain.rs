@@ -34,7 +34,6 @@ use crate::storage::ListDb;
 use failure::ensure;
 use failure::Error;
 use log::*;
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::time::Instant;
@@ -377,13 +376,8 @@ impl Blockchain {
 
     /// Return the current epoch validators with their stakes.
     #[inline]
-    pub fn validators(&self) -> BTreeMap<secure::PublicKey, i64> {
-        //todo: rewrite to use btreemap everywhere
-        self.election_result
-            .validators
-            .iter()
-            .map(|&(k, v)| (k, v))
-            .collect()
+    pub fn validators(&self) -> &Vec<(secure::PublicKey, i64)> {
+        &self.election_result.validators
     }
 
     /// Return the last block timestamp.
@@ -530,20 +524,13 @@ impl Blockchain {
         //TODO: Remove validators list from keyblock.
         //TODO: Remove facilitator, leader from keyblock.
 
-        let validators = election_result
-            .validators
-            .into_iter()
-            .map(|(k, _v)| k)
-            .collect();
+        let validators = &election_result.validators;
 
         // select leader work only with inited blockchain
         // view_change is equal to 0 at genesis
         // facilitator is equal to leader at genesis
         if self.epoch > 0 {
-            ensure!(
-                block.header.leader == self.leader(),
-                "Wrong leader"
-            );
+            ensure!(block.header.leader == self.leader(), "Wrong leader");
             // TODO: Use real view_change
             ensure!(
                 block.header.view_change == self.view_change(),
@@ -553,17 +540,16 @@ impl Blockchain {
                 block.header.facilitator == election_result.facilitator,
                 "Wrong facilitator"
             );
-            ensure!(
-                block.header.validators == validators,
-                BlockchainError::ValidatorsNotEqualToOurStakers
-            );
-        }
-
-        let validators = self.escrow.multiget(&block.header.validators);
-        let stakers = self.escrow.get_stakers_majority();
-        // We didn't allows fork, this is done by forcing group to be the same as stakers count.
-        if stakers != validators {
-            return Err(BlockchainError::ValidatorsNotEqualToOurStakers.into());
+            for (election, key_block) in validators
+                .iter()
+                .map(|(k, _)| k)
+                .zip(&block.header.validators)
+            {
+                ensure!(
+                    election == key_block,
+                    BlockchainError::ValidatorsNotEqualToOurStakers
+                );
+            }
         }
 
         // Check multisignature.
@@ -725,7 +711,7 @@ impl Blockchain {
                 &block_hash,
                 &block.header.base.multisig,
                 &block.header.base.multisigmap,
-                &self.validators(),
+                self.validators(),
                 &self.leader(),
                 true,
             )
@@ -1000,6 +986,7 @@ pub mod tests {
     use crate::multisignature::create_multi_signature;
     use chrono::prelude::Utc;
     use simple_logger;
+    use std::collections::BTreeMap;
     use stegos_keychain::KeyChain;
 
     #[test]
@@ -1031,18 +1018,16 @@ pub mod tests {
         assert_eq!(blockchain.height(), 2);
         assert_eq!(blockchain.epoch, block2.header.base.epoch);
         assert_eq!(blockchain.blocks_in_epoch(), 1);
-        assert_eq!(
-            blockchain.leader(),
-            block2.header.leader
-        );
+        assert_eq!(blockchain.leader(), block2.header.leader);
         assert_eq!(*blockchain.facilitator(), block2.header.facilitator);
         let validators = blockchain.escrow.get_stakers_majority();
         assert_eq!(validators.len(), keychains.len());
+        let validators_map: BTreeMap<_, _> = validators.iter().cloned().collect();
         for keychain in &keychains {
-            let stake = validators.get(&keychain.network_pkey).expect("exists");
+            let stake = validators_map.get(&keychain.network_pkey).expect("exists");
             assert_eq!(*stake, MIN_STAKE_AMOUNT);
         }
-        assert_eq!(blockchain.validators(), validators);
+        assert_eq!(blockchain.validators(), &validators);
         assert_eq!(blockchain.last_block_hash(), Hash::digest(&block2));
         assert_eq!(
             Hash::digest(&blockchain.last_block().unwrap()),
@@ -1120,7 +1105,7 @@ pub mod tests {
                 KeyBlock::new(base, leader, facilitator, random, view_change, validators)
             };
             let block_hash = Hash::digest(&block);
-            let validators: BTreeMap<secure::PublicKey, i64> = keychains
+            let validators: Vec<(secure::PublicKey, i64)> = keychains
                 .iter()
                 .map(|p| (p.network_pkey.clone(), stake))
                 .collect();

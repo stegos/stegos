@@ -218,7 +218,7 @@ impl Escrow {
     /// Get all staked values of all validators.
     /// Filter out stakers with stake lower than MIN_STAKE_AMOUNT.
     ///
-    pub fn get_stakers_majority(&self) -> BTreeMap<secure::PublicKey, i64> {
+    pub fn get_stakers_majority(&self) -> Vec<(secure::PublicKey, i64)> {
         let mut stakes: BTreeMap<secure::PublicKey, i64> = BTreeMap::new();
         for (k, v) in self.escrow.iter() {
             let entry = stakes.entry(k.validator_pkey).or_insert(0);

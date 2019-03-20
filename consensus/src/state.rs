@@ -587,8 +587,10 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
     pub fn sign_and_commit(&mut self) -> (Request, Proof, secure::Signature, BitVector) {
         assert!(self.should_commit());
 
+        // TODO: Use id instead of PublicKey.
+        let validators = self.validators.iter().map(|(k, v)| (*k, *v)).collect();
         // Create multi-signature.
-        let (multisig, multisigmap) = create_multi_signature(&self.validators, &self.precommits);
+        let (multisig, multisigmap) = create_multi_signature(&validators, &self.precommits);
         let r = (
             self.request.take().unwrap(),
             self.proof.take().unwrap(),

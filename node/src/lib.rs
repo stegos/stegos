@@ -46,7 +46,6 @@ use lazy_static::lazy_static;
 use log::*;
 use protobuf;
 use protobuf::Message;
-use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 use stegos_blockchain::*;
 use stegos_consensus::{self as consensus, BlockConsensus, BlockConsensusMessage};
@@ -150,7 +149,7 @@ pub struct EpochNotification {
     pub epoch: u64,
     pub leader: secure::PublicKey,
     pub facilitator: secure::PublicKey,
-    pub validators: BTreeMap<secure::PublicKey, i64>,
+    pub validators: Vec<(secure::PublicKey, i64)>,
 }
 
 /// Send when outputs created and/or pruned.
@@ -604,7 +603,11 @@ impl NodeService {
             consensus.leader()
         );
 
-        let validators = consensus.validators();
+        let validators: Vec<_> = consensus
+            .validators()
+            .iter()
+            .map(|(k, v)| (*k, *v))
+            .collect();
         let mut block = KeyBlock::new(
             base,
             leader,
@@ -660,9 +663,12 @@ impl NodeService {
         if self
             .chain
             .validators()
-            .contains_key(&self.keys.network_pkey)
+            .iter()
+            .find(|(key, _)| *key == self.keys.network_pkey)
+            .is_some()
         {
-            debug!("I am regular node, waiting for old consensus to produce blocks")
+            debug!("I am regular node, waiting for old consensus to produce blocks");
+            return Ok(());
         }
 
         info!("I am a part of consensus, trying choose new group.");
@@ -672,7 +678,7 @@ impl NodeService {
             self.keys.network_skey.clone(),
             self.keys.network_pkey.clone(),
             self.chain.leader(),
-            self.chain.validators(),
+            self.chain.validators().iter().cloned().collect(),
         );
 
         self.consensus = Some(consensus);

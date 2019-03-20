@@ -1,7 +1,7 @@
 //
 // MIT License
 //
-// Copyright (c) 2018-2019 Stegos AG
+// Copyright (c) 2019 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -21,11 +21,39 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use stegos_serialization::build_script;
+use std::collections::HashSet;
 
-fn main() {
-    build_script::build_protobuf("protos/ncp_proto.proto", "ncp_proto", &[]);
-    build_script::build_protobuf("protos/unicast_proto.proto", "unicast_proto", &[]);
-    build_script::build_protobuf("protos/pubsub_proto.proto", "pubsub", &[]);
-    build_script::build_protobuf("protos/gatekeeper_proto.proto", "gatekeeper_proto", &[]);
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ChainProtocol {
+    Pubsub,
+    Ncp,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PeerProtos {
+    pub wanted_incoming: HashSet<ChainProtocol>,
+    pub enabled_incoming: HashSet<ChainProtocol>,
+    pub wanted_outgoing: HashSet<ChainProtocol>,
+    pub enabled_outgoing: HashSet<ChainProtocol>,
+}
+
+impl PeerProtos {
+    pub fn new() -> Self {
+        PeerProtos {
+            wanted_incoming: HashSet::new(),
+            enabled_incoming: HashSet::new(),
+            wanted_outgoing: HashSet::new(),
+            enabled_outgoing: HashSet::new(),
+        }
+    }
+
+    pub fn want_listener(&mut self) {
+        self.wanted_incoming.insert(ChainProtocol::Pubsub);
+        self.wanted_incoming.insert(ChainProtocol::Ncp);
+    }
+
+    pub fn want_dialer(&mut self) {
+        self.wanted_outgoing.insert(ChainProtocol::Pubsub);
+        self.wanted_outgoing.insert(ChainProtocol::Ncp);
+    }
 }

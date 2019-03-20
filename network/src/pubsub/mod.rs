@@ -24,10 +24,10 @@
 pub mod handler;
 pub mod protocol;
 
-mod layer;
+mod behavior;
 mod proto;
 mod topic;
 
-pub use self::layer::{Floodsub, FloodsubEvent};
+pub use self::behavior::{Floodsub, FloodsubEvent};
 pub use self::protocol::{FloodsubMessage, FloodsubRpc};
 pub use self::topic::{Topic, TopicBuilder, TopicHash};

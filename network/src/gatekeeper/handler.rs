@@ -1,7 +1,7 @@
 //
 // MIT License
 //
-// Copyright (c) 2018-2019 Stegos AG
+// Copyright (c) 2019 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -21,8 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use super::behavior::{NcpRecvEvent, NcpSendEvent};
-use super::protocol::{NcpCodec, NcpConfig, NcpMessage};
+use super::protocol::{GatekeeperCodec, GatekeeperConfig, GatekeeperMessage};
 
 use futures::prelude::*;
 use libp2p::core::{
@@ -30,30 +29,39 @@ use libp2p::core::{
     upgrade::{InboundUpgrade, OutboundUpgrade},
     ProtocolsHandler, ProtocolsHandlerEvent,
 };
-use log::{debug, trace, warn};
+use log::{debug, trace};
 use smallvec::SmallVec;
-use std::collections::VecDeque;
-use std::{fmt, io};
+use std::{
+    fmt, io,
+    time::{Duration, Instant},
+};
 use tokio::codec::Framed;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-/// Protocol handler that handles communication with the remote for the NCP protocol.
+/// Event passed to protocol handler from upper level
+pub enum GatekeeperSendEvent {
+    Shutdown,
+    Send(GatekeeperMessage),
+}
+
+/// Protocol handler that handles communication with the remote for the Gatekeeper protocol.
 ///
 /// The handler will automatically open a substream with the remote for each request we make.
 ///
 /// It also handles requests made by the remote.
-pub struct NcpHandler<TSubstream>
+pub struct GatekeeperHandler<TSubstream>
 where
     TSubstream: AsyncRead + AsyncWrite,
 {
     /// Configuration for the Ncp protocol.
-    config: NcpConfig,
+    config: GatekeeperConfig,
 
-    /// Accept incoming substreams
-    enabled_incoming: bool,
+    /// If true, we are trying to shut down the existing Gatekeeper substream and should refuse any
+    /// incoming connection.
+    shutting_down: bool,
 
-    /// Allow outgoing substreams
-    enabled_outgoing: bool,
+    /// Keep connection alive for data to arrive
+    keep_alive: KeepAlive,
 
     /// Internal failure happened
     internal_failure: bool,
@@ -63,10 +71,7 @@ where
     substreams: Vec<SubstreamState<TSubstream>>,
 
     /// Queue of values that we want to send to the remote.
-    send_queue: SmallVec<[NcpMessage; 16]>,
-
-    /// Queue of events to send upper level (layer)
-    out_events: VecDeque<NcpRecvEvent>,
+    send_queue: SmallVec<[GatekeeperMessage; 16]>,
 }
 
 /// State of an active substream, opened either by us or by the remote.
@@ -75,36 +80,35 @@ where
     TSubstream: AsyncRead + AsyncWrite,
 {
     /// Waiting for a message from the remote.
-    WaitingInput(Framed<TSubstream, NcpCodec>),
+    WaitingInput(Framed<TSubstream, GatekeeperCodec>),
     /// Waiting to send a message to the remote.
-    PendingSend(Framed<TSubstream, NcpCodec>, NcpMessage),
+    PendingSend(Framed<TSubstream, GatekeeperCodec>, GatekeeperMessage),
     /// Waiting to flush the substream so that the data arrives to the remote.
-    PendingFlush(Framed<TSubstream, NcpCodec>),
+    PendingFlush(Framed<TSubstream, GatekeeperCodec>),
     /// The substream is being closed.
-    Closing(Framed<TSubstream, NcpCodec>),
+    Closing(Framed<TSubstream, GatekeeperCodec>),
 }
 
-impl<TSubstream> NcpHandler<TSubstream>
+impl<TSubstream> GatekeeperHandler<TSubstream>
 where
     TSubstream: AsyncRead + AsyncWrite,
 {
     /// Builds a new `NcpHandler`.
     pub fn new() -> Self {
-        NcpHandler {
-            config: NcpConfig::new(),
-            enabled_incoming: false,
-            enabled_outgoing: false,
+        GatekeeperHandler {
+            config: GatekeeperConfig::new(),
+            shutting_down: false,
+            keep_alive: KeepAlive::Until(Instant::now() + Duration::from_secs(5)),
             internal_failure: false,
             substreams: Vec::new(),
             send_queue: SmallVec::new(),
-            out_events: VecDeque::new(),
         }
     }
 
     #[inline]
-    fn disable(&mut self) {
-        self.enabled_incoming = false;
-        self.enabled_outgoing = false;
+    fn shutdown(&mut self) {
+        self.shutting_down = true;
+        self.keep_alive = KeepAlive::Now;
         for n in (0..self.substreams.len()).rev() {
             let substream = self.substreams.swap_remove(n);
             self.substreams
@@ -118,7 +122,7 @@ where
     TSubstream: AsyncRead + AsyncWrite,
 {
     /// Consumes this state and produces the substream.
-    fn into_substream(self) -> Framed<TSubstream, NcpCodec> {
+    fn into_substream(self) -> Framed<TSubstream, GatekeeperCodec> {
         match self {
             SubstreamState::WaitingInput(substream) => substream,
             SubstreamState::PendingSend(substream, _) => substream,
@@ -128,17 +132,17 @@ where
     }
 }
 
-impl<TSubstream> ProtocolsHandler for NcpHandler<TSubstream>
+impl<TSubstream> ProtocolsHandler for GatekeeperHandler<TSubstream>
 where
     TSubstream: AsyncRead + AsyncWrite,
 {
-    type InEvent = NcpSendEvent;
-    type OutEvent = NcpRecvEvent;
+    type InEvent = GatekeeperSendEvent;
+    type OutEvent = GatekeeperMessage;
     type Error = io::Error;
     type Substream = TSubstream;
-    type InboundProtocol = NcpConfig;
-    type OutboundProtocol = NcpConfig;
-    type OutboundOpenInfo = NcpMessage;
+    type InboundProtocol = GatekeeperConfig;
+    type OutboundProtocol = GatekeeperConfig;
+    type OutboundOpenInfo = GatekeeperMessage;
 
     #[inline]
     fn listen_protocol(&self) -> Self::InboundProtocol {
@@ -149,11 +153,11 @@ where
         &mut self,
         protocol: <Self::InboundProtocol as InboundUpgrade<TSubstream>>::Output,
     ) {
-        trace!(target: "stegos_network::ncp", "successfully negotiated inbound substream");
-        if !self.enabled_incoming {
-            trace!(target: "stegos_network::ncp", "listener is disabled, dropping inbound substream");
-            return;
+        trace!(target: "stegos_network::gatekeeper", "successfully negotiated inbound substream");
+        if self.shutting_down {
+            return ();
         }
+        self.keep_alive = KeepAlive::Forever;
         self.substreams.push(SubstreamState::WaitingInput(protocol))
     }
 
@@ -162,11 +166,11 @@ where
         protocol: <Self::OutboundProtocol as OutboundUpgrade<TSubstream>>::Output,
         message: Self::OutboundOpenInfo,
     ) {
-        trace!(target: "stegos_network::ncp", "successfully negotiated outbound substream");
-        if !self.enabled_outgoing {
-            trace!(target: "stegos_network::ncp", "dialer is disabled, dropping outbound substream");
+        trace!(target: "stegos_network::gatekeeper", "successfully negotiated outbound substream");
+        if self.shutting_down {
             return;
         }
+        self.keep_alive = KeepAlive::Forever;
         self.substreams
             .push(SubstreamState::PendingSend(protocol, message))
     }
@@ -174,19 +178,11 @@ where
     #[inline]
     fn inject_event(&mut self, event: Self::InEvent) {
         match event {
-            NcpSendEvent::EnableIncoming => {
-                self.enabled_incoming = true;
-                self.out_events.push_back(NcpRecvEvent::EnabledIncoming);
+            GatekeeperSendEvent::Shutdown => self.shutdown(),
+            GatekeeperSendEvent::Send(message) => {
+                self.keep_alive = KeepAlive::Forever;
+                self.send_queue.push(message);
             }
-            NcpSendEvent::EnableOutgoing => {
-                self.enabled_outgoing = true;
-                self.out_events.push_back(NcpRecvEvent::EnabledOutgoing);
-            }
-            NcpSendEvent::Disable => {
-                self.disable();
-                self.out_events.push_back(NcpRecvEvent::Disabled);
-            }
-            NcpSendEvent::Send(message) => self.send_queue.push(message),
         }
     }
 
@@ -202,11 +198,7 @@ where
 
     #[inline]
     fn connection_keep_alive(&self) -> KeepAlive {
-        if self.enabled_incoming || self.enabled_outgoing {
-            KeepAlive::Forever
-        } else {
-            KeepAlive::Now
-        }
+        self.keep_alive.clone()
     }
 
     fn poll(
@@ -218,13 +210,8 @@ where
         if self.internal_failure {
             self.internal_failure = false;
             // let other substreams to be closed gracefully
-            self.disable();
+            self.shutdown();
             return Ok(Async::NotReady);
-        }
-
-        if !self.out_events.is_empty() {
-            let message = self.out_events.pop_front().unwrap();
-            return Ok(Async::Ready(ProtocolsHandlerEvent::Custom(message)));
         }
 
         if !self.send_queue.is_empty() {
@@ -245,18 +232,20 @@ where
                         Ok(Async::Ready(Some(message))) => {
                             self.substreams
                                 .push(SubstreamState::WaitingInput(substream));
-                            return Ok(Async::Ready(ProtocolsHandlerEvent::Custom(
-                                NcpRecvEvent::Recv(message),
-                            )));
+                            return Ok(Async::Ready(ProtocolsHandlerEvent::Custom(message)));
                         }
-                        Ok(Async::Ready(None)) => SubstreamState::Closing(substream),
+                        Ok(Async::Ready(None)) => {
+                            self.keep_alive =
+                                KeepAlive::Until(Instant::now() + Duration::from_secs(5));
+                            SubstreamState::Closing(substream)
+                        }
                         Ok(Async::NotReady) => {
                             self.substreams
                                 .push(SubstreamState::WaitingInput(substream));
                             return Ok(Async::NotReady);
                         }
                         Err(e) => {
-                            debug!(target: "stegos_network::ncp", "error reading from substream: error={}", e);
+                            debug!(target: "stegos_network::gatekeeper", "error waiting for input: error={}", e);
                             SubstreamState::Closing(substream)
                         }
                     },
@@ -269,23 +258,32 @@ where
                                 return Ok(Async::NotReady);
                             }
                             Err(e) => {
-                                debug!(target: "stegos_network::ncp", "error sending to substream: error={}", e);
-                                SubstreamState::Closing(substream)
+                                debug!(target: "stegos_network::gatekeeper", "error sending message: error={}", e);
+                                self.internal_failure = true;
+                                return Ok(Async::NotReady);
                             }
                         }
                     }
                     SubstreamState::PendingFlush(mut substream) => {
-                        match substream.poll_complete()? {
-                            Async::Ready(()) => SubstreamState::Closing(substream),
-                            Async::NotReady => {
+                        match substream.poll_complete() {
+                            Ok(Async::Ready(())) => SubstreamState::Closing(substream),
+                            Ok(Async::NotReady) => {
                                 self.substreams
                                     .push(SubstreamState::PendingFlush(substream));
+                                return Ok(Async::NotReady);
+                            }
+                            Err(e) => {
+                                debug!(target: "stegos_network::gatekeeper", "error flushing substream: error={}", e);
+                                self.internal_failure = true;
                                 return Ok(Async::NotReady);
                             }
                         }
                     }
                     SubstreamState::Closing(mut substream) => match substream.close() {
                         Ok(Async::Ready(())) => {
+                            // Let connection be closed after 5 idle secs
+                            self.keep_alive =
+                                KeepAlive::Until(Instant::now() + Duration::from_secs(5));
                             self.substreams.shrink_to_fit();
                             break;
                         }
@@ -294,7 +292,7 @@ where
                             return Ok(Async::NotReady);
                         }
                         Err(e) => {
-                            warn!(target: "stegos_network::ncp", "failure closing substream: error={}", e);
+                            debug!(target: "stegos_network::gatekeeper", "failure closing substream: error={}", e);
                             self.internal_failure = true;
                             break;
                         }
@@ -307,14 +305,14 @@ where
     }
 }
 
-impl<TSubstream> fmt::Debug for NcpHandler<TSubstream>
+impl<TSubstream> fmt::Debug for GatekeeperHandler<TSubstream>
 where
     TSubstream: AsyncRead + AsyncWrite,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        f.debug_struct("NcpHandler")
-            .field("enabled_incoming", &self.enabled_incoming)
-            .field("enabled_outgoing", &self.enabled_outgoing)
+        f.debug_struct("GatekeeperHandler")
+            .field("shutting_down", &self.shutting_down)
+            .field("internal_failure", &self.internal_failure)
             .field("substreams", &self.substreams.len())
             .field("send_queue", &self.send_queue.len())
             .finish()

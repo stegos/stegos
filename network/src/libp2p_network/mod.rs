@@ -43,11 +43,15 @@ use stegos_keychain::KeyChain;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::config::NetworkConfig;
+use crate::gatekeeper::{Gatekeeper, GatekeeperOutEvent, ProtocolUpdateEvent};
+use crate::ncp::{Ncp, NcpOutEvent};
 use crate::pubsub::{Floodsub, FloodsubEvent, TopicBuilder, TopicHash};
-use crate::{ncp::Ncp, Network, NetworkProvider, UnicastMessage};
+use crate::{Network, NetworkProvider, UnicastMessage};
+
+mod peer_state;
+use peer_state::{ChainProtocol, PeerProtos};
 
 mod proto;
-
 use self::proto::unicast_proto;
 
 #[derive(Clone, Debug)]
@@ -194,6 +198,7 @@ fn new_service(
 pub struct Libp2pBehaviour<TSubstream: AsyncRead + AsyncWrite> {
     floodsub: Floodsub<TSubstream>,
     ncp: Ncp<TSubstream>,
+    gatekeeper: Gatekeeper<TSubstream>,
     #[behaviour(ignore)]
     consumers: HashMap<TopicHash, SmallVec<[mpsc::UnboundedSender<Vec<u8>>; 3]>>,
     #[behaviour(ignore)]
@@ -204,6 +209,8 @@ pub struct Libp2pBehaviour<TSubstream: AsyncRead + AsyncWrite> {
     my_skey: secure::SecretKey,
     #[behaviour(ignore)]
     topics_map: HashMap<TopicHash, String>,
+    #[behaviour(ignore)]
+    connected_peers: HashMap<PeerId, PeerProtos>,
 }
 
 impl<TSubstream> Libp2pBehaviour<TSubstream>
@@ -214,11 +221,13 @@ where
         let mut behaviour = Libp2pBehaviour {
             floodsub: Floodsub::new(peer_id.clone()),
             ncp: Ncp::new(config),
+            gatekeeper: Gatekeeper::new(config, keychain),
             consumers: HashMap::new(),
             unicast_consumers: HashMap::new(),
             my_pkey: keychain.network_pkey.clone(),
             my_skey: keychain.network_skey.clone(),
             topics_map: HashMap::new(),
+            connected_peers: HashMap::new(),
         };
         let unicast_topic = TopicBuilder::new(UNICAST_TOPIC).build();
         behaviour.floodsub.subscribe(unicast_topic);
@@ -302,17 +311,43 @@ where
     }
 
     fn shutdown(&mut self, peer_id: &PeerId) {
-        self.ncp.shutdown(peer_id);
-        self.floodsub.shutdown(peer_id);
+        self.ncp.disable(peer_id);
+        self.floodsub.disable(peer_id);
     }
 }
 
-impl<TSubstream> NetworkBehaviourEventProcess<void::Void> for Libp2pBehaviour<TSubstream>
+impl<TSubstream> NetworkBehaviourEventProcess<NcpOutEvent> for Libp2pBehaviour<TSubstream>
 where
     TSubstream: AsyncRead + AsyncWrite,
 {
-    fn inject_event(&mut self, _ev: void::Void) {
-        void::unreachable(_ev)
+    fn inject_event(&mut self, event: NcpOutEvent) {
+        match event {
+            NcpOutEvent::DialAddress { address } => {
+                self.gatekeeper.dial_address(address);
+            }
+            NcpOutEvent::DialPeer { peer_id } => {
+                self.gatekeeper.dial_peer(peer_id);
+            }
+            NcpOutEvent::EnabledIncoming { peer_id } => {
+                if let Some(entry) = self.connected_peers.get_mut(&peer_id) {
+                    entry.enabled_incoming.insert(ChainProtocol::Ncp);
+                    if entry.enabled_incoming == entry.wanted_incoming {
+                        self.gatekeeper
+                            .notify(&peer_id, ProtocolUpdateEvent::EnabledListener);
+                    }
+                }
+            }
+            NcpOutEvent::EnabledOutgoing { peer_id } => {
+                if let Some(entry) = self.connected_peers.get_mut(&peer_id) {
+                    entry.enabled_outgoing.insert(ChainProtocol::Ncp);
+                    if entry.enabled_outgoing == entry.wanted_outgoing {
+                        self.gatekeeper
+                            .notify(&peer_id, ProtocolUpdateEvent::EnabledDialer);
+                    }
+                }
+            }
+            NcpOutEvent::Disabled { .. } => unimplemented!(),
+        }
     }
 }
 
@@ -323,64 +358,127 @@ where
     // Called when `floodsub` produces an event.
     // Send received message to consumers.
     fn inject_event(&mut self, message: FloodsubEvent) {
-        if let FloodsubEvent::Message(message) = message {
-            let floodsub_topic = TopicBuilder::new(UNICAST_TOPIC).build();
-            let unicast_topic_hash = floodsub_topic.hash();
-            if message.topics.iter().any(|t| t == unicast_topic_hash) {
-                match decode_unicast(message.data.clone()) {
-                    Ok((from, to, protocol_id, data)) => {
-                        // send unicast message upstream
-                        if to == self.my_pkey {
-                            debug!(target: "stegos_network::pubsub",
-                                "Received unicast message: from={}, protocol={} size={}",
-                                from,
-                                protocol_id,
-                                data.len()
-                            );
-                            let msg = UnicastMessage { from, data };
-                            self.unicast_consumers
-                                .entry(protocol_id)
-                                .or_insert(SmallVec::new())
-                                .retain({
-                                    move |c| {
-                                        if let Err(e) = c.unbounded_send(msg.clone()) {
-                                            error!(target:"stegos_network::pubsub", "Error sending data to consumer: {}", e);
-                                            false
-                                        } else {
-                                            true
+        match message {
+            FloodsubEvent::Message(message) => {
+                let floodsub_topic = TopicBuilder::new(UNICAST_TOPIC).build();
+                let unicast_topic_hash = floodsub_topic.hash();
+                if message.topics.iter().any(|t| t == unicast_topic_hash) {
+                    match decode_unicast(message.data.clone()) {
+                        Ok((from, to, protocol_id, data)) => {
+                            // send unicast message upstream
+                            if to == self.my_pkey {
+                                debug!(target: "stegos_network::pubsub",
+                                    "Received unicast message: from={}, protocol={} size={}",
+                                    from,
+                                    protocol_id,
+                                    data.len()
+                                );
+                                let msg = UnicastMessage { from, data };
+                                self.unicast_consumers
+                                    .entry(protocol_id)
+                                    .or_insert(SmallVec::new())
+                                    .retain({
+                                        move |c| {
+                                            if let Err(e) = c.unbounded_send(msg.clone()) {
+                                                error!(target:"stegos_network::pubsub", "Error sending data to consumer: {}", e);
+                                                false
+                                            } else {
+                                                true
+                                            }
                                         }
-                                    }
-                                })
+                                    })
+                            }
                         }
+                        Err(e) => error!("Failure decoding unicast message: {}", e),
                     }
-                    Err(e) => error!("Failure decoding unicast message: {}", e),
+                    return;
                 }
-                return;
-            }
-            for t in message.topics.into_iter() {
-                let topic = match self.topics_map.get(&t) {
-                    Some(t) => t.clone(),
-                    None => "Unknown".to_string(),
-                };
+                for t in message.topics.into_iter() {
+                    let topic = match self.topics_map.get(&t) {
+                        Some(t) => t.clone(),
+                        None => "Unknown".to_string(),
+                    };
 
-                debug!(target: "stegos_network::pubsub",
-                    "Received broadcast message: topic={}, size={}",
-                    topic,
-                    message.data.len(),
-                );
-                let consumers = self.consumers.entry(t).or_insert(SmallVec::new());
-                consumers.retain({
-                    let data = &message.data;
-                    move |c| {
-                        if let Err(e) = c.unbounded_send(data.clone()) {
-                            error!(target: "stegos_network::pubsub", "Error sending data to consumer: {}", e);
-                            false
-                        } else {
-                            true
+                    debug!(target: "stegos_network::pubsub",
+                        "Received broadcast message: topic={}, size={}",
+                        topic,
+                        message.data.len(),
+                    );
+                    let consumers = self.consumers.entry(t).or_insert(SmallVec::new());
+                    consumers.retain({
+                        let data = &message.data;
+                        move |c| {
+                            if let Err(e) = c.unbounded_send(data.clone()) {
+                                error!(target: "stegos_network::pubsub", "Error sending data to consumer: {}", e);
+                                false
+                            } else {
+                                true
+                            }
                         }
-                    }
-                })
+                    })
+                }
             }
+            FloodsubEvent::EnabledIncoming { peer_id } => {
+                if let Some(entry) = self.connected_peers.get_mut(&peer_id) {
+                    entry.enabled_incoming.insert(ChainProtocol::Pubsub);
+                    if entry.enabled_incoming == entry.wanted_incoming {
+                        self.gatekeeper
+                            .notify(&peer_id, ProtocolUpdateEvent::EnabledListener);
+                    }
+                }
+            }
+            FloodsubEvent::EnabledOutgoing { peer_id } => {
+                if let Some(entry) = self.connected_peers.get_mut(&peer_id) {
+                    entry.enabled_outgoing.insert(ChainProtocol::Pubsub);
+                    if entry.enabled_outgoing == entry.wanted_outgoing {
+                        self.gatekeeper
+                            .notify(&peer_id, ProtocolUpdateEvent::EnabledDialer);
+                    }
+                }
+            }
+            FloodsubEvent::Disabled { .. } => unimplemented!(),
+            FloodsubEvent::Subscribed { .. } => {}
+            FloodsubEvent::Unsubscribed { .. } => {}
+        }
+    }
+}
+
+impl<TSubstream> NetworkBehaviourEventProcess<GatekeeperOutEvent> for Libp2pBehaviour<TSubstream>
+where
+    TSubstream: AsyncRead + AsyncWrite,
+{
+    fn inject_event(&mut self, event: GatekeeperOutEvent) {
+        match event {
+            GatekeeperOutEvent::PrepareListener { peer_id } => {
+                let entry = self
+                    .connected_peers
+                    .entry(peer_id.clone())
+                    .or_insert(PeerProtos::new());
+                entry.want_listener();
+                for p in entry.wanted_incoming.iter() {
+                    match p {
+                        ChainProtocol::Pubsub => self.floodsub.enable_incoming(&peer_id),
+                        ChainProtocol::Ncp => self.ncp.enable_incoming(&peer_id),
+                    }
+                }
+            }
+            GatekeeperOutEvent::PrepareDialer { peer_id } => {
+                let entry = self
+                    .connected_peers
+                    .entry(peer_id.clone())
+                    .or_insert(PeerProtos::new());
+                entry.want_dialer();
+                for p in entry.wanted_incoming.iter() {
+                    match p {
+                        ChainProtocol::Pubsub => self.floodsub.enable_outgoing(&peer_id),
+                        ChainProtocol::Ncp => self.ncp.enable_outgoing(&peer_id),
+                    }
+                }
+            }
+            GatekeeperOutEvent::Connected { peer_id } => {
+                self.ncp.connected_peer(peer_id);
+            }
+            GatekeeperOutEvent::Message { .. } => unimplemented!(),
         }
     }
 }

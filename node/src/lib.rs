@@ -140,6 +140,7 @@ impl Node {
 /// Info from node.
 #[derive(Clone, Debug)]
 pub enum InfoNotification {
+    ElectionInfo(ElectionInfo),
     Escrow(EscrowInfo),
 }
 
@@ -570,7 +571,10 @@ impl NodeService {
     }
 
     fn handle_election_info(&mut self) -> Result<(), Error> {
-        unimplemented!();
+        let msg = InfoNotification::ElectionInfo(self.chain.election_info());
+        self.on_info
+            .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
+        Ok(())
     }
 
     fn handle_escrow_info(&mut self) -> Result<(), Error> {

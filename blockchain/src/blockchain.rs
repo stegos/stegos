@@ -24,6 +24,7 @@
 use crate::block::*;
 use crate::check_multi_signature;
 use crate::config::*;
+use crate::election::ElectionInfo;
 use crate::election::{self, mix, ElectionResult};
 use crate::error::*;
 use crate::escrow::*;
@@ -265,6 +266,24 @@ impl Blockchain {
         }
     }
 
+    //
+    // Info
+    //
+    pub fn election_info(&self) -> ElectionInfo {
+        let last_leader = if self.view_change > 1 {
+            self.select_leader(self.view_change - 1).to_string()
+        } else {
+            "no_leader".to_owned()
+        };
+
+        ElectionInfo {
+            height: self.height,
+            view_change: self.view_change,
+            last_leader,
+            current_leader: self.select_leader(self.view_change).to_string(),
+            next_leader: self.select_leader(self.view_change + 1).to_string(),
+        }
+    }
     //----------------------------------------------------------------------------------------------
     // Database API.
     //----------------------------------------------------------------------------------------------

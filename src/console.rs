@@ -414,6 +414,7 @@ impl ConsoleService {
     fn on_node_info(&mut self, info: InfoNotification) {
         let output = match info {
             InfoNotification::Escrow(info) => serde_yaml::to_string(&[info]),
+            InfoNotification::ElectionInfo(info) => serde_yaml::to_string(&[info]),
         }
         .map_err(|_| fmt::Error)
         .unwrap();

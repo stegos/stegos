@@ -22,15 +22,26 @@
 //! Leader election and group formation algorithms and tests.
 
 use log::error;
-
-use rand::{Rng, SeedableRng};
-use rand_isaac::IsaacRng;
-
+use serde_derive::Serialize;
+use std::collections::BTreeMap;
+use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc::secure::G1;
 use stegos_crypto::pbc::secure::VRF;
 
 pub type StakersGroup = Vec<(secure::PublicKey, i64)>;
 
+/// User-friendly printable representation of state.
+#[derive(Serialize, Clone, Debug)]
+pub struct ElectionInfo {
+    pub height: u64,
+    pub view_change: u32,
+    pub last_leader: String,
+    pub current_leader: String,
+    pub next_leader: String,
+}
+
+/// Result of election.
 #[derive(Debug, Eq, PartialEq)]
 pub struct ElectionResult {
     /// Initial random of election
@@ -39,10 +50,35 @@ pub struct ElectionResult {
     pub view_change: u32,
     /// List of Validators
     pub validators: StakersGroup,
-    /// Leader public key
-    pub leader: secure::PublicKey,
     /// Facilitator of the transaction pool
     pub facilitator: secure::PublicKey,
+}
+
+impl Default for ElectionResult {
+    fn default() -> Self {
+        let facilitator: secure::PublicKey = secure::G2::generator().into(); // some fake key
+        let view_change = 0;
+        let validators = Vec::new();
+        let random = VRF {
+            rand: Hash::digest("random"),
+            proof: G1::zero(),
+        };
+        ElectionResult {
+            facilitator,
+            validators,
+            view_change,
+            random,
+        }
+    }
+}
+
+impl ElectionResult {
+    pub fn select_leader(&self, view_change: u32) -> secure::PublicKey {
+        let random = generate_u64(self.random.rand, view_change);
+        let leader_id =
+            select_winner(self.validators.iter().map(|(_k, slots)| slots), random).unwrap();
+        self.validators[leader_id].0
+    }
 }
 
 /// Choose random validator, based on `random_number`.
@@ -78,87 +114,77 @@ where
     unreachable!("Validator should be found in loop.")
 }
 
-/// Choose a random group limited by `max_count` out of active stakers list.
-/// Stakers consist of pair (stake, PublikKey).
+/// Choose numbers of slots, limited by `slot_count` out of active stakers list.
 /// Stakers array should not be empty, and every staker should have stake more than 0.
+/// Stakers array should contain unique PublicKey.
 ///
-/// Returns Group of validators, and new leader
-#[allow(dead_code)] // Save real group choosing for after testnet.
-pub fn choose_consensus_group_real(
-    mut stakers: StakersGroup,
+/// Returns array of validators slots, this array will contain pair of (PublicKey, slots_count).
+/// Where PublicKey is unique among array network identifier of validators,
+/// slots_count is a count of slots owned by specific validator.
+pub fn select_validators_slots(
+    stakers: StakersGroup,
     random: VRF,
-    max_group_size: usize,
+    slot_count: usize,
 ) -> ElectionResult {
     assert!(!stakers.is_empty());
-    assert!(max_group_size > 0);
-    let mut validators = Vec::new();
+    assert!(slot_count > 0);
+    // Using BTreeMap to keep order.
+    let mut validators = BTreeMap::new();
 
-    let mut seed = [0u8; 32];
-    seed.copy_from_slice(random.rand.base_vector());
-
-    let mut rng = IsaacRng::from_seed(seed);
-
-    for _ in 0..max_group_size {
-        let rand = rng.gen::<i64>();
+    let seed = random.rand;
+    for i in 0..slot_count {
+        let rand = generate_u64(seed, i as u32);
         let index = select_winner(stakers.iter().map(|(_k, stake)| stake), rand).unwrap();
 
-        let winner = stakers.remove(index);
-        validators.push(winner);
+        let winner = stakers[index].0;
 
-        if stakers.is_empty() {
-            break;
-        }
+        // Increase slot counter of validator.
+        *validators.entry(winner).or_insert(0) += 1;
     }
-    let rand = rng.gen::<i64>();
-    let leader = select_winner(validators.iter().map(|(_k, stake)| stake), rand).unwrap();
-
-    let rand = rng.gen::<i64>();
-    let facilitator = select_winner(validators.iter().map(|(_k, stake)| stake), rand).unwrap();
-
-    let leader = validators[leader].0;
-    let facilitator = validators[facilitator].0;
+    // Convert Map -> Vec. Deterministically ordered.
+    let validators: Vec<_> = validators.into_iter().collect();
+    // generate special random for facilitator.
+    let mut hasher = Hasher::new();
+    seed.hash(&mut hasher);
+    "facilitator".hash(&mut hasher);
+    let seed = hasher.result();
+    let rand = shrink_hash(seed);
+    let facilitator_id = select_winner(validators.iter().map(|(_k, slots)| slots), rand).unwrap();
+    let facilitator = validators[facilitator_id].0;
     ElectionResult {
         validators,
         random,
         view_change: 0,
-        leader,
         facilitator,
     }
 }
 
-/// Choose validator and facilitator from stake group.
-pub fn choose_consensus_group(
-    stakers: StakersGroup,
-    leader: secure::PublicKey,
-    random: VRF,
-    view_change: u32,
-    max_group_size: usize,
-) -> ElectionResult {
-    assert!(max_group_size > 0);
-    assert!(
-        stakers.len() <= max_group_size,
-        "stakers majority group more then testnet hard limit."
-    );
-    let mut seed = [0u8; 32];
-    seed.copy_from_slice(random.rand.base_vector());
-    let validators = stakers;
-    let mut rng = IsaacRng::from_seed(seed);
-    let rand = rng.gen::<i64>();
-    let facilitator = select_winner(validators.iter().map(|(_k, stake)| stake), rand).unwrap();
+/// Mix seed hash with round value to produce new hash.
+pub fn mix(random: Hash, round: u32) -> Hash {
+    let mut hasher = Hasher::new();
+    random.hash(&mut hasher);
+    round.hash(&mut hasher);
+    hasher.result()
+}
 
-    let facilitator = validators[facilitator].0;
-    ElectionResult {
-        random,
-        view_change,
-        validators,
-        leader,
-        facilitator,
+/// Shrink hash to size of u64, internally takes 8 most significant bytes.
+fn shrink_hash(hash: Hash) -> i64 {
+    let slice = hash.base_vector();
+    let mut result = 0;
+    for i in 0..8 {
+        result |= (slice[8 - i] as i64) << i;
     }
+    result
+}
+
+fn generate_u64(seed: Hash, index: u32) -> i64 {
+    let new_random = mix(seed, index);
+    shrink_hash(new_random)
 }
 
 #[cfg(test)]
 mod test {
-    use super::{choose_consensus_group_real, select_winner};
+    use super::{select_validators_slots, select_winner};
     use std::collections::{HashMap, HashSet};
 
     use stegos_crypto::hash::Hash;
@@ -265,21 +291,26 @@ mod test {
         let keys = vec![(key, 1), (key, 2), (key, 3), (key, 4)];
         let rand = secure::make_VRF(&skey, &Hash::zero());
         for i in 1..5 {
-            assert_eq!(
-                choose_consensus_group_real(keys.clone(), rand, i)
+            assert!(
+                select_validators_slots(keys.clone(), rand, i)
                     .validators
-                    .len(),
-                i
+                    .len()
+                    <= i
             )
         }
         for i in 5..10 {
-            assert_eq!(
-                choose_consensus_group_real(keys.clone(), rand, i)
+            assert!(
+                select_validators_slots(keys.clone(), rand, i)
                     .validators
-                    .len(),
-                4
+                    .len()
+                    <= 4
             )
         }
-    }
 
+        for i in &[1, 5, 10, 100, 1000, 5000] {
+            let validators = select_validators_slots(keys.clone(), rand, *i).validators;
+            let acc = validators.into_iter().fold(0, |acc, (_, v)| acc + v) as usize;
+            assert_eq!(acc, *i)
+        }
+    }
 }

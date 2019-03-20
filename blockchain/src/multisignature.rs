@@ -40,7 +40,7 @@ pub fn check_supermajority(got_votes: usize, total_votes: usize) -> bool {
 /// Create a new multi-signature from individual signatures
 ///
 pub fn create_multi_signature(
-    validators: &BTreeMap<secure::PublicKey, i64>,
+    validators: &Vec<(secure::PublicKey, i64)>,
     signatures: &BTreeMap<secure::PublicKey, secure::Signature>,
 ) -> (secure::Signature, BitVector) {
     let mut multisig = secure::G1::zero();
@@ -70,7 +70,7 @@ pub fn create_proposal_signature(
     hash: &Hash,
     skey: &secure::SecretKey,
     pkey: &secure::PublicKey,
-    validators: &BTreeMap<secure::PublicKey, i64>,
+    validators: &Vec<(secure::PublicKey, i64)>,
 ) -> (secure::Signature, BitVector) {
     let mut signatures: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();
     let sig = secure::sign_hash(hash, skey);
@@ -85,7 +85,7 @@ pub fn check_multi_signature(
     hash: &Hash,
     multisig: &secure::Signature,
     multisigmap: &BitVector,
-    validators: &BTreeMap<secure::PublicKey, i64>,
+    validators: &Vec<(secure::PublicKey, i64)>,
     leader: &secure::PublicKey,
     is_proposal: bool,
 ) -> bool {
@@ -98,7 +98,7 @@ pub fn check_multi_signature(
     let mut multisigpkey = secure::G2::zero();
 
     let mut count: usize = 0;
-    for (bit, pkey) in validators.keys().enumerate() {
+    for (bit, pkey) in validators.iter().map(|(k, _)| k).enumerate() {
         if !multisigmap.contains(bit) {
             continue;
         }

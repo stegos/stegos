@@ -24,6 +24,7 @@
 mod block;
 mod blockchain;
 mod config;
+pub mod election;
 mod error;
 mod escrow;
 mod genesis;
@@ -39,6 +40,7 @@ mod transaction;
 pub use crate::block::*;
 pub use crate::blockchain::*;
 pub use crate::config::*;
+pub use crate::election::{mix, ElectionInfo, ElectionResult, StakersGroup};
 pub use crate::error::*;
 pub use crate::escrow::*;
 pub use crate::genesis::*;

@@ -96,7 +96,7 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64, timestamp: u64) -
         let leader = keychains[0].network_pkey.clone();
         let facilitator = keychains[0].network_pkey.clone();
 
-        let seed = crate::blockchain::mix(init_random, view_change);
+        let seed = crate::election::mix(init_random, view_change);
         let random = secure::make_VRF(&keychains[0].network_skey.clone(), &seed);
         let mut block = KeyBlock::new(base, leader, facilitator, random, view_change, validators);
         let block_hash = Hash::digest(&block);
@@ -108,6 +108,7 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64, timestamp: u64) -
             signatures.insert(keychain.network_pkey.clone(), sig);
             validators.insert(keychain.network_pkey.clone(), stake);
         }
+        let validators = validators.into_iter().collect();
         let (multisig, multisigmap) = create_multi_signature(&validators, &signatures);
         block.header.base.multisig = multisig;
         block.header.base.multisigmap = multisigmap;

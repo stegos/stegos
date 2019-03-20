@@ -21,7 +21,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-mod election;
 mod error;
 mod loader;
 mod mempool;
@@ -30,16 +29,13 @@ pub mod protos;
 mod metrics;
 #[cfg(test)]
 mod test;
-mod tickets;
 mod validation;
 
 use crate::mempool::Mempool;
 use bitvector::BitVector;
 
-use crate::election::ElectionResult;
 use crate::error::*;
 use crate::loader::{ChainLoader, ChainLoaderMessage};
-pub use crate::tickets::{TicketsSystem, VRFTicket};
 use crate::validation::*;
 use chrono::Utc;
 use failure::Error;
@@ -50,7 +46,6 @@ use lazy_static::lazy_static;
 use log::*;
 use protobuf;
 use protobuf::Message;
-use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 use stegos_blockchain::*;
 use stegos_consensus::{self as consensus, BlockConsensus, BlockConsensusMessage};
@@ -145,7 +140,7 @@ impl Node {
 /// Info from node.
 #[derive(Clone, Debug)]
 pub enum InfoNotification {
-    Election(tickets::ElectionInfo),
+    ElectionInfo(ElectionInfo),
     Escrow(EscrowInfo),
 }
 
@@ -155,7 +150,7 @@ pub struct EpochNotification {
     pub epoch: u64,
     pub leader: secure::PublicKey,
     pub facilitator: secure::PublicKey,
-    pub validators: BTreeMap<secure::PublicKey, i64>,
+    pub validators: Vec<(secure::PublicKey, i64)>,
 }
 
 /// Send when outputs created and/or pruned.
@@ -220,7 +215,6 @@ enum NodeMessage {
     Transaction(Vec<u8>),
     Consensus(Vec<u8>),
     SealedBlock(Vec<u8>),
-    VRFMessage(Vec<u8>),
     ChainLoaderMessage(UnicastMessage),
     //
     // Internal Events
@@ -235,10 +229,6 @@ pub struct NodeService {
     chain: Blockchain,
     /// Key Chain.
     keys: KeyChain,
-
-    /// A system that restart consensus in case of fault or partition.
-    /// And allow to change validators in case of epoch change.
-    vrf_system: TicketsSystem,
 
     chain_loader: ChainLoader,
 
@@ -308,13 +298,6 @@ impl NodeService {
         inbox: UnboundedReceiver<NodeMessage>,
     ) -> Result<Self, Error> {
         let future_consensus_messages = Vec::new();
-        let vrf_system = TicketsSystem::new(
-            VALIDATORS_MAX,
-            0,
-            0,
-            keys.network_pkey,
-            keys.network_skey.clone(),
-        );
         let chain_loader = ChainLoader::new();
         let mempool = Mempool::new();
 
@@ -340,12 +323,6 @@ impl NodeService {
             .map(|m| NodeMessage::Consensus(m));
         streams.push(Box::new(consensus_rx));
 
-        // VRF Requests
-        let ticket_system_rx = network
-            .subscribe(&tickets::VRF_TICKETS_TOPIC)?
-            .map(|m| NodeMessage::VRFMessage(m));
-        streams.push(Box::new(ticket_system_rx));
-
         // Sealed blocks broadcast topic.
         let block_rx = network
             .subscribe(&SEALED_BLOCK_TOPIC)?
@@ -370,7 +347,6 @@ impl NodeService {
         let service = NodeService {
             chain_loader,
             future_consensus_messages,
-            vrf_system,
             chain,
             keys,
             mempool,
@@ -391,16 +367,6 @@ impl NodeService {
         assert!(len > 0);
         debug!("Recovering consensus state");
         self.on_new_epoch();
-        debug!("Recovering vrf system.");
-        //TODO: Calculate viewchange on node restart by timeout since last known block. For this we need to track last_block time in storage.
-        //Recreate vrf system
-        self.vrf_system = TicketsSystem::new(
-            VALIDATORS_MAX,
-            0,
-            len,
-            self.keys.network_pkey,
-            self.keys.network_skey.clone(),
-        );
 
         // Sync wallet.
         // TODO: this implementation can consume a lot of memory.
@@ -422,10 +388,7 @@ impl NodeService {
         // epoch ended, disable consensus and start vrf system.
         if self.chain.blocks_in_epoch() >= SEALED_BLOCK_IN_EPOCH {
             debug!("Recover at end of epoch, trying to force vrf to start.");
-            self.consensus = None;
-            let random = self.chain.last_random();
-            let ticket = self.vrf_system.handle_epoch_end(random);
-            let _ = self.broadcast_vrf_ticket(ticket);
+            self.on_change_group()?;
         }
 
         self.request_history()
@@ -435,10 +398,11 @@ impl NodeService {
     fn on_new_epoch(&mut self) {
         consensus::metrics::CONSENSUS_ROLE.set(consensus::metrics::ConsensusRole::Regular as i64);
         // Resign from Validator role.
+        let leader = self.chain.leader();
         info!(
             "I'm regular node, waiting for sealed block: epoch={}, leader={}",
             self.chain.epoch(),
-            self.chain.leader()
+            leader
         );
         self.consensus = None;
         consensus::metrics::CONSENSUS_STATE
@@ -447,7 +411,7 @@ impl NodeService {
         debug!("Broadcast new epoch event.");
         let msg = EpochNotification {
             epoch: self.chain.epoch(),
-            leader: self.chain.leader().clone(),
+            leader: leader,
             validators: self.chain.validators().clone(),
             facilitator: self.chain.facilitator().clone(),
         };
@@ -516,9 +480,9 @@ impl NodeService {
         match block {
             Block::KeyBlock(key_block) => {
                 // Check for the correct block order.
-                //if self.chain.blocks_in_epoch() < SEALED_BLOCK_IN_EPOCH {
-                //    return Err(NodeError::ExpectedMonetaryBlock(self.chain.height()).into());
-                //}
+                if self.chain.blocks_in_epoch() < SEALED_BLOCK_IN_EPOCH {
+                    return Err(NodeError::ExpectedMonetaryBlock(self.chain.height()).into());
+                }
 
                 // Check consensus.
                 if let Some(consensus) = &mut self.consensus {
@@ -576,26 +540,6 @@ impl NodeService {
             }
         }
 
-        self.on_next_block()?;
-
-        Ok(())
-    }
-
-    /// Count sealed block in epoch, restarts timers and all systems
-    /// related to block timeout.
-    ///
-    /// Returns error on sending message failure.
-    fn on_next_block(&mut self) -> Result<(), Error> {
-        self.vrf_system.handle_sealed_block();
-
-        // epoch ended, disable consensus and start vrf system.
-        if self.chain.blocks_in_epoch() >= SEALED_BLOCK_IN_EPOCH {
-            self.consensus = None;
-            let random = self.chain.last_random();
-            let ticket = self.vrf_system.handle_epoch_end(random);
-            self.broadcast_vrf_ticket(ticket)?;
-        }
-
         Ok(())
     }
 
@@ -627,7 +571,7 @@ impl NodeService {
     }
 
     fn handle_election_info(&mut self) -> Result<(), Error> {
-        let msg = InfoNotification::Election(self.vrf_system.info());
+        let msg = InfoNotification::ElectionInfo(self.chain.election_info());
         self.on_info
             .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
         Ok(())
@@ -663,7 +607,11 @@ impl NodeService {
             consensus.leader()
         );
 
-        let validators = consensus.validators();
+        let validators: Vec<_> = consensus
+            .validators()
+            .iter()
+            .map(|(k, v)| (*k, *v))
+            .collect();
         let mut block = KeyBlock::new(
             base,
             leader,
@@ -715,28 +663,56 @@ impl NodeService {
 
     /// Request for changing group received from VRF system.
     /// Restars consensus with new params, and send new keyblock.
-    fn on_change_group(&mut self, group: ElectionResult) -> Result<(), Error> {
-        info!("Changing group, new group leader = {}", group.leader);
-        let validators: BTreeMap<secure::PublicKey, i64> =
-            group.validators.iter().cloned().collect();
-        if validators.contains_key(&self.keys.network_pkey) {
-            let consensus = BlockConsensus::new(
-                self.chain.height() as u64,
-                self.chain.epoch() + 1,
-                self.keys.network_skey.clone(),
-                self.keys.network_pkey.clone(),
-                group.leader.clone(),
-                validators,
-            );
-            self.consensus = Some(consensus);
-            let consensus = self.consensus.as_ref().unwrap();
-            if consensus.is_leader() {
-                self.create_new_epoch(group.random, group.view_change, group.facilitator)?;
-            }
-            self.on_new_consensus();
-        } else {
-            self.consensus = None;
+    fn on_change_group(&mut self) -> Result<(), Error> {
+        if self
+            .chain
+            .validators()
+            .iter()
+            .find(|(key, _)| *key == self.keys.network_pkey)
+            .is_some()
+        {
+            debug!("I am regular node, waiting for old consensus to produce blocks");
+            return Ok(());
         }
+
+        info!("I am a part of consensus, trying choose new group.");
+        let consensus = BlockConsensus::new(
+            self.chain.height() as u64,
+            self.chain.epoch() + 1,
+            self.keys.network_skey.clone(),
+            self.keys.network_pkey.clone(),
+            self.chain.leader(),
+            self.chain.validators().iter().cloned().collect(),
+        );
+
+        self.consensus = Some(consensus);
+        let consensus = self.consensus.as_ref().unwrap();
+        if consensus.is_leader() {
+            let last_random = self.chain.last_random();
+            let seed = mix(last_random, self.chain.height() as u32);
+            let stakers = self
+                .chain
+                .escrow()
+                .get_stakers_majority()
+                .into_iter()
+                .collect();
+
+            let vrf = secure::make_VRF(&self.keys.network_skey, &seed);
+            let group =
+                election::select_validators_slots(stakers, vrf, stegos_blockchain::MAX_SLOTS_COUNT);
+            //TODO: rewrite view_change counter.
+
+            debug!("Trying to broadcast new group : {:?}", group);
+
+            info!(
+                "I am leader, sending new keyblock propose, new group random = {}",
+                group.random
+            );
+
+            self.create_new_epoch(group.random, self.chain.height() as u32, group.facilitator)?;
+        }
+        self.on_new_consensus();
+
         Ok(())
     }
 
@@ -808,7 +784,7 @@ impl NodeService {
     /// Returns true if current node is a leader.
     ///
     fn is_leader(&self) -> bool {
-        self.chain.leader() == &self.keys.network_pkey
+        self.chain.leader() == self.keys.network_pkey
     }
 
     ///
@@ -854,8 +830,7 @@ impl NodeService {
             self.commit_proposed_block(block, multisig, multisigmap);
         }
 
-        // Handle VRF.
-        self.handle_vrf_timer()
+        Ok(())
     }
 
     ///
@@ -979,8 +954,6 @@ impl Future for NodeService {
                         NodeMessage::SealedBlock(msg) => {
                             Block::from_buffer(&msg).and_then(|msg| self.handle_sealed_block(msg))
                         }
-                        NodeMessage::VRFMessage(msg) => VRFTicket::from_buffer(&msg)
-                            .and_then(|msg| self.handle_vrf_message(msg)),
                         NodeMessage::ChainLoaderMessage(msg) => {
                             ChainLoaderMessage::from_buffer(&msg.data)
                                 .and_then(|data| self.handle_chain_loader_message(msg.from, data))

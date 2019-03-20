@@ -24,15 +24,17 @@
 use crate::block::*;
 use crate::check_multi_signature;
 use crate::config::*;
+use crate::election::ElectionInfo;
+use crate::election::{self, mix, ElectionResult};
 use crate::error::*;
 use crate::escrow::*;
 use crate::merkle::*;
 use crate::metrics;
 use crate::output::*;
 use crate::storage::ListDb;
+use failure::ensure;
 use failure::Error;
 use log::*;
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::time::Instant;
@@ -45,6 +47,8 @@ use stegos_crypto::curve1174::G;
 use stegos_crypto::hash::*;
 use stegos_crypto::pbc::secure;
 use tokio_timer::clock;
+
+pub const MAX_SLOTS_COUNT: usize = 1000;
 
 /// A help to find UTXO in this blockchain.
 struct OutputKey {
@@ -77,14 +81,8 @@ pub struct Blockchain {
     epoch: u64,
     /// Zero-indexed identifier of the last key block.
     last_key_block_id: u64,
-    /// Snapshot of selected leader from the latest key block.
-    leader: secure::PublicKey,
-    /// Snapshot of selected facilitator from the latest key block.
-    facilitator: secure::PublicKey,
-    /// Snapshot of validators with stakes from the latest key block.
-    validators: BTreeMap<secure::PublicKey, i64>,
-    /// Copy of a random value from the latest key block.
-    last_random: Hash,
+    /// Last election result.
+    election_result: ElectionResult,
 
     //
     // Height Information.
@@ -95,6 +93,12 @@ pub struct Blockchain {
     last_block_timestamp: Instant,
     /// Copy of a block hash from the latest registered block.
     last_block_hash: Hash,
+
+    //
+    // Consensus information.
+    //
+    /// Number of leader changes since last epoch.
+    view_change: u32,
 
     //
     // Global Monetary Balance.
@@ -137,10 +141,7 @@ impl Blockchain {
         //
         let epoch: u64 = 0;
         let last_key_block_id: u64 = 0;
-        let leader = secure::PublicKey::dum();
-        let facilitator = secure::PublicKey::dum();
-        let validators: BTreeMap<secure::PublicKey, i64> = BTreeMap::new();
-        let last_random = Hash::digest("random");
+        let election_result = ElectionResult::default();
 
         //
         // Height Information.
@@ -148,6 +149,11 @@ impl Blockchain {
         let height: u64 = 0;
         let last_block_timestamp = clock::now();
         let last_block_hash = Hash::digest("genesis");
+
+        //
+        // Consensus information.
+        //
+        let view_change = 0;
 
         //
         // Global Monetary Balance.
@@ -164,13 +170,11 @@ impl Blockchain {
             escrow,
             epoch,
             last_key_block_id,
-            leader,
-            facilitator,
-            validators,
-            last_random,
+            election_result,
             height,
             last_block_timestamp,
             last_block_hash,
+            view_change,
             created,
             burned,
             gamma,
@@ -262,6 +266,24 @@ impl Blockchain {
         }
     }
 
+    //
+    // Info
+    //
+    pub fn election_info(&self) -> ElectionInfo {
+        let last_leader = if self.view_change > 1 {
+            self.select_leader(self.view_change - 1).to_string()
+        } else {
+            "no_leader".to_owned()
+        };
+
+        ElectionInfo {
+            height: self.height,
+            view_change: self.view_change,
+            last_leader,
+            current_leader: self.select_leader(self.view_change).to_string(),
+            next_leader: self.select_leader(self.view_change + 1).to_string(),
+        }
+    }
     //----------------------------------------------------------------------------------------------
     // Database API.
     //----------------------------------------------------------------------------------------------
@@ -355,22 +377,26 @@ impl Blockchain {
         }
     }
 
-    /// Return the current epoch leader.
-    #[inline]
-    pub fn leader(&self) -> &secure::PublicKey {
-        &self.leader
+    /// Return leader public key for specific view_change number.
+    pub fn select_leader(&self, view_change: u32) -> secure::PublicKey {
+        self.election_result.select_leader(view_change)
+    }
+
+    /// Returns public key of the active leader.
+    pub fn leader(&self) -> secure::PublicKey {
+        self.select_leader(self.view_change())
     }
 
     /// Return the current epoch facilitator.
     #[inline]
     pub fn facilitator(&self) -> &secure::PublicKey {
-        &self.facilitator
+        &self.election_result.facilitator
     }
 
     /// Return the current epoch validators with their stakes.
     #[inline]
-    pub fn validators(&self) -> &BTreeMap<secure::PublicKey, i64> {
-        &self.validators
+    pub fn validators(&self) -> &Vec<(secure::PublicKey, i64)> {
+        &self.election_result.validators
     }
 
     /// Return the last block timestamp.
@@ -382,7 +408,7 @@ impl Blockchain {
     /// Return the last random value.
     #[inline]
     pub fn last_random(&self) -> Hash {
-        self.last_random
+        self.election_result.random.rand
     }
 
     /// Return the last block hash.
@@ -408,6 +434,11 @@ impl Blockchain {
     #[inline]
     pub fn escrow(&self) -> &Escrow {
         &self.escrow
+    }
+
+    /// Returns number of leader changes since last epoch creation.
+    pub fn view_change(&self) -> u32 {
+        self.view_change
     }
 
     //----------------------------------------------------------------------------------------------
@@ -496,16 +527,48 @@ impl Blockchain {
         if !block.header.validators.contains(&block.header.leader) {
             return Err(BlockchainError::LeaderIsNotValidator.into());
         }
-        let validators = self.escrow.multiget(&block.header.validators);
-        let stakers = self.escrow.get_stakers_majority();
-        // We didn't allows fork, this is done by forcing group to be the same as stakers count.
-        if stakers != validators {
-            return Err(BlockchainError::ValidatorsNotEqualToOurStakers.into());
-        }
 
-        let seed = mix(self.last_random, block.header.view_change);
+        let seed = mix(self.last_random(), block.header.view_change);
         if !secure::validate_VRF_source(&block.header.random, &block.header.leader, &seed) {
             return Err(BlockchainError::IncorrectRandom.into());
+        }
+
+        //Try to tmp elect according to random
+        let election_result = election::select_validators_slots(
+            self.escrow.get_stakers_majority().into_iter().collect(),
+            block.header.random,
+            MAX_SLOTS_COUNT,
+        );
+
+        //TODO: Remove validators list from keyblock.
+        //TODO: Remove facilitator, leader from keyblock.
+
+        let validators = &election_result.validators;
+
+        // select leader work only with inited blockchain
+        // view_change is equal to 0 at genesis
+        // facilitator is equal to leader at genesis
+        if self.epoch > 0 {
+            ensure!(block.header.leader == self.leader(), "Wrong leader");
+            // TODO: Use real view_change
+            ensure!(
+                block.header.view_change == self.view_change(),
+                "Wrong view_change"
+            );
+            ensure!(
+                block.header.facilitator == election_result.facilitator,
+                "Wrong facilitator"
+            );
+            for (election, key_block) in validators
+                .iter()
+                .map(|(k, _)| k)
+                .zip(&block.header.validators)
+            {
+                ensure!(
+                    election == key_block,
+                    BlockchainError::ValidatorsNotEqualToOurStakers
+                );
+            }
         }
 
         // Check multisignature.
@@ -541,15 +604,19 @@ impl Blockchain {
         //
         // Update metadata.
         //
+
         self.last_block_timestamp = clock::now();
         self.last_block_hash = block_hash.clone();
-        self.height = self.height + 1;
-        self.epoch = self.epoch + 1;
+        self.height += 1;
+        self.epoch += 1;
         self.last_key_block_id = block_id;
-        self.last_random = block.header.random.rand.clone();
-        self.leader = block.header.leader.clone();
-        self.facilitator = block.header.facilitator.clone();
-        self.validators = self.escrow.multiget(&block.header.validators);
+        self.election_result = election::select_validators_slots(
+            self.escrow.get_stakers_majority().into_iter().collect(),
+            block.header.random,
+            MAX_SLOTS_COUNT,
+        );
+        self.view_change = 0;
+
         metrics::HEIGHT.inc();
         metrics::EPOCH.inc();
 
@@ -557,8 +624,8 @@ impl Blockchain {
             "Registered key block: height={}, hash={}",
             self.height, block_hash
         );
-        debug!("Validators: {:?}", &self.validators);
-        for (key, stake) in self.validators.iter() {
+        debug!("Validators: {:?}", &self.validators());
+        for (key, stake) in self.validators().iter() {
             let key_str = key.to_string();
             metrics::VALIDATOR_STAKE_GAUGEVEC
                 .with_label_values(&[key_str.as_str()])
@@ -655,14 +722,16 @@ impl Blockchain {
             return Err(BlockchainError::BlockHashCollision(block_hash).into());
         }
 
+        //TODO: remove multisig?
+
         // Check multisignature (exclude epoch == 0 for genesis).
         if self.epoch > 0
             && !check_multi_signature(
                 &block_hash,
                 &block.header.base.multisig,
                 &block.header.base.multisigmap,
-                &self.validators,
-                &self.leader,
+                self.validators(),
+                &self.leader(),
                 true,
             )
         {
@@ -910,7 +979,8 @@ impl Blockchain {
         self.monetary_adjustment = monetary_adjustment;
         self.last_block_timestamp = clock::now();
         self.last_block_hash = block_hash.clone();
-        self.height = self.height + 1;
+        self.height += 1;
+        self.view_change += 1;
         metrics::HEIGHT.inc();
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
 
@@ -926,23 +996,16 @@ impl Blockchain {
     }
 }
 
-/// Mix seed hash with round value to produce new hash.
-pub(crate) fn mix(random: Hash, round: u32) -> Hash {
-    let mut hasher = Hasher::new();
-    random.hash(&mut hasher);
-    round.hash(&mut hasher);
-    hasher.result()
-}
-
 #[cfg(test)]
 pub mod tests {
     use super::*;
 
+    use crate::election::select_validators_slots;
     use crate::genesis::genesis;
     use crate::multisignature::create_multi_signature;
     use chrono::prelude::Utc;
     use simple_logger;
-    use std::collections::BTreeSet;
+    use std::collections::BTreeMap;
     use stegos_keychain::KeyChain;
 
     #[test]
@@ -974,15 +1037,16 @@ pub mod tests {
         assert_eq!(blockchain.height(), 2);
         assert_eq!(blockchain.epoch, block2.header.base.epoch);
         assert_eq!(blockchain.blocks_in_epoch(), 1);
-        assert_eq!(blockchain.leader, block2.header.leader);
-        assert_eq!(blockchain.facilitator, block2.header.facilitator);
+        assert_eq!(blockchain.leader(), block2.header.leader);
+        assert_eq!(*blockchain.facilitator(), block2.header.facilitator);
         let validators = blockchain.escrow.get_stakers_majority();
         assert_eq!(validators.len(), keychains.len());
+        let validators_map: BTreeMap<_, _> = validators.iter().cloned().collect();
         for keychain in &keychains {
-            let stake = validators.get(&keychain.network_pkey).expect("exists");
+            let stake = validators_map.get(&keychain.network_pkey).expect("exists");
             assert_eq!(*stake, MIN_STAKE_AMOUNT);
         }
-        assert_eq!(blockchain.validators, validators);
+        assert_eq!(blockchain.validators(), &validators);
         assert_eq!(blockchain.last_block_hash(), Hash::digest(&block2));
         assert_eq!(
             Hash::digest(&blockchain.last_block().unwrap()),
@@ -1035,20 +1099,32 @@ pub mod tests {
         assert!(blockchain.height() > 0);
         let version: u64 = 1;
         for epoch in 2..12 {
+            let view_change = blockchain.view_change();;
+            let key = blockchain.select_leader(view_change);
+            let keychain = keychains.iter().find(|p| p.network_pkey == key).unwrap();
             let mut block = {
                 let previous = blockchain.last_block_hash();
                 let base = BaseBlockHeader::new(version, previous, epoch, 0);
 
-                let validators: BTreeSet<secure::PublicKey> =
-                    keychains.iter().map(|p| p.network_pkey.clone()).collect();
-                let leader = keychains[0].network_pkey.clone();
-                let facilitator = keychains[0].network_pkey.clone();
-                let seed = mix(blockchain.last_random, 0);
-                let random = secure::make_VRF(&keychains[0].network_skey, &seed);
-                KeyBlock::new(base, leader, facilitator, random, 0, validators)
+                let leader = keychain.network_pkey.clone();
+                let seed = mix(blockchain.last_random(), view_change);
+                let random = secure::make_VRF(&keychain.network_skey, &seed);
+                let election = select_validators_slots(
+                    blockchain
+                        .escrow
+                        .get_stakers_majority()
+                        .into_iter()
+                        .collect(),
+                    random,
+                    MAX_SLOTS_COUNT,
+                );
+
+                let facilitator = election.facilitator;
+                let validators = election.validators.into_iter().map(|(k, _)| k).collect();
+                KeyBlock::new(base, leader, facilitator, random, view_change, validators)
             };
             let block_hash = Hash::digest(&block);
-            let validators: BTreeMap<secure::PublicKey, i64> = keychains
+            let validators: Vec<(secure::PublicKey, i64)> = keychains
                 .iter()
                 .map(|p| (p.network_pkey.clone(), stake))
                 .collect();

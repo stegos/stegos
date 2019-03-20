@@ -114,7 +114,6 @@ impl ProtoConvert for BlockConsensusMessage {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use std::collections::BTreeSet;
     use stegos_crypto::hash::Hashable;
     use stegos_crypto::pbc::secure::make_random_keys as make_secure_random_keys;
 
@@ -158,19 +157,16 @@ mod tests {
 
     #[test]
     fn key_blocks() {
-        let (skey0, pkey0, _sig0) = make_secure_random_keys();
+        let (skey0, _pkey0, _sig0) = make_secure_random_keys();
 
         let version: u64 = 1;
         let epoch: u64 = 1;
         let timestamp = Utc::now().timestamp() as u64;
         let previous = Hash::digest(&"test".to_string());
 
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
-        let validators: BTreeSet<secure::PublicKey> = [pkey0].iter().cloned().collect();
-        let leader = pkey0.clone();
-        let facilitator = pkey0.clone();
+        let base = BaseBlockHeader::new(version, previous, epoch, timestamp, 0);
         let random = secure::make_VRF(&skey0, &Hash::digest("test"));
-        let block = KeyBlock::new(base, leader, facilitator, random, 0, validators);
+        let block = KeyBlock::new(base, random);
 
         //
         // KeyBlockProposal

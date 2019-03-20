@@ -149,6 +149,7 @@ impl Mempool {
         reward: i64,
         skey: &SecretKey,
         pkey: &PublicKey,
+        view_change: u32,
     ) -> (MonetaryBlock, Option<Output>, Vec<Hash>) {
         // TODO: limit the block size.
         let tx_count = self.pool.len();
@@ -201,7 +202,7 @@ impl Mempool {
         };
 
         // Create a new monetary block.
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+        let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
         let block = MonetaryBlock::new(base, gamma, monetary_adjustment, &inputs, &outputs);
 
         (block, output_fee, tx_hashes)
@@ -323,8 +324,9 @@ mod test {
         let previous = Hash::digest(&1u64);
         let version = 1;
         let epoch = 1;
+        let view_change = 0;
         let (block, output_fee, tx_hashes) =
-            mempool.create_block(previous, version, epoch, 0, &skey, &pkey);
+            mempool.create_block(previous, version, epoch, 0, &skey, &pkey, view_change);
 
         // Used transactions.
         assert_eq!(tx_hashes, vec![tx_hash1, tx_hash2]);

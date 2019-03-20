@@ -26,15 +26,13 @@ use crate::mempool::Mempool;
 use crate::PAYMENT_FEE;
 use crate::STAKE_FEE;
 use chrono::Utc;
-use failure::ensure;
-use failure::Error;
+use failure::{ensure, Error};
 use log::*;
 use stegos_blockchain::Blockchain;
 use stegos_blockchain::BlockchainError;
 use stegos_blockchain::KeyBlock;
 use stegos_blockchain::Output;
 use stegos_blockchain::Transaction;
-use stegos_consensus::BlockConsensus;
 use stegos_crypto::hash::Hash;
 
 ///
@@ -126,7 +124,7 @@ pub(crate) fn validate_transaction(
 ///
 pub(crate) fn validate_proposed_key_block(
     chain: &Blockchain,
-    consensus: &BlockConsensus,
+    view_change: u32,
     block_hash: Hash,
     block: &KeyBlock,
 ) -> Result<(), Error> {
@@ -140,21 +138,9 @@ pub(crate) fn validate_proposed_key_block(
     }
 
     ensure!(
-        block.header.leader == consensus.leader(),
-        "Consensus leader different from our consensus group."
+        block.header.base.view_change == view_change,
+        "Proposed view_change different from our"
     );
-    ensure!(
-        block.header.validators.len() == consensus.validators().len(),
-        "Received key block proposal with wrong consensus group"
-    );
-
-    for validator in &block.header.validators {
-        ensure!(
-            consensus.validators().contains_key(validator),
-            "Received Key block proposal with wrong consensus group."
-        );
-    }
-
     chain.validate_key_block(block, true)?;
 
     debug!("Key block proposal is valid: block={:?}", block_hash);
@@ -176,6 +162,7 @@ mod test {
         let stake: i64 = MIN_STAKE_AMOUNT;
         let amount: i64 = 10000;
         let current_timestamp = Utc::now().timestamp() as u64;
+        let view_change = 0;
         let keychain = KeyChain::new_mem();
         let mut mempool = Mempool::new();
         let genesis = genesis(
@@ -420,7 +407,8 @@ mod test {
             let previous = chain.last_block_hash();
             let epoch = chain.epoch();
             let version = VERSION;
-            let base = BaseBlockHeader::new(version, previous, epoch, current_timestamp);
+            let base =
+                BaseBlockHeader::new(version, previous, epoch, current_timestamp, view_change);
             let (output, outputs_gamma) =
                 Output::new_payment(current_timestamp, skey, pkey, amount - fee)
                     .expect("genesis has valid public keys");

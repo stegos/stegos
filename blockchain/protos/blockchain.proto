@@ -36,8 +36,9 @@ message BaseBlockHeader {
     stegos.crypto.Hash previous = 2;
     uint64 epoch = 3;
     uint64 timestamp = 4;
-    stegos.crypto.SecureSignature sig = 5;
-    repeated bool sigmap = 6;
+    uint32 view_change = 5;
+    stegos.crypto.SecureSignature sig = 6;
+    repeated bool sigmap = 7;
 }
 
 message MonetaryBlockHeader {
@@ -67,11 +68,7 @@ message MonetaryBlock {
 
 message KeyBlockHeader {
     BaseBlockHeader base = 1;
-    stegos.crypto.SecurePublicKey leader = 2;
-    stegos.crypto.SecurePublicKey facilitator = 3;
-    stegos.crypto.VRF random = 4;
-    uint32 view_change = 5;
-    repeated stegos.crypto.SecurePublicKey validators = 6;
+    stegos.crypto.VRF random = 2;
 }
 
 message KeyBlock {

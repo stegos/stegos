@@ -26,7 +26,6 @@ use crate::merkle::*;
 use crate::output::*;
 use bitvector::BitVector;
 use failure::Error;
-use std::collections::BTreeSet;
 use stegos_crypto::bulletproofs::{fee_a, validate_range_proof};
 use stegos_crypto::curve1174::cpt::Pt;
 use stegos_crypto::curve1174::ecpt::ECp;
@@ -57,6 +56,9 @@ pub struct BaseBlockHeader {
     /// Timestamp at which the block was built.
     pub timestamp: u64,
 
+    /// Number of leader changes in current validator groups.
+    pub view_change: u32,
+
     /// BLS multi-signature
     pub multisig: secure::Signature,
 
@@ -65,7 +67,7 @@ pub struct BaseBlockHeader {
 }
 
 impl BaseBlockHeader {
-    pub fn new(version: u64, previous: Hash, epoch: u64, timestamp: u64) -> Self {
+    pub fn new(version: u64, previous: Hash, epoch: u64, timestamp: u64, view_change: u32) -> Self {
         let multisig = secure::Signature::zero();
         let multisigmap = BitVector::new(VALIDATORS_MAX);
         BaseBlockHeader {
@@ -73,6 +75,7 @@ impl BaseBlockHeader {
             previous,
             epoch,
             timestamp,
+            view_change,
             multisig,
             multisigmap,
         }
@@ -94,31 +97,14 @@ pub struct KeyBlockHeader {
     /// Common header.
     pub base: BaseBlockHeader,
 
-    /// Leader public key.
-    pub leader: secure::PublicKey,
-
-    /// Facilitator of Transaction Pool.
-    pub facilitator: secure::PublicKey,
-
     /// Initial seed of epoch.
     pub random: VRF,
-
-    /// Number of retries during creating a block.
-    pub view_change: u32,
-
-    /// Ordered list of validators public keys.
-    pub validators: BTreeSet<secure::PublicKey>,
 }
 
 impl Hashable for KeyBlockHeader {
     fn hash(&self, state: &mut Hasher) {
         "Key".hash(state);
         self.base.hash(state);
-        self.leader.hash(state);
-        self.facilitator.hash(state);
-        for validator in self.validators.iter() {
-            validator.hash(state);
-        }
     }
 }
 
@@ -194,37 +180,14 @@ pub struct KeyBlock {
 }
 
 impl KeyBlock {
-    pub fn new(
-        base: BaseBlockHeader,
-        leader: secure::PublicKey,
-        facilitator: secure::PublicKey,
-        random: VRF,
-        view_change: u32,
-        validators: BTreeSet<secure::PublicKey>,
-    ) -> Self {
+    pub fn new(base: BaseBlockHeader, random: VRF) -> Self {
         debug_assert!(
             secure::validate_VRF_randomness(&random),
             "Cannot verify VRF."
         );
-        assert!(!validators.is_empty(), "validators is not empty");
-        assert!(
-            validators.contains(&leader),
-            "leader must present in validators array"
-        );
-        assert!(
-            validators.len() <= VALIDATORS_MAX,
-            "max number of validators"
-        );
 
         // Create header
-        let header = KeyBlockHeader {
-            base,
-            leader,
-            facilitator,
-            random,
-            view_change,
-            validators,
-        };
+        let header = KeyBlockHeader { base, random };
 
         // Create the block
         KeyBlock { header }
@@ -417,6 +380,7 @@ pub mod tests {
         let version: u64 = 1;
         let epoch: u64 = 1;
         let timestamp = Utc::now().timestamp() as u64;
+        let view_change = 0;
         let amount: i64 = 1_000_000;
         let previous = Hash::digest("test");
 
@@ -425,7 +389,7 @@ pub mod tests {
         //
         {
             let (output0, gamma0) = Output::new_payment(timestamp, &skey0, &pkey1, amount).unwrap();
-            let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+            let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
             let inputs1 = [Hash::digest(&output0)];
             let (output1, gamma1) = Output::new_payment(timestamp, &skey1, &pkey2, amount).unwrap();
             let outputs1 = [output1];
@@ -439,7 +403,7 @@ pub mod tests {
         //
         {
             let (output0, gamma0) = Output::new_payment(timestamp, &skey0, &pkey1, amount).unwrap();
-            let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+            let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
             let inputs1 = [Hash::digest(&output0)];
             let (output1, gamma1) =
                 Output::new_payment(timestamp, &skey1, &pkey2, amount - 1).unwrap();
@@ -463,11 +427,12 @@ pub mod tests {
         let version: u64 = 1;
         let epoch: u64 = 1;
         let timestamp = Utc::now().timestamp() as u64;
+        let view_change = 0;
         let amount: i64 = 1_000_000;
         let previous = Hash::digest(&"test".to_string());
 
         let (input, gamma0) = Output::new_payment(timestamp, &skey, &pkey, amount).unwrap();
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+        let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
         let input_hashes = [Hash::digest(&input)];
         let inputs = [input];
         let (output, gamma1) = Output::new_payment(timestamp, &skey, &pkey, amount).unwrap();
@@ -500,6 +465,7 @@ pub mod tests {
         let version: u64 = 1;
         let epoch: u64 = 1;
         let timestamp = Utc::now().timestamp() as u64;
+        let view_change = 0;
         let amount: i64 = 1_000_000;
         let previous = Hash::digest(&"test".to_string());
 
@@ -517,7 +483,7 @@ pub mod tests {
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;
 
-            let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+            let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
             let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..]);
             block.validate_balance(&inputs).expect("block is valid");
         }
@@ -536,7 +502,7 @@ pub mod tests {
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;
 
-            let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+            let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
             let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..]);
             block.validate_balance(&inputs).expect("block is valid");
         }
@@ -557,7 +523,7 @@ pub mod tests {
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;
 
-            let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+            let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
             let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..]);
             match block.validate_balance(&inputs) {
                 Err(e) => match e.downcast::<BlockchainError>().unwrap() {
@@ -584,7 +550,7 @@ pub mod tests {
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;
 
-            let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+            let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
             let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..]);
             match block.validate_balance(&inputs) {
                 Err(e) => match e.downcast::<OutputError>().unwrap() {
@@ -602,13 +568,14 @@ pub mod tests {
         let version: u64 = 1;
         let epoch: u64 = 1;
         let timestamp = Utc::now().timestamp() as u64;
+        let view_change = 0;
         let previous = Hash::digest(&"test".to_string());
 
         let monetary_adjustment: i64 = output_amount - input_amount;
 
         let (input, input_gamma) =
             Output::new_payment(timestamp, &skey, &pkey, input_amount).unwrap();
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+        let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
         let input_hashes = [Hash::digest(&input)];
         let inputs = [input];
         let (output, output_gamma) =

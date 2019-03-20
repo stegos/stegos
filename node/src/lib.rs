@@ -400,7 +400,7 @@ impl NodeService {
         // Resign from Validator role.
         let leader = self.chain.leader();
         info!(
-            "I'm regular node, waiting for sealed block: epoch={}, leader={}",
+            "Waiting for sealed block: epoch={}, leader={}",
             self.chain.epoch(),
             leader
         );
@@ -537,6 +537,11 @@ impl NodeService {
                 let msg = OutputsNotification { inputs, outputs };
                 self.on_outputs_changed
                     .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
+
+                if self.chain.blocks_in_epoch() >= SEALED_BLOCK_IN_EPOCH {
+                    debug!("Starting new election.");
+                    self.on_change_group()?;
+                }
             }
         }
 
@@ -587,20 +592,16 @@ impl NodeService {
     /// Handler for new epoch creation procedure.
     /// This method called only on leader side, and when consensus is active.
     /// Leader should create a KeyBlock based on last random provided by VRF.
-    fn create_new_epoch(
-        &mut self,
-        random: VRF,
-        view_change: u32,
-        facilitator: secure::PublicKey,
-    ) -> Result<(), Error> {
+    fn create_new_epoch(&mut self, random: VRF) -> Result<(), Error> {
         let consensus = self.consensus.as_mut().unwrap();
         let previous = self.chain.last_block_hash();
         let timestamp = Utc::now().timestamp() as u64;
+        let view_change = self.chain.view_change();
         let epoch = self.chain.epoch() + 1;
         let leader = consensus.leader();
         assert_eq!(&leader, &self.keys.network_pkey);
 
-        let base = BaseBlockHeader::new(VERSION, previous, epoch, timestamp);
+        let base = BaseBlockHeader::new(VERSION, previous, epoch, timestamp, view_change);
         debug!(
             "Creating a new epoch proposal: {}, with leader = {:?}",
             epoch,
@@ -612,14 +613,7 @@ impl NodeService {
             .iter()
             .map(|(k, v)| (*k, *v))
             .collect();
-        let mut block = KeyBlock::new(
-            base,
-            leader,
-            facilitator,
-            random,
-            view_change,
-            validators.iter().map(|(k, _s)| *k).collect(),
-        );
+        let mut block = KeyBlock::new(base, random);
 
         let block_hash = Hash::digest(&block);
 
@@ -669,7 +663,7 @@ impl NodeService {
             .validators()
             .iter()
             .find(|(key, _)| *key == self.keys.network_pkey)
-            .is_some()
+            .is_none()
         {
             debug!("I am regular node, waiting for old consensus to produce blocks");
             return Ok(());
@@ -689,7 +683,7 @@ impl NodeService {
         let consensus = self.consensus.as_ref().unwrap();
         if consensus.is_leader() {
             let last_random = self.chain.last_random();
-            let seed = mix(last_random, self.chain.height() as u32);
+            let seed = mix(last_random, self.chain.view_change());
             let stakers = self
                 .chain
                 .escrow()
@@ -709,7 +703,7 @@ impl NodeService {
                 group.random
             );
 
-            self.create_new_epoch(group.random, self.chain.height() as u32, group.facilitator)?;
+            self.create_new_epoch(group.random)?;
         }
         self.on_new_consensus();
 
@@ -856,6 +850,7 @@ impl NodeService {
             BLOCK_REWARD,
             &self.keys.wallet_skey,
             &self.keys.wallet_pkey,
+            self.chain.view_change(),
         );
         let block_hash = Hash::digest(&block);
 
@@ -895,7 +890,12 @@ impl NodeService {
         let (block, _proof) = consensus.get_proposal();
         let request_hash = Hash::digest(block);
         debug!("Validating block: block={:?}", &request_hash);
-        match validate_proposed_key_block(&self.chain, consensus, request_hash, block) {
+        match validate_proposed_key_block(
+            &self.chain,
+            self.chain.view_change(),
+            request_hash,
+            block,
+        ) {
             Ok(()) => {
                 let consensus = self.consensus.as_mut().unwrap();
                 consensus.prevote(request_hash);

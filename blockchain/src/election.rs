@@ -168,11 +168,12 @@ pub fn mix(random: Hash, round: u32) -> Hash {
 }
 
 /// Shrink hash to size of u64, internally takes 8 most significant bytes.
+#[inline(always)]
 fn shrink_hash(hash: Hash) -> i64 {
     let slice = hash.base_vector();
     let mut result = 0;
     for i in 0..8 {
-        result |= (slice[8 - i] as i64) << i;
+        result |= (slice[8 - i] as i64) << (i * 8);
     }
     result
 }

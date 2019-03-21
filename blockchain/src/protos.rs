@@ -25,7 +25,6 @@ use stegos_serialization::traits::*;
 use bitvector::BitVector;
 
 use crate::*;
-use std::collections::BTreeSet;
 use stegos_crypto::bulletproofs::BulletProof;
 use stegos_crypto::curve1174::cpt::{EncryptedPayload, PublicKey, SchnorrSig};
 use stegos_crypto::curve1174::fields::Fr;
@@ -169,6 +168,7 @@ impl ProtoConvert for BaseBlockHeader {
         proto.set_previous(self.previous.into_proto());
         proto.set_epoch(self.epoch);
         proto.set_timestamp(self.timestamp);
+        proto.set_view_change(self.view_change);
         if !self.multisig.is_zero() {
             proto.set_sig(self.multisig.into_proto());
         }
@@ -187,6 +187,7 @@ impl ProtoConvert for BaseBlockHeader {
         let previous = Hash::from_proto(proto.get_previous())?;
         let epoch = proto.get_epoch();
         let timestamp = proto.get_timestamp();
+        let view_change = proto.get_view_change();
         let sig = if proto.has_sig() {
             secure::Signature::from_proto(proto.get_sig())?
         } else {
@@ -206,6 +207,7 @@ impl ProtoConvert for BaseBlockHeader {
             previous,
             epoch,
             timestamp,
+            view_change,
             multisig: sig,
             multisigmap: sigmap,
         })
@@ -217,37 +219,15 @@ impl ProtoConvert for KeyBlockHeader {
     fn into_proto(&self) -> Self::Proto {
         let mut proto = blockchain::KeyBlockHeader::new();
         proto.set_base(self.base.into_proto());
-        proto.set_leader(self.leader.into_proto());
-        proto.set_facilitator(self.facilitator.into_proto());
         proto.set_random(self.random.into_proto());
-        proto.set_view_change(self.view_change);
-        for validator in &self.validators {
-            proto.validators.push(validator.into_proto());
-        }
         proto
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let base = BaseBlockHeader::from_proto(proto.get_base())?;
-        let leader = secure::PublicKey::from_proto(proto.get_leader())?;
-        let facilitator = secure::PublicKey::from_proto(proto.get_facilitator())?;
         let random = secure::VRF::from_proto(proto.get_random())?;
-        let view_change = proto.get_view_change();
-        let mut validators = BTreeSet::new();
-        for validator in proto.validators.iter() {
-            if !validators.insert(secure::PublicKey::from_proto(validator)?) {
-                return Err(ProtoError::DuplicateValue("validators".to_string()).into());
-            }
-        }
 
-        Ok(KeyBlockHeader {
-            base,
-            leader,
-            facilitator,
-            random,
-            view_change,
-            validators,
-        })
+        Ok(KeyBlockHeader { base, random })
     }
 }
 
@@ -502,14 +482,14 @@ mod tests {
 
     #[test]
     fn key_blocks() {
-        let (skey0, pkey0, sig0) = make_secure_random_keys();
+        let (skey0, _pkey0, sig0) = make_secure_random_keys();
 
         let version: u64 = 1;
         let epoch: u64 = 1;
         let timestamp = Utc::now().timestamp() as u64;
         let previous = Hash::digest(&"test".to_string());
 
-        let mut base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+        let mut base = BaseBlockHeader::new(version, previous, epoch, timestamp, 0);
         roundtrip(&sig0);
         base.multisig = sig0;
         base.multisigmap.insert(1);
@@ -523,12 +503,8 @@ mod tests {
         assert!(base.multisigmap.contains(13));
         assert!(base.multisigmap.contains(44));
 
-        let validators: BTreeSet<secure::PublicKey> = [pkey0].iter().cloned().collect();
-        let leader = pkey0.clone();
-        let facilitator = pkey0.clone();
-
         let random = secure::make_VRF(&skey0, &Hash::digest("test"));
-        let block = KeyBlock::new(base, leader, facilitator, random, 0, validators);
+        let block = KeyBlock::new(base, random);
         roundtrip(&block.header);
         roundtrip(&block);
 
@@ -545,6 +521,7 @@ mod tests {
         let version: u64 = 1;
         let epoch: u64 = 1;
         let timestamp = Utc::now().timestamp() as u64;
+        let view_change = 0;
         let amount: i64 = 1_000_000;
         let previous = Hash::digest(&"test".to_string());
 
@@ -557,7 +534,7 @@ mod tests {
         let outputs1 = [output1];
         let gamma = gamma0 - gamma1;
 
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+        let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
         let base2 = roundtrip(&base);
         assert_eq!(base.multisig, base2.multisig);
         assert_eq!(base.multisigmap, base2.multisigmap);

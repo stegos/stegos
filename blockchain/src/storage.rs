@@ -112,24 +112,20 @@ impl ListDb {
 mod test {
     use super::*;
     use crate::block::{BaseBlockHeader, KeyBlock};
-    use std::collections::BTreeSet;
     use stegos_crypto::hash::Hash;
     use stegos_crypto::pbc::secure;
 
     fn create_block(previous: Hash) -> Block {
-        let (skey0, pkey0, _sig0) = secure::make_random_keys();
+        let (skey0, _pkey0, _sig0) = secure::make_random_keys();
         let version: u64 = 1;
         let epoch: u64 = 1;
         let timestamp = 0;
 
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+        let base = BaseBlockHeader::new(version, previous, epoch, timestamp, 0);
 
-        let validators: BTreeSet<secure::PublicKey> = [pkey0].iter().cloned().collect();
-        let leader = pkey0.clone();
-        let facilitator = pkey0.clone();
         let random = secure::make_VRF(&skey0, &Hash::digest("random"));
 
-        let block = KeyBlock::new(base, leader, facilitator, random, 0, validators);
+        let block = KeyBlock::new(base, random);
         Block::KeyBlock(block)
     }
     #[test]
@@ -148,7 +144,7 @@ mod test {
         for (block, saved) in blocks.iter().zip(db.iter()) {
             match (block, &saved) {
                 (Block::KeyBlock(b1), Block::KeyBlock(b2)) => {
-                    assert_eq!(b1.header.leader, b2.header.leader);
+                    assert_eq!(Hash::digest(b1), Hash::digest(b2));
                 }
                 _ => panic!("different blocks found in database and generated."),
             }

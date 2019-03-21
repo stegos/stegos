@@ -66,4 +66,9 @@ pub enum BlockchainError {
     InvalidBlockVersion(Hash, u64, u64),
     #[fail(display = "Received block with invalid random.")]
     IncorrectRandom,
+    #[fail(
+        display = "Received block with wrong view_change: our_view_change={}, block_view_change={}",
+        _0, _1
+    )]
+    InvalidViewChange(u32, u32),
 }

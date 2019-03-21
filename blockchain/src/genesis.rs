@@ -25,7 +25,6 @@ use crate::block::*;
 use crate::multisignature::create_multi_signature;
 use crate::output::*;
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
@@ -36,6 +35,7 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64, timestamp: u64) -
 
     // Both block are created at the same time in the same epoch.
     let version: u64 = 1;
+    let mut view_change = 0;
 
     //
     // Create initial Monetary Block.
@@ -43,7 +43,7 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64, timestamp: u64) -
     let block1 = {
         let epoch: u64 = 0;
         let previous = Hash::digest(&"genesis".to_string());
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
+        let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
         //
         // Genesis has one PaymentOutput + N * StakeOutput, where N is the number of validators.
         //
@@ -80,25 +80,19 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64, timestamp: u64) -
         let gamma = -outputs_gamma;
         MonetaryBlock::new(base, gamma, coins, &[], &outputs)
     };
-
+    view_change += 1;
     //
     // Create initial Key Block.
     //
     let block2 = {
         let epoch: u64 = 1;
         let init_random = Hash::digest("random");
-        let view_change = 0;
         let previous = Hash::digest(&block1);
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp);
-
-        let validators: BTreeSet<secure::PublicKey> =
-            keychains.iter().map(|p| p.network_pkey.clone()).collect();
-        let leader = keychains[0].network_pkey.clone();
-        let facilitator = keychains[0].network_pkey.clone();
+        let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
 
         let seed = crate::election::mix(init_random, view_change);
         let random = secure::make_VRF(&keychains[0].network_skey.clone(), &seed);
-        let mut block = KeyBlock::new(base, leader, facilitator, random, view_change, validators);
+        let mut block = KeyBlock::new(base, random);
         let block_hash = Hash::digest(&block);
 
         let mut signatures: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();

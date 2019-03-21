@@ -519,68 +519,40 @@ impl Blockchain {
         if let Some(_) = self.block_by_hash.get(&block_hash) {
             return Err(BlockchainError::BlockHashCollision(block_hash).into());
         }
-
-        // Check validators.
-        if block.header.validators.is_empty() {
-            return Err(BlockchainError::MissingValidators.into());
-        }
-        if !block.header.validators.contains(&block.header.leader) {
-            return Err(BlockchainError::LeaderIsNotValidator.into());
-        }
-
-        let seed = mix(self.last_random(), block.header.view_change);
-        if !secure::validate_VRF_source(&block.header.random, &block.header.leader, &seed) {
-            return Err(BlockchainError::IncorrectRandom.into());
-        }
-
-        //Try to tmp elect according to random
-        let election_result = election::select_validators_slots(
-            self.escrow.get_stakers_majority().into_iter().collect(),
-            block.header.random,
-            MAX_SLOTS_COUNT,
+        // TODO: Use real view_change
+        ensure!(
+            block.header.base.view_change == self.view_change(),
+            BlockchainError::InvalidViewChange(self.view_change, block.header.base.view_change)
         );
 
-        //TODO: Remove validators list from keyblock.
-        //TODO: Remove facilitator, leader from keyblock.
-
-        let validators = &election_result.validators;
-
-        // select leader work only with inited blockchain
-        // view_change is equal to 0 at genesis
-        // facilitator is equal to leader at genesis
+        // skip leader selection and signature checking for genesis block.
         if self.epoch > 0 {
-            ensure!(block.header.leader == self.leader(), "Wrong leader");
-            // TODO: Use real view_change
-            ensure!(
-                block.header.view_change == self.view_change(),
-                "Wrong view_change"
-            );
-            ensure!(
-                block.header.facilitator == election_result.facilitator,
-                "Wrong facilitator"
-            );
-            for (election, key_block) in validators
-                .iter()
-                .map(|(k, _)| k)
-                .zip(&block.header.validators)
-            {
-                ensure!(
-                    election == key_block,
-                    BlockchainError::ValidatorsNotEqualToOurStakers
-                );
+            let leader = self.select_leader(block.header.base.view_change);
+            let seed = mix(self.last_random(), block.header.base.view_change);
+            if !secure::validate_VRF_source(&block.header.random, &leader, &seed) {
+                return Err(BlockchainError::IncorrectRandom.into());
             }
-        }
 
-        // Check multisignature.
-        if !check_multi_signature(
-            &block_hash,
-            &block.header.base.multisig,
-            &block.header.base.multisigmap,
-            &validators,
-            &block.header.leader,
-            is_proposal,
-        ) {
-            return Err(BlockchainError::InvalidBlockSignature(block_hash).into());
+            //Try to tmp elect according to random
+            let election_result = election::select_validators_slots(
+                self.escrow.get_stakers_majority().into_iter().collect(),
+                block.header.random,
+                MAX_SLOTS_COUNT,
+            );
+
+            let validators = &election_result.validators;
+
+            // Check multisignature.
+            if !check_multi_signature(
+                &block_hash,
+                &block.header.base.multisig,
+                &block.header.base.multisigmap,
+                &validators,
+                &leader,
+                is_proposal,
+            ) {
+                return Err(BlockchainError::InvalidBlockSignature(block_hash).into());
+            }
         }
 
         debug!("The key block is valid: hash={}", &block_hash);
@@ -1000,7 +972,6 @@ impl Blockchain {
 pub mod tests {
     use super::*;
 
-    use crate::election::select_validators_slots;
     use crate::genesis::genesis;
     use crate::multisignature::create_multi_signature;
     use chrono::prelude::Utc;
@@ -1037,8 +1008,6 @@ pub mod tests {
         assert_eq!(blockchain.height(), 2);
         assert_eq!(blockchain.epoch, block2.header.base.epoch);
         assert_eq!(blockchain.blocks_in_epoch(), 1);
-        assert_eq!(blockchain.leader(), block2.header.leader);
-        assert_eq!(*blockchain.facilitator(), block2.header.facilitator);
         let validators = blockchain.escrow.get_stakers_majority();
         assert_eq!(validators.len(), keychains.len());
         let validators_map: BTreeMap<_, _> = validators.iter().cloned().collect();
@@ -1104,24 +1073,11 @@ pub mod tests {
             let keychain = keychains.iter().find(|p| p.network_pkey == key).unwrap();
             let mut block = {
                 let previous = blockchain.last_block_hash();
-                let base = BaseBlockHeader::new(version, previous, epoch, 0);
+                let base = BaseBlockHeader::new(version, previous, epoch, 0, view_change);
 
-                let leader = keychain.network_pkey.clone();
                 let seed = mix(blockchain.last_random(), view_change);
                 let random = secure::make_VRF(&keychain.network_skey, &seed);
-                let election = select_validators_slots(
-                    blockchain
-                        .escrow
-                        .get_stakers_majority()
-                        .into_iter()
-                        .collect(),
-                    random,
-                    MAX_SLOTS_COUNT,
-                );
-
-                let facilitator = election.facilitator;
-                let validators = election.validators.into_iter().map(|(k, _)| k).collect();
-                KeyBlock::new(base, leader, facilitator, random, view_change, validators)
+                KeyBlock::new(base, random)
             };
             let block_hash = Hash::digest(&block);
             let validators: Vec<(secure::PublicKey, i64)> = keychains

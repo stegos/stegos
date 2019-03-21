@@ -138,20 +138,7 @@ impl NodeService {
     /// Choose a master node to download blocks from.
     fn choose_master(&self) -> secure::PublicKey {
         let mut rng = rand::thread_rng();
-        // Use the latest known key block.
-        for block in self.chain_loader.blocks_queue.iter().rev() {
-            if let Block::KeyBlock(key_block) = block {
-                let validators = key_block
-                    .header
-                    .validators
-                    .iter()
-                    .filter(|key| &self.keys.network_pkey != *key);
-                let master = validators.choose(&mut rng).unwrap().clone();
-                debug!("Selected a source node from the latest known orphan KeyBlock: hash={}, epoch={}, selected={}",
-                       Hash::digest(&block), key_block.header.base.epoch, &master);
-                return master;
-            }
-        }
+        // use latest known validators list.
         let validators = self
             .chain
             .validators()

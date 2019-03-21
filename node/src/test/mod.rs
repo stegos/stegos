@@ -27,6 +27,7 @@ pub use time::*;
 mod consensus;
 use crate::*;
 use assert_matches::assert_matches;
+use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
 
 #[allow(unused)]
@@ -49,8 +50,18 @@ impl Sandbox {
         }
     }
 
+    fn iter_except_pk(
+        &mut self,
+        validator_id: secure::PublicKey,
+    ) -> impl Iterator<Item = &mut NodeSandbox> {
+        self.nodes
+            .iter_mut()
+            .filter(move |node| node.node_service.keys.network_pkey != validator_id)
+    }
+
     fn poll(&mut self) {
-        for node in &mut self.nodes {
+        for (id, node) in self.nodes.iter_mut().enumerate() {
+            info!("============ POLLING node={} ============", id);
             node.poll();
         }
     }
@@ -77,6 +88,18 @@ impl NodeSandbox {
             outbox,
             node_service,
         }
+    }
+
+    fn get_id(&self) -> usize {
+        let key = self.node_service.keys.network_pkey;
+        self.node_service
+            .chain
+            .validators()
+            .iter()
+            .enumerate()
+            .find(|(_id, keys)| key == keys.0)
+            .map(|(id, _)| id)
+            .unwrap()
     }
 
     fn poll(&mut self) {

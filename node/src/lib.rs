@@ -47,7 +47,9 @@ use log::*;
 use protobuf;
 use protobuf::Message;
 use std::time::{Duration, Instant};
+use stegos_blockchain::view_changes::ViewChangeProof;
 use stegos_blockchain::*;
+use stegos_consensus::optimistic::{ViewChangeCollector, ViewChangeMessage};
 use stegos_consensus::{self as consensus, BlockConsensus, BlockConsensusMessage};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure::{self, VRF};
@@ -168,6 +170,8 @@ pub struct OutputsNotification {
 const TX_TOPIC: &'static str = "tx";
 /// Topic used for consensus.
 const CONSENSUS_TOPIC: &'static str = "consensus";
+/// Topic for ViewChange message.
+pub const VIEW_CHANGE_TOPIC: &'static str = "view_changes";
 /// Topic used for sending sealed blocks.
 const SEALED_BLOCK_TOPIC: &'static str = "block";
 
@@ -187,6 +191,7 @@ pub enum NodeMessage {
     Transaction(Vec<u8>),
     Consensus(Vec<u8>),
     SealedBlock(Vec<u8>),
+    ViewChangeMessage(Vec<u8>),
     ChainLoaderMessage(UnicastMessage),
     //
     // Internal Events
@@ -219,6 +224,9 @@ pub struct NodeService {
 
     /// Proof-of-stake consensus.
     consensus: Option<BlockConsensus>,
+
+    /// Optimistic consensus part, that collect ViewChange messages.
+    optimistic: ViewChangeCollector,
 
     //
     // Communication with environment.
@@ -289,6 +297,8 @@ impl NodeService {
         let mempool = Mempool::new();
 
         let consensus = None;
+        let optimistic =
+            ViewChangeCollector::new(&chain, keys.network_pkey, keys.network_skey.clone());
 
         let on_epoch_changed = Vec::<UnboundedSender<EpochNotification>>::new();
         let on_outputs_received = Vec::<UnboundedSender<OutputsNotification>>::new();
@@ -309,6 +319,11 @@ impl NodeService {
             .subscribe(&CONSENSUS_TOPIC)?
             .map(|m| NodeMessage::Consensus(m));
         streams.push(Box::new(consensus_rx));
+
+        let view_change_rx = network
+            .subscribe(&VIEW_CHANGE_TOPIC)?
+            .map(|m| NodeMessage::ViewChangeMessage(m));
+        streams.push(Box::new(view_change_rx));
 
         // Sealed blocks broadcast topic.
         let block_rx = network
@@ -346,6 +361,7 @@ impl NodeService {
             keys,
             mempool,
             consensus,
+            optimistic,
             network,
             on_epoch_changed,
             on_outputs_changed: on_outputs_received,
@@ -414,6 +430,7 @@ impl NodeService {
             .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
         // clear consensus messages when new epoch starts
         self.future_consensus_messages.clear();
+        self.optimistic.on_new_consensus(&self.chain);
     }
     /// Handle incoming transactions received from network.
     fn handle_transaction(&mut self, tx: Transaction) -> Result<(), Error> {
@@ -546,6 +563,7 @@ impl NodeService {
                     debug!("Starting new election.");
                     self.on_change_group()?;
                 }
+                self.optimistic.on_new_payment_block(&self.chain)
             }
         }
 
@@ -781,7 +799,7 @@ impl NodeService {
             && self.is_leader()
             && self.chain.blocks_in_epoch() < self.cfg.blocks_in_epoch
         {
-            self.create_monetary_block()?;
+            self.create_monetary_block(None)?;
         }
 
         // Check that a block has been committed but haven't send by the leader.
@@ -813,24 +831,51 @@ impl NodeService {
 
         Ok(())
     }
+    //
+    // Optimisitc consensus
+    //
+
+    fn handle_view_change(&mut self, msg: ViewChangeMessage) -> Result<(), Error> {
+        if let Some(counter) = self.optimistic.handle_message(&self.chain, msg)? {
+            debug!(
+                "Received enought message for change leader: view_change={}",
+                counter
+            );
+            self.chain.set_view_change(counter);
+            if self.is_leader() {
+                debug!("We are leader, producing new monetary block.");
+                //let proof = self.optimistic.last_proof(&self.chain).expect("Collected proof");
+                self.create_monetary_block(None)?;
+            }
+        }
+        Ok(())
+    }
     /// Request block history from leader, if no block was received
     /// retry each message_timeout.
     fn handle_view_change_timer(&mut self) -> Result<(), Error> {
         let elapsed: Duration = clock::now().duration_since(self.chain.last_block_timestamp());
 
+        // TODO: Increment timeout for future view_changes.
         if self.consensus.is_none() && elapsed >= Duration::from_secs(self.cfg.micro_block_timeout)
         {
             metrics::FORCED_VIEW_CHANGES.inc();
+            // No block was received, request leader directly, and start collecting view_changes.
             let leader = self.chain.leader();
             debug!("Timed out while waiting for monetary block, request block from last leader: leader={}", leader);
             self.request_history_from(leader)?;
+
+            if let Some(msg) = self.optimistic.handle_timeout(&self.chain)? {
+                self.network
+                    .publish(VIEW_CHANGE_TOPIC, msg.into_buffer()?)?;
+                self.handle_view_change(msg)?;
+            }
         }
         Ok(())
     }
     ///
     /// Create a new monetary block.
     ///
-    fn create_monetary_block(&mut self) -> Result<(), Error> {
+    fn create_monetary_block(&mut self, _proof: Option<ViewChangeProof>) -> Result<(), Error> {
         assert!(self.consensus.is_none());
         assert!(self.is_leader());
         assert!(self.chain.blocks_in_epoch() < self.cfg.blocks_in_epoch);
@@ -943,6 +988,8 @@ impl Future for NodeService {
                             .and_then(|msg| self.handle_transaction(msg)),
                         NodeMessage::Consensus(msg) => BlockConsensusMessage::from_buffer(&msg)
                             .and_then(|msg| self.handle_consensus_message(msg)),
+                        NodeMessage::ViewChangeMessage(msg) => ViewChangeMessage::from_buffer(&msg)
+                            .and_then(|msg| self.handle_view_change(msg)),
                         NodeMessage::SealedBlock(msg) => {
                             Block::from_buffer(&msg).and_then(|msg| self.handle_sealed_block(msg))
                         }

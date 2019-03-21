@@ -3,6 +3,7 @@ package stegos.consensus;
 
 import "crypto.proto";
 import "blockchain.proto";
+import "view_changes.proto";
 
 
 message KeyBlockProposal {
@@ -33,3 +34,8 @@ message ConsensusMessage {
     stegos.crypto.SecureSignature sig = 6;
 }
 
+message ViewChangeMessage {
+    stegos.blockchain.ChainInfo chain = 1;
+    uint32 validator_id = 2;
+    stegos.crypto.SecureSignature signature = 3;
+}

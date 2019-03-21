@@ -239,3 +239,69 @@ fn request_on_timeout() {
         }
     });
 }
+
+#[test]
+fn micro_block_view_change() {
+    const NUM_NODES: usize = 4;
+    use log::Level;
+    let _ = simple_logger::init_with_level(Level::Trace);
+    start_test(|timer| {
+        // Create NUM_NODES.
+        let mut cfg: ChainConfig = Default::default();
+        cfg.blocks_in_epoch = 2;
+        let mut s: Sandbox = Sandbox::new(cfg.clone(), NUM_NODES);
+        s.poll();
+        for node in s.nodes.iter() {
+            assert_eq!(node.node_service.chain.height(), 2);
+        }
+        let leader_pk = s.nodes[0].node_service.chain.leader();
+
+        // emulate timeout on other nodes, and wait for request
+        wait(timer, Duration::from_secs(cfg.micro_block_timeout));
+        info!("BEFORE POLL");
+        s.poll();
+        // emulate dead leader for other nodes
+        {
+            for node in s.iter_except_pk(leader_pk) {
+                assert_eq!(node.node_service.chain.view_change(), 0);
+                // skip chain loader message
+                let _: ChainLoaderMessage = node
+                    .network_service
+                    .get_unicast(crate::loader::CHAIN_LOADER_TOPIC, &leader_pk);
+            }
+
+            let mut msgs = Vec::new();
+            for node in s.iter_except_pk(leader_pk) {
+                let id = node.get_id();
+                let chain = node
+                    .node_service
+                    .optimistic
+                    .current_chain(&node.node_service.chain);
+                let msg =
+                    ViewChangeMessage::new(chain, id as u32, &node.node_service.keys.network_skey);
+                msgs.push(msg);
+            }
+
+            assert_eq!(msgs.len(), 3);
+
+            for node in s.iter_except_pk(leader_pk) {
+                for msg in &msgs {
+                    node.network_service
+                        .receive_broadcast(crate::VIEW_CHANGE_TOPIC, msg.clone())
+                }
+            }
+            for node in s.iter_except_pk(leader_pk) {
+                node.poll();
+                // every node should go to the next view_change, after receiving majority of msgs.
+                // This assert can fail in case of bad distributions, if leader has > 1/3 slots_count.
+                if node.node_service.chain.select_leader(1) == node.node_service.keys.network_pkey {
+                    // If node was leader, they have produced monetary block,
+                    assert_eq!(node.node_service.chain.view_change(), 2);
+                } else {
+                    assert_eq!(node.node_service.chain.view_change(), 1);
+                }
+            }
+        }
+    });
+}
+

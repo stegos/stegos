@@ -1,7 +1,5 @@
-//! Blockchain Implementation.
-
 //
-// Copyright (c) 2018 Stegos AG
+// Copyright (c) 2019 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -21,32 +19,32 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-mod block;
-mod blockchain;
-mod config;
-pub mod election;
-mod error;
-mod escrow;
-mod genesis;
-mod merkle;
-mod metrics;
-mod multisignature;
-pub mod mvcc;
-mod output;
-pub mod protos;
-mod storage;
-mod transaction;
-pub mod view_changes;
+use bitvector::BitVector;
 
-pub use crate::block::*;
-pub use crate::blockchain::*;
-pub use crate::config::*;
-pub use crate::election::{mix, ElectionInfo, ElectionResult, StakersGroup};
-pub use crate::error::*;
-pub use crate::escrow::*;
-pub use crate::genesis::*;
-pub use crate::merkle::*;
-pub use crate::multisignature::*;
-pub use crate::output::*;
-pub use crate::storage::*;
-pub use crate::transaction::*;
+use stegos_crypto::hash::{Hash, Hashable, Hasher};
+use stegos_crypto::pbc::secure;
+
+pub type ViewCounter = u32;
+pub type ValidatorId = u32;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ChainInfo {
+    pub height: u64,
+    pub view_change: ViewCounter,
+    pub last_block: Hash,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ViewChangeProof {
+    pub chain: ChainInfo,
+    pub multimap: BitVector,
+    pub multisig: secure::Signature,
+}
+
+impl Hashable for ChainInfo {
+    fn hash(&self, hasher: &mut Hasher) {
+        self.height.hash(hasher);
+        self.view_change.hash(hasher);
+        self.last_block.hash(hasher);
+    }
+}

@@ -301,6 +301,8 @@ impl Blockchain {
         ElectionInfo {
             height: self.height,
             view_change: self.view_change,
+            slots_count: self.cfg.max_slot_count as i64,
+            majority_slots_count: self.majority_count(),
             last_leader,
             current_leader: self.select_leader(self.view_change).to_string(),
             next_leader: self.select_leader(self.view_change + 1).to_string(),
@@ -475,6 +477,15 @@ impl Blockchain {
     pub fn total_slots(&self) -> i64 {
         self.cfg.max_slot_count
     }
+    /// Sets new blockchain view_change.
+    /// ## Panics
+    /// if new_view_change not greater than current.
+    #[inline]
+    pub fn set_view_change(&mut self, new_view_change: u32) {
+        assert!(self.view_change < new_view_change);
+        self.view_change = new_view_change;
+    }
+
 
     //----------------------------------------------------------------------------------------------
     // Key Blocks

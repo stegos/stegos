@@ -24,11 +24,13 @@ use stegos_serialization::traits::*;
 
 use crate::blockchain::*;
 use crate::message::*;
+use crate::optimistic::*;
+use stegos_blockchain::view_changes::*;
 use stegos_blockchain::*;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
-
 // link protobuf dependencies
+use stegos_blockchain::protos::view_changes;
 use stegos_blockchain::protos::*;
 use stegos_crypto::protos::*;
 include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
@@ -106,6 +108,27 @@ impl ProtoConvert for BlockConsensusMessage {
             body,
             sig,
             pkey,
+        })
+    }
+}
+impl ProtoConvert for ViewChangeMessage {
+    type Proto = consensus::ViewChangeMessage;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = consensus::ViewChangeMessage::new();
+        proto.set_chain(self.chain.into_proto());
+        proto.set_validator_id(self.validator_id);
+        proto.set_signature(self.signature.into_proto());
+        proto
+    }
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let chain = ChainInfo::from_proto(proto.get_chain())?;
+        let validator_id = proto.get_validator_id();
+        let signature = secure::Signature::from_proto(proto.get_signature())?;
+
+        Ok(ViewChangeMessage {
+            chain,
+            validator_id,
+            signature,
         })
     }
 }

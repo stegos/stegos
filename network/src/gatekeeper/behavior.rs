@@ -192,6 +192,11 @@ where
         debug!(target: "stegos_network::gatekeeper", "peer disconnected: peer_id={}", id.to_base58());
         self.connected_peers.remove(id);
         self.negotiating.remove(id);
+        self.events.push_back(NetworkBehaviourAction::GenerateEvent(
+            GatekeeperOutEvent::Disconnected {
+                peer_id: id.clone(),
+            },
+        ));
     }
 
     fn inject_node_event(&mut self, propagation_source: PeerId, event: GatekeeperMessage) {
@@ -313,6 +318,9 @@ pub enum GatekeeperOutEvent {
         peer_id: PeerId,
     },
     Connected {
+        peer_id: PeerId,
+    },
+    Disconnected {
         peer_id: PeerId,
     },
 }

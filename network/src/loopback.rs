@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 #![allow(dead_code)]
+use crate::{Network, NetworkProvider, UnicastMessage};
 use failure::Error;
 use futures::sync::mpsc;
 use log::*;
@@ -28,7 +29,6 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 use stegos_crypto::pbc::secure;
-use stegos_network::{Network, NetworkProvider, UnicastMessage};
 use stegos_serialization::traits::ProtoConvert;
 
 #[derive(Debug, Clone)]

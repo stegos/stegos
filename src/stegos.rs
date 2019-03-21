@@ -338,7 +338,56 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::sync::mpsc::unbounded;
     use simple_logger;
+    use stegos_network::loopback::Loopback;
+    use stegos_node::NodeService;
+
+    #[ignore]
+    #[test]
+    fn is_testnet_loadable() {
+        let _ = simple_logger::init_with_level(log::Level::Debug);
+        let keys = KeyChain::new_mem();
+        let mut config = config::Config::default();
+        let chain = "testnet";
+        config.general.chain = chain.to_string();
+        let genesis = initialize_genesis(&config).expect("testnet looks like unloadable.");
+
+        let (_loopback, network) = Loopback::new();
+        let (_outbox, inbox) = unbounded();
+        let mut node = NodeService::testing(keys.clone(), network, genesis, inbox).unwrap();
+        node.handle_init().unwrap();
+    }
+
+    #[test]
+    fn is_devnet_loadable() {
+        let _ = simple_logger::init_with_level(log::Level::Debug);
+        let keys = KeyChain::new_mem();
+        let mut config = config::Config::default();
+        let chain = "devnet";
+        config.general.chain = chain.to_string();
+        let genesis = initialize_genesis(&config).expect("devnet looks like unloadable.");
+
+        let (_loopback, network) = Loopback::new();
+        let (_outbox, inbox) = unbounded();
+        let mut node = NodeService::testing(keys.clone(), network, genesis, inbox).unwrap();
+        node.handle_init().unwrap();
+    }
+
+    #[test]
+    fn is_dev_loadable() {
+        let _ = simple_logger::init_with_level(log::Level::Debug);
+        let keys = KeyChain::new_mem();
+        let mut config = config::Config::default();
+        let chain = "dev";
+        config.general.chain = chain.to_string();
+        let genesis = initialize_genesis(&config).expect("dev looks like unloadable.");
+
+        let (_loopback, network) = Loopback::new();
+        let (_outbox, inbox) = unbounded();
+        let mut node = NodeService::testing(keys.clone(), network, genesis, inbox).unwrap();
+        node.handle_init().unwrap();
+    }
 
     #[test]
     fn log_test() {

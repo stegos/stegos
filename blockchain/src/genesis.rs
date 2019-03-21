@@ -104,8 +104,8 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64, timestamp: u64) -
         }
         let validators = validators.into_iter().collect();
         let (multisig, multisigmap) = create_multi_signature(&validators, &signatures);
-        block.header.base.multisig = multisig;
-        block.header.base.multisigmap = multisigmap;
+        block.body.multisig = multisig;
+        block.body.multisigmap = multisigmap;
         block
     };
 

@@ -478,6 +478,9 @@ where
             GatekeeperOutEvent::Connected { peer_id } => {
                 self.ncp.connected_peer(peer_id);
             }
+            GatekeeperOutEvent::Disconnected { peer_id } => {
+                self.connected_peers.remove(&peer_id);
+            }
             GatekeeperOutEvent::Message { .. } => unimplemented!(),
         }
     }

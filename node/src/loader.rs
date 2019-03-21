@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use failure::Error;
+use failure::{format_err, Error};
 use log::{debug, info, warn};
 use rand::seq::IteratorRandom;
 use std::mem;
@@ -136,7 +136,7 @@ impl NodeService {
     }
 
     /// Choose a master node to download blocks from.
-    fn choose_master(&self) -> secure::PublicKey {
+    fn choose_master(&self) -> Option<secure::PublicKey> {
         let mut rng = rand::thread_rng();
         // use latest known validators list.
         let validators = self
@@ -145,19 +145,21 @@ impl NodeService {
             .into_iter()
             .map(|(k, _)| k)
             .filter(|key| self.keys.network_pkey != **key);
-        let master = validators.choose(&mut rng).unwrap().clone();
+        let master = validators.choose(&mut rng)?.clone();
         debug!(
             "Selected a source node from the latest committed KeyBlock: hash={:?}, epoch={}, selected={:?}",
             self.chain.last_block_hash(),
             self.chain.epoch(),
             &master
         );
-        return master;
+        return Some(master);
     }
 
     /// Request the block history from an random node.
     pub fn request_history(&mut self) -> Result<(), Error> {
-        let master = self.choose_master();
+        let master = self
+            .choose_master()
+            .ok_or_else(|| format_err!("Failed to get validator list."))?;
         self.request_history_from(master)
     }
 

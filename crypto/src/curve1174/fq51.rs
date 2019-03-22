@@ -61,7 +61,9 @@ impl Fq51 {
     }
 
     pub fn is_odd(&self) -> bool {
-        (self.0[0] & 1) != 0
+        let mut tmp = Self::zero();
+        gnorm(&self, &mut tmp);
+        (tmp.0[0] & 1) != 0
     }
 
     pub fn sqr(self) -> Fq51 {
@@ -362,19 +364,52 @@ pub fn scr(w: &mut Fq51) {
 
     let t4 = w.0[4].wrapping_add(t3 >> 51);
     w.0[4] = bot47s(t4);
+    // At this point we know that cells 1-4 were left with positive values.
+    // But if cell 4 were previously negative, it becomes possible that
+    // the final add back into cell 0 could produce a negative value, or
+    // a value beyond 2^51.
+    // A second pass would ensure that all cells are made positive.
     w.0[0] = t0.wrapping_add((t4 >> 47).wrapping_mul(9));
 }
 
 // normalize Fq51 representation
+/* Example:
+Value = 2^51, negated
+                X0                 X1                 X2                 X3                 X4
+      +------------------+------------------+------------------+------------------+------------------+
+fq    | _______________0 | FFFFFFFFFFFFFFFF | _______________0 | _______________0 | _______________0 |
+      +------------------+------------------+------------------+------------------+------------------+
+gneg  | _______________0 | _______________1 | _______________0 | _______________0 | _______________0 |
+      +------------------+------------------+------------------+------------------+------------------+
+scr   | _______________0 | _______________1 | _______________0 | _______________0 | _______________0 |
+      +------------------+------------------+------------------+------------------+------------------+
+gneg  | _______________0 | FFFFFFFFFFFFFFFF | _______________0 | _______________0 | _______________0 |
+      +------------------+------------------+------------------+------------------+------------------+
+scr   | FFFFFFFFFFFFFFF7 | ___7FFFFFFFFFFFF | ___7FFFFFFFFFFFF | ___7FFFFFFFFFFFF | ____7FFFFFFFFFFF |
+      +------------------+------------------+------------------+------------------+------------------+
+scr   | ___7FFFFFFFFFFF7 | ___7FFFFFFFFFFFE | ___7FFFFFFFFFFFF | ___7FFFFFFFFFFFF | ____7FFFFFFFFFFF |
+      +------------------+------------------+------------------+------------------+------------------+
+*/
 pub fn gnorm(x: &Fq51, y: &mut Fq51) {
-    // double negation followed by scr() in each case
-    // effectively removes any modular excess and
-    // produces a result of the same field value
+    // gnet(), scr(), gneg(), scr() removes any modular excess
+    // and leaves the value effectively unchanged.
+    //
+    // All cells except possibly cell 0 will hold values
+    // in the range [0, 2^51-1] ([0, 2^47-1] for last cell).
+    //
+    // At this point, parity checking (even/odd) will be correct.
+    //
+    // A final scr() if cell 0 outside of normalized range ensures
+    // that all cells are fully normalized. This could be important
+    // for concatenative conversions to byte strings.
+    //
     let mut tmp = Fq51::zero();
+
     gneg(x, &mut tmp);
     scr(&mut tmp);
     gneg(&tmp, y);
-    scr(y);
+    scr(y); // modular excess removed at this point
+    scr(y); // two consecutive scr() completely normalizes
 }
 
 // equality comparison

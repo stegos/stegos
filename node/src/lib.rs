@@ -683,26 +683,9 @@ impl NodeService {
         if consensus.is_leader() {
             let last_random = self.chain.last_random();
             let seed = mix(last_random, self.chain.view_change());
-            let stakers = self
-                .chain
-                .escrow()
-                .get_stakers_majority()
-                .into_iter()
-                .collect();
 
             let vrf = secure::make_VRF(&self.keys.network_skey, &seed);
-            let group =
-                election::select_validators_slots(stakers, vrf, stegos_blockchain::MAX_SLOTS_COUNT);
-            //TODO: rewrite view_change counter.
-
-            debug!("Trying to broadcast new group : {:?}", group);
-
-            info!(
-                "I am leader, sending new keyblock propose, new group random = {}",
-                group.random
-            );
-
-            self.create_new_epoch(group.random)?;
+            self.create_new_epoch(vrf)?;
         }
         self.on_new_consensus();
 

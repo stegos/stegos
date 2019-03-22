@@ -623,8 +623,8 @@ impl NodeService {
             &self.keys.network_pkey,
             &validators,
         );
-        block.header.base.multisig = multisig;
-        block.header.base.multisigmap = multisigmap;
+        block.body.multisig = multisig;
+        block.body.multisigmap = multisigmap;
 
         // Validate the block via blockchain (just double-checking here).
         self.chain
@@ -815,8 +815,8 @@ impl NodeService {
             merge_multi_signature(
                 &mut multisig,
                 &mut multisigmap,
-                &block.header.base.multisig,
-                &block.header.base.multisigmap,
+                &block.body.multisig,
+                &block.body.multisigmap,
             );
             metrics::AUTOCOMMIT.inc();
             // Auto-commit proposed block and send it to the network.
@@ -852,16 +852,7 @@ impl NodeService {
             self.chain.view_change(),
         );
         let block_hash = Hash::digest(&block);
-
-        // Create initial multi-signature.
-        let (multisig, multisigmap) = create_proposal_signature(
-            &block_hash,
-            &self.keys.network_skey,
-            &self.keys.network_pkey,
-            &self.chain.validators(),
-        );
-        block.header.base.multisig = multisig;
-        block.header.base.multisigmap = multisigmap;
+        block.body.sig = secure::sign_hash(&block_hash, &self.keys.network_skey);
 
         // Log info.
         info!(
@@ -919,8 +910,8 @@ impl NodeService {
         multisig: secure::Signature,
         multisigmap: BitVector,
     ) {
-        key_block.header.base.multisig = multisig;
-        key_block.header.base.multisigmap = multisigmap;
+        key_block.body.multisig = multisig;
+        key_block.body.multisigmap = multisigmap;
         let key_block2 = key_block.clone();
         self.apply_new_block(Block::KeyBlock(key_block))
             .expect("block is validated before");

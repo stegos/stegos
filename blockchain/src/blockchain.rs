@@ -545,8 +545,8 @@ impl Blockchain {
             // Check multisignature.
             if !check_multi_signature(
                 &block_hash,
-                &block.header.base.multisig,
-                &block.header.base.multisigmap,
+                &block.body.multisig,
+                &block.body.multisigmap,
                 &validators,
                 &leader,
                 is_proposal,
@@ -696,17 +696,8 @@ impl Blockchain {
 
         //TODO: remove multisig?
 
-        // Check multisignature (exclude epoch == 0 for genesis).
-        if self.epoch > 0
-            && !check_multi_signature(
-                &block_hash,
-                &block.header.base.multisig,
-                &block.header.base.multisigmap,
-                self.validators(),
-                &self.leader(),
-                true,
-            )
-        {
+        // Check signature (exclude epoch == 0 for genesis).
+        if self.epoch > 0 && !secure::check_hash(&block_hash, &block.body.sig, &self.leader()) {
             return Err(BlockchainError::InvalidBlockSignature(block_hash).into());
         }
 
@@ -1090,8 +1081,8 @@ pub mod tests {
                 signatures.insert(keychain.network_pkey.clone(), sig);
             }
             let (multisig, multisigmap) = create_multi_signature(&validators, &signatures);
-            block.header.base.multisig = multisig;
-            block.header.base.multisigmap = multisigmap;
+            block.body.multisig = multisig;
+            block.body.multisigmap = multisigmap;
             blockchain.push_key_block(block).expect("block is valid");
         }
 

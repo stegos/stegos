@@ -58,26 +58,16 @@ pub struct BaseBlockHeader {
 
     /// Number of leader changes in current validator groups.
     pub view_change: u32,
-
-    /// BLS multi-signature
-    pub multisig: secure::Signature,
-
-    /// Bitmap of signers in the multi-signature.
-    pub multisigmap: BitVector,
 }
 
 impl BaseBlockHeader {
     pub fn new(version: u64, previous: Hash, epoch: u64, timestamp: u64, view_change: u32) -> Self {
-        let multisig = secure::Signature::zero();
-        let multisigmap = BitVector::new(VALIDATORS_MAX);
         BaseBlockHeader {
             version,
             previous,
             epoch,
             timestamp,
             view_change,
-            multisig,
-            multisigmap,
         }
     }
 }
@@ -107,6 +97,25 @@ impl Hashable for KeyBlockHeader {
         self.base.hash(state);
     }
 }
+
+/// Key Block Body.
+#[derive(Debug, Clone)]
+pub struct KeyBlockBody {
+    /// BLS multi-signature
+    pub multisig: secure::Signature,
+
+    /// Bitmap of signers in the multi-signature.
+    pub multisigmap: BitVector,
+}
+
+impl PartialEq for KeyBlockBody {
+    fn eq(&self, _other: &KeyBlockBody) -> bool {
+        // Required by enum Block.
+        unreachable!();
+    }
+}
+
+impl Eq for KeyBlockBody {}
 
 /// Monetary Block Header.
 #[derive(Debug, Clone)]
@@ -144,6 +153,9 @@ impl Hashable for MonetaryBlockHeader {
 /// Monetary Block.
 #[derive(Debug, Clone)]
 pub struct MonetaryBlockBody {
+    /// BLS signature.
+    pub sig: secure::Signature,
+
     /// The list of transaction inputs in a Merkle Tree.
     pub inputs: Vec<Hash>,
 
@@ -160,23 +172,14 @@ impl PartialEq for MonetaryBlockBody {
 
 impl Eq for MonetaryBlockBody {}
 
-impl Hashable for MonetaryBlockBody {
-    fn hash(&self, state: &mut Hasher) {
-        "Monetary".hash(state);
-        let inputs_count: u64 = self.inputs.len() as u64;
-        inputs_count.hash(state);
-        for input in &self.inputs {
-            input.hash(state);
-        }
-        self.outputs.roothash().hash(state)
-    }
-}
-
 /// Carries all cryptocurrency transactions.
 #[derive(Debug, Clone)]
 pub struct KeyBlock {
     /// Header.
     pub header: KeyBlockHeader,
+
+    /// Body.
+    pub body: KeyBlockBody,
 }
 
 impl KeyBlock {
@@ -189,13 +192,16 @@ impl KeyBlock {
         // Create header
         let header = KeyBlockHeader { base, random };
 
-        // Create the block
-        KeyBlock { header }
-    }
+        // Create body
+        let multisig = secure::Signature::zero();
+        let multisigmap = BitVector::new(VALIDATORS_MAX);
+        let body = KeyBlockBody {
+            multisig,
+            multisigmap,
+        };
 
-    /// Create block from known header.
-    pub fn new_from_header(header: KeyBlockHeader) -> Self {
-        KeyBlock { header }
+        // Create the block
+        KeyBlock { header, body }
     }
 }
 
@@ -266,9 +272,15 @@ impl MonetaryBlock {
             outputs_range_hash,
         };
 
-        // Create the block
-        let body = MonetaryBlockBody { inputs, outputs };
+        // Create body
+        let sig = secure::Signature::zero();
+        let body = MonetaryBlockBody {
+            sig,
+            inputs,
+            outputs,
+        };
 
+        // Create the block.
         let block = MonetaryBlock { header, body };
         block
     }
@@ -349,8 +361,8 @@ pub enum Block {
 impl Block {
     pub fn base_header(&self) -> &BaseBlockHeader {
         match self {
-            Block::KeyBlock(KeyBlock { header }) => &header.base,
-            Block::MonetaryBlock(MonetaryBlock { header, body: _ }) => &header.base,
+            Block::KeyBlock(KeyBlock { header, .. }) => &header.base,
+            Block::MonetaryBlock(MonetaryBlock { header, .. }) => &header.base,
         }
     }
 }

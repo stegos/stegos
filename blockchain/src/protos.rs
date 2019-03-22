@@ -169,16 +169,6 @@ impl ProtoConvert for BaseBlockHeader {
         proto.set_epoch(self.epoch);
         proto.set_timestamp(self.timestamp);
         proto.set_view_change(self.view_change);
-        if !self.multisig.is_zero() {
-            proto.set_sig(self.multisig.into_proto());
-        }
-        if !self.multisigmap.is_empty() {
-            assert!(self.multisigmap.len() <= VALIDATORS_MAX);
-            proto.sigmap.resize(VALIDATORS_MAX, false);
-            for bit in self.multisigmap.iter() {
-                proto.sigmap[bit] = true;
-            }
-        }
         proto
     }
 
@@ -188,28 +178,12 @@ impl ProtoConvert for BaseBlockHeader {
         let epoch = proto.get_epoch();
         let timestamp = proto.get_timestamp();
         let view_change = proto.get_view_change();
-        let sig = if proto.has_sig() {
-            secure::Signature::from_proto(proto.get_sig())?
-        } else {
-            secure::Signature::zero()
-        };
-        if proto.sigmap.len() > VALIDATORS_MAX {
-            return Err(CryptoError::InvalidBinaryLength(VALIDATORS_MAX, proto.sigmap.len()).into());
-        }
-        let mut sigmap = BitVector::new(VALIDATORS_MAX);
-        for (bit, val) in proto.sigmap.iter().enumerate() {
-            if *val {
-                sigmap.insert(bit);
-            }
-        }
         Ok(BaseBlockHeader {
             version,
             previous,
             epoch,
             timestamp,
             view_change,
-            multisig: sig,
-            multisigmap: sigmap,
         })
     }
 }
@@ -231,17 +205,58 @@ impl ProtoConvert for KeyBlockHeader {
     }
 }
 
+impl ProtoConvert for KeyBlockBody {
+    type Proto = blockchain::KeyBlockBody;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = blockchain::KeyBlockBody::new();
+        if !self.multisig.is_zero() {
+            proto.set_sig(self.multisig.into_proto());
+        }
+        if !self.multisigmap.is_empty() {
+            assert!(self.multisigmap.len() <= VALIDATORS_MAX);
+            proto.sigmap.resize(VALIDATORS_MAX, false);
+            for bit in self.multisigmap.iter() {
+                proto.sigmap[bit] = true;
+            }
+        }
+        proto
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let multisig = if proto.has_sig() {
+            secure::Signature::from_proto(proto.get_sig())?
+        } else {
+            secure::Signature::zero()
+        };
+        if proto.sigmap.len() > VALIDATORS_MAX {
+            return Err(CryptoError::InvalidBinaryLength(VALIDATORS_MAX, proto.sigmap.len()).into());
+        }
+        let mut multisigmap = BitVector::new(VALIDATORS_MAX);
+        for (bit, val) in proto.sigmap.iter().enumerate() {
+            if *val {
+                multisigmap.insert(bit);
+            }
+        }
+        Ok(KeyBlockBody {
+            multisig,
+            multisigmap,
+        })
+    }
+}
+
 impl ProtoConvert for KeyBlock {
     type Proto = blockchain::KeyBlock;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = blockchain::KeyBlock::new();
         proto.set_header(self.header.into_proto());
+        proto.set_body(self.body.into_proto());
         proto
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let header = KeyBlockHeader::from_proto(proto.get_header())?;
-        Ok(KeyBlock { header })
+        let body = KeyBlockBody::from_proto(proto.get_body())?;
+        Ok(KeyBlock { header, body })
     }
 }
 
@@ -324,6 +339,9 @@ impl ProtoConvert for MonetaryBlockBody {
     type Proto = blockchain::MonetaryBlockBody;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = blockchain::MonetaryBlockBody::new();
+        if !self.sig.is_zero() {
+            proto.set_sig(self.sig.into_proto());
+        }
         for input in &self.inputs {
             proto.inputs.push(input.into_proto());
         }
@@ -334,6 +352,11 @@ impl ProtoConvert for MonetaryBlockBody {
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let sig = if proto.has_sig() {
+            secure::Signature::from_proto(proto.get_sig())?
+        } else {
+            secure::Signature::zero()
+        };
         let mut inputs = Vec::<Hash>::with_capacity(proto.inputs.len());
         for input in proto.inputs.iter() {
             inputs.push(Hash::from_proto(input)?);
@@ -345,7 +368,11 @@ impl ProtoConvert for MonetaryBlockBody {
         }
         let outputs = Merkle::deserialize(&outputs)?;
 
-        Ok(MonetaryBlockBody { inputs, outputs })
+        Ok(MonetaryBlockBody {
+            sig,
+            inputs,
+            outputs,
+        })
     }
 }
 
@@ -403,7 +430,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use stegos_crypto::curve1174::cpt::make_random_keys;
-    use stegos_crypto::hash::Hashable;
+    use stegos_crypto::hash::{Hash, Hashable, Hasher};
     use stegos_crypto::pbc::secure::make_random_keys as make_secure_random_keys;
 
     fn roundtrip<T>(x: &T) -> T
@@ -480,36 +507,47 @@ mod tests {
         Transaction::from_buffer(&buf).expect_err("error");
     }
 
+    impl Hashable for KeyBlockBody {
+        fn hash(&self, state: &mut Hasher) {
+            "Key".hash(state);
+            self.multisig.hash(state);
+            for bit in self.multisigmap.iter() {
+                (bit as u64).hash(state);
+            }
+        }
+    }
+
     #[test]
     fn key_blocks() {
-        let (skey0, _pkey0, sig0) = make_secure_random_keys();
+        let (skey0, _pkey0, _sig0) = make_secure_random_keys();
 
         let version: u64 = 1;
         let epoch: u64 = 1;
         let timestamp = Utc::now().timestamp() as u64;
         let previous = Hash::digest(&"test".to_string());
 
-        let mut base = BaseBlockHeader::new(version, previous, epoch, timestamp, 0);
-        roundtrip(&sig0);
-        base.multisig = sig0;
-        base.multisigmap.insert(1);
-        base.multisigmap.insert(13);
-        base.multisigmap.insert(44);
-        let base2 = roundtrip(&base);
-        assert_eq!(base.multisig, base2.multisig);
-        assert_eq!(base.multisigmap, base2.multisigmap);
-        assert!(!base.multisigmap.contains(0));
-        assert!(base.multisigmap.contains(1));
-        assert!(base.multisigmap.contains(13));
-        assert!(base.multisigmap.contains(44));
-
+        let base = BaseBlockHeader::new(version, previous, epoch, timestamp, 0);
         let random = secure::make_VRF(&skey0, &Hash::digest("test"));
         let block = KeyBlock::new(base, random);
         roundtrip(&block.header);
+        roundtrip(&block.body);
         roundtrip(&block);
 
         let block = Block::KeyBlock(block);
         roundtrip(&block);
+    }
+
+    impl Hashable for MonetaryBlockBody {
+        fn hash(&self, state: &mut Hasher) {
+            "Monetary".hash(state);
+            self.sig.hash(state);
+            let inputs_count: u64 = self.inputs.len() as u64;
+            inputs_count.hash(state);
+            for input in &self.inputs {
+                input.hash(state);
+            }
+            self.outputs.roothash().hash(state)
+        }
     }
 
     #[test]
@@ -535,9 +573,7 @@ mod tests {
         let gamma = gamma0 - gamma1;
 
         let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
-        let base2 = roundtrip(&base);
-        assert_eq!(base.multisig, base2.multisig);
-        assert_eq!(base.multisigmap, base2.multisigmap);
+        roundtrip(&base);
 
         let block = MonetaryBlock::new(base, gamma.clone(), 0, &inputs1, &outputs1);
         roundtrip(&block.header);

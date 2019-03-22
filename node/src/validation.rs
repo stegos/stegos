@@ -154,6 +154,7 @@ mod test {
     use chrono::Utc;
     use stegos_blockchain::*;
     use stegos_crypto::curve1174::fields::Fr;
+    use stegos_crypto::pbc::secure;
     use stegos_keychain::KeyChain;
 
     #[test]
@@ -416,14 +417,7 @@ mod test {
             let gamma = -outputs_gamma;
             let mut block = MonetaryBlock::new(base, gamma, amount - fee, &[], &outputs);
             let block_hash = Hash::digest(&block);
-            let (multisig, multisigmap) = create_proposal_signature(
-                &block_hash,
-                &validator_skey,
-                &validator_pkey,
-                &chain.validators(),
-            );
-            block.header.base.multisig = multisig;
-            block.header.base.multisigmap = multisigmap;
+            block.body.sig = secure::sign_hash(&block_hash, &validator_skey);
 
             chain
                 .push_monetary_block(block, current_timestamp)

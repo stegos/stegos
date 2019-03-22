@@ -45,10 +45,6 @@ use tokio_timer::clock;
 /// Topic used for vrf system.
 pub const VRF_TICKETS_TOPIC: &'static str = "vrf_tickets";
 
-/// How long we should collect the tickets.
-/// This value represent initial timeout, at view_change timeout exponentialy increasing.
-pub const COLLECTING_TICKETS_TIMER: Duration = crate::MESSAGE_TIMEOUT;
-
 ///
 /// Data types
 ///

@@ -23,6 +23,27 @@
 
 use serde_derive::{Deserialize, Serialize};
 
+/// Blockchain configuration.
+#[derive(Debug, Clone)]
+pub struct BlockchainConfig {
+    /// Maximal number of slots for election.
+    pub max_slot_count: usize,
+    /// Minimal stake amount.
+    pub min_stake_amount: i64,
+    /// Time to lock stakes.
+    pub bonding_time: u64,
+}
+
+impl Default for BlockchainConfig {
+    fn default() -> Self {
+        BlockchainConfig {
+            max_slot_count: 1000,
+            min_stake_amount: 1000,
+            bonding_time: 900,
+        }
+    }
+}
+
 /// Storage configuration.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(default)]

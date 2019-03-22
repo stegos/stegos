@@ -26,23 +26,23 @@ mod loader;
 mod mempool;
 pub mod protos;
 
+mod config;
 mod metrics;
 #[cfg(test)]
 mod test;
 mod validation;
 
-use crate::mempool::Mempool;
-use bitvector::BitVector;
-
+pub use crate::config::ChainConfig;
 use crate::error::*;
 use crate::loader::{ChainLoader, ChainLoaderMessage};
+use crate::mempool::Mempool;
 use crate::validation::*;
+use bitvector::BitVector;
 use chrono::Utc;
 use failure::Error;
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::{Async, Future, Poll, Stream};
 use futures_stream_select_all_send::select_all;
-use lazy_static::lazy_static;
 use log::*;
 use protobuf;
 use protobuf::Message;
@@ -170,34 +170,6 @@ const TX_TOPIC: &'static str = "tx";
 const CONSENSUS_TOPIC: &'static str = "consensus";
 /// Topic used for sending sealed blocks.
 const SEALED_BLOCK_TOPIC: &'static str = "block";
-/// Time delta in which our messages should be delivered, or forgeted.
-const MESSAGE_TIMEOUT: Duration = Duration::from_secs(60);
-/// Estimated time of block validation.
-// tx_count * verify_tx = 1500 * 20ms
-const BLOCK_VALIDATION_TIME: Duration = Duration::from_secs(30);
-/// How long wait for transactions before starting to create a new block.
-const TX_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
-/// How often to check the consensus state.
-const CONSENSUS_TIMER: Duration = Duration::from_secs(5);
-/// How long we should wait for network stabilization.
-pub const NETWORK_GRACE_TIMEOUT: Duration = Duration::from_secs(10);
-/// Max count of sealed block in epoch.
-const SEALED_BLOCK_IN_EPOCH: u64 = 5;
-/// Max difference in timestamps of leader and validators.
-const TIME_TO_RECEIVE_BLOCK: u64 = 10 * 60;
-/// Fixed reward per block.
-pub const BLOCK_REWARD: i64 = 60;
-/// Fixed fee for payment transactions.
-pub const PAYMENT_FEE: i64 = 1;
-/// Fixed fee for the stake transactions.
-pub const STAKE_FEE: i64 = 1;
-
-lazy_static! {
-    /// If no new block was provided between this interval - we should start vrf system.
-    pub static ref BLOCK_TIMEOUT: Duration = crate::TX_WAIT_TIMEOUT + // propose timeout
-                                             crate::MESSAGE_TIMEOUT * 3 + // 3 consensus message
-                                             crate::BLOCK_VALIDATION_TIME * 3; // leader + validators + sealed block.
-}
 
 #[derive(Clone, Debug)]
 pub enum NodeMessage {
@@ -225,6 +197,8 @@ pub enum NodeMessage {
 }
 
 pub struct NodeService {
+    /// Config.
+    cfg: ChainConfig,
     /// Blockchain.
     chain: Blockchain,
     /// Key Chain.
@@ -263,34 +237,47 @@ pub struct NodeService {
 impl NodeService {
     /// Constructor.
     pub fn new(
-        cfg: &StorageConfig,
+        cfg: ChainConfig,
+        storage_cfg: StorageConfig,
         keys: KeyChain,
         genesis: Vec<Block>,
         network: Network,
     ) -> Result<(Self, Node), Error> {
+        let blockchain_cfg = BlockchainConfig {
+            max_slot_count: cfg.max_slot_count,
+            min_stake_amount: cfg.min_stake_amount,
+            bonding_time: cfg.bonding_time,
+        };
         let current_timestamp = Utc::now().timestamp() as u64;
         let (outbox, inbox) = unbounded();
-        let chain = Blockchain::new(&cfg, genesis, current_timestamp);
+        let chain = Blockchain::new(blockchain_cfg, storage_cfg, genesis, current_timestamp);
         let handler = Node {
             outbox,
             network: network.clone(),
         };
-        let service = Self::with_blockchain(chain, keys, network, inbox)?;
+        let service = Self::with_blockchain(cfg, chain, keys, network, inbox)?;
         Ok((service, handler))
     }
 
     pub fn testing(
+        cfg: ChainConfig,
         keys: KeyChain,
         network: Network,
         genesis: Vec<Block>,
         inbox: UnboundedReceiver<NodeMessage>,
     ) -> Result<Self, Error> {
+        let blockchain_cfg = BlockchainConfig {
+            max_slot_count: cfg.max_slot_count,
+            min_stake_amount: cfg.min_stake_amount,
+            bonding_time: cfg.bonding_time,
+        };
         let current_timestamp = Utc::now().timestamp() as u64;
-        let chain = Blockchain::testing(genesis, current_timestamp);
-        Self::with_blockchain(chain, keys, network, inbox)
+        let chain = Blockchain::testing(blockchain_cfg, genesis, current_timestamp);
+        Self::with_blockchain(cfg, chain, keys, network, inbox)
     }
 
     fn with_blockchain(
+        cfg: ChainConfig,
         chain: Blockchain,
         keys: KeyChain,
         network: Network,
@@ -335,7 +322,7 @@ impl NodeService {
         streams.push(Box::new(requests_rx));
 
         // Consensus timer events
-        let duration = CONSENSUS_TIMER; // every second
+        let duration = Duration::from_secs(1); // every second
         let timer = Interval::new_interval(duration)
             .map(|i| NodeMessage::ConsensusTimer(i))
             .map_err(|_e| ()); // ignore transient timer errors
@@ -344,6 +331,7 @@ impl NodeService {
         let events = select_all(streams);
 
         let service = NodeService {
+            cfg,
             chain_loader,
             future_consensus_messages,
             chain,
@@ -385,7 +373,7 @@ impl NodeService {
     /// Second init phase. Used to rebroadcast messages from VRF, Consensus and so on.
     fn handle_network_ready(&mut self) -> Result<(), Error> {
         // epoch ended, disable consensus and start vrf system.
-        if self.chain.blocks_in_epoch() >= SEALED_BLOCK_IN_EPOCH {
+        if self.chain.blocks_in_epoch() >= self.cfg.blocks_in_epoch {
             debug!("Recover at end of epoch, trying to force vrf to start.");
             self.on_change_group()?;
         }
@@ -432,7 +420,14 @@ impl NodeService {
 
         // Validate transaction.
         let current_timestamp = Utc::now().timestamp() as u64;
-        validate_transaction(&tx, &self.mempool, &self.chain, current_timestamp)?;
+        validate_transaction(
+            &tx,
+            &self.mempool,
+            &self.chain,
+            current_timestamp,
+            self.cfg.payment_fee,
+            self.cfg.stake_fee,
+        )?;
 
         // Queue to mempool.
         info!("Transaction is valid, adding to mempool: hash={}", &tx_hash);
@@ -479,7 +474,7 @@ impl NodeService {
         match block {
             Block::KeyBlock(key_block) => {
                 // Check for the correct block order.
-                if self.chain.blocks_in_epoch() < SEALED_BLOCK_IN_EPOCH {
+                if self.chain.blocks_in_epoch() < self.cfg.blocks_in_epoch {
                     return Err(NodeError::ExpectedMonetaryBlock(self.chain.height()).into());
                 }
 
@@ -502,7 +497,7 @@ impl NodeService {
             }
             Block::MonetaryBlock(monetary_block) => {
                 // Check for the correct block order.
-                if self.chain.blocks_in_epoch() >= SEALED_BLOCK_IN_EPOCH {
+                if self.chain.blocks_in_epoch() >= self.cfg.blocks_in_epoch {
                     return Err(NodeError::ExpectedKeyBlock(self.chain.height()).into());
                 }
 
@@ -512,13 +507,13 @@ impl NodeService {
 
                 // Check monetary adjustment.
                 if self.chain.epoch() > 0
-                    && monetary_block.header.monetary_adjustment != BLOCK_REWARD
+                    && monetary_block.header.monetary_adjustment != self.cfg.block_reward
                 {
                     // TODO: support slashing.
                     return Err(NodeError::InvalidBlockReward(
                         block_hash,
                         monetary_block.header.monetary_adjustment,
-                        BLOCK_REWARD,
+                        self.cfg.block_reward,
                     )
                     .into());
                 }
@@ -537,7 +532,7 @@ impl NodeService {
                 self.on_outputs_changed
                     .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
 
-                if self.chain.blocks_in_epoch() >= SEALED_BLOCK_IN_EPOCH {
+                if self.chain.blocks_in_epoch() >= self.cfg.blocks_in_epoch {
                     debug!("Starting new election.");
                     self.on_change_group()?;
                 }
@@ -683,7 +678,6 @@ impl NodeService {
         if consensus.is_leader() {
             let last_random = self.chain.last_random();
             let seed = mix(last_random, self.chain.view_change());
-
             let vrf = secure::make_VRF(&self.keys.network_skey, &seed);
             self.create_new_epoch(vrf)?;
         }
@@ -772,9 +766,9 @@ impl NodeService {
 
         // Check that a new payment block should be created.
         if self.consensus.is_none()
-            && elapsed >= TX_WAIT_TIMEOUT
+            && elapsed >= Duration::from_secs(self.cfg.tx_wait_timeout)
             && self.is_leader()
-            && self.chain.blocks_in_epoch() < SEALED_BLOCK_IN_EPOCH
+            && self.chain.blocks_in_epoch() < self.cfg.blocks_in_epoch
         {
             self.create_monetary_block()?;
         }
@@ -782,7 +776,7 @@ impl NodeService {
         // Check that a block has been committed but haven't send by the leader.
         if self.consensus.is_some()
             && self.consensus.as_ref().unwrap().should_commit()
-            && elapsed >= *BLOCK_TIMEOUT
+            && elapsed >= Duration::from_secs(self.cfg.block_timeout)
         {
             assert!(
                 !self.consensus.as_ref().unwrap().is_leader(),
@@ -815,7 +809,7 @@ impl NodeService {
     fn create_monetary_block(&mut self) -> Result<(), Error> {
         assert!(self.consensus.is_none());
         assert!(self.is_leader());
-        assert!(self.chain.blocks_in_epoch() < SEALED_BLOCK_IN_EPOCH);
+        assert!(self.chain.blocks_in_epoch() < self.cfg.blocks_in_epoch);
 
         let height = self.chain.height() + 1;
         let previous = self.chain.last_block_hash();
@@ -829,7 +823,7 @@ impl NodeService {
             previous,
             VERSION,
             self.chain.epoch(),
-            BLOCK_REWARD,
+            self.cfg.block_reward,
             &self.keys.wallet_skey,
             &self.keys.wallet_pkey,
             self.chain.view_change(),
@@ -864,6 +858,7 @@ impl NodeService {
         let request_hash = Hash::digest(block);
         debug!("Validating block: block={:?}", &request_hash);
         match validate_proposed_key_block(
+            &self.cfg,
             &self.chain,
             self.chain.view_change(),
             request_hash,

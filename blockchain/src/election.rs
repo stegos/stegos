@@ -285,10 +285,8 @@ mod test {
     /// Check if group size actually depends on limit.
     #[test]
     fn test_group_size() {
-        const PUBLIC_KEY_SIZE: usize = 65;
-
         let (skey, _, _) = secure::make_random_keys();
-        let key = secure::PublicKey::try_from_bytes(&[0; PUBLIC_KEY_SIZE]).unwrap();
+        let key = secure::PublicKey::dum();
         let keys = vec![(key, 1), (key, 2), (key, 3), (key, 4)];
         let rand = secure::make_VRF(&skey, &Hash::zero());
         for i in 1..5 {

@@ -67,6 +67,11 @@ pub struct WalletService {
     /// ValueShuffle State.
     vs: ValueShuffle,
 
+    /// Payment fee.
+    payment_fee: i64,
+    /// Staking fee.
+    stake_fee: i64,
+
     /// Node API.
     node: Node,
 
@@ -85,6 +90,8 @@ impl WalletService {
         validator_pkey: secure::PublicKey,
         network: Network,
         node: Node,
+        payment_fee: i64,
+        stake_fee: i64,
     ) -> (Self, Wallet) {
         info!("My wallet key: {}", pkey.to_hex());
         debug!("My network key: {}", validator_pkey.to_hex());
@@ -134,6 +141,8 @@ impl WalletService {
             unspent_stakes,
             balance,
             vs,
+            payment_fee,
+            stake_fee,
             node,
             subscribers,
             events,
@@ -153,6 +162,7 @@ impl WalletService {
             recipient,
             &self.unspent,
             amount,
+            self.payment_fee,
             data,
         )?;
         // Transaction TXINs can generally have different keying for each one
@@ -168,8 +178,14 @@ impl WalletService {
         amount: i64,
         comment: String,
     ) -> Result<(), Error> {
-        let (inputs, outputs, fee) =
-            create_vs_payment_transaction(&self.pkey, recipient, &self.unspent, amount, comment)?;
+        let (inputs, outputs, fee) = create_vs_payment_transaction(
+            &self.pkey,
+            recipient,
+            &self.unspent,
+            amount,
+            self.payment_fee,
+            comment,
+        )?;
         self.vs.queue_transaction(&inputs, &outputs, fee)?;
         Ok(())
     }
@@ -182,6 +198,8 @@ impl WalletService {
             &self.validator_pkey,
             &self.unspent,
             amount,
+            self.payment_fee,
+            self.stake_fee,
         )?;
         self.node.send_transaction(tx)?;
         Ok(())
@@ -196,6 +214,8 @@ impl WalletService {
             &self.validator_pkey,
             &self.unspent_stakes,
             amount,
+            self.payment_fee,
+            self.stake_fee,
         )?;
         self.node.send_transaction(tx)?;
         Ok(())

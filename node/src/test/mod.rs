@@ -36,12 +36,12 @@ pub struct Sandbox {
 }
 
 impl Sandbox {
-    fn new(num_nodes: usize) -> Self {
+    fn new(cfg: ChainConfig, num_nodes: usize) -> Self {
         let nodes_keychains: Vec<_> = (0..num_nodes).map(|_num| KeyChain::new_mem()).collect();
         let genesis = stegos_blockchain::genesis(&nodes_keychains, 1000, 1000000, 0);
 
         let nodes: Vec<NodeSandbox> = (0..num_nodes)
-            .map(|i| NodeSandbox::new(nodes_keychains[i].clone(), genesis.clone()))
+            .map(|i| NodeSandbox::new(cfg.clone(), nodes_keychains[i].clone(), genesis.clone()))
             .collect();
         Self {
             nodes,
@@ -63,13 +63,14 @@ struct NodeSandbox {
 }
 
 impl NodeSandbox {
-    fn new(keychain: KeyChain, genesis: Vec<Block>) -> Self {
+    fn new(cfg: ChainConfig, keychain: KeyChain, genesis: Vec<Block>) -> Self {
         // init network
         let (network_service, network) = Loopback::new();
 
         // Create node, with first node keychain.
         let (outbox, inbox) = unbounded();
-        let mut node_service = NodeService::testing(keychain, network, genesis, inbox).unwrap();
+        let mut node_service =
+            NodeService::testing(cfg, keychain, network, genesis, inbox).unwrap();
         node_service.handle_init().unwrap();
         Self {
             network_service,

@@ -26,7 +26,7 @@ use protobuf::Message;
 use simple_logger;
 use std::fs;
 use std::process;
-use stegos_blockchain::genesis;
+use stegos_blockchain::{genesis, BlockchainConfig};
 use stegos_keychain::KeyChain;
 use stegos_keychain::KeyChainConfig;
 use stegos_serialization::traits::ProtoConvert;
@@ -34,6 +34,7 @@ use stegos_serialization::traits::ProtoConvert;
 fn main() {
     simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
+    let cfg: BlockchainConfig = Default::default();
     let args = App::new("Stegos Bootstrap Utility")
         .version(crate_version!())
         .author("Stegos AG <info@stegos.com>")
@@ -103,10 +104,10 @@ fn main() {
     let stake = if let Some(stake) = args.value_of("stake") {
         match stake.parse::<i64>() {
             Ok(stake) => {
-                if stake < stegos_blockchain::MIN_STAKE_AMOUNT {
+                if stake < cfg.min_stake_amount {
                     eprintln!(
                         "Invalid stake: must be greater than MIN_STAKE_AMOUNT = {}",
-                        stegos_blockchain::MIN_STAKE_AMOUNT
+                        cfg.min_stake_amount
                     );
                     process::exit(1);
                 };
@@ -119,7 +120,7 @@ fn main() {
             }
         }
     } else {
-        stegos_blockchain::MIN_STAKE_AMOUNT
+        cfg.min_stake_amount
     };
 
     info!("Generating genesis keys...");

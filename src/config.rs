@@ -32,6 +32,7 @@ use std::result::Result;
 use stegos_blockchain::StorageConfig;
 use stegos_keychain::KeyChainConfig;
 use stegos_network::NetworkConfig;
+use stegos_node::ChainConfig;
 use toml;
 
 /// Configuration root
@@ -46,6 +47,8 @@ use toml;
 pub struct Config {
     /// General settings
     pub general: GeneralConfig,
+    /// Chain configuration.
+    pub chain: ChainConfig,
     /// Network configuration.
     pub network: NetworkConfig,
     /// Key Chain configuration.
@@ -59,6 +62,7 @@ impl Default for Config {
     fn default() -> Config {
         Config {
             general: Default::default(),
+            chain: Default::default(),
             network: Default::default(),
             keychain: Default::default(),
             storage: Default::default(),

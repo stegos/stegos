@@ -61,7 +61,9 @@ impl Fq51 {
     }
 
     pub fn is_odd(&self) -> bool {
-        (self.0[0] & 1) != 0
+        let mut tmp = Self::zero();
+        gnorm(&self, &mut tmp);
+        (tmp.0[0] & 1) != 0
     }
 
     pub fn sqr(self) -> Fq51 {

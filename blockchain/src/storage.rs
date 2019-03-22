@@ -84,6 +84,13 @@ impl ListDb {
         }
     }
 
+    /// Remove record by id.
+    pub fn remove(&self, height: u64) -> Result<(), Error> {
+        let key = Self::key_u64_to_bytes(height);
+        self.database.delete(&key)?;
+        Ok(())
+    }
+
     /// Create iterator that traverse fully block collection.
     pub fn iter(&self) -> impl Iterator<Item = Block> {
         let mode = IteratorMode::Start;

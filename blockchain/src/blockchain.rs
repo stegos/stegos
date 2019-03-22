@@ -30,12 +30,12 @@ use crate::error::*;
 use crate::escrow::*;
 use crate::merkle::*;
 use crate::metrics;
+use crate::mvcc::MultiVersionedMap;
 use crate::output::*;
 use crate::storage::ListDb;
 use failure::ensure;
 use failure::Error;
 use log::*;
-use std::collections::HashMap;
 use std::collections::HashSet;
 use std::time::Instant;
 use stegos_crypto::bulletproofs::fee_a;
@@ -48,13 +48,31 @@ use stegos_crypto::hash::*;
 use stegos_crypto::pbc::secure;
 use tokio_timer::clock;
 
-/// A help to find UTXO in this blockchain.
+/// A helper to find UTXO in this blockchain.
+#[derive(Debug, Clone)]
 struct OutputKey {
     /// The short block identifier.
     pub block_id: u64,
     /// Merkle Tree path inside block.
     pub path: MerklePath,
 }
+
+/// A helper to store the global monetary balance in MultiVersionedMap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Balance {
+    /// The total sum of money created.
+    created: ECp,
+    /// The total sum of money burned.
+    burned: ECp,
+    /// The total sum of gamma adjustments.
+    gamma: Fr,
+    /// The total sum of monetary adjustments.
+    monetary_adjustment: i64,
+}
+
+type BlockByHashMap = MultiVersionedMap<Hash, u64, u64>;
+type OutputByHashMap = MultiVersionedMap<Hash, OutputKey, u64>;
+type BalanceMap = MultiVersionedMap<(), Balance, u64>;
 
 /// The blockchain database.
 pub struct Blockchain {
@@ -69,9 +87,11 @@ pub struct Blockchain {
     /// Persistent storage for blocks.
     database: ListDb,
     /// In-memory index to lookup blocks by its hash.
-    block_by_hash: HashMap<Hash, u64>,
+    block_by_hash: BlockByHashMap,
     /// In-memory index to lookup UTXO by its hash.
-    output_by_hash: HashMap<Hash, OutputKey>,
+    output_by_hash: OutputByHashMap,
+    /// Global monetary balance.
+    balance: BalanceMap,
     /// In-memory storage of stakes.
     escrow: Escrow,
 
@@ -102,18 +122,6 @@ pub struct Blockchain {
     //
     /// Number of leader changes since last epoch.
     view_change: u32,
-
-    //
-    // Global Monetary Balance.
-    //
-    /// The total sum of money created.
-    created: ECp,
-    /// The total sum of money burned.
-    burned: ECp,
-    /// The total sum of gamma adjustments.
-    gamma: Fr,
-    /// The total sum of monetary adjustments.
-    monetary_adjustment: i64,
 }
 
 impl Blockchain {
@@ -149,8 +157,16 @@ impl Blockchain {
         //
         // Storage.
         //
-        let block_by_hash = HashMap::<Hash, u64>::new();
-        let output_by_hash = HashMap::<Hash, OutputKey>::new();
+        let block_by_hash: BlockByHashMap = BlockByHashMap::new();
+        let output_by_hash: OutputByHashMap = OutputByHashMap::new();
+        let mut balance: BalanceMap = BalanceMap::new();
+        let initial_balance = Balance {
+            created: ECp::inf(),
+            burned: ECp::inf(),
+            gamma: Fr::zero(),
+            monetary_adjustment: 0,
+        };
+        balance.insert(0, (), initial_balance);
         let escrow = Escrow::new();
 
         //
@@ -172,19 +188,12 @@ impl Blockchain {
         //
         let view_change = 0;
 
-        //
-        // Global Monetary Balance.
-        //
-        let created = ECp::inf();
-        let burned = ECp::inf();
-        let gamma = Fr::zero();
-        let monetary_adjustment: i64 = 0;
-
         let mut blockchain = Blockchain {
             cfg,
             database,
             block_by_hash,
             output_by_hash,
+            balance,
             escrow,
             epoch,
             last_key_block_id,
@@ -193,10 +202,6 @@ impl Blockchain {
             last_block_timestamp,
             last_block_hash,
             view_change,
-            created,
-            burned,
-            gamma,
-            monetary_adjustment,
         };
 
         blockchain.recover(genesis, current_timestamp);
@@ -454,7 +459,14 @@ impl Blockchain {
         &self.escrow
     }
 
+    /// Returns balance.
+    #[inline]
+    fn balance(&self) -> &Balance {
+        &self.balance.get(&()).unwrap()
+    }
+
     /// Returns number of leader changes since last epoch creation.
+    #[inline]
     pub fn view_change(&self) -> u32 {
         self.view_change
     }
@@ -478,7 +490,7 @@ impl Blockchain {
         // Write the key block to the disk.
         //
         self.database
-            .insert(block_id as u64, Block::KeyBlock(block.clone()))?;
+            .insert(block_id, Block::KeyBlock(block.clone()))?;
 
         //
         // Update in-memory indexes and metadata.
@@ -581,15 +593,20 @@ impl Blockchain {
     /// Update indexes and metadata.
     ///
     fn register_key_block(&mut self, block: KeyBlock) {
+        let version = self.height + 1;
         let block_id = self.height;
         let block_hash = Hash::digest(&block);
 
         //
         // Update indexes.
         //
-        if let Some(_) = self.block_by_hash.insert(block_hash.clone(), block_id) {
+        if let Some(_) = self
+            .block_by_hash
+            .insert(version, block_hash.clone(), block_id)
+        {
             panic!("Block hash collision");
         }
+        assert_eq!(self.block_by_hash.current_version(), version);
 
         //
         // Update metadata.
@@ -606,8 +623,8 @@ impl Blockchain {
             self.cfg.max_slot_count,
         );
         self.view_change = 0;
-
-        metrics::HEIGHT.inc();
+        assert_eq!(self.height, version);
+        metrics::HEIGHT.set(self.height as i64);
         metrics::EPOCH.inc();
 
         info!(
@@ -621,6 +638,12 @@ impl Blockchain {
                 .with_label_values(&[key_str.as_str()])
                 .set(*stake);
         }
+
+        // Finalize storage.
+        self.block_by_hash.checkpoint();
+        self.output_by_hash.checkpoint();
+        self.balance.checkpoint();
+        self.escrow.checkpoint();
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -646,7 +669,7 @@ impl Blockchain {
         // Write the monetary block to the disk.
         //
         self.database
-            .insert(block_id as u64, Block::MonetaryBlock(block.clone()))?;
+            .insert(block_id, Block::MonetaryBlock(block.clone()))?;
 
         //
         // Update in-memory indexes and metadata.
@@ -823,11 +846,17 @@ impl Blockchain {
         //
         // Validate the global monetary balance.
         //
-        let created: ECp = self.created + created;
-        let burned: ECp = self.burned + burned;
-        let gamma: Fr = self.gamma + block.header.gamma;
-        let monetary_adjustment: i64 = self.monetary_adjustment + block.header.monetary_adjustment;
-        if fee_a(monetary_adjustment) + burned - created != gamma * (*G) {
+        let orig_balance = self.balance();
+        let balance = Balance {
+            created: orig_balance.created + created,
+            burned: orig_balance.burned + burned,
+            gamma: orig_balance.gamma + block.header.gamma,
+            monetary_adjustment: orig_balance.monetary_adjustment
+                + block.header.monetary_adjustment,
+        };
+        if fee_a(balance.monetary_adjustment) + balance.burned - balance.created
+            != balance.gamma * (*G)
+        {
             panic!("Invalid global monetary balance");
         }
 
@@ -841,6 +870,7 @@ impl Blockchain {
         mut block: MonetaryBlock,
         current_timestamp: u64,
     ) -> Result<(Vec<Output>, Vec<Output>), Error> {
+        let version = self.height + 1;
         let block_id = self.height;
         let block_hash = Hash::digest(&block);
         let block_timestamp = block.header.base.timestamp;
@@ -848,9 +878,13 @@ impl Blockchain {
         //
         // Update indexes.
         //
-        if let Some(_) = self.block_by_hash.insert(block_hash.clone(), block_id) {
+        if let Some(_) = self
+            .block_by_hash
+            .insert(version, block_hash.clone(), block_id)
+        {
             panic!("Block hash collision");
         }
+        assert_eq!(self.block_by_hash.current_version(), version);
 
         let mut burned = ECp::inf();
         let mut created = ECp::inf();
@@ -860,7 +894,10 @@ impl Blockchain {
         //
         let mut inputs: Vec<Output> = Vec::with_capacity(block.body.inputs.len());
         for input_hash in &block.body.inputs {
-            if let Some(OutputKey { block_id, path }) = self.output_by_hash.remove(input_hash) {
+            if let Some(OutputKey { block_id, path }) =
+                self.output_by_hash.remove(version, input_hash)
+            {
+                assert_eq!(self.output_by_hash.current_version(), version);
                 let block = self.block_by_id(block_id)?;
                 let block_hash = Hash::digest(&block);
                 if let Block::MonetaryBlock(MonetaryBlock { header: _, body }) = block {
@@ -874,10 +911,12 @@ impl Blockchain {
                                 }
                                 Output::StakeOutput(o) => {
                                     self.escrow.unstake(
+                                        version,
                                         o.validator,
                                         input_hash.clone(),
                                         current_timestamp,
                                     );
+                                    assert_eq!(self.escrow.current_version(), version);
                                     burned += fee_a(o.amount);
                                 }
                             }
@@ -912,9 +951,13 @@ impl Blockchain {
 
             // Update indexes.
             let output_key = OutputKey { block_id, path };
-            if let Some(_) = self.output_by_hash.insert(output_hash.clone(), output_key) {
+            if let Some(_) = self
+                .output_by_hash
+                .insert(version, output_hash.clone(), output_key)
+            {
                 panic!("UTXO hash collision: hash={}", output_hash);
             }
+            assert_eq!(self.output_by_hash.current_version(), version);
 
             match output.as_ref() {
                 Output::PaymentOutput(o) => {
@@ -922,9 +965,16 @@ impl Blockchain {
                 }
                 Output::StakeOutput(o) => {
                     created += fee_a(o.amount);
+
                     let bonding_timestamp = block_timestamp + self.cfg.bonding_time;
-                    self.escrow
-                        .stake(o.validator, output_hash, bonding_timestamp, o.amount);
+                    self.escrow.stake(
+                        version,
+                        o.validator,
+                        output_hash,
+                        bonding_timestamp,
+                        o.amount,
+                    );
+                    assert_eq!(self.escrow.current_version(), version);
                 }
             }
 
@@ -947,22 +997,27 @@ impl Blockchain {
         //
 
         // Global monetary balance.
-        let created: ECp = self.created + created;
-        let burned: ECp = self.burned + burned;
-        let gamma: Fr = self.gamma + block.header.gamma;
-        let monetary_adjustment: i64 = self.monetary_adjustment + block.header.monetary_adjustment;
-        if fee_a(monetary_adjustment) + burned - created != gamma * (*G) {
+        let orig_balance = self.balance();
+        let balance = Balance {
+            created: orig_balance.created + created,
+            burned: orig_balance.burned + burned,
+            gamma: orig_balance.gamma + block.header.gamma,
+            monetary_adjustment: orig_balance.monetary_adjustment
+                + block.header.monetary_adjustment,
+        };
+        if fee_a(balance.monetary_adjustment) + balance.burned - balance.created
+            != balance.gamma * (*G)
+        {
             panic!("Invalid global monetary balance");
         }
-        self.created = created;
-        self.burned = burned;
-        self.gamma = gamma;
-        self.monetary_adjustment = monetary_adjustment;
+        self.balance.insert(version, (), balance);
+        assert_eq!(self.balance.current_version(), version);
         self.last_block_timestamp = clock::now();
         self.last_block_hash = block_hash.clone();
         self.height += 1;
         self.view_change += 1;
-        metrics::HEIGHT.inc();
+        assert_eq!(self.height, version);
+        metrics::HEIGHT.set(self.height as i64);
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
 
         info!(
@@ -975,6 +1030,66 @@ impl Blockchain {
 
         Ok((inputs, outputs))
     }
+
+    pub fn pop_monetary_block(&mut self) -> Result<(), Error> {
+        assert!(self.height > 1);
+        let block_id = self.height - 1;
+        assert_ne!(
+            block_id, self.last_key_block_id,
+            "attempt to rollback the key block"
+        );
+        let version = block_id;
+
+        //
+        // Remove from the disk.
+        //
+        let block = self.block_by_id(block_id)?;
+        let block = if let Block::MonetaryBlock(block) = block {
+            block
+        } else {
+            panic!("Expected monetary block");
+        };
+        self.database.remove(block_id)?;
+
+        //
+        // Revert metadata.
+        //
+        self.block_by_hash.rollback_to_version(version);
+        self.output_by_hash.rollback_to_version(version);
+        self.balance.rollback_to_version(version);
+        self.escrow.rollback_to_version(version);
+        assert_eq!(self.block_by_hash.current_version(), version);
+        assert!(self.output_by_hash.current_version() <= version);
+        assert!(self.balance.current_version() <= version);
+        assert!(self.escrow.current_version() <= version);
+        self.height = self.height - 1;
+        assert_eq!(self.height, version);
+        self.last_block_timestamp = clock::now();
+        self.last_block_hash = Hash::digest(&self.last_block()?);
+        metrics::HEIGHT.set(self.height as i64);
+        metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
+
+        let mut outputs_count: usize = 0;
+        for (output, _path) in block.body.outputs.leafs() {
+            let output_hash = Hash::digest(output.as_ref());
+            info!("Reverted UTXO: hash={}", &output_hash);
+            outputs_count += 1;
+        }
+
+        for input_hash in &block.body.inputs {
+            info!("Restored UXTO: hash={}", &input_hash);
+        }
+
+        info!(
+            "Reverted monetary block: height={}, hash={}, inputs={}, outputs={}",
+            self.height + 1,
+            Hash::digest(&block),
+            block.body.inputs.len(),
+            outputs_count
+        );
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -984,9 +1099,12 @@ pub mod tests {
     use crate::genesis::genesis;
     use crate::multisignature::create_multi_signature;
     use chrono::prelude::Utc;
+    use rand::distributions::Alphanumeric;
+    use rand::{thread_rng, Rng};
     use simple_logger;
     use std::collections::BTreeMap;
     use stegos_keychain::KeyChain;
+    use tempdir::TempDir;
 
     #[test]
     fn basic() {
@@ -1065,6 +1183,265 @@ pub mod tests {
             assert_eq!(Hash::digest(&output2), output_hash);
             assert!(blockchain.contains_output(&output_hash));
         }
+    }
+
+    fn create_monetary_block(
+        chain: &mut Blockchain,
+        keys: &KeyChain,
+        current_timestamp: u64,
+    ) -> (MonetaryBlock, Vec<Hash>, Vec<Hash>) {
+        let mut input_hashes: Vec<Hash> = Vec::new();
+        let mut gamma: Fr = Fr::zero();
+        let mut amount: i64 = 0;
+        for input_hash in chain.unspent() {
+            let input = chain
+                .output_by_hash(&input_hash)
+                .expect("exists and no disk errors");
+            match input {
+                Output::PaymentOutput(ref o) => {
+                    let payload = o.decrypt_payload(&keys.wallet_skey).unwrap();
+                    gamma += payload.gamma;
+                    amount += payload.amount;
+                    input_hashes.push(input_hash.clone());
+                }
+                Output::StakeOutput(ref o) => {
+                    o.decrypt_payload(&keys.wallet_skey).unwrap();
+                    amount += o.amount;
+                    input_hashes.push(input_hash.clone());
+                }
+            }
+        }
+
+        let mut outputs: Vec<Output> = Vec::new();
+        let stake = chain.cfg.min_stake_amount;
+        let (output, output_gamma) = PaymentOutput::new(
+            current_timestamp,
+            &keys.wallet_skey,
+            &keys.wallet_pkey,
+            amount - stake,
+        )
+        .expect("keys are valid");
+        outputs.push(Output::PaymentOutput(output));
+        gamma -= output_gamma;
+        let output = StakeOutput::new(
+            current_timestamp,
+            &keys.wallet_skey,
+            &keys.wallet_pkey,
+            &keys.network_pkey,
+            stake,
+        )
+        .expect("keys are valid");
+        outputs.push(Output::StakeOutput(output));
+
+        let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
+        let version = VERSION;
+        let previous = chain.last_block_hash().clone();
+        let epoch = chain.epoch();
+        let view_change = 0;
+        let base = BaseBlockHeader::new(version, previous, epoch, current_timestamp, view_change);
+        let mut block = MonetaryBlock::new(base, gamma, 0, &input_hashes, &outputs);
+        let block_hash = Hash::digest(&block);
+        block.body.sig = secure::sign_hash(&block_hash, &keys.network_skey);
+        (block, input_hashes, output_hashes)
+    }
+
+    fn create_empty_monetary_block(
+        chain: &mut Blockchain,
+        keys: &KeyChain,
+        current_timestamp: u64,
+    ) -> MonetaryBlock {
+        let input_hashes: Vec<Hash> = Vec::new();
+        let outputs: Vec<Output> = Vec::new();
+        let gamma = Fr::zero();
+        let version = VERSION;
+        let previous = chain.last_block_hash().clone();
+        let epoch = chain.epoch();
+        let view_change = 0;
+        let base = BaseBlockHeader::new(version, previous, epoch, current_timestamp, view_change);
+        let mut block = MonetaryBlock::new(base, gamma, 0, &input_hashes, &outputs);
+        let block_hash = Hash::digest(&block);
+        block.body.sig = secure::sign_hash(&block_hash, &keys.network_skey);
+        block
+    }
+
+    #[test]
+    fn iterate() {
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+
+        let keychains = [KeyChain::new_mem()];
+        let mut current_timestamp = Utc::now().timestamp() as u64;
+        let cfg: BlockchainConfig = Default::default();
+        let genesis = genesis(
+            &keychains,
+            cfg.min_stake_amount,
+            1_000_000,
+            current_timestamp,
+        );
+        let temp_prefix: String = thread_rng().sample_iter(&Alphanumeric).take(30).collect();
+        let temp_dir = TempDir::new(&temp_prefix).expect("couldn't create temp dir");
+        let database = ListDb::new(&temp_dir.path());
+        let mut chain =
+            Blockchain::with_db(cfg.clone(), database, genesis.clone(), current_timestamp);
+
+        let height = chain.height();
+        for i in 1..4 {
+            current_timestamp += cfg.bonding_time + 1;
+            let block_hash = if i % 2 == 0 {
+                // Non-empty block.
+                let (block, input_hashes, output_hashes) =
+                    create_monetary_block(&mut chain, &keychains[0], current_timestamp);
+                let block_hash = Hash::digest(&block);
+                chain
+                    .push_monetary_block(block, current_timestamp)
+                    .expect("block is valid");
+                for input_hash in input_hashes {
+                    assert!(!chain.contains_output(&input_hash));
+                }
+                for output_hash in output_hashes {
+                    assert!(chain.contains_output(&output_hash));
+                }
+                block_hash
+            } else {
+                // Empty block.
+                let block =
+                    create_empty_monetary_block(&mut chain, &keychains[0], current_timestamp);
+                let block_hash = Hash::digest(&block);
+                chain
+                    .push_monetary_block(block, current_timestamp)
+                    .expect("block is valid");
+                block_hash
+            };
+            assert_eq!(block_hash, chain.last_block_hash());
+            assert_eq!(height + i, chain.height());
+            assert!(chain.last_block_timestamp <= clock::now());
+        }
+
+        //
+        // Recovery.
+        //
+        let height = chain.height();
+        let block_hash = chain.last_block_hash();
+        let balance = chain.balance().clone();
+        drop(chain);
+        let database = ListDb::new(&temp_dir.path());
+        let chain = Blockchain::with_db(cfg, database, genesis, current_timestamp);
+        assert_eq!(height, chain.height());
+        assert_eq!(block_hash, chain.last_block_hash());
+        assert_eq!(chain.blocks().count() as u64, chain.height());
+        assert!(chain.last_block_timestamp <= clock::now());
+        assert_eq!(&balance, chain.balance());
+    }
+
+    #[test]
+    fn rollback() {
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+
+        let keychains = [KeyChain::new_mem()];
+        let mut current_timestamp = Utc::now().timestamp() as u64;
+        let cfg: BlockchainConfig = Default::default();
+        let genesis = genesis(
+            &keychains,
+            cfg.min_stake_amount,
+            1_000_000,
+            current_timestamp,
+        );
+
+        let temp_prefix: String = thread_rng().sample_iter(&Alphanumeric).take(30).collect();
+        let temp_dir = TempDir::new(&temp_prefix).expect("couldn't create temp dir");
+        let database = ListDb::new(&temp_dir.path());
+        let mut chain =
+            Blockchain::with_db(cfg.clone(), database, genesis.clone(), current_timestamp);
+
+        let height0 = chain.height();
+        let block_hash0 = chain.last_block_hash();
+        let balance0 = chain.balance().clone();
+        let escrow0 = chain.escrow().info().clone();
+
+        // Register a monetary block.
+        current_timestamp += chain.cfg.bonding_time + 1;
+        let (block1, input_hashes1, output_hashes1) =
+            create_monetary_block(&mut chain, &keychains[0], current_timestamp);
+        chain
+            .push_monetary_block(block1, current_timestamp)
+            .expect("block is valid");
+        assert_eq!(height0 + 1, chain.height());
+        assert_ne!(block_hash0, chain.last_block_hash());
+        assert_eq!(chain.blocks().count() as u64, chain.height());
+        assert!(chain.last_block_timestamp <= clock::now());
+        assert_ne!(&balance0, chain.balance());
+        assert_ne!(escrow0, chain.escrow().info());
+        for input_hash in &input_hashes1 {
+            assert!(!chain.contains_output(input_hash));
+        }
+        for output_hash in &output_hashes1 {
+            assert!(chain.contains_output(output_hash));
+        }
+        let height1 = chain.height();
+        let block_hash1 = chain.last_block_hash();
+        let balance1 = chain.balance().clone();
+        let escrow1 = chain.escrow().info().clone();
+
+        // Register one more monetary block.
+        current_timestamp += chain.cfg.bonding_time + 1;
+        let (block2, input_hashes2, output_hashes2) =
+            create_monetary_block(&mut chain, &keychains[0], current_timestamp);
+        chain
+            .push_monetary_block(block2, current_timestamp)
+            .expect("block is valid");
+        assert_eq!(height1 + 1, chain.height());
+        assert_ne!(block_hash1, chain.last_block_hash());
+        assert_eq!(chain.blocks().count() as u64, chain.height());
+        assert!(chain.last_block_timestamp <= clock::now());
+        assert_ne!(&balance1, chain.balance());
+        assert_ne!(escrow1, chain.escrow().info());
+        for input_hash in &input_hashes2 {
+            assert!(!chain.contains_output(input_hash));
+        }
+        for output_hash in &output_hashes2 {
+            assert!(chain.contains_output(output_hash));
+        }
+
+        // Pop the last monetary block.
+        chain.pop_monetary_block().expect("no disk errors");
+        assert_eq!(height1, chain.height());
+        assert_eq!(block_hash1, chain.last_block_hash());
+        assert_eq!(chain.blocks().count() as u64, chain.height());
+        assert!(chain.last_block_timestamp <= clock::now());
+        assert_eq!(&balance1, chain.balance());
+        assert_eq!(escrow1, chain.escrow().info());
+        for input_hash in &input_hashes2 {
+            assert!(chain.contains_output(input_hash));
+        }
+        for output_hash in &output_hashes2 {
+            assert!(!chain.contains_output(output_hash));
+        }
+
+        // Pop the previous monetary block.
+        chain.pop_monetary_block().expect("no disk errors");
+        assert_eq!(height0, chain.height());
+        assert_eq!(block_hash0, chain.last_block_hash());
+        assert_eq!(chain.blocks().count() as u64, chain.height());
+        assert!(chain.last_block_timestamp <= clock::now());
+        assert_eq!(&balance0, chain.balance());
+        assert_eq!(escrow0, chain.escrow().info());
+        for input_hash in &input_hashes1 {
+            assert!(chain.contains_output(&input_hash));
+        }
+        for output_hash in &output_hashes1 {
+            assert!(!chain.contains_output(&output_hash));
+        }
+
+        //
+        // Recovery.
+        //
+        drop(chain);
+        let database = ListDb::new(&temp_dir.path());
+        let chain = Blockchain::with_db(cfg, database, genesis, current_timestamp);
+        assert_eq!(height0, chain.height());
+        assert_eq!(block_hash0, chain.last_block_hash());
+        assert_eq!(chain.blocks().count() as u64, chain.height());
+        assert!(chain.last_block_timestamp <= clock::now());
+        assert_eq!(&balance0, chain.balance());
     }
 
     #[test]

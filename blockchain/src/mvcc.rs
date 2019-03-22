@@ -21,11 +21,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use std::borrow::Borrow;
 pub use std::collections::btree_map::Iter;
 pub use std::collections::btree_map::Keys;
+pub use std::collections::btree_map::Range;
 pub use std::collections::btree_map::Values;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
+use std::ops::RangeBounds;
 
 /// The Undo record.
 /// Used to undo changes when a map is rolled back.
@@ -195,14 +198,10 @@ where
     ///
     pub fn rollback_to_version(&mut self, to_version: L) {
         assert!(to_version >= self.checkpoint_version(), "too old");
-        assert!(to_version <= self.current_version(), "too new");
-        dbg!(&to_version);
-        dbg!(&self.undo);
 
         while self.current_version() > to_version {
             assert!(!self.undo.is_empty(), "rollback before the checkpoint");
             let undo = self.undo.pop().unwrap();
-            dbg!(&undo);
             match undo {
                 UndoRecord::Insert {
                     version,
@@ -224,10 +223,41 @@ where
         assert!(self.current_version() <= to_version);
     }
 
+    /// Returns a reference to the value corresponding to the key.
+    pub fn get<Q: ?Sized>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+        Q: Ord,
+    {
+        self.map.get(key)
+    }
+
+    /// Constructs a double-ended iterator over a sub-range of elements in the map.
+    /// The simplest way is to use the range syntax `min..max`, thus `range(min..max)` will
+    /// yield elements from min (inclusive) to max (exclusive).
+    /// The range may also be entered as `(Bound<T>, Bound<T>)`, so for example
+    /// `range((Excluded(4), Included(10)))` will yield a left-exclusive, right-inclusive
+    /// range from 4 to 10.
+    #[inline]
+    pub fn range<T: ?Sized, R>(&self, range: R) -> Range<K, V>
+    where
+        T: Ord,
+        K: Borrow<T>,
+        R: RangeBounds<T>,
+    {
+        self.map.range(range)
+    }
+
     /// Returns true if the map contains no elements.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
+    }
+
+    /// Returns the number of elements in the map.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.map.len()
     }
 
     /// An iterator visiting all keys in arbitrary order.
@@ -298,8 +328,17 @@ mod tests {
         assert_map!(&map, vec![]);
 
         map.insert(1, 101, 1001);
+        assert_eq!(0, map.checkpoint_version());
+        assert_eq!(1, map.current_version());
+
         map.insert(1, 102, 1002);
+        assert_eq!(0, map.checkpoint_version());
+        assert_eq!(1, map.current_version());
+
         map.insert(2, 102, 2002); // overwrite 102
+        assert_eq!(0, map.checkpoint_version());
+        assert_eq!(2, map.current_version());
+
         map.insert(2, 103, 2003);
         assert_eq!(0, map.checkpoint_version());
         assert_eq!(2, map.current_version());
@@ -403,16 +442,5 @@ mod tests {
         assert_eq!(map.checkpoint_version(), 1);
         assert_eq!(map.current_version(), 1);
         map.rollback_to_version(0);
-    }
-
-    #[test]
-    #[should_panic]
-    fn too_new() {
-        let mut map: MultiVersionedMap<u32, u32> = MultiVersionedMap::new();
-        assert_eq!(map.checkpoint_version(), 0);
-        assert_eq!(map.current_version(), 0);
-        map.insert(1, 101, 1001);
-        assert_eq!(map.current_version(), 1);
-        map.rollback_to_version(2);
     }
 }

@@ -33,8 +33,8 @@ lazy_static! {
     .unwrap();
     pub static ref EPOCH: IntCounter =
         register_int_counter!("stegos_blockchain_epoch", "Current blockchain epoch").unwrap();
-    pub static ref HEIGHT: IntCounter =
-        register_int_counter!("stegos_blockchain_height", "Blockchain blocks count").unwrap();
+    pub static ref HEIGHT: IntGauge =
+        register_int_gauge!("stegos_blockchain_height", "Blockchain blocks count").unwrap();
     pub static ref UTXO_LEN: IntGauge =
         register_int_gauge!("stegos_blockchain_utxo", "Size of UTXO map").unwrap();
 }

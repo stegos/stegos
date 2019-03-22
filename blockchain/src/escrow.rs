@@ -23,6 +23,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::mvcc::MultiVersionedMap;
 use chrono::NaiveDateTime;
 use failure::Fail;
 use log::*;
@@ -32,37 +33,39 @@ use std::collections::HashMap;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
 
-#[derive(PartialEq, Eq, Ord, PartialOrd)]
+#[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd)]
 struct EscrowKey {
     validator_pkey: secure::PublicKey,
     output_hash: Hash,
 }
 
+#[derive(Debug, Clone)]
 struct EscrowValue {
     bonding_timestamp: u64,
     amount: i64,
 }
 
-type EscrowMap = BTreeMap<EscrowKey, EscrowValue>;
+type EscrowMap = MultiVersionedMap<EscrowKey, EscrowValue, u64>;
 
+#[derive(Debug, Clone)]
 pub struct Escrow {
     /// Stakes.
     escrow: EscrowMap,
 }
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct EscrowInfo {
     pub validators: Vec<ValidatorInfo>,
 }
 
-#[derive(Serialize, Clone, Debug, Default)]
+#[derive(Serialize, Clone, Debug, PartialEq, Eq, Default)]
 pub struct ValidatorInfo {
     pub network_pkey: String,
     pub total: i64,
     pub stakes: Vec<StakeInfo>,
 }
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct StakeInfo {
     pub output_hash: String,
     pub locked_until: String,
@@ -82,6 +85,7 @@ impl Escrow {
     ///
     pub fn stake(
         &mut self,
+        version: u64,
         validator_pkey: secure::PublicKey,
         output_hash: Hash,
         bonding_timestamp: u64,
@@ -96,7 +100,7 @@ impl Escrow {
             amount,
         };
 
-        if let Some(v) = self.escrow.insert(key, value) {
+        if let Some(v) = self.escrow.insert(version, key, value) {
             panic!(
                 "Stake already exists: validator={}, utxo={}, amount={}",
                 &validator_pkey, &output_hash, v.amount
@@ -149,6 +153,7 @@ impl Escrow {
     ///
     pub fn unstake(
         &mut self,
+        version: u64,
         validator_pkey: secure::PublicKey,
         output_hash: Hash,
         timestamp: u64,
@@ -158,7 +163,7 @@ impl Escrow {
             output_hash,
         };
 
-        let val = self.escrow.remove(&key).expect("stake exists");
+        let val = self.escrow.remove(version, &key).expect("stake exists");
         if val.bonding_timestamp >= timestamp {
             panic!("stake is locked");
         }
@@ -248,6 +253,21 @@ impl Escrow {
         let mut validators: Vec<ValidatorInfo> = validators.into_iter().map(|(_k, v)| v).collect();
         validators.sort_by_key(|x| -x.total);
         EscrowInfo { validators }
+    }
+
+    #[inline]
+    pub fn current_version(&self) -> u64 {
+        self.escrow.current_version()
+    }
+
+    #[inline]
+    pub fn checkpoint(&mut self) {
+        self.escrow.checkpoint();
+    }
+
+    #[inline]
+    pub fn rollback_to_version(&mut self, to_version: u64) {
+        self.escrow.rollback_to_version(to_version);
     }
 }
 

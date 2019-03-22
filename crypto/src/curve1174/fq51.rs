@@ -55,10 +55,8 @@ impl Fq51 {
     }
 
     pub fn is_zero(&self) -> bool {
-        // faster than test == FQ51_0
-        // avoid scr(FQ51_0);
-        let mut tmp = *self;
-        scr(&mut tmp);
+        let mut tmp = Self::zero();
+        gnorm(&self, &mut tmp);
         tmp.0 == FQ51_0.0
     }
 
@@ -95,9 +93,6 @@ impl From<Fq> for Fq51 {
 impl From<Fq51> for Fq {
     fn from(x: Fq51) -> Fq {
         let mut tmp = U256::from(x);
-        while tmp >= *Q {
-            u256::sub_noborrow(&mut tmp.0, &(*Q).0);
-        }
         Fq::from(tmp)
     }
 }
@@ -264,7 +259,7 @@ impl Div<Fq51> for Fq51 {
 
 impl PartialEq for Fq51 {
     fn eq(&self, other: &Fq51) -> bool {
-        Fq::from(*self) == Fq::from(*other)
+        geq(self, other)
     }
 }
 
@@ -368,6 +363,25 @@ pub fn scr(w: &mut Fq51) {
     let t4 = w.0[4].wrapping_add(t3 >> 51);
     w.0[4] = bot47s(t4);
     w.0[0] = t0.wrapping_add((t4 >> 47).wrapping_mul(9));
+}
+
+// normalize Fq51 representation
+pub fn gnorm(x: &Fq51, y: &mut Fq51) {
+    // double negation followed by scr() in each case
+    // effectively removes any modular excess and
+    // produces a result of the same field value
+    let mut tmp = Fq51::zero();
+    gneg(x, &mut tmp);
+    scr(&mut tmp);
+    gneg(&tmp, y);
+    scr(y);
+}
+
+// equality comparison
+pub fn geq(x: &Fq51, y: &Fq51) -> bool {
+    let mut tmp1 = Fq51::zero();
+    gsub(x, y, &mut tmp1);
+    tmp1.is_zero()
 }
 
 // multiply w by a constant, w*=i
@@ -711,7 +725,7 @@ pub fn gsqrt(x: &Fq51) -> Result<Fq51, CryptoError> {
 
     gsqr(&w, &mut t1); // t1 = sqrt(x)^2 =? x
 
-    if t1 == *x {
+    if geq(&t1, x) {
         Ok(w)
     } else {
         Err(CryptoError::NotQuadraticResidue)
@@ -756,10 +770,10 @@ impl Fq51 {
 // into a collection of 64-bit cells
 impl From<Fq51> for U256 {
     fn from(x: Fq51) -> U256 {
-        let mut xx = x;
-        scr(&mut xx);
+        let mut tmp = Fq51::zero();
+        gnorm(&x, &mut tmp);
         let mut y = U256::zero();
-        clean_convert_Fq51_to_lev_u64(&xx, &mut y.0);
+        clean_convert_Fq51_to_lev_u64(&tmp, &mut y.0);
         y
     }
 }

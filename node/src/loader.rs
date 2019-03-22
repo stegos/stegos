@@ -88,8 +88,6 @@ impl Hashable for ChainLoaderMessage {
     }
 }
 
-/// Limit of blocks to download starting from current known blockchain state.
-const ORPHANS_BLOCK_LIMIT: u64 = 100;
 /// Unicast topic for loading blocks.
 pub const CHAIN_LOADER_TOPIC: &'static str = "chain-loader";
 
@@ -181,7 +179,9 @@ impl NodeService {
         request: RequestBlocks,
     ) -> Result<(), Error> {
         let start_hash = request.start_block;
-        let blocks = self.chain.blocks_range(&start_hash, ORPHANS_BLOCK_LIMIT);
+        let blocks = self
+            .chain
+            .blocks_range(&start_hash, self.cfg.loader_batch_size);
         if let Some(blocks) = blocks {
             info!("Feeding blocks: to={}, num_blocks={}", pkey, blocks.len());
             let msg = ChainLoaderMessage::Response(ResponseBlocks::new(blocks));

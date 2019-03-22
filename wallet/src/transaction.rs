@@ -34,8 +34,6 @@ use stegos_crypto::curve1174::cpt::SecretKey;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
-use stegos_node::PAYMENT_FEE;
-use stegos_node::STAKE_FEE;
 
 /// Create a new ValueShuffle payment transaction. (no data)
 pub(crate) fn create_vs_payment_transaction(
@@ -43,6 +41,7 @@ pub(crate) fn create_vs_payment_transaction(
     recipient: &PublicKey,
     unspent: &HashMap<Hash, (PaymentOutput, i64)>,
     amount: i64,
+    payment_fee: i64,
     data: String,
 ) -> Result<(Vec<(Hash, PaymentOutput)>, Vec<ProposedUTXO>, i64), Error> {
     if amount < 0 {
@@ -63,8 +62,8 @@ pub(crate) fn create_vs_payment_transaction(
     //
 
     trace!("Checking for available funds in the wallet...");
-    let fee = PAYMENT_FEE;
-    let fee_change = fee + PAYMENT_FEE;
+    let fee = payment_fee;
+    let fee_change = fee + payment_fee;
     let unspent_iter = unspent.values().map(|(o, a)| (o, *a));
     let (inputs, fee, change) = find_utxo(unspent_iter, amount, fee, fee_change)?;
     let inputs: Vec<Output> = inputs
@@ -150,6 +149,7 @@ pub(crate) fn create_payment_transaction(
     recipient: &PublicKey,
     unspent: &HashMap<Hash, (PaymentOutput, i64)>,
     amount: i64,
+    payment_fee: i64,
     data: PaymentPayloadData,
 ) -> Result<(Vec<Output>, Vec<Output>, Fr, i64), Error> {
     if amount < 0 {
@@ -168,8 +168,8 @@ pub(crate) fn create_payment_transaction(
     //
 
     trace!("Checking for available funds in the wallet...");
-    let fee = PAYMENT_FEE;
-    let fee_change = fee + PAYMENT_FEE;
+    let fee = payment_fee;
+    let fee_change = fee + payment_fee;
     let unspent_iter = unspent.values().map(|(o, a)| (o, *a));
     let (inputs, fee, change) = find_utxo(unspent_iter, amount, fee, fee_change)?;
     let inputs: Vec<Output> = inputs
@@ -245,12 +245,14 @@ pub(crate) fn create_staking_transaction(
     validator_pkey: &secure::PublicKey,
     unspent: &HashMap<Hash, (PaymentOutput, i64)>,
     amount: i64,
+    payment_fee: i64,
+    stake_fee: i64,
 ) -> Result<Transaction, Error> {
     if amount < 0 {
         return Err(WalletError::NegativeAmount(amount).into());
-    } else if amount <= PAYMENT_FEE {
+    } else if amount <= payment_fee {
         // Stake must be > PAYMENT_FEE.
-        return Err(WalletError::InsufficientStake(PAYMENT_FEE + 1, amount).into());
+        return Err(WalletError::InsufficientStake(payment_fee + 1, amount).into());
     }
 
     debug!(
@@ -263,8 +265,8 @@ pub(crate) fn create_staking_transaction(
     //
 
     trace!("Checking for available funds in the wallet...");
-    let fee = STAKE_FEE;
-    let fee_change = fee + PAYMENT_FEE;
+    let fee = stake_fee;
+    let fee_change = fee + payment_fee;
     let unspent_iter = unspent.values().map(|(o, a)| (o, *a));
     let (inputs, fee, change) = find_utxo(unspent_iter, amount, fee, fee_change)?;
     let inputs: Vec<Output> = inputs
@@ -344,9 +346,11 @@ pub(crate) fn create_unstaking_transaction(
     validator_pkey: &secure::PublicKey,
     unspent: &HashMap<Hash, StakeOutput>,
     amount: i64,
+    payment_fee: i64,
+    stake_fee: i64,
 ) -> Result<Transaction, Error> {
-    if amount <= PAYMENT_FEE {
-        return Err(WalletError::NegativeAmount(amount - PAYMENT_FEE).into());
+    if amount <= payment_fee {
+        return Err(WalletError::NegativeAmount(amount - payment_fee).into());
     }
 
     debug!(
@@ -360,16 +364,16 @@ pub(crate) fn create_unstaking_transaction(
 
     trace!("Checking for staked money in the wallet...");
     let unspent_iter = unspent.values().map(|o| (o, o.amount));
-    let amount = amount - PAYMENT_FEE;
+    let amount = amount - payment_fee;
     let (inputs, fee, change) =
-        find_utxo(unspent_iter, amount, PAYMENT_FEE, PAYMENT_FEE + STAKE_FEE)?;
+        find_utxo(unspent_iter, amount, payment_fee, payment_fee + stake_fee)?;
     let inputs: Vec<Output> = inputs
         .into_iter()
         .map(|o| Output::StakeOutput(o.clone()))
         .collect();
-    if fee > PAYMENT_FEE && change <= PAYMENT_FEE {
+    if fee > payment_fee && change <= payment_fee {
         // Stake must be > PAYMENT_FEE.
-        return Err(WalletError::InsufficientStake(PAYMENT_FEE + 1, change).into());
+        return Err(WalletError::InsufficientStake(payment_fee + 1, change).into());
     }
 
     debug!(
@@ -401,7 +405,7 @@ pub(crate) fn create_unstaking_transaction(
 
     if change > 0 {
         // Create an output for staking.
-        assert_eq!(fee, PAYMENT_FEE + STAKE_FEE);
+        assert_eq!(fee, payment_fee + stake_fee);
         trace!("Creating stake UTXO...");
         let output2 =
             Output::new_stake(timestamp, sender_skey, sender_pkey, validator_pkey, change)?;
@@ -434,7 +438,9 @@ pub mod tests {
     /// Check transaction signing and validation.
     #[test]
     fn unstaking_transactions() {
-        assert!(PAYMENT_FEE > 0 && STAKE_FEE > 0);
+        let payment_fee: i64 = 1;
+        let stake_fee: i64 = 1;
+        assert!(payment_fee > 0 && stake_fee > 0);
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
         let (skey, pkey, _sig0) = make_random_keys();
@@ -452,77 +458,124 @@ pub mod tests {
         unspent.insert(output_hash, output);
 
         // Unstake all of the money.
-        let tx = create_unstaking_transaction(&skey, &pkey, &validator_pkey, &unspent, stake)
-            .expect("tx is created");
+        let tx = create_unstaking_transaction(
+            &skey,
+            &pkey,
+            &validator_pkey,
+            &unspent,
+            stake,
+            payment_fee,
+            stake_fee,
+        )
+        .expect("tx is created");
         tx.validate(&inputs).expect("tx is valid");
-        assert_eq!(tx.body.fee, PAYMENT_FEE);
+        assert_eq!(tx.body.fee, payment_fee);
         assert_eq!(tx.body.txouts.len(), 1);
         match &tx.body.txouts.first().unwrap() {
             Output::PaymentOutput(o) => {
                 let PaymentPayload { amount, .. } = o.decrypt_payload(&skey).expect("key is valid");
-                assert_eq!(amount, stake - PAYMENT_FEE);
+                assert_eq!(amount, stake - payment_fee);
             }
             _ => panic!("invalid tx"),
         }
 
         // Unstake part of the money.
         let unstake = stake / 2;
-        let tx = create_unstaking_transaction(&skey, &pkey, &validator_pkey, &unspent, unstake)
-            .expect("tx is created");
+        let tx = create_unstaking_transaction(
+            &skey,
+            &pkey,
+            &validator_pkey,
+            &unspent,
+            unstake,
+            payment_fee,
+            stake_fee,
+        )
+        .expect("tx is created");
         tx.validate(&inputs).expect("tx is valid");
-        assert_eq!(tx.body.fee, PAYMENT_FEE + STAKE_FEE);
+        assert_eq!(tx.body.fee, payment_fee + stake_fee);
         assert_eq!(tx.body.txouts.len(), 2);
         match &tx.body.txouts[0] {
             Output::PaymentOutput(o) => {
                 let PaymentPayload { amount, .. } = o.decrypt_payload(&skey).expect("key is valid");
-                assert_eq!(amount, unstake - PAYMENT_FEE);
+                assert_eq!(amount, unstake - payment_fee);
             }
             _ => panic!("invalid tx"),
         }
         match &tx.body.txouts[1] {
             Output::StakeOutput(o) => {
-                assert_eq!(o.amount, stake - unstake - STAKE_FEE);
+                assert_eq!(o.amount, stake - unstake - stake_fee);
             }
             _ => panic!("invalid tx"),
         }
 
         // Try to unstake less than PAYMENT_FEE.
-        let e =
-            create_unstaking_transaction(&skey, &pkey, &validator_pkey, &unspent, PAYMENT_FEE - 1)
-                .unwrap_err();
+        let e = create_unstaking_transaction(
+            &skey,
+            &pkey,
+            &validator_pkey,
+            &unspent,
+            payment_fee - 1,
+            payment_fee,
+            stake_fee,
+        )
+        .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {
             WalletError::NegativeAmount(_amount) => {}
             _ => panic!(),
         }
 
         // Try to unstake PAYMENT_FEE.
-        let e = create_unstaking_transaction(&skey, &pkey, &validator_pkey, &unspent, PAYMENT_FEE)
-            .unwrap_err();
+        let e = create_unstaking_transaction(
+            &skey,
+            &pkey,
+            &validator_pkey,
+            &unspent,
+            payment_fee,
+            payment_fee,
+            stake_fee,
+        )
+        .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {
             WalletError::NegativeAmount(_amount) => {}
             _ => panic!(),
         }
 
         // Try to re-stake zero.
-        let unstake = stake - STAKE_FEE;
-        let e = create_unstaking_transaction(&skey, &pkey, &validator_pkey, &unspent, unstake)
-            .unwrap_err();
+        let unstake = stake - stake_fee;
+        let e = create_unstaking_transaction(
+            &skey,
+            &pkey,
+            &validator_pkey,
+            &unspent,
+            unstake,
+            payment_fee,
+            stake_fee,
+        )
+        .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {
             WalletError::InsufficientStake(min, got) => {
-                assert_eq!(min, PAYMENT_FEE + 1);
+                assert_eq!(min, payment_fee + 1);
                 assert_eq!(got, 0);
             }
             _ => panic!(),
         }
 
         // Try to re-stake PAYMENT_FEE.
-        let unstake = stake - PAYMENT_FEE - STAKE_FEE;
-        let e = create_unstaking_transaction(&skey, &pkey, &validator_pkey, &unspent, unstake)
-            .unwrap_err();
+        let unstake = stake - payment_fee - stake_fee;
+        let e = create_unstaking_transaction(
+            &skey,
+            &pkey,
+            &validator_pkey,
+            &unspent,
+            unstake,
+            payment_fee,
+            stake_fee,
+        )
+        .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {
             WalletError::InsufficientStake(min, got) => {
-                assert_eq!(min, PAYMENT_FEE + 1);
-                assert_eq!(got, PAYMENT_FEE);
+                assert_eq!(min, payment_fee + 1);
+                assert_eq!(got, payment_fee);
             }
             _ => panic!(),
         }

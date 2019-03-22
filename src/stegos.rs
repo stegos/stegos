@@ -270,8 +270,13 @@ fn run() -> Result<(), Error> {
     let (network, network_service) = Libp2pNetwork::new(&cfg.network, &keychain)?;
 
     // Initialize node
-    let (node_service, node) =
-        NodeService::new(&cfg.storage, keychain.clone(), genesis, network.clone())?;
+    let (node_service, node) = NodeService::new(
+        cfg.chain.clone(),
+        cfg.storage,
+        keychain.clone(),
+        genesis,
+        network.clone(),
+    )?;
     rt.spawn(node_service);
 
     // Initialize TransactionPool.
@@ -287,6 +292,8 @@ fn run() -> Result<(), Error> {
             keychain.network_pkey.clone(),
             network.clone(),
             node.clone(),
+            cfg.chain.payment_fee,
+            cfg.chain.stake_fee,
         );
         rt.spawn(wallet_service);
 
@@ -298,8 +305,8 @@ fn run() -> Result<(), Error> {
     // Register genesis block.
     node.init().unwrap();
     // start node
-    let timer =
-        tokio_timer::Delay::new(tokio_timer::clock::now() + stegos_node::NETWORK_GRACE_TIMEOUT);
+    let network_grace_period = std::time::Duration::from_secs(10);
+    let timer = tokio_timer::Delay::new(tokio_timer::clock::now() + network_grace_period);
 
     rt.spawn(
         timer
@@ -341,7 +348,7 @@ mod tests {
     use futures::sync::mpsc::unbounded;
     use simple_logger;
     use stegos_network::loopback::Loopback;
-    use stegos_node::NodeService;
+    use stegos_node::{ChainConfig, NodeService};
 
     #[ignore]
     #[test]
@@ -352,13 +359,14 @@ mod tests {
         let chain = "testnet";
         config.general.chain = chain.to_string();
         let genesis = initialize_genesis(&config).expect("testnet looks like unloadable.");
-
+        let cfg: ChainConfig = Default::default();
         let (_loopback, network) = Loopback::new();
         let (_outbox, inbox) = unbounded();
-        let mut node = NodeService::testing(keys.clone(), network, genesis, inbox).unwrap();
+        let mut node = NodeService::testing(cfg, keys.clone(), network, genesis, inbox).unwrap();
         node.handle_init().unwrap();
     }
 
+    #[ignore]
     #[test]
     fn is_devnet_loadable() {
         let _ = simple_logger::init_with_level(log::Level::Debug);
@@ -367,10 +375,10 @@ mod tests {
         let chain = "devnet";
         config.general.chain = chain.to_string();
         let genesis = initialize_genesis(&config).expect("devnet looks like unloadable.");
-
+        let cfg: ChainConfig = Default::default();
         let (_loopback, network) = Loopback::new();
         let (_outbox, inbox) = unbounded();
-        let mut node = NodeService::testing(keys.clone(), network, genesis, inbox).unwrap();
+        let mut node = NodeService::testing(cfg, keys.clone(), network, genesis, inbox).unwrap();
         node.handle_init().unwrap();
     }
 
@@ -382,10 +390,10 @@ mod tests {
         let chain = "dev";
         config.general.chain = chain.to_string();
         let genesis = initialize_genesis(&config).expect("dev looks like unloadable.");
-
+        let cfg: ChainConfig = Default::default();
         let (_loopback, network) = Loopback::new();
         let (_outbox, inbox) = unbounded();
-        let mut node = NodeService::testing(keys.clone(), network, genesis, inbox).unwrap();
+        let mut node = NodeService::testing(cfg, keys.clone(), network, genesis, inbox).unwrap();
         node.handle_init().unwrap();
     }
 

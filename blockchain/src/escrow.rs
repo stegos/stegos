@@ -32,9 +32,6 @@ use std::collections::HashMap;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
 
-/// Minimal stake amount.
-pub const MIN_STAKE_AMOUNT: i64 = 1000;
-
 #[derive(PartialEq, Eq, Ord, PartialOrd)]
 struct EscrowKey {
     validator_pkey: secure::PublicKey,
@@ -46,12 +43,10 @@ struct EscrowValue {
     amount: i64,
 }
 
-/// Time to lock StakeOutput.
-pub const BONDING_TIME: u64 = 900; // 15 minutes
-
 type EscrowMap = BTreeMap<EscrowKey, EscrowValue>;
 
 pub struct Escrow {
+    /// Stakes.
     escrow: EscrowMap,
 }
 
@@ -216,9 +211,9 @@ impl Escrow {
 
     ///
     /// Get all staked values of all validators.
-    /// Filter out stakers with stake lower than MIN_STAKE_AMOUNT.
+    /// Filter out stakers with stake lower than min_stake_amount.
     ///
-    pub fn get_stakers_majority(&self) -> Vec<(secure::PublicKey, i64)> {
+    pub fn get_stakers_majority(&self, min_stake_amount: i64) -> Vec<(secure::PublicKey, i64)> {
         let mut stakes: BTreeMap<secure::PublicKey, i64> = BTreeMap::new();
         for (k, v) in self.escrow.iter() {
             let entry = stakes.entry(k.validator_pkey).or_insert(0);
@@ -228,7 +223,7 @@ impl Escrow {
         // filter out validators with low stake.
         stakes
             .into_iter()
-            .filter(|(_, amount)| *amount >= MIN_STAKE_AMOUNT)
+            .filter(|(_, amount)| *amount >= min_stake_amount)
             .collect()
     }
 

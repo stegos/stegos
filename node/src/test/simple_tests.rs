@@ -34,7 +34,8 @@ pub fn init() {
     let current_timestamp = Utc::now().timestamp() as u64;
     let genesis = genesis(&[keys.clone()], 1000, 3_000_000, current_timestamp);
     let genesis_count = genesis.len() as u64;
-    let node = NodeService::testing(keys.clone(), network, genesis, inbox).unwrap();
+    let node =
+        NodeService::testing(Default::default(), keys.clone(), network, genesis, inbox).unwrap();
     assert_eq!(node.chain.height(), genesis_count);
     assert_eq!(node.mempool.len(), 0);
     assert_eq!(node.chain.epoch(), 1);
@@ -67,7 +68,7 @@ fn simulate_payment(node: &mut NodeService, amount: i64) -> Result<(), Error> {
         }
     }
 
-    let fee: i64 = PAYMENT_FEE * inputs.len() as i64;
+    let fee: i64 = node.cfg.payment_fee * inputs.len() as i64;
     assert!(inputs_amount >= amount + fee);
     let change = inputs_amount - amount - fee;
     let timestamp = Utc::now().timestamp() as u64;
@@ -97,11 +98,13 @@ pub fn monetary_requests() {
     let stake: i64 = 1000;
     let current_timestamp = Utc::now().timestamp() as u64;
     let genesis = genesis(&[keys.clone()], stake, total, current_timestamp);
-    let mut node = NodeService::testing(keys.clone(), network, genesis, inbox).unwrap();
+    let cfg: ChainConfig = Default::default();
+    let mut node =
+        NodeService::testing(cfg.clone(), keys.clone(), network, genesis, inbox).unwrap();
     let mut block_count = node.chain.height();
 
     // Payment without a change.
-    simulate_payment(&mut node, total - stake - PAYMENT_FEE).unwrap();
+    simulate_payment(&mut node, total - stake - cfg.payment_fee).unwrap();
     assert_eq!(node.mempool.len(), 1);
     simulate_consensus(&mut node);
     assert_eq!(node.mempool.len(), 0);
@@ -125,7 +128,10 @@ pub fn monetary_requests() {
     amounts.sort();
     assert_eq!(
         amounts,
-        vec![PAYMENT_FEE + BLOCK_REWARD, total - stake - PAYMENT_FEE]
+        vec![
+            cfg.payment_fee + cfg.block_reward,
+            total - stake - cfg.payment_fee
+        ]
     );
     block_count += 1;
 
@@ -153,9 +159,9 @@ pub fn monetary_requests() {
     }
     amounts.sort();
     let expected = vec![
-        BLOCK_REWARD + 2 * PAYMENT_FEE,
+        cfg.block_reward + 2 * cfg.payment_fee,
         100,
-        BLOCK_REWARD + total - stake - 100 - 2 * PAYMENT_FEE,
+        cfg.block_reward + total - stake - 100 - 2 * cfg.payment_fee,
     ];
     assert_eq!(amounts, expected);
 

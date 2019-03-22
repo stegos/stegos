@@ -38,7 +38,9 @@ fn basic() {
     start_test(|timer| {
         let topic = crate::CONSENSUS_TOPIC;
         // Create NUM_NODES.
-        let mut s: Sandbox = Sandbox::new(NUM_NODES);
+        let mut cfg: ChainConfig = Default::default();
+        cfg.blocks_in_epoch = 2;
+        let mut s: Sandbox = Sandbox::new(cfg.clone(), NUM_NODES);
         s.poll();
         for node in s.nodes.iter() {
             assert_eq!(node.node_service.chain.height(), 2);
@@ -48,8 +50,8 @@ fn basic() {
 
         // Process N monetary blocks.
         let mut height = s.nodes[0].node_service.chain.height();
-        for _ in 1..SEALED_BLOCK_IN_EPOCH {
-            wait(timer, crate::TX_WAIT_TIMEOUT);
+        for _ in 1..cfg.blocks_in_epoch {
+            wait(timer, Duration::from_secs(cfg.tx_wait_timeout));
             s.poll();
             let block: Block = s.nodes[leader_id]
                 .network_service
@@ -175,7 +177,7 @@ fn basic() {
         );
 
         // Wait for TX_WAIT_TIMEOUT.
-        wait(timer, *crate::BLOCK_TIMEOUT);
+        wait(timer, Duration::from_secs(cfg.block_timeout));
         s.nodes[NUM_NODES - 1].poll();
 
         // Check that the last node has auto-committed the block.

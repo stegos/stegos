@@ -48,8 +48,6 @@ use stegos_crypto::hash::*;
 use stegos_crypto::pbc::secure;
 use tokio_timer::clock;
 
-pub const MAX_SLOTS_COUNT: usize = 1000;
-
 /// A help to find UTXO in this blockchain.
 struct OutputKey {
     /// The short block identifier.
@@ -60,6 +58,11 @@ struct OutputKey {
 
 /// The blockchain database.
 pub struct Blockchain {
+    //
+    // Configuration.
+    //
+    cfg: BlockchainConfig,
+
     //
     // Storage.
     //
@@ -118,17 +121,31 @@ impl Blockchain {
     // Constructors.
     //----------------------------------------------------------------------------------------------
 
-    pub fn new(config: &StorageConfig, genesis: Vec<Block>, current_timestamp: u64) -> Blockchain {
-        let database = ListDb::new(&config.database_path);
-        Self::with_db(database, genesis, current_timestamp)
+    pub fn new(
+        cfg: BlockchainConfig,
+        storage_cfg: StorageConfig,
+        genesis: Vec<Block>,
+        current_timestamp: u64,
+    ) -> Blockchain {
+        let database = ListDb::new(&storage_cfg.database_path);
+        Self::with_db(cfg, database, genesis, current_timestamp)
     }
 
-    pub fn testing(genesis: Vec<Block>, current_timestamp: u64) -> Blockchain {
+    pub fn testing(
+        cfg: BlockchainConfig,
+        genesis: Vec<Block>,
+        current_timestamp: u64,
+    ) -> Blockchain {
         let database = ListDb::testing();
-        Self::with_db(database, genesis, current_timestamp)
+        Self::with_db(cfg, database, genesis, current_timestamp)
     }
 
-    fn with_db(database: ListDb, genesis: Vec<Block>, current_timestamp: u64) -> Blockchain {
+    fn with_db(
+        cfg: BlockchainConfig,
+        database: ListDb,
+        genesis: Vec<Block>,
+        current_timestamp: u64,
+    ) -> Blockchain {
         //
         // Storage.
         //
@@ -164,6 +181,7 @@ impl Blockchain {
         let monetary_adjustment: i64 = 0;
 
         let mut blockchain = Blockchain {
+            cfg,
             database,
             block_by_hash,
             output_by_hash,
@@ -535,9 +553,9 @@ impl Blockchain {
 
             //Try to tmp elect according to random
             let election_result = election::select_validators_slots(
-                self.escrow.get_stakers_majority().into_iter().collect(),
+                self.escrow.get_stakers_majority(self.cfg.min_stake_amount),
                 block.header.random,
-                MAX_SLOTS_COUNT,
+                self.cfg.max_slot_count,
             );
 
             let validators = &election_result.validators;
@@ -583,9 +601,9 @@ impl Blockchain {
         self.epoch += 1;
         self.last_key_block_id = block_id;
         self.election_result = election::select_validators_slots(
-            self.escrow.get_stakers_majority().into_iter().collect(),
+            self.escrow.get_stakers_majority(self.cfg.min_stake_amount),
             block.header.random,
-            MAX_SLOTS_COUNT,
+            self.cfg.max_slot_count,
         );
         self.view_change = 0;
 
@@ -904,7 +922,7 @@ impl Blockchain {
                 }
                 Output::StakeOutput(o) => {
                     created += fee_a(o.amount);
-                    let bonding_timestamp = block_timestamp + crate::escrow::BONDING_TIME;
+                    let bonding_timestamp = block_timestamp + self.cfg.bonding_time;
                     self.escrow
                         .stake(o.validator, output_hash, bonding_timestamp, o.amount);
                 }
@@ -976,13 +994,19 @@ pub mod tests {
 
         let keychains = [KeyChain::new_mem()];
         let current_timestamp = Utc::now().timestamp() as u64;
-        let blocks = genesis(&keychains, MIN_STAKE_AMOUNT, 1_000_000, current_timestamp);
+        let cfg: BlockchainConfig = Default::default();
+        let blocks = genesis(
+            &keychains,
+            cfg.min_stake_amount,
+            1_000_000,
+            current_timestamp,
+        );
         assert_eq!(blocks.len(), 2);
         let (block1, block2) = match &blocks[..] {
             [Block::MonetaryBlock(block1), Block::KeyBlock(block2)] => (block1, block2),
             _ => panic!(),
         };
-        let blockchain = Blockchain::testing(blocks.clone(), current_timestamp);
+        let blockchain = Blockchain::testing(cfg, blocks.clone(), current_timestamp);
         let outputs: Vec<Output> = block1
             .body
             .outputs
@@ -999,12 +1023,14 @@ pub mod tests {
         assert_eq!(blockchain.height(), 2);
         assert_eq!(blockchain.epoch, block2.header.base.epoch);
         assert_eq!(blockchain.blocks_in_epoch(), 1);
-        let validators = blockchain.escrow.get_stakers_majority();
+        let validators = blockchain
+            .escrow
+            .get_stakers_majority(blockchain.cfg.min_stake_amount);
         assert_eq!(validators.len(), keychains.len());
         let validators_map: BTreeMap<_, _> = validators.iter().cloned().collect();
         for keychain in &keychains {
             let stake = validators_map.get(&keychain.network_pkey).expect("exists");
-            assert_eq!(*stake, MIN_STAKE_AMOUNT);
+            assert_eq!(*stake, blockchain.cfg.min_stake_amount);
         }
         assert_eq!(blockchain.validators(), &validators);
         assert_eq!(blockchain.last_block_hash(), Hash::digest(&block2));
@@ -1050,10 +1076,11 @@ pub mod tests {
             KeyChain::new_mem(),
         ];
 
-        let stake = MIN_STAKE_AMOUNT;
         let current_timestamp = Utc::now().timestamp() as u64;
+        let cfg: BlockchainConfig = Default::default();
+        let stake = cfg.min_stake_amount;
         let blocks = genesis(&keychains, stake, 1_000_000, current_timestamp);
-        let mut blockchain = Blockchain::testing(blocks, current_timestamp);
+        let mut blockchain = Blockchain::testing(cfg, blocks, current_timestamp);
         let start = blockchain.last_block_hash();
         // len of genesis
         assert!(blockchain.height() > 0);

@@ -43,6 +43,7 @@ use stegos_keychain::KeyChain;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::config::NetworkConfig;
+use crate::discovery::{Discovery, DiscoveryOutEvent};
 use crate::gatekeeper::{Gatekeeper, GatekeeperOutEvent, ProtocolUpdateEvent};
 use crate::ncp::{Ncp, NcpOutEvent};
 use crate::pubsub::{Floodsub, FloodsubEvent, TopicBuilder, TopicHash};
@@ -200,6 +201,7 @@ pub struct Libp2pBehaviour<TSubstream: AsyncRead + AsyncWrite> {
     floodsub: Floodsub<TSubstream>,
     ncp: Ncp<TSubstream>,
     gatekeeper: Gatekeeper<TSubstream>,
+    discovery: Discovery<TSubstream>,
     #[behaviour(ignore)]
     consumers: HashMap<TopicHash, SmallVec<[mpsc::UnboundedSender<Vec<u8>>; 3]>>,
     #[behaviour(ignore)]
@@ -221,8 +223,9 @@ where
     pub fn new(config: &NetworkConfig, keychain: &KeyChain, peer_id: PeerId) -> Self {
         let mut behaviour = Libp2pBehaviour {
             floodsub: Floodsub::new(peer_id.clone()),
-            ncp: Ncp::new(config),
+            ncp: Ncp::new(config, keychain),
             gatekeeper: Gatekeeper::new(config, keychain),
+            discovery: Discovery::new(keychain.network_pkey.clone()),
             consumers: HashMap::new(),
             unicast_consumers: HashMap::new(),
             my_pkey: keychain.network_pkey.clone(),
@@ -353,6 +356,24 @@ where
                 }
             }
             NcpOutEvent::Disabled { .. } => unimplemented!(),
+            NcpOutEvent::DiscoveredPeer {
+                node_id,
+                peer_id,
+                addresses,
+            } => {
+                debug!(target: "stegos_network::ncp", "discovered node: node_id={}, peer_id={}", node_id, peer_id.to_base58());
+                self.discovery.set_peer_id(&node_id, peer_id.clone());
+                if self.connected_peers.contains_key(&peer_id) {
+                    for a in addresses.iter() {
+                        self.discovery.add_connected_address(&node_id, a.clone());
+                    }
+                } else {
+                    for a in addresses.iter() {
+                        self.discovery
+                            .add_not_connected_address(&node_id, a.clone());
+                    }
+                }
+            }
         }
     }
 }
@@ -505,6 +526,13 @@ where
             GatekeeperOutEvent::Message { .. } => unimplemented!(),
         }
     }
+}
+
+impl<TSubstream> NetworkBehaviourEventProcess<DiscoveryOutEvent> for Libp2pBehaviour<TSubstream>
+where
+    TSubstream: AsyncRead + AsyncWrite,
+{
+    fn inject_event(&mut self, _event: DiscoveryOutEvent) {}
 }
 
 #[derive(Clone, Debug)]

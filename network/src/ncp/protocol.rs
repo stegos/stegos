@@ -27,6 +27,7 @@ use libp2p::core::{InboundUpgrade, OutboundUpgrade, PeerId, UpgradeInfo};
 use libp2p::Multiaddr;
 use protobuf::Message;
 use std::{io, iter};
+use stegos_crypto::pbc::secure;
 use tokio::codec::{Decoder, Encoder, Framed};
 use tokio::io::{AsyncRead, AsyncWrite};
 use unsigned_varint::codec;
@@ -117,6 +118,7 @@ impl Encoder for NcpCodec {
                 for peer in response.peers.into_iter() {
                     let mut peer_info = ncp_proto::Message_PeerInfo::new();
                     peer_info.set_peer_id(peer.peer_id.into_bytes());
+                    peer_info.set_node_id(peer.node_id.to_bytes().to_vec());
                     for addr in peer.addresses.into_iter() {
                         peer_info.mut_addrs().push(addr.to_bytes());
                     }
@@ -159,18 +161,32 @@ impl Decoder for NcpCodec {
             ncp_proto::Message_MessageType::GET_PEERS_RES => {
                 let mut response = GetPeersResponse { peers: vec![] };
                 for peer in message.get_peers().into_iter() {
-                    if let Ok(peer_id) = PeerId::from_bytes(peer.get_peer_id().to_vec()) {
-                        let mut peer_info = PeerInfo {
-                            peer_id,
-                            addresses: vec![],
-                        };
-                        for addr in peer.get_addrs().into_iter() {
-                            if let Ok(addr_) = Multiaddr::from_bytes(addr.to_vec()) {
-                                peer_info.addresses.push(addr_);
-                            }
+                    let peer_id =
+                        PeerId::from_bytes(peer.get_peer_id().to_vec()).map_err(|_| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "bad protobuf encoding, failed to decode node_id",
+                            )
+                        })?;
+                    let node_id =
+                        secure::PublicKey::try_from_bytes(peer.get_node_id()).map_err(|_| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "bad protobuf encoding, failed to decode node_id",
+                            )
+                        })?;
+
+                    let mut peer_info = PeerInfo {
+                        peer_id,
+                        node_id,
+                        addresses: vec![],
+                    };
+                    for addr in peer.get_addrs().into_iter() {
+                        if let Ok(addr_) = Multiaddr::from_bytes(addr.to_vec()) {
+                            peer_info.addresses.push(addr_);
                         }
-                        response.peers.push(peer_info);
                     }
+                    response.peers.push(peer_info);
                 }
                 Ok(Some(NcpMessage::GetPeersResponse { response }))
             }
@@ -188,6 +204,7 @@ pub enum NcpMessage {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PeerInfo {
     pub peer_id: PeerId,
+    pub node_id: secure::PublicKey,
     pub addresses: Vec<Multiaddr>,
 }
 
@@ -197,9 +214,10 @@ pub struct GetPeersResponse {
 }
 
 impl PeerInfo {
-    pub fn new(peer_id: &PeerId) -> Self {
+    pub fn new(peer_id: &PeerId, node_id: &secure::PublicKey) -> Self {
         Self {
             peer_id: peer_id.clone(),
+            node_id: node_id.clone(),
             addresses: vec![],
         }
     }
@@ -211,16 +229,20 @@ mod tests {
     use futures::{Future, Sink, Stream};
     use libp2p::core::upgrade::{InboundUpgrade, OutboundUpgrade};
     use libp2p::core::PeerId;
+    use stegos_crypto::pbc::secure;
     use tokio::net::{TcpListener, TcpStream};
 
     #[test]
     fn correct_transfer() {
         test_one(NcpMessage::GetPeersRequest);
 
+        let (_, node_id, _) = secure::make_random_keys();
+
         let msg = NcpMessage::GetPeersResponse {
             response: GetPeersResponse {
                 peers: vec![PeerInfo {
                     peer_id: PeerId::random(),
+                    node_id,
                     addresses: vec![
                         "/ip4/1.2.3.4/tcp/1111".parse().unwrap(),
                         "/ip4/1.2.3.4/tcp/1231".parse().unwrap(),

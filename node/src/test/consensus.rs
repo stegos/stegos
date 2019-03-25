@@ -199,3 +199,43 @@ fn basic() {
         assert_eq!(block_hash, block_hash2);
     });
 }
+
+#[test]
+fn request_on_timeout() {
+    const NUM_NODES: usize = 3;
+    use log::Level;
+    let _ = simple_logger::init_with_level(Level::Trace);
+    start_test(|timer| {
+        // Create NUM_NODES.
+        let mut cfg: ChainConfig = Default::default();
+        cfg.blocks_in_epoch = 2;
+        let mut s: Sandbox = Sandbox::new(cfg.clone(), NUM_NODES);
+        s.poll();
+        for node in s.nodes.iter() {
+            assert_eq!(node.node_service.chain.height(), 2);
+        }
+        let leader_pk = s.nodes[0].node_service.chain.leader();
+        let leader_id = s
+            .nodes_keychains
+            .iter()
+            .enumerate()
+            .find(|(_id, keys)| leader_pk == keys.network_pkey)
+            .map(|(id, _)| id)
+            .unwrap();
+
+        // emulate timeout on other nodes, and wait for request
+        wait(timer, Duration::from_secs(cfg.micro_block_timeout));
+        info!("BEFORE POLL");
+        s.poll();
+        for (_, node) in s
+            .nodes
+            .iter_mut()
+            .enumerate()
+            .filter(|(id, _)| *id != leader_id)
+        {
+            let _: ChainLoaderMessage = node
+                .network_service
+                .get_unicast(crate::loader::CHAIN_LOADER_TOPIC, &leader_pk);
+        }
+    });
+}

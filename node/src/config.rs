@@ -35,6 +35,8 @@ pub struct ChainConfig {
     pub tx_wait_timeout: u64,
     /// How long wait for blocks.
     pub block_timeout: u64,
+    /// How long wait for micro blocks.
+    pub micro_block_timeout: u64,
     /// Max difference in timestamps of leader and validators.
     pub timestamp_delta_max: u64,
     /// Max count of sealed block in epoch.
@@ -63,11 +65,13 @@ impl Default for ChainConfig {
         let block_timeout = tx_wait_timeout + // propose timeout
             message_timeout * 3 + // 3 consensus message
             block_validation_timeout * 3; // leader + validators + sealed block.
+        let micro_block_timeout = tx_wait_timeout + message_timeout + block_validation_timeout;
         ChainConfig {
             message_timeout,
             block_validation_timeout,
             tx_wait_timeout,
             block_timeout,
+            micro_block_timeout,
             timestamp_delta_max: 10 * 60,
             blocks_in_epoch: 5,
             block_reward: 60,

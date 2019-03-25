@@ -194,6 +194,7 @@ pub enum NodeMessage {
     Init,
     NetworkReady,
     ConsensusTimer(Instant),
+    ViewChangeTimer(Instant),
 }
 
 pub struct NodeService {
@@ -325,6 +326,13 @@ impl NodeService {
         let duration = Duration::from_secs(1); // every second
         let timer = Interval::new_interval(duration)
             .map(|i| NodeMessage::ConsensusTimer(i))
+            .map_err(|_e| ()); // ignore transient timer errors
+        streams.push(Box::new(timer));
+
+        // ViewChange timer events
+        let duration = Duration::from_secs(cfg.micro_block_timeout); // every message_timeout
+        let timer = Interval::new_interval(duration)
+            .map(|i| NodeMessage::ViewChangeTimer(i))
             .map_err(|_e| ()); // ignore transient timer errors
         streams.push(Box::new(timer));
 
@@ -802,7 +810,19 @@ impl NodeService {
 
         Ok(())
     }
+    /// Request block history from leader, if no block was received
+    /// retry each message_timeout.
+    fn handle_view_change_timer(&mut self) -> Result<(), Error> {
+        let elapsed: Duration = clock::now().duration_since(self.chain.last_block_timestamp());
 
+        if self.consensus.is_none() && elapsed >= Duration::from_secs(self.cfg.micro_block_timeout)
+        {
+            let leader = self.chain.leader();
+            debug!("Timed out while waiting for monetary block, request block from last leader: leader={}", leader);
+            self.request_history_from(leader)?;
+        }
+        Ok(())
+    }
     ///
     /// Create a new monetary block.
     ///
@@ -927,6 +947,7 @@ impl Future for NodeService {
                                 .and_then(|data| self.handle_chain_loader_message(msg.from, data))
                         }
                         NodeMessage::ConsensusTimer(_now) => self.handle_consensus_timer(),
+                        NodeMessage::ViewChangeTimer(_now) => self.handle_view_change_timer(),
                     };
                     if let Err(e) = result {
                         error!("Error: {}", e);

@@ -350,7 +350,6 @@ mod tests {
     use stegos_network::loopback::Loopback;
     use stegos_node::{ChainConfig, NodeService};
 
-    #[ignore]
     #[test]
     fn is_testnet_loadable() {
         let _ = simple_logger::init_with_level(log::Level::Debug);
@@ -366,7 +365,6 @@ mod tests {
         node.handle_init().unwrap();
     }
 
-    #[ignore]
     #[test]
     fn is_devnet_loadable() {
         let _ = simple_logger::init_with_level(log::Level::Debug);

@@ -10,6 +10,7 @@ fn main() {
 
     conf.cpp(true)
         .include("/usr/local/include/flint")
+        .flag_if_supported("-Wno-unused-parameter")
         .file("src/dicemix/solver_flint.cpp")
         .compile("libsolver_flint.a");
 

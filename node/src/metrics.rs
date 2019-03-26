@@ -30,6 +30,11 @@ lazy_static! {
         "The number of auto-commits of proposed block"
     )
     .unwrap();
+    pub static ref FORCED_VIEW_CHANGES: IntCounter = register_int_counter!(
+        "stegos_forced_view_changes",
+        "The number of forced view_changes, in case of dead leader."
+    )
+    .unwrap();
 }
 
 pub mod vrf {

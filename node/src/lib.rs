@@ -817,6 +817,7 @@ impl NodeService {
 
         if self.consensus.is_none() && elapsed >= Duration::from_secs(self.cfg.micro_block_timeout)
         {
+            metrics::FORCED_VIEW_CHANGES.inc();
             let leader = self.chain.leader();
             debug!("Timed out while waiting for monetary block, request block from last leader: leader={}", leader);
             self.request_history_from(leader)?;

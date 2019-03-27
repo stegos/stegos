@@ -20,13 +20,18 @@
 // SOFTWARE.
 
 use bitvector::BitVector;
+use failure::Error;
 
+use crate::block::MonetaryBlock;
+use crate::blockchain::Blockchain;
+use crate::multisignature::{check_multi_signature, create_multi_signature_index};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure;
 
 pub type ViewCounter = u32;
 pub type ValidatorId = u32;
 
+/// Information of current chain, that is used as proof of viewchange.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ChainInfo {
     pub height: u64,
@@ -34,11 +39,55 @@ pub struct ChainInfo {
     pub last_block: Hash,
 }
 
+impl ChainInfo {
+    /// Create ChainInfo from monetary block.
+    /// ## Panics
+    /// if view_change is equal to 0
+    pub fn from_monetary_block(block: &MonetaryBlock, height: u64) -> Self {
+        assert_ne!(block.header.base.view_change, 0);
+        ChainInfo {
+            height,
+            view_change: block.header.base.view_change - 1,
+            last_block: block.header.base.previous,
+        }
+    }
+
+    /// Create ChainInfo from blockchain.
+    pub fn from_blockchain(blockchain: &Blockchain) -> Self {
+        ChainInfo {
+            height: blockchain.height(),
+            view_change: blockchain.view_change(),
+            last_block: blockchain.last_block_hash(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ViewChangeProof {
-    pub chain: ChainInfo,
     pub multimap: BitVector,
     pub multisig: secure::Signature,
+}
+
+impl ViewChangeProof {
+    pub fn new<'a, I>(signatures: I) -> Self
+    where
+        I: Iterator<Item = (u32, &'a secure::Signature)>,
+    {
+        let (multisig, multimap) = create_multi_signature_index(signatures);
+        ViewChangeProof { multisig, multimap }
+    }
+    pub fn validate(&self, chain_info: &ChainInfo, blockchain: &Blockchain) -> Result<(), Error> {
+        let hash = Hash::digest(chain_info);
+
+        check_multi_signature(
+            &hash,
+            &self.multisig,
+            &self.multimap,
+            blockchain.validators(),
+            blockchain.total_slots(),
+        )?;
+        Ok(())
+    }
 }
 
 impl Hashable for ChainInfo {
@@ -46,5 +95,13 @@ impl Hashable for ChainInfo {
         self.height.hash(hasher);
         self.view_change.hash(hasher);
         self.last_block.hash(hasher);
+    }
+}
+
+impl Hashable for ViewChangeProof {
+    fn hash(&self, state: &mut Hasher) {
+        // bitmap is only used to determine whom are signers,
+        // so we can skip it in hash, and use only multisig part
+        self.multisig.hash(state);
     }
 }

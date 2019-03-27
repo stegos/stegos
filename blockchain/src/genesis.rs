@@ -79,7 +79,7 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64, timestamp: u64) -
         assert_eq!(coins, coins1);
 
         let gamma = -outputs_gamma;
-        MonetaryBlock::new(base, gamma, coins, &[], &outputs)
+        MonetaryBlock::new(base, gamma, coins, &[], &outputs, None)
     };
     view_change += 1;
     height += 1;

@@ -320,6 +320,9 @@ impl ProtoConvert for MonetaryBlockHeader {
         proto.set_monetary_adjustment(self.monetary_adjustment);
         proto.set_inputs_range_hash(self.inputs_range_hash.into_proto());
         proto.set_outputs_range_hash(self.outputs_range_hash.into_proto());
+        if let Some(proof) = &self.proof {
+            proto.set_proof(proof.into_proto())
+        }
         proto
     }
 
@@ -329,7 +332,14 @@ impl ProtoConvert for MonetaryBlockHeader {
         let monetary_adjustment = proto.get_monetary_adjustment();
         let inputs_range_hash = Hash::from_proto(proto.get_inputs_range_hash())?;
         let outputs_range_hash = Hash::from_proto(proto.get_outputs_range_hash())?;
+
+        let proof = if proto.has_proof() {
+            Some(ViewChangeProof::from_proto(proto.get_proof())?)
+        } else {
+            None
+        };
         Ok(MonetaryBlockHeader {
+            proof,
             base,
             gamma,
             monetary_adjustment,
@@ -454,7 +464,6 @@ impl ProtoConvert for ViewChangeProof {
     type Proto = view_changes::ViewChangeProof;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = view_changes::ViewChangeProof::new();
-        proto.set_chain(self.chain.into_proto());
         if !self.multisig.is_zero() {
             proto.set_multisig(self.multisig.into_proto());
         }
@@ -468,7 +477,6 @@ impl ProtoConvert for ViewChangeProof {
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let chain = ChainInfo::from_proto(proto.get_chain())?;
         let multisig = if proto.has_multisig() {
             secure::Signature::from_proto(proto.get_multisig())?
         } else {
@@ -487,11 +495,7 @@ impl ProtoConvert for ViewChangeProof {
                 multimap.insert(bit);
             }
         }
-        Ok(ViewChangeProof {
-            chain,
-            multisig,
-            multimap,
-        })
+        Ok(ViewChangeProof { multisig, multimap })
     }
 }
 
@@ -652,7 +656,7 @@ mod tests {
         let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
         roundtrip(&base);
 
-        let block = MonetaryBlock::new(base, gamma.clone(), 0, &inputs1, &outputs1);
+        let block = MonetaryBlock::new(base, gamma.clone(), 0, &inputs1, &outputs1, None);
         roundtrip(&block.header);
         roundtrip(&block.body);
         roundtrip(&block);

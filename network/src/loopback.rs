@@ -144,31 +144,35 @@ impl Loopback {
 
     pub fn get_unicast<M: ProtoConvert>(&mut self, topic: &str, peer: &secure::PublicKey) -> M {
         let ref mut state = self.state.lock().unwrap();
-        if let MessageFromNode::SendUnicast {
-            protocol_id: msg_topic,
-            to: msg_peer,
-            data: msg_data,
-        } = state.queue.pop_front().unwrap()
-        {
-            assert_eq!(topic, &msg_topic);
-            assert_eq!(peer, &msg_peer);
-            M::from_buffer(&msg_data).unwrap()
-        } else {
-            panic!("Unexpected message");
+        match state.queue.pop_front().unwrap() {
+            MessageFromNode::SendUnicast {
+                protocol_id: msg_topic,
+                to: msg_peer,
+                data: msg_data,
+            } => {
+                assert_eq!(topic, &msg_topic);
+                assert_eq!(peer, &msg_peer);
+                M::from_buffer(&msg_data).unwrap()
+            }
+            x => {
+                panic!("Unexpected message {:?}", x);
+            }
         }
     }
 
     pub fn get_broadcast<M: ProtoConvert>(&mut self, topic: &str) -> M {
         let ref mut state = self.state.lock().unwrap();
-        if let MessageFromNode::Publish {
-            topic: msg_topic,
-            data: msg_data,
-        } = state.queue.pop_front().unwrap()
-        {
-            assert_eq!(topic, &msg_topic);
-            M::from_buffer(&msg_data).unwrap()
-        } else {
-            panic!("Unexpected message");
+        match state.queue.pop_front().unwrap() {
+            MessageFromNode::Publish {
+                topic: msg_topic,
+                data: msg_data,
+            } => {
+                assert_eq!(topic, &msg_topic);
+                M::from_buffer(&msg_data).unwrap()
+            }
+            x => {
+                panic!("Unexpected message {:?}", x);
+            }
         }
     }
 

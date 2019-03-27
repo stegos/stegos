@@ -23,11 +23,12 @@
 //! View Changes implementation.
 //!
 
-use failure::{bail, ensure, Error};
+use crate::error::ConsensusError;
+use failure::Error;
 use log::{debug, info};
 use std::collections::HashMap;
 use stegos_blockchain::view_changes::*;
-use stegos_blockchain::Blockchain;
+use stegos_blockchain::{check_supermajority, Blockchain};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
 
@@ -50,22 +51,16 @@ impl ViewChangeMessage {
     }
 
     #[must_use]
-    pub fn validate(&self, blockchain: &Blockchain) -> Result<(), Error> {
+    pub fn validate(&self, blockchain: &Blockchain) -> Result<(), ConsensusError> {
         let validator_id = self.validator_id;
-        ensure!(
-            (validator_id as usize) < blockchain.validators().len(),
-            format!(
-                "malicious view change message found, validator_id greater than \
-                 size of validators: validator_id={}",
-                validator_id
-            )
-        );
+        if (validator_id as usize) >= blockchain.validators().len() {
+            return Err(ConsensusError::InvalidValidatorId(validator_id));
+        }
         let hash = Hash::digest(&self.chain);
         let author = blockchain.validators()[validator_id as usize].0;
-        ensure!(
-            secure::check_hash(&hash, &self.signature, &author),
-            "Failed to check view change message signature."
-        );
+        if !secure::check_hash(&hash, &self.signature, &author) {
+            return Err(ConsensusError::InvalidViewChangeSignature);
+        }
         Ok(())
     }
 }
@@ -107,26 +102,23 @@ impl ViewChangeCollector {
         &mut self,
         blockchain: &Blockchain,
         message: ViewChangeMessage,
-    ) -> Result<Option<ViewCounter>, Error> {
+    ) -> Result<Option<ViewCounter>, ConsensusError> {
         if !self.is_validator() {
             return Ok(None);
         }
 
         if message.chain.height != blockchain.height() {
-            bail!(
-                "Received ViewChangeMessage, with other height: msg_height={}, our_height={}",
+            return Err(ConsensusError::InvalidViewChangeHeight(
                 message.chain.height,
-                blockchain.height()
-            );
+                blockchain.height(),
+            ));
         }
         //TODO: Implement catch-up
         if message.chain.view_change != blockchain.view_change() {
-            bail!(
-                "Received ViewChangeMessage, from other \
-                 view_change: our view_change={}, message_view_change={}",
+            return Err(ConsensusError::InvalidViewChangeCounter(
                 message.chain.view_change,
-                blockchain.view_change()
-            )
+                blockchain.view_change(),
+            ));
         }
 
         // checks if id exist, and signature.
@@ -142,12 +134,12 @@ impl ViewChangeCollector {
             self.collected_slots += blockchain.validators()[id as usize].1;
         }
         info!(
-            "Collected view_changes: collected={}, needed={},",
+            "Collected view_changes: collected={}, total={},",
             self.collected_slots,
-            blockchain.majority_count()
+            blockchain.total_slots()
         );
         // return proof only about first 2/3rd of validators
-        if self.collected_slots >= blockchain.majority_count() {
+        if check_supermajority(self.collected_slots, blockchain.total_slots()) {
             return Ok(Some(blockchain.view_change() + 1));
         }
         Ok(None)
@@ -161,9 +153,12 @@ impl ViewChangeCollector {
         if !self.is_validator() {
             return Ok(None);
         }
-        debug!("Timeout at block receiving, trying to collect view changes.");
         let id = self.validator_id.unwrap();
 
+        debug!(
+            "Timeout at block receiving, trying to collect view changes: validator_id = {}",
+            id
+        );
         // on timeout, create view change message.
         let chain = self.current_chain(blockchain);
         let msg = ViewChangeMessage::new(chain, id, &self.skey);;
@@ -206,7 +201,12 @@ impl ViewChangeCollector {
 
     /// Returns proof of last view_change.
     pub fn last_proof(&self, _blockchain: &Blockchain) -> Option<ViewChangeProof> {
-        unimplemented!("create_multisig_proof")
+        let signatures = self
+            .actual_view_changes
+            .iter()
+            .map(|(k, v)| (*k, &v.signature));
+        let proof = ViewChangeProof::new(signatures);
+        Some(proof)
     }
 
     /// Reset collector to initial state.

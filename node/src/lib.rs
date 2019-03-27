@@ -844,9 +844,12 @@ impl NodeService {
             self.chain.set_view_change(counter);
             if self.is_leader() {
                 debug!("We are leader, producing new monetary block.");
-                //let proof = self.optimistic.last_proof(&self.chain).expect("Collected proof");
-                self.create_monetary_block(None)?;
-            }
+                let proof = self
+                    .optimistic
+                    .last_proof(&self.chain)
+                    .expect("Collected proof");
+                self.create_monetary_block(Some(proof))?;
+            };
         }
         Ok(())
     }
@@ -875,7 +878,7 @@ impl NodeService {
     ///
     /// Create a new monetary block.
     ///
-    fn create_monetary_block(&mut self, _proof: Option<ViewChangeProof>) -> Result<(), Error> {
+    fn create_monetary_block(&mut self, proof: Option<ViewChangeProof>) -> Result<(), Error> {
         assert!(self.consensus.is_none());
         assert!(self.is_leader());
         assert!(self.chain.blocks_in_epoch() < self.cfg.blocks_in_epoch);
@@ -896,6 +899,7 @@ impl NodeService {
             &self.keys.wallet_skey,
             &self.keys.wallet_pkey,
             self.chain.view_change(),
+            proof,
         );
         let block_hash = Hash::digest(&block);
         block.body.sig = secure::sign_hash(&block_hash, &self.keys.network_skey);

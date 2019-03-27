@@ -2,8 +2,6 @@ syntax = "proto3";
 package stegos.blockchain;
 
 import "crypto.proto";
-import "blockchain.proto";
-
 
 message ChainInfo {
     uint64 height = 1;
@@ -12,7 +10,6 @@ message ChainInfo {
 }
 
 message ViewChangeProof {
-    ChainInfo chain = 1;
-    repeated bool multimap = 2;
-    stegos.crypto.SecureSignature multisig = 3;
+    repeated bool multimap = 1;
+    stegos.crypto.SecureSignature multisig = 2;
 }

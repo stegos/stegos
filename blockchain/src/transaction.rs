@@ -244,6 +244,7 @@ impl Transaction {
                     eff_pkey += Pt::from(o.recipient).decompress()? + cmt;
                 }
                 Output::StakeOutput(o) => {
+                    o.validate_pkey()?;
                     let cmt = fee_a(o.amount);
                     txin_sum += cmt;
                     eff_pkey += Pt::from(o.recipient).decompress()? + cmt;
@@ -277,6 +278,7 @@ impl Transaction {
                     eff_pkey -= cmt;
                 }
                 Output::StakeOutput(o) => {
+                    o.validate_pkey()?; // need to prove that we own SecurePublicKey
                     if o.amount <= 0 {
                         return Err(OutputError::InvalidStake.into());
                     }
@@ -636,7 +638,7 @@ pub mod tests {
     pub fn stake_utxo() {
         let (skey0, _pkey0, _sig0) = make_random_keys();
         let (skey1, pkey1, _sig1) = make_random_keys();
-        let (_secure_skey1, secure_pkey1, _secure_sig1) = secure::make_random_keys();
+        let (secure_skey1, secure_pkey1, _secure_sig1) = secure::make_random_keys();
 
         let timestamp = Utc::now().timestamp() as u64;
         let amount: i64 = 1_000_000;
@@ -645,8 +647,15 @@ pub mod tests {
         //
         // StakeUTXO as an input.
         //
-        let input = Output::new_stake(timestamp, &skey0, &pkey1, &secure_pkey1, amount)
-            .expect("keys are valid");
+        let input = Output::new_stake(
+            timestamp,
+            &skey0,
+            &pkey1,
+            &secure_pkey1,
+            &secure_skey1,
+            amount,
+        )
+        .expect("keys are valid");
         let inputs = [input];
         let (output, outputs_gamma) =
             Output::new_payment(timestamp, &skey1, &pkey1, amount - fee).expect("keys are valid");
@@ -660,8 +669,15 @@ pub mod tests {
         let (input, _inputs_gamma) =
             Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
         let inputs = [input];
-        let output = Output::new_stake(timestamp, &skey1, &pkey1, &secure_pkey1, amount - fee)
-            .expect("keys are valid");
+        let output = Output::new_stake(
+            timestamp,
+            &skey1,
+            &pkey1,
+            &secure_pkey1,
+            &secure_skey1,
+            amount - fee,
+        )
+        .expect("keys are valid");
         let outputs_gamma = Fr::zero();
         let tx = Transaction::new(&skey1, &inputs, &[output], outputs_gamma, fee)
             .expect("keys are valid");
@@ -673,8 +689,15 @@ pub mod tests {
         let (input, _inputs_gamma) =
             Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
         let inputs = [input];
-        let mut output = StakeOutput::new(timestamp, &skey1, &pkey1, &secure_pkey1, amount - fee)
-            .expect("keys are valid");
+        let mut output = StakeOutput::new(
+            timestamp,
+            &skey1,
+            &pkey1,
+            &secure_pkey1,
+            &secure_skey1,
+            amount - fee,
+        )
+        .expect("keys are valid");
         output.amount = amount - fee - 1;
         let output = Output::StakeOutput(output);
         let outputs_gamma = Fr::zero();
@@ -692,8 +715,15 @@ pub mod tests {
         let (input, _inputs_gamma) =
             Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
         let inputs = [input];
-        let mut output = StakeOutput::new(timestamp, &skey1, &pkey1, &secure_pkey1, amount - fee)
-            .expect("keys are valid");
+        let mut output = StakeOutput::new(
+            timestamp,
+            &skey1,
+            &pkey1,
+            &secure_pkey1,
+            &secure_skey1,
+            amount - fee,
+        )
+        .expect("keys are valid");
         output.amount = 0;
         let output = Output::StakeOutput(output);
         let outputs_gamma = Fr::zero();
@@ -711,8 +741,15 @@ pub mod tests {
         let (input, _inputs_gamma) =
             Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
         let inputs = [input];
-        let output = Output::new_stake(timestamp, &skey1, &pkey1, &secure_pkey1, amount - fee)
-            .expect("keys are valid");
+        let output = Output::new_stake(
+            timestamp,
+            &skey1,
+            &pkey1,
+            &secure_pkey1,
+            &secure_skey1,
+            amount - fee,
+        )
+        .expect("keys are valid");
         let outputs_gamma = Fr::zero();
         let mut tx = Transaction::new(&skey1, &inputs, &[output], outputs_gamma, fee)
             .expect("keys are valid");
@@ -727,11 +764,8 @@ pub mod tests {
         };
         let e = tx.validate(&inputs).expect_err("transaction is invalid");
         dbg!(&e);
-        match e.downcast::<TransactionError>().unwrap() {
-            TransactionError::InvalidSignature(tx_hash) => {
-                // the hash of a transaction excludes its signature...
-                assert_eq!(tx_hash, Hash::digest(&tx.body))
-            }
+        match e.downcast::<OutputError>().unwrap() {
+            OutputError::InvalidStakeSignature => {}
             _ => panic!(),
         }
     }

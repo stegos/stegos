@@ -765,6 +765,7 @@ impl Blockchain {
                     burned += Pt::decompress(o.proof.vcmt)?;
                 }
                 Output::StakeOutput(o) => {
+                    o.validate_pkey()?;
                     burned += fee_a(o.amount);
                     self.escrow
                         .validate_unstake(&o.validator, input_hash, current_timestamp)?;
@@ -812,6 +813,8 @@ impl Blockchain {
                     created += Pt::decompress(o.proof.vcmt)?;
                 }
                 Output::StakeOutput(o) => {
+                    // Check for valid signature on network pkey.
+                    o.validate_pkey()?;
                     // Validate amount.
                     if o.amount <= 0 {
                         return Err(OutputError::InvalidStake.into());
@@ -910,6 +913,7 @@ impl Blockchain {
                                         .expect("pedersen commitment is valid");
                                 }
                                 Output::StakeOutput(o) => {
+                                    o.validate_pkey().expect("valid network pkey");
                                     self.escrow.unstake(
                                         version,
                                         o.validator,
@@ -964,6 +968,7 @@ impl Blockchain {
                     created += Pt::decompress(o.proof.vcmt).expect("pedersen commitment is valid");
                 }
                 Output::StakeOutput(o) => {
+                    o.validate_pkey().expect("valid network pkey signature");
                     created += fee_a(o.amount);
 
                     let bonding_timestamp = block_timestamp + self.cfg.bonding_time;
@@ -1205,6 +1210,7 @@ pub mod tests {
                     input_hashes.push(input_hash.clone());
                 }
                 Output::StakeOutput(ref o) => {
+                    o.validate_pkey().expect("valid network pkey signature");
                     o.decrypt_payload(&keys.wallet_skey).unwrap();
                     amount += o.amount;
                     input_hashes.push(input_hash.clone());
@@ -1228,6 +1234,7 @@ pub mod tests {
             &keys.wallet_skey,
             &keys.wallet_pkey,
             &keys.network_pkey,
+            &keys.network_skey,
             stake,
         )
         .expect("keys are valid");

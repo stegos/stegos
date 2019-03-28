@@ -290,6 +290,7 @@ fn run() -> Result<(), Error> {
             keychain.wallet_skey.clone(),
             keychain.wallet_pkey.clone(),
             keychain.network_pkey.clone(),
+            keychain.network_skey.clone(),
             network.clone(),
             node.clone(),
             cfg.chain.payment_fee,
@@ -351,6 +352,7 @@ mod tests {
     use stegos_node::{ChainConfig, NodeService};
 
     #[test]
+    #[ignore]
     fn is_testnet_loadable() {
         let _ = simple_logger::init_with_level(log::Level::Debug);
         let keys = KeyChain::new_mem();
@@ -366,6 +368,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn is_devnet_loadable() {
         let _ = simple_logger::init_with_level(log::Level::Debug);
         let keys = KeyChain::new_mem();

@@ -69,6 +69,8 @@ pub enum OutputError {
     TrailingGarbage,
     #[fail(display = "Negative amount: amount={}", _0)]
     NegativeAmount(i64),
+    #[fail(display = "Stake UTXO with invalid signature on validator pkey")]
+    InvalidStakeSignature,
 }
 
 /// Payment UTXO.
@@ -103,6 +105,9 @@ pub struct StakeOutput {
 
     /// Uncloaked network key of validator.
     pub validator: secure::PublicKey,
+
+    /// BLS signature of recipient, validator and payload.
+    pub signature: secure::Signature,
 
     /// Amount to stake.
     pub amount: i64,
@@ -467,6 +472,7 @@ impl StakeOutput {
         sender_skey: &SecretKey,
         recipient_pkey: &PublicKey,
         validator_pkey: &secure::PublicKey,
+        validator_skey: &secure::SecretKey,
         amount: i64,
     ) -> Result<Self, Error> {
         assert!(amount > 0);
@@ -480,9 +486,18 @@ impl StakeOutput {
         // NOTE: real public key should be used to encrypt payload
         let payload = payload.encrypt(recipient_pkey)?;
 
+        // Form BLS signature on the validator PBC public key
+        let mut state = Hasher::new();
+        validator_pkey.hash(&mut state);
+        cloaked_pkey.hash(&mut state);
+        payload.hash(&mut state);
+        let h = state.result();
+        let sig = secure::sign_hash(&h, validator_skey);
+
         let output = StakeOutput {
             recipient: cloaked_pkey,
             validator: validator_pkey.clone(),
+            signature: sig.clone(),
             amount,
             payload,
         };
@@ -493,6 +508,19 @@ impl StakeOutput {
     /// Decrypt payload of StakeOutput.
     pub fn decrypt_payload(&self, skey: &SecretKey) -> Result<StakePayload, Error> {
         StakePayload::decrypt(&self.payload, skey)
+    }
+
+    /// Validate BLS signature of validator_pkey
+    pub fn validate_pkey(&self) -> Result<(), Error> {
+        let mut state = Hasher::new();
+        self.validator.hash(&mut state);
+        self.recipient.hash(&mut state);
+        self.payload.hash(&mut state);
+        let h = state.result();
+        if !secure::check_hash(&h, &self.signature, &self.validator) {
+            return Err(OutputError::InvalidStakeSignature.into());
+        }
+        Ok(())
     }
 }
 
@@ -514,6 +542,7 @@ impl Output {
         sender_skey: &SecretKey,
         recipient_pkey: &PublicKey,
         validator_pkey: &secure::PublicKey,
+        validator_skey: &secure::SecretKey,
         amount: i64,
     ) -> Result<Self, Error> {
         let output = StakeOutput::new(
@@ -521,6 +550,7 @@ impl Output {
             sender_skey,
             recipient_pkey,
             validator_pkey,
+            validator_skey,
             amount,
         )?;
         Ok(Output::StakeOutput(output))
@@ -818,13 +848,20 @@ pub mod tests {
     pub fn stake_encrypt_decrypt() {
         let (skey1, _pkey1, _sig1) = make_random_keys();
         let (skey2, pkey2, _sig2) = make_random_keys();
-        let (_secure_skey1, secure_pkey1, _secure_sig1) = secure::make_random_keys();
+        let (secure_skey1, secure_pkey1, _secure_sig1) = secure::make_random_keys();
 
         let timestamp = Utc::now().timestamp() as u64;
         let amount: i64 = 100500;
 
-        let output = StakeOutput::new(timestamp, &skey1, &pkey2, &secure_pkey1, amount)
-            .expect("encryption successful");
+        let output = StakeOutput::new(
+            timestamp,
+            &skey1,
+            &pkey2,
+            &secure_pkey1,
+            &secure_skey1,
+            amount,
+        )
+        .expect("encryption successful");
         let _payload = output
             .decrypt_payload(&skey2)
             .expect("decryption successful");

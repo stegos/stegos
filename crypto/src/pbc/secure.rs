@@ -890,6 +890,18 @@ impl RVal {
         let g = G2::try_from_hex(s)?;
         Ok(RVal(g))
     }
+
+    /// Convert into bytes slice
+    #[inline]
+    pub fn to_bytes(&self) -> [u8; G2_SIZE_FR256] {
+        self.0.to_bytes()
+    }
+
+    /// Try to convert from raw bytes.
+    #[inline]
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        Ok(RVal(G2::try_from_bytes(bytes)?))
+    }
 }
 
 impl Hashable for RVal {
@@ -921,6 +933,15 @@ pub struct EncryptedPacket {
 }
 
 impl EncryptedPacket {
+    pub fn new(pkey: &PublicKey, id: &[u8], rval: &RVal, cmsg: &[u8]) -> Self {
+        EncryptedPacket {
+            pkey: pkey.clone(),
+            id: id.to_vec(),
+            rval: rval.clone(),
+            cmsg: cmsg.to_vec(),
+        }
+    }
+
     pub fn rval(&self) -> &RVal {
         &self.rval
     }

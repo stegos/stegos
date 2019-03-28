@@ -62,7 +62,7 @@ impl ECp {
     }
 
     pub fn is_affine(&self) -> bool {
-        self.z.0 == FQ51_1.0
+        self.z == FQ51_1
     }
 
     pub fn try_from_xy(x: &Fq, y: &Fq) -> Result<Self, CryptoError> {
@@ -99,6 +99,9 @@ impl ECp {
         let sgn = (x[31] & 0x80) != 0;
         x[31] &= 0x7f;
         let x256 = U256::from(Lev32(x));
+        if !(x256 < *Q) {
+            return Err(CryptoError::TooLarge);
+        }
         let xq = Fq51::from(Fq::from(x256));
         let ysqrt = Self::solve_y(&xq)?;
         let yq = if ysqrt.is_odd() == sgn { ysqrt } else { -ysqrt };
@@ -273,11 +276,11 @@ impl Mul<i64> for ECp {
     type Output = Self;
     fn mul(self, other: i64) -> Self {
         match other {
-            // 0 => ECp::inf(),
-            // 1 => self,
-            // -1 => -self,
-            // 2 => self + self,
-            // 3 => self + self + self,
+            0 => ECp::inf(),
+            1 => self,
+            -1 => -self,
+            2 => self + self,
+            3 => self + self + self,
             _ => {
                 let wv = WinVec::from(other);
                 let mut tmp = self;
@@ -440,21 +443,13 @@ fn ecp_neg(qpt: &ECp, ppt: &mut ECp) {
 // Make Affine
 
 pub fn norm(pt: &mut ECp) {
-    if pt.is_affine() {
-        scr(&mut pt.x);
-        scr(&mut pt.y);
-    } else {
+    if !pt.is_affine() {
         let mut w = pt.z;
         ginv(&mut w);
+
+        pt.x *= w;
+        pt.y *= w;
         pt.z = Fq51::one();
-
-        let mut tmp = pt.x * w;
-        scr(&mut tmp);
-        pt.x = tmp;
-
-        let mut tmp = pt.y * w;
-        scr(&mut tmp);
-        pt.y = tmp;
     }
 }
 
@@ -463,9 +458,7 @@ pub fn norm(pt: &mut ECp) {
 fn precomp(pt: &mut ECp, wpts: &mut [ECp]) {
     norm(pt); // must start with affine form
               // pt mult is the only place where pt.t is used
-    let mut tmp = pt.x * pt.y;
-    scr(&mut tmp);
-    pt.t = tmp;
+    pt.t = pt.x * pt.y;
 
     let mut tmp1 = *pt;
     tmp1.t *= CURVE_D;

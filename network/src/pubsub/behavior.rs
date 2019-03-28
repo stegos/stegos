@@ -24,17 +24,22 @@ use super::protocol::{
 };
 use super::topic::{Topic, TopicHash};
 
-use cuckoofilter::CuckooFilter;
 use futures::prelude::*;
 use libp2p::core::swarm::{
     ConnectedPoint, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
 };
 use libp2p::core::{protocols_handler::ProtocolsHandler, Multiaddr, PeerId};
-use log::debug;
+use log::{debug, trace};
+use lru_time_cache::LruCache;
 use rand;
 use smallvec::SmallVec;
-use std::collections::hash_map::{DefaultHasher, HashMap};
-use std::{collections::VecDeque, iter, marker::PhantomData};
+use std::time::Duration;
+use std::{
+    collections::{hash_map::HashMap, VecDeque},
+    iter,
+    marker::PhantomData,
+};
+use stegos_crypto::utils::u8v_to_hexstr;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 /// Network behaviour that automatically identifies nodes periodically, and returns information
@@ -57,7 +62,7 @@ pub struct Floodsub<TSubstream> {
 
     // We keep track of the messages we received (in the format `hash(source ID, seq_no)`) so that
     // we don't dispatch the same message twice if we receive it twice on the network.
-    received: CuckooFilter<DefaultHasher>,
+    received: LruCache<u64, ()>,
 
     /// Marker to pin the generics.
     marker: PhantomData<TSubstream>,
@@ -71,7 +76,10 @@ impl<TSubstream> Floodsub<TSubstream> {
             local_peer_id,
             connected_peers: HashMap::new(),
             subscribed_topics: SmallVec::new(),
-            received: CuckooFilter::new(),
+            received: LruCache::with_expiry_duration_and_capacity(
+                Duration::from_secs(60 * 15),
+                1_000_000,
+            ),
             marker: PhantomData,
         }
     }
@@ -122,7 +130,7 @@ impl<TSubstream> Floodsub<TSubstream> {
         topic: impl IntoIterator<Item = impl Into<TopicHash>>,
         data: impl Into<Vec<u8>>,
     ) {
-        let message = FloodsubMessage {
+        let mut message = FloodsubMessage {
             source: self.local_peer_id.clone(),
             data: data.into(),
             // If the sequence numbers are predictable, then an attacker could flood the network
@@ -141,7 +149,18 @@ impl<TSubstream> Floodsub<TSubstream> {
             return;
         }
 
-        self.received.add(&message);
+        // Guard against very unlikely event of Hash collision
+        if self.received.contains_key(&message.digest()) {
+            loop {
+                message.sequence_number = rand::random::<[u8; 20]>().to_vec();
+                if !self.received.contains_key(&message.digest()) {
+                    break;
+                }
+            }
+        }
+
+        self.received.insert(message.digest(), ());
+        super::metrics::LRU_CACHE_SIZE.set(self.received.len() as i64);
 
         // Send to peers we know are subscribed to the topic.
         for (peer_id, sub_topic) in self.connected_peers.iter() {
@@ -152,6 +171,7 @@ impl<TSubstream> Floodsub<TSubstream> {
                 continue;
             }
 
+            trace!(target: "stegos_network::pubsub", "sending message to peer: peer_id={}, seq_no={}", peer_id.to_base58(), u8v_to_hexstr(&message.sequence_number));
             self.events.push_back(NetworkBehaviourAction::SendEvent {
                 peer_id: peer_id.clone(),
                 event: FloodsubSendEvent::Publish(FloodsubRpc {
@@ -163,7 +183,7 @@ impl<TSubstream> Floodsub<TSubstream> {
     }
 
     pub fn enable_outgoing(&mut self, peer_id: &PeerId) {
-        debug!(target: "stegos_network::pubsub", "enabling pubsub dialer: peer_id={}", peer_id.to_base58());
+        debug!(target: "stegos_network::gatekeeper", "enabling pubsub dialer: peer_id={}", peer_id.to_base58());
         if !self.connected_peers.contains_key(peer_id) {
             return;
         }
@@ -189,7 +209,7 @@ impl<TSubstream> Floodsub<TSubstream> {
     }
 
     pub fn enable_incoming(&mut self, peer_id: &PeerId) {
-        debug!(target: "stegos_network::pubsub", "enabling pubsub listener: peer_id={}", peer_id.to_base58());
+        debug!(target: "stegos_network::gatekeeper", "enabling pubsub listener: peer_id={}", peer_id.to_base58());
         if !self.connected_peers.contains_key(peer_id) {
             return;
         }
@@ -201,7 +221,7 @@ impl<TSubstream> Floodsub<TSubstream> {
     }
 
     pub fn disable(&mut self, peer_id: &PeerId) {
-        debug!(target: "stegos_network::pubsub", "disabling pubsub: peer_id={}", peer_id.to_base58());
+        debug!(target: "stegos_network::gatekeeper", "disabling pubsub: peer_id={}", peer_id.to_base58());
         self.events.push_back(NetworkBehaviourAction::SendEvent {
             peer_id: peer_id.clone(),
             event: FloodsubSendEvent::Disable,
@@ -300,9 +320,13 @@ where
                 for message in event.messages {
                     // Use `self.received` to skip the messages that we have already received in the past.
                     // Note that this can false positive.
-                    if !self.received.test_and_add(&message) {
+                    if self.received.insert(message.digest(), ()).is_some() {
+                        trace!(target: "stegos_network::pubsub", "LRU cache hit: set_seqno={}", u8v_to_hexstr(&message.sequence_number));
+                        super::metrics::LRU_CACHE_SIZE.set(self.received.len() as i64);
                         continue;
                     }
+                    super::metrics::LRU_CACHE_SIZE.set(self.received.len() as i64);
+                    trace!(target: "stegos_network::pubsub", "processing message: peer_id={}, seq_no={}", propagation_source.to_base58(), u8v_to_hexstr(&message.sequence_number));
 
                     // Add the message to be dispatched to the user.
                     if self

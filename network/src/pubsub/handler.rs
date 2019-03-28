@@ -182,7 +182,9 @@ where
                 self.disable();
                 self.out_events.push_back(FloodsubRecvEvent::Disabled);
             }
-            FloodsubSendEvent::Publish(message) => self.send_queue.push(message),
+            FloodsubSendEvent::Publish(message) => {
+                self.send_queue.push(message);
+            }
         }
     }
 

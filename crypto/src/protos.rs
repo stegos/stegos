@@ -27,6 +27,7 @@ use crate::curve1174::cpt::Pt;
 use crate::curve1174::cpt::{EncryptedPayload, PublicKey, SchnorrSig, SecretKey};
 use crate::curve1174::fields::Fr;
 use crate::hash::Hash;
+use crate::hashcash::HashCashProof;
 use crate::pbc::secure;
 use crate::pbc::secure::G1;
 use crate::pbc::secure::G2;
@@ -135,6 +136,23 @@ impl ProtoConvert for SchnorrSig {
         let k: Pt = Pt::from_proto(proto.get_K())?;
         let u: Fr = Fr::from_proto(proto.get_u())?;
         Ok(SchnorrSig { K: k, u })
+    }
+}
+
+impl ProtoConvert for HashCashProof {
+    type Proto = crypto::HashCashProof;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = crypto::HashCashProof::new();
+        proto.set_nbits(self.nbits as i64);
+        proto.set_seed(self.seed.clone());
+        proto.set_count(self.count);
+        proto
+    }
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let nbits: usize = proto.get_nbits() as usize;
+        let seed: Vec<u8> = proto.get_seed().to_vec();
+        let count: i64 = proto.get_count();
+        Ok(HashCashProof { nbits, seed, count })
     }
 }
 

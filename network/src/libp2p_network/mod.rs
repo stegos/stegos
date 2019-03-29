@@ -60,6 +60,7 @@ pub struct Libp2pNetwork {
 }
 
 const UNICAST_TOPIC: &'static str = "stegos-unicast";
+const IBE_ID: &'static [u8] = &[105u8, 13, 185, 148, 68, 76, 69, 155];
 
 impl Libp2pNetwork {
     pub fn new(
@@ -302,8 +303,13 @@ where
                         })
                 } else {
                     let floodsub_topic = TopicBuilder::new(UNICAST_TOPIC).build();
-                    let msg =
-                        encode_unicast(self.my_pkey.clone(), to, protocol_id, data, &self.my_skey);
+                    let payload = UnicastPayload {
+                        from: self.my_pkey.clone(),
+                        to,
+                        protocol_id,
+                        data,
+                    };
+                    let msg = encode_unicast(payload, &self.my_skey);
                     self.floodsub.publish(floodsub_topic, msg);
                 }
             }
@@ -364,18 +370,33 @@ where
                 let unicast_topic_hash = floodsub_topic.hash();
                 if message.topics.iter().any(|t| t == unicast_topic_hash) {
                     match decode_unicast(message.data.clone()) {
-                        Ok((from, to, protocol_id, data)) => {
+                        Ok((payload, signature, rval)) => {
                             // send unicast message upstream
-                            if to == self.my_pkey {
+                            if payload.to == self.my_pkey {
+                                let payload = match decrypt_message(
+                                    &self.my_skey,
+                                    payload,
+                                    signature,
+                                    rval,
+                                ) {
+                                    Ok(p) => p,
+                                    Err(e) => {
+                                        debug!("bad unicast message received: {}", e);
+                                        return;
+                                    }
+                                };
                                 debug!(target: "stegos_network::pubsub",
                                     "Received unicast message: from={}, protocol={} size={}",
-                                    from,
-                                    protocol_id,
-                                    data.len()
+                                    payload.from,
+                                    payload.protocol_id,
+                                    payload.data.len()
                                 );
-                                let msg = UnicastMessage { from, data };
+                                let msg = UnicastMessage {
+                                    from: payload.from,
+                                    data: payload.data,
+                                };
                                 self.unicast_consumers
-                                    .entry(protocol_id)
+                                    .entry(payload.protocol_id)
                                     .or_insert(SmallVec::new())
                                     .retain({
                                         move |c| {
@@ -546,27 +567,34 @@ fn my_external_address(config: &NetworkConfig) -> Vec<Multiaddr> {
     my_addresses
 }
 
-// Encode unicast message
-fn encode_unicast(
+#[derive(Clone, Debug)]
+struct UnicastPayload {
     from: secure::PublicKey,
     to: secure::PublicKey,
     protocol_id: String,
     data: Vec<u8>,
-    sign_key: &secure::SecretKey,
-) -> Vec<u8> {
+}
+
+// Encode unicast message
+fn encode_unicast(payload: UnicastPayload, sign_key: &secure::SecretKey) -> Vec<u8> {
+    let mut msg = unicast_proto::Message::new();
+
+    let enc_packet = secure::ibe_encrypt(&payload.data, &payload.to, IBE_ID);
+
     let mut hasher = Hasher::new();
-    from.hash(&mut hasher);
-    to.hash(&mut hasher);
-    protocol_id.hash(&mut hasher);
-    data.hash(&mut hasher);
+    payload.from.hash(&mut hasher);
+    payload.to.hash(&mut hasher);
+    payload.protocol_id.hash(&mut hasher);
+    enc_packet.rval().hash(&mut hasher);
+    enc_packet.cmsg().hash(&mut hasher);
     let hash = hasher.result();
     let sig = secure::sign_hash(&hash, sign_key);
 
-    let mut msg = unicast_proto::Message::new();
-    msg.set_from(from.to_bytes().to_vec());
-    msg.set_to(to.to_bytes().to_vec());
-    msg.set_protocol_id(protocol_id.into_bytes().to_vec());
-    msg.set_data(data);
+    msg.set_data(enc_packet.cmsg().to_vec());
+    msg.set_rval(enc_packet.rval().to_bytes().to_vec());
+    msg.set_from(payload.from.to_bytes().to_vec());
+    msg.set_to(payload.to.to_bytes().to_vec());
+    msg.set_protocol_id(payload.protocol_id.into_bytes().to_vec());
     msg.set_signature(sig.to_bytes().to_vec());
 
     msg.write_to_bytes()
@@ -575,50 +603,85 @@ fn encode_unicast(
 
 fn decode_unicast(
     input: Vec<u8>,
-) -> Result<(secure::PublicKey, secure::PublicKey, String, Vec<u8>), Error> {
+) -> Result<(UnicastPayload, secure::Signature, secure::RVal), Error> {
     let mut msg: unicast_proto::Message = protobuf::parse_from_bytes(&input)?;
 
     let from = secure::PublicKey::try_from_bytes(&msg.take_from().to_vec())?;
     let to = secure::PublicKey::try_from_bytes(&msg.take_to().to_vec())?;
-    let sig = secure::Signature::try_from_bytes(&msg.take_signature().to_vec())?;
+    let signature = secure::Signature::try_from_bytes(&msg.take_signature().to_vec())?;
     let protocol_id_bytes = &msg.get_protocol_id();
     let protocol_id = String::from_utf8(protocol_id_bytes.to_vec())?;
     let data = msg.take_data().to_vec();
+    let rval = secure::RVal::try_from_bytes(&msg.take_rval().to_vec())?;
+
+    let payload = UnicastPayload {
+        from,
+        to,
+        protocol_id,
+        data,
+    };
+
+    Ok((payload, signature, rval))
+}
+
+fn decrypt_message(
+    my_skey: &secure::SecretKey,
+    mut payload: UnicastPayload,
+    signature: secure::Signature,
+    rval: secure::RVal,
+) -> Result<UnicastPayload, Error> {
+    let enc_packet = secure::EncryptedPacket::new(&payload.to, IBE_ID, &rval, &payload.data);
 
     let mut hasher = Hasher::new();
-    from.hash(&mut hasher);
-    to.hash(&mut hasher);
-    protocol_id.hash(&mut hasher);
-    data.hash(&mut hasher);
+    payload.from.hash(&mut hasher);
+    payload.to.hash(&mut hasher);
+    payload.protocol_id.hash(&mut hasher);
+    rval.hash(&mut hasher);
+    payload.data.hash(&mut hasher);
     let hash = hasher.result();
 
-    if secure::check_hash(&hash, &sig, &from) {
-        Ok((from, to, protocol_id, data))
+    if !secure::check_hash(&hash, &signature, &payload.from) {
+        return Err(format_err!("Bad packet signature."));
+    }
+
+    if let Some(data) = secure::ibe_decrypt(&enc_packet, my_skey) {
+        // if decrypted fine, check the signature
+        payload.data = data;
+        Ok(payload)
     } else {
-        Err(format_err!("Bad packet signature."))
+        Err(format_err!("Packet failed to decrypt."))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::UnicastPayload;
     use stegos_crypto::pbc::secure;
 
     #[test]
     fn encode_decode() {
-        let seed = random_vec(128);
-        let (from_skey, from, _signature) = secure::make_deterministic_keys(&seed);
-        let to = secure::PublicKey::try_from_bytes(&random_vec(65)).unwrap();
+        let (from_skey, from, _) = secure::make_random_keys();
+        let (to_skey, to, _) = secure::make_random_keys();
         let protocol_id = "the quick brown fox".to_string();
         let data = random_vec(1024);
 
-        let encoded =
-            super::encode_unicast(from, to, protocol_id.clone(), data.clone(), &from_skey);
-        let (from_2, to_2, protocol_id_2, data_2) = super::decode_unicast(encoded).unwrap();
+        let payload = UnicastPayload {
+            from,
+            to,
+            protocol_id,
+            data,
+        };
 
-        assert_eq!(from, from_2);
-        assert_eq!(to, to_2);
-        assert_eq!(protocol_id, protocol_id_2);
-        assert_eq!(data, data_2);
+        let encoded = super::encode_unicast(payload.clone(), &from_skey);
+        let (enc_payload, signature, rval) = super::decode_unicast(encoded).unwrap();
+        let enc_data = enc_payload.data.clone();
+        let payload_2 = super::decrypt_message(&to_skey, enc_payload, signature, rval).unwrap();
+
+        assert_eq!(payload.from, payload_2.from);
+        assert_eq!(payload.to, payload_2.to);
+        assert_eq!(payload.protocol_id, payload_2.protocol_id);
+        assert_eq!(payload.data, payload_2.data);
+        assert_ne!(payload.data, enc_data);
     }
 
     fn random_vec(len: usize) -> Vec<u8> {

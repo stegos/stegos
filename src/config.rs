@@ -29,6 +29,7 @@ use std::io::ErrorKind;
 use std::io::Read;
 use std::path::Path;
 use std::result::Result;
+use stegos_api::WebSocketConfig;
 use stegos_blockchain::StorageConfig;
 use stegos_keychain::KeyChainConfig;
 use stegos_network::NetworkConfig;
@@ -55,6 +56,8 @@ pub struct Config {
     pub keychain: KeyChainConfig,
     /// Storage configuration.
     pub storage: StorageConfig,
+    /// WebSocket API configuration.
+    pub api: WebSocketConfig,
 }
 
 /// Default values for global configuration.
@@ -66,6 +69,7 @@ impl Default for Config {
             network: Default::default(),
             keychain: Default::default(),
             storage: Default::default(),
+            api: Default::default(),
         }
     }
 }

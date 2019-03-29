@@ -31,3 +31,6 @@ level = "info"
 
 [loggers."stegos_consensus"]
 level = "debug"
+
+[loggers."stegos_api"]
+level = "info"

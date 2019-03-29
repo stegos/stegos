@@ -25,6 +25,7 @@ pub mod handler;
 pub mod protocol;
 
 mod behavior;
+mod metrics;
 mod proto;
 mod topic;
 

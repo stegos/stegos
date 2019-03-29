@@ -25,6 +25,8 @@ use bytes::{BufMut, BytesMut};
 use futures::future;
 use libp2p::core::{InboundUpgrade, OutboundUpgrade, PeerId, UpgradeInfo};
 use protobuf::Message as ProtobufMessage;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::{io, iter};
 use tokio::codec::{Decoder, Encoder, Framed};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -211,6 +213,14 @@ pub struct FloodsubMessage {
     ///
     /// Each message can belong to multiple topics at once.
     pub topics: Vec<TopicHash>,
+}
+
+impl FloodsubMessage {
+    pub fn digest(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
 }
 
 /// A subscription received by the floodsub system.

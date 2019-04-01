@@ -80,3 +80,9 @@ message VRF {
     stegos.crypto.Hash rand = 1;
     stegos.crypto.G1 proof = 2;
 }
+
+message HashCashProof {
+    int64 nbits = 1;
+    bytes seed = 2;
+    int64 count = 3;
+}

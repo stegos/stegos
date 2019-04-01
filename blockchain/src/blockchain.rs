@@ -38,7 +38,7 @@ use failure::{ensure, Error};
 use log::*;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
-use std::time::Instant;
+use std::time::SystemTime;
 use stegos_crypto::bulletproofs::fee_a;
 use stegos_crypto::bulletproofs::validate_range_proof;
 use stegos_crypto::curve1174::cpt::Pt;
@@ -47,7 +47,6 @@ use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::curve1174::G;
 use stegos_crypto::hash::*;
 use stegos_crypto::pbc::secure;
-use tokio_timer::clock;
 
 /// A helper to find UTXO in this blockchain.
 #[derive(Debug, Clone)]
@@ -113,8 +112,6 @@ pub struct Blockchain {
     //
     /// The number of blocks in this blockchain.
     height: u64,
-    /// Timestamp when the latest block was registered.
-    last_block_timestamp: Instant,
     /// Copy of a block hash from the latest registered block.
     last_block_hash: Hash,
 
@@ -134,26 +131,26 @@ impl Blockchain {
         cfg: BlockchainConfig,
         storage_cfg: StorageConfig,
         genesis: Vec<Block>,
-        current_timestamp: u64,
+        timestamp: SystemTime,
     ) -> Blockchain {
         let database = ListDb::new(&storage_cfg.database_path);
-        Self::with_db(cfg, database, genesis, current_timestamp)
+        Self::with_db(cfg, database, genesis, timestamp)
     }
 
     pub fn testing(
         cfg: BlockchainConfig,
         genesis: Vec<Block>,
-        current_timestamp: u64,
+        timestamp: SystemTime,
     ) -> Blockchain {
         let database = ListDb::testing();
-        Self::with_db(cfg, database, genesis, current_timestamp)
+        Self::with_db(cfg, database, genesis, timestamp)
     }
 
     fn with_db(
         cfg: BlockchainConfig,
         database: ListDb,
         genesis: Vec<Block>,
-        current_timestamp: u64,
+        timestamp: SystemTime,
     ) -> Blockchain {
         //
         // Storage.
@@ -181,7 +178,6 @@ impl Blockchain {
         // Height Information.
         //
         let height: u64 = 0;
-        let last_block_timestamp = clock::now();
         let last_block_hash = Hash::digest("genesis");
 
         //
@@ -200,12 +196,11 @@ impl Blockchain {
             last_key_block_height,
             election_result,
             height,
-            last_block_timestamp,
             last_block_hash,
             view_change,
         };
 
-        blockchain.recover(genesis, current_timestamp);
+        blockchain.recover(genesis, timestamp);
         blockchain
     }
 
@@ -213,7 +208,7 @@ impl Blockchain {
     // Recovery.
     //----------------------------------------------------------------------------------------------
 
-    fn recover(&mut self, genesis: Vec<Block>, current_timestamp: u64) {
+    fn recover(&mut self, genesis: Vec<Block>, timestamp: SystemTime) {
         let mut blocks = self.database.iter();
 
         let block = blocks.next();
@@ -224,7 +219,7 @@ impl Blockchain {
             for block in genesis {
                 match block {
                     Block::MonetaryBlock(monetary_block) => {
-                        self.push_monetary_block(monetary_block, current_timestamp)
+                        self.push_monetary_block(monetary_block, timestamp)
                             .expect("genesis is valid");
                     }
                     Block::KeyBlock(key_block) => {
@@ -240,9 +235,9 @@ impl Blockchain {
         };
 
         info!("Loading blockchain from database.");
-        self.recover_block(block, current_timestamp);
+        self.recover_block(block, timestamp);
         for block in blocks {
-            self.recover_block(block, current_timestamp);
+            self.recover_block(block, timestamp);
         }
 
         for ((height, genesis), chain) in genesis.iter().enumerate().zip(self.blocks()) {
@@ -266,7 +261,7 @@ impl Blockchain {
         );
     }
 
-    fn recover_block(&mut self, block: Block, current_timestamp: u64) {
+    fn recover_block(&mut self, block: Block, timestamp: SystemTime) {
         debug!(
             "Loading a block from the disk: hash={}",
             Hash::digest(&block)
@@ -275,10 +270,10 @@ impl Blockchain {
         match block {
             Block::MonetaryBlock(block) => {
                 if cfg!(debug_assertions) {
-                    self.validate_monetary_block(&block, current_timestamp)
+                    self.validate_monetary_block(&block, timestamp)
                         .expect("a monetary block from the disk is valid")
                 }
-                let _ = self.register_monetary_block(block, current_timestamp);
+                let _ = self.register_monetary_block(block, timestamp);
             }
             Block::KeyBlock(block) => {
                 if cfg!(debug_assertions) {
@@ -422,12 +417,6 @@ impl Blockchain {
     #[inline]
     pub fn validators(&self) -> &Vec<(secure::PublicKey, i64)> {
         &self.election_result.validators
-    }
-
-    /// Return the last block timestamp.
-    #[inline]
-    pub fn last_block_timestamp(&self) -> Instant {
-        self.last_block_timestamp
     }
 
     /// Return the last random value.
@@ -665,7 +654,6 @@ impl Blockchain {
         // Update metadata.
         //
 
-        self.last_block_timestamp = clock::now();
         self.last_block_hash = block_hash.clone();
         self.height += 1;
         self.epoch += 1;
@@ -709,12 +697,12 @@ impl Blockchain {
     pub fn push_monetary_block(
         &mut self,
         block: MonetaryBlock,
-        current_timestamp: u64,
+        timestamp: SystemTime,
     ) -> Result<(Vec<Output>, Vec<Output>), Error> {
         //
         // Validate the monetary block.
         //
-        self.validate_monetary_block(&block, current_timestamp)?;
+        self.validate_monetary_block(&block, timestamp)?;
 
         //
         // Write the monetary block to the disk.
@@ -725,7 +713,7 @@ impl Blockchain {
         //
         // Update in-memory indexes and metadata.
         //
-        let (inputs, outputs) = self.register_monetary_block(block, current_timestamp)?;
+        let (inputs, outputs) = self.register_monetary_block(block, timestamp)?;
 
         Ok((inputs, outputs))
     }
@@ -738,13 +726,13 @@ impl Blockchain {
     /// * `block` - block to validate.
     /// * `is_proposal` - don't check for the supermajority of votes.
     ///                          Used to validating block proposals.
-    /// * `current_timestamp` - current time.
+    /// * `timestamp` - current time.
     ///                         Used to validating escrow.
     ///
     pub fn validate_monetary_block(
         &self,
         block: &MonetaryBlock,
-        current_timestamp: u64,
+        timestamp: SystemTime,
     ) -> Result<(), Error> {
         let height = block.header.base.height;
         let block_hash = Hash::digest(&block);
@@ -854,7 +842,7 @@ impl Blockchain {
                     o.validate_pkey()?;
                     burned += fee_a(o.amount);
                     self.escrow
-                        .validate_unstake(&o.validator, input_hash, current_timestamp)?;
+                        .validate_unstake(&o.validator, input_hash, timestamp)?;
                 }
             }
             input_hash.hash(&mut hasher);
@@ -957,7 +945,7 @@ impl Blockchain {
     fn register_monetary_block(
         &mut self,
         mut block: MonetaryBlock,
-        current_timestamp: u64,
+        timestamp: SystemTime,
     ) -> Result<(Vec<Output>, Vec<Output>), Error> {
         let version = self.height + 1;
         let height = self.height;
@@ -1008,7 +996,7 @@ impl Blockchain {
                                         version,
                                         o.validator,
                                         input_hash.clone(),
-                                        current_timestamp,
+                                        timestamp,
                                     );
                                     assert_eq!(self.escrow.current_version(), version);
                                     burned += fee_a(o.amount);
@@ -1107,7 +1095,6 @@ impl Blockchain {
         }
         self.balance.insert(version, (), balance);
         assert_eq!(self.balance.current_version(), version);
-        self.last_block_timestamp = clock::now();
         self.last_block_hash = block_hash.clone();
         self.view_change = block.header.base.view_change + 1;
         self.height += 1;
@@ -1160,7 +1147,6 @@ impl Blockchain {
         self.height = self.height - 1;
         assert_eq!(self.height, height);
         assert_eq!(self.height, version);
-        self.last_block_timestamp = clock::now();
         self.last_block_hash = Hash::digest(&self.last_block()?);
         metrics::HEIGHT.set(self.height as i64);
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
@@ -1194,11 +1180,12 @@ pub mod tests {
 
     use crate::genesis::genesis;
     use crate::multisignature::create_multi_signature;
-    use chrono::prelude::Utc;
     use rand::distributions::Alphanumeric;
     use rand::{thread_rng, Rng};
     use simple_logger;
     use std::collections::BTreeMap;
+    use std::time::Duration;
+    use std::time::SystemTime;
     use stegos_keychain::KeyChain;
     use tempdir::TempDir;
 
@@ -1207,20 +1194,15 @@ pub mod tests {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
         let keychains = [KeyChain::new_mem()];
-        let current_timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
         let cfg: BlockchainConfig = Default::default();
-        let blocks = genesis(
-            &keychains,
-            cfg.min_stake_amount,
-            1_000_000,
-            current_timestamp,
-        );
+        let blocks = genesis(&keychains, cfg.min_stake_amount, 1_000_000, timestamp);
         assert_eq!(blocks.len(), 2);
         let (block1, block2) = match &blocks[..] {
             [Block::MonetaryBlock(block1), Block::KeyBlock(block2)] => (block1, block2),
             _ => panic!(),
         };
-        let blockchain = Blockchain::testing(cfg, blocks.clone(), current_timestamp);
+        let blockchain = Blockchain::testing(cfg, blocks.clone(), timestamp);
         let outputs: Vec<Output> = block1
             .body
             .outputs
@@ -1284,7 +1266,7 @@ pub mod tests {
     fn create_monetary_block(
         chain: &mut Blockchain,
         keys: &KeyChain,
-        current_timestamp: u64,
+        timestamp: SystemTime,
         view_change: u32,
     ) -> (MonetaryBlock, Vec<Hash>, Vec<Hash>) {
         let mut input_hashes: Vec<Hash> = Vec::new();
@@ -1313,7 +1295,7 @@ pub mod tests {
         let mut outputs: Vec<Output> = Vec::new();
         let stake = chain.cfg.min_stake_amount;
         let (output, output_gamma) = PaymentOutput::new(
-            current_timestamp,
+            timestamp,
             &keys.wallet_skey,
             &keys.wallet_pkey,
             amount - stake,
@@ -1322,7 +1304,7 @@ pub mod tests {
         outputs.push(Output::PaymentOutput(output));
         gamma -= output_gamma;
         let output = StakeOutput::new(
-            current_timestamp,
+            timestamp,
             &keys.wallet_skey,
             &keys.wallet_pkey,
             &keys.network_pkey,
@@ -1336,7 +1318,7 @@ pub mod tests {
         let version = VERSION;
         let previous = chain.last_block_hash().clone();
         let height = chain.height();
-        let base = BaseBlockHeader::new(version, previous, height, view_change, current_timestamp);
+        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
         let mut block = MonetaryBlock::new(base, gamma, 0, &input_hashes, &outputs, None);
         let block_hash = Hash::digest(&block);
         block.body.sig = secure::sign_hash(&block_hash, &keys.network_skey);
@@ -1346,7 +1328,7 @@ pub mod tests {
     fn create_empty_monetary_block(
         chain: &mut Blockchain,
         keys: &KeyChain,
-        current_timestamp: u64,
+        timestamp: SystemTime,
         view_change: u32,
     ) -> MonetaryBlock {
         let input_hashes: Vec<Hash> = Vec::new();
@@ -1355,7 +1337,7 @@ pub mod tests {
         let version = VERSION;
         let previous = chain.last_block_hash().clone();
         let height = chain.height();
-        let base = BaseBlockHeader::new(version, previous, height, view_change, current_timestamp);
+        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
         let mut block = MonetaryBlock::new(base, gamma, 0, &input_hashes, &outputs, None);
         let block_hash = Hash::digest(&block);
         block.body.sig = secure::sign_hash(&block_hash, &keys.network_skey);
@@ -1367,30 +1349,24 @@ pub mod tests {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
         let keychains = [KeyChain::new_mem()];
-        let mut current_timestamp = Utc::now().timestamp() as u64;
+        let mut timestamp = SystemTime::now();
         let cfg: BlockchainConfig = Default::default();
-        let genesis = genesis(
-            &keychains,
-            cfg.min_stake_amount,
-            1_000_000,
-            current_timestamp,
-        );
+        let genesis = genesis(&keychains, cfg.min_stake_amount, 1_000_000, timestamp);
         let temp_prefix: String = thread_rng().sample_iter(&Alphanumeric).take(30).collect();
         let temp_dir = TempDir::new(&temp_prefix).expect("couldn't create temp dir");
         let database = ListDb::new(&temp_dir.path());
-        let mut chain =
-            Blockchain::with_db(cfg.clone(), database, genesis.clone(), current_timestamp);
+        let mut chain = Blockchain::with_db(cfg.clone(), database, genesis.clone(), timestamp);
 
         let height = chain.height();
         for i in 1..4 {
-            current_timestamp += cfg.bonding_time + 1;
+            timestamp += cfg.bonding_time + Duration::from_millis(1);
             let block_hash = if i % 2 == 0 {
                 // Non-empty block.
                 let (block, input_hashes, output_hashes) =
-                    create_monetary_block(&mut chain, &keychains[0], current_timestamp, i - 1);
+                    create_monetary_block(&mut chain, &keychains[0], timestamp, i - 1);
                 let block_hash = Hash::digest(&block);
                 chain
-                    .push_monetary_block(block, current_timestamp)
+                    .push_monetary_block(block, timestamp)
                     .expect("block is valid");
                 for input_hash in input_hashes {
                     assert!(!chain.contains_output(&input_hash));
@@ -1401,21 +1377,16 @@ pub mod tests {
                 block_hash
             } else {
                 // Empty block.
-                let block = create_empty_monetary_block(
-                    &mut chain,
-                    &keychains[0],
-                    current_timestamp,
-                    i - 1,
-                );
+                let block =
+                    create_empty_monetary_block(&mut chain, &keychains[0], timestamp, i - 1);
                 let block_hash = Hash::digest(&block);
                 chain
-                    .push_monetary_block(block, current_timestamp)
+                    .push_monetary_block(block, timestamp)
                     .expect("block is valid");
                 block_hash
             };
             assert_eq!(block_hash, chain.last_block_hash());
             assert_eq!(height + i as u64, chain.height());
-            assert!(chain.last_block_timestamp <= clock::now());
         }
 
         //
@@ -1426,11 +1397,10 @@ pub mod tests {
         let balance = chain.balance().clone();
         drop(chain);
         let database = ListDb::new(&temp_dir.path());
-        let chain = Blockchain::with_db(cfg, database, genesis, current_timestamp);
+        let chain = Blockchain::with_db(cfg, database, genesis, timestamp);
         assert_eq!(height, chain.height());
         assert_eq!(block_hash, chain.last_block_hash());
         assert_eq!(chain.blocks().count() as u64, chain.height());
-        assert!(chain.last_block_timestamp <= clock::now());
         assert_eq!(&balance, chain.balance());
     }
 
@@ -1439,20 +1409,14 @@ pub mod tests {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
         let keychains = [KeyChain::new_mem()];
-        let mut current_timestamp = Utc::now().timestamp() as u64;
+        let mut timestamp = SystemTime::now();
         let cfg: BlockchainConfig = Default::default();
-        let genesis = genesis(
-            &keychains,
-            cfg.min_stake_amount,
-            1_000_000,
-            current_timestamp,
-        );
+        let genesis = genesis(&keychains, cfg.min_stake_amount, 1_000_000, timestamp);
 
         let temp_prefix: String = thread_rng().sample_iter(&Alphanumeric).take(30).collect();
         let temp_dir = TempDir::new(&temp_prefix).expect("couldn't create temp dir");
         let database = ListDb::new(&temp_dir.path());
-        let mut chain =
-            Blockchain::with_db(cfg.clone(), database, genesis.clone(), current_timestamp);
+        let mut chain = Blockchain::with_db(cfg.clone(), database, genesis.clone(), timestamp);
 
         let height0 = chain.height();
         let block_hash0 = chain.last_block_hash();
@@ -1460,16 +1424,15 @@ pub mod tests {
         let escrow0 = chain.escrow().info().clone();
 
         // Register a monetary block.
-        current_timestamp += chain.cfg.bonding_time + 1;
+        timestamp += chain.cfg.bonding_time + Duration::from_millis(1);
         let (block1, input_hashes1, output_hashes1) =
-            create_monetary_block(&mut chain, &keychains[0], current_timestamp, 0);
+            create_monetary_block(&mut chain, &keychains[0], timestamp, 0);
         chain
-            .push_monetary_block(block1, current_timestamp)
+            .push_monetary_block(block1, timestamp)
             .expect("block is valid");
         assert_eq!(height0 + 1, chain.height());
         assert_ne!(block_hash0, chain.last_block_hash());
         assert_eq!(chain.blocks().count() as u64, chain.height());
-        assert!(chain.last_block_timestamp <= clock::now());
         assert_ne!(&balance0, chain.balance());
         assert_ne!(escrow0, chain.escrow().info());
         for input_hash in &input_hashes1 {
@@ -1484,16 +1447,15 @@ pub mod tests {
         let escrow1 = chain.escrow().info().clone();
 
         // Register one more monetary block.
-        current_timestamp += chain.cfg.bonding_time + 1;
+        timestamp += chain.cfg.bonding_time + Duration::from_millis(1);;
         let (block2, input_hashes2, output_hashes2) =
-            create_monetary_block(&mut chain, &keychains[0], current_timestamp, 1);
+            create_monetary_block(&mut chain, &keychains[0], timestamp, 1);
         chain
-            .push_monetary_block(block2, current_timestamp)
+            .push_monetary_block(block2, timestamp)
             .expect("block is valid");
         assert_eq!(height1 + 1, chain.height());
         assert_ne!(block_hash1, chain.last_block_hash());
         assert_eq!(chain.blocks().count() as u64, chain.height());
-        assert!(chain.last_block_timestamp <= clock::now());
         assert_ne!(&balance1, chain.balance());
         assert_ne!(escrow1, chain.escrow().info());
         for input_hash in &input_hashes2 {
@@ -1508,7 +1470,6 @@ pub mod tests {
         assert_eq!(height1, chain.height());
         assert_eq!(block_hash1, chain.last_block_hash());
         assert_eq!(chain.blocks().count() as u64, chain.height());
-        assert!(chain.last_block_timestamp <= clock::now());
         assert_eq!(&balance1, chain.balance());
         assert_eq!(escrow1, chain.escrow().info());
         for input_hash in &input_hashes2 {
@@ -1523,7 +1484,6 @@ pub mod tests {
         assert_eq!(height0, chain.height());
         assert_eq!(block_hash0, chain.last_block_hash());
         assert_eq!(chain.blocks().count() as u64, chain.height());
-        assert!(chain.last_block_timestamp <= clock::now());
         assert_eq!(&balance0, chain.balance());
         assert_eq!(escrow0, chain.escrow().info());
         for input_hash in &input_hashes1 {
@@ -1538,11 +1498,10 @@ pub mod tests {
         //
         drop(chain);
         let database = ListDb::new(&temp_dir.path());
-        let chain = Blockchain::with_db(cfg, database, genesis, current_timestamp);
+        let chain = Blockchain::with_db(cfg, database, genesis, timestamp);
         assert_eq!(height0, chain.height());
         assert_eq!(block_hash0, chain.last_block_hash());
         assert_eq!(chain.blocks().count() as u64, chain.height());
-        assert!(chain.last_block_timestamp <= clock::now());
         assert_eq!(&balance0, chain.balance());
     }
 
@@ -1555,11 +1514,11 @@ pub mod tests {
             KeyChain::new_mem(),
         ];
 
-        let current_timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
         let cfg: BlockchainConfig = Default::default();
         let stake = cfg.min_stake_amount;
-        let blocks = genesis(&keychains, stake, 1_000_000, current_timestamp);
-        let mut blockchain = Blockchain::testing(cfg, blocks, current_timestamp);
+        let blocks = genesis(&keychains, stake, 1_000_000, timestamp);
+        let mut blockchain = Blockchain::testing(cfg, blocks, timestamp);
         let start = blockchain.last_block_hash();
         // len of genesis
         assert!(blockchain.height() > 0);
@@ -1570,8 +1529,7 @@ pub mod tests {
             let keychain = keychains.iter().find(|p| p.network_pkey == key).unwrap();
             let mut block = {
                 let previous = blockchain.last_block_hash();
-                let base =
-                    BaseBlockHeader::new(version, previous, height, view_change, current_timestamp);
+                let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
                 let seed = mix(blockchain.last_random(), view_change);
                 let random = secure::make_VRF(&keychain.network_skey, &seed);
                 KeyBlock::new(base, random)

@@ -24,6 +24,7 @@
 // SOFTWARE.
 
 use failure::Fail;
+use std::time::SystemTime;
 use stegos_crypto::hash::Hash;
 
 #[derive(Debug, Fail, PartialEq, Eq)]
@@ -42,8 +43,8 @@ pub enum NodeError {
     #[fail(display = "Expected a monetary block, got key block: height={}.", _0)]
     ExpectedMonetaryBlock(u64),
     #[fail(
-        display = "Found a block proposal with timestamp: {} that differ with our timestamp: {}.",
+        display = "Found a block proposal with timestamp: {:?} that differ with our timestamp: {:?}.",
         _0, _1
     )]
-    UnsynchronizedBlock(u64, u64),
+    UnsynchronizedBlock(SystemTime, SystemTime),
 }

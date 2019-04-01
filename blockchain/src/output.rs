@@ -23,6 +23,7 @@
 
 use failure::{Error, Fail};
 use std::mem::transmute;
+use std::time::SystemTime;
 use stegos_crypto::bulletproofs::{make_range_proof, BulletProof};
 use stegos_crypto::curve1174::cpt::{
     aes_decrypt, aes_encrypt, EncryptedPayload, Pt, PublicKey, SecretKey,
@@ -128,7 +129,7 @@ fn cloak_key(
     sender_skey: &SecretKey,
     recipient_pkey: &PublicKey,
     gamma: &Fr,
-    timestamp: u64,
+    timestamp: SystemTime,
 ) -> Result<(PublicKey, Fr), CryptoError> {
     // h is the digest of the recipients actual public key mixed with a timestamp.
     let mut hasher = Hasher::new();
@@ -386,7 +387,7 @@ impl StakePayload {
 impl PaymentOutput {
     /// Create a new PaymentOutput with generic payload.
     pub fn with_payload(
-        timestamp: u64,
+        timestamp: SystemTime,
         sender_skey: &SecretKey,
         recipient_pkey: &PublicKey,
         amount: i64,
@@ -418,7 +419,7 @@ impl PaymentOutput {
 
     /// Create a new PaymentOutput.
     pub fn new(
-        timestamp: u64,
+        timestamp: SystemTime,
         sender_skey: &SecretKey,
         recipient_pkey: &PublicKey,
         amount: i64,
@@ -468,7 +469,7 @@ impl PaymentOutput {
 impl StakeOutput {
     /// Create a new StakeOutput.
     pub fn new(
-        timestamp: u64,
+        timestamp: SystemTime,
         sender_skey: &SecretKey,
         recipient_pkey: &PublicKey,
         validator_pkey: &secure::PublicKey,
@@ -527,7 +528,7 @@ impl StakeOutput {
 impl Output {
     /// Create a new payment UTXO.
     pub fn new_payment(
-        timestamp: u64,
+        timestamp: SystemTime,
         sender_skey: &SecretKey,
         recipient_pkey: &PublicKey,
         amount: i64,
@@ -538,7 +539,7 @@ impl Output {
 
     /// Create a new escrow transaction.
     pub fn new_stake(
-        timestamp: u64,
+        timestamp: SystemTime,
         sender_skey: &SecretKey,
         recipient_pkey: &PublicKey,
         validator_pkey: &secure::PublicKey,
@@ -596,9 +597,9 @@ impl Hashable for Box<Output> {
 pub mod tests {
     use super::*;
 
-    use chrono::Utc;
     use rand::distributions::Alphanumeric;
     use rand::{thread_rng, Rng};
+    use std::time::SystemTime;
     use stegos_crypto::curve1174::cpt::make_random_keys;
 
     fn random_string(len: usize) -> String {
@@ -818,7 +819,7 @@ pub mod tests {
         let (skey1, _pkey1, _sig1) = make_random_keys();
         let (skey2, pkey2, _sig2) = make_random_keys();
 
-        let timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
         let amount: i64 = 100500;
 
         let (output, gamma) =
@@ -850,7 +851,7 @@ pub mod tests {
         let (skey2, pkey2, _sig2) = make_random_keys();
         let (secure_skey1, secure_pkey1, _secure_sig1) = secure::make_random_keys();
 
-        let timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
         let amount: i64 = 100500;
 
         let output = StakeOutput::new(

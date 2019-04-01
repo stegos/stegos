@@ -21,11 +21,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use chrono::Utc;
 use linked_hash_map::LinkedHashMap;
 use log::*;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::time::SystemTime;
 use stegos_blockchain::view_changes::ViewChangeProof;
 use stegos_blockchain::*;
 use stegos_crypto::curve1174::cpt::PublicKey;
@@ -161,7 +161,7 @@ impl Mempool {
             self.pool.len()
         );
 
-        let timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
         let mut gamma = Fr::zero();
         let mut fee = 0i64;
         let mut inputs: Vec<Hash> = Vec::new();

@@ -24,7 +24,6 @@ mod console;
 mod consts;
 
 use atty;
-use chrono::NaiveDateTime;
 use clap;
 use clap::{App, Arg, ArgMatches};
 use dirs;
@@ -161,13 +160,11 @@ fn initialize_genesis(cfg: &config::Config) -> Result<Vec<Block>, Error> {
     for (i, block) in [block1.as_ref(), block2.as_ref()].iter().enumerate() {
         let block = Block::from_buffer(&block)?;
         let header = block.base_header();
-        let timestamp = NaiveDateTime::from_timestamp(header.timestamp as i64, 0);
         info!(
-            "Block #{}: hash={}, version={}, timestamp={}",
+            "Block #{}: hash={}, version={}",
             i,
             Hash::digest(&block),
             header.version,
-            timestamp
         );
         blocks.push(block);
     }

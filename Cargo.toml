@@ -43,7 +43,6 @@ stegos_serialization = { version = "0.2.0", path = "./serialization" }
 stegos_txpool = { version = "0.2.0", path = "./txpool" }
 stegos_wallet = { version = "0.2.0", path = "./wallet" }
 atty = "0.2"
-chrono = "0.4"
 clap = "2.32"
 dirs = "1.0"
 failure = "0.1"

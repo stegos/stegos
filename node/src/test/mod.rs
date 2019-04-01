@@ -38,8 +38,9 @@ pub struct Sandbox {
 
 impl Sandbox {
     fn new(cfg: ChainConfig, num_nodes: usize) -> Self {
+        let timestamp = SystemTime::now();
         let nodes_keychains: Vec<_> = (0..num_nodes).map(|_num| KeyChain::new_mem()).collect();
-        let genesis = stegos_blockchain::genesis(&nodes_keychains, 1000, 1000000, 0);
+        let genesis = stegos_blockchain::genesis(&nodes_keychains, 1000, 1000000, timestamp);
 
         let nodes: Vec<NodeSandbox> = (0..num_nodes)
             .map(|i| NodeSandbox::new(cfg.clone(), nodes_keychains[i].clone(), genesis.clone()))

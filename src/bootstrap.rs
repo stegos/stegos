@@ -19,13 +19,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use chrono::Utc;
 use clap::{crate_version, App, Arg};
 use log::*;
 use protobuf::Message;
 use simple_logger;
 use std::fs;
 use std::process;
+use std::time::SystemTime;
 use stegos_blockchain::{genesis, BlockchainConfig};
 use stegos_keychain::KeyChain;
 use stegos_keychain::KeyChainConfig;
@@ -143,7 +143,7 @@ fn main() {
     }
 
     info!("Generating genesis blocks...");
-    let timestamp = Utc::now().timestamp() as u64;
+    let timestamp = SystemTime::now();
     let blocks = genesis(&keychains, stake, coins, timestamp);
     for (i, block) in blocks.iter().enumerate() {
         let block_data = block.into_proto();

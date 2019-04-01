@@ -22,10 +22,10 @@
 // SOFTWARE.
 
 use crate::output::*;
-use chrono::Utc;
 use failure::Error;
 use failure::Fail;
 use std::collections::HashSet;
+use std::time::SystemTime;
 use stegos_crypto::bulletproofs::{fee_a, simple_commit, validate_range_proof};
 use stegos_crypto::curve1174::cpt::{
     sign_hash, sign_hash_with_kval, validate_sig, Pt, PublicKey, SchnorrSig, SecretKey,
@@ -398,7 +398,7 @@ impl Transaction {
         let mut inputs: Vec<Output> = Vec::with_capacity(input_count);
         let mut outputs: Vec<Output> = Vec::with_capacity(output_count);
 
-        let timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
 
         for _ in 0..input_count {
             let (input, _gamma) =
@@ -434,7 +434,7 @@ pub mod tests {
     #[test]
     pub fn no_inputs() {
         let (skey, pkey, _sig) = make_random_keys();
-        let timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
         let amount: i64 = 1_000_000;
         let fee: i64 = amount;
         let (input, _gamma1) =
@@ -467,7 +467,7 @@ pub mod tests {
         let (skey1, pkey1, _sig1) = make_random_keys();
         let (_skey2, pkey2, _sig2) = make_random_keys();
 
-        let timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
         let amount: i64 = 1_000_000;
         let fee: i64 = 1;
 
@@ -640,7 +640,7 @@ pub mod tests {
         let (skey1, pkey1, _sig1) = make_random_keys();
         let (secure_skey1, secure_pkey1, _secure_sig1) = secure::make_random_keys();
 
-        let timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
         let amount: i64 = 1_000_000;
         let fee: i64 = 1;
 
@@ -775,7 +775,7 @@ pub mod tests {
         let (skey1, pkey1, _) = make_random_keys();
         let (skey2, pkey2, _) = make_random_keys();
         let (skey3, pkey3, _) = make_random_keys();
-        let timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
         let err_utxo = "Can't construct UTXO";
         let iamt1 = 101;
         let iamt2 = 102;

@@ -25,12 +25,18 @@ use crate::block::*;
 use crate::multisignature::create_multi_signature;
 use crate::output::*;
 use std::collections::BTreeMap;
+use std::time::SystemTime;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
 
 /// Genesis blocks.
-pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64, timestamp: u64) -> Vec<Block> {
+pub fn genesis(
+    keychains: &[KeyChain],
+    stake: i64,
+    coins: i64,
+    timestamp: SystemTime,
+) -> Vec<Block> {
     let mut blocks = Vec::with_capacity(2);
 
     // Both block are created at the same time in the same epoch.

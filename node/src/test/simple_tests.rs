@@ -21,7 +21,7 @@
 
 use super::Loopback;
 use crate::*;
-use chrono::Utc;
+use std::time::SystemTime;
 use stegos_blockchain::*;
 
 #[test]
@@ -31,8 +31,8 @@ pub fn init() {
     let (_outbox, inbox) = unbounded();
     let (_loopback, network) = Loopback::new();
 
-    let current_timestamp = Utc::now().timestamp() as u64;
-    let genesis = genesis(&[keys.clone()], 1000, 3_000_000, current_timestamp);
+    let timestamp = SystemTime::now();
+    let genesis = genesis(&[keys.clone()], 1000, 3_000_000, timestamp);
     let genesis_count = genesis.len() as u64;
     let node =
         NodeService::testing(Default::default(), keys.clone(), network, genesis, inbox).unwrap();
@@ -71,7 +71,7 @@ fn simulate_payment(node: &mut NodeService, amount: i64) -> Result<(), Error> {
     let fee: i64 = node.cfg.payment_fee * inputs.len() as i64;
     assert!(inputs_amount >= amount + fee);
     let change = inputs_amount - amount - fee;
-    let timestamp = Utc::now().timestamp() as u64;
+    let timestamp = SystemTime::now();
     let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
     let (output1, gamma1) = PaymentOutput::new(timestamp, sender_skey, sender_pkey, amount)?;
     outputs.push(Output::PaymentOutput(output1));
@@ -96,8 +96,8 @@ pub fn monetary_requests() {
 
     let total: i64 = 3_000_000;
     let stake: i64 = 1000;
-    let current_timestamp = Utc::now().timestamp() as u64;
-    let genesis = genesis(&[keys.clone()], stake, total, current_timestamp);
+    let timestamp = SystemTime::now();
+    let genesis = genesis(&[keys.clone()], stake, total, timestamp);
     let cfg: ChainConfig = Default::default();
     let mut node =
         NodeService::testing(cfg.clone(), keys.clone(), network, genesis, inbox).unwrap();

@@ -18,7 +18,6 @@ stegos_keychain = { version = "0.2.0", path = "../keychain" }
 stegos_serialization = { version = "0.2.0", path = "../serialization" }
 bitvector = "0.1"
 byteorder = "1.3"
-chrono = "0.4"
 failure = "0.1"
 lazy_static = "1.2"
 log = "0.4"
@@ -29,7 +28,6 @@ rocksdb = "0.11"
 serde = "1.0"
 serde_derive = "1.0"
 tempdir = "0.3"
-tokio-timer = "0.2"
 
 [dev-dependencies]
 simple_logger = "1.0"

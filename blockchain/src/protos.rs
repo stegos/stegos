@@ -172,7 +172,12 @@ impl ProtoConvert for BaseBlockHeader {
         proto.set_previous(self.previous.into_proto());
         proto.set_height(self.height);
         proto.set_view_change(self.view_change);
-        proto.set_timestamp(self.timestamp);
+        let since_the_epoch = self
+            .timestamp
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time is valid");
+        let timestamp = since_the_epoch.as_secs() * 1000 + since_the_epoch.subsec_millis() as u64;
+        proto.set_timestamp(timestamp);
         proto
     }
 
@@ -181,7 +186,8 @@ impl ProtoConvert for BaseBlockHeader {
         let previous = Hash::from_proto(proto.get_previous())?;
         let height = proto.get_height();
         let view_change = proto.get_view_change();
-        let timestamp = proto.get_timestamp();
+        let timestamp =
+            std::time::UNIX_EPOCH + std::time::Duration::from_millis(proto.get_timestamp());
         Ok(BaseBlockHeader {
             version,
             previous,
@@ -502,7 +508,7 @@ impl ProtoConvert for ViewChangeProof {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
+    use std::time::SystemTime;
     use stegos_crypto::curve1174::cpt::make_random_keys;
     use stegos_crypto::hash::{Hash, Hashable, Hasher};
     use stegos_crypto::pbc::secure::make_random_keys as make_secure_random_keys;
@@ -523,7 +529,7 @@ mod tests {
         let (secure_skey1, secure_pkey1, _secure_sig1) = make_secure_random_keys();
 
         let amount = 1_000_000;
-        let timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
 
         let (output, _gamma) =
             Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
@@ -550,7 +556,7 @@ mod tests {
         let (skey1, pkey1, _sig1) = make_random_keys();
         let (_skey2, pkey2, _sig2) = make_random_keys();
 
-        let timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
         let amount: i64 = 1_000_000;
         let fee: i64 = 0;
 
@@ -604,7 +610,7 @@ mod tests {
 
         let version: u64 = 1;
         let height: u64 = 0;
-        let timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
         let previous = Hash::digest(&"test".to_string());
 
         let base = BaseBlockHeader::new(version, previous, height, 0, timestamp);
@@ -639,7 +645,7 @@ mod tests {
 
         let version: u64 = 1;
         let height: u64 = 0;
-        let timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
         let view_change = 0;
         let amount: i64 = 1_000_000;
         let previous = Hash::digest(&"test".to_string());

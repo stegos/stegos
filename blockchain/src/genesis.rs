@@ -35,15 +35,15 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64, timestamp: u64) -
 
     // Both block are created at the same time in the same epoch.
     let version: u64 = 1;
-    let mut view_change = 0;
+    let mut view_change: u32 = 0;
+    let mut height: u64 = 0;
 
     //
     // Create initial Monetary Block.
     //
     let block1 = {
-        let epoch: u64 = 0;
         let previous = Hash::digest(&"genesis".to_string());
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
+        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
         //
         // Genesis has one PaymentOutput + N * StakeOutput, where N is the number of validators.
         //
@@ -82,14 +82,15 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64, timestamp: u64) -
         MonetaryBlock::new(base, gamma, coins, &[], &outputs)
     };
     view_change += 1;
+    height += 1;
+
     //
     // Create initial Key Block.
     //
     let block2 = {
-        let epoch: u64 = 1;
         let init_random = Hash::digest("random");
         let previous = Hash::digest(&block1);
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
+        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
 
         let seed = crate::election::mix(init_random, view_change);
         let random = secure::make_VRF(&keychains[0].network_skey.clone(), &seed);

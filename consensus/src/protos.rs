@@ -160,11 +160,11 @@ mod tests {
         let (skey0, _pkey0, _sig0) = make_secure_random_keys();
 
         let version: u64 = 1;
-        let epoch: u64 = 1;
+        let height: u64 = 0;
         let timestamp = Utc::now().timestamp() as u64;
         let previous = Hash::digest(&"test".to_string());
 
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp, 0);
+        let base = BaseBlockHeader::new(version, previous, height, 0, timestamp);
         let random = secure::make_VRF(&skey0, &Hash::digest("test"));
         let block = KeyBlock::new(base, random);
 

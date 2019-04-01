@@ -499,7 +499,7 @@ pub fn aes_encrypt(msg: &[u8], pkey: &PublicKey) -> Result<EncryptedPayload, Cry
         let ctxt = aes_encrypt_with_key(msg, &key.bits());
         Ok(EncryptedPayload {
             ag: Pt::from(ag),
-            ctxt: ctxt,
+            ctxt,
         })
     }
 }

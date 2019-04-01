@@ -56,7 +56,7 @@ fn basic() {
             let block: Block = s.nodes[leader_id]
                 .network_service
                 .get_broadcast(crate::SEALED_BLOCK_TOPIC);
-            assert_eq!(block.base_header().epoch, epoch);
+            assert_eq!(block.base_header().height, height);
             for (i, node) in s.nodes.iter_mut().enumerate() {
                 if i != leader_id {
                     node.network_service
@@ -151,7 +151,7 @@ fn basic() {
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
         let block_hash = Hash::digest(&block);
         assert_eq!(block_hash, proposal.request_hash);
-        assert_eq!(block.base_header().epoch, epoch);
+        assert_eq!(block.base_header().height, height);
         assert_eq!(block.base_header().previous, last_block_hash);
 
         // Send this sealed block to all other nodes expect the last one.

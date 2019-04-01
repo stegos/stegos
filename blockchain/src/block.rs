@@ -49,25 +49,30 @@ pub struct BaseBlockHeader {
     /// Hash of the block previous to this in the chain.
     pub previous: Hash,
 
-    /// A monotonically increasing value that represents the heights of the blockchain,
-    /// starting from genesis block (=0).
-    pub epoch: u64,
-
-    /// Timestamp at which the block was built.
-    pub timestamp: u64,
+    /// Block height.
+    pub height: u64,
 
     /// Number of leader changes in current validator groups.
     pub view_change: u32,
+
+    /// Timestamp at which the block was built.
+    pub timestamp: u64,
 }
 
 impl BaseBlockHeader {
-    pub fn new(version: u64, previous: Hash, epoch: u64, timestamp: u64, view_change: u32) -> Self {
+    pub fn new(
+        version: u64,
+        previous: Hash,
+        height: u64,
+        view_change: u32,
+        timestamp: u64,
+    ) -> Self {
         BaseBlockHeader {
             version,
             previous,
-            epoch,
-            timestamp,
+            height,
             view_change,
+            timestamp,
         }
     }
 }
@@ -76,7 +81,8 @@ impl Hashable for BaseBlockHeader {
     fn hash(&self, state: &mut Hasher) {
         self.version.hash(state);
         self.previous.hash(state);
-        self.epoch.hash(state);
+        self.height.hash(state);
+        self.view_change.hash(state);
         self.timestamp.hash(state);
     }
 }
@@ -390,7 +396,7 @@ pub mod tests {
         let (_skey2, pkey2, _sig2) = make_random_keys();
 
         let version: u64 = 1;
-        let epoch: u64 = 1;
+        let height: u64 = 0;
         let timestamp = Utc::now().timestamp() as u64;
         let view_change = 0;
         let amount: i64 = 1_000_000;
@@ -401,7 +407,7 @@ pub mod tests {
         //
         {
             let (output0, gamma0) = Output::new_payment(timestamp, &skey0, &pkey1, amount).unwrap();
-            let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
+            let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
             let inputs1 = [Hash::digest(&output0)];
             let (output1, gamma1) = Output::new_payment(timestamp, &skey1, &pkey2, amount).unwrap();
             let outputs1 = [output1];
@@ -415,7 +421,7 @@ pub mod tests {
         //
         {
             let (output0, gamma0) = Output::new_payment(timestamp, &skey0, &pkey1, amount).unwrap();
-            let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
+            let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
             let inputs1 = [Hash::digest(&output0)];
             let (output1, gamma1) =
                 Output::new_payment(timestamp, &skey1, &pkey2, amount - 1).unwrap();
@@ -437,14 +443,14 @@ pub mod tests {
         let (skey, pkey, _sig) = make_random_keys();
 
         let version: u64 = 1;
-        let epoch: u64 = 1;
+        let height: u64 = 0;
         let timestamp = Utc::now().timestamp() as u64;
         let view_change = 0;
         let amount: i64 = 1_000_000;
         let previous = Hash::digest(&"test".to_string());
 
         let (input, gamma0) = Output::new_payment(timestamp, &skey, &pkey, amount).unwrap();
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
+        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
         let input_hashes = [Hash::digest(&input)];
         let inputs = [input];
         let (output, gamma1) = Output::new_payment(timestamp, &skey, &pkey, amount).unwrap();
@@ -475,7 +481,7 @@ pub mod tests {
         let (secure_skey1, secure_pkey1, _secure_sig1) = make_secure_random_keys();
 
         let version: u64 = 1;
-        let epoch: u64 = 1;
+        let height: u64 = 0;
         let timestamp = Utc::now().timestamp() as u64;
         let view_change = 0;
         let amount: i64 = 1_000_000;
@@ -502,7 +508,7 @@ pub mod tests {
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;
 
-            let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
+            let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
             let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..]);
             block.validate_balance(&inputs).expect("block is valid");
         }
@@ -528,7 +534,7 @@ pub mod tests {
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;
 
-            let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
+            let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
             let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..]);
             block.validate_balance(&inputs).expect("block is valid");
         }
@@ -556,7 +562,7 @@ pub mod tests {
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;
 
-            let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
+            let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
             let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..]);
             match block.validate_balance(&inputs) {
                 Err(e) => match e.downcast::<BlockchainError>().unwrap() {
@@ -590,7 +596,7 @@ pub mod tests {
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;
 
-            let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
+            let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
             let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..]);
             match block.validate_balance(&inputs) {
                 Err(e) => match e.downcast::<OutputError>().unwrap() {
@@ -606,7 +612,7 @@ pub mod tests {
         let (skey, pkey, _sig) = make_random_keys();
 
         let version: u64 = 1;
-        let epoch: u64 = 1;
+        let height: u64 = 0;
         let timestamp = Utc::now().timestamp() as u64;
         let view_change = 0;
         let previous = Hash::digest(&"test".to_string());
@@ -615,7 +621,7 @@ pub mod tests {
 
         let (input, input_gamma) =
             Output::new_payment(timestamp, &skey, &pkey, input_amount).unwrap();
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
+        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
         let input_hashes = [Hash::digest(&input)];
         let inputs = [input];
         let (output, output_gamma) =

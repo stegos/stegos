@@ -33,7 +33,6 @@ use crate::metrics;
 use crate::mvcc::MultiVersionedMap;
 use crate::output::*;
 use crate::storage::ListDb;
-use failure::ensure;
 use failure::Error;
 use log::*;
 use std::collections::HashSet;
@@ -51,8 +50,8 @@ use tokio_timer::clock;
 /// A helper to find UTXO in this blockchain.
 #[derive(Debug, Clone)]
 struct OutputKey {
-    /// The short block identifier.
-    pub block_id: u64,
+    /// Block Height.
+    pub height: u64,
     /// Merkle Tree path inside block.
     pub path: MerklePath,
 }
@@ -103,7 +102,7 @@ pub struct Blockchain {
     /// 1-based indexed - the genetic key block starts epoch #1.
     epoch: u64,
     /// Zero-indexed identifier of the last key block.
-    last_key_block_id: u64,
+    last_key_block_height: u64,
     /// Last election result.
     election_result: ElectionResult,
 
@@ -173,7 +172,7 @@ impl Blockchain {
         // Epoch Information.
         //
         let epoch: u64 = 0;
-        let last_key_block_id: u64 = 0;
+        let last_key_block_height: u64 = 0;
         let election_result = ElectionResult::default();
 
         //
@@ -196,7 +195,7 @@ impl Blockchain {
             balance,
             escrow,
             epoch,
-            last_key_block_id,
+            last_key_block_height,
             election_result,
             height,
             last_block_timestamp,
@@ -314,7 +313,7 @@ impl Blockchain {
     /// Returns the number of blocks in the current epoch.
     pub fn blocks_in_epoch(&self) -> u64 {
         // Include the key block itself.
-        self.height - self.last_key_block_id
+        self.height - self.last_key_block_height
     }
 
     /// Returns an iterator over UTXO hashes.
@@ -332,8 +331,8 @@ impl Blockchain {
 
     /// Resolve UTXO by hash.
     pub fn output_by_hash(&self, output_hash: &Hash) -> Result<Output, Error> {
-        if let Some(OutputKey { block_id, path }) = self.output_by_hash.get(output_hash) {
-            let block = self.block_by_id(*block_id)?;
+        if let Some(OutputKey { height, path }) = self.output_by_hash.get(output_hash) {
+            let block = self.block_by_height(*height)?;
             if let Block::MonetaryBlock(MonetaryBlock { header: _, body }) = block {
                 if let Some(output) = body.outputs.lookup(path) {
                     return Ok(output.as_ref().clone());
@@ -360,16 +359,16 @@ impl Blockchain {
 
     /// Checks whether a block exists or not.
     pub fn contains_block(&self, block_hash: &Hash) -> bool {
-        if let Some(_block_id) = self.block_by_hash.get(block_hash) {
+        if let Some(_height) = self.block_by_hash.get(block_hash) {
             return true;
         }
         return false;
     }
 
-    /// Get a block by id.
-    fn block_by_id(&self, block_id: u64) -> Result<Block, Error> {
-        assert!(block_id < self.height);
-        Ok((self.database.get(block_id)?).expect("block exists"))
+    /// Get a block by height.
+    fn block_by_height(&self, height: u64) -> Result<Block, Error> {
+        assert!(height < self.height);
+        Ok((self.database.get(height)?).expect("block exists"))
     }
 
     /// Return iterator over saved blocks.
@@ -379,11 +378,11 @@ impl Blockchain {
 
     /// Returns blocks history starting from block_hash, limited by count.
     pub fn blocks_range(&self, starting_hash: &Hash, count: u64) -> Option<Vec<Block>> {
-        if let Some(&block_id) = self.block_by_hash.get(starting_hash) {
-            let block_id = block_id + 1;
+        if let Some(&height) = self.block_by_hash.get(starting_hash) {
+            let height = height + 1;
             return Some(
                 self.database
-                    .iter_starting(block_id as u64)
+                    .iter_starting(height)
                     .take(count as usize)
                     .collect(),
             );
@@ -479,8 +478,6 @@ impl Blockchain {
     /// Add a new block into blockchain.
     ///
     pub fn push_key_block(&mut self, block: KeyBlock) -> Result<(), Error> {
-        let block_id = self.height;
-
         //
         // Validate the key block.
         //
@@ -490,7 +487,7 @@ impl Blockchain {
         // Write the key block to the disk.
         //
         self.database
-            .insert(block_id, Block::KeyBlock(block.clone()))?;
+            .insert(self.height, Block::KeyBlock(block.clone()))?;
 
         //
         // Update in-memory indexes and metadata.
@@ -510,12 +507,17 @@ impl Blockchain {
     ///                          Used to validating block proposals.
     ///
     pub fn validate_key_block(&self, block: &KeyBlock, is_proposal: bool) -> Result<(), Error> {
+        let height = block.header.base.height;
         let block_hash = Hash::digest(&block);
-        debug!("Validating a key block: hash={}", &block_hash);
+        debug!(
+            "Validating a key block: height={}, hash={}",
+            height, &block_hash
+        );
 
         // Check block version.
         if block.header.base.version != VERSION {
             return Err(BlockchainError::InvalidBlockVersion(
+                height,
                 block_hash,
                 VERSION,
                 block.header.base.version,
@@ -523,12 +525,12 @@ impl Blockchain {
             .into());
         }
 
-        // Check epoch.
-        if block.header.base.epoch != self.epoch + 1 {
-            return Err(BlockchainError::OutOfOrderBlockEpoch(
+        // Check height.
+        if block.header.base.height != self.height {
+            return Err(BlockchainError::OutOfOrderBlock(
                 block_hash,
-                self.epoch + 1,
-                block.header.base.epoch,
+                self.height,
+                block.header.base.height,
             )
             .into());
         }
@@ -537,7 +539,9 @@ impl Blockchain {
         if self.height > 0 {
             let previous_hash = self.last_block_hash();
             if previous_hash != block.header.base.previous {
-                return Err(BlockchainError::PreviousHashMismatch(
+                return Err(BlockchainError::InvalidPreviousHash(
+                    height,
+                    block_hash,
                     previous_hash,
                     block.header.base.previous,
                 )
@@ -547,20 +551,26 @@ impl Blockchain {
 
         // Check new hash.
         if let Some(_) = self.block_by_hash.get(&block_hash) {
-            return Err(BlockchainError::BlockHashCollision(block_hash).into());
+            return Err(BlockchainError::BlockHashCollision(height, block_hash).into());
         }
-        // TODO: Use real view_change
-        ensure!(
-            block.header.base.view_change == self.view_change(),
-            BlockchainError::InvalidViewChange(self.view_change, block.header.base.view_change)
-        );
+
+        // Check the view change.
+        if block.header.base.view_change != self.view_change() {
+            return Err(BlockchainError::InvalidViewChange(
+                height,
+                block_hash,
+                self.view_change,
+                block.header.base.view_change,
+            )
+            .into());
+        }
 
         // skip leader selection and signature checking for genesis block.
         if self.epoch > 0 {
             let leader = self.select_leader(block.header.base.view_change);
             let seed = mix(self.last_random(), block.header.base.view_change);
             if !secure::validate_VRF_source(&block.header.random, &leader, &seed) {
-                return Err(BlockchainError::IncorrectRandom.into());
+                return Err(BlockchainError::IncorrectRandom(height, block_hash).into());
             }
 
             //Try to tmp elect according to random
@@ -581,11 +591,14 @@ impl Blockchain {
                 &leader,
                 is_proposal,
             ) {
-                return Err(BlockchainError::InvalidBlockSignature(block_hash).into());
+                return Err(BlockchainError::InvalidBlockSignature(height, block_hash).into());
             }
         }
 
-        debug!("The key block is valid: hash={}", &block_hash);
+        debug!(
+            "The key block is valid: height={}, hash={}",
+            height, &block_hash
+        );
         Ok(())
     }
 
@@ -594,7 +607,8 @@ impl Blockchain {
     ///
     fn register_key_block(&mut self, block: KeyBlock) {
         let version = self.height + 1;
-        let block_id = self.height;
+        let height = self.height;
+        assert_eq!(height, block.header.base.height);
         let block_hash = Hash::digest(&block);
 
         //
@@ -602,9 +616,12 @@ impl Blockchain {
         //
         if let Some(_) = self
             .block_by_hash
-            .insert(version, block_hash.clone(), block_id)
+            .insert(version, block_hash.clone(), height)
         {
-            panic!("Block hash collision");
+            panic!(
+                "Block hash collision: height={}, hash={}",
+                height, block_hash
+            );
         }
         assert_eq!(self.block_by_hash.current_version(), version);
 
@@ -616,7 +633,7 @@ impl Blockchain {
         self.last_block_hash = block_hash.clone();
         self.height += 1;
         self.epoch += 1;
-        self.last_key_block_id = block_id;
+        self.last_key_block_height = height;
         self.election_result = election::select_validators_slots(
             self.escrow.get_stakers_majority(self.cfg.min_stake_amount),
             block.header.random,
@@ -629,7 +646,7 @@ impl Blockchain {
 
         info!(
             "Registered key block: height={}, hash={}",
-            self.height, block_hash
+            height, block_hash
         );
         debug!("Validators: {:?}", &self.validators());
         for (key, stake) in self.validators().iter() {
@@ -658,8 +675,6 @@ impl Blockchain {
         block: MonetaryBlock,
         current_timestamp: u64,
     ) -> Result<(Vec<Output>, Vec<Output>), Error> {
-        let block_id = self.height;
-
         //
         // Validate the monetary block.
         //
@@ -669,7 +684,7 @@ impl Blockchain {
         // Write the monetary block to the disk.
         //
         self.database
-            .insert(block_id, Block::MonetaryBlock(block.clone()))?;
+            .insert(self.height, Block::MonetaryBlock(block.clone()))?;
 
         //
         // Update in-memory indexes and metadata.
@@ -695,12 +710,17 @@ impl Blockchain {
         block: &MonetaryBlock,
         current_timestamp: u64,
     ) -> Result<(), Error> {
+        let height = block.header.base.height;
         let block_hash = Hash::digest(&block);
-        debug!("Validating a monetary block: hash={}", &block_hash);
+        debug!(
+            "Validating a monetary block: height={}, hash={}",
+            height, &block_hash
+        );
 
         // Check block version.
         if block.header.base.version != VERSION {
             return Err(BlockchainError::InvalidBlockVersion(
+                height,
                 block_hash,
                 VERSION,
                 block.header.base.version,
@@ -708,21 +728,18 @@ impl Blockchain {
             .into());
         }
 
-        // Check epoch.
-        if block.header.base.epoch != self.epoch {
-            return Err(BlockchainError::OutOfOrderBlockEpoch(
-                block_hash,
-                self.epoch,
-                block.header.base.epoch,
-            )
-            .into());
+        // Check height.
+        if block.header.base.height != self.height {
+            return Err(BlockchainError::OutOfOrderBlock(block_hash, self.height, height).into());
         }
 
         // Check previous hash.
         if self.height > 0 {
             let previous_hash = self.last_block_hash();
             if previous_hash != block.header.base.previous {
-                return Err(BlockchainError::PreviousHashMismatch(
+                return Err(BlockchainError::InvalidPreviousHash(
+                    height,
+                    block_hash,
                     previous_hash,
                     block.header.base.previous,
                 )
@@ -732,14 +749,14 @@ impl Blockchain {
 
         // Check new hash.
         if let Some(_) = self.block_by_hash.get(&block_hash) {
-            return Err(BlockchainError::BlockHashCollision(block_hash).into());
+            return Err(BlockchainError::BlockHashCollision(height, block_hash).into());
         }
 
         //TODO: remove multisig?
 
         // Check signature (exclude epoch == 0 for genesis).
         if self.epoch > 0 && !secure::check_hash(&block_hash, &block.body.sig, &self.leader()) {
-            return Err(BlockchainError::InvalidBlockSignature(block_hash).into());
+            return Err(BlockchainError::InvalidBlockSignature(height, block_hash).into());
         }
 
         let mut burned = ECp::inf();
@@ -874,7 +891,8 @@ impl Blockchain {
         current_timestamp: u64,
     ) -> Result<(Vec<Output>, Vec<Output>), Error> {
         let version = self.height + 1;
-        let block_id = self.height;
+        let height = self.height;
+        assert_eq!(height, block.header.base.height);
         let block_hash = Hash::digest(&block);
         let block_timestamp = block.header.base.timestamp;
 
@@ -883,9 +901,12 @@ impl Blockchain {
         //
         if let Some(_) = self
             .block_by_hash
-            .insert(version, block_hash.clone(), block_id)
+            .insert(version, block_hash.clone(), height)
         {
-            panic!("Block hash collision");
+            panic!(
+                "Block hash collision: height={}, hash={}",
+                height, block_hash
+            );
         }
         assert_eq!(self.block_by_hash.current_version(), version);
 
@@ -897,11 +918,11 @@ impl Blockchain {
         //
         let mut inputs: Vec<Output> = Vec::with_capacity(block.body.inputs.len());
         for input_hash in &block.body.inputs {
-            if let Some(OutputKey { block_id, path }) =
+            if let Some(OutputKey { height, path }) =
                 self.output_by_hash.remove(version, input_hash)
             {
                 assert_eq!(self.output_by_hash.current_version(), version);
-                let block = self.block_by_id(block_id)?;
+                let block = self.block_by_height(height)?;
                 let block_hash = Hash::digest(&block);
                 if let Block::MonetaryBlock(MonetaryBlock { header: _, body }) = block {
                     // Remove from the block.
@@ -954,7 +975,7 @@ impl Blockchain {
             let output_hash = Hash::digest(output.as_ref());
 
             // Update indexes.
-            let output_key = OutputKey { block_id, path };
+            let output_key = OutputKey { height, path };
             if let Some(_) = self
                 .output_by_hash
                 .insert(version, output_hash.clone(), output_key)
@@ -1027,7 +1048,7 @@ impl Blockchain {
 
         info!(
             "Registered monetary block: height={}, hash={}, inputs={}, outputs={}",
-            self.height,
+            height,
             block_hash,
             inputs.len(),
             outputs.len()
@@ -1038,23 +1059,23 @@ impl Blockchain {
 
     pub fn pop_monetary_block(&mut self) -> Result<(), Error> {
         assert!(self.height > 1);
-        let block_id = self.height - 1;
+        let height = self.height - 1;
         assert_ne!(
-            block_id, self.last_key_block_id,
+            height, self.last_key_block_height,
             "attempt to rollback the key block"
         );
-        let version = block_id;
+        let version = height;
 
         //
         // Remove from the disk.
         //
-        let block = self.block_by_id(block_id)?;
+        let block = self.block_by_height(height)?;
         let block = if let Block::MonetaryBlock(block) = block {
             block
         } else {
             panic!("Expected monetary block");
         };
-        self.database.remove(block_id)?;
+        self.database.remove(height)?;
 
         //
         // Revert metadata.
@@ -1068,6 +1089,7 @@ impl Blockchain {
         assert!(self.balance.current_version() <= version);
         assert!(self.escrow.current_version() <= version);
         self.height = self.height - 1;
+        assert_eq!(self.height, height);
         assert_eq!(self.height, version);
         self.last_block_timestamp = clock::now();
         self.last_block_hash = Hash::digest(&self.last_block()?);
@@ -1087,7 +1109,7 @@ impl Blockchain {
 
         info!(
             "Reverted monetary block: height={}, hash={}, inputs={}, outputs={}",
-            self.height + 1,
+            self.height,
             Hash::digest(&block),
             block.body.inputs.len(),
             outputs_count
@@ -1144,7 +1166,7 @@ pub mod tests {
         assert_eq!(unspent, unspent2);
 
         assert_eq!(blockchain.height(), 2);
-        assert_eq!(blockchain.epoch, block2.header.base.epoch);
+        assert_eq!(blockchain.height, block2.header.base.height + 1);
         assert_eq!(blockchain.blocks_in_epoch(), 1);
         let validators = blockchain
             .escrow
@@ -1172,11 +1194,11 @@ pub mod tests {
         assert!(!blockchain.contains_block(&Hash::digest("test")));
 
         assert_eq!(
-            Hash::digest(&blockchain.block_by_id(0).unwrap()),
+            Hash::digest(&blockchain.block_by_height(0).unwrap()),
             Hash::digest(&block1)
         );
         assert_eq!(
-            Hash::digest(&blockchain.block_by_id(1).unwrap()),
+            Hash::digest(&blockchain.block_by_height(1).unwrap()),
             Hash::digest(&block2)
         );
 
@@ -1243,9 +1265,9 @@ pub mod tests {
         let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
         let version = VERSION;
         let previous = chain.last_block_hash().clone();
-        let epoch = chain.epoch();
+        let height = chain.height();
         let view_change = 0;
-        let base = BaseBlockHeader::new(version, previous, epoch, current_timestamp, view_change);
+        let base = BaseBlockHeader::new(version, previous, height, view_change, current_timestamp);
         let mut block = MonetaryBlock::new(base, gamma, 0, &input_hashes, &outputs);
         let block_hash = Hash::digest(&block);
         block.body.sig = secure::sign_hash(&block_hash, &keys.network_skey);
@@ -1262,9 +1284,9 @@ pub mod tests {
         let gamma = Fr::zero();
         let version = VERSION;
         let previous = chain.last_block_hash().clone();
-        let epoch = chain.epoch();
+        let height = chain.height();
         let view_change = 0;
-        let base = BaseBlockHeader::new(version, previous, epoch, current_timestamp, view_change);
+        let base = BaseBlockHeader::new(version, previous, height, view_change, current_timestamp);
         let mut block = MonetaryBlock::new(base, gamma, 0, &input_hashes, &outputs);
         let block_hash = Hash::digest(&block);
         block.body.sig = secure::sign_hash(&block_hash, &keys.network_skey);
@@ -1469,14 +1491,14 @@ pub mod tests {
         // len of genesis
         assert!(blockchain.height() > 0);
         let version: u64 = 1;
-        for epoch in 2..12 {
+        for height in 2..12 {
             let view_change = blockchain.view_change();;
             let key = blockchain.select_leader(view_change);
             let keychain = keychains.iter().find(|p| p.network_pkey == key).unwrap();
             let mut block = {
                 let previous = blockchain.last_block_hash();
-                let base = BaseBlockHeader::new(version, previous, epoch, 0, view_change);
-
+                let base =
+                    BaseBlockHeader::new(version, previous, height, view_change, current_timestamp);
                 let seed = mix(blockchain.last_random(), view_change);
                 let random = secure::make_VRF(&keychain.network_skey, &seed);
                 KeyBlock::new(base, random)

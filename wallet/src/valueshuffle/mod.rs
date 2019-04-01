@@ -972,7 +972,7 @@ impl ValueShuffle {
         let msg_txins: Vec<TXIN> = self.my_txins.iter().map(|(k, _u)| k.clone()).collect();
         let msg = PoolJoin {
             txins: msg_txins,
-            utxos: utxos,
+            utxos,
             ownsig: own_sig,
         };
         Ok(msg)

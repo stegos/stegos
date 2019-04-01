@@ -985,7 +985,7 @@ pub fn ibe_encrypt(msg: &[u8], pkey: &PublicKey, id: &[u8]) -> EncryptedPacket {
         pkey: *pkey,
         id: id.to_vec(),
         rval: RVal(rval),
-        cmsg: cmsg,
+        cmsg,
     }
 }
 
@@ -1067,7 +1067,7 @@ pub fn make_VRF(skey: &SecretKey, seed: &Hash) -> VRF {
     let rand = compute_pairing(&proof, &G2::generator());
     VRF {
         rand: Hash::digest(&rand),
-        proof: proof,
+        proof,
     }
 }
 

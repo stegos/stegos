@@ -23,7 +23,21 @@
 
 use failure::Fail;
 use stegos_crypto::hash::Hash;
-
+#[derive(Debug, Fail)]
+pub enum MultisignatureError {
+    #[fail(
+        display = "Signature bitmap too big: len={}, validators_len={} ",
+        _0, _1
+    )]
+    TooBigBitmap(usize, usize),
+    #[fail(
+        display = "Not enough votes in signature: votes={}, needed_votes={} ",
+        _0, _1
+    )]
+    NotEnoughtVotes(i64, i64),
+    #[fail(display = "Signature is not valid: hash={} ", _0)]
+    InvalidSignature(Hash),
+}
 #[derive(Debug, Fail)]
 pub enum BlockchainError {
     #[fail(
@@ -52,11 +66,25 @@ pub enum BlockchainError {
     DuplicateBlockInput(Hash),
     #[fail(display = "Duplicate block output: {}.", _0)]
     DuplicateBlockOutput(Hash),
+    #[fail(display = "The leader must be validator.")]
+    LeaderIsNotValidator,
+    #[fail(display = "No leader signature was found in BLS signature.")]
+    NoLeaderSignatureFound,
     #[fail(
-        display = "Invalid block BLS multisignature: height={}, hash={}",
+        display = "Found propose with more than one signature: height={}, hash={}.",
         _0, _1
     )]
-    InvalidBlockSignature(u64, Hash),
+    MoreThanOneSignatureAtPropose(u64, Hash),
+    #[fail(
+        display = "Invalid leader signature found: height={}, hash={}.",
+        _0, _1
+    )]
+    InvalidLeaderSignature(u64, Hash),
+    #[fail(
+        display = "Invalid block BLS multisignature: height={}, hash={}, error={}",
+        _1, _2, _0
+    )]
+    InvalidBlockSignature(MultisignatureError, u64, Hash),
     #[fail(
         display = "Invalid block version: height={}, hash={}, expected={}, got={}",
         _0, _1, _2, _3

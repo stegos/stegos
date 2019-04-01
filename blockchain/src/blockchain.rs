@@ -33,9 +33,9 @@ use crate::metrics;
 use crate::mvcc::MultiVersionedMap;
 use crate::output::*;
 use crate::storage::ListDb;
-use failure::Error;
+use failure::{ensure, Error};
 use log::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 use stegos_crypto::bulletproofs::fee_a;
 use stegos_crypto::bulletproofs::validate_range_proof;
@@ -470,6 +470,12 @@ impl Blockchain {
         self.view_change
     }
 
+    /// Returns number of total slots in current epoch.
+    /// Internally always return cfg.max_slot_count
+    pub fn total_slots(&self) -> i64 {
+        self.cfg.max_slot_count
+    }
+
     //----------------------------------------------------------------------------------------------
     // Key Blocks
     //----------------------------------------------------------------------------------------------
@@ -573,25 +579,44 @@ impl Blockchain {
                 return Err(BlockchainError::IncorrectRandom(height, block_hash).into());
             }
 
-            //Try to tmp elect according to random
-            let election_result = election::select_validators_slots(
-                self.escrow.get_stakers_majority(self.cfg.min_stake_amount),
-                block.header.random,
-                self.cfg.max_slot_count,
-            );
+            // Currently macro block consensus uses public key as peer id.
+            // This adaptor allows converting PublicKey into integer identifier.
+            let validators_map: HashMap<secure::PublicKey, u32> = self
+                .validators()
+                .iter()
+                .enumerate()
+                .map(|(id, (pk, _))| (*pk, id as u32))
+                .collect();
 
-            let validators = &election_result.validators;
+            if let Some(leader_id) = validators_map.get(&leader) {
+                // bit of leader should be always set.
+                ensure!(
+                    block.body.multisigmap.contains(*leader_id as usize),
+                    BlockchainError::NoLeaderSignatureFound
+                );
+            } else {
+                return Err(BlockchainError::LeaderIsNotValidator.into());
+            }
 
-            // Check multisignature.
-            if !check_multi_signature(
-                &block_hash,
-                &block.body.multisig,
-                &block.body.multisigmap,
-                &validators,
-                &leader,
-                is_proposal,
-            ) {
-                return Err(BlockchainError::InvalidBlockSignature(height, block_hash).into());
+            // checks that proposal is signed only by leader.
+            if is_proposal {
+                ensure!(
+                    block.body.multisigmap.len() == 1,
+                    BlockchainError::MoreThanOneSignatureAtPropose(height, block_hash)
+                );
+                ensure!(
+                    secure::check_hash(&block_hash, &block.body.multisig, &leader),
+                    BlockchainError::InvalidLeaderSignature(height, block_hash)
+                );
+            } else {
+                check_multi_signature(
+                    &block_hash,
+                    &block.body.multisig,
+                    &block.body.multisigmap,
+                    self.validators(),
+                    self.total_slots(),
+                )
+                .map_err(|e| BlockchainError::InvalidBlockSignature(e, height, block_hash))?;
             }
         }
 
@@ -756,7 +781,7 @@ impl Blockchain {
 
         // Check signature (exclude epoch == 0 for genesis).
         if self.epoch > 0 && !secure::check_hash(&block_hash, &block.body.sig, &self.leader()) {
-            return Err(BlockchainError::InvalidBlockSignature(height, block_hash).into());
+            return Err(BlockchainError::InvalidLeaderSignature(height, block_hash).into());
         }
 
         let mut burned = ECp::inf();

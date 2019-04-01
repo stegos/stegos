@@ -48,7 +48,7 @@ pub struct ChainConfig {
     /// Fixed fee for the stake transactions.
     pub stake_fee: i64,
     /// Maximal number of slots for election.
-    pub max_slot_count: usize,
+    pub max_slot_count: i64,
     /// Minimal stake amount.
     pub min_stake_amount: i64,
     /// Time to lock stakes.

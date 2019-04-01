@@ -124,7 +124,7 @@ where
 pub fn select_validators_slots(
     stakers: StakersGroup,
     random: VRF,
-    slot_count: usize,
+    slot_count: i64,
 ) -> ElectionResult {
     assert!(!stakers.is_empty());
     assert!(slot_count > 0);
@@ -294,7 +294,7 @@ mod test {
                 select_validators_slots(keys.clone(), rand, i)
                     .validators
                     .len()
-                    <= i
+                    <= i as usize
             )
         }
         for i in 5..10 {
@@ -302,14 +302,14 @@ mod test {
                 select_validators_slots(keys.clone(), rand, i)
                     .validators
                     .len()
-                    <= 4
+                    <= 4 as usize
             )
         }
 
         for i in &[1, 5, 10, 100, 1000, 5000] {
             let validators = select_validators_slots(keys.clone(), rand, *i).validators;
             let acc = validators.into_iter().fold(0, |acc, (_, v)| acc + v) as usize;
-            assert_eq!(acc, *i)
+            assert_eq!(acc, *i as usize)
         }
     }
 }

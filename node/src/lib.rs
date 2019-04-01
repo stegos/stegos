@@ -27,7 +27,7 @@ mod mempool;
 pub mod protos;
 
 mod config;
-mod metrics;
+pub mod metrics;
 #[cfg(test)]
 mod test;
 mod validation;
@@ -508,6 +508,7 @@ impl NodeService {
 
     fn apply_new_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
+        let block_timestamp = block.base_header().timestamp;
         match block {
             Block::KeyBlock(key_block) => {
                 // Check for the correct block order.
@@ -577,6 +578,12 @@ impl NodeService {
         }
 
         self.last_block_clock = clock::now();
+
+        let local_timestamp_ms = metrics::time_to_timestamp_ms(SystemTime::now());
+        let remote_timestamp_ms = metrics::time_to_timestamp_ms(block_timestamp);
+        metrics::BLOCK_REMOTE_TIMESTAMP.set(remote_timestamp_ms);
+        metrics::BLOCK_LOCAL_TIMESTAMP.set(local_timestamp_ms);
+        metrics::BLOCK_LAG.set(local_timestamp_ms - remote_timestamp_ms); // can be negative.
 
         Ok(())
     }

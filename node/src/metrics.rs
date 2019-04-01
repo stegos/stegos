@@ -21,6 +21,15 @@
 
 use lazy_static::lazy_static;
 use prometheus::*;
+use std::time::SystemTime;
+
+/// Convert SystemTime to unix timestamp in millisecond precision.
+pub fn time_to_timestamp_ms(time: SystemTime) -> i64 {
+    let since_the_epoch = time
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("timestamp is valid");
+    (since_the_epoch.as_secs() * 1000) as i64 + (since_the_epoch.subsec_millis() as i64)
+}
 
 lazy_static! {
     pub static ref MEMPOOL_LEN: IntGauge =
@@ -35,6 +44,15 @@ lazy_static! {
         "The number of forced view_changes, in case of dead leader."
     )
     .unwrap();
+
+    pub static ref BLOCK_REMOTE_TIMESTAMP: IntGauge =
+        register_int_gauge!("stegos_block_remote_timestamp_ms", "The local time at a remote leader when the last block began to be created, i.e it equals to the value of block.header.timestamp.").unwrap();
+    pub static ref BLOCK_LOCAL_TIMESTAMP: IntGauge =
+        register_int_gauge!("stegos_block_local_timestamp_ms", "The local time at this node when the last block was registered.").unwrap();
+    pub static ref BLOCK_LAG: IntGauge =
+        register_int_gauge!("stegos_block_lag_ms", "The last block creation + validation + propagation time, i.e. it is the time difference between the local time at a remote leader when the last block began to be created and the local time at this node when this block was registered.").unwrap();
+    pub static ref BLOCK_IDLE: IntGauge =
+        register_int_gauge!("stegos_block_idle_ms", "The elapsed time since the last block, i.e. it is the time difference between the local time at this node and the time when the last block was registered.").unwrap();
 }
 
 pub mod vrf {

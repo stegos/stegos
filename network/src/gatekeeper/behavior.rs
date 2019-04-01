@@ -125,7 +125,7 @@ impl<TSubstream> Gatekeeper<TSubstream> {
     pub fn dial_peer(&mut self, peer_id: PeerId) {
         self.connecting_peers.insert(peer_id.clone());
         self.events
-            .push_back(NetworkBehaviourAction::DialPeer { peer_id: peer_id });
+            .push_back(NetworkBehaviourAction::DialPeer { peer_id });
     }
 
     pub fn dial_address(&mut self, address: Multiaddr) {

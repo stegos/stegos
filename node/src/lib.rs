@@ -406,7 +406,7 @@ impl NodeService {
         debug!("Broadcast new epoch event.");
         let msg = EpochNotification {
             epoch: self.chain.epoch(),
-            leader: leader,
+            leader,
             validators: self.chain.validators().clone(),
             facilitator: self.chain.facilitator().clone(),
         };

@@ -211,11 +211,8 @@ pub mod tests {
         let sid = Hash::digest("test");
         let ksig = simple_commit(Fr::from(1), Fr::zero()).compress();
         let msg = Message::VsMessage {
-            sid: sid,
-            payload: VsPayload::SharedKeying {
-                pkey: pkey,
-                ksig: ksig,
-            },
+            sid,
+            payload: VsPayload::SharedKeying { pkey, ksig },
         };
         let smsg = msg.into_buffer().expect("can't into_buffer()");
         // dbg!(&smsg);

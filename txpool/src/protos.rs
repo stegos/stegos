@@ -60,9 +60,9 @@ impl ProtoConvert for PoolJoin {
         }
         let ownsig = SchnorrSig::from_proto(proto.get_ownsig())?;
         Ok(PoolJoin {
-            txins: txins,
-            utxos: utxos,
-            ownsig: ownsig,
+            txins,
+            utxos,
+            ownsig,
         })
     }
 }
@@ -93,10 +93,10 @@ impl ProtoConvert for ParticipantTXINMap {
         }
         let ownsig = SchnorrSig::from_proto(proto.get_ownsig())?;
         Ok(ParticipantTXINMap {
-            participant: participant,
-            txins: txins,
-            utxos: utxos,
-            ownsig: ownsig,
+            participant,
+            txins,
+            utxos,
+            ownsig,
         })
     }
 }

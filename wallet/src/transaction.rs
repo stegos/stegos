@@ -104,8 +104,8 @@ pub(crate) fn create_vs_payment_transaction(
     trace!("Creating change UTXO...");
     let output1 = ProposedUTXO {
         recip: recipient.clone(),
-        amount: amount,
-        data: data,
+        amount,
+        data,
     };
     outputs.push(output1);
 

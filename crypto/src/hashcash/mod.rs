@@ -68,7 +68,7 @@ pub fn delay(nbits: usize, seed: &Vec<u8>) -> HashCashProof {
         let h = trial(seed, ctr);
         if chkbits(h.base_vector(), nbits) {
             return HashCashProof {
-                nbits: nbits,
+                nbits,
                 seed: seed.clone(),
                 count: ctr,
             };

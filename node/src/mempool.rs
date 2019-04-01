@@ -145,7 +145,7 @@ impl Mempool {
         &mut self,
         previous: Hash,
         version: u64,
-        epoch: u64,
+        height: u64,
         reward: i64,
         skey: &SecretKey,
         pkey: &PublicKey,
@@ -202,7 +202,7 @@ impl Mempool {
         };
 
         // Create a new monetary block.
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
+        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
         let block = MonetaryBlock::new(base, gamma, monetary_adjustment, &inputs, &outputs);
 
         (block, output_fee, tx_hashes)
@@ -323,10 +323,10 @@ mod test {
 
         let previous = Hash::digest(&1u64);
         let version = 1;
-        let epoch = 1;
+        let height = 0;
         let view_change = 0;
         let (block, output_fee, tx_hashes) =
-            mempool.create_block(previous, version, epoch, 0, &skey, &pkey, view_change);
+            mempool.create_block(previous, version, height, 0, &skey, &pkey, view_change);
 
         // Used transactions.
         assert_eq!(tx_hashes, vec![tx_hash1, tx_hash2]);

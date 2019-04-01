@@ -50,11 +50,13 @@ impl RequestBlocks {
 
 #[derive(Debug, Clone)]
 pub struct ResponseBlocks {
+    pub height: u64,
     pub blocks: Vec<Block>,
 }
 
 impl Hashable for ResponseBlocks {
     fn hash(&self, state: &mut Hasher) {
+        self.height.hash(state);
         for block in &self.blocks {
             block.hash(state);
         }
@@ -62,8 +64,8 @@ impl Hashable for ResponseBlocks {
 }
 
 impl ResponseBlocks {
-    pub fn new(blocks: Vec<Block>) -> ResponseBlocks {
-        Self { blocks }
+    pub fn new(height: u64, blocks: Vec<Block>) -> ResponseBlocks {
+        Self { height, blocks }
     }
 }
 
@@ -107,27 +109,21 @@ impl NodeService {
     /// Handle orphan block from network.
     pub fn on_orphan_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
-        let block_epoch = block.base_header().epoch;
-        if self.chain.epoch() > block_epoch {
-            debug!(
-                "Skipping outdated sealed block: hash={}, epoch={}",
-                block_hash, block_epoch
-            );
-            return Ok(());
-        }
+        let header = block.base_header();
+        assert!(header.height > self.chain.height());
         // TODO: re-order blocks.
         if let Some(last) = self.chain_loader.blocks_queue.last() {
             let last_hash = Hash::digest(last);
-            if last_hash != block.base_header().previous {
-                debug!("Skipping orphan sealed block that is not linked to the previous received: hash={}, epoch={}, known_previous={}, got_previous={}",
-                        block_hash, block_epoch, last_hash, block.base_header().previous);
+            if last_hash != header.previous {
+                debug!("Skipping orphan sealed block that is not linked to the previous received: hash={}, height={}, known_previous={}, got_previous={}",
+                        block_hash, header.height, last_hash, header.previous);
                 return Ok(());
             }
         }
 
         info!(
-            "Queued orphan sealed block: hash={}, epoch={}",
-            block_hash, block_epoch
+            "Queued orphan sealed block: hash={}, height={}",
+            block_hash, header.height
         );
         self.chain_loader.blocks_queue.push(block);
         self.request_history()
@@ -179,12 +175,13 @@ impl NodeService {
         request: RequestBlocks,
     ) -> Result<(), Error> {
         let start_hash = request.start_block;
+        let height = self.chain.height();
         let blocks = self
             .chain
             .blocks_range(&start_hash, self.cfg.loader_batch_size);
         if let Some(blocks) = blocks {
             info!("Feeding blocks: to={}, num_blocks={}", pkey, blocks.len());
-            let msg = ChainLoaderMessage::Response(ResponseBlocks::new(blocks));
+            let msg = ChainLoaderMessage::Response(ResponseBlocks::new(height, blocks));
             self.network
                 .send(pkey, CHAIN_LOADER_TOPIC, msg.into_buffer()?)?;
         } else {

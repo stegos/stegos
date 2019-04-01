@@ -448,12 +448,22 @@ impl NodeService {
     fn handle_sealed_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
         let header = block.base_header();
-        // Check previous hash.
-        let previous_hash = self.chain.last_block_hash();
-        if previous_hash != header.previous {
+
+        // Check height.
+        if header.height < self.chain.height() {
+            warn!(
+                "Skip outdated block: hash={}, block_height={}, our_height={}",
+                &block_hash,
+                header.height,
+                self.chain.height()
+            );
+            return Ok(());
+        } else if header.height > self.chain.height() {
             debug!(
-                "Orphan sealed block: hash={}, epoch={}, expected_previous={:?}, got_previous={:?}",
-                &block_hash, header.epoch, &previous_hash, &header.previous
+                "Orphan sealed block: hash={}, block_height={}, our_height={}",
+                &block_hash,
+                header.height,
+                self.chain.height()
             );
             return self.on_orphan_block(block);
         }
@@ -471,14 +481,6 @@ impl NodeService {
 
     fn apply_new_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
-
-        // Check that block is not registered yet.
-        if self.chain.contains_block(&block_hash) {
-            warn!("Block has been already registered: hash={}", &block_hash);
-            // Already registered, skip.
-            return Ok(());
-        }
-
         match block {
             Block::KeyBlock(key_block) => {
                 // Check for the correct block order.
@@ -490,8 +492,8 @@ impl NodeService {
                 if let Some(consensus) = &mut self.consensus {
                     if consensus.should_commit() {
                         // Check for forks.
-                        let (block, _proof) = consensus.get_proposal();
-                        let consensus_block_hash = Hash::digest(block);
+                        let (consensus_block, _proof) = consensus.get_proposal();
+                        let consensus_block_hash = Hash::digest(consensus_block);
                         if block_hash != consensus_block_hash {
                             panic!(
                                 "Network fork: received_block={:?}, consensus_block={:?}",
@@ -599,14 +601,16 @@ impl NodeService {
         let previous = self.chain.last_block_hash();
         let timestamp = Utc::now().timestamp() as u64;
         let view_change = self.chain.view_change();
+        let height = self.chain.height();
         let epoch = self.chain.epoch() + 1;
         let leader = consensus.leader();
         assert_eq!(&leader, &self.keys.network_pkey);
 
-        let base = BaseBlockHeader::new(VERSION, previous, epoch, timestamp, view_change);
+        let base = BaseBlockHeader::new(VERSION, previous, height, view_change, timestamp);
         debug!(
-            "Creating a new epoch proposal: {}, with leader = {:?}",
-            epoch,
+            "Creating a new epoch proposal: height={}, epoch={}, leader={:?}",
+            height,
+            self.chain.epoch() + 1,
             consensus.leader()
         );
 
@@ -635,9 +639,8 @@ impl NodeService {
             .expect("proposed key block is valid");
 
         info!(
-            "Created key block block: height={}, hash={}",
-            self.chain.height() + 1,
-            block_hash
+            "Created a new key block proposal: height={}, epoch={}, hash={}",
+            height, epoch, block_hash
         );
 
         let proof = ();
@@ -843,7 +846,7 @@ impl NodeService {
         let (mut block, _fee_output, _tx_hashes) = self.mempool.create_block(
             previous,
             VERSION,
-            self.chain.epoch(),
+            self.chain.height(),
             self.cfg.block_reward,
             &self.keys.wallet_skey,
             &self.keys.wallet_pkey,

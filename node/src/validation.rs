@@ -511,10 +511,10 @@ mod test {
             // Register one more UTXO.
             let fee = payment_fee;
             let previous = chain.last_block_hash();
-            let epoch = chain.epoch();
+            let height = chain.height();
             let version = VERSION;
             let base =
-                BaseBlockHeader::new(version, previous, epoch, current_timestamp, view_change);
+                BaseBlockHeader::new(version, previous, height, view_change, current_timestamp);
             let (output, outputs_gamma) =
                 Output::new_payment(current_timestamp, skey, pkey, amount - fee)
                     .expect("genesis has valid public keys");

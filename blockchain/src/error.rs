@@ -26,21 +26,22 @@ use stegos_crypto::hash::Hash;
 
 #[derive(Debug, Fail)]
 pub enum BlockchainError {
-    #[fail(display = "Previous hash mismatch: expected={}, got={}.", _0, _1)]
-    PreviousHashMismatch(Hash, Hash),
-    #[fail(display = "Block hash collision: {}.", _0)]
-    BlockHashCollision(Hash),
+    #[fail(
+        display = "Previous hash mismatch: height={}, hash={}, expected_previous={}, got_previous={}.",
+        _0, _1, _2, _3
+    )]
+    InvalidPreviousHash(u64, Hash, Hash, Hash),
+    #[fail(display = "Block hash collision: height={}, hash={}.", _0, _1)]
+    BlockHashCollision(u64, Hash),
     #[fail(display = "UXTO hash collision: {}.", _0)]
     OutputHashCollision(Hash),
     #[fail(
-        display = "Invalid or out-of-order epoch: block={}, expected={}, got={}",
+        display = "Out of order block: block={}, expected_height={}, got_height={}",
         _0, _1, _2
     )]
-    OutOfOrderBlockEpoch(Hash, u64, u64),
+    OutOfOrderBlock(Hash, u64, u64),
     #[fail(display = "Missing UXTO {}.", _0)]
     MissingUTXO(Hash),
-    #[fail(display = "Missing Block: height={}.", _0)]
-    MissingBlock(usize),
     #[fail(display = "Invalid block monetary balance.")]
     InvalidBlockBalance,
     #[fail(display = "Invalid block inputs: expected={}, got={}.", _0, _1)]
@@ -51,24 +52,24 @@ pub enum BlockchainError {
     DuplicateBlockInput(Hash),
     #[fail(display = "Duplicate block output: {}.", _0)]
     DuplicateBlockOutput(Hash),
-    #[fail(display = "Block must contain at least one validator.")]
-    MissingValidators,
-    #[fail(display = "The leader must be validator.")]
-    LeaderIsNotValidator,
-    #[fail(display = "KeyBlocks validators not equal to our stakers view.")]
-    ValidatorsNotEqualToOurStakers,
-    #[fail(display = "Invalid block BLS multisignature: block={}", _0)]
-    InvalidBlockSignature(Hash),
     #[fail(
-        display = "Invalid block version: block={}, expected={}, got={}",
-        _0, _1, _2
-    )]
-    InvalidBlockVersion(Hash, u64, u64),
-    #[fail(display = "Received block with invalid random.")]
-    IncorrectRandom,
-    #[fail(
-        display = "Received block with wrong view_change: our_view_change={}, block_view_change={}",
+        display = "Invalid block BLS multisignature: height={}, hash={}",
         _0, _1
     )]
-    InvalidViewChange(u32, u32),
+    InvalidBlockSignature(u64, Hash),
+    #[fail(
+        display = "Invalid block version: height={}, hash={}, expected={}, got={}",
+        _0, _1, _2, _3
+    )]
+    InvalidBlockVersion(u64, Hash, u64, u64),
+    #[fail(
+        display = "Received block with invalid random: height={}, hash={}",
+        _0, _1
+    )]
+    IncorrectRandom(u64, Hash),
+    #[fail(
+        display = "Received block with wrong view_change: height={}, hash={}, our_view_change={}, block_view_change={}",
+        _0, _1, _2, _3
+    )]
+    InvalidViewChange(u64, Hash, u32, u32),
 }

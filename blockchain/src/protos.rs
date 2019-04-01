@@ -169,24 +169,24 @@ impl ProtoConvert for BaseBlockHeader {
         let mut proto = blockchain::BaseBlockHeader::new();
         proto.set_version(self.version);
         proto.set_previous(self.previous.into_proto());
-        proto.set_epoch(self.epoch);
-        proto.set_timestamp(self.timestamp);
+        proto.set_height(self.height);
         proto.set_view_change(self.view_change);
+        proto.set_timestamp(self.timestamp);
         proto
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let version = proto.get_version();
         let previous = Hash::from_proto(proto.get_previous())?;
-        let epoch = proto.get_epoch();
-        let timestamp = proto.get_timestamp();
+        let height = proto.get_height();
         let view_change = proto.get_view_change();
+        let timestamp = proto.get_timestamp();
         Ok(BaseBlockHeader {
             version,
             previous,
-            epoch,
-            timestamp,
+            height,
             view_change,
+            timestamp,
         })
     }
 }
@@ -532,11 +532,11 @@ mod tests {
         let (skey0, _pkey0, _sig0) = make_secure_random_keys();
 
         let version: u64 = 1;
-        let epoch: u64 = 1;
+        let height: u64 = 0;
         let timestamp = Utc::now().timestamp() as u64;
         let previous = Hash::digest(&"test".to_string());
 
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp, 0);
+        let base = BaseBlockHeader::new(version, previous, height, 0, timestamp);
         let random = secure::make_VRF(&skey0, &Hash::digest("test"));
         let block = KeyBlock::new(base, random);
         roundtrip(&block.header);
@@ -567,7 +567,7 @@ mod tests {
         let (_skey2, pkey2, _sig2) = make_random_keys();
 
         let version: u64 = 1;
-        let epoch: u64 = 1;
+        let height: u64 = 0;
         let timestamp = Utc::now().timestamp() as u64;
         let view_change = 0;
         let amount: i64 = 1_000_000;
@@ -582,7 +582,7 @@ mod tests {
         let outputs1 = [output1];
         let gamma = gamma0 - gamma1;
 
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp, view_change);
+        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
         roundtrip(&base);
 
         let block = MonetaryBlock::new(base, gamma.clone(), 0, &inputs1, &outputs1);

@@ -35,9 +35,9 @@ message Transaction {
 message BaseBlockHeader {
     uint64 version = 1;
     stegos.crypto.Hash previous = 2;
-    uint64 epoch = 3;
-    uint64 timestamp = 4;
-    uint32 view_change = 5;
+    uint64 height = 3;
+    uint32 view_change = 4;
+    uint64 timestamp = 5;
 }
 
 message MonetaryBlockHeader {

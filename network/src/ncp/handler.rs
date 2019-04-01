@@ -55,9 +55,6 @@ where
     /// Allow outgoing substreams
     enabled_outgoing: bool,
 
-    /// Internal failure happened
-    internal_failure: bool,
-
     /// The active substreams.
     // TODO: add a limit to the number of allowed substreams
     substreams: Vec<SubstreamState<TSubstream>>,
@@ -94,7 +91,6 @@ where
             config: NcpConfig::new(),
             enabled_incoming: false,
             enabled_outgoing: false,
-            internal_failure: false,
             substreams: Vec::new(),
             send_queue: SmallVec::new(),
             out_events: VecDeque::new(),
@@ -215,13 +211,6 @@ where
         ProtocolsHandlerEvent<Self::OutboundProtocol, Self::OutboundOpenInfo, Self::OutEvent>,
         io::Error,
     > {
-        if self.internal_failure {
-            self.internal_failure = false;
-            // let other substreams to be closed gracefully
-            self.disable();
-            return Ok(Async::NotReady);
-        }
-
         if !self.out_events.is_empty() {
             let message = self.out_events.pop_front().unwrap();
             return Ok(Async::Ready(ProtocolsHandlerEvent::Custom(message)));
@@ -295,7 +284,6 @@ where
                         }
                         Err(e) => {
                             warn!(target: "stegos_network::ncp", "failure closing substream: error={}", e);
-                            self.internal_failure = true;
                             break;
                         }
                     },

@@ -376,6 +376,7 @@ mod test {
                 &skey,
                 &pkey,
                 &validator_pkey,
+                &validator_skey,
                 amount - fee,
             )
             .unwrap();
@@ -399,8 +400,15 @@ mod test {
             let stake = 0;
             let (output1, gamma1) =
                 Output::new_payment(current_timestamp, &skey, &pkey, amount - stake - fee).unwrap();
-            let mut output2 =
-                StakeOutput::new(current_timestamp, &skey, &pkey, &validator_pkey, 1).unwrap();
+            let mut output2 = StakeOutput::new(
+                current_timestamp,
+                &skey,
+                &pkey,
+                &validator_pkey,
+                &validator_skey,
+                1,
+            )
+            .unwrap();
             output2.amount = stake; // StakeOutput::new() doesn't allow zero amount.
             let output2 = Output::StakeOutput(output2);
             let outputs: Vec<Output> = vec![output1, output2];

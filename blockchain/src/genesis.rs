@@ -69,6 +69,7 @@ pub fn genesis(keychains: &[KeyChain], stake: i64, coins: i64, timestamp: u64) -
                 &keys.wallet_skey,
                 &keys.wallet_pkey,
                 &keys.network_pkey,
+                &keys.network_skey,
                 stake,
             )
             .expect("genesis has valid public keys");

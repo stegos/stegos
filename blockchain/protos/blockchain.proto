@@ -12,8 +12,9 @@ message PaymentOutput {
 message StakeOutput {
     stegos.crypto.PublicKey recipient = 1;
     stegos.crypto.SecurePublicKey validator = 2;
-    int64 amount = 3;
-    stegos.crypto.EncryptedPayload payload = 4;
+    stegos.crypto.SecureSignature signature = 3;
+    int64 amount = 4;
+    stegos.crypto.EncryptedPayload payload = 5;
 }
 
 message Output {

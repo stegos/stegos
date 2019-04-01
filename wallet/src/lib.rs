@@ -58,6 +58,8 @@ pub struct WalletService {
     pkey: PublicKey,
     /// Validator's public key
     validator_pkey: secure::PublicKey,
+    /// Validator's secret key.
+    validator_skey: secure::SecretKey,
     /// Unspent Payment UXTO.
     unspent: HashMap<Hash, (PaymentOutput, i64)>,
     /// Unspent Stake UTXO.
@@ -88,6 +90,7 @@ impl WalletService {
         skey: SecretKey,
         pkey: PublicKey,
         validator_pkey: secure::PublicKey,
+        validator_skey: secure::SecretKey,
         network: Network,
         node: Node,
         payment_fee: i64,
@@ -137,6 +140,7 @@ impl WalletService {
             skey,
             pkey,
             validator_pkey,
+            validator_skey,
             unspent,
             unspent_stakes,
             balance,
@@ -196,6 +200,7 @@ impl WalletService {
             &self.skey,
             &self.pkey,
             &self.validator_pkey,
+            &self.validator_skey,
             &self.unspent,
             amount,
             self.payment_fee,
@@ -212,6 +217,7 @@ impl WalletService {
             &self.skey,
             &self.pkey,
             &self.validator_pkey,
+            &self.validator_skey,
             &self.unspent_stakes,
             amount,
             self.payment_fee,

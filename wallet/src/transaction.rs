@@ -243,6 +243,7 @@ pub(crate) fn create_staking_transaction(
     sender_skey: &SecretKey,
     sender_pkey: &PublicKey,
     validator_pkey: &secure::PublicKey,
+    validator_skey: &secure::SecretKey,
     unspent: &HashMap<Hash, (PaymentOutput, i64)>,
     amount: i64,
     payment_fee: i64,
@@ -297,7 +298,14 @@ pub(crate) fn create_staking_transaction(
 
     // Create an output for staking.
     trace!("Creating stake UTXO...");
-    let output1 = Output::new_stake(timestamp, sender_skey, sender_pkey, validator_pkey, amount)?;
+    let output1 = Output::new_stake(
+        timestamp,
+        sender_skey,
+        sender_pkey,
+        validator_pkey,
+        validator_skey,
+        amount,
+    )?;
     info!(
         "Created stake UTXO: hash={}, recipient={}, validator={}, amount={}",
         Hash::digest(&output1),
@@ -344,6 +352,7 @@ pub(crate) fn create_unstaking_transaction(
     sender_skey: &SecretKey,
     sender_pkey: &PublicKey,
     validator_pkey: &secure::PublicKey,
+    validator_skey: &secure::SecretKey,
     unspent: &HashMap<Hash, StakeOutput>,
     amount: i64,
     payment_fee: i64,
@@ -407,8 +416,14 @@ pub(crate) fn create_unstaking_transaction(
         // Create an output for staking.
         assert_eq!(fee, payment_fee + stake_fee);
         trace!("Creating stake UTXO...");
-        let output2 =
-            Output::new_stake(timestamp, sender_skey, sender_pkey, validator_pkey, change)?;
+        let output2 = Output::new_stake(
+            timestamp,
+            sender_skey,
+            sender_pkey,
+            validator_pkey,
+            validator_skey,
+            change,
+        )?;
         info!(
             "Created stake UTXO: hash={}, validator={}, amount={}",
             Hash::digest(&output2),
@@ -444,14 +459,21 @@ pub mod tests {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
         let (skey, pkey, _sig0) = make_random_keys();
-        let (_validator_skey, validator_pkey, _validator_sig) = secure::make_random_keys();
+        let (validator_skey, validator_pkey, _validator_sig) = secure::make_random_keys();
 
         let timestamp = Utc::now().timestamp() as u64;
         let stake: i64 = 100;
 
         // Stake money.
-        let output = StakeOutput::new(timestamp, &skey, &pkey, &validator_pkey, stake)
-            .expect("keys are valid");
+        let output = StakeOutput::new(
+            timestamp,
+            &skey,
+            &pkey,
+            &validator_pkey,
+            &validator_skey,
+            stake,
+        )
+        .expect("keys are valid");
         let output_hash = Hash::digest(&output);
         let inputs = [Output::StakeOutput(output.clone())];
         let mut unspent: HashMap<Hash, StakeOutput> = HashMap::new();
@@ -462,6 +484,7 @@ pub mod tests {
             &skey,
             &pkey,
             &validator_pkey,
+            &validator_skey,
             &unspent,
             stake,
             payment_fee,
@@ -485,6 +508,7 @@ pub mod tests {
             &skey,
             &pkey,
             &validator_pkey,
+            &validator_skey,
             &unspent,
             unstake,
             payment_fee,
@@ -513,6 +537,7 @@ pub mod tests {
             &skey,
             &pkey,
             &validator_pkey,
+            &validator_skey,
             &unspent,
             payment_fee - 1,
             payment_fee,
@@ -529,6 +554,7 @@ pub mod tests {
             &skey,
             &pkey,
             &validator_pkey,
+            &validator_skey,
             &unspent,
             payment_fee,
             payment_fee,
@@ -546,6 +572,7 @@ pub mod tests {
             &skey,
             &pkey,
             &validator_pkey,
+            &validator_skey,
             &unspent,
             unstake,
             payment_fee,
@@ -566,6 +593,7 @@ pub mod tests {
             &skey,
             &pkey,
             &validator_pkey,
+            &validator_skey,
             &unspent,
             unstake,
             payment_fee,

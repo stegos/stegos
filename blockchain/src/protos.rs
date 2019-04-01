@@ -71,6 +71,7 @@ impl ProtoConvert for StakeOutput {
         let mut proto = blockchain::StakeOutput::new();
         proto.set_recipient(self.recipient.into_proto());
         proto.set_validator(self.validator.into_proto());
+        proto.set_signature(self.signature.into_proto());
         proto.set_amount(self.amount);
         proto.set_payload(self.payload.into_proto());
         proto
@@ -79,11 +80,13 @@ impl ProtoConvert for StakeOutput {
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let recipient = PublicKey::from_proto(proto.get_recipient())?;
         let validator = secure::PublicKey::from_proto(proto.get_validator())?;
+        let signature = secure::Signature::from_proto(proto.get_signature())?;
         let amount = proto.get_amount();
         let payload = EncryptedPayload::from_proto(proto.get_payload())?;
         Ok(StakeOutput {
             recipient,
             validator,
+            signature,
             amount,
             payload,
         })
@@ -446,7 +449,7 @@ mod tests {
     fn outputs() {
         let (skey0, _pkey0, _sig0) = make_random_keys();
         let (skey1, pkey1, _sig1) = make_random_keys();
-        let (_secure_skey1, secure_pkey1, _secure_sig1) = make_secure_random_keys();
+        let (secure_skey1, secure_pkey1, _secure_sig1) = make_secure_random_keys();
 
         let amount = 1_000_000;
         let timestamp = Utc::now().timestamp() as u64;
@@ -455,8 +458,15 @@ mod tests {
             Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
         roundtrip(&output);
 
-        let output = Output::new_stake(timestamp, &skey1, &pkey1, &secure_pkey1, amount)
-            .expect("keys are valid");
+        let output = Output::new_stake(
+            timestamp,
+            &skey1,
+            &pkey1,
+            &secure_pkey1,
+            &secure_skey1,
+            amount,
+        )
+        .expect("keys are valid");
         roundtrip(&output);
 
         let mut buf = output.into_buffer().unwrap();

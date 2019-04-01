@@ -52,9 +52,6 @@ where
     /// Allow outgoing substreams
     enabled_outgoing: bool,
 
-    /// Substream failure happened, initialize shutting_down on next poll()
-    internal_failure: bool,
-
     /// The active substreams.
     // TODO: add a limit to the number of allowed substreams
     substreams: Vec<SubstreamState<TSubstream>>,
@@ -105,7 +102,6 @@ where
             config: FloodsubConfig::new(),
             enabled_incoming: false,
             enabled_outgoing: false,
-            internal_failure: false,
             substreams: Vec::new(),
             send_queue: SmallVec::new(),
             out_events: VecDeque::new(),
@@ -214,13 +210,6 @@ where
         ProtocolsHandlerEvent<Self::OutboundProtocol, Self::OutboundOpenInfo, Self::OutEvent>,
         io::Error,
     > {
-        if self.internal_failure {
-            self.internal_failure = false;
-            // let other substreams to be closed gracefully
-            self.disable();
-            return Ok(Async::NotReady);
-        }
-
         if !self.out_events.is_empty() {
             let message = self.out_events.pop_front().unwrap();
             return Ok(Async::Ready(ProtocolsHandlerEvent::Custom(message)));
@@ -298,7 +287,6 @@ where
                         }
                         Err(e) => {
                             warn!(target: "stegos_network::pubsub", "failure closing substream: {}", e);
-                            self.internal_failure = true;
                             break;
                         }
                     },
@@ -318,7 +306,6 @@ where
         f.debug_struct("FloodsubHandler")
             .field("enabled_incoming", &self.enabled_incoming)
             .field("enabled_outgoing", &self.enabled_outgoing)
-            .field("internal_failure", &self.internal_failure)
             .field("substreams", &self.substreams.len())
             .field("send_queue", &self.send_queue.len())
             .finish()

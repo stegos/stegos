@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::error::MultisignatureError;
 use crate::VALIDATORS_MAX;
 use bitvector::BitVector;
 use std::collections::BTreeMap;
@@ -30,8 +31,10 @@ use stegos_crypto::pbc::secure;
 ///
 /// Return true if supermajority of votes has been collected.
 ///
-pub fn check_supermajority(got_votes: usize, total_votes: usize) -> bool {
+pub fn check_supermajority(got_votes: i64, total_votes: i64) -> bool {
     assert!(got_votes <= total_votes);
+    assert!(got_votes >= 0);
+    assert!(total_votes > 0);
     let need_votes = (total_votes * 2 + 3) / 3;
     (got_votes >= need_votes)
 }
@@ -43,24 +46,91 @@ pub fn create_multi_signature(
     validators: &Vec<(secure::PublicKey, i64)>,
     signatures: &BTreeMap<secure::PublicKey, secure::Signature>,
 ) -> (secure::Signature, BitVector) {
+    create_multi_signature_index(
+        // convert Map<Pk, Signature> -> Iterator<(id, Signature)>
+        validators
+            .iter()
+            .enumerate() // add id
+            .map(|(id, other)| (id as u32, other)) //convert id to u32
+            .filter_map(|(id, (pk, _stake))| {
+                // map pk -> Option<signature>
+                signatures.get(pk).map(|pk| (id, pk))
+            }),
+    )
+}
+
+///
+/// Create a new multi-signature from individual signatures
+/// version which work for array of validators id's
+///
+pub fn create_multi_signature_index<'a, I>(signatures: I) -> (secure::Signature, BitVector)
+where
+    I: Iterator<Item = (u32, &'a secure::Signature)>,
+{
     let mut multisig = secure::G1::zero();
     let mut multisigmap = BitVector::new(VALIDATORS_MAX);
-    let mut count: usize = 0;
-    for (bit, (pkey, _stake)) in validators.iter().enumerate() {
-        let sig = match signatures.get(pkey) {
-            Some(sig) => *sig,
-            None => continue,
-        };
-        let sig: secure::G1 = sig.into();
+    let mut vec: Vec<_> = signatures.collect();
+    vec.sort_by_key(|i| i.0);
+
+    for (bit, sig) in vec {
+        assert!(bit < VALIDATORS_MAX as u32);
+        let sig: secure::G1 = sig.clone().into();
         multisig += sig;
-        let ok = multisigmap.insert(bit);
+        let ok = multisigmap.insert(bit as usize);
         assert!(ok);
-        count += 1;
     }
-    assert_eq!(count, signatures.len());
 
     let multisig: secure::Signature = multisig.into();
+
     (multisig, multisigmap)
+}
+
+///
+/// Check multi-signature of group, each signature is weighted by stake.
+///
+pub fn check_multi_signature(
+    hash: &Hash,
+    multisig: &secure::Signature,
+    multisigmap: &BitVector,
+    validators: &Vec<(secure::PublicKey, i64)>,
+    total_slots: i64,
+) -> Result<(), MultisignatureError> {
+    // Check for trailing bits in the bitmap.
+    if multisigmap.len() > validators.len() {
+        return Err(MultisignatureError::TooBigBitmap(
+            multisigmap.len(),
+            validators.len(),
+        ));
+    };
+
+    let mut multisigpkey = secure::G2::zero();
+    // total count of group slots
+    let mut group_total_slots = 0;
+
+    for bit in multisigmap.iter() {
+        let validator = &validators[bit];
+        let pkey: secure::G2 = validator.0.into();
+        let slots = validator.1;
+        assert!(slots > 0);
+
+        multisigpkey += pkey;
+        group_total_slots += slots;
+    }
+
+    // Multi-signature must be signed by the supermajority of validators.
+    if !check_supermajority(group_total_slots, total_slots) {
+        return Err(MultisignatureError::NotEnoughtVotes(
+            group_total_slots,
+            total_slots,
+        ));
+    }
+
+    // The hash must match the signature.
+    let multipkey: secure::PublicKey = multisigpkey.into();
+    if !secure::check_hash(&hash, &multisig, &multipkey) {
+        return Err(MultisignatureError::InvalidSignature(*hash));
+    }
+    Ok(())
 }
 
 ///
@@ -76,57 +146,6 @@ pub fn create_proposal_signature(
     let sig = secure::sign_hash(hash, skey);
     signatures.insert(pkey.clone(), sig);
     create_multi_signature(validators, &signatures)
-}
-
-///
-/// Check multi-signature
-///
-pub fn check_multi_signature(
-    hash: &Hash,
-    multisig: &secure::Signature,
-    multisigmap: &BitVector,
-    validators: &Vec<(secure::PublicKey, i64)>,
-    leader: &secure::PublicKey,
-    is_proposal: bool,
-) -> bool {
-    // Check for trailing bits in the bitmap.
-    if multisigmap.len() > validators.len() {
-        return false;
-    }
-
-    let mut has_leader = false;
-    let mut multisigpkey = secure::G2::zero();
-
-    let mut count: usize = 0;
-    for (bit, pkey) in validators.iter().map(|(k, _)| k).enumerate() {
-        if !multisigmap.contains(bit) {
-            continue;
-        }
-        has_leader = has_leader || (pkey == leader);
-        let pkey: secure::G2 = pkey.clone().into();
-        multisigpkey += pkey;
-        count += 1;
-    }
-
-    // Multi-signature must contain leader's key.
-    if !has_leader {
-        return false;
-    }
-
-    // Proposal must only be signed by the leader.
-    if is_proposal && count != 1 {
-        return false;
-    }
-
-    // Multi-signature must be signed by the supermajority of validators.
-    if !is_proposal && !check_supermajority(count, validators.len()) {
-        return false;
-    }
-
-    // The hash must match the signature.
-    let multipkey: secure::PublicKey = multisigpkey.into();
-    debug_assert!(!is_proposal || &multipkey == leader);
-    secure::check_hash(&hash, &multisig, &multipkey)
 }
 
 ///
@@ -151,5 +170,35 @@ pub fn merge_multi_signature(
     } else {
         // Intersecting sets.
         panic!("Can't merge n intersected multi-signatures")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_multisig() {
+        let _ = simple_logger::init();
+        let mut skeys = Vec::new();
+
+        let mut validators = Vec::new();
+        const NUM_VALIDATORS: usize = 1;
+        for _i in 0..NUM_VALIDATORS {
+            let (s, p, _) = secure::make_random_keys();
+            validators.push((p, 1));
+            skeys.push(s);
+        }
+
+        let ref hash = Hash::digest("test");
+        let mut signatures = Vec::new();
+
+        for i in 0..NUM_VALIDATORS {
+            let sign = secure::sign_hash(hash, &skeys[i]);
+            signatures.push((sign, i as u32));
+            assert!(secure::check_hash(hash, &signatures[i].0, &validators[i].0))
+        }
+
+        let multisig = create_multi_signature_index(signatures.iter().map(|p| (p.1, &p.0)));
+        assert!(check_multi_signature(hash, &multisig.0, &multisig.1, &validators, 1).is_ok())
     }
 }

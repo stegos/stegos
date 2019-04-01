@@ -65,8 +65,10 @@ pub struct Consensus<Request, Proof> {
     pkey: secure::PublicKey,
     /// Public key of leader.
     leader: secure::PublicKey,
-    /// Public keys and stakes of participating nodes.
+    /// Public keys and slots count of participating nodes.
     validators: BTreeMap<secure::PublicKey, i64>,
+    /// total number of slots for specific node.
+    total_slots: i64,
     /// Consensus State.
     state: ConsensusState,
     /// Identifier of current session.
@@ -112,6 +114,7 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
         debug!("New => {}({})", state.name(), height);
         let prevote_accepts: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();
         let precommit_accepts: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();
+        let total_slots = validators.iter().map(|v| v.1).sum();
         let request = None;
         let proof = None;
         let inbox: Vec<ConsensusMessage<Request, Proof>> = Vec::new();
@@ -121,6 +124,7 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
             pkey,
             leader,
             validators,
+            total_slots,
             state,
             height,
             epoch,
@@ -615,6 +619,10 @@ impl<Request: Hashable + Clone + Debug, Proof: Hashable + Clone + Debug> Consens
             accepts.len(),
             self.validators.len()
         );
-        check_supermajority(accepts.len(), self.validators.len())
+        let mut stake = 0;
+        for (pk, _sign) in accepts {
+            stake += self.validators.get(pk).expect("vote from validator");
+        }
+        check_supermajority(stake, self.total_slots)
     }
 }

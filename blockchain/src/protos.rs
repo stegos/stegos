@@ -19,11 +19,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use failure::{Error, Fail};
+use failure::{ensure, format_err, Error, Fail};
 use stegos_serialization::traits::*;
 
 use bitvector::BitVector;
 
+use crate::view_changes::*;
 use crate::*;
 use stegos_crypto::bulletproofs::BulletProof;
 use stegos_crypto::curve1174::cpt::{EncryptedPayload, PublicKey, SchnorrSig};
@@ -319,6 +320,9 @@ impl ProtoConvert for MonetaryBlockHeader {
         proto.set_monetary_adjustment(self.monetary_adjustment);
         proto.set_inputs_range_hash(self.inputs_range_hash.into_proto());
         proto.set_outputs_range_hash(self.outputs_range_hash.into_proto());
+        if let Some(proof) = &self.proof {
+            proto.set_proof(proof.into_proto())
+        }
         proto
     }
 
@@ -328,7 +332,14 @@ impl ProtoConvert for MonetaryBlockHeader {
         let monetary_adjustment = proto.get_monetary_adjustment();
         let inputs_range_hash = Hash::from_proto(proto.get_inputs_range_hash())?;
         let outputs_range_hash = Hash::from_proto(proto.get_outputs_range_hash())?;
+
+        let proof = if proto.has_proof() {
+            Some(ViewChangeProof::from_proto(proto.get_proof())?)
+        } else {
+            None
+        };
         Ok(MonetaryBlockHeader {
+            proof,
             base,
             gamma,
             monetary_adjustment,
@@ -425,6 +436,66 @@ impl ProtoConvert for Block {
             }
         };
         Ok(block)
+    }
+}
+
+impl ProtoConvert for ChainInfo {
+    type Proto = view_changes::ChainInfo;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = view_changes::ChainInfo::new();
+        proto.set_height(self.height);
+        proto.set_last_block(self.last_block.into_proto());
+        proto.set_view_change(self.view_change);
+        proto
+    }
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let height = proto.get_height();
+        let view_change = proto.get_view_change();
+        let last_block = Hash::from_proto(proto.get_last_block())?;
+        Ok(ChainInfo {
+            height,
+            view_change,
+            last_block,
+        })
+    }
+}
+
+impl ProtoConvert for ViewChangeProof {
+    type Proto = view_changes::ViewChangeProof;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = view_changes::ViewChangeProof::new();
+        if !self.multisig.is_zero() {
+            proto.set_multisig(self.multisig.into_proto());
+        }
+        if !self.multimap.is_empty() {
+            assert!(self.multimap.len() <= VALIDATORS_MAX);
+            proto.multimap.resize(VALIDATORS_MAX, false);
+            for bit in self.multimap.iter() {
+                proto.multimap[bit] = true;
+            }
+        }
+        proto
+    }
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let multisig = if proto.has_multisig() {
+            secure::Signature::from_proto(proto.get_multisig())?
+        } else {
+            secure::Signature::zero()
+        };
+        ensure!(
+            proto.multimap.len() <= VALIDATORS_MAX,
+            format_err!(
+                "multimap greater than max count of max validators: map_len={}",
+                proto.multimap.len()
+            )
+        );
+        let mut multimap = BitVector::new(VALIDATORS_MAX);
+        for (bit, val) in proto.multimap.iter().enumerate() {
+            if *val {
+                multimap.insert(bit);
+            }
+        }
+        Ok(ViewChangeProof { multisig, multimap })
     }
 }
 
@@ -585,7 +656,7 @@ mod tests {
         let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
         roundtrip(&base);
 
-        let block = MonetaryBlock::new(base, gamma.clone(), 0, &inputs1, &outputs1);
+        let block = MonetaryBlock::new(base, gamma.clone(), 0, &inputs1, &outputs1, None);
         roundtrip(&block.header);
         roundtrip(&block.body);
         roundtrip(&block);

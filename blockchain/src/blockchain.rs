@@ -33,8 +33,10 @@ use crate::metrics;
 use crate::mvcc::MultiVersionedMap;
 use crate::output::*;
 use crate::storage::ListDb;
+use crate::view_changes::ChainInfo;
 use failure::{ensure, Error};
 use log::*;
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 use stegos_crypto::bulletproofs::fee_a;
@@ -301,6 +303,7 @@ impl Blockchain {
         ElectionInfo {
             height: self.height,
             view_change: self.view_change,
+            slots_count: self.cfg.max_slot_count as i64,
             last_leader,
             current_leader: self.select_leader(self.view_change).to_string(),
             next_leader: self.select_leader(self.view_change + 1).to_string(),
@@ -474,6 +477,14 @@ impl Blockchain {
     /// Internally always return cfg.max_slot_count
     pub fn total_slots(&self) -> i64 {
         self.cfg.max_slot_count
+    }
+    /// Sets new blockchain view_change.
+    /// ## Panics
+    /// if new_view_change not greater than current.
+    #[inline]
+    pub fn set_view_change(&mut self, new_view_change: u32) {
+        assert!(self.view_change < new_view_change);
+        self.view_change = new_view_change;
     }
 
     //----------------------------------------------------------------------------------------------
@@ -780,8 +791,41 @@ impl Blockchain {
         //TODO: remove multisig?
 
         // Check signature (exclude epoch == 0 for genesis).
-        if self.epoch > 0 && !secure::check_hash(&block_hash, &block.body.sig, &self.leader()) {
-            return Err(BlockchainError::InvalidLeaderSignature(height, block_hash).into());
+        if self.epoch > 0 {
+            let leader = match block.header.base.view_change.cmp(&self.view_change) {
+                Ordering::Equal => self.leader(),
+                Ordering::Greater => {
+                    let chain = ChainInfo::from_monetary_block(&block, self.height());
+                    match block.header.proof {
+                        Some(ref proof) => {
+                            proof.validate(&chain, &self)?;
+                            self.select_leader(block.header.base.view_change)
+                        }
+                        _ => {
+                            return Err(BlockchainError::NoProofWasFound(
+                                height,
+                                block_hash,
+                                self.view_change,
+                                block.header.base.view_change,
+                            )
+                            .into());
+                        }
+                    }
+                }
+                Ordering::Less => {
+                    return Err(BlockchainError::InvalidViewChange(
+                        height,
+                        block_hash,
+                        self.view_change,
+                        block.header.base.view_change,
+                    )
+                    .into());
+                }
+            };
+            ensure!(
+                secure::check_hash(&block_hash, &block.body.sig, &leader),
+                BlockchainError::InvalidLeaderSignature(height, block_hash)
+            );
         }
 
         let mut burned = ECp::inf();
@@ -1065,8 +1109,8 @@ impl Blockchain {
         assert_eq!(self.balance.current_version(), version);
         self.last_block_timestamp = clock::now();
         self.last_block_hash = block_hash.clone();
+        self.view_change = block.header.base.view_change + 1;
         self.height += 1;
-        self.view_change += 1;
         assert_eq!(self.height, version);
         metrics::HEIGHT.set(self.height as i64);
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
@@ -1241,6 +1285,7 @@ pub mod tests {
         chain: &mut Blockchain,
         keys: &KeyChain,
         current_timestamp: u64,
+        view_change: u32,
     ) -> (MonetaryBlock, Vec<Hash>, Vec<Hash>) {
         let mut input_hashes: Vec<Hash> = Vec::new();
         let mut gamma: Fr = Fr::zero();
@@ -1291,9 +1336,8 @@ pub mod tests {
         let version = VERSION;
         let previous = chain.last_block_hash().clone();
         let height = chain.height();
-        let view_change = 0;
         let base = BaseBlockHeader::new(version, previous, height, view_change, current_timestamp);
-        let mut block = MonetaryBlock::new(base, gamma, 0, &input_hashes, &outputs);
+        let mut block = MonetaryBlock::new(base, gamma, 0, &input_hashes, &outputs, None);
         let block_hash = Hash::digest(&block);
         block.body.sig = secure::sign_hash(&block_hash, &keys.network_skey);
         (block, input_hashes, output_hashes)
@@ -1303,6 +1347,7 @@ pub mod tests {
         chain: &mut Blockchain,
         keys: &KeyChain,
         current_timestamp: u64,
+        view_change: u32,
     ) -> MonetaryBlock {
         let input_hashes: Vec<Hash> = Vec::new();
         let outputs: Vec<Output> = Vec::new();
@@ -1310,9 +1355,8 @@ pub mod tests {
         let version = VERSION;
         let previous = chain.last_block_hash().clone();
         let height = chain.height();
-        let view_change = 0;
         let base = BaseBlockHeader::new(version, previous, height, view_change, current_timestamp);
-        let mut block = MonetaryBlock::new(base, gamma, 0, &input_hashes, &outputs);
+        let mut block = MonetaryBlock::new(base, gamma, 0, &input_hashes, &outputs, None);
         let block_hash = Hash::digest(&block);
         block.body.sig = secure::sign_hash(&block_hash, &keys.network_skey);
         block
@@ -1343,7 +1387,7 @@ pub mod tests {
             let block_hash = if i % 2 == 0 {
                 // Non-empty block.
                 let (block, input_hashes, output_hashes) =
-                    create_monetary_block(&mut chain, &keychains[0], current_timestamp);
+                    create_monetary_block(&mut chain, &keychains[0], current_timestamp, i - 1);
                 let block_hash = Hash::digest(&block);
                 chain
                     .push_monetary_block(block, current_timestamp)
@@ -1357,8 +1401,12 @@ pub mod tests {
                 block_hash
             } else {
                 // Empty block.
-                let block =
-                    create_empty_monetary_block(&mut chain, &keychains[0], current_timestamp);
+                let block = create_empty_monetary_block(
+                    &mut chain,
+                    &keychains[0],
+                    current_timestamp,
+                    i - 1,
+                );
                 let block_hash = Hash::digest(&block);
                 chain
                     .push_monetary_block(block, current_timestamp)
@@ -1366,7 +1414,7 @@ pub mod tests {
                 block_hash
             };
             assert_eq!(block_hash, chain.last_block_hash());
-            assert_eq!(height + i, chain.height());
+            assert_eq!(height + i as u64, chain.height());
             assert!(chain.last_block_timestamp <= clock::now());
         }
 
@@ -1414,7 +1462,7 @@ pub mod tests {
         // Register a monetary block.
         current_timestamp += chain.cfg.bonding_time + 1;
         let (block1, input_hashes1, output_hashes1) =
-            create_monetary_block(&mut chain, &keychains[0], current_timestamp);
+            create_monetary_block(&mut chain, &keychains[0], current_timestamp, 0);
         chain
             .push_monetary_block(block1, current_timestamp)
             .expect("block is valid");
@@ -1438,7 +1486,7 @@ pub mod tests {
         // Register one more monetary block.
         current_timestamp += chain.cfg.bonding_time + 1;
         let (block2, input_hashes2, output_hashes2) =
-            create_monetary_block(&mut chain, &keychains[0], current_timestamp);
+            create_monetary_block(&mut chain, &keychains[0], current_timestamp, 1);
         chain
             .push_monetary_block(block2, current_timestamp)
             .expect("block is valid");

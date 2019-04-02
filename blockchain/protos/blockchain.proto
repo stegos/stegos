@@ -2,6 +2,7 @@ syntax = "proto3";
 package stegos.blockchain;
 
 import "crypto.proto";
+import "view_changes.proto";
 
 message PaymentOutput {
     stegos.crypto.PublicKey recipient = 1;
@@ -46,6 +47,7 @@ message MonetaryBlockHeader {
     int64 monetary_adjustment = 3;
     stegos.crypto.Hash inputs_range_hash = 4;
     stegos.crypto.Hash outputs_range_hash = 5;
+    ViewChangeProof proof = 6;
 }
 
 message MerkleNode {

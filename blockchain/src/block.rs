@@ -24,6 +24,7 @@
 use crate::error::*;
 use crate::merkle::*;
 use crate::output::*;
+use crate::view_changes::ViewChangeProof;
 use bitvector::BitVector;
 use failure::Error;
 use stegos_crypto::bulletproofs::{fee_a, validate_range_proof};
@@ -143,6 +144,9 @@ pub struct MonetaryBlockHeader {
 
     /// Merklish root of all range proofs for output.
     pub outputs_range_hash: Hash,
+
+    /// Proof of the happen view_change.
+    pub proof: Option<ViewChangeProof>,
 }
 
 impl Hashable for MonetaryBlockHeader {
@@ -153,6 +157,9 @@ impl Hashable for MonetaryBlockHeader {
         self.monetary_adjustment.hash(state);
         self.inputs_range_hash.hash(state);
         self.outputs_range_hash.hash(state);
+        if let Some(proof) = &self.proof {
+            proof.hash(state);
+        }
     }
 }
 
@@ -233,6 +240,7 @@ impl MonetaryBlock {
         monetary_adjustment: i64,
         inputs: &[Hash],
         outputs: &[Output],
+        proof: Option<ViewChangeProof>,
     ) -> MonetaryBlock {
         // Re-order all inputs to blur transaction boundaries.
         // Current algorithm just sorts this list.
@@ -271,6 +279,7 @@ impl MonetaryBlock {
 
         // Create header
         let header = MonetaryBlockHeader {
+            proof,
             base,
             gamma,
             monetary_adjustment,
@@ -412,7 +421,7 @@ pub mod tests {
             let (output1, gamma1) = Output::new_payment(timestamp, &skey1, &pkey2, amount).unwrap();
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
-            let block = MonetaryBlock::new(base, gamma, 0, &inputs1, &outputs1);
+            let block = MonetaryBlock::new(base, gamma, 0, &inputs1, &outputs1, None);
             block.validate_balance(&[output0]).expect("block is valid");
         }
 
@@ -427,7 +436,7 @@ pub mod tests {
                 Output::new_payment(timestamp, &skey1, &pkey2, amount - 1).unwrap();
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
-            let block = MonetaryBlock::new(base, gamma, 0, &inputs1, &outputs1);
+            let block = MonetaryBlock::new(base, gamma, 0, &inputs1, &outputs1, None);
             match block.validate_balance(&[output0]) {
                 Err(e) => match e.downcast::<BlockchainError>().unwrap() {
                     BlockchainError::InvalidBlockBalance => {}
@@ -456,7 +465,7 @@ pub mod tests {
         let (output, gamma1) = Output::new_payment(timestamp, &skey, &pkey, amount).unwrap();
         let outputs = [output];
         let gamma = gamma0 - gamma1;
-        let block = MonetaryBlock::new(base, gamma, 0, &input_hashes, &outputs);
+        let block = MonetaryBlock::new(base, gamma, 0, &input_hashes, &outputs, None);
         block.validate_balance(&inputs).expect("block is valid");
 
         {
@@ -509,7 +518,7 @@ pub mod tests {
             let gamma = inputs_gamma - outputs_gamma;
 
             let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
-            let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..]);
+            let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None);
             block.validate_balance(&inputs).expect("block is valid");
         }
 
@@ -535,7 +544,7 @@ pub mod tests {
             let gamma = inputs_gamma - outputs_gamma;
 
             let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
-            let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..]);
+            let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None);
             block.validate_balance(&inputs).expect("block is valid");
         }
 
@@ -563,7 +572,7 @@ pub mod tests {
             let gamma = inputs_gamma - outputs_gamma;
 
             let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
-            let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..]);
+            let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None);
             match block.validate_balance(&inputs) {
                 Err(e) => match e.downcast::<BlockchainError>().unwrap() {
                     BlockchainError::InvalidBlockBalance => {}
@@ -597,7 +606,7 @@ pub mod tests {
             let gamma = inputs_gamma - outputs_gamma;
 
             let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
-            let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..]);
+            let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None);
             match block.validate_balance(&inputs) {
                 Err(e) => match e.downcast::<OutputError>().unwrap() {
                     OutputError::InvalidStake => {}
@@ -628,7 +637,14 @@ pub mod tests {
             Output::new_payment(timestamp, &skey, &pkey, output_amount).unwrap();
         let outputs = [output];
         let gamma = input_gamma - output_gamma;
-        let block = MonetaryBlock::new(base, gamma, monetary_adjustment, &input_hashes, &outputs);
+        let block = MonetaryBlock::new(
+            base,
+            gamma,
+            monetary_adjustment,
+            &input_hashes,
+            &outputs,
+            None,
+        );
         block.validate_balance(&inputs).expect("block is valid");
     }
 

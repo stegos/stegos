@@ -520,7 +520,7 @@ mod test {
                     .expect("genesis has valid public keys");
             let outputs = vec![output.clone()];
             let gamma = -outputs_gamma;
-            let mut block = MonetaryBlock::new(base, gamma, amount - fee, &[], &outputs);
+            let mut block = MonetaryBlock::new(base, gamma, amount - fee, &[], &outputs, None);
             let block_hash = Hash::digest(&block);
             block.body.sig = secure::sign_hash(&block_hash, &validator_skey);
 

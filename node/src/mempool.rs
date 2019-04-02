@@ -26,6 +26,7 @@ use linked_hash_map::LinkedHashMap;
 use log::*;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use stegos_blockchain::view_changes::ViewChangeProof;
 use stegos_blockchain::*;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::curve1174::cpt::SecretKey;
@@ -150,6 +151,7 @@ impl Mempool {
         skey: &SecretKey,
         pkey: &PublicKey,
         view_change: u32,
+        proof: Option<ViewChangeProof>,
     ) -> (MonetaryBlock, Option<Output>, Vec<Hash>) {
         // TODO: limit the block size.
         let tx_count = self.pool.len();
@@ -203,7 +205,7 @@ impl Mempool {
 
         // Create a new monetary block.
         let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
-        let block = MonetaryBlock::new(base, gamma, monetary_adjustment, &inputs, &outputs);
+        let block = MonetaryBlock::new(base, gamma, monetary_adjustment, &inputs, &outputs, proof);
 
         (block, output_fee, tx_hashes)
     }
@@ -325,8 +327,16 @@ mod test {
         let version = 1;
         let height = 0;
         let view_change = 0;
-        let (block, output_fee, tx_hashes) =
-            mempool.create_block(previous, version, height, 0, &skey, &pkey, view_change);
+        let (block, output_fee, tx_hashes) = mempool.create_block(
+            previous,
+            version,
+            height,
+            0,
+            &skey,
+            &pkey,
+            view_change,
+            None,
+        );
 
         // Used transactions.
         assert_eq!(tx_hashes, vec![tx_hash1, tx_hash2]);

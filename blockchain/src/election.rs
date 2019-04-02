@@ -36,6 +36,7 @@ pub type StakersGroup = Vec<(secure::PublicKey, i64)>;
 pub struct ElectionInfo {
     pub height: u64,
     pub view_change: u32,
+    pub slots_count: i64,
     pub last_leader: String,
     pub current_leader: String,
     pub next_leader: String,

@@ -48,7 +48,7 @@ pub fn init() {
 }
 
 fn simulate_consensus(node: &mut NodeService) {
-    node.create_monetary_block().unwrap();
+    node.create_monetary_block(None).unwrap();
 }
 
 fn simulate_payment(node: &mut NodeService, amount: i64) -> Result<(), Error> {

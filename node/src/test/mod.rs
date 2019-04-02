@@ -27,6 +27,7 @@ pub use time::*;
 mod consensus;
 use crate::*;
 use assert_matches::assert_matches;
+use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
 
 #[allow(unused)]
@@ -49,10 +50,62 @@ impl Sandbox {
         }
     }
 
+    /// Return node for publickey.
+    fn node(&mut self, pk: &secure::PublicKey) -> Option<&mut NodeSandbox> {
+        self.nodes
+            .iter_mut()
+            .find(|node| node.node_service.keys.network_pkey == *pk)
+    }
+
+    /// Iterator among all nodes, except one of
+    fn iter_except<'a>(
+        &'a mut self,
+        validators: &'a [secure::PublicKey],
+    ) -> impl Iterator<Item = &'a mut NodeSandbox> {
+        self.nodes.iter_mut().filter(move |node| {
+            validators
+                .iter()
+                .find(|key| **key == node.node_service.keys.network_pkey)
+                .is_none()
+        })
+    }
+
     fn poll(&mut self) {
-        for node in &mut self.nodes {
+        for (id, node) in self.nodes.iter_mut().enumerate() {
+            info!("============ POLLING node={} ============", id);
             node.poll();
         }
+    }
+
+    fn assert_synchronized(&self) {
+        let height = self.nodes[0].node_service.chain.height();
+        let last_block = self.nodes[0].node_service.chain.last_block_hash();
+        for node in &self.nodes {
+            assert_eq!(node.node_service.chain.height(), height);
+            assert_eq!(node.node_service.chain.last_block_hash(), last_block);
+        }
+    }
+
+    /// Take monetary block from leader, rebroadcast to other nodes.
+    /// Use after block timeout.
+    /// This function will poll() every node.
+    fn skip_monetary_block(&mut self) {
+        self.assert_synchronized();
+        assert!(
+            self.nodes[0].node_service.chain.blocks_in_epoch()
+                <= self.nodes[0].node_service.cfg.blocks_in_epoch
+        );
+        let leader_pk = self.nodes[0].node_service.chain.leader();
+        self.poll();
+        let leader = self.node(&leader_pk).unwrap();
+        let block: Block = leader
+            .network_service
+            .get_broadcast(crate::SEALED_BLOCK_TOPIC);
+        for node in self.iter_except(&[leader_pk]) {
+            node.network_service
+                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
+        }
+        self.poll();
     }
 }
 
@@ -77,6 +130,18 @@ impl NodeSandbox {
             outbox,
             node_service,
         }
+    }
+
+    fn get_id(&self) -> usize {
+        let key = self.node_service.keys.network_pkey;
+        self.node_service
+            .chain
+            .validators()
+            .iter()
+            .enumerate()
+            .find(|(_id, keys)| key == keys.0)
+            .map(|(id, _)| id)
+            .unwrap()
     }
 
     fn poll(&mut self) {

@@ -100,4 +100,9 @@ pub enum BlockchainError {
         _0, _1, _2, _3
     )]
     InvalidViewChange(u64, Hash, u32, u32),
+    #[fail(
+        display = "No proof of view change found for out of order block: height={}, hash={}, our_view_change={}, block_view_change={}",
+        _0, _1, _2, _3
+    )]
+    NoProofWasFound(u64, Hash, u32, u32),
 }

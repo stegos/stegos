@@ -43,6 +43,26 @@ pub enum ConsensusError {
         _0, _1, _2
     )]
     ProposalFromNonLeader(Hash, secure::PublicKey, secure::PublicKey),
+
     #[fail(display = "Invalid BLS multisignature for request: request={}", _0)]
     InvalidRequestSignature(Hash),
+    #[fail(
+        display = "Received ViewChangeMessage, with other height: msg_height={}, our_height={}",
+        _0, _1
+    )]
+    InvalidViewChangeHeight(u64, u64),
+    #[fail(
+        display = "Received ViewChangeMessage, with other view_change: \
+                   our_view_change={}, message_view_change={}",
+        _0, _1
+    )]
+    InvalidViewChangeCounter(u32, u32),
+    #[fail(
+        display = "Malicious view change message found, validator_id greater than \
+                   size of validators: validator_id={}",
+        _0
+    )]
+    InvalidValidatorId(u32),
+    #[fail(display = "Failed to check view change message signature.")]
+    InvalidViewChangeSignature,
 }

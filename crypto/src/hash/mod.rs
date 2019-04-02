@@ -31,6 +31,7 @@ use std::fmt;
 use std::hash as stdhash;
 use std::mem;
 use std::slice;
+use std::time::SystemTime;
 
 // -----------------------------------------------------
 // Hashing with SHA3
@@ -278,6 +279,16 @@ impl Hashable for str {
 impl Hashable for String {
     fn hash(&self, state: &mut Hasher) {
         state.input(self.as_bytes());
+    }
+}
+
+impl Hashable for SystemTime {
+    fn hash(&self, state: &mut Hasher) {
+        let since_the_epoch = self
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time is valid");
+        let timestamp = since_the_epoch.as_secs() * 1000 + since_the_epoch.subsec_millis() as u64;
+        timestamp.hash(state);
     }
 }
 

@@ -25,7 +25,7 @@
 #![deny(warnings)]
 #![allow(non_snake_case)]
 
-use chrono::Utc;
+use std::time::SystemTime;
 use stegos_blockchain::Output;
 use stegos_blockchain::Transaction;
 use stegos_blockchain::{PaymentOutput, PaymentPayloadData};
@@ -45,7 +45,7 @@ use stegos_crypto::dicemix::*;
 fn main() {
     // Determine number of DiceMix chunks needed to support our UTXO's
     let (skey, pkey, _) = make_random_keys();
-    let tstamp = Utc::now().timestamp() as u64;
+    let tstamp = SystemTime::now();
     let data = PaymentPayloadData::Comment("Testing".to_string());
     let (out, gamma) = PaymentOutput::with_payload(tstamp, &skey, &pkey, 1500, data)
         .expect("Can't produce payment output");

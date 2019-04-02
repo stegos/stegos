@@ -22,24 +22,27 @@
 // SOFTWARE.
 
 use serde_derive::{Deserialize, Serialize};
+use std::time::Duration;
 
 /// Chain configuration.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(default)]
 pub struct ChainConfig {
     /// Time delta in which our messages should be delivered, or forgotten.
-    pub message_timeout: u64,
-    /// Estimated time of block validation
-    pub block_validation_timeout: u64,
+    pub message_timeout: Duration,
     /// How long wait for transactions before starting to create a new block.
-    pub tx_wait_timeout: u64,
-    /// How long wait for blocks.
-    pub block_timeout: u64,
+    pub tx_wait_timeout: Duration,
+    /// Estimated time of the micro block validation.
+    pub micro_block_validation_timeout: Duration,
     /// How long wait for micro blocks.
-    pub micro_block_timeout: u64,
+    pub micro_block_timeout: Duration,
+    /// Estimated time of the key block validation.
+    pub key_block_validation_timeout: Duration,
+    /// How long wait for the keu blocks.
+    pub key_block_timeout: Duration,
+    /// Time to lock stakes.
+    pub bonding_time: Duration,
     /// Max difference in timestamps of leader and validators.
-    pub timestamp_delta_max: u64,
-    /// Max count of sealed block in epoch.
     pub blocks_in_epoch: u64,
     /// Fixed reward per block.
     pub block_reward: i64,
@@ -51,35 +54,36 @@ pub struct ChainConfig {
     pub max_slot_count: i64,
     /// Minimal stake amount.
     pub min_stake_amount: i64,
-    /// Time to lock stakes.
-    pub bonding_time: u64,
     /// Limit of blocks to download starting from current known blockchain state.
     pub loader_batch_size: u64,
 }
 
 impl Default for ChainConfig {
     fn default() -> Self {
-        let message_timeout = 60;
-        let block_validation_timeout = 30; // tx_count * verify_tx = 1500 * 20ms.
-        let tx_wait_timeout = 30;
-        let block_timeout = tx_wait_timeout + // propose timeout
-            message_timeout * 3 + // 3 consensus message
-            block_validation_timeout * 3; // leader + validators + sealed block.
-        let micro_block_timeout = tx_wait_timeout + message_timeout + block_validation_timeout;
+        let message_timeout = Duration::from_secs(1);
+        let tx_wait_timeout = Duration::from_secs(1);
+        // tx_count * verify_tx = 1500 * 20ms.
+        let micro_block_validation_timeout = Duration::from_secs(30);
+        let micro_block_timeout =
+            tx_wait_timeout + message_timeout + micro_block_validation_timeout;
+        let key_block_validation_timeout = Duration::from_millis(5);
+        let key_block_timeout = message_timeout * 3 + // 3 consensus message
+            key_block_validation_timeout * 3; // leader + validators + sealed block.
+
         ChainConfig {
             message_timeout,
-            block_validation_timeout,
             tx_wait_timeout,
-            block_timeout,
+            micro_block_validation_timeout,
             micro_block_timeout,
-            timestamp_delta_max: 10 * 60,
+            key_block_validation_timeout,
+            key_block_timeout,
+            bonding_time: Duration::from_secs(15 * 60),
             blocks_in_epoch: 5,
             block_reward: 60,
             payment_fee: 1,
             stake_fee: 1,
             max_slot_count: 1000,
             min_stake_amount: 1000,
-            bonding_time: 900,
             loader_batch_size: 100,
         }
     }

@@ -20,7 +20,6 @@ stegos_keychain = { version = "0.2.0", path = "../keychain" }
 stegos_network = { version = "0.4.0", path = "../network" }
 stegos_serialization = { version = "0.2.0", path = "../serialization" }
 bitvector = "0.1"
-chrono = "0.4"
 clap = "2.32"
 failure = "0.1"
 futures = "0.1"

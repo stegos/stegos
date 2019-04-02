@@ -27,6 +27,7 @@ use crate::output::*;
 use crate::view_changes::ViewChangeProof;
 use bitvector::BitVector;
 use failure::Error;
+use std::time::SystemTime;
 use stegos_crypto::bulletproofs::{fee_a, validate_range_proof};
 use stegos_crypto::curve1174::cpt::Pt;
 use stegos_crypto::curve1174::ecpt::ECp;
@@ -57,7 +58,7 @@ pub struct BaseBlockHeader {
     pub view_change: u32,
 
     /// Timestamp at which the block was built.
-    pub timestamp: u64,
+    pub timestamp: SystemTime,
 }
 
 impl BaseBlockHeader {
@@ -66,7 +67,7 @@ impl BaseBlockHeader {
         previous: Hash,
         height: u64,
         view_change: u32,
-        timestamp: u64,
+        timestamp: SystemTime,
     ) -> Self {
         BaseBlockHeader {
             version,
@@ -394,7 +395,7 @@ impl Hashable for Block {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use chrono::Utc;
+    use std::time::SystemTime;
     use stegos_crypto::curve1174::cpt::make_random_keys;
     use stegos_crypto::pbc::secure::make_random_keys as make_secure_random_keys;
 
@@ -406,7 +407,7 @@ pub mod tests {
 
         let version: u64 = 1;
         let height: u64 = 0;
-        let timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
         let view_change = 0;
         let amount: i64 = 1_000_000;
         let previous = Hash::digest("test");
@@ -453,7 +454,7 @@ pub mod tests {
 
         let version: u64 = 1;
         let height: u64 = 0;
-        let timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
         let view_change = 0;
         let amount: i64 = 1_000_000;
         let previous = Hash::digest(&"test".to_string());
@@ -491,7 +492,7 @@ pub mod tests {
 
         let version: u64 = 1;
         let height: u64 = 0;
-        let timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
         let view_change = 0;
         let amount: i64 = 1_000_000;
         let previous = Hash::digest(&"test".to_string());
@@ -622,7 +623,7 @@ pub mod tests {
 
         let version: u64 = 1;
         let height: u64 = 0;
-        let timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
         let view_change = 0;
         let previous = Hash::digest(&"test".to_string());
 

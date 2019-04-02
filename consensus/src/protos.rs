@@ -136,7 +136,7 @@ impl ProtoConvert for ViewChangeMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
+    use std::time::SystemTime;
     use stegos_crypto::hash::Hashable;
     use stegos_crypto::pbc::secure::make_random_keys as make_secure_random_keys;
 
@@ -184,7 +184,7 @@ mod tests {
 
         let version: u64 = 1;
         let height: u64 = 0;
-        let timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
         let previous = Hash::digest(&"test".to_string());
 
         let base = BaseBlockHeader::new(version, previous, height, 0, timestamp);

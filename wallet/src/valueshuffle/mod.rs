@@ -98,10 +98,13 @@ use std::collections::VecDeque;
 use std::time::{Duration, SystemTime};
 use stegos_blockchain::Output;
 use stegos_blockchain::Transaction;
+use stegos_blockchain::{PaymentOutput, PaymentPayloadData};
+use stegos_crypto::bulletproofs::{simple_commit, validate_range_proof};
 use stegos_crypto::curve1174::cpt::Pt;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::curve1174::cpt::SchnorrSig;
 use stegos_crypto::curve1174::cpt::SecretKey;
+use stegos_crypto::curve1174::cpt::{make_deterministic_keys, sign_hash, validate_sig};
 use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::dicemix::*;
@@ -115,13 +118,6 @@ use stegos_txpool::PoolJoin;
 use stegos_txpool::POOL_ANNOUNCE_TOPIC;
 use stegos_txpool::POOL_JOIN_TOPIC;
 use tokio_timer::Interval;
-
-// use super::*;
-use chrono::Utc;
-// use failure::Fail;
-use stegos_blockchain::{PaymentOutput, PaymentPayloadData};
-use stegos_crypto::bulletproofs::{simple_commit, validate_range_proof};
-use stegos_crypto::curve1174::cpt::{make_deterministic_keys, sign_hash, validate_sig};
 
 /// A topic used for ValueShuffle unicast communication.
 pub const VALUE_SHUFFLE_TOPIC: &'static str = "valueshuffle";
@@ -1704,7 +1700,7 @@ impl ValueShuffle {
         // generate a fresh set of UTXOs based on the list of proposed UTXOs
         // Return new UTXOs with fresh randomness, and the sum of all gamma factors
 
-        let tstamp = Utc::now().timestamp() as u64;
+        let tstamp = SystemTime::now();
         let mut outs = Vec::<(UTXO, Fr)>::new();
         for txout in txouts.clone() {
             let data = PaymentPayloadData::Comment(txout.data);

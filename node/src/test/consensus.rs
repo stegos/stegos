@@ -51,7 +51,7 @@ fn basic() {
         // Process N monetary blocks.
         let mut height = s.nodes[0].node_service.chain.height();
         for _ in 1..cfg.blocks_in_epoch {
-            wait(timer, Duration::from_secs(cfg.tx_wait_timeout));
+            wait(timer, cfg.tx_wait_timeout);
             s.poll();
             let block: Block = s.nodes[leader_id]
                 .network_service
@@ -177,7 +177,7 @@ fn basic() {
         );
 
         // Wait for TX_WAIT_TIMEOUT.
-        wait(timer, Duration::from_secs(cfg.block_timeout));
+        wait(timer, cfg.key_block_timeout);
         s.nodes[NUM_NODES - 1].poll();
 
         // Check that the last node has auto-committed the block.
@@ -224,10 +224,10 @@ fn request_on_timeout() {
             .unwrap();
 
         // let leader shot his block
-        wait(timer, Duration::from_secs(cfg.tx_wait_timeout));
+        wait(timer, cfg.tx_wait_timeout);
         s.poll();
         // emulate timeout on other nodes, and wait for request
-        wait(timer, Duration::from_secs(cfg.micro_block_timeout));
+        wait(timer, cfg.micro_block_timeout);
         info!("BEFORE POLL");
         s.poll();
         for (_, node) in s
@@ -266,10 +266,10 @@ fn micro_block_view_change() {
         }
         let leader_pk = s.nodes[0].node_service.chain.leader();
         // let leader shot his block
-        wait(timer, Duration::from_secs(cfg.tx_wait_timeout));
+        wait(timer, cfg.tx_wait_timeout);
         s.poll();
         // emulate timeout on other nodes, and wait for request
-        wait(timer, Duration::from_secs(cfg.micro_block_timeout));
+        wait(timer, cfg.micro_block_timeout);
         info!("PARTITION BEGIN");
         s.poll();
         // emulate dead leader for other nodes
@@ -355,14 +355,14 @@ fn micro_block_from_future_with_proof() {
             {
                 break;
             }
-            wait(timer, Duration::from_secs(cfg.tx_wait_timeout));
+            wait(timer, cfg.tx_wait_timeout);
             s.skip_monetary_block();
             starting_view_changes += 1;
         }
 
-        wait(timer, Duration::from_secs(cfg.tx_wait_timeout));
+        wait(timer, cfg.tx_wait_timeout);
         s.poll();
-        wait(timer, Duration::from_secs(cfg.micro_block_timeout));
+        wait(timer, cfg.micro_block_timeout);
         info!("======= PARTITION BEGIN =======");
         s.poll();
         // emulate dead leader for other nodes

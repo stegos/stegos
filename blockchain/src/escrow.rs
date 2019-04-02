@@ -24,12 +24,12 @@
 // SOFTWARE.
 
 use crate::mvcc::MultiVersionedMap;
-use chrono::NaiveDateTime;
 use failure::Fail;
 use log::*;
 use serde_derive::Serialize;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::time::SystemTime;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
 
@@ -41,7 +41,7 @@ struct EscrowKey {
 
 #[derive(Debug, Clone)]
 struct EscrowValue {
-    bonding_timestamp: u64,
+    bonding_timestamp: SystemTime,
     amount: i64,
 }
 
@@ -88,7 +88,7 @@ impl Escrow {
         version: u64,
         validator_pkey: secure::PublicKey,
         output_hash: Hash,
-        bonding_timestamp: u64,
+        bonding_timestamp: SystemTime,
         amount: i64,
     ) {
         let key = EscrowKey {
@@ -125,7 +125,7 @@ impl Escrow {
         &self,
         validator_pkey: &secure::PublicKey,
         output_hash: &Hash,
-        timestamp: u64,
+        timestamp: SystemTime,
     ) -> Result<(), EscrowError> {
         let key = EscrowKey {
             validator_pkey: validator_pkey.clone(),
@@ -156,7 +156,7 @@ impl Escrow {
         version: u64,
         validator_pkey: secure::PublicKey,
         output_hash: Hash,
-        timestamp: u64,
+        timestamp: SystemTime,
     ) {
         let key = EscrowKey {
             validator_pkey,
@@ -240,10 +240,9 @@ impl Escrow {
             let entry = validators
                 .entry(validator_pkey.clone())
                 .or_insert(Default::default());
-            let locked_until = NaiveDateTime::from_timestamp(v.bonding_timestamp as i64, 0);
             let stake = StakeInfo {
                 output_hash: format!("{}", &k.output_hash),
-                locked_until: format!("{}", &locked_until),
+                locked_until: format!("{:?}", &v.bonding_timestamp),
                 amount: v.amount,
             };
             (*entry).network_pkey = validator_pkey;
@@ -274,8 +273,8 @@ impl Escrow {
 #[derive(Debug, Fail, PartialEq, Eq)]
 pub enum EscrowError {
     #[fail(
-        display = "Stake is locked: validator={}, stake={}, bonding_time={}, current_time={}",
+        display = "Stake is locked: validator={}, stake={}, bonding_time={:?}, current_time={:?}",
         _0, _1, _2, _3
     )]
-    StakeIsLocked(secure::PublicKey, Hash, u64, u64),
+    StakeIsLocked(secure::PublicKey, Hash, SystemTime, SystemTime),
 }

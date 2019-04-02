@@ -27,7 +27,7 @@ mod mempool;
 pub mod protos;
 
 mod config;
-mod metrics;
+pub mod metrics;
 #[cfg(test)]
 mod test;
 mod validation;
@@ -38,7 +38,6 @@ use crate::loader::{ChainLoader, ChainLoaderMessage};
 use crate::mempool::Mempool;
 use crate::validation::*;
 use bitvector::BitVector;
-use chrono::Utc;
 use failure::Error;
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::{Async, Future, Poll, Stream};
@@ -46,6 +45,7 @@ use futures_stream_select_all_send::select_all;
 use log::*;
 use protobuf;
 use protobuf::Message;
+use std::time::SystemTime;
 use std::time::{Duration, Instant};
 use stegos_blockchain::view_changes::ViewChangeProof;
 use stegos_blockchain::*;
@@ -198,8 +198,9 @@ pub enum NodeMessage {
     //
     Init,
     NetworkReady,
-    ConsensusTimer(Instant),
-    ViewChangeTimer(Instant),
+    MicroBlockProposeTimer(Instant),
+    MicroBlockViewChangeTimer(Instant),
+    KeyBlockViewChangeTimer(Instant),
 }
 
 pub struct NodeService {
@@ -227,6 +228,9 @@ pub struct NodeService {
 
     /// Optimistic consensus part, that collect ViewChange messages.
     optimistic: ViewChangeCollector,
+
+    /// Monotonic clock when the latest block was registered.
+    last_block_clock: Instant,
 
     //
     // Communication with environment.
@@ -257,9 +261,9 @@ impl NodeService {
             min_stake_amount: cfg.min_stake_amount,
             bonding_time: cfg.bonding_time,
         };
-        let current_timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
         let (outbox, inbox) = unbounded();
-        let chain = Blockchain::new(blockchain_cfg, storage_cfg, genesis, current_timestamp);
+        let chain = Blockchain::new(blockchain_cfg, storage_cfg, genesis, timestamp);
         let handler = Node {
             outbox,
             network: network.clone(),
@@ -280,8 +284,8 @@ impl NodeService {
             min_stake_amount: cfg.min_stake_amount,
             bonding_time: cfg.bonding_time,
         };
-        let current_timestamp = Utc::now().timestamp() as u64;
-        let chain = Blockchain::testing(blockchain_cfg, genesis, current_timestamp);
+        let timestamp = SystemTime::now();
+        let chain = Blockchain::testing(blockchain_cfg, genesis, timestamp);
         Self::with_blockchain(cfg, chain, keys, network, inbox)
     }
 
@@ -299,6 +303,7 @@ impl NodeService {
         let consensus = None;
         let optimistic =
             ViewChangeCollector::new(&chain, keys.network_pkey, keys.network_skey.clone());
+        let last_block_clock = clock::now();
 
         let on_epoch_changed = Vec::<UnboundedSender<EpochNotification>>::new();
         let on_outputs_received = Vec::<UnboundedSender<OutputsNotification>>::new();
@@ -337,17 +342,21 @@ impl NodeService {
             .map(NodeMessage::ChainLoaderMessage);
         streams.push(Box::new(requests_rx));
 
-        // Consensus timer events
-        let duration = Duration::from_secs(1); // every second
-        let timer = Interval::new_interval(duration)
-            .map(|i| NodeMessage::ConsensusTimer(i))
+        // Timer for the micro block proposals.
+        let timer = Interval::new_interval(cfg.tx_wait_timeout)
+            .map(|i| NodeMessage::MicroBlockProposeTimer(i))
             .map_err(|_e| ()); // ignore transient timer errors
         streams.push(Box::new(timer));
 
-        // ViewChange timer events
-        let duration = Duration::from_secs(cfg.micro_block_timeout); // every message_timeout
-        let timer = Interval::new_interval(duration)
-            .map(|i| NodeMessage::ViewChangeTimer(i))
+        // Timer for the micro block view changes.
+        let timer = Interval::new_interval(cfg.micro_block_timeout)
+            .map(|i| NodeMessage::MicroBlockViewChangeTimer(i))
+            .map_err(|_e| ()); // ignore transient timer errors
+        streams.push(Box::new(timer));
+
+        // Timer for the key block view changes.
+        let timer = Interval::new_interval(cfg.key_block_timeout)
+            .map(|i| NodeMessage::KeyBlockViewChangeTimer(i))
             .map_err(|_e| ()); // ignore transient timer errors
         streams.push(Box::new(timer));
 
@@ -362,6 +371,7 @@ impl NodeService {
             mempool,
             consensus,
             optimistic,
+            last_block_clock,
             network,
             on_epoch_changed,
             on_outputs_changed: on_outputs_received,
@@ -444,12 +454,12 @@ impl NodeService {
         );
 
         // Validate transaction.
-        let current_timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
         validate_transaction(
             &tx,
             &self.mempool,
             &self.chain,
-            current_timestamp,
+            timestamp,
             self.cfg.payment_fee,
             self.cfg.stake_fee,
         )?;
@@ -498,6 +508,7 @@ impl NodeService {
 
     fn apply_new_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
+        let block_timestamp = block.base_header().timestamp;
         match block {
             Block::KeyBlock(key_block) => {
                 // Check for the correct block order.
@@ -530,7 +541,7 @@ impl NodeService {
 
                 assert!(self.consensus.is_none(), "consensus is for key blocks only");
 
-                let current_timestamp = Utc::now().timestamp() as u64;
+                let timestamp = SystemTime::now();
 
                 // Check monetary adjustment.
                 if self.chain.epoch() > 0
@@ -545,9 +556,8 @@ impl NodeService {
                     .into());
                 }
 
-                let (inputs, outputs) = self
-                    .chain
-                    .push_monetary_block(monetary_block, current_timestamp)?;
+                let (inputs, outputs) =
+                    self.chain.push_monetary_block(monetary_block, timestamp)?;
 
                 // Remove old transactions from the mempool.
                 let input_hashes: Vec<Hash> = inputs.iter().map(|o| Hash::digest(o)).collect();
@@ -566,6 +576,14 @@ impl NodeService {
                 self.optimistic.on_new_payment_block(&self.chain)
             }
         }
+
+        self.last_block_clock = clock::now();
+
+        let local_timestamp_ms = metrics::time_to_timestamp_ms(SystemTime::now());
+        let remote_timestamp_ms = metrics::time_to_timestamp_ms(block_timestamp);
+        metrics::BLOCK_REMOTE_TIMESTAMP.set(remote_timestamp_ms);
+        metrics::BLOCK_LOCAL_TIMESTAMP.set(local_timestamp_ms);
+        metrics::BLOCK_LAG.set(local_timestamp_ms - remote_timestamp_ms); // can be negative.
 
         Ok(())
     }
@@ -617,7 +635,7 @@ impl NodeService {
     fn create_new_epoch(&mut self, random: VRF) -> Result<(), Error> {
         let consensus = self.consensus.as_mut().unwrap();
         let previous = self.chain.last_block_hash();
-        let timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
         let view_change = self.chain.view_change();
         let height = self.chain.height();
         let epoch = self.chain.epoch() + 1;
@@ -786,26 +804,29 @@ impl NodeService {
         self.chain.leader() == self.keys.network_pkey
     }
 
-    ///
-    /// Called periodically every CONSENSUS_TIMER seconds.
-    ///
-    fn handle_consensus_timer(&mut self) -> Result<(), Error> {
-        let now = clock::now();
-        let elapsed: Duration = now.duration_since(self.chain.last_block_timestamp());
+    /// Сhecks if it's time to create a micro block.
+    fn handle_micro_block_propose_timer(&mut self) -> Result<(), Error> {
+        let elapsed: Duration = clock::now().duration_since(self.last_block_clock);
 
         // Check that a new payment block should be created.
-        if self.consensus.is_none()
-            && elapsed >= Duration::from_secs(self.cfg.tx_wait_timeout)
-            && self.is_leader()
-            && self.chain.blocks_in_epoch() < self.cfg.blocks_in_epoch
-        {
+        if self.consensus.is_none() && elapsed >= self.cfg.tx_wait_timeout && self.is_leader() {
+            assert!(self.chain.blocks_in_epoch() < self.cfg.blocks_in_epoch);
             self.create_monetary_block(None)?;
         }
+
+        Ok(())
+    }
+
+    /// Checks if it's time to perform a view change on a micro block.
+    fn handle_key_block_viewchange_timer(&mut self) -> Result<(), Error> {
+        let elapsed: Duration = clock::now().duration_since(self.last_block_clock);
+
+        // TODO: implement view changes for key blocks.
 
         // Check that a block has been committed but haven't send by the leader.
         if self.consensus.is_some()
             && self.consensus.as_ref().unwrap().should_commit()
-            && elapsed >= Duration::from_secs(self.cfg.block_timeout)
+            && elapsed >= self.cfg.key_block_timeout
         {
             assert!(
                 !self.consensus.as_ref().unwrap().is_leader(),
@@ -831,6 +852,7 @@ impl NodeService {
 
         Ok(())
     }
+
     //
     // Optimisitc consensus
     //
@@ -853,14 +875,12 @@ impl NodeService {
         }
         Ok(())
     }
-    /// Request block history from leader, if no block was received
-    /// retry each message_timeout.
-    fn handle_view_change_timer(&mut self) -> Result<(), Error> {
-        let elapsed: Duration = clock::now().duration_since(self.chain.last_block_timestamp());
 
-        // TODO: Increment timeout for future view_changes.
-        if self.consensus.is_none() && elapsed >= Duration::from_secs(self.cfg.micro_block_timeout)
-        {
+    /// Checks if it's time to perform a view change on a monetary block.
+    fn handle_micro_block_viewchange_timer(&mut self) -> Result<(), Error> {
+        let elapsed: Duration = clock::now().duration_since(self.last_block_clock);
+
+        if self.consensus.is_none() && elapsed >= self.cfg.micro_block_timeout {
             metrics::FORCED_VIEW_CHANGES.inc();
             // No block was received, request leader directly, and start collecting view_changes.
             let leader = self.chain.leader();
@@ -875,6 +895,7 @@ impl NodeService {
         }
         Ok(())
     }
+
     ///
     /// Create a new monetary block.
     ///
@@ -1001,8 +1022,15 @@ impl Future for NodeService {
                             ChainLoaderMessage::from_buffer(&msg.data)
                                 .and_then(|data| self.handle_chain_loader_message(msg.from, data))
                         }
-                        NodeMessage::ConsensusTimer(_now) => self.handle_consensus_timer(),
-                        NodeMessage::ViewChangeTimer(_now) => self.handle_view_change_timer(),
+                        NodeMessage::MicroBlockProposeTimer(_now) => {
+                            self.handle_micro_block_propose_timer()
+                        }
+                        NodeMessage::MicroBlockViewChangeTimer(_now) => {
+                            self.handle_micro_block_viewchange_timer()
+                        }
+                        NodeMessage::KeyBlockViewChangeTimer(_now) => {
+                            self.handle_key_block_viewchange_timer()
+                        }
                     };
                     if let Err(e) = result {
                         error!("Error: {}", e);

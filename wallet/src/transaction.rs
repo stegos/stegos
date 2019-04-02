@@ -24,10 +24,10 @@
 use crate::change::*;
 use crate::error::*;
 use crate::valueshuffle::ProposedUTXO;
-use chrono::Utc;
 use failure::Error;
 use log::*;
 use std::collections::HashMap;
+use std::time::SystemTime;
 use stegos_blockchain::*;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::curve1174::cpt::SecretKey;
@@ -194,7 +194,7 @@ pub(crate) fn create_payment_transaction(
     // Create outputs
     //
 
-    let timestamp = Utc::now().timestamp() as u64;
+    let timestamp = SystemTime::now();
     let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
 
     // Create an output for payment
@@ -293,7 +293,7 @@ pub(crate) fn create_staking_transaction(
     // Create outputs
     //
 
-    let timestamp = Utc::now().timestamp() as u64;
+    let timestamp = SystemTime::now();
     let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
 
     // Create an output for staking.
@@ -397,7 +397,7 @@ pub(crate) fn create_unstaking_transaction(
     // Create outputs
     //
 
-    let timestamp = Utc::now().timestamp() as u64;
+    let timestamp = SystemTime::now();
     let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
 
     // Create an output for payment
@@ -461,7 +461,7 @@ pub mod tests {
         let (skey, pkey, _sig0) = make_random_keys();
         let (validator_skey, validator_pkey, _validator_sig) = secure::make_random_keys();
 
-        let timestamp = Utc::now().timestamp() as u64;
+        let timestamp = SystemTime::now();
         let stake: i64 = 100;
 
         // Stake money.

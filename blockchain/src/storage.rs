@@ -119,6 +119,7 @@ impl ListDb {
 mod test {
     use super::*;
     use crate::block::{BaseBlockHeader, KeyBlock};
+    use std::time::SystemTime;
     use stegos_crypto::hash::Hash;
     use stegos_crypto::pbc::secure;
 
@@ -126,9 +127,9 @@ mod test {
         let (skey0, _pkey0, _sig0) = secure::make_random_keys();
         let version: u64 = 1;
         let epoch: u64 = 1;
-        let timestamp = 0;
+        let timestamp = SystemTime::now();
 
-        let base = BaseBlockHeader::new(version, previous, epoch, timestamp, 0);
+        let base = BaseBlockHeader::new(version, previous, epoch, 0, timestamp);
 
         let random = secure::make_VRF(&skey0, &Hash::digest("random"));
 

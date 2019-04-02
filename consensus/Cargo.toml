@@ -25,7 +25,6 @@ prometheus = "0.5"
 
 [dev-dependencies]
 stegos_keychain = { version = "0.2.0", path = "../keychain" }
-chrono = "0.4"
 rand = "0.6"
 simple_logger = "1.0"
 

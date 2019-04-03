@@ -46,6 +46,12 @@ impl Pt {
         Pt([0u8; 32])
     }
 
+    pub fn flip_sign(cmt: &mut Pt) {
+        // flip sign bit in compressed Pt
+        // used for test purposes in BulletProofs
+        cmt.0[31] ^= 0x80;
+    }
+
     /// Return random point on a curve.
     pub fn random() -> Self {
         ECp::random().compress()

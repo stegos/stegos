@@ -48,7 +48,6 @@ message EncryptedPayload {
 }
 
 message LR {
-    Fr x = 1;
     Pt l = 2;
     Pt r = 3;
 };
@@ -71,9 +70,6 @@ message BulletProof {
     Fr mu = 7;
     Fr t_hat = 8;
     DotProof dot_proof = 9;
-    Fr x = 10;
-    Fr y = 11;
-    Fr z = 12;
 }
 
 message VRF {

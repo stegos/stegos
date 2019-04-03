@@ -86,7 +86,6 @@ lazy_static! {
         vec_sum(&(*TWOS));
     pub static ref BP: BulletproofBasis = make_bulletproof_basis();
     pub static ref LR_INIT : [LR; L2_NBASIS] = [LR {
-        x: Int::zero(),
         l: Point::compress(Point::inf()),
         r: Point::compress(Point::inf()),
     }; L2_NBASIS];
@@ -307,9 +306,6 @@ pub struct BulletProof {
     pub mu: Int,
     pub t_hat: Int,
     pub dot_proof: DotProof, // composite dot-product proof
-    pub x: Int,              // x,y,z are hash challenge values mapped to Fr field
-    pub y: Int,
-    pub z: Int,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -325,7 +321,6 @@ pub struct DotProof {
 #[derive(Copy, Clone, Debug)]
 pub struct LR {
     // represents one component of the proof for each power-of-2 folding
-    pub x: Int,
     pub l: Pt,
     pub r: Pt,
 }
@@ -343,7 +338,6 @@ impl Debug for BulletProof {
 impl Hashable for LR {
     fn hash(&self, state: &mut Hasher) {
         "LR".hash(state);
-        self.x.hash(state);
         self.l.hash(state);
         self.r.hash(state);
     }
@@ -374,9 +368,6 @@ impl Hashable for BulletProof {
         self.mu.hash(state);
         self.t_hat.hash(state);
         self.dot_proof.hash(state);
-        self.x.hash(state);
-        self.y.hash(state);
-        self.z.hash(state);
     }
 }
 
@@ -456,7 +447,6 @@ pub fn make_range_proof(v: i64) -> (BulletProof, Int) {
 
             // save this portion of the proof into list accumulator
             acc[aix] = LR {
-                x: x.unscaled(), // x starts at 1, this applies to next LR half-sizing
                 l: Point::compress(l),
                 r: Point::compress(r),
             };
@@ -569,9 +559,6 @@ pub fn make_range_proof(v: i64) -> (BulletProof, Int) {
             mu: mu.unscaled(),
             t_hat: t_hat.unscaled(),
             dot_proof: make_lr_dot_proof(y, mu, t_hat, &mut lvec, &mut rvec),
-            x: x.unscaled(), // hash challenge values x,y,z
-            y: y.unscaled(),
-            z: z.unscaled(),
         },
         gamma.unscaled(),
     )
@@ -590,43 +577,54 @@ pub fn validate_range_proof(bp: &BulletProof) -> bool {
         fn compute_iter_commit(xlrs: &[LR; L2_NBASIS], init: Point) -> Result<Point, CryptoError> {
             let mut sum = init;
             for triple in xlrs.iter().rev() {
-                let x = triple.x.scaled();
-                let xsq = x * x;
                 let l = Point::decompress(triple.l)?;
                 let r = Point::decompress(triple.r)?;
+                let x = Int::from(Hash::digest_chain(&[&l, &r])).scaled(); // hash challenge value
+                let xsq = x * x;
                 sum += xsq * l + r / xsq;
             }
             Ok(sum)
         }
 
-        fn compute_svec(xlrs: &[LR; L2_NBASIS]) -> ScalarVect {
+        fn compute_svec(xlrs: &[LR; L2_NBASIS]) -> Result<ScalarVect, CryptoError> {
             let mut svec = *TWOS;
             for ix in 0..NBASIS {
                 let mut prod = Int::one();
                 let mut jx = 0;
                 for triple in xlrs.iter().rev() {
-                    let x = triple.x.scaled();
+                    let l = Point::decompress(triple.l)?;
+                    let r = Point::decompress(triple.r)?;
+                    let x = Int::from(Hash::digest_chain(&[&l, &r])).scaled(); // hash challenge value
                     prod *= if (ix & (1 << jx)) != 0 { x } else { 1 / x };
                     jx += 1;
                 }
                 svec[ix] = prod;
             }
-            svec
+            Ok(svec)
         }
 
         // -------------------------------------------------------------
 
-        let y = bp.y;
+        let vcmt = Point::decompress(bp.vcmt)?;
+        let acmt = Point::decompress(bp.acmt)?;
+        let scmt = Point::decompress(bp.scmt)?;
+        let t1cmt = Point::decompress(bp.t1_cmt)?;
+        let t2cmt = Point::decompress(bp.t2_cmt)?;
+
+        // get challenge values: x, y, z
+        let x = Int::from(Hash::digest_chain(&[&t1cmt, &t2cmt])).scaled();
+
+        let h = Hash::digest_chain(&[&vcmt, &acmt, &scmt]);
+        let y = Int::from(h).scaled();
+
+        let h = Hash::digest(&h);
+        let z = Int::from(h).scaled();
+
         let yvec = pow_vec(y);
-        let z = bp.z.scaled();
         let zsq = z * z;
         let delta = (z - zsq) * vec_sum(&yvec) - *MASK * z * zsq;
 
-        let x = bp.x.scaled();
         let xsq = x * x;
-        let vcmt = Point::decompress(bp.vcmt)?;
-        let t1cmt = Point::decompress(bp.t1_cmt)?;
-        let t2cmt = Point::decompress(bp.t2_cmt)?;
         let chk_v_r = zsq * vcmt + delta * BP.H + x * t1cmt + xsq * t2cmt;
 
         let chk_v_l = simple_commit(bp.tau_x, bp.t_hat);
@@ -648,9 +646,6 @@ pub fn validate_range_proof(bp: &BulletProof) -> bool {
 
         let hpows = bpvec!(-z);
 
-        let acmt = Point::decompress(bp.acmt)?;
-        let scmt = Point::decompress(bp.scmt)?;
-
         let chk_p_l = acmt + vec_commit(scmt, &gv, &hv, x, &gpows, &hpows);
         let dot_proof = bp.dot_proof;
         let p = Point::decompress(dot_proof.pcmt)?;
@@ -666,7 +661,7 @@ pub fn validate_range_proof(bp: &BulletProof) -> bool {
         let a = dot_proof.a.scaled();
         let b = dot_proof.b.scaled();
         let xlrs = dot_proof.xlrs;
-        let mut sv = compute_svec(&xlrs);
+        let mut sv = compute_svec(&xlrs)?;
         let mut svinv = sv;
         vec_inv(&mut svinv);
         vec_scale(&mut sv, a);
@@ -823,6 +818,32 @@ pub mod tests {
     fn check_bad_bulletproofs() {
         let (proof, _gamma) = make_range_proof(-1);
         assert!(validate_range_proof(&proof));
+    }
+
+    #[test]
+    fn test_bp_quadrants() {
+        // show that interpreting the sign of compressed points
+        // incorrectly, invalidates a BulletProof
+        //
+        // This is a partial quadrant test. Ideally we also
+        // want to test -X on decompression, but I don't know
+        // how to override decompress() during testing...
+
+        let (proof, _gamma) = make_range_proof(1234567890);
+        assert!(validate_range_proof(&proof));
+
+        let mut dum = proof.clone();
+
+        fn diddle_cmts(proof: &mut BulletProof) {
+            Pt::flip_sign(&mut proof.vcmt);
+            Pt::flip_sign(&mut proof.acmt);
+            Pt::flip_sign(&mut proof.scmt);
+            Pt::flip_sign(&mut proof.t1_cmt);
+            Pt::flip_sign(&mut proof.t2_cmt);
+        }
+
+        diddle_cmts(&mut dum);
+        assert!(!validate_range_proof(&dum));
     }
 }
 

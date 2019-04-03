@@ -203,16 +203,14 @@ impl ProtoConvert for LR {
     type Proto = crypto::LR;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = crypto::LR::new();
-        proto.set_x(self.x.into_proto());
         proto.set_l(self.l.into_proto());
         proto.set_r(self.r.into_proto());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let x = Fr::from_proto(proto.get_x())?;
         let l = Pt::from_proto(proto.get_l())?;
         let r = Pt::from_proto(proto.get_r())?;
-        Ok(LR { x, l, r })
+        Ok(LR { l, r })
     }
 }
 
@@ -268,9 +266,6 @@ impl ProtoConvert for BulletProof {
         proto.set_mu(self.mu.into_proto());
         proto.set_t_hat(self.t_hat.into_proto());
         proto.set_dot_proof(self.dot_proof.into_proto());
-        proto.set_x(self.x.into_proto());
-        proto.set_y(self.y.into_proto());
-        proto.set_z(self.z.into_proto());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
@@ -283,9 +278,6 @@ impl ProtoConvert for BulletProof {
         let mu = Fr::from_proto(proto.get_mu())?;
         let t_hat = Fr::from_proto(proto.get_t_hat())?;
         let dot_proof = DotProof::from_proto(proto.get_dot_proof())?;
-        let x = Fr::from_proto(proto.get_x())?;
-        let y = Fr::from_proto(proto.get_y())?;
-        let z = Fr::from_proto(proto.get_z())?;
         Ok(BulletProof {
             vcmt,
             acmt,
@@ -296,9 +288,6 @@ impl ProtoConvert for BulletProof {
             mu,
             t_hat,
             dot_proof,
-            x,
-            y,
-            z,
         })
     }
 }
@@ -378,7 +367,6 @@ mod tests {
     #[test]
     fn bulletproofs() {
         let lr = LR {
-            x: Fr::random(),
             l: Pt::from(ECp::random()),
             r: Pt::from(ECp::random()),
         };

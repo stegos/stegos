@@ -362,6 +362,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // TODO: remove this before pushing repo!
     fn is_devnet_loadable() {
         let _ = simple_logger::init_with_level(log::Level::Debug);
         let keys = KeyChain::new_mem();

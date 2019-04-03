@@ -22,32 +22,83 @@
 #![cfg_attr(test, feature(test))]
 use rand::{Rng, SeedableRng};
 use rand_isaac::IsaacRng;
+use stegos_blockchain::election;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
+use stegos_crypto::pbc::secure;
 extern crate test;
 use test::Bencher;
 
 #[bench]
-fn isaac_prng(b: &mut Bencher) {
+fn isaac_prng_1000(b: &mut Bencher) {
     let random = Hash::digest("bla");
     let mut seed = [0u8; 32];
     seed.copy_from_slice(random.base_vector());
     let mut rng = IsaacRng::from_seed(seed);
     b.iter(|| {
-        for _ in 0..100 {
+        for _ in 0..1000 {
             test::black_box(rng.gen::<i64>());
         }
     });
 }
 
 #[bench]
-fn hash_prng(b: &mut Bencher) {
+fn hash_prng_1000(b: &mut Bencher) {
     let random = Hash::digest("bla");
     b.iter(|| {
-        for i in 0..100u32 {
+        for i in 0..1000u32 {
             let mut hasher = Hasher::new();
             random.hash(&mut hasher);
             i.hash(&mut hasher);
             test::black_box(hasher.result());
         }
+    });
+}
+
+#[bench]
+fn select_1000_slots_out_of_16(b: &mut Bencher) {
+    const SLOTS_COUNT: i64 = 1000;
+    const GROUP_SIZE: usize = 16;
+    const STAKE: i64 = 100_000;
+
+    let random = Hash::digest("bla");
+    let (skey, _, _) = secure::make_random_keys();
+
+    let random = secure::make_VRF(&skey, &random);
+
+    let mut stakers = Vec::new();
+    for _ in 0..GROUP_SIZE {
+        let (_, pkey, _) = secure::make_random_keys();
+        stakers.push((pkey, STAKE));
+    }
+
+    b.iter(|| {
+        test::black_box(election::select_validators_slots(
+            test::black_box(stakers.clone()),
+            random,
+            SLOTS_COUNT,
+        ));
+    });
+}
+
+#[bench]
+fn create_vrf(b: &mut Bencher) {
+    let random = Hash::digest("bla");
+    let (skey, _, _) = secure::make_random_keys();
+
+    b.iter(|| {
+        test::black_box(secure::make_VRF(&skey, &random));
+    });
+}
+
+#[bench]
+fn verify_vrf(b: &mut Bencher) {
+    let random = Hash::digest("bla");
+    let (skey, pkey, _) = secure::make_random_keys();
+    let vrf = secure::make_VRF(&skey, &random);
+
+    b.iter(|| {
+        assert!(test::black_box(secure::validate_VRF_source(
+            &vrf, &pkey, &random
+        )));
     });
 }

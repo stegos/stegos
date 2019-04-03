@@ -310,18 +310,6 @@ fn run() -> Result<(), Error> {
         rt.spawn(console_service);
     }
 
-    // Register genesis block.
-    node.init().unwrap();
-    // start node
-    let network_grace_period = std::time::Duration::from_secs(10);
-    let timer = tokio_timer::Delay::new(tokio_timer::clock::now() + network_grace_period);
-
-    rt.spawn(
-        timer
-            .map(move |_| node.network_ready().unwrap())
-            .map_err(drop),
-    );
-
     if cfg.general.prometheus_endpoint != "" {
         // Prepare HTTP service to export Prometheus metrics
         let prom_serv = || service_fn_ok(report_metrics);
@@ -370,8 +358,7 @@ mod tests {
         let cfg: ChainConfig = Default::default();
         let (_loopback, network) = Loopback::new();
         let (_outbox, inbox) = unbounded();
-        let mut node = NodeService::testing(cfg, keys.clone(), network, genesis, inbox).unwrap();
-        node.handle_init().unwrap();
+        NodeService::testing(cfg, keys.clone(), network, genesis, inbox).unwrap();
     }
 
     #[test]
@@ -385,8 +372,7 @@ mod tests {
         let cfg: ChainConfig = Default::default();
         let (_loopback, network) = Loopback::new();
         let (_outbox, inbox) = unbounded();
-        let mut node = NodeService::testing(cfg, keys.clone(), network, genesis, inbox).unwrap();
-        node.handle_init().unwrap();
+        NodeService::testing(cfg, keys.clone(), network, genesis, inbox).unwrap();
     }
 
     #[test]
@@ -400,8 +386,7 @@ mod tests {
         let cfg: ChainConfig = Default::default();
         let (_loopback, network) = Loopback::new();
         let (_outbox, inbox) = unbounded();
-        let mut node = NodeService::testing(cfg, keys.clone(), network, genesis, inbox).unwrap();
-        node.handle_init().unwrap();
+        NodeService::testing(cfg, keys.clone(), network, genesis, inbox).unwrap();
     }
 
     #[test]

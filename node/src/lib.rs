@@ -72,20 +72,6 @@ pub struct Node {
 }
 
 impl Node {
-    /// Initialize blockchain.
-    pub fn init(&self) -> Result<(), Error> {
-        let msg = NodeMessage::Init;
-        self.outbox.unbounded_send(msg)?;
-        Ok(())
-    }
-
-    /// Network initialized.
-    pub fn network_ready(&self) -> Result<(), Error> {
-        let msg = NodeMessage::NetworkReady;
-        self.outbox.unbounded_send(msg)?;
-        Ok(())
-    }
-
     /// Send transaction to node and to the network.
     pub fn send_transaction(&self, tx: Transaction) -> Result<(), Error> {
         let proto = tx.into_proto();
@@ -196,8 +182,6 @@ pub enum NodeMessage {
     //
     // Internal Events
     //
-    Init,
-    NetworkReady,
     MicroBlockProposeTimer(Instant),
     MicroBlockViewChangeTimer(Instant),
     KeyBlockViewChangeTimer(Instant),
@@ -362,7 +346,7 @@ impl NodeService {
 
         let events = select_all(streams);
 
-        let service = NodeService {
+        let mut service = NodeService {
             cfg,
             chain_loader,
             future_consensus_messages,
@@ -379,40 +363,16 @@ impl NodeService {
             events,
         };
 
-        Ok(service)
-    }
-
-    /// Handler for NodeMessage::Init.
-    pub fn handle_init(&mut self) -> Result<(), Error> {
-        let len = self.chain.height();
-        assert!(len > 0);
         debug!("Recovering consensus state");
-        self.on_new_epoch();
+        service.on_new_epoch();
 
-        // Sync wallet.
-        // TODO: this implementation can consume a lot of memory.
-        let unspent: Vec<Hash> = self.chain.unspent().cloned().collect();
-        let outputs = self
-            .chain
-            .outputs_by_hashes(&unspent)
-            .expect("Cannot find unspent outputs.");
-        let inputs = Vec::new();
-        debug!("Broadcast unspent outputs.");
-        let msg = OutputsNotification { inputs, outputs };
-        self.on_outputs_changed
-            .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
-        Ok(())
-    }
-
-    /// Second init phase. Used to rebroadcast messages from VRF, Consensus and so on.
-    fn handle_network_ready(&mut self) -> Result<(), Error> {
-        // epoch ended, disable consensus and start vrf system.
-        if self.chain.blocks_in_epoch() >= self.cfg.blocks_in_epoch {
-            debug!("Recover at end of epoch, trying to force vrf to start.");
-            self.on_change_group()?;
+        // Epoch ended, start consensus.
+        if service.chain.blocks_in_epoch() >= service.cfg.blocks_in_epoch {
+            debug!("Recover at end of epoch");
+            service.on_change_group()?;
         }
 
-        self.request_history()
+        Ok(service)
     }
 
     /// Update consensus state, if chain has other view of consensus group.
@@ -593,6 +553,13 @@ impl NodeService {
         &mut self,
         tx: UnboundedSender<EpochNotification>,
     ) -> Result<(), Error> {
+        let msg = EpochNotification {
+            epoch: self.chain.epoch(),
+            leader: self.chain.leader(),
+            validators: self.chain.validators().clone(),
+            facilitator: self.chain.facilitator().clone(),
+        };
+        tx.unbounded_send(msg).ok(); // ignore error.
         self.on_epoch_changed.push(tx);
         Ok(())
     }
@@ -602,6 +569,17 @@ impl NodeService {
         &mut self,
         tx: UnboundedSender<OutputsNotification>,
     ) -> Result<(), Error> {
+        // Sent initial state.
+        // TODO: this implementation can consume a lot of memory.
+        let unspent: Vec<Hash> = self.chain.unspent().cloned().collect();
+        let outputs = self
+            .chain
+            .outputs_by_hashes(&unspent)
+            .expect("Cannot find unspent outputs.");
+        let inputs = Vec::new();
+        debug!("Broadcast unspent outputs.");
+        let msg = OutputsNotification { inputs, outputs };
+        tx.unbounded_send(msg).ok(); // ignore error.
         self.on_outputs_changed.push(tx);
         Ok(())
     }
@@ -1002,8 +980,6 @@ impl Future for NodeService {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => {
                     let result: Result<(), Error> = match event {
-                        NodeMessage::Init => self.handle_init(),
-                        NodeMessage::NetworkReady => self.handle_network_ready(),
                         NodeMessage::SubscribeEpoch(tx) => self.handle_subscribe_epoch(tx),
                         NodeMessage::SubscribeOutputs(tx) => self.handle_subscribe_outputs(tx),
                         NodeMessage::SubscribeInfo(tx) => self.handle_subscribe_info(tx),

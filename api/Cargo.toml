@@ -1,0 +1,21 @@
+[package]
+name = "stegos_api"
+version = "0.2.0"
+authors = ["Stegos AG <info@stegos.com>"]
+categories = ["web-programming::http-server", "web-programming::websocket"]
+edition = "2018"
+homepage = "https://stegos.com"
+keywords = ["stegos", "blockchain", "cryptocurrency", "crypto", "privacy"]
+license = "MIT"
+repository = "https://github.com/stegos/stegos"
+description = "Stegos - WebSocket API"
+
+[dependencies]
+failure = "0.1"
+futures = "0.1"
+log = "0.4"
+serde = "1.0"
+serde_derive = "1.0"
+stegos_wallet = { version = "0.2.0", path = "../wallet" }
+tokio = "0.1"
+websocket = { version = "0.22", default-features = false, features = ["async"] }

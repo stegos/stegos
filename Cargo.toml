@@ -21,6 +21,7 @@ path = "src/bootstrap.rs"
 
 [workspace]
 members = [
+    "api",
     "blockchain",
     "consensus",
     "crypto",
@@ -29,10 +30,11 @@ members = [
     "node",
     "serialization",
     "txpool",
-    "wallet"
+    "wallet",
 ]
 
 [dependencies]
+stegos_api = { version = "0.2.0", path = "./api" }
 stegos_blockchain = { version = "0.2.0", path = "./blockchain" }
 stegos_consensus = { version = "0.2.0", path = "./consensus" }
 stegos_crypto = { version = "0.2.0", path = "./crypto" }

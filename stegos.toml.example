@@ -34,3 +34,9 @@ public_key = "testing/node01/public-key.der"
 private_key = "testing/node01/private-key.pk8"
 # Topic name for Broadcast communications
 broadcast_topic = "stegos"
+
+[api]
+# Local IP address to bind to
+bind_ip = "0.0.0.0"
+# Local IP port to bind to
+bind_port = 3145

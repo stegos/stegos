@@ -10,7 +10,6 @@ private_key = "testing/node02/stegos.skey"
 public_key = "testing/node02/stegos.pkey"
 
 [network]
-node_id = "node02"
 bind_ip = "127.0.0.1"
 bind_port = 10056
 advertise_local_ips = false
@@ -21,3 +20,7 @@ seed_nodes = [
 advertised_addresses = [
     "/ip4/127.0.0.1/tcp/10056",
 ]
+
+[api]
+bind_ip = "127.0.0.1"
+bind_port = 3146

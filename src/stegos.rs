@@ -44,6 +44,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process;
 use std::time::SystemTime;
+use stegos_api::WebSocketAPI;
 use stegos_blockchain::Block;
 use stegos_crypto::hash::Hash;
 use stegos_keychain::*;
@@ -290,25 +291,28 @@ fn run() -> Result<(), Error> {
     let txpool_service = TransactionPoolService::new(&keychain, network.clone(), node.clone());
     rt.spawn(txpool_service);
 
+    // Initialize Wallet.
+    let (wallet_service, wallet) = WalletService::new(
+        keychain.wallet_skey.clone(),
+        keychain.wallet_pkey.clone(),
+        keychain.network_pkey.clone(),
+        keychain.network_skey.clone(),
+        network.clone(),
+        node.clone(),
+        cfg.chain.payment_fee,
+        cfg.chain.stake_fee,
+    );
+    rt.spawn(wallet_service);
+
     // Don't initialize REPL if stdin is not a TTY device
     if atty::is(atty::Stream::Stdin) {
-        // Initialize Wallet.
-        let (wallet_service, wallet) = WalletService::new(
-            keychain.wallet_skey.clone(),
-            keychain.wallet_pkey.clone(),
-            keychain.network_pkey.clone(),
-            keychain.network_skey.clone(),
-            network.clone(),
-            node.clone(),
-            cfg.chain.payment_fee,
-            cfg.chain.stake_fee,
-        );
-        rt.spawn(wallet_service);
-
         // Initialize console
         let console_service = ConsoleService::new(network.clone(), wallet.clone(), node.clone())?;
         rt.spawn(console_service);
     }
+
+    // Start WebSocket API server.
+    WebSocketAPI::spawn(cfg.api, rt.executor(), wallet.clone())?;
 
     if cfg.general.prometheus_endpoint != "" {
         // Prepare HTTP service to export Prometheus metrics

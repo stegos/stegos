@@ -473,6 +473,9 @@ impl Blockchain {
         self.view_change = new_view_change;
     }
 
+    pub fn election_result(&self) -> ElectionResult {
+        self.election_result.clone()
+    }
     //----------------------------------------------------------------------------------------------
     // Key Blocks
     //----------------------------------------------------------------------------------------------
@@ -557,20 +560,14 @@ impl Blockchain {
             return Err(BlockError::BlockHashCollision(height, block_hash).into());
         }
 
-        // Check the view change.
-        if block.header.base.view_change != self.view_change() {
-            return Err(BlockError::InvalidViewChange(
-                height,
-                block_hash,
-                block.header.base.view_change,
-                self.view_change,
-            )
-            .into());
-        }
-
         // skip leader selection and signature checking for genesis block.
         if self.epoch > 0 {
+            // Skip view change check, just check supermajority.
             let leader = self.select_leader(block.header.base.view_change);
+            debug!(
+                "Validating VRF: leader={}, round={}",
+                leader, block.header.base.view_change
+            );
             let seed = mix(self.last_random(), block.header.base.view_change);
             if !secure::validate_VRF_source(&block.header.random, &leader, &seed) {
                 return Err(BlockError::IncorrectRandom(height, block_hash).into());

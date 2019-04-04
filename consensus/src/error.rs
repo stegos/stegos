@@ -43,6 +43,8 @@ pub enum ConsensusError {
         _0, _1, _2
     )]
     ProposalFromNonLeader(Hash, secure::PublicKey, secure::PublicKey),
+    #[fail(display = "Received invalid propose={}", _0)]
+    InvalidPropose(failure::Error),
 
     #[fail(display = "Invalid BLS multisignature for request: request={}", _0)]
     InvalidRequestSignature(Hash),

@@ -20,7 +20,7 @@ fast_checks:
     - cargo fmt --all -- --check
   tags:
     - linux
-  image: rust:1.32
+  image: rust:1.33
 
 .build:
   stage: build
@@ -29,7 +29,7 @@ fast_checks:
 
 build:linux:
   extends: .build
-  image: rust:1.32
+  image: rust:1.33
   tags:
     - linux
 
@@ -50,7 +50,7 @@ build:macos:
 
 test:linux:
   extends: .test
-  image: rust:1.32
+  image: rust:1.33
   tags:
     - linux
 
@@ -61,7 +61,7 @@ test:macos:
 
 code_coverage:
   stage: code_coverage
-  image: rust:1.32
+  image: rust:1.33
   before_script: []
   script:
     - ci-scripts/coverage.sh
@@ -88,7 +88,7 @@ code_coverage:
 
 release:linux:
   extends: .release
-  image: rust:1.32
+  image: rust:1.33
   script:
     - cargo install --path . --root /usr/local && strip /usr/local/bin/stegos
     - mkdir -p release/linux && mv /usr/local/bin/stegos release/linux
@@ -105,7 +105,7 @@ release:macos:
 
 release:linux:static:
   extends: .release
-  image: stegos/rust-musl-builder:1.32
+  image: stegos/rust-musl-builder:1.33
   before_script: []
   script:
     - cargo install --path . --root /usr/local && strip /usr/local/bin/stegos

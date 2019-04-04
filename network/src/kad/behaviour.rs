@@ -36,6 +36,7 @@ use log::{debug, trace};
 use lru_time_cache::LruCache;
 use rand;
 use smallvec::SmallVec;
+use std::vec::IntoIter as VecIntoIter;
 use std::{cmp::Ordering, error, marker::PhantomData, time::Duration, time::Instant};
 use stegos_crypto::pbc::secure;
 use stegos_crypto::utils::u8v_to_hexstr;
@@ -115,7 +116,8 @@ pub struct Kademlia<TSubstream> {
     marker: PhantomData<TSubstream>,
 }
 
-struct NodeInfo {
+#[derive(Clone, Debug)]
+pub struct NodeInfo {
     peer_id: Option<PeerId>,
     addresses: Addresses,
 }
@@ -126,6 +128,12 @@ impl Default for NodeInfo {
             peer_id: None,
             addresses: Addresses::default(),
         }
+    }
+}
+
+impl NodeInfo {
+    pub fn peer_id(&self) -> Option<PeerId> {
+        self.peer_id.clone()
     }
 }
 
@@ -158,6 +166,25 @@ impl<TSubstream> Kademlia<TSubstream> {
     #[inline]
     pub fn without_init(local_node_id: secure::PublicKey) -> Self {
         Self::new_inner(local_node_id, false)
+    }
+
+    /// Returns local node's id (secure::PublicKey)
+    #[inline]
+    pub fn my_id(&self) -> &secure::PublicKey {
+        &self.my_id
+    }
+
+    #[inline]
+    pub fn find_closest(&mut self, id: &secure::PublicKey) -> VecIntoIter<secure::PublicKey> {
+        self.kbuckets.find_closest(id)
+    }
+
+    #[inline]
+    pub fn get_node(&self, node_id: &secure::PublicKey) -> Option<NodeInfo> {
+        match self.kbuckets.get(node_id) {
+            Some(n) => Some(n.clone()),
+            None => None,
+        }
     }
 
     /// Sets peer_id to the corresponging node_id

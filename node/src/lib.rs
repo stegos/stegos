@@ -21,17 +21,15 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+mod config;
 mod error;
 mod loader;
 mod mempool;
-pub mod protos;
-
-mod config;
 pub mod metrics;
+pub mod protos;
 #[cfg(test)]
 mod test;
 mod validation;
-
 pub use crate::config::ChainConfig;
 use crate::error::*;
 use crate::loader::{ChainLoader, ChainLoaderMessage};

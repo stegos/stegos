@@ -3,25 +3,25 @@ chain = "dev"
 log4rs_config = "stegos-log4rs.toml"
 
 [storage]
-database_path = "testing/node01/database"
+database_path = "testing/node04/database"
 
 [keychain]
-private_key = "testing/node01/stegos.skey"
-public_key = "testing/node01/stegos.pkey"
+private_key = "testing/node04/stegos.skey"
+public_key = "testing/node04/stegos.pkey"
 
 [network]
 bind_ip = "127.0.0.1"
-bind_port = 10055
+bind_port = 10058
 advertise_local_ips = false
 seed_nodes = [
+    "/ip4/127.0.0.1/tcp/10055",
     "/ip4/127.0.0.1/tcp/10056",
     "/ip4/127.0.0.1/tcp/10057",
-    "/ip4/127.0.0.1/tcp/10058",
 ]
 advertised_addresses = [
-    "/ip4/127.0.0.1/tcp/10055",
+    "/ip4/127.0.0.1/tcp/10058",
 ]
 
 [api]
 bind_ip = "127.0.0.1"
-bind_port = 3145
+bind_port = 3148

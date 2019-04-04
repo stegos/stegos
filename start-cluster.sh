@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 mode=${2:-debug}
-nodes_count=${1:-3}
+nodes_count=${1:-4}
 
 BASE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

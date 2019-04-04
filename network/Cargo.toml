@@ -16,6 +16,8 @@ description = "Stegos - Network Library"
 stegos_crypto = { version = "0.2.0", path = "../crypto" }
 stegos_keychain = { version = "0.2.0", path = "../keychain" }
 stegos_serialization = { version = "0.2.0", path = "../serialization" }
+arrayvec = "0.4"
+bigint = "4.4"
 bs58 = "0.2"
 bytes = "0.4"
 cuckoofilter = "0.3"

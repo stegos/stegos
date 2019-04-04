@@ -23,11 +23,14 @@
 #![allow(dead_code)]
 
 mod config;
+mod discovery;
 mod gatekeeper;
+mod kad;
 mod libp2p_network;
 pub mod loopback;
 mod ncp;
 mod pubsub;
+mod utils;
 
 use failure::{Error, Fail};
 use futures::sync::mpsc;
@@ -36,6 +39,7 @@ use stegos_crypto::pbc::secure;
 
 pub use self::config::*;
 pub use self::libp2p_network::Libp2pNetwork;
+pub use self::utils::IntoMultihash;
 
 pub type Network = Box<dyn NetworkProvider + Send>;
 

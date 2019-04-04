@@ -21,4 +21,28 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-include!(concat!(env!("OUT_DIR"), "/ncp_proto/mod.rs"));
+use libp2p::core::PeerId;
+use libp2p::multihash::{encode, Hash::SHA3512, Multihash};
+use stegos_crypto::pbc::secure;
+
+pub trait IntoMultihash {
+    fn into_multihash(self) -> Multihash;
+}
+
+impl IntoMultihash for secure::PublicKey {
+    fn into_multihash(self) -> Multihash {
+        encode(SHA3512, &self.to_bytes()).expect("should never fail")
+    }
+}
+
+impl IntoMultihash for PeerId {
+    fn into_multihash(self) -> Multihash {
+        std::convert::Into::into(self)
+    }
+}
+
+impl IntoMultihash for Multihash {
+    fn into_multihash(self) -> Multihash {
+        self
+    }
+}

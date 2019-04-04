@@ -28,4 +28,5 @@ fn main() {
     build_script::build_protobuf("protos/unicast_proto.proto", "unicast_proto", &[]);
     build_script::build_protobuf("protos/pubsub_proto.proto", "pubsub", &[]);
     build_script::build_protobuf("protos/gatekeeper_proto.proto", "gatekeeper_proto", &[]);
+    build_script::build_protobuf("protos/dht.proto", "dht", &[]);
 }

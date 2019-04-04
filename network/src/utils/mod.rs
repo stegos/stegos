@@ -21,4 +21,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-include!(concat!(env!("OUT_DIR"), "/ncp_proto/mod.rs"));
+mod multihash;
+
+pub use self::multihash::IntoMultihash;

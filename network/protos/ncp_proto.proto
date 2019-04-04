@@ -9,7 +9,8 @@ message Message {
     
     message PeerInfo {
         required bytes peer_id = 1;
-        repeated bytes addrs = 2;
+        required bytes node_id = 2;
+        repeated bytes addrs = 3;
     }
 
 	// defines what type of message it is.

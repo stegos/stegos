@@ -36,6 +36,8 @@ use std::{
     marker::PhantomData,
     time::{Duration, Instant},
 };
+use stegos_crypto::pbc::secure;
+use stegos_keychain::KeyChain;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::timer::Delay;
 
@@ -48,6 +50,8 @@ const KNOWN_PEERS_TABLE_SIZE: usize = 1024;
 /// Network behaviour that automatically identifies nodes periodically, and returns information
 /// about them.
 pub struct Ncp<TSubstream> {
+    /// Out network key
+    node_id: secure::PublicKey,
     /// Queue of internal events
     events: VecDeque<NcpEvent>,
     /// Events that need to be yielded to the outside when polling.
@@ -57,7 +61,7 @@ pub struct Ncp<TSubstream> {
     /// Active peers (with which we exchange data)
     active_peers: HashSet<PeerId>,
     /// Known peers
-    known_peers: LruCache<Vec<u8>, SmallVec<[Multiaddr; 16]>>,
+    known_peers: LruCache<Vec<u8>, (secure::PublicKey, SmallVec<[Multiaddr; 16]>)>,
     /// Maximum connections allowd
     max_connections: usize,
     /// Minimum connections to keep
@@ -73,15 +77,17 @@ pub struct Ncp<TSubstream> {
 
 impl<TSubstream> Ncp<TSubstream> {
     /// Creates a NetworkBehaviour for NCP.
-    pub fn new(config: &NetworkConfig) -> Self {
+    pub fn new(config: &NetworkConfig, keychain: &KeyChain) -> Self {
         Ncp {
+            node_id: keychain.network_pkey.clone(),
             events: VecDeque::new(),
             out_events: VecDeque::new(),
             connected_peers: HashSet::new(),
             active_peers: HashSet::new(),
-            known_peers: LruCache::<Vec<u8>, SmallVec<[Multiaddr; 16]>>::with_capacity(
-                KNOWN_PEERS_TABLE_SIZE,
-            ),
+            known_peers:
+                LruCache::<Vec<u8>, (secure::PublicKey, SmallVec<[Multiaddr; 16]>)>::with_capacity(
+                    KNOWN_PEERS_TABLE_SIZE,
+                ),
             max_connections: config.max_connections,
             min_connections: config.min_connections,
             monitor_delay: Delay::new(
@@ -143,7 +149,7 @@ where
         let small = self
             .known_peers
             .get(peer.as_bytes())
-            .map(|v| v.clone())
+            .map(|(_, v)| v.clone())
             .unwrap_or(SmallVec::new());
         let addresses: Vec<Multiaddr> = small.iter().map(|v| v.clone()).collect();
         addresses
@@ -292,19 +298,38 @@ where
                             for addr in peer.addresses.into_iter() {
                                 let id = peer.peer_id.clone();
                                 if !self.known_peers.contains_key(id.as_bytes()) {
-                                    self.known_peers
-                                        .insert(id.clone().into_bytes(), SmallVec::new());
+                                    self.known_peers.insert(
+                                        id.clone().into_bytes(),
+                                        (peer.node_id.clone(), SmallVec::new()),
+                                    );
                                 }
                                 // Safe to unwrap, since we initalized entry on previous step
                                 if self
                                     .known_peers
                                     .get_mut(id.as_bytes())
                                     .unwrap()
+                                    .1
                                     .iter()
                                     .all(|a| *a != addr)
                                 {
-                                    self.known_peers.get_mut(id.as_bytes()).unwrap().push(addr)
+                                    self.known_peers
+                                        .get_mut(id.as_bytes())
+                                        .unwrap()
+                                        .1
+                                        .push(addr)
                                 }
+                                self.out_events.push_back(NcpOutEvent::DiscoveredPeer {
+                                    peer_id: peer.peer_id.clone(),
+                                    node_id: peer.node_id.clone(),
+                                    addresses: self
+                                        .known_peers
+                                        .get(id.as_bytes())
+                                        .unwrap()
+                                        .1
+                                        .iter()
+                                        .map(|v| v.clone())
+                                        .collect(),
+                                });
                             }
                         }
                     }
@@ -317,7 +342,11 @@ where
                         if peer == peer_id {
                             continue;
                         }
-                        let mut peer_info = PeerInfo::new(&peer);
+                        if self.known_peers.get(&peer.clone().into_bytes()).is_none() {
+                            continue;
+                        }
+                        let node_id = self.known_peers.get(&peer.clone().into_bytes()).unwrap().0;
+                        let mut peer_info = PeerInfo::new(&peer, &node_id);
                         for addr in self.addresses_of_peer(&peer) {
                             peer_info.addresses.push(addr);
                         }
@@ -326,7 +355,7 @@ where
                         }
                     }
                     let peer = poll_parameters.local_peer_id().clone();
-                    let mut peer_info = PeerInfo::new(&peer);
+                    let mut peer_info = PeerInfo::new(&peer, &self.node_id);
                     for addr in poll_parameters.external_addresses() {
                         peer_info.addresses.push(addr);
                     }
@@ -415,6 +444,11 @@ pub enum NcpOutEvent {
     Disabled {
         /// Disabled protocol for peer_id
         peer_id: PeerId,
+    },
+    DiscoveredPeer {
+        node_id: secure::PublicKey,
+        peer_id: PeerId,
+        addresses: Vec<Multiaddr>,
     },
 }
 

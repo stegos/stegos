@@ -335,17 +335,18 @@ impl MonetaryBlock {
 
         // -\sum{C_o} for o in txouts
         for (txout, _) in self.body.outputs.leafs() {
+            let output_hash = Hash::digest(&*txout);
             match **txout {
                 Output::PaymentOutput(ref o) => {
                     // Check bulletproofs of created outputs
                     if !validate_range_proof(&o.proof) {
-                        return Err(OutputError::InvalidBulletProof.into());
+                        return Err(OutputError::InvalidBulletProof(output_hash).into());
                     }
                     pedersen_commitment_diff -= Pt::decompress(o.proof.vcmt)?;
                 }
                 Output::StakeOutput(ref o) => {
                     if o.amount <= 0 {
-                        return Err(OutputError::InvalidStake.into());
+                        return Err(OutputError::InvalidStake(output_hash).into());
                     }
                     pedersen_commitment_diff -= fee_a(o.amount);
                 }
@@ -354,7 +355,8 @@ impl MonetaryBlock {
 
         // Check the monetary balance
         if pedersen_commitment_diff != self.header.gamma * (*G) {
-            return Err(BlockchainError::InvalidBlockBalance.into());
+            let block_hash = Hash::digest(&self);
+            return Err(BlockError::InvalidBlockBalance(self.header.base.height, block_hash).into());
         }
 
         Ok(())
@@ -439,8 +441,8 @@ pub mod tests {
             let gamma = gamma0 - gamma1;
             let block = MonetaryBlock::new(base, gamma, 0, &inputs1, &outputs1, None);
             match block.validate_balance(&[output0]) {
-                Err(e) => match e.downcast::<BlockchainError>().unwrap() {
-                    BlockchainError::InvalidBlockBalance => {}
+                Err(e) => match e.downcast::<BlockError>().unwrap() {
+                    BlockError::InvalidBlockBalance(_height, _hash) => {}
                     _ => panic!(),
                 },
                 _ => panic!(),
@@ -475,8 +477,8 @@ pub mod tests {
             let (_output, path) = block2.body.outputs.leafs()[0];
             block2.body.outputs.prune(&path).expect("output exists");
             match block2.validate_balance(&inputs) {
-                Err(e) => match e.downcast::<BlockchainError>().unwrap() {
-                    BlockchainError::InvalidBlockBalance => {}
+                Err(e) => match e.downcast::<BlockError>().unwrap() {
+                    BlockError::InvalidBlockBalance(_height, _hash) => {}
                     _ => panic!(),
                 },
                 _ => panic!(),
@@ -575,8 +577,8 @@ pub mod tests {
             let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
             let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None);
             match block.validate_balance(&inputs) {
-                Err(e) => match e.downcast::<BlockchainError>().unwrap() {
-                    BlockchainError::InvalidBlockBalance => {}
+                Err(e) => match e.downcast::<BlockError>().unwrap() {
+                    BlockError::InvalidBlockBalance(_height, _hash) => {}
                     _ => panic!(),
                 },
                 _ => panic!(),
@@ -610,7 +612,7 @@ pub mod tests {
             let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None);
             match block.validate_balance(&inputs) {
                 Err(e) => match e.downcast::<OutputError>().unwrap() {
-                    OutputError::InvalidStake => {}
+                    OutputError::InvalidStake(_output_hash) => {}
                     _ => panic!(),
                 },
                 _ => panic!(),

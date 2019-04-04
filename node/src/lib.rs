@@ -77,10 +77,7 @@ impl Node {
         let proto = tx.into_proto();
         let data = proto.write_to_bytes()?;
         self.network.publish(&TX_TOPIC, data.clone())?;
-        info!(
-            "Sent transaction to the network: hash={}",
-            Hash::digest(&tx)
-        );
+        info!("Sent transaction to the network: tx={}", Hash::digest(&tx));
         let msg = NodeMessage::Transaction(data);
         self.outbox.unbounded_send(msg)?;
         Ok(())
@@ -389,7 +386,6 @@ impl NodeService {
         consensus::metrics::CONSENSUS_STATE
             .set(consensus::metrics::ConsensusState::NotInConsensus as i64);
 
-        debug!("Broadcast new epoch event.");
         let msg = EpochNotification {
             epoch: self.chain.epoch(),
             leader,
@@ -406,7 +402,7 @@ impl NodeService {
     fn handle_transaction(&mut self, tx: Transaction) -> Result<(), Error> {
         let tx_hash = Hash::digest(&tx);
         info!(
-            "Received transaction from the network: hash={}, inputs={}, outputs={}, fee={}",
+            "Received transaction from the network: tx={}, inputs={}, outputs={}, fee={}",
             &tx_hash,
             tx.body.txins.len(),
             tx.body.txouts.len(),
@@ -425,7 +421,7 @@ impl NodeService {
         )?;
 
         // Queue to mempool.
-        info!("Transaction is valid, adding to mempool: hash={}", &tx_hash);
+        info!("Transaction is valid, adding to mempool: tx={}", &tx_hash);
         self.mempool.push_tx(tx_hash, tx);
 
         Ok(())
@@ -439,7 +435,7 @@ impl NodeService {
         // Check height.
         if header.height < self.chain.height() {
             warn!(
-                "Skip outdated block: hash={}, block_height={}, our_height={}",
+                "Skip outdated block: block={}, block_height={}, our_height={}",
                 &block_hash,
                 header.height,
                 self.chain.height()
@@ -447,7 +443,7 @@ impl NodeService {
             return Ok(());
         } else if header.height > self.chain.height() {
             debug!(
-                "Orphan sealed block: hash={}, block_height={}, our_height={}",
+                "Orphan sealed block: block={}, block_height={}, our_height={}",
                 &block_hash,
                 header.height,
                 self.chain.height()
@@ -458,9 +454,9 @@ impl NodeService {
         // TODO: validate timestamp
 
         info!(
-            "Received sealed block from the network: hash={}, current_height={}",
+            "Received sealed block from the network: height={}, block={}",
+            self.chain.height(),
             &block_hash,
-            self.chain.height()
         );
 
         self.apply_new_block(block)
@@ -469,11 +465,16 @@ impl NodeService {
     fn apply_new_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
         let block_timestamp = block.base_header().timestamp;
+        let block_height = block.base_header().height;
         match block {
             Block::KeyBlock(key_block) => {
                 // Check for the correct block order.
                 if self.chain.blocks_in_epoch() < self.cfg.blocks_in_epoch {
-                    return Err(NodeError::ExpectedMonetaryBlock(self.chain.height()).into());
+                    return Err(NodeBlockError::ExpectedMonetaryBlock(
+                        self.chain.height(),
+                        block_hash,
+                    )
+                    .into());
                 }
 
                 // Check consensus.
@@ -496,7 +497,9 @@ impl NodeService {
             Block::MonetaryBlock(monetary_block) => {
                 // Check for the correct block order.
                 if self.chain.blocks_in_epoch() >= self.cfg.blocks_in_epoch {
-                    return Err(NodeError::ExpectedKeyBlock(self.chain.height()).into());
+                    return Err(
+                        NodeBlockError::ExpectedKeyBlock(self.chain.height(), block_hash).into(),
+                    );
                 }
 
                 assert!(self.consensus.is_none(), "consensus is for key blocks only");
@@ -508,7 +511,8 @@ impl NodeService {
                     && monetary_block.header.monetary_adjustment != self.cfg.block_reward
                 {
                     // TODO: support slashing.
-                    return Err(NodeError::InvalidBlockReward(
+                    return Err(NodeBlockError::InvalidMonetaryAdjustment(
+                        block_height,
                         block_hash,
                         monetary_block.header.monetary_adjustment,
                         self.cfg.block_reward,
@@ -530,7 +534,6 @@ impl NodeService {
                     .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
 
                 if self.chain.blocks_in_epoch() >= self.cfg.blocks_in_epoch {
-                    debug!("Starting new election.");
                     self.on_change_group()?;
                 }
                 self.optimistic.on_new_payment_block(&self.chain)
@@ -571,13 +574,12 @@ impl NodeService {
     ) -> Result<(), Error> {
         // Sent initial state.
         // TODO: this implementation can consume a lot of memory.
-        let unspent: Vec<Hash> = self.chain.unspent().cloned().collect();
-        let outputs = self
-            .chain
-            .outputs_by_hashes(&unspent)
-            .expect("Cannot find unspent outputs.");
+        let mut outputs: Vec<Output> = Vec::new();
+        for output_hash in self.chain.unspent() {
+            let output = self.chain.output_by_hash(output_hash)?.expect("exists");
+            outputs.push(output);
+        }
         let inputs = Vec::new();
-        debug!("Broadcast unspent outputs.");
         let msg = OutputsNotification { inputs, outputs };
         tx.unbounded_send(msg).ok(); // ignore error.
         self.on_outputs_changed.push(tx);
@@ -622,7 +624,7 @@ impl NodeService {
 
         let base = BaseBlockHeader::new(VERSION, previous, height, view_change, timestamp);
         debug!(
-            "Creating a new epoch proposal: height={}, epoch={}, leader={:?}",
+            "Creating a new key block proposal: height={}, epoch={}, leader={:?}",
             height,
             self.chain.epoch() + 1,
             consensus.leader()
@@ -838,12 +840,16 @@ impl NodeService {
     fn handle_view_change(&mut self, msg: ViewChangeMessage) -> Result<(), Error> {
         if let Some(counter) = self.optimistic.handle_message(&self.chain, msg)? {
             debug!(
-                "Received enought message for change leader: view_change={}",
-                counter
+                "Received enough messages for change leader: height={}, last_block={}, view_change={}",
+                self.chain.height(), self.chain.last_block_hash(),  counter
             );
             self.chain.set_view_change(counter);
             if self.is_leader() {
-                debug!("We are leader, producing new monetary block.");
+                debug!(
+                    "We are leader, producing new monetary block: height={}, last_block={}",
+                    self.chain.height(),
+                    self.chain.last_block_hash()
+                );
                 let proof = self
                     .optimistic
                     .last_proof(&self.chain)
@@ -862,7 +868,8 @@ impl NodeService {
             metrics::FORCED_VIEW_CHANGES.inc();
             // No block was received, request leader directly, and start collecting view_changes.
             let leader = self.chain.leader();
-            debug!("Timed out while waiting for monetary block, request block from last leader: leader={}", leader);
+            debug!("Timed out while waiting for monetary block, request block from last leader: hash={}, block={}, leader={}",
+                   self.chain.height(), self.chain.last_block_hash(), leader);
             self.request_history_from(leader)?;
 
             if let Some(msg) = self.optimistic.handle_timeout(&self.chain)? {
@@ -882,10 +889,10 @@ impl NodeService {
         assert!(self.is_leader());
         assert!(self.chain.blocks_in_epoch() < self.cfg.blocks_in_epoch);
 
-        let height = self.chain.height() + 1;
+        let height = self.chain.height();
         let previous = self.chain.last_block_hash();
         info!(
-            "I'm leader, proposing a new monetary block: height={}, previous={}",
+            "I'm leader, proposing a new monetary block: height={}, last_block={}",
             height, previous
         );
 
@@ -903,12 +910,13 @@ impl NodeService {
         let block_hash = Hash::digest(&block);
         block.body.sig = secure::sign_hash(&block_hash, &self.keys.network_skey);
 
-        // Log info.
         info!(
-            "Created monetary block: height={}, hash={}",
-            height, &block_hash,
+            "Created a monetary block: height={}, block={}, inputs={}, outputs={}",
+            height,
+            &block_hash,
+            block.body.inputs.len(),
+            block.body.outputs.leafs().len()
         );
-        // TODO: log the number of inputs/outputs
 
         // TODO: swap send_sealed_block() and apply_new_block() order after removing VRF.
         let block2 = block.clone();
@@ -928,7 +936,10 @@ impl NodeService {
 
         let (block, _proof) = consensus.get_proposal();
         let request_hash = Hash::digest(block);
-        debug!("Validating block: block={:?}", &request_hash);
+        debug!(
+            "Validating a key block: height={}, block={:?}",
+            block.header.base.height, &request_hash
+        );
         match validate_proposed_key_block(
             &self.cfg,
             &self.chain,
@@ -943,8 +954,8 @@ impl NodeService {
             }
             Err(e) => {
                 error!(
-                    "Discarded invalid block proposal: hash={:?}, error={}",
-                    &request_hash, e
+                    "Discarded an invalid key block proposal: height={}, block={}, error={}",
+                    block.header.base.height, &request_hash, e
                 );
             }
         }

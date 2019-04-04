@@ -19,12 +19,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use bitvector::BitVector;
-use failure::Error;
-
 use crate::block::MonetaryBlock;
 use crate::blockchain::Blockchain;
+use crate::error::MultisignatureError;
 use crate::multisignature::{check_multi_signature, create_multi_signature_index};
+use bitvector::BitVector;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure;
 
@@ -76,7 +75,11 @@ impl ViewChangeProof {
         let (multisig, multimap) = create_multi_signature_index(signatures);
         ViewChangeProof { multisig, multimap }
     }
-    pub fn validate(&self, chain_info: &ChainInfo, blockchain: &Blockchain) -> Result<(), Error> {
+    pub fn validate(
+        &self,
+        chain_info: &ChainInfo,
+        blockchain: &Blockchain,
+    ) -> Result<(), MultisignatureError> {
         let hash = Hash::digest(chain_info);
 
         check_multi_signature(

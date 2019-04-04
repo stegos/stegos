@@ -24,11 +24,10 @@
 use crate::config::ChainConfig;
 use crate::error::*;
 use crate::mempool::Mempool;
-use failure::{ensure, Error};
+use failure::Error;
 use log::*;
 use std::time::SystemTime;
 use stegos_blockchain::Blockchain;
-use stegos_blockchain::BlockchainError;
 use stegos_blockchain::KeyBlock;
 use stegos_blockchain::Output;
 use stegos_blockchain::Transaction;
@@ -67,7 +66,7 @@ pub(crate) fn validate_transaction(
 
     // Check that transaction exists in the mempool.
     if mempool.contains_tx(&tx_hash) {
-        return Err(NodeError::TransactionAlreadyExists(tx_hash).into());
+        return Err(NodeTransactionError::AlreadyExists(tx_hash).into());
     }
 
     // Check fee.
@@ -79,7 +78,7 @@ pub(crate) fn validate_transaction(
         };
     }
     if tx.body.fee < min_fee {
-        return Err(NodeError::TooLowFee(min_fee, tx.body.fee).into());
+        return Err(NodeTransactionError::TooLowFee(tx_hash, min_fee, tx.body.fee).into());
     }
 
     // Validate inputs.
@@ -87,11 +86,16 @@ pub(crate) fn validate_transaction(
     for input_hash in &tx.body.txins {
         // Check that the input can be resolved.
         // TODO: check outputs created by mempool transactions.
-        let input = chain.output_by_hash(input_hash)?;
+        let input = match chain.output_by_hash(input_hash)? {
+            Some(input) => input,
+            None => {
+                return Err(NodeTransactionError::MissingInput(tx_hash, input_hash.clone()).into());
+            }
+        };
 
         // Check that the input is not claimed by other transactions.
         if mempool.contains_input(input_hash) {
-            return Err(BlockchainError::MissingUTXO(input_hash.clone()).into());
+            return Err(NodeTransactionError::MissingInput(tx_hash, input_hash.clone()).into());
         }
 
         // Check escrow.
@@ -110,7 +114,7 @@ pub(crate) fn validate_transaction(
 
         // Check that the output is unique and don't overlap with other transactions.
         if mempool.contains_output(&output_hash) || chain.contains_output(&output_hash) {
-            return Err(BlockchainError::OutputHashCollision(output_hash).into());
+            return Err(NodeTransactionError::OutputHashCollision(tx_hash, output_hash).into());
         }
     }
 
@@ -146,13 +150,24 @@ pub(crate) fn validate_proposed_key_block(
             .unwrap()
     };
     if duration > cfg.key_block_timeout {
-        return Err(NodeError::UnsynchronizedBlock(block.header.base.timestamp, timestamp).into());
+        return Err(NodeBlockError::OutOfSyncTimestamp(
+            block.header.base.height,
+            block_hash,
+            block.header.base.timestamp,
+            timestamp,
+        )
+        .into());
     }
 
-    ensure!(
-        block.header.base.view_change == view_change,
-        "Proposed view_change different from our"
-    );
+    if block.header.base.view_change != view_change {
+        return Err(NodeBlockError::OutOfSyncViewChange(
+            block.header.base.height,
+            block_hash,
+            block.header.base.view_change,
+            view_change,
+        )
+        .into());
+    }
     chain.validate_key_block(block, true)?;
 
     debug!("Key block proposal is valid: block={:?}", block_hash);
@@ -189,7 +204,8 @@ mod test {
         for output_hash in chain.unspent() {
             let output = chain
                 .output_by_hash(&output_hash)
-                .expect("exists and no disk errors");
+                .expect("no disk errors")
+                .expect("exists");
             match output {
                 Output::PaymentOutput(ref _o) => inputs.push(output),
                 Output::StakeOutput(ref _o) => stakes.push(output),
@@ -238,8 +254,9 @@ mod test {
             let tx = Transaction::unchecked(&skey, &inputs, &[output], gamma, fee).unwrap();
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect_err("transaction is not valid");
-            match e.downcast::<NodeError>().unwrap() {
-                NodeError::TooLowFee(min, got) => {
+            match e.downcast::<NodeTransactionError>().unwrap() {
+                NodeTransactionError::TooLowFee(tx_hash, min, got) => {
+                    assert_eq!(tx_hash, Hash::digest(&tx));
                     assert_eq!(min, payment_fee);
                     assert_eq!(got, fee);
                 }
@@ -260,8 +277,8 @@ mod test {
             let tx = Transaction::new(&skey, &[input], &[output], outputs_gamma, fee).unwrap();
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect_err("transaction is not valid");
-            match e.downcast::<BlockchainError>().unwrap() {
-                BlockchainError::MissingUTXO(hash) => {
+            match e.downcast::<NodeTransactionError>().unwrap() {
+                NodeTransactionError::MissingInput(_tx_hash, hash) => {
                     assert_eq!(hash, missing);
                 }
                 _ => panic!(),
@@ -285,8 +302,8 @@ mod test {
             // TX hash is unique.
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect_err("transaction is not valid");
-            match e.downcast::<NodeError>().expect("proper error") {
-                NodeError::TransactionAlreadyExists(tx_hash) => {
+            match e.downcast::<NodeTransactionError>().expect("proper error") {
+                NodeTransactionError::AlreadyExists(tx_hash) => {
                     assert_eq!(tx_hash, Hash::digest(&tx));
                 }
                 _ => panic!(),
@@ -300,8 +317,8 @@ mod test {
             };
             let e = validate_transaction(&tx2, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect_err("transaction is not valid");
-            match e.downcast::<BlockchainError>().expect("proper error") {
-                BlockchainError::MissingUTXO(hash) => {
+            match e.downcast::<NodeTransactionError>().expect("proper error") {
+                NodeTransactionError::MissingInput(_tx_hash, hash) => {
                     assert_eq!(hash, input_hashes[0]);
                 }
                 _ => panic!(),
@@ -352,7 +369,7 @@ mod test {
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect_err("transaction is not valid");
             match e.downcast::<OutputError>().expect("proper error") {
-                OutputError::InvalidStake => {}
+                OutputError::InvalidStake(_output_hash) => {}
                 _ => panic!(),
             }
         }
@@ -367,10 +384,10 @@ mod test {
             let tx = Transaction::unchecked(&skey, &stakes, &[output], outputs_gamma, fee).unwrap();
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect_err("transaction is not valid");
-            match e.downcast::<EscrowError>().expect("proper error") {
-                EscrowError::StakeIsLocked(
-                    validator_pkey2,
+            match e.downcast::<OutputError>().expect("proper error") {
+                OutputError::StakeIsLocked(
                     input_hash,
+                    validator_pkey2,
                     bonding_timestamp,
                     timestamp2,
                 ) => {
@@ -379,6 +396,7 @@ mod test {
                     assert_eq!(bonding_timestamp, timestamp + bonding_time);
                     assert_eq!(timestamp2, timestamp);
                 }
+                _ => panic!(),
             }
             validate_transaction(
                 &tx,
@@ -408,8 +426,8 @@ mod test {
             let tx = Transaction::unchecked(&skey, &inputs, &outputs, outputs_gamma, fee).unwrap();
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect_err("transaction is not valid");
-            match e.downcast::<BlockchainError>().expect("proper error") {
-                BlockchainError::OutputHashCollision(hash) => {
+            match e.downcast::<NodeTransactionError>().expect("proper error") {
+                NodeTransactionError::OutputHashCollision(_tx_hash, hash) => {
                     assert_eq!(hash, output_hashes[0]);
                 }
                 _ => panic!(),
@@ -444,8 +462,8 @@ mod test {
                 .unwrap();
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect_err("transaction is not valid");
-            match e.downcast::<BlockchainError>().expect("proper error") {
-                BlockchainError::OutputHashCollision(hash) => {
+            match e.downcast::<NodeTransactionError>().expect("proper error") {
+                NodeTransactionError::OutputHashCollision(_tx_hash, hash) => {
                     assert_eq!(hash, Hash::digest(&output));
                 }
                 _ => panic!(),

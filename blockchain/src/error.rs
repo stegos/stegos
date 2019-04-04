@@ -23,6 +23,7 @@
 
 use failure::Fail;
 use stegos_crypto::hash::Hash;
+
 #[derive(Debug, Fail)]
 pub enum MultisignatureError {
     #[fail(
@@ -38,70 +39,100 @@ pub enum MultisignatureError {
     #[fail(display = "Signature is not valid: hash={} ", _0)]
     InvalidSignature(Hash),
 }
+
 #[derive(Debug, Fail)]
-pub enum BlockchainError {
+pub enum BlockError {
     #[fail(
-        display = "Previous hash mismatch: height={}, hash={}, expected_previous={}, got_previous={}.",
+        display = "Previous hash mismatch: height={}, block={}, block_previous={}, our_previous={}",
         _0, _1, _2, _3
     )]
     InvalidPreviousHash(u64, Hash, Hash, Hash),
-    #[fail(display = "Block hash collision: height={}, hash={}.", _0, _1)]
+    #[fail(display = "Block hash collision: height={}, block={}", _0, _1)]
     BlockHashCollision(u64, Hash),
-    #[fail(display = "UXTO hash collision: {}.", _0)]
-    OutputHashCollision(Hash),
     #[fail(
-        display = "Out of order block: block={}, expected_height={}, got_height={}",
+        display = "Out of order block: block={}, block_height={}, our_height={}",
         _0, _1, _2
     )]
     OutOfOrderBlock(Hash, u64, u64),
-    #[fail(display = "Missing UXTO {}.", _0)]
-    MissingUTXO(Hash),
-    #[fail(display = "Invalid block monetary balance.")]
-    InvalidBlockBalance,
-    #[fail(display = "Invalid block inputs: expected={}, got={}.", _0, _1)]
-    InvalidBlockInputsHash(Hash, Hash),
-    #[fail(display = "Invalid block outputs: expected={}, got={}.", _0, _1)]
-    InvalidBlockOutputsHash(Hash, Hash),
-    #[fail(display = "Duplicate block input: {}.", _0)]
-    DuplicateBlockInput(Hash),
-    #[fail(display = "Duplicate block output: {}.", _0)]
-    DuplicateBlockOutput(Hash),
-    #[fail(display = "The leader must be validator.")]
-    LeaderIsNotValidator,
-    #[fail(display = "No leader signature was found in BLS signature.")]
-    NoLeaderSignatureFound,
     #[fail(
-        display = "Found propose with more than one signature: height={}, hash={}.",
+        display = "Invalid block monetary balance: height={}, block={}",
+        _0, _1
+    )]
+    InvalidBlockBalance(u64, Hash),
+    #[fail(
+        display = "Invalid block input hash: height={}, block={}, expected={}, got={}",
+        _0, _1, _2, _3
+    )]
+    InvalidBlockInputsHash(u64, Hash, Hash, Hash),
+    #[fail(
+        display = "Invalid block output hash: height={}, block={}, expected={}, got={}",
+        _0, _1, _2, _3
+    )]
+    InvalidBlockOutputsHash(u64, Hash, Hash, Hash),
+    #[fail(
+        display = "Missing block input: height={}, block={}, utxo={}",
+        _0, _1, _1
+    )]
+    MissingBlockInput(u64, Hash, Hash),
+    #[fail(
+        display = "Duplicate block input: height={}, block={}, utxo={}",
+        _0, _1, _1
+    )]
+    DuplicateBlockInput(u64, Hash, Hash),
+    #[fail(
+        display = "Duplicate block output: height={}, block={}, utxo={}",
+        _0, _1, _2
+    )]
+    DuplicateBlockOutput(u64, Hash, Hash),
+    #[fail(
+        display = "Output hash collision: height={}, block={}, utxo={}",
+        _0, _1, _2
+    )]
+    OutputHashCollision(u64, Hash, Hash),
+    #[fail(display = "The leader must be validator: height={}, block={}", _0, _1)]
+    LeaderIsNotValidator(u64, Hash),
+    #[fail(
+        display = "No leader signature was found in BLS signature: height={}, block={}",
+        _0, _1
+    )]
+    NoLeaderSignatureFound(u64, Hash),
+    #[fail(
+        display = "Found propose with more than one signature: height={}, block={}",
         _0, _1
     )]
     MoreThanOneSignatureAtPropose(u64, Hash),
     #[fail(
-        display = "Invalid leader signature found: height={}, hash={}.",
+        display = "Invalid leader signature found: height={}, block={}",
         _0, _1
     )]
     InvalidLeaderSignature(u64, Hash),
     #[fail(
-        display = "Invalid block BLS multisignature: height={}, hash={}, error={}",
+        display = "Invalid block BLS multisignature: height={}, block={}, error={}",
         _1, _2, _0
     )]
     InvalidBlockSignature(MultisignatureError, u64, Hash),
     #[fail(
-        display = "Invalid block version: height={}, hash={}, expected={}, got={}",
+        display = "Invalid block version: height={}, block={}, block_version={}, our_version={}",
         _0, _1, _2, _3
     )]
     InvalidBlockVersion(u64, Hash, u64, u64),
     #[fail(
-        display = "Received block with invalid random: height={}, hash={}",
+        display = "Received block with invalid random: height={}, block={}",
         _0, _1
     )]
     IncorrectRandom(u64, Hash),
     #[fail(
-        display = "Received block with wrong view_change: height={}, hash={}, our_view_change={}, block_view_change={}",
+        display = "Received block with wrong view_change: height={}, block={}, block_view_change={}, our_view_change={}",
         _0, _1, _2, _3
     )]
     InvalidViewChange(u64, Hash, u32, u32),
     #[fail(
-        display = "No proof of view change found for out of order block: height={}, hash={}, our_view_change={}, block_view_change={}",
+        display = "Invalid view change proof: height={}, block={}, error={}",
+        _0, _1, _2
+    )]
+    InvalidViewChangeProof(u64, Hash, MultisignatureError),
+    #[fail(
+        display = "No proof of view change found for out of order block: height={}, block={}, block_view_change={}, our_view_change={}",
         _0, _1, _2, _3
     )]
     NoProofWasFound(u64, Hash, u32, u32),

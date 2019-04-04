@@ -54,24 +54,32 @@ pub const STAKE_PAYLOAD_LEN: usize = 36;
 /// UTXO errors.
 #[derive(Debug, Fail)]
 pub enum OutputError {
-    #[fail(display = "Invalid stake.")]
-    InvalidStake,
-    #[fail(display = "Invalid bulletproof.")]
-    InvalidBulletProof,
-    #[fail(display = "Invalid payload length: expected={}, got={}", _0, _1)]
-    InvalidPayloadLength(usize, usize),
-    #[fail(display = "Failed to decrypt payload")]
-    PayloadDecryptionError,
-    #[fail(display = "Data is too long:  max={}, got={}.", _0, _1)]
+    #[fail(display = "Invalid stake: utxo={}", _0)]
+    InvalidStake(Hash),
+    #[fail(display = "Invalid bulletproof: utxo={}", _0)]
+    InvalidBulletProof(Hash),
+    #[fail(
+        display = "Invalid payload length: utxo={}, expected={}, got={}",
+        _0, _1, _2
+    )]
+    InvalidPayloadLength(Hash, usize, usize),
+    #[fail(display = "Failed to decrypt payload: utxo={}", _0)]
+    PayloadDecryptionError(Hash),
+    #[fail(display = "Data is too long: max={}, got={}", _0, _1)]
     DataIsTooLong(usize, usize),
-    #[fail(display = "Unsupported data type: typecode={}.", _0)]
-    UnsupportedDataType(u8),
-    #[fail(display = "Trailing garbage in payload")]
-    TrailingGarbage,
-    #[fail(display = "Negative amount: amount={}", _0)]
-    NegativeAmount(i64),
-    #[fail(display = "Stake UTXO with invalid signature on validator pkey")]
-    InvalidStakeSignature,
+    #[fail(display = "Unsupported data type: utxo={}, typecode={}", _0, _1)]
+    UnsupportedDataType(Hash, u8),
+    #[fail(display = "Trailing garbage in payload: utxo={}", _0)]
+    TrailingGarbage(Hash),
+    #[fail(display = "Negative amount: utxo={}, amount={}", _0, _1)]
+    NegativeAmount(Hash, i64),
+    #[fail(display = "Invalid signature on validator pkey: utxo={}", _0)]
+    InvalidStakeSignature(Hash),
+    #[fail(
+        display = "Stake is locked: utxo={}, validator={}, bonding_time={:?}, current_time={:?}",
+        _0, _1, _2, _3
+    )]
+    StakeIsLocked(Hash, secure::PublicKey, SystemTime, SystemTime),
 }
 
 /// Payment UTXO.
@@ -251,11 +259,18 @@ impl PaymentPayload {
     }
 
     /// Decrypt and deserialize payload.
-    fn decrypt(payload: &EncryptedPayload, skey: &SecretKey) -> Result<Self, Error> {
+    fn decrypt(
+        output_hash: Hash,
+        payload: &EncryptedPayload,
+        skey: &SecretKey,
+    ) -> Result<Self, Error> {
         if payload.ctxt.len() != PAYMENT_PAYLOAD_LEN {
-            return Err(
-                OutputError::InvalidPayloadLength(PAYMENT_PAYLOAD_LEN, payload.ctxt.len()).into(),
-            );
+            return Err(OutputError::InvalidPayloadLength(
+                output_hash,
+                PAYMENT_PAYLOAD_LEN,
+                payload.ctxt.len(),
+            )
+            .into());
         }
         let payload: Vec<u8> = aes_decrypt(payload, skey)?;
         assert_eq!(payload.len(), PAYMENT_PAYLOAD_LEN);
@@ -267,7 +282,7 @@ impl PaymentPayload {
         pos += 4;
         if magic != PAYMENT_PAYLOAD_MAGIC {
             // Invalid payload or invalid secret key supplied.
-            return Err(OutputError::PayloadDecryptionError.into());
+            return Err(OutputError::PayloadDecryptionError(output_hash).into());
         }
 
         // Gamma.
@@ -288,7 +303,7 @@ impl PaymentPayload {
         pos += amount_bytes.len();
         let amount: i64 = i64::from_le(unsafe { transmute(amount_bytes) });
         if amount < 0 {
-            return Err(OutputError::NegativeAmount(amount).into());
+            return Err(OutputError::NegativeAmount(output_hash, amount).into());
         }
 
         // Data.
@@ -309,13 +324,13 @@ impl PaymentPayload {
                 pos += HASH_SIZE;
                 PaymentPayloadData::ContentHash(hash)
             }
-            code @ _ => return Err(OutputError::UnsupportedDataType(code).into()),
+            code @ _ => return Err(OutputError::UnsupportedDataType(output_hash, code).into()),
         };
 
         // Check for trailing garbage.
         for byte in &payload[pos..] {
             if *byte != 0 {
-                return Err(OutputError::TrailingGarbage.into());
+                return Err(OutputError::TrailingGarbage(output_hash).into());
             }
         }
 
@@ -352,11 +367,18 @@ impl StakePayload {
     }
 
     /// Decrypt and deserialize payload.
-    fn decrypt(payload: &EncryptedPayload, skey: &SecretKey) -> Result<Self, Error> {
+    fn decrypt(
+        output_hash: Hash,
+        payload: &EncryptedPayload,
+        skey: &SecretKey,
+    ) -> Result<Self, Error> {
         if payload.ctxt.len() != STAKE_PAYLOAD_LEN {
-            return Err(
-                OutputError::InvalidPayloadLength(STAKE_PAYLOAD_LEN, payload.ctxt.len()).into(),
-            );
+            return Err(OutputError::InvalidPayloadLength(
+                output_hash,
+                STAKE_PAYLOAD_LEN,
+                payload.ctxt.len(),
+            )
+            .into());
         }
         let payload: Vec<u8> = aes_decrypt(&payload, &skey)?;
         assert_eq!(payload.len(), STAKE_PAYLOAD_LEN);
@@ -368,7 +390,7 @@ impl StakePayload {
         pos += 4;
         if magic != STAKE_PAYLOAD_MAGIC {
             // Invalid payload or invalid secret key supplied.
-            return Err(OutputError::PayloadDecryptionError.into());
+            return Err(OutputError::PayloadDecryptionError(output_hash).into());
         }
 
         // Delta.
@@ -462,7 +484,8 @@ impl PaymentOutput {
 
     /// Decrypt payload.
     pub fn decrypt_payload(&self, skey: &SecretKey) -> Result<PaymentPayload, Error> {
-        PaymentPayload::decrypt(&self.payload, skey)
+        let output_hash = Hash::digest(&self);
+        PaymentPayload::decrypt(output_hash, &self.payload, skey)
     }
 }
 
@@ -508,7 +531,8 @@ impl StakeOutput {
 
     /// Decrypt payload of StakeOutput.
     pub fn decrypt_payload(&self, skey: &SecretKey) -> Result<StakePayload, Error> {
-        StakePayload::decrypt(&self.payload, skey)
+        let output_hash = Hash::digest(&self);
+        StakePayload::decrypt(output_hash, &self.payload, skey)
     }
 
     /// Validate BLS signature of validator_pkey
@@ -519,7 +543,8 @@ impl StakeOutput {
         self.payload.hash(&mut state);
         let h = state.result();
         if !secure::check_hash(&h, &self.signature, &self.validator) {
-            return Err(OutputError::InvalidStakeSignature.into());
+            let output_hash = Hash::digest(&self);
+            return Err(OutputError::InvalidStakeSignature(output_hash).into());
         }
         Ok(())
     }
@@ -614,9 +639,13 @@ pub mod tests {
         use simple_logger;
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
+        let output_hash = Hash::digest("test");
+
         fn rt(payload: &PaymentPayload, skey: &SecretKey, pkey: &PublicKey) {
+            let output_hash = Hash::digest("test");
             let encrypted = payload.encrypt(&pkey).expect("keys are valid");
-            let payload2 = PaymentPayload::decrypt(&encrypted, &skey).expect("keys are valid");
+            let payload2 =
+                PaymentPayload::decrypt(output_hash, &encrypted, &skey).expect("keys are valid");
             assert_eq!(payload, &payload2);
         }
 
@@ -705,9 +734,9 @@ pub mod tests {
         let mut invalid = raw.clone();
         invalid.push(0);
         let invalid = aes_encrypt(&invalid, &pkey).expect("keys are valid");
-        let e = PaymentPayload::decrypt(&invalid, &skey).unwrap_err();
+        let e = PaymentPayload::decrypt(output_hash, &invalid, &skey).unwrap_err();
         match e.downcast::<OutputError>().unwrap() {
-            OutputError::InvalidPayloadLength(expected, got) => {
+            OutputError::InvalidPayloadLength(_output_hash, expected, got) => {
                 assert_eq!(expected, PAYMENT_PAYLOAD_LEN);
                 assert_eq!(got, PAYMENT_PAYLOAD_LEN + 1);
             }
@@ -718,9 +747,9 @@ pub mod tests {
         let mut invalid = raw.clone();
         invalid[3] = 5;
         let invalid = aes_encrypt(&invalid, &pkey).expect("keys are valid");
-        let e = PaymentPayload::decrypt(&invalid, &skey).unwrap_err();
+        let e = PaymentPayload::decrypt(output_hash, &invalid, &skey).unwrap_err();
         match e.downcast::<OutputError>().unwrap() {
-            OutputError::PayloadDecryptionError => {}
+            OutputError::PayloadDecryptionError(_output_hash) => {}
             _ => unreachable!(),
         }
 
@@ -730,9 +759,9 @@ pub mod tests {
         let amount_bytes: [u8; 8] = unsafe { transmute(amount.to_le()) };
         invalid[68..68 + amount_bytes.len()].copy_from_slice(&amount_bytes);
         let invalid = aes_encrypt(&invalid, &pkey).expect("keys are valid");
-        let e = PaymentPayload::decrypt(&invalid, &skey).unwrap_err();
+        let e = PaymentPayload::decrypt(output_hash, &invalid, &skey).unwrap_err();
         match e.downcast::<OutputError>().unwrap() {
-            OutputError::NegativeAmount(amount2) => assert_eq!(amount, amount2),
+            OutputError::NegativeAmount(_output_hash, amount2) => assert_eq!(amount, amount2),
             _ => unreachable!(),
         }
 
@@ -741,9 +770,9 @@ pub mod tests {
         let code: u8 = 10;
         invalid[76] = code;
         let invalid = aes_encrypt(&invalid, &pkey).expect("keys are valid");
-        let e = PaymentPayload::decrypt(&invalid, &skey).unwrap_err();
+        let e = PaymentPayload::decrypt(output_hash, &invalid, &skey).unwrap_err();
         match e.downcast::<OutputError>().unwrap() {
-            OutputError::UnsupportedDataType(code2) => assert_eq!(code, code2),
+            OutputError::UnsupportedDataType(_output_hash, code2) => assert_eq!(code, code2),
             _ => unreachable!(),
         }
 
@@ -751,9 +780,9 @@ pub mod tests {
         let mut invalid = raw.clone();
         invalid[77 + HASH_SIZE] = 1;
         let invalid = aes_encrypt(&invalid, &pkey).expect("keys are valid");
-        let e = PaymentPayload::decrypt(&invalid, &skey).unwrap_err();
+        let e = PaymentPayload::decrypt(output_hash, &invalid, &skey).unwrap_err();
         match e.downcast::<OutputError>().unwrap() {
-            OutputError::TrailingGarbage => {}
+            OutputError::TrailingGarbage(_output_hash) => {}
             _ => unreachable!(),
         }
     }
@@ -767,12 +796,15 @@ pub mod tests {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
         fn rt(payload: &StakePayload, skey: &SecretKey, pkey: &PublicKey) {
+            let output_hash = Hash::digest("test");
             let encrypted = payload.encrypt(&pkey).expect("keys are valid");
-            let payload2 = StakePayload::decrypt(&encrypted, &skey).expect("keys are valid");
+            let payload2 =
+                StakePayload::decrypt(output_hash, &encrypted, &skey).expect("keys are valid");
             assert_eq!(payload, &payload2);
         }
 
         let (skey, pkey, _sig) = make_random_keys();
+        let output_hash = Hash::digest("test");
 
         // Basic.
         let delta: Fr = Fr::random();
@@ -791,9 +823,9 @@ pub mod tests {
         let mut invalid = raw.clone();
         invalid.push(0);
         let invalid = aes_encrypt(&invalid, &pkey).expect("keys are valid");
-        let e = StakePayload::decrypt(&invalid, &skey).unwrap_err();
+        let e = StakePayload::decrypt(output_hash, &invalid, &skey).unwrap_err();
         match e.downcast::<OutputError>().unwrap() {
-            OutputError::InvalidPayloadLength(expected, got) => {
+            OutputError::InvalidPayloadLength(_output_hash, expected, got) => {
                 assert_eq!(expected, STAKE_PAYLOAD_LEN);
                 assert_eq!(got, STAKE_PAYLOAD_LEN + 1);
             }
@@ -804,9 +836,9 @@ pub mod tests {
         let mut invalid = raw.clone();
         invalid[3] = 5;
         let invalid = aes_encrypt(&invalid, &pkey).expect("keys are valid");
-        let e = StakePayload::decrypt(&invalid, &skey).unwrap_err();
+        let e = StakePayload::decrypt(output_hash, &invalid, &skey).unwrap_err();
         match e.downcast::<OutputError>().unwrap() {
-            OutputError::PayloadDecryptionError => {}
+            OutputError::PayloadDecryptionError(_output_hash) => {}
             _ => unreachable!(),
         }
     }
@@ -834,7 +866,7 @@ pub mod tests {
         // Error handling
         if let Err(e) = output.decrypt_payload(&skey1) {
             match e.downcast::<OutputError>() {
-                Ok(OutputError::PayloadDecryptionError) => (),
+                Ok(OutputError::PayloadDecryptionError(_output_hash)) => (),
                 _ => assert!(false),
             };
         } else {
@@ -870,7 +902,7 @@ pub mod tests {
         // Error handling
         if let Err(e) = output.decrypt_payload(&skey1) {
             match e.downcast::<OutputError>() {
-                Ok(OutputError::PayloadDecryptionError) => (),
+                Ok(OutputError::PayloadDecryptionError(_output_hash)) => (),
                 _ => assert!(false),
             };
         } else {

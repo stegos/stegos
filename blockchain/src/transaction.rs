@@ -264,10 +264,11 @@ impl Transaction {
                 Output::PaymentOutput(o) => {
                     // Check bulletproofs of created outputs
                     if !validate_range_proof(&o.proof) {
-                        return Err(OutputError::InvalidBulletProof.into());
+                        return Err(OutputError::InvalidBulletProof(txout_hash).into());
                     }
                     if o.payload.ctxt.len() != PAYMENT_PAYLOAD_LEN {
                         return Err(OutputError::InvalidPayloadLength(
+                            txout_hash,
                             PAYMENT_PAYLOAD_LEN,
                             o.payload.ctxt.len(),
                         )
@@ -280,10 +281,11 @@ impl Transaction {
                 Output::StakeOutput(o) => {
                     o.validate_pkey()?; // need to prove that we own SecurePublicKey
                     if o.amount <= 0 {
-                        return Err(OutputError::InvalidStake.into());
+                        return Err(OutputError::InvalidStake(txout_hash).into());
                     }
                     if o.payload.ctxt.len() != STAKE_PAYLOAD_LEN {
                         return Err(OutputError::InvalidPayloadLength(
+                            txout_hash,
                             STAKE_PAYLOAD_LEN,
                             o.payload.ctxt.len(),
                         )
@@ -495,7 +497,7 @@ pub mod tests {
         {
             match Transaction::new_test(&skey0, &pkey0, 0, 1, -1, 1, 0) {
                 Err(e) => match e.downcast::<OutputError>().unwrap() {
-                    OutputError::InvalidBulletProof => {}
+                    OutputError::InvalidBulletProof(_output_hash) => {}
                     _ => panic!(),
                 },
                 _ => {}
@@ -729,7 +731,7 @@ pub mod tests {
         let outputs_gamma = Fr::zero();
         match Transaction::new(&skey1, &inputs, &[output], outputs_gamma, fee) {
             Err(e) => match e.downcast::<OutputError>().unwrap() {
-                OutputError::InvalidStake => {}
+                OutputError::InvalidStake(_output_hash) => {}
                 _ => panic!(),
             },
             _ => panic!(),
@@ -765,7 +767,7 @@ pub mod tests {
         let e = tx.validate(&inputs).expect_err("transaction is invalid");
         dbg!(&e);
         match e.downcast::<OutputError>().unwrap() {
-            OutputError::InvalidStakeSignature => {}
+            OutputError::InvalidStakeSignature(_output_hash) => {}
             _ => panic!(),
         }
     }

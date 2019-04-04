@@ -24,7 +24,7 @@
 // SOFTWARE.
 
 use crate::mvcc::MultiVersionedMap;
-use failure::Fail;
+use crate::output::OutputError;
 use log::*;
 use serde_derive::Serialize;
 use std::collections::BTreeMap;
@@ -126,7 +126,7 @@ impl Escrow {
         validator_pkey: &secure::PublicKey,
         output_hash: &Hash,
         timestamp: SystemTime,
-    ) -> Result<(), EscrowError> {
+    ) -> Result<(), OutputError> {
         let key = EscrowKey {
             validator_pkey: validator_pkey.clone(),
             output_hash: output_hash.clone(),
@@ -137,9 +137,9 @@ impl Escrow {
 
         // Check bonding time.
         if val.bonding_timestamp >= timestamp {
-            return Err(EscrowError::StakeIsLocked(
-                key.validator_pkey,
+            return Err(OutputError::StakeIsLocked(
                 key.output_hash,
+                key.validator_pkey,
                 val.bonding_timestamp,
                 timestamp,
             ));
@@ -268,13 +268,4 @@ impl Escrow {
     pub fn rollback_to_version(&mut self, to_version: u64) {
         self.escrow.rollback_to_version(to_version);
     }
-}
-
-#[derive(Debug, Fail, PartialEq, Eq)]
-pub enum EscrowError {
-    #[fail(
-        display = "Stake is locked: validator={}, stake={}, bonding_time={:?}, current_time={:?}",
-        _0, _1, _2, _3
-    )]
-    StakeIsLocked(secure::PublicKey, Hash, SystemTime, SystemTime),
 }

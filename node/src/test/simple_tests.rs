@@ -60,7 +60,8 @@ fn simulate_payment(node: &mut NodeService, amount: i64) -> Result<(), Error> {
         let output = node
             .chain
             .output_by_hash(&hash)
-            .expect("no errors and utxo exists");
+            .expect("no disk errors")
+            .expect("utxo exists");
         if let Output::PaymentOutput(ref o) = output {
             let PaymentPayload { amount, .. } = o.decrypt_payload(sender_skey).unwrap();
             inputs.push(output);
@@ -114,7 +115,8 @@ pub fn monetary_requests() {
         match node
             .chain
             .output_by_hash(&unspent)
-            .expect("exists and no disk errors ")
+            .expect("no disk errors")
+            .expect("utxo exists")
         {
             Output::PaymentOutput(o) => {
                 let PaymentPayload { amount, .. } = o.decrypt_payload(&keys.wallet_skey).unwrap();
@@ -146,6 +148,7 @@ pub fn monetary_requests() {
         match node
             .chain
             .output_by_hash(&unspent)
+            .expect("no disk errors")
             .expect("exists and no disk errors")
         {
             Output::PaymentOutput(o) => {

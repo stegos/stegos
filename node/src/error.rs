@@ -28,23 +28,45 @@ use std::time::SystemTime;
 use stegos_crypto::hash::Hash;
 
 #[derive(Debug, Fail, PartialEq, Eq)]
-pub enum NodeError {
-    #[fail(display = "Fee is to low: min={}, got={}", _0, _1)]
-    TooLowFee(i64, i64),
+pub enum NodeTransactionError {
     #[fail(
-        display = "Invalid block reward: hash={}, expected={}, got={}",
+        display = "Transaction fee is too low: tx={}, min={}, got={}",
         _0, _1, _2
     )]
-    InvalidBlockReward(Hash, i64, i64),
-    #[fail(display = "Transaction already exists in mempool: {}.", _0)]
-    TransactionAlreadyExists(Hash),
-    #[fail(display = "Expected a key block, got monetary block: height={}.", _0)]
-    ExpectedKeyBlock(u64),
-    #[fail(display = "Expected a monetary block, got key block: height={}.", _0)]
-    ExpectedMonetaryBlock(u64),
+    TooLowFee(Hash, i64, i64),
+    #[fail(display = "Transaction already exists in mempool: tx={}", _0)]
+    AlreadyExists(Hash),
+    #[fail(display = "Missing transaction input: tx={}, utxo={}", _0, _1)]
+    MissingInput(Hash, Hash),
+    #[fail(display = "Output hash collision: tx={}, utxo={}", _0, _1)]
+    OutputHashCollision(Hash, Hash),
+}
+
+#[derive(Debug, Fail, PartialEq, Eq)]
+pub enum NodeBlockError {
     #[fail(
-        display = "Found a block proposal with timestamp: {:?} that differ with our timestamp: {:?}.",
+        display = "Unexpected monetary adjustment: height={}, block={}, got={}, expected={}",
+        _0, _1, _2, _3
+    )]
+    InvalidMonetaryAdjustment(u64, Hash, i64, i64),
+    #[fail(
+        display = "Expected a key block, got monetary block: height={}, block={}",
         _0, _1
     )]
-    UnsynchronizedBlock(SystemTime, SystemTime),
+    ExpectedKeyBlock(u64, Hash),
+    #[fail(
+        display = "Expected a monetary block, got key block: height={}, block={}",
+        _0, _1
+    )]
+    ExpectedMonetaryBlock(u64, Hash),
+    #[fail(
+        display = "Timestamp is out of sync: height={}, block={}, block_timestamp={:?}, our_timestamp={:?}",
+        _0, _1, _2, _3
+    )]
+    OutOfSyncTimestamp(u64, Hash, SystemTime, SystemTime),
+    #[fail(
+        display = "Proposed view_change different from ours: height={}, block={}, block_viewchange={}, our_viewchange={}",
+        _0, _1, _2, _3
+    )]
+    OutOfSyncViewChange(u64, Hash, u32, u32),
 }

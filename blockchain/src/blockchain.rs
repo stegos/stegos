@@ -34,7 +34,7 @@ use crate::mvcc::MultiVersionedMap;
 use crate::output::*;
 use crate::storage::ListDb;
 use crate::view_changes::ChainInfo;
-use failure::{ensure, Error};
+use failure::Error;
 use log::*;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
@@ -228,26 +228,26 @@ impl Blockchain {
                 }
             }
             info!(
-                "Initialized a new blockchain: height={}, hash={}",
+                "Initialized a new blockchain: height={}, last_block={}",
                 self.height, self.last_block_hash
             );
             return;
         };
 
-        info!("Loading blockchain from database.");
+        info!("Recovering blockchain from the disk...");
         self.recover_block(block, timestamp);
         for block in blocks {
             self.recover_block(block, timestamp);
         }
 
-        for ((height, genesis), chain) in genesis.iter().enumerate().zip(self.blocks()) {
+        for (genesis, chain) in genesis.iter().zip(self.blocks()) {
             let genesis_hash = Hash::digest(genesis);
             let chain_hash = Hash::digest(&chain);
             if genesis_hash != chain_hash {
                 error!(
                     "Found a saved chain that is not compatible to our genesis at height = {}, \
                      genesis_block = {:?}, database_block = {:?}",
-                    height + 1,
+                    chain.base_header().height,
                     genesis_hash,
                     chain_hash
                 );
@@ -256,14 +256,15 @@ impl Blockchain {
         }
 
         info!(
-            "Recovered blockchain from the disk: height={}, hash={}",
+            "Recovered blockchain from the disk: height={}, last_block={}",
             self.height, self.last_block_hash
         );
     }
 
     fn recover_block(&mut self, block: Block, timestamp: SystemTime) {
         debug!(
-            "Loading a block from the disk: hash={}",
+            "Recovering a block from the disk: height={}, block={}",
+            block.base_header().height,
             Hash::digest(&block)
         );
         // Skip validate_key_block()/validate_monetary_block().
@@ -328,31 +329,20 @@ impl Blockchain {
     }
 
     /// Resolve UTXO by hash.
-    pub fn output_by_hash(&self, output_hash: &Hash) -> Result<Output, Error> {
+    pub fn output_by_hash(&self, output_hash: &Hash) -> Result<Option<Output>, Error> {
         if let Some(OutputKey { height, path }) = self.output_by_hash.get(output_hash) {
             let block = self.block_by_height(*height)?;
             if let Block::MonetaryBlock(MonetaryBlock { header: _, body }) = block {
                 if let Some(output) = body.outputs.lookup(path) {
-                    return Ok(output.as_ref().clone());
+                    return Ok(Some(output.as_ref().clone()));
                 } else {
-                    return Err(BlockchainError::MissingUTXO(output_hash.clone()).into());
+                    return Ok(None);
                 }
             } else {
                 unreachable!(); // Non-monetary block
             }
         }
-        return Err(BlockchainError::MissingUTXO(output_hash.clone()).into());
-    }
-
-    /// Resolve the list of UTXOs by its hashes.
-    pub fn outputs_by_hashes(&self, output_hashes: &[Hash]) -> Result<Vec<Output>, Error> {
-        // TODO: optimize this function for batch processing.
-        let mut outputs: Vec<Output> = Vec::new();
-        for output_hash in output_hashes {
-            let input = self.output_by_hash(output_hash)?;
-            outputs.push(input);
-        }
-        Ok(outputs)
+        return Ok(None);
     }
 
     /// Checks whether a block exists or not.
@@ -374,7 +364,7 @@ impl Blockchain {
         self.database.iter()
     }
 
-    /// Returns blocks history starting from block_hash, limited by count.
+    /// Returns blocks history starting from block_hash + 1, limited by count.
     pub fn blocks_range(&self, starting_hash: &Hash, count: u64) -> Option<Vec<Block>> {
         if let Some(&height) = self.block_by_hash.get(starting_hash) {
             let height = height + 1;
@@ -391,10 +381,7 @@ impl Blockchain {
     /// Return the last block.
     pub fn last_block(&self) -> Result<Block, Error> {
         assert!(self.height > 0);
-        match self.database.get(self.height - 1) {
-            Ok(block) => Ok(block.expect("block exists")),
-            Err(e) => Err(e),
-        }
+        Ok(self.database.get(self.height - 1)?.expect("block exists"))
     }
 
     /// Return leader public key for specific view_change number.
@@ -516,13 +503,13 @@ impl Blockchain {
         let height = block.header.base.height;
         let block_hash = Hash::digest(&block);
         debug!(
-            "Validating a key block: height={}, hash={}",
+            "Validating a key block: height={}, block={}",
             height, &block_hash
         );
 
         // Check block version.
         if block.header.base.version != VERSION {
-            return Err(BlockchainError::InvalidBlockVersion(
+            return Err(BlockError::InvalidBlockVersion(
                 height,
                 block_hash,
                 VERSION,
@@ -533,7 +520,7 @@ impl Blockchain {
 
         // Check height.
         if block.header.base.height != self.height {
-            return Err(BlockchainError::OutOfOrderBlock(
+            return Err(BlockError::OutOfOrderBlock(
                 block_hash,
                 self.height,
                 block.header.base.height,
@@ -545,11 +532,11 @@ impl Blockchain {
         if self.height > 0 {
             let previous_hash = self.last_block_hash();
             if previous_hash != block.header.base.previous {
-                return Err(BlockchainError::InvalidPreviousHash(
+                return Err(BlockError::InvalidPreviousHash(
                     height,
                     block_hash,
-                    previous_hash,
                     block.header.base.previous,
+                    previous_hash,
                 )
                 .into());
             }
@@ -557,16 +544,16 @@ impl Blockchain {
 
         // Check new hash.
         if let Some(_) = self.block_by_hash.get(&block_hash) {
-            return Err(BlockchainError::BlockHashCollision(height, block_hash).into());
+            return Err(BlockError::BlockHashCollision(height, block_hash).into());
         }
 
         // Check the view change.
         if block.header.base.view_change != self.view_change() {
-            return Err(BlockchainError::InvalidViewChange(
+            return Err(BlockError::InvalidViewChange(
                 height,
                 block_hash,
-                self.view_change,
                 block.header.base.view_change,
+                self.view_change,
             )
             .into());
         }
@@ -576,7 +563,7 @@ impl Blockchain {
             let leader = self.select_leader(block.header.base.view_change);
             let seed = mix(self.last_random(), block.header.base.view_change);
             if !secure::validate_VRF_source(&block.header.random, &leader, &seed) {
-                return Err(BlockchainError::IncorrectRandom(height, block_hash).into());
+                return Err(BlockError::IncorrectRandom(height, block_hash).into());
             }
 
             // Currently macro block consensus uses public key as peer id.
@@ -590,24 +577,23 @@ impl Blockchain {
 
             if let Some(leader_id) = validators_map.get(&leader) {
                 // bit of leader should be always set.
-                ensure!(
-                    block.body.multisigmap.contains(*leader_id as usize),
-                    BlockchainError::NoLeaderSignatureFound
-                );
+                if !block.body.multisigmap.contains(*leader_id as usize) {
+                    return Err(BlockError::NoLeaderSignatureFound(height, block_hash).into());
+                }
             } else {
-                return Err(BlockchainError::LeaderIsNotValidator.into());
+                return Err(BlockError::LeaderIsNotValidator(height, block_hash).into());
             }
 
             // checks that proposal is signed only by leader.
             if is_proposal {
-                ensure!(
-                    block.body.multisigmap.len() == 1,
-                    BlockchainError::MoreThanOneSignatureAtPropose(height, block_hash)
-                );
-                ensure!(
-                    secure::check_hash(&block_hash, &block.body.multisig, &leader),
-                    BlockchainError::InvalidLeaderSignature(height, block_hash)
-                );
+                if block.body.multisigmap.len() != 1 {
+                    return Err(
+                        BlockError::MoreThanOneSignatureAtPropose(height, block_hash).into(),
+                    );
+                }
+                if !secure::check_hash(&block_hash, &block.body.multisig, &leader) {
+                    return Err(BlockError::InvalidLeaderSignature(height, block_hash).into());
+                }
             } else {
                 check_multi_signature(
                     &block_hash,
@@ -616,12 +602,12 @@ impl Blockchain {
                     self.validators(),
                     self.total_slots(),
                 )
-                .map_err(|e| BlockchainError::InvalidBlockSignature(e, height, block_hash))?;
+                .map_err(|e| BlockError::InvalidBlockSignature(e, height, block_hash))?;
             }
         }
 
         debug!(
-            "The key block is valid: height={}, hash={}",
+            "The key block is valid: height={}, block={}",
             height, &block_hash
         );
         Ok(())
@@ -644,7 +630,7 @@ impl Blockchain {
             .insert(version, block_hash.clone(), height)
         {
             panic!(
-                "Block hash collision: height={}, hash={}",
+                "A block hash collision: height={}, block={}",
                 height, block_hash
             );
         }
@@ -669,7 +655,7 @@ impl Blockchain {
         metrics::EPOCH.inc();
 
         info!(
-            "Registered key block: height={}, hash={}",
+            "Registered a key block: height={}, block={}",
             height, block_hash
         );
         debug!("Validators: {:?}", &self.validators());
@@ -737,35 +723,35 @@ impl Blockchain {
         let height = block.header.base.height;
         let block_hash = Hash::digest(&block);
         debug!(
-            "Validating a monetary block: height={}, hash={}",
+            "Validating a monetary block: height={}, block={}",
             height, &block_hash
         );
 
         // Check block version.
         if block.header.base.version != VERSION {
-            return Err(BlockchainError::InvalidBlockVersion(
+            return Err(BlockError::InvalidBlockVersion(
                 height,
                 block_hash,
-                VERSION,
                 block.header.base.version,
+                VERSION,
             )
             .into());
         }
 
         // Check height.
-        if block.header.base.height != self.height {
-            return Err(BlockchainError::OutOfOrderBlock(block_hash, self.height, height).into());
+        if height != self.height {
+            return Err(BlockError::OutOfOrderBlock(block_hash, height, self.height).into());
         }
 
         // Check previous hash.
         if self.height > 0 {
             let previous_hash = self.last_block_hash();
             if previous_hash != block.header.base.previous {
-                return Err(BlockchainError::InvalidPreviousHash(
+                return Err(BlockError::InvalidPreviousHash(
                     height,
                     block_hash,
-                    previous_hash,
                     block.header.base.previous,
+                    previous_hash,
                 )
                 .into());
             }
@@ -773,10 +759,8 @@ impl Blockchain {
 
         // Check new hash.
         if let Some(_) = self.block_by_hash.get(&block_hash) {
-            return Err(BlockchainError::BlockHashCollision(height, block_hash).into());
+            return Err(BlockError::BlockHashCollision(height, block_hash).into());
         }
-
-        //TODO: remove multisig?
 
         // Check signature (exclude epoch == 0 for genesis).
         if self.epoch > 0 {
@@ -786,34 +770,35 @@ impl Blockchain {
                     let chain = ChainInfo::from_monetary_block(&block, self.height());
                     match block.header.proof {
                         Some(ref proof) => {
-                            proof.validate(&chain, &self)?;
+                            proof.validate(&chain, &self).map_err(|e| {
+                                BlockError::InvalidViewChangeProof(height, block_hash, e)
+                            })?;
                             self.select_leader(block.header.base.view_change)
                         }
                         _ => {
-                            return Err(BlockchainError::NoProofWasFound(
+                            return Err(BlockError::NoProofWasFound(
                                 height,
                                 block_hash,
-                                self.view_change,
                                 block.header.base.view_change,
+                                self.view_change,
                             )
                             .into());
                         }
                     }
                 }
                 Ordering::Less => {
-                    return Err(BlockchainError::InvalidViewChange(
+                    return Err(BlockError::InvalidViewChange(
                         height,
                         block_hash,
-                        self.view_change,
                         block.header.base.view_change,
+                        self.view_change,
                     )
                     .into());
                 }
             };
-            ensure!(
-                secure::check_hash(&block_hash, &block.body.sig, &leader),
-                BlockchainError::InvalidLeaderSignature(height, block_hash)
-            );
+            if !secure::check_hash(&block_hash, &block.body.sig, &leader) {
+                return Err(BlockError::InvalidLeaderSignature(height, block_hash).into());
+            }
         }
 
         let mut burned = ECp::inf();
@@ -826,12 +811,18 @@ impl Blockchain {
         let inputs_count: u64 = block.body.inputs.len() as u64;
         inputs_count.hash(&mut hasher);
         let mut input_set: HashSet<Hash> = HashSet::new();
-        let inputs = self.outputs_by_hashes(&block.body.inputs)?;
-        for (input_hash, input) in block.body.inputs.iter().zip(inputs.iter()) {
-            debug_assert_eq!(Hash::digest(input), *input_hash);
+        for input_hash in block.body.inputs.iter() {
+            let input = match self.output_by_hash(input_hash)? {
+                Some(input) => input,
+                None => {
+                    return Err(
+                        BlockError::MissingBlockInput(height, block_hash, *input_hash).into(),
+                    );
+                }
+            };
             // Check for the duplicate input.
             if !input_set.insert(*input_hash) {
-                return Err(BlockchainError::DuplicateBlockInput(*input_hash).into());
+                return Err(BlockError::DuplicateBlockInput(height, block_hash, *input_hash).into());
             }
             // Check UTXO.
             match input {
@@ -852,7 +843,9 @@ impl Blockchain {
         if block.header.inputs_range_hash != inputs_range_hash {
             let expected = block.header.inputs_range_hash.clone();
             let got = inputs_range_hash;
-            return Err(BlockchainError::InvalidBlockInputsHash(expected, got).into());
+            return Err(
+                BlockError::InvalidBlockInputsHash(height, block_hash, expected, got).into(),
+            );
         }
         //
         // Validate outputs.
@@ -862,22 +855,25 @@ impl Blockchain {
             // Check that hash is unique.
             let output_hash = Hash::digest(output.as_ref());
             if let Some(_) = self.output_by_hash.get(&output_hash) {
-                return Err(BlockchainError::OutputHashCollision(output_hash).into());
+                return Err(BlockError::OutputHashCollision(height, block_hash, output_hash).into());
             }
             // Check for the duplicate output.
             if !output_set.insert(output_hash) {
-                return Err(BlockchainError::DuplicateBlockOutput(output_hash).into());
+                return Err(
+                    BlockError::DuplicateBlockOutput(height, block_hash, output_hash).into(),
+                );
             }
             // Check UTXO.
             match output.as_ref() {
                 Output::PaymentOutput(o) => {
                     // Validate bullet proofs.
                     if !validate_range_proof(&o.proof) {
-                        return Err(OutputError::InvalidBulletProof.into());
+                        return Err(OutputError::InvalidBulletProof(output_hash).into());
                     }
                     // Validate payload.
                     if o.payload.ctxt.len() != PAYMENT_PAYLOAD_LEN {
                         return Err(OutputError::InvalidPayloadLength(
+                            output_hash,
                             PAYMENT_PAYLOAD_LEN,
                             o.payload.ctxt.len(),
                         )
@@ -891,11 +887,12 @@ impl Blockchain {
                     o.validate_pkey()?;
                     // Validate amount.
                     if o.amount <= 0 {
-                        return Err(OutputError::InvalidStake.into());
+                        return Err(OutputError::InvalidStake(output_hash).into());
                     }
                     // Validate payload.
                     if o.payload.ctxt.len() != STAKE_PAYLOAD_LEN {
                         return Err(OutputError::InvalidPayloadLength(
+                            output_hash,
                             STAKE_PAYLOAD_LEN,
                             o.payload.ctxt.len(),
                         )
@@ -910,14 +907,16 @@ impl Blockchain {
         if block.header.outputs_range_hash != *block.body.outputs.roothash() {
             let expected = block.header.outputs_range_hash.clone();
             let got = block.body.outputs.roothash().clone();
-            return Err(BlockchainError::InvalidBlockOutputsHash(expected, got).into());
+            return Err(
+                BlockError::InvalidBlockOutputsHash(height, block_hash, expected, got).into(),
+            );
         }
 
         //
         // Validate block monetary balance.
         //
         if fee_a(block.header.monetary_adjustment) + burned - created != block.header.gamma * (*G) {
-            return Err(BlockchainError::InvalidBlockBalance.into());
+            return Err(BlockError::InvalidBlockBalance(height, block_hash).into());
         }
 
         //
@@ -934,10 +933,16 @@ impl Blockchain {
         if fee_a(balance.monetary_adjustment) + balance.burned - balance.created
             != balance.gamma * (*G)
         {
-            panic!("Invalid global monetary balance");
+            panic!(
+                "Invalid global monetary balance: height={}, block={}",
+                height, &block_hash
+            );
         }
 
-        debug!("The monetary block is valid: hash={}", &block_hash);
+        debug!(
+            "The monetary block is valid: height={}, block={}",
+            height, &block_hash
+        );
         Ok(())
     }
 
@@ -961,7 +966,7 @@ impl Blockchain {
             .insert(version, block_hash.clone(), height)
         {
             panic!(
-                "Block hash collision: height={}, hash={}",
+                "Block hash collision: height={}, block={}",
                 height, block_hash
             );
         }
@@ -1016,12 +1021,15 @@ impl Blockchain {
                 }
             } else {
                 panic!(
-                    "Missing input UTXO: block={}, hash={}",
-                    &block_hash, &input_hash
+                    "Missing input UTXO: height={}, block={}, utxo={}",
+                    height, &block_hash, &input_hash
                 );
             }
 
-            info!("Pruned UXTO: hash={}", &input_hash);
+            debug!(
+                "Pruned UXTO: height={}, block={}, utxo={}",
+                height, &block_hash, &input_hash
+            );
         }
 
         //
@@ -1037,7 +1045,10 @@ impl Blockchain {
                 .output_by_hash
                 .insert(version, output_hash.clone(), output_key)
             {
-                panic!("UTXO hash collision: hash={}", output_hash);
+                panic!(
+                    "UTXO hash collision: height={}, block={}, utxo={}",
+                    height, &block_hash, &output_hash
+                );
             }
             assert_eq!(self.output_by_hash.current_version(), version);
 
@@ -1062,12 +1073,18 @@ impl Blockchain {
             }
 
             outputs.push(output.as_ref().clone());
-            info!("Registered UXTO: hash={}", &output_hash);
+            debug!(
+                "Registered UXTO: height={}, block={}, utxo={}",
+                height, &block_hash, &output_hash
+            );
         }
 
         // Check the block monetary balance.
         if fee_a(block.header.monetary_adjustment) + burned - created != block.header.gamma * (*G) {
-            panic!("Invalid block balance")
+            panic!(
+                "Invalid block monetary balance: height={}, block={}",
+                height, &block_hash
+            )
         }
 
         //
@@ -1091,7 +1108,10 @@ impl Blockchain {
         if fee_a(balance.monetary_adjustment) + balance.burned - balance.created
             != balance.gamma * (*G)
         {
-            panic!("Invalid global monetary balance");
+            panic!(
+                "Invalid global monetary balance: height={}, block={}",
+                height, &block_hash
+            );
         }
         self.balance.insert(version, (), balance);
         assert_eq!(self.balance.current_version(), version);
@@ -1103,7 +1123,7 @@ impl Blockchain {
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
 
         info!(
-            "Registered monetary block: height={}, hash={}, inputs={}, outputs={}",
+            "Registered a monetary block: height={}, block={}, inputs={}, outputs={}",
             height,
             block_hash,
             inputs.len(),
@@ -1132,6 +1152,7 @@ impl Blockchain {
             panic!("Expected monetary block");
         };
         self.database.remove(height)?;
+        let block_hash = Hash::digest(&block);
 
         //
         // Revert metadata.
@@ -1154,16 +1175,22 @@ impl Blockchain {
         let mut outputs_count: usize = 0;
         for (output, _path) in block.body.outputs.leafs() {
             let output_hash = Hash::digest(output.as_ref());
-            info!("Reverted UTXO: hash={}", &output_hash);
+            debug!(
+                "Reverted UTXO: height={}, block={}, utxo={}",
+                height, &block_hash, &output_hash
+            );
             outputs_count += 1;
         }
 
         for input_hash in &block.body.inputs {
-            info!("Restored UXTO: hash={}", &input_hash);
+            debug!(
+                "Restored UXTO: height={}, block={}, utxo={}",
+                height, &block_hash, &input_hash
+            );
         }
 
         info!(
-            "Reverted monetary block: height={}, hash={}, inputs={}, outputs={}",
+            "Reverted a monetary block: height={}, block={}, inputs={}, outputs={}",
             self.height,
             Hash::digest(&block),
             block.body.inputs.len(),
@@ -1254,10 +1281,16 @@ pub mod tests {
         );
 
         assert!(!blockchain.contains_output(&Hash::digest("test")));
-        assert!(blockchain.output_by_hash(&Hash::digest("test")).is_err());
+        assert!(blockchain
+            .output_by_hash(&Hash::digest("test"))
+            .expect("no disk errors")
+            .is_none());
         for (output, _path) in block1.body.outputs.leafs() {
             let output_hash = Hash::digest(&output);
-            let output2 = blockchain.output_by_hash(&output_hash).expect("exists");
+            let output2 = blockchain
+                .output_by_hash(&output_hash)
+                .expect("no disk errors")
+                .expect("exists");
             assert_eq!(Hash::digest(&output2), output_hash);
             assert!(blockchain.contains_output(&output_hash));
         }
@@ -1275,7 +1308,8 @@ pub mod tests {
         for input_hash in chain.unspent() {
             let input = chain
                 .output_by_hash(&input_hash)
-                .expect("exists and no disk errors");
+                .expect("no disk errors")
+                .expect("exists");
             match input {
                 Output::PaymentOutput(ref o) => {
                     let payload = o.decrypt_payload(&keys.wallet_skey).unwrap();

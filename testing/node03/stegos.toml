@@ -16,6 +16,7 @@ advertise_local_ips = false
 seed_nodes = [
     "/ip4/127.0.0.1/tcp/10055",
     "/ip4/127.0.0.1/tcp/10056",
+    "/ip4/127.0.0.1/tcp/10058",
 ]
 advertised_addresses = [
     "/ip4/127.0.0.1/tcp/10057",

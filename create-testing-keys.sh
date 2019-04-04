@@ -1,7 +1,7 @@
 #!/bin/sh
 
 set -e
-export NUM_KEYS=${1:-3}
+export NUM_KEYS=${1:-4}
 
 rm -f stegos*.pkey stegos*.skey public-key.der private-key.pk8 genesis*.bin
 
@@ -9,7 +9,7 @@ rm -f stegos*.pkey stegos*.skey public-key.der private-key.pk8 genesis*.bin
 cargo run --bin bootstrap -- --keys $NUM_KEYS
 
 mkdir -p testing
-for i in `seq -f "%02g" 1 $NUM_KEYS`; do
+for i in $(seq -f "%02g" 1 $NUM_KEYS); do
     mkdir -p testing/ testing/node$i
 
     # Wallet Keys

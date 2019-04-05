@@ -168,6 +168,8 @@ where
                     GatekeeperOutEvent::PrepareListener { peer_id: id },
                 ));
             } else {
+                // For now let all connections be full node
+                // TODO: handle different kinds of connections properly
                 self.events.push_back(NetworkBehaviourAction::SendEvent {
                     peer_id: id,
                     event: GatekeeperSendEvent::Send(GatekeeperMessage::Request {
@@ -204,13 +206,12 @@ where
         debug!(target: "stegos_network::gatekeeper", "Received a message: {:?}", event);
         match event {
             GatekeeperMessage::Request {
-                conn_type,
+                conn_type: _,
                 node_id: _,
             } => {
                 // TODO: validate node/peer
                 if let Some((kind, state)) = self.negotiating.get_mut(&propagation_source) {
                     debug_assert_eq!(*kind, PeerKind::Listener);
-                    debug_assert_eq!(conn_type, ConnectionType::FullNode);
                     *state = NegotiateState::PreparingListener;
                     self.events.push_back(NetworkBehaviourAction::GenerateEvent(
                         GatekeeperOutEvent::PrepareListener {

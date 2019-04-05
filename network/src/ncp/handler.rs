@@ -86,11 +86,12 @@ where
     TSubstream: AsyncRead + AsyncWrite,
 {
     /// Builds a new `NcpHandler`.
+    /// TODO: set to intially disabled, when upgrade is implemented
     pub fn new() -> Self {
         NcpHandler {
             config: NcpConfig::new(),
-            enabled_incoming: false,
-            enabled_outgoing: false,
+            enabled_incoming: true,
+            enabled_outgoing: true,
             substreams: Vec::new(),
             send_queue: SmallVec::new(),
             out_events: VecDeque::new(),

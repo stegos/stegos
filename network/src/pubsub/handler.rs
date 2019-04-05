@@ -27,7 +27,7 @@ use libp2p::core::{
     upgrade::{InboundUpgrade, OutboundUpgrade},
     ProtocolsHandler, ProtocolsHandlerEvent,
 };
-use log::{debug, warn};
+use log::{debug, trace};
 use smallvec::SmallVec;
 use std::collections::VecDeque;
 use std::{fmt, io};
@@ -286,7 +286,7 @@ where
                             return Ok(Async::NotReady);
                         }
                         Err(e) => {
-                            warn!(target: "stegos_network::pubsub", "failure closing substream: {}", e);
+                            trace!(target: "stegos_network::pubsub", "failure closing substream: {}", e);
                             break;
                         }
                     },

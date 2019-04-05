@@ -48,8 +48,8 @@ pub struct ChainConfig {
     pub max_slot_count: i64,
     /// Minimal stake amount.
     pub min_stake_amount: i64,
-    /// Limit of blocks to download starting from current known blockchain state.
-    pub loader_batch_size: u64,
+    /// Minimal interval between loader runs.
+    pub loader_timeout: Duration,
 }
 
 impl Default for ChainConfig {
@@ -69,7 +69,7 @@ impl Default for ChainConfig {
             stake_fee: 1,
             max_slot_count: 1000,
             min_stake_amount: 1000,
-            loader_batch_size: 100,
+            loader_timeout: Duration::from_secs(5),
         }
     }
 }

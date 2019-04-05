@@ -24,7 +24,6 @@
 use stegos_serialization::traits::*;
 // link protobuf dependencies
 use stegos_blockchain::protos::*;
-use stegos_crypto::protos::*;
 include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
 
 use crate::loader::{ChainLoaderMessage, RequestBlocks, ResponseBlocks};
@@ -35,12 +34,12 @@ impl ProtoConvert for RequestBlocks {
     type Proto = loader::RequestBlocks;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = loader::RequestBlocks::new();
-        proto.set_start_block(self.start_block.into_proto());
+        proto.set_starting_height(self.starting_height);
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let start_block = ProtoConvert::from_proto(proto.get_start_block())?;
-        Ok(RequestBlocks { start_block })
+        let starting_height = proto.get_starting_height();
+        Ok(RequestBlocks { starting_height })
     }
 }
 
@@ -108,7 +107,7 @@ mod tests {
 
     #[test]
     fn chain_loader() {
-        let request = ChainLoaderMessage::Request(RequestBlocks::new(Hash::digest("test")));
+        let request = ChainLoaderMessage::Request(RequestBlocks::new(1));
         roundtrip(&request);
     }
 }

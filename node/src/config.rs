@@ -28,16 +28,10 @@ use std::time::Duration;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(default)]
 pub struct ChainConfig {
-    /// Time delta in which our messages should be delivered, or forgotten.
-    pub message_timeout: Duration,
     /// How long wait for transactions before starting to create a new block.
     pub tx_wait_timeout: Duration,
-    /// Estimated time of the micro block validation.
-    pub micro_block_validation_timeout: Duration,
     /// How long wait for micro blocks.
     pub micro_block_timeout: Duration,
-    /// Estimated time of the key block validation.
-    pub key_block_validation_timeout: Duration,
     /// How long wait for the keu blocks.
     pub key_block_timeout: Duration,
     /// Time to lock stakes.
@@ -54,28 +48,19 @@ pub struct ChainConfig {
     pub max_slot_count: i64,
     /// Minimal stake amount.
     pub min_stake_amount: i64,
-    /// Limit of blocks to download starting from current known blockchain state.
-    pub loader_batch_size: u64,
+    /// Minimal interval between loader runs.
+    pub loader_timeout: Duration,
 }
 
 impl Default for ChainConfig {
     fn default() -> Self {
-        let message_timeout = Duration::from_secs(1);
-        let tx_wait_timeout = Duration::from_secs(1);
-        // tx_count * verify_tx = 1500 * 20ms.
-        let micro_block_validation_timeout = Duration::from_secs(30);
-        let micro_block_timeout =
-            tx_wait_timeout + message_timeout + micro_block_validation_timeout;
-        let key_block_validation_timeout = Duration::from_millis(5);
-        let key_block_timeout = message_timeout * 3 + // 3 consensus message
-            key_block_validation_timeout * 3; // leader + validators + sealed block.
+        let tx_wait_timeout = Duration::from_secs(10);
+        let micro_block_timeout = Duration::from_secs(30);
+        let key_block_timeout = Duration::from_secs(30);
 
         ChainConfig {
-            message_timeout,
             tx_wait_timeout,
-            micro_block_validation_timeout,
             micro_block_timeout,
-            key_block_validation_timeout,
             key_block_timeout,
             bonding_time: Duration::from_secs(15 * 60),
             blocks_in_epoch: 5,
@@ -84,7 +69,7 @@ impl Default for ChainConfig {
             stake_fee: 1,
             max_slot_count: 1000,
             min_stake_amount: 1000,
-            loader_batch_size: 100,
+            loader_timeout: Duration::from_secs(5),
         }
     }
 }

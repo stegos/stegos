@@ -32,7 +32,7 @@ mod test;
 mod validation;
 pub use crate::config::ChainConfig;
 use crate::error::*;
-use crate::loader::{ChainLoader, ChainLoaderMessage};
+use crate::loader::ChainLoaderMessage;
 use crate::mempool::Mempool;
 use crate::validation::*;
 use bitvector::BitVector;
@@ -43,6 +43,7 @@ use futures_stream_select_all_send::select_all;
 use log::*;
 use protobuf;
 use protobuf::Message;
+use std::collections::BTreeMap;
 use std::time::SystemTime;
 use std::time::{Duration, Instant};
 use stegos_blockchain::view_changes::ViewChangeProof;
@@ -190,7 +191,11 @@ pub struct NodeService {
     /// Key Chain.
     keys: KeyChain,
 
-    chain_loader: ChainLoader,
+    /// A time when loader was started the last time
+    last_sync_clock: Instant,
+
+    /// Orphan blocks sorted by height.
+    future_blocks: BTreeMap<u64, Block>,
 
     /// A queue of consensus message from the future epoch.
     // TODO: Resolve unknown blocks using requests-responses.
@@ -275,8 +280,9 @@ impl NodeService {
         network: Network,
         inbox: UnboundedReceiver<NodeMessage>,
     ) -> Result<Self, Error> {
+        let last_sync_clock = clock::now();
         let future_consensus_messages = Vec::new();
-        let chain_loader = ChainLoader::new();
+        let future_blocks: BTreeMap<u64, Block> = BTreeMap::new();
         let mempool = Mempool::new();
 
         let consensus = None;
@@ -343,7 +349,8 @@ impl NodeService {
 
         let mut service = NodeService {
             cfg,
-            chain_loader,
+            last_sync_clock,
+            future_blocks,
             future_consensus_messages,
             chain,
             keys,
@@ -375,11 +382,6 @@ impl NodeService {
         consensus::metrics::CONSENSUS_ROLE.set(consensus::metrics::ConsensusRole::Regular as i64);
         // Resign from Validator role.
         let leader = self.chain.leader();
-        info!(
-            "Waiting for sealed block: epoch={}, leader={}",
-            self.chain.epoch(),
-            leader
-        );
         self.consensus = None;
         consensus::metrics::CONSENSUS_STATE
             .set(consensus::metrics::ConsensusState::NotInConsensus as i64);
@@ -428,44 +430,98 @@ impl NodeService {
     /// Handle incoming blocks received from network.
     fn handle_sealed_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
-        let header = block.base_header();
-
-        // Check height.
-        if header.height < self.chain.height() {
-            warn!(
-                "Skip outdated block: block={}, block_height={}, our_height={}",
-                &block_hash,
-                header.height,
-                self.chain.height()
-            );
-            return Ok(());
-        } else if header.height > self.chain.height() {
-            debug!(
-                "Orphan sealed block: block={}, block_height={}, our_height={}",
-                &block_hash,
-                header.height,
-                self.chain.height()
-            );
-            return self.on_orphan_block(block);
-        }
-
-        // TODO: validate timestamp
-
-        info!(
-            "Received sealed block from the network: height={}, block={}",
+        let block_height = block.base_header().height;
+        debug!(
+            "Received a new block from the network: height={}, block={}, current_height={}, last_block={}",
+            block_height,
+            block_hash,
             self.chain.height(),
-            &block_hash,
+            self.chain.last_block_hash()
         );
 
-        self.apply_new_block(block)
+        // Check height.
+        if block_height <= self.chain.last_key_block_height() {
+            // A duplicate block from a finalized epoch - ignore.
+            debug!(
+                "Skip an outdated block: height={}, block={}, current_height={}, last_block={}",
+                block_height,
+                block_hash,
+                self.chain.height(),
+                self.chain.last_block_hash()
+            );
+            return Ok(());
+        } else if block_height < self.chain.height() {
+            // A duplicate block from the current epoch - try to resolve forks.
+            let local_block = self.chain.block_by_height(block_height)?;
+            let local_block_hash = Hash::digest(&local_block);
+            if local_block_hash == block_hash {
+                debug!(
+                    "Skip a duplicate block with the same hash: height={}, block={}, current_height={}, last_block={}",
+                    block_height, local_block_hash, self.chain.height(), self.chain.last_block_hash(),
+                );
+                return Ok(());
+            }
+
+            warn!(
+                "A fork detected: height={}, local_block={}, remote_block={}, local_previous={}, remote_previous={}, current_height={}, last_block={}",
+                block_height,
+                local_block_hash,
+                block_hash,
+                local_block.base_header().previous,
+                block.base_header().previous,
+                self.chain.height(),
+                self.chain.last_block_hash()
+            );
+
+            // TODO: implement fork resolution.
+            metrics::FORKS.inc();
+
+            return Ok(());
+        } else if block_height > self.chain.height() + self.cfg.blocks_in_epoch {
+            // Don't queue all blocks from epoch + 1 to limit the size of self.future_blocks.
+            warn!("Skipped an orphan block from the future: height={}, block={}, current_height={}, last_block={}",
+                  block_height,
+                  block_hash,
+                  self.chain.height(),
+                  self.chain.last_block_hash()
+            );
+            self.request_history()?;
+            return Ok(());
+        } else if block_height > self.chain.height() {
+            // Queue blocks with chain.height < height <= chain.height + blocks_in_epoch.
+            self.future_blocks.insert(block_height, block); // ignore dups
+            debug!("Queued an orphan block from the future: height={}, block={}, current_height={}, last_block={}",
+                  block_height,
+                  block_hash,
+                  self.chain.height(),
+                  self.chain.last_block_hash()
+            );
+            self.request_history()?;
+            return Ok(());
+        }
+
+        // Apply received block.
+        assert_eq!(block_height, self.chain.height());
+        assert!(!self.future_blocks.contains_key(&block_height));
+        self.apply_new_block(block)?;
+
+        // Try to process orphan blocks.
+        while let Some(block) = self.future_blocks.remove(&self.chain.height()) {
+            self.apply_new_block(block)?;
+        }
+
+        Ok(())
     }
 
+    /// Try to apply a new block to the blockchain.
     fn apply_new_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
         let block_timestamp = block.base_header().timestamp;
         let block_height = block.base_header().height;
         match block {
             Block::KeyBlock(key_block) => {
+                let was_synchronized = self.is_synchronized();
+
                 // Check for the correct block order.
                 if self.chain.blocks_in_epoch() < self.cfg.blocks_in_epoch {
                     return Err(NodeBlockError::ExpectedMonetaryBlock(
@@ -490,6 +546,16 @@ impl NodeService {
                     }
                 }
                 self.chain.push_key_block(key_block)?;
+
+                if !was_synchronized && self.is_synchronized() {
+                    info!(
+                        "Synchronized with the network: height={}, last_block={}",
+                        self.chain.height(),
+                        self.chain.last_block_hash()
+                    );
+                    metrics::SYNCHRONIZED.set(1);
+                }
+
                 self.on_new_epoch();
             }
             Block::MonetaryBlock(monetary_block) => {
@@ -667,10 +733,14 @@ impl NodeService {
     /// Send block to network.
     fn send_sealed_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
+        let block_height = block.base_header().height;
         let data = block.into_buffer()?;
         // Don't send block to myself.
         self.network.publish(&SEALED_BLOCK_TOPIC, data)?;
-        info!("Sent sealed block to the network: hash={}", block_hash);
+        info!(
+            "Sent sealed block to the network: height={}, block={}",
+            block_height, block_hash
+        );
         Ok(())
     }
 
@@ -689,12 +759,13 @@ impl NodeService {
         }
 
         info!("I am a part of consensus, trying choose new group.");
+        let leader = self.chain.leader();
         let consensus = BlockConsensus::new(
             self.chain.height() as u64,
             self.chain.epoch() + 1,
             self.keys.network_skey.clone(),
             self.keys.network_pkey.clone(),
-            self.chain.leader(),
+            leader,
             self.chain.validators().iter().cloned().collect(),
         );
 
@@ -705,6 +776,14 @@ impl NodeService {
             let seed = mix(last_random, self.chain.view_change());
             let vrf = secure::make_VRF(&self.keys.network_skey, &seed);
             self.create_new_epoch(vrf)?;
+        } else {
+            info!(
+                "Waiting for a key block: height={}, last_block={}, epoch={}, leader={}",
+                self.chain.height(),
+                self.chain.last_block_hash(),
+                self.chain.epoch(),
+                leader
+            );
         }
         self.on_new_consensus();
 
@@ -795,17 +874,32 @@ impl NodeService {
         Ok(())
     }
 
+    /// True if the node is synchronized with the network.
+    fn is_synchronized(&self) -> bool {
+        let timestamp = SystemTime::now();
+        let block_timestamp = self.chain.last_key_block_timestamp();
+        block_timestamp
+            + self.cfg.micro_block_timeout * (self.cfg.blocks_in_epoch as u32)
+            + self.cfg.key_block_timeout
+            >= timestamp
+    }
+
     /// Checks if it's time to perform a view change on a micro block.
     fn handle_key_block_viewchange_timer(&mut self) -> Result<(), Error> {
+        // Check status of the key block.
         let elapsed: Duration = clock::now().duration_since(self.last_block_clock);
+        if self.consensus.is_none() || elapsed < self.cfg.key_block_timeout {
+            return Ok(());
+        }
 
-        // TODO: implement view changes for key blocks.
+        warn!(
+            "Timed out while waiting for a key block: height={}, elapsed={:?}",
+            self.chain.height(),
+            elapsed
+        );
 
         // Check that a block has been committed but haven't send by the leader.
-        if self.consensus.is_some()
-            && self.consensus.as_ref().unwrap().should_commit()
-            && elapsed >= self.cfg.key_block_timeout
-        {
+        if self.consensus.as_ref().unwrap().should_commit() {
             assert!(
                 !self.consensus.as_ref().unwrap().is_leader(),
                 "never happens on leader"
@@ -826,7 +920,19 @@ impl NodeService {
             metrics::AUTOCOMMIT.inc();
             // Auto-commit proposed block and send it to the network.
             self.commit_proposed_block(block, multisig, multisigmap);
+
+            return Ok(());
         }
+
+        // Try to sync with the network.
+        metrics::SYNCHRONIZED.set(0);
+        self.request_history()?;
+
+        // Try to perform the view change.
+        metrics::KEY_BLOCK_VIEW_CHANGES.inc();
+
+        // TODO: implement view changes for key blocks.
+        error!("The view changes for the key block are not implemented");
 
         Ok(())
     }
@@ -860,22 +966,30 @@ impl NodeService {
 
     /// Checks if it's time to perform a view change on a monetary block.
     fn handle_micro_block_viewchange_timer(&mut self) -> Result<(), Error> {
+        // Check status of the monetary block.
         let elapsed: Duration = clock::now().duration_since(self.last_block_clock);
-
-        if self.consensus.is_none() && elapsed >= self.cfg.micro_block_timeout {
-            metrics::FORCED_VIEW_CHANGES.inc();
-            // No block was received, request leader directly, and start collecting view_changes.
-            let leader = self.chain.leader();
-            debug!("Timed out while waiting for monetary block, request block from last leader: hash={}, block={}, leader={}",
-                   self.chain.height(), self.chain.last_block_hash(), leader);
-            self.request_history_from(leader)?;
-
-            if let Some(msg) = self.optimistic.handle_timeout(&self.chain)? {
-                self.network
-                    .publish(VIEW_CHANGE_TOPIC, msg.into_buffer()?)?;
-                self.handle_view_change(msg)?;
-            }
+        if self.consensus.is_some() || elapsed < self.cfg.micro_block_timeout {
+            return Ok(());
         }
+
+        warn!(
+            "Timed out while waiting for a monetary block: height={}, elapsed={:?}",
+            self.chain.height(),
+            elapsed
+        );
+
+        // Try to sync with the network.
+        metrics::SYNCHRONIZED.set(0);
+        self.request_history()?;
+
+        // Try to perform the view change.
+        metrics::MICRO_BLOCK_VIEW_CHANGES.inc();
+        if let Some(msg) = self.optimistic.handle_timeout(&self.chain)? {
+            self.network
+                .publish(VIEW_CHANGE_TOPIC, msg.into_buffer()?)?;
+            self.handle_view_change(msg)?;
+        }
+
         Ok(())
     }
 

@@ -38,7 +38,7 @@ use failure::Error;
 use log::*;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 use stegos_crypto::bulletproofs::fee_a;
 use stegos_crypto::bulletproofs::validate_range_proof;
 use stegos_crypto::curve1174::cpt::Pt;
@@ -104,6 +104,8 @@ pub struct Blockchain {
     epoch: u64,
     /// Zero-indexed identifier of the last key block.
     last_key_block_height: u64,
+    /// A timestamp from the last key block.
+    last_key_block_timestamp: SystemTime,
     /// Last election result.
     election_result: ElectionResult,
 
@@ -172,6 +174,7 @@ impl Blockchain {
         //
         let epoch: u64 = 0;
         let last_key_block_height: u64 = 0;
+        let last_key_block_timestamp = UNIX_EPOCH;
         let election_result = ElectionResult::default();
 
         //
@@ -194,6 +197,7 @@ impl Blockchain {
             escrow,
             epoch,
             last_key_block_height,
+            last_key_block_timestamp,
             election_result,
             height,
             last_block_hash,
@@ -354,7 +358,7 @@ impl Blockchain {
     }
 
     /// Get a block by height.
-    fn block_by_height(&self, height: u64) -> Result<Block, Error> {
+    pub fn block_by_height(&self, height: u64) -> Result<Block, Error> {
         assert!(height < self.height);
         Ok((self.database.get(height)?).expect("block exists"))
     }
@@ -365,17 +369,11 @@ impl Blockchain {
     }
 
     /// Returns blocks history starting from block_hash + 1, limited by count.
-    pub fn blocks_range(&self, starting_hash: &Hash, count: u64) -> Option<Vec<Block>> {
-        if let Some(&height) = self.block_by_hash.get(starting_hash) {
-            let height = height + 1;
-            return Some(
-                self.database
-                    .iter_starting(height)
-                    .take(count as usize)
-                    .collect(),
-            );
-        }
-        return None;
+    pub fn blocks_range(&self, starting_height: u64, count: u64) -> Vec<Block> {
+        self.database
+            .iter_starting(starting_height)
+            .take(count as usize)
+            .collect()
     }
 
     /// Return the last block.
@@ -404,6 +402,18 @@ impl Blockchain {
     #[inline]
     pub fn validators(&self) -> &Vec<(secure::PublicKey, i64)> {
         &self.election_result.validators
+    }
+
+    /// Returns the last block height.
+    #[inline]
+    pub fn last_key_block_height(&self) -> u64 {
+        self.last_key_block_height
+    }
+
+    /// Return the timestamp from the last key block.
+    #[inline]
+    pub fn last_key_block_timestamp(&self) -> SystemTime {
+        self.last_key_block_timestamp
     }
 
     /// Return the last random value.
@@ -644,6 +654,7 @@ impl Blockchain {
         self.height += 1;
         self.epoch += 1;
         self.last_key_block_height = height;
+        self.last_key_block_timestamp = block.header.base.timestamp;
         self.election_result = election::select_validators_slots(
             self.escrow.get_stakers_majority(self.cfg.min_stake_amount),
             block.header.random,
@@ -1553,7 +1564,7 @@ pub mod tests {
         let stake = cfg.min_stake_amount;
         let blocks = genesis(&keychains, stake, 1_000_000, timestamp);
         let mut blockchain = Blockchain::testing(cfg, blocks, timestamp);
-        let start = blockchain.last_block_hash();
+        let starting_height = blockchain.height();
         // len of genesis
         assert!(blockchain.height() > 0);
         let version: u64 = 1;
@@ -1584,10 +1595,12 @@ pub mod tests {
             blockchain.push_key_block(block).expect("block is valid");
         }
 
-        assert_eq!(blockchain.blocks_range(&start, 1).unwrap().len(), 1);
+        assert_eq!(blockchain.blocks_range(starting_height, 1).len(), 1);
 
-        assert_eq!(blockchain.blocks_range(&start, 4).unwrap().len(), 4);
+        assert_eq!(blockchain.blocks_range(starting_height, 4).len(), 4);
         // limit
-        assert_eq!(blockchain.blocks_range(&start, 20).unwrap().len(), 10);
+        assert_eq!(blockchain.blocks_range(starting_height, 20).len(), 10);
+        // empty
+        assert_eq!(blockchain.blocks_range(blockchain.height(), 1).len(), 0);
     }
 }

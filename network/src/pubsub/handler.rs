@@ -188,11 +188,11 @@ where
     fn inject_dial_upgrade_error(
         &mut self,
         _: Self::OutboundOpenInfo,
-        _: ProtocolsHandlerUpgrErr<
+        e: ProtocolsHandlerUpgrErr<
             <Self::OutboundProtocol as OutboundUpgrade<Self::Substream>>::Error,
         >,
     ) {
-        self.enabled_outgoing = false;
+        trace!(target: "stegos_network::pubsub", "got dial outbound failure: {}", e);
     }
 
     #[inline]

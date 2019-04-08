@@ -29,6 +29,7 @@ pub mod metrics;
 pub mod protos;
 #[cfg(test)]
 mod test;
+pub mod timer;
 mod validation;
 pub use crate::config::ChainConfig;
 use crate::error::*;
@@ -56,8 +57,8 @@ use stegos_keychain::KeyChain;
 use stegos_network::Network;
 use stegos_network::UnicastMessage;
 use stegos_serialization::traits::ProtoConvert;
+use timer::Interval;
 use tokio_timer::clock;
-use tokio_timer::Interval;
 
 // ----------------------------------------------------------------
 // Public API.

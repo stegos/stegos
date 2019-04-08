@@ -37,6 +37,7 @@ use clear_on_drop::clear::Clear;
 use rand::rngs::ThreadRng;
 use rand::thread_rng;
 use rand::Rng;
+use serde::ser::{Serialize, Serializer};
 use std::cmp::Ordering;
 use std::hash as stdhash;
 use std::ops::{Add, AddAssign, Neg};
@@ -595,6 +596,15 @@ impl Add<PublicKey> for PublicKey {
     type Output = Self;
     fn add(self, other: Self) -> Self {
         PublicKey(self.0 + other.0)
+    }
+}
+
+impl Serialize for PublicKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_hex())
     }
 }
 

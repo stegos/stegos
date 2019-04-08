@@ -27,18 +27,49 @@ mod config;
 
 pub use crate::config::WebSocketConfig;
 use failure::Error;
+use futures::sync::mpsc::UnboundedReceiver;
+use futures::sync::oneshot;
 use futures::{Async, AsyncSink, Future, Poll, Sink, Stream};
 use log::*;
+use serde_derive::Deserialize;
+use serde_json;
 use std::net::SocketAddr;
-use stegos_wallet::Wallet;
+use stegos_crypto::curve1174::cpt::PublicKey;
+use stegos_wallet::{Wallet, WalletNotification, WalletResponse};
 use tokio::net::TcpListener;
 use tokio::runtime::TaskExecutor;
-use websocket::message::{Message, OwnedMessage};
+use websocket::message::OwnedMessage;
 use websocket::result::WebSocketError;
 use websocket::server::upgrade::r#async::IntoWs;
 
 /// The number of values to fit in the output buffer.
 const OUTPUT_BUFFER_SIZE: usize = 10;
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "request")]
+#[serde(rename_all = "snake_case")]
+enum WalletRequest {
+    Payment {
+        recipient: PublicKey,
+        amount: i64,
+        comment: String,
+    },
+    SecurePayment {
+        recipient: PublicKey,
+        amount: i64,
+        comment: String,
+    },
+    Stake {
+        amount: i64,
+    },
+    Unstake {
+        amount: i64,
+    },
+    UnstakeAll {},
+    KeysInfo {},
+    BalanceInfo {},
+    UnspentInfo {},
+}
 
 /// A type definition for sink.
 type WsSink = Box<Sink<SinkItem = OwnedMessage, SinkError = WebSocketError> + Send>;
@@ -58,13 +89,70 @@ struct WebSocketHandler {
     /// Wallet API.
     #[allow(unused)]
     wallet: Wallet,
+    /// Wallet events.
+    wallet_notifications: UnboundedReceiver<WalletNotification>,
+    /// Wallet RPC responses.
+    wallet_responses: Vec<oneshot::Receiver<WalletResponse>>,
 }
 
 impl WebSocketHandler {
+    fn new(peer: SocketAddr, sink: WsSink, stream: WsStream, wallet: Wallet) -> Self {
+        let need_flush = false;
+        let wallet_notifications = wallet.subscribe();
+        let wallet_responses = Vec::new();
+        WebSocketHandler {
+            peer,
+            sink,
+            stream,
+            need_flush,
+            wallet,
+            wallet_notifications,
+            wallet_responses,
+        }
+    }
+
     fn on_message(&mut self, text: String) -> Result<(), WebSocketError> {
-        //info!("[{}] Message: {}", self.peer, text);
-        self.send(format!("Response: #{}", text))?;
+        let request: WalletRequest = match serde_json::from_str(&text) {
+            Ok(r) => r,
+            Err(e) => {
+                error!("Invalid request: {}", e);
+                return Err(WebSocketError::RequestError("Invalid request"));
+            }
+        };
+        let rx = match request {
+            WalletRequest::Payment {
+                recipient,
+                amount,
+                comment,
+            } => self.wallet.payment(recipient, amount, comment),
+            WalletRequest::SecurePayment {
+                recipient,
+                amount,
+                comment,
+            } => self.wallet.secure_payment(recipient, amount, comment),
+            WalletRequest::Stake { amount } => self.wallet.stake(amount),
+            WalletRequest::Unstake { amount } => self.wallet.unstake(amount),
+            WalletRequest::UnstakeAll {} => self.wallet.unstake_all(),
+            WalletRequest::KeysInfo {} => self.wallet.keys_info(),
+            WalletRequest::BalanceInfo {} => self.wallet.balance_info(),
+            WalletRequest::UnspentInfo {} => self.wallet.unspent_info(),
+        };
+        self.wallet_responses.push(rx);
         Ok(())
+    }
+
+    fn on_wallet_notification(&mut self, notification: WalletNotification) {
+        let msg = serde_json::to_string(&notification).expect("serialized");
+        if let Err(e) = self.send(msg) {
+            error!("Failed to send notification: {}", e);
+        }
+    }
+
+    fn on_wallet_response(&mut self, response: WalletResponse) {
+        let msg = serde_json::to_string(&response).expect("serialized");
+        if let Err(e) = self.send(msg) {
+            error!("Failed to send response: {}", e);
+        }
     }
 
     fn send(&mut self, text: String) -> Result<(), WebSocketError> {
@@ -130,6 +218,28 @@ impl Future for WebSocketHandler {
             }
         }
 
+        loop {
+            match self.wallet_notifications.poll() {
+                Ok(Async::Ready(Some(notification))) => {
+                    self.on_wallet_notification(notification);
+                }
+                Ok(Async::Ready(None)) => return Ok(Async::Ready(())),
+                Ok(Async::NotReady) => break, // fall through
+                Err(()) => panic!("Wallet failure"),
+            }
+        }
+
+        let wallet_responses = std::mem::replace(&mut self.wallet_responses, Vec::new());
+        for mut rx in wallet_responses {
+            match rx.poll() {
+                Ok(Async::Ready(response)) => {
+                    self.on_wallet_response(response);
+                }
+                Ok(Async::NotReady) => self.wallet_responses.push(rx),
+                Err(_) => panic!("disconnected"),
+            }
+        }
+
         // Flush output buffer.
         if self.need_flush {
             match self.sink.poll_complete()? {
@@ -171,20 +281,14 @@ impl WebSocketAPI {
                     .and_then(move |upgrade| {
                         upgrade
                             .accept()
-                            .and_then(|(s, _headers)| s.send(Message::text("Hello World!").into()))
+                            .map(|(s, _headers)| s)
                             .and_then(move |s| {
                                 let (sink, stream) = s.split();
                                 let sink = sink.buffer(OUTPUT_BUFFER_SIZE);
                                 let sink: WsSink = Box::new(sink);
                                 let stream: WsStream = Box::new(stream);
                                 info!("[{}] Connected", peer);
-                                WebSocketHandler {
-                                    peer,
-                                    sink,
-                                    stream,
-                                    need_flush: false,
-                                    wallet: wallet3.clone(),
-                                }
+                                WebSocketHandler::new(peer, sink, stream, wallet3.clone())
                             })
                             .map_err(move |e| {
                                 error!("[{}] Error: {}", &peer, e);

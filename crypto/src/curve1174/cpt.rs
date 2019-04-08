@@ -544,3 +544,62 @@ pub fn aes_decrypt(payload: &EncryptedPayload, skey: &SecretKey) -> Result<Vec<u
         Ok(aes_encrypt_with_key(&payload.ctxt, &key.bits()))
     }
 }
+
+// -----------------------------------------------------------
+
+fn make_securing_keys(seed: &str) -> (SecretKey, PublicKey) {
+    // Do we need a salt? We won't be storing these seed keys
+    // anywhere, so there is nothing to guard against rainbow table
+    // attacks. And so I don't think we need salting.
+    let mut seed = Hash::from_str(seed);
+    for _ in 1..1024 {
+        seed = Hash::from_vector(&seed.bits());
+    }
+    let (skey, pkey, _) = make_deterministic_keys(&seed.bits());
+    (skey, pkey)
+}
+
+pub fn encrypt_key(seed: &str, key_to_encrypt: &[u8]) -> (EncryptedPayload, SchnorrSig) {
+    // For secure storage of keying material
+    // Returns an AES encrypted key, along with a SchnorrSig on
+    // the encrytped key.
+    let (skey, pkey) = make_securing_keys(seed);
+    let payload = aes_encrypt(key_to_encrypt, &pkey).expect("Valid Pubkey");
+    let mut state = Hasher::new();
+    payload.hash(&mut state);
+    let h = state.result();
+    let sig = sign_hash(&h, &skey);
+    (payload, sig)
+}
+
+pub fn decrypt_key(
+    seed: &str,
+    encr_key: &EncryptedPayload,
+    chk: &SchnorrSig,
+) -> Result<Vec<u8>, CryptoError> {
+    // For secure retrieval of keying material
+    // check that the signature matches the encrypted key,
+    // then decrypt the key
+    let (skey, pkey) = make_securing_keys(seed);
+    let mut state = Hasher::new();
+    encr_key.hash(&mut state);
+    let h = state.result();
+    validate_sig(&h, chk, &pkey)?;
+    aes_decrypt(encr_key, &skey)
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    #[test]
+    fn encr_keying() {
+        let (skey, _, _) = make_deterministic_keys(b"testing");
+        let my_cloaking_seed = "diddly";
+        let (payload, sig) = encrypt_key(my_cloaking_seed, &skey.to_bytes());
+        assert!(payload.ctxt != skey.to_bytes());
+        let recovered_skey =
+            decrypt_key(my_cloaking_seed, &payload, &sig).expect("Key couldn't be decrypted");
+        assert!(recovered_skey == skey.to_bytes());
+    }
+}

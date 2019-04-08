@@ -351,7 +351,6 @@ mod tests {
     use stegos_node::{ChainConfig, NodeService};
 
     #[test]
-    #[ignore]
     fn is_testnet_loadable() {
         let _ = simple_logger::init_with_level(log::Level::Debug);
         let keys = KeyChain::new_mem();
@@ -366,7 +365,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: remove this before pushing repo!
     fn is_devnet_loadable() {
         let _ = simple_logger::init_with_level(log::Level::Debug);
         let keys = KeyChain::new_mem();

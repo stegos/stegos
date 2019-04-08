@@ -1,0 +1,22 @@
+syntax = "proto3";
+package delivery.pb;
+
+message Unicast {
+    bytes to = 1;
+    bytes payload = 2;
+    bool dont_route = 3;
+}
+
+message Broadcast {
+	bytes from = 1;
+	bytes payload = 2;
+	repeated string topics = 3;
+}
+
+message Message {
+    bytes seqno = 1;
+    oneof typ {
+        Unicast unicast = 2;
+        Broadcast broadcast = 3;
+    }
+}

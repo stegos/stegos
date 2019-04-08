@@ -23,6 +23,7 @@
 #![allow(dead_code)]
 
 mod config;
+mod delivery;
 mod discovery;
 mod gatekeeper;
 mod kad;

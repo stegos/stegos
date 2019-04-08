@@ -1,7 +1,7 @@
 //
 // MIT License
 //
-// Copyright (c) 2018-2019 Stegos AG
+// Copyright (c) 2019 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -21,8 +21,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-mod expiring_queue;
-mod multihash;
-
-pub use self::expiring_queue::ExpiringQueue;
-pub use self::multihash::IntoMultihash;
+mod behavior;
+mod handler;
+mod metrics;
+mod proto;
+mod protocol;

@@ -24,6 +24,7 @@ use dirs;
 use failure::Error;
 use futures::sync::mpsc::UnboundedReceiver;
 use futures::sync::mpsc::{channel, Receiver, Sender};
+use futures::sync::oneshot;
 use futures::{Async, Future, Poll, Sink, Stream};
 use lazy_static::*;
 use log::*;
@@ -38,7 +39,7 @@ use stegos_network::Network;
 use stegos_network::UnicastMessage;
 use stegos_node::InfoNotification;
 use stegos_node::Node;
-use stegos_wallet::{Wallet, WalletNotification};
+use stegos_wallet::{Wallet, WalletNotification, WalletResponse};
 
 // ----------------------------------------------------------------
 // Public API.
@@ -74,7 +75,9 @@ pub struct ConsoleService {
     /// Node API.
     node: Node,
     /// Wallet events.
-    wallet_events: UnboundedReceiver<WalletNotification>,
+    wallet_notifications: UnboundedReceiver<WalletNotification>,
+    /// Wallet RPC responses.
+    wallet_responses: Vec<oneshot::Receiver<WalletResponse>>,
     /// A channel to receive info from node.
     node_events: UnboundedReceiver<InfoNotification>,
     /// A channel to receive message from stdin thread.
@@ -89,7 +92,8 @@ impl ConsoleService {
     /// Constructor.
     pub fn new(network: Network, wallet: Wallet, node: Node) -> Result<ConsoleService, Error> {
         let (tx, rx) = channel::<String>(1);
-        let wallet_events = wallet.subscribe();
+        let wallet_notifications = wallet.subscribe();
+        let wallet_responses = Vec::new();
         let node_events = node.subscribe_info()?;
         let stdin_th = thread::spawn(move || Self::readline_thread_f(tx));
         let stdin = rx;
@@ -98,7 +102,8 @@ impl ConsoleService {
         let service = ConsoleService {
             network,
             wallet,
-            wallet_events,
+            wallet_notifications,
+            wallet_responses,
             stdin,
             stdin_th,
             unicast_rx,
@@ -239,6 +244,7 @@ impl ConsoleService {
             self.network
                 .publish(&topic, msg.as_bytes().to_vec())
                 .unwrap();
+            return true;
         } else if msg.starts_with("net send ") {
             let caps = match SEND_COMMAND_RE.captures(&msg[9..]) {
                 Some(c) => c,
@@ -262,6 +268,7 @@ impl ConsoleService {
             self.network
                 .send(recipient, "console", msg.as_bytes().to_vec())
                 .unwrap();
+            return true;
         } else if msg.starts_with("pay ") {
             let caps = match PAY_COMMAND_RE.captures(&msg[4..]) {
                 Some(c) => c,
@@ -289,7 +296,8 @@ impl ConsoleService {
             };
 
             info!("Sending {} STG to {}", amount, recipient.to_hex());
-            self.wallet.payment(recipient, amount, comment);
+            let rx = self.wallet.payment(recipient, amount, comment);
+            self.wallet_responses.push(rx);
         } else if msg.starts_with("spay ") {
             let caps = match PAY_COMMAND_RE.captures(&msg[5..]) {
                 Some(c) => c,
@@ -321,7 +329,8 @@ impl ConsoleService {
                 amount,
                 recipient.to_hex()
             );
-            self.wallet.secure_payment(recipient, amount, comment);
+            let rx = self.wallet.secure_payment(recipient, amount, comment);
+            self.wallet_responses.push(rx);
         } else if msg.starts_with("msg ") {
             let caps = match MSG_COMMAND_RE.captures(&msg[4..]) {
                 Some(c) => c,
@@ -345,7 +354,8 @@ impl ConsoleService {
             assert!(comment.len() > 0);
 
             info!("Sending message to {}", recipient.to_hex());
-            self.wallet.payment(recipient, amount, comment);
+            let rx = self.wallet.payment(recipient, amount, comment);
+            self.wallet_responses.push(rx);
         } else if msg.starts_with("stake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[6..]) {
                 Some(c) => c,
@@ -359,10 +369,12 @@ impl ConsoleService {
             let amount = amount.parse::<i64>().unwrap(); // check by regex
 
             info!("Staking {} STG into escrow", amount);
-            self.wallet.stake(amount);
+            let rx = self.wallet.stake(amount);
+            self.wallet_responses.push(rx);
         } else if msg == "unstake" {
             info!("Unstaking all of the money from escrow");
-            self.wallet.unstake_all();
+            let rx = self.wallet.unstake_all();
+            self.wallet_responses.push(rx);
         } else if msg.starts_with("unstake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[8..]) {
                 Some(c) => c,
@@ -376,7 +388,8 @@ impl ConsoleService {
             let amount = amount.parse::<i64>().unwrap(); // check by regex
 
             info!("Unstaking {} STG from escrow", amount);
-            self.wallet.unstake(amount);
+            let rx = self.wallet.unstake(amount);
+            self.wallet_responses.push(rx);
         } else if msg == "show version" {
             println!(
                 "Stegos {}.{}.{} ({} {})",
@@ -386,25 +399,22 @@ impl ConsoleService {
                 env!("VERSION_COMMIT"),
                 env!("VERSION_DATE")
             );
+            return true;
         } else if msg == "show keys" {
-            self.wallet.keys_info();
-            return false; // keep stdin parked until result is received.
+            self.wallet_responses.push(self.wallet.keys_info());
         } else if msg == "show balance" {
-            self.wallet.balance_info();
-            return false; // keep stdin parked until result is received.
+            self.wallet_responses.push(self.wallet.balance_info());
         } else if msg == "show election" {
             self.node.election_info().unwrap();
-            return false; // keep stdin parked until result is received.
         } else if msg == "show escrow" {
             self.node.escrow_info().unwrap();
-            return false; // keep stdin parked until result is received.
         } else if msg == "show utxo" {
-            self.wallet.unspent_info();
-            return false; // keep stdin parked until result is received.
+            self.wallet_responses.push(self.wallet.unspent_info());
         } else {
             Self::help();
+            return true;
         }
-        true
+        return false; // keep stdin parked until result is received.
     }
 
     fn on_exit(&self) {
@@ -422,7 +432,7 @@ impl ConsoleService {
         self.stdin_th.thread().unpark();
     }
 
-    fn on_notification(&mut self, notification: WalletNotification) {
+    fn on_wallet_notification(&mut self, notification: WalletNotification) {
         match notification {
             WalletNotification::PaymentReceived { amount, comment } => {
                 if amount == 0 && !comment.is_empty() {
@@ -432,19 +442,28 @@ impl ConsoleService {
             WalletNotification::BalanceChanged { balance } => {
                 info!("Balance is {} STG", balance);
             }
-            WalletNotification::BalanceInfo { balance } => {
-                println!("{} STG", balance);
-                self.stdin_th.thread().unpark();
+        }
+    }
+
+    fn on_wallet_response(&mut self, response: WalletResponse) {
+        match response {
+            WalletResponse::TransactionCreated { tx_hash, fee } => {
+                println!("Transaction: tx={}, fee={}", tx_hash, fee);
             }
-            WalletNotification::KeysInfo {
+            WalletResponse::ValueShuffleStarted {} => {
+                // println!("Started value shuffle");
+            }
+            WalletResponse::BalanceInfo { balance } => {
+                println!("{} STG", balance);
+            }
+            WalletResponse::KeysInfo {
                 wallet_pkey,
                 network_pkey,
             } => {
                 println!("My wallet key: {}", wallet_pkey.to_hex());
                 println!("My network key: {}", network_pkey.to_hex());
-                self.stdin_th.thread().unpark();
             }
-            WalletNotification::UnspentInfo {
+            WalletResponse::UnspentInfo {
                 unspent,
                 unspent_stakes,
             } => {
@@ -459,12 +478,12 @@ impl ConsoleService {
                 } else {
                     println!("No UTXO found");
                 }
-                self.stdin_th.thread().unpark();
             }
-            WalletNotification::Error { error } => {
+            WalletResponse::Error { error } => {
                 error!("{}", error);
             }
         }
+        self.stdin_th.thread().unpark();
     }
 }
 
@@ -488,13 +507,24 @@ impl Future for ConsoleService {
         }
 
         loop {
-            match self.wallet_events.poll() {
+            match self.wallet_notifications.poll() {
                 Ok(Async::Ready(Some(notification))) => {
-                    self.on_notification(notification);
+                    self.on_wallet_notification(notification);
                 }
                 Ok(Async::Ready(None)) => self.on_exit(),
                 Ok(Async::NotReady) => break, // fall through
                 Err(()) => panic!("Wallet failure"),
+            }
+        }
+
+        let wallet_responses = std::mem::replace(&mut self.wallet_responses, Vec::new());
+        for mut rx in wallet_responses {
+            match rx.poll() {
+                Ok(Async::Ready(response)) => {
+                    self.on_wallet_response(response);
+                }
+                Ok(Async::NotReady) => self.wallet_responses.push(rx),
+                Err(_) => panic!("Wallet failure"),
             }
         }
 

@@ -26,6 +26,8 @@ use crate::CryptoError;
 
 use rand::thread_rng;
 use rand::Rng;
+use serde::de::{Deserialize, Deserializer};
+use serde::ser::{Serialize, Serializer};
 use sha3::{Digest, Sha3_256};
 use std::fmt;
 use std::hash as stdhash;
@@ -150,6 +152,25 @@ impl Hashable for Hash {
 impl<'a, T: Hashable + ?Sized> Hashable for &'a T {
     fn hash(&self, state: &mut Hasher) {
         T::hash(self, state)
+    }
+}
+
+impl Serialize for Hash {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'de> Deserialize<'de> for Hash {
+    fn deserialize<D>(deserializer: D) -> Result<Hash, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Hash::try_from_hex(&s).map_err(serde::de::Error::custom)
     }
 }
 

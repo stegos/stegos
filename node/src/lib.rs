@@ -762,7 +762,8 @@ impl NodeService {
             self.chain.election_result(),
             self.chain.validators().iter().cloned().collect(),
         );
-
+        // update timer, set current_time to now().
+        self.key_block_timer.reset(self.cfg.key_block_timeout);
         self.consensus = Some(consensus);
         let consensus = self.consensus.as_ref().unwrap();
         if consensus.is_leader() {
@@ -879,16 +880,13 @@ impl NodeService {
 
     /// Checks if it's time to perform a view change on a micro block.
     fn handle_key_block_viewchange_timer(&mut self) -> Result<(), Error> {
-        // Check status of the key block.
-        let elapsed: Duration = clock::now().duration_since(self.last_block_clock);
-        if self.consensus.is_none() || elapsed < self.cfg.key_block_timeout {
+        if self.consensus.is_none() {
             return Ok(());
         }
 
         warn!(
-            "Timed out while waiting for a key block: height={}, elapsed={:?}",
+            "Timed out while waiting for a key block: height={}",
             self.chain.height(),
-            elapsed
         );
 
         // Check that a block has been committed but haven't send by the leader.
@@ -913,6 +911,8 @@ impl NodeService {
             } else {
                 // not at commit phase, go to the next round
                 consensus.next_round();
+                self.key_block_timer
+                    .reset(self.cfg.key_block_timeout * consensus.round());
                 let consensus = self.consensus.as_ref().unwrap();
                 if consensus.is_leader() {
                     debug!("I am leader proposing a new block");
@@ -932,9 +932,6 @@ impl NodeService {
 
         // Try to perform the view change.
         metrics::KEY_BLOCK_VIEW_CHANGES.inc();
-
-        // TODO: implement view changes for key blocks.
-        error!("The view changes for the key block are not implemented");
 
         Ok(())
     }

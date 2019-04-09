@@ -75,10 +75,6 @@ code_coverage:
 
 .release:
   stage: release
-  only:
-    - dev
-    - master
-    - tags
   when: manual
   dependencies: []
   artifacts:

@@ -1,7 +1,5 @@
 //
-// MIT License
-//
-// Copyright (c) 2018-2019 Stegos AG
+// Copyright (c) 2019 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -21,8 +19,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-mod expiring_queue;
-mod multihash;
+use lazy_static::lazy_static;
+use prometheus::*;
 
-pub use self::expiring_queue::ExpiringQueue;
-pub use self::multihash::IntoMultihash;
+lazy_static! {
+    pub static ref LRU_CACHE_SIZE: IntGauge = register_int_gauge!(
+        "stegos_delivery_lru_cache_size",
+        "Size of LRU cache for messages."
+    )
+    .unwrap();
+}

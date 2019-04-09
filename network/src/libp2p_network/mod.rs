@@ -532,7 +532,15 @@ impl<TSubstream> NetworkBehaviourEventProcess<DiscoveryOutEvent> for Libp2pBehav
 where
     TSubstream: AsyncRead + AsyncWrite,
 {
-    fn inject_event(&mut self, _event: DiscoveryOutEvent) {}
+    fn inject_event(&mut self, event: DiscoveryOutEvent) {
+        match event {
+            DiscoveryOutEvent::DialPeer { peer_id } => {
+                debug!(target: "stegos_network::kad", "connecting to closest peer: {}", peer_id.to_base58());
+                self.gatekeeper.dial_peer(peer_id);
+            }
+            _ => {}
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

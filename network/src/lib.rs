@@ -39,6 +39,7 @@ use std::fmt;
 use stegos_crypto::pbc::secure;
 
 pub use self::config::*;
+pub use self::kad::KBucketsPeerId;
 pub use self::libp2p_network::Libp2pNetwork;
 pub use self::utils::IntoMultihash;
 

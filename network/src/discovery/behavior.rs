@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::kad::{Kademlia, KademliaOut};
+use crate::kad::{kbucket::KBucketsPeerId, Kademlia, KademliaOut};
 use futures::prelude::*;
 use libp2p::core::swarm::{
     ConnectedPoint, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
@@ -29,27 +29,37 @@ use libp2p::core::swarm::{
 use libp2p::{core::ProtocolsHandler, Multiaddr, PeerId};
 use log::*;
 use std::cmp;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
 use stegos_crypto::pbc::secure;
 use stegos_crypto::utils::u8v_to_hexstr;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::timer::Delay;
 
+// How often check connections to the known closest peers
+const MONITORING_INTERVAL: u64 = 30;
+// Try to keep open connections to at leasy followin number of closest peers
+const MIN_CLOSEST_PEERS: usize = 10;
+
 pub enum DiscoveryOutEvent {
     KadEvent(KademliaOut),
+    DialPeer { peer_id: PeerId },
 }
 
 /// Kademlia-based network discovery
 pub struct Discovery<TSubstream> {
     /// Kademlia systems
     kademlia: Kademlia<TSubstream>,
+    /// Outbound events
+    out_events: VecDeque<DiscoveryOutEvent>,
     /// Set of currently connected peers
     connected_peers: HashSet<PeerId>,
     /// When to send random request to gather network info
     next_query: Delay,
     /// Delay to the next random poll
     delay_between_queries: Duration,
+    /// Delay to next monitoring check
+    next_connection_check: Delay,
 }
 
 impl<TSubstream> Discovery<TSubstream>
@@ -59,9 +69,11 @@ where
     pub fn new(local_node_id: secure::PublicKey) -> Self {
         Discovery {
             kademlia: Kademlia::without_init(local_node_id),
+            out_events: VecDeque::new(),
             connected_peers: HashSet::new(),
             next_query: Delay::new(Instant::now() + Duration::from_secs(30)),
             delay_between_queries: Duration::from_secs(1),
+            next_connection_check: Delay::new(Instant::now() + Duration::from_secs(10)),
         }
     }
 
@@ -126,6 +138,11 @@ where
             Self::OutEvent,
         >,
     > {
+        // Return pending events
+        if let Some(event) = self.out_events.pop_front() {
+            return Async::Ready(NetworkBehaviourAction::GenerateEvent(event));
+        }
+
         // Process results of Kademlia discovery
         match self.kademlia.poll(params) {
             Async::Ready(NetworkBehaviourAction::GenerateEvent(action)) => {
@@ -196,16 +213,52 @@ where
             }
             Async::NotReady => (),
         }
-        trace!("Done checking queues");
+        // Check if we are connected to enough closes peers
+        loop {
+            match self.next_connection_check.poll() {
+                Ok(Async::NotReady) => break,
+                Ok(Async::Ready(_)) => {
+                    self.next_connection_check
+                        .reset(Instant::now() + Duration::from_secs(MONITORING_INTERVAL));
+                    let my_id = self.kademlia.my_id().clone();
+                    let closest_nodes: Vec<secure::PublicKey> = self
+                        .kademlia
+                        .find_closest(&my_id)
+                        .take(MIN_CLOSEST_PEERS)
+                        .collect();
+                    debug!(target: "stegos_network::discovery", "Checking connection to the known closest peers: count={}", closest_nodes.len());
+                    for node in closest_nodes.iter() {
+                        if let Some(node_info) = self.kademlia.get_node(&node) {
+                            match node_info.peer_id() {
+                                Some(p) => {
+                                    if !self.connected_peers.contains(&p) {
+                                        debug!(target: "stegos_network::discovery", "connecting to known closest peer: {}, distance: {}", p.to_base58(), &my_id.distance_with(node));
+                                        self.out_events.push_back(DiscoveryOutEvent::DialPeer {
+                                            peer_id: p.clone(),
+                                        });
+                                    } else {
+                                        debug!(target: "stegos_network::discovery", "already connected to closest peer: {}, distance: {}", p.to_base58(), &my_id.distance_with(node));
+                                    }
+                                }
+                                None => (),
+                            }
+                        }
+                    }
+                }
+                Err(err) => {
+                    warn!(target: "stegos_network::discovery", "monitoring timer error: {}", err);
+                    break;
+                }
+            }
+        }
         // Initiate new shake of DHT network
         loop {
             match self.next_query.poll() {
                 Ok(Async::NotReady) => break,
                 Ok(Async::Ready(_)) => {
-                    debug!("Shooting at DHT to gather nodes information");
+                    debug!(target: "stegos_network::discovery", "Shooting at DHT to gather nodes information");
                     let (_, random_node_id, _) = secure::make_random_keys();
                     self.kademlia.find_node(random_node_id);
-
                     // Reset the `Delay` to the next random.
                     self.next_query
                         .reset(Instant::now() + self.delay_between_queries);
@@ -213,12 +266,11 @@ where
                         cmp::min(self.delay_between_queries * 2, Duration::from_secs(60));
                 }
                 Err(err) => {
-                    error!("Kad discovery timer errored: {:?}", err);
+                    warn!(target: "stegos_network::discovery", "Kad discovery timer errored: {:?}", err);
                     break;
                 }
             }
         }
-        trace!("Done discovery poll");
         Async::NotReady
     }
 }

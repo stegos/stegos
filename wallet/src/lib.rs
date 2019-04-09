@@ -359,70 +359,54 @@ impl Future for WalletService {
         loop {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => match event {
-                    WalletEvent::Payment {
-                        recipient,
-                        amount,
-                        comment,
-                        tx,
-                    } => {
-                        tx.send(self.payment(&recipient, amount, comment).into())
-                            .ok();
-                    }
-                    WalletEvent::SecurePayment {
-                        recipient,
-                        amount,
-                        comment,
-                        tx,
-                    } => {
-                        let r = match self.secure_payment(&recipient, amount, comment) {
-                            Ok(()) => WalletResponse::ValueShuffleStarted {},
-                            Err(e) => WalletResponse::Error {
-                                error: format!("{}", e),
+                    WalletEvent::Request { request, tx } => {
+                        let response = match request {
+                            WalletRequest::Payment {
+                                recipient,
+                                amount,
+                                comment,
+                            } => self.payment(&recipient, amount, comment).into(),
+                            WalletRequest::SecurePayment {
+                                recipient,
+                                amount,
+                                comment,
+                            } => match self.secure_payment(&recipient, amount, comment) {
+                                Ok(()) => WalletResponse::ValueShuffleStarted {},
+                                Err(e) => WalletResponse::Error {
+                                    error: format!("{}", e),
+                                },
                             },
+                            WalletRequest::Stake { amount } => self.stake(amount).into(),
+                            WalletRequest::Unstake { amount } => self.unstake(amount).into(),
+                            WalletRequest::UnstakeAll {} => self.unstake_all().into(),
+                            WalletRequest::KeysInfo {} => WalletResponse::KeysInfo {
+                                wallet_pkey: self.pkey,
+                                network_pkey: self.validator_pkey,
+                            },
+                            WalletRequest::BalanceInfo {} => WalletResponse::BalanceInfo {
+                                balance: self.balance,
+                            },
+                            WalletRequest::UnspentInfo {} => {
+                                let unspent: Vec<(Hash, i64)> = self
+                                    .unspent
+                                    .iter()
+                                    .map(|(hash, (_, amount))| (hash.clone(), *amount))
+                                    .collect();
+                                let unspent_stakes: Vec<(Hash, i64)> = self
+                                    .unspent_stakes
+                                    .iter()
+                                    .map(|(hash, o)| (hash.clone(), o.amount))
+                                    .collect();
+                                WalletResponse::UnspentInfo {
+                                    unspent,
+                                    unspent_stakes,
+                                }
+                            }
                         };
-                        tx.send(r).ok();
-                    }
-                    WalletEvent::Stake { amount, tx } => {
-                        tx.send(self.stake(amount).into()).ok();
-                    }
-                    WalletEvent::Unstake { amount, tx } => {
-                        tx.send(self.unstake(amount).into()).ok();
-                    }
-                    WalletEvent::UnstakeAll { tx } => {
-                        tx.send(self.unstake_all().into()).ok();
+                        tx.send(response).ok(); // ignore errors.
                     }
                     WalletEvent::Subscribe { tx } => {
                         self.subscribers.push(tx);
-                    }
-                    WalletEvent::KeysInfo { tx } => {
-                        let response = WalletResponse::KeysInfo {
-                            wallet_pkey: self.pkey,
-                            network_pkey: self.validator_pkey,
-                        };
-                        tx.send(response).ok();
-                    }
-                    WalletEvent::BalanceInfo { tx } => {
-                        let response = WalletResponse::BalanceInfo {
-                            balance: self.balance,
-                        };
-                        tx.send(response).ok();
-                    }
-                    WalletEvent::UnspentInfo { tx } => {
-                        let unspent: Vec<(Hash, i64)> = self
-                            .unspent
-                            .iter()
-                            .map(|(hash, (_, amount))| (hash.clone(), *amount))
-                            .collect();
-                        let unspent_stakes: Vec<(Hash, i64)> = self
-                            .unspent_stakes
-                            .iter()
-                            .map(|(hash, o)| (hash.clone(), o.amount))
-                            .collect();
-                        let response = WalletResponse::UnspentInfo {
-                            unspent,
-                            unspent_stakes,
-                        };
-                        tx.send(response).ok();
                     }
                     WalletEvent::NodeOutputsChanged(OutputsNotification { inputs, outputs }) => {
                         self.on_outputs_changed(inputs, outputs);

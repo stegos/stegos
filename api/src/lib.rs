@@ -31,11 +31,9 @@ use futures::sync::mpsc::UnboundedReceiver;
 use futures::sync::oneshot;
 use futures::{Async, AsyncSink, Future, Poll, Sink, Stream};
 use log::*;
-use serde_derive::Deserialize;
 use serde_json;
 use std::net::SocketAddr;
-use stegos_crypto::curve1174::cpt::PublicKey;
-use stegos_wallet::{Wallet, WalletNotification, WalletResponse};
+use stegos_wallet::{Wallet, WalletNotification, WalletRequest, WalletResponse};
 use tokio::net::TcpListener;
 use tokio::runtime::TaskExecutor;
 use websocket::message::OwnedMessage;
@@ -44,32 +42,6 @@ use websocket::server::upgrade::r#async::IntoWs;
 
 /// The number of values to fit in the output buffer.
 const OUTPUT_BUFFER_SIZE: usize = 10;
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "request")]
-#[serde(rename_all = "snake_case")]
-enum WalletRequest {
-    Payment {
-        recipient: PublicKey,
-        amount: i64,
-        comment: String,
-    },
-    SecurePayment {
-        recipient: PublicKey,
-        amount: i64,
-        comment: String,
-    },
-    Stake {
-        amount: i64,
-    },
-    Unstake {
-        amount: i64,
-    },
-    UnstakeAll {},
-    KeysInfo {},
-    BalanceInfo {},
-    UnspentInfo {},
-}
 
 /// A type definition for sink.
 type WsSink = Box<Sink<SinkItem = OwnedMessage, SinkError = WebSocketError> + Send>;
@@ -119,25 +91,7 @@ impl WebSocketHandler {
                 return Err(WebSocketError::RequestError("Invalid request"));
             }
         };
-        let rx = match request {
-            WalletRequest::Payment {
-                recipient,
-                amount,
-                comment,
-            } => self.wallet.payment(recipient, amount, comment),
-            WalletRequest::SecurePayment {
-                recipient,
-                amount,
-                comment,
-            } => self.wallet.secure_payment(recipient, amount, comment),
-            WalletRequest::Stake { amount } => self.wallet.stake(amount),
-            WalletRequest::Unstake { amount } => self.wallet.unstake(amount),
-            WalletRequest::UnstakeAll {} => self.wallet.unstake_all(),
-            WalletRequest::KeysInfo {} => self.wallet.keys_info(),
-            WalletRequest::BalanceInfo {} => self.wallet.balance_info(),
-            WalletRequest::UnspentInfo {} => self.wallet.unspent_info(),
-        };
-        self.wallet_responses.push(rx);
+        self.wallet_responses.push(self.wallet.request(request));
         Ok(())
     }
 

@@ -25,16 +25,16 @@ use futures::sync::mpsc::unbounded;
 use futures::sync::mpsc::UnboundedReceiver;
 use futures::sync::mpsc::UnboundedSender;
 use futures::sync::oneshot;
+use serde_derive::Deserialize;
 use serde_derive::Serialize;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
 use stegos_node::OutputsNotification;
 
-//
-// Outgoing messages.
-//
-
+///
+/// Out-of-band notifications.
+///
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "notification")]
 #[serde(rename_all = "snake_case")]
@@ -43,6 +43,38 @@ pub enum WalletNotification {
     PaymentReceived { amount: i64, comment: String },
 }
 
+///
+/// RPC requests.
+///
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "request")]
+#[serde(rename_all = "snake_case")]
+pub enum WalletRequest {
+    Payment {
+        recipient: PublicKey,
+        amount: i64,
+        comment: String,
+    },
+    SecurePayment {
+        recipient: PublicKey,
+        amount: i64,
+        comment: String,
+    },
+    Stake {
+        amount: i64,
+    },
+    Unstake {
+        amount: i64,
+    },
+    UnstakeAll {},
+    KeysInfo {},
+    BalanceInfo {},
+    UnspentInfo {},
+}
+
+///
+/// RPC responses.
+///
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "response")]
 #[serde(rename_all = "snake_case")]
@@ -68,9 +100,9 @@ pub enum WalletResponse {
     },
 }
 
-//
-// Events.
-//
+///
+/// Events.
+///
 #[derive(Debug)]
 pub(crate) enum WalletEvent {
     //
@@ -79,37 +111,8 @@ pub(crate) enum WalletEvent {
     Subscribe {
         tx: UnboundedSender<WalletNotification>,
     },
-    Payment {
-        recipient: PublicKey,
-        amount: i64,
-        comment: String,
-        tx: oneshot::Sender<WalletResponse>,
-    },
-    SecurePayment {
-        recipient: PublicKey,
-        amount: i64,
-        comment: String,
-        tx: oneshot::Sender<WalletResponse>,
-    },
-    Stake {
-        amount: i64,
-        tx: oneshot::Sender<WalletResponse>,
-    },
-    Unstake {
-        amount: i64,
-        tx: oneshot::Sender<WalletResponse>,
-    },
-    UnstakeAll {
-        tx: oneshot::Sender<WalletResponse>,
-    },
-
-    KeysInfo {
-        tx: oneshot::Sender<WalletResponse>,
-    },
-    BalanceInfo {
-        tx: oneshot::Sender<WalletResponse>,
-    },
-    UnspentInfo {
+    Request {
+        request: WalletRequest,
         tx: oneshot::Sender<WalletResponse>,
     },
 
@@ -133,78 +136,10 @@ impl Wallet {
         rx
     }
 
-    pub fn payment(
-        &self,
-        recipient: PublicKey,
-        amount: i64,
-        comment: String,
-    ) -> oneshot::Receiver<WalletResponse> {
+    /// Execute a Wallet Request.
+    pub fn request(&self, request: WalletRequest) -> oneshot::Receiver<WalletResponse> {
         let (tx, rx) = oneshot::channel();
-        let msg = WalletEvent::Payment {
-            recipient,
-            amount,
-            comment,
-            tx,
-        };
-        self.outbox.unbounded_send(msg).expect("connected");
-        rx
-    }
-
-    pub fn secure_payment(
-        &self,
-        recipient: PublicKey,
-        amount: i64,
-        comment: String,
-    ) -> oneshot::Receiver<WalletResponse> {
-        let (tx, rx) = oneshot::channel();
-        let msg = WalletEvent::SecurePayment {
-            recipient,
-            amount,
-            comment,
-            tx,
-        };
-        self.outbox.unbounded_send(msg).expect("connected");
-        rx
-    }
-
-    pub fn stake(&self, amount: i64) -> oneshot::Receiver<WalletResponse> {
-        let (tx, rx) = oneshot::channel();
-        let msg = WalletEvent::Stake { amount, tx };
-        self.outbox.unbounded_send(msg).expect("connected");
-        rx
-    }
-
-    pub fn unstake(&self, amount: i64) -> oneshot::Receiver<WalletResponse> {
-        let (tx, rx) = oneshot::channel();
-        let msg = WalletEvent::Unstake { amount, tx };
-        self.outbox.unbounded_send(msg).expect("connected");
-        rx
-    }
-
-    pub fn unstake_all(&self) -> oneshot::Receiver<WalletResponse> {
-        let (tx, rx) = oneshot::channel();
-        let msg = WalletEvent::UnstakeAll { tx };
-        self.outbox.unbounded_send(msg).expect("connected");
-        rx
-    }
-
-    pub fn balance_info(&self) -> oneshot::Receiver<WalletResponse> {
-        let (tx, rx) = oneshot::channel();
-        let msg = WalletEvent::BalanceInfo { tx };
-        self.outbox.unbounded_send(msg).expect("connected");
-        rx
-    }
-
-    pub fn keys_info(&self) -> oneshot::Receiver<WalletResponse> {
-        let (tx, rx) = oneshot::channel();
-        let msg = WalletEvent::KeysInfo { tx };
-        self.outbox.unbounded_send(msg).expect("connected");
-        rx
-    }
-
-    pub fn unspent_info(&self) -> oneshot::Receiver<WalletResponse> {
-        let (tx, rx) = oneshot::channel();
-        let msg = WalletEvent::UnspentInfo { tx };
+        let msg = WalletEvent::Request { request, tx };
         self.outbox.unbounded_send(msg).expect("connected");
         rx
     }

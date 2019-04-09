@@ -39,7 +39,7 @@ use stegos_network::Network;
 use stegos_network::UnicastMessage;
 use stegos_node::InfoNotification;
 use stegos_node::Node;
-use stegos_wallet::{Wallet, WalletNotification, WalletResponse};
+use stegos_wallet::{Wallet, WalletNotification, WalletRequest, WalletResponse};
 
 // ----------------------------------------------------------------
 // Public API.
@@ -296,8 +296,12 @@ impl ConsoleService {
             };
 
             info!("Sending {} STG to {}", amount, recipient.to_hex());
-            let rx = self.wallet.payment(recipient, amount, comment);
-            self.wallet_responses.push(rx);
+            let request = WalletRequest::Payment {
+                recipient,
+                amount,
+                comment,
+            };
+            self.wallet_responses.push(self.wallet.request(request));
         } else if msg.starts_with("spay ") {
             let caps = match PAY_COMMAND_RE.captures(&msg[5..]) {
                 Some(c) => c,
@@ -329,8 +333,12 @@ impl ConsoleService {
                 amount,
                 recipient.to_hex()
             );
-            let rx = self.wallet.secure_payment(recipient, amount, comment);
-            self.wallet_responses.push(rx);
+            let request = WalletRequest::SecurePayment {
+                recipient,
+                amount,
+                comment,
+            };
+            self.wallet_responses.push(self.wallet.request(request));
         } else if msg.starts_with("msg ") {
             let caps = match MSG_COMMAND_RE.captures(&msg[4..]) {
                 Some(c) => c,
@@ -354,8 +362,12 @@ impl ConsoleService {
             assert!(comment.len() > 0);
 
             info!("Sending message to {}", recipient.to_hex());
-            let rx = self.wallet.payment(recipient, amount, comment);
-            self.wallet_responses.push(rx);
+            let request = WalletRequest::Payment {
+                recipient,
+                amount,
+                comment,
+            };
+            self.wallet_responses.push(self.wallet.request(request));
         } else if msg.starts_with("stake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[6..]) {
                 Some(c) => c,
@@ -369,12 +381,12 @@ impl ConsoleService {
             let amount = amount.parse::<i64>().unwrap(); // check by regex
 
             info!("Staking {} STG into escrow", amount);
-            let rx = self.wallet.stake(amount);
-            self.wallet_responses.push(rx);
+            let request = WalletRequest::Stake { amount };
+            self.wallet_responses.push(self.wallet.request(request));
         } else if msg == "unstake" {
             info!("Unstaking all of the money from escrow");
-            let rx = self.wallet.unstake_all();
-            self.wallet_responses.push(rx);
+            let request = WalletRequest::UnstakeAll {};
+            self.wallet_responses.push(self.wallet.request(request));
         } else if msg.starts_with("unstake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[8..]) {
                 Some(c) => c,
@@ -388,8 +400,8 @@ impl ConsoleService {
             let amount = amount.parse::<i64>().unwrap(); // check by regex
 
             info!("Unstaking {} STG from escrow", amount);
-            let rx = self.wallet.unstake(amount);
-            self.wallet_responses.push(rx);
+            let request = WalletRequest::Unstake { amount };
+            self.wallet_responses.push(self.wallet.request(request));
         } else if msg == "show version" {
             println!(
                 "Stegos {}.{}.{} ({} {})",
@@ -401,15 +413,18 @@ impl ConsoleService {
             );
             return true;
         } else if msg == "show keys" {
-            self.wallet_responses.push(self.wallet.keys_info());
+            let request = WalletRequest::KeysInfo {};
+            self.wallet_responses.push(self.wallet.request(request));
         } else if msg == "show balance" {
-            self.wallet_responses.push(self.wallet.balance_info());
+            let request = WalletRequest::BalanceInfo {};
+            self.wallet_responses.push(self.wallet.request(request));
         } else if msg == "show election" {
             self.node.election_info().unwrap();
         } else if msg == "show escrow" {
             self.node.escrow_info().unwrap();
         } else if msg == "show utxo" {
-            self.wallet_responses.push(self.wallet.unspent_info());
+            let request = WalletRequest::UnspentInfo {};
+            self.wallet_responses.push(self.wallet.request(request));
         } else {
             Self::help();
             return true;

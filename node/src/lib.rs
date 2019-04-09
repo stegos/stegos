@@ -29,12 +29,14 @@ pub mod metrics;
 pub mod protos;
 #[cfg(test)]
 mod test;
+#[macro_use]
 pub mod timer;
 mod validation;
 pub use crate::config::ChainConfig;
 use crate::error::*;
 use crate::loader::ChainLoaderMessage;
 use crate::mempool::Mempool;
+use crate::timer::{Interval, TimerEvents};
 use crate::validation::*;
 use bitvector::BitVector;
 use failure::Error;
@@ -57,7 +59,6 @@ use stegos_keychain::KeyChain;
 use stegos_network::Network;
 use stegos_network::UnicastMessage;
 use stegos_serialization::traits::ProtoConvert;
-use timer::Interval;
 use tokio_timer::clock;
 
 // ----------------------------------------------------------------
@@ -176,12 +177,6 @@ pub enum NodeMessage {
     SealedBlock(Vec<u8>),
     ViewChangeMessage(Vec<u8>),
     ChainLoaderMessage(UnicastMessage),
-    //
-    // Internal Events
-    //
-    MicroBlockProposeTimer(Instant),
-    MicroBlockViewChangeTimer(Instant),
-    KeyBlockViewChangeTimer(Instant),
 }
 
 pub struct NodeService {
@@ -230,6 +225,10 @@ pub struct NodeService {
     on_info: Vec<UnboundedSender<InfoNotification>>,
     /// Aggregated stream of events.
     events: Box<Stream<Item = NodeMessage, Error = ()> + Send>,
+    /// timer events
+    key_block_timer: Interval,
+    view_change_timer: Interval,
+    propose_timer: Interval,
 }
 
 impl NodeService {
@@ -328,25 +327,15 @@ impl NodeService {
             .map(NodeMessage::ChainLoaderMessage);
         streams.push(Box::new(requests_rx));
 
+        let events = select_all(streams);
         // Timer for the micro block proposals.
-        let timer = Interval::new_interval(cfg.tx_wait_timeout)
-            .map(|i| NodeMessage::MicroBlockProposeTimer(i))
-            .map_err(|_e| ()); // ignore transient timer errors
-        streams.push(Box::new(timer));
+        let propose_timer = Interval::new_interval(cfg.tx_wait_timeout);
 
         // Timer for the micro block view changes.
-        let timer = Interval::new_interval(cfg.micro_block_timeout)
-            .map(|i| NodeMessage::MicroBlockViewChangeTimer(i))
-            .map_err(|_e| ()); // ignore transient timer errors
-        streams.push(Box::new(timer));
+        let view_change_timer = Interval::new_interval(cfg.micro_block_timeout);
 
         // Timer for the key block view changes.
-        let timer = Interval::new_interval(cfg.key_block_timeout)
-            .map(|i| NodeMessage::KeyBlockViewChangeTimer(i))
-            .map_err(|_e| ()); // ignore transient timer errors
-        streams.push(Box::new(timer));
-
-        let events = select_all(streams);
+        let key_block_timer = Interval::new_interval(cfg.key_block_timeout);
 
         let mut service = NodeService {
             cfg,
@@ -364,6 +353,9 @@ impl NodeService {
             on_outputs_changed: on_outputs_received,
             on_info: Vec::new(),
             events,
+            key_block_timer,
+            propose_timer,
+            view_change_timer,
         };
 
         debug!("Recovering consensus state");
@@ -1092,6 +1084,18 @@ impl NodeService {
         self.send_sealed_block(Block::KeyBlock(key_block2))
             .expect("failed to send sealed monetary block");
     }
+
+    /// poll internal intervals.
+    ///
+    /// ## Panics:
+    /// If some of intevals return None.
+    /// If some timer fails.
+    pub fn poll_timers(&mut self) -> Async<TimerEvents> {
+        poll_timer!(TimerEvents::KeyBlockViewChangeTimer => self.key_block_timer);
+        poll_timer!(TimerEvents::MicroBlockViewChangeTimer => self.view_change_timer);
+        poll_timer!(TimerEvents::MicroBlockProposeTimer => self.propose_timer);
+        return Async::NotReady;
+    }
 }
 
 // Event loop.
@@ -1100,6 +1104,23 @@ impl Future for NodeService {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        while let Async::Ready(item) = self.poll_timers() {
+            let result = match item {
+                TimerEvents::MicroBlockProposeTimer(_now) => {
+                    self.handle_micro_block_propose_timer()
+                }
+                TimerEvents::MicroBlockViewChangeTimer(_now) => {
+                    self.handle_micro_block_viewchange_timer()
+                }
+                TimerEvents::KeyBlockViewChangeTimer(_now) => {
+                    self.handle_key_block_viewchange_timer()
+                }
+            };
+            if let Err(e) = result {
+                error!("Error: {}", e);
+            }
+        }
+
         loop {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => {
@@ -1121,15 +1142,6 @@ impl Future for NodeService {
                         NodeMessage::ChainLoaderMessage(msg) => {
                             ChainLoaderMessage::from_buffer(&msg.data)
                                 .and_then(|data| self.handle_chain_loader_message(msg.from, data))
-                        }
-                        NodeMessage::MicroBlockProposeTimer(_now) => {
-                            self.handle_micro_block_propose_timer()
-                        }
-                        NodeMessage::MicroBlockViewChangeTimer(_now) => {
-                            self.handle_micro_block_viewchange_timer()
-                        }
-                        NodeMessage::KeyBlockViewChangeTimer(_now) => {
-                            self.handle_key_block_viewchange_timer()
                         }
                     };
                     if let Err(e) = result {

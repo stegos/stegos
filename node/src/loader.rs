@@ -179,13 +179,18 @@ impl NodeService {
             response.height,
         );
 
+        let initial_height = self.chain.height();
         for block in response.blocks {
             // Fail on the first error.
             self.handle_sealed_block(block)?;
         }
 
-        // Request more blocks.
-        if !self.is_synchronized() {
+        //
+        // Request more blocks in the follwing cases:
+        // a) The timestamp of the latest keyblock is oudated (see is_synchronized()).
+        // b) At least two blocks have been applied.
+        //
+        if !self.is_synchronized() || (self.chain.height() >= initial_height + 2) {
             self.request_history()?;
         }
 

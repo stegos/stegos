@@ -69,7 +69,7 @@ impl Default for ChainConfig {
             stake_fee: 1,
             max_slot_count: 1000,
             min_stake_amount: 1000,
-            loader_timeout: Duration::from_secs(5),
+            loader_timeout: Duration::from_millis(500),
         }
     }
 }

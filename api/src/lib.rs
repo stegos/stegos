@@ -31,6 +31,8 @@ use futures::sync::mpsc::UnboundedReceiver;
 use futures::sync::oneshot;
 use futures::{Async, AsyncSink, Future, Poll, Sink, Stream};
 use log::*;
+use serde_derive::Deserialize;
+use serde_derive::Serialize;
 use serde_json;
 use std::net::SocketAddr;
 use stegos_wallet::{Wallet, WalletNotification, WalletRequest, WalletResponse};
@@ -48,6 +50,42 @@ type WsSink = Box<Sink<SinkItem = OwnedMessage, SinkError = WebSocketError> + Se
 /// A type definition for stream.
 type WsStream = Box<Stream<Item = OwnedMessage, Error = WebSocketError> + Send>;
 
+pub type RequestId = u64;
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RequestKind {
+    WalletRequest(WalletRequest),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct Request {
+    #[serde(flatten)]
+    kind: RequestKind,
+    #[serde(default)]
+    id: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum ResponseKind {
+    WalletResponse(WalletResponse),
+}
+
+fn is_default(id: &RequestId) -> bool {
+    *id == 0
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct Response {
+    #[serde(flatten)]
+    kind: ResponseKind,
+    #[serde(skip_serializing_if = "is_default")]
+    id: RequestId,
+}
+
 /// Handler of incoming connections.
 struct WebSocketHandler {
     /// Remote address.
@@ -64,7 +102,7 @@ struct WebSocketHandler {
     /// Wallet events.
     wallet_notifications: UnboundedReceiver<WalletNotification>,
     /// Wallet RPC responses.
-    wallet_responses: Vec<oneshot::Receiver<WalletResponse>>,
+    wallet_responses: Vec<(RequestId, oneshot::Receiver<WalletResponse>)>,
 }
 
 impl WebSocketHandler {
@@ -84,14 +122,19 @@ impl WebSocketHandler {
     }
 
     fn on_message(&mut self, text: String) -> Result<(), WebSocketError> {
-        let request: WalletRequest = match serde_json::from_str(&text) {
+        let request: Request = match serde_json::from_str(&text) {
             Ok(r) => r,
             Err(e) => {
                 error!("Invalid request: {}", e);
                 return Err(WebSocketError::RequestError("Invalid request"));
             }
         };
-        self.wallet_responses.push(self.wallet.request(request));
+        match request.kind {
+            RequestKind::WalletRequest(wallet_request) => {
+                self.wallet_responses
+                    .push((request.id, self.wallet.request(wallet_request)));
+            }
+        }
         Ok(())
     }
 
@@ -102,8 +145,12 @@ impl WebSocketHandler {
         }
     }
 
-    fn on_wallet_response(&mut self, response: WalletResponse) {
-        let msg = serde_json::to_string(&response).expect("serialized");
+    fn on_wallet_response(&mut self, id: RequestId, response: WalletResponse) {
+        let msg = Response {
+            kind: ResponseKind::WalletResponse(response),
+            id,
+        };
+        let msg = serde_json::to_string(&msg).expect("serialized");
         if let Err(e) = self.send(msg) {
             error!("Failed to send response: {}", e);
         }
@@ -184,12 +231,12 @@ impl Future for WebSocketHandler {
         }
 
         let wallet_responses = std::mem::replace(&mut self.wallet_responses, Vec::new());
-        for mut rx in wallet_responses {
+        for (id, mut rx) in wallet_responses {
             match rx.poll() {
                 Ok(Async::Ready(response)) => {
-                    self.on_wallet_response(response);
+                    self.on_wallet_response(id, response);
                 }
-                Ok(Async::NotReady) => self.wallet_responses.push(rx),
+                Ok(Async::NotReady) => self.wallet_responses.push((id, rx)),
                 Err(_) => panic!("disconnected"),
             }
         }

@@ -35,6 +35,7 @@ use serde_derive::Deserialize;
 use serde_derive::Serialize;
 use serde_json;
 use std::net::SocketAddr;
+use stegos_node::{Node, NodeRequest, NodeResponse};
 use stegos_wallet::{Wallet, WalletNotification, WalletRequest, WalletResponse};
 use tokio::net::TcpListener;
 use tokio::runtime::TaskExecutor;
@@ -56,6 +57,7 @@ pub type RequestId = u64;
 #[serde(untagged)]
 enum RequestKind {
     WalletRequest(WalletRequest),
+    NodeRequest(NodeRequest),
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,6 +73,7 @@ struct Request {
 #[serde(untagged)]
 enum ResponseKind {
     WalletResponse(WalletResponse),
+    NodeResponse(NodeResponse),
 }
 
 fn is_default(id: &RequestId) -> bool {
@@ -97,19 +100,23 @@ struct WebSocketHandler {
     /// True if outgoing buffer should be flushed on the next poll().
     need_flush: bool,
     /// Wallet API.
-    #[allow(unused)]
     wallet: Wallet,
     /// Wallet events.
     wallet_notifications: UnboundedReceiver<WalletNotification>,
     /// Wallet RPC responses.
     wallet_responses: Vec<(RequestId, oneshot::Receiver<WalletResponse>)>,
+    /// Node API.
+    node: Node,
+    /// Node RPC responses.
+    node_responses: Vec<(RequestId, oneshot::Receiver<NodeResponse>)>,
 }
 
 impl WebSocketHandler {
-    fn new(peer: SocketAddr, sink: WsSink, stream: WsStream, wallet: Wallet) -> Self {
+    fn new(peer: SocketAddr, sink: WsSink, stream: WsStream, wallet: Wallet, node: Node) -> Self {
         let need_flush = false;
         let wallet_notifications = wallet.subscribe();
         let wallet_responses = Vec::new();
+        let node_responses = Vec::new();
         WebSocketHandler {
             peer,
             sink,
@@ -118,6 +125,8 @@ impl WebSocketHandler {
             wallet,
             wallet_notifications,
             wallet_responses,
+            node,
+            node_responses,
         }
     }
 
@@ -134,6 +143,10 @@ impl WebSocketHandler {
                 self.wallet_responses
                     .push((request.id, self.wallet.request(wallet_request)));
             }
+            RequestKind::NodeRequest(node_request) => {
+                self.node_responses
+                    .push((request.id, self.node.request(node_request)));
+            }
         }
         Ok(())
     }
@@ -145,12 +158,8 @@ impl WebSocketHandler {
         }
     }
 
-    fn on_wallet_response(&mut self, id: RequestId, response: WalletResponse) {
-        let msg = Response {
-            kind: ResponseKind::WalletResponse(response),
-            id,
-        };
-        let msg = serde_json::to_string(&msg).expect("serialized");
+    fn on_response(&mut self, response: Response) {
+        let msg = serde_json::to_string(&response).expect("serialized");
         if let Err(e) = self.send(msg) {
             error!("Failed to send response: {}", e);
         }
@@ -234,9 +243,28 @@ impl Future for WebSocketHandler {
         for (id, mut rx) in wallet_responses {
             match rx.poll() {
                 Ok(Async::Ready(response)) => {
-                    self.on_wallet_response(id, response);
+                    let response = Response {
+                        kind: ResponseKind::WalletResponse(response),
+                        id,
+                    };
+                    self.on_response(response);
                 }
                 Ok(Async::NotReady) => self.wallet_responses.push((id, rx)),
+                Err(_) => panic!("disconnected"),
+            }
+        }
+
+        let node_responses = std::mem::replace(&mut self.node_responses, Vec::new());
+        for (id, mut rx) in node_responses {
+            match rx.poll() {
+                Ok(Async::Ready(response)) => {
+                    let response = Response {
+                        kind: ResponseKind::NodeResponse(response),
+                        id,
+                    };
+                    self.on_response(response)
+                }
+                Ok(Async::NotReady) => self.node_responses.push((id, rx)),
                 Err(_) => panic!("disconnected"),
             }
         }
@@ -260,9 +288,11 @@ impl WebSocketAPI {
         cfg: WebSocketConfig,
         executor: TaskExecutor,
         wallet: Wallet,
+        node: Node,
     ) -> Result<(), Error> {
         let executor2 = executor.clone();
         let wallet2 = wallet.clone();
+        let node2 = node.clone();
         let addr: SocketAddr = format!("{}:{}", cfg.bind_ip, cfg.bind_port).parse()?;
         info!("Starting WebSocket API on {}", &addr);
         let server = TcpListener::bind(&addr)?
@@ -272,6 +302,7 @@ impl WebSocketAPI {
             })
             .for_each(move |s| {
                 let wallet3 = wallet2.clone();
+                let node3 = node2.clone();
                 let peer = s.peer_addr().expect("has peer address");
                 debug!("[{}] accepted", peer);
                 let s = s
@@ -289,7 +320,13 @@ impl WebSocketAPI {
                                 let sink: WsSink = Box::new(sink);
                                 let stream: WsStream = Box::new(stream);
                                 info!("[{}] Connected", peer);
-                                WebSocketHandler::new(peer, sink, stream, wallet3.clone())
+                                WebSocketHandler::new(
+                                    peer,
+                                    sink,
+                                    stream,
+                                    wallet3.clone(),
+                                    node3.clone(),
+                                )
                             })
                             .map_err(move |e| {
                                 error!("[{}] Error: {}", &peer, e);

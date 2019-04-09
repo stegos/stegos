@@ -18,6 +18,7 @@ serde = "1.0"
 serde_derive = "1.0"
 serde_json = "1.0"
 stegos_crypto = { version = "0.2.0", path = "../crypto" }
+stegos_node = { version = "0.2.0", path = "../node" }
 stegos_wallet = { version = "0.2.0", path = "../wallet" }
 tokio = "0.1"
 websocket = { version = "0.22", default-features = false, features = ["async"] }

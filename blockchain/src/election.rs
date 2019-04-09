@@ -37,9 +37,9 @@ pub struct ElectionInfo {
     pub height: u64,
     pub view_change: u32,
     pub slots_count: i64,
-    pub last_leader: String,
-    pub current_leader: String,
-    pub next_leader: String,
+    pub last_leader: Option<secure::PublicKey>,
+    pub current_leader: secure::PublicKey,
+    pub next_leader: secure::PublicKey,
 }
 
 /// Result of election.

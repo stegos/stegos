@@ -58,17 +58,17 @@ pub struct EscrowInfo {
     pub validators: Vec<ValidatorInfo>,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct ValidatorInfo {
-    pub network_pkey: String,
+    pub network_pkey: secure::PublicKey,
     pub total: i64,
     pub stakes: Vec<StakeInfo>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct StakeInfo {
-    pub output_hash: String,
-    pub locked_until: String,
+    pub output_hash: Hash,
+    pub bonding_timestamp: u64,
     pub amount: i64,
 }
 
@@ -234,18 +234,26 @@ impl Escrow {
 
     /// Returns an object that represent printable part of the state.
     pub fn info(&self) -> EscrowInfo {
-        let mut validators: HashMap<String, ValidatorInfo> = HashMap::new();
+        let mut validators: HashMap<secure::PublicKey, ValidatorInfo> = HashMap::new();
         for (k, v) in self.escrow.iter() {
-            let validator_pkey = format!("{}", &k.validator_pkey);
             let entry = validators
-                .entry(validator_pkey.clone())
-                .or_insert(Default::default());
+                .entry(k.validator_pkey.clone())
+                .or_insert(ValidatorInfo {
+                    network_pkey: k.validator_pkey.clone(),
+                    stakes: Default::default(),
+                    total: Default::default(),
+                });
+            let since_the_epoch = v
+                .bonding_timestamp
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time is valid");
+            let bonding_timestamp =
+                since_the_epoch.as_secs() * 1000 + since_the_epoch.subsec_millis() as u64;
             let stake = StakeInfo {
-                output_hash: format!("{}", &k.output_hash),
-                locked_until: format!("{:?}", &v.bonding_timestamp),
+                output_hash: k.output_hash,
+                bonding_timestamp,
                 amount: v.amount,
             };
-            (*entry).network_pkey = validator_pkey;
             (*entry).stakes.push(stake);
             (*entry).total += v.amount;
         }

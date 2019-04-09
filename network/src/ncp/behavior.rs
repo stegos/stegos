@@ -295,14 +295,14 @@ where
                     debug!(target: "stegos_network::ncp", "received peers: from_peer={}", from.to_base58());
                     for peer in message.peers.into_iter() {
                         if peer.peer_id != *poll_parameters.local_peer_id() {
+                            let id = peer.peer_id.clone();
+                            if !self.known_peers.contains_key(id.as_bytes()) {
+                                self.known_peers.insert(
+                                    id.clone().into_bytes(),
+                                    (peer.node_id.clone(), SmallVec::new()),
+                                );
+                            }
                             for addr in peer.addresses.into_iter() {
-                                let id = peer.peer_id.clone();
-                                if !self.known_peers.contains_key(id.as_bytes()) {
-                                    self.known_peers.insert(
-                                        id.clone().into_bytes(),
-                                        (peer.node_id.clone(), SmallVec::new()),
-                                    );
-                                }
                                 // Safe to unwrap, since we initalized entry on previous step
                                 if self
                                     .known_peers
@@ -318,19 +318,19 @@ where
                                         .1
                                         .push(addr)
                                 }
-                                self.out_events.push_back(NcpOutEvent::DiscoveredPeer {
-                                    peer_id: peer.peer_id.clone(),
-                                    node_id: peer.node_id.clone(),
-                                    addresses: self
-                                        .known_peers
-                                        .get(id.as_bytes())
-                                        .unwrap()
-                                        .1
-                                        .iter()
-                                        .map(|v| v.clone())
-                                        .collect(),
-                                });
                             }
+                            self.out_events.push_back(NcpOutEvent::DiscoveredPeer {
+                                peer_id: peer.peer_id.clone(),
+                                node_id: peer.node_id.clone(),
+                                addresses: self
+                                    .known_peers
+                                    .get(id.as_bytes())
+                                    .unwrap()
+                                    .1
+                                    .iter()
+                                    .map(|v| v.clone())
+                                    .collect(),
+                            });
                         }
                     }
                 }

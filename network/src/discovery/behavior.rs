@@ -21,13 +21,16 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::kad::{kbucket::KBucketsPeerId, Kademlia, KademliaOut};
+use crate::delivery::Unicast;
+use crate::kad::{kbucket::KBucketsPeerId, Kademlia, KademliaOut, NodeInfo};
+use crate::utils::LruBimap;
 use futures::prelude::*;
 use libp2p::core::swarm::{
     ConnectedPoint, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
 };
 use libp2p::{core::ProtocolsHandler, Multiaddr, PeerId};
 use log::*;
+use lru_time_cache::LruCache;
 use std::cmp;
 use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
@@ -40,20 +43,33 @@ use tokio::timer::Delay;
 const MONITORING_INTERVAL: u64 = 30;
 // Try to keep open connections to at leasy followin number of closest peers
 const MIN_CLOSEST_PEERS: usize = 10;
+// Deliver message to N closest node ids, if node is not present in DHT
+const DELIVERY_REPLICATION: usize = 5;
+// TTL for known nodes
+const NODES_TTL: Duration = Duration::from_secs(15 * 60);
 
 pub enum DiscoveryOutEvent {
-    KadEvent(KademliaOut),
     DialPeer { peer_id: PeerId },
+    KadEvent { event: KademliaOut },
+    Route { next_hop: PeerId, message: Unicast },
 }
 
 /// Kademlia-based network discovery
 pub struct Discovery<TSubstream> {
+    my_id: secure::PublicKey,
     /// Kademlia systems
     kademlia: Kademlia<TSubstream>,
+    /// Known nodes
+    known_nodes: LruBimap<secure::PublicKey, PeerId>,
     /// Outbound events
     out_events: VecDeque<DiscoveryOutEvent>,
     /// Set of currently connected peers
     connected_peers: HashSet<PeerId>,
+
+    /// We keep track of the messages we received (in the format `hash(source ID, seq_no)`) so that
+    /// we don't dispatch the same message twice if we receive it twice on the network.
+    received: LruCache<u64, ()>,
+
     /// When to send random request to gather network info
     next_query: Delay,
     /// Delay to the next random poll
@@ -68,12 +84,20 @@ where
 {
     pub fn new(local_node_id: secure::PublicKey) -> Self {
         Discovery {
+            my_id: local_node_id.clone(),
             kademlia: Kademlia::without_init(local_node_id),
+            known_nodes: LruBimap::<secure::PublicKey, PeerId>::with_expiry_duration(NODES_TTL),
             out_events: VecDeque::new(),
             connected_peers: HashSet::new(),
             next_query: Delay::new(Instant::now() + Duration::from_secs(30)),
             delay_between_queries: Duration::from_secs(1),
-            next_connection_check: Delay::new(Instant::now() + Duration::from_secs(10)),
+            next_connection_check: Delay::new(
+                Instant::now() + Duration::from_secs(MONITORING_INTERVAL),
+            ),
+            received: LruCache::with_expiry_duration_and_capacity(
+                Duration::from_secs(60 * 15),
+                100_000,
+            ),
         }
     }
 
@@ -91,6 +115,109 @@ where
     /// are connected to this address.
     pub fn add_not_connected_address(&mut self, node_id: &secure::PublicKey, address: Multiaddr) {
         self.kademlia.add_not_connected_address(node_id, address);
+    }
+
+    pub fn add_node(&mut self, node_id: secure::PublicKey, peer_id: PeerId) {
+        self.known_nodes.insert(node_id, peer_id);
+    }
+
+    pub fn deliver_unicast(&mut self, to: &secure::PublicKey, payload: Vec<u8>) {
+        let mut message = Unicast {
+            to: to.clone(),
+            payload,
+            dont_route: false,
+            seq_no: rand::random::<[u8; 20]>().to_vec(),
+        };
+
+        // Guard against very unlikely event of Hash collision
+        if self.received.contains_key(&message.digest()) {
+            loop {
+                message.seq_no = rand::random::<[u8; 20]>().to_vec();
+                if !self.received.contains_key(&message.digest()) {
+                    break;
+                }
+            }
+        }
+
+        self.route(to, message);
+    }
+
+    pub fn route(&mut self, to: &secure::PublicKey, message: Unicast) {
+        if self.received.contains_key(&message.digest()) {
+            debug!(target: "stegos_network::delivery", "LRU cache hit: dest={}, seq_no={}",  message.to, u8v_to_hexstr(&message.seq_no));
+            return;
+        }
+
+        self.received.insert(message.digest(), ());
+        super::metrics::LRU_CACHE_SIZE.set(self.received.len() as i64);
+
+        // Check if we already know node's peer_id
+        if let Some(peer_id) = self.known_nodes.get_by_key(to) {
+            debug!(target: "stegos_network::delivery", "found node's peer_id: node_id={}, peer_id={}, seq_no={}", to, peer_id.to_base58(), u8v_to_hexstr(&message.seq_no));
+            self.out_events.push_back(DiscoveryOutEvent::Route {
+                next_hop: peer_id.clone(),
+                message,
+            });
+            return;
+        }
+
+        // If destination node is present in out DHT, send payload directly
+        if let Some(node_info) = self.kademlia.get_node(to) {
+            if let Some(peer_id) = node_info.peer_id() {
+                if self.connected_peers.contains(&peer_id) || node_info.has_addresses() {
+                    debug!(target: "stegos_network::delivery", "node is connected, delivering: node_id={}, peer_id={}, seq_no={}", to, peer_id.to_base58(), u8v_to_hexstr(&message.seq_no));
+                    self.out_events.push_back(DiscoveryOutEvent::Route {
+                        next_hop: peer_id,
+                        message,
+                    });
+                    return;
+                }
+            }
+        }
+
+        debug!(target: "stegos_network::delivery", "finding route to node: node_id={}, seq_no={}", to, u8v_to_hexstr(&message.seq_no));
+        // Collect DELIVERY_REPLICATION closest nodes with both peer_id and IPs known
+        let closer_peers_temp: Vec<secure::PublicKey> =
+            self.kademlia.find_closest_with_self(to).collect();
+
+        debug!(target: "stegos_network::delivery", "found closer ppers: count={}", closer_peers_temp.len());
+
+        let closer_peers: Vec<(secure::PublicKey, NodeInfo)> = closer_peers_temp
+            .into_iter()
+            .take_while(|p| p.distance_with(to) <= self.my_id.distance_with(to))
+            .filter_map(|n| {
+                if let Some(node_info) = self.kademlia.get_node(&n) {
+                    Some((n, node_info))
+                } else {
+                    None
+                }
+            })
+            .filter(|n| n.1.has_peer_id() && n.1.has_addresses())
+            .take(DELIVERY_REPLICATION)
+            .collect();
+        debug!(target: "stegos_network::delivery", "collected closer nodes: count={}", closer_peers.len());
+
+        // Should be sorted in ascending order by XOR distance
+        let distances: Vec<u32> = closer_peers.iter().map(|p| p.0.distance_with(to)).collect();
+
+        debug!(target: "stegos_network::delivery", "closest peers disctances: {:?}", distances);
+        if closer_peers.len() == 0 {
+            debug!(target: "stegos_network::delivery", "couldn't find closer peers for node: node_id={}, seq_no={}", to, u8v_to_hexstr(&message.seq_no));
+            return;
+        }
+
+        // deliver to N closer peers
+        for p in closer_peers.iter() {
+            debug!(target: "stegos_network::delivery", "we are closest node, delivering to other closest: to_node_id={}, seq_no={}", p.0, u8v_to_hexstr(&message.seq_no));
+            self.out_events.push_back(DiscoveryOutEvent::Route {
+                next_hop: p.1.peer_id().unwrap(), // we filtered nodes without peer_id
+                message: message.clone(),
+            });
+        }
+    }
+
+    pub fn is_duplicate(&self, msg: &Unicast) -> bool {
+        self.received.contains_key(&msg.digest())
     }
 }
 
@@ -174,17 +301,20 @@ where
                     } => {
                         if peer_id.is_some() {
                             let peer_id = peer_id.clone().unwrap();
+                            self.known_nodes.insert(node_id.clone(), peer_id.clone());
                             debug!(target: "stegos_network::discovery",
                                 "Discovered peer: node_id={}, peer_id={}, addresses={:?}, connected={:?}",
                                 node_id, peer_id.to_base58(), addresses, ty
                             );
-                            self.kademlia.set_peer_id(node_id, peer_id.clone());
-                            for addr in addresses.iter() {
-                                if self.connected_peers.contains(&peer_id) {
-                                    self.kademlia.add_connected_address(node_id, addr.clone());
-                                } else {
-                                    self.kademlia
-                                        .add_not_connected_address(node_id, addr.clone());
+                            if addresses.len() > 0 {
+                                self.kademlia.set_peer_id(node_id, peer_id.clone());
+                                for addr in addresses.iter() {
+                                    if self.connected_peers.contains(&peer_id) {
+                                        self.kademlia.add_connected_address(node_id, addr.clone());
+                                    } else {
+                                        self.kademlia
+                                            .add_not_connected_address(node_id, addr.clone());
+                                    }
                                 }
                             }
                         } else {
@@ -196,7 +326,7 @@ where
                     }
                 }
                 return Async::Ready(NetworkBehaviourAction::GenerateEvent(
-                    DiscoveryOutEvent::KadEvent(action),
+                    DiscoveryOutEvent::KadEvent { event: action },
                 ));
             }
             Async::Ready(NetworkBehaviourAction::DialAddress { address }) => {
@@ -226,7 +356,9 @@ where
                         .find_closest(&my_id)
                         .take(MIN_CLOSEST_PEERS)
                         .collect();
-                    debug!(target: "stegos_network::discovery", "Checking connection to the known closest peers: count={}", closest_nodes.len());
+                    if closest_nodes.len() > 0 {
+                        debug!(target: "stegos_network::discovery", "Checking connection to the known closest peers: count={}, firts/last distance={}/{}", closest_nodes.len(), my_id.distance_with(&closest_nodes[0]), my_id.distance_with(&closest_nodes[closest_nodes.len()-1]));
+                    }
                     for node in closest_nodes.iter() {
                         if let Some(node_info) = self.kademlia.get_node(&node) {
                             match node_info.peer_id() {

@@ -39,10 +39,12 @@ use smallvec::SmallVec;
 use std::collections::HashMap;
 use stegos_crypto::hash::{Hashable, Hasher};
 use stegos_crypto::pbc::secure;
+use stegos_crypto::utils::u8v_to_hexstr;
 use stegos_keychain::KeyChain;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::config::NetworkConfig;
+use crate::delivery::{Delivery, DeliveryEvent, DeliveryMessage};
 use crate::discovery::{Discovery, DiscoveryOutEvent};
 use crate::gatekeeper::{Gatekeeper, GatekeeperOutEvent, ProtocolUpdateEvent};
 use crate::ncp::{Ncp, NcpOutEvent};
@@ -201,6 +203,7 @@ pub struct Libp2pBehaviour<TSubstream: AsyncRead + AsyncWrite> {
     floodsub: Floodsub<TSubstream>,
     ncp: Ncp<TSubstream>,
     gatekeeper: Gatekeeper<TSubstream>,
+    delivery: Delivery<TSubstream>,
     discovery: Discovery<TSubstream>,
     #[behaviour(ignore)]
     consumers: HashMap<TopicHash, SmallVec<[mpsc::UnboundedSender<Vec<u8>>; 3]>>,
@@ -225,6 +228,7 @@ where
             floodsub: Floodsub::new(peer_id.clone()),
             ncp: Ncp::new(config, keychain),
             gatekeeper: Gatekeeper::new(config, keychain),
+            delivery: Delivery::new(),
             discovery: Discovery::new(keychain.network_pkey.clone()),
             consumers: HashMap::new(),
             unicast_consumers: HashMap::new(),
@@ -235,10 +239,11 @@ where
         };
         let unicast_topic = TopicBuilder::new(UNICAST_TOPIC).build();
         behaviour.floodsub.subscribe(unicast_topic);
-        debug!(target: "stegos_network::pubsub",
-            "Listening for unicast message: my_key={:?}",
-            behaviour.my_pkey.clone().to_string()
-        );
+        // debug!(target: "stegos_network::pubsub",
+        //     "Listening for unicast message: my_key={:?}",
+        //     behaviour.my_pkey.clone().to_string()
+        // );
+        debug!(target: "stegos_network::delivery", "Network endpoints: node_id={}, peer_id={}", keychain.network_pkey, peer_id.to_base58());
         behaviour
     }
 
@@ -305,15 +310,16 @@ where
                             }
                         })
                 } else {
-                    let floodsub_topic = TopicBuilder::new(UNICAST_TOPIC).build();
+                    let _floodsub_topic = TopicBuilder::new(UNICAST_TOPIC).build();
                     let payload = UnicastPayload {
                         from: self.my_pkey.clone(),
-                        to,
+                        to: to.clone(),
                         protocol_id,
                         data,
                     };
                     let msg = encode_unicast(payload, &self.my_skey);
-                    self.floodsub.publish(floodsub_topic, msg);
+                    // self.floodsub.publish(floodsub_topic, msg);
+                    self.discovery.deliver_unicast(&to, msg);
                 }
             }
         }
@@ -361,16 +367,19 @@ where
                 peer_id,
                 addresses,
             } => {
-                debug!(target: "stegos_network::ncp", "discovered node: node_id={}, peer_id={}", node_id, peer_id.to_base58());
-                self.discovery.set_peer_id(&node_id, peer_id.clone());
-                if self.connected_peers.contains_key(&peer_id) {
-                    for a in addresses.iter() {
-                        self.discovery.add_connected_address(&node_id, a.clone());
-                    }
-                } else {
-                    for a in addresses.iter() {
-                        self.discovery
-                            .add_not_connected_address(&node_id, a.clone());
+                debug!(target: "stegos_network::discovery", "discovered node: node_id={}, peer_id={}", node_id, peer_id.to_base58());
+                self.discovery.add_node(node_id.clone(), peer_id.clone());
+                if addresses.len() > 0 {
+                    self.discovery.set_peer_id(&node_id, peer_id.clone());
+                    if self.connected_peers.contains_key(&peer_id) {
+                        for a in addresses.iter() {
+                            self.discovery.add_connected_address(&node_id, a.clone());
+                        }
+                    } else {
+                        for a in addresses.iter() {
+                            self.discovery
+                                .add_not_connected_address(&node_id, a.clone());
+                        }
                     }
                 }
             }
@@ -538,7 +547,85 @@ where
                 debug!(target: "stegos_network::kad", "connecting to closest peer: {}", peer_id.to_base58());
                 self.gatekeeper.dial_peer(peer_id);
             }
+            DiscoveryOutEvent::Route { next_hop, message } => {
+                debug!(target: "stegos_network::delivery", "delivering paylod: node_id={}, peer_id={}", message.to, next_hop.to_base58());
+                self.delivery.deliver_unicast(&next_hop, message);
+            }
             _ => {}
+        }
+    }
+}
+
+impl<TSubstream> NetworkBehaviourEventProcess<DeliveryEvent> for Libp2pBehaviour<TSubstream>
+where
+    TSubstream: AsyncRead + AsyncWrite,
+{
+    fn inject_event(&mut self, event: DeliveryEvent) {
+        match event {
+            DeliveryEvent::Message(msg) => match msg {
+                DeliveryMessage::UnicastMessage(unicast) => {
+                    debug!(target: "stegos_network::delivery", "received message: dest={}", unicast.to);
+                    if unicast.to == self.my_pkey {
+                        // Check for duplicate
+                        if self.discovery.is_duplicate(&unicast) {
+                            debug!(target: "stegos_network::delivery", "got duplicate unicast message for us: seq_no={}", u8v_to_hexstr(&unicast.seq_no));
+                            return;
+                        }
+                        // Unicast message to us, deliver
+                        debug!(target: "stegos_network::delivery", "message for us, delivering");
+                        match decode_unicast(unicast.payload.clone()) {
+                            Ok((payload, signature, rval)) => {
+                                // send unicast message upstream
+                                if payload.to == self.my_pkey {
+                                    let payload = match decrypt_message(
+                                        &self.my_skey,
+                                        payload,
+                                        signature,
+                                        rval,
+                                    ) {
+                                        Ok(p) => p,
+                                        Err(e) => {
+                                            debug!(target: "stegos_network::delivery", "bad unicast message received: {}", e);
+                                            return;
+                                        }
+                                    };
+                                    debug!(target: "stegos_network::delivery",
+                                        "Received unicast message: from={}, protocol={} size={}",
+                                        payload.from,
+                                        payload.protocol_id,
+                                        payload.data.len()
+                                    );
+                                    let msg = UnicastMessage {
+                                        from: payload.from,
+                                        data: payload.data,
+                                    };
+                                    self.unicast_consumers
+                                        .entry(payload.protocol_id)
+                                        .or_insert(SmallVec::new())
+                                        .retain({
+                                            move |c| {
+                                                if let Err(e) = c.unbounded_send(msg.clone()) {
+                                                    error!(target:"stegos_network::delivery", "Error sending data to consumer: {}", e);
+                                                    false
+                                                } else {
+                                                    true
+                                                }
+                                            }
+                                        })
+                                }
+                            }
+                            Err(e) => {
+                                error!(target:"stegos_network::delivery", "Failure decoding unicast message: {}", e)
+                            }
+                        }
+                        return;
+                    }
+                    // Mesage to somebody else, try to route again...
+                    let dest = unicast.to.clone();
+                    self.discovery.route(&dest, unicast);
+                }
+                DeliveryMessage::BroadcastMessage(_) => unimplemented!(),
+            },
         }
     }
 }
@@ -604,7 +691,7 @@ fn my_external_address(config: &NetworkConfig) -> Vec<Multiaddr> {
 }
 
 #[derive(Clone, Debug)]
-struct UnicastPayload {
+pub struct UnicastPayload {
     from: secure::PublicKey,
     to: secure::PublicKey,
     protocol_id: String,

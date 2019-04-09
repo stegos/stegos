@@ -23,6 +23,7 @@
 
 mod behavior;
 mod handler;
-mod metrics;
 mod proto;
 mod protocol;
+
+pub use self::behavior::{Delivery, DeliveryEvent, DeliveryMessage, Unicast};

@@ -22,5 +22,6 @@
 // SOFTWARE.
 
 mod behavior;
+mod metrics;
 
 pub use behavior::{Discovery, DiscoveryOutEvent};

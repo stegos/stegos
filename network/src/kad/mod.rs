@@ -23,7 +23,7 @@
 //!
 #![allow(dead_code)]
 
-pub use self::behaviour::{Kademlia, KademliaOut};
+pub use self::behaviour::{Kademlia, KademliaOut, NodeInfo};
 pub use self::kbucket::KBucketsPeerId;
 pub use self::protocol::KadConnectionType;
 

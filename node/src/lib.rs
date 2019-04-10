@@ -95,20 +95,28 @@ impl Node {
         rx
     }
 
-    /// Subscribe to epoch changes.
-    pub fn subscribe_epoch(&self) -> Result<UnboundedReceiver<EpochNotification>, Error> {
+    /// Subscribe to block changes.
+    pub fn subscribe_block_added(&self) -> UnboundedReceiver<BlockAdded> {
         let (tx, rx) = unbounded();
-        let msg = NodeMessage::SubscribeEpoch(tx);
-        self.outbox.unbounded_send(msg)?;
-        Ok(rx)
+        let msg = NodeMessage::SubscribeBlockAdded(tx);
+        self.outbox.unbounded_send(msg).expect("connected");
+        rx
     }
 
-    /// Subscribe to outputs.
-    pub fn subscribe_outputs(&self) -> Result<UnboundedReceiver<OutputsNotification>, Error> {
+    /// Subscribe to epoch changes.
+    pub fn subscribe_epoch_changed(&self) -> UnboundedReceiver<EpochChanged> {
         let (tx, rx) = unbounded();
-        let msg = NodeMessage::SubscribeOutputs(tx);
-        self.outbox.unbounded_send(msg)?;
-        Ok(rx)
+        let msg = NodeMessage::SubscribeEpochChanged(tx);
+        self.outbox.unbounded_send(msg).expect("connected");
+        rx
+    }
+
+    /// Subscribe to UTXO changes.
+    pub fn subscribe_outputs_changed(&self) -> UnboundedReceiver<OutputsChanged> {
+        let (tx, rx) = unbounded();
+        let msg = NodeMessage::SubscribeOutputsChanged(tx);
+        self.outbox.unbounded_send(msg).expect("connected");
+        rx
     }
 }
 
@@ -134,18 +142,30 @@ pub enum NodeResponse {
     EscrowInfo(EscrowInfo),
 }
 
-/// Send when epoch is changed.
-#[derive(Clone, Debug)]
-pub struct EpochNotification {
+/// Send when height is changed.
+#[derive(Clone, Debug, Serialize)]
+pub struct BlockAdded {
+    pub height: u64,
+    pub hash: Hash,
+    pub lag: i64,
+    pub view_change: u32,
+    pub local_timestamp: i64,
+    pub remote_timestamp: i64,
+    pub synchronized: bool,
     pub epoch: u64,
-    pub leader: secure::PublicKey,
+}
+
+/// Send when epoch is changed.
+#[derive(Clone, Debug, Serialize)]
+pub struct EpochChanged {
+    pub epoch: u64,
     pub facilitator: secure::PublicKey,
     pub validators: Vec<(secure::PublicKey, i64)>,
 }
 
 /// Send when outputs created and/or pruned.
 #[derive(Debug, Clone)]
-pub struct OutputsNotification {
+pub struct OutputsChanged {
     pub inputs: Vec<Output>,
     pub outputs: Vec<Output>,
 }
@@ -168,8 +188,9 @@ pub enum NodeMessage {
     //
     // Public API
     //
-    SubscribeEpoch(UnboundedSender<EpochNotification>),
-    SubscribeOutputs(UnboundedSender<OutputsNotification>),
+    SubscribeBlockAdded(UnboundedSender<BlockAdded>),
+    SubscribeEpochChanged(UnboundedSender<EpochChanged>),
+    SubscribeOutputsChanged(UnboundedSender<OutputsChanged>),
     Request {
         request: NodeRequest,
         tx: oneshot::Sender<NodeResponse>,
@@ -222,10 +243,12 @@ pub struct NodeService {
     //
     /// Network interface.
     network: Network,
+    /// Triggered when height is changed.
+    on_block_added: Vec<UnboundedSender<BlockAdded>>,
     /// Triggered when epoch is changed.
-    on_epoch_changed: Vec<UnboundedSender<EpochNotification>>,
+    on_epoch_changed: Vec<UnboundedSender<EpochChanged>>,
     /// Triggered when outputs created and/or pruned.
-    on_outputs_changed: Vec<UnboundedSender<OutputsNotification>>,
+    on_outputs_changed: Vec<UnboundedSender<OutputsChanged>>,
     /// Aggregated stream of events.
     events: Box<Stream<Item = NodeMessage, Error = ()> + Send>,
     /// timer events
@@ -293,8 +316,9 @@ impl NodeService {
             ViewChangeCollector::new(&chain, keys.network_pkey, keys.network_skey.clone());
         let last_block_clock = clock::now();
 
-        let on_epoch_changed = Vec::<UnboundedSender<EpochNotification>>::new();
-        let on_outputs_received = Vec::<UnboundedSender<OutputsNotification>>::new();
+        let on_block_added = Vec::<UnboundedSender<BlockAdded>>::new();
+        let on_epoch_changed = Vec::<UnboundedSender<EpochChanged>>::new();
+        let on_outputs_changed = Vec::<UnboundedSender<OutputsChanged>>::new();
 
         let mut streams = Vec::<Box<Stream<Item = NodeMessage, Error = ()> + Send>>::new();
 
@@ -352,8 +376,9 @@ impl NodeService {
             optimistic,
             last_block_clock,
             network,
+            on_block_added,
             on_epoch_changed,
-            on_outputs_changed: on_outputs_received,
+            on_outputs_changed,
             events,
             key_block_timer,
             propose_timer,
@@ -376,14 +401,12 @@ impl NodeService {
     fn on_new_epoch(&mut self) {
         consensus::metrics::CONSENSUS_ROLE.set(consensus::metrics::ConsensusRole::Regular as i64);
         // Resign from Validator role.
-        let leader = self.chain.leader();
         self.consensus = None;
         consensus::metrics::CONSENSUS_STATE
             .set(consensus::metrics::ConsensusState::NotInConsensus as i64);
 
-        let msg = EpochNotification {
+        let msg = EpochChanged {
             epoch: self.chain.epoch(),
-            leader,
             validators: self.chain.validators().clone(),
             facilitator: self.chain.facilitator().clone(),
         };
@@ -510,20 +533,19 @@ impl NodeService {
 
     /// Try to apply a new block to the blockchain.
     fn apply_new_block(&mut self, block: Block) -> Result<(), Error> {
-        let block_hash = Hash::digest(&block);
-        let block_timestamp = block.base_header().timestamp;
-        let block_height = block.base_header().height;
+        let hash = Hash::digest(&block);
+        let timestamp = block.base_header().timestamp;
+        let height = block.base_header().height;
+        let view_change = block.base_header().view_change;
         match block {
             Block::KeyBlock(key_block) => {
                 let was_synchronized = self.is_synchronized();
 
                 // Check for the correct block order.
                 if self.chain.blocks_in_epoch() < self.cfg.blocks_in_epoch {
-                    return Err(NodeBlockError::ExpectedMonetaryBlock(
-                        self.chain.height(),
-                        block_hash,
-                    )
-                    .into());
+                    return Err(
+                        NodeBlockError::ExpectedMonetaryBlock(self.chain.height(), hash).into(),
+                    );
                 }
 
                 // Check consensus.
@@ -532,10 +554,10 @@ impl NodeService {
                         // Check for forks.
                         let (consensus_block, _proof) = consensus.get_proposal();
                         let consensus_block_hash = Hash::digest(consensus_block);
-                        if block_hash != consensus_block_hash {
+                        if hash != consensus_block_hash {
                             panic!(
                                 "Network fork: received_block={:?}, consensus_block={:?}",
-                                &block_hash, &consensus_block_hash
+                                &hash, &consensus_block_hash
                             );
                         }
                     }
@@ -556,9 +578,7 @@ impl NodeService {
             Block::MonetaryBlock(monetary_block) => {
                 // Check for the correct block order.
                 if self.chain.blocks_in_epoch() >= self.cfg.blocks_in_epoch {
-                    return Err(
-                        NodeBlockError::ExpectedKeyBlock(self.chain.height(), block_hash).into(),
-                    );
+                    return Err(NodeBlockError::ExpectedKeyBlock(self.chain.height(), hash).into());
                 }
 
                 assert!(self.consensus.is_none(), "consensus is for key blocks only");
@@ -571,8 +591,8 @@ impl NodeService {
                 {
                     // TODO: support slashing.
                     return Err(NodeBlockError::InvalidMonetaryAdjustment(
-                        block_height,
-                        block_hash,
+                        height,
+                        hash,
                         monetary_block.header.monetary_adjustment,
                         self.cfg.block_reward,
                     )
@@ -588,7 +608,7 @@ impl NodeService {
                 self.mempool.prune(&input_hashes, &output_hashes);
 
                 // Notify subscribers.
-                let msg = OutputsNotification { inputs, outputs };
+                let msg = OutputsChanged { inputs, outputs };
                 self.on_outputs_changed
                     .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
 
@@ -601,23 +621,39 @@ impl NodeService {
 
         self.last_block_clock = clock::now();
 
-        let local_timestamp_ms = metrics::time_to_timestamp_ms(SystemTime::now());
-        let remote_timestamp_ms = metrics::time_to_timestamp_ms(block_timestamp);
-        metrics::BLOCK_REMOTE_TIMESTAMP.set(remote_timestamp_ms);
-        metrics::BLOCK_LOCAL_TIMESTAMP.set(local_timestamp_ms);
-        metrics::BLOCK_LAG.set(local_timestamp_ms - remote_timestamp_ms); // can be negative.
+        let local_timestamp = metrics::time_to_timestamp_ms(SystemTime::now());
+        let remote_timestamp = metrics::time_to_timestamp_ms(timestamp);
+        let lag = local_timestamp - remote_timestamp;
+        metrics::BLOCK_REMOTE_TIMESTAMP.set(remote_timestamp);
+        metrics::BLOCK_LOCAL_TIMESTAMP.set(local_timestamp);
+        metrics::BLOCK_LAG.set(lag); // can be negative.
+
+        let msg = BlockAdded {
+            height,
+            view_change,
+            hash,
+            lag,
+            local_timestamp,
+            remote_timestamp,
+            synchronized: self.is_synchronized(),
+            epoch: self.chain.epoch(),
+        };
+        self.on_block_added
+            .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
 
         Ok(())
     }
 
+    /// Handler for NodeMessage::SubscribeHeight.
+    fn handle_block_added(&mut self, tx: UnboundedSender<BlockAdded>) -> Result<(), Error> {
+        self.on_block_added.push(tx);
+        Ok(())
+    }
+
     /// Handler for NodeMessage::SubscribeEpoch.
-    fn handle_subscribe_epoch(
-        &mut self,
-        tx: UnboundedSender<EpochNotification>,
-    ) -> Result<(), Error> {
-        let msg = EpochNotification {
+    fn handle_subscribe_epoch(&mut self, tx: UnboundedSender<EpochChanged>) -> Result<(), Error> {
+        let msg = EpochChanged {
             epoch: self.chain.epoch(),
-            leader: self.chain.leader(),
             validators: self.chain.validators().clone(),
             facilitator: self.chain.facilitator().clone(),
         };
@@ -629,7 +665,7 @@ impl NodeService {
     /// Handler for NodeMessage::SubscribeOutputs.
     fn handle_subscribe_outputs(
         &mut self,
-        tx: UnboundedSender<OutputsNotification>,
+        tx: UnboundedSender<OutputsChanged>,
     ) -> Result<(), Error> {
         // Sent initial state.
         // TODO: this implementation can consume a lot of memory.
@@ -639,7 +675,7 @@ impl NodeService {
             outputs.push(output);
         }
         let inputs = Vec::new();
-        let msg = OutputsNotification { inputs, outputs };
+        let msg = OutputsChanged { inputs, outputs };
         tx.unbounded_send(msg).ok(); // ignore error.
         self.on_outputs_changed.push(tx);
         Ok(())
@@ -1104,8 +1140,11 @@ impl Future for NodeService {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => {
                     let result: Result<(), Error> = match event {
-                        NodeMessage::SubscribeEpoch(tx) => self.handle_subscribe_epoch(tx),
-                        NodeMessage::SubscribeOutputs(tx) => self.handle_subscribe_outputs(tx),
+                        NodeMessage::SubscribeBlockAdded(tx) => self.handle_block_added(tx),
+                        NodeMessage::SubscribeEpochChanged(tx) => self.handle_subscribe_epoch(tx),
+                        NodeMessage::SubscribeOutputsChanged(tx) => {
+                            self.handle_subscribe_outputs(tx)
+                        }
                         NodeMessage::Request { request, tx } => {
                             let response = match request {
                                 NodeRequest::ElectionInfo {} => {

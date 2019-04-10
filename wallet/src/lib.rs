@@ -49,7 +49,7 @@ use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
 use stegos_network::Network;
 use stegos_node::Node;
-use stegos_node::OutputsNotification;
+use stegos_node::OutputsChanged;
 
 pub struct WalletService {
     /// Secret Key.
@@ -129,8 +129,7 @@ impl WalletService {
 
         // Monetary blocks from node.
         let node_outputs = node
-            .subscribe_outputs()
-            .expect("connected")
+            .subscribe_outputs_changed()
             .map(|outputs| WalletEvent::NodeOutputsChanged(outputs));
         events.push(Box::new(node_outputs));
 
@@ -408,7 +407,7 @@ impl Future for WalletService {
                     WalletEvent::Subscribe { tx } => {
                         self.subscribers.push(tx);
                     }
-                    WalletEvent::NodeOutputsChanged(OutputsNotification { inputs, outputs }) => {
+                    WalletEvent::NodeOutputsChanged(OutputsChanged { inputs, outputs }) => {
                         self.on_outputs_changed(inputs, outputs);
                     }
                 },

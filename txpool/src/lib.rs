@@ -15,7 +15,7 @@ use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
 use stegos_network::Network;
-use stegos_node::EpochNotification;
+use stegos_node::EpochChanged;
 use stegos_node::Node;
 use stegos_serialization::traits::*;
 use tokio_timer::Interval;
@@ -77,7 +77,7 @@ pub(crate) enum PoolEvent {
     //
     // Internal events.
     //
-    EpochChanged(EpochNotification),
+    EpochChanged(EpochChanged),
 }
 
 pub struct TransactionPoolService {
@@ -105,8 +105,10 @@ impl TransactionPoolService {
             streams.push(Box::new(unicast_message));
 
             // Epoch Changes
-            let node_outputs = node.subscribe_epoch()?.map(|m| PoolEvent::EpochChanged(m));
-            streams.push(Box::new(node_outputs));
+            let epoch_changes = node
+                .subscribe_epoch_changed()
+                .map(|m| PoolEvent::EpochChanged(m));
+            streams.push(Box::new(epoch_changes));
 
             Ok(select_all(streams))
         }()
@@ -121,7 +123,7 @@ impl TransactionPoolService {
         }
     }
 
-    fn handle_epoch(&mut self, epoch: EpochNotification) -> Result<(), Error> {
+    fn handle_epoch(&mut self, epoch: EpochChanged) -> Result<(), Error> {
         debug!("Changed facilitator: facilitator={}", epoch.facilitator);
         let role = if epoch.facilitator == self.pkey {
             info!("I am facilitator.");

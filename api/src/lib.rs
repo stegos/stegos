@@ -31,11 +31,12 @@ use futures::sync::mpsc::UnboundedReceiver;
 use futures::sync::oneshot;
 use futures::{Async, AsyncSink, Future, Poll, Sink, Stream};
 use log::*;
+use serde::Serialize;
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
 use serde_json;
 use std::net::SocketAddr;
-use stegos_node::{Node, NodeRequest, NodeResponse};
+use stegos_node::{BlockAdded, EpochChanged, Node, NodeRequest, NodeResponse};
 use stegos_wallet::{Wallet, WalletNotification, WalletRequest, WalletResponse};
 use tokio::net::TcpListener;
 use tokio::runtime::TaskExecutor;
@@ -89,6 +90,14 @@ struct Response {
     id: RequestId,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "notification")]
+#[serde(rename_all = "snake_case")]
+pub enum NodeNotification {
+    BlockAdded(BlockAdded),
+    EpochChanged(EpochChanged),
+}
+
 /// Handler of incoming connections.
 struct WebSocketHandler {
     /// Remote address.
@@ -109,6 +118,10 @@ struct WebSocketHandler {
     node: Node,
     /// Node RPC responses.
     node_responses: Vec<(RequestId, oneshot::Receiver<NodeResponse>)>,
+    /// Height Changed Notification.
+    node_block_added: UnboundedReceiver<BlockAdded>,
+    /// Epoch Changed Notification.
+    node_epoch_changed: UnboundedReceiver<EpochChanged>,
 }
 
 impl WebSocketHandler {
@@ -117,6 +130,8 @@ impl WebSocketHandler {
         let wallet_notifications = wallet.subscribe();
         let wallet_responses = Vec::new();
         let node_responses = Vec::new();
+        let node_block_added = node.subscribe_block_added();
+        let node_epoch_changed = node.subscribe_epoch_changed();
         WebSocketHandler {
             peer,
             sink,
@@ -127,6 +142,8 @@ impl WebSocketHandler {
             wallet_responses,
             node,
             node_responses,
+            node_block_added,
+            node_epoch_changed,
         }
     }
 
@@ -151,22 +168,11 @@ impl WebSocketHandler {
         Ok(())
     }
 
-    fn on_wallet_notification(&mut self, notification: WalletNotification) {
-        let msg = serde_json::to_string(&notification).expect("serialized");
-        if let Err(e) = self.send(msg) {
-            error!("Failed to send notification: {}", e);
+    fn send<T: Serialize>(&mut self, msg: T) {
+        let msg = serde_json::to_string(&msg).expect("serialized");
+        if let Err(e) = self.send_raw(OwnedMessage::Text(msg)) {
+            error!("Failed to send message: {}", e);
         }
-    }
-
-    fn on_response(&mut self, response: Response) {
-        let msg = serde_json::to_string(&response).expect("serialized");
-        if let Err(e) = self.send(msg) {
-            error!("Failed to send response: {}", e);
-        }
-    }
-
-    fn send(&mut self, text: String) -> Result<(), WebSocketError> {
-        self.send_raw(OwnedMessage::Text(text))
     }
 
     fn send_raw(&mut self, msg: OwnedMessage) -> Result<(), WebSocketError> {
@@ -231,7 +237,7 @@ impl Future for WebSocketHandler {
         loop {
             match self.wallet_notifications.poll() {
                 Ok(Async::Ready(Some(notification))) => {
-                    self.on_wallet_notification(notification);
+                    self.send(&notification);
                 }
                 Ok(Async::Ready(None)) => return Ok(Async::Ready(())),
                 Ok(Async::NotReady) => break, // fall through
@@ -247,7 +253,7 @@ impl Future for WebSocketHandler {
                         kind: ResponseKind::WalletResponse(response),
                         id,
                     };
-                    self.on_response(response);
+                    self.send(response);
                 }
                 Ok(Async::NotReady) => self.wallet_responses.push((id, rx)),
                 Err(_) => panic!("disconnected"),
@@ -262,10 +268,34 @@ impl Future for WebSocketHandler {
                         kind: ResponseKind::NodeResponse(response),
                         id,
                     };
-                    self.on_response(response)
+                    self.send(response)
                 }
                 Ok(Async::NotReady) => self.node_responses.push((id, rx)),
                 Err(_) => panic!("disconnected"),
+            }
+        }
+
+        // Height changes.
+        loop {
+            match self.node_block_added.poll().expect("connected") {
+                Async::Ready(Some(msg)) => {
+                    let msg = NodeNotification::BlockAdded(msg);
+                    self.send(msg);
+                }
+                Async::Ready(None) => return Ok(Async::Ready(())),
+                Async::NotReady => break, // fall through
+            }
+        }
+
+        // Epoch changes.
+        loop {
+            match self.node_epoch_changed.poll().expect("connected") {
+                Async::Ready(Some(msg)) => {
+                    let msg = NodeNotification::EpochChanged(msg);
+                    self.send(msg);
+                }
+                Async::Ready(None) => return Ok(Async::Ready(())),
+                Async::NotReady => break, // fall through
             }
         }
 

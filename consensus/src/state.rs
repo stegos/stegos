@@ -144,7 +144,12 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
     ) -> Self {
         assert!(validators.contains_key(&pkey));
         let state = ConsensusState::Propose;
-        debug!("New => {}({})", state.name(), height);
+        debug!(
+            "New => {}({}:{})",
+            state.name(),
+            height,
+            starting_view_change
+        );
         let prevotes: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();
         let precommits: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();
         let total_slots = validators.iter().map(|v| v.1).sum();
@@ -279,9 +284,10 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
         assert_eq!(&request_hash, &expected_request_hash);
         assert!(!self.prevotes.contains_key(&self.pkey));
         debug!(
-            "{}({}): pre-vote request={:?}",
+            "{}({}:{}): pre-vote request={:?}",
             self.state.name(),
             self.height,
+            self.round,
             &request_hash
         );
         let body = ConsensusMessageBody::Prevote {};
@@ -309,9 +315,10 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
         let expected_request_hash = Hash::digest(self.request.as_ref().unwrap());
         assert_eq!(&request_hash, &expected_request_hash);
         debug!(
-            "{}({}): pre-commit request={:?}",
+            "{}({}:{}): pre-commit request={:?}",
             self.state.name(),
             self.height,
+            self.round,
             &request_hash
         );
         let request_hash_sig = secure::sign_hash(&request_hash, &self.skey);
@@ -340,18 +347,20 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
         msg: ConsensusMessage<Request, Proof>,
     ) -> Result<(), ConsensusError> {
         trace!(
-            "{}({}): process message: msg={:?}",
+            "{}({}:{}): process message: msg={:?}",
             self.state.name(),
             self.height,
+            self.round,
             &msg
         );
 
         // Check sender.
         if !self.validators.contains_key(&msg.pkey) {
             debug!(
-                "{}({}): peer is not a validator: msg={:?}",
+                "{}({}:{}): peer is not a validator: msg={:?}",
                 self.state.name(),
                 self.height,
+                self.round,
                 &msg
             );
             return Err(ConsensusError::UnknownMessagePeer(msg.pkey));
@@ -397,11 +406,11 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
             let expected_request_hash = Hash::digest(self.request.as_ref().unwrap());
             if expected_request_hash != msg.request_hash {
                 warn!(
-                    "{}({}): invalid request_hash: expected_request_hash={:?}, got_request_hash={:?}, msg={:?}",
+                    "{}({}:{}): invalid request_hash: expected_request_hash={:?}, got_request_hash={:?}, msg={:?}",
                     self.state.name(),
                     self.height,
                     &expected_request_hash,
-                    &msg.request_hash,
+                    &msg.request_hash, self.round,
                     &msg
                 );
                 return Err(ConsensusError::InvalidRequestHash(
@@ -414,9 +423,10 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
 
         if self.state == ConsensusState::Commit {
             debug!(
-                "{}({}): a late message: msg={:?}",
+                "{}({}:{}): a late message: msg={:?}",
                 self.state.name(),
                 self.height,
+                self.round,
                 &msg
             );
             // Silently discard this message.
@@ -442,9 +452,10 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
             // Early Prevotes and Precommits in Propose state
             (_, ConsensusState::Propose) => {
                 debug!(
-                    "{}({}): an early message: msg={:?}",
+                    "{}({}:{}): an early message: msg={:?}",
                     self.state.name(),
                     self.height,
+                    self.round,
                     &msg
                 );
                 self.inbox.push(msg);
@@ -454,9 +465,10 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
             // Unexpected message or message in unexpected state.
             (_, _) => {
                 error!(
-                    "{}({}): unexpected message: msg={:?}",
+                    "{}({}:{}): unexpected message: msg={:?}",
                     self.state.name(),
                     self.height,
+                    self.round,
                     &msg
                 );
                 return Err(ConsensusError::InvalidMessage(
@@ -474,9 +486,10 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
                 // Check that message has been sent by leader.
                 if msg.pkey != self.leader() {
                     error!(
-                        "{}({}): a proposal from a non-leader: leader={:?}, from={:?}",
+                        "{}({}:{}): a proposal from a non-leader: leader={:?}, from={:?}",
                         self.state.name(),
                         self.height,
+                        self.round,
                         &self.leader(),
                         &msg.pkey
                     );
@@ -503,11 +516,13 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
                 assert!(self.request.is_none());
                 assert!(self.proof.is_none());
                 debug!(
-                    "{}({}) => {}({}): received a new proposal hash={:?}, from={:?}",
+                    "{}({}:{}) => {}({}:{}): received a new proposal hash={:?}, from={:?}",
                     self.state.name(),
                     self.height,
+                    self.round,
                     ConsensusState::Prevote.name(),
                     self.height,
+                    self.round,
                     &msg.request_hash,
                     &msg.pkey
                 );
@@ -533,9 +548,10 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
 
                 // Collect the vote.
                 debug!(
-                    "{}({}): collected a pre-vote: from={:?}",
+                    "{}({}:{}): collected a pre-vote: from={:?}",
                     self.state.name(),
                     self.height,
+                    self.round,
                     &msg.pkey
                 );
                 self.prevotes.insert(msg.pkey, msg.sig);
@@ -547,9 +563,10 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
                 let request_hash = Hash::digest(self.request.as_ref().unwrap());
                 if !secure::check_hash(&request_hash, &request_hash_sig, &msg.pkey) {
                     error!(
-                        "{}({}): a pre-commit signature is not valid: from={:?}",
+                        "{}({}:{}): a pre-commit signature is not valid: from={:?}",
                         self.state.name(),
                         self.height,
+                        self.round,
                         &msg.pkey
                     );
                     return Err(ConsensusError::InvalidRequestSignature(request_hash));
@@ -557,9 +574,10 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
 
                 // Collect the vote.
                 debug!(
-                    "{}({}): collected a pre-commit: from={:?}",
+                    "{}({}:{}): collected a pre-commit: from={:?}",
                     self.state.name(),
                     self.height,
+                    self.round,
                     &msg.pkey
                 );
                 self.precommits.insert(msg.pkey, request_hash_sig);
@@ -574,11 +592,13 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
             }
             // Move to Precommit.
             debug!(
-                "{}({}) => {}({})",
+                "{}({}:{}) => {}({}:{})",
                 self.state.name(),
                 self.height,
+                self.round,
                 ConsensusState::Precommit.name(),
-                self.height
+                self.height,
+                self.round,
             );
             self.state = ConsensusState::Precommit;
             metrics::CONSENSUS_STATE.set(metrics::ConsensusState::Precommit as i64);
@@ -588,20 +608,23 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
             } else {
                 // Don't vote in this case and stay silent.
                 warn!(
-                    "{}({}): request accepted by supermajority, but rejected this node",
+                    "{}({}:{}): request accepted by supermajority, but rejected this node",
                     self.state.name(),
                     self.height,
+                    self.round,
                 );
             }
         } else if self.state == ConsensusState::Precommit {
             if self.check_supermajority(&self.precommits) {
                 // Move to Commit.
                 debug!(
-                    "{}({}) => {}({})",
+                    "{}({}:{}) => {}({}:{})",
                     self.state.name(),
                     self.height,
+                    self.round,
                     ConsensusState::Commit.name(),
-                    self.height
+                    self.height,
+                    self.round,
                 );
                 self.state = ConsensusState::Commit;
                 metrics::CONSENSUS_STATE.set(metrics::ConsensusState::Commit as i64);
@@ -617,9 +640,10 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
         for msg in inbox {
             if let Err(e) = self.feed_message(msg) {
                 warn!(
-                    "{}({}): failed to process message: error={:?}",
+                    "{}({}:{}): failed to process message: error={:?}",
                     self.state.name(),
                     self.height,
+                    self.round,
                     e
                 );
             }
@@ -712,9 +736,10 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
         accepts: &BTreeMap<secure::PublicKey, secure::Signature>,
     ) -> bool {
         trace!(
-            "{}({}): check for supermajority: accepts={:?}, total={:?}",
+            "{}({}:{}): check for supermajority: accepts={:?}, total={:?}",
             self.state.name(),
             self.height,
+            self.round,
             accepts.len(),
             self.validators.len()
         );

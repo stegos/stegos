@@ -54,7 +54,7 @@ use stegos_blockchain::*;
 use stegos_consensus::optimistic::{ViewChangeCollector, ViewChangeMessage};
 use stegos_consensus::{self as consensus, BlockConsensus, BlockConsensusMessage};
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure::{self, VRF};
+use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
 use stegos_network::Network;
 use stegos_network::UnicastMessage;
@@ -669,16 +669,21 @@ impl NodeService {
     /// Handler for new epoch creation procedure.
     /// This method called only on leader side, and when consensus is active.
     /// Leader should create a KeyBlock based on last random provided by VRF.
-    fn create_new_epoch(&mut self, random: VRF) -> Result<(), Error> {
+    fn create_new_epoch(&mut self) -> Result<(), Error> {
         let consensus = self.consensus.as_mut().unwrap();
         let timestamp = SystemTime::now();
         let view_change = consensus.round();
+
+        let last_random = self.chain.last_random();
         let leader = consensus.leader();
         let blockchain = &self.chain;
         let keys = &self.keys;
         assert_eq!(&leader, &self.keys.network_pkey);
 
         let create_key_block = || {
+            let seed = mix(last_random, view_change);
+            let random = secure::make_VRF(&keys.network_skey, &seed);
+
             let previous = blockchain.last_block_hash();
             let height = blockchain.height();
             let epoch = blockchain.epoch() + 1;
@@ -767,10 +772,7 @@ impl NodeService {
         self.consensus = Some(consensus);
         let consensus = self.consensus.as_ref().unwrap();
         if consensus.is_leader() {
-            let last_random = self.chain.last_random();
-            let seed = mix(last_random, self.chain.view_change());
-            let vrf = secure::make_VRF(&self.keys.network_skey, &seed);
-            self.create_new_epoch(vrf)?;
+            self.create_new_epoch()?;
         } else {
             info!(
                 "Waiting for a key block: height={}, last_block={}, epoch={}, leader={}",
@@ -916,11 +918,7 @@ impl NodeService {
                 let consensus = self.consensus.as_ref().unwrap();
                 if consensus.is_leader() {
                     debug!("I am leader proposing a new block");
-                    //TODO: Hide vrf creation inside create_new_epoch
-                    let last_random = self.chain.last_random();
-                    let seed = mix(last_random, consensus.round());
-                    let vrf = secure::make_VRF(&self.keys.network_skey, &seed);
-                    self.create_new_epoch(vrf)?;
+                    self.create_new_epoch()?;
                 }
                 self.on_new_consensus();
             }

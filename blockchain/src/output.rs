@@ -33,7 +33,6 @@ use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::curve1174::G;
 use stegos_crypto::hash::{Hash, Hashable, Hasher, HASH_SIZE};
 use stegos_crypto::pbc::secure;
-use stegos_crypto::CryptoError;
 
 /// A magic value used to encode/decode payload.
 const PAYMENT_PAYLOAD_MAGIC: [u8; 4] = [112, 97, 121, 109]; // "paym"
@@ -138,7 +137,7 @@ fn cloak_key(
     recipient_pkey: &PublicKey,
     gamma: &Fr,
     timestamp: SystemTime,
-) -> Result<(PublicKey, Fr), CryptoError> {
+) -> Result<(PublicKey, Fr), Error> {
     // h is the digest of the recipients actual public key mixed with a timestamp.
     let mut hasher = Hasher::new();
     recipient_pkey.hash(&mut hasher);

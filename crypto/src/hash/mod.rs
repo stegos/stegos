@@ -110,7 +110,7 @@ impl Hash {
 
     pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
         if bytes.len() != HASH_SIZE {
-            return Err(CryptoError::InvalidBinaryLength(HASH_SIZE, bytes.len()));
+            return Err(CryptoError::InvalidBinaryLength(HASH_SIZE, bytes.len()).into());
         }
         let mut bits: [u8; HASH_SIZE] = [0u8; HASH_SIZE];
         bits.copy_from_slice(bytes);

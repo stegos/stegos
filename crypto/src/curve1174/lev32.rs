@@ -22,7 +22,6 @@
 // SOFTWARE.
 
 use super::*;
-use crate::CryptoError;
 use std::cmp::Ordering;
 
 // -----------------------------------------------------------------

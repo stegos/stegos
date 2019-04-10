@@ -31,8 +31,8 @@ use crate::curve1174::fields::*;
 use crate::curve1174::*;
 use crate::hash::*;
 use crate::utils::*;
-use crate::CryptoError;
 
+use crate::CryptoError;
 use lazy_static::lazy_static;
 use log::*;
 use rand::prelude::*;

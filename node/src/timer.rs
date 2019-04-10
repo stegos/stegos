@@ -97,3 +97,29 @@ impl Stream for Interval {
         Ok(Some(now).into())
     }
 }
+
+#[derive(Debug, Clone)]
+pub enum TimerEvents {
+    MicroBlockProposeTimer(Instant),
+    MicroBlockViewChangeTimer(Instant),
+    KeyBlockViewChangeTimer(Instant),
+}
+
+/// Checks if interval produce some items.
+/// Returns Enum::Variant(Instant).
+///
+/// Panics if timer return error, or if timer stream is ended.
+///
+/// Usage:
+///  poll_timer!(Enum::Variant => self.timer_field);
+#[macro_export]
+macro_rules! poll_timer {
+    ($($map: ident)::* => $($timer: tt)*) => {
+    let err_msg = concat!("error when polling timer ", stringify!($($timer)*));
+    let empty_msg = concat!("timer suddenly ends ", stringify!($($timer)*));
+        match $($timer)*.poll().expect(err_msg) {
+            Async::Ready(x) => return Async::Ready($($map)::*(x.expect(empty_msg))),
+            Async::NotReady => {}
+        }
+    }
+}

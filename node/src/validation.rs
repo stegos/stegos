@@ -124,15 +124,18 @@ pub(crate) fn validate_transaction(
     Ok(())
 }
 
-fn vetted_timestamp(block: &KeyBlock, cfg: &ChainConfig) -> Result<(), Error> {
+fn vetted_timestamp(
+    block: &KeyBlock,
+    cfg: &ChainConfig,
+    last_block_time: SystemTime,
+) -> Result<(), Error> {
     let timestamp = SystemTime::now();
 
-    //    TODO: add check of last block
-    //    if block.header.base.timestamp <= last_block {
-    //        return Err(
-    //            NodeError::OutdatedBlock(block.header.base.timestamp, last_block).into(),
-    //        );
-    //    }
+    if block.header.base.timestamp <= last_block_time {
+        return Err(
+            NodeBlockError::OutdatedBlock(block.header.base.timestamp, last_block_time).into(),
+        );
+    }
 
     if block.header.base.timestamp >= timestamp {
         let duration = block
@@ -178,7 +181,7 @@ pub(crate) fn validate_proposed_key_block(
         )
         .into());
     }
-    vetted_timestamp(block, cfg)?;
+    vetted_timestamp(block, cfg, chain.last_key_block_timestamp())?;
     chain.validate_key_block(block, true)?;
 
     debug!("Key block proposal is valid: block={:?}", block_hash);

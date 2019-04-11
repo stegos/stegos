@@ -3,6 +3,7 @@
 /target
 /stegos.toml
 /stegos-log4rs.toml
+/node_id.txt
 logs/
 
 # Keys

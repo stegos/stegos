@@ -22,7 +22,9 @@
 // SOFTWARE.
 
 mod expiring_queue;
+mod lru_bimap;
 mod multihash;
 
 pub use self::expiring_queue::ExpiringQueue;
+pub use self::lru_bimap::LruBimap;
 pub use self::multihash::IntoMultihash;

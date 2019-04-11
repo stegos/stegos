@@ -87,7 +87,7 @@ impl ProtoConvert for BlockConsensusMessage {
     fn into_proto(&self) -> Self::Proto {
         let mut proto = consensus::ConsensusMessage::new();
         proto.set_height(self.height);
-        proto.set_epoch(self.epoch);
+        proto.set_round(self.round);
         proto.set_request_hash(self.request_hash.into_proto());
         proto.set_body(self.body.into_proto());
         proto.set_sig(self.sig.into_proto());
@@ -96,14 +96,14 @@ impl ProtoConvert for BlockConsensusMessage {
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let height = proto.get_height();
-        let epoch = proto.get_epoch();
+        let round = proto.get_round();
         let request_hash = Hash::from_proto(proto.get_request_hash())?;
         let body = ConsensusMessageBody::from_proto(proto.get_body())?;
         let sig = secure::Signature::from_proto(proto.get_sig())?;
         let pkey = secure::PublicKey::from_proto(proto.get_pkey())?;
         Ok(ConsensusMessage {
             height,
-            epoch,
+            round,
             request_hash,
             body,
             sig,

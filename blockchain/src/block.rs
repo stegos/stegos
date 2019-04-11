@@ -225,6 +225,14 @@ impl Hashable for KeyBlock {
     }
 }
 
+impl PartialEq for KeyBlock {
+    fn eq(&self, other: &KeyBlock) -> bool {
+        Hash::digest(self) == Hash::digest(other)
+    }
+}
+
+impl Eq for KeyBlock {}
+
 /// Carries administrative information to blockchain participants.
 #[derive(Debug, Clone)]
 pub struct MonetaryBlock {

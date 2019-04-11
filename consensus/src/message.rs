@@ -22,6 +22,7 @@
 // SOFTWARE.
 
 use crate::error::*;
+use failure::Error;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure;
 
@@ -58,10 +59,10 @@ impl<Request: Hashable, Proof: Hashable> Hashable for ConsensusMessageBody<Reque
 /// Consensus Message.
 #[derive(Clone, Debug)]
 pub struct ConsensusMessage<Request, Proof> {
+    /// Current round.
+    pub round: u32,
     /// Current height.
     pub height: u64,
-    /// Current epoch.
-    pub epoch: u64,
     /// Hash of proposed request.
     pub request_hash: Hash,
     /// Message Body.
@@ -88,7 +89,7 @@ impl<Request: Hashable, Proof: Hashable> ConsensusMessage<Request, Proof> {
     ///
     pub fn new(
         height: u64,
-        epoch: u64,
+        round: u32,
         request_hash: Hash,
         skey: &secure::SecretKey,
         pkey: &secure::PublicKey,
@@ -96,14 +97,14 @@ impl<Request: Hashable, Proof: Hashable> ConsensusMessage<Request, Proof> {
     ) -> ConsensusMessage<Request, Proof> {
         let mut hasher = Hasher::new();
         height.hash(&mut hasher);
-        epoch.hash(&mut hasher);
+        round.hash(&mut hasher);
         request_hash.hash(&mut hasher);
         body.hash(&mut hasher);
         let hash = hasher.result();
         let sig = secure::sign_hash(&hash, skey);
         ConsensusMessage {
             height,
-            epoch,
+            round,
             request_hash,
             body,
             pkey: pkey.clone(),
@@ -114,15 +115,28 @@ impl<Request: Hashable, Proof: Hashable> ConsensusMessage<Request, Proof> {
     ///
     /// Validate signature of the message.
     ///
-    pub fn validate(&self) -> Result<(), ConsensusError> {
+    pub fn validate<F>(&self, mut validate_request: F) -> Result<(), ConsensusError>
+    where
+        F: FnMut(Hash, &Request, u32) -> Result<(), Error>,
+    {
         let mut hasher = Hasher::new();
         self.height.hash(&mut hasher);
-        self.epoch.hash(&mut hasher);
+        self.round.hash(&mut hasher);
         self.request_hash.hash(&mut hasher);
         self.body.hash(&mut hasher);
         let hash = hasher.result();
         if !secure::check_hash(&hash, &self.sig, &self.pkey) {
             return Err(ConsensusError::InvalidMessageSignature);
+        }
+        match &self.body {
+            ConsensusMessageBody::Proposal {
+                request,
+                proof: _proof,
+            } => {
+                validate_request(self.request_hash, request, self.round)
+                    .map_err(ConsensusError::InvalidPropose)?;
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -132,7 +146,7 @@ impl<Request: Hashable, Proof: Hashable> ConsensusMessage<Request, Proof> {
 impl<Request: Hashable, Proof: Hashable> Hashable for ConsensusMessage<Request, Proof> {
     fn hash(&self, state: &mut Hasher) {
         self.height.hash(state);
-        self.epoch.hash(state);
+        self.round.hash(state);
         self.request_hash.hash(state);
         self.body.hash(state);
         self.pkey.hash(state);

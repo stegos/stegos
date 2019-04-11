@@ -124,6 +124,41 @@ pub(crate) fn validate_transaction(
     Ok(())
 }
 
+fn vetted_timestamp(
+    block: &KeyBlock,
+    cfg: &ChainConfig,
+    last_block_time: SystemTime,
+) -> Result<(), Error> {
+    let timestamp = SystemTime::now();
+
+    if block.header.base.timestamp <= last_block_time {
+        return Err(
+            NodeBlockError::OutdatedBlock(block.header.base.timestamp, last_block_time).into(),
+        );
+    }
+
+    if block.header.base.timestamp >= timestamp {
+        let duration = block
+            .header
+            .base
+            .timestamp
+            .duration_since(timestamp)
+            .unwrap();
+
+        if duration > cfg.key_block_timeout {
+            return Err(NodeBlockError::OutOfSyncTimestamp(
+                block.header.base.height,
+                Hash::digest(block),
+                block.header.base.timestamp,
+                timestamp,
+            )
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
 ///
 /// Validate proposed key block.
 ///
@@ -136,30 +171,8 @@ pub(crate) fn validate_proposed_key_block(
 ) -> Result<(), Error> {
     debug_assert_eq!(&Hash::digest(block), &block_hash);
 
-    let timestamp = SystemTime::now();
-    let duration = if block.header.base.timestamp < timestamp {
-        timestamp
-            .duration_since(block.header.base.timestamp)
-            .unwrap()
-    } else {
-        block
-            .header
-            .base
-            .timestamp
-            .duration_since(timestamp)
-            .unwrap()
-    };
-    if duration > cfg.key_block_timeout {
-        return Err(NodeBlockError::OutOfSyncTimestamp(
-            block.header.base.height,
-            block_hash,
-            block.header.base.timestamp,
-            timestamp,
-        )
-        .into());
-    }
-
-    if block.header.base.view_change != view_change {
+    // Ensure that block was produced at round lower than current.
+    if block.header.base.view_change > view_change {
         return Err(NodeBlockError::OutOfSyncViewChange(
             block.header.base.height,
             block_hash,
@@ -168,6 +181,7 @@ pub(crate) fn validate_proposed_key_block(
         )
         .into());
     }
+    vetted_timestamp(block, cfg, chain.last_key_block_timestamp())?;
     chain.validate_key_block(block, true)?;
 
     debug!("Key block proposal is valid: block={:?}", block_hash);

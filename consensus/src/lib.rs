@@ -34,4 +34,5 @@ mod state;
 pub use crate::blockchain::*;
 pub use crate::error::*;
 pub use crate::message::*;
+pub use crate::optimistic::ViewChangeCollector;
 pub use crate::state::*;

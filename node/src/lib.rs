@@ -54,7 +54,7 @@ use stegos_blockchain::*;
 use stegos_consensus::optimistic::{ViewChangeCollector, ViewChangeMessage};
 use stegos_consensus::{self as consensus, BlockConsensus, BlockConsensusMessage};
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure::{self, VRF};
+use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
 use stegos_network::Network;
 use stegos_network::UnicastMessage;
@@ -669,57 +669,62 @@ impl NodeService {
     /// Handler for new epoch creation procedure.
     /// This method called only on leader side, and when consensus is active.
     /// Leader should create a KeyBlock based on last random provided by VRF.
-    fn create_new_epoch(&mut self, random: VRF) -> Result<(), Error> {
+    fn create_new_epoch(&mut self) -> Result<(), Error> {
         let consensus = self.consensus.as_mut().unwrap();
-        let previous = self.chain.last_block_hash();
         let timestamp = SystemTime::now();
-        let view_change = self.chain.view_change();
-        let height = self.chain.height();
-        let epoch = self.chain.epoch() + 1;
+        let view_change = consensus.round();
+
+        let last_random = self.chain.last_random();
         let leader = consensus.leader();
+        let blockchain = &self.chain;
+        let keys = &self.keys;
         assert_eq!(&leader, &self.keys.network_pkey);
 
-        let base = BaseBlockHeader::new(VERSION, previous, height, view_change, timestamp);
-        debug!(
-            "Creating a new key block proposal: height={}, epoch={}, leader={:?}",
-            height,
-            self.chain.epoch() + 1,
-            consensus.leader()
-        );
+        let create_key_block = || {
+            let seed = mix(last_random, view_change);
+            let random = secure::make_VRF(&keys.network_skey, &seed);
 
-        let validators: Vec<_> = consensus
-            .validators()
-            .iter()
-            .map(|(k, v)| (*k, *v))
-            .collect();
-        let mut block = KeyBlock::new(base, random);
+            let previous = blockchain.last_block_hash();
+            let height = blockchain.height();
+            let epoch = blockchain.epoch() + 1;
+            let base = BaseBlockHeader::new(VERSION, previous, height, view_change, timestamp);
+            debug!(
+                "Creating a new key block proposal: height={}, epoch={}, leader={:?}",
+                height,
+                blockchain.epoch() + 1,
+                leader
+            );
 
-        let block_hash = Hash::digest(&block);
+            let validators = blockchain.validators();
+            let mut block = KeyBlock::new(base, random);
 
-        // Create initial multi-signature.
-        let (multisig, multisigmap) = create_proposal_signature(
-            &block_hash,
-            &self.keys.network_skey,
-            &self.keys.network_pkey,
-            &validators,
-        );
-        block.body.multisig = multisig;
-        block.body.multisigmap = multisigmap;
+            let block_hash = Hash::digest(&block);
 
-        // Validate the block via blockchain (just double-checking here).
-        self.chain
-            .validate_key_block(&block, true)
-            .expect("proposed key block is valid");
+            // Create initial multi-signature.
+            let (multisig, multisigmap) = create_proposal_signature(
+                &block_hash,
+                &keys.network_skey,
+                &keys.network_pkey,
+                validators,
+            );
+            block.body.multisig = multisig;
+            block.body.multisigmap = multisigmap;
 
-        info!(
-            "Created a new key block proposal: height={}, epoch={}, hash={}",
-            height, epoch, block_hash
-        );
+            // Validate the block via blockchain (just double-checking here).
+            blockchain
+                .validate_key_block(&block, true)
+                .expect("proposed key block is valid");
 
-        let proof = ();
-        consensus.propose(block, proof);
-        // Prevote for this block.
-        consensus.prevote(block_hash);
+            info!(
+                "Created a new key block proposal: height={}, epoch={}, hash={}",
+                height, epoch, block_hash
+            );
+
+            let proof = ();
+            (block, proof)
+        };
+
+        consensus.propose(create_key_block);
         NodeService::flush_consensus_messages(consensus, &mut self.network)
     }
 
@@ -758,17 +763,16 @@ impl NodeService {
             self.chain.epoch() + 1,
             self.keys.network_skey.clone(),
             self.keys.network_pkey.clone(),
-            leader,
+            self.chain.view_change(),
+            self.chain.election_result(),
             self.chain.validators().iter().cloned().collect(),
         );
-
+        // update timer, set current_time to now().
+        self.key_block_timer.reset(self.cfg.key_block_timeout);
         self.consensus = Some(consensus);
         let consensus = self.consensus.as_ref().unwrap();
         if consensus.is_leader() {
-            let last_random = self.chain.last_random();
-            let seed = mix(last_random, self.chain.view_change());
-            let vrf = secure::make_VRF(&self.keys.network_skey, &seed);
-            self.create_new_epoch(vrf)?;
+            self.create_new_epoch()?;
         } else {
             info!(
                 "Waiting for a key block: height={}, last_block={}, epoch={}, leader={}",
@@ -822,21 +826,20 @@ impl NodeService {
     fn handle_consensus_message(&mut self, msg: BlockConsensusMessage) -> Result<(), Error> {
         // if our consensus state is outdated, push message to future_consensus_messages.
         // TODO: remove queue and use request-responses to get message from other nodes.
-        if self.consensus.is_none() || self.consensus.as_ref().unwrap().epoch() == msg.epoch + 1 {
+        if self.consensus.is_none() {
             self.future_consensus_messages.push(msg);
             return Ok(());
         }
-        let consensus = self.consensus.as_mut().unwrap();
+        let validate_request = |request_hash: Hash, block: &KeyBlock, round| {
+            validate_proposed_key_block(&self.cfg, &self.chain, round, request_hash, block)
+        };
         // Validate signature and content.
-        msg.validate()?;
+        msg.validate(validate_request)?;
+        let consensus = self.consensus.as_mut().unwrap();
         consensus.feed_message(msg)?;
         // Flush pending messages.
         NodeService::flush_consensus_messages(consensus, &mut self.network)?;
 
-        // Check if we can prevote for a block.
-        if !consensus.is_leader() && consensus.should_prevote() {
-            self.prevote_block();
-        }
         // Check if we can commit a block.
         let consensus = self.consensus.as_ref().unwrap();
         if consensus.is_leader() && consensus.should_commit() {
@@ -879,43 +882,47 @@ impl NodeService {
 
     /// Checks if it's time to perform a view change on a micro block.
     fn handle_key_block_viewchange_timer(&mut self) -> Result<(), Error> {
-        // Check status of the key block.
-        let elapsed: Duration = clock::now().duration_since(self.last_block_clock);
-        if self.consensus.is_none() || elapsed < self.cfg.key_block_timeout {
+        if self.consensus.is_none() {
             return Ok(());
         }
 
         warn!(
-            "Timed out while waiting for a key block: height={}, elapsed={:?}",
+            "Timed out while waiting for a key block: height={}",
             self.chain.height(),
-            elapsed
         );
 
         // Check that a block has been committed but haven't send by the leader.
-        if self.consensus.as_ref().unwrap().should_commit() {
-            assert!(
-                !self.consensus.as_ref().unwrap().is_leader(),
-                "never happens on leader"
-            );
-            let (block, _proof, mut multisig, mut multisigmap) =
-                self.consensus.as_mut().unwrap().sign_and_commit();
-            let block_hash = Hash::digest(&block);
-            warn!("Timed out while waiting for the committed block from the leader, applying automatically: hash={}, height={}",
-                block_hash, self.chain.height()
-            );
-            // Augment multi-signature by leader's signature from the proposal.
-            merge_multi_signature(
-                &mut multisig,
-                &mut multisigmap,
-                &block.body.multisig,
-                &block.body.multisigmap,
-            );
-            metrics::AUTOCOMMIT.inc();
-            // Auto-commit proposed block and send it to the network.
-            self.commit_proposed_block(block, multisig, multisigmap);
-
-            return Ok(());
-        }
+        if let Some(ref mut consensus) = self.consensus {
+            if consensus.should_commit() {
+                assert!(!consensus.is_leader(), "never happens on leader");
+                let (block, _proof, mut multisig, mut multisigmap) = consensus.sign_and_commit();
+                let block_hash = Hash::digest(&block);
+                warn!("Timed out while waiting for the committed block from the leader, applying automatically: hash={}, height={}",
+                      block_hash, self.chain.height()
+                );
+                // Augment multi-signature by leader's signature from the proposal.
+                merge_multi_signature(
+                    &mut multisig,
+                    &mut multisigmap,
+                    &block.body.multisig,
+                    &block.body.multisigmap,
+                );
+                metrics::AUTOCOMMIT.inc();
+                // Auto-commit proposed block and send it to the network.
+                self.commit_proposed_block(block, multisig, multisigmap);
+            } else {
+                // not at commit phase, go to the next round
+                consensus.next_round();
+                self.key_block_timer
+                    .reset(self.cfg.key_block_timeout * consensus.round());
+                let consensus = self.consensus.as_ref().unwrap();
+                if consensus.is_leader() {
+                    debug!("I am leader proposing a new block");
+                    self.create_new_epoch()?;
+                }
+                self.on_new_consensus();
+            }
+        };
 
         // Try to sync with the network.
         metrics::SYNCHRONIZED.set(0);
@@ -923,9 +930,6 @@ impl NodeService {
 
         // Try to perform the view change.
         metrics::KEY_BLOCK_VIEW_CHANGES.inc();
-
-        // TODO: implement view changes for key blocks.
-        error!("The view changes for the key block are not implemented");
 
         Ok(())
     }
@@ -1030,40 +1034,6 @@ impl NodeService {
         self.apply_new_block(Block::MonetaryBlock(block))?;
 
         Ok(())
-    }
-
-    ///
-    /// Pre-vote for a block.
-    ///
-    fn prevote_block(&mut self) {
-        let consensus = self.consensus.as_ref().unwrap();
-        assert!(!consensus.is_leader() && consensus.should_prevote());
-
-        let (block, _proof) = consensus.get_proposal();
-        let request_hash = Hash::digest(block);
-        debug!(
-            "Validating a key block: height={}, block={:?}",
-            block.header.base.height, &request_hash
-        );
-        match validate_proposed_key_block(
-            &self.cfg,
-            &self.chain,
-            self.chain.view_change(),
-            request_hash,
-            block,
-        ) {
-            Ok(()) => {
-                let consensus = self.consensus.as_mut().unwrap();
-                consensus.prevote(request_hash);
-                NodeService::flush_consensus_messages(consensus, &mut self.network).unwrap();
-            }
-            Err(e) => {
-                error!(
-                    "Discarded an invalid key block proposal: height={}, block={}, error={}",
-                    block.header.base.height, &request_hash, e
-                );
-            }
-        }
     }
 
     ///

@@ -45,6 +45,7 @@ fn basic() {
         for node in s.nodes.iter() {
             assert_eq!(node.node_service.chain.height(), 2);
         }
+        let round = s.nodes[0].node_service.chain.view_change();
         let epoch = s.nodes[0].node_service.chain.epoch();
         let leader_id = 0;
 
@@ -78,7 +79,7 @@ fn basic() {
         let proposal: BlockConsensusMessage = s.nodes[0].network_service.get_broadcast(topic);
         debug!("Proposal: {:?}", proposal);
         assert_eq!(proposal.height, height);
-        assert_eq!(proposal.epoch, epoch);
+        assert_eq!(proposal.round, round);
         assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
 
         // Send this proposal to other nodes.
@@ -93,7 +94,7 @@ fn basic() {
         for node in s.nodes.iter_mut() {
             let prevote: BlockConsensusMessage = node.network_service.get_broadcast(topic);
             assert_eq!(proposal.height, height);
-            assert_eq!(proposal.epoch, epoch);
+            assert_eq!(proposal.round, round);
             assert_eq!(proposal.request_hash, proposal.request_hash);
             assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
             prevotes.push(prevote);
@@ -116,7 +117,7 @@ fn basic() {
         for node in s.nodes.iter_mut() {
             let precommit: BlockConsensusMessage = node.network_service.get_broadcast(topic);
             assert_eq!(proposal.height, height);
-            assert_eq!(proposal.epoch, epoch);
+            assert_eq!(proposal.round, round);
             assert_eq!(proposal.request_hash, proposal.request_hash);
             if let ConsensusMessageBody::Precommit {
                 request_hash_sig, ..

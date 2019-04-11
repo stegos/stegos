@@ -69,4 +69,9 @@ pub enum NodeBlockError {
         _0, _1, _2, _3
     )]
     OutOfSyncViewChange(u64, Hash, u32, u32),
+    #[fail(
+        display = "Found a outdated block proposal: block_time={:?} last_block_time={:?}.",
+        _0, _1
+    )]
+    OutdatedBlock(SystemTime, SystemTime),
 }

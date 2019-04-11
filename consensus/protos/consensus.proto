@@ -27,7 +27,7 @@ message ConsensusMessageBody {
 
 message ConsensusMessage {
     uint64 height = 1;
-    uint64 epoch = 2;
+    uint32 round = 2;
     stegos.crypto.Hash request_hash = 3;
     ConsensusMessageBody body = 4;
     stegos.crypto.SecurePublicKey pkey = 5;

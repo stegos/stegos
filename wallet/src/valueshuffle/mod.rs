@@ -356,8 +356,7 @@ impl ValueShuffle {
 
         // Facilitator elections.
         let facilitator_changed = node
-            .subscribe_epoch()
-            .expect("connected")
+            .subscribe_epoch_changed()
             .map(|epoch| ValueShuffleEvent::FacilitatorChanged(epoch.facilitator));
         events.push(Box::new(facilitator_changed));
 

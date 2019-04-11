@@ -295,9 +295,9 @@ impl Blockchain {
     //
     pub fn election_info(&self) -> ElectionInfo {
         let last_leader = if self.view_change > 1 {
-            self.select_leader(self.view_change - 1).to_string()
+            Some(self.select_leader(self.view_change - 1))
         } else {
-            "no_leader".to_owned()
+            None
         };
 
         ElectionInfo {
@@ -305,8 +305,8 @@ impl Blockchain {
             view_change: self.view_change,
             slots_count: self.cfg.max_slot_count as i64,
             last_leader,
-            current_leader: self.select_leader(self.view_change).to_string(),
-            next_leader: self.select_leader(self.view_change + 1).to_string(),
+            current_leader: self.select_leader(self.view_change),
+            next_leader: self.select_leader(self.view_change + 1),
         }
     }
     //----------------------------------------------------------------------------------------------

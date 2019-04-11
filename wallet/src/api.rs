@@ -30,7 +30,7 @@ use serde_derive::Serialize;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
-use stegos_node::OutputsNotification;
+use stegos_node::OutputsChanged;
 
 ///
 /// Out-of-band notifications.
@@ -119,7 +119,7 @@ pub(crate) enum WalletEvent {
     //
     // Internal events.
     //
-    NodeOutputsChanged(OutputsNotification),
+    NodeOutputsChanged(OutputsChanged),
 }
 
 #[derive(Debug, Clone)]

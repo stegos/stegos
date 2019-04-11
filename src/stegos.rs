@@ -312,7 +312,7 @@ fn run() -> Result<(), Error> {
     }
 
     // Start WebSocket API server.
-    WebSocketAPI::spawn(cfg.api, rt.executor(), wallet.clone())?;
+    WebSocketAPI::spawn(cfg.api, rt.executor(), wallet.clone(), node.clone())?;
 
     if cfg.general.prometheus_endpoint != "" {
         // Prepare HTTP service to export Prometheus metrics

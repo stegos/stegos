@@ -37,8 +37,7 @@ use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::pbc::secure;
 use stegos_network::Network;
 use stegos_network::UnicastMessage;
-use stegos_node::InfoNotification;
-use stegos_node::Node;
+use stegos_node::{Node, NodeRequest, NodeResponse};
 use stegos_wallet::{Wallet, WalletNotification, WalletRequest, WalletResponse};
 
 // ----------------------------------------------------------------
@@ -77,9 +76,9 @@ pub struct ConsoleService {
     /// Wallet events.
     wallet_notifications: UnboundedReceiver<WalletNotification>,
     /// Wallet RPC responses.
-    wallet_responses: Vec<oneshot::Receiver<WalletResponse>>,
-    /// A channel to receive info from node.
-    node_events: UnboundedReceiver<InfoNotification>,
+    wallet_response: Option<oneshot::Receiver<WalletResponse>>,
+    /// Node RPC responses.
+    node_response: Option<oneshot::Receiver<NodeResponse>>,
     /// A channel to receive message from stdin thread.
     stdin: Receiver<String>,
     /// A thread used for readline.
@@ -93,8 +92,8 @@ impl ConsoleService {
     pub fn new(network: Network, wallet: Wallet, node: Node) -> Result<ConsoleService, Error> {
         let (tx, rx) = channel::<String>(1);
         let wallet_notifications = wallet.subscribe();
-        let wallet_responses = Vec::new();
-        let node_events = node.subscribe_info()?;
+        let wallet_response = None;
+        let node_response = None;
         let stdin_th = thread::spawn(move || Self::readline_thread_f(tx));
         let stdin = rx;
         let unicast_rx = network.subscribe_unicast(CONSOLE_PROTOCOL_ID)?;
@@ -103,11 +102,11 @@ impl ConsoleService {
             network,
             wallet,
             wallet_notifications,
-            wallet_responses,
+            wallet_response,
+            node_response,
             stdin,
             stdin_th,
             unicast_rx,
-            node_events,
             node,
         };
         Ok(service)
@@ -301,7 +300,7 @@ impl ConsoleService {
                 amount,
                 comment,
             };
-            self.wallet_responses.push(self.wallet.request(request));
+            self.wallet_response = Some(self.wallet.request(request));
         } else if msg.starts_with("spay ") {
             let caps = match PAY_COMMAND_RE.captures(&msg[5..]) {
                 Some(c) => c,
@@ -338,7 +337,7 @@ impl ConsoleService {
                 amount,
                 comment,
             };
-            self.wallet_responses.push(self.wallet.request(request));
+            self.wallet_response = Some(self.wallet.request(request));
         } else if msg.starts_with("msg ") {
             let caps = match MSG_COMMAND_RE.captures(&msg[4..]) {
                 Some(c) => c,
@@ -367,7 +366,7 @@ impl ConsoleService {
                 amount,
                 comment,
             };
-            self.wallet_responses.push(self.wallet.request(request));
+            self.wallet_response = Some(self.wallet.request(request));
         } else if msg.starts_with("stake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[6..]) {
                 Some(c) => c,
@@ -382,11 +381,11 @@ impl ConsoleService {
 
             info!("Staking {} STG into escrow", amount);
             let request = WalletRequest::Stake { amount };
-            self.wallet_responses.push(self.wallet.request(request));
+            self.wallet_response = Some(self.wallet.request(request));
         } else if msg == "unstake" {
             info!("Unstaking all of the money from escrow");
             let request = WalletRequest::UnstakeAll {};
-            self.wallet_responses.push(self.wallet.request(request));
+            self.wallet_response = Some(self.wallet.request(request));
         } else if msg.starts_with("unstake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[8..]) {
                 Some(c) => c,
@@ -401,7 +400,7 @@ impl ConsoleService {
 
             info!("Unstaking {} STG from escrow", amount);
             let request = WalletRequest::Unstake { amount };
-            self.wallet_responses.push(self.wallet.request(request));
+            self.wallet_response = Some(self.wallet.request(request));
         } else if msg == "show version" {
             println!(
                 "Stegos {}.{}.{} ({} {})",
@@ -414,17 +413,19 @@ impl ConsoleService {
             return true;
         } else if msg == "show keys" {
             let request = WalletRequest::KeysInfo {};
-            self.wallet_responses.push(self.wallet.request(request));
+            self.wallet_response = Some(self.wallet.request(request));
         } else if msg == "show balance" {
             let request = WalletRequest::BalanceInfo {};
-            self.wallet_responses.push(self.wallet.request(request));
+            self.wallet_response = Some(self.wallet.request(request));
         } else if msg == "show election" {
-            self.node.election_info().unwrap();
+            let request = NodeRequest::ElectionInfo {};
+            self.node_response = Some(self.node.request(request));
         } else if msg == "show escrow" {
-            self.node.escrow_info().unwrap();
+            let request = NodeRequest::EscrowInfo {};
+            self.node_response = Some(self.node.request(request));
         } else if msg == "show utxo" {
             let request = WalletRequest::UnspentInfo {};
-            self.wallet_responses.push(self.wallet.request(request));
+            self.wallet_response = Some(self.wallet.request(request));
         } else {
             Self::help();
             return true;
@@ -436,10 +437,10 @@ impl ConsoleService {
         std::process::exit(0);
     }
 
-    fn on_node_info(&mut self, info: InfoNotification) {
+    fn on_node_response(&mut self, info: NodeResponse) {
         let output = match info {
-            InfoNotification::Escrow(info) => serde_yaml::to_string(&[info]),
-            InfoNotification::ElectionInfo(info) => serde_yaml::to_string(&[info]),
+            NodeResponse::EscrowInfo(info) => serde_yaml::to_string(&[info]),
+            NodeResponse::ElectionInfo(info) => serde_yaml::to_string(&[info]),
         }
         .map_err(|_| fmt::Error)
         .unwrap();
@@ -532,25 +533,24 @@ impl Future for ConsoleService {
             }
         }
 
-        let wallet_responses = std::mem::replace(&mut self.wallet_responses, Vec::new());
-        for mut rx in wallet_responses {
+        if self.wallet_response.is_some() {
+            let mut rx = self.wallet_response.take().unwrap();
             match rx.poll() {
                 Ok(Async::Ready(response)) => {
                     self.on_wallet_response(response);
                 }
-                Ok(Async::NotReady) => self.wallet_responses.push(rx),
+                Ok(Async::NotReady) => self.wallet_response = Some(rx),
                 Err(_) => panic!("Wallet failure"),
             }
         }
 
-        loop {
-            match self.node_events.poll() {
-                Ok(Async::Ready(Some(notification))) => {
-                    self.on_node_info(notification);
+        if let Some(mut rx) = self.node_response.take() {
+            match rx.poll() {
+                Ok(Async::Ready(response)) => {
+                    self.on_node_response(response);
                 }
-                Ok(Async::Ready(None)) => self.on_exit(),
-                Ok(Async::NotReady) => break, // fall through
-                Err(()) => panic!("Wallet failure"),
+                Ok(Async::NotReady) => self.node_response = Some(rx),
+                Err(_) => panic!("Wallet failure"),
             }
         }
 

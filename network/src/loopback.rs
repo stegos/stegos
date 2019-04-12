@@ -27,6 +27,7 @@ use futures::sync::mpsc;
 use log::*;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
+use std::mem;
 use std::sync::{Arc, Mutex};
 use stegos_crypto::pbc::secure;
 use stegos_serialization::traits::ProtoConvert;
@@ -174,6 +175,37 @@ impl Loopback {
                 panic!("Unexpected message {:?}", x);
             }
         }
+    }
+
+    /// Filter out messages with protocol_ids in the following list.
+    pub fn filter_unicast(&mut self, protocols: &[&str]) {
+        let ref mut state = self.state.lock().unwrap();
+        let queue = mem::replace(&mut state.queue, VecDeque::new());
+        state.queue = queue
+            .into_iter()
+            .filter(move |msg| match msg {
+                MessageFromNode::SendUnicast {
+                    protocol_id: topic, ..
+                } => protocols.iter().find(|i| *i == &topic).is_none(),
+                _ => true,
+            })
+            .collect()
+    }
+
+    /// Filter out messages from topics in the following list.
+    pub fn filter_broadcast(&mut self, topic_list: &[&str]) {
+        let ref mut state = self.state.lock().unwrap();
+        let queue = mem::replace(&mut state.queue, VecDeque::new());
+        state.queue = queue
+            .into_iter()
+            .filter(|msg| match msg {
+                MessageFromNode::Publish { topic, .. } => {
+                    topic_list.iter().find(|i| *i == &topic).is_none()
+                }
+
+                _ => true,
+            })
+            .collect()
     }
 
     pub fn assert_unicast<M: ProtoConvert + Debug + PartialEq>(

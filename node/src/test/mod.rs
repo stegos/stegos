@@ -101,6 +101,21 @@ impl<'timer> Sandbox<'timer> {
             .find(|node| node.node_service.keys.network_pkey == *pk)
     }
 
+    /// Filter messages from specific protocol_ids.
+    fn filter_unicast(&mut self, protocol_ids: &[&str]) {
+        for node in &mut self.nodes {
+            node.network_service.filter_unicast(protocol_ids)
+        }
+    }
+
+    #[allow(dead_code)]
+    /// Filter messages from specific topics.
+    fn filter_broadcast(&mut self, topics: &[&str]) {
+        for node in &mut self.nodes {
+            node.network_service.filter_broadcast(topics)
+        }
+    }
+
     /// Iterator among all nodes, except one of
     fn iter_except<'a>(
         &'a mut self,

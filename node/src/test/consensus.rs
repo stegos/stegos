@@ -28,8 +28,7 @@ use stegos_consensus::ConsensusMessageBody;
 use stegos_crypto::pbc::secure;
 
 #[test]
-#[allow(dead_code)]
-fn basic() {
+fn smoke_test() {
     let config = SandboxConfig {
         num_nodes: 3,
         ..Default::default()
@@ -142,6 +141,94 @@ fn basic() {
         assert_eq!(block.base_header().previous, last_block_hash);
 
         // Send this sealed block to all other nodes expect the first not leader.
+        for node in s.iter_except(&[leader_pk]) {
+            node.network_service
+                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
+        }
+        s.poll();
+
+        // Check state of (0..NUM_NODES - 1) nodes.
+        for node in s.iter_except(&[leader_pk]) {
+            assert_eq!(node.node_service.chain.height(), height + 1);
+            assert_eq!(node.node_service.chain.epoch(), epoch + 1);
+            assert_eq!(node.node_service.chain.last_block_hash(), block_hash);
+        }
+    });
+}
+
+#[test]
+fn autocomit() {
+    let config = SandboxConfig {
+        num_nodes: 3,
+        ..Default::default()
+    };
+
+    Sandbox::start(config, |s| {
+        let topic = crate::CONSENSUS_TOPIC;
+        s.poll();
+        for node in s.nodes.iter() {
+            assert_eq!(node.node_service.chain.height(), 2);
+        }
+
+        // Process N monetary blocks.
+        let height = s.nodes[0].node_service.chain.height();
+        for _ in 1..s.cfg().blocks_in_epoch {
+            s.wait(s.cfg().tx_wait_timeout);
+            s.skip_monetary_block()
+        }
+        info!("====== Received all monetary blocks. =====");
+        let height = height + s.cfg().blocks_in_epoch - 1; // exclude keyblock, as first block of epoch.
+        let epoch = s.nodes[0].node_service.chain.epoch();
+
+        s.for_each(|node| assert_eq!(node.chain.height(), height));
+
+        let last_block_hash = s.nodes[0].node_service.chain.last_block_hash();
+
+        let leader_pk = s.nodes[0].node_service.chain.leader();
+        let leader_node = s.node(&leader_pk).unwrap();
+        // Check for a proposal from the leader.
+        let proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        debug!("Proposal: {:?}", proposal);
+        assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
+
+        // Send this proposal to other nodes.
+        for node in s.iter_except(&[leader_pk]) {
+            node.network_service
+                .receive_broadcast(topic, proposal.clone());
+        }
+        s.poll();
+
+        for i in 0..s.num_nodes() {
+            let prevote: BlockConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
+            assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
+            for j in 0..s.num_nodes() {
+                s.nodes[j]
+                    .network_service
+                    .receive_broadcast(topic, prevote.clone());
+            }
+        }
+        s.poll();
+
+        for i in 0..s.num_nodes() {
+            let precommit: BlockConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
+            assert_matches!(precommit.body, ConsensusMessageBody::Precommit { .. });
+            for j in 0..s.num_nodes() {
+                s.nodes[j]
+                    .network_service
+                    .receive_broadcast(topic, precommit.clone());
+            }
+        }
+        s.poll();
+
+        // Receive sealed block.
+        let block: Block = s
+            .node(&leader_pk)
+            .unwrap()
+            .network_service
+            .get_broadcast(crate::SEALED_BLOCK_TOPIC);
+        let block_hash = Hash::digest(&block);
+
+        // Send this sealed block to all other nodes expect the first not leader.
         for node in s.iter_except(&[leader_pk]).skip(1) {
             node.network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
@@ -155,8 +242,8 @@ fn basic() {
             assert_eq!(node.node_service.chain.last_block_hash(), block_hash);
         }
 
-        let skil_leader = [leader_pk];
-        let last_node = s.iter_except(&skil_leader).next().unwrap();
+        let skip_leader = [leader_pk];
+        let last_node = s.iter_except(&skip_leader).next().unwrap();
         // The last node hasn't received sealed block.
         assert_eq!(last_node.node_service.chain.height(), height);
         assert_eq!(last_node.node_service.chain.epoch(), epoch);
@@ -167,7 +254,7 @@ fn basic() {
 
         // Wait for TX_WAIT_TIMEOUT.
         s.wait(s.cfg().key_block_timeout);
-        let last_node = s.iter_except(&skil_leader).next().unwrap();
+        let last_node = s.iter_except(&skip_leader).next().unwrap();
         last_node.poll();
 
         // Check that the last node has auto-committed the block.
@@ -181,6 +268,110 @@ fn basic() {
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
         let block_hash2 = Hash::digest(&block2);
         assert_eq!(block_hash, block_hash2);
+    });
+}
+
+#[test]
+fn round() {
+    let config = SandboxConfig {
+        num_nodes: 3,
+        ..Default::default()
+    };
+
+    Sandbox::start(config, |s| {
+        let topic = crate::CONSENSUS_TOPIC;
+        s.poll();
+        for node in s.nodes.iter() {
+            assert_eq!(node.node_service.chain.height(), 2);
+        }
+
+        // Process N monetary blocks.
+        let height = s.nodes[0].node_service.chain.height();
+        for _ in 1..s.cfg().blocks_in_epoch {
+            s.wait(s.cfg().tx_wait_timeout);
+            s.skip_monetary_block()
+        }
+        info!("====== Received all monetary blocks. =====");
+        let height = height + s.cfg().blocks_in_epoch - 1; // exclude keyblock, as first block of epoch.
+
+        s.for_each(|node| assert_eq!(node.chain.height(), height));
+
+        let leader_pk = s.nodes[0].node_service.chain.leader();
+        let leader_node = s.node(&leader_pk).unwrap();
+        // skip proposal and prevote of last leader.
+        let _proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        let _prevote: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
+
+        let round = s.nodes[0].node_service.chain.view_change() + 1;
+        let epoch = s.nodes[0].node_service.chain.epoch();
+        s.wait(s.cfg().key_block_timeout);
+
+        info!("====== Waiting for keyblock timeout. =====");
+        s.poll();
+
+        // filter messages from chain loader.
+        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+
+        let leader_pk = s.nodes[0].node_service.chain.select_leader(round);
+        let leader_node = s.node(&leader_pk).unwrap();
+        let proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        debug!("Proposal: {:?}", proposal);
+        assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
+
+        // Send this proposal to other nodes.
+        for node in s.iter_except(&[leader_pk]) {
+            node.network_service
+                .receive_broadcast(topic, proposal.clone());
+        }
+        s.poll();
+
+        for i in 0..s.num_nodes() {
+            let prevote: BlockConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
+            assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
+            assert_eq!(prevote.height, height);
+            assert_eq!(prevote.round, round);
+            assert_eq!(prevote.request_hash, proposal.request_hash);
+            for j in 0..s.num_nodes() {
+                s.nodes[j]
+                    .network_service
+                    .receive_broadcast(topic, prevote.clone());
+            }
+        }
+        s.poll();
+
+        for i in 0..s.num_nodes() {
+            let precommit: BlockConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
+            assert_matches!(precommit.body, ConsensusMessageBody::Precommit { .. });
+            assert_eq!(precommit.height, height);
+            assert_eq!(precommit.round, round);
+            assert_eq!(precommit.request_hash, proposal.request_hash);
+            for j in 0..s.num_nodes() {
+                s.nodes[j]
+                    .network_service
+                    .receive_broadcast(topic, precommit.clone());
+            }
+        }
+        s.poll();
+
+        // Receive sealed block.
+        let block: Block = s
+            .node(&leader_pk)
+            .unwrap()
+            .network_service
+            .get_broadcast(crate::SEALED_BLOCK_TOPIC);
+        let block_hash = Hash::digest(&block);
+
+        for node in s.iter_except(&[leader_pk]) {
+            node.network_service
+                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
+        }
+        s.poll();
+
+        for node in s.iter_except(&[leader_pk]) {
+            assert_eq!(node.node_service.chain.height(), height + 1);
+            assert_eq!(node.node_service.chain.epoch(), epoch + 1);
+            assert_eq!(node.node_service.chain.last_block_hash(), block_hash);
+        }
     });
 }
 

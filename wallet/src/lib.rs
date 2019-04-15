@@ -260,6 +260,7 @@ impl WalletService {
         }
 
         if saved_balance != self.balance {
+            debug!("Balance changed.");
             let balance = self.balance;
             let notification = WalletNotification::BalanceChanged { balance };
             self.subscribers

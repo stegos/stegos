@@ -31,6 +31,7 @@ use std::path::Path;
 use std::result::Result;
 use stegos_api::WebSocketConfig;
 use stegos_blockchain::StorageConfig;
+use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_keychain::KeyChainConfig;
 use stegos_network::NetworkConfig;
 use stegos_node::ChainConfig;
@@ -84,6 +85,8 @@ pub struct GeneralConfig {
     pub log4rs_config: String,
     /// Prometheus exporter endpoint
     pub prometheus_endpoint: String,
+    /// Start transaction generator to some receivers.
+    pub generate_txs: Vec<PublicKey>,
 }
 
 impl Default for GeneralConfig {
@@ -92,6 +95,7 @@ impl Default for GeneralConfig {
             chain: "testnet".to_string(),
             log4rs_config: "stegos-log4rs.toml".to_string(),
             prometheus_endpoint: "".to_string(),
+            generate_txs: Vec::new(),
         }
     }
 }

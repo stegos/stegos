@@ -22,6 +22,7 @@
 mod config;
 mod console;
 mod consts;
+mod generator;
 
 use atty;
 use clap;
@@ -321,7 +322,8 @@ fn run() -> Result<(), Error> {
     // Don't initialize REPL if stdin is not a TTY device
     if atty::is(atty::Stream::Stdin) {
         // Initialize console
-        let console_service = ConsoleService::new(network.clone(), wallet.clone(), node.clone())?;
+        let console_service =
+            ConsoleService::new(&cfg.general, network.clone(), wallet.clone(), node.clone())?;
         rt.spawn(console_service);
     }
 

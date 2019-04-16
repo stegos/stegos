@@ -24,17 +24,14 @@
 use bytes::{BufMut, BytesMut};
 use futures::future;
 use libp2p::core::{InboundUpgrade, OutboundUpgrade, UpgradeInfo};
-use libp2p::Multiaddr;
 use protobuf::Message as ProtobufMessage;
 use std::{io, iter};
-use stegos_crypto::pbc::secure;
+use stegos_crypto::hashcash::HashCashProof;
 use tokio::codec::{Decoder, Encoder, Framed};
 use tokio::io::{AsyncRead, AsyncWrite};
 use unsigned_varint::codec;
 
-use super::proto::gatekeeper_proto::{
-    self, ConnectionType as ProtoConnectionType, Message, Message_oneof_typ,
-};
+use super::proto::gatekeeper_proto::{self, Message, Message_oneof_typ};
 
 /// Implementation of `ConnectionUpgrade` for the Gatekeeper protocol.
 #[derive(Debug, Clone, Default)]
@@ -106,28 +103,32 @@ impl Encoder for GatekeeperCodec {
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
         let proto = match item {
-            GatekeeperMessage::Request { conn_type, node_id } => {
-                let mut msg_typ = gatekeeper_proto::HelloRequest::new();
-                msg_typ.set_conn_type(conn_type.into());
-                msg_typ.set_node_id(node_id.to_bytes().to_vec());
+            GatekeeperMessage::UnlockRequest { proof } => {
+                let mut msg_typ = gatekeeper_proto::UnlockRequest::new();
+                if let Some(proof) = proof {
+                    let mut proof_proto = gatekeeper_proto::HashcashProof::new();
+                    proof_proto.set_seed(proof.seed);
+                    proof_proto.set_nbits(proof.nbits as u32);
+                    proof_proto.set_count(proof.count);
+                    msg_typ.set_proof(proof_proto);
+                }
                 let mut proto_msg = gatekeeper_proto::Message::new();
-                proto_msg.set_request(msg_typ);
+                proto_msg.set_unlock_request(msg_typ);
                 proto_msg
             }
-            GatekeeperMessage::Reply {
-                conn_type,
-                node_id,
-                others,
-            } => {
-                let mut msg_typ = gatekeeper_proto::HelloReply::new();
-                msg_typ.set_conn_type(conn_type.into());
-                msg_typ.set_node_id(node_id.to_bytes().to_vec());
-                for addr in others.iter() {
-                    msg_typ.mut_other_nodes().push(addr.to_bytes());
-                }
-
+            GatekeeperMessage::ChallengeReply { seed, nbits } => {
+                let mut msg_typ = gatekeeper_proto::ChallengeReply::new();
+                msg_typ.set_seed(seed);
+                msg_typ.set_nbits(nbits as u32);
                 let mut proto_msg = gatekeeper_proto::Message::new();
-                proto_msg.set_reply(msg_typ);
+                proto_msg.set_challenge_reply(msg_typ);
+                proto_msg
+            }
+            GatekeeperMessage::PermitReply { connection_allowed } => {
+                let mut msg_typ = gatekeeper_proto::PermitReply::new();
+                msg_typ.set_connection_allowed(connection_allowed);
+                let mut proto_msg = gatekeeper_proto::Message::new();
+                proto_msg.set_permit_reply(msg_typ);
                 proto_msg
             }
         };
@@ -160,38 +161,31 @@ impl Decoder for GatekeeperCodec {
         let message: Message = protobuf::parse_from_bytes(&packet)?;
 
         match message.typ {
-            Some(Message_oneof_typ::request(mut request_msg)) => {
-                let node_id = secure::PublicKey::try_from_bytes(&request_msg.take_node_id())
-                    .map_err(|_| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "bad protobuf encoding, failed to decode node_id",
-                        )
-                    })?;
-                Ok(Some(GatekeeperMessage::Request {
-                    conn_type: request_msg.get_conn_type().into(),
-                    node_id,
+            Some(Message_oneof_typ::unlock_request(unlock_request_msg)) => {
+                let proof = if unlock_request_msg.has_proof() {
+                    let proof_msg = unlock_request_msg.get_proof();
+                    let seed = proof_msg.get_seed();
+                    let nbits = proof_msg.get_nbits() as usize;
+                    let count = proof_msg.get_count();
+                    Some(HashCashProof {
+                        seed: seed.to_vec(),
+                        nbits,
+                        count,
+                    })
+                } else {
+                    None
+                };
+                Ok(Some(GatekeeperMessage::UnlockRequest { proof }))
+            }
+            Some(Message_oneof_typ::challenge_reply(reply_msg)) => {
+                Ok(Some(GatekeeperMessage::ChallengeReply {
+                    seed: reply_msg.get_seed().to_vec(),
+                    nbits: reply_msg.get_nbits() as usize,
                 }))
             }
-            Some(Message_oneof_typ::reply(mut reply_msg)) => {
-                let node_id = secure::PublicKey::try_from_bytes(&reply_msg.take_node_id())
-                    .map_err(|_| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "bad protobuf encoding, failed to decode node_id",
-                        )
-                    })?;
-
-                let mut others: Vec<Multiaddr> = Vec::new();
-                for addr in reply_msg.take_other_nodes().iter() {
-                    if let Ok(addr_) = Multiaddr::from_bytes(addr.to_vec()) {
-                        others.push(addr_);
-                    }
-                }
-                Ok(Some(GatekeeperMessage::Reply {
-                    conn_type: reply_msg.get_conn_type().into(),
-                    node_id,
-                    others,
+            Some(Message_oneof_typ::permit_reply(reply_msg)) => {
+                Ok(Some(GatekeeperMessage::PermitReply {
+                    connection_allowed: reply_msg.get_connection_allowed(),
                 }))
             }
             None => {
@@ -204,78 +198,47 @@ impl Decoder for GatekeeperCodec {
     }
 }
 
+/// Struct
+
 /// Message that we can send to a peer or received from a peer.
 #[derive(Debug, Clone, PartialEq)]
 pub enum GatekeeperMessage {
-    Request {
-        conn_type: ConnectionType,
-        node_id: secure::PublicKey,
-    },
-    Reply {
-        conn_type: ConnectionType,
-        node_id: secure::PublicKey,
-        others: Vec<Multiaddr>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ConnectionType {
-    FullNode,
-    Routing,
-    Query,
-    None,
-}
-
-impl From<ProtoConnectionType> for ConnectionType {
-    fn from(item: ProtoConnectionType) -> ConnectionType {
-        match item {
-            ProtoConnectionType::FULL_NODE => ConnectionType::FullNode,
-            ProtoConnectionType::ROUTING => ConnectionType::Routing,
-            ProtoConnectionType::QUERY => ConnectionType::Query,
-            ProtoConnectionType::NONE => ConnectionType::None,
-        }
-    }
-}
-
-impl From<ConnectionType> for ProtoConnectionType {
-    fn from(item: ConnectionType) -> ProtoConnectionType {
-        match item {
-            ConnectionType::FullNode => ProtoConnectionType::FULL_NODE,
-            ConnectionType::Routing => ProtoConnectionType::ROUTING,
-            ConnectionType::Query => ProtoConnectionType::QUERY,
-            ConnectionType::None => ProtoConnectionType::NONE,
-        }
-    }
+    UnlockRequest { proof: Option<HashCashProof> },
+    ChallengeReply { seed: Vec<u8>, nbits: usize },
+    PermitReply { connection_allowed: bool },
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ConnectionType, GatekeeperConfig, GatekeeperMessage};
+    use super::{GatekeeperConfig, GatekeeperMessage};
     use futures::{Future, Sink, Stream};
     use libp2p::core::upgrade::{InboundUpgrade, OutboundUpgrade};
-    use stegos_crypto::pbc::secure;
+    use stegos_crypto::hashcash::HashCashProof;
     use tokio::net::{TcpListener, TcpStream};
 
     #[test]
     fn correct_transfer() {
-        let request = GatekeeperMessage::Request {
-            conn_type: ConnectionType::FullNode,
-            node_id: secure::PublicKey::from(secure::G2::generator()),
+        let unlock_request_null = GatekeeperMessage::UnlockRequest { proof: None };
+        test_one(unlock_request_null);
+
+        let proof = HashCashProof {
+            seed: rand::random::<[u8; 20]>().to_vec(),
+            nbits: rand::random::<usize>(),
+            count: rand::random::<i64>(),
         };
+        let unlock_request_proof = GatekeeperMessage::UnlockRequest { proof: Some(proof) };
+        test_one(unlock_request_proof);
 
-        test_one(request);
-
-        let reply = GatekeeperMessage::Reply {
-            conn_type: ConnectionType::Routing,
-            node_id: secure::PublicKey::from(secure::G2::generator()),
-            others: vec![
-                "/ip4/1.2.3.4/tcp/1111".parse().unwrap(),
-                "/ip4/1.2.3.4/tcp/1231".parse().unwrap(),
-                "/ip4/1.2.3.4/tcp/1221".parse().unwrap(),
-            ],
+        let challenge_reply = GatekeeperMessage::ChallengeReply {
+            seed: random_vec(256),
+            nbits: 16,
         };
+        test_one(challenge_reply);
 
-        test_one(reply);
+        let permit_reply = GatekeeperMessage::PermitReply {
+            connection_allowed: false,
+        };
+        test_one(permit_reply);
     }
 
     fn test_one(msg: GatekeeperMessage) {
@@ -311,5 +274,10 @@ mod tests {
         runtime
             .block_on(server.select(client).map_err(|_| panic!()))
             .unwrap();
+    }
+
+    fn random_vec(len: usize) -> Vec<u8> {
+        let key = (0..len).map(|_| rand::random::<u8>()).collect::<Vec<_>>();
+        key
     }
 }

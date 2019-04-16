@@ -100,8 +100,8 @@ where
     pub fn new() -> Self {
         FloodsubHandler {
             config: FloodsubConfig::new(),
-            enabled_incoming: true,
-            enabled_outgoing: true,
+            enabled_incoming: false,
+            enabled_outgoing: false,
             substreams: Vec::new(),
             send_queue: SmallVec::new(),
             out_events: VecDeque::new(),
@@ -170,6 +170,7 @@ where
                     .push_back(FloodsubRecvEvent::EnabledIncoming);
             }
             FloodsubSendEvent::EnableOutgoing => {
+                self.enabled_incoming = true;
                 self.enabled_outgoing = true;
                 self.out_events
                     .push_back(FloodsubRecvEvent::EnabledOutgoing);

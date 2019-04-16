@@ -27,3 +27,4 @@ mod proto;
 mod protocol;
 
 pub use self::behavior::{Ncp, NcpOutEvent};
+pub use self::protocol::PeerInfo;

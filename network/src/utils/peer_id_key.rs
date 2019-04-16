@@ -1,7 +1,7 @@
 //
 // MIT License
 //
-// Copyright (c) 2018-2019 Stegos AG
+// Copyright (c) 2019 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -21,12 +21,49 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-mod expiring_queue;
-mod lru_bimap;
-mod multihash;
-mod peer_id_key;
+//! Helper data type to add Ord to libp2p::PeerId
+//!
 
-pub use self::expiring_queue::ExpiringQueue;
-pub use self::lru_bimap::LruBimap;
-pub use self::multihash::IntoMultihash;
-pub use self::peer_id_key::PeerIdKey;
+use libp2p::core::PeerId;
+use std::cmp::Ordering;
+
+#[derive(Clone, Debug)]
+pub struct PeerIdKey(PeerId);
+
+impl PeerIdKey {
+    pub fn new(peer_id: PeerId) -> Self {
+        PeerIdKey(peer_id)
+    }
+}
+
+impl From<PeerId> for PeerIdKey {
+    fn from(p: PeerId) -> Self {
+        PeerIdKey(p)
+    }
+}
+
+impl Into<PeerId> for PeerIdKey {
+    fn into(self) -> PeerId {
+        self.0
+    }
+}
+
+impl Ord for PeerIdKey {
+    fn cmp(&self, other: &PeerIdKey) -> Ordering {
+        self.0.as_bytes().cmp(&other.0.as_bytes())
+    }
+}
+
+impl PartialOrd for PeerIdKey {
+    fn partial_cmp(&self, other: &PeerIdKey) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for PeerIdKey {
+    fn eq(&self, other: &PeerIdKey) -> bool {
+        self.0.as_bytes() == other.0.as_bytes()
+    }
+}
+
+impl Eq for PeerIdKey {}

@@ -35,12 +35,13 @@ use smallvec::SmallVec;
 use std::{
     collections::{hash_map::HashMap, hash_set::HashSet, VecDeque},
     marker::PhantomData,
+    time::Duration,
 };
 use stegos_crypto::utils::u8v_to_hexstr;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 // Set timeout for connecting to peer to 15 secs
-const DIAL_TIMEOUT: u64 = 15;
+const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Network behaviour that automatically identifies nodes periodically, and returns information
 /// about them.
@@ -52,7 +53,7 @@ pub struct Delivery<TSubstream> {
     connected_peers: HashSet<PeerId>,
 
     // Pending peers, peers we are trying to dial
-    dial_queue: ExpiringQueue<PeerId>,
+    dial_queue: ExpiringQueue<PeerId, ()>,
 
     // Sending queue
     send_queue: HashMap<PeerId, SmallVec<[DeliveryMessage; 16]>>,
@@ -86,8 +87,8 @@ impl<TSubstream> Delivery<TSubstream> {
         }
 
         debug!(target: "stegos_network::delivery", "dialing peer for message delivery: peer_id={}, seq_no={}", next_hop.to_base58(), u8v_to_hexstr(&message.seq_no));
-        if !self.dial_queue.contains(next_hop) {
-            self.dial_queue.insert(next_hop);
+        if !self.dial_queue.contains_key(next_hop) {
+            self.dial_queue.insert(next_hop.clone(), ());
             self.events.push_back(NetworkBehaviourAction::DialPeer {
                 peer_id: next_hop.clone(),
             });
@@ -117,7 +118,7 @@ where
     fn inject_connected(&mut self, id: PeerId, _: ConnectedPoint) {
         debug!(target: "stegos_network::delivery", "peer connected: peer_id={}", id.to_base58());
         self.connected_peers.insert(id.clone());
-        if self.dial_queue.contains(&id) {
+        if self.dial_queue.contains_key(&id) {
             self.dial_queue.remove(&id);
             if let Some(queue) = self.send_queue.get_mut(&id) {
                 debug!(target: "stegos_network::delivery", "delivering queued messages: peer_id={}, queue_len={}", id.to_base58(), queue.len());
@@ -168,9 +169,9 @@ where
         loop {
             match self.dial_queue.poll() {
                 Ok(Async::Ready(ref entry)) => {
-                    debug!(target: "stegos_network::delivery", "dialout timeout: peer_id={}", entry.clone().to_base58());
+                    debug!(target: "stegos_network::delivery", "dialout timeout: peer_id={}", entry.0.clone().to_base58());
                     // Drop sending queue for the peer
-                    self.send_queue.remove(entry);
+                    self.send_queue.remove(&entry.0);
                 }
                 Ok(Async::NotReady) => break,
                 Err(e) => {

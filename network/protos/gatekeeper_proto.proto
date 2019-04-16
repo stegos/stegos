@@ -1,32 +1,32 @@
 syntax = "proto3";
 package gatekeeper.pb;
 
-enum ConnectionType {
-    FULL_NODE = 0;      // Blockchain protocols + Routing + Query
-    ROUTING = 1;        // Route unicast messages
-    QUERY = 2;          // Allow discovery queris
-    NONE = 4;           // No communications allowed
+message HashcashProof {
+    bytes seed = 1;
+    uint32 nbits = 2;
+    sint64 count = 3;
 }
 
-message HelloRequest {
-    // desired connection type
-    ConnectionType conn_type = 1;
-    // PBC PublicKey
-    bytes node_id = 2;
+message UnlockRequest {
+    // Optional proof
+    HashcashProof proof = 1;
 }
 
-message HelloReply {
-    // enabled connection type
-    ConnectionType conn_type = 1;
-    // PBC PublicKey
-    bytes node_id = 2;
-    // List of IPs of other nodes to try to connect to
-    repeated bytes other_nodes = 3;
+message ChallengeReply {
+    // Puzzle seed
+    bytes seed = 1;
+    // Number of bits to calculate
+    uint32 nbits = 2;
+}
+
+message PermitReply {
+    bool connection_allowed = 1;
 }
 
 message Message {
     oneof typ {
-        HelloRequest request = 1;
-        HelloReply reply = 2;
+        UnlockRequest unlock_request = 1;
+        ChallengeReply challenge_reply = 3;
+        PermitReply permit_reply = 4;
     }
 }

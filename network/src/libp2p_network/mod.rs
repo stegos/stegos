@@ -36,7 +36,7 @@ use log::*;
 use pnet::datalink;
 use protobuf::Message as ProtoMessage;
 use smallvec::SmallVec;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use stegos_crypto::hash::{Hashable, Hasher};
 use stegos_crypto::pbc::secure;
 use stegos_crypto::utils::u8v_to_hexstr;
@@ -46,13 +46,10 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use crate::config::NetworkConfig;
 use crate::delivery::{Delivery, DeliveryEvent, DeliveryMessage};
 use crate::discovery::{Discovery, DiscoveryOutEvent};
-use crate::gatekeeper::{Gatekeeper, GatekeeperOutEvent, ProtocolUpdateEvent};
+use crate::gatekeeper::{Gatekeeper, GatekeeperOutEvent, PeerEvent};
 use crate::ncp::{Ncp, NcpOutEvent};
 use crate::pubsub::{Floodsub, FloodsubEvent, TopicBuilder, TopicHash};
 use crate::{Network, NetworkProvider, UnicastMessage};
-
-mod peer_state;
-use peer_state::{ChainProtocol, PeerProtos};
 
 mod proto;
 use self::proto::unicast_proto;
@@ -219,7 +216,7 @@ pub struct Libp2pBehaviour<TSubstream: AsyncRead + AsyncWrite> {
     #[behaviour(ignore)]
     topics_map: HashMap<TopicHash, String>,
     #[behaviour(ignore)]
-    connected_peers: HashMap<PeerId, PeerProtos>,
+    connected_peers: HashSet<PeerId>,
 }
 
 impl<TSubstream> Libp2pBehaviour<TSubstream>
@@ -238,7 +235,7 @@ where
             my_pkey: keychain.network_pkey.clone(),
             my_skey: keychain.network_skey.clone(),
             topics_map: HashMap::new(),
-            connected_peers: HashMap::new(),
+            connected_peers: HashSet::new(),
         };
         let unicast_topic = TopicBuilder::new(UNICAST_TOPIC).build();
         behaviour.floodsub.subscribe(unicast_topic);
@@ -286,7 +283,7 @@ where
                 protocol_id,
                 data,
             } => {
-                debug!(target: "stegos_network::pubsub",
+                debug!(target: "stegos_network::delivery",
                     "Sending unicast message: to={}, from={}, protocol={}, size={}",
                     to,
                     self.my_pkey,
@@ -329,7 +326,6 @@ where
     }
 
     fn shutdown(&mut self, peer_id: &PeerId) {
-        self.ncp.disable(peer_id);
         self.floodsub.disable(peer_id);
     }
 }
@@ -346,25 +342,12 @@ where
             NcpOutEvent::DialPeer { peer_id } => {
                 self.gatekeeper.dial_peer(peer_id);
             }
-            NcpOutEvent::EnabledIncoming { peer_id } => {
-                if let Some(entry) = self.connected_peers.get_mut(&peer_id) {
-                    entry.enabled_incoming.insert(ChainProtocol::Ncp);
-                    if entry.enabled_incoming == entry.wanted_incoming {
-                        self.gatekeeper
-                            .notify(&peer_id, ProtocolUpdateEvent::EnabledListener);
-                    }
-                }
+            NcpOutEvent::Connected { peer_id } => {
+                self.connected_peers.insert(peer_id);
             }
-            NcpOutEvent::EnabledOutgoing { peer_id } => {
-                if let Some(entry) = self.connected_peers.get_mut(&peer_id) {
-                    entry.enabled_outgoing.insert(ChainProtocol::Ncp);
-                    if entry.enabled_outgoing == entry.wanted_outgoing {
-                        self.gatekeeper
-                            .notify(&peer_id, ProtocolUpdateEvent::EnabledDialer);
-                    }
-                }
+            NcpOutEvent::Disconnected { peer_id } => {
+                self.connected_peers.remove(&peer_id);
             }
-            NcpOutEvent::Disabled { .. } => unimplemented!(),
             NcpOutEvent::DiscoveredPeer {
                 node_id,
                 peer_id,
@@ -374,7 +357,7 @@ where
                 self.discovery.add_node(node_id.clone(), peer_id.clone());
                 if addresses.len() > 0 {
                     self.discovery.set_peer_id(&node_id, peer_id.clone());
-                    if self.connected_peers.contains_key(&peer_id) {
+                    if self.connected_peers.contains(&peer_id) {
                         for a in addresses.iter() {
                             self.discovery.add_connected_address(&node_id, a.clone());
                         }
@@ -484,22 +467,11 @@ where
                 }
             }
             FloodsubEvent::EnabledIncoming { peer_id } => {
-                if let Some(entry) = self.connected_peers.get_mut(&peer_id) {
-                    entry.enabled_incoming.insert(ChainProtocol::Pubsub);
-                    if entry.enabled_incoming == entry.wanted_incoming {
-                        self.gatekeeper
-                            .notify(&peer_id, ProtocolUpdateEvent::EnabledListener);
-                    }
-                }
+                self.gatekeeper
+                    .notify(PeerEvent::EnabledListener { peer_id });
             }
             FloodsubEvent::EnabledOutgoing { peer_id } => {
-                if let Some(entry) = self.connected_peers.get_mut(&peer_id) {
-                    entry.enabled_outgoing.insert(ChainProtocol::Pubsub);
-                    if entry.enabled_outgoing == entry.wanted_outgoing {
-                        self.gatekeeper
-                            .notify(&peer_id, ProtocolUpdateEvent::EnabledDialer);
-                    }
-                }
+                self.gatekeeper.notify(PeerEvent::EnabledDialer { peer_id });
             }
             FloodsubEvent::Ready => {
                 debug!(target: "stegos_network::pubsub", "network is ready");
@@ -534,38 +506,24 @@ where
     fn inject_event(&mut self, event: GatekeeperOutEvent) {
         match event {
             GatekeeperOutEvent::PrepareListener { peer_id } => {
-                let entry = self
-                    .connected_peers
-                    .entry(peer_id.clone())
-                    .or_insert(PeerProtos::new());
-                entry.want_listener();
-                for p in entry.wanted_incoming.iter() {
-                    match p {
-                        ChainProtocol::Pubsub => self.floodsub.enable_incoming(&peer_id),
-                        ChainProtocol::Ncp => self.ncp.enable_incoming(&peer_id),
-                    }
-                }
+                self.floodsub.enable_incoming(&peer_id);
             }
             GatekeeperOutEvent::PrepareDialer { peer_id } => {
-                let entry = self
-                    .connected_peers
-                    .entry(peer_id.clone())
-                    .or_insert(PeerProtos::new());
-                entry.want_dialer();
-                for p in entry.wanted_incoming.iter() {
-                    match p {
-                        ChainProtocol::Pubsub => self.floodsub.enable_outgoing(&peer_id),
-                        ChainProtocol::Ncp => self.ncp.enable_outgoing(&peer_id),
-                    }
-                }
+                self.floodsub.enable_outgoing(&peer_id);
             }
-            GatekeeperOutEvent::Connected { peer_id } => {
-                self.ncp.connected_peer(peer_id);
+            GatekeeperOutEvent::Solve { peer_id, .. } => {
+                // do puzzle solving
+                self.gatekeeper.notify(PeerEvent::PuzzleSolved {
+                    peer_id,
+                    answer: 42,
+                })
             }
-            GatekeeperOutEvent::Disconnected { peer_id } => {
-                self.connected_peers.remove(&peer_id);
+            GatekeeperOutEvent::Finished { peer_id } => {
+                self.floodsub.enable_outgoing(&peer_id);
             }
-            GatekeeperOutEvent::Message { .. } => unimplemented!(),
+            GatekeeperOutEvent::Message { .. } => {}
+            GatekeeperOutEvent::Connected { .. } => {}
+            GatekeeperOutEvent::Disconnected { .. } => {}
         }
     }
 }
@@ -583,8 +541,8 @@ where
             DiscoveryOutEvent::Route { next_hop, message } => {
                 debug!(target: "stegos_network::delivery", "delivering paylod: node_id={}, peer_id={}", message.to, next_hop.to_base58());
                 self.delivery.deliver_unicast(&next_hop, message);
-            }
-            _ => {}
+            } // _ => {}
+            DiscoveryOutEvent::KadEvent { .. } => {}
         }
     }
 }

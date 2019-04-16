@@ -23,21 +23,46 @@ mod simple_tests;
 pub mod time;
 
 pub use stegos_network::loopback::Loopback;
-pub use time::*;
+use time::{start_test, wait, TestTimer};
 mod consensus;
 use crate::*;
 use assert_matches::assert_matches;
+use log::Level;
 use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
+use tokio_timer::Timer;
 
-#[allow(unused)]
-pub struct Sandbox {
-    nodes: Vec<NodeSandbox>,
-    nodes_keychains: Vec<KeyChain>,
+pub struct SandboxConfig {
+    pub chain: ChainConfig,
+    pub num_nodes: usize,
+    pub log_level: Level,
 }
 
-impl Sandbox {
-    fn new(cfg: ChainConfig, num_nodes: usize) -> Self {
+impl Default for SandboxConfig {
+    fn default() -> SandboxConfig {
+        SandboxConfig {
+            chain: Default::default(),
+            num_nodes: 4,
+            log_level: Level::Trace,
+        }
+    }
+}
+
+#[allow(unused)]
+pub struct Sandbox<'timer> {
+    nodes: Vec<NodeSandbox>,
+    nodes_keychains: Vec<KeyChain>,
+    timer: &'timer mut Timer<TestTimer>,
+    config: ChainConfig,
+}
+
+impl<'timer> Sandbox<'timer> {
+    pub fn start<F>(cfg: SandboxConfig, test_routine: F)
+    where
+        F: FnOnce(&mut Sandbox),
+    {
+        let num_nodes = cfg.num_nodes;
+        let cfg = cfg.chain;
         let timestamp = SystemTime::now();
         let nodes_keychains: Vec<_> = (0..num_nodes).map(|_num| KeyChain::new_mem()).collect();
         let genesis = stegos_blockchain::genesis(&nodes_keychains, 1000, 1000000, timestamp);
@@ -45,10 +70,28 @@ impl Sandbox {
         let nodes: Vec<NodeSandbox> = (0..num_nodes)
             .map(|i| NodeSandbox::new(cfg.clone(), nodes_keychains[i].clone(), genesis.clone()))
             .collect();
-        Self {
-            nodes,
-            nodes_keychains,
-        }
+        start_test(|timer| {
+            let _ = simple_logger::init_with_level(Level::Trace);
+            let mut sandbox = Sandbox {
+                nodes,
+                nodes_keychains,
+                timer,
+                config: cfg,
+            };
+            test_routine(&mut sandbox)
+        });
+    }
+
+    pub fn wait(&mut self, duration: Duration) {
+        wait(&mut *self.timer, duration)
+    }
+
+    pub fn num_nodes(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub fn cfg(&self) -> &ChainConfig {
+        &self.config
     }
 
     /// Return node for publickey.
@@ -56,6 +99,21 @@ impl Sandbox {
         self.nodes
             .iter_mut()
             .find(|node| node.node_service.keys.network_pkey == *pk)
+    }
+
+    /// Filter messages from specific protocol_ids.
+    fn filter_unicast(&mut self, protocol_ids: &[&str]) {
+        for node in &mut self.nodes {
+            node.network_service.filter_unicast(protocol_ids)
+        }
+    }
+
+    #[allow(dead_code)]
+    /// Filter messages from specific topics.
+    fn filter_broadcast(&mut self, topics: &[&str]) {
+        for node in &mut self.nodes {
+            node.network_service.filter_broadcast(topics)
+        }
     }
 
     /// Iterator among all nodes, except one of
@@ -78,6 +136,17 @@ impl Sandbox {
         }
     }
 
+    /// Execute some function for each node_service.
+    fn for_each<F>(&self, mut function: F)
+    where
+        F: FnMut(&NodeService),
+    {
+        for node in &self.nodes {
+            function(&node.node_service)
+        }
+    }
+
+    /// Checks if all sandbox nodes synchronized.
     fn assert_synchronized(&self) {
         let height = self.nodes[0].node_service.chain.height();
         let last_block = self.nodes[0].node_service.chain.last_block_hash();

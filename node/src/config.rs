@@ -38,6 +38,8 @@ pub struct ChainConfig {
     pub bonding_time: Duration,
     /// Max difference in timestamps of leader and validators.
     pub blocks_in_epoch: u64,
+    /// Loader will send maximum N epoch at time.
+    pub chain_loader_speed_in_epoch: u64,
     /// Fixed reward per block.
     pub block_reward: i64,
     /// Fixed fee for payment transactions.
@@ -64,6 +66,7 @@ impl Default for ChainConfig {
             key_block_timeout,
             bonding_time: Duration::from_secs(15 * 60),
             blocks_in_epoch: 5,
+            chain_loader_speed_in_epoch: 10,
             block_reward: 60,
             payment_fee: 1,
             stake_fee: 1,

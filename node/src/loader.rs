@@ -157,9 +157,10 @@ impl NodeService {
         }
 
         // Send one epoch.
-        let blocks = self
-            .chain
-            .blocks_range(starting_height, self.cfg.blocks_in_epoch);
+        let blocks = self.chain.blocks_range(
+            starting_height,
+            self.cfg.blocks_in_epoch * self.cfg.chain_loader_speed_in_epoch,
+        );
         info!("Feeding blocks: to={}, num_blocks={}", pkey, blocks.len());
         let msg = ChainLoaderMessage::Response(ResponseBlocks::new(height, blocks));
         self.network

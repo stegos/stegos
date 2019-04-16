@@ -22,7 +22,7 @@
 // SOFTWARE.
 
 use super::handler::{DeliveryHandler, DeliveryRecvEvent, DeliverySendEvent};
-use super::protocol::{DeliveryMessage, Unicast};
+pub use super::protocol::{DeliveryMessage, Unicast};
 
 use crate::utils::ExpiringQueue;
 use futures::prelude::*;
@@ -31,14 +31,11 @@ use libp2p::core::swarm::{
 };
 use libp2p::core::{protocols_handler::ProtocolsHandler, Multiaddr, PeerId};
 use log::{debug, error};
-use lru_time_cache::LruCache;
 use smallvec::SmallVec;
-use std::time::Duration;
 use std::{
     collections::{hash_map::HashMap, hash_set::HashSet, VecDeque},
     marker::PhantomData,
 };
-use stegos_crypto::pbc::secure;
 use stegos_crypto::utils::u8v_to_hexstr;
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -60,10 +57,6 @@ pub struct Delivery<TSubstream> {
     // Sending queue
     send_queue: HashMap<PeerId, SmallVec<[DeliveryMessage; 16]>>,
 
-    // We keep track of the messages we received (in the format `hash(source ID, seq_no)`) so that
-    // we don't dispatch the same message twice if we receive it twice on the network.
-    received: LruCache<u64, ()>,
-
     /// Marker to pin the generics.
     marker: PhantomData<TSubstream>,
 }
@@ -76,43 +69,13 @@ impl<TSubstream> Delivery<TSubstream> {
             connected_peers: HashSet::new(),
             dial_queue: ExpiringQueue::new(DIAL_TIMEOUT),
             send_queue: HashMap::new(),
-            received: LruCache::with_expiry_duration_and_capacity(
-                Duration::from_secs(60 * 15),
-                100_000,
-            ),
             marker: PhantomData,
         }
     }
 }
 
 impl<TSubstream> Delivery<TSubstream> {
-    pub fn deliver_unicast(
-        &mut self,
-        next_hop: &PeerId,
-        to: secure::PublicKey,
-        payload: Vec<u8>,
-        dont_route: bool,
-    ) {
-        let mut message = Unicast {
-            to,
-            payload,
-            dont_route,
-            seq_no: rand::random::<[u8; 20]>().to_vec(),
-        };
-
-        // Guard against very unlikely event of Hash collision
-        if self.received.contains_key(&message.digest()) {
-            loop {
-                message.seq_no = rand::random::<[u8; 20]>().to_vec();
-                if !self.received.contains_key(&message.digest()) {
-                    break;
-                }
-            }
-        }
-
-        self.received.insert(message.digest(), ());
-        super::metrics::LRU_CACHE_SIZE.set(self.received.len() as i64);
-
+    pub fn deliver_unicast(&mut self, next_hop: &PeerId, message: Unicast) {
         if self.connected_peers.contains(next_hop) {
             debug!(target: "stegos_network::delivery", "delivering message to connected peer: peer_id={}, seq_no={}", next_hop.to_base58(), u8v_to_hexstr(&message.seq_no));
             self.events.push_back(NetworkBehaviourAction::SendEvent {
@@ -178,10 +141,6 @@ where
         match event {
             DeliveryRecvEvent::Message(msg) => match msg {
                 DeliveryMessage::UnicastMessage(unicast) => {
-                    if self.received.contains_key(&unicast.digest()) {
-                        debug!(target: "stegos_network::delivery", "LRU cache hit: peer_id={}, seq_no={}", propagation_source.to_base58(), u8v_to_hexstr(&unicast.seq_no));
-                        return;
-                    }
                     debug!(target: "stegos_network::delivery", "received unicast message from peer: peer_id={}, seq_no={}", propagation_source.to_base58(), u8v_to_hexstr(&unicast.seq_no));
                     self.events.push_back(NetworkBehaviourAction::GenerateEvent(
                         DeliveryEvent::Message(DeliveryMessage::UnicastMessage(unicast)),

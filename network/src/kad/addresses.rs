@@ -47,6 +47,10 @@ impl Addresses {
         }
     }
 
+    pub fn size(&self) -> usize {
+        self.addrs.len()
+    }
+
     /// Returns the list of addresses.
     pub fn iter(&self) -> impl Iterator<Item = &Multiaddr> {
         let now = Instant::now();

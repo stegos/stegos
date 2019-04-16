@@ -132,8 +132,14 @@ impl Default for NodeInfo {
 }
 
 impl NodeInfo {
+    pub fn has_peer_id(&self) -> bool {
+        self.peer_id.is_some()
+    }
     pub fn peer_id(&self) -> Option<PeerId> {
         self.peer_id.clone()
+    }
+    pub fn has_addresses(&self) -> bool {
+        self.addresses.size() > 0
     }
 }
 
@@ -177,6 +183,14 @@ impl<TSubstream> Kademlia<TSubstream> {
     #[inline]
     pub fn find_closest(&mut self, id: &secure::PublicKey) -> VecIntoIter<secure::PublicKey> {
         self.kbuckets.find_closest(id)
+    }
+
+    #[inline]
+    pub fn find_closest_with_self(
+        &mut self,
+        id: &secure::PublicKey,
+    ) -> VecIntoIter<secure::PublicKey> {
+        self.kbuckets.find_closest_with_self(id)
     }
 
     #[inline]

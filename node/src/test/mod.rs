@@ -20,11 +20,14 @@
 // SOFTWARE.
 
 mod simple_tests;
+
 pub mod time;
 
 pub use stegos_network::loopback::Loopback;
 use time::{start_test, wait, TestTimer};
 mod consensus;
+mod microblocks;
+mod requests;
 use crate::*;
 use assert_matches::assert_matches;
 use log::Level;
@@ -59,7 +62,7 @@ pub struct Sandbox<'timer> {
 impl<'timer> Sandbox<'timer> {
     pub fn start<F>(cfg: SandboxConfig, test_routine: F)
     where
-        F: FnOnce(&mut Sandbox),
+        F: FnOnce(Sandbox),
     {
         let num_nodes = cfg.num_nodes;
         let cfg = cfg.chain;
@@ -72,13 +75,13 @@ impl<'timer> Sandbox<'timer> {
             .collect();
         start_test(|timer| {
             let _ = simple_logger::init_with_level(Level::Trace);
-            let mut sandbox = Sandbox {
+            let sandbox = Sandbox {
                 nodes,
                 nodes_keychains,
                 timer,
                 config: cfg,
             };
-            test_routine(&mut sandbox)
+            test_routine(sandbox)
         });
     }
 
@@ -92,13 +95,6 @@ impl<'timer> Sandbox<'timer> {
 
     pub fn cfg(&self) -> &ChainConfig {
         &self.config
-    }
-
-    /// Return node for publickey.
-    fn node(&mut self, pk: &secure::PublicKey) -> Option<&mut NodeSandbox> {
-        self.nodes
-            .iter_mut()
-            .find(|node| node.node_service.keys.network_pkey == *pk)
     }
 
     /// Filter messages from specific protocol_ids.
@@ -116,22 +112,12 @@ impl<'timer> Sandbox<'timer> {
         }
     }
 
-    /// Iterator among all nodes, except one of
-    fn iter_except<'a>(
-        &'a mut self,
-        validators: &'a [secure::PublicKey],
-    ) -> impl Iterator<Item = &'a mut NodeSandbox> {
-        self.nodes.iter_mut().filter(move |node| {
-            validators
-                .iter()
-                .find(|key| **key == node.node_service.keys.network_pkey)
-                .is_none()
-        })
-    }
-
     fn poll(&mut self) {
-        for (id, node) in self.nodes.iter_mut().enumerate() {
-            info!("============ POLLING node={} ============", id);
+        for node in self.nodes.iter_mut() {
+            info!(
+                "============ POLLING node={:?} ============",
+                node.validator_id()
+            );
             node.poll();
         }
     }
@@ -177,6 +163,101 @@ impl<'timer> Sandbox<'timer> {
         }
         self.poll();
     }
+
+    fn split<'a>(&'a mut self, first_partitions_nodes: &[secure::PublicKey]) -> PartitionGuard<'a> {
+        let divider = |key| {
+            first_partitions_nodes
+                .iter()
+                .find(|item| **item == key)
+                .is_some()
+        };
+
+        let mut part1 = Partition::default();
+        let mut part2 = Partition::default();
+        for node in self.nodes.iter_mut() {
+            if divider(node.node_service.keys.network_pkey) {
+                part1.nodes.push(node)
+            } else {
+                part2.nodes.push(node)
+            }
+        }
+
+        PartitionGuard {
+            timer: &mut *self.timer,
+            config: &self.config,
+            parts: (part1, part2),
+        }
+    }
+}
+
+/// Most of test related to consensus, will split network into parts.
+/// This wrapper was designed to represent splitted parts of network.
+#[allow(unused)]
+#[derive(Default)]
+struct Partition<'p> {
+    nodes: Vec<&'p mut NodeSandbox>,
+}
+#[allow(dead_code)]
+impl<'p> Partition<'p> {
+    fn poll(&mut self) {
+        for node in self.nodes.iter_mut() {
+            info!(
+                "============ PARTIOTION_POLLING node={:?} ============",
+                node.validator_id()
+            );
+            node.poll();
+        }
+    }
+
+    /// Execute some function for each node_service.
+    fn for_each<F>(&self, mut function: F)
+    where
+        F: FnMut(&NodeService),
+    {
+        for node in &self.nodes {
+            function(&node.node_service)
+        }
+    }
+
+    /// Checks if all sandbox nodes synchronized.
+    fn assert_synchronized(&self) {
+        let height = self.nodes[0].node_service.chain.height();
+        let last_block = self.nodes[0].node_service.chain.last_block_hash();
+        for node in &self.nodes {
+            assert_eq!(node.node_service.chain.height(), height);
+            assert_eq!(node.node_service.chain.last_block_hash(), last_block);
+        }
+    }
+
+    // rust borrowchecker is not smart enought to deduct that we need smaller iter lifetimes.
+    // to proove that it is safe this implemetation contain intermediate vector.
+    // This function can be rewrited as unsafe,
+    // or may be later rewrited just as `self.into_iter().map(|i|*i)`
+    fn reborrow_nodes<'a>(&'a mut self) -> impl Iterator<Item = &'a mut NodeSandbox>
+    where
+        'p: 'a,
+    {
+        use std::ops::DerefMut;
+        let mut arr = Vec::new();
+        for item in &mut self.nodes {
+            arr.push(item.deref_mut())
+        }
+        arr.into_iter()
+    }
+}
+
+#[allow(unused)]
+struct PartitionGuard<'p> {
+    timer: &'p mut Timer<TestTimer>,
+    config: &'p ChainConfig,
+    parts: (Partition<'p>, Partition<'p>),
+}
+
+#[allow(dead_code)]
+impl<'p> PartitionGuard<'p> {
+    pub fn wait(&mut self, duration: Duration) {
+        wait(&mut *self.timer, duration)
+    }
 }
 
 struct NodeSandbox {
@@ -200,7 +281,7 @@ impl NodeSandbox {
         }
     }
 
-    fn get_id(&self) -> usize {
+    fn validator_id(&self) -> Option<usize> {
         let key = self.node_service.keys.network_pkey;
         self.node_service
             .chain
@@ -209,10 +290,80 @@ impl NodeSandbox {
             .enumerate()
             .find(|(_id, keys)| key == keys.0)
             .map(|(id, _)| id)
-            .unwrap()
     }
 
     fn poll(&mut self) {
         assert_eq!(self.node_service.poll(), Ok(Async::NotReady));
     }
+}
+
+trait Api<'p> {
+    fn first_mut(&mut self) -> &mut NodeSandbox;
+    fn iter_mut<'a>(&'a mut self) -> Box<dyn Iterator<Item = &'a mut NodeSandbox> + 'a>
+    where
+        'p: 'a;
+
+    /// Iterator among all nodes, except one of
+    fn iter_except<'a>(
+        &'a mut self,
+        validators: &'a [secure::PublicKey],
+    ) -> Box<dyn Iterator<Item = &'a mut NodeSandbox> + 'a>
+    where
+        'p: 'a,
+    {
+        Box::new(self.iter_mut().filter(move |node| {
+            validators
+                .iter()
+                .find(|key| **key == node.node_service.keys.network_pkey)
+                .is_none()
+        }))
+    }
+
+    /// Return node for publickey.
+    fn node<'a>(&'a mut self, pk: &secure::PublicKey) -> Option<&'a mut NodeSandbox>
+    where
+        'p: 'a,
+    {
+        self.iter_mut()
+            .find(|node| node.node_service.keys.network_pkey == *pk)
+    }
+}
+
+impl<'p> Api<'p> for Partition<'p> {
+    fn first_mut(&mut self) -> &mut NodeSandbox {
+        &mut *self.nodes[0]
+    }
+    fn iter_mut<'a>(&'a mut self) -> Box<dyn Iterator<Item = &'a mut NodeSandbox> + 'a>
+    where
+        'p: 'a,
+    {
+        Box::new(self.reborrow_nodes())
+    }
+}
+
+impl<'p> Api<'p> for Sandbox<'p> {
+    fn first_mut(&mut self) -> &mut NodeSandbox {
+        &mut self.nodes[0]
+    }
+    fn iter_mut<'a>(&'a mut self) -> Box<dyn Iterator<Item = &'a mut NodeSandbox> + 'a>
+    where
+        'p: 'a,
+    {
+        Box::new(self.nodes.iter_mut())
+    }
+}
+
+// tests
+
+#[test]
+fn test_partition() {
+    let config: SandboxConfig = Default::default();
+
+    Sandbox::start(config, |mut s| {
+        s.poll();
+        let leader_pk = s.nodes[0].node_service.chain.leader();
+        let r = s.split(&[leader_pk]);
+        assert_eq!(r.parts.0.nodes.len(), 1);
+        assert_eq!(r.parts.1.nodes.len(), 3);
+    });
 }

@@ -246,6 +246,10 @@ where
 
     fn inject_connected(&mut self, id: PeerId, _: ConnectedPoint) {
         self.connected_peers.insert(id.clone(), SmallVec::new());
+        if self.connected_peers.len() >= 2 {
+            self.events
+                .push_back(NetworkBehaviourAction::GenerateEvent(FloodsubEvent::Ready));
+        }
     }
 
     fn inject_disconnected(&mut self, id: &PeerId, _: ConnectedPoint) {
@@ -426,6 +430,7 @@ pub enum FloodsubEvent {
         /// Disabled protocol for peer_id
         peer_id: PeerId,
     },
+    Ready,
 }
 
 #[derive(Debug)]

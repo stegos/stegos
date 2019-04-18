@@ -62,6 +62,9 @@ pub struct Libp2pNetwork {
     control_tx: mpsc::UnboundedSender<ControlMessage>,
 }
 
+pub const NETWORK_STATUS_TOPIC: &'static str = "stegos-network-status";
+pub const NETWORK_READY_TOKEN: &'static [u8] = &[1, 0, 0, 0];
+
 const UNICAST_TOPIC: &'static str = "stegos-unicast";
 const IBE_ID: &'static [u8] = &[105u8, 13, 185, 148, 68, 76, 69, 155];
 
@@ -396,6 +399,17 @@ where
     fn inject_event(&mut self, message: FloodsubEvent) {
         match message {
             FloodsubEvent::Message(message) => {
+                let network_status_topic = TopicBuilder::new(NETWORK_STATUS_TOPIC).build();
+                let network_status_topic_hash = network_status_topic.hash();
+                // ignore messages with NETWORK_STATUS_TOPIC
+                if message
+                    .topics
+                    .iter()
+                    .any(|t| t == network_status_topic_hash)
+                {
+                    return;
+                }
+
                 let floodsub_topic = TopicBuilder::new(UNICAST_TOPIC).build();
                 let unicast_topic_hash = floodsub_topic.hash();
                 if message.topics.iter().any(|t| t == unicast_topic_hash) {
@@ -486,6 +500,25 @@ where
                             .notify(&peer_id, ProtocolUpdateEvent::EnabledDialer);
                     }
                 }
+            }
+            FloodsubEvent::Ready => {
+                debug!(target: "stegos_network::pubsub", "network is ready");
+                let status_topic = TopicBuilder::new(NETWORK_STATUS_TOPIC).build();
+                let topic_hash = status_topic.hash();
+                let consumers = self
+                    .consumers
+                    .entry(topic_hash.clone())
+                    .or_insert(SmallVec::new());
+                consumers.retain({
+                    move |c| {
+                        if let Err(e) = c.unbounded_send(NETWORK_READY_TOKEN.to_vec()) {
+                            error!(target: "stegos_network::pubsub", "Error sending network status to consumer: {}", e);
+                            false
+                        } else {
+                            true
+                        }
+                    }
+                })
             }
             FloodsubEvent::Disabled { .. } => unimplemented!(),
             FloodsubEvent::Subscribed { .. } => {}

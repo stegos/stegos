@@ -25,6 +25,7 @@ use super::*;
 use crate::*;
 use stegos_blockchain::Block;
 use stegos_consensus::ConsensusMessageBody;
+use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::pbc::secure;
 
 #[test]
@@ -268,6 +269,7 @@ fn autocomit() {
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
         let block_hash2 = Hash::digest(&block2);
         assert_eq!(block_hash, block_hash2);
+        s.filter_unicast(&["chain-loader"])
     });
 }
 
@@ -372,5 +374,65 @@ fn round() {
             assert_eq!(node.node_service.chain.epoch(), epoch + 1);
             assert_eq!(node.node_service.chain.last_block_hash(), block_hash);
         }
+    });
+}
+
+#[test]
+fn out_of_order_micro_block() {
+    let config = SandboxConfig {
+        num_nodes: 3,
+        ..Default::default()
+    };
+
+    Sandbox::start(config, |mut s| {
+        let topic = crate::CONSENSUS_TOPIC;
+        s.poll();
+        for node in s.nodes.iter() {
+            assert_eq!(node.node_service.chain.height(), 2);
+        }
+
+        // Process N monetary blocks.
+        let height = s.nodes[0].node_service.chain.height();
+        for _ in 1..s.cfg().blocks_in_epoch {
+            s.wait(s.cfg().tx_wait_timeout);
+            s.skip_monetary_block()
+        }
+
+        info!("====== Received all monetary blocks. =====");
+        let height = height + s.cfg().blocks_in_epoch - 1; // exclude keyblock, as first block of epoch.
+
+        s.for_each(|node| assert_eq!(node.chain.height(), height));
+
+        let leader_pk = s.nodes[0].node_service.chain.leader();
+        let leader_node = s.node(&leader_pk).unwrap();
+        // Discard proposal from leader for a proposal from the leader.
+        let _proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
+
+        //create valid but out of order fake micro block.
+        let version: u64 = 1;
+        let timestamp = SystemTime::now();
+
+        let round = s.nodes[0].node_service.chain.view_change();
+        let last_block_hash = s.nodes[0].node_service.chain.last_block_hash();
+
+        let gamma: Fr = Fr::zero();
+        let base = BaseBlockHeader::new(version, last_block_hash, height, round + 1, timestamp);
+        let block = MonetaryBlock::new(base, gamma, 0, &[], &[], None);
+
+        let block: Block = Block::MonetaryBlock(block);
+        // broadcast block to other nodes.
+        for node in &mut s.iter_except(&[leader_pk]) {
+            node.network_service
+                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone())
+        }
+        s.poll();
+
+        s.for_each(|node| assert_eq!(node.chain.height(), height));
+
+        let leader_pk = s.first().node_service.chain.leader();
+        let leader_node = s.node(&leader_pk).unwrap();
+        leader_node
+            .network_service
+            .filter_broadcast(&[crate::CONSENSUS_TOPIC]);
     });
 }

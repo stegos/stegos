@@ -89,79 +89,8 @@ impl<'timer> Sandbox<'timer> {
         wait(&mut *self.timer, duration)
     }
 
-    pub fn num_nodes(&self) -> usize {
-        self.nodes.len()
-    }
-
     pub fn cfg(&self) -> &ChainConfig {
         &self.config
-    }
-
-    /// Filter messages from specific protocol_ids.
-    fn filter_unicast(&mut self, protocol_ids: &[&str]) {
-        for node in &mut self.nodes {
-            node.network_service.filter_unicast(protocol_ids)
-        }
-    }
-
-    #[allow(dead_code)]
-    /// Filter messages from specific topics.
-    fn filter_broadcast(&mut self, topics: &[&str]) {
-        for node in &mut self.nodes {
-            node.network_service.filter_broadcast(topics)
-        }
-    }
-
-    fn poll(&mut self) {
-        for node in self.nodes.iter_mut() {
-            info!(
-                "============ POLLING node={:?} ============",
-                node.validator_id()
-            );
-            node.poll();
-        }
-    }
-
-    /// Execute some function for each node_service.
-    fn for_each<F>(&self, mut function: F)
-    where
-        F: FnMut(&NodeService),
-    {
-        for node in &self.nodes {
-            function(&node.node_service)
-        }
-    }
-
-    /// Checks if all sandbox nodes synchronized.
-    fn assert_synchronized(&self) {
-        let height = self.nodes[0].node_service.chain.height();
-        let last_block = self.nodes[0].node_service.chain.last_block_hash();
-        for node in &self.nodes {
-            assert_eq!(node.node_service.chain.height(), height);
-            assert_eq!(node.node_service.chain.last_block_hash(), last_block);
-        }
-    }
-
-    /// Take monetary block from leader, rebroadcast to other nodes.
-    /// Use after block timeout.
-    /// This function will poll() every node.
-    fn skip_monetary_block(&mut self) {
-        self.assert_synchronized();
-        assert!(
-            self.nodes[0].node_service.chain.blocks_in_epoch()
-                <= self.nodes[0].node_service.cfg.blocks_in_epoch
-        );
-        let leader_pk = self.nodes[0].node_service.chain.leader();
-        self.poll();
-        let leader = self.node(&leader_pk).unwrap();
-        let block: Block = leader
-            .network_service
-            .get_broadcast(crate::SEALED_BLOCK_TOPIC);
-        for node in self.iter_except(&[leader_pk]) {
-            node.network_service
-                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
-        }
-        self.poll();
     }
 
     fn split<'a>(&'a mut self, first_partitions_nodes: &[secure::PublicKey]) -> PartitionGuard<'a> {
@@ -199,41 +128,22 @@ struct Partition<'p> {
 }
 #[allow(dead_code)]
 impl<'p> Partition<'p> {
-    fn poll(&mut self) {
-        for node in self.nodes.iter_mut() {
-            info!(
-                "============ PARTIOTION_POLLING node={:?} ============",
-                node.validator_id()
-            );
-            node.poll();
-        }
-    }
-
-    /// Execute some function for each node_service.
-    fn for_each<F>(&self, mut function: F)
-    where
-        F: FnMut(&NodeService),
-    {
-        for node in &self.nodes {
-            function(&node.node_service)
-        }
-    }
-
-    /// Checks if all sandbox nodes synchronized.
-    fn assert_synchronized(&self) {
-        let height = self.nodes[0].node_service.chain.height();
-        let last_block = self.nodes[0].node_service.chain.last_block_hash();
-        for node in &self.nodes {
-            assert_eq!(node.node_service.chain.height(), height);
-            assert_eq!(node.node_service.chain.last_block_hash(), last_block);
-        }
-    }
-
     // rust borrowchecker is not smart enought to deduct that we need smaller iter lifetimes.
     // to proove that it is safe this implemetation contain intermediate vector.
     // This function can be rewrited as unsafe,
     // or may be later rewrited just as `self.into_iter().map(|i|*i)`
-    fn reborrow_nodes<'a>(&'a mut self) -> impl Iterator<Item = &'a mut NodeSandbox>
+    fn reborrow_nodes<'a>(&'a self) -> impl Iterator<Item = &'a NodeSandbox>
+    where
+        'p: 'a,
+    {
+        use std::ops::Deref;
+        let mut arr = Vec::new();
+        for item in &self.nodes {
+            arr.push(item.deref())
+        }
+        arr.into_iter()
+    }
+    fn reborrow_nodes_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut NodeSandbox>
     where
         'p: 'a,
     {
@@ -243,6 +153,15 @@ impl<'p> Partition<'p> {
             arr.push(item.deref_mut())
         }
         arr.into_iter()
+    }
+}
+
+impl Drop for NodeSandbox {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            info!("Droping node with id = {:?}", self.validator_id());
+            self.network_service.assert_empty_queue();
+        }
     }
 }
 
@@ -298,11 +217,31 @@ impl NodeSandbox {
 }
 
 trait Api<'p> {
-    fn first_mut(&mut self) -> &mut NodeSandbox;
     fn iter_mut<'a>(&'a mut self) -> Box<dyn Iterator<Item = &'a mut NodeSandbox> + 'a>
     where
         'p: 'a;
 
+    fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a NodeSandbox> + 'a>
+    where
+        'p: 'a;
+
+    fn first<'a>(&'a self) -> &'a NodeSandbox
+    where
+        'p: 'a,
+    {
+        self.iter()
+            .next()
+            .expect("Not found first node at sandbox.")
+    }
+
+    fn first_mut<'a>(&'a mut self) -> &'a mut NodeSandbox
+    where
+        'p: 'a,
+    {
+        self.iter_mut()
+            .next()
+            .expect("Not found first node at sandbox.")
+    }
     /// Iterator among all nodes, except one of
     fn iter_except<'a>(
         &'a mut self,
@@ -319,6 +258,77 @@ trait Api<'p> {
         }))
     }
 
+    /// Checks if all sandbox nodes synchronized.
+    fn assert_synchronized(&self) {
+        let height = self.first().node_service.chain.height();
+        let last_block = self.first().node_service.chain.last_block_hash();
+        for node in self.iter() {
+            assert_eq!(node.node_service.chain.height(), height);
+            assert_eq!(node.node_service.chain.last_block_hash(), last_block);
+        }
+    }
+
+    /// Filter messages from specific protocol_ids.
+    fn filter_unicast(&mut self, protocol_ids: &[&str]) {
+        for node in &mut self.iter_mut() {
+            node.network_service.filter_unicast(protocol_ids)
+        }
+    }
+
+    /// Filter messages from specific topics.
+    fn filter_broadcast(&mut self, topics: &[&str]) {
+        for node in &mut self.iter_mut() {
+            node.network_service.filter_broadcast(topics)
+        }
+    }
+
+    /// poll each node for updates.
+    fn poll(&mut self) {
+        for node in self.iter_mut() {
+            info!(
+                "============ POLLING node={:?} ============",
+                node.validator_id()
+            );
+            node.poll();
+        }
+    }
+
+    fn num_nodes(&self) -> usize {
+        self.iter().count()
+    }
+
+    /// Take monetary block from leader, rebroadcast to other nodes.
+    /// Use after block timeout.
+    /// This function will poll() every node.
+    fn skip_monetary_block(&mut self) {
+        self.assert_synchronized();
+        assert!(
+            self.first().node_service.chain.blocks_in_epoch()
+                <= self.first().node_service.cfg.blocks_in_epoch
+        );
+        let leader_pk = self.first().node_service.chain.leader();
+        self.poll();
+        let leader = self.node(&leader_pk).unwrap();
+        let block: Block = leader
+            .network_service
+            .get_broadcast(crate::SEALED_BLOCK_TOPIC);
+        for node in self.iter_except(&[leader_pk]) {
+            node.network_service
+                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
+        }
+        self.poll();
+    }
+
+    /// Execute some function for each node_service.
+    fn for_each<F>(&self, mut function: F)
+    where
+        F: FnMut(&NodeService),
+    {
+        for node in self.iter() {
+            function(&node.node_service)
+        }
+    }
+
     /// Return node for publickey.
     fn node<'a>(&'a mut self, pk: &secure::PublicKey) -> Option<&'a mut NodeSandbox>
     where
@@ -330,20 +340,26 @@ trait Api<'p> {
 }
 
 impl<'p> Api<'p> for Partition<'p> {
-    fn first_mut(&mut self) -> &mut NodeSandbox {
-        &mut *self.nodes[0]
-    }
-    fn iter_mut<'a>(&'a mut self) -> Box<dyn Iterator<Item = &'a mut NodeSandbox> + 'a>
+    fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a NodeSandbox> + 'a>
     where
         'p: 'a,
     {
         Box::new(self.reborrow_nodes())
     }
+    fn iter_mut<'a>(&'a mut self) -> Box<dyn Iterator<Item = &'a mut NodeSandbox> + 'a>
+    where
+        'p: 'a,
+    {
+        Box::new(self.reborrow_nodes_mut())
+    }
 }
 
 impl<'p> Api<'p> for Sandbox<'p> {
-    fn first_mut(&mut self) -> &mut NodeSandbox {
-        &mut self.nodes[0]
+    fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a NodeSandbox> + 'a>
+    where
+        'p: 'a,
+    {
+        Box::new(self.nodes.iter())
     }
     fn iter_mut<'a>(&'a mut self) -> Box<dyn Iterator<Item = &'a mut NodeSandbox> + 'a>
     where

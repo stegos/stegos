@@ -26,8 +26,7 @@ use crate::*;
 
 #[test]
 fn request_on_timeout() {
-    let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 2;
+    let cfg: ChainConfig = Default::default();
     let config = SandboxConfig {
         num_nodes: 3,
         chain: cfg,
@@ -40,13 +39,6 @@ fn request_on_timeout() {
             assert_eq!(node.node_service.chain.height(), 2);
         }
         let leader_pk = s.nodes[0].node_service.chain.leader();
-        let leader_id = s
-            .nodes_keychains
-            .iter()
-            .enumerate()
-            .find(|(_id, keys)| leader_pk == keys.network_pkey)
-            .map(|(id, _)| id)
-            .unwrap();
 
         // let leader shot his block
         s.wait(s.cfg().tx_wait_timeout);
@@ -55,15 +47,22 @@ fn request_on_timeout() {
         s.wait(s.cfg().micro_block_timeout);
         info!("BEFORE POLL");
         s.poll();
-        for (_, node) in s
-            .nodes
-            .iter_mut()
-            .enumerate()
-            .filter(|(id, _)| *id != leader_id)
-        {
+        s.filter_broadcast(&[crate::VIEW_CHANGE_TOPIC]); // ignore message from other modules.
+        let mut p = s.split(&[leader_pk]);
+        for node in &mut p.parts.1.nodes {
             let _: ChainLoaderMessage = node
                 .network_service
                 .get_unicast(crate::loader::CHAIN_LOADER_TOPIC, &leader_pk);
         }
+
+        let leader = p.parts.0.first_mut();
+
+        assert_eq!(leader_pk, leader.node_service.keys.network_pkey);
+        leader
+            .network_service
+            .filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        leader
+            .network_service
+            .filter_broadcast(&[crate::SEALED_BLOCK_TOPIC]);
     });
 }

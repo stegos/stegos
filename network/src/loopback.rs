@@ -127,7 +127,19 @@ impl Loopback {
 
     pub fn assert_empty_queue(&self) {
         let ref mut state = self.state.lock().unwrap();
-        assert!(state.queue.is_empty());
+        let mut result = Vec::new();
+        for data in &state.queue {
+            match data {
+                MessageFromNode::SendUnicast {
+                    protocol_id: topic, ..
+                }
+                | MessageFromNode::Publish { topic, .. } => result.push(topic),
+            }
+        }
+
+        if !result.is_empty() {
+            panic!("Found not processed messages: {:?}", result);
+        }
     }
 
     pub fn assert_broadcast<M: ProtoConvert + Debug + PartialEq>(&mut self, topic: &str, data: M) {

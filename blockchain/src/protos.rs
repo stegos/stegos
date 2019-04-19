@@ -239,7 +239,9 @@ impl ProtoConvert for KeyBlockBody {
             secure::Signature::zero()
         };
         if proto.sigmap.len() > VALIDATORS_MAX {
-            return Err(CryptoError::InvalidBinaryLength(VALIDATORS_MAX, proto.sigmap.len()).into());
+            return Err(
+                CryptoError::InvalidBinaryLength(VALIDATORS_MAX, proto.sigmap.len()).into(),
+            );
         }
         let mut multisigmap = BitVector::new(VALIDATORS_MAX);
         for (bit, val) in proto.sigmap.iter().enumerate() {

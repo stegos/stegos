@@ -147,7 +147,9 @@ impl ProtoConvert for VsPayload {
                 }
             }
             None => {
-                return Err(ProtoError::MissingField("body".to_string(), "body".to_string()).into());
+                return Err(
+                    ProtoError::MissingField("body".to_string(), "body".to_string()).into(),
+                );
             }
         };
         Ok(payload)
@@ -189,7 +191,9 @@ impl ProtoConvert for Message {
                 session_id: Hash::from_proto(msg.get_session_id())?,
             },
             None => {
-                return Err(ProtoError::MissingField("body".to_string(), "body".to_string()).into());
+                return Err(
+                    ProtoError::MissingField("body".to_string(), "body".to_string()).into(),
+                );
             }
         };
         Ok(msg)

@@ -836,7 +836,9 @@ impl Blockchain {
             };
             // Check for the duplicate input.
             if !input_set.insert(*input_hash) {
-                return Err(BlockError::DuplicateBlockInput(height, block_hash, *input_hash).into());
+                return Err(
+                    BlockError::DuplicateBlockInput(height, block_hash, *input_hash).into(),
+                );
             }
             // Check UTXO.
             match input {
@@ -869,7 +871,9 @@ impl Blockchain {
             // Check that hash is unique.
             let output_hash = Hash::digest(output.as_ref());
             if let Some(_) = self.output_by_hash.get(&output_hash) {
-                return Err(BlockError::OutputHashCollision(height, block_hash, output_hash).into());
+                return Err(
+                    BlockError::OutputHashCollision(height, block_hash, output_hash).into(),
+                );
             }
             // Check for the duplicate output.
             if !output_set.insert(output_hash) {

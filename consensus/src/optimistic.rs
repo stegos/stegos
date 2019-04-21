@@ -102,7 +102,7 @@ impl ViewChangeCollector {
         &mut self,
         blockchain: &Blockchain,
         message: ViewChangeMessage,
-    ) -> Result<Option<ViewCounter>, ConsensusError> {
+    ) -> Result<Option<ViewChangeProof>, ConsensusError> {
         if !self.is_validator() {
             return Ok(None);
         }
@@ -140,7 +140,13 @@ impl ViewChangeCollector {
         );
         // return proof only about first 2/3rd of validators
         if check_supermajority(self.collected_slots, blockchain.total_slots()) {
-            return Ok(Some(blockchain.view_change() + 1));
+            let signatures = self
+                .actual_view_changes
+                .iter()
+                .map(|(k, v)| (*k, &v.signature));
+            let proof = ViewChangeProof::new(signatures);
+            self.reset();
+            return Ok(Some(proof));
         }
         Ok(None)
     }
@@ -197,16 +203,6 @@ impl ViewChangeCollector {
     /// Is current node active validator.
     pub fn is_validator(&self) -> bool {
         self.validator_id.is_some()
-    }
-
-    /// Returns proof of last view_change.
-    pub fn last_proof(&self, _blockchain: &Blockchain) -> Option<ViewChangeProof> {
-        let signatures = self
-            .actual_view_changes
-            .iter()
-            .map(|(k, v)| (*k, &v.signature));
-        let proof = ViewChangeProof::new(signatures);
-        Some(proof)
     }
 
     /// Reset collector to initial state.

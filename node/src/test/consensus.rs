@@ -25,6 +25,7 @@ use super::*;
 use crate::*;
 use stegos_blockchain::Block;
 use stegos_consensus::ConsensusMessageBody;
+use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::pbc::secure;
 
 #[test]
@@ -34,7 +35,7 @@ fn smoke_test() {
         ..Default::default()
     };
 
-    Sandbox::start(config, |s| {
+    Sandbox::start(config, |mut s| {
         let topic = crate::CONSENSUS_TOPIC;
         s.poll();
         for node in s.nodes.iter() {
@@ -163,7 +164,7 @@ fn autocomit() {
         ..Default::default()
     };
 
-    Sandbox::start(config, |s| {
+    Sandbox::start(config, |mut s| {
         let topic = crate::CONSENSUS_TOPIC;
         s.poll();
         for node in s.nodes.iter() {
@@ -268,6 +269,7 @@ fn autocomit() {
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
         let block_hash2 = Hash::digest(&block2);
         assert_eq!(block_hash, block_hash2);
+        s.filter_unicast(&["chain-loader"])
     });
 }
 
@@ -278,7 +280,7 @@ fn round() {
         ..Default::default()
     };
 
-    Sandbox::start(config, |s| {
+    Sandbox::start(config, |mut s| {
         let topic = crate::CONSENSUS_TOPIC;
         s.poll();
         for node in s.nodes.iter() {
@@ -376,238 +378,61 @@ fn round() {
 }
 
 #[test]
-fn request_on_timeout() {
-    let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 2;
+fn out_of_order_micro_block() {
     let config = SandboxConfig {
         num_nodes: 3,
-        chain: cfg,
         ..Default::default()
     };
 
-    Sandbox::start(config, |s| {
-        s.poll();
-        for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height(), 2);
-        }
-        let leader_pk = s.nodes[0].node_service.chain.leader();
-        let leader_id = s
-            .nodes_keychains
-            .iter()
-            .enumerate()
-            .find(|(_id, keys)| leader_pk == keys.network_pkey)
-            .map(|(id, _)| id)
-            .unwrap();
-
-        // let leader shot his block
-        s.wait(s.cfg().tx_wait_timeout);
-        s.poll();
-        // emulate timeout on other nodes, and wait for request
-        s.wait(s.cfg().micro_block_timeout);
-        info!("BEFORE POLL");
-        s.poll();
-        for (_, node) in s
-            .nodes
-            .iter_mut()
-            .enumerate()
-            .filter(|(id, _)| *id != leader_id)
-        {
-            let _: ChainLoaderMessage = node
-                .network_service
-                .get_unicast(crate::loader::CHAIN_LOADER_TOPIC, &leader_pk);
-        }
-    });
-}
-
-// CASE partition:
-// Nodes [A, B, C, D]
-//
-// 1. Node A leader of view_change 1, didn't broadcast micro block (B1) to [B,C,D]
-// 2. Nodes [B, C, D] receive 2/3rd of view_change messages.
-//
-// Asserts that Nodes [B, D, E] go to the next view_change.
-#[test]
-fn micro_block_view_change() {
-    let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 2000;
-    let config = SandboxConfig {
-        num_nodes: 4,
-        chain: cfg,
-        ..Default::default()
-    };
-
-    Sandbox::start(config, |s| {
-        s.poll();
-        for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height(), 2);
-        }
-        let leader_pk = s.nodes[0].node_service.chain.leader();
-        // let leader shot his block
-        s.wait(s.cfg().tx_wait_timeout);
-        s.poll();
-        // emulate timeout on other nodes, and wait for request
-        s.wait(s.cfg().micro_block_timeout);
-        info!("PARTITION BEGIN");
-        s.poll();
-        // emulate dead leader for other nodes
-        {
-            for node in s.iter_except(&[leader_pk]) {
-                assert_eq!(node.node_service.chain.view_change(), 0);
-                // skip chain loader message
-                let _: ChainLoaderMessage = node
-                    .network_service
-                    .get_unicast(crate::loader::CHAIN_LOADER_TOPIC, &leader_pk);
-            }
-
-            let mut msgs = Vec::new();
-            for node in s.iter_except(&[leader_pk]) {
-                let id = node.get_id();
-                let chain = node
-                    .node_service
-                    .optimistic
-                    .current_chain(&node.node_service.chain);
-                let msg =
-                    ViewChangeMessage::new(chain, id as u32, &node.node_service.keys.network_skey);
-                msgs.push(msg);
-            }
-
-            assert_eq!(msgs.len(), 3);
-
-            info!("BROADCAST VIEW_CHANGES");
-            for node in s.iter_except(&[leader_pk]) {
-                for msg in &msgs {
-                    node.network_service
-                        .receive_broadcast(crate::VIEW_CHANGE_TOPIC, msg.clone())
-                }
-            }
-            s.poll();
-            for node in s.iter_except(&[leader_pk]) {
-                // every node should go to the next view_change, after receiving majority of msgs.
-                // This assert can fail in case of bad distributions, if leader has > 1/3 slots_count.
-                if node.node_service.chain.select_leader(1) == node.node_service.keys.network_pkey {
-                    // If node was leader, they have produced monetary block,
-                    assert_eq!(node.node_service.chain.view_change(), 2);
-                } else {
-                    assert_eq!(node.node_service.chain.view_change(), 1);
-                }
-            }
-        }
-    });
-}
-
-// CASE partition:
-// Nodes [A, B, C, D]
-//
-// 1. Node A leader of view_change 1, didn't broadcast micro block (B1) to [B,C,D]
-// 2. Nodes [B, C, D] go to the next view_change 2
-// 2.1. Node B become leader of view_change 2, and broadcast new block (B2).
-// 3. Nodes [A,C,D] Receive block (B2)
-//
-// Asserts that Nodes [A, B, D, E] has last block B2, and same height().
-
-#[test]
-fn micro_block_from_future_with_proof() {
-    let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 2000;
-    let config = SandboxConfig {
-        num_nodes: 4,
-        chain: cfg,
-        ..Default::default()
-    };
-
-    Sandbox::start(config, |s| {
+    Sandbox::start(config, |mut s| {
+        let topic = crate::CONSENSUS_TOPIC;
         s.poll();
         for node in s.nodes.iter() {
             assert_eq!(node.node_service.chain.height(), 2);
         }
 
-        let leader_pk = s.nodes[0].node_service.chain.leader();
-        let mut starting_view_changes = 0;
-
-        for _ in 0..(s.cfg().blocks_in_epoch - 2) {
-            if s.nodes[0]
-                .node_service
-                .chain
-                .select_leader(starting_view_changes + 1)
-                != s.nodes[0].node_service.chain.leader()
-            {
-                break;
-            }
+        // Process N monetary blocks.
+        let height = s.nodes[0].node_service.chain.height();
+        for _ in 1..s.cfg().blocks_in_epoch {
             s.wait(s.cfg().tx_wait_timeout);
-            s.skip_monetary_block();
-            starting_view_changes += 1;
+            s.skip_monetary_block()
         }
 
-        s.wait(s.cfg().tx_wait_timeout);
-        s.poll();
-        s.wait(s.cfg().micro_block_timeout);
-        info!("======= PARTITION BEGIN =======");
-        s.poll();
-        // emulate dead leader for other nodes
-        {
-            for node in s.iter_except(&[leader_pk]) {
-                assert_eq!(node.node_service.chain.view_change(), starting_view_changes);
-                // skip chain loader message
-                let _: ChainLoaderMessage = node
-                    .network_service
-                    .get_unicast(crate::loader::CHAIN_LOADER_TOPIC, &leader_pk);
-            }
+        info!("====== Received all monetary blocks. =====");
+        let height = height + s.cfg().blocks_in_epoch - 1; // exclude keyblock, as first block of epoch.
 
-            let mut msgs = Vec::new();
-            for node in s.iter_except(&[leader_pk]) {
-                let msg: ViewChangeMessage = node.network_service.get_broadcast(VIEW_CHANGE_TOPIC);
-                msgs.push(msg);
-            }
-            assert_eq!(msgs.len(), 3);
+        s.for_each(|node| assert_eq!(node.chain.height(), height));
 
-            let new_leader = s.nodes[0]
-                .node_service
-                .chain
-                .select_leader(starting_view_changes + 1);
-            let new_leader_node = s.node(&new_leader).unwrap();
-            // new leader receive all view change messages and produce new block.
-            // each node should accept new block.
+        let leader_pk = s.nodes[0].node_service.chain.leader();
+        let leader_node = s.node(&leader_pk).unwrap();
+        // Discard proposal from leader for a proposal from the leader.
+        let _proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
 
-            info!("======= BROADCAST VIEW_CHANGES =======");
-            for msg in &msgs {
-                new_leader_node
-                    .network_service
-                    .receive_broadcast(crate::VIEW_CHANGE_TOPIC, msg.clone())
-            }
-            new_leader_node.poll();
+        //create valid but out of order fake micro block.
+        let version: u64 = 1;
+        let timestamp = SystemTime::now();
 
-            info!("======= BROADCAST BLOCK =======");
-            let block: Block = new_leader_node
-                .network_service
-                .get_broadcast(crate::SEALED_BLOCK_TOPIC);
+        let round = s.nodes[0].node_service.chain.view_change();
+        let last_block_hash = s.nodes[0].node_service.chain.last_block_hash();
 
-            assert_eq!(block.base_header().view_change, starting_view_changes + 1);
-            // broadcast block to other nodes.
-            for node in s.iter_except(&[new_leader]) {
-                node.network_service
-                    .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone())
-            }
-            s.poll();
-            // after this each node should go to the current block
+        let gamma: Fr = Fr::zero();
+        let base = BaseBlockHeader::new(version, last_block_hash, height, round + 1, timestamp);
+        let block = MonetaryBlock::new(base, gamma, 0, &[], &[], None);
 
-            let last_block_hash = Hash::digest(&block);
-            // skip next leader, because it can immediately produce next block,
-            // and go to the next view_change.
-            let last_winner = s.nodes[0]
-                .node_service
-                .chain
-                .select_leader(starting_view_changes + 2);
-            for node in s.iter_except(&[leader_pk, last_winner]) {
-                assert_eq!(
-                    node.node_service.chain.view_change(),
-                    starting_view_changes + 2
-                );
-                assert_eq!(node.node_service.chain.last_block_hash(), last_block_hash);
-                assert_eq!(
-                    node.node_service.chain.height(),
-                    starting_view_changes as u64 + 3
-                );
-            }
+        let block: Block = Block::MonetaryBlock(block);
+        // broadcast block to other nodes.
+        for node in &mut s.iter_except(&[leader_pk]) {
+            node.network_service
+                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone())
         }
+        s.poll();
+
+        s.for_each(|node| assert_eq!(node.chain.height(), height));
+
+        let leader_pk = s.first().node_service.chain.leader();
+        let leader_node = s.node(&leader_pk).unwrap();
+        leader_node
+            .network_service
+            .filter_broadcast(&[crate::CONSENSUS_TOPIC]);
     });
 }

@@ -954,22 +954,20 @@ impl NodeService {
     //
 
     fn handle_view_change(&mut self, msg: ViewChangeMessage) -> Result<(), Error> {
-        if let Some(counter) = self.optimistic.handle_message(&self.chain, msg)? {
+        if let Some(proof) = self.optimistic.handle_message(&self.chain, msg)? {
             debug!(
                 "Received enough messages for change leader: height={}, last_block={}, view_change={}",
-                self.chain.height(), self.chain.last_block_hash(),  counter
+                self.chain.height(), self.chain.last_block_hash(), self.chain.view_change()
             );
-            self.chain.set_view_change(counter);
+            self.chain.set_view_change(self.chain.view_change() + 1);
+
+            //TODO: save proof if you are not leader.
             if self.is_leader() {
                 debug!(
                     "We are leader, producing new monetary block: height={}, last_block={}",
                     self.chain.height(),
                     self.chain.last_block_hash()
                 );
-                let proof = self
-                    .optimistic
-                    .last_proof(&self.chain)
-                    .expect("Collected proof");
                 self.create_monetary_block(Some(proof))?;
             };
         }

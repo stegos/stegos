@@ -216,6 +216,149 @@ fn silent_view_change() {
     });
 }
 
+// Regression test for double view_change.
+// CASE partition:
+// Nodes [A, B, C, D]
+//
+// 1. Node A leader of view_change 1, didn't broadcast micro block (B1) to [B,C,D]
+// 2. Nodes [B, C, D] go to the next view_change 2
+// 2.1. Node B become leader and go offline.
+// 3. Nodes [D] Receive single view_change message from node [C].
+//
+// Asserts that Nodes [D] has view_change 2, and don't go to view_change 3.
+
+#[test]
+fn double_view_change() {
+    let mut cfg: ChainConfig = Default::default();
+    cfg.blocks_in_epoch = 2000;
+    let config = SandboxConfig {
+        num_nodes: 4,
+        chain: cfg,
+        ..Default::default()
+    };
+
+    Sandbox::start(config, |mut s| {
+        s.poll();
+        for node in s.nodes.iter() {
+            assert_eq!(node.node_service.chain.height(), 2);
+        }
+
+        let mut starting_view_changes = 0;
+
+        for _ in 0..s.cfg().blocks_in_epoch {
+            let leader1 = s.nodes[0]
+                .node_service
+                .chain
+                .select_leader(starting_view_changes);
+            let leader2 = s.nodes[0]
+                .node_service
+                .chain
+                .select_leader(starting_view_changes + 1);
+            let leader3 = s.nodes[0]
+                .node_service
+                .chain
+                .select_leader(starting_view_changes + 2);
+            if leader1 != leader2 && leader2 != leader3 && leader3 != leader1 {
+                break;
+            }
+            s.wait(s.cfg().tx_wait_timeout);
+            s.skip_monetary_block();
+            starting_view_changes += 1;
+        }
+        assert!(starting_view_changes < s.cfg().blocks_in_epoch as u32 - 2);
+        let leader_pk = s.nodes[0].node_service.chain.leader();
+        s.for_each(|node| assert_eq!(starting_view_changes, node.chain.view_change()));
+
+        s.wait(s.cfg().tx_wait_timeout);
+        s.poll();
+        s.wait(s.cfg().micro_block_timeout);
+        info!("======= PARTITION BEGIN =======");
+        s.poll();
+        // emulate dead leader for other nodes
+        {
+            // filter messages from chain loader.
+            s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+
+            let mut r = s.split(&[leader_pk]);
+
+            let first_leader = r.parts.0.first_mut();
+
+            assert_eq!(leader_pk, first_leader.node_service.keys.network_pkey);
+            first_leader
+                .network_service
+                .filter_broadcast(&[crate::VIEW_CHANGE_TOPIC, crate::SEALED_BLOCK_TOPIC]);
+
+            let mut msgs = Vec::new();
+            for node in &mut r.parts.1.nodes {
+                let msg: ViewChangeMessage = node.network_service.get_broadcast(VIEW_CHANGE_TOPIC);
+                msgs.push(msg);
+            }
+            assert_eq!(msgs.len(), 3);
+
+            let new_leader = r.parts.1.nodes[0]
+                .node_service
+                .chain
+                .select_leader(starting_view_changes + 1);
+
+            info!("======= BROADCAST VIEW_CHANGES =======");
+            for node in &mut r.parts.1.nodes {
+                for msg in &msgs {
+                    node.network_service
+                        .receive_broadcast(crate::VIEW_CHANGE_TOPIC, msg.clone())
+                }
+            }
+
+            r.parts.1.poll();
+            let new_leader_node = r.parts.1.node(&new_leader).unwrap();
+            // new leader receive all view change messages and produce new block.
+
+            let _: Block = new_leader_node
+                .network_service
+                .get_broadcast(crate::SEALED_BLOCK_TOPIC);
+
+            // firstly check that all except leader increased view_change by one
+            for node in &mut r.parts.1.iter_except(&[new_leader]) {
+                info!("processing validator = {:?}", node.validator_id());
+                assert_eq!(
+                    node.node_service.chain.view_change(),
+                    starting_view_changes + 1
+                );
+            }
+
+            s.wait(s.cfg().micro_block_timeout);
+            let mut r = s.split(&[leader_pk, new_leader]);
+            r.parts.1.poll();
+
+            r.parts
+                .1
+                .filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+            let mut msgs = Vec::new();
+            for node in &mut r.parts.1.nodes {
+                let msg: ViewChangeMessage = node.network_service.get_broadcast(VIEW_CHANGE_TOPIC);
+                msgs.push(msg);
+            }
+            assert_eq!(msgs.len(), 2);
+
+            info!("======= BROADCAST VIEW_CHANGES2 =======");
+            for node in &mut r.parts.1.nodes {
+                for msg in &msgs {
+                    node.network_service
+                        .receive_broadcast(crate::VIEW_CHANGE_TOPIC, msg.clone())
+                }
+            }
+            // secondly check that after receiving 2/4 messages we didn't change view_counter
+            for node in &mut r.parts.1.nodes {
+                info!("processing validator = {:?}", node.validator_id());
+                assert_eq!(
+                    node.node_service.chain.view_change(),
+                    starting_view_changes + 1
+                );
+            }
+            r.parts.1.assert_synchronized();
+        }
+    });
+}
+
 // CASE partition:
 // Nodes [A, B, C, D]
 //

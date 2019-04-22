@@ -118,6 +118,12 @@ impl Node {
         self.outbox.unbounded_send(msg).expect("connected");
         rx
     }
+
+    /// Revert the latest block.
+    pub fn pop_block(&self) {
+        let msg = NodeMessage::PopBlock;
+        self.outbox.unbounded_send(msg).expect("connected");
+    }
 }
 
 ///
@@ -191,6 +197,7 @@ pub enum NodeMessage {
     SubscribeBlockAdded(UnboundedSender<BlockAdded>),
     SubscribeEpochChanged(UnboundedSender<EpochChanged>),
     SubscribeOutputsChanged(UnboundedSender<OutputsChanged>),
+    PopBlock,
     Request {
         request: NodeRequest,
         tx: oneshot::Sender<NodeResponse>,
@@ -385,14 +392,7 @@ impl NodeService {
             view_change_timer,
         };
 
-        debug!("Recovering consensus state");
-        service.on_new_epoch();
-
-        // Epoch ended, start consensus.
-        if service.chain.blocks_in_epoch() >= service.cfg.blocks_in_epoch {
-            debug!("Recover at end of epoch");
-            service.on_change_group()?;
-        }
+        service.recover_consensus_state()?;
 
         Ok(service)
     }
@@ -681,6 +681,21 @@ impl NodeService {
         Ok(())
     }
 
+    /// Handler for NodeMessage::PopBlock.
+    fn handle_pop_block(&mut self) -> Result<(), Error> {
+        warn!("Received a request to revert the latest block");
+        if self.chain.blocks_in_epoch() > 1 {
+            self.chain.pop_monetary_block()?;
+            self.recover_consensus_state()?
+        } else {
+            error!(
+                "Attempt to revert a key block: height={}",
+                self.chain.height()
+            );
+        }
+        Ok(())
+    }
+
     /// Handler for new epoch creation procedure.
     /// This method called only on leader side, and when consensus is active.
     /// Leader should create a KeyBlock based on last random provided by VRF.
@@ -805,6 +820,29 @@ impl NodeService {
     //----------------------------------------------------------------------------------------------
     // Consensus
     //----------------------------------------------------------------------------------------------
+
+    ///
+    /// Initialize consensus state after recovery.
+    ///
+    fn recover_consensus_state(&mut self) -> Result<(), Error> {
+        // Recover consensus status.
+        if self.chain.blocks_in_epoch() < self.cfg.blocks_in_epoch {
+            debug!(
+                "The next block is a monetary block: height={}, last_block={}",
+                self.chain.height(),
+                self.chain.last_block_hash()
+            );
+            self.on_new_epoch();
+            Ok(())
+        } else {
+            debug!(
+                "The next block is a key block: height={}, last_block={}",
+                self.chain.height(),
+                self.chain.last_block_hash()
+            );
+            self.on_change_group()
+        }
+    }
 
     ///
     /// Try to process messages with new consensus.
@@ -1113,6 +1151,7 @@ impl Future for NodeService {
                         NodeMessage::SubscribeOutputsChanged(tx) => {
                             self.handle_subscribe_outputs(tx)
                         }
+                        NodeMessage::PopBlock => self.handle_pop_block(),
                         NodeMessage::Request { request, tx } => {
                             let response = match request {
                                 NodeRequest::ElectionInfo {} => {

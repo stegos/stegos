@@ -1146,7 +1146,7 @@ impl Blockchain {
         let height = self.height - 1;
         assert_ne!(
             height, self.last_key_block_height,
-            "attempt to rollback the key block"
+            "attempt to revert the key block"
         );
         let version = height;
 
@@ -1159,6 +1159,7 @@ impl Blockchain {
         } else {
             panic!("Expected monetary block");
         };
+        let previous = self.block_by_height(height - 1)?;
         self.database.remove(height)?;
         let block_hash = Hash::digest(&block);
 
@@ -1176,7 +1177,11 @@ impl Blockchain {
         self.height = self.height - 1;
         assert_eq!(self.height, height);
         assert_eq!(self.height, version);
-        self.last_block_hash = Hash::digest(&self.last_block()?);
+        self.last_block_hash = Hash::digest(&previous);
+        self.view_change = match previous {
+            Block::KeyBlock(ref _previous) => 0,
+            Block::MonetaryBlock(ref previous) => previous.header.base.view_change + 1,
+        };
         metrics::HEIGHT.set(self.height as i64);
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
 
@@ -1461,6 +1466,7 @@ pub mod tests {
         let mut chain = Blockchain::with_db(cfg.clone(), database, genesis.clone(), timestamp);
 
         let height0 = chain.height();
+        let view_change0 = 0;
         let block_hash0 = chain.last_block_hash();
         let balance0 = chain.balance().clone();
         let escrow0 = chain.escrow().info().clone();
@@ -1468,11 +1474,12 @@ pub mod tests {
         // Register a monetary block.
         timestamp += chain.cfg.bonding_time + Duration::from_millis(1);
         let (block1, input_hashes1, output_hashes1) =
-            create_monetary_block(&mut chain, &keychains[0], timestamp, 0);
+            create_monetary_block(&mut chain, &keychains[0], timestamp, view_change0);
         chain
             .push_monetary_block(block1, timestamp)
             .expect("block is valid");
         assert_eq!(height0 + 1, chain.height());
+        assert_eq!(view_change0 + 1, chain.view_change());
         assert_ne!(block_hash0, chain.last_block_hash());
         assert_eq!(chain.blocks().count() as u64, chain.height());
         assert_ne!(&balance0, chain.balance());
@@ -1484,6 +1491,7 @@ pub mod tests {
             assert!(chain.contains_output(output_hash));
         }
         let height1 = chain.height();
+        let view_change1 = 1;
         let block_hash1 = chain.last_block_hash();
         let balance1 = chain.balance().clone();
         let escrow1 = chain.escrow().info().clone();
@@ -1491,11 +1499,12 @@ pub mod tests {
         // Register one more monetary block.
         timestamp += chain.cfg.bonding_time + Duration::from_millis(1);;
         let (block2, input_hashes2, output_hashes2) =
-            create_monetary_block(&mut chain, &keychains[0], timestamp, 1);
+            create_monetary_block(&mut chain, &keychains[0], timestamp, view_change1);
         chain
             .push_monetary_block(block2, timestamp)
             .expect("block is valid");
         assert_eq!(height1 + 1, chain.height());
+        assert_eq!(view_change1 + 1, chain.view_change());
         assert_ne!(block_hash1, chain.last_block_hash());
         assert_eq!(chain.blocks().count() as u64, chain.height());
         assert_ne!(&balance1, chain.balance());
@@ -1510,6 +1519,7 @@ pub mod tests {
         // Pop the last monetary block.
         chain.pop_monetary_block().expect("no disk errors");
         assert_eq!(height1, chain.height());
+        assert_eq!(view_change1, chain.view_change());
         assert_eq!(block_hash1, chain.last_block_hash());
         assert_eq!(chain.blocks().count() as u64, chain.height());
         assert_eq!(&balance1, chain.balance());
@@ -1524,6 +1534,7 @@ pub mod tests {
         // Pop the previous monetary block.
         chain.pop_monetary_block().expect("no disk errors");
         assert_eq!(height0, chain.height());
+        assert_eq!(view_change0, chain.view_change());
         assert_eq!(block_hash0, chain.last_block_hash());
         assert_eq!(chain.blocks().count() as u64, chain.height());
         assert_eq!(&balance0, chain.balance());
@@ -1542,6 +1553,7 @@ pub mod tests {
         let database = ListDb::new(&temp_dir.path());
         let chain = Blockchain::with_db(cfg, database, genesis, timestamp);
         assert_eq!(height0, chain.height());
+        assert_eq!(view_change0, chain.view_change());
         assert_eq!(block_hash0, chain.last_block_hash());
         assert_eq!(chain.blocks().count() as u64, chain.height());
         assert_eq!(&balance0, chain.balance());

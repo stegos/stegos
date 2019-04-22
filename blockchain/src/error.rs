@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::view_changes::ViewChangeProof;
 use failure::Fail;
 use stegos_crypto::hash::Hash;
 
@@ -127,10 +128,10 @@ pub enum BlockError {
     )]
     InvalidViewChange(u64, Hash, u32, u32),
     #[fail(
-        display = "Invalid view change proof: height={}, block={}, error={}",
-        _0, _1, _2
+        display = "Invalid view change proof: height={}, block={}, proof={:?}, error={}",
+        _0, _1, _2, _3
     )]
-    InvalidViewChangeProof(u64, Hash, MultisignatureError),
+    InvalidViewChangeProof(u64, Hash, ViewChangeProof, MultisignatureError),
     #[fail(
         display = "No proof of view change found for out of order block: height={}, block={}, block_view_change={}, our_view_change={}",
         _0, _1, _2, _3

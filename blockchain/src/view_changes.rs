@@ -42,10 +42,10 @@ impl ChainInfo {
     /// Create ChainInfo from monetary block.
     /// ## Panics
     /// if view_change is equal to 0
-    pub fn from_monetary_block(block: &MonetaryBlock, height: u64) -> Self {
+    pub fn from_monetary_block(block: &MonetaryBlock) -> Self {
         assert_ne!(block.header.base.view_change, 0);
         ChainInfo {
-            height,
+            height: block.header.base.height,
             view_change: block.header.base.view_change - 1,
             last_block: block.header.base.previous,
         }

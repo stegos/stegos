@@ -166,8 +166,8 @@ impl ViewChangeCollector {
             id
         );
         // on timeout, create view change message.
-        let chain = self.current_chain(blockchain);
-        let msg = ViewChangeMessage::new(chain, id, &self.skey);;
+        let chain = ChainInfo::from_blockchain(blockchain);
+        let msg = ViewChangeMessage::new(chain, id, &self.skey);
         Ok(Some(msg))
     }
 
@@ -209,13 +209,5 @@ impl ViewChangeCollector {
     fn reset(&mut self) {
         self.actual_view_changes.clear();
         self.collected_slots = 0;
-    }
-
-    pub fn current_chain(&self, blockchain: &Blockchain) -> ChainInfo {
-        ChainInfo {
-            height: blockchain.height(),
-            last_block: blockchain.last_block_hash(),
-            view_change: blockchain.view_change(),
-        }
     }
 }

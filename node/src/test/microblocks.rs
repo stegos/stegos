@@ -370,7 +370,6 @@ fn double_view_change() {
 // Asserts that Nodes [A] has last block B2, and same height().
 
 #[test]
-#[ignore] // TODO: run this test when fork will be ready
 fn resolve_fork_for_view_change() {
     let mut cfg: ChainConfig = Default::default();
     cfg.blocks_in_epoch = 2000;
@@ -404,7 +403,15 @@ fn resolve_fork_for_view_change() {
         let leader_pk = s.nodes[0].node_service.chain.leader();
 
         s.wait(s.cfg().tx_wait_timeout);
+
         s.poll();
+
+        let leader = s.node(&leader_pk).unwrap();
+        // forget block
+        let _b: Block = leader
+            .network_service
+            .get_broadcast(crate::SEALED_BLOCK_TOPIC);
+
         s.wait(s.cfg().micro_block_timeout);
         info!("======= PARTITION BEGIN =======");
         s.poll();
@@ -449,7 +456,9 @@ fn resolve_fork_for_view_change() {
 
         let first_leader = r.parts.0.first_mut();
         assert_eq!(leader_pk, first_leader.node_service.keys.network_pkey);
-
+        first_leader
+            .network_service
+            .filter_broadcast(&[crate::VIEW_CHANGE_TOPIC]);
         // broadcast block to old leader.
         first_leader
             .network_service

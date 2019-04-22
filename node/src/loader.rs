@@ -112,8 +112,20 @@ impl NodeService {
         return Some(master);
     }
 
-    /// Request the block history from an random node.
     pub fn request_history(&mut self) -> Result<(), Error> {
+        let from = if self.is_synchronized() {
+            // Try to download history from the leader.
+            self.chain.leader()
+        } else {
+            // Try to download history from a random validator.
+            self.choose_master()
+                .ok_or_else(|| format_err!("Failed to get validator list."))?
+        };
+
+        self.request_history_from(from)
+    }
+
+    pub fn request_history_from(&mut self, from: secure::PublicKey) -> Result<(), Error> {
         let elapsed = clock::now().duration_since(self.last_sync_clock);
         if elapsed < self.cfg.loader_timeout {
             debug!(
@@ -123,24 +135,17 @@ impl NodeService {
             return Ok(());
         }
 
-        let master = if self.is_synchronized() {
-            // Try to download history from the leader.
-            self.chain.leader()
-        } else {
-            // Try to download history from a random validator.
-            self.choose_master()
-                .ok_or_else(|| format_err!("Failed to get validator list."))?
-        };
-
-        let start_height = self.chain.height();
+        let start_height = self.chain.last_key_block_height();
         info!(
-            "Downloading blocks: from={}, last_height={}",
-            &master, start_height
+            "Downloading blocks: from={}, start_height={}, our_height={}",
+            &from,
+            start_height,
+            self.chain.height()
         );
         let msg = ChainLoaderMessage::Request(RequestBlocks::new(start_height));
         self.last_sync_clock = clock::now();
         self.network
-            .send(master, CHAIN_LOADER_TOPIC, msg.into_buffer()?)
+            .send(from, CHAIN_LOADER_TOPIC, msg.into_buffer()?)
     }
 
     fn handle_request_blocks(

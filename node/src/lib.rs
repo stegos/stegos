@@ -52,6 +52,7 @@ use serde_derive::Serialize;
 use std::collections::BTreeMap;
 use std::time::SystemTime;
 use std::time::{Duration, Instant};
+use stegos_blockchain::view_changes::ChainInfo;
 use stegos_blockchain::view_changes::ViewChangeProof;
 use stegos_blockchain::*;
 use stegos_consensus::optimistic::{ViewChangeCollector, ViewChangeMessage};
@@ -445,14 +446,189 @@ impl NodeService {
         Ok(())
     }
 
+    ///
+    /// Resolve a fork using a duplicate monetary block from the current epoch.
+    ///
+    fn resolve_fork(&mut self, remote: Block) -> Result<(), Error> {
+        let height = remote.base_header().height;
+        assert!(height < self.chain.height());
+        assert!(height > 0);
+        assert!(height > self.chain.last_key_block_height());
+
+        let remote_hash = Hash::digest(&remote);
+        let remote = match remote {
+            Block::MonetaryBlock(remote) => remote,
+            _ => {
+                return Err(NodeBlockError::ExpectedMonetaryBlock(height, remote_hash).into());
+            }
+        };
+
+        // Check signature first.
+        let remote_view_change = remote.header.base.view_change;
+        let leader = self.chain.select_leader(remote_view_change);
+        if !secure::check_hash(&remote_hash, &remote.body.sig, &leader) {
+            return Err(BlockError::InvalidLeaderSignature(height, remote_hash).into());
+        }
+
+        // Get local block.
+        let local = self.chain.block_by_height(height)?;
+        let local_hash = Hash::digest(&local);
+        let local = match local {
+            Block::MonetaryBlock(local) => local,
+            _ => {
+                let e = NodeBlockError::ExpectedMonetaryBlock(height, local_hash);
+                panic!("{}", e);
+            }
+        };
+        let local_view_change = local.header.base.view_change;
+
+        debug!("Started fork resolution: height={}, local_block={}, remote_block={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, local_proof={:?}, remote_proof={:?}, current_height={}, last_block={}",
+               height,
+               local_hash,
+               remote_hash,
+               local.header.base.previous,
+               remote.header.base.previous,
+               local_view_change,
+               remote_view_change,
+               local.header.proof,
+               remote.header.proof,
+               self.chain.height(),
+               self.chain.last_block_hash());
+
+        // Check view_change.
+        if remote_view_change < local_view_change {
+            warn!("Discarded a block with lesser view_change: height={}, local_block={}, remote_block={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, current_height={}, last_block={}",
+                  height,
+                  local_hash,
+                  remote_hash,
+                  local.header.base.previous,
+                  remote.header.base.previous,
+                  local_view_change,
+                  remote_view_change,
+                  self.chain.height(),
+                  self.chain.last_block_hash());
+            return Ok(());
+        } else if remote_view_change == local_view_change {
+            if local_hash == remote_hash {
+                debug!(
+                    "Skip a duplicate block with the same hash: height={}, block={}, current_height={}, last_block={}",
+                    height, local_hash, self.chain.height(), self.chain.last_block_hash(),
+                );
+                return Ok(());
+            }
+
+            warn!("Two micro-blocks from the same leader detected: height={}, local_block={}, remote_block={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, current_height={}, last_block={}",
+                  height,
+                  local_hash,
+                  remote_hash,
+                  local.header.base.previous,
+                  remote.header.base.previous,
+                  local_view_change,
+                  remote_view_change,
+                  self.chain.height(),
+                  self.chain.last_block_hash());
+
+            metrics::CHEATS.inc();
+            // TODO: implement slashing.
+
+            return Ok(());
+        }
+
+        assert!(remote_view_change > local_view_change);
+
+        // Check previous hash.
+        let previous = self.chain.block_by_height(height - 1)?;
+        let previous_hash = Hash::digest(&previous);
+        if remote.header.base.previous != previous_hash {
+            warn!("Found a block with invalid previous hash: height={}, local_block={}, remote_block={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, current_height={}, last_block={}",
+                  height,
+                  local_hash,
+                  remote_hash,
+                  local.header.base.previous,
+                  remote.header.base.previous,
+                  local_view_change,
+                  remote_view_change,
+                  self.chain.height(),
+                  self.chain.last_block_hash());
+            // Request history from that node.
+            let from = self.chain.select_leader(remote_view_change);
+            self.request_history_from(from)?;
+            return Ok(());
+        }
+
+        // Check the proof.
+        assert_eq!(remote.header.base.previous, previous_hash);
+        let chain = ChainInfo::from_monetary_block(&remote);
+        match remote.header.proof {
+            Some(ref proof) => {
+                if let Err(e) = proof.validate(&chain, &self.chain) {
+                    return Err(BlockError::InvalidViewChangeProof(
+                        height,
+                        remote_hash,
+                        proof.clone(),
+                        e,
+                    )
+                    .into());
+                }
+            }
+            None => {
+                return Err(BlockError::NoProofWasFound(
+                    height,
+                    remote_hash,
+                    remote_view_change,
+                    local_view_change,
+                )
+                .into());
+            }
+        }
+
+        metrics::FORKS.inc();
+
+        warn!(
+            "A fork detected: height={}, local_block={}, remote_block={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, current_height={}, last_block={}",
+            height,
+            local_hash,
+            remote_hash,
+            local.header.base.previous,
+            remote.header.base.previous,
+            local_view_change,
+            remote_view_change,
+            self.chain.height(),
+            self.chain.last_block_hash());
+
+        // Truncate the blockchain.
+        while self.chain.height() > height {
+            let (inputs, outputs) = self.chain.pop_monetary_block()?;
+            let msg = OutputsChanged { inputs, outputs };
+            self.on_outputs_changed
+                .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
+        }
+        assert_eq!(height, self.chain.height());
+
+        // Apply the block from this fork.
+        self.apply_new_block(Block::MonetaryBlock(remote))?;
+        if let Some((min_orphan_height, _block)) = self.future_blocks.iter().next() {
+            assert!(
+                *min_orphan_height > self.chain.height(),
+                "nothing to process in orphan queue"
+            );
+        }
+
+        // Request history from the new leader.
+        self.request_history()?;
+
+        return Ok(());
+    }
+
     /// Handle incoming blocks received from network.
     fn handle_sealed_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
         let block_height = block.base_header().height;
         debug!(
-            "Received a new block from the network: height={}, block={}, current_height={}, last_block={}",
+            "Received a new block: height={}, block={}, view_change={}, current_height={}, last_block={}",
             block_height,
             block_hash,
+            block.base_header().view_change,
             self.chain.height(),
             self.chain.last_block_hash()
         );
@@ -470,45 +646,10 @@ impl NodeService {
             return Ok(());
         } else if block_height < self.chain.height() {
             // A duplicate block from the current epoch - try to resolve forks.
-            let local_block = self.chain.block_by_height(block_height)?;
-            let local_block_hash = Hash::digest(&local_block);
-            if local_block_hash == block_hash {
-                debug!(
-                    "Skip a duplicate block with the same hash: height={}, block={}, current_height={}, last_block={}",
-                    block_height, local_block_hash, self.chain.height(), self.chain.last_block_hash(),
-                );
-                return Ok(());
-            }
-
-            warn!(
-                "A fork detected: height={}, local_block={}, remote_block={}, local_previous={}, remote_previous={}, current_height={}, last_block={}",
-                block_height,
-                local_block_hash,
-                block_hash,
-                local_block.base_header().previous,
-                block.base_header().previous,
-                self.chain.height(),
-                self.chain.last_block_hash()
-            );
-
-            // TODO: implement fork resolution.
-            metrics::FORKS.inc();
-
-            return Ok(());
-        } else if block_height > self.chain.height() + self.cfg.blocks_in_epoch {
-            // Don't queue all blocks from epoch + 1 to limit the size of self.future_blocks.
+            return self.resolve_fork(block);
+        } else if block_height > self.chain.last_key_block_height() + self.cfg.blocks_in_epoch {
+            // An orphan block from later epochs - ignore.
             warn!("Skipped an orphan block from the future: height={}, block={}, current_height={}, last_block={}",
-                  block_height,
-                  block_hash,
-                  self.chain.height(),
-                  self.chain.last_block_hash()
-            );
-            self.request_history()?;
-            return Ok(());
-        } else if block_height > self.chain.height() {
-            // Queue blocks with chain.height < height <= chain.height + blocks_in_epoch.
-            self.future_blocks.insert(block_height, block); // ignore dups
-            debug!("Queued an orphan block from the future: height={}, block={}, current_height={}, last_block={}",
                   block_height,
                   block_hash,
                   self.chain.height(),
@@ -518,14 +659,69 @@ impl NodeService {
             return Ok(());
         }
 
-        // Apply received block.
-        assert_eq!(block_height, self.chain.height());
-        assert!(!self.future_blocks.contains_key(&block_height));
-        self.apply_new_block(block)?;
+        // A block from the current epoch.
+        assert!(block_height > self.chain.last_key_block_height());
+        assert!(block_height <= self.chain.last_key_block_height() + self.cfg.blocks_in_epoch);
+        let leader = self.chain.select_leader(block.base_header().view_change);
 
-        // Try to process orphan blocks.
+        // Check signature.
+        match block {
+            Block::KeyBlock(ref block) => {
+                check_multi_signature(
+                    &block_hash,
+                    &block.body.multisig,
+                    &block.body.multisigmap,
+                    self.chain.validators(),
+                    self.chain.total_slots(),
+                )
+                .map_err(|e| BlockError::InvalidBlockSignature(e, block_height, block_hash))?;
+            }
+            Block::MonetaryBlock(ref block) => {
+                if !secure::check_hash(&block_hash, &block.body.sig, &leader) {
+                    return Err(BlockError::InvalidLeaderSignature(block_height, block_hash).into());
+                }
+            }
+        }
+
+        // Add this block to a queue.
+        self.future_blocks.insert(block_height, block);
+
+        // Process pending blocks.
         while let Some(block) = self.future_blocks.remove(&self.chain.height()) {
-            self.apply_new_block(block)?;
+            let hash = Hash::digest(&block);
+            let view_change = block.base_header().view_change;
+            if let Err(e) = self.apply_new_block(block) {
+                error!(
+                    "Failed to apply block: height={}, block={}, error={}",
+                    self.chain.height(),
+                    hash,
+                    e
+                );
+
+                if let Ok(BlockError::InvalidPreviousHash(_, _, _, _)) = e.downcast::<BlockError>()
+                {
+                    // A potential fork - request history from that node.
+                    let from = self.chain.select_leader(view_change);
+                    self.request_history_from(from)?;
+                }
+
+                break; // Stop processing.
+            }
+        }
+
+        // Queue is not empty - request history from the current leader.
+        if !self.future_blocks.is_empty() {
+            for (height, block) in self.future_blocks.iter() {
+                debug!(
+                    "Orphan block: height={}, block={}, previous={}, current_height={}, last_block={}",
+                    height,
+                    Hash::digest(block),
+                    block.base_header().previous,
+                    self.chain.height(),
+                    self.chain.last_block_hash()
+                );
+            }
+            self.request_history()?;
         }
 
         Ok(())
@@ -1035,6 +1231,10 @@ impl NodeService {
         // Try to perform the view change.
         metrics::MICRO_BLOCK_VIEW_CHANGES.inc();
         if let Some(msg) = self.optimistic.handle_timeout(&self.chain)? {
+            debug!(
+                "Sent a view change to the network: height={}, view_change={}, last_block={}",
+                msg.chain.height, msg.chain.view_change, msg.chain.last_block
+            );
             self.network
                 .publish(VIEW_CHANGE_TOPIC, msg.into_buffer()?)?;
             self.handle_view_change(msg)?;

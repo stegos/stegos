@@ -138,19 +138,13 @@ where
                 }
             }
         }
+        self.received.insert(message.digest(), ());
+        super::metrics::LRU_CACHE_SIZE.set(self.received.len() as i64);
 
         self.route(to, message);
     }
 
     pub fn route(&mut self, to: &secure::PublicKey, message: Unicast) {
-        if self.received.contains_key(&message.digest()) {
-            debug!(target: "stegos_network::delivery", "LRU cache hit: dest={}, seq_no={}",  message.to, u8v_to_hexstr(&message.seq_no));
-            return;
-        }
-
-        self.received.insert(message.digest(), ());
-        super::metrics::LRU_CACHE_SIZE.set(self.received.len() as i64);
-
         // Check if we already know node's peer_id
         if let Some(peer_id) = self.known_nodes.get_by_key(to) {
             debug!(target: "stegos_network::delivery", "found node's peer_id: node_id={}, peer_id={}, seq_no={}", to, peer_id.to_base58(), u8v_to_hexstr(&message.seq_no));
@@ -216,8 +210,15 @@ where
         }
     }
 
-    pub fn is_duplicate(&self, msg: &Unicast) -> bool {
-        self.received.contains_key(&msg.digest())
+    pub fn is_duplicate(&mut self, msg: &Unicast) -> bool {
+        match self.received.contains_key(&msg.digest()) {
+            true => true,
+            false => {
+                self.received.insert(msg.digest(), ());
+                super::metrics::LRU_CACHE_SIZE.set(self.received.len() as i64);
+                false
+            }
+        }
     }
 }
 

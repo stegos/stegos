@@ -565,12 +565,12 @@ where
             DeliveryEvent::Message(msg) => match msg {
                 DeliveryMessage::UnicastMessage(unicast) => {
                     debug!(target: "stegos_network::delivery", "received message: dest={}", unicast.to);
+                    // Check for duplicate
+                    if self.discovery.is_duplicate(&unicast) {
+                        debug!(target: "stegos_network::delivery", "got duplicate unicast message: seq_no={}", u8v_to_hexstr(&unicast.seq_no));
+                        return;
+                    }
                     if unicast.to == self.my_pkey {
-                        // Check for duplicate
-                        if self.discovery.is_duplicate(&unicast) {
-                            debug!(target: "stegos_network::delivery", "got duplicate unicast message for us: seq_no={}", u8v_to_hexstr(&unicast.seq_no));
-                            return;
-                        }
                         // Unicast message to us, deliver
                         debug!(target: "stegos_network::delivery", "message for us, delivering");
                         match decode_unicast(unicast.payload.clone()) {

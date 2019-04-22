@@ -276,6 +276,21 @@ fn run() -> Result<(), Error> {
     // Initialize network
     let mut rt = Runtime::new()?;
     let (network, network_service) = Libp2pNetwork::new(&cfg.network, &keychain)?;
+    rt.spawn(network_service);
+
+    // Start metrics exporter
+    if cfg.general.prometheus_endpoint != "" {
+        // Prepare HTTP service to export Prometheus metrics
+        let prom_serv = || service_fn_ok(report_metrics);
+        let addr = cfg.general.prometheus_endpoint.as_str().parse()?;
+
+        let hyper_service = Server::bind(&addr)
+            .serve(prom_serv)
+            .map_err(|e| error!("failed to bind prometheus exporter: {}", e));
+
+        // Run hyper server to export Prometheus metrics
+        rt.spawn(hyper_service);
+    }
 
     // Initialize node
     let (node_service, node) = NodeService::new(
@@ -285,7 +300,6 @@ fn run() -> Result<(), Error> {
         genesis,
         network.clone(),
     )?;
-    rt.spawn(node_service);
 
     // Initialize TransactionPool.
     let txpool_service = TransactionPoolService::new(&keychain, network.clone(), node.clone());
@@ -314,21 +328,8 @@ fn run() -> Result<(), Error> {
     // Start WebSocket API server.
     WebSocketAPI::spawn(cfg.api, rt.executor(), wallet.clone(), node.clone())?;
 
-    if cfg.general.prometheus_endpoint != "" {
-        // Prepare HTTP service to export Prometheus metrics
-        let prom_serv = || service_fn_ok(report_metrics);
-        let addr = cfg.general.prometheus_endpoint.as_str().parse()?;
-
-        let hyper_service = Server::bind(&addr)
-            .serve(prom_serv)
-            .map_err(|e| error!("failed to bind prometheus exporter: {}", e));
-
-        // Run hyper server to export Prometheus metrics
-        rt.spawn(hyper_service);
-    }
-
     // Start main event loop
-    rt.block_on(network_service)
+    rt.block_on(node_service)
         .expect("errors are handled earlier");
 
     Ok(())

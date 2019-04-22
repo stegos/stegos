@@ -173,6 +173,7 @@ impl ConsoleService {
         println!("show escrow - print escrow");
         println!("net publish TOPIC MESSAGE - publish a network message via floodsub");
         println!("net send NETWORK_PUBKEY MESSAGE - send a network message via unicast");
+        println!("db pop block - revert the latest block");
         println!();
     }
 
@@ -426,6 +427,9 @@ impl ConsoleService {
         } else if msg == "show utxo" {
             let request = WalletRequest::UnspentInfo {};
             self.wallet_response = Some(self.wallet.request(request));
+        } else if msg == "db pop block" {
+            self.node.pop_block();
+            return true;
         } else {
             Self::help();
             return true;

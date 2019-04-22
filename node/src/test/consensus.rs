@@ -507,11 +507,15 @@ fn lock() {
             leader_node.poll();
             let _proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
             let _prevote: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
-            s.wait(s.cfg().key_block_timeout);
             round += 1;
+            // wait for current round end
+            s.wait(
+                s.cfg().key_block_timeout * (round - s.nodes[0].node_service.chain.view_change()),
+            );
         }
         assert!(ready);
 
+        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
         let leader_pk = s.nodes[0].node_service.chain.select_leader(round);
         let leader_node = s.node(&leader_pk).unwrap();
 
@@ -546,7 +550,9 @@ fn lock() {
         for i in 0..s.num_nodes() {
             let _precommit: BlockConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
         }
-        s.wait(s.cfg().key_block_timeout);
+        s.wait(
+            s.cfg().key_block_timeout * (round - s.nodes[0].node_service.chain.view_change() + 1),
+        );
 
         info!("====== Waiting for keyblock timeout. =====");
         s.poll();

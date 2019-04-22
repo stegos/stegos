@@ -25,6 +25,7 @@ use super::*;
 use crate::*;
 use stegos_blockchain::Block;
 use stegos_consensus::{ConsensusMessage, ConsensusMessageBody};
+use stegos_crypto::curve1174::fields::Fr;
 
 // CASE partition:
 // Nodes [A, B, C, D]
@@ -548,5 +549,50 @@ fn out_of_order_keyblock_proposal() {
         leader
             .network_service
             .filter_broadcast(&[crate::SEALED_BLOCK_TOPIC]);
+    });
+}
+
+#[test]
+fn monetary_block_without_signature() {
+    let config = SandboxConfig {
+        num_nodes: 3,
+        ..Default::default()
+    };
+
+    Sandbox::start(config, |mut s| {
+        s.poll();
+        for node in s.nodes.iter() {
+            assert_eq!(node.node_service.chain.height(), 2);
+        }
+
+        let height = s.nodes[0].node_service.chain.height();
+
+        s.for_each(|node| assert_eq!(node.chain.height(), height));
+
+        let leader_pk = s.nodes[0].node_service.chain.leader();
+        //create valid but out of order fake micro block.
+        let version: u64 = 1;
+        let timestamp = SystemTime::now();
+
+        let round = s.nodes[0].node_service.chain.view_change();
+        let last_block_hash = s.nodes[0].node_service.chain.last_block_hash();
+
+        let gamma: Fr = Fr::zero();
+        let base = BaseBlockHeader::new(version, last_block_hash, height, round + 1, timestamp);
+        let block = MonetaryBlock::new(base, gamma, 0, &[], &[], None);
+
+        let block: Block = Block::MonetaryBlock(block);
+
+        let mut r = s.split(&[leader_pk]);
+        // broadcast block to other nodes.
+        for node in &mut r.parts.1.iter_mut() {
+            node.network_service
+                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone())
+        }
+        r.parts.1.poll();
+
+        r.parts
+            .1
+            .for_each(|node| assert_eq!(node.chain.height(), height));
     });
 }

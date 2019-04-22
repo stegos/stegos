@@ -64,17 +64,17 @@ impl<'timer> Sandbox<'timer> {
     where
         F: FnOnce(Sandbox),
     {
-        let num_nodes = cfg.num_nodes;
-        let cfg = cfg.chain;
-        let timestamp = SystemTime::now();
-        let nodes_keychains: Vec<_> = (0..num_nodes).map(|_num| KeyChain::new_mem()).collect();
-        let genesis = stegos_blockchain::genesis(&nodes_keychains, 1000, 1000000, timestamp);
-
-        let nodes: Vec<NodeSandbox> = (0..num_nodes)
-            .map(|i| NodeSandbox::new(cfg.clone(), nodes_keychains[i].clone(), genesis.clone()))
-            .collect();
         start_test(|timer| {
             let _ = simple_logger::init_with_level(Level::Trace);
+            let num_nodes = cfg.num_nodes;
+            let cfg = cfg.chain;
+            let timestamp = SystemTime::now();
+            let nodes_keychains: Vec<_> = (0..num_nodes).map(|_num| KeyChain::new_mem()).collect();
+            let genesis = stegos_blockchain::genesis(&nodes_keychains, 1000, 1000000, timestamp);
+
+            let nodes: Vec<NodeSandbox> = (0..num_nodes)
+                .map(|i| NodeSandbox::new(cfg.clone(), nodes_keychains[i].clone(), genesis.clone()))
+                .collect();
             let sandbox = Sandbox {
                 nodes,
                 nodes_keychains,

@@ -600,9 +600,6 @@ fn out_of_order_micro_block() {
         s.for_each(|node| assert_eq!(node.chain.height(), height));
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
-        let leader_node = s.node(&leader_pk).unwrap();
-        // Discard proposal from leader for a proposal from the leader.
-        let _proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
 
         //create valid but out of order fake micro block.
         let version: u64 = 1;
@@ -613,9 +610,16 @@ fn out_of_order_micro_block() {
 
         let gamma: Fr = Fr::zero();
         let base = BaseBlockHeader::new(version, last_block_hash, height, round + 1, timestamp);
-        let block = MonetaryBlock::new(base, gamma, 0, &[], &[], None);
+        let mut block = MonetaryBlock::new(base, gamma, 0, &[], &[], None);
 
+        let block_hash = Hash::digest(&block);
+        let leader_node = s.node(&leader_pk).unwrap();
+        block.body.sig =
+            secure::sign_hash(&block_hash, &leader_node.node_service.keys.network_skey);
         let block: Block = Block::MonetaryBlock(block);
+
+        // Discard proposal from leader for a proposal from the leader.
+        let _proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
         // broadcast block to other nodes.
         for node in &mut s.iter_except(&[leader_pk]) {
             node.network_service

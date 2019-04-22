@@ -61,6 +61,7 @@ use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
 use stegos_network::Network;
 use stegos_network::UnicastMessage;
+use stegos_network::{NETWORK_READY_TOKEN, NETWORK_STATUS_TOPIC};
 use stegos_serialization::traits::ProtoConvert;
 use tokio_timer::clock;
 
@@ -198,6 +199,7 @@ pub enum NodeMessage {
     //
     // Network Events
     //
+    NetworkStatus(Vec<u8>),
     Transaction(Vec<u8>),
     Consensus(Vec<u8>),
     SealedBlock(Vec<u8>),
@@ -243,6 +245,7 @@ pub struct NodeService {
     //
     /// Network interface.
     network: Network,
+    is_network_ready: bool,
     /// Triggered when height is changed.
     on_block_added: Vec<UnboundedSender<BlockAdded>>,
     /// Triggered when epoch is changed.
@@ -315,6 +318,7 @@ impl NodeService {
         let optimistic =
             ViewChangeCollector::new(&chain, keys.network_pkey, keys.network_skey.clone());
         let last_block_clock = clock::now();
+        let is_network_ready = false;
 
         let on_block_added = Vec::<UnboundedSender<BlockAdded>>::new();
         let on_epoch_changed = Vec::<UnboundedSender<EpochChanged>>::new();
@@ -324,6 +328,12 @@ impl NodeService {
 
         // Control messages
         streams.push(Box::new(inbox));
+
+        // Network Statuses
+        let network_status_rx = network
+            .subscribe(&NETWORK_STATUS_TOPIC)?
+            .map(|m| NodeMessage::NetworkStatus(m));
+        streams.push(Box::new(network_status_rx));
 
         // Transaction Requests
         let transaction_rx = network
@@ -376,6 +386,7 @@ impl NodeService {
             optimistic,
             last_block_clock,
             network,
+            is_network_ready,
             on_block_added,
             on_epoch_changed,
             on_outputs_changed,
@@ -385,16 +396,32 @@ impl NodeService {
             view_change_timer,
         };
 
-        debug!("Recovering consensus state");
-        service.on_new_epoch();
-
-        // Epoch ended, start consensus.
-        if service.chain.blocks_in_epoch() >= service.cfg.blocks_in_epoch {
-            debug!("Recover at end of epoch");
+        // Recover consensus status.
+        if service.chain.blocks_in_epoch() < service.cfg.blocks_in_epoch {
+            debug!("The next block is a monetary block");
+            service.on_new_epoch();
+        } else {
+            debug!("The next block is a key block");
             service.on_change_group()?;
         }
 
         Ok(service)
+    }
+
+    /// Handle network status changes.
+    fn handle_network_status(&mut self, msg: Vec<u8>) -> Result<(), Error> {
+        if msg == NETWORK_READY_TOKEN {
+            if self.is_network_ready {
+                return Ok(());
+            }
+            self.is_network_ready = true;
+            info!("Network is ready");
+            if self.consensus.is_some() {
+                self.on_new_consensus()?;
+            }
+            self.request_history()?;
+        }
+        Ok(())
     }
 
     /// Update consensus state, if chain has other view of consensus group.
@@ -684,7 +711,7 @@ impl NodeService {
     /// Handler for new epoch creation procedure.
     /// This method called only on leader side, and when consensus is active.
     /// Leader should create a KeyBlock based on last random provided by VRF.
-    fn create_new_epoch(&mut self) -> Result<(), Error> {
+    fn create_key_block(&mut self) -> Result<(), Error> {
         let consensus = self.consensus.as_mut().unwrap();
         let timestamp = SystemTime::now();
         let view_change = consensus.round();
@@ -771,8 +798,6 @@ impl NodeService {
             return Ok(());
         }
 
-        info!("I am a part of consensus, trying choose new group.");
-        let leader = self.chain.leader();
         let consensus = BlockConsensus::new(
             self.chain.height() as u64,
             self.chain.epoch() + 1,
@@ -782,22 +807,8 @@ impl NodeService {
             self.chain.election_result(),
             self.chain.validators().iter().cloned().collect(),
         );
-        // update timer, set current_time to now().
-        self.key_block_timer.reset(self.cfg.key_block_timeout);
         self.consensus = Some(consensus);
-        let consensus = self.consensus.as_ref().unwrap();
-        if consensus.is_leader() {
-            self.create_new_epoch()?;
-        } else {
-            info!(
-                "Waiting for a key block: height={}, last_block={}, epoch={}, leader={}",
-                self.chain.height(),
-                self.chain.last_block_hash(),
-                self.chain.epoch(),
-                leader
-            );
-        }
-        self.on_new_consensus();
+        self.on_new_consensus()?;
 
         Ok(())
     }
@@ -809,13 +820,37 @@ impl NodeService {
     ///
     /// Try to process messages with new consensus.
     ///
-    fn on_new_consensus(&mut self) {
+    fn on_new_consensus(&mut self) -> Result<(), Error> {
+        if !self.is_network_ready {
+            return Ok(());
+        }
+
+        info!("I am a part of consensus, trying to choose a new group");
+        // update timer, set current_time to now().
+        let consensus = self.consensus.as_ref().unwrap();
+        //self.key_block_timer
+        //    .reset(self.cfg.key_block_timeout * consensus.round());
+        self.key_block_timer.reset(self.cfg.key_block_timeout);
+        if consensus.should_propose() {
+            self.create_key_block()?;
+        } else {
+            info!(
+                "Waiting for a key block: height={}, last_block={}, epoch={}, leader={}",
+                self.chain.height(),
+                self.chain.last_block_hash(),
+                self.chain.epoch(),
+                self.chain.leader(),
+            );
+        }
+
         let outbox = std::mem::replace(&mut self.future_consensus_messages, Vec::new());
         for msg in outbox {
             if let Err(e) = self.handle_consensus_message(msg) {
                 debug!("Error in future consensus message: {}", e);
             }
         }
+
+        Ok(())
     }
 
     ///
@@ -874,6 +909,10 @@ impl NodeService {
 
     /// Сhecks if it's time to create a micro block.
     fn handle_micro_block_propose_timer(&mut self) -> Result<(), Error> {
+        if !self.is_network_ready {
+            return Ok(());
+        }
+
         let elapsed: Duration = clock::now().duration_since(self.last_block_clock);
 
         // Check that a new payment block should be created.
@@ -897,7 +936,7 @@ impl NodeService {
 
     /// Checks if it's time to perform a view change on a micro block.
     fn handle_key_block_viewchange_timer(&mut self) -> Result<(), Error> {
-        if self.consensus.is_none() {
+        if self.consensus.is_none() || !self.is_network_ready {
             return Ok(());
         }
 
@@ -928,14 +967,7 @@ impl NodeService {
             } else {
                 // not at commit phase, go to the next round
                 consensus.next_round();
-                self.key_block_timer
-                    .reset(self.cfg.key_block_timeout * consensus.round());
-                let consensus = self.consensus.as_ref().unwrap();
-                if consensus.is_leader() {
-                    debug!("I am leader proposing a new block");
-                    self.create_new_epoch()?;
-                }
-                self.on_new_consensus();
+                self.on_new_consensus()?;
             }
         };
 
@@ -976,6 +1008,10 @@ impl NodeService {
 
     /// Checks if it's time to perform a view change on a monetary block.
     fn handle_micro_block_viewchange_timer(&mut self) -> Result<(), Error> {
+        if !self.is_network_ready {
+            return Ok(());
+        }
+
         // Check status of the monetary block.
         let elapsed: Duration = clock::now().duration_since(self.last_block_clock);
         if self.consensus.is_some() || elapsed < self.cfg.micro_block_timeout {
@@ -1125,6 +1161,7 @@ impl Future for NodeService {
                             tx.send(response).ok(); // ignore errors.
                             Ok(())
                         }
+                        NodeMessage::NetworkStatus(msg) => self.handle_network_status(msg),
                         NodeMessage::Transaction(msg) => Transaction::from_buffer(&msg)
                             .and_then(|msg| self.handle_transaction(msg)),
                         NodeMessage::Consensus(msg) => BlockConsensusMessage::from_buffer(&msg)

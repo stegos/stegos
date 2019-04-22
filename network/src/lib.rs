@@ -41,6 +41,8 @@ use stegos_crypto::pbc::secure;
 pub use self::config::*;
 pub use self::kad::KBucketsPeerId;
 pub use self::libp2p_network::Libp2pNetwork;
+pub use self::libp2p_network::NETWORK_READY_TOKEN;
+pub use self::libp2p_network::NETWORK_STATUS_TOPIC;
 pub use self::utils::IntoMultihash;
 
 pub type Network = Box<dyn NetworkProvider + Send>;

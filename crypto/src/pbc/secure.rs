@@ -804,6 +804,10 @@ pub fn sign_hash(h: &Hash, skey: &SecretKey) -> Signature {
 }
 
 pub fn check_hash(h: &Hash, sig: &Signature, pkey: &PublicKey) -> bool {
+    if sig.is_zero() {
+        // if signature is empty libpbc will panic, so return false.
+        return false;
+    }
     // check a hash with a raw signature, return t/f
     unsafe {
         0 == rust_libpbc::check_signature(

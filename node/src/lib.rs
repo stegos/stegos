@@ -926,10 +926,12 @@ impl NodeService {
                 // Auto-commit proposed block and send it to the network.
                 self.commit_proposed_block(block, multisig, multisigmap);
             } else {
+                assert!(self.chain.view_change() <= consensus.round());
                 // not at commit phase, go to the next round
                 consensus.next_round();
+                let relevant_round = 1 + consensus.round() - self.chain.view_change();
                 self.key_block_timer
-                    .reset(self.cfg.key_block_timeout * consensus.round());
+                    .reset(self.cfg.key_block_timeout * relevant_round);
                 let consensus = self.consensus.as_ref().unwrap();
                 if consensus.is_leader() {
                     debug!("I am leader proposing a new block");

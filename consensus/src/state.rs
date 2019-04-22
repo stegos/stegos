@@ -188,6 +188,7 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
             proof: self.proof.take().expect("expected some proof"),
         };
 
+        self.prevotes.clear();
         self.locked_round = Some(locked_round);
         self.proof = None;
         self.outbox.clear();
@@ -512,7 +513,6 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
 
                 // Move to Prevote
                 assert!(self.prevotes.is_empty());
-                assert!(self.precommits.is_empty());
                 assert!(self.request.is_none());
                 assert!(self.proof.is_none());
                 debug!(

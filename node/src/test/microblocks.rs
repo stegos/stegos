@@ -25,6 +25,7 @@ use super::*;
 use crate::*;
 use stegos_blockchain::Block;
 use stegos_consensus::{ConsensusMessage, ConsensusMessageBody};
+use stegos_crypto::curve1174::fields::Fr;
 
 // CASE partition:
 // Nodes [A, B, C, D]
@@ -370,7 +371,6 @@ fn double_view_change() {
 // Asserts that Nodes [A] has last block B2, and same height().
 
 #[test]
-#[ignore] // TODO: run this test when fork will be ready
 fn resolve_fork_for_view_change() {
     let mut cfg: ChainConfig = Default::default();
     cfg.blocks_in_epoch = 2000;
@@ -404,7 +404,15 @@ fn resolve_fork_for_view_change() {
         let leader_pk = s.nodes[0].node_service.chain.leader();
 
         s.wait(s.cfg().tx_wait_timeout);
+
         s.poll();
+
+        let leader = s.node(&leader_pk).unwrap();
+        // forget block
+        let _b: Block = leader
+            .network_service
+            .get_broadcast(crate::SEALED_BLOCK_TOPIC);
+
         s.wait(s.cfg().micro_block_timeout);
         info!("======= PARTITION BEGIN =======");
         s.poll();
@@ -449,7 +457,9 @@ fn resolve_fork_for_view_change() {
 
         let first_leader = r.parts.0.first_mut();
         assert_eq!(leader_pk, first_leader.node_service.keys.network_pkey);
-
+        first_leader
+            .network_service
+            .filter_broadcast(&[crate::VIEW_CHANGE_TOPIC]);
         // broadcast block to old leader.
         first_leader
             .network_service
@@ -539,5 +549,50 @@ fn out_of_order_keyblock_proposal() {
         leader
             .network_service
             .filter_broadcast(&[crate::SEALED_BLOCK_TOPIC]);
+    });
+}
+
+#[test]
+fn monetary_block_without_signature() {
+    let config = SandboxConfig {
+        num_nodes: 3,
+        ..Default::default()
+    };
+
+    Sandbox::start(config, |mut s| {
+        s.poll();
+        for node in s.nodes.iter() {
+            assert_eq!(node.node_service.chain.height(), 2);
+        }
+
+        let height = s.nodes[0].node_service.chain.height();
+
+        s.for_each(|node| assert_eq!(node.chain.height(), height));
+
+        let leader_pk = s.nodes[0].node_service.chain.leader();
+        //create valid but out of order fake micro block.
+        let version: u64 = 1;
+        let timestamp = SystemTime::now();
+
+        let round = s.nodes[0].node_service.chain.view_change();
+        let last_block_hash = s.nodes[0].node_service.chain.last_block_hash();
+
+        let gamma: Fr = Fr::zero();
+        let base = BaseBlockHeader::new(version, last_block_hash, height, round + 1, timestamp);
+        let block = MonetaryBlock::new(base, gamma, 0, &[], &[], None);
+
+        let block: Block = Block::MonetaryBlock(block);
+
+        let mut r = s.split(&[leader_pk]);
+        // broadcast block to other nodes.
+        for node in &mut r.parts.1.iter_mut() {
+            node.network_service
+                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone())
+        }
+        r.parts.1.poll();
+
+        r.parts
+            .1
+            .for_each(|node| assert_eq!(node.chain.height(), height));
     });
 }

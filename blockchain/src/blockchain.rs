@@ -775,12 +775,18 @@ impl Blockchain {
             let leader = match block.header.base.view_change.cmp(&self.view_change) {
                 Ordering::Equal => self.leader(),
                 Ordering::Greater => {
-                    let chain = ChainInfo::from_monetary_block(&block, self.height());
+                    let chain = ChainInfo::from_monetary_block(&block);
                     match block.header.proof {
                         Some(ref proof) => {
-                            proof.validate(&chain, &self).map_err(|e| {
-                                BlockError::InvalidViewChangeProof(height, block_hash, e)
-                            })?;
+                            if let Err(e) = proof.validate(&chain, &self) {
+                                return Err(BlockError::InvalidViewChangeProof(
+                                    height,
+                                    block_hash,
+                                    proof.clone(),
+                                    e,
+                                )
+                                .into());
+                            }
                             self.select_leader(block.header.base.view_change)
                         }
                         _ => {
@@ -1141,7 +1147,7 @@ impl Blockchain {
         Ok((inputs, outputs))
     }
 
-    pub fn pop_monetary_block(&mut self) -> Result<(), Error> {
+    pub fn pop_monetary_block(&mut self) -> Result<(Vec<Output>, Vec<Output>), Error> {
         assert!(self.height > 1);
         let height = self.height - 1;
         assert_ne!(
@@ -1185,17 +1191,20 @@ impl Blockchain {
         metrics::HEIGHT.set(self.height as i64);
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
 
-        let mut outputs_count: usize = 0;
+        let mut pruned: Vec<Output> = Vec::new();
         for (output, _path) in block.body.outputs.leafs() {
+            pruned.push(output.as_ref().clone());
             let output_hash = Hash::digest(output.as_ref());
             debug!(
                 "Reverted UTXO: height={}, block={}, utxo={}",
                 height, &block_hash, &output_hash
             );
-            outputs_count += 1;
         }
 
+        let mut created: Vec<Output> = Vec::new();
         for input_hash in &block.body.inputs {
+            let input = self.output_by_hash(input_hash)?.expect("exists");
+            created.push(input);
             debug!(
                 "Restored UXTO: height={}, block={}, utxo={}",
                 height, &block_hash, &input_hash
@@ -1206,11 +1215,11 @@ impl Blockchain {
             "Reverted a monetary block: height={}, block={}, inputs={}, outputs={}",
             self.height,
             Hash::digest(&block),
-            block.body.inputs.len(),
-            outputs_count
+            created.len(),
+            pruned.len()
         );
 
-        Ok(())
+        Ok((pruned, created))
     }
 }
 

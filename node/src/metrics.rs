@@ -54,6 +54,11 @@ lazy_static! {
         "The number of forks detected"
     )
     .unwrap();
+        pub static ref CHEATS: IntCounter = register_int_counter!(
+        "stegos_cheats",
+        "The number of duplicate blocks for the same slot detected"
+    )
+    .unwrap();
     pub static ref SYNCHRONIZED: IntGauge =
         register_int_gauge!("stegos_synchronized", "Flag that the node is synchornized with the network.").unwrap();
     pub static ref BLOCK_REMOTE_TIMESTAMP: IntGauge =

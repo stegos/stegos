@@ -341,7 +341,7 @@ pub fn curve1174_tests() {
 
     // ---------------------------------------------------------------
     let (skey, pkey, sig) = make_deterministic_keys(b"Testing");
-    println!("Key Check = {}", check_keying(&pkey, &sig).unwrap());
+    check_keying(&pkey, &sig).expect("Bad keying");
     println!("pkey = {:?}", pkey);
 
     let delta = Fr::random();

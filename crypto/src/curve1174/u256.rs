@@ -23,7 +23,6 @@
 
 use super::*;
 use crate::CryptoError;
-
 use rand::rngs::ThreadRng;
 use rand::thread_rng;
 use rand::Rng;

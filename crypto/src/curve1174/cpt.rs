@@ -332,7 +332,7 @@ pub fn make_deterministic_keys(seed: &[u8]) -> (SecretKey, PublicKey, SchnorrSig
     (skey, pkey, sig)
 }
 
-pub fn check_keying(pkey: &PublicKey, sig: &SchnorrSig) -> Result<bool, CryptoError> {
+pub fn check_keying(pkey: &PublicKey, sig: &SchnorrSig) -> Result<(), CryptoError> {
     let hkey = Hash::digest(pkey);
     validate_sig(&hkey, &sig, &pkey)
 }
@@ -459,11 +459,15 @@ pub fn sign_hash_with_kval(
     }
 }
 
-pub fn validate_sig(hmsg: &Hash, sig: &SchnorrSig, pkey: &PublicKey) -> Result<bool, CryptoError> {
+pub fn validate_sig(hmsg: &Hash, sig: &SchnorrSig, pkey: &PublicKey) -> Result<(), CryptoError> {
     let h = Hash::digest_chain(&[&sig.K, pkey, hmsg]);
     let Ppt = Pt::decompress(pkey.0)?;
     let Kpt = Pt::decompress(sig.K)?;
-    Ok(sig.u * *G == Kpt + Fr::from(h) * Ppt)
+    if sig.u * *G == Kpt + Fr::from(h) * Ppt {
+        return Ok(());
+    } else {
+        return Err(CryptoError::BadKeyingSignature);
+    }
 }
 
 // ----------------------------------------------------------------
@@ -580,6 +584,9 @@ pub fn decrypt_key(
     // For secure retrieval of keying material
     // check that the signature matches the encrypted key,
     // then decrypt the key
+    //
+    // Return CryptoError::BadKeyingSignature if the Schnorr
+    // signature fails to validate the hash of the encrypted payload.
     let (skey, pkey) = make_securing_keys(seed);
     let mut state = Hasher::new();
     encr_key.hash(&mut state);

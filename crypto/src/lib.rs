@@ -63,6 +63,9 @@ pub enum CryptoError {
     // is too large to allow that conversion...
     #[fail(display = "Field value is too large for requested conversion")]
     TooLarge,
+
+    #[fail(display = "Encrypted Key has incorrect Signature")]
+    BadKeyingSignature,
 }
 
 impl From<hex::FromHexError> for CryptoError {

@@ -134,7 +134,7 @@ impl Zr {
     /// Try to convert from raw bytes.
     pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
         if bytes.len() != ZR_SIZE_FR256 {
-            return Err(CryptoError::InvalidBinaryLength(ZR_SIZE_FR256, bytes.len()));
+            return Err(CryptoError::InvalidBinaryLength(ZR_SIZE_FR256, bytes.len()).into());
         }
         let mut bits: [u8; ZR_SIZE_FR256] = [0u8; ZR_SIZE_FR256];
         bits.copy_from_slice(bytes);
@@ -239,7 +239,7 @@ impl G1 {
 
     pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
         if bytes.len() != G1_SIZE_FR256 {
-            return Err(CryptoError::InvalidBinaryLength(G1_SIZE_FR256, bytes.len()));
+            return Err(CryptoError::InvalidBinaryLength(G1_SIZE_FR256, bytes.len()).into());
         }
         let mut bits: [u8; G1_SIZE_FR256] = [0u8; G1_SIZE_FR256];
         bits.copy_from_slice(bytes);
@@ -336,10 +336,7 @@ impl G2 {
     /// Try to convert from raw bytes.
     pub fn try_from_bytes(bytes_slices: &[u8]) -> Result<Self, CryptoError> {
         if bytes_slices.len() != G2_SIZE_FR256 {
-            return Err(CryptoError::InvalidBinaryLength(
-                G2_SIZE_FR256,
-                bytes_slices.len(),
-            ));
+            return Err(CryptoError::InvalidBinaryLength(G2_SIZE_FR256, bytes_slices.len()).into());
         }
         let mut bytes: [u8; G2_SIZE_FR256] = [0u8; G2_SIZE_FR256];
         bytes.copy_from_slice(bytes_slices);

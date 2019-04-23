@@ -41,7 +41,6 @@
 
 use super::*;
 use crate::CryptoError;
-
 use clear_on_drop::clear::Clear;
 use rand::rngs::ThreadRng;
 use rand::thread_rng;
@@ -393,7 +392,7 @@ impl G1 {
 
     pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
         if bytes.len() != G1_SIZE_AR160 {
-            return Err(CryptoError::InvalidBinaryLength(G1_SIZE_AR160, bytes.len()));
+            return Err(CryptoError::InvalidBinaryLength(G1_SIZE_AR160, bytes.len()).into());
         }
         let mut bits: [u8; G1_SIZE_AR160] = [0u8; G1_SIZE_AR160];
         bits.copy_from_slice(bytes);
@@ -601,7 +600,7 @@ impl G2 {
 
     pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
         if bytes.len() != G2_SIZE_AR160 {
-            return Err(CryptoError::InvalidBinaryLength(G2_SIZE_AR160, bytes.len()));
+            return Err(CryptoError::InvalidBinaryLength(G2_SIZE_AR160, bytes.len()).into());
         }
         let mut bits: [u8; G2_SIZE_AR160] = [0u8; G2_SIZE_AR160];
         bits.copy_from_slice(bytes);

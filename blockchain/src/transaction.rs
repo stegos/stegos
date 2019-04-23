@@ -313,9 +313,9 @@ impl Transaction {
         let eff_pkey: PublicKey = eff_pkey.into();
 
         // Check signature
-        match validate_sig(&tx_hash, &self.sig, &eff_pkey)? {
-            true => Ok(()),
-            false => Err(TransactionError::InvalidSignature(tx_hash).into()),
+        match validate_sig(&tx_hash, &self.sig, &eff_pkey) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(TransactionError::InvalidSignature(tx_hash).into()),
         }
     }
 

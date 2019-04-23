@@ -535,11 +535,14 @@ impl ValueShuffle {
             for (txin, utxo) in elt.txins.iter().zip(elt.utxos.iter()) {
                 pairs.push((txin.clone(), utxo.clone()));
             }
-            if true == validate_ownership(&pairs, &elt.ownsig)? {
-                self.participants.push(elt.participant);
-                self.all_txins.insert(elt.participant, pairs);
-            } else {
-                debug!("Invalid ownership signature");
+            match validate_ownership(&pairs, &elt.ownsig) {
+                Ok(_) => {
+                    self.participants.push(elt.participant);
+                    self.all_txins.insert(elt.participant, pairs);
+                }
+                _ => {
+                    debug!("Invalid ownership signature");
+                }
             }
         }
         // handle enqueued requests from possible pool restart
@@ -936,9 +939,7 @@ impl ValueShuffle {
         let own_sig = sign_utxos(&utxos, &self.skey)?;
 
         // double check our own TXINs
-        if false == validate_ownership(&self.my_txins, &own_sig)? {
-            return Err(VsError::VsBadTXIN.into());
-        }
+        validate_ownership(&self.my_txins, &own_sig)?;
 
         let mut amt_in = 0;
         for utxo in utxos.clone() {
@@ -1655,8 +1656,8 @@ impl ValueShuffle {
 
         // check signature on this portion of transaction
         match validate_sig(&hash, &sig, &eff_pkey) {
-            Ok(tf) => tf, // maybe ok? maybe not?
-            _ => false,   // definitely not
+            Ok(_) => true,
+            _ => false,
         }
     }
 
@@ -1919,7 +1920,7 @@ fn sign_utxos(utxos: &Vec<UTXO>, skey: &SecretKey) -> Result<SchnorrSig, Error> 
     Ok(sign_hash(&state.result(), &SecretKey::from(signing_f)))
 }
 
-fn validate_ownership(txins: &Vec<(TXIN, UTXO)>, owner_sig: &SchnorrSig) -> Result<bool, Error> {
+fn validate_ownership(txins: &Vec<(TXIN, UTXO)>, owner_sig: &SchnorrSig) -> Result<(), Error> {
     let mut p_cmp = ECp::inf();
     let hash = {
         let mut state = Hasher::new();
@@ -1934,7 +1935,7 @@ fn validate_ownership(txins: &Vec<(TXIN, UTXO)>, owner_sig: &SchnorrSig) -> Resu
         state.result()
     };
     match validate_sig(&hash, owner_sig, &PublicKey::from(p_cmp)) {
-        Ok(tf) => Ok(tf),
+        Ok(()) => Ok(()),
         Err(err) => Err(err.into()),
     }
 }
@@ -1943,14 +1944,14 @@ fn serialize_utxo(utxo: &UTXO) -> Vec<u8> {
     utxo.into_buffer().expect("Can't serialize UTXO")
 }
 
-fn deserialize_utxo(msg: &Vec<u8>, ser_size: usize) -> Result<UTXO, VsError> {
+fn deserialize_utxo(msg: &Vec<u8>, ser_size: usize) -> Result<UTXO, Error> {
     // DiceMix returns a byte vector whose length is some integral
     // number of Field size. But proto-bufs is very particular about
     // what it is handed, and complains about trailing padding bytes.
     match UTXO::from_buffer(&msg[0..ser_size]) {
         Err(err) => {
             debug!("deserialization error: {:?}", err);
-            Err(VsError::VsBadUTXO)
+            Err(VsError::VsBadUTXO.into())
         }
         Ok(utxo) => Ok(utxo),
     }

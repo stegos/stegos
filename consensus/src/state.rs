@@ -229,7 +229,6 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
             self.height,
             self.round
         );
-        if self.is_leader() {}
     }
 
     ///

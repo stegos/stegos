@@ -501,10 +501,13 @@ fn lock() {
                 break;
             }
 
-            info!("skipping round {}", i);
-
+            info!("skipping round {}, leader = {}", i, leader_pk);
+            s.poll();
             let leader_node = s.node(&leader_pk).unwrap();
-            leader_node.poll();
+
+            leader_node
+                .network_service
+                .filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
             let _proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
             let _prevote: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
             round += 1;
@@ -514,7 +517,7 @@ fn lock() {
             );
         }
         assert!(ready);
-
+        info!("Starting test.");
         s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
         let leader_pk = s.nodes[0].node_service.chain.select_leader(round);
         let leader_node = s.node(&leader_pk).unwrap();

@@ -75,7 +75,9 @@ impl ProtoConvert for BlockConsensusMessageBody {
                 ConsensusMessageBody::Precommit { request_hash_sig }
             }
             None => {
-                return Err(ProtoError::MissingField("body".to_string(), "body".to_string()).into());
+                return Err(
+                    ProtoError::MissingField("body".to_string(), "body".to_string()).into(),
+                );
             }
         };
         Ok(msg)

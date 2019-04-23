@@ -364,7 +364,9 @@ impl MonetaryBlock {
         // Check the monetary balance
         if pedersen_commitment_diff != self.header.gamma * (*G) {
             let block_hash = Hash::digest(&self);
-            return Err(BlockError::InvalidBlockBalance(self.header.base.height, block_hash).into());
+            return Err(
+                BlockError::InvalidBlockBalance(self.header.base.height, block_hash).into(),
+            );
         }
 
         Ok(())

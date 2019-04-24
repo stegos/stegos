@@ -236,7 +236,7 @@ mod tests {
     fn correct_transfer() {
         test_one(NcpMessage::GetPeersRequest);
 
-        let (_, node_id, _) = secure::make_random_keys();
+        let (_, node_id) = secure::make_random_keys();
 
         let msg = NcpMessage::GetPeersResponse {
             response: GetPeersResponse {

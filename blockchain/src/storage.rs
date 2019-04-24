@@ -124,7 +124,7 @@ mod test {
     use stegos_crypto::pbc::secure;
 
     fn create_block(previous: Hash) -> Block {
-        let (skey0, _pkey0, _sig0) = secure::make_random_keys();
+        let (skey0, _pkey0) = secure::make_random_keys();
         let version: u64 = 1;
         let epoch: u64 = 1;
         let timestamp = SystemTime::now();

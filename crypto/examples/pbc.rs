@@ -35,11 +35,9 @@ fn main() {
     println!("rand Zr = {}", secure::Zr::random().to_hex());
 
     // test keying...
-    let (_skey, pkey, sig) = secure::make_deterministic_keys(b"Testing");
-    println!("pkey = {:?}", pkey);
-    println!("sig  = {:?}", sig);
-    assert!(secure::check_keying(&pkey, &sig));
-    println!("");
+    let (skey, pkey) = secure::make_deterministic_keys(b"Testing");
+    secure::check_keying(&skey, &pkey).unwrap();
+    println!();
 
     // -------------------------------------
     // on Fast pairings
@@ -59,13 +57,9 @@ fn main() {
     println!("chk Zr: -1 -> {:?}", fast::Zr::from(-1));
     println!("chk Zr: -1 + 1 -> {:?}", fast::Zr::from(-1) + 1);
 
-    let (_skey, pkey, sig) = secure::make_deterministic_keys(b"dev");
-    println!("pkey = {:?}", pkey);
-    println!("sig = {:?}", sig);
-
     // -----------------------------------------
-    let (skey, pkey, sig) = secure::make_deterministic_keys(b"Testing");
-    assert!(secure::check_keying(&pkey, &sig));
+    let (skey, pkey) = secure::make_deterministic_keys(b"Testing");
+    secure::check_keying(&skey, &pkey).unwrap();
     let hseed = Hash::from_str("VRF_Seed");
     let vrf = secure::make_VRF(&skey, &hseed);
     println!("VRF Rand: {:?}", vrf.rand);

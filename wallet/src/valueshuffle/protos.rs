@@ -211,7 +211,7 @@ pub mod tests {
 
     #[test]
     fn vs_serialization() {
-        let (_skey, pkey, _) = make_random_keys();
+        let (_skey, pkey) = make_random_keys();
         let sid = Hash::digest("test");
         let ksig = simple_commit(Fr::from(1), Fr::zero()).compress();
         let msg = Message::VsMessage {

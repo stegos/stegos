@@ -800,27 +800,31 @@ pub fn sign_hash(h: &Hash, skey: &SecretKey) -> Signature {
     Signature(v)
 }
 
-pub fn check_hash(h: &Hash, sig: &Signature, pkey: &PublicKey) -> bool {
+pub fn check_hash(h: &Hash, sig: &Signature, pkey: &PublicKey) -> Result<(), CryptoError> {
     if sig.is_zero() {
         // if signature is empty libpbc will panic, so return false.
-        return false;
+        return Err(CryptoError::BadKeyingSignature);
     }
     // check a hash with a raw signature, return t/f
-    unsafe {
-        0 == rust_libpbc::check_signature(
+    let rc = unsafe {
+        rust_libpbc::check_signature(
             *CONTEXT_FR256,
             sig.base_vector().as_ptr() as *mut _,
             h.base_vector().as_ptr() as *mut _,
             HASH_SIZE as u64,
             pkey.base_vector().as_ptr() as *mut _,
         )
+    };
+    match rc {
+        0 => Ok(()),
+        _ => Err(CryptoError::BadKeyingSignature),
     }
 }
 
 // ------------------------------------------------------------------
 // Key Generation & Checking
 
-pub fn make_deterministic_keys(seed: &[u8]) -> (SecretKey, PublicKey, Signature) {
+pub fn make_deterministic_keys(seed: &[u8]) -> (SecretKey, PublicKey) {
     let h = Hash::from_vector(&seed);
     let zr = Zr::synthetic_random("skey", &G1::generator(), &h);
     let pt = G2::generator().clone(); // public keys in G2
@@ -833,16 +837,16 @@ pub fn make_deterministic_keys(seed: &[u8]) -> (SecretKey, PublicKey, Signature)
     }
     let skey = SecretKey(zr);
     let pkey = PublicKey(pt);
+    (skey, pkey)
+}
+
+pub fn check_keying(skey: &SecretKey, pkey: &PublicKey) -> Result<(), CryptoError> {
     let hpk = Hash::digest(&pkey);
     let sig = sign_hash(&hpk, &skey);
-    (skey, pkey, sig)
+    check_hash(&hpk, &sig, &pkey)
 }
 
-pub fn check_keying(pkey: &PublicKey, sig: &Signature) -> bool {
-    check_hash(&Hash::digest(pkey), &sig, &pkey)
-}
-
-pub fn make_random_keys() -> (SecretKey, PublicKey, Signature) {
+pub fn make_random_keys() -> (SecretKey, PublicKey) {
     let mut rng: ThreadRng = thread_rng();
     make_deterministic_keys(&rng.gen::<[u8; 32]>())
 }

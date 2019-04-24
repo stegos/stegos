@@ -458,8 +458,8 @@ pub mod tests {
         assert!(payment_fee > 0 && stake_fee > 0);
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
-        let (skey, pkey, _sig0) = make_random_keys();
-        let (validator_skey, validator_pkey, _validator_sig) = secure::make_random_keys();
+        let (skey, pkey) = make_random_keys();
+        let (validator_skey, validator_pkey) = secure::make_random_keys();
 
         let timestamp = SystemTime::now();
         let stake: i64 = 100;

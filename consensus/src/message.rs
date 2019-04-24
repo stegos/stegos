@@ -125,7 +125,7 @@ impl<Request: Hashable, Proof: Hashable> ConsensusMessage<Request, Proof> {
         self.request_hash.hash(&mut hasher);
         self.body.hash(&mut hasher);
         let hash = hasher.result();
-        if !secure::check_hash(&hash, &self.sig, &self.pkey) {
+        if let Err(_e) = secure::check_hash(&hash, &self.sig, &self.pkey) {
             return Err(ConsensusError::InvalidMessageSignature);
         }
         match &self.body {

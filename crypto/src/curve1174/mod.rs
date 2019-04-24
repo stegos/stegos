@@ -240,17 +240,14 @@ mod tests {
             secure::PublicKey::try_from_hex(&SIG_PKEY).expect("Invalid hexstr: SIG_PKEY");
         let sig = secure::Signature::try_from_hex(&SIG_1174).expect("Invalid hexstr: SIG_1174");
         let h = Hash::try_from_hex(&HASH_CONSTS).expect("Invalid hexstr: HASH_CONSTS");
-        assert!(
-            secure::check_hash(&h, &sig, &sig_pkey),
-            "Invalid Curve1174 init constants"
-        );
+        secure::check_hash(&h, &sig, &sig_pkey).expect("Invalid Curve1174 init contants");
     }
 
     #[test]
     fn chk_encryption() {
         use crate::hash;
-        let (skey, pkey, sig) = make_random_keys();
-        check_keying(&pkey, &sig).expect("Random keying failed");
+        let (skey, pkey) = make_random_keys();
+        check_keying(&skey, &pkey).expect("Random keying failed");
         let msg = hash::hash_nbytes(72, b"This is a test");
         let mchk = Hash::from_vector(&msg);
         let payload = aes_encrypt(&msg, &pkey).expect("AES Encryption failed");
@@ -340,8 +337,8 @@ pub fn curve1174_tests() {
     println!("hash -> {:?}", ept2);
 
     // ---------------------------------------------------------------
-    let (skey, pkey, sig) = make_deterministic_keys(b"Testing");
-    check_keying(&pkey, &sig).expect("Bad keying");
+    let (skey, pkey) = make_deterministic_keys(b"Testing");
+    check_keying(&skey, &pkey).expect("Bad keying");
     println!("pkey = {:?}", pkey);
 
     let delta = Fr::random();

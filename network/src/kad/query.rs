@@ -491,7 +491,7 @@ mod tests {
 
     #[test]
     fn start_by_sending_rpc_to_known_peers() {
-        let (_, random_id, _) = secure::make_random_keys();
+        let (_, random_id) = secure::make_random_keys();
         let random_target = Multihash::random(Hash::SHA3512);
 
         let target = QueryTarget::FindPeer(random_target);
@@ -516,8 +516,8 @@ mod tests {
 
     #[test]
     fn continue_second_result() {
-        let (_, random_id, _) = secure::make_random_keys();
-        let (_, random_id2, _) = secure::make_random_keys();
+        let (_, random_id) = secure::make_random_keys();
+        let (_, random_id2) = secure::make_random_keys();
         let random_target = Multihash::random(Hash::SHA3512);
         let target = QueryTarget::FindPeer(random_target);
 
@@ -561,7 +561,7 @@ mod tests {
 
     #[test]
     fn timeout_works() {
-        let (_, random_id, _) = secure::make_random_keys();
+        let (_, random_id) = secure::make_random_keys();
         let random_target = Multihash::random(Hash::SHA3512);
         let target = QueryTarget::FindPeer(random_target);
 

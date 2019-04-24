@@ -789,9 +789,9 @@ mod tests {
 
     #[test]
     fn tst_sheet_gen() {
-        let (sk1, pk1, _) = pbc::secure::make_deterministic_keys(b"User1");
-        let (sk2, pk2, _) = pbc::secure::make_deterministic_keys(b"User2");
-        let (sk3, pk3, _) = pbc::secure::make_deterministic_keys(b"User3");
+        let (sk1, pk1) = pbc::secure::make_deterministic_keys(b"User1");
+        let (sk2, pk2) = pbc::secure::make_deterministic_keys(b"User2");
+        let (sk3, pk3) = pbc::secure::make_deterministic_keys(b"User3");
         let all_participants = vec![pk1, pk2, pk3];
         dbg!(&all_participants);
 
@@ -800,9 +800,9 @@ mod tests {
         let participants_3 = vec![pk1, pk2];
 
         let sess = Hash::from_str("session1");
-        let (sess_sk1, sess_pk1, _) = curve1174::cpt::make_deterministic_keys(b"User1-session1");
-        let (sess_sk2, sess_pk2, _) = curve1174::cpt::make_deterministic_keys(b"User2-session1");
-        let (sess_sk3, sess_pk3, _) = curve1174::cpt::make_deterministic_keys(b"User3-session1");
+        let (sess_sk1, sess_pk1) = curve1174::cpt::make_deterministic_keys(b"User1-session1");
+        let (sess_sk2, sess_pk2) = curve1174::cpt::make_deterministic_keys(b"User2-session1");
+        let (sess_sk3, sess_pk3) = curve1174::cpt::make_deterministic_keys(b"User3-session1");
 
         let mut npk1 = HashMap::new();
         npk1.insert(pk2, sess_pk2);
@@ -1045,7 +1045,7 @@ mod tests {
         let mut participants = Vec::<ParticipantID>::new();
         for ix in 0..nparts {
             let seed = format!("User_{}", ix).into_bytes();
-            let (sk, pk, _) = pbc::secure::make_deterministic_keys(&seed);
+            let (sk, pk) = pbc::secure::make_deterministic_keys(&seed);
             // skeys.push(sk);
             participants.push(pk);
         }
@@ -1062,7 +1062,7 @@ mod tests {
         let mut sess_skeys = HashMap::new();
         for ix in 0..nparts {
             let seed = format!("User_{}_Session_Key", ix).into_bytes();
-            let (sk, pk, _) = curve1174::cpt::make_deterministic_keys(&seed);
+            let (sk, pk) = curve1174::cpt::make_deterministic_keys(&seed);
             let p = participants[ix];
             sess_pkeys.insert(p, pk);
             sess_skeys.insert(p, sk);

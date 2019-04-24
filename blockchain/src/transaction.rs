@@ -435,7 +435,7 @@ pub mod tests {
     ///
     #[test]
     pub fn no_inputs() {
-        let (skey, pkey, _sig) = make_random_keys();
+        let (skey, pkey) = make_random_keys();
         let timestamp = SystemTime::now();
         let amount: i64 = 1_000_000;
         let fee: i64 = amount;
@@ -454,7 +454,7 @@ pub mod tests {
     #[test]
     pub fn no_outputs() {
         // No outputs
-        let (skey, pkey, _sig) = make_random_keys();
+        let (skey, pkey) = make_random_keys();
         let (tx, inputs, _outputs) =
             Transaction::new_test(&skey, &pkey, 100, 1, 0, 0, 100).expect("transaction is valid");
         tx.validate(&inputs).expect("transaction is valid");
@@ -465,9 +465,9 @@ pub mod tests {
     ///
     #[test]
     pub fn payment_utxo() {
-        let (skey0, pkey0, _sig0) = make_random_keys();
-        let (skey1, pkey1, _sig1) = make_random_keys();
-        let (_skey2, pkey2, _sig2) = make_random_keys();
+        let (skey0, pkey0) = make_random_keys();
+        let (skey1, pkey1) = make_random_keys();
+        let (_skey2, pkey2) = make_random_keys();
 
         let timestamp = SystemTime::now();
         let amount: i64 = 1_000_000;
@@ -638,9 +638,9 @@ pub mod tests {
     ///
     #[test]
     pub fn stake_utxo() {
-        let (skey0, _pkey0, _sig0) = make_random_keys();
-        let (skey1, pkey1, _sig1) = make_random_keys();
-        let (secure_skey1, secure_pkey1, _secure_sig1) = secure::make_random_keys();
+        let (skey0, _pkey0) = make_random_keys();
+        let (skey1, pkey1) = make_random_keys();
+        let (secure_skey1, secure_pkey1) = secure::make_random_keys();
 
         let timestamp = SystemTime::now();
         let amount: i64 = 1_000_000;
@@ -774,9 +774,9 @@ pub mod tests {
 
     #[test]
     fn test_supertransaction() {
-        let (skey1, pkey1, _) = make_random_keys();
-        let (skey2, pkey2, _) = make_random_keys();
-        let (skey3, pkey3, _) = make_random_keys();
+        let (skey1, pkey1) = make_random_keys();
+        let (skey2, pkey2) = make_random_keys();
+        let (skey3, pkey3) = make_random_keys();
         let timestamp = SystemTime::now();
         let err_utxo = "Can't construct UTXO";
         let iamt1 = 101;

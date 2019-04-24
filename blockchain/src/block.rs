@@ -413,9 +413,9 @@ pub mod tests {
 
     #[test]
     fn create_validate_monetary_block() {
-        let (skey0, _pkey0, _sig0) = make_random_keys();
-        let (skey1, pkey1, _sig1) = make_random_keys();
-        let (_skey2, pkey2, _sig2) = make_random_keys();
+        let (skey0, _pkey0) = make_random_keys();
+        let (skey1, pkey1) = make_random_keys();
+        let (_skey2, pkey2) = make_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -462,7 +462,7 @@ pub mod tests {
 
     #[test]
     fn validate_pruned_monetary_block() {
-        let (skey, pkey, _sig) = make_random_keys();
+        let (skey, pkey) = make_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -498,9 +498,9 @@ pub mod tests {
 
     #[test]
     fn create_validate_monetary_block_with_escrow() {
-        let (skey0, _pkey0, _sig0) = make_random_keys();
-        let (skey1, pkey1, _sig1) = make_random_keys();
-        let (secure_skey1, secure_pkey1, _secure_sig1) = make_secure_random_keys();
+        let (skey0, _pkey0) = make_random_keys();
+        let (skey1, pkey1) = make_random_keys();
+        let (secure_skey1, secure_pkey1) = make_secure_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -631,7 +631,7 @@ pub mod tests {
     }
 
     fn create_burn_money(input_amount: i64, output_amount: i64) {
-        let (skey, pkey, _sig) = make_random_keys();
+        let (skey, pkey) = make_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;

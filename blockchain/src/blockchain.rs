@@ -598,7 +598,7 @@ impl Blockchain {
                         BlockError::MoreThanOneSignatureAtPropose(height, block_hash).into(),
                     );
                 }
-                if !secure::check_hash(&block_hash, &block.body.multisig, &leader) {
+                if let Err(_e) = secure::check_hash(&block_hash, &block.body.multisig, &leader) {
                     return Err(BlockError::InvalidLeaderSignature(height, block_hash).into());
                 }
             } else {
@@ -810,7 +810,7 @@ impl Blockchain {
                     .into());
                 }
             };
-            if !secure::check_hash(&block_hash, &block.body.sig, &leader) {
+            if let Err(_e) = secure::check_hash(&block_hash, &block.body.sig, &leader) {
                 return Err(BlockError::InvalidLeaderSignature(height, block_hash).into());
             }
         }

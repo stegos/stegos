@@ -149,8 +149,8 @@ mod tests {
 
     #[test]
     fn pool_info() {
-        let (_, pkey, _) = secure::make_random_keys();
-        let (_, pkey1, _) = secure::make_random_keys();
+        let (_, pkey) = secure::make_random_keys();
+        let (_, pkey1) = secure::make_random_keys();
 
         let session_id = Hash::digest(&1u64);
         let mut participants: Vec<secure::PublicKey> = Vec::new();

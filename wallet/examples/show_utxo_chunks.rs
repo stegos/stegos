@@ -44,7 +44,7 @@ use stegos_crypto::dicemix::*;
 
 fn main() {
     // Determine number of DiceMix chunks needed to support our UTXO's
-    let (skey, pkey, _) = make_random_keys();
+    let (skey, pkey) = make_random_keys();
     let tstamp = SystemTime::now();
     let data = PaymentPayloadData::Comment("Testing".to_string());
     let (out, gamma) = PaymentOutput::with_payload(tstamp, &skey, &pkey, 1500, data)

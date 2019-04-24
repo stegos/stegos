@@ -115,17 +115,15 @@ impl Mempool {
         // Prune transactions.
         for tx_hash in tx_hashes {
             let tx = self.pool.remove(&tx_hash).expect("transaction exists");
-
             for input_hash in tx.body.txins {
-                if self.inputs.contains_key(&input_hash) {
-                    panic!("Inconsistent mempool pruning");
+                if let Some(tx_hash2) = self.inputs.remove(&input_hash) {
+                    assert_eq!(tx_hash2, tx_hash);
                 }
             }
-
             for output in tx.body.txouts {
                 let output_hash = Hash::digest(&output);
-                if self.outputs.contains_key(&output_hash) {
-                    panic!("Inconsistent mempool pruning");
+                if let Some(tx_hash2) = self.outputs.remove(&output_hash) {
+                    assert_eq!(tx_hash2, tx_hash);
                 }
             }
         }
@@ -283,29 +281,45 @@ mod test {
     }
 
     #[test]
-    #[should_panic]
-    pub fn inconsistent_pruning1() {
+    pub fn partial_pruning1() {
         let (skey, pkey) = make_random_keys();
         let mut mempool = Mempool::new();
 
-        let (tx, inputs, _outputs) =
-            Transaction::new_test(&skey, &pkey, 100, 1, 100, 1, 0).expect("transaction valid");
+        let (tx, inputs, outputs) =
+            Transaction::new_test(&skey, &pkey, 100, 2, 100, 2, 0).expect("transaction valid");
         let tx_hash = Hash::digest(&tx);
         mempool.push_tx(tx_hash.clone(), tx.clone());
         mempool.prune(&vec![Hash::digest(&inputs[0])], &vec![]);
+        assert!(!mempool.contains_tx(&tx_hash));
+        for input in inputs {
+            let input_hash = Hash::digest(&input);
+            assert!(!mempool.contains_input(&input_hash));
+        }
+        for output in outputs {
+            let output_hash = Hash::digest(&output);
+            assert!(!mempool.contains_output(&output_hash));
+        }
     }
 
     #[test]
-    #[should_panic]
-    pub fn inconsistent_pruning2() {
+    pub fn partial_pruning2() {
         let (skey, pkey) = make_random_keys();
         let mut mempool = Mempool::new();
 
-        let (tx, _inputs, outputs) =
-            Transaction::new_test(&skey, &pkey, 100, 1, 100, 1, 0).expect("transaction valid");
+        let (tx, inputs, outputs) =
+            Transaction::new_test(&skey, &pkey, 100, 2, 100, 2, 0).expect("transaction valid");
         let tx_hash = Hash::digest(&tx);
         mempool.push_tx(tx_hash.clone(), tx.clone());
         mempool.prune(&vec![], &vec![Hash::digest(&outputs[0])]);
+        assert!(!mempool.contains_tx(&tx_hash));
+        for input in inputs {
+            let input_hash = Hash::digest(&input);
+            assert!(!mempool.contains_input(&input_hash));
+        }
+        for output in outputs {
+            let output_hash = Hash::digest(&output);
+            assert!(!mempool.contains_output(&output_hash));
+        }
     }
 
     #[test]

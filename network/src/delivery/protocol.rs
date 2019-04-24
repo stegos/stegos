@@ -255,7 +255,7 @@ mod tests {
 
     #[test]
     fn correct_transfer() {
-        let (_, pkey, _) = secure::make_random_keys();
+        let (_, pkey) = secure::make_random_keys();
 
         let msg = DeliveryMessage::UnicastMessage(Unicast {
             to: pkey,
@@ -266,7 +266,7 @@ mod tests {
 
         test_one(msg);
 
-        let (_, node_id, _) = secure::make_random_keys();
+        let (_, node_id) = secure::make_random_keys();
 
         let msg = DeliveryMessage::BroadcastMessage(Broadcast {
             from: node_id,

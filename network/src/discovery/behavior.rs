@@ -390,7 +390,7 @@ where
                 Ok(Async::NotReady) => break,
                 Ok(Async::Ready(_)) => {
                     debug!(target: "stegos_network::discovery", "Shooting at DHT to gather nodes information");
-                    let (_, random_node_id, _) = secure::make_random_keys();
+                    let (_, random_node_id) = secure::make_random_keys();
                     self.kademlia.find_node(random_node_id);
                     // Reset the `Delay` to the next random.
                     self.next_query

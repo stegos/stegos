@@ -58,7 +58,7 @@ impl ViewChangeMessage {
         }
         let hash = Hash::digest(&self.chain);
         let author = blockchain.validators()[validator_id as usize].0;
-        if !secure::check_hash(&hash, &self.signature, &author) {
+        if let Err(_e) = secure::check_hash(&hash, &self.signature, &author) {
             return Err(ConsensusError::InvalidViewChangeSignature);
         }
         Ok(())

@@ -526,9 +526,9 @@ mod tests {
 
     #[test]
     fn outputs() {
-        let (skey0, _pkey0, _sig0) = make_random_keys();
-        let (skey1, pkey1, _sig1) = make_random_keys();
-        let (secure_skey1, secure_pkey1, _secure_sig1) = make_secure_random_keys();
+        let (skey0, _pkey0) = make_random_keys();
+        let (skey1, pkey1) = make_random_keys();
+        let (secure_skey1, secure_pkey1) = make_secure_random_keys();
 
         let amount = 1_000_000;
         let timestamp = SystemTime::now();
@@ -554,9 +554,9 @@ mod tests {
     }
 
     fn mktransaction() -> Transaction {
-        let (skey0, _pkey0, _sig0) = make_random_keys();
-        let (skey1, pkey1, _sig1) = make_random_keys();
-        let (_skey2, pkey2, _sig2) = make_random_keys();
+        let (skey0, _pkey0) = make_random_keys();
+        let (skey1, pkey1) = make_random_keys();
+        let (_skey2, pkey2) = make_random_keys();
 
         let timestamp = SystemTime::now();
         let amount: i64 = 1_000_000;
@@ -608,7 +608,7 @@ mod tests {
 
     #[test]
     fn key_blocks() {
-        let (skey0, _pkey0, _sig0) = make_secure_random_keys();
+        let (skey0, _pkey0) = make_secure_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -641,9 +641,9 @@ mod tests {
 
     #[test]
     fn monetary_blocks() {
-        let (skey0, _pkey0, _sig0) = make_random_keys();
-        let (skey1, pkey1, _sig1) = make_random_keys();
-        let (_skey2, pkey2, _sig2) = make_random_keys();
+        let (skey0, _pkey0) = make_random_keys();
+        let (skey1, pkey1) = make_random_keys();
+        let (_skey2, pkey2) = make_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;

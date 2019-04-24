@@ -1886,7 +1886,7 @@ fn make_session_key(skey: &SecretKey, sid: &Hash) -> (SecretKey, PublicKey) {
         skey.hash(&mut state);
         state.result()
     };
-    let (skey, pkey, _) = make_deterministic_keys(&seed.to_bytes());
+    let (skey, pkey) = make_deterministic_keys(&seed.to_bytes());
     (skey, pkey)
 }
 

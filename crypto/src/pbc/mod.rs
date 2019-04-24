@@ -247,30 +247,24 @@ pub mod tests {
         let h = Hash::try_from_hex(&HASH_AR160).expect("Invalid hexstring: HASH_AR160");
         let sig =
             secure::Signature::try_from_hex(&SIG_AR160).expect("Invalid hexstring: SIG_AR160");
-        assert!(
-            secure::check_hash(&h, &sig, &sig_pkey),
-            "Invalid curve constants for AR160"
-        );
+        secure::check_hash(&h, &sig, &sig_pkey).expect("valid curve constants for AR160");
 
         let h = Hash::try_from_hex(&HASH_FR256).expect("Invalid hexstring: HASH_FR256");
         let sig = secure::Signature::try_from_hex(SIG_FR256).expect("Invalid hexstring: SIG_FR256");
-        assert!(
-            secure::check_hash(&h, &sig, &sig_pkey),
-            "Invalid curve constants for FR256"
-        );
+        secure::check_hash(&h, &sig, &sig_pkey).expect("Invalid curve constants for FR256");
 
         // check to be sure make_deterministic_keys() stil works properly
         let mut rng: ThreadRng = thread_rng();
         let seed = rng.gen::<[u8; 32]>();
-        let (_skey, pkey, sig) = secure::make_deterministic_keys(&seed);
-        assert!(secure::check_keying(&pkey, &sig), "Invalid keying");
+        let (skey, pkey) = secure::make_deterministic_keys(&seed);
+        secure::check_keying(&skey, &pkey).expect("Invalid keying");
         fast::G2::generator();
     }
 
     #[test]
     fn check_vrf() {
-        let (skey, pkey, sig) = secure::make_deterministic_keys(b"Testing");
-        assert!(secure::check_keying(&pkey, &sig));
+        let (skey, pkey) = secure::make_deterministic_keys(b"Testing");
+        secure::check_keying(&skey, &pkey).unwrap();
         let hseed = Hash::from_str("VRF_Seed");
         let vrf = secure::make_VRF(&skey, &hseed);
         assert!(secure::validate_VRF_randomness(&vrf));

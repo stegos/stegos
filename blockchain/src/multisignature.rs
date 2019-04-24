@@ -127,7 +127,7 @@ pub fn check_multi_signature(
 
     // The hash must match the signature.
     let multipkey: secure::PublicKey = multisigpkey.into();
-    if !secure::check_hash(&hash, &multisig, &multipkey) {
+    if let Err(_e) = secure::check_hash(&hash, &multisig, &multipkey) {
         return Err(MultisignatureError::InvalidSignature(*hash));
     }
     Ok(())
@@ -184,7 +184,7 @@ mod tests {
         let mut validators = Vec::new();
         const NUM_VALIDATORS: usize = 1;
         for _i in 0..NUM_VALIDATORS {
-            let (s, p, _) = secure::make_random_keys();
+            let (s, p) = secure::make_random_keys();
             validators.push((p, 1));
             skeys.push(s);
         }
@@ -195,7 +195,7 @@ mod tests {
         for i in 0..NUM_VALIDATORS {
             let sign = secure::sign_hash(hash, &skeys[i]);
             signatures.push((sign, i as u32));
-            assert!(secure::check_hash(hash, &signatures[i].0, &validators[i].0))
+            secure::check_hash(hash, &signatures[i].0, &validators[i].0).unwrap();
         }
 
         let multisig = create_multi_signature_index(signatures.iter().map(|p| (p.1, &p.0)));

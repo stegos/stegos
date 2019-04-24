@@ -466,7 +466,7 @@ impl NodeService {
         // Check signature first.
         let remote_view_change = remote.header.base.view_change;
         let leader = self.chain.select_leader(remote_view_change);
-        if !secure::check_hash(&remote_hash, &remote.body.sig, &leader) {
+        if let Err(_e) = secure::check_hash(&remote_hash, &remote.body.sig, &leader) {
             return Err(BlockError::InvalidLeaderSignature(height, remote_hash).into());
         }
 
@@ -677,7 +677,7 @@ impl NodeService {
                 .map_err(|e| BlockError::InvalidBlockSignature(e, block_height, block_hash))?;
             }
             Block::MonetaryBlock(ref block) => {
-                if !secure::check_hash(&block_hash, &block.body.sig, &leader) {
+                if let Err(_e) = secure::check_hash(&block_hash, &block.body.sig, &leader) {
                     return Err(BlockError::InvalidLeaderSignature(block_height, block_hash).into());
                 }
             }

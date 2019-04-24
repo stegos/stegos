@@ -107,11 +107,12 @@ fn smoke_test() {
                 request_hash_sig, ..
             } = precommit.body
             {
-                assert!(secure::check_hash(
+                secure::check_hash(
                     &proposal.request_hash,
                     &request_hash_sig,
-                    &node.node_service.keys.network_pkey
-                ));
+                    &node.node_service.keys.network_pkey,
+                )
+                .unwrap();
             } else {
                 panic!("Invalid packet");
             }

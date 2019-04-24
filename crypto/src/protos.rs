@@ -24,7 +24,7 @@ use stegos_serialization::traits::*;
 
 use crate::bulletproofs::{BulletProof, DotProof, L2_NBASIS, LR};
 use crate::curve1174::cpt::Pt;
-use crate::curve1174::cpt::{EncryptedPayload, PublicKey, SchnorrSig, SecretKey};
+use crate::curve1174::cpt::{EncryptedKey, EncryptedPayload, PublicKey, SchnorrSig, SecretKey};
 use crate::curve1174::fields::Fr;
 use crate::hash::Hash;
 use crate::hashcash::HashCashProof;
@@ -199,6 +199,21 @@ impl ProtoConvert for EncryptedPayload {
     }
 }
 
+impl ProtoConvert for EncryptedKey {
+    type Proto = crypto::EncryptedKey;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = crypto::EncryptedKey::new();
+        proto.set_payload(self.payload.into_proto());
+        proto.set_sig(self.sig.into_proto());
+        proto
+    }
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let payload = EncryptedPayload::from_proto(proto.get_payload())?;
+        let sig = SchnorrSig::from_proto(proto.get_sig())?;
+        Ok(EncryptedKey { payload, sig })
+    }
+}
+
 impl ProtoConvert for LR {
     type Proto = crypto::LR;
     fn into_proto(&self) -> Self::Proto {
@@ -311,7 +326,7 @@ impl ProtoConvert for VRF {
 mod tests {
     use super::*;
     use crate::bulletproofs::make_range_proof;
-    use crate::curve1174::cpt::make_random_keys;
+    use crate::curve1174::cpt::{decrypt_key, encrypt_key, make_random_keys};
     use crate::curve1174::ecpt::ECp;
     use crate::hash::Hashable;
     use crate::pbc::secure::make_random_keys as make_secure_random_keys;
@@ -345,16 +360,14 @@ mod tests {
 
     #[test]
     fn keys() {
-        let (_skey, pkey, sig) = make_random_keys();
+        let (_skey, pkey) = make_random_keys();
         roundtrip(&pkey);
-        roundtrip(&sig);
     }
 
     #[test]
     fn secure_keys() {
-        let (_skey, pkey, sig) = make_secure_random_keys();
+        let (_skey, pkey) = make_secure_random_keys();
         roundtrip(&pkey);
-        roundtrip(&sig);
     }
 
     #[test]
@@ -385,5 +398,15 @@ mod tests {
         let (bp, gamma) = make_range_proof(100);
         roundtrip(&bp);
         roundtrip(&gamma);
+    }
+
+    #[test]
+    fn encrypted_secret_key() {
+        let passphrase = "test";
+        let key_to_encrypt = b"key";
+        let encr_key = encrypt_key(&passphrase, key_to_encrypt);
+        roundtrip(&encr_key);
+        let key_to_encrypt2 = decrypt_key(&passphrase, &encr_key).expect("valid");
+        assert_eq!(key_to_encrypt.to_vec(), key_to_encrypt2);
     }
 }

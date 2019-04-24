@@ -796,7 +796,7 @@ fn decrypt_message(
     payload.data.hash(&mut hasher);
     let hash = hasher.result();
 
-    if !secure::check_hash(&hash, &signature, &payload.from) {
+    if let Err(_e) = secure::check_hash(&hash, &signature, &payload.from) {
         return Err(format_err!("Bad packet signature."));
     }
 
@@ -816,8 +816,8 @@ mod tests {
 
     #[test]
     fn encode_decode() {
-        let (from_skey, from, _) = secure::make_random_keys();
-        let (to_skey, to, _) = secure::make_random_keys();
+        let (from_skey, from) = secure::make_random_keys();
+        let (to_skey, to) = secure::make_random_keys();
         let protocol_id = "the quick brown fox".to_string();
         let data = random_vec(1024);
 

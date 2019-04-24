@@ -219,7 +219,7 @@ mod test {
 
     #[test]
     fn basic() {
-        let (skey, pkey, _sig) = make_random_keys();
+        let (skey, pkey) = make_random_keys();
         let mut mempool = Mempool::new();
 
         let (tx1, inputs1, outputs1) =
@@ -285,7 +285,7 @@ mod test {
     #[test]
     #[should_panic]
     pub fn inconsistent_pruning1() {
-        let (skey, pkey, _sig) = make_random_keys();
+        let (skey, pkey) = make_random_keys();
         let mut mempool = Mempool::new();
 
         let (tx, inputs, _outputs) =
@@ -298,7 +298,7 @@ mod test {
     #[test]
     #[should_panic]
     pub fn inconsistent_pruning2() {
-        let (skey, pkey, _sig) = make_random_keys();
+        let (skey, pkey) = make_random_keys();
         let mut mempool = Mempool::new();
 
         let (tx, _inputs, outputs) =
@@ -310,7 +310,7 @@ mod test {
 
     #[test]
     fn create_block() {
-        let (skey, pkey, _sig) = make_random_keys();
+        let (skey, pkey) = make_random_keys();
         let mut mempool = Mempool::new();
 
         let (tx1, inputs1, _outputs1) =

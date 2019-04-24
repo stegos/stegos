@@ -61,13 +61,13 @@ fn select_1000_slots_out_of_16(b: &mut Bencher) {
     const STAKE: i64 = 100_000;
 
     let random = Hash::digest("bla");
-    let (skey, _, _) = secure::make_random_keys();
+    let (skey, _pkey) = secure::make_random_keys();
 
     let random = secure::make_VRF(&skey, &random);
 
     let mut stakers = Vec::new();
     for _ in 0..GROUP_SIZE {
-        let (_, pkey, _) = secure::make_random_keys();
+        let (_, pkey) = secure::make_random_keys();
         stakers.push((pkey, STAKE));
     }
 
@@ -83,7 +83,7 @@ fn select_1000_slots_out_of_16(b: &mut Bencher) {
 #[bench]
 fn create_vrf(b: &mut Bencher) {
     let random = Hash::digest("bla");
-    let (skey, _, _) = secure::make_random_keys();
+    let (skey, _pkey) = secure::make_random_keys();
 
     b.iter(|| {
         test::black_box(secure::make_VRF(&skey, &random));
@@ -93,7 +93,7 @@ fn create_vrf(b: &mut Bencher) {
 #[bench]
 fn verify_vrf(b: &mut Bencher) {
     let random = Hash::digest("bla");
-    let (skey, pkey, _) = secure::make_random_keys();
+    let (skey, pkey) = secure::make_random_keys();
     let vrf = secure::make_VRF(&skey, &random);
 
     b.iter(|| {

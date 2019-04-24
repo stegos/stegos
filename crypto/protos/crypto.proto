@@ -47,6 +47,11 @@ message EncryptedPayload {
     bytes ctxt = 2;
 }
 
+message EncryptedKey {
+    EncryptedPayload payload = 1;
+    SchnorrSig sig = 2;
+}
+
 message LR {
     Pt l = 2;
     Pt r = 3;

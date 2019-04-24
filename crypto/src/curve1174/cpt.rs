@@ -321,23 +321,22 @@ impl<'de> Deserialize<'de> for PublicKey {
 // -----------------------------------------------------------------------
 // Key Generation & Checking
 
-pub fn make_deterministic_keys(seed: &[u8]) -> (SecretKey, PublicKey, SchnorrSig) {
+pub fn make_deterministic_keys(seed: &[u8]) -> (SecretKey, PublicKey) {
     let h = Hash::from_vector(&seed);
     let zr = Fr::synthetic_random("skey", &*G, &h);
     let pt = zr * *G;
     let skey = SecretKey::from(zr);
     let pkey = PublicKey::from(pt);
-    let hkey = Hash::digest(&pkey);
-    let sig = sign_hash(&hkey, &skey);
-    (skey, pkey, sig)
+    (skey, pkey)
 }
 
-pub fn check_keying(pkey: &PublicKey, sig: &SchnorrSig) -> Result<(), CryptoError> {
-    let hkey = Hash::digest(pkey);
+pub fn check_keying(skey: &SecretKey, pkey: &PublicKey) -> Result<(), CryptoError> {
+    let hkey = Hash::digest(&pkey);
+    let sig = sign_hash(&hkey, &skey);
     validate_sig(&hkey, &sig, &pkey)
 }
 
-pub fn make_random_keys() -> (SecretKey, PublicKey, SchnorrSig) {
+pub fn make_random_keys() -> (SecretKey, PublicKey) {
     make_deterministic_keys(&Lev32::random().bits())
 }
 
@@ -559,11 +558,23 @@ fn make_securing_keys(seed: &str) -> (SecretKey, PublicKey) {
     for _ in 1..1024 {
         seed = Hash::from_vector(&seed.bits());
     }
-    let (skey, pkey, _) = make_deterministic_keys(&seed.bits());
-    (skey, pkey)
+    make_deterministic_keys(&seed.bits())
 }
 
-pub fn encrypt_key(seed: &str, key_to_encrypt: &[u8]) -> (EncryptedPayload, SchnorrSig) {
+#[derive(Debug, Clone)]
+pub struct EncryptedKey {
+    pub payload: EncryptedPayload,
+    pub sig: SchnorrSig,
+}
+
+impl Hashable for EncryptedKey {
+    fn hash(&self, state: &mut Hasher) {
+        self.payload.hash(state);
+        self.sig.hash(state);
+    }
+}
+
+pub fn encrypt_key(seed: &str, key_to_encrypt: &[u8]) -> EncryptedKey {
     // For secure storage of keying material
     // Returns an AES encrypted key, along with a SchnorrSig on
     // the encrytped key.
@@ -573,14 +584,10 @@ pub fn encrypt_key(seed: &str, key_to_encrypt: &[u8]) -> (EncryptedPayload, Schn
     payload.hash(&mut state);
     let h = state.result();
     let sig = sign_hash(&h, &skey);
-    (payload, sig)
+    EncryptedKey { payload, sig }
 }
 
-pub fn decrypt_key(
-    seed: &str,
-    encr_key: &EncryptedPayload,
-    chk: &SchnorrSig,
-) -> Result<Vec<u8>, CryptoError> {
+pub fn decrypt_key(seed: &str, encr_key: &EncryptedKey) -> Result<Vec<u8>, CryptoError> {
     // For secure retrieval of keying material
     // check that the signature matches the encrypted key,
     // then decrypt the key
@@ -589,10 +596,10 @@ pub fn decrypt_key(
     // signature fails to validate the hash of the encrypted payload.
     let (skey, pkey) = make_securing_keys(seed);
     let mut state = Hasher::new();
-    encr_key.hash(&mut state);
+    encr_key.payload.hash(&mut state);
     let h = state.result();
-    validate_sig(&h, chk, &pkey)?;
-    aes_decrypt(encr_key, &skey)
+    validate_sig(&h, &encr_key.sig, &pkey)?;
+    aes_decrypt(&encr_key.payload, &skey)
 }
 
 #[cfg(test)]
@@ -601,12 +608,12 @@ pub mod tests {
 
     #[test]
     fn encr_keying() {
-        let (skey, _, _) = make_deterministic_keys(b"testing");
+        let (skey, _) = make_deterministic_keys(b"testing");
         let my_cloaking_seed = "diddly";
-        let (payload, sig) = encrypt_key(my_cloaking_seed, &skey.to_bytes());
-        assert!(payload.ctxt != skey.to_bytes());
+        let encr_key = encrypt_key(my_cloaking_seed, &skey.to_bytes());
+        assert!(encr_key.payload.ctxt != skey.to_bytes());
         let recovered_skey =
-            decrypt_key(my_cloaking_seed, &payload, &sig).expect("Key couldn't be decrypted");
+            decrypt_key(my_cloaking_seed, &encr_key).expect("Key couldn't be decrypted");
         assert!(recovered_skey == skey.to_bytes());
     }
 }

@@ -541,7 +541,7 @@ impl StakeOutput {
         self.recipient.hash(&mut state);
         self.payload.hash(&mut state);
         let h = state.result();
-        if !secure::check_hash(&h, &self.signature, &self.validator) {
+        if let Err(_e) = secure::check_hash(&h, &self.signature, &self.validator) {
             let output_hash = Hash::digest(&self);
             return Err(OutputError::InvalidStakeSignature(output_hash).into());
         }
@@ -648,7 +648,7 @@ pub mod tests {
             assert_eq!(payload, &payload2);
         }
 
-        let (skey, pkey, _sig) = make_random_keys();
+        let (skey, pkey) = make_random_keys();
 
         // With empty comment.
         let gamma: Fr = Fr::random();
@@ -802,7 +802,7 @@ pub mod tests {
             assert_eq!(payload, &payload2);
         }
 
-        let (skey, pkey, _sig) = make_random_keys();
+        let (skey, pkey) = make_random_keys();
         let output_hash = Hash::digest("test");
 
         // Basic.
@@ -847,8 +847,8 @@ pub mod tests {
     ///
     #[test]
     pub fn payment_encrypt_decrypt() {
-        let (skey1, _pkey1, _sig1) = make_random_keys();
-        let (skey2, pkey2, _sig2) = make_random_keys();
+        let (skey1, _pkey1) = make_random_keys();
+        let (skey2, pkey2) = make_random_keys();
 
         let timestamp = SystemTime::now();
         let amount: i64 = 100500;
@@ -878,9 +878,9 @@ pub mod tests {
     ///
     #[test]
     pub fn stake_encrypt_decrypt() {
-        let (skey1, _pkey1, _sig1) = make_random_keys();
-        let (skey2, pkey2, _sig2) = make_random_keys();
-        let (secure_skey1, secure_pkey1, _secure_sig1) = secure::make_random_keys();
+        let (skey1, _pkey1) = make_random_keys();
+        let (skey2, pkey2) = make_random_keys();
+        let (secure_skey1, secure_pkey1) = secure::make_random_keys();
 
         let timestamp = SystemTime::now();
         let amount: i64 = 100500;
@@ -911,7 +911,7 @@ pub mod tests {
 
     #[test]
     pub fn unencrypted_payload() {
-        let (skey, pkey, _) = make_random_keys();
+        let (skey, pkey) = make_random_keys();
         let amount: i64 = 0x1234567;
 
         let (output, gamma) =

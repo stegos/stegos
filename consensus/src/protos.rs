@@ -141,6 +141,7 @@ mod tests {
     use std::time::SystemTime;
     use stegos_crypto::hash::Hashable;
     use stegos_crypto::pbc::secure::make_random_keys as make_secure_random_keys;
+    use stegos_crypto::pbc::secure::sign_hash as secure_sign_hash;
 
     fn roundtrip<T>(x: &T) -> T
     where
@@ -153,7 +154,7 @@ mod tests {
 
     #[test]
     fn consensus() {
-        let (network_skey, network_pkey, network_sig) = make_secure_random_keys();
+        let (network_skey, network_pkey) = make_secure_random_keys();
 
         let body = ConsensusMessageBody::Prevote {};
         let msg = ConsensusMessage::new(
@@ -166,9 +167,8 @@ mod tests {
         );
         roundtrip(&msg);
 
-        let body = ConsensusMessageBody::Precommit {
-            request_hash_sig: network_sig,
-        };
+        let request_hash_sig = secure_sign_hash(&Hash::digest("test"), &network_skey);
+        let body = ConsensusMessageBody::Precommit { request_hash_sig };
         let msg = ConsensusMessage::new(
             1,
             1,
@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn key_blocks() {
-        let (skey0, _pkey0, _sig0) = make_secure_random_keys();
+        let (skey0, _pkey0) = make_secure_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;

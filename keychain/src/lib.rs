@@ -43,7 +43,7 @@ use secp256k1::rand::{ChaChaRng, SeedableRng};
 ///
 pub fn wallet_to_network_keys(
     wallet_skey: &cpt::SecretKey,
-) -> (secure::SecretKey, secure::PublicKey, secure::Signature) {
+) -> (secure::SecretKey, secure::PublicKey) {
     let wallet_skey_hash = Hash::digest(wallet_skey);
     let network_seed = wallet_skey_hash.base_vector();
     secure::make_deterministic_keys(network_seed)
@@ -82,7 +82,7 @@ impl KeyChain {
 
         let (wallet_skey, wallet_pkey) = if !skey_path.exists() && !pkey_path.exists() {
             info!("Generating a new key pair...");
-            let (skey, pkey, _sig) = cpt::make_random_keys();
+            let (skey, pkey) = cpt::make_random_keys();
 
             let skey_pem = pem::Pem {
                 tag: SKEY_TAG.to_string(),
@@ -122,16 +122,15 @@ impl KeyChain {
 
             let skey = cpt::SecretKey::try_from_bytes(&skey.contents)?;
             let pkey = cpt::PublicKey::try_from_bytes(&pkey.contents[..])?;
-            let pkey_check = skey.clone().into();
 
-            if pkey != pkey_check {
+            if let Err(_e) = cpt::check_keying(&skey, &pkey) {
                 return Err(KeyChainError::KeyValidateError.into());
             }
 
             (skey, pkey)
         };
 
-        let (network_skey, network_pkey, _network_sig) = wallet_to_network_keys(&wallet_skey);
+        let (network_skey, network_pkey) = wallet_to_network_keys(&wallet_skey);
 
         let keychain = KeyChain {
             wallet_skey,
@@ -145,8 +144,8 @@ impl KeyChain {
 
     /// Temporary KeyChain for tests.
     pub fn new_mem() -> Self {
-        let (wallet_skey, wallet_pkey, _wallet_sig) = cpt::make_random_keys();
-        let (network_skey, network_pkey, _network_sig) = wallet_to_network_keys(&wallet_skey);
+        let (wallet_skey, wallet_pkey) = cpt::make_random_keys();
+        let (network_skey, network_pkey) = wallet_to_network_keys(&wallet_skey);
 
         let keychain = KeyChain {
             wallet_skey,

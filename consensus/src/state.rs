@@ -561,7 +561,7 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
 
                 // Check signature.
                 let request_hash = Hash::digest(self.request.as_ref().unwrap());
-                if !secure::check_hash(&request_hash, &request_hash_sig, &msg.pkey) {
+                if let Err(_e) = secure::check_hash(&request_hash, &request_hash_sig, &msg.pkey) {
                     error!(
                         "{}({}:{}): a pre-commit signature is not valid: from={:?}",
                         self.state.name(),

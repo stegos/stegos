@@ -408,9 +408,9 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
                 warn!(
                     "{}({}:{}): invalid request_hash: expected_request_hash={:?}, got_request_hash={:?}, msg={:?}",
                     self.state.name(),
-                    self.height,
+                    self.height, self.round,
                     &expected_request_hash,
-                    &msg.request_hash, self.round,
+                    &msg.request_hash,
                     &msg
                 );
                 return Err(ConsensusError::InvalidRequestHash(

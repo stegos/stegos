@@ -70,7 +70,12 @@ impl<'timer> Sandbox<'timer> {
             let cfg = cfg.chain;
             let timestamp = SystemTime::now();
             let nodes_keychains: Vec<_> = (0..num_nodes).map(|_num| KeyChain::new_mem()).collect();
-            let genesis = stegos_blockchain::genesis(&nodes_keychains, 1000, 1000000, timestamp);
+            let genesis = stegos_blockchain::genesis(
+                &nodes_keychains,
+                cfg.min_stake_amount,
+                1000 * cfg.min_stake_amount,
+                timestamp,
+            );
 
             let nodes: Vec<NodeSandbox> = (0..num_nodes)
                 .map(|i| NodeSandbox::new(cfg.clone(), nodes_keychains[i].clone(), genesis.clone()))

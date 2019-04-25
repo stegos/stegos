@@ -22,6 +22,7 @@ use crate::config::GeneralConfig;
 // SOFTWARE.
 use crate::consts;
 use crate::generator::Generator;
+use crate::money::{format_money, parse_money};
 use dirs;
 use failure::Error;
 use futures::sync::mpsc::UnboundedReceiver;
@@ -54,11 +55,11 @@ use stegos_wallet::{Wallet, WalletNotification, WalletRequest, WalletResponse};
 
 lazy_static! {
     /// Regex to parse "pay" command.
-    static ref PAY_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<amount>[0-9]{1,19})(\s+(?P<comment>.+))?\s*$").unwrap();
+    static ref PAY_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<amount>[0-9\.]{1,19})(\s+(?P<comment>.+))?\s*$").unwrap();
     /// Regex to parse "msg" command.
     static ref MSG_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<msg>.+)$").unwrap();
     /// Regex to parse "stake/unstake" command.
-    static ref STAKE_COMMAND_RE: Regex = Regex::new(r"\s*(?P<amount>[0-9]{1,19})\s*$").unwrap();
+    static ref STAKE_COMMAND_RE: Regex = Regex::new(r"\s*(?P<amount>[0-9\.]{1,19})\s*$").unwrap();
     /// Regex to parse "publish" command.
     static ref PUBLISH_COMMAND_RE: Regex = Regex::new(r"\s*(?P<topic>[0-9A-Za-z]+)\s+(?P<msg>.*)$").unwrap();
     /// Regex to parse "send" command.
@@ -320,14 +321,25 @@ impl ConsoleService {
                 }
             };
             let amount = caps.name("amount").unwrap().as_str();
-            let amount = amount.parse::<i64>().unwrap(); // check by regex
+            let amount = match parse_money(amount) {
+                Ok(amount) => amount,
+                Err(e) => {
+                    println!("{}", e);
+                    Self::help_pay();
+                    return true;
+                }
+            };
             let comment = if let Some(m) = caps.name("comment") {
                 m.as_str().to_string()
             } else {
                 String::new()
             };
 
-            info!("Sending {} STG to {}", amount, recipient.to_hex());
+            info!(
+                "Sending {} STG to {}",
+                format_money(amount),
+                recipient.to_hex()
+            );
             let request = WalletRequest::Payment {
                 recipient,
                 amount,
@@ -348,12 +360,19 @@ impl ConsoleService {
                 Ok(r) => r,
                 Err(e) => {
                     println!("Invalid wallet public key '{}': {}", recipient, e);
-                    Self::help_pay();
+                    Self::help_spay();
                     return true;
                 }
             };
             let amount = caps.name("amount").unwrap().as_str();
-            let amount = amount.parse::<i64>().unwrap(); // check by regex
+            let amount = match parse_money(amount) {
+                Ok(amount) => amount,
+                Err(e) => {
+                    println!("{}", e);
+                    Self::help_spay();
+                    return true;
+                }
+            };
             let comment = if let Some(m) = caps.name("comment") {
                 m.as_str().to_string()
             } else {
@@ -361,8 +380,8 @@ impl ConsoleService {
             };
 
             info!(
-                "Sending {} STG to {} via ValueShuffle",
-                amount,
+                "Sending {} to {} via ValueShuffle",
+                format_money(amount),
                 recipient.to_hex()
             );
             let request = WalletRequest::SecurePayment {
@@ -410,9 +429,16 @@ impl ConsoleService {
             };
 
             let amount = caps.name("amount").unwrap().as_str();
-            let amount = amount.parse::<i64>().unwrap(); // check by regex
+            let amount = match parse_money(amount) {
+                Ok(amount) => amount,
+                Err(e) => {
+                    println!("{}", e);
+                    Self::help_stake();
+                    return true;
+                }
+            };
 
-            info!("Staking {} STG into escrow", amount);
+            info!("Staking {} STG into escrow", format_money(amount));
             let request = WalletRequest::Stake { amount };
             self.wallet_response = Some(self.wallet.request(request));
         } else if msg == "unstake" {
@@ -429,9 +455,16 @@ impl ConsoleService {
             };
 
             let amount = caps.name("amount").unwrap().as_str();
-            let amount = amount.parse::<i64>().unwrap(); // check by regex
+            let amount = match parse_money(amount) {
+                Ok(amount) => amount,
+                Err(e) => {
+                    println!("{}", e);
+                    Self::help_unstake();
+                    return true;
+                }
+            };
 
-            info!("Unstaking {} STG from escrow", amount);
+            info!("Unstaking {} STG from escrow", format_money(amount));
             let request = WalletRequest::Unstake { amount };
             self.wallet_response = Some(self.wallet.request(request));
         } else if msg.starts_with("generator ") {
@@ -521,7 +554,7 @@ impl ConsoleService {
                 }
             }
             WalletNotification::BalanceChanged { balance } => {
-                info!("Balance is {} STG", balance);
+                info!("Balance is {} STG", format_money(balance));
             }
         }
     }
@@ -535,7 +568,7 @@ impl ConsoleService {
                 // println!("Started value shuffle");
             }
             WalletResponse::BalanceInfo { balance } => {
-                println!("{} STG", balance);
+                println!("{} STG", format_money(balance));
             }
             WalletResponse::KeysInfo {
                 wallet_pkey,

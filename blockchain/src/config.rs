@@ -39,8 +39,8 @@ impl Default for BlockchainConfig {
     fn default() -> Self {
         BlockchainConfig {
             max_slot_count: 1000,
-            min_stake_amount: 1000,
-            bonding_time: Duration::from_secs(15 * 600),
+            min_stake_amount: 1_000_000_000, // 1000 STG
+            bonding_time: Duration::from_secs(15 * 60),
         }
     }
 }

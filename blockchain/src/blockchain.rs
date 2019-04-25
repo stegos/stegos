@@ -1249,7 +1249,12 @@ pub mod tests {
         let keychains = [KeyChain::new_mem()];
         let timestamp = SystemTime::now();
         let cfg: BlockchainConfig = Default::default();
-        let blocks = genesis(&keychains, cfg.min_stake_amount, 1_000_000, timestamp);
+        let blocks = genesis(
+            &keychains,
+            cfg.min_stake_amount,
+            cfg.min_stake_amount,
+            timestamp,
+        );
         assert_eq!(blocks.len(), 2);
         let (block1, block2) = match &blocks[..] {
             [Block::MonetaryBlock(block1), Block::KeyBlock(block2)] => (block1, block2),
@@ -1281,7 +1286,6 @@ pub mod tests {
             let stake = validators_map.get(&keychain.network_pkey).expect("exists");
             assert_eq!(*stake, blockchain.cfg.min_stake_amount);
         }
-        assert_eq!(blockchain.validators(), &validators);
         assert_eq!(blockchain.last_block_hash(), Hash::digest(&block2));
         assert_eq!(
             Hash::digest(&blockchain.last_block().unwrap()),
@@ -1411,7 +1415,12 @@ pub mod tests {
         let keychains = [KeyChain::new_mem()];
         let mut timestamp = SystemTime::now();
         let cfg: BlockchainConfig = Default::default();
-        let genesis = genesis(&keychains, cfg.min_stake_amount, 1_000_000, timestamp);
+        let genesis = genesis(
+            &keychains,
+            cfg.min_stake_amount,
+            10 * cfg.min_stake_amount,
+            timestamp,
+        );
         let temp_prefix: String = thread_rng().sample_iter(&Alphanumeric).take(30).collect();
         let temp_dir = TempDir::new(&temp_prefix).expect("couldn't create temp dir");
         let database = ListDb::new(&temp_dir.path());
@@ -1471,8 +1480,12 @@ pub mod tests {
         let keychains = [KeyChain::new_mem()];
         let mut timestamp = SystemTime::now();
         let cfg: BlockchainConfig = Default::default();
-        let genesis = genesis(&keychains, cfg.min_stake_amount, 1_000_000, timestamp);
-
+        let genesis = genesis(
+            &keychains,
+            cfg.min_stake_amount,
+            10 * cfg.min_stake_amount,
+            timestamp,
+        );
         let temp_prefix: String = thread_rng().sample_iter(&Alphanumeric).take(30).collect();
         let temp_dir = TempDir::new(&temp_prefix).expect("couldn't create temp dir");
         let database = ListDb::new(&temp_dir.path());
@@ -1584,7 +1597,7 @@ pub mod tests {
         let timestamp = SystemTime::now();
         let cfg: BlockchainConfig = Default::default();
         let stake = cfg.min_stake_amount;
-        let blocks = genesis(&keychains, stake, 1_000_000, timestamp);
+        let blocks = genesis(&keychains, stake, 10 * cfg.min_stake_amount, timestamp);
         let mut blockchain = Blockchain::testing(cfg, blocks, timestamp);
         let starting_height = blockchain.height();
         // len of genesis

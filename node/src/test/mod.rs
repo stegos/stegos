@@ -302,10 +302,10 @@ trait Api<'p> {
         self.iter().count()
     }
 
-    /// Take monetary block from leader, rebroadcast to other nodes.
+    /// Take micro block from leader, rebroadcast to other nodes.
     /// Use after block timeout.
     /// This function will poll() every node.
-    fn skip_monetary_block(&mut self) {
+    fn skip_micro_block(&mut self) {
         self.assert_synchronized();
         assert!(
             self.first().node_service.chain.blocks_in_epoch()

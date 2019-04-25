@@ -222,8 +222,8 @@ impl Blockchain {
             debug!("Creating a new blockchain...");
             for block in genesis {
                 match block {
-                    Block::MonetaryBlock(monetary_block) => {
-                        self.push_monetary_block(monetary_block, timestamp)
+                    Block::MicroBlock(micro_block) => {
+                        self.push_micro_block(micro_block, timestamp)
                             .expect("genesis is valid");
                     }
                     Block::KeyBlock(key_block) => {
@@ -271,14 +271,14 @@ impl Blockchain {
             block.base_header().height,
             Hash::digest(&block)
         );
-        // Skip validate_key_block()/validate_monetary_block().
+        // Skip validate_key_block()/validate_micro_block().
         match block {
-            Block::MonetaryBlock(block) => {
+            Block::MicroBlock(block) => {
                 if cfg!(debug_assertions) {
-                    self.validate_monetary_block(&block, timestamp)
-                        .expect("a monetary block from the disk is valid")
+                    self.validate_micro_block(&block, timestamp)
+                        .expect("a micro block from the disk is valid")
                 }
-                let _ = self.register_monetary_block(block, timestamp);
+                let _ = self.register_micro_block(block, timestamp);
             }
             Block::KeyBlock(block) => {
                 if cfg!(debug_assertions) {
@@ -336,14 +336,14 @@ impl Blockchain {
     pub fn output_by_hash(&self, output_hash: &Hash) -> Result<Option<Output>, Error> {
         if let Some(OutputKey { height, path }) = self.output_by_hash.get(output_hash) {
             let block = self.block_by_height(*height)?;
-            if let Block::MonetaryBlock(MonetaryBlock { header: _, body }) = block {
+            if let Block::MicroBlock(MicroBlock { header: _, body }) = block {
                 if let Some(output) = body.outputs.lookup(path) {
                     return Ok(Some(output.as_ref().clone()));
                 } else {
                     return Ok(None);
                 }
             } else {
-                unreachable!(); // Non-monetary block
+                unreachable!(); // Non-micro block
             }
         }
         return Ok(None);
@@ -686,34 +686,34 @@ impl Blockchain {
     // ---------------------------------------------------------------------------------------------
 
     ///
-    /// Add a new monetary block into blockchain.
+    /// Add a new micro block into blockchain.
     ///
-    pub fn push_monetary_block(
+    pub fn push_micro_block(
         &mut self,
-        block: MonetaryBlock,
+        block: MicroBlock,
         timestamp: SystemTime,
     ) -> Result<(Vec<Output>, Vec<Output>), Error> {
         //
-        // Validate the monetary block.
+        // Validate the micro block.
         //
-        self.validate_monetary_block(&block, timestamp)?;
+        self.validate_micro_block(&block, timestamp)?;
 
         //
-        // Write the monetary block to the disk.
+        // Write the micro block to the disk.
         //
         self.database
-            .insert(self.height, Block::MonetaryBlock(block.clone()))?;
+            .insert(self.height, Block::MicroBlock(block.clone()))?;
 
         //
         // Update in-memory indexes and metadata.
         //
-        let (inputs, outputs) = self.register_monetary_block(block, timestamp)?;
+        let (inputs, outputs) = self.register_micro_block(block, timestamp)?;
 
         Ok((inputs, outputs))
     }
 
     ///
-    /// Validate sealed monetary block.
+    /// Validate sealed micro block.
     ///
     /// # Arguments
     ///
@@ -723,15 +723,15 @@ impl Blockchain {
     /// * `timestamp` - current time.
     ///                         Used to validating escrow.
     ///
-    pub fn validate_monetary_block(
+    pub fn validate_micro_block(
         &self,
-        block: &MonetaryBlock,
+        block: &MicroBlock,
         timestamp: SystemTime,
     ) -> Result<(), Error> {
         let height = block.header.base.height;
         let block_hash = Hash::digest(&block);
         debug!(
-            "Validating a monetary block: height={}, block={}",
+            "Validating a micro block: height={}, block={}",
             height, &block_hash
         );
 
@@ -775,7 +775,7 @@ impl Blockchain {
             let leader = match block.header.base.view_change.cmp(&self.view_change) {
                 Ordering::Equal => self.leader(),
                 Ordering::Greater => {
-                    let chain = ChainInfo::from_monetary_block(&block);
+                    let chain = ChainInfo::from_micro_block(&block);
                     match block.header.proof {
                         Some(ref proof) => {
                             if let Err(e) = proof.validate(&chain, &self) {
@@ -958,16 +958,16 @@ impl Blockchain {
         }
 
         debug!(
-            "The monetary block is valid: height={}, block={}",
+            "The micro block is valid: height={}, block={}",
             height, &block_hash
         );
         Ok(())
     }
 
     //
-    fn register_monetary_block(
+    fn register_micro_block(
         &mut self,
-        mut block: MonetaryBlock,
+        mut block: MicroBlock,
         timestamp: SystemTime,
     ) -> Result<(Vec<Output>, Vec<Output>), Error> {
         let version = self.height + 1;
@@ -1004,7 +1004,7 @@ impl Blockchain {
                 assert_eq!(self.output_by_hash.current_version(), version);
                 let block = self.block_by_height(height)?;
                 let block_hash = Hash::digest(&block);
-                if let Block::MonetaryBlock(MonetaryBlock { header: _, body }) = block {
+                if let Block::MicroBlock(MicroBlock { header: _, body }) = block {
                     // Remove from the block.
                     match body.outputs.lookup(&path) {
                         Some(o) => {
@@ -1141,7 +1141,7 @@ impl Blockchain {
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
 
         info!(
-            "Registered a monetary block: height={}, block={}, inputs={}, outputs={}",
+            "Registered a micro block: height={}, block={}, inputs={}, outputs={}",
             height,
             block_hash,
             inputs.len(),
@@ -1151,7 +1151,7 @@ impl Blockchain {
         Ok((inputs, outputs))
     }
 
-    pub fn pop_monetary_block(&mut self) -> Result<(Vec<Output>, Vec<Output>), Error> {
+    pub fn pop_micro_block(&mut self) -> Result<(Vec<Output>, Vec<Output>), Error> {
         assert!(self.height > 1);
         let height = self.height - 1;
         assert_ne!(
@@ -1164,10 +1164,10 @@ impl Blockchain {
         // Remove from the disk.
         //
         let block = self.block_by_height(height)?;
-        let block = if let Block::MonetaryBlock(block) = block {
+        let block = if let Block::MicroBlock(block) = block {
             block
         } else {
-            panic!("Expected monetary block");
+            panic!("Expected micro block");
         };
         let previous = self.block_by_height(height - 1)?;
         self.database.remove(height)?;
@@ -1190,7 +1190,7 @@ impl Blockchain {
         self.last_block_hash = Hash::digest(&previous);
         self.view_change = match previous {
             Block::KeyBlock(ref _previous) => 0,
-            Block::MonetaryBlock(ref previous) => previous.header.base.view_change + 1,
+            Block::MicroBlock(ref previous) => previous.header.base.view_change + 1,
         };
         metrics::HEIGHT.set(self.height as i64);
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
@@ -1216,7 +1216,7 @@ impl Blockchain {
         }
 
         info!(
-            "Reverted a monetary block: height={}, block={}, inputs={}, outputs={}",
+            "Reverted a micro block: height={}, block={}, inputs={}, outputs={}",
             self.height,
             Hash::digest(&block),
             created.len(),
@@ -1257,7 +1257,7 @@ pub mod tests {
         );
         assert_eq!(blocks.len(), 2);
         let (block1, block2) = match &blocks[..] {
-            [Block::MonetaryBlock(block1), Block::KeyBlock(block2)] => (block1, block2),
+            [Block::MicroBlock(block1), Block::KeyBlock(block2)] => (block1, block2),
             _ => panic!(),
         };
         let blockchain = Blockchain::testing(cfg, blocks.clone(), timestamp);
@@ -1326,12 +1326,12 @@ pub mod tests {
         }
     }
 
-    fn create_monetary_block(
+    fn create_micro_block(
         chain: &mut Blockchain,
         keys: &KeyChain,
         timestamp: SystemTime,
         view_change: u32,
-    ) -> (MonetaryBlock, Vec<Hash>, Vec<Hash>) {
+    ) -> (MicroBlock, Vec<Hash>, Vec<Hash>) {
         let mut input_hashes: Vec<Hash> = Vec::new();
         let mut gamma: Fr = Fr::zero();
         let mut amount: i64 = 0;
@@ -1383,18 +1383,18 @@ pub mod tests {
         let previous = chain.last_block_hash().clone();
         let height = chain.height();
         let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
-        let mut block = MonetaryBlock::new(base, gamma, 0, &input_hashes, &outputs, None);
+        let mut block = MicroBlock::new(base, gamma, 0, &input_hashes, &outputs, None);
         let block_hash = Hash::digest(&block);
         block.body.sig = secure::sign_hash(&block_hash, &keys.network_skey);
         (block, input_hashes, output_hashes)
     }
 
-    fn create_empty_monetary_block(
+    fn create_empty_micro_block(
         chain: &mut Blockchain,
         keys: &KeyChain,
         timestamp: SystemTime,
         view_change: u32,
-    ) -> MonetaryBlock {
+    ) -> MicroBlock {
         let input_hashes: Vec<Hash> = Vec::new();
         let outputs: Vec<Output> = Vec::new();
         let gamma = Fr::zero();
@@ -1402,7 +1402,7 @@ pub mod tests {
         let previous = chain.last_block_hash().clone();
         let height = chain.height();
         let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
-        let mut block = MonetaryBlock::new(base, gamma, 0, &input_hashes, &outputs, None);
+        let mut block = MicroBlock::new(base, gamma, 0, &input_hashes, &outputs, None);
         let block_hash = Hash::digest(&block);
         block.body.sig = secure::sign_hash(&block_hash, &keys.network_skey);
         block
@@ -1432,10 +1432,10 @@ pub mod tests {
             let block_hash = if i % 2 == 0 {
                 // Non-empty block.
                 let (block, input_hashes, output_hashes) =
-                    create_monetary_block(&mut chain, &keychains[0], timestamp, i - 1);
+                    create_micro_block(&mut chain, &keychains[0], timestamp, i - 1);
                 let block_hash = Hash::digest(&block);
                 chain
-                    .push_monetary_block(block, timestamp)
+                    .push_micro_block(block, timestamp)
                     .expect("block is valid");
                 for input_hash in input_hashes {
                     assert!(!chain.contains_output(&input_hash));
@@ -1446,11 +1446,10 @@ pub mod tests {
                 block_hash
             } else {
                 // Empty block.
-                let block =
-                    create_empty_monetary_block(&mut chain, &keychains[0], timestamp, i - 1);
+                let block = create_empty_micro_block(&mut chain, &keychains[0], timestamp, i - 1);
                 let block_hash = Hash::digest(&block);
                 chain
-                    .push_monetary_block(block, timestamp)
+                    .push_micro_block(block, timestamp)
                     .expect("block is valid");
                 block_hash
             };
@@ -1497,12 +1496,12 @@ pub mod tests {
         let balance0 = chain.balance().clone();
         let escrow0 = chain.escrow().info().clone();
 
-        // Register a monetary block.
+        // Register a micro block.
         timestamp += chain.cfg.bonding_time + Duration::from_millis(1);
         let (block1, input_hashes1, output_hashes1) =
-            create_monetary_block(&mut chain, &keychains[0], timestamp, view_change0);
+            create_micro_block(&mut chain, &keychains[0], timestamp, view_change0);
         chain
-            .push_monetary_block(block1, timestamp)
+            .push_micro_block(block1, timestamp)
             .expect("block is valid");
         assert_eq!(height0 + 1, chain.height());
         assert_eq!(view_change0 + 1, chain.view_change());
@@ -1522,12 +1521,12 @@ pub mod tests {
         let balance1 = chain.balance().clone();
         let escrow1 = chain.escrow().info().clone();
 
-        // Register one more monetary block.
+        // Register one more micro block.
         timestamp += chain.cfg.bonding_time + Duration::from_millis(1);;
         let (block2, input_hashes2, output_hashes2) =
-            create_monetary_block(&mut chain, &keychains[0], timestamp, view_change1);
+            create_micro_block(&mut chain, &keychains[0], timestamp, view_change1);
         chain
-            .push_monetary_block(block2, timestamp)
+            .push_micro_block(block2, timestamp)
             .expect("block is valid");
         assert_eq!(height1 + 1, chain.height());
         assert_eq!(view_change1 + 1, chain.view_change());
@@ -1542,8 +1541,8 @@ pub mod tests {
             assert!(chain.contains_output(output_hash));
         }
 
-        // Pop the last monetary block.
-        chain.pop_monetary_block().expect("no disk errors");
+        // Pop the last micro block.
+        chain.pop_micro_block().expect("no disk errors");
         assert_eq!(height1, chain.height());
         assert_eq!(view_change1, chain.view_change());
         assert_eq!(block_hash1, chain.last_block_hash());
@@ -1557,8 +1556,8 @@ pub mod tests {
             assert!(!chain.contains_output(output_hash));
         }
 
-        // Pop the previous monetary block.
-        chain.pop_monetary_block().expect("no disk errors");
+        // Pop the previous micro block.
+        chain.pop_micro_block().expect("no disk errors");
         assert_eq!(height0, chain.height());
         assert_eq!(view_change0, chain.view_change());
         assert_eq!(block_hash0, chain.last_block_hash());

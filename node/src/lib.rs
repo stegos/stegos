@@ -447,7 +447,7 @@ impl NodeService {
     }
 
     ///
-    /// Resolve a fork using a duplicate monetary block from the current epoch.
+    /// Resolve a fork using a duplicate micro block from the current epoch.
     ///
     fn resolve_fork(&mut self, remote: Block) -> Result<(), Error> {
         let height = remote.base_header().height;
@@ -457,9 +457,9 @@ impl NodeService {
 
         let remote_hash = Hash::digest(&remote);
         let remote = match remote {
-            Block::MonetaryBlock(remote) => remote,
+            Block::MicroBlock(remote) => remote,
             _ => {
-                return Err(NodeBlockError::ExpectedMonetaryBlock(height, remote_hash).into());
+                return Err(NodeBlockError::ExpectedMicroBlock(height, remote_hash).into());
             }
         };
 
@@ -474,9 +474,9 @@ impl NodeService {
         let local = self.chain.block_by_height(height)?;
         let local_hash = Hash::digest(&local);
         let local = match local {
-            Block::MonetaryBlock(local) => local,
+            Block::MicroBlock(local) => local,
             _ => {
-                let e = NodeBlockError::ExpectedMonetaryBlock(height, local_hash);
+                let e = NodeBlockError::ExpectedMicroBlock(height, local_hash);
                 panic!("{}", e);
             }
         };
@@ -558,7 +558,7 @@ impl NodeService {
 
         // Check the proof.
         assert_eq!(remote.header.base.previous, previous_hash);
-        let chain = ChainInfo::from_monetary_block(&remote);
+        let chain = ChainInfo::from_micro_block(&remote);
         match remote.header.proof {
             Some(ref proof) => {
                 if let Err(e) = proof.validate(&chain, &self.chain) {
@@ -598,7 +598,7 @@ impl NodeService {
 
         // Truncate the blockchain.
         while self.chain.height() > height {
-            let (inputs, outputs) = self.chain.pop_monetary_block()?;
+            let (inputs, outputs) = self.chain.pop_micro_block()?;
             let msg = OutputsChanged { inputs, outputs };
             self.on_outputs_changed
                 .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
@@ -606,7 +606,7 @@ impl NodeService {
         assert_eq!(height, self.chain.height());
 
         // Apply the block from this fork.
-        self.apply_new_block(Block::MonetaryBlock(remote))?;
+        self.apply_new_block(Block::MicroBlock(remote))?;
         if let Some((min_orphan_height, _block)) = self.future_blocks.iter().next() {
             assert!(
                 *min_orphan_height > self.chain.height(),
@@ -676,7 +676,7 @@ impl NodeService {
                 )
                 .map_err(|e| BlockError::InvalidBlockSignature(e, block_height, block_hash))?;
             }
-            Block::MonetaryBlock(ref block) => {
+            Block::MicroBlock(ref block) => {
                 if let Err(_e) = secure::check_hash(&block_hash, &block.body.sig, &leader) {
                     return Err(BlockError::InvalidLeaderSignature(block_height, block_hash).into());
                 }
@@ -740,7 +740,7 @@ impl NodeService {
                 // Check for the correct block order.
                 if self.chain.blocks_in_epoch() < self.cfg.blocks_in_epoch {
                     return Err(
-                        NodeBlockError::ExpectedMonetaryBlock(self.chain.height(), hash).into(),
+                        NodeBlockError::ExpectedMicroBlock(self.chain.height(), hash).into(),
                     );
                 }
 
@@ -771,7 +771,7 @@ impl NodeService {
 
                 self.on_new_epoch();
             }
-            Block::MonetaryBlock(monetary_block) => {
+            Block::MicroBlock(micro_block) => {
                 // Check for the correct block order.
                 if self.chain.blocks_in_epoch() >= self.cfg.blocks_in_epoch {
                     return Err(NodeBlockError::ExpectedKeyBlock(self.chain.height(), hash).into());
@@ -783,20 +783,19 @@ impl NodeService {
 
                 // Check monetary adjustment.
                 if self.chain.epoch() > 0
-                    && monetary_block.header.monetary_adjustment != self.cfg.block_reward
+                    && micro_block.header.monetary_adjustment != self.cfg.block_reward
                 {
                     // TODO: support slashing.
                     return Err(NodeBlockError::InvalidMonetaryAdjustment(
                         height,
                         hash,
-                        monetary_block.header.monetary_adjustment,
+                        micro_block.header.monetary_adjustment,
                         self.cfg.block_reward,
                     )
                     .into());
                 }
 
-                let (inputs, outputs) =
-                    self.chain.push_monetary_block(monetary_block, timestamp)?;
+                let (inputs, outputs) = self.chain.push_micro_block(micro_block, timestamp)?;
 
                 // Remove old transactions from the mempool.
                 let input_hashes: Vec<Hash> = inputs.iter().map(|o| Hash::digest(o)).collect();
@@ -881,7 +880,7 @@ impl NodeService {
     fn handle_pop_block(&mut self) -> Result<(), Error> {
         warn!("Received a request to revert the latest block");
         if self.chain.blocks_in_epoch() > 1 {
-            self.chain.pop_monetary_block()?;
+            self.chain.pop_micro_block()?;
             self.recover_consensus_state()?
         } else {
             error!(
@@ -1024,7 +1023,7 @@ impl NodeService {
         // Recover consensus status.
         if self.chain.blocks_in_epoch() < self.cfg.blocks_in_epoch {
             debug!(
-                "The next block is a monetary block: height={}, last_block={}",
+                "The next block is a micro block: height={}, last_block={}",
                 self.chain.height(),
                 self.chain.last_block_hash()
             );
@@ -1113,7 +1112,7 @@ impl NodeService {
         // Check that a new payment block should be created.
         if self.consensus.is_none() && elapsed >= self.cfg.tx_wait_timeout && self.is_leader() {
             assert!(self.chain.blocks_in_epoch() < self.cfg.blocks_in_epoch);
-            self.create_monetary_block(None)?;
+            self.create_micro_block(None)?;
         }
 
         Ok(())
@@ -1200,26 +1199,26 @@ impl NodeService {
             //TODO: save proof if you are not leader.
             if self.is_leader() {
                 debug!(
-                    "We are leader, producing new monetary block: height={}, last_block={}",
+                    "We are leader, producing new micro block: height={}, last_block={}",
                     self.chain.height(),
                     self.chain.last_block_hash()
                 );
-                self.create_monetary_block(Some(proof))?;
+                self.create_micro_block(Some(proof))?;
             };
         }
         Ok(())
     }
 
-    /// Checks if it's time to perform a view change on a monetary block.
+    /// Checks if it's time to perform a view change on a micro block.
     fn handle_micro_block_viewchange_timer(&mut self) -> Result<(), Error> {
-        // Check status of the monetary block.
+        // Check status of the micro block.
         let elapsed: Duration = clock::now().duration_since(self.last_block_clock);
         if self.consensus.is_some() || elapsed < self.cfg.micro_block_timeout {
             return Ok(());
         }
 
         warn!(
-            "Timed out while waiting for a monetary block: height={}, elapsed={:?}",
+            "Timed out while waiting for a micro block: height={}, elapsed={:?}",
             self.chain.height(),
             elapsed
         );
@@ -1244,9 +1243,9 @@ impl NodeService {
     }
 
     ///
-    /// Create a new monetary block.
+    /// Create a new micro block.
     ///
-    fn create_monetary_block(&mut self, proof: Option<ViewChangeProof>) -> Result<(), Error> {
+    fn create_micro_block(&mut self, proof: Option<ViewChangeProof>) -> Result<(), Error> {
         assert!(self.consensus.is_none());
         assert!(self.is_leader());
         assert!(self.chain.blocks_in_epoch() < self.cfg.blocks_in_epoch);
@@ -1254,11 +1253,11 @@ impl NodeService {
         let height = self.chain.height();
         let previous = self.chain.last_block_hash();
         info!(
-            "I'm leader, proposing a new monetary block: height={}, last_block={}",
+            "I'm leader, proposing a new micro block: height={}, last_block={}",
             height, previous
         );
 
-        // Create a new monetary block from the mempool.
+        // Create a new micro block from the mempool.
         let (mut block, _fee_output, _tx_hashes) = self.mempool.create_block(
             previous,
             VERSION,
@@ -1273,7 +1272,7 @@ impl NodeService {
         block.body.sig = secure::sign_hash(&block_hash, &self.keys.network_skey);
 
         info!(
-            "Created a monetary block: height={}, block={}, inputs={}, outputs={}",
+            "Created a micro block: height={}, block={}, inputs={}, outputs={}",
             height,
             &block_hash,
             block.body.inputs.len(),
@@ -1282,9 +1281,9 @@ impl NodeService {
 
         // TODO: swap send_sealed_block() and apply_new_block() order after removing VRF.
         let block2 = block.clone();
-        self.send_sealed_block(Block::MonetaryBlock(block2))
-            .expect("failed to send sealed monetary block");
-        self.apply_new_block(Block::MonetaryBlock(block))?;
+        self.send_sealed_block(Block::MicroBlock(block2))
+            .expect("failed to send sealed micro block");
+        self.apply_new_block(Block::MicroBlock(block))?;
 
         Ok(())
     }
@@ -1305,7 +1304,7 @@ impl NodeService {
         self.apply_new_block(Block::KeyBlock(key_block))
             .expect("block is validated before");
         self.send_sealed_block(Block::KeyBlock(key_block2))
-            .expect("failed to send sealed monetary block");
+            .expect("failed to send sealed micro block");
     }
 
     /// poll internal intervals.

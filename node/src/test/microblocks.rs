@@ -81,7 +81,7 @@ fn dead_leader() {
             info!("processing validator = {:?}", node.validator_id());
             if node.node_service.chain.select_leader(1) == node.node_service.keys.network_pkey {
                 let _: Block = node.network_service.get_broadcast(SEALED_BLOCK_TOPIC);
-                // If node was leader, they have produced monetary block,
+                // If node was leader, they have produced micro block,
                 assert_eq!(node.node_service.chain.view_change(), 2);
             } else {
                 assert_eq!(node.node_service.chain.view_change(), 1);
@@ -138,7 +138,7 @@ fn silent_view_change() {
                 break;
             }
             s.wait(s.cfg().tx_wait_timeout);
-            s.skip_monetary_block();
+            s.skip_micro_block();
             starting_view_changes += 1;
         }
         let leader_pk = s.nodes[0].node_service.chain.leader();
@@ -263,7 +263,7 @@ fn double_view_change() {
                 break;
             }
             s.wait(s.cfg().tx_wait_timeout);
-            s.skip_monetary_block();
+            s.skip_micro_block();
             starting_view_changes += 1;
         }
         assert!(starting_view_changes < s.cfg().blocks_in_epoch as u32 - 2);
@@ -398,7 +398,7 @@ fn resolve_fork_for_view_change() {
                 break;
             }
             s.wait(s.cfg().tx_wait_timeout);
-            s.skip_monetary_block();
+            s.skip_micro_block();
             starting_view_changes += 1;
         }
         let leader_pk = s.nodes[0].node_service.chain.leader();
@@ -496,7 +496,7 @@ fn out_of_order_keyblock_proposal() {
         }
 
         s.wait(s.cfg().tx_wait_timeout);
-        // Process N monetary blocks.
+        // Process N micro blocks.
         let height = s.nodes[0].node_service.chain.height();
 
         let round = s.nodes[0].node_service.chain.view_change();
@@ -553,7 +553,7 @@ fn out_of_order_keyblock_proposal() {
 }
 
 #[test]
-fn monetary_block_without_signature() {
+fn micro_block_without_signature() {
     let config = SandboxConfig {
         num_nodes: 3,
         ..Default::default()
@@ -579,9 +579,9 @@ fn monetary_block_without_signature() {
 
         let gamma: Fr = Fr::zero();
         let base = BaseBlockHeader::new(version, last_block_hash, height, round + 1, timestamp);
-        let block = MonetaryBlock::new(base, gamma, 0, &[], &[], None);
+        let block = MicroBlock::new(base, gamma, 0, &[], &[], None);
 
-        let block: Block = Block::MonetaryBlock(block);
+        let block: Block = Block::MicroBlock(block);
 
         let mut r = s.split(&[leader_pk]);
         // broadcast block to other nodes.

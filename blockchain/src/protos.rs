@@ -319,10 +319,10 @@ impl ProtoConvert for SerializedNode<Box<Output>> {
     }
 }
 
-impl ProtoConvert for MonetaryBlockHeader {
-    type Proto = blockchain::MonetaryBlockHeader;
+impl ProtoConvert for MicroBlockHeader {
+    type Proto = blockchain::MicroBlockHeader;
     fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::MonetaryBlockHeader::new();
+        let mut proto = blockchain::MicroBlockHeader::new();
         proto.set_base(self.base.into_proto());
         proto.set_gamma(self.gamma.into_proto());
         proto.set_monetary_adjustment(self.monetary_adjustment);
@@ -346,7 +346,7 @@ impl ProtoConvert for MonetaryBlockHeader {
         } else {
             None
         };
-        Ok(MonetaryBlockHeader {
+        Ok(MicroBlockHeader {
             proof,
             base,
             gamma,
@@ -357,10 +357,10 @@ impl ProtoConvert for MonetaryBlockHeader {
     }
 }
 
-impl ProtoConvert for MonetaryBlockBody {
-    type Proto = blockchain::MonetaryBlockBody;
+impl ProtoConvert for MicroBlockBody {
+    type Proto = blockchain::MicroBlockBody;
     fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::MonetaryBlockBody::new();
+        let mut proto = blockchain::MicroBlockBody::new();
         if !self.sig.is_zero() {
             proto.set_sig(self.sig.into_proto());
         }
@@ -390,7 +390,7 @@ impl ProtoConvert for MonetaryBlockBody {
         }
         let outputs = Merkle::deserialize(&outputs)?;
 
-        Ok(MonetaryBlockBody {
+        Ok(MicroBlockBody {
             sig,
             inputs,
             outputs,
@@ -398,19 +398,19 @@ impl ProtoConvert for MonetaryBlockBody {
     }
 }
 
-impl ProtoConvert for MonetaryBlock {
-    type Proto = blockchain::MonetaryBlock;
+impl ProtoConvert for MicroBlock {
+    type Proto = blockchain::MicroBlock;
     fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::MonetaryBlock::new();
+        let mut proto = blockchain::MicroBlock::new();
         proto.set_header(self.header.into_proto());
         proto.set_body(self.body.into_proto());
         proto
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let header = MonetaryBlockHeader::from_proto(proto.get_header())?;
-        let body = MonetaryBlockBody::from_proto(proto.get_body())?;
-        Ok(MonetaryBlock { header, body })
+        let header = MicroBlockHeader::from_proto(proto.get_header())?;
+        let body = MicroBlockBody::from_proto(proto.get_body())?;
+        Ok(MicroBlock { header, body })
     }
 }
 
@@ -420,9 +420,7 @@ impl ProtoConvert for Block {
         let mut proto = blockchain::Block::new();
         match self {
             Block::KeyBlock(key_block) => proto.set_key_block(key_block.into_proto()),
-            Block::MonetaryBlock(monetary_block) => {
-                proto.set_monetary_block(monetary_block.into_proto())
-            }
+            Block::MicroBlock(micro_block) => proto.set_micro_block(micro_block.into_proto()),
         }
         proto
     }
@@ -433,9 +431,9 @@ impl ProtoConvert for Block {
                 let key_block = KeyBlock::from_proto(key_block)?;
                 Block::KeyBlock(key_block)
             }
-            Some(blockchain::Block_oneof_block::monetary_block(ref monetary_block)) => {
-                let monetary_block = MonetaryBlock::from_proto(monetary_block)?;
-                Block::MonetaryBlock(monetary_block)
+            Some(blockchain::Block_oneof_block::micro_block(ref micro_block)) => {
+                let micro_block = MicroBlock::from_proto(micro_block)?;
+                Block::MicroBlock(micro_block)
             }
             None => {
                 return Err(
@@ -626,7 +624,7 @@ mod tests {
         roundtrip(&block);
     }
 
-    impl Hashable for MonetaryBlockBody {
+    impl Hashable for MicroBlockBody {
         fn hash(&self, state: &mut Hasher) {
             "Monetary".hash(state);
             self.sig.hash(state);
@@ -640,7 +638,7 @@ mod tests {
     }
 
     #[test]
-    fn monetary_blocks() {
+    fn micro_blocks() {
         let (skey0, _pkey0) = make_random_keys();
         let (skey1, pkey1) = make_random_keys();
         let (_skey2, pkey2) = make_random_keys();
@@ -664,12 +662,12 @@ mod tests {
         let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
         roundtrip(&base);
 
-        let block = MonetaryBlock::new(base, gamma.clone(), 0, &inputs1, &outputs1, None);
+        let block = MicroBlock::new(base, gamma.clone(), 0, &inputs1, &outputs1, None);
         roundtrip(&block.header);
         roundtrip(&block.body);
         roundtrip(&block);
 
-        let block = Block::MonetaryBlock(block);
+        let block = Block::MicroBlock(block);
         roundtrip(&block);
     }
 }

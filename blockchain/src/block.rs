@@ -127,7 +127,7 @@ impl Eq for KeyBlockBody {}
 
 /// Monetary Block Header.
 #[derive(Debug, Clone)]
-pub struct MonetaryBlockHeader {
+pub struct MicroBlockHeader {
     /// Common header.
     pub base: BaseBlockHeader,
 
@@ -150,7 +150,7 @@ pub struct MonetaryBlockHeader {
     pub proof: Option<ViewChangeProof>,
 }
 
-impl Hashable for MonetaryBlockHeader {
+impl Hashable for MicroBlockHeader {
     fn hash(&self, state: &mut Hasher) {
         "Monetary".hash(state);
         self.base.hash(state);
@@ -166,7 +166,7 @@ impl Hashable for MonetaryBlockHeader {
 
 /// Monetary Block.
 #[derive(Debug, Clone)]
-pub struct MonetaryBlockBody {
+pub struct MicroBlockBody {
     /// BLS signature.
     pub sig: secure::Signature,
 
@@ -177,14 +177,14 @@ pub struct MonetaryBlockBody {
     pub outputs: Merkle<Box<Output>>,
 }
 
-impl PartialEq for MonetaryBlockBody {
-    fn eq(&self, _other: &MonetaryBlockBody) -> bool {
+impl PartialEq for MicroBlockBody {
+    fn eq(&self, _other: &MicroBlockBody) -> bool {
         // Required by enum Block.
         unreachable!();
     }
 }
 
-impl Eq for MonetaryBlockBody {}
+impl Eq for MicroBlockBody {}
 
 /// Carries all cryptocurrency transactions.
 #[derive(Debug, Clone)]
@@ -235,14 +235,14 @@ impl Eq for KeyBlock {}
 
 /// Carries administrative information to blockchain participants.
 #[derive(Debug, Clone)]
-pub struct MonetaryBlock {
+pub struct MicroBlock {
     /// Header.
-    pub header: MonetaryBlockHeader,
+    pub header: MicroBlockHeader,
     /// Body
-    pub body: MonetaryBlockBody,
+    pub body: MicroBlockBody,
 }
 
-impl MonetaryBlock {
+impl MicroBlock {
     pub fn new(
         base: BaseBlockHeader,
         gamma: Fr,
@@ -250,7 +250,7 @@ impl MonetaryBlock {
         inputs: &[Hash],
         outputs: &[Output],
         proof: Option<ViewChangeProof>,
-    ) -> MonetaryBlock {
+    ) -> MicroBlock {
         // Re-order all inputs to blur transaction boundaries.
         // Current algorithm just sorts this list.
         // Since Hash is random, it has the same effect as shuffling.
@@ -287,7 +287,7 @@ impl MonetaryBlock {
         let outputs_range_hash = outputs.roothash().clone();
 
         // Create header
-        let header = MonetaryBlockHeader {
+        let header = MicroBlockHeader {
             proof,
             base,
             gamma,
@@ -298,21 +298,21 @@ impl MonetaryBlock {
 
         // Create body
         let sig = secure::Signature::zero();
-        let body = MonetaryBlockBody {
+        let body = MicroBlockBody {
             sig,
             inputs,
             outputs,
         };
 
         // Create the block.
-        let block = MonetaryBlock { header, body };
+        let block = MicroBlock { header, body };
         block
     }
 
     ///
     /// Validate the block monetary balance.
     ///
-    /// This function is a lightweight version of Blockchain.validate_monetary_block().
+    /// This function is a lightweight version of Blockchain.validate_micro_block().
     /// The only monetary balance is validated. For test purposes only.
     ///
     /// # Arguments
@@ -373,7 +373,7 @@ impl MonetaryBlock {
     }
 }
 
-impl Hashable for MonetaryBlock {
+impl Hashable for MicroBlock {
     fn hash(&self, state: &mut Hasher) {
         self.header.hash(state)
     }
@@ -383,14 +383,14 @@ impl Hashable for MonetaryBlock {
 #[derive(Clone, Debug)]
 pub enum Block {
     KeyBlock(KeyBlock),
-    MonetaryBlock(MonetaryBlock),
+    MicroBlock(MicroBlock),
 }
 
 impl Block {
     pub fn base_header(&self) -> &BaseBlockHeader {
         match self {
             Block::KeyBlock(KeyBlock { header, .. }) => &header.base,
-            Block::MonetaryBlock(MonetaryBlock { header, .. }) => &header.base,
+            Block::MicroBlock(MicroBlock { header, .. }) => &header.base,
         }
     }
 }
@@ -399,7 +399,7 @@ impl Hashable for Block {
     fn hash(&self, state: &mut Hasher) {
         match self {
             Block::KeyBlock(key_block) => key_block.hash(state),
-            Block::MonetaryBlock(monetary_block) => monetary_block.hash(state),
+            Block::MicroBlock(micro_block) => micro_block.hash(state),
         }
     }
 }
@@ -412,7 +412,7 @@ pub mod tests {
     use stegos_crypto::pbc::secure::make_random_keys as make_secure_random_keys;
 
     #[test]
-    fn create_validate_monetary_block() {
+    fn create_validate_micro_block() {
         let (skey0, _pkey0) = make_random_keys();
         let (skey1, pkey1) = make_random_keys();
         let (_skey2, pkey2) = make_random_keys();
@@ -434,7 +434,7 @@ pub mod tests {
             let (output1, gamma1) = Output::new_payment(timestamp, &skey1, &pkey2, amount).unwrap();
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
-            let block = MonetaryBlock::new(base, gamma, 0, &inputs1, &outputs1, None);
+            let block = MicroBlock::new(base, gamma, 0, &inputs1, &outputs1, None);
             block.validate_balance(&[output0]).expect("block is valid");
         }
 
@@ -449,7 +449,7 @@ pub mod tests {
                 Output::new_payment(timestamp, &skey1, &pkey2, amount - 1).unwrap();
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
-            let block = MonetaryBlock::new(base, gamma, 0, &inputs1, &outputs1, None);
+            let block = MicroBlock::new(base, gamma, 0, &inputs1, &outputs1, None);
             match block.validate_balance(&[output0]) {
                 Err(e) => match e.downcast::<BlockError>().unwrap() {
                     BlockError::InvalidBlockBalance(_height, _hash) => {}
@@ -461,7 +461,7 @@ pub mod tests {
     }
 
     #[test]
-    fn validate_pruned_monetary_block() {
+    fn validate_pruned_micro_block() {
         let (skey, pkey) = make_random_keys();
 
         let version: u64 = 1;
@@ -478,7 +478,7 @@ pub mod tests {
         let (output, gamma1) = Output::new_payment(timestamp, &skey, &pkey, amount).unwrap();
         let outputs = [output];
         let gamma = gamma0 - gamma1;
-        let block = MonetaryBlock::new(base, gamma, 0, &input_hashes, &outputs, None);
+        let block = MicroBlock::new(base, gamma, 0, &input_hashes, &outputs, None);
         block.validate_balance(&inputs).expect("block is valid");
 
         {
@@ -497,7 +497,7 @@ pub mod tests {
     }
 
     #[test]
-    fn create_validate_monetary_block_with_escrow() {
+    fn create_validate_micro_block_with_escrow() {
         let (skey0, _pkey0) = make_random_keys();
         let (skey1, pkey1) = make_random_keys();
         let (secure_skey1, secure_pkey1) = make_secure_random_keys();
@@ -531,7 +531,7 @@ pub mod tests {
             let gamma = inputs_gamma - outputs_gamma;
 
             let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
-            let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None);
+            let block = MicroBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None);
             block.validate_balance(&inputs).expect("block is valid");
         }
 
@@ -557,7 +557,7 @@ pub mod tests {
             let gamma = inputs_gamma - outputs_gamma;
 
             let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
-            let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None);
+            let block = MicroBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None);
             block.validate_balance(&inputs).expect("block is valid");
         }
 
@@ -585,7 +585,7 @@ pub mod tests {
             let gamma = inputs_gamma - outputs_gamma;
 
             let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
-            let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None);
+            let block = MicroBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None);
             match block.validate_balance(&inputs) {
                 Err(e) => match e.downcast::<BlockError>().unwrap() {
                     BlockError::InvalidBlockBalance(_height, _hash) => {}
@@ -619,7 +619,7 @@ pub mod tests {
             let gamma = inputs_gamma - outputs_gamma;
 
             let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
-            let block = MonetaryBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None);
+            let block = MicroBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None);
             match block.validate_balance(&inputs) {
                 Err(e) => match e.downcast::<OutputError>().unwrap() {
                     OutputError::InvalidStake(_output_hash) => {}
@@ -650,7 +650,7 @@ pub mod tests {
             Output::new_payment(timestamp, &skey, &pkey, output_amount).unwrap();
         let outputs = [output];
         let gamma = input_gamma - output_gamma;
-        let block = MonetaryBlock::new(
+        let block = MicroBlock::new(
             base,
             gamma,
             monetary_adjustment,

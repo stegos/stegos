@@ -98,7 +98,7 @@ fn main() {
             }
         }
     } else {
-        1_000_000_000i64
+        1_000_000_000_000_000i64
     };
 
     let stake = if let Some(stake) = args.value_of("stake") {

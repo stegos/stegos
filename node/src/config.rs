@@ -23,6 +23,7 @@
 
 use serde_derive::{Deserialize, Serialize};
 use std::time::Duration;
+use stegos_blockchain::BlockchainConfig;
 
 /// Chain configuration.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -60,18 +61,20 @@ impl Default for ChainConfig {
         let micro_block_timeout = Duration::from_secs(30);
         let key_block_timeout = Duration::from_secs(30);
 
+        let blockchain_default: BlockchainConfig = Default::default();
+
         ChainConfig {
             tx_wait_timeout,
             micro_block_timeout,
             key_block_timeout,
-            bonding_time: Duration::from_secs(15 * 60),
+            bonding_time: blockchain_default.bonding_time,
             blocks_in_epoch: 5,
             chain_loader_speed_in_epoch: 10,
-            block_reward: 60,
-            payment_fee: 1,
-            stake_fee: 1,
-            max_slot_count: 1000,
-            min_stake_amount: 1000,
+            block_reward: 60_000_000, // 60 STG
+            payment_fee: 1_000,       // 0.001 STG
+            stake_fee: 1_000,         // 0.001 STG
+            max_slot_count: blockchain_default.max_slot_count,
+            min_stake_amount: blockchain_default.min_stake_amount,
             loader_timeout: Duration::from_millis(500),
         }
     }

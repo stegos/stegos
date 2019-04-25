@@ -31,11 +31,16 @@ pub fn init() {
     let (_outbox, inbox) = unbounded();
     let (_loopback, network) = Loopback::new();
 
+    let cfg: ChainConfig = Default::default();
     let timestamp = SystemTime::now();
-    let genesis = genesis(&[keys.clone()], 1000, 3_000_000, timestamp);
+    let genesis = genesis(
+        &[keys.clone()],
+        cfg.min_stake_amount,
+        1000 * cfg.min_stake_amount,
+        timestamp,
+    );
     let genesis_count = genesis.len() as u64;
-    let node =
-        NodeService::testing(Default::default(), keys.clone(), network, genesis, inbox).unwrap();
+    let node = NodeService::testing(cfg, keys.clone(), network, genesis, inbox).unwrap();
     assert_eq!(node.chain.height(), genesis_count);
     assert_eq!(node.mempool.len(), 0);
     assert_eq!(node.chain.epoch(), 1);
@@ -95,11 +100,11 @@ pub fn monetary_requests() {
     let (_outbox, inbox) = unbounded();
     let (_loopback, network) = Loopback::new();
 
-    let total: i64 = 3_000_000;
-    let stake: i64 = 1000;
+    let cfg: ChainConfig = Default::default();
+    let total: i64 = 1000 * cfg.min_stake_amount;
+    let stake: i64 = cfg.min_stake_amount;
     let timestamp = SystemTime::now();
     let genesis = genesis(&[keys.clone()], stake, total, timestamp);
-    let cfg: ChainConfig = Default::default();
     let mut node =
         NodeService::testing(cfg.clone(), keys.clone(), network, genesis, inbox).unwrap();
     let mut block_count = node.chain.height();
@@ -162,8 +167,8 @@ pub fn monetary_requests() {
     }
     amounts.sort();
     let expected = vec![
-        cfg.block_reward + 2 * cfg.payment_fee,
         100,
+        cfg.block_reward + 2 * cfg.payment_fee,
         cfg.block_reward + total - stake - 100 - 2 * cfg.payment_fee,
     ];
     assert_eq!(amounts, expected);

@@ -41,7 +41,7 @@ message BaseBlockHeader {
     uint64 timestamp = 5;
 }
 
-message MonetaryBlockHeader {
+message MicroBlockHeader {
     BaseBlockHeader base = 1;
     stegos.crypto.Fr gamma = 2;
     int64 monetary_adjustment = 3;
@@ -57,15 +57,15 @@ message MerkleNode {
     Output value = 4;
 }
 
-message MonetaryBlockBody {
+message MicroBlockBody {
     stegos.crypto.SecureSignature sig = 1;
     repeated stegos.crypto.Hash inputs = 2;
     repeated MerkleNode outputs = 3;
 }
 
-message MonetaryBlock {
-    MonetaryBlockHeader header = 1;
-    MonetaryBlockBody body = 2;
+message MicroBlock {
+    MicroBlockHeader header = 1;
+    MicroBlockBody body = 2;
 }
 
 message KeyBlockHeader {
@@ -86,6 +86,6 @@ message KeyBlock {
 message Block {
     oneof block {
         KeyBlock key_block = 1;
-        MonetaryBlock monetary_block = 2;
+        MicroBlock micro_block = 2;
     }
 }

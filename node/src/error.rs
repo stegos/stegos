@@ -50,15 +50,15 @@ pub enum NodeBlockError {
     )]
     InvalidMonetaryAdjustment(u64, Hash, i64, i64),
     #[fail(
-        display = "Expected a key block, got monetary block: height={}, block={}",
+        display = "Expected a key block, got micro block: height={}, block={}",
         _0, _1
     )]
     ExpectedKeyBlock(u64, Hash),
     #[fail(
-        display = "Expected a monetary block, got key block: height={}, block={}",
+        display = "Expected a micro block, got key block: height={}, block={}",
         _0, _1
     )]
-    ExpectedMonetaryBlock(u64, Hash),
+    ExpectedMicroBlock(u64, Hash),
     #[fail(
         display = "Timestamp is out of sync: height={}, block={}, block_timestamp={:?}, our_timestamp={:?}",
         _0, _1, _2, _3

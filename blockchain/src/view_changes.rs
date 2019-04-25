@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::block::MonetaryBlock;
+use crate::block::MicroBlock;
 use crate::blockchain::Blockchain;
 use crate::error::MultisignatureError;
 use crate::multisignature::{check_multi_signature, create_multi_signature_index};
@@ -39,10 +39,10 @@ pub struct ChainInfo {
 }
 
 impl ChainInfo {
-    /// Create ChainInfo from monetary block.
+    /// Create ChainInfo from micro block.
     /// ## Panics
     /// if view_change is equal to 0
-    pub fn from_monetary_block(block: &MonetaryBlock) -> Self {
+    pub fn from_micro_block(block: &MicroBlock) -> Self {
         assert_ne!(block.header.base.view_change, 0);
         ChainInfo {
             height: block.header.base.height,

@@ -138,7 +138,7 @@ impl Mempool {
     }
 
     ///
-    /// Process transactions in mempool and create a new monetary block.
+    /// Process transactions in mempool and create a new micro block.
     ///
     pub fn create_block(
         &mut self,
@@ -150,7 +150,7 @@ impl Mempool {
         pkey: &PublicKey,
         view_change: u32,
         proof: Option<ViewChangeProof>,
-    ) -> (MonetaryBlock, Option<Output>, Vec<Hash>) {
+    ) -> (MicroBlock, Option<Output>, Vec<Hash>) {
         // TODO: limit the block size.
         let tx_count = self.pool.len();
         debug!(
@@ -201,9 +201,9 @@ impl Mempool {
             None
         };
 
-        // Create a new monetary block.
+        // Create a new micro block.
         let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
-        let block = MonetaryBlock::new(base, gamma, monetary_adjustment, &inputs, &outputs, proof);
+        let block = MicroBlock::new(base, gamma, monetary_adjustment, &inputs, &outputs, proof);
 
         (block, output_fee, tx_hashes)
     }

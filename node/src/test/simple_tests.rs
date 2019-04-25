@@ -53,7 +53,7 @@ pub fn init() {
 }
 
 fn simulate_consensus(node: &mut NodeService) {
-    node.create_monetary_block(None).unwrap();
+    node.create_micro_block(None).unwrap();
 }
 
 fn simulate_payment(node: &mut NodeService, amount: i64) -> Result<(), Error> {
@@ -94,7 +94,7 @@ fn simulate_payment(node: &mut NodeService, amount: i64) -> Result<(), Error> {
 }
 
 #[test]
-pub fn monetary_requests() {
+pub fn payments() {
     simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
     let keys = KeyChain::new_mem();
     let (_outbox, inbox) = unbounded();

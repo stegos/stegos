@@ -85,7 +85,7 @@ pub fn genesis(
         assert_eq!(coins, coins1);
 
         let gamma = -outputs_gamma;
-        MonetaryBlock::new(base, gamma, coins, &[], &outputs, None)
+        MicroBlock::new(base, gamma, coins, &[], &outputs, None)
     };
     view_change += 1;
     height += 1;
@@ -117,7 +117,7 @@ pub fn genesis(
         block
     };
 
-    blocks.push(Block::MonetaryBlock(block1));
+    blocks.push(Block::MicroBlock(block1));
     blocks.push(Block::KeyBlock(block2));
 
     blocks

@@ -604,8 +604,8 @@ impl Hashable for StakeOutput {
 impl Hashable for Output {
     fn hash(&self, state: &mut Hasher) {
         match self {
-            Output::PaymentOutput(monetary) => monetary.hash(state),
-            Output::StakeOutput(escrow) => escrow.hash(state),
+            Output::PaymentOutput(payment) => payment.hash(state),
+            Output::StakeOutput(stake) => stake.hash(state),
         }
     }
 }

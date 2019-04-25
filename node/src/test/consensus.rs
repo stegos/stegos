@@ -42,13 +42,13 @@ fn smoke_test() {
             assert_eq!(node.node_service.chain.height(), 2);
         }
 
-        // Process N monetary blocks.
+        // Process N micro blocks.
         let height = s.nodes[0].node_service.chain.height();
         for _ in 1..s.cfg().blocks_in_epoch {
             s.wait(s.cfg().tx_wait_timeout);
-            s.skip_monetary_block()
+            s.skip_micro_block()
         }
-        info!("====== Received all monetary blocks. =====");
+        info!("====== Received all micro blocks. =====");
         let height = height + s.cfg().blocks_in_epoch - 1; // exclude keyblock, as first block of epoch.
 
         s.for_each(|node| assert_eq!(node.chain.height(), height));
@@ -172,13 +172,13 @@ fn autocomit() {
             assert_eq!(node.node_service.chain.height(), 2);
         }
 
-        // Process N monetary blocks.
+        // Process N micro blocks.
         let height = s.nodes[0].node_service.chain.height();
         for _ in 1..s.cfg().blocks_in_epoch {
             s.wait(s.cfg().tx_wait_timeout);
-            s.skip_monetary_block()
+            s.skip_micro_block()
         }
-        info!("====== Received all monetary blocks. =====");
+        info!("====== Received all micro blocks. =====");
         let height = height + s.cfg().blocks_in_epoch - 1; // exclude keyblock, as first block of epoch.
         let epoch = s.nodes[0].node_service.chain.epoch();
 
@@ -288,13 +288,13 @@ fn round() {
             assert_eq!(node.node_service.chain.height(), 2);
         }
 
-        // Process N monetary blocks.
+        // Process N micro blocks.
         let height = s.nodes[0].node_service.chain.height();
         for _ in 1..s.cfg().blocks_in_epoch {
             s.wait(s.cfg().tx_wait_timeout);
-            s.skip_monetary_block()
+            s.skip_micro_block()
         }
-        info!("====== Received all monetary blocks. =====");
+        info!("====== Received all micro blocks. =====");
         let height = height + s.cfg().blocks_in_epoch - 1; // exclude keyblock, as first block of epoch.
 
         s.for_each(|node| assert_eq!(node.chain.height(), height));
@@ -380,7 +380,7 @@ fn round() {
 }
 
 // check if rounds started at correct timeout
-// first immediatly after monetary block
+// first immediatly after micro block
 // second at key_block_timeout
 // third at key_block_timeout * 2
 #[test]
@@ -397,13 +397,13 @@ fn multiple_rounds() {
             assert_eq!(node.node_service.chain.height(), 2);
         }
 
-        // Process N monetary blocks.
+        // Process N micro blocks.
         let height = s.nodes[0].node_service.chain.height();
         for _ in 1..s.cfg().blocks_in_epoch {
             s.wait(s.cfg().tx_wait_timeout);
-            s.skip_monetary_block()
+            s.skip_micro_block()
         }
-        info!("====== Received all monetary blocks. =====");
+        info!("====== Received all micro blocks. =====");
         let height = height + s.cfg().blocks_in_epoch - 1; // exclude keyblock, as first block of epoch.
 
         s.for_each(|node| assert_eq!(node.chain.height(), height));
@@ -474,13 +474,13 @@ fn lock() {
             assert_eq!(node.node_service.chain.height(), 2);
         }
 
-        // Process N monetary blocks.
+        // Process N micro blocks.
         let height = s.nodes[0].node_service.chain.height();
         for _ in 1..s.cfg().blocks_in_epoch {
             s.wait(s.cfg().tx_wait_timeout);
-            s.skip_monetary_block()
+            s.skip_micro_block()
         }
-        info!("====== Received all monetary blocks. =====");
+        info!("====== Received all micro blocks. =====");
         let height = height + s.cfg().blocks_in_epoch - 1; // exclude keyblock, as last block of epoch.
 
         s.for_each(|node| assert_eq!(node.chain.height(), height));
@@ -591,14 +591,14 @@ fn out_of_order_micro_block() {
             assert_eq!(node.node_service.chain.height(), 2);
         }
 
-        // Process N monetary blocks.
+        // Process N micro blocks.
         let height = s.nodes[0].node_service.chain.height();
         for _ in 1..s.cfg().blocks_in_epoch {
             s.wait(s.cfg().tx_wait_timeout);
-            s.skip_monetary_block()
+            s.skip_micro_block()
         }
 
-        info!("====== Received all monetary blocks. =====");
+        info!("====== Received all micro blocks. =====");
         let height = height + s.cfg().blocks_in_epoch - 1; // exclude keyblock, as first block of epoch.
 
         s.for_each(|node| assert_eq!(node.chain.height(), height));
@@ -614,13 +614,13 @@ fn out_of_order_micro_block() {
 
         let gamma: Fr = Fr::zero();
         let base = BaseBlockHeader::new(version, last_block_hash, height, round + 1, timestamp);
-        let mut block = MonetaryBlock::new(base, gamma, 0, &[], &[], None);
+        let mut block = MicroBlock::new(base, gamma, 0, &[], &[], None);
 
         let block_hash = Hash::digest(&block);
         let leader_node = s.node(&leader_pk).unwrap();
         block.body.sig =
             secure::sign_hash(&block_hash, &leader_node.node_service.keys.network_skey);
-        let block: Block = Block::MonetaryBlock(block);
+        let block: Block = Block::MicroBlock(block);
 
         // Discard proposal from leader for a proposal from the leader.
         let _proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);

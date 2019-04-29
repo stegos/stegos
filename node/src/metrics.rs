@@ -69,6 +69,13 @@ lazy_static! {
         register_int_gauge!("stegos_block_lag_ms", "The last block creation + validation + propagation time, i.e. it is the time difference between the local time at a remote leader when the last block began to be created and the local time at this node when this block was registered.").unwrap();
     pub static ref BLOCK_IDLE: IntGauge =
         register_int_gauge!("stegos_block_idle_ms", "The elapsed time since the last block, i.e. it is the time difference between the local time at this node and the time when the last block was registered.").unwrap();
+
+    pub static ref MEMPOOL_INPUTS: IntGauge =
+        register_int_gauge!("stegos_mempool_inputs", "The number of inputs in mempool.").unwrap();
+    pub static ref MEMPOOL_OUTPUTS: IntGauge =
+        register_int_gauge!("stegos_mempool_outputs", "The number of outputs in mempool.").unwrap();
+    pub static ref MEMPOOL_TRANSACTIONS: IntGauge =
+        register_int_gauge!("stegos_mempool_transactions", "The number of transactions in mempool.").unwrap();
 }
 
 pub mod vrf {

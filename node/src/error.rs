@@ -40,6 +40,13 @@ pub enum NodeTransactionError {
     MissingInput(Hash, Hash),
     #[fail(display = "Output hash collision: tx={}, utxo={}", _0, _1)]
     OutputHashCollision(Hash, Hash),
+    #[fail(
+        display = "Transaction is too large: tx={}, got_inout={}, max_inout={}",
+        _0, _1, _2
+    )]
+    TooLarge(Hash, usize, usize),
+    #[fail(display = "Can't process transaction - mempool is full: tx={}", _0)]
+    MempoolIsFull(Hash),
 }
 
 #[derive(Debug, Fail, PartialEq, Eq)]

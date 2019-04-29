@@ -103,6 +103,17 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
         cfg.network.seed_pool =
             format!("_stegos._tcp.{}.aws.stegos.com", cfg.general.chain).to_string();
     }
+
+    // Password options.
+    if let Some(password_file) = args.value_of("password-file") {
+        cfg.keychain.password_file = password_file.to_string();
+    }
+
+    // Recovery options.
+    if let Some(recovery_file) = args.value_of("recovery-file") {
+        cfg.keychain.recovery_file = recovery_file.to_string();
+    }
+
     Ok(cfg)
 }
 
@@ -248,6 +259,32 @@ fn run() -> Result<(), Error> {
                 .takes_value(true),
         )
         .arg(
+            Arg::with_name("password-file")
+                .short("p")
+                .long("password-file")
+                .help("Read wallet's password from a file")
+                .long_help(
+                    "Read wallet's password from a file. \
+                     Provide a path to file which contains wallet password.\
+                     Use '--password-file -' to read password from terminal.",
+                )
+                .takes_value(true)
+                .value_name("FILE"),
+        )
+        .arg(
+            Arg::with_name("recovery-file")
+                .short("r")
+                .long("recovery-file")
+                .help("Recover wallet from 24-word recovery phrase")
+                .long_help(
+                    "Recover wallet from 24-word recovery phrase. \
+                     Provide a path to file which contains 24-word recovery phrase.\
+                     Use '--recovery-file -' to read recovery phrase from terminal.",
+                )
+                .takes_value(true)
+                .value_name("FILE"),
+        )
+        .arg(
             Arg::with_name("chain")
                 .short("n")
                 .long("chain")
@@ -266,11 +303,11 @@ fn run() -> Result<(), Error> {
     // Print welcome message
     info!("{} {}", name, version);
 
+    // Initialize keychain
+    let keychain = KeyChain::new(cfg.keychain.clone())?;
+
     // Initialize genesis
     let genesis = initialize_genesis(&cfg)?;
-
-    // Initialize keychain
-    let keychain = KeyChain::new(&cfg.keychain)?;
 
     // Resolve seed pool (works, if chain=='testent', does nothing otherwise)
     resolve_pool(&mut cfg)?;
@@ -309,10 +346,7 @@ fn run() -> Result<(), Error> {
 
     // Initialize Wallet.
     let (wallet_service, wallet) = WalletService::new(
-        keychain.wallet_skey.clone(),
-        keychain.wallet_pkey.clone(),
-        keychain.network_pkey.clone(),
-        keychain.network_skey.clone(),
+        keychain.clone(),
         network.clone(),
         node.clone(),
         cfg.chain.payment_fee,

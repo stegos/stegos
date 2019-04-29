@@ -27,17 +27,29 @@ use serde_derive::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(default)]
 pub struct KeyChainConfig {
+    /// Path to password file.
+    pub password_file: String,
+    /// Path to recovery file.
+    pub recovery_file: String,
     /// Path to Curve1174 secret key.
-    pub private_key: String,
+    pub wallet_skey_file: String,
     /// Path to Curve1174 public key.
-    pub public_key: String,
+    pub wallet_pkey_file: String,
+    /// Path to PBC secret key.
+    pub network_skey_file: String,
+    /// Path to PBC public key.
+    pub network_pkey_file: String,
 }
 
 impl Default for KeyChainConfig {
     fn default() -> Self {
         KeyChainConfig {
-            private_key: "stegos.skey".to_string(),
-            public_key: "stegos.pkey".to_string(),
+            password_file: "-".to_string(),
+            recovery_file: "".to_string(),
+            wallet_skey_file: "wallet.skey".to_string(),
+            wallet_pkey_file: "wallet.pkey".to_string(),
+            network_skey_file: "network.skey".to_string(),
+            network_pkey_file: "network.pkey".to_string(),
         }
     }
 }

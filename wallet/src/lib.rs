@@ -44,22 +44,15 @@ use log::*;
 use std::collections::HashMap;
 use stegos_blockchain::*;
 use stegos_crypto::curve1174::cpt::PublicKey;
-use stegos_crypto::curve1174::cpt::SecretKey;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure;
+use stegos_keychain::KeyChain;
 use stegos_network::Network;
 use stegos_node::Node;
 use stegos_node::OutputsChanged;
 
 pub struct WalletService {
-    /// Secret Key.
-    skey: SecretKey,
-    /// Public Key.
-    pkey: PublicKey,
-    /// Validator's public key
-    validator_pkey: secure::PublicKey,
-    /// Validator's secret key.
-    validator_skey: secure::SecretKey,
+    /// Keys.
+    keys: KeyChain,
     /// Unspent Payment UXTO.
     unspent: HashMap<Hash, (PaymentOutput, i64)>,
     /// Unspent Stake UTXO.
@@ -87,17 +80,14 @@ pub struct WalletService {
 impl WalletService {
     /// Create a new wallet.
     pub fn new(
-        skey: SecretKey,
-        pkey: PublicKey,
-        validator_pkey: secure::PublicKey,
-        validator_skey: secure::SecretKey,
+        keys: KeyChain,
         network: Network,
         node: Node,
         payment_fee: i64,
         stake_fee: i64,
     ) -> (Self, Wallet) {
-        info!("My wallet key: {}", pkey.to_hex());
-        debug!("My network key: {}", validator_pkey.to_hex());
+        info!("My wallet key: {}", keys.wallet_pkey.to_hex());
+        debug!("My network key: {}", keys.network_pkey.to_hex());
 
         //
         // State.
@@ -106,9 +96,9 @@ impl WalletService {
         let unspent_stakes: HashMap<Hash, StakeOutput> = HashMap::new();
         let balance: i64 = 0;
         let vs = ValueShuffle::new(
-            skey.clone(),
-            pkey.clone(),
-            validator_pkey.clone(),
+            keys.wallet_skey.clone(),
+            keys.wallet_pkey.clone(),
+            keys.network_pkey.clone(),
             network.clone(),
             node.clone(),
         );
@@ -136,10 +126,7 @@ impl WalletService {
         let events = select_all(events);
 
         let service = WalletService {
-            skey,
-            pkey,
-            validator_pkey,
-            validator_skey,
+            keys,
             unspent,
             unspent_stakes,
             balance,
@@ -165,8 +152,8 @@ impl WalletService {
     ) -> Result<(Hash, i64), Error> {
         let data = PaymentPayloadData::Comment(comment);
         let (inputs, outputs, gamma, fee) = create_payment_transaction(
-            &self.skey,
-            &self.pkey,
+            &self.keys.wallet_skey,
+            &self.keys.wallet_pkey,
             recipient,
             &self.unspent,
             amount,
@@ -175,7 +162,7 @@ impl WalletService {
         )?;
 
         // Transaction TXINs can generally have different keying for each one
-        let tx = Transaction::new(&self.skey, &inputs, &outputs, gamma, fee)?;
+        let tx = Transaction::new(&self.keys.wallet_skey, &inputs, &outputs, gamma, fee)?;
         let tx_hash = Hash::digest(&tx);
         let fee = tx.body.fee;
         self.node.send_transaction(tx)?;
@@ -190,7 +177,7 @@ impl WalletService {
         comment: String,
     ) -> Result<(), Error> {
         let (inputs, outputs, fee) = create_vs_payment_transaction(
-            &self.pkey,
+            &self.keys.wallet_pkey,
             recipient,
             &self.unspent,
             amount,
@@ -204,10 +191,10 @@ impl WalletService {
     /// Stake money into the escrow.
     fn stake(&self, amount: i64) -> Result<(Hash, i64), Error> {
         let tx = create_staking_transaction(
-            &self.skey,
-            &self.pkey,
-            &self.validator_pkey,
-            &self.validator_skey,
+            &self.keys.wallet_skey,
+            &self.keys.wallet_pkey,
+            &self.keys.network_pkey,
+            &self.keys.network_skey,
             &self.unspent,
             amount,
             self.payment_fee,
@@ -223,10 +210,10 @@ impl WalletService {
     /// NOTE: amount must include PAYMENT_FEE.
     fn unstake(&self, amount: i64) -> Result<(Hash, i64), Error> {
         let tx = create_unstaking_transaction(
-            &self.skey,
-            &self.pkey,
-            &self.validator_pkey,
-            &self.validator_skey,
+            &self.keys.wallet_skey,
+            &self.keys.wallet_pkey,
+            &self.keys.network_pkey,
+            &self.keys.network_skey,
             &self.unspent_stakes,
             amount,
             self.payment_fee,
@@ -273,7 +260,9 @@ impl WalletService {
         let hash = Hash::digest(&output);
         match output {
             Output::PaymentOutput(o) => {
-                if let Ok(PaymentPayload { amount, data, .. }) = o.decrypt_payload(&self.skey) {
+                if let Ok(PaymentPayload { amount, data, .. }) =
+                    o.decrypt_payload(&self.keys.wallet_skey)
+                {
                     info!(
                         "Received UTXO: hash={}, amount={}, data={:?}",
                         hash, amount, data
@@ -294,7 +283,7 @@ impl WalletService {
                 }
             }
             Output::StakeOutput(o) => {
-                if let Ok(_payload) = o.decrypt_payload(&self.skey) {
+                if let Ok(_payload) = o.decrypt_payload(&self.keys.wallet_skey) {
                     info!("Staked money to escrow: hash={}, amount={}", hash, o.amount);
                     let missing = self.unspent_stakes.insert(hash, o);
                     assert!(missing.is_none());
@@ -308,7 +297,9 @@ impl WalletService {
         let hash = Hash::digest(&output);
         match output {
             Output::PaymentOutput(o) => {
-                if let Ok(PaymentPayload { amount, data, .. }) = o.decrypt_payload(&self.skey) {
+                if let Ok(PaymentPayload { amount, data, .. }) =
+                    o.decrypt_payload(&self.keys.wallet_skey)
+                {
                     info!(
                         "Spent UTXO: hash={}, amount={}, data={:?}",
                         hash, amount, data
@@ -320,7 +311,7 @@ impl WalletService {
                 }
             }
             Output::StakeOutput(o) => {
-                if let Ok(_payload) = o.decrypt_payload(&self.skey) {
+                if let Ok(_payload) = o.decrypt_payload(&self.keys.wallet_skey) {
                     info!(
                         "Unstaked money from escrow: hash={}, amount={}",
                         hash, o.amount
@@ -380,8 +371,8 @@ impl Future for WalletService {
                             WalletRequest::Unstake { amount } => self.unstake(amount).into(),
                             WalletRequest::UnstakeAll {} => self.unstake_all().into(),
                             WalletRequest::KeysInfo {} => WalletResponse::KeysInfo {
-                                wallet_pkey: self.pkey,
-                                network_pkey: self.validator_pkey,
+                                wallet_pkey: self.keys.wallet_pkey,
+                                network_pkey: self.keys.network_pkey,
                             },
                             WalletRequest::BalanceInfo {} => WalletResponse::BalanceInfo {
                                 balance: self.balance,
@@ -402,6 +393,12 @@ impl Future for WalletService {
                                     unspent_stakes,
                                 }
                             }
+                            WalletRequest::GetRecovery {} => match self.keys.show_recovery() {
+                                Ok(recovery) => WalletResponse::Recovery { recovery },
+                                Err(e) => WalletResponse::Error {
+                                    error: format!("{}", e),
+                                },
+                            },
                         };
                         tx.send(response).ok(); // ignore errors.
                     }

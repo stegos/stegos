@@ -19,44 +19,32 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#![deny(warnings)]
+// #![deny(warnings)]
 
 mod config;
+mod error;
 pub mod pem;
 pub use config::*;
+mod input;
+mod keyfile;
+mod recovery;
 
-use failure::{Error, Fail};
+use crate::error::KeyError;
+use crate::input::*;
+use crate::keyfile::*;
+use crate::recovery::wallet_skey_to_recovery;
+use failure::Error;
 use log::*;
-use std::fs;
+use secp256k1::rand::{ChaChaRng, SeedableRng};
 use std::path::Path;
 use stegos_crypto::curve1174::cpt;
-use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
-
-use secp256k1::rand::{ChaChaRng, SeedableRng};
-
-/// Create deterministic Network keys from Wallet keys.
-///
-/// # Arguments
-///
-/// * `wallet_skey` - Wallet Secret Key.
-///
-pub fn wallet_to_network_keys(
-    wallet_skey: &cpt::SecretKey,
-) -> (secure::SecretKey, secure::PublicKey) {
-    let wallet_skey_hash = Hash::digest(wallet_skey);
-    let network_seed = wallet_skey_hash.base_vector();
-    secure::make_deterministic_keys(network_seed)
-}
-
-/// PEM tag for secret key.
-const SKEY_TAG: &'static str = "STEGOS-CURVE1174 SECRET KEY";
-/// PEM tag for public key.
-const PKEY_TAG: &'static str = "STEGOS-CURVE1174 PUBLIC KEY";
 
 /// Wallet implementation.
 #[derive(Clone, Debug)]
 pub struct KeyChain {
+    /// Configuration.
+    cfg: KeyChainConfig,
     /// Wallet Secret Key.
     pub wallet_skey: cpt::SecretKey,
     /// Wallet Public Key.
@@ -67,72 +55,100 @@ pub struct KeyChain {
     pub network_pkey: secure::PublicKey,
 }
 
-#[derive(Debug, Fail)]
-pub enum KeyChainError {
-    #[fail(display = "Failed to parse key: {}.", _0)]
-    KeyParseError(String),
-    #[fail(display = "Failed to validate key.")]
-    KeyValidateError,
-}
-
 impl KeyChain {
-    pub fn new(cfg: &KeyChainConfig) -> Result<Self, Error> {
-        let skey_path = Path::new(&cfg.private_key);
-        let pkey_path = Path::new(&cfg.public_key);
+    pub fn new(cfg: KeyChainConfig) -> Result<Self, KeyError> {
+        let wallet_skey_path = Path::new(&cfg.wallet_skey_file);
+        let wallet_pkey_path = Path::new(&cfg.wallet_pkey_file);
+        let network_skey_path = Path::new(&cfg.network_skey_file);
+        let network_pkey_path = Path::new(&cfg.network_pkey_file);
 
-        let (wallet_skey, wallet_pkey) = if !skey_path.exists() && !pkey_path.exists() {
-            info!("Generating a new key pair...");
-            let (skey, pkey) = cpt::make_random_keys();
+        let (wallet_skey, wallet_pkey, network_skey, network_pkey) = if !wallet_skey_path.exists()
+            && !wallet_pkey_path.exists()
+            && !network_skey_path.exists()
+            && !network_pkey_path.exists()
+        {
+            debug!("Can't find keys on the disk: wallet_skey_file={}, wallet_pkey_file={}, network_skey_file={}, network_pkey_file={}",
+                cfg.wallet_skey_file, cfg.wallet_pkey_file, cfg.network_skey_file, cfg.network_pkey_file);
 
-            let skey_pem = pem::Pem {
-                tag: SKEY_TAG.to_string(),
-                contents: skey.to_bytes().to_vec(),
+            let (wallet_skey, wallet_pkey) = if !cfg.recovery_file.is_empty() {
+                info!("Recovering keys...");
+                let wallet_skey = read_recovery(&cfg.recovery_file)?;
+                let wallet_pkey: cpt::PublicKey = wallet_skey.clone().into();
+                info!("Recovered a wallet key: pkey={}", wallet_pkey);
+                (wallet_skey, wallet_pkey)
+            } else {
+                debug!("Generating a new wallet key pair...");
+                let (wallet_skey, wallet_pkey) = cpt::make_random_keys();
+                info!("Generated a new wallet key pair: pkey={}", wallet_pkey);
+                (wallet_skey, wallet_pkey)
             };
-            let pkey_bytes: [u8; 32] = pkey.to_bytes();
-            let pkey_pem = pem::Pem {
-                tag: PKEY_TAG.to_string(),
-                contents: pkey_bytes.to_vec(),
-            };
 
-            fs::write(skey_path, pem::encode(&skey_pem))?;
-            fs::write(pkey_path, pem::encode(&pkey_pem))?;
+            debug!("Generating a new network key pair...");
+            let (network_skey, network_pkey) = secure::make_random_keys();
+            info!("Generated a new network key pair: pkey={}", network_pkey);
 
-            debug!("Generated {:?}", pkey);
-            (skey, pkey)
-        } else {
+            let password = read_password(&cfg.password_file, true)?;
+
             debug!(
-                "Loading existing key pair from {} and {}...",
-                cfg.private_key, cfg.public_key
+                "Writing wallet key pair: wallet_skey_file={} wallet_pkey_file={}",
+                cfg.wallet_skey_file, cfg.wallet_pkey_file
+            );
+            write_wallet_pkey(wallet_pkey_path, &wallet_pkey)?;
+            write_wallet_skey(wallet_skey_path, &wallet_skey, &password)?;
+            info!(
+                "Wrote wallet key pair: wallet_skey_file={}, wallet_pkey_pkey={}",
+                cfg.wallet_skey_file, cfg.wallet_pkey_file
             );
 
-            let skey = fs::read_to_string(skey_path)?;
-            let pkey = fs::read_to_string(pkey_path)?;
+            debug!(
+                "Writing network key pair: network_skey_file={}, network_pkey_file={}...",
+                cfg.network_skey_file, cfg.network_pkey_file
+            );
+            write_network_pkey(network_pkey_path, &network_pkey)?;
+            write_network_skey(network_skey_path, &network_skey, &password)?;
+            info!(
+                "Wrote network key pair: network_skey_file={}, network_pkey_file={}",
+                cfg.network_skey_file, cfg.network_pkey_file
+            );
 
-            let skey = pem::parse(skey)
-                .map_err(|_| KeyChainError::KeyParseError(cfg.private_key.clone()))?;
-            if skey.tag != SKEY_TAG {
-                return Err(KeyChainError::KeyParseError(cfg.private_key.clone()).into());
+            (wallet_skey, wallet_pkey, network_skey, network_pkey)
+        } else {
+            debug!("Loading keys from the disk...");
+            let password = read_password(&cfg.password_file, false)?;
+
+            debug!(
+                "Loading wallet key pair: wallet_skey_file={}, wallet_pkey_file={}...",
+                cfg.wallet_skey_file, cfg.wallet_pkey_file
+            );
+            let wallet_pkey = load_wallet_pkey(wallet_pkey_path)?;
+            let wallet_skey = load_wallet_skey(wallet_skey_path, &password)?;
+            if let Err(_e) = cpt::check_keying(&wallet_skey, &wallet_pkey) {
+                return Err(KeyError::InvalidKeying(
+                    cfg.wallet_skey_file,
+                    cfg.wallet_pkey_file,
+                ));
             }
+            info!("Loaded wallet key pair: pkey={}", wallet_pkey);
 
-            let pkey = pem::parse(pkey)
-                .map_err(|_| KeyChainError::KeyParseError(cfg.public_key.clone()))?;
-            if pkey.tag != PKEY_TAG {
-                return Err(KeyChainError::KeyParseError(cfg.public_key.clone()).into());
+            debug!(
+                "Loading network key pair: network_skey_file={}, network_pkey_file={}...",
+                cfg.network_skey_file, cfg.network_pkey_file
+            );
+            let network_pkey = load_network_pkey(network_pkey_path)?;
+            let network_skey = load_network_skey(network_skey_path, &password)?;
+            if let Err(_e) = secure::check_keying(&network_skey, &network_pkey) {
+                return Err(KeyError::InvalidKeying(
+                    cfg.network_skey_file,
+                    cfg.network_pkey_file,
+                ));
             }
+            info!("Loaded network key pair: pkey={}", network_pkey);
 
-            let skey = cpt::SecretKey::try_from_bytes(&skey.contents)?;
-            let pkey = cpt::PublicKey::try_from_bytes(&pkey.contents[..])?;
-
-            if let Err(_e) = cpt::check_keying(&skey, &pkey) {
-                return Err(KeyChainError::KeyValidateError.into());
-            }
-
-            (skey, pkey)
+            (wallet_skey, wallet_pkey, network_skey, network_pkey)
         };
 
-        let (network_skey, network_pkey) = wallet_to_network_keys(&wallet_skey);
-
         let keychain = KeyChain {
+            cfg,
             wallet_skey,
             wallet_pkey,
             network_skey,
@@ -145,9 +161,10 @@ impl KeyChain {
     /// Temporary KeyChain for tests.
     pub fn new_mem() -> Self {
         let (wallet_skey, wallet_pkey) = cpt::make_random_keys();
-        let (network_skey, network_pkey) = wallet_to_network_keys(&wallet_skey);
+        let (network_skey, network_pkey) = secure::make_random_keys();
 
         let keychain = KeyChain {
+            cfg: Default::default(),
             wallet_skey,
             wallet_pkey,
             network_skey,
@@ -155,6 +172,14 @@ impl KeyChain {
         };
 
         keychain
+    }
+
+    /// Get recovery phrase.
+    pub fn show_recovery(&self) -> Result<String, KeyError> {
+        let password = read_password_from_stdin(false)?;
+        let wallet_skey_path = Path::new(&self.cfg.wallet_skey_file);
+        let wallet_skey = load_wallet_skey(wallet_skey_path, &password)?;
+        Ok(wallet_skey_to_recovery(&wallet_skey))
     }
 
     /// Generate new secp256k1 keypair using KeyChain as seed.

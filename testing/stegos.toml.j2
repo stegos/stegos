@@ -6,8 +6,11 @@ log4rs_config = "stegos-log4rs.toml"
 database_path = "testing/node{{NODE_ID}}/database"
 
 [keychain]
-private_key = "testing/node{{NODE_ID}}/stegos.skey"
-public_key = "testing/node{{NODE_ID}}/stegos.pkey"
+password_file = "testing/node{{NODE_ID}}/password.txt"
+wallet_skey_file = "testing/node{{NODE_ID}}/wallet.skey"
+wallet_pkey_file = "testing/node{{NODE_ID}}/wallet.pkey"
+network_skey_file = "testing/node{{NODE_ID}}/network.skey"
+network_pkey_file = "testing/node{{NODE_ID}}/network.pkey"
 
 [network]
 bind_ip = "127.0.0.1"

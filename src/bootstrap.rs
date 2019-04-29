@@ -126,12 +126,16 @@ fn main() {
     info!("Generating genesis keys...");
     let mut keychains = Vec::<KeyChain>::new();
     for i in 0..keys {
-        let config = KeyChainConfig {
-            private_key: format!("stegos{:02}.skey", i + 1),
-            public_key: format!("stegos{:02}.pkey", i + 1),
+        let cfg = KeyChainConfig {
+            recovery_file: "".to_string(),
+            password_file: format!("password{:02}.txt", i + 1),
+            wallet_skey_file: format!("wallet{:02}.skey", i + 1),
+            wallet_pkey_file: format!("wallet{:02}.pkey", i + 1),
+            network_skey_file: format!("network{:02}.skey", i + 1),
+            network_pkey_file: format!("network{:02}.pkey", i + 1),
         };
 
-        let keychain = match KeyChain::new(&config) {
+        let keychain = match KeyChain::new(cfg) {
             Ok(k) => k,
             Err(e) => {
                 eprintln!("Failed to generate keys: {}", e);

@@ -70,6 +70,7 @@ pub enum WalletRequest {
     KeysInfo {},
     BalanceInfo {},
     UnspentInfo {},
+    GetRecovery {},
 }
 
 ///
@@ -94,6 +95,9 @@ pub enum WalletResponse {
     UnspentInfo {
         unspent: Vec<(Hash, i64)>,
         unspent_stakes: Vec<(Hash, i64)>,
+    },
+    Recovery {
+        recovery: String,
     },
     Error {
         error: String,

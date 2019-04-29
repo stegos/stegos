@@ -7,12 +7,14 @@
 logs/
 
 # Keys
-/stegos*.pkey
-/stegos*.skey
+/*.pkey
+/*.skey
 /genesis*.bin
+/password*.txt
 
 # Test data
 /testing/node*/database/
+/database/
 
 # IDE files
 /.vscode

@@ -20,6 +20,7 @@
 // SOFTWARE.
 
 use super::Loopback;
+use crate::transaction::Transaction;
 use crate::*;
 use std::time::SystemTime;
 use stegos_blockchain::*;

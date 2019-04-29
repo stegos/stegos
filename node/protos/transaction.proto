@@ -1,0 +1,13 @@
+syntax = "proto3";
+package stegos.transaction;
+
+import "crypto.proto";
+import "blockchain.proto";
+
+message Transaction {
+    repeated stegos.crypto.Hash txins = 1;
+    repeated stegos.blockchain.Output txouts = 2;
+    stegos.crypto.Fr gamma = 3;
+    int64 fee = 4;
+    stegos.crypto.SchnorrSig sig = 5;
+}

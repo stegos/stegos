@@ -50,6 +50,7 @@ use stegos_crypto::pbc::secure;
 use stegos_network::Network;
 use stegos_node::Node;
 use stegos_node::OutputsChanged;
+use stegos_node::Transaction;
 
 pub struct WalletService {
     /// Secret Key.

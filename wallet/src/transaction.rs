@@ -34,6 +34,7 @@ use stegos_crypto::curve1174::cpt::SecretKey;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
+use stegos_node::Transaction;
 
 /// Create a new ValueShuffle payment transaction. (no data)
 pub(crate) fn create_vs_payment_transaction(

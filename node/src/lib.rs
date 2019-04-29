@@ -31,12 +31,15 @@ pub mod protos;
 mod test;
 #[macro_use]
 pub mod timer;
+mod transaction;
 mod validation;
+
 pub use crate::config::ChainConfig;
 use crate::error::*;
 use crate::loader::ChainLoaderMessage;
 use crate::mempool::Mempool;
 use crate::timer::{Interval, TimerEvents};
+pub use crate::transaction::Transaction;
 use crate::validation::*;
 use bitvector::BitVector;
 use failure::Error;
@@ -431,18 +434,15 @@ impl NodeService {
         // Limit the number of inputs and outputs.
         let utxo_count = tx.body.txins.len() + tx.body.txouts.len();
         if utxo_count > self.cfg.max_utxo_in_tx {
-            return Err(NodeTransactionError::TooLarge(
-                tx_hash,
-                utxo_count,
-                self.cfg.max_utxo_in_tx,
-            )
-            .into());
+            return Err(
+                TransactionError::TooLarge(tx_hash, utxo_count, self.cfg.max_utxo_in_tx).into(),
+            );
         }
 
         // Limit the maximum size of mempool.
         let utxo_in_mempool = self.mempool.inputs_len() + self.mempool.outputs_len();
         if utxo_in_mempool > self.cfg.max_utxo_in_mempool {
-            return Err(NodeTransactionError::MempoolIsFull(tx_hash).into());
+            return Err(TransactionError::MempoolIsFull(tx_hash).into());
         }
 
         // Validate transaction.

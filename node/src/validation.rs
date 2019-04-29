@@ -24,13 +24,13 @@
 use crate::config::ChainConfig;
 use crate::error::*;
 use crate::mempool::Mempool;
+use crate::transaction::Transaction;
 use failure::Error;
 use log::*;
 use std::time::SystemTime;
 use stegos_blockchain::Blockchain;
 use stegos_blockchain::KeyBlock;
 use stegos_blockchain::Output;
-use stegos_blockchain::Transaction;
 use stegos_crypto::hash::Hash;
 
 ///
@@ -66,7 +66,7 @@ pub(crate) fn validate_transaction(
 
     // Check that transaction exists in the mempool.
     if mempool.contains_tx(&tx_hash) {
-        return Err(NodeTransactionError::AlreadyExists(tx_hash).into());
+        return Err(TransactionError::AlreadyExists(tx_hash).into());
     }
 
     // Check fee.
@@ -78,7 +78,7 @@ pub(crate) fn validate_transaction(
         };
     }
     if tx.body.fee < min_fee {
-        return Err(NodeTransactionError::TooLowFee(tx_hash, min_fee, tx.body.fee).into());
+        return Err(TransactionError::TooLowFee(tx_hash, min_fee, tx.body.fee).into());
     }
 
     // Validate inputs.
@@ -89,13 +89,13 @@ pub(crate) fn validate_transaction(
         let input = match chain.output_by_hash(input_hash)? {
             Some(input) => input,
             None => {
-                return Err(NodeTransactionError::MissingInput(tx_hash, input_hash.clone()).into());
+                return Err(TransactionError::MissingInput(tx_hash, input_hash.clone()).into());
             }
         };
 
         // Check that the input is not claimed by other transactions.
         if mempool.contains_input(input_hash) {
-            return Err(NodeTransactionError::MissingInput(tx_hash, input_hash.clone()).into());
+            return Err(TransactionError::MissingInput(tx_hash, input_hash.clone()).into());
         }
 
         // Check escrow.
@@ -114,7 +114,7 @@ pub(crate) fn validate_transaction(
 
         // Check that the output is unique and don't overlap with other transactions.
         if mempool.contains_output(&output_hash) || chain.contains_output(&output_hash) {
-            return Err(NodeTransactionError::OutputHashCollision(tx_hash, output_hash).into());
+            return Err(TransactionError::OutputHashCollision(tx_hash, output_hash).into());
         }
     }
 
@@ -268,8 +268,8 @@ mod test {
             let tx = Transaction::unchecked(&skey, &inputs, &[output], gamma, fee).unwrap();
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect_err("transaction is not valid");
-            match e.downcast::<NodeTransactionError>().unwrap() {
-                NodeTransactionError::TooLowFee(tx_hash, min, got) => {
+            match e.downcast::<TransactionError>().unwrap() {
+                TransactionError::TooLowFee(tx_hash, min, got) => {
                     assert_eq!(tx_hash, Hash::digest(&tx));
                     assert_eq!(min, payment_fee);
                     assert_eq!(got, fee);
@@ -291,8 +291,8 @@ mod test {
             let tx = Transaction::new(&skey, &[input], &[output], outputs_gamma, fee).unwrap();
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect_err("transaction is not valid");
-            match e.downcast::<NodeTransactionError>().unwrap() {
-                NodeTransactionError::MissingInput(_tx_hash, hash) => {
+            match e.downcast::<TransactionError>().unwrap() {
+                TransactionError::MissingInput(_tx_hash, hash) => {
                     assert_eq!(hash, missing);
                 }
                 _ => panic!(),
@@ -316,8 +316,8 @@ mod test {
             // TX hash is unique.
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect_err("transaction is not valid");
-            match e.downcast::<NodeTransactionError>().expect("proper error") {
-                NodeTransactionError::AlreadyExists(tx_hash) => {
+            match e.downcast::<TransactionError>().expect("proper error") {
+                TransactionError::AlreadyExists(tx_hash) => {
                     assert_eq!(tx_hash, Hash::digest(&tx));
                 }
                 _ => panic!(),
@@ -331,8 +331,8 @@ mod test {
             };
             let e = validate_transaction(&tx2, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect_err("transaction is not valid");
-            match e.downcast::<NodeTransactionError>().expect("proper error") {
-                NodeTransactionError::MissingInput(_tx_hash, hash) => {
+            match e.downcast::<TransactionError>().expect("proper error") {
+                TransactionError::MissingInput(_tx_hash, hash) => {
                     assert_eq!(hash, input_hashes[0]);
                 }
                 _ => panic!(),
@@ -440,8 +440,8 @@ mod test {
             let tx = Transaction::unchecked(&skey, &inputs, &outputs, outputs_gamma, fee).unwrap();
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect_err("transaction is not valid");
-            match e.downcast::<NodeTransactionError>().expect("proper error") {
-                NodeTransactionError::OutputHashCollision(_tx_hash, hash) => {
+            match e.downcast::<TransactionError>().expect("proper error") {
+                TransactionError::OutputHashCollision(_tx_hash, hash) => {
                     assert_eq!(hash, output_hashes[0]);
                 }
                 _ => panic!(),
@@ -476,8 +476,8 @@ mod test {
                 .unwrap();
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect_err("transaction is not valid");
-            match e.downcast::<NodeTransactionError>().expect("proper error") {
-                NodeTransactionError::OutputHashCollision(_tx_hash, hash) => {
+            match e.downcast::<TransactionError>().expect("proper error") {
+                TransactionError::OutputHashCollision(_tx_hash, hash) => {
                     assert_eq!(hash, Hash::digest(&output));
                 }
                 _ => panic!(),

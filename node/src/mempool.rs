@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::transaction::Transaction;
 use linked_hash_map::LinkedHashMap;
 use log::*;
 use std::collections::HashMap;

@@ -1,7 +1,7 @@
 //! Transactions.
 
 //
-// Copyright (c) 2018 Stegos AG
+// Copyright (c) 2018-2019 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -21,11 +21,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::output::*;
+use crate::error::TransactionError;
 use failure::Error;
-use failure::Fail;
 use std::collections::HashSet;
 use std::time::SystemTime;
+use stegos_blockchain::{Output, OutputError, PAYMENT_PAYLOAD_LEN, STAKE_PAYLOAD_LEN};
 use stegos_crypto::bulletproofs::{fee_a, simple_commit, validate_range_proof};
 use stegos_crypto::curve1174::cpt::{
     sign_hash, sign_hash_with_kval, validate_sig, Pt, PublicKey, SchnorrSig, SecretKey,
@@ -33,23 +33,6 @@ use stegos_crypto::curve1174::cpt::{
 use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-
-/// Transaction errors.
-#[derive(Debug, Fail)]
-pub enum TransactionError {
-    #[fail(display = "Invalid signature: tx={}", _0)]
-    InvalidSignature(Hash),
-    #[fail(display = "Invalid monetary balance: tx={}", _0)]
-    InvalidMonetaryBalance(Hash),
-    #[fail(display = "Negative fee: tx={}", _0)]
-    NegativeFee(Hash),
-    #[fail(display = "No inputs: tx={}", _0)]
-    NoInputs(Hash),
-    #[fail(display = "Duplicate input: tx={}, utxo={}", _0, _1)]
-    DuplicateInput(Hash, Hash),
-    #[fail(display = "Duplicate output: tx={}, utxo={}", _0, _1)]
-    DuplicateOutput(Hash, Hash),
-}
 
 /// Transaction body.
 #[derive(Clone, Debug)]
@@ -427,7 +410,8 @@ impl Transaction {
 pub mod tests {
     use super::*;
 
-    use stegos_crypto::curve1174::cpt::make_random_keys;
+    use stegos_blockchain::StakeOutput;
+    use stegos_crypto::curve1174::cpt;
     use stegos_crypto::pbc::secure;
 
     ///
@@ -435,7 +419,7 @@ pub mod tests {
     ///
     #[test]
     pub fn no_inputs() {
-        let (skey, pkey) = make_random_keys();
+        let (skey, pkey) = cpt::make_random_keys();
         let timestamp = SystemTime::now();
         let amount: i64 = 1_000_000;
         let fee: i64 = amount;
@@ -454,7 +438,7 @@ pub mod tests {
     #[test]
     pub fn no_outputs() {
         // No outputs
-        let (skey, pkey) = make_random_keys();
+        let (skey, pkey) = cpt::make_random_keys();
         let (tx, inputs, _outputs) =
             Transaction::new_test(&skey, &pkey, 100, 1, 0, 0, 100).expect("transaction is valid");
         tx.validate(&inputs).expect("transaction is valid");
@@ -465,9 +449,9 @@ pub mod tests {
     ///
     #[test]
     pub fn payment_utxo() {
-        let (skey0, pkey0) = make_random_keys();
-        let (skey1, pkey1) = make_random_keys();
-        let (_skey2, pkey2) = make_random_keys();
+        let (skey0, pkey0) = cpt::make_random_keys();
+        let (skey1, pkey1) = cpt::make_random_keys();
+        let (_skey2, pkey2) = cpt::make_random_keys();
 
         let timestamp = SystemTime::now();
         let amount: i64 = 1_000_000;
@@ -638,8 +622,8 @@ pub mod tests {
     ///
     #[test]
     pub fn stake_utxo() {
-        let (skey0, _pkey0) = make_random_keys();
-        let (skey1, pkey1) = make_random_keys();
+        let (skey0, _pkey0) = cpt::make_random_keys();
+        let (skey1, pkey1) = cpt::make_random_keys();
         let (secure_skey1, secure_pkey1) = secure::make_random_keys();
 
         let timestamp = SystemTime::now();
@@ -774,9 +758,9 @@ pub mod tests {
 
     #[test]
     fn test_supertransaction() {
-        let (skey1, pkey1) = make_random_keys();
-        let (skey2, pkey2) = make_random_keys();
-        let (skey3, pkey3) = make_random_keys();
+        let (skey1, pkey1) = cpt::make_random_keys();
+        let (skey2, pkey2) = cpt::make_random_keys();
+        let (skey3, pkey3) = cpt::make_random_keys();
         let timestamp = SystemTime::now();
         let err_utxo = "Can't construct UTXO";
         let iamt1 = 101;

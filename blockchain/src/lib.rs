@@ -35,7 +35,6 @@ pub mod mvcc;
 mod output;
 pub mod protos;
 mod storage;
-mod transaction;
 pub mod view_changes;
 
 pub use crate::block::*;
@@ -49,4 +48,3 @@ pub use crate::merkle::*;
 pub use crate::multisignature::*;
 pub use crate::output::*;
 pub use crate::storage::*;
-pub use crate::transaction::*;

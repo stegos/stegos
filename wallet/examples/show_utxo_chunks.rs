@@ -27,7 +27,6 @@
 
 use std::time::SystemTime;
 use stegos_blockchain::Output;
-use stegos_blockchain::Transaction;
 use stegos_blockchain::{PaymentOutput, PaymentPayloadData};
 use stegos_crypto::curve1174::cpt::make_random_keys;
 use stegos_crypto::curve1174::cpt::Pt;
@@ -38,6 +37,7 @@ use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::hash::{Hashable, Hasher, HASH_SIZE};
+use stegos_node::Transaction;
 use stegos_serialization::traits::ProtoConvert;
 
 use stegos_crypto::dicemix::*;

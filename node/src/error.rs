@@ -28,7 +28,19 @@ use std::time::SystemTime;
 use stegos_crypto::hash::Hash;
 
 #[derive(Debug, Fail, PartialEq, Eq)]
-pub enum NodeTransactionError {
+pub enum TransactionError {
+    #[fail(display = "Invalid signature: tx={}", _0)]
+    InvalidSignature(Hash),
+    #[fail(display = "Invalid monetary balance: tx={}", _0)]
+    InvalidMonetaryBalance(Hash),
+    #[fail(display = "Negative fee: tx={}", _0)]
+    NegativeFee(Hash),
+    #[fail(display = "No inputs: tx={}", _0)]
+    NoInputs(Hash),
+    #[fail(display = "Duplicate input: tx={}, utxo={}", _0, _1)]
+    DuplicateInput(Hash, Hash),
+    #[fail(display = "Duplicate output: tx={}, utxo={}", _0, _1)]
+    DuplicateOutput(Hash, Hash),
     #[fail(
         display = "Transaction fee is too low: tx={}, min={}, got={}",
         _0, _1, _2

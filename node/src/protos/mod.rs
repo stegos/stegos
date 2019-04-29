@@ -23,12 +23,60 @@
 
 use stegos_serialization::traits::*;
 // link protobuf dependencies
-use stegos_blockchain::protos::*;
-include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
-
 use crate::loader::{ChainLoaderMessage, RequestBlocks, ResponseBlocks};
+use crate::transaction::{Transaction, TransactionBody};
 use failure::{format_err, Error};
 use protobuf::RepeatedField;
+use stegos_blockchain::protos::*;
+use stegos_blockchain::Output;
+use stegos_crypto::curve1174::cpt;
+use stegos_crypto::curve1174::fields::Fr;
+use stegos_crypto::hash::Hash;
+use stegos_crypto::protos::*;
+
+include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
+
+impl ProtoConvert for Transaction {
+    type Proto = transaction::Transaction;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = transaction::Transaction::new();
+
+        for txin in &self.body.txins {
+            proto.txins.push(txin.into_proto());
+        }
+        for txout in &self.body.txouts {
+            proto.txouts.push(txout.into_proto());
+        }
+        proto.set_gamma(self.body.gamma.into_proto());
+        proto.set_fee(self.body.fee);
+        proto.set_sig(self.sig.into_proto());
+        proto
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let mut txins = Vec::<Hash>::with_capacity(proto.txins.len());
+        for txin in proto.txins.iter() {
+            txins.push(Hash::from_proto(txin)?);
+        }
+        let mut txouts = Vec::<Output>::with_capacity(proto.txouts.len());
+        for txout in proto.txouts.iter() {
+            txouts.push(Output::from_proto(txout)?);
+        }
+        let gamma = Fr::from_proto(proto.get_gamma())?;
+        let fee = proto.get_fee();
+        let sig = cpt::SchnorrSig::from_proto(proto.get_sig())?;
+
+        Ok(Transaction {
+            body: TransactionBody {
+                txins,
+                txouts,
+                gamma,
+                fee,
+            },
+            sig,
+        })
+    }
+}
 
 impl ProtoConvert for RequestBlocks {
     type Proto = loader::RequestBlocks;
@@ -94,6 +142,7 @@ impl ProtoConvert for ChainLoaderMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::SystemTime;
     use stegos_crypto::hash::{Hash, Hashable};
 
     fn roundtrip<T>(x: &T) -> T
@@ -103,6 +152,49 @@ mod tests {
         let r = T::from_proto(&x.clone().into_proto()).unwrap();
         assert_eq!(Hash::digest(x), Hash::digest(&r));
         r
+    }
+
+    fn mktransaction() -> Transaction {
+        let (skey0, _pkey0) = cpt::make_random_keys();
+        let (skey1, pkey1) = cpt::make_random_keys();
+        let (_skey2, pkey2) = cpt::make_random_keys();
+
+        let timestamp = SystemTime::now();
+        let amount: i64 = 1_000_000;
+        let fee: i64 = 0;
+
+        // "genesis" output by 0
+        let (output0, _delta0) =
+            Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
+
+        // Transaction from 1 to 2
+        let inputs1 = [output0];
+        let (output11, gamma11) =
+            Output::new_payment(timestamp, &skey1, &pkey2, amount).expect("keys are valid");
+
+        roundtrip(&output11);
+        roundtrip(&gamma11);
+
+        let outputs_gamma = gamma11;
+
+        let tx = Transaction::new(&skey1, &inputs1, &[output11], outputs_gamma, fee)
+            .expect("keys are valid");
+        tx.validate(&inputs1).unwrap();
+
+        let tx2 = roundtrip(&tx);
+        tx2.validate(&inputs1).unwrap();
+
+        tx
+    }
+
+    #[test]
+    fn transactions() {
+        let tx = mktransaction();
+        roundtrip(&tx);
+
+        let mut buf = tx.into_buffer().unwrap();
+        buf.pop();
+        Transaction::from_buffer(&buf).expect_err("error");
     }
 
     #[test]

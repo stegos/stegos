@@ -138,7 +138,21 @@ impl Mempool {
     }
 
     ///
-    /// Process transactions in mempool and create a new micro block.
+    /// Returns the number of inputs in this mempool.
+    ///
+    pub fn inputs_len(&self) -> usize {
+        self.inputs.len()
+    }
+
+    ///
+    /// Returns the number of outputs in this mempool.
+    ///
+    pub fn outputs_len(&self) -> usize {
+        self.outputs.len()
+    }
+
+    ///
+    /// Process transactions in mempool and create a new monetary block.
     ///
     pub fn create_block(
         &mut self,
@@ -150,25 +164,25 @@ impl Mempool {
         pkey: &PublicKey,
         view_change: u32,
         proof: Option<ViewChangeProof>,
+        max_utxo_in_block: usize,
     ) -> (MicroBlock, Option<Output>, Vec<Hash>) {
-        // TODO: limit the block size.
-        let tx_count = self.pool.len();
-        debug!(
-            "Processing {}/{} transactions from mempool",
-            tx_count,
-            self.pool.len()
-        );
-
         let timestamp = SystemTime::now();
         let mut gamma = Fr::zero();
         let mut fee = 0i64;
         let mut inputs: Vec<Hash> = Vec::new();
         let mut outputs: Vec<Output> = Vec::new();
-        let mut tx_hashes: Vec<Hash> = Vec::with_capacity(tx_count);
+        let mut tx_hashes: Vec<Hash> = Vec::new();
         for entry in self.pool.entries() {
             let tx_hash = entry.key();
             let tx = entry.get();
             debug_assert_eq!(tx_hash, &Hash::digest(&tx));
+
+            // Check the maximum number of UTXO in block.
+            let utxo_in_block =
+                inputs.len() + tx.body.txins.len() + outputs.len() + tx.body.txouts.len();
+            if utxo_in_block >= max_utxo_in_block {
+                break;
+            }
 
             debug!("Processing transaction: hash={}", &tx_hash);
             tx_hashes.push(tx_hash.clone());
@@ -177,6 +191,12 @@ impl Mempool {
             gamma += tx.body.gamma;
             fee += tx.body.fee;
         }
+
+        debug!(
+            "Processed {}/{} transactions from mempool",
+            tx_hashes.len(),
+            self.pool.len()
+        );
 
         let monetary_adjustment: i64 = reward;
 
@@ -325,17 +345,22 @@ mod test {
     #[test]
     fn create_block() {
         let (skey, pkey) = make_random_keys();
+        let max_utxo_in_block: usize = 7;
         let mut mempool = Mempool::new();
 
         let (tx1, inputs1, _outputs1) =
             Transaction::new_test(&skey, &pkey, 3, 2, 2, 1, 4).expect("transaction valid");
         let (tx2, inputs2, _outputs2) =
             Transaction::new_test(&skey, &pkey, 6, 1, 2, 2, 2).expect("transaction valid");
+        let (tx3, _inputs3, _outputs3) =
+            Transaction::new_test(&skey, &pkey, 6, 1, 2, 2, 2).expect("transaction valid");
 
         let tx_hash1 = Hash::digest(&tx1);
         let tx_hash2 = Hash::digest(&tx2);
+        let tx_hash3 = Hash::digest(&tx3);
         mempool.push_tx(tx_hash1.clone(), tx1.clone());
         mempool.push_tx(tx_hash2.clone(), tx2.clone());
+        mempool.push_tx(tx_hash3.clone(), tx3.clone());
 
         let previous = Hash::digest(&1u64);
         let version = 1;
@@ -350,9 +375,10 @@ mod test {
             &pkey,
             view_change,
             None,
+            max_utxo_in_block,
         );
 
-        // Used transactions.
+        // Used transactions - tx3 is not used because of max_utxo_in_block.
         assert_eq!(tx_hashes, vec![tx_hash1, tx_hash2]);
 
         // Monetary balance.

@@ -37,8 +37,14 @@ pub struct ChainConfig {
     pub key_block_timeout: Duration,
     /// Time to lock stakes.
     pub bonding_time: Duration,
-    /// Max difference in timestamps of leader and validators.
+    /// The number of blocks per epoch.
     pub blocks_in_epoch: u64,
+    /// The maximal number of inputs + outputs in a transaction.
+    pub max_utxo_in_tx: usize,
+    /// The maximal number of inputs + outputs in a micro block.
+    pub max_utxo_in_block: usize,
+    /// The maximal number of inputs + outputs in mempool.
+    pub max_utxo_in_mempool: usize,
     /// Loader will send maximum N epoch at time.
     pub chain_loader_speed_in_epoch: u64,
     /// Fixed reward per block.
@@ -69,6 +75,9 @@ impl Default for ChainConfig {
             key_block_timeout,
             bonding_time: blockchain_default.bonding_time,
             blocks_in_epoch: 5,
+            max_utxo_in_tx: 10,
+            max_utxo_in_block: 1000,
+            max_utxo_in_mempool: 10000,
             chain_loader_speed_in_epoch: 10,
             block_reward: 60_000_000, // 60 STG
             payment_fee: 1_000,       // 0.001 STG

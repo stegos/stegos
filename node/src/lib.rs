@@ -428,6 +428,23 @@ impl NodeService {
             tx.body.fee
         );
 
+        // Limit the number of inputs and outputs.
+        let utxo_count = tx.body.txins.len() + tx.body.txouts.len();
+        if utxo_count > self.cfg.max_utxo_in_tx {
+            return Err(NodeTransactionError::TooLarge(
+                tx_hash,
+                utxo_count,
+                self.cfg.max_utxo_in_tx,
+            )
+            .into());
+        }
+
+        // Limit the maximum size of mempool.
+        let utxo_in_mempool = self.mempool.inputs_len() + self.mempool.outputs_len();
+        if utxo_in_mempool > self.cfg.max_utxo_in_mempool {
+            return Err(NodeTransactionError::MempoolIsFull(tx_hash).into());
+        }
+
         // Validate transaction.
         let timestamp = SystemTime::now();
         validate_transaction(
@@ -442,6 +459,9 @@ impl NodeService {
         // Queue to mempool.
         info!("Transaction is valid, adding to mempool: tx={}", &tx_hash);
         self.mempool.push_tx(tx_hash, tx);
+        metrics::MEMPOOL_TRANSACTIONS.set(self.mempool.len() as i64);
+        metrics::MEMPOOL_INPUTS.set(self.mempool.inputs_len() as i64);
+        metrics::MEMPOOL_OUTPUTS.set(self.mempool.inputs_len() as i64);
 
         Ok(())
     }
@@ -801,6 +821,9 @@ impl NodeService {
                 let input_hashes: Vec<Hash> = inputs.iter().map(|o| Hash::digest(o)).collect();
                 let output_hashes: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
                 self.mempool.prune(&input_hashes, &output_hashes);
+                metrics::MEMPOOL_TRANSACTIONS.set(self.mempool.len() as i64);
+                metrics::MEMPOOL_INPUTS.set(self.mempool.inputs_len() as i64);
+                metrics::MEMPOOL_OUTPUTS.set(self.mempool.inputs_len() as i64);
 
                 // Notify subscribers.
                 let msg = OutputsChanged { inputs, outputs };
@@ -1267,6 +1290,7 @@ impl NodeService {
             &self.keys.wallet_pkey,
             self.chain.view_change(),
             proof,
+            self.cfg.max_utxo_in_block,
         );
         let block_hash = Hash::digest(&block);
         block.body.sig = secure::sign_hash(&block_hash, &self.keys.network_skey);

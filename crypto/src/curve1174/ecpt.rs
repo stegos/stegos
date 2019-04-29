@@ -68,11 +68,22 @@ impl ECp {
     pub fn try_from_xy(x: &Fq, y: &Fq) -> Result<Self, CryptoError> {
         let x51 = Fq51::from(*x);
         let y51 = Fq51::from(*y);
-        if Self::is_valid_pt(&x51, &y51) {
-            Ok(Self::new_from_xy51(&x51, &y51))
-        } else {
-            Err(CryptoError::PointNotOnCurve)
+        Self::make_valid_pt(&x51, &y51)
+    }
+
+    fn make_valid_pt(x: &Fq51, y: &Fq51) -> Result<Self, CryptoError> {
+        if !Self::is_valid_pt(x, y) {
+            return Err(CryptoError::PointNotOnCurve);
         }
+        // avoid small subgroup
+        // this assumes cofactor CURVE_H = 4
+        let newpt = Self::new_from_xy51(x, y);
+        let newpt2 = newpt + newpt;
+        let newpt4 = newpt2 + newpt2;
+        if newpt4.is_inf() {
+            return Err(CryptoError::InSmallSubgroup);
+        }
+        Ok(newpt4)
     }
 
     fn solve_y(xq: &Fq51) -> Result<Fq51, CryptoError> {
@@ -85,7 +96,7 @@ impl ECp {
     fn is_valid_pt(x: &Fq51, y: &Fq51) -> bool {
         let xsq = x.sqr();
         let ysq = y.sqr();
-        xsq + ysq == 1 + CURVE_D * xsq * ysq
+        (xsq + ysq == 1 + CURVE_D * xsq * ysq)
     }
 
     fn new_from_xy51(x: &Fq51, y: &Fq51) -> Self {
@@ -105,14 +116,7 @@ impl ECp {
         let xq = Fq51::from(Fq::from(x256));
         let ysqrt = Self::solve_y(&xq)?;
         let yq = if ysqrt.is_odd() == sgn { ysqrt } else { -ysqrt };
-        let newpt = Self::new_from_xy51(&xq, &yq);
-
-        if (CURVE_H * newpt).is_inf() {
-            // point was Inf , or in small subgroup of curve
-            Err(CryptoError::PointNotOnCurve)
-        } else {
-            Ok(newpt)
-        }
+        Self::make_valid_pt(&xq, &yq)
     }
 
     /// Try to convert from a compressed point.
@@ -143,9 +147,12 @@ impl ECp {
                     Ok(ysqrt) => {
                         let yq = if sgn == ysqrt.is_odd() { ysqrt } else { -ysqrt };
                         // avoid small subgroup
-                        let pt = CURVE_H * Self::new_from_xy51(&xq, &yq);
-                        if !pt.is_inf() {
-                            hpt = pt;
+                        // this assumes cofactor CURVE_H = 4
+                        let pt = Self::new_from_xy51(&xq, &yq);
+                        let pt2 = pt + pt;
+                        let pt4 = pt2 + pt2;
+                        if !pt4.is_inf() {
+                            hpt = pt4;
                             break;
                         }
                     }
@@ -256,6 +263,20 @@ impl Mul<Fr> for ECp {
         mul_to_proj(&wv, &mut tmp);
         tmp
     }
+}
+
+// A window vector representing the Fr(1/4) scale factor
+// as prescale on compression of ECC points.
+const WV_4: WinVec = WinVec([
+    5, 1, 7, 1, -3, 1, -3, -2, -8, 5, -1, -6, 4, -1, 7, 6, 7, 6, 5, 4, -2, -2, -8, -5, 4, 5, -4, 1,
+    -5, -6, -6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, -8, 2, 0,
+]);
+
+pub fn prescale_for_compression(pt: ECp) -> ECp {
+    let mut tmp = pt;
+    mul_to_proj(&WV_4, &mut tmp);
+    tmp
 }
 
 impl Mul<ECp> for Fr {
@@ -657,6 +678,32 @@ mod tests {
             let cpt = Pt::from(pt);
             let ept = ECp::decompress(cpt).unwrap();
             assert!(ept == pt);
+        }
+
+        println!("WV(1/4)");
+        let wv = WinVec::from(Fr::invert(Fr::from(4)));
+        for ix in 0..4 {
+            let kx = ix * 16;
+            let s = format!(
+                "{}, {}, {}, {}, {}, {}, {}, {},  {}, {}, {}, {}, {}, {}, {}, {}",
+                wv.0[kx],
+                wv.0[kx + 1],
+                wv.0[kx + 2],
+                wv.0[kx + 3],
+                wv.0[kx + 4],
+                wv.0[kx + 5],
+                wv.0[kx + 6],
+                wv.0[kx + 7],
+                wv.0[kx + 8],
+                wv.0[kx + 9],
+                wv.0[kx + 10],
+                wv.0[kx + 11],
+                wv.0[kx + 12],
+                wv.0[kx + 13],
+                wv.0[kx + 14],
+                wv.0[kx + 15]
+            );
+            println!("{}", s);
         }
     }
 }

@@ -79,7 +79,8 @@ impl Pt {
     /// Create from an uncompressed point.
     #[inline]
     pub fn compress(ept: ECp) -> Pt {
-        let bytes = ECp::to_bytes(&ept);
+        let pt_4 = ecpt::prescale_for_compression(ept);
+        let bytes = ECp::to_bytes(&pt_4);
         Pt(bytes)
     }
 

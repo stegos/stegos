@@ -503,9 +503,7 @@ fn aes_encrypt_with_key(msg: &[u8], key: &[u8; 32]) -> Vec<u8> {
     // on input, key is 32B. AES128 only needs 16B for keying.
     // So take first 16B of key as keying,
     // and last 16B of key as CTR mode nonce
-    let mut ctr = [0u8; 16];
-    ctr.copy_from_slice(&key[16..]);
-    let mut aes_enc = aes::ctr(aes::KeySize::KeySize128, key, &ctr[..]);
+    let mut aes_enc = aes::ctr(aes::KeySize::KeySize128, &key[..16], &key[16..]);
     let mut ctxt: Vec<u8> = repeat(0).take(msg.len()).collect();
     aes_enc.process(msg, &mut ctxt);
     ctxt

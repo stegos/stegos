@@ -198,7 +198,7 @@ where
 
     #[inline]
     fn connection_keep_alive(&self) -> KeepAlive {
-        self.keep_alive.clone()
+        self.keep_alive
     }
 
     fn poll(
@@ -207,13 +207,6 @@ where
         ProtocolsHandlerEvent<Self::OutboundProtocol, Self::OutboundOpenInfo, Self::OutEvent>,
         io::Error,
     > {
-        if self.internal_failure {
-            self.internal_failure = false;
-            // let other substreams to be closed gracefully
-            self.shutdown();
-            return Ok(Async::NotReady);
-        }
-
         if !self.send_queue.is_empty() {
             let message = self.send_queue.remove(0);
             return Ok(Async::Ready(
@@ -293,12 +286,17 @@ where
                         }
                         Err(e) => {
                             debug!(target: "stegos_network::gatekeeper", "failure closing substream: error={}", e);
-                            self.internal_failure = true;
                             break;
                         }
                     },
                 }
             }
+        }
+
+        if self.substreams.is_empty() {
+            self.keep_alive = KeepAlive::Until(Instant::now() + Duration::from_secs(10));
+        } else {
+            self.keep_alive = KeepAlive::Forever;
         }
 
         Ok(Async::NotReady)
@@ -312,7 +310,6 @@ where
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         f.debug_struct("GatekeeperHandler")
             .field("shutting_down", &self.shutting_down)
-            .field("internal_failure", &self.internal_failure)
             .field("substreams", &self.substreams.len())
             .field("send_queue", &self.send_queue.len())
             .finish()

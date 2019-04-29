@@ -21,9 +21,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod behavior;
+mod behavior;
 mod handler;
 mod proto;
 mod protocol;
 
-pub use behavior::{Gatekeeper, GatekeeperOutEvent, ProtocolUpdateEvent};
+pub use behavior::{Gatekeeper, GatekeeperOutEvent, PeerEvent};

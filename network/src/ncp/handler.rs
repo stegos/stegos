@@ -33,6 +33,7 @@ use libp2p::core::{
 use log::{debug, trace, warn};
 use smallvec::SmallVec;
 use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 use std::{fmt, io};
 use tokio::codec::Framed;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -49,12 +50,6 @@ where
     /// Configuration for the Ncp protocol.
     config: NcpConfig,
 
-    /// Accept incoming substreams
-    enabled_incoming: bool,
-
-    /// Allow outgoing substreams
-    enabled_outgoing: bool,
-
     /// The active substreams.
     // TODO: add a limit to the number of allowed substreams
     substreams: Vec<SubstreamState<TSubstream>>,
@@ -64,6 +59,9 @@ where
 
     /// Queue of events to send upper level (layer)
     out_events: VecDeque<NcpRecvEvent>,
+
+    /// Keep alive for the connection
+    keep_alive: KeepAlive,
 }
 
 /// State of an active substream, opened either by us or by the remote.
@@ -90,22 +88,10 @@ where
     pub fn new() -> Self {
         NcpHandler {
             config: NcpConfig::new(),
-            enabled_incoming: true,
-            enabled_outgoing: true,
             substreams: Vec::new(),
             send_queue: SmallVec::new(),
             out_events: VecDeque::new(),
-        }
-    }
-
-    #[inline]
-    fn disable(&mut self) {
-        self.enabled_incoming = false;
-        self.enabled_outgoing = false;
-        for n in (0..self.substreams.len()).rev() {
-            let substream = self.substreams.swap_remove(n);
-            self.substreams
-                .push(SubstreamState::Closing(substream.into_substream()));
+            keep_alive: KeepAlive::Forever,
         }
     }
 }
@@ -147,10 +133,6 @@ where
         protocol: <Self::InboundProtocol as InboundUpgrade<TSubstream>>::Output,
     ) {
         trace!(target: "stegos_network::ncp", "successfully negotiated inbound substream");
-        if !self.enabled_incoming {
-            trace!(target: "stegos_network::ncp", "listener is disabled, dropping inbound substream");
-            return;
-        }
         self.substreams.push(SubstreamState::WaitingInput(protocol))
     }
 
@@ -160,10 +142,6 @@ where
         message: Self::OutboundOpenInfo,
     ) {
         trace!(target: "stegos_network::ncp", "successfully negotiated outbound substream");
-        if !self.enabled_outgoing {
-            trace!(target: "stegos_network::ncp", "dialer is disabled, dropping outbound substream");
-            return;
-        }
         self.substreams
             .push(SubstreamState::PendingSend(protocol, message))
     }
@@ -171,18 +149,6 @@ where
     #[inline]
     fn inject_event(&mut self, event: Self::InEvent) {
         match event {
-            NcpSendEvent::EnableIncoming => {
-                self.enabled_incoming = true;
-                self.out_events.push_back(NcpRecvEvent::EnabledIncoming);
-            }
-            NcpSendEvent::EnableOutgoing => {
-                self.enabled_outgoing = true;
-                self.out_events.push_back(NcpRecvEvent::EnabledOutgoing);
-            }
-            NcpSendEvent::Disable => {
-                self.disable();
-                self.out_events.push_back(NcpRecvEvent::Disabled);
-            }
             NcpSendEvent::Send(message) => self.send_queue.push(message),
         }
     }
@@ -199,11 +165,7 @@ where
 
     #[inline]
     fn connection_keep_alive(&self) -> KeepAlive {
-        if self.enabled_incoming || self.enabled_outgoing {
-            KeepAlive::Forever
-        } else {
-            KeepAlive::Now
-        }
+        self.keep_alive
     }
 
     fn poll(
@@ -292,6 +254,12 @@ where
             }
         }
 
+        if self.substreams.is_empty() {
+            self.keep_alive = KeepAlive::Until(Instant::now() + Duration::from_secs(10));
+        } else {
+            self.keep_alive = KeepAlive::Forever;
+        }
+
         Ok(Async::NotReady)
     }
 }
@@ -302,8 +270,6 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         f.debug_struct("NcpHandler")
-            .field("enabled_incoming", &self.enabled_incoming)
-            .field("enabled_outgoing", &self.enabled_outgoing)
             .field("substreams", &self.substreams.len())
             .field("send_queue", &self.send_queue.len())
             .finish()

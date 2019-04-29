@@ -35,7 +35,7 @@ use rand;
 use smallvec::SmallVec;
 use std::time::Duration;
 use std::{
-    collections::{hash_map::HashMap, VecDeque},
+    collections::{hash_map::HashMap, hash_set::HashSet, VecDeque},
     iter,
     marker::PhantomData,
 };
@@ -52,9 +52,10 @@ pub struct Floodsub<TSubstream> {
     local_peer_id: PeerId,
 
     /// List of peers the network is connected to, and the topics that they're subscribed to.
-    // TODO: filter out peers that don't support floodsub, so that we avoid hammering them with
-    //       opened substreams
-    connected_peers: HashMap<PeerId, SmallVec<[TopicHash; 8]>>,
+    connected_peers: HashSet<PeerId>,
+
+    /// List of peers enabled for PubSub
+    enabled_peers: HashMap<PeerId, SmallVec<[TopicHash; 8]>>,
 
     // List of topics we're subscribed to. Necessary to filter out messages that we receive
     // erroneously.
@@ -74,7 +75,8 @@ impl<TSubstream> Floodsub<TSubstream> {
         Floodsub {
             events: VecDeque::new(),
             local_peer_id,
-            connected_peers: HashMap::new(),
+            connected_peers: HashSet::new(),
+            enabled_peers: HashMap::new(),
             subscribed_topics: SmallVec::new(),
             received: LruCache::with_expiry_duration_and_capacity(
                 Duration::from_secs(60 * 15),
@@ -98,7 +100,7 @@ impl<TSubstream> Floodsub<TSubstream> {
             return false;
         }
 
-        for peer in self.connected_peers.keys() {
+        for peer in self.enabled_peers.keys() {
             self.events.push_back(NetworkBehaviourAction::SendEvent {
                 peer_id: peer.clone(),
                 event: FloodsubSendEvent::Publish(FloodsubRpc {
@@ -163,7 +165,7 @@ impl<TSubstream> Floodsub<TSubstream> {
         super::metrics::LRU_CACHE_SIZE.set(self.received.len() as i64);
 
         // Send to peers we know are subscribed to the topic.
-        for (peer_id, sub_topic) in self.connected_peers.iter() {
+        for (peer_id, sub_topic) in self.enabled_peers.iter() {
             if !sub_topic
                 .iter()
                 .any(|t| message.topics.iter().any(|u| t == u))
@@ -184,8 +186,16 @@ impl<TSubstream> Floodsub<TSubstream> {
 
     pub fn enable_outgoing(&mut self, peer_id: &PeerId) {
         debug!(target: "stegos_network::gatekeeper", "enabling pubsub dialer: peer_id={}", peer_id.to_base58());
-        if !self.connected_peers.contains_key(peer_id) {
+        if !self.connected_peers.contains(peer_id) {
             return;
+        }
+
+        if !self.enabled_peers.contains_key(peer_id) {
+            self.enabled_peers.insert(peer_id.clone(), SmallVec::new());
+        }
+
+        for p in self.enabled_peers.keys() {
+            debug!(target: "stegos_network::pubsub", "peer enabled: {}", p.to_base58());
         }
 
         self.events.push_back(NetworkBehaviourAction::SendEvent {
@@ -210,14 +220,27 @@ impl<TSubstream> Floodsub<TSubstream> {
 
     pub fn enable_incoming(&mut self, peer_id: &PeerId) {
         debug!(target: "stegos_network::gatekeeper", "enabling pubsub listener: peer_id={}", peer_id.to_base58());
-        if !self.connected_peers.contains_key(peer_id) {
+        if !self.connected_peers.contains(peer_id) {
             return;
+        }
+
+        if !self.enabled_peers.contains_key(peer_id) {
+            self.enabled_peers.insert(peer_id.clone(), SmallVec::new());
+        }
+
+        for p in self.enabled_peers.keys() {
+            debug!(target: "stegos_network::pubsub", "peer enabled: {}", p.to_base58());
         }
 
         self.events.push_back(NetworkBehaviourAction::SendEvent {
             peer_id: peer_id.clone(),
             event: FloodsubSendEvent::EnableIncoming,
         });
+
+        if self.enabled_peers.len() >= 2 {
+            self.events
+                .push_back(NetworkBehaviourAction::GenerateEvent(FloodsubEvent::Ready));
+        }
     }
 
     pub fn disable(&mut self, peer_id: &PeerId) {
@@ -245,16 +268,13 @@ where
     }
 
     fn inject_connected(&mut self, id: PeerId, _: ConnectedPoint) {
-        self.connected_peers.insert(id.clone(), SmallVec::new());
-        if self.connected_peers.len() >= 2 {
-            self.events
-                .push_back(NetworkBehaviourAction::GenerateEvent(FloodsubEvent::Ready));
-        }
+        self.connected_peers.insert(id.clone());
     }
 
     fn inject_disconnected(&mut self, id: &PeerId, _: ConnectedPoint) {
         let was_in = self.connected_peers.remove(id);
-        debug_assert!(was_in.is_some());
+        debug_assert!(was_in);
+        self.enabled_peers.remove(id);
     }
 
     fn inject_node_event(&mut self, propagation_source: PeerId, event: FloodsubRecvEvent) {
@@ -286,7 +306,7 @@ where
             FloodsubRecvEvent::Message(event) => {
                 // Update connected peers topics
                 for subscription in event.subscriptions {
-                    let remote_peer_topics = self.connected_peers
+                    let remote_peer_topics = self.enabled_peers
                         .get_mut(&propagation_source)
                         .expect("connected_peers is kept in sync with the peers we are connected to; we are guaranteed to only receive events from connected peers; QED");
                     match subscription.action {
@@ -344,7 +364,7 @@ where
                     }
 
                     // Propagate the message to everyone else who is subscribed to any of the topics.
-                    for (peer_id, subscr_topics) in self.connected_peers.iter() {
+                    for (peer_id, subscr_topics) in self.enabled_peers.iter() {
                         if peer_id == &propagation_source {
                             continue;
                         }

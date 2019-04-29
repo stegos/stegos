@@ -35,6 +35,7 @@
 /// --------------------------------------------------------------------------
 use crate::hash::*;
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct HashCashProof {
     pub nbits: usize,
     pub seed: Vec<u8>,

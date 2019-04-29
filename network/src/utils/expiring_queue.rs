@@ -29,54 +29,63 @@ use std::time::Duration;
 use tokio::timer::{delay_queue, DelayQueue};
 
 /// HashMap (used as HashSet) with TTL of peers
-pub struct ExpiringQueue<T>
+pub struct ExpiringQueue<K, V>
 where
-    T: Hash + Clone + Eq,
+    K: Hash + Clone + Eq,
 {
     ttl: Duration,
-    entries: HashMap<T, delay_queue::Key>,
-    expirations: DelayQueue<T>,
+    entries: HashMap<K, (delay_queue::Key, V)>,
+    expirations: DelayQueue<K>,
 }
 
-impl<T> ExpiringQueue<T>
+impl<K, V> ExpiringQueue<K, V>
 where
-    T: Hash + Clone + Eq,
+    K: Hash + Clone + Eq,
 {
-    pub fn new(ttl: u64) -> Self {
+    pub fn new(ttl: Duration) -> Self {
         ExpiringQueue {
-            ttl: Duration::from_secs(ttl),
-            entries: HashMap::<T, delay_queue::Key>::new(),
-            expirations: DelayQueue::<T>::new(),
+            ttl,
+            entries: HashMap::<K, (delay_queue::Key, V)>::new(),
+            expirations: DelayQueue::<K>::new(),
         }
     }
 
-    pub fn insert(&mut self, key: &T) {
+    pub fn insert(&mut self, key: K, value: V) {
+        if let Some((cache_key, _)) = self.entries.remove(&key) {
+            self.expirations.remove(&cache_key);
+        }
         let delay = self.expirations.insert(key.clone(), self.ttl);
 
-        self.entries.insert(key.clone(), delay);
+        self.entries.insert(key, (delay, value));
     }
 
-    pub fn keys(&self) -> HashMapKeys<T, delay_queue::Key> {
+    pub fn keys(&self) -> HashMapKeys<K, (delay_queue::Key, V)> {
         self.entries.keys()
     }
 
-    pub fn contains(&self, key: &T) -> bool {
+    pub fn contains_key(&self, key: &K) -> bool {
         self.entries.contains_key(key)
     }
 
-    pub fn remove(&mut self, key: &T) {
-        if let Some(cache_key) = self.entries.remove(key) {
+    pub fn remove(&mut self, key: &K) -> Option<V> {
+        if let Some((cache_key, v)) = self.entries.remove(key) {
             self.expirations.remove(&cache_key);
+            Some(v)
+        } else {
+            None
         }
     }
 
-    pub fn poll(&mut self) -> Poll<T, Error> {
+    pub fn poll(&mut self) -> Poll<(K, Option<V>), Error> {
         loop {
             match self.expirations.poll() {
                 Ok(Async::Ready(Some(entry))) => {
                     let expired = entry.get_ref().clone();
-                    self.entries.remove(entry.get_ref());
-                    return Ok(Async::Ready(expired));
+                    let v = match self.entries.remove(entry.get_ref()) {
+                        Some((_, v)) => Some(v),
+                        None => None,
+                    };
+                    return Ok(Async::Ready((expired, v)));
                 }
                 Ok(Async::Ready(None)) => return Ok(Async::NotReady),
                 Ok(Async::NotReady) => return Ok(Async::NotReady),

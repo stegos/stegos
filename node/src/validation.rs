@@ -401,12 +401,12 @@ mod test {
                 OutputError::StakeIsActive(
                     input_hash,
                     validator_pkey2,
-                    valid_until_epoch,
+                    active_until_epoch,
                     epoch2,
                 ) => {
                     assert_eq!(input_hash, Hash::digest(&stakes[0]));
                     assert_eq!(validator_pkey, &validator_pkey2);
-                    assert_eq!(valid_until_epoch, stake_epochs);
+                    assert_eq!(active_until_epoch, stake_epochs);
                     assert_eq!(epoch2, chain.epoch());
                 }
                 _ => panic!(),

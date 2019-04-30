@@ -47,18 +47,52 @@ use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::hash::Hash;
 use stegos_keychain::KeyChain;
 use stegos_network::Network;
+use stegos_node::EpochChanged;
 use stegos_node::Node;
 use stegos_node::OutputsChanged;
+
+struct PaymentValue {
+    output: PaymentOutput,
+    amount: i64,
+    data: PaymentPayloadData,
+}
+
+struct StakeValue {
+    output: StakeOutput,
+    active_until_epoch: u64,
+}
+
+impl PaymentValue {
+    fn to_info(&self) -> PaymentInfo {
+        PaymentInfo {
+            utxo: Hash::digest(&self.output),
+            amount: self.amount,
+            data: self.data.clone(),
+        }
+    }
+}
+
+impl StakeValue {
+    fn to_info(&self, epoch: u64) -> StakeInfo {
+        let is_active = self.active_until_epoch >= epoch;
+        StakeInfo {
+            utxo: Hash::digest(&self.output),
+            amount: self.output.amount,
+            active_until_epoch: self.active_until_epoch,
+            is_active,
+        }
+    }
+}
 
 pub struct WalletService {
     /// Keys.
     keys: KeyChain,
+    /// Current Epoch.
+    epoch: u64,
     /// Unspent Payment UXTO.
-    unspent: HashMap<Hash, (PaymentOutput, i64)>,
+    payments: HashMap<Hash, PaymentValue>,
     /// Unspent Stake UTXO.
-    unspent_stakes: HashMap<Hash, StakeOutput>,
-    /// Calculated Node's balance.
-    balance: i64,
+    stakes: HashMap<Hash, StakeValue>,
     /// ValueShuffle State.
     vs: ValueShuffle,
 
@@ -66,6 +100,8 @@ pub struct WalletService {
     payment_fee: i64,
     /// Staking fee.
     stake_fee: i64,
+    /// Lifetime of stake.
+    stake_epochs: u64,
 
     /// Node API.
     node: Node,
@@ -85,6 +121,7 @@ impl WalletService {
         node: Node,
         payment_fee: i64,
         stake_fee: i64,
+        stake_epochs: u64,
         persistent_state: Vec<(Output, u64)>,
     ) -> (Self, Wallet) {
         info!("My wallet key: {}", keys.wallet_pkey.to_hex());
@@ -93,9 +130,9 @@ impl WalletService {
         //
         // State.
         //
-        let unspent: HashMap<Hash, (PaymentOutput, i64)> = HashMap::new();
-        let unspent_stakes: HashMap<Hash, StakeOutput> = HashMap::new();
-        let balance: i64 = 0;
+        let epoch = 0;
+        let payments: HashMap<Hash, PaymentValue> = HashMap::new();
+        let stakes: HashMap<Hash, StakeValue> = HashMap::new();
         let vs = ValueShuffle::new(
             keys.wallet_skey.clone(),
             keys.wallet_pkey.clone(),
@@ -124,16 +161,23 @@ impl WalletService {
             .map(|outputs| WalletEvent::NodeOutputsChanged(outputs));
         events.push(Box::new(node_outputs));
 
+        // Key blocks from node.
+        let node_epochs = node
+            .subscribe_epoch_changed()
+            .map(|epoch| WalletEvent::NodeEpochChanged(epoch));
+        events.push(Box::new(node_epochs));
+
         let events = select_all(events);
 
         let mut service = WalletService {
+            epoch,
             keys,
-            unspent,
-            unspent_stakes,
-            balance,
+            payments,
+            stakes,
             vs,
             payment_fee,
             stake_fee,
+            stake_epochs,
             node,
             subscribers,
             events,
@@ -157,11 +201,12 @@ impl WalletService {
         comment: String,
     ) -> Result<(Hash, i64), Error> {
         let data = PaymentPayloadData::Comment(comment);
+        let unspent_iter = self.payments.values().map(|v| (&v.output, v.amount));
         let (inputs, outputs, gamma, fee) = create_payment_transaction(
             &self.keys.wallet_skey,
             &self.keys.wallet_pkey,
             recipient,
-            &self.unspent,
+            unspent_iter,
             amount,
             self.payment_fee,
             data,
@@ -182,10 +227,11 @@ impl WalletService {
         amount: i64,
         comment: String,
     ) -> Result<(), Error> {
+        let unspent_iter = self.payments.values().map(|v| (&v.output, v.amount));
         let (inputs, outputs, fee) = create_vs_payment_transaction(
             &self.keys.wallet_pkey,
             recipient,
-            &self.unspent,
+            unspent_iter,
             amount,
             self.payment_fee,
             comment,
@@ -196,12 +242,13 @@ impl WalletService {
 
     /// Stake money into the escrow.
     fn stake(&self, amount: i64) -> Result<(Hash, i64), Error> {
+        let unspent_iter = self.payments.values().map(|v| (&v.output, v.amount));
         let tx = create_staking_transaction(
             &self.keys.wallet_skey,
             &self.keys.wallet_pkey,
             &self.keys.network_pkey,
             &self.keys.network_skey,
-            &self.unspent,
+            unspent_iter,
             amount,
             self.payment_fee,
             self.stake_fee,
@@ -215,12 +262,13 @@ impl WalletService {
     /// Unstake money from the escrow.
     /// NOTE: amount must include PAYMENT_FEE.
     fn unstake(&self, amount: i64) -> Result<(Hash, i64), Error> {
+        let unspent_iter = self.stakes.values().map(|v| &v.output);
         let tx = create_unstaking_transaction(
             &self.keys.wallet_skey,
             &self.keys.wallet_pkey,
             &self.keys.network_pkey,
             &self.keys.network_skey,
-            &self.unspent_stakes,
+            unspent_iter,
             amount,
             self.payment_fee,
             self.stake_fee,
@@ -234,15 +282,25 @@ impl WalletService {
     /// Unstake all of the money from the escrow.
     fn unstake_all(&self) -> Result<(Hash, i64), Error> {
         let mut amount: i64 = 0;
-        for output in self.unspent_stakes.values() {
-            amount += output.amount;
+        for val in self.stakes.values() {
+            amount += val.output.amount;
         }
         self.unstake(amount)
     }
 
+    /// Get actual balance.
+    fn balance(&self) -> i64 {
+        let mut balance: i64 = 0;
+        for val in self.payments.values() {
+            balance += val.amount;
+        }
+        balance
+    }
+
     /// Called when outputs registered and/or pruned.
     fn on_outputs_changed(&mut self, epoch: u64, inputs: Vec<Output>, outputs: Vec<Output>) {
-        let saved_balance = self.balance;
+        assert_eq!(self.epoch, epoch);
+        let saved_balance = self.balance();
 
         for input in inputs {
             self.on_output_pruned(epoch, input);
@@ -252,47 +310,52 @@ impl WalletService {
             self.on_output_created(epoch, output);
         }
 
-        if saved_balance != self.balance {
-            debug!("Balance changed.");
-            let balance = self.balance;
-            let notification = WalletNotification::BalanceChanged { balance };
-            self.subscribers
-                .retain(move |tx| tx.unbounded_send(notification.clone()).is_ok());
+        let balance = self.balance();
+        if saved_balance != balance {
+            debug!("Balance changed");
+            self.notify(WalletNotification::BalanceChanged { balance });
         }
     }
 
     /// Called when UTXO is created.
-    fn on_output_created(&mut self, _epoch: u64, output: Output) {
+    fn on_output_created(&mut self, epoch: u64, output: Output) {
         let hash = Hash::digest(&output);
         match output {
             Output::PaymentOutput(o) => {
                 if let Ok(PaymentPayload { amount, data, .. }) =
                     o.decrypt_payload(&self.keys.wallet_skey)
                 {
+                    assert!(amount >= 0);
                     info!(
-                        "Received UTXO: hash={}, amount={}, data={:?}",
+                        "Received: utxo={}, amount={}, data={:?}",
                         hash, amount, data
                     );
-                    let comment = match data {
-                        PaymentPayloadData::Comment(comment) => comment,
-                        PaymentPayloadData::ContentHash(hash) => hash.to_hex(),
+                    let value = PaymentValue {
+                        output: o,
+                        amount,
+                        data: data.clone(),
                     };
-                    let missing = self.unspent.insert(hash, (o, amount));
+                    let info = value.to_info();
+                    let missing = self.payments.insert(hash, value);
                     assert!(missing.is_none());
-                    assert!(amount >= 0);
-                    self.balance += amount;
-
-                    // Notify subscribers.
-                    let notification = WalletNotification::PaymentReceived { amount, comment };
-                    self.subscribers
-                        .retain(move |tx| tx.unbounded_send(notification.clone()).is_ok());
+                    self.notify(WalletNotification::Received(info));
                 }
             }
             Output::StakeOutput(o) => {
                 if let Ok(_payload) = o.decrypt_payload(&self.keys.wallet_skey) {
-                    info!("Staked money to escrow: hash={}, amount={}", hash, o.amount);
-                    let missing = self.unspent_stakes.insert(hash, o);
-                    assert!(missing.is_none());
+                    let active_until_epoch = epoch + self.stake_epochs;
+                    info!(
+                        "Staked money to escrow: hash={}, amount={}, active_until_epoch={}",
+                        hash, o.amount, active_until_epoch
+                    );
+                    let value = StakeValue {
+                        output: o,
+                        active_until_epoch,
+                    };
+                    let info = value.to_info(self.epoch);
+                    let missing = self.stakes.insert(hash, value);
+                    assert!(missing.is_none(), "Inconsistent wallet state");
+                    self.notify(WalletNotification::Staked(info));
                 }
             }
         };
@@ -306,27 +369,38 @@ impl WalletService {
                 if let Ok(PaymentPayload { amount, data, .. }) =
                     o.decrypt_payload(&self.keys.wallet_skey)
                 {
-                    info!(
-                        "Spent UTXO: hash={}, amount={}, data={:?}",
-                        hash, amount, data
-                    );
-                    let exists = self.unspent.remove(&hash);
-                    assert!(exists.is_some());
-                    self.balance -= amount;
-                    assert!(self.balance >= 0);
+                    info!("Spent: utxo={}, amount={}, data={:?}", hash, amount, data);
+                    match self.payments.remove(&hash) {
+                        Some(value) => {
+                            let info = value.to_info();
+                            self.notify(WalletNotification::Spent(info));
+                        }
+                        None => panic!("Inconsistent wallet state"),
+                    }
                 }
             }
             Output::StakeOutput(o) => {
                 if let Ok(_payload) = o.decrypt_payload(&self.keys.wallet_skey) {
-                    info!(
-                        "Unstaked money from escrow: hash={}, amount={}",
-                        hash, o.amount
-                    );
-                    let exists = self.unspent_stakes.remove(&hash);
-                    assert!(exists.is_some());
+                    info!("Unstaked: utxo={}, amount={}", hash, o.amount);
+                    match self.stakes.remove(&hash) {
+                        Some(value) => {
+                            let info = value.to_info(self.epoch);
+                            self.notify(WalletNotification::Unstaked(info));
+                        }
+                        None => panic!("Inconsistent wallet state"),
+                    }
                 }
             }
         }
+    }
+
+    fn on_epoch_changed(&mut self, epoch: u64) {
+        self.epoch = epoch;
+    }
+
+    fn notify(&mut self, notification: WalletNotification) {
+        self.subscribers
+            .retain(move |tx| tx.unbounded_send(notification.clone()).is_ok());
     }
 }
 
@@ -381,23 +455,21 @@ impl Future for WalletService {
                                 network_pkey: self.keys.network_pkey,
                             },
                             WalletRequest::BalanceInfo {} => WalletResponse::BalanceInfo {
-                                balance: self.balance,
+                                balance: self.balance(),
                             },
                             WalletRequest::UnspentInfo {} => {
-                                let unspent: Vec<(Hash, i64)> = self
-                                    .unspent
-                                    .iter()
-                                    .map(|(hash, (_, amount))| (hash.clone(), *amount))
+                                let epoch = self.epoch;
+                                let payments: Vec<PaymentInfo> = self
+                                    .payments
+                                    .values()
+                                    .map(|value| value.to_info())
                                     .collect();
-                                let unspent_stakes: Vec<(Hash, i64)> = self
-                                    .unspent_stakes
-                                    .iter()
-                                    .map(|(hash, o)| (hash.clone(), o.amount))
+                                let stakes: Vec<StakeInfo> = self
+                                    .stakes
+                                    .values()
+                                    .map(|value| value.to_info(epoch))
                                     .collect();
-                                WalletResponse::UnspentInfo {
-                                    unspent,
-                                    unspent_stakes,
-                                }
+                                WalletResponse::UnspentInfo { payments, stakes }
                             }
                             WalletRequest::GetRecovery {} => match self.keys.show_recovery() {
                                 Ok(recovery) => WalletResponse::Recovery { recovery },
@@ -417,6 +489,9 @@ impl Future for WalletService {
                         outputs,
                     }) => {
                         self.on_outputs_changed(epoch, inputs, outputs);
+                    }
+                    WalletEvent::NodeEpochChanged(EpochChanged { epoch, .. }) => {
+                        self.on_epoch_changed(epoch);
                     }
                 },
                 Async::Ready(None) => unreachable!(), // never happens

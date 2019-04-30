@@ -27,10 +27,20 @@ use futures::sync::mpsc::UnboundedSender;
 use futures::sync::oneshot;
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
+pub use stegos_blockchain::PaymentPayloadData;
+pub use stegos_blockchain::StakeInfo;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
+use stegos_node::EpochChanged;
 use stegos_node::OutputsChanged;
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct PaymentInfo {
+    pub utxo: Hash,
+    pub amount: i64,
+    pub data: PaymentPayloadData,
+}
 
 ///
 /// Out-of-band notifications.
@@ -40,7 +50,10 @@ use stegos_node::OutputsChanged;
 #[serde(rename_all = "snake_case")]
 pub enum WalletNotification {
     BalanceChanged { balance: i64 },
-    PaymentReceived { amount: i64, comment: String },
+    Received(PaymentInfo),
+    Spent(PaymentInfo),
+    Staked(StakeInfo),
+    Unstaked(StakeInfo),
 }
 
 ///
@@ -93,8 +106,8 @@ pub enum WalletResponse {
         network_pkey: secure::PublicKey,
     },
     UnspentInfo {
-        unspent: Vec<(Hash, i64)>,
-        unspent_stakes: Vec<(Hash, i64)>,
+        payments: Vec<PaymentInfo>,
+        stakes: Vec<StakeInfo>,
     },
     Recovery {
         recovery: String,
@@ -124,6 +137,7 @@ pub(crate) enum WalletEvent {
     // Internal events.
     //
     NodeOutputsChanged(OutputsChanged),
+    NodeEpochChanged(EpochChanged),
 }
 
 #[derive(Debug, Clone)]

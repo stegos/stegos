@@ -22,6 +22,7 @@
 // SOFTWARE.
 
 use failure::{Error, Fail};
+use serde_derive::Serialize;
 use std::mem::transmute;
 use std::time::SystemTime;
 use stegos_crypto::bulletproofs::{make_range_proof, pedersen_commitment, BulletProof};
@@ -162,7 +163,7 @@ fn cloak_key(
 }
 
 /// Unpacked data field of PaymentPayload.
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Serialize, Debug, Eq, PartialEq, Clone)]
 pub enum PaymentPayloadData {
     /// A string up to PAYLOAD_DATA_LEN - 2 bytes inclusive.
     Comment(String),

@@ -26,7 +26,6 @@ use crate::error::*;
 use crate::valueshuffle::ProposedUTXO;
 use failure::Error;
 use log::*;
-use std::collections::HashMap;
 use std::time::SystemTime;
 use stegos_blockchain::*;
 use stegos_crypto::curve1174::cpt::PublicKey;
@@ -36,14 +35,17 @@ use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
 
 /// Create a new ValueShuffle payment transaction. (no data)
-pub(crate) fn create_vs_payment_transaction(
+pub(crate) fn create_vs_payment_transaction<'a, UnspentIter>(
     sender_pkey: &PublicKey,
     recipient: &PublicKey,
-    unspent: &HashMap<Hash, (PaymentOutput, i64)>,
+    unspent_iter: UnspentIter,
     amount: i64,
     payment_fee: i64,
     data: String,
-) -> Result<(Vec<(Hash, PaymentOutput)>, Vec<ProposedUTXO>, i64), Error> {
+) -> Result<(Vec<(Hash, PaymentOutput)>, Vec<ProposedUTXO>, i64), Error>
+where
+    UnspentIter: Iterator<Item = (&'a PaymentOutput, i64)>,
+{
     if amount < 0 {
         return Err(WalletError::NegativeAmount(amount).into());
     }
@@ -64,7 +66,6 @@ pub(crate) fn create_vs_payment_transaction(
     trace!("Checking for available funds in the wallet...");
     let fee = payment_fee;
     let fee_change = fee + payment_fee;
-    let unspent_iter = unspent.values().map(|(o, a)| (o, *a));
     let (inputs, fee, change) = find_utxo(unspent_iter, amount, fee, fee_change)?;
     let inputs: Vec<Output> = inputs
         .into_iter()
@@ -143,15 +144,18 @@ pub(crate) fn create_vs_payment_transaction(
 }
 
 /// Create a new payment transaction.
-pub(crate) fn create_payment_transaction(
+pub(crate) fn create_payment_transaction<'a, UnspentIter>(
     sender_skey: &SecretKey,
     sender_pkey: &PublicKey,
     recipient: &PublicKey,
-    unspent: &HashMap<Hash, (PaymentOutput, i64)>,
+    unspent_iter: UnspentIter,
     amount: i64,
     payment_fee: i64,
     data: PaymentPayloadData,
-) -> Result<(Vec<Output>, Vec<Output>, Fr, i64), Error> {
+) -> Result<(Vec<Output>, Vec<Output>, Fr, i64), Error>
+where
+    UnspentIter: Iterator<Item = (&'a PaymentOutput, i64)>,
+{
     if amount < 0 {
         return Err(WalletError::NegativeAmount(amount).into());
     }
@@ -170,7 +174,6 @@ pub(crate) fn create_payment_transaction(
     trace!("Checking for available funds in the wallet...");
     let fee = payment_fee;
     let fee_change = fee + payment_fee;
-    let unspent_iter = unspent.values().map(|(o, a)| (o, *a));
     let (inputs, fee, change) = find_utxo(unspent_iter, amount, fee, fee_change)?;
     let inputs: Vec<Output> = inputs
         .into_iter()
@@ -239,16 +242,19 @@ pub(crate) fn create_payment_transaction(
 }
 
 /// Create a new staking transaction.
-pub(crate) fn create_staking_transaction(
+pub(crate) fn create_staking_transaction<'a, UnspentIter>(
     sender_skey: &SecretKey,
     sender_pkey: &PublicKey,
     validator_pkey: &secure::PublicKey,
     validator_skey: &secure::SecretKey,
-    unspent: &HashMap<Hash, (PaymentOutput, i64)>,
+    unspent_iter: UnspentIter,
     amount: i64,
     payment_fee: i64,
     stake_fee: i64,
-) -> Result<Transaction, Error> {
+) -> Result<Transaction, Error>
+where
+    UnspentIter: Iterator<Item = (&'a PaymentOutput, i64)>,
+{
     if amount < 0 {
         return Err(WalletError::NegativeAmount(amount).into());
     } else if amount <= payment_fee {
@@ -268,7 +274,6 @@ pub(crate) fn create_staking_transaction(
     trace!("Checking for available funds in the wallet...");
     let fee = stake_fee;
     let fee_change = fee + payment_fee;
-    let unspent_iter = unspent.values().map(|(o, a)| (o, *a));
     let (inputs, fee, change) = find_utxo(unspent_iter, amount, fee, fee_change)?;
     let inputs: Vec<Output> = inputs
         .into_iter()
@@ -348,16 +353,19 @@ pub(crate) fn create_staking_transaction(
 
 /// Create a new unstaking transaction.
 /// NOTE: amount must include PAYMENT_FEE.
-pub(crate) fn create_unstaking_transaction(
+pub(crate) fn create_unstaking_transaction<'a, UnspentIter>(
     sender_skey: &SecretKey,
     sender_pkey: &PublicKey,
     validator_pkey: &secure::PublicKey,
     validator_skey: &secure::SecretKey,
-    unspent: &HashMap<Hash, StakeOutput>,
+    unspent_iter: UnspentIter,
     amount: i64,
     payment_fee: i64,
     stake_fee: i64,
-) -> Result<Transaction, Error> {
+) -> Result<Transaction, Error>
+where
+    UnspentIter: Iterator<Item = &'a StakeOutput>,
+{
     if amount <= payment_fee {
         return Err(WalletError::NegativeAmount(amount - payment_fee).into());
     }
@@ -372,7 +380,7 @@ pub(crate) fn create_unstaking_transaction(
     //
 
     trace!("Checking for staked money in the wallet...");
-    let unspent_iter = unspent.values().map(|o| (o, o.amount));
+    let unspent_iter = unspent_iter.map(|o| (o, o.amount));
     let amount = amount - payment_fee;
     let (inputs, fee, change) =
         find_utxo(unspent_iter, amount, payment_fee, payment_fee + stake_fee)?;
@@ -475,10 +483,8 @@ pub mod tests {
             stake,
         )
         .expect("keys are valid");
-        let output_hash = Hash::digest(&output);
         let inputs = [Output::StakeOutput(output.clone())];
-        let mut unspent: HashMap<Hash, StakeOutput> = HashMap::new();
-        unspent.insert(output_hash, output);
+        let unspent: Vec<StakeOutput> = vec![output];
 
         // Unstake all of the money.
         let tx = create_unstaking_transaction(
@@ -486,7 +492,7 @@ pub mod tests {
             &pkey,
             &validator_pkey,
             &validator_skey,
-            &unspent,
+            unspent.iter(),
             stake,
             payment_fee,
             stake_fee,
@@ -510,7 +516,7 @@ pub mod tests {
             &pkey,
             &validator_pkey,
             &validator_skey,
-            &unspent,
+            unspent.iter(),
             unstake,
             payment_fee,
             stake_fee,
@@ -539,7 +545,7 @@ pub mod tests {
             &pkey,
             &validator_pkey,
             &validator_skey,
-            &unspent,
+            unspent.iter(),
             payment_fee - 1,
             payment_fee,
             stake_fee,
@@ -556,7 +562,7 @@ pub mod tests {
             &pkey,
             &validator_pkey,
             &validator_skey,
-            &unspent,
+            unspent.iter(),
             payment_fee,
             payment_fee,
             stake_fee,
@@ -574,7 +580,7 @@ pub mod tests {
             &pkey,
             &validator_pkey,
             &validator_skey,
-            &unspent,
+            unspent.iter(),
             unstake,
             payment_fee,
             stake_fee,
@@ -595,7 +601,7 @@ pub mod tests {
             &pkey,
             &validator_pkey,
             &validator_skey,
-            &unspent,
+            unspent.iter(),
             unstake,
             payment_fee,
             stake_fee,

@@ -350,6 +350,7 @@ fn run() -> Result<(), Error> {
         node.clone(),
         cfg.chain.payment_fee,
         cfg.chain.stake_fee,
+        cfg.chain.stake_epochs,
         wallet_persistent_state,
     );
     rt.spawn(wallet_service);

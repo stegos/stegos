@@ -1124,12 +1124,12 @@ impl Blockchain {
             match output.as_ref() {
                 Output::StakeOutput(o) => {
                     o.validate_pkey().expect("valid network pkey signature");
-                    let valid_until_epoch = self.epoch + self.cfg.stake_epochs;
+                    let active_until_epoch = self.epoch + self.cfg.stake_epochs;
                     self.escrow.stake(
                         version,
                         o.validator,
                         output_hash,
-                        valid_until_epoch,
+                        active_until_epoch,
                         o.amount,
                     );
                     assert_eq!(self.escrow.current_version(), version);

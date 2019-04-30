@@ -1,4 +1,3 @@
-use crate::config::GeneralConfig;
 ///! Console - command-line interface.
 //
 // Copyright (c) 2018 Stegos AG
@@ -20,6 +19,7 @@ use crate::config::GeneralConfig;
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+use crate::config::GeneralConfig;
 use crate::consts;
 use crate::generator::Generator;
 use crate::money::{format_money, parse_money};
@@ -41,7 +41,9 @@ use stegos_crypto::pbc::secure;
 use stegos_network::Network;
 use stegos_network::UnicastMessage;
 use stegos_node::{Node, NodeRequest, NodeResponse};
-use stegos_wallet::{Wallet, WalletNotification, WalletRequest, WalletResponse};
+use stegos_wallet::{
+    PaymentInfo, PaymentPayloadData, Wallet, WalletNotification, WalletRequest, WalletResponse,
+};
 
 // ----------------------------------------------------------------
 // Public API.
@@ -552,11 +554,20 @@ impl ConsoleService {
 
     fn on_wallet_notification(&mut self, notification: WalletNotification) {
         match notification {
-            WalletNotification::PaymentReceived { amount, comment } => {
-                if amount == 0 && !comment.is_empty() {
-                    info!("Incoming message: {}", comment);
+            WalletNotification::Received(PaymentInfo {
+                utxo: _,
+                amount,
+                data,
+            }) => {
+                if let PaymentPayloadData::Comment(comment) = data {
+                    if amount == 0 && !comment.is_empty() {
+                        info!("Incoming message: {}", comment);
+                    }
                 }
             }
+            WalletNotification::Spent(_) => {}
+            WalletNotification::Staked(_) => {}
+            WalletNotification::Unstaked(_) => {}
             WalletNotification::BalanceChanged { balance } => {
                 info!("Balance is {} STG", format_money(balance));
             }
@@ -564,46 +575,10 @@ impl ConsoleService {
     }
 
     fn on_wallet_response(&mut self, response: WalletResponse) {
-        match response {
-            WalletResponse::TransactionCreated { tx_hash, fee } => {
-                println!("Transaction: tx={}, fee={}", tx_hash, fee);
-            }
-            WalletResponse::ValueShuffleStarted {} => {
-                // println!("Started value shuffle");
-            }
-            WalletResponse::BalanceInfo { balance } => {
-                println!("{} STG", format_money(balance));
-            }
-            WalletResponse::KeysInfo {
-                wallet_pkey,
-                network_pkey,
-            } => {
-                println!("My wallet key: {}", wallet_pkey.to_hex());
-                println!("My network key: {}", network_pkey.to_hex());
-            }
-            WalletResponse::UnspentInfo {
-                unspent,
-                unspent_stakes,
-            } => {
-                if !unspent.is_empty() || !unspent_stakes.is_empty() {
-                    println!("Found {} UTXO(s):", unspent.len() + unspent_stakes.len());
-                    for (hash, amount) in unspent {
-                        println!("PaymentUTXO(hash={}, amount={})", hash.to_hex(), amount);
-                    }
-                    for (hash, amount) in unspent_stakes {
-                        println!("  StakeUTXO(hash={}, amount={})", hash.to_hex(), amount);
-                    }
-                } else {
-                    println!("No UTXO found");
-                }
-            }
-            WalletResponse::Recovery { recovery } => {
-                println!("24-word recovery: {}", recovery);
-            }
-            WalletResponse::Error { error } => {
-                error!("{}", error);
-            }
-        }
+        let output = serde_yaml::to_string(&[response])
+            .map_err(|_| fmt::Error)
+            .unwrap();
+        println!("{}\n...\n", output);
         self.stdin_th.thread().unpark();
     }
 }

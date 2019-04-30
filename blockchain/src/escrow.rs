@@ -40,7 +40,7 @@ struct EscrowKey {
 
 #[derive(Debug, Clone)]
 struct EscrowValue {
-    valid_until_epoch: u64,
+    active_until_epoch: u64,
     amount: i64,
 }
 
@@ -67,8 +67,8 @@ pub struct ValidatorInfo {
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct StakeInfo {
-    pub output_hash: Hash,
-    pub valid_until_epoch: u64,
+    pub utxo: Hash,
+    pub active_until_epoch: u64,
     pub is_active: bool,
     pub amount: i64,
 }
@@ -89,7 +89,7 @@ impl Escrow {
         version: u64,
         validator_pkey: secure::PublicKey,
         output_hash: Hash,
-        valid_until_epoch: u64, // inclusive
+        active_until_epoch: u64, // inclusive
         amount: i64,
     ) {
         let key = EscrowKey {
@@ -97,7 +97,7 @@ impl Escrow {
             output_hash,
         };
         let value = EscrowValue {
-            valid_until_epoch,
+            active_until_epoch,
             amount,
         };
 
@@ -137,11 +137,11 @@ impl Escrow {
         let val = self.escrow.get(&key).expect("stake exists");
 
         // Check that stake is not active time.
-        if val.valid_until_epoch >= epoch {
+        if val.active_until_epoch >= epoch {
             return Err(OutputError::StakeIsActive(
                 key.output_hash,
                 key.validator_pkey,
-                val.valid_until_epoch,
+                val.active_until_epoch,
                 epoch,
             ));
         }
@@ -165,7 +165,7 @@ impl Escrow {
         };
 
         let val = self.escrow.remove(version, &key).expect("stake exists");
-        if val.valid_until_epoch >= epoch {
+        if val.active_until_epoch >= epoch {
             panic!("stake is locked");
         }
 
@@ -211,7 +211,7 @@ impl Escrow {
         let mut stakes: BTreeMap<secure::PublicKey, i64> = BTreeMap::new();
         for (k, v) in self.escrow.iter() {
             // TODO: uncomment this part after finishing with re-staking.
-            //if v.valid_until_epoch < epoch {
+            //if v.active_until_epoch < epoch {
             //    // Skip inactive stake.
             //    continue;
             //}
@@ -238,10 +238,10 @@ impl Escrow {
                     active_stake: Default::default(),
                     expired_stake: Default::default(),
                 });
-            let is_active = v.valid_until_epoch >= epoch;
+            let is_active = v.active_until_epoch >= epoch;
             let stake = StakeInfo {
-                output_hash: k.output_hash,
-                valid_until_epoch: v.valid_until_epoch,
+                utxo: k.output_hash,
+                active_until_epoch: v.active_until_epoch,
                 is_active,
                 amount: v.amount,
             };

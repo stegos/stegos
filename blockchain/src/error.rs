@@ -26,6 +26,16 @@ use failure::Fail;
 use stegos_crypto::hash::Hash;
 
 #[derive(Debug, Fail)]
+pub enum BlockchainError {
+    #[fail(
+        display = "Found a saved chain that is not compatible to our genesis at height = {}, \
+                   genesis_block = {:?}, database_block = {:?}",
+        _0, _1, _2
+    )]
+    IncompatibleChain(u64, Hash, Hash),
+}
+
+#[derive(Debug, Fail)]
 pub enum MultisignatureError {
     #[fail(
         display = "Signature bitmap too big: len={}, validators_len={} ",

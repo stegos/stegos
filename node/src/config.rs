@@ -88,3 +88,13 @@ impl Default for ChainConfig {
         }
     }
 }
+
+impl Into<BlockchainConfig> for ChainConfig {
+    fn into(self) -> BlockchainConfig {
+        BlockchainConfig {
+            max_slot_count: self.max_slot_count,
+            min_stake_amount: self.min_stake_amount,
+            stake_epochs: self.stake_epochs,
+        }
+    }
+}

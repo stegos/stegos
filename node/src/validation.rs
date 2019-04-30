@@ -210,7 +210,8 @@ mod test {
         let stake_epochs = cfg.stake_epochs;
         let stake: i64 = cfg.min_stake_amount;
         let genesis = genesis(&[keychain.clone()], stake, amount + stake, timestamp);
-        let mut chain = Blockchain::testing(cfg, genesis, timestamp);
+        let mut chain =
+            Blockchain::testing(cfg, genesis, timestamp).expect("Failed to create blockchain");
         let mut inputs: Vec<Output> = Vec::new();
         let mut stakes: Vec<Output> = Vec::new();
         for output_hash in chain.unspent() {

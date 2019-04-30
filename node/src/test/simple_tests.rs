@@ -28,7 +28,6 @@ use stegos_blockchain::*;
 pub fn init() {
     simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
     let keys = KeyChain::new_mem();
-    let (_outbox, inbox) = unbounded();
     let (_loopback, network) = Loopback::new();
 
     let cfg: ChainConfig = Default::default();
@@ -40,7 +39,9 @@ pub fn init() {
         timestamp,
     );
     let genesis_count = genesis.len() as u64;
-    let node = NodeService::testing(cfg, keys.clone(), network, genesis, inbox).unwrap();
+    let chain = Blockchain::testing(cfg.clone().into(), genesis, timestamp)
+        .expect("Failed to create blockchain");
+    let (node, _node_api) = NodeService::new(cfg, chain, keys.clone(), network).unwrap();
     assert_eq!(node.chain.height(), genesis_count);
     assert_eq!(node.mempool.len(), 0);
     assert_eq!(node.chain.epoch(), 1);
@@ -97,7 +98,6 @@ fn simulate_payment(node: &mut NodeService, amount: i64) -> Result<(), Error> {
 pub fn payments() {
     simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
     let keys = KeyChain::new_mem();
-    let (_outbox, inbox) = unbounded();
     let (_loopback, network) = Loopback::new();
 
     let cfg: ChainConfig = Default::default();
@@ -105,8 +105,10 @@ pub fn payments() {
     let stake: i64 = cfg.min_stake_amount;
     let timestamp = SystemTime::now();
     let genesis = genesis(&[keys.clone()], stake, total, timestamp);
-    let mut node =
-        NodeService::testing(cfg.clone(), keys.clone(), network, genesis, inbox).unwrap();
+    let chain = Blockchain::testing(cfg.clone().into(), genesis, timestamp)
+        .expect("Failed to create blockchain");
+    let (mut node, _node_api) =
+        NodeService::new(cfg.clone(), chain, keys.clone(), network).unwrap();
     let mut block_count = node.chain.height();
 
     // Payment without a change.

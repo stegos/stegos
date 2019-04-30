@@ -29,7 +29,6 @@ use log::*;
 use serde_derive::Serialize;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-use std::time::SystemTime;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
 
@@ -41,7 +40,7 @@ struct EscrowKey {
 
 #[derive(Debug, Clone)]
 struct EscrowValue {
-    bonding_timestamp: SystemTime,
+    valid_until_epoch: u64,
     amount: i64,
 }
 
@@ -61,14 +60,16 @@ pub struct EscrowInfo {
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct ValidatorInfo {
     pub network_pkey: secure::PublicKey,
-    pub total: i64,
+    pub active_stake: i64,
+    pub expired_stake: i64,
     pub stakes: Vec<StakeInfo>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct StakeInfo {
     pub output_hash: Hash,
-    pub bonding_timestamp: u64,
+    pub valid_until_epoch: u64,
+    pub is_active: bool,
     pub amount: i64,
 }
 
@@ -88,7 +89,7 @@ impl Escrow {
         version: u64,
         validator_pkey: secure::PublicKey,
         output_hash: Hash,
-        bonding_timestamp: SystemTime,
+        valid_until_epoch: u64, // inclusive
         amount: i64,
     ) {
         let key = EscrowKey {
@@ -96,7 +97,7 @@ impl Escrow {
             output_hash,
         };
         let value = EscrowValue {
-            bonding_timestamp,
+            valid_until_epoch,
             amount,
         };
 
@@ -125,7 +126,7 @@ impl Escrow {
         &self,
         validator_pkey: &secure::PublicKey,
         output_hash: &Hash,
-        timestamp: SystemTime,
+        epoch: u64,
     ) -> Result<(), OutputError> {
         let key = EscrowKey {
             validator_pkey: validator_pkey.clone(),
@@ -135,13 +136,13 @@ impl Escrow {
         // The stake must exists.
         let val = self.escrow.get(&key).expect("stake exists");
 
-        // Check bonding time.
-        if val.bonding_timestamp >= timestamp {
-            return Err(OutputError::StakeIsLocked(
+        // Check that stake is not active time.
+        if val.valid_until_epoch >= epoch {
+            return Err(OutputError::StakeIsActive(
                 key.output_hash,
                 key.validator_pkey,
-                val.bonding_timestamp,
-                timestamp,
+                val.valid_until_epoch,
+                epoch,
             ));
         }
 
@@ -156,7 +157,7 @@ impl Escrow {
         version: u64,
         validator_pkey: secure::PublicKey,
         output_hash: Hash,
-        timestamp: SystemTime,
+        epoch: u64,
     ) {
         let key = EscrowKey {
             validator_pkey,
@@ -164,7 +165,7 @@ impl Escrow {
         };
 
         let val = self.escrow.remove(version, &key).expect("stake exists");
-        if val.bonding_timestamp >= timestamp {
+        if val.valid_until_epoch >= epoch {
             panic!("stake is locked");
         }
 
@@ -199,28 +200,21 @@ impl Escrow {
     }
 
     ///
-    /// Get staked values for specified validators.
-    ///
-    pub fn multiget<'a, I>(&self, validators: I) -> BTreeMap<secure::PublicKey, i64>
-    where
-        I: IntoIterator<Item = &'a secure::PublicKey>,
-    {
-        // TODO: optimize using two iterator.
-        let mut stakes = BTreeMap::<secure::PublicKey, i64>::new();
-        for validator in validators {
-            let stake = self.get(validator);
-            stakes.insert(validator.clone(), stake);
-        }
-        stakes
-    }
-
-    ///
     /// Get all staked values of all validators.
     /// Filter out stakers with stake lower than min_stake_amount.
     ///
-    pub fn get_stakers_majority(&self, min_stake_amount: i64) -> Vec<(secure::PublicKey, i64)> {
+    pub fn get_stakers_majority(
+        &self,
+        _epoch: u64,
+        min_stake_amount: i64,
+    ) -> Vec<(secure::PublicKey, i64)> {
         let mut stakes: BTreeMap<secure::PublicKey, i64> = BTreeMap::new();
         for (k, v) in self.escrow.iter() {
+            // TODO: uncomment this part after finishing with re-staking.
+            //if v.valid_until_epoch < epoch {
+            //    // Skip inactive stake.
+            //    continue;
+            //}
             let entry = stakes.entry(k.validator_pkey).or_insert(0);
             *entry += v.amount;
         }
@@ -233,7 +227,7 @@ impl Escrow {
     }
 
     /// Returns an object that represent printable part of the state.
-    pub fn info(&self) -> EscrowInfo {
+    pub fn info(&self, epoch: u64) -> EscrowInfo {
         let mut validators: HashMap<secure::PublicKey, ValidatorInfo> = HashMap::new();
         for (k, v) in self.escrow.iter() {
             let entry = validators
@@ -241,24 +235,25 @@ impl Escrow {
                 .or_insert(ValidatorInfo {
                     network_pkey: k.validator_pkey.clone(),
                     stakes: Default::default(),
-                    total: Default::default(),
+                    active_stake: Default::default(),
+                    expired_stake: Default::default(),
                 });
-            let since_the_epoch = v
-                .bonding_timestamp
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time is valid");
-            let bonding_timestamp =
-                since_the_epoch.as_secs() * 1000 + since_the_epoch.subsec_millis() as u64;
+            let is_active = v.valid_until_epoch >= epoch;
             let stake = StakeInfo {
                 output_hash: k.output_hash,
-                bonding_timestamp,
+                valid_until_epoch: v.valid_until_epoch,
+                is_active,
                 amount: v.amount,
             };
             (*entry).stakes.push(stake);
-            (*entry).total += v.amount;
+            if is_active {
+                (*entry).active_stake += v.amount;
+            } else {
+                (*entry).expired_stake += v.amount;
+            }
         }
         let mut validators: Vec<ValidatorInfo> = validators.into_iter().map(|(_k, v)| v).collect();
-        validators.sort_by_key(|x| -x.total);
+        validators.sort_by_key(|x| -x.active_stake);
         EscrowInfo { validators }
     }
 

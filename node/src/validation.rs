@@ -40,7 +40,7 @@ pub(crate) fn validate_transaction(
     tx: &Transaction,
     mempool: &Mempool,
     chain: &Blockchain,
-    timestamp: SystemTime,
+    _timestamp: SystemTime,
     payment_fee: i64,
     stake_fee: i64,
 ) -> Result<(), Error> {
@@ -100,9 +100,7 @@ pub(crate) fn validate_transaction(
 
         // Check escrow.
         if let Output::StakeOutput(ref input) = input {
-            chain
-                .escrow()
-                .validate_unstake(&input.validator, input_hash, timestamp)?;
+            chain.validate_unstake(&input.validator, input_hash)?;
         }
 
         inputs.push(input);
@@ -192,7 +190,7 @@ pub(crate) fn validate_proposed_key_block(
 mod test {
     use super::*;
     use crate::VERSION;
-    use std::time::{Duration, SystemTime};
+    use std::time::SystemTime;
     use stegos_blockchain::*;
     use stegos_crypto::curve1174::fields::Fr;
     use stegos_crypto::pbc::secure;
@@ -209,7 +207,7 @@ mod test {
         let keychain = KeyChain::new_mem();
         let mut mempool = Mempool::new();
         let cfg: BlockchainConfig = Default::default();
-        let bonding_time = cfg.bonding_time;
+        let stake_epochs = cfg.stake_epochs;
         let stake: i64 = cfg.min_stake_amount;
         let genesis = genesis(&[keychain.clone()], stake, amount + stake, timestamp);
         let mut chain = Blockchain::testing(cfg, genesis, timestamp);
@@ -399,28 +397,24 @@ mod test {
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect_err("transaction is not valid");
             match e.downcast::<OutputError>().expect("proper error") {
-                OutputError::StakeIsLocked(
+                OutputError::StakeIsActive(
                     input_hash,
                     validator_pkey2,
-                    bonding_timestamp,
-                    timestamp2,
+                    valid_until_epoch,
+                    epoch2,
                 ) => {
                     assert_eq!(input_hash, Hash::digest(&stakes[0]));
                     assert_eq!(validator_pkey, &validator_pkey2);
-                    assert_eq!(bonding_timestamp, timestamp + bonding_time);
-                    assert_eq!(timestamp2, timestamp);
+                    assert_eq!(valid_until_epoch, stake_epochs);
+                    assert_eq!(epoch2, chain.epoch());
                 }
                 _ => panic!(),
             }
-            validate_transaction(
-                &tx,
-                &mempool,
-                &chain,
-                timestamp + bonding_time + Duration::from_millis(1),
-                payment_fee,
-                stake_fee,
-            )
-            .expect("transaction is valid");
+            // Create a new epoch to unlock stakes.
+            let key_block = create_fake_key_block(&chain, &[keychain.clone()], timestamp);
+            chain.push_key_block(key_block).expect("Invalid key block");
+            validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
+                .expect("transaction is valid");
         }
 
         //

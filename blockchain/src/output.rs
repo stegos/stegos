@@ -75,10 +75,10 @@ pub enum OutputError {
     #[fail(display = "Invalid signature on validator pkey: utxo={}", _0)]
     InvalidStakeSignature(Hash),
     #[fail(
-        display = "Stake is locked: utxo={}, validator={}, bonding_time={:?}, current_time={:?}",
+        display = "Stake is locked: utxo={}, validator={}, until_epoch={}, current_epoch={}",
         _0, _1, _2, _3
     )]
-    StakeIsLocked(Hash, secure::PublicKey, SystemTime, SystemTime),
+    StakeIsActive(Hash, secure::PublicKey, u64, u64),
 }
 
 /// Payment UTXO.

@@ -7,10 +7,18 @@ log4rs_config = "stegos-log4rs.toml"
 prometheus_endpoint = "0.0.0.0:9898"
 
 [keychain]
-# Path to a secret key in PEM format
-skey = "stegos.skey"
-# Path to a public key in PEM format
-pkey = "stegos.pkey"
+# Path to wallet secret key
+wallet_skey_file = "wallet.skey"
+# Path to wallet public key
+wallet_pkey_file = "wallet.pkey"
+# Path to network secret key
+network_skey_file = "network.skey"
+# Path to network public key
+network_pkey_file = "network.pkey"
+# Path to wallet password file (use '-' for interactive prompt)
+password_file = "-"
+# Path to 24-word recovery phrase (use '-' for interactive prompt)
+recovery_file = ""
 
 [network]
 # Local IP to bind to

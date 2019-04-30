@@ -190,6 +190,7 @@ impl ConsoleService {
         println!("show utxo - print unspent outputs");
         println!("show election - print leader election state");
         println!("show escrow - print escrow");
+        println!("show recovery - print recovery information");
         println!("net publish TOPIC MESSAGE - publish a network message via floodsub");
         println!("net send NETWORK_PUBKEY MESSAGE - send a network message via unicast");
         println!("db pop block - revert the latest block");
@@ -521,6 +522,9 @@ impl ConsoleService {
         } else if msg == "show utxo" {
             let request = WalletRequest::UnspentInfo {};
             self.wallet_response = Some(self.wallet.request(request));
+        } else if msg == "show recovery" {
+            let request = WalletRequest::GetRecovery {};
+            self.wallet_response = Some(self.wallet.request(request));
         } else if msg == "db pop block" {
             self.node.pop_block();
             return true;
@@ -592,6 +596,9 @@ impl ConsoleService {
                 } else {
                     println!("No UTXO found");
                 }
+            }
+            WalletResponse::Recovery { recovery } => {
+                println!("24-word recovery: {}", recovery);
             }
             WalletResponse::Error { error } => {
                 error!("{}", error);

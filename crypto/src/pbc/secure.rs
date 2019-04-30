@@ -450,6 +450,18 @@ impl SecretKey {
         self.0.base_vector()
     }
 
+    /// Convert into raw bytes.
+    #[inline]
+    pub fn to_bytes(&self) -> [u8; ZR_SIZE_FR256] {
+        self.0.to_bytes()
+    }
+
+    /// Try to convert from raw bytes.
+    #[inline]
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        Ok(SecretKey(Zr::try_from_bytes(bytes)?))
+    }
+
     /// Convert into hex string.
     pub fn to_hex(&self) -> String {
         self.0.to_hex()

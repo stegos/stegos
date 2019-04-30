@@ -64,8 +64,7 @@ fn main() {
     for w in lst.iter() {
         println!("{}", w);
     }
-    let mut xx = [0u8; 33];
-    convert_wordlist_to_int(&lst, &mut xx);
+    let xx = convert_wordlist_to_int(&lst).unwrap();
     for ix in 0..33 {
         assert!(x[ix] == xx[ix], "Mismatch on wordlist conversion");
     }

@@ -48,6 +48,7 @@ use std::process;
 use std::time::SystemTime;
 use stegos_api::WebSocketAPI;
 use stegos_blockchain::Block;
+use stegos_blockchain::Blockchain;
 use stegos_crypto::hash::Hash;
 use stegos_keychain::*;
 use stegos_network::Libp2pNetwork;
@@ -306,9 +307,6 @@ fn run() -> Result<(), Error> {
     // Initialize keychain
     let keychain = KeyChain::new(cfg.keychain.clone())?;
 
-    // Initialize genesis
-    let genesis = initialize_genesis(&cfg)?;
-
     // Resolve seed pool (works, if chain=='testent', does nothing otherwise)
     resolve_pool(&mut cfg)?;
 
@@ -331,14 +329,14 @@ fn run() -> Result<(), Error> {
         rt.spawn(hyper_service);
     }
 
+    // Initialize blockchain
+    let genesis = initialize_genesis(&cfg)?;
+    let timestamp = SystemTime::now();
+    let chain = Blockchain::new(cfg.chain.clone().into(), cfg.storage, genesis, timestamp)?;
+
     // Initialize node
-    let (node_service, node) = NodeService::new(
-        cfg.chain.clone(),
-        cfg.storage,
-        keychain.clone(),
-        genesis,
-        network.clone(),
-    )?;
+    let (node_service, node) =
+        NodeService::new(cfg.chain.clone(), chain, keychain.clone(), network.clone())?;
 
     // Initialize TransactionPool.
     let txpool_service = TransactionPoolService::new(&keychain, network.clone(), node.clone());
@@ -383,53 +381,44 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::sync::mpsc::unbounded;
     use simple_logger;
-    use stegos_network::loopback::Loopback;
-    use stegos_node::{ChainConfig, NodeService};
 
     #[test]
     #[ignore]
     fn is_testnet_loadable() {
         let _ = simple_logger::init_with_level(log::Level::Debug);
-        let keys = KeyChain::new_mem();
         let mut config = config::Config::default();
         let chain = "testnet";
         config.general.chain = chain.to_string();
         let genesis = initialize_genesis(&config).expect("testnet looks like unloadable.");
-        let cfg: ChainConfig = Default::default();
-        let (_loopback, network) = Loopback::new();
-        let (_outbox, inbox) = unbounded();
-        NodeService::testing(cfg, keys.clone(), network, genesis, inbox).unwrap();
+        let timestamp = SystemTime::now();
+        Blockchain::testing(Default::default(), genesis, timestamp)
+            .expect("testnet looks like unloadable.");
     }
 
     #[test]
     // #[ignore]
     fn is_devnet_loadable() {
         let _ = simple_logger::init_with_level(log::Level::Debug);
-        let keys = KeyChain::new_mem();
         let mut config = config::Config::default();
         let chain = "devnet";
         config.general.chain = chain.to_string();
         let genesis = initialize_genesis(&config).expect("devnet looks like unloadable.");
-        let cfg: ChainConfig = Default::default();
-        let (_loopback, network) = Loopback::new();
-        let (_outbox, inbox) = unbounded();
-        NodeService::testing(cfg, keys.clone(), network, genesis, inbox).unwrap();
+        let timestamp = SystemTime::now();
+        Blockchain::testing(Default::default(), genesis, timestamp)
+            .expect("devnet looks like unloadable.");
     }
 
     #[test]
     fn is_dev_loadable() {
         let _ = simple_logger::init_with_level(log::Level::Debug);
-        let keys = KeyChain::new_mem();
         let mut config = config::Config::default();
         let chain = "dev";
         config.general.chain = chain.to_string();
         let genesis = initialize_genesis(&config).expect("dev looks like unloadable.");
-        let cfg: ChainConfig = Default::default();
-        let (_loopback, network) = Loopback::new();
-        let (_outbox, inbox) = unbounded();
-        NodeService::testing(cfg, keys.clone(), network, genesis, inbox).unwrap();
+        let timestamp = SystemTime::now();
+        Blockchain::testing(Default::default(), genesis, timestamp)
+            .expect("dev looks like unloadable.");
     }
 
     #[test]

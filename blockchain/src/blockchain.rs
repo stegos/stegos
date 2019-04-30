@@ -137,7 +137,7 @@ impl Blockchain {
         storage_cfg: StorageConfig,
         genesis: Vec<Block>,
         timestamp: SystemTime,
-    ) -> Blockchain {
+    ) -> Result<Blockchain, Error> {
         let database = ListDb::new(&storage_cfg.database_path);
         Self::with_db(cfg, database, genesis, timestamp)
     }
@@ -146,7 +146,7 @@ impl Blockchain {
         cfg: BlockchainConfig,
         genesis: Vec<Block>,
         timestamp: SystemTime,
-    ) -> Blockchain {
+    ) -> Result<Blockchain, Error> {
         let database = ListDb::testing();
         Self::with_db(cfg, database, genesis, timestamp)
     }
@@ -156,7 +156,7 @@ impl Blockchain {
         database: ListDb,
         genesis: Vec<Block>,
         timestamp: SystemTime,
-    ) -> Blockchain {
+    ) -> Result<Blockchain, Error> {
         //
         // Storage.
         //
@@ -207,15 +207,15 @@ impl Blockchain {
             view_change,
         };
 
-        blockchain.recover(genesis, timestamp);
-        blockchain
+        blockchain.recover(genesis, timestamp)?;
+        Ok(blockchain)
     }
 
     //----------------------------------------------------------------------------------------------
     // Recovery.
     //----------------------------------------------------------------------------------------------
 
-    fn recover(&mut self, genesis: Vec<Block>, timestamp: SystemTime) {
+    fn recover(&mut self, genesis: Vec<Block>, timestamp: SystemTime) -> Result<(), Error> {
         let mut blocks = self.database.iter();
 
         let block = blocks.next();
@@ -226,39 +226,35 @@ impl Blockchain {
             for block in genesis {
                 match block {
                     Block::MicroBlock(micro_block) => {
-                        self.push_micro_block(micro_block, timestamp)
-                            .expect("genesis is valid");
+                        self.push_micro_block(micro_block, timestamp)?;
                     }
-                    Block::KeyBlock(key_block) => {
-                        self.push_key_block(key_block).expect("genesis is valid");
-                    }
+                    Block::KeyBlock(key_block) => self.push_key_block(key_block)?,
                 }
             }
             info!(
                 "Initialized a new blockchain: height={}, last_block={}",
                 self.height, self.last_block_hash
             );
-            return;
+            return Ok(());
         };
 
         info!("Recovering blockchain from the disk...");
-        self.recover_block(block, timestamp);
+        self.recover_block(block, timestamp)?;
         for block in blocks {
-            self.recover_block(block, timestamp);
+            self.recover_block(block, timestamp)?;
         }
 
+        // Check genesis.
         for (genesis, chain) in genesis.iter().zip(self.blocks()) {
             let genesis_hash = Hash::digest(genesis);
             let chain_hash = Hash::digest(&chain);
             if genesis_hash != chain_hash {
-                error!(
-                    "Found a saved chain that is not compatible to our genesis at height = {}, \
-                     genesis_block = {:?}, database_block = {:?}",
+                return Err(BlockchainError::IncompatibleChain(
                     chain.base_header().height,
                     genesis_hash,
-                    chain_hash
-                );
-                std::process::exit(1);
+                    chain_hash,
+                )
+                .into());
             }
         }
 
@@ -266,9 +262,11 @@ impl Blockchain {
             "Recovered blockchain from the disk: height={}, last_block={}",
             self.height, self.last_block_hash
         );
+
+        Ok(())
     }
 
-    fn recover_block(&mut self, block: Block, timestamp: SystemTime) {
+    fn recover_block(&mut self, block: Block, timestamp: SystemTime) -> Result<(), Error> {
         debug!(
             "Recovering a block from the disk: height={}, block={}",
             block.base_header().height,
@@ -278,19 +276,18 @@ impl Blockchain {
         match block {
             Block::MicroBlock(block) => {
                 if cfg!(debug_assertions) {
-                    self.validate_micro_block(&block, timestamp)
-                        .expect("a micro block from the disk is valid")
+                    self.validate_micro_block(&block, timestamp)?
                 }
                 let _ = self.register_micro_block(block, timestamp);
             }
             Block::KeyBlock(block) => {
                 if cfg!(debug_assertions) {
-                    self.validate_key_block(&block, false)
-                        .expect("a key block from the disk is valid")
+                    self.validate_key_block(&block, false)?
                 }
                 self.register_key_block(block);
             }
         }
+        Ok(())
     }
 
     //
@@ -1387,7 +1384,8 @@ pub mod tests {
             [Block::MicroBlock(block1), Block::KeyBlock(block2)] => (block1, block2),
             _ => panic!(),
         };
-        let blockchain = Blockchain::testing(cfg, blocks.clone(), timestamp);
+        let blockchain = Blockchain::testing(cfg, blocks.clone(), timestamp)
+            .expect("Failed to create blockchain");
         let outputs: Vec<Output> = block1
             .body
             .outputs
@@ -1470,7 +1468,8 @@ pub mod tests {
         let temp_prefix: String = thread_rng().sample_iter(&Alphanumeric).take(30).collect();
         let temp_dir = TempDir::new(&temp_prefix).expect("couldn't create temp dir");
         let database = ListDb::new(&temp_dir.path());
-        let mut chain = Blockchain::with_db(cfg.clone(), database, genesis.clone(), timestamp);
+        let mut chain = Blockchain::with_db(cfg.clone(), database, genesis.clone(), timestamp)
+            .expect("Failed to create blockchain");
 
         for _epoch in 0..2 {
             //
@@ -1526,7 +1525,8 @@ pub mod tests {
         let balance = chain.balance().clone();
         drop(chain);
         let database = ListDb::new(&temp_dir.path());
-        let chain = Blockchain::with_db(cfg, database, genesis, timestamp);
+        let chain = Blockchain::with_db(cfg, database, genesis, timestamp)
+            .expect("Failed to create blockchain");
         assert_eq!(height, chain.height());
         assert_eq!(block_hash, chain.last_block_hash());
         assert_eq!(chain.blocks().count() as u64, chain.height());
@@ -1550,7 +1550,8 @@ pub mod tests {
         let temp_prefix: String = thread_rng().sample_iter(&Alphanumeric).take(30).collect();
         let temp_dir = TempDir::new(&temp_prefix).expect("couldn't create temp dir");
         let database = ListDb::new(&temp_dir.path());
-        let mut chain = Blockchain::with_db(cfg.clone(), database, genesis.clone(), timestamp);
+        let mut chain = Blockchain::with_db(cfg.clone(), database, genesis.clone(), timestamp)
+            .expect("Failed to create blockchain");
 
         let height0 = chain.height();
         let view_change0 = 0;
@@ -1638,7 +1639,8 @@ pub mod tests {
         //
         drop(chain);
         let database = ListDb::new(&temp_dir.path());
-        let chain = Blockchain::with_db(cfg, database, genesis, timestamp);
+        let chain = Blockchain::with_db(cfg, database, genesis, timestamp)
+            .expect("Failed to create blockchain");
         assert_eq!(height0, chain.height());
         assert_eq!(view_change0, chain.view_change());
         assert_eq!(block_hash0, chain.last_block_hash());
@@ -1659,7 +1661,8 @@ pub mod tests {
         let cfg: BlockchainConfig = Default::default();
         let stake = cfg.min_stake_amount;
         let blocks = genesis(&keychains, stake, 10 * cfg.min_stake_amount, timestamp);
-        let mut blockchain = Blockchain::testing(cfg, blocks, timestamp);
+        let mut blockchain =
+            Blockchain::testing(cfg, blocks, timestamp).expect("Failed to create blockchain");
         let starting_height = blockchain.height();
         // len of genesis
         assert!(blockchain.height() > 0);

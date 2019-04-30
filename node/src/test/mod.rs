@@ -186,7 +186,7 @@ impl<'p> PartitionGuard<'p> {
 
 struct NodeSandbox {
     pub network_service: Loopback,
-    pub outbox: UnboundedSender<NodeMessage>,
+    pub node: Node,
     pub node_service: NodeService,
 }
 
@@ -196,11 +196,13 @@ impl NodeSandbox {
         let (network_service, network) = Loopback::new();
 
         // Create node, with first node keychain.
-        let (outbox, inbox) = unbounded();
-        let node_service = NodeService::testing(cfg, keychain, network, genesis, inbox).unwrap();
+        let timestamp = SystemTime::now();
+        let chain = Blockchain::testing(cfg.clone().into(), genesis, timestamp)
+            .expect("Failed to create blockchain");
+        let (node_service, node) = NodeService::new(cfg, chain, keychain, network).unwrap();
         Self {
             network_service,
-            outbox,
+            node,
             node_service,
         }
     }

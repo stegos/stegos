@@ -269,51 +269,11 @@ impl NodeService {
     /// Constructor.
     pub fn new(
         cfg: ChainConfig,
-        storage_cfg: StorageConfig,
-        keys: KeyChain,
-        genesis: Vec<Block>,
-        network: Network,
-    ) -> Result<(Self, Node), Error> {
-        let blockchain_cfg = BlockchainConfig {
-            max_slot_count: cfg.max_slot_count,
-            min_stake_amount: cfg.min_stake_amount,
-            stake_epochs: cfg.stake_epochs,
-        };
-        let timestamp = SystemTime::now();
-        let (outbox, inbox) = unbounded();
-        let chain = Blockchain::new(blockchain_cfg, storage_cfg, genesis, timestamp);
-        let handler = Node {
-            outbox,
-            network: network.clone(),
-        };
-        let service = Self::with_blockchain(cfg, chain, keys, network, inbox)?;
-        Ok((service, handler))
-    }
-
-    pub fn testing(
-        cfg: ChainConfig,
-        keys: KeyChain,
-        network: Network,
-        genesis: Vec<Block>,
-        inbox: UnboundedReceiver<NodeMessage>,
-    ) -> Result<Self, Error> {
-        let blockchain_cfg = BlockchainConfig {
-            max_slot_count: cfg.max_slot_count,
-            min_stake_amount: cfg.min_stake_amount,
-            stake_epochs: cfg.stake_epochs,
-        };
-        let timestamp = SystemTime::now();
-        let chain = Blockchain::testing(blockchain_cfg, genesis, timestamp);
-        Self::with_blockchain(cfg, chain, keys, network, inbox)
-    }
-
-    fn with_blockchain(
-        cfg: ChainConfig,
         chain: Blockchain,
         keys: KeyChain,
         network: Network,
-        inbox: UnboundedReceiver<NodeMessage>,
-    ) -> Result<Self, Error> {
+    ) -> Result<(Self, Node), Error> {
+        let (outbox, inbox) = unbounded();
         let last_sync_clock = clock::now();
         let future_consensus_messages = Vec::new();
         let future_blocks: BTreeMap<u64, Block> = BTreeMap::new();
@@ -383,7 +343,7 @@ impl NodeService {
             consensus,
             optimistic,
             last_block_clock,
-            network,
+            network: network.clone(),
             on_block_added,
             on_epoch_changed,
             on_outputs_changed,
@@ -392,10 +352,14 @@ impl NodeService {
             propose_timer,
             view_change_timer,
         };
-
         service.recover_consensus_state()?;
 
-        Ok(service)
+        let handler = Node {
+            outbox,
+            network: network.clone(),
+        };
+
+        Ok((service, handler))
     }
 
     /// Update consensus state, if chain has other view of consensus group.

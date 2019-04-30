@@ -333,6 +333,7 @@ fn run() -> Result<(), Error> {
     let genesis = initialize_genesis(&cfg)?;
     let timestamp = SystemTime::now();
     let chain = Blockchain::new(cfg.chain.clone().into(), cfg.storage, genesis, timestamp)?;
+    let wallet_persistent_state = chain.recover_wallet(&keychain.wallet_skey)?;
 
     // Initialize node
     let (node_service, node) =
@@ -349,6 +350,7 @@ fn run() -> Result<(), Error> {
         node.clone(),
         cfg.chain.payment_fee,
         cfg.chain.stake_fee,
+        wallet_persistent_state,
     );
     rt.spawn(wallet_service);
 

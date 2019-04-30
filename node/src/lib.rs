@@ -173,6 +173,7 @@ pub struct EpochChanged {
 /// Send when outputs created and/or pruned.
 #[derive(Debug, Clone)]
 pub struct OutputsChanged {
+    pub epoch: u64,
     pub inputs: Vec<Output>,
     pub outputs: Vec<Output>,
 }
@@ -583,7 +584,11 @@ impl NodeService {
         // Truncate the blockchain.
         while self.chain.height() > height {
             let (inputs, outputs) = self.chain.pop_micro_block()?;
-            let msg = OutputsChanged { inputs, outputs };
+            let msg = OutputsChanged {
+                epoch: self.chain.epoch(),
+                inputs,
+                outputs,
+            };
             self.on_outputs_changed
                 .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
         }
@@ -790,7 +795,11 @@ impl NodeService {
                 metrics::MEMPOOL_OUTPUTS.set(self.mempool.inputs_len() as i64);
 
                 // Notify subscribers.
-                let msg = OutputsChanged { inputs, outputs };
+                let msg = OutputsChanged {
+                    epoch: self.chain.epoch(),
+                    inputs,
+                    outputs,
+                };
                 self.on_outputs_changed
                     .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
 
@@ -849,16 +858,6 @@ impl NodeService {
         &mut self,
         tx: UnboundedSender<OutputsChanged>,
     ) -> Result<(), Error> {
-        // Sent initial state.
-        // TODO: this implementation can consume a lot of memory.
-        let mut outputs: Vec<Output> = Vec::new();
-        for output_hash in self.chain.unspent() {
-            let output = self.chain.output_by_hash(output_hash)?.expect("exists");
-            outputs.push(output);
-        }
-        let inputs = Vec::new();
-        let msg = OutputsChanged { inputs, outputs };
-        tx.unbounded_send(msg).ok(); // ignore error.
         self.on_outputs_changed.push(tx);
         Ok(())
     }

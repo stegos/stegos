@@ -44,6 +44,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use stegos_crypto::bulletproofs::fee_a;
 use stegos_crypto::bulletproofs::validate_range_proof;
 use stegos_crypto::curve1174::cpt::Pt;
+use stegos_crypto::curve1174::cpt::SecretKey;
 use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::curve1174::G;
@@ -288,6 +289,45 @@ impl Blockchain {
             }
         }
         Ok(())
+    }
+
+    ///
+    /// Recovery wallet state from the blockchain.
+    /// TODO: this method is a temporary solution until persistence is implemented in wallet.
+    /// https://github.com/stegos/stegos/issues/812
+    ///
+    pub fn recover_wallet(&self, skey: &SecretKey) -> Result<Vec<(Output, u64)>, Error> {
+        let mut wallet_state: Vec<(Output, u64)> = Vec::new();
+        let mut epoch: u64 = 0;
+        for block in self.database.iter_starting(0) {
+            match block {
+                Block::KeyBlock(_block) => {
+                    epoch += 1;
+                }
+                Block::MicroBlock(block) => {
+                    for (output, _) in block.body.outputs.leafs() {
+                        let output_hash = Hash::digest(&output);
+                        if !self.contains_output(&output_hash) {
+                            continue; // Spent.
+                        }
+                        match output.as_ref() {
+                            Output::PaymentOutput(o) => {
+                                if let Ok(_payload) = o.decrypt_payload(skey) {
+                                    wallet_state.push((output.as_ref().clone(), epoch));
+                                }
+                            }
+                            Output::StakeOutput(o) => {
+                                if let Ok(_payload) = o.decrypt_payload(skey) {
+                                    wallet_state.push((output.as_ref().clone(), epoch));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(epoch, self.epoch);
+        Ok(wallet_state)
     }
 
     //

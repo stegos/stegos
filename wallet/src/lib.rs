@@ -85,6 +85,7 @@ impl WalletService {
         node: Node,
         payment_fee: i64,
         stake_fee: i64,
+        persistent_state: Vec<(Output, u64)>,
     ) -> (Self, Wallet) {
         info!("My wallet key: {}", keys.wallet_pkey.to_hex());
         debug!("My network key: {}", keys.network_pkey.to_hex());
@@ -125,7 +126,7 @@ impl WalletService {
 
         let events = select_all(events);
 
-        let service = WalletService {
+        let mut service = WalletService {
             keys,
             unspent,
             unspent_stakes,
@@ -137,6 +138,11 @@ impl WalletService {
             subscribers,
             events,
         };
+
+        // Recover state.
+        for (output, epoch) in persistent_state {
+            service.on_output_created(epoch, output);
+        }
 
         let api = Wallet { outbox };
 
@@ -235,15 +241,15 @@ impl WalletService {
     }
 
     /// Called when outputs registered and/or pruned.
-    fn on_outputs_changed(&mut self, inputs: Vec<Output>, outputs: Vec<Output>) {
+    fn on_outputs_changed(&mut self, epoch: u64, inputs: Vec<Output>, outputs: Vec<Output>) {
         let saved_balance = self.balance;
 
         for input in inputs {
-            self.on_output_pruned(input);
+            self.on_output_pruned(epoch, input);
         }
 
         for output in outputs {
-            self.on_output_created(output);
+            self.on_output_created(epoch, output);
         }
 
         if saved_balance != self.balance {
@@ -256,7 +262,7 @@ impl WalletService {
     }
 
     /// Called when UTXO is created.
-    fn on_output_created(&mut self, output: Output) {
+    fn on_output_created(&mut self, _epoch: u64, output: Output) {
         let hash = Hash::digest(&output);
         match output {
             Output::PaymentOutput(o) => {
@@ -293,7 +299,7 @@ impl WalletService {
     }
 
     /// Called when UTXO is spent.
-    fn on_output_pruned(&mut self, output: Output) {
+    fn on_output_pruned(&mut self, _epoch: u64, output: Output) {
         let hash = Hash::digest(&output);
         match output {
             Output::PaymentOutput(o) => {
@@ -405,8 +411,12 @@ impl Future for WalletService {
                     WalletEvent::Subscribe { tx } => {
                         self.subscribers.push(tx);
                     }
-                    WalletEvent::NodeOutputsChanged(OutputsChanged { inputs, outputs }) => {
-                        self.on_outputs_changed(inputs, outputs);
+                    WalletEvent::NodeOutputsChanged(OutputsChanged {
+                        epoch,
+                        inputs,
+                        outputs,
+                    }) => {
+                        self.on_outputs_changed(epoch, inputs, outputs);
                     }
                 },
                 Async::Ready(None) => unreachable!(), // never happens

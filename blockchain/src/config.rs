@@ -22,7 +22,6 @@
 // SOFTWARE.
 
 use serde_derive::{Deserialize, Serialize};
-use std::time::Duration;
 
 /// Blockchain configuration.
 #[derive(Debug, Clone)]
@@ -31,8 +30,8 @@ pub struct BlockchainConfig {
     pub max_slot_count: i64,
     /// Minimal stake amount.
     pub min_stake_amount: i64,
-    /// Time to lock stakes.
-    pub bonding_time: Duration,
+    /// How many epochs stake is valid.
+    pub stake_epochs: u64,
 }
 
 impl Default for BlockchainConfig {
@@ -40,7 +39,7 @@ impl Default for BlockchainConfig {
         BlockchainConfig {
             max_slot_count: 1000,
             min_stake_amount: 1_000_000_000, // 1000 STG
-            bonding_time: Duration::from_secs(15 * 60),
+            stake_epochs: 1,
         }
     }
 }

@@ -277,7 +277,7 @@ impl NodeService {
         let blockchain_cfg = BlockchainConfig {
             max_slot_count: cfg.max_slot_count,
             min_stake_amount: cfg.min_stake_amount,
-            bonding_time: cfg.bonding_time,
+            stake_epochs: cfg.stake_epochs,
         };
         let timestamp = SystemTime::now();
         let (outbox, inbox) = unbounded();
@@ -300,7 +300,7 @@ impl NodeService {
         let blockchain_cfg = BlockchainConfig {
             max_slot_count: cfg.max_slot_count,
             min_stake_amount: cfg.min_stake_amount,
-            bonding_time: cfg.bonding_time,
+            stake_epochs: cfg.stake_epochs,
         };
         let timestamp = SystemTime::now();
         let chain = Blockchain::testing(blockchain_cfg, genesis, timestamp);
@@ -1383,7 +1383,7 @@ impl Future for NodeService {
                                     NodeResponse::ElectionInfo(self.chain.election_info())
                                 }
                                 NodeRequest::EscrowInfo {} => {
-                                    NodeResponse::EscrowInfo(self.chain.escrow().info())
+                                    NodeResponse::EscrowInfo(self.chain.escrow_info())
                                 }
                             };
                             tx.send(response).ok(); // ignore errors.

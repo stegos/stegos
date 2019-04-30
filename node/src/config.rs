@@ -36,7 +36,7 @@ pub struct ChainConfig {
     /// How long wait for the keu blocks.
     pub key_block_timeout: Duration,
     /// Time to lock stakes.
-    pub bonding_time: Duration,
+    pub stake_epochs: u64,
     /// The number of blocks per epoch.
     pub blocks_in_epoch: u64,
     /// The maximal number of inputs + outputs in a transaction.
@@ -73,7 +73,7 @@ impl Default for ChainConfig {
             tx_wait_timeout,
             micro_block_timeout,
             key_block_timeout,
-            bonding_time: blockchain_default.bonding_time,
+            stake_epochs: blockchain_default.stake_epochs,
             blocks_in_epoch: 5,
             max_utxo_in_tx: 10,
             max_utxo_in_block: 1000,

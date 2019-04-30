@@ -66,6 +66,12 @@ pub enum CryptoError {
 
     #[fail(display = "Encrypted Key has incorrect Signature")]
     BadKeyingSignature,
+
+    #[fail(display = "Point in small subgroup")]
+    InSmallSubgroup,
+
+    #[fail(display = "Point not in principal subgroup")]
+    NotInPrincipalSubgroup,
 }
 
 impl From<hex::FromHexError> for CryptoError {

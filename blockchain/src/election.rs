@@ -37,7 +37,6 @@ pub struct ElectionInfo {
     pub height: u64,
     pub view_change: u32,
     pub slots_count: i64,
-    pub last_leader: Option<secure::PublicKey>,
     pub current_leader: secure::PublicKey,
     pub next_leader: secure::PublicKey,
 }
@@ -81,6 +80,7 @@ impl ElectionResult {
         self.validators[leader_id].0
     }
 }
+
 
 /// Choose random validator, based on `random_number`.
 /// Accepts list of validators stakes consistently sorted on all participants,

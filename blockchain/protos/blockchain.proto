@@ -39,6 +39,7 @@ message BaseBlockHeader {
     uint64 height = 3;
     uint32 view_change = 4;
     uint64 timestamp = 5;
+    stegos.crypto.VRF random = 6;
 }
 
 message MicroBlockHeader {
@@ -70,7 +71,6 @@ message MicroBlock {
 
 message KeyBlockHeader {
     BaseBlockHeader base = 1;
-    stegos.crypto.VRF random = 2;
 }
 
 message KeyBlockBody {

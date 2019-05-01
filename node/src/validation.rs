@@ -454,7 +454,11 @@ mod test {
             let previous = chain.last_block_hash();
             let height = chain.height();
             let version = VERSION;
-            let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
+
+            let seed = mix(chain.last_random(), chain.view_change());
+            let random = secure::make_VRF(&validator_skey, &seed);
+            let base =
+                BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
             let (output, outputs_gamma) = Output::new_payment(timestamp, skey, pkey, amount - fee)
                 .expect("genesis has valid public keys");
             let outputs = vec![output.clone()];

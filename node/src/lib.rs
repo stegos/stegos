@@ -450,6 +450,7 @@ impl NodeService {
 
         // Check signature first.
         let remote_view_change = remote.header.base.view_change;
+
         let leader = self.chain.select_leader(remote_view_change);
         if let Err(_e) = secure::check_hash(&remote_hash, &remote.body.sig, &leader) {
             return Err(BlockError::InvalidLeaderSignature(height, remote_hash).into());
@@ -898,7 +899,8 @@ impl NodeService {
             let previous = blockchain.last_block_hash();
             let height = blockchain.height();
             let epoch = blockchain.epoch() + 1;
-            let base = BaseBlockHeader::new(VERSION, previous, height, view_change, timestamp);
+            let base =
+                BaseBlockHeader::new(VERSION, previous, height, view_change, timestamp, random);
             debug!(
                 "Creating a new key block proposal: height={}, epoch={}, leader={:?}",
                 height,
@@ -907,7 +909,7 @@ impl NodeService {
             );
 
             let validators = blockchain.validators();
-            let mut block = KeyBlock::new(base, random);
+            let mut block = KeyBlock::new(base);
 
             let block_hash = Hash::digest(&block);
 
@@ -1242,6 +1244,8 @@ impl NodeService {
             "I'm leader, proposing a new micro block: height={}, last_block={}",
             height, previous
         );
+        let seed = mix(self.chain.last_random(), self.chain.view_change());
+        let random = secure::make_VRF(&self.keys.network_skey, &seed);
 
         // Create a new micro block from the mempool.
         let (mut block, _fee_output, _tx_hashes) = self.mempool.create_block(
@@ -1254,6 +1258,7 @@ impl NodeService {
             self.chain.view_change(),
             proof,
             self.cfg.max_utxo_in_block,
+            random,
         );
         let block_hash = Hash::digest(&block);
         block.body.sig = secure::sign_hash(&block_hash, &self.keys.network_skey);

@@ -76,10 +76,12 @@ fn dead_leader() {
                     .receive_broadcast(crate::VIEW_CHANGE_TOPIC, msg.clone())
             }
         }
+
+        let next_leader = r.parts.1.next_leader();
         r.parts.1.poll();
         for node in r.parts.1.iter_mut() {
             info!("processing validator = {:?}", node.validator_id());
-            if node.node_service.chain.select_leader(1) == node.node_service.keys.network_pkey {
+            if next_leader == node.node_service.keys.network_pkey {
                 let _: Block = node.network_service.get_broadcast(SEALED_BLOCK_TOPIC);
                 // If node was leader, they have produced micro block,
                 assert_eq!(node.node_service.chain.view_change(), 2);
@@ -126,21 +128,10 @@ fn silent_view_change() {
             assert_eq!(node.node_service.chain.height(), 2);
         }
 
-        let mut starting_view_changes = 0;
 
-        for _ in 0..(s.cfg().blocks_in_epoch - 2) {
-            if s.nodes[0]
-                .node_service
-                .chain
-                .select_leader(starting_view_changes + 1)
-                != s.nodes[0].node_service.chain.leader()
-            {
-                break;
-            }
-            s.wait(s.cfg().tx_wait_timeout);
-            s.skip_micro_block();
-            starting_view_changes += 1;
-        }
+        s.skip_while_different_leader();
+
+        let starting_view_changes = s.nodes[0].node_service.chain.view_change();
         let leader_pk = s.nodes[0].node_service.chain.leader();
 
         s.wait(s.cfg().tx_wait_timeout);
@@ -247,21 +238,25 @@ fn double_view_change() {
         let mut starting_view_changes = 0;
 
         for _ in 0..s.cfg().blocks_in_epoch {
-            let leader1 = s.nodes[0]
+
+            let leader1 = s.first_mut().node_service.chain.leader();
+            let view_change = s.first_mut().node_service.chain.view_change();
+
+            let vrf = s.node(&leader1).unwrap().create_vrf();
+            let mut election = s.first_mut()
                 .node_service
-                .chain
-                .select_leader(starting_view_changes);
-            let leader2 = s.nodes[0]
-                .node_service
-                .chain
-                .select_leader(starting_view_changes + 1);
-            let leader3 = s.nodes[0]
-                .node_service
-                .chain
-                .select_leader(starting_view_changes + 2);
+                .chain.election_result();
+            election.random = vrf;
+            let leader2 = election.select_leader(view_change + 1);
+
+            let vrf = s.node(&leader1).unwrap().create_vrf_from_seed(election.random.rand, view_change + 1);
+            election.random = vrf;
+            let leader3 = election.select_leader(view_change + 2);
+
             if leader1 != leader2 && leader2 != leader3 && leader3 != leader1 {
                 break;
             }
+
             s.wait(s.cfg().tx_wait_timeout);
             s.skip_micro_block();
             starting_view_changes += 1;
@@ -386,21 +381,9 @@ fn resolve_fork_for_view_change() {
             assert_eq!(node.node_service.chain.height(), 2);
         }
 
-        let mut starting_view_changes = 0;
+        s.skip_while_different_leader();
+        let starting_view_changes = s.nodes[0].node_service.chain.view_change();
 
-        for _ in 0..(s.cfg().blocks_in_epoch - 2) {
-            if s.nodes[0]
-                .node_service
-                .chain
-                .select_leader(starting_view_changes + 1)
-                != s.nodes[0].node_service.chain.leader()
-            {
-                break;
-            }
-            s.wait(s.cfg().tx_wait_timeout);
-            s.skip_micro_block();
-            starting_view_changes += 1;
-        }
         let leader_pk = s.nodes[0].node_service.chain.leader();
 
         s.wait(s.cfg().tx_wait_timeout);
@@ -456,7 +439,7 @@ fn resolve_fork_for_view_change() {
         let last_block_hash = Hash::digest(&block);
 
         let first_leader = r.parts.0.first_mut();
-        assert_eq!(leader_pk, first_leader.node_service.keys.network_pkey);
+        assert_eq!(leader_pk, first_leader.node_service.keys.network_pkey) ;
         first_leader
             .network_service
             .filter_broadcast(&[crate::VIEW_CHANGE_TOPIC]);
@@ -510,10 +493,10 @@ fn out_of_order_keyblock_proposal() {
 
             let version = 1;
             let timestamp = SystemTime::now();
-            let base = BaseBlockHeader::new(version, previous, height, round, timestamp);
             let seed = mix(last_random, round);
             let random = secure::make_VRF(&leader_node.node_service.keys.network_skey, &seed);
-            let request = KeyBlock::new(base, random);
+            let base = BaseBlockHeader::new(version, previous, height, round, timestamp, random);
+            let request = KeyBlock::new(base);
             let hash = Hash::digest(&request);
             let body = ConsensusMessageBody::Proposal { request, proof: () };
             ConsensusMessage::new(
@@ -578,7 +561,21 @@ fn micro_block_without_signature() {
         let last_block_hash = s.nodes[0].node_service.chain.last_block_hash();
 
         let gamma: Fr = Fr::zero();
-        let base = BaseBlockHeader::new(version, last_block_hash, height, round + 1, timestamp);
+
+        let leader = s.node(&leader_pk).unwrap();
+        let seed = mix(
+            leader.node_service.chain.last_random(),
+            leader.node_service.chain.view_change(),
+        );
+        let random = secure::make_VRF(&leader.node_service.keys.network_skey, &seed);
+        let base = BaseBlockHeader::new(
+            version,
+            last_block_hash,
+            height,
+            round + 1,
+            timestamp,
+            random,
+        );
         let block = MicroBlock::new(base, gamma, 0, &[], &[], None);
 
         let block: Block = Block::MicroBlock(block);

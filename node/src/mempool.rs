@@ -32,6 +32,7 @@ use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::curve1174::cpt::SecretKey;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
+use stegos_crypto::pbc::secure::VRF;
 
 /// Memory Pool of Transactions.
 pub struct Mempool {
@@ -165,6 +166,7 @@ impl Mempool {
         view_change: u32,
         proof: Option<ViewChangeProof>,
         max_utxo_in_block: usize,
+        random: VRF,
     ) -> (MicroBlock, Option<Output>, Vec<Hash>) {
         let timestamp = SystemTime::now();
         let mut gamma = Fr::zero();
@@ -220,9 +222,8 @@ impl Mempool {
         } else {
             None
         };
-
         // Create a new micro block.
-        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
+        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
         let block = MicroBlock::new(base, gamma, monetary_adjustment, &inputs, &outputs, proof);
 
         (block, output_fee, tx_hashes)
@@ -234,6 +235,7 @@ mod test {
     use super::*;
     use std::collections::BTreeMap;
     use stegos_crypto::curve1174::cpt::make_random_keys;
+    use stegos_crypto::pbc::secure;
 
     #[test]
     fn basic() {
@@ -345,6 +347,7 @@ mod test {
     #[test]
     fn create_block() {
         let (skey, pkey) = make_random_keys();
+        let (pbc_skey, _) = secure::make_random_keys();
         let max_utxo_in_block: usize = 7;
         let mut mempool = Mempool::new();
 
@@ -366,6 +369,8 @@ mod test {
         let version = 1;
         let height = 0;
         let view_change = 0;
+        let random = secure::make_VRF(&pbc_skey, &Hash::digest("test"));
+
         let (block, output_fee, tx_hashes) = mempool.create_block(
             previous,
             version,
@@ -376,6 +381,7 @@ mod test {
             view_change,
             None,
             max_utxo_in_block,
+            random,
         );
 
         // Used transactions - tx3 is not used because of max_utxo_in_block.

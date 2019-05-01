@@ -30,7 +30,10 @@ use stegos_crypto::pbc::secure;
 
 #[test]
 fn smoke_test() {
+    let mut cfg: ChainConfig = Default::default();
+    cfg.blocks_in_epoch = 1;
     let config = SandboxConfig {
+        chain: cfg,
         num_nodes: 3,
         ..Default::default()
     };
@@ -42,17 +45,7 @@ fn smoke_test() {
             assert_eq!(node.node_service.chain.height(), 2);
         }
 
-        // Process N micro blocks.
         let height = s.nodes[0].node_service.chain.height();
-        for _ in 1..s.cfg().blocks_in_epoch {
-            s.wait(s.cfg().tx_wait_timeout);
-            s.skip_micro_block()
-        }
-        info!("====== Received all micro blocks. =====");
-        let height = height + s.cfg().blocks_in_epoch - 1; // exclude keyblock, as first block of epoch.
-
-        s.for_each(|node| assert_eq!(node.chain.height(), height));
-
         let round = s.nodes[0].node_service.chain.view_change();
         let epoch = s.nodes[0].node_service.chain.epoch();
         let last_block_hash = s.nodes[0].node_service.chain.last_block_hash();
@@ -160,7 +153,10 @@ fn smoke_test() {
 
 #[test]
 fn autocomit() {
+    let mut cfg: ChainConfig = Default::default();
+    cfg.blocks_in_epoch = 1;
     let config = SandboxConfig {
+        chain: cfg,
         num_nodes: 3,
         ..Default::default()
     };
@@ -172,17 +168,8 @@ fn autocomit() {
             assert_eq!(node.node_service.chain.height(), 2);
         }
 
-        // Process N micro blocks.
         let height = s.nodes[0].node_service.chain.height();
-        for _ in 1..s.cfg().blocks_in_epoch {
-            s.wait(s.cfg().tx_wait_timeout);
-            s.skip_micro_block()
-        }
-        info!("====== Received all micro blocks. =====");
-        let height = height + s.cfg().blocks_in_epoch - 1; // exclude keyblock, as first block of epoch.
         let epoch = s.nodes[0].node_service.chain.epoch();
-
-        s.for_each(|node| assert_eq!(node.chain.height(), height));
 
         let last_block_hash = s.nodes[0].node_service.chain.last_block_hash();
 
@@ -276,7 +263,10 @@ fn autocomit() {
 
 #[test]
 fn round() {
+    let mut cfg: ChainConfig = Default::default();
+    cfg.blocks_in_epoch = 1;
     let config = SandboxConfig {
+        chain: cfg,
         num_nodes: 3,
         ..Default::default()
     };
@@ -288,16 +278,7 @@ fn round() {
             assert_eq!(node.node_service.chain.height(), 2);
         }
 
-        // Process N micro blocks.
         let height = s.nodes[0].node_service.chain.height();
-        for _ in 1..s.cfg().blocks_in_epoch {
-            s.wait(s.cfg().tx_wait_timeout);
-            s.skip_micro_block()
-        }
-        info!("====== Received all micro blocks. =====");
-        let height = height + s.cfg().blocks_in_epoch - 1; // exclude keyblock, as first block of epoch.
-
-        s.for_each(|node| assert_eq!(node.chain.height(), height));
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
         let leader_node = s.node(&leader_pk).unwrap();
@@ -385,7 +366,10 @@ fn round() {
 // third at key_block_timeout * 2
 #[test]
 fn multiple_rounds() {
+    let mut cfg: ChainConfig = Default::default();
+    cfg.blocks_in_epoch = 1;
     let config = SandboxConfig {
+        chain: cfg,
         num_nodes: 3,
         ..Default::default()
     };
@@ -397,24 +381,12 @@ fn multiple_rounds() {
             assert_eq!(node.node_service.chain.height(), 2);
         }
 
-        // Process N micro blocks.
-        let height = s.nodes[0].node_service.chain.height();
-        for _ in 1..s.cfg().blocks_in_epoch {
-            s.wait(s.cfg().tx_wait_timeout);
-            s.skip_micro_block()
-        }
-        info!("====== Received all micro blocks. =====");
-        let height = height + s.cfg().blocks_in_epoch - 1; // exclude keyblock, as first block of epoch.
-
-        s.for_each(|node| assert_eq!(node.chain.height(), height));
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
         let leader_node = s.node(&leader_pk).unwrap();
         // skip proposal and prevote of last leader.
         let _proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
         let _prevote: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
-
-        let round = s.nodes[0].node_service.chain.view_change() + 1;
 
         s.wait(s.cfg().key_block_timeout - Duration::from_millis(1));
 
@@ -431,7 +403,7 @@ fn multiple_rounds() {
         // filter messages from chain loader.
         s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
 
-        let leader_pk = s.nodes[0].node_service.chain.select_leader(round);
+        let leader_pk = s.nodes[0].node_service.chain.leader();
         let leader_node = s.node(&leader_pk).unwrap();
         let _proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
         let _prevote: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
@@ -451,7 +423,7 @@ fn multiple_rounds() {
         // filter messages from chain loader.
         s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
 
-        let leader_pk = s.nodes[0].node_service.chain.select_leader(round + 1);
+        let leader_pk = s.next_view_change_leader();
         let leader_node = s.node(&leader_pk).unwrap();
         let _proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
         let _prevote: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
@@ -462,7 +434,10 @@ fn multiple_rounds() {
 //
 #[test]
 fn lock() {
+    let mut cfg: ChainConfig = Default::default();
+    cfg.blocks_in_epoch = 1;
     let config = SandboxConfig {
+        chain: cfg,
         num_nodes: 3,
         ..Default::default()
     };
@@ -474,16 +449,7 @@ fn lock() {
             assert_eq!(node.node_service.chain.height(), 2);
         }
 
-        // Process N micro blocks.
         let height = s.nodes[0].node_service.chain.height();
-        for _ in 1..s.cfg().blocks_in_epoch {
-            s.wait(s.cfg().tx_wait_timeout);
-            s.skip_micro_block()
-        }
-        info!("====== Received all micro blocks. =====");
-        let height = height + s.cfg().blocks_in_epoch - 1; // exclude keyblock, as last block of epoch.
-
-        s.for_each(|node| assert_eq!(node.chain.height(), height));
 
         let mut round = s.nodes[0].node_service.chain.view_change();
 
@@ -579,7 +545,10 @@ fn lock() {
 
 #[test]
 fn out_of_order_micro_block() {
+    let mut cfg: ChainConfig = Default::default();
+    cfg.blocks_in_epoch = 1;
     let config = SandboxConfig {
+        chain: cfg,
         num_nodes: 3,
         ..Default::default()
     };
@@ -591,18 +560,7 @@ fn out_of_order_micro_block() {
             assert_eq!(node.node_service.chain.height(), 2);
         }
 
-        // Process N micro blocks.
         let height = s.nodes[0].node_service.chain.height();
-        for _ in 1..s.cfg().blocks_in_epoch {
-            s.wait(s.cfg().tx_wait_timeout);
-            s.skip_micro_block()
-        }
-
-        info!("====== Received all micro blocks. =====");
-        let height = height + s.cfg().blocks_in_epoch - 1; // exclude keyblock, as first block of epoch.
-
-        s.for_each(|node| assert_eq!(node.chain.height(), height));
-
         let leader_pk = s.nodes[0].node_service.chain.leader();
 
         //create valid but out of order fake micro block.
@@ -612,8 +570,22 @@ fn out_of_order_micro_block() {
         let round = s.nodes[0].node_service.chain.view_change();
         let last_block_hash = s.nodes[0].node_service.chain.last_block_hash();
 
+        let leader = s.node(&leader_pk).unwrap();
+        let seed = mix(
+            leader.node_service.chain.last_random(),
+            leader.node_service.chain.view_change(),
+        );
+        let random = secure::make_VRF(&leader.node_service.keys.network_skey, &seed);
+
         let gamma: Fr = Fr::zero();
-        let base = BaseBlockHeader::new(version, last_block_hash, height, round + 1, timestamp);
+        let base = BaseBlockHeader::new(
+            version,
+            last_block_hash,
+            height,
+            round + 1,
+            timestamp,
+            random,
+        );
         let mut block = MicroBlock::new(base, gamma, 0, &[], &[], None);
 
         let block_hash = Hash::digest(&block);

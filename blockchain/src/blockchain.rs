@@ -121,11 +121,6 @@ pub struct Blockchain {
     /// Copy of a block hash from the latest registered block.
     last_block_hash: Hash,
 
-    //
-    // Consensus information.
-    //
-    /// Number of leader changes since last epoch.
-    view_change: u32,
 }
 
 impl Blockchain {
@@ -187,11 +182,6 @@ impl Blockchain {
         let height: u64 = 0;
         let last_block_hash = Hash::digest("genesis");
 
-        //
-        // Consensus information.
-        //
-        let view_change = 0;
-
         let mut blockchain = Blockchain {
             cfg,
             database,
@@ -205,7 +195,6 @@ impl Blockchain {
             election_result,
             height,
             last_block_hash,
-            view_change,
         };
 
         blockchain.recover(genesis, timestamp)?;
@@ -334,19 +323,12 @@ impl Blockchain {
     // Info
     //
     pub fn election_info(&self) -> ElectionInfo {
-        let last_leader = if self.view_change > 1 {
-            Some(self.select_leader(self.view_change - 1))
-        } else {
-            None
-        };
-
         ElectionInfo {
             height: self.height,
-            view_change: self.view_change,
+            view_change: self.view_change(),
             slots_count: self.cfg.max_slot_count as i64,
-            last_leader,
-            current_leader: self.select_leader(self.view_change),
-            next_leader: self.select_leader(self.view_change + 1),
+            current_leader: self.select_leader(self.view_change()),
+            next_leader: self.select_leader(self.view_change() + 1),
         }
     }
     //----------------------------------------------------------------------------------------------
@@ -507,7 +489,7 @@ impl Blockchain {
     /// Returns number of leader changes since last epoch creation.
     #[inline]
     pub fn view_change(&self) -> u32 {
-        self.view_change
+        self.election_result.view_change
     }
 
     /// Returns number of total slots in current epoch.
@@ -520,8 +502,8 @@ impl Blockchain {
     /// if new_view_change not greater than current.
     #[inline]
     pub fn set_view_change(&mut self, new_view_change: u32) {
-        assert!(self.view_change < new_view_change);
-        self.view_change = new_view_change;
+        assert!(self.view_change() < new_view_change);
+        self.election_result.view_change = new_view_change;
     }
 
     pub fn election_result(&self) -> ElectionResult {
@@ -620,7 +602,7 @@ impl Blockchain {
                 leader, block.header.base.view_change
             );
             let seed = mix(self.last_random(), block.header.base.view_change);
-            if !secure::validate_VRF_source(&block.header.random, &leader, &seed) {
+            if !secure::validate_VRF_source(&block.header.base.random, &leader, &seed) {
                 return Err(BlockError::IncorrectRandom(height, block_hash).into());
             }
 
@@ -706,10 +688,10 @@ impl Blockchain {
         self.election_result = election::select_validators_slots(
             self.escrow
                 .get_stakers_majority(self.epoch, self.cfg.min_stake_amount),
-            block.header.random,
+            block.header.base.random,
             self.cfg.max_slot_count,
         );
-        self.view_change = 0;
+        self.election_result.view_change = 0;
         assert_eq!(self.height, version);
         metrics::HEIGHT.set(self.height as i64);
         metrics::EPOCH.inc();
@@ -824,7 +806,7 @@ impl Blockchain {
 
         // Check signature (exclude epoch == 0 for genesis).
         if self.epoch > 0 {
-            let leader = match block.header.base.view_change.cmp(&self.view_change) {
+            let leader = match block.header.base.view_change.cmp(&self.view_change()) {
                 Ordering::Equal => self.leader(),
                 Ordering::Greater => {
                     let chain = ChainInfo::from_micro_block(&block);
@@ -846,7 +828,7 @@ impl Blockchain {
                                 height,
                                 block_hash,
                                 block.header.base.view_change,
-                                self.view_change,
+                                self.view_change(),
                             )
                             .into());
                         }
@@ -857,11 +839,15 @@ impl Blockchain {
                         height,
                         block_hash,
                         block.header.base.view_change,
-                        self.view_change,
+                        self.view_change(),
                     )
                     .into());
                 }
             };
+            let seed = mix(self.last_random(), block.header.base.view_change);
+            if !secure::validate_VRF_source(&block.header.base.random, &leader, &seed) {
+                return Err(BlockError::IncorrectRandom(height, block_hash).into());
+            }
             if let Err(_e) = secure::check_hash(&block_hash, &block.body.sig, &leader) {
                 return Err(BlockError::InvalidLeaderSignature(height, block_hash).into());
             }
@@ -1184,7 +1170,8 @@ impl Blockchain {
         self.balance.insert(version, (), balance);
         assert_eq!(self.balance.current_version(), version);
         self.last_block_hash = block_hash.clone();
-        self.view_change = block.header.base.view_change + 1;
+        self.election_result.view_change = block.header.base.view_change + 1;
+        self.election_result.random = block.header.base.random;
         self.height += 1;
         assert_eq!(self.height, version);
         metrics::HEIGHT.set(self.height as i64);
@@ -1238,7 +1225,8 @@ impl Blockchain {
         assert_eq!(self.height, height);
         assert_eq!(self.height, version);
         self.last_block_hash = Hash::digest(&previous);
-        self.view_change = match previous {
+        self.election_result.random = previous.base_header().random;
+        self.election_result.view_change = match previous {
             Block::KeyBlock(ref _previous) => 0,
             Block::MicroBlock(ref previous) => previous.header.base.view_change + 1,
         };
@@ -1289,10 +1277,10 @@ pub fn create_fake_key_block(
     let keychain = keychains.iter().find(|p| p.network_pkey == key).unwrap();
     let mut block = {
         let previous = chain.last_block_hash();
-        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
         let seed = mix(chain.last_random(), view_change);
         let random = secure::make_VRF(&keychain.network_skey, &seed);
-        KeyBlock::new(base, random)
+        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
+        KeyBlock::new(base)
     };
     let block_hash = Hash::digest(&block);
     let validators = chain.validators();
@@ -1368,7 +1356,9 @@ pub fn create_fake_micro_block(
     let height = chain.height();
     let view_change = chain.view_change();;
     let previous = chain.last_block_hash().clone();
-    let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
+    let seed = mix(chain.last_random(), view_change);
+    let random = secure::make_VRF(&keys.network_skey, &seed);
+    let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
     let mut block = MicroBlock::new(base, gamma, 0, &input_hashes, &outputs, None);
     let block_hash = Hash::digest(&block);
     block.body.sig = secure::sign_hash(&block_hash, &keys.network_skey);
@@ -1387,7 +1377,9 @@ pub fn create_empty_micro_block(
     let previous = chain.last_block_hash().clone();
     let height = chain.height();
     let view_change = chain.view_change();;
-    let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
+    let seed = mix(chain.last_random(), view_change);
+    let random = secure::make_VRF(&keys.network_skey, &seed);
+    let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
     let mut block = MicroBlock::new(base, gamma, 0, &input_hashes, &outputs, None);
     let block_hash = Hash::digest(&block);
     block.body.sig = secure::sign_hash(&block_hash, &keys.network_skey);

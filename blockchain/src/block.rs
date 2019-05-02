@@ -29,7 +29,6 @@ use bitvector::BitVector;
 use failure::Error;
 use std::time::SystemTime;
 use stegos_crypto::bulletproofs::{fee_a, validate_range_proof};
-use stegos_crypto::curve1174::cpt::Pt;
 use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::curve1174::G;
@@ -331,32 +330,24 @@ impl MicroBlock {
         // +\sum{C_i} for i in txins
         for (txin_hash, txin) in self.body.inputs.iter().zip(inputs) {
             assert_eq!(Hash::digest(txin), *txin_hash);
-            match txin {
-                Output::PaymentOutput(o) => {
-                    pedersen_commitment_diff += Pt::decompress(o.proof.vcmt)?;
-                }
-                Output::StakeOutput(o) => {
-                    pedersen_commitment_diff += fee_a(o.amount);
-                }
-            };
+            pedersen_commitment_diff += txin.commitment()?;
         }
 
         // -\sum{C_o} for o in txouts
         for (txout, _) in self.body.outputs.leafs() {
             let output_hash = Hash::digest(&*txout);
+            pedersen_commitment_diff -= txout.commitment()?;
             match **txout {
                 Output::PaymentOutput(ref o) => {
                     // Check bulletproofs of created outputs
                     if !validate_range_proof(&o.proof) {
                         return Err(OutputError::InvalidBulletProof(output_hash).into());
                     }
-                    pedersen_commitment_diff -= Pt::decompress(o.proof.vcmt)?;
                 }
                 Output::StakeOutput(ref o) => {
                     if o.amount <= 0 {
                         return Err(OutputError::InvalidStake(output_hash).into());
                     }
-                    pedersen_commitment_diff -= fee_a(o.amount);
                 }
             };
         }
@@ -408,6 +399,7 @@ impl Hashable for Block {
 pub mod tests {
     use super::*;
     use std::time::SystemTime;
+    use stegos_crypto::bulletproofs::pedersen_commitment;
     use stegos_crypto::curve1174::cpt::make_random_keys;
     use stegos_crypto::pbc::secure::make_random_keys as make_secure_random_keys;
 
@@ -513,7 +505,7 @@ pub mod tests {
         // Escrow as an input.
         //
         {
-            let input = Output::new_stake(
+            let (input, inputs_gamma) = Output::new_stake(
                 timestamp,
                 &skey0,
                 &pkey1,
@@ -524,7 +516,6 @@ pub mod tests {
             .expect("keys are valid");
             let input_hashes = [Hash::digest(&input)];
             let inputs = [input];
-            let inputs_gamma = Fr::zero();
             let (output, outputs_gamma) =
                 Output::new_payment(timestamp, &skey1, &pkey1, amount).expect("keys are valid");
             let outputs = [output];
@@ -543,7 +534,7 @@ pub mod tests {
                 Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
             let input_hashes = [Hash::digest(&input)];
             let inputs = [input];
-            let output = Output::new_stake(
+            let (output, outputs_gamma) = Output::new_stake(
                 timestamp,
                 &skey1,
                 &pkey1,
@@ -552,7 +543,6 @@ pub mod tests {
                 amount,
             )
             .expect("keys are valid");
-            let outputs_gamma = Fr::zero();
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;
 
@@ -569,7 +559,7 @@ pub mod tests {
                 Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
             let input_hashes = [Hash::digest(&input)];
             let inputs = [input];
-            let mut output = StakeOutput::new(
+            let (mut output, outputs_gamma) = StakeOutput::new(
                 timestamp,
                 &skey1,
                 &pkey1,
@@ -579,8 +569,9 @@ pub mod tests {
             )
             .expect("keys are valid");
             output.amount = amount - 1;
+            let (cmt, _gamma) = pedersen_commitment(output.amount);
+            output.commitment = cmt.compress();
             let output = Output::StakeOutput(output);
-            let outputs_gamma = Fr::zero();
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;
 
@@ -603,7 +594,7 @@ pub mod tests {
                 Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
             let input_hashes = [Hash::digest(&input)];
             let inputs = [input];
-            let mut output = StakeOutput::new(
+            let (mut output, outputs_gamma) = StakeOutput::new(
                 timestamp,
                 &skey1,
                 &pkey1,
@@ -613,8 +604,9 @@ pub mod tests {
             )
             .expect("keys are valid");
             output.amount = 0;
+            let (cmt, _gamma) = pedersen_commitment(0);
+            output.commitment = cmt.compress();
             let output = Output::StakeOutput(output);
-            let outputs_gamma = Fr::zero();
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;
 

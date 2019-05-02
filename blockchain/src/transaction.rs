@@ -26,9 +26,9 @@ use failure::Error;
 use failure::Fail;
 use std::collections::HashSet;
 use std::time::SystemTime;
-use stegos_crypto::bulletproofs::{fee_a, simple_commit, validate_range_proof};
+use stegos_crypto::bulletproofs::{simple_commit, validate_range_proof};
 use stegos_crypto::curve1174::cpt::{
-    sign_hash, sign_hash_with_kval, validate_sig, Pt, PublicKey, SchnorrSig, SecretKey,
+    sign_hash, sign_hash_with_kval, validate_sig, PublicKey, SchnorrSig, SecretKey,
 };
 use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
@@ -167,7 +167,7 @@ impl Transaction {
                 }
                 Output::StakeOutput(o) => {
                     let payload = o.decrypt_payload(skey)?;
-                    eff_skey += payload.delta;
+                    gamma_adj += payload.gamma;
                 }
             }
             let hash = Hasher::digest(txin);
@@ -233,22 +233,21 @@ impl Transaction {
         // +\sum{C_i} for i in txins
         let mut txins_set: HashSet<Hash> = HashSet::new();
         for (txin_hash, txin) in self.body.txins.iter().zip(inputs) {
+            txin.validate()?;
             assert_eq!(Hash::digest(txin), *txin_hash);
             if !txins_set.insert(*txin_hash) {
                 return Err(TransactionError::DuplicateInput(tx_hash, *txin_hash).into());
             }
+
+            let cmt = txin.commitment()?;
+            txin_sum += cmt;
+            eff_pkey += txin.recipient()? + cmt;
+
             match txin {
-                Output::PaymentOutput(o) => {
-                    let cmt = o.proof.vcmt.decompress()?;
-                    txin_sum += cmt;
-                    eff_pkey += Pt::from(o.recipient).decompress()? + cmt;
-                }
                 Output::StakeOutput(o) => {
                     o.validate_pkey()?;
-                    let cmt = fee_a(o.amount);
-                    txin_sum += cmt;
-                    eff_pkey += Pt::from(o.recipient).decompress()? + cmt;
                 }
+                _ => {}
             };
         }
         drop(txins_set);
@@ -256,10 +255,16 @@ impl Transaction {
         // -\sum{C_o} for o in txouts
         let mut txouts_set: HashSet<Hash> = HashSet::new();
         for txout in &self.body.txouts {
+            txout.validate()?;
             let txout_hash = Hash::digest(txout);
             if !txouts_set.insert(txout_hash) {
                 return Err(TransactionError::DuplicateOutput(tx_hash, txout_hash).into());
             }
+
+            let cmt = txout.commitment()?;
+            txout_sum += cmt;
+            eff_pkey -= cmt;
+
             match txout {
                 Output::PaymentOutput(o) => {
                     // Check bulletproofs of created outputs
@@ -274,9 +279,6 @@ impl Transaction {
                         )
                         .into());
                     }
-                    let cmt = Pt::decompress(o.proof.vcmt)?;
-                    txout_sum += cmt;
-                    eff_pkey -= cmt;
                 }
                 Output::StakeOutput(o) => {
                     o.validate_pkey()?; // need to prove that we own SecurePublicKey
@@ -291,9 +293,6 @@ impl Transaction {
                         )
                         .into());
                     }
-                    let cmt = fee_a(o.amount);
-                    txout_sum += cmt;
-                    eff_pkey -= cmt;
                 }
             };
         }
@@ -359,13 +358,15 @@ impl Transaction {
 
         // check that each TXIN is unique
         for txin in inputs {
+            txin.validate()?;
             let hash = Hasher::digest(txin);
             txins.push(hash);
-            let pkey = match txin {
-                Output::PaymentOutput(o) => o.recipient,
-                Output::StakeOutput(o) => o.recipient,
-            };
-            sum_pkey += Pt::from(pkey).decompress()?;
+            sum_pkey += txin.recipient()?;
+        }
+
+        // ensure that all TXOUT are valid with signature
+        for txout in outputs {
+            txout.validate()?;
         }
 
         // Create a transaction body and calculate the hash.
@@ -426,9 +427,11 @@ impl Transaction {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-
+    use stegos_crypto::bulletproofs::pedersen_commitment;
     use stegos_crypto::curve1174::cpt::make_random_keys;
+    use stegos_crypto::curve1174::cpt::Pt;
     use stegos_crypto::pbc::secure;
+    use stegos_crypto::CryptoError;
 
     ///
     /// Tests that transactions without inputs are prohibited.
@@ -520,11 +523,8 @@ pub mod tests {
                 _ => panic!(),
             };
             let e = tx.validate(&inputs).expect_err("transaction is invalid");
-            match e.downcast::<TransactionError>().unwrap() {
-                TransactionError::InvalidSignature(tx_hash) => {
-                    // the hash of a transaction excludes its signature
-                    assert_eq!(tx_hash, Hash::digest(&tx.body))
-                }
+            match e.downcast::<CryptoError>().unwrap() {
+                CryptoError::BadKeyingSignature => (),
                 _ => panic!(),
             }
         }
@@ -649,7 +649,7 @@ pub mod tests {
         //
         // StakeUTXO as an input.
         //
-        let input = Output::new_stake(
+        let (input, _inputs_gamma) = Output::new_stake(
             timestamp,
             &skey0,
             &pkey1,
@@ -671,7 +671,7 @@ pub mod tests {
         let (input, _inputs_gamma) =
             Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
         let inputs = [input];
-        let output = Output::new_stake(
+        let (output, outputs_gamma) = Output::new_stake(
             timestamp,
             &skey1,
             &pkey1,
@@ -680,7 +680,6 @@ pub mod tests {
             amount - fee,
         )
         .expect("keys are valid");
-        let outputs_gamma = Fr::zero();
         let tx = Transaction::new(&skey1, &inputs, &[output], outputs_gamma, fee)
             .expect("keys are valid");
         tx.validate(&inputs).expect("tx is valid");
@@ -691,7 +690,7 @@ pub mod tests {
         let (input, _inputs_gamma) =
             Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
         let inputs = [input];
-        let mut output = StakeOutput::new(
+        let (mut output, outputs_gamma) = StakeOutput::new(
             timestamp,
             &skey1,
             &pkey1,
@@ -701,11 +700,12 @@ pub mod tests {
         )
         .expect("keys are valid");
         output.amount = amount - fee - 1;
+        let (cmt, _gamma) = pedersen_commitment(output.amount);
+        output.commitment = cmt.compress();
         let output = Output::StakeOutput(output);
-        let outputs_gamma = Fr::zero();
         match Transaction::new(&skey1, &inputs, &[output], outputs_gamma, fee) {
-            Err(e) => match e.downcast::<TransactionError>().unwrap() {
-                TransactionError::InvalidMonetaryBalance(_tx_hash) => {}
+            Err(e) => match e.downcast::<CryptoError>().unwrap() {
+                CryptoError::BadKeyingSignature => {}
                 _ => panic!(),
             },
             _ => panic!(),
@@ -717,7 +717,7 @@ pub mod tests {
         let (input, _inputs_gamma) =
             Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
         let inputs = [input];
-        let mut output = StakeOutput::new(
+        let (mut output, outputs_gamma) = StakeOutput::new(
             timestamp,
             &skey1,
             &pkey1,
@@ -727,11 +727,12 @@ pub mod tests {
         )
         .expect("keys are valid");
         output.amount = 0;
+        let (cmt, _gamma) = pedersen_commitment(0);
+        output.commitment = cmt.compress();
         let output = Output::StakeOutput(output);
-        let outputs_gamma = Fr::zero();
         match Transaction::new(&skey1, &inputs, &[output], outputs_gamma, fee) {
-            Err(e) => match e.downcast::<OutputError>().unwrap() {
-                OutputError::InvalidStake(_output_hash) => {}
+            Err(e) => match e.downcast::<CryptoError>().unwrap() {
+                CryptoError::BadKeyingSignature => {}
                 _ => panic!(),
             },
             _ => panic!(),
@@ -743,7 +744,7 @@ pub mod tests {
         let (input, _inputs_gamma) =
             Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
         let inputs = [input];
-        let output = Output::new_stake(
+        let (output, outputs_gamma) = Output::new_stake(
             timestamp,
             &skey1,
             &pkey1,
@@ -752,7 +753,6 @@ pub mod tests {
             amount - fee,
         )
         .expect("keys are valid");
-        let outputs_gamma = Fr::zero();
         let mut tx = Transaction::new(&skey1, &inputs, &[output], outputs_gamma, fee)
             .expect("keys are valid");
         tx.validate(&inputs).expect("tx is valid");
@@ -766,8 +766,8 @@ pub mod tests {
         };
         let e = tx.validate(&inputs).expect_err("transaction is invalid");
         dbg!(&e);
-        match e.downcast::<OutputError>().unwrap() {
-            OutputError::InvalidStakeSignature(_output_hash) => {}
+        match e.downcast::<CryptoError>().unwrap() {
+            CryptoError::BadKeyingSignature => {}
             _ => panic!(),
         }
     }

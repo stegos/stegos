@@ -24,15 +24,17 @@
 use failure::{Error, Fail};
 use std::mem::transmute;
 use std::time::SystemTime;
-use stegos_crypto::bulletproofs::{make_range_proof, BulletProof};
+use stegos_crypto::bulletproofs::{make_range_proof, pedersen_commitment, BulletProof};
 use stegos_crypto::curve1174::cpt::{
-    aes_decrypt, aes_encrypt, EncryptedPayload, Pt, PublicKey, SecretKey,
+    aes_decrypt, aes_encrypt, sign_hash, validate_sig, EncryptedPayload, Pt, PublicKey, SchnorrSig,
+    SecretKey,
 };
 use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::curve1174::G;
 use stegos_crypto::hash::{Hash, Hashable, Hasher, HASH_SIZE};
 use stegos_crypto::pbc::secure;
+use stegos_crypto::CryptoError;
 
 /// A magic value used to encode/decode payload.
 const PAYMENT_PAYLOAD_MAGIC: [u8; 4] = [112, 97, 121, 109]; // "paym"
@@ -82,46 +84,41 @@ pub enum OutputError {
 }
 
 /// Payment UTXO.
-/// Transaction output.
-/// (ID, P_{M, δ}, Bp, E_M(x, γ, δ))
 #[derive(Debug, Clone)]
 pub struct PaymentOutput {
-    /// Cloacked public key of recipient.
-    /// P_M + δG
+    /// Cloaked recipient public key.
     pub recipient: PublicKey,
-
     /// Bulletproof on range on amount x.
-    /// Contains Pedersen commitment.
-    /// Size is approx. 1 KB (very structured data type).
+    /// Contains Pedersen Commitment.
     pub proof: BulletProof,
-
+    /// Check term.
+    pub check: Pt,
     /// Encrypted payload.
-    ///
-    /// E_M(x, γ, δ)
-    /// Represents an encrypted packet contain the information about x, γ, δ
-    /// that only receiver can red
-    /// Size is approx 137 Bytes =
-    ///     (R-val 65B, crypto-text 72B = (amount 8B, gamma 32B, delta 32B))
+    /// Contains gamma, delta, amount.
     pub payload: EncryptedPayload,
+    /// Schnorr signature on hash of rest of UTXO using public key commitment()+check.
+    pub body_signature: SchnorrSig,
 }
 
-/// Escrow UTXO.
+/// Stake UTXO.
 #[derive(Debug, Clone)]
 pub struct StakeOutput {
-    /// Cloaked wallet key of validator.
+    /// Uncloaked recipient public key.
     pub recipient: PublicKey,
-
     /// Uncloaked network key of validator.
     pub validator: secure::PublicKey,
-
     /// BLS signature of recipient, validator and payload.
     pub signature: secure::Signature,
-
     /// Amount to stake.
     pub amount: i64,
-
+    /// Recipient public key.
+    pub commitment: Pt,
+    /// Check term.
+    pub check: Pt,
     /// Encrypted payload.
     pub payload: EncryptedPayload,
+    /// Schnorr signature on hash of rest of UTXO using public key commitment()+check.
+    pub body_signature: SchnorrSig,
 }
 
 /// Blockchain UTXO.
@@ -346,16 +343,16 @@ impl PaymentPayload {
 /// Unpacked encrypted payload of PaymentOutput.
 #[derive(Debug, Eq, PartialEq)]
 pub struct StakePayload {
-    pub delta: Fr,
+    pub gamma: Fr,
 }
 
 impl StakePayload {
     /// Serialize and encrypt payload.
     fn encrypt(&self, pkey: &PublicKey) -> Result<EncryptedPayload, Error> {
         // Delta.
-        let delta_bytes: [u8; 32] = self.delta.to_lev_u8();
+        let gamma_bytes: [u8; 32] = self.gamma.to_lev_u8();
 
-        let payload: Vec<u8> = [&STAKE_PAYLOAD_MAGIC[..], &delta_bytes[..]].concat();
+        let payload: Vec<u8> = [&STAKE_PAYLOAD_MAGIC[..], &gamma_bytes[..]].concat();
 
         // Ensure that the total length of package is valid.
         assert_eq!(payload.len(), STAKE_PAYLOAD_LEN);
@@ -393,14 +390,14 @@ impl StakePayload {
         }
 
         // Delta.
-        let mut delta_bytes: [u8; 32] = [0u8; 32];
-        delta_bytes.copy_from_slice(&payload[pos..pos + 32]);
-        pos += delta_bytes.len();
-        let delta: Fr = Fr::from_lev_u8(delta_bytes);
+        let mut gamma_bytes: [u8; 32] = [0u8; 32];
+        gamma_bytes.copy_from_slice(&payload[pos..pos + 32]);
+        pos += gamma_bytes.len();
+        let gamma: Fr = Fr::from_lev_u8(gamma_bytes);
 
         assert_eq!(pos, STAKE_PAYLOAD_LEN);
 
-        let payload = StakePayload { delta };
+        let payload = StakePayload { gamma };
         Ok(payload)
     }
 }
@@ -429,12 +426,17 @@ impl PaymentOutput {
         // NOTE: real public key should be used to encrypt payload
         let payload = payload.encrypt(recipient_pkey)?;
 
-        let output = PaymentOutput {
+        let (xchk, rvalue) = pedersen_commitment(-amount);
+
+        let mut output = PaymentOutput {
             recipient: cloaked_pkey,
             proof,
             payload,
+            check: xchk.compress(),
+            body_signature: SchnorrSig::new(),
         };
-
+        let h = Hash::digest(&output);
+        output.body_signature = sign_hash(&h, &SecretKey::from(gamma + rvalue));
         Ok((output, gamma))
     }
 
@@ -467,11 +469,17 @@ impl PaymentOutput {
         // and unencrypted payload
         let payload = payload.encrypt(&PublicKey::zero())?;
 
-        let output = PaymentOutput {
+        let (chk, rvalue) = pedersen_commitment(-amount);
+
+        let mut output = PaymentOutput {
             recipient: recipient_pkey.clone(),
             proof,
             payload,
+            check: chk.compress(),
+            body_signature: SchnorrSig::new(),
         };
+        let h = Hash::digest(&output);
+        output.body_signature = sign_hash(&h, &SecretKey::from(gamma + rvalue));
 
         Ok((output, gamma))
     }
@@ -486,46 +494,66 @@ impl PaymentOutput {
         let output_hash = Hash::digest(&self);
         PaymentPayload::decrypt(output_hash, &self.payload, skey)
     }
+
+    pub fn validate(&self) -> Result<(), Error> {
+        let pkey = self.check.decompress()? + self.proof.vcmt.decompress()?;
+        let h = Hash::digest(self);
+        validate_sig(&h, &self.body_signature, &PublicKey::from(pkey))?;
+        Ok(())
+    }
+
+    pub fn recipient(&self) -> Result<ECp, CryptoError> {
+        Pt::from(self.recipient).decompress()
+    }
+
+    pub fn commitment(&self) -> Result<ECp, CryptoError> {
+        self.proof.vcmt.decompress()
+    }
 }
 
 impl StakeOutput {
     /// Create a new StakeOutput.
     pub fn new(
-        timestamp: SystemTime,
-        sender_skey: &SecretKey,
+        _timestamp: SystemTime,
+        _sender_skey: &SecretKey,
         recipient_pkey: &PublicKey,
         validator_pkey: &secure::PublicKey,
         validator_skey: &secure::SecretKey,
         amount: i64,
-    ) -> Result<Self, Error> {
+    ) -> Result<(Self, Fr), Error> {
         assert!(amount > 0);
 
         // Cloak recipient public key.
-        let gamma = Fr::zero();
-        let (cloaked_pkey, delta) = cloak_key(sender_skey, recipient_pkey, &gamma, timestamp)?;
+        let (cmt, gamma) = pedersen_commitment(amount);
+        let (chk, rvalue) = pedersen_commitment(-amount);
 
         // Encrypt payload.
-        let payload = StakePayload { delta };
+        let payload = StakePayload { gamma };
         // NOTE: real public key should be used to encrypt payload
         let payload = payload.encrypt(recipient_pkey)?;
 
         // Form BLS signature on the validator PBC public key
         let mut state = Hasher::new();
         validator_pkey.hash(&mut state);
-        cloaked_pkey.hash(&mut state);
+        recipient_pkey.hash(&mut state);
         payload.hash(&mut state);
         let h = state.result();
         let sig = secure::sign_hash(&h, validator_skey);
 
-        let output = StakeOutput {
-            recipient: cloaked_pkey,
+        let mut output = StakeOutput {
+            recipient: recipient_pkey.clone(),
             validator: validator_pkey.clone(),
             signature: sig.clone(),
             amount,
             payload,
+            commitment: cmt.compress(),
+            check: chk.compress(),
+            body_signature: SchnorrSig::new(),
         };
+        let h = Hash::digest(&output);
+        output.body_signature = sign_hash(&h, &SecretKey::from(gamma + rvalue));
 
-        Ok(output)
+        Ok((output, gamma))
     }
 
     /// Decrypt payload of StakeOutput.
@@ -547,6 +575,21 @@ impl StakeOutput {
         }
         Ok(())
     }
+
+    pub fn validate(&self) -> Result<(), Error> {
+        let pkey = self.check.decompress()? + self.commitment.decompress()?;
+        let h = Hash::digest(self);
+        validate_sig(&h, &self.body_signature, &PublicKey::from(pkey))?;
+        Ok(())
+    }
+
+    pub fn recipient(&self) -> Result<ECp, CryptoError> {
+        Pt::from(self.recipient).decompress()
+    }
+
+    pub fn commitment(&self) -> Result<ECp, CryptoError> {
+        self.commitment.decompress()
+    }
 }
 
 impl Output {
@@ -557,8 +600,8 @@ impl Output {
         recipient_pkey: &PublicKey,
         amount: i64,
     ) -> Result<(Self, Fr), Error> {
-        let (output, delta) = PaymentOutput::new(timestamp, sender_skey, recipient_pkey, amount)?;
-        Ok((Output::PaymentOutput(output), delta))
+        let (output, gamma) = PaymentOutput::new(timestamp, sender_skey, recipient_pkey, amount)?;
+        Ok((Output::PaymentOutput(output), gamma))
     }
 
     /// Create a new escrow transaction.
@@ -569,8 +612,8 @@ impl Output {
         validator_pkey: &secure::PublicKey,
         validator_skey: &secure::SecretKey,
         amount: i64,
-    ) -> Result<Self, Error> {
-        let output = StakeOutput::new(
+    ) -> Result<(Self, Fr), Error> {
+        let (output, gamma) = StakeOutput::new(
             timestamp,
             sender_skey,
             recipient_pkey,
@@ -578,7 +621,28 @@ impl Output {
             validator_skey,
             amount,
         )?;
-        Ok(Output::StakeOutput(output))
+        Ok((Output::StakeOutput(output), gamma))
+    }
+
+    pub fn validate(&self) -> Result<(), Error> {
+        match self {
+            Output::PaymentOutput(o) => o.validate(),
+            Output::StakeOutput(o) => o.validate(),
+        }
+    }
+
+    pub fn recipient(&self) -> Result<ECp, CryptoError> {
+        match self {
+            Output::PaymentOutput(o) => o.recipient(),
+            Output::StakeOutput(o) => o.recipient(),
+        }
+    }
+
+    pub fn commitment(&self) -> Result<ECp, CryptoError> {
+        match self {
+            Output::PaymentOutput(o) => o.commitment(),
+            Output::StakeOutput(o) => o.commitment(),
+        }
     }
 }
 
@@ -587,6 +651,7 @@ impl Hashable for PaymentOutput {
         "Payment".hash(state);
         self.recipient.hash(state);
         self.proof.hash(state);
+        self.check.hash(state);
         self.payload.hash(state);
     }
 }
@@ -597,6 +662,8 @@ impl Hashable for StakeOutput {
         self.recipient.hash(state);
         self.validator.hash(state);
         self.amount.hash(state);
+        self.commitment.hash(state);
+        self.check.hash(state);
         self.payload.hash(state);
     }
 }
@@ -806,15 +873,15 @@ pub mod tests {
         let output_hash = Hash::digest("test");
 
         // Basic.
-        let delta: Fr = Fr::random();
-        let payload = StakePayload { delta };
+        let gamma: Fr = Fr::random();
+        let payload = StakePayload { gamma };
         rt(&payload, &skey, &pkey);
 
         //
         // Corrupted payload.
         //
-        let delta: Fr = Fr::random();
-        let payload = StakePayload { delta };
+        let gamma: Fr = Fr::random();
+        let payload = StakePayload { gamma };
         let encrypted = payload.encrypt(&pkey).expect("keys are valid");
         let raw = aes_decrypt(&encrypted, &skey).expect("keys are valid");
 
@@ -885,7 +952,7 @@ pub mod tests {
         let timestamp = SystemTime::now();
         let amount: i64 = 100500;
 
-        let output = StakeOutput::new(
+        let (output, _outputs_gamma) = StakeOutput::new(
             timestamp,
             &skey1,
             &pkey2,

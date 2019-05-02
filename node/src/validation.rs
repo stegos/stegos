@@ -192,8 +192,8 @@ mod test {
     use crate::VERSION;
     use std::time::SystemTime;
     use stegos_blockchain::*;
-    use stegos_crypto::curve1174::fields::Fr;
     use stegos_crypto::pbc::secure;
+    use stegos_crypto::CryptoError;
     use stegos_keychain::KeyChain;
 
     #[test]
@@ -348,7 +348,7 @@ mod test {
         //
         {
             let fee = stake_fee;
-            let output = Output::new_stake(
+            let (output, gamma) = Output::new_stake(
                 timestamp,
                 &skey,
                 &pkey,
@@ -357,7 +357,7 @@ mod test {
                 amount - fee,
             )
             .unwrap();
-            let tx = Transaction::new(&skey, &inputs, &[output], Fr::zero(), fee).unwrap();
+            let tx = Transaction::new(&skey, &inputs, &[output], gamma, fee).unwrap();
             validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect("transaction is valid");
         }
@@ -370,7 +370,7 @@ mod test {
             let stake = 0;
             let (output1, gamma1) =
                 Output::new_payment(timestamp, &skey, &pkey, amount - stake - fee).unwrap();
-            let mut output2 =
+            let (mut output2, _gamma) =
                 StakeOutput::new(timestamp, &skey, &pkey, &validator_pkey, &validator_skey, 1)
                     .unwrap();
             output2.amount = stake; // StakeOutput::new() doesn't allow zero amount.
@@ -380,8 +380,8 @@ mod test {
             let tx = Transaction::unchecked(&skey, &inputs, &outputs, outputs_gamma, fee).unwrap();
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect_err("transaction is not valid");
-            match e.downcast::<OutputError>().expect("proper error") {
-                OutputError::InvalidStake(_output_hash) => {}
+            match e.downcast::<CryptoError>().expect("proper error") {
+                CryptoError::BadKeyingSignature => {}
                 _ => panic!(),
             }
         }

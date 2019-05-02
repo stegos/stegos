@@ -7,7 +7,9 @@ import "view_changes.proto";
 message PaymentOutput {
     stegos.crypto.PublicKey recipient = 1;
     stegos.crypto.BulletProof proof = 2;
-    stegos.crypto.EncryptedPayload payload = 3;
+    stegos.crypto.Pt check = 3;
+    stegos.crypto.EncryptedPayload payload = 4;
+    stegos.crypto.SchnorrSig body_signature = 5;
 }
 
 message StakeOutput {
@@ -15,7 +17,10 @@ message StakeOutput {
     stegos.crypto.SecurePublicKey validator = 2;
     stegos.crypto.SecureSignature signature = 3;
     int64 amount = 4;
-    stegos.crypto.EncryptedPayload payload = 5;
+    stegos.crypto.Pt commitment = 5;
+    stegos.crypto.Pt check = 6;
+    stegos.crypto.EncryptedPayload payload = 7;
+    stegos.crypto.SchnorrSig body_signature = 8;
 }
 
 message Output {

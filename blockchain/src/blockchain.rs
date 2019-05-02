@@ -43,7 +43,6 @@ use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 use stegos_crypto::bulletproofs::fee_a;
 use stegos_crypto::bulletproofs::validate_range_proof;
-use stegos_crypto::curve1174::cpt::Pt;
 use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::curve1174::G;
@@ -855,17 +854,19 @@ impl Blockchain {
                     BlockError::DuplicateBlockInput(height, block_hash, *input_hash).into(),
                 );
             }
+
+            // Update balance
+            burned += input.commitment()?;
+
             // Check UTXO.
             match input {
-                Output::PaymentOutput(o) => {
-                    burned += Pt::decompress(o.proof.vcmt)?;
-                }
                 Output::StakeOutput(o) => {
                     o.validate_pkey()?;
-                    burned += fee_a(o.amount);
                     self.escrow
-                        .validate_unstake(&o.validator, input_hash, self.epoch)?;
+                        .validate_unstake(&o.validator, input_hash, self.epoch)
+                        .expect("Valid unstake");
                 }
+                _ => {}
             }
             input_hash.hash(&mut hasher);
         }
@@ -896,6 +897,10 @@ impl Blockchain {
                     BlockError::DuplicateBlockOutput(height, block_hash, output_hash).into(),
                 );
             }
+
+            // Update balance.
+            created += output.commitment()?;
+
             // Check UTXO.
             match output.as_ref() {
                 Output::PaymentOutput(o) => {
@@ -912,8 +917,6 @@ impl Blockchain {
                         )
                         .into());
                     }
-                    // Update balance.
-                    created += Pt::decompress(o.proof.vcmt)?;
                 }
                 Output::StakeOutput(o) => {
                     // Check for valid signature on network pkey.
@@ -931,8 +934,6 @@ impl Blockchain {
                         )
                         .into());
                     }
-                    // Update balance.
-                    created += fee_a(o.amount);
                 }
             }
         }
@@ -1022,11 +1023,8 @@ impl Blockchain {
                     // Remove from the block.
                     match body.outputs.lookup(&path) {
                         Some(o) => {
+                            burned += o.commitment()?;
                             match o.as_ref() {
-                                Output::PaymentOutput(o) => {
-                                    burned += Pt::decompress(o.proof.vcmt)
-                                        .expect("pedersen commitment is valid");
-                                }
                                 Output::StakeOutput(o) => {
                                     o.validate_pkey().expect("valid network pkey");
                                     self.escrow.unstake(
@@ -1036,8 +1034,9 @@ impl Blockchain {
                                         self.epoch,
                                     );
                                     assert_eq!(self.escrow.current_version(), version);
-                                    burned += fee_a(o.amount);
+                                    // burned += Pt::decompress(o.commitment)?;
                                 }
+                                _ => {}
                             }
                             inputs.push(o.as_ref().clone());
                         }
@@ -1084,14 +1083,10 @@ impl Blockchain {
             }
             assert_eq!(self.output_by_hash.current_version(), version);
 
+            created += output.commitment()?;
             match output.as_ref() {
-                Output::PaymentOutput(o) => {
-                    created += Pt::decompress(o.proof.vcmt).expect("pedersen commitment is valid");
-                }
                 Output::StakeOutput(o) => {
                     o.validate_pkey().expect("valid network pkey signature");
-                    created += fee_a(o.amount);
-
                     let valid_until_epoch = self.epoch + self.cfg.stake_epochs;
                     self.escrow.stake(
                         version,
@@ -1102,6 +1097,7 @@ impl Blockchain {
                     );
                     assert_eq!(self.escrow.current_version(), version);
                 }
+                _ => {}
             }
 
             outputs.push(output.as_ref().clone());
@@ -1297,7 +1293,8 @@ pub fn create_fake_micro_block(
                     continue;
                 }
                 o.validate_pkey().expect("valid network pkey signature");
-                o.decrypt_payload(&keys.wallet_skey).unwrap();
+                let payload = o.decrypt_payload(&keys.wallet_skey).unwrap();
+                gamma += payload.gamma;
                 amount += o.amount;
                 input_hashes.push(input_hash.clone());
             }
@@ -1315,7 +1312,7 @@ pub fn create_fake_micro_block(
     .expect("keys are valid");
     outputs.push(Output::PaymentOutput(output));
     gamma -= output_gamma;
-    let output = StakeOutput::new(
+    let (output, output_gamma) = StakeOutput::new(
         timestamp,
         &keys.wallet_skey,
         &keys.wallet_pkey,
@@ -1325,6 +1322,7 @@ pub fn create_fake_micro_block(
     )
     .expect("keys are valid");
     outputs.push(Output::StakeOutput(output));
+    gamma -= output_gamma;
 
     let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
 

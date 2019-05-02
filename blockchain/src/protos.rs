@@ -27,7 +27,7 @@ use bitvector::BitVector;
 use crate::view_changes::*;
 use crate::*;
 use stegos_crypto::bulletproofs::BulletProof;
-use stegos_crypto::curve1174::cpt::{EncryptedPayload, PublicKey, SchnorrSig};
+use stegos_crypto::curve1174::cpt::{EncryptedPayload, Pt, PublicKey, SchnorrSig};
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
@@ -51,17 +51,23 @@ impl ProtoConvert for PaymentOutput {
         let mut proto = blockchain::PaymentOutput::new();
         proto.set_recipient(self.recipient.into_proto());
         proto.set_proof(self.proof.into_proto());
+        proto.set_check(self.check.into_proto());
         proto.set_payload(self.payload.into_proto());
+        proto.set_body_signature(self.body_signature.into_proto());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let recipient = PublicKey::from_proto(proto.get_recipient())?;
         let proof = BulletProof::from_proto(proto.get_proof())?;
+        let check = Pt::from_proto(proto.get_check())?;
         let payload = EncryptedPayload::from_proto(proto.get_payload())?;
+        let body_signature = SchnorrSig::from_proto(proto.get_body_signature())?;
         Ok(PaymentOutput {
             recipient,
             proof,
+            check,
             payload,
+            body_signature,
         })
     }
 }
@@ -74,7 +80,10 @@ impl ProtoConvert for StakeOutput {
         proto.set_validator(self.validator.into_proto());
         proto.set_signature(self.signature.into_proto());
         proto.set_amount(self.amount);
+        proto.set_commitment(self.commitment.into_proto());
+        proto.set_check(self.check.into_proto());
         proto.set_payload(self.payload.into_proto());
+        proto.set_body_signature(self.body_signature.into_proto());
         proto
     }
 
@@ -83,13 +92,19 @@ impl ProtoConvert for StakeOutput {
         let validator = secure::PublicKey::from_proto(proto.get_validator())?;
         let signature = secure::Signature::from_proto(proto.get_signature())?;
         let amount = proto.get_amount();
+        let commitment = Pt::from_proto(proto.get_commitment())?;
+        let check = Pt::from_proto(proto.get_check())?;
         let payload = EncryptedPayload::from_proto(proto.get_payload())?;
+        let body_signature = SchnorrSig::from_proto(proto.get_body_signature())?;
         Ok(StakeOutput {
             recipient,
             validator,
             signature,
             amount,
+            commitment,
+            check,
             payload,
+            body_signature,
         })
     }
 }
@@ -535,7 +550,7 @@ mod tests {
             Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
         roundtrip(&output);
 
-        let output = Output::new_stake(
+        let (output, _output_gamma) = Output::new_stake(
             timestamp,
             &skey1,
             &pkey1,

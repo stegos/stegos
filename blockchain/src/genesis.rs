@@ -26,6 +26,7 @@ use crate::multisignature::create_multi_signature;
 use crate::output::*;
 use std::collections::BTreeMap;
 use std::time::SystemTime;
+use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
@@ -63,14 +64,16 @@ pub fn genesis(
         let sender_skey = &keychains[0].wallet_skey;
         let recipient_pkey = &keychains[0].wallet_pkey;
         let mut coins1: i64 = coins - keychains.len() as i64 * stake;
+        let mut gamma = Fr::zero();
         let (output, outputs_gamma) =
             Output::new_payment(timestamp, sender_skey, recipient_pkey, coins1)
                 .expect("genesis has valid public keys");
         outputs.push(output);
+        gamma -= outputs_gamma;
 
         // Create StakeOutput for each node.
         for keys in keychains {
-            let output = Output::new_stake(
+            let (output, stake_gamma) = Output::new_stake(
                 timestamp,
                 &keys.wallet_skey,
                 &keys.wallet_pkey,
@@ -81,10 +84,10 @@ pub fn genesis(
             .expect("genesis has valid public keys");
             coins1 += stake;
             outputs.push(output);
+            gamma -= stake_gamma;
         }
         assert_eq!(coins, coins1);
 
-        let gamma = -outputs_gamma;
         MicroBlock::new(base, gamma, coins, &[], &outputs, None)
     };
     view_change += 1;

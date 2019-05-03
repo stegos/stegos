@@ -125,8 +125,11 @@ impl From<ECp> for Pt {
 }
 
 impl Ord for Pt {
+    // ValueShuffle needs a pseudo ordering of Pt values...
     fn cmp(&self, other: &Pt) -> Ordering {
-        Lev32(self.to_bytes()).cmp(&Lev32(other.to_bytes()))
+        let me = self.decompress().unwrap().compress();
+        let pt = other.decompress().unwrap().compress();
+        Lev32(me.to_bytes()).cmp(&Lev32(pt.to_bytes()))
     }
 }
 

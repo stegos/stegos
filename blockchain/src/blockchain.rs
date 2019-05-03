@@ -482,14 +482,26 @@ impl Blockchain {
     }
 
     /// Check that the stake can be unstaked.
-    #[inline]
-    pub fn validate_unstake(
+    pub fn validate_staking_balance<'a, StakeIter>(
         &self,
-        validator_pkey: &secure::PublicKey,
-        output_hash: &Hash,
-    ) -> Result<(), OutputError> {
-        self.escrow
-            .validate_unstake(validator_pkey, output_hash, self.epoch)
+        staking_balance: StakeIter,
+    ) -> Result<(), BlockchainError>
+    where
+        StakeIter: Iterator<Item = (&'a secure::PublicKey, &'a i64)>,
+    {
+        for (validator_pkey, balance) in staking_balance {
+            let (active_balance, expired_balance) = self.escrow.get(validator_pkey, self.epoch);
+            let expected_balance = active_balance + expired_balance + balance;
+            if expected_balance < active_balance {
+                return Err(BlockchainError::StakeIsLocked(
+                    *validator_pkey,
+                    expected_balance,
+                    active_balance,
+                ));
+            }
+        }
+
+        Ok(())
     }
 
     /// Return information about escrow.
@@ -869,6 +881,7 @@ impl Blockchain {
 
         let mut burned = ECp::inf();
         let mut created = ECp::inf();
+        let mut staking_balance: HashMap<secure::PublicKey, i64> = HashMap::new();
 
         //
         // Validate inputs.
@@ -898,10 +911,12 @@ impl Blockchain {
                     burned += Pt::decompress(o.proof.vcmt)?;
                 }
                 Output::StakeOutput(o) => {
+                    // Validate staking signature.
                     o.validate_pkey()?;
                     burned += fee_a(o.amount);
-                    self.escrow
-                        .validate_unstake(&o.validator, input_hash, self.epoch)?;
+                    // Validate staking balance.
+                    let entry = staking_balance.entry(o.validator).or_insert(0);
+                    *entry -= o.amount;
                 }
             }
             input_hash.hash(&mut hasher);
@@ -953,12 +968,8 @@ impl Blockchain {
                     created += Pt::decompress(o.proof.vcmt)?;
                 }
                 Output::StakeOutput(o) => {
-                    // Check for valid signature on network pkey.
+                    // Validate staking signature.
                     o.validate_pkey()?;
-                    // Validate amount.
-                    if o.amount <= 0 {
-                        return Err(OutputError::InvalidStake(output_hash).into());
-                    }
                     // Validate payload.
                     if o.payload.ctxt.len() != STAKE_PAYLOAD_LEN {
                         return Err(OutputError::InvalidPayloadLength(
@@ -968,6 +979,13 @@ impl Blockchain {
                         )
                         .into());
                     }
+                    // Validate amount.
+                    if o.amount <= 0 {
+                        return Err(OutputError::InvalidStake(output_hash).into());
+                    }
+                    // Validated staking balance.
+                    let entry = staking_balance.entry(o.validator).or_insert(0);
+                    *entry += o.amount;
                     // Update balance.
                     created += fee_a(o.amount);
                 }
@@ -1008,6 +1026,9 @@ impl Blockchain {
                 height, &block_hash
             );
         }
+
+        // Checks staking balance.
+        self.validate_staking_balance(staking_balance.iter())?;
 
         debug!(
             "The micro block is valid: height={}, block={}",
@@ -1128,12 +1149,12 @@ impl Blockchain {
                 Output::StakeOutput(o) => {
                     o.validate_pkey().expect("valid network pkey signature");
                     created += fee_a(o.amount);
-                    let active_until_epoch = self.epoch + self.cfg.stake_epochs;
                     self.escrow.stake(
                         version,
                         o.validator,
                         output_hash,
-                        active_until_epoch,
+                        self.epoch,
+                        self.cfg.stake_epochs,
                         o.amount,
                     );
                     assert_eq!(self.escrow.current_version(), version);
@@ -1308,14 +1329,14 @@ pub fn create_fake_key_block(
 }
 
 pub fn create_fake_micro_block(
-    chain: &mut Blockchain,
+    chain: &Blockchain,
     keys: &KeyChain,
     timestamp: SystemTime,
-    with_stakes: bool,
 ) -> (MicroBlock, Vec<Hash>, Vec<Hash>) {
     let mut input_hashes: Vec<Hash> = Vec::new();
-    let mut gamma: Fr = Fr::zero();
-    let mut amount: i64 = 0;
+    let mut monetary_balance: i64 = 0;
+    let mut staking_balance: i64 = 0;
+    let mut gamma = Fr::zero();
     for input_hash in chain.unspent() {
         let input = chain
             .output_by_hash(&input_hash)
@@ -1325,42 +1346,46 @@ pub fn create_fake_micro_block(
             Output::PaymentOutput(ref o) => {
                 let payload = o.decrypt_payload(&keys.wallet_skey).unwrap();
                 gamma += payload.gamma;
-                amount += payload.amount;
+                monetary_balance += payload.amount;
                 input_hashes.push(input_hash.clone());
             }
             Output::StakeOutput(ref o) => {
-                if !with_stakes {
-                    continue;
-                }
                 o.validate_pkey().expect("valid network pkey signature");
                 o.decrypt_payload(&keys.wallet_skey).unwrap();
-                amount += o.amount;
+                staking_balance += o.amount;
                 input_hashes.push(input_hash.clone());
             }
         }
     }
 
     let mut outputs: Vec<Output> = Vec::new();
-    let stake = chain.cfg.min_stake_amount;
-    let (output, output_gamma) = PaymentOutput::new(
-        timestamp,
-        &keys.wallet_skey,
-        &keys.wallet_pkey,
-        amount - stake,
-    )
-    .expect("keys are valid");
-    outputs.push(Output::PaymentOutput(output));
-    gamma -= output_gamma;
-    let output = StakeOutput::new(
-        timestamp,
-        &keys.wallet_skey,
-        &keys.wallet_pkey,
-        &keys.network_pkey,
-        &keys.network_skey,
-        stake,
-    )
-    .expect("keys are valid");
-    outputs.push(Output::StakeOutput(output));
+
+    // Payments.
+    if monetary_balance > 0 {
+        let (output, output_gamma) = PaymentOutput::new(
+            timestamp,
+            &keys.wallet_skey,
+            &keys.wallet_pkey,
+            monetary_balance,
+        )
+        .expect("keys are valid");
+        outputs.push(Output::PaymentOutput(output));
+        gamma -= output_gamma;
+    }
+
+    // Stakes.
+    if staking_balance > 0 {
+        let output = StakeOutput::new(
+            timestamp,
+            &keys.wallet_skey,
+            &keys.wallet_pkey,
+            &keys.network_pkey,
+            &keys.network_skey,
+            staking_balance,
+        )
+        .expect("keys are valid");
+        outputs.push(Output::StakeOutput(output));
+    }
 
     let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
 
@@ -1376,7 +1401,7 @@ pub fn create_fake_micro_block(
 }
 
 pub fn create_empty_micro_block(
-    chain: &mut Blockchain,
+    chain: &Blockchain,
     keys: &KeyChain,
     timestamp: SystemTime,
 ) -> MicroBlock {
@@ -1497,7 +1522,7 @@ pub mod tests {
         let keychains = [KeyChain::new_mem()];
         let mut timestamp = SystemTime::now();
         let mut cfg: BlockchainConfig = Default::default();
-        cfg.stake_epochs = 0;
+        cfg.stake_epochs = 1;
         let genesis = genesis(
             &keychains,
             cfg.min_stake_amount,
@@ -1516,7 +1541,7 @@ pub mod tests {
             //
             timestamp += Duration::from_millis(1);
             let (block, input_hashes, output_hashes) =
-                create_fake_micro_block(&mut chain, &keychains[0], timestamp, true);
+                create_fake_micro_block(&mut chain, &keychains[0], timestamp);
             let hash = Hash::digest(&block);
             let height = chain.height();
             chain
@@ -1578,8 +1603,7 @@ pub mod tests {
 
         let keychains = [KeyChain::new_mem()];
         let mut timestamp = SystemTime::now();
-        let mut cfg: BlockchainConfig = Default::default();
-        cfg.stake_epochs = 0;
+        let cfg: BlockchainConfig = Default::default();
         let genesis = genesis(
             &keychains,
             cfg.min_stake_amount,
@@ -1601,7 +1625,7 @@ pub mod tests {
         // Register a micro block.
         timestamp += Duration::from_millis(1);
         let (block1, input_hashes1, output_hashes1) =
-            create_fake_micro_block(&mut chain, &keychains[0], timestamp, true);
+            create_fake_micro_block(&mut chain, &keychains[0], timestamp);
         chain
             .push_micro_block(block1, timestamp)
             .expect("block is valid");
@@ -1610,7 +1634,6 @@ pub mod tests {
         assert_ne!(block_hash0, chain.last_block_hash());
         assert_eq!(chain.blocks().count() as u64, chain.height());
         assert_ne!(&balance0, chain.balance());
-        assert_ne!(escrow0, chain.escrow_info());
         for input_hash in &input_hashes1 {
             assert!(!chain.contains_output(input_hash));
         }
@@ -1626,7 +1649,7 @@ pub mod tests {
         // Register one more micro block.
         timestamp += Duration::from_millis(1);
         let (block2, input_hashes2, output_hashes2) =
-            create_fake_micro_block(&mut chain, &keychains[0], timestamp, false);
+            create_fake_micro_block(&mut chain, &keychains[0], timestamp);
         chain
             .push_micro_block(block2, timestamp)
             .expect("block is valid");
@@ -1635,7 +1658,6 @@ pub mod tests {
         assert_ne!(block_hash1, chain.last_block_hash());
         assert_eq!(chain.blocks().count() as u64, chain.height());
         assert_ne!(&balance1, chain.balance());
-        assert_ne!(escrow1, chain.escrow_info());
         for input_hash in &input_hashes2 {
             assert!(!chain.contains_output(input_hash));
         }
@@ -1690,11 +1712,7 @@ pub mod tests {
     #[test]
     fn block_range_limit() {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
-        let keychains = [
-            KeyChain::new_mem(),
-            KeyChain::new_mem(),
-            KeyChain::new_mem(),
-        ];
+        let keychains = [KeyChain::new_mem()];
 
         let mut timestamp = SystemTime::now();
         let cfg: BlockchainConfig = Default::default();
@@ -1707,8 +1725,10 @@ pub mod tests {
         assert!(blockchain.height() > 0);
         for _height in 2..12 {
             timestamp += Duration::from_millis(1);
-            let block = create_fake_key_block(&blockchain, &keychains[..], timestamp);
-            blockchain.push_key_block(block).expect("block is valid");
+            let block = create_empty_micro_block(&blockchain, &keychains[0], timestamp);
+            blockchain
+                .push_micro_block(block, timestamp)
+                .expect("Invalid block");
         }
 
         assert_eq!(blockchain.blocks_range(starting_height, 1).len(), 1);

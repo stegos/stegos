@@ -39,7 +39,7 @@ impl Default for BlockchainConfig {
         BlockchainConfig {
             max_slot_count: 1000,
             min_stake_amount: 1_000_000_000, // 1000 STG
-            stake_epochs: 1,
+            stake_epochs: 2,
         }
     }
 }

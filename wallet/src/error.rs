@@ -34,4 +34,6 @@ pub enum WalletError {
     IncorrectTXINType,
     #[fail(display = "Incorrect UTXO data")]
     InvalidUTXOData,
+    #[fail(display = "Nothing to re-stake")]
+    NothingToRestake,
 }

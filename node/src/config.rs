@@ -81,7 +81,7 @@ impl Default for ChainConfig {
             chain_loader_speed_in_epoch: 10,
             block_reward: 60_000_000, // 60 STG
             payment_fee: 1_000,       // 0.001 STG
-            stake_fee: 1_000,         // 0.001 STG
+            stake_fee: 0,             // free
             max_slot_count: blockchain_default.max_slot_count,
             min_stake_amount: blockchain_default.min_stake_amount,
             loader_timeout: Duration::from_millis(500),

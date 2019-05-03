@@ -452,6 +452,67 @@ where
     Ok(tx)
 }
 
+/// Create a restaking transaction.
+pub(crate) fn create_restaking_transaction<'a, UnspentIter>(
+    sender_skey: &SecretKey,
+    sender_pkey: &PublicKey,
+    validator_pkey: &secure::PublicKey,
+    validator_skey: &secure::SecretKey,
+    stakes_iter: UnspentIter,
+) -> Result<Transaction, Error>
+where
+    UnspentIter: Iterator<Item = &'a StakeOutput>,
+{
+    debug!(
+        "Creating a restaking transaction: recipient={}, new_validator_key={}",
+        sender_pkey, validator_pkey
+    );
+
+    let timestamp = SystemTime::now();
+    let mut inputs: Vec<Output> = Vec::new();
+    let mut outputs: Vec<Output> = Vec::new();
+    let outputs_gamma = Fr::zero();
+    for input in stakes_iter {
+        debug!(
+            "Unstake: hash={}, validator={}, amount={}",
+            Hash::digest(&input),
+            validator_pkey,
+            input.amount
+        );
+        inputs.push(Output::StakeOutput(input.clone()));
+
+        trace!("Creating StakeUTXO...");
+        let output = Output::new_stake(
+            timestamp,
+            sender_skey,
+            sender_pkey,
+            validator_pkey,
+            validator_skey,
+            input.amount,
+        )?;
+        debug!(
+            "Stake: hash={}, validator={}, amount={}",
+            Hash::digest(&output),
+            validator_pkey,
+            input.amount
+        );
+        outputs.push(output);
+    }
+
+    trace!("Signing transaction...");
+    let fee = 0;
+    let tx = Transaction::new(&sender_skey, &inputs, &outputs, outputs_gamma, fee)?;
+    let tx_hash = Hash::digest(&tx);
+    info!(
+        "Created a restaking transaction: hash={}, inputs={}, outputs={}",
+        tx_hash,
+        tx.body.txins.len(),
+        tx.body.txouts.len()
+    );
+
+    Ok(tx)
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;

@@ -26,12 +26,14 @@ use crate::error::*;
 use crate::mempool::Mempool;
 use failure::Error;
 use log::*;
+use std::collections::HashMap;
 use std::time::SystemTime;
 use stegos_blockchain::Blockchain;
 use stegos_blockchain::KeyBlock;
 use stegos_blockchain::Output;
 use stegos_blockchain::Transaction;
 use stegos_crypto::hash::Hash;
+use stegos_crypto::pbc::secure;
 
 ///
 /// Validate transaction.
@@ -81,6 +83,8 @@ pub(crate) fn validate_transaction(
         return Err(NodeTransactionError::TooLowFee(tx_hash, min_fee, tx.body.fee).into());
     }
 
+    let mut staking_balance: HashMap<secure::PublicKey, i64> = HashMap::new();
+
     // Validate inputs.
     let mut inputs: Vec<Output> = Vec::new();
     for input_hash in &tx.body.txins {
@@ -98,9 +102,10 @@ pub(crate) fn validate_transaction(
             return Err(NodeTransactionError::MissingInput(tx_hash, input_hash.clone()).into());
         }
 
-        // Check escrow.
-        if let Output::StakeOutput(ref input) = input {
-            chain.validate_unstake(&input.validator, input_hash)?;
+        // Check staking.
+        if let Output::StakeOutput(ref o) = input {
+            let entry = staking_balance.entry(o.validator).or_insert(0);
+            *entry -= o.amount;
         }
 
         inputs.push(input);
@@ -114,10 +119,19 @@ pub(crate) fn validate_transaction(
         if mempool.contains_output(&output_hash) || chain.contains_output(&output_hash) {
             return Err(NodeTransactionError::OutputHashCollision(tx_hash, output_hash).into());
         }
+
+        // Check stakes.
+        if let Output::StakeOutput(ref o) = output {
+            let entry = staking_balance.entry(o.validator).or_insert(0);
+            *entry += o.amount;
+        }
     }
 
     // Check the monetary balance, Bulletpoofs/amounts and signature.
     tx.validate(&inputs)?;
+
+    // Checks staking balance.
+    chain.validate_staking_balance(staking_balance.iter())?;
 
     Ok(())
 }
@@ -190,7 +204,7 @@ pub(crate) fn validate_proposed_key_block(
 mod test {
     use super::*;
     use crate::VERSION;
-    use std::time::SystemTime;
+    use std::time::{Duration, SystemTime};
     use stegos_blockchain::*;
     use stegos_crypto::curve1174::fields::Fr;
     use stegos_crypto::pbc::secure;
@@ -200,14 +214,15 @@ mod test {
     fn test_validate_transaction() {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
         let payment_fee: i64 = 1;
-        let stake_fee: i64 = 1;
+        let stake_fee: i64 = 0;
         let amount: i64 = 10000;
-        let timestamp = SystemTime::now();
+        let mut timestamp = SystemTime::now();
         let view_change = 0;
         let keychain = KeyChain::new_mem();
         let mut mempool = Mempool::new();
-        let cfg: BlockchainConfig = Default::default();
-        let stake_epochs = cfg.stake_epochs;
+        let mut cfg: BlockchainConfig = Default::default();
+        let stake_epochs = 1;
+        cfg.stake_epochs = stake_epochs;
         let stake: i64 = cfg.min_stake_amount;
         let genesis = genesis(&[keychain.clone()], stake, amount + stake, timestamp);
         let mut chain =
@@ -348,6 +363,7 @@ mod test {
         // Valid stake.
         //
         {
+            timestamp += Duration::from_millis(1);
             let fee = stake_fee;
             let output = Output::new_stake(
                 timestamp,
@@ -367,6 +383,7 @@ mod test {
         // Zero or negative stake.
         //
         {
+            timestamp += Duration::from_millis(1);
             let fee = payment_fee + stake_fee;
             let stake = 0;
             let (output1, gamma1) =
@@ -391,30 +408,43 @@ mod test {
         // Locked stake.
         //
         {
+            timestamp += Duration::from_millis(1);
             let fee = payment_fee;
             let (output, outputs_gamma) =
                 Output::new_payment(timestamp, &skey, &pkey, stake - fee).unwrap();
             let tx = Transaction::unchecked(&skey, &stakes, &[output], outputs_gamma, fee).unwrap();
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect_err("transaction is not valid");
-            match e.downcast::<OutputError>().expect("proper error") {
-                OutputError::StakeIsActive(
-                    input_hash,
+            match e.downcast::<BlockchainError>().expect("proper error") {
+                BlockchainError::StakeIsLocked(
                     validator_pkey2,
-                    active_until_epoch,
-                    epoch2,
+                    expected_balance,
+                    active_balance,
                 ) => {
-                    assert_eq!(input_hash, Hash::digest(&stakes[0]));
                     assert_eq!(validator_pkey, &validator_pkey2);
-                    assert_eq!(active_until_epoch, stake_epochs);
-                    assert_eq!(epoch2, chain.epoch());
+                    assert_eq!(expected_balance, 0);
+                    assert_eq!(active_balance, stake);
                 }
                 _ => panic!(),
             }
-            // Create a new epoch to unlock stakes.
-            let key_block = create_fake_key_block(&chain, &[keychain.clone()], timestamp);
-            chain.push_key_block(key_block).expect("Invalid key block");
-            validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
+        }
+
+        //
+        // Re-stake.
+        //
+        {
+            timestamp += Duration::from_millis(1);
+            let output = Output::new_stake(
+                timestamp,
+                &skey,
+                &pkey,
+                &keychain.network_pkey,
+                &keychain.network_skey,
+                stake,
+            )
+            .unwrap();
+            let tx = Transaction::unchecked(&skey, &stakes, &[output], Fr::zero(), 0).unwrap();
+            validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, 0)
                 .expect("transaction is valid");
         }
 

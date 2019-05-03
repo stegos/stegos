@@ -185,7 +185,8 @@ impl ConsoleService {
         println!("spay WALLET_PUBKEY AMOUNT [COMMENT] - send money using ValueShuffle");
         println!("msg WALLET_PUBKEY MESSAGE - send a message via blockchain");
         println!("stake AMOUNT - stake money");
-        println!("unstake AMOUNT - unstake money");
+        println!("unstake [AMOUNT] - unstake money");
+        println!("restake - restake all available stakes");
         println!("show version - print version information");
         println!("show keys - print keys");
         println!("show balance - print balance");
@@ -469,6 +470,9 @@ impl ConsoleService {
 
             info!("Unstaking {} STG from escrow", format_money(amount));
             let request = WalletRequest::Unstake { amount };
+            self.wallet_response = Some(self.wallet.request(request));
+        } else if msg == "restake" {
+            let request = WalletRequest::RestakeAll {};
             self.wallet_response = Some(self.wallet.request(request));
         } else if msg.starts_with("generator ") {
             let subcommand = &msg[10..];

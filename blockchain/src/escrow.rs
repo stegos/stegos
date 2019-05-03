@@ -24,7 +24,6 @@
 // SOFTWARE.
 
 use crate::mvcc::MultiVersionedMap;
-use crate::output::OutputError;
 use log::*;
 use serde_derive::Serialize;
 use std::collections::BTreeMap;
@@ -89,9 +88,11 @@ impl Escrow {
         version: u64,
         validator_pkey: secure::PublicKey,
         output_hash: Hash,
-        active_until_epoch: u64, // inclusive
+        epoch: u64,
+        stakes_epoch: u64,
         amount: i64,
     ) {
+        let active_until_epoch = epoch + stakes_epoch;
         let key = EscrowKey {
             validator_pkey,
             output_hash,
@@ -108,45 +109,11 @@ impl Escrow {
             );
         }
 
-        let total = self.get(&validator_pkey);
+        let (active_balance, expired_balance) = self.get(&validator_pkey, epoch);
         info!(
-            "Stake: validator={}, staked={}, total={}",
-            &validator_pkey, amount, total
+            "Staked: utxo={}, validator={}, amount={}, active_until_epoch={}, active_balance={}, expired_balance={}",
+            output_hash, &validator_pkey, amount, active_until_epoch, active_balance, expired_balance
         );
-    }
-
-    ///
-    /// Check that the stake is not locked.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the stake doesn't exist.
-    ///
-    pub fn validate_unstake(
-        &self,
-        validator_pkey: &secure::PublicKey,
-        output_hash: &Hash,
-        epoch: u64,
-    ) -> Result<(), OutputError> {
-        let key = EscrowKey {
-            validator_pkey: validator_pkey.clone(),
-            output_hash: output_hash.clone(),
-        };
-
-        // The stake must exists.
-        let val = self.escrow.get(&key).expect("stake exists");
-
-        // Check that stake is not active time.
-        if val.active_until_epoch >= epoch {
-            return Err(OutputError::StakeIsActive(
-                key.output_hash,
-                key.validator_pkey,
-                val.active_until_epoch,
-                epoch,
-            ));
-        }
-
-        Ok(())
     }
 
     ///
@@ -163,23 +130,21 @@ impl Escrow {
             validator_pkey,
             output_hash,
         };
-
         let val = self.escrow.remove(version, &key).expect("stake exists");
-        if val.active_until_epoch >= epoch {
-            panic!("stake is locked");
-        }
 
-        let total = self.get(&validator_pkey);
+        let (active_balance, expired_balance) = self.get(&validator_pkey, epoch);
         info!(
-            "Unstake: validator={}, unstaked={}, total={}",
-            validator_pkey, val.amount, total
+            "Unstaked: utxo={}, validator={}, amount={}, active_balance={}, expired_balance={}",
+            output_hash, validator_pkey, val.amount, active_balance, expired_balance
         );
     }
 
     ///
     /// Get staked value for validator.
     ///
-    pub fn get(&self, validator_pkey: &secure::PublicKey) -> i64 {
+    /// Returns (active_balance, expired_balance) stake.
+    ///
+    pub fn get(&self, validator_pkey: &secure::PublicKey, epoch: u64) -> (i64, i64) {
         let (hash_min, hash_max) = Hash::bounds();
         let key_min = EscrowKey {
             validator_pkey: validator_pkey.clone(),
@@ -190,13 +155,18 @@ impl Escrow {
             output_hash: hash_max,
         };
 
-        let mut stake: i64 = 0;
+        let mut active_balance: i64 = 0;
+        let mut expired_balance: i64 = 0;
         for (key, value) in self.escrow.range(&key_min..=&key_max) {
             assert_eq!(&key.validator_pkey, validator_pkey);
-            stake += value.amount;
+            if value.active_until_epoch >= epoch {
+                active_balance += value.amount;
+            } else {
+                expired_balance += value.amount;
+            }
         }
 
-        stake
+        (active_balance, expired_balance)
     }
 
     ///
@@ -205,16 +175,15 @@ impl Escrow {
     ///
     pub fn get_stakers_majority(
         &self,
-        _epoch: u64,
+        epoch: u64,
         min_stake_amount: i64,
     ) -> Vec<(secure::PublicKey, i64)> {
         let mut stakes: BTreeMap<secure::PublicKey, i64> = BTreeMap::new();
         for (k, v) in self.escrow.iter() {
-            // TODO: uncomment this part after finishing with re-staking.
-            //if v.active_until_epoch < epoch {
-            //    // Skip inactive stake.
-            //    continue;
-            //}
+            if v.active_until_epoch < epoch {
+                // Skip expired stakes.
+                continue;
+            }
             let entry = stakes.entry(k.validator_pkey).or_insert(0);
             *entry += v.amount;
         }

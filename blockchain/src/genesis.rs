@@ -90,7 +90,16 @@ pub fn genesis(
         assert_eq!(coins, coins1);
 
         let gamma = -outputs_gamma;
-        MicroBlock::new(base, gamma, coins, &[], &outputs, None)
+        MicroBlock::new(
+            base,
+            gamma,
+            coins,
+            &[],
+            &outputs,
+            None,
+            keychains[0].network_pkey,
+            &keychains[0].network_skey,
+        )
     };
     view_change += 1;
     height += 1;

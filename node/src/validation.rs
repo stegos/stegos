@@ -463,7 +463,16 @@ mod test {
                 .expect("genesis has valid public keys");
             let outputs = vec![output.clone()];
             let gamma = -outputs_gamma;
-            let mut block = MicroBlock::new(base, gamma, amount - fee, &[], &outputs, None);
+            let mut block = MicroBlock::new(
+                base,
+                gamma,
+                amount - fee,
+                &[],
+                &outputs,
+                None,
+                *validator_pkey,
+                &validator_skey,
+            );
             let block_hash = Hash::digest(&block);
             block.body.sig = secure::sign_hash(&block_hash, &validator_skey);
 

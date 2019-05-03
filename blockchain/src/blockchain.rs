@@ -120,7 +120,6 @@ pub struct Blockchain {
     height: u64,
     /// Copy of a block hash from the latest registered block.
     last_block_hash: Hash,
-
 }
 
 impl Blockchain {
@@ -844,13 +843,17 @@ impl Blockchain {
                     .into());
                 }
             };
+            if leader != block.body.pkey {
+                return Err(BlockError::DifferentPublicKey(leader, block.body.pkey).into());
+            }
             let seed = mix(self.last_random(), block.header.base.view_change);
             if !secure::validate_VRF_source(&block.header.base.random, &leader, &seed) {
                 return Err(BlockError::IncorrectRandom(height, block_hash).into());
             }
-            if let Err(_e) = secure::check_hash(&block_hash, &block.body.sig, &leader) {
-                return Err(BlockError::InvalidLeaderSignature(height, block_hash).into());
-            }
+        }
+
+        if let Err(_e) = secure::check_hash(&block_hash, &block.body.sig, &block.body.pkey) {
+            return Err(BlockError::InvalidLeaderSignature(height, block_hash).into());
         }
 
         let mut burned = ECp::inf();
@@ -1359,7 +1362,16 @@ pub fn create_fake_micro_block(
     let seed = mix(chain.last_random(), view_change);
     let random = secure::make_VRF(&keys.network_skey, &seed);
     let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-    let mut block = MicroBlock::new(base, gamma, 0, &input_hashes, &outputs, None);
+    let mut block = MicroBlock::new(
+        base,
+        gamma,
+        0,
+        &input_hashes,
+        &outputs,
+        None,
+        keys.network_pkey,
+        &keys.network_skey,
+    );
     let block_hash = Hash::digest(&block);
     block.body.sig = secure::sign_hash(&block_hash, &keys.network_skey);
     (block, input_hashes, output_hashes)
@@ -1380,7 +1392,16 @@ pub fn create_empty_micro_block(
     let seed = mix(chain.last_random(), view_change);
     let random = secure::make_VRF(&keys.network_skey, &seed);
     let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-    let mut block = MicroBlock::new(base, gamma, 0, &input_hashes, &outputs, None);
+    let mut block = MicroBlock::new(
+        base,
+        gamma,
+        0,
+        &input_hashes,
+        &outputs,
+        None,
+        keys.network_pkey,
+        &keys.network_skey,
+    );
     let block_hash = Hash::digest(&block);
     block.body.sig = secure::sign_hash(&block_hash, &keys.network_skey);
     block

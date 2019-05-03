@@ -380,8 +380,7 @@ fn multiple_rounds() {
         for node in s.nodes.iter() {
             assert_eq!(node.node_service.chain.height(), 2);
         }
-
-
+        let view_change = s.nodes[0].node_service.chain.view_change();
         let leader_pk = s.nodes[0].node_service.chain.leader();
         let leader_node = s.node(&leader_pk).unwrap();
         // skip proposal and prevote of last leader.
@@ -403,7 +402,7 @@ fn multiple_rounds() {
         // filter messages from chain loader.
         s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
 
-        let leader_pk = s.nodes[0].node_service.chain.leader();
+        let leader_pk = s.nodes[0].node_service.chain.select_leader(view_change + 1);
         let leader_node = s.node(&leader_pk).unwrap();
         let _proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
         let _prevote: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
@@ -423,7 +422,7 @@ fn multiple_rounds() {
         // filter messages from chain loader.
         s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
 
-        let leader_pk = s.next_view_change_leader();
+        let leader_pk = s.nodes[0].node_service.chain.select_leader(view_change + 2);
         let leader_node = s.node(&leader_pk).unwrap();
         let _proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
         let _prevote: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
@@ -586,7 +585,16 @@ fn out_of_order_micro_block() {
             timestamp,
             random,
         );
-        let mut block = MicroBlock::new(base, gamma, 0, &[], &[], None);
+        let mut block = MicroBlock::new(
+            base,
+            gamma,
+            0,
+            &[],
+            &[],
+            None,
+            leader.node_service.keys.network_pkey,
+            &leader.node_service.keys.network_skey,
+        );
 
         let block_hash = Hash::digest(&block);
         let leader_node = s.node(&leader_pk).unwrap();

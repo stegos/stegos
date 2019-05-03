@@ -451,7 +451,13 @@ impl NodeService {
         // Check signature first.
         let remote_view_change = remote.header.base.view_change;
 
-        let leader = self.chain.select_leader(remote_view_change);
+        let previous_block = self.chain.block_by_height(height - 1)?;
+        let mut election_result = self.chain.election_result();
+        election_result.random = previous_block.base_header().random;
+        let leader = election_result.select_leader(remote_view_change);
+        if leader != remote.body.pkey {
+            return Err(BlockError::DifferentPublicKey(leader, remote.body.pkey).into());
+        }
         if let Err(_e) = secure::check_hash(&remote_hash, &remote.body.sig, &leader) {
             return Err(BlockError::InvalidLeaderSignature(height, remote_hash).into());
         }
@@ -1244,24 +1250,20 @@ impl NodeService {
             "I'm leader, proposing a new micro block: height={}, last_block={}",
             height, previous
         );
-        let seed = mix(self.chain.last_random(), self.chain.view_change());
-        let random = secure::make_VRF(&self.keys.network_skey, &seed);
-
         // Create a new micro block from the mempool.
-        let (mut block, _fee_output, _tx_hashes) = self.mempool.create_block(
+        let (block, _fee_output, _tx_hashes) = self.mempool.create_block(
             previous,
             VERSION,
             self.chain.height(),
             self.cfg.block_reward,
-            &self.keys.wallet_skey,
-            &self.keys.wallet_pkey,
+            &self.keys,
+            self.chain.last_random(),
             self.chain.view_change(),
             proof,
             self.cfg.max_utxo_in_block,
-            random,
         );
+
         let block_hash = Hash::digest(&block);
-        block.body.sig = secure::sign_hash(&block_hash, &self.keys.network_skey);
 
         info!(
             "Created a micro block: height={}, block={}, inputs={}, outputs={}",

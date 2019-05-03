@@ -81,7 +81,6 @@ impl ElectionResult {
     }
 }
 
-
 /// Choose random validator, based on `random_number`.
 /// Accepts list of validators stakes consistently sorted on all participants,
 /// Returns index of the validator which stake are won.

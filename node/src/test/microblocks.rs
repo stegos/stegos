@@ -77,7 +77,7 @@ fn dead_leader() {
             }
         }
 
-        let next_leader = r.parts.1.next_leader();
+        let next_leader = r.parts.1.next_view_change_leader();
         r.parts.1.poll();
         for node in r.parts.1.iter_mut() {
             info!("processing validator = {:?}", node.validator_id());
@@ -108,7 +108,7 @@ fn dead_leader() {
 // 1. Node A leader of view_change 1, didn't broadcast micro block (B1) to [B,C,D]
 // 2. Nodes [B, C, D] go to the next view_change 2
 // 2.1. Node B become leader of view_change 2, and broadcast new block (B2).
-// 3. Nodes [A,C,D] Receive block (B2)
+// 3. Nodes [C,D] Receive block (B2)
 //
 // Asserts that Nodes [B, D, E] has last block B2, and same height().
 
@@ -128,11 +128,11 @@ fn silent_view_change() {
             assert_eq!(node.node_service.chain.height(), 2);
         }
 
-
-        s.skip_while_different_leader();
+        precondition_2_different_leaderers(&mut s);
 
         let starting_view_changes = s.nodes[0].node_service.chain.view_change();
-        let leader_pk = s.nodes[0].node_service.chain.leader();
+        let leader_pk = s.leader();
+        let new_leader = s.next_view_change_leader();
 
         s.wait(s.cfg().tx_wait_timeout);
         s.poll();
@@ -153,10 +153,6 @@ fn silent_view_change() {
             }
             assert_eq!(msgs.len(), 3);
 
-            let new_leader = r.parts.1.nodes[0]
-                .node_service
-                .chain
-                .select_leader(starting_view_changes + 1);
             let new_leader_node = r.parts.1.node(&new_leader).unwrap();
             // new leader receive all view change messages and produce new block.
             // each node should accept new block.
@@ -238,20 +234,18 @@ fn double_view_change() {
         let mut starting_view_changes = 0;
 
         for _ in 0..s.cfg().blocks_in_epoch {
-
-            let leader1 = s.first_mut().node_service.chain.leader();
             let view_change = s.first_mut().node_service.chain.view_change();
-
-            let vrf = s.node(&leader1).unwrap().create_vrf();
-            let mut election = s.first_mut()
+            let leader1 = s.first_mut().node_service.chain.leader();
+            let leader2 = s
+                .first_mut()
                 .node_service
-                .chain.election_result();
-            election.random = vrf;
-            let leader2 = election.select_leader(view_change + 1);
-
-            let vrf = s.node(&leader1).unwrap().create_vrf_from_seed(election.random.rand, view_change + 1);
-            election.random = vrf;
-            let leader3 = election.select_leader(view_change + 2);
+                .chain
+                .select_leader(view_change + 1);
+            let leader3 = s
+                .first_mut()
+                .node_service
+                .chain
+                .select_leader(view_change + 2);
 
             if leader1 != leader2 && leader2 != leader3 && leader3 != leader1 {
                 break;
@@ -381,7 +375,8 @@ fn resolve_fork_for_view_change() {
             assert_eq!(node.node_service.chain.height(), 2);
         }
 
-        s.skip_while_different_leader();
+        precondition_2_different_leaderers(&mut s);
+
         let starting_view_changes = s.nodes[0].node_service.chain.view_change();
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
@@ -397,13 +392,13 @@ fn resolve_fork_for_view_change() {
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
 
         s.wait(s.cfg().micro_block_timeout);
-        info!("======= PARTITION BEGIN =======");
         s.poll();
         // emulate dead leader for other nodes
 
         // filter messages from chain loader.
         s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
 
+        info!("======= PARTITION BEGIN =======");
         let mut r = s.split(&[leader_pk]);
 
         let mut msgs = Vec::new();
@@ -413,10 +408,7 @@ fn resolve_fork_for_view_change() {
         }
         assert_eq!(msgs.len(), 3);
 
-        let new_leader = r.parts.1.nodes[0]
-            .node_service
-            .chain
-            .select_leader(starting_view_changes + 1);
+        let new_leader = r.parts.1.next_view_change_leader();
         let new_leader_node = r.parts.1.node(&new_leader).unwrap();
         // new leader receive all view change messages and produce new block.
         // each node should accept new block.
@@ -439,10 +431,14 @@ fn resolve_fork_for_view_change() {
         let last_block_hash = Hash::digest(&block);
 
         let first_leader = r.parts.0.first_mut();
-        assert_eq!(leader_pk, first_leader.node_service.keys.network_pkey) ;
+        assert_eq!(leader_pk, first_leader.node_service.keys.network_pkey);
         first_leader
             .network_service
             .filter_broadcast(&[crate::VIEW_CHANGE_TOPIC]);
+        // leader can send second block, if tx_wait_time << view_change timeout, and he is lucky
+        first_leader
+            .network_service
+            .filter_broadcast(&[crate::SEALED_BLOCK_TOPIC]);
         // broadcast block to old leader.
         first_leader
             .network_service
@@ -576,7 +572,16 @@ fn micro_block_without_signature() {
             timestamp,
             random,
         );
-        let block = MicroBlock::new(base, gamma, 0, &[], &[], None);
+        let block = MicroBlock::new(
+            base,
+            gamma,
+            0,
+            &[],
+            &[],
+            None,
+            leader.node_service.keys.network_pkey,
+            &leader.node_service.keys.network_skey,
+        );
 
         let block: Block = Block::MicroBlock(block);
 
@@ -592,4 +597,24 @@ fn micro_block_without_signature() {
             .1
             .for_each(|node| assert_eq!(node.chain.height(), height));
     });
+}
+
+fn precondition_2_different_leaderers(s: &mut Sandbox) {
+    let mut ready = false;
+    for _ in 0..(s.cfg().blocks_in_epoch - 2) {
+        let first_leader_pk = s.nodes[0].node_service.chain.leader();
+        let new_leader_pk = s.next_view_change_leader();
+        info!(
+            "Checking that leader {} and {} are different.",
+            first_leader_pk, new_leader_pk
+        );
+        if first_leader_pk != new_leader_pk {
+            ready = true;
+            break;
+        }
+        info!("Skipping microlock.");
+        s.wait(s.cfg().tx_wait_timeout);
+        s.skip_micro_block()
+    }
+    assert!(ready, "Not enought micriblocks found");
 }

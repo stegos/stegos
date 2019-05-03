@@ -32,9 +32,9 @@ use crate::*;
 use assert_matches::assert_matches;
 use log::Level;
 use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc::secure::VRF;
 use stegos_keychain::KeyChain;
 use tokio_timer::Timer;
-use stegos_crypto::pbc::secure::VRF;
 
 pub struct SandboxConfig {
     pub chain: ChainConfig,
@@ -97,22 +97,6 @@ impl<'timer> Sandbox<'timer> {
 
     pub fn cfg(&self) -> &ChainConfig {
         &self.config
-    }
-
-    /// skip leaders until next leaders are different.
-    fn skip_while_different_leader(&mut self) {
-        let mut ready = false;
-        for _ in 0..(self.cfg().blocks_in_epoch - 2) {
-            let first_leader_pk = self.nodes[0].node_service.chain.leader();
-            let new_leader_pk = self.next_leader();
-            if first_leader_pk != new_leader_pk {
-                ready = true;
-                break;
-            }
-            self.wait(self.cfg().micro_block_timeout);
-            self.skip_micro_block()
-        }
-        assert!(ready, "Not enought micriblocks found");
     }
 
     fn split<'a>(&'a mut self, first_partitions_nodes: &[secure::PublicKey]) -> PartitionGuard<'a> {
@@ -224,10 +208,15 @@ impl NodeSandbox {
         }
     }
 
+    #[allow(dead_code)]
     fn create_vrf(&self) -> VRF {
-        self.create_vrf_from_seed(self.node_service.chain.last_random(), self.node_service.chain.view_change())
+        self.create_vrf_from_seed(
+            self.node_service.chain.last_random(),
+            self.node_service.chain.view_change(),
+        )
     }
 
+    #[allow(dead_code)]
     fn create_vrf_from_seed(&self, random: Hash, view_change: u32) -> VRF {
         let seed = mix(random, view_change);
         secure::make_VRF(&self.node_service.keys.network_skey, &seed)
@@ -356,22 +345,24 @@ trait Api<'p> {
         self.first_mut().node_service.chain.leader()
     }
 
-
-    fn next_leader(&mut self) -> secure::PublicKey {
+    /// Returns next leader publicKey.
+    /// Returns None if current leader was not found in current partition.
+    fn next_leader(&mut self) -> Option<secure::PublicKey> {
         let first_leader_pk = self.first_mut().node_service.chain.leader();
         let view_change = self.first_mut().node_service.chain.view_change();
 
-        let vrf = self.node(&first_leader_pk).unwrap().create_vrf();
-        let mut election = self.first_mut()
-            .node_service
-            .chain.election_result();
+        let vrf = self.node(&first_leader_pk)?.create_vrf();
+        let mut election = self.first_mut().node_service.chain.election_result();
         election.random = vrf;
-        election.select_leader(view_change + 1)
+        Some(election.select_leader(view_change + 1))
     }
 
     fn next_view_change_leader(&mut self) -> secure::PublicKey {
         let view_change = self.first_mut().node_service.chain.view_change();
-        self.first_mut().node_service.chain.select_leader(view_change + 1)
+        self.first_mut()
+            .node_service
+            .chain
+            .select_leader(view_change + 1)
     }
 
     /// Execute some function for each node_service.
@@ -395,13 +386,12 @@ trait Api<'p> {
 
     /// Return node for publickey.
     fn node_ref<'a>(&'a mut self, pk: &secure::PublicKey) -> Option<&'a NodeSandbox>
-        where
-            'p: 'a,
+    where
+        'p: 'a,
     {
         self.iter()
             .find(|node| node.node_service.keys.network_pkey == *pk)
     }
-
 }
 
 impl<'p> Api<'p> for Partition<'p> {

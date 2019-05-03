@@ -24,6 +24,7 @@
 use crate::view_changes::ViewChangeProof;
 use failure::Fail;
 use stegos_crypto::hash::Hash;
+use stegos_crypto::pbc::secure;
 
 #[derive(Debug, Fail)]
 pub enum BlockchainError {
@@ -112,6 +113,11 @@ pub enum BlockError {
         _0, _1
     )]
     MoreThanOneSignatureAtPropose(u64, Hash),
+    #[fail(
+        display = "Different leader found in received block: elected={}, sender={}",
+        _0, _1
+    )]
+    DifferentPublicKey(secure::PublicKey, secure::PublicKey),
     #[fail(
         display = "Invalid leader signature found: height={}, block={}",
         _0, _1

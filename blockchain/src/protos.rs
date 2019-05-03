@@ -362,9 +362,9 @@ impl ProtoConvert for MicroBlockBody {
     type Proto = blockchain::MicroBlockBody;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = blockchain::MicroBlockBody::new();
-        if !self.sig.is_zero() {
-            proto.set_sig(self.sig.into_proto());
-        }
+        proto.set_sig(self.sig.into_proto());
+        proto.set_pkey(self.pkey.into_proto());
+
         for input in &self.inputs {
             proto.inputs.push(input.into_proto());
         }
@@ -375,11 +375,10 @@ impl ProtoConvert for MicroBlockBody {
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let sig = if proto.has_sig() {
-            secure::Signature::from_proto(proto.get_sig())?
-        } else {
-            secure::Signature::zero()
-        };
+        let sig = secure::Signature::from_proto(proto.get_sig())?;
+
+        let pkey = secure::PublicKey::from_proto(proto.get_pkey())?;
+
         let mut inputs = Vec::<Hash>::with_capacity(proto.inputs.len());
         for input in proto.inputs.iter() {
             inputs.push(Hash::from_proto(input)?);
@@ -393,6 +392,7 @@ impl ProtoConvert for MicroBlockBody {
 
         Ok(MicroBlockBody {
             sig,
+            pkey,
             inputs,
             outputs,
         })
@@ -643,7 +643,7 @@ mod tests {
         let (skey0, _pkey0) = make_random_keys();
         let (skey1, pkey1) = make_random_keys();
         let (_skey2, pkey2) = make_random_keys();
-        let (skeypbc, _pkeypbc) = make_secure_random_keys();
+        let (skeypbc, pkeypbc) = make_secure_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -666,7 +666,16 @@ mod tests {
         let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
         roundtrip(&base);
 
-        let block = MicroBlock::new(base, gamma.clone(), 0, &inputs1, &outputs1, None);
+        let block = MicroBlock::new(
+            base,
+            gamma.clone(),
+            0,
+            &inputs1,
+            &outputs1,
+            None,
+            pkeypbc,
+            &skeypbc,
+        );
         roundtrip(&block.header);
         roundtrip(&block.body);
         roundtrip(&block);

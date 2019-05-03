@@ -175,6 +175,9 @@ impl Hashable for MicroBlockHeader {
 /// Monetary Block.
 #[derive(Debug, Clone)]
 pub struct MicroBlockBody {
+    /// Public key of leader.
+    pub pkey: secure::PublicKey,
+
     /// BLS signature.
     pub sig: secure::Signature,
 
@@ -253,6 +256,8 @@ impl MicroBlock {
         inputs: &[Hash],
         outputs: &[Output],
         proof: Option<ViewChangeProof>,
+        pkey: secure::PublicKey,
+        skey: &secure::SecretKey,
     ) -> MicroBlock {
         // Re-order all inputs to blur transaction boundaries.
         // Current algorithm just sorts this list.
@@ -302,13 +307,18 @@ impl MicroBlock {
         // Create body
         let sig = secure::Signature::zero();
         let body = MicroBlockBody {
+            pkey,
             sig,
             inputs,
             outputs,
         };
 
         // Create the block.
-        let block = MicroBlock { header, body };
+        let mut block = MicroBlock { header, body };
+        let h = Hash::digest(&block);
+        let sig = secure::sign_hash(&h, &skey);
+        block.body.sig = sig;
+
         block
     }
 
@@ -420,7 +430,7 @@ pub mod tests {
         let (skey0, _pkey0) = make_random_keys();
         let (skey1, pkey1) = make_random_keys();
         let (_skey2, pkey2) = make_random_keys();
-        let (pbc_skey, _pbc_pkey) = make_secure_random_keys();
+        let (pbc_skey, pbc_pkey) = make_secure_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -442,7 +452,9 @@ pub mod tests {
             let (output1, gamma1) = Output::new_payment(timestamp, &skey1, &pkey2, amount).unwrap();
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
-            let block = MicroBlock::new(base, gamma, 0, &inputs1, &outputs1, None);
+            let block = MicroBlock::new(
+                base, gamma, 0, &inputs1, &outputs1, None, pbc_pkey, &pbc_skey,
+            );
             block.validate_balance(&[output0]).expect("block is valid");
         }
 
@@ -458,7 +470,9 @@ pub mod tests {
                 Output::new_payment(timestamp, &skey1, &pkey2, amount - 1).unwrap();
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
-            let block = MicroBlock::new(base, gamma, 0, &inputs1, &outputs1, None);
+            let block = MicroBlock::new(
+                base, gamma, 0, &inputs1, &outputs1, None, pbc_pkey, &pbc_skey,
+            );
             match block.validate_balance(&[output0]) {
                 Err(e) => match e.downcast::<BlockError>().unwrap() {
                     BlockError::InvalidBlockBalance(_height, _hash) => {}
@@ -472,7 +486,7 @@ pub mod tests {
     #[test]
     fn validate_pruned_micro_block() {
         let (skey, pkey) = make_random_keys();
-        let (pbc_skey, _pbc_pkey) = make_secure_random_keys();
+        let (pbc_skey, pbc_pkey) = make_secure_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -491,7 +505,16 @@ pub mod tests {
         let (output, gamma1) = Output::new_payment(timestamp, &skey, &pkey, amount).unwrap();
         let outputs = [output];
         let gamma = gamma0 - gamma1;
-        let block = MicroBlock::new(base, gamma, 0, &input_hashes, &outputs, None);
+        let block = MicroBlock::new(
+            base,
+            gamma,
+            0,
+            &input_hashes,
+            &outputs,
+            None,
+            pbc_pkey,
+            &pbc_skey,
+        );
         block.validate_balance(&inputs).expect("block is valid");
 
         {
@@ -547,7 +570,16 @@ pub mod tests {
 
             let base =
                 BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-            let block = MicroBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None);
+            let block = MicroBlock::new(
+                base,
+                gamma,
+                0,
+                &input_hashes[..],
+                &outputs[..],
+                None,
+                secure_pkey1,
+                &secure_skey1,
+            );
             block.validate_balance(&inputs).expect("block is valid");
         }
 
@@ -574,7 +606,16 @@ pub mod tests {
 
             let base =
                 BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-            let block = MicroBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None);
+            let block = MicroBlock::new(
+                base,
+                gamma,
+                0,
+                &input_hashes[..],
+                &outputs[..],
+                None,
+                secure_pkey1,
+                &secure_skey1,
+            );
             block.validate_balance(&inputs).expect("block is valid");
         }
 
@@ -603,7 +644,16 @@ pub mod tests {
 
             let base =
                 BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-            let block = MicroBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None);
+            let block = MicroBlock::new(
+                base,
+                gamma,
+                0,
+                &input_hashes[..],
+                &outputs[..],
+                None,
+                secure_pkey1,
+                &secure_skey1,
+            );
             match block.validate_balance(&inputs) {
                 Err(e) => match e.downcast::<BlockError>().unwrap() {
                     BlockError::InvalidBlockBalance(_height, _hash) => {}
@@ -638,7 +688,16 @@ pub mod tests {
 
             let base =
                 BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-            let block = MicroBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None);
+            let block = MicroBlock::new(
+                base,
+                gamma,
+                0,
+                &input_hashes[..],
+                &outputs[..],
+                None,
+                secure_pkey1,
+                &secure_skey1,
+            );
             match block.validate_balance(&inputs) {
                 Err(e) => match e.downcast::<OutputError>().unwrap() {
                     OutputError::InvalidStake(_output_hash) => {}
@@ -651,7 +710,7 @@ pub mod tests {
 
     fn create_burn_money(input_amount: i64, output_amount: i64) {
         let (skey, pkey) = make_random_keys();
-        let (secure_skey1, _secure_pkey1) = make_secure_random_keys();
+        let (secure_skey1, secure_pkey1) = make_secure_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -679,6 +738,8 @@ pub mod tests {
             &input_hashes,
             &outputs,
             None,
+            secure_pkey1,
+            &secure_skey1,
         );
         block.validate_balance(&inputs).expect("block is valid");
     }

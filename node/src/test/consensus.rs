@@ -34,6 +34,7 @@ fn smoke_test() {
         num_nodes: 3,
         ..Default::default()
     };
+    assert!(config.chain.stake_epochs > 1);
 
     Sandbox::start(config, |mut s| {
         let topic = crate::CONSENSUS_TOPIC;
@@ -164,6 +165,7 @@ fn autocomit() {
         num_nodes: 3,
         ..Default::default()
     };
+    assert!(config.chain.stake_epochs > 1);
 
     Sandbox::start(config, |mut s| {
         let topic = crate::CONSENSUS_TOPIC;
@@ -280,6 +282,7 @@ fn round() {
         num_nodes: 3,
         ..Default::default()
     };
+    assert!(config.chain.stake_epochs > 1);
 
     Sandbox::start(config, |mut s| {
         let topic = crate::CONSENSUS_TOPIC;

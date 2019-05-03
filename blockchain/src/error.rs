@@ -24,6 +24,7 @@
 use crate::view_changes::ViewChangeProof;
 use failure::Fail;
 use stegos_crypto::hash::Hash;
+use stegos_crypto::pbc::secure;
 
 #[derive(Debug, Fail)]
 pub enum BlockchainError {
@@ -33,6 +34,11 @@ pub enum BlockchainError {
         _0, _1, _2
     )]
     IncompatibleChain(u64, Hash, Hash),
+    #[fail(
+        display = "Stake is locked: validator={}, expected_balance={}, minimum_balance={}",
+        _0, _1, _2
+    )]
+    StakeIsLocked(secure::PublicKey, i64, i64),
 }
 
 #[derive(Debug, Fail)]

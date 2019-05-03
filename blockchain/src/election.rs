@@ -127,7 +127,7 @@ pub fn select_validators_slots(
     random: VRF,
     slot_count: i64,
 ) -> ElectionResult {
-    assert!(!stakers.is_empty());
+    assert!(!stakers.is_empty(), "Have stakes");
     assert!(slot_count > 0);
     // Using BTreeMap to keep order.
     let mut validators = BTreeMap::new();

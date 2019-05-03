@@ -30,6 +30,7 @@ mod transaction;
 mod valueshuffle;
 
 pub use crate::api::*;
+use crate::error::WalletError;
 use crate::transaction::*;
 use crate::valueshuffle::ValueShuffle;
 use failure::Error;
@@ -288,6 +289,56 @@ impl WalletService {
         self.unstake(amount)
     }
 
+    /// Restake all available stakes (even if not expired).
+    fn restake_all(&mut self) -> Result<(Hash, i64), Error> {
+        assert_eq!(self.stake_fee, 0);
+        if self.stakes.is_empty() {
+            return Err(WalletError::NothingToRestake.into());
+        }
+
+        let stakes = self.stakes.values().map(|val| &val.output);
+        let tx = create_restaking_transaction(
+            &self.keys.wallet_skey,
+            &self.keys.wallet_pkey,
+            &self.keys.network_pkey,
+            &self.keys.network_skey,
+            stakes,
+        )?;
+        let tx_hash = Hash::digest(&tx);
+        self.node.send_transaction(tx)?;
+        Ok((tx_hash, 0))
+    }
+
+    /// Re-stake expiring stakes.
+    fn restake_expiring(&mut self) -> Result<(), Error> {
+        assert_eq!(self.stake_fee, 0);
+        let epoch = self.epoch;
+        let stakes: Vec<&StakeOutput> = self.stakes.iter().filter_map(|(hash, val)|
+                // Re-stake in the last epoch where stake is valid.
+                if val.active_until_epoch <= epoch {
+                    info!("Expiring stake: utxo={}, amount={}, active_until_epoch={}, epoch={}",
+                           hash, val.output.amount, val.active_until_epoch, epoch);
+                    Some(&val.output)
+                } else {
+                    None
+                }
+        ).collect();
+
+        if stakes.is_empty() {
+            return Ok(()); // Nothing to re-stake.
+        }
+
+        let tx = create_restaking_transaction(
+            &self.keys.wallet_skey,
+            &self.keys.wallet_pkey,
+            &self.keys.network_pkey,
+            &self.keys.network_skey,
+            stakes.into_iter(),
+        )?;
+        self.node.send_transaction(tx)?;
+        Ok(())
+    }
+
     /// Get actual balance.
     fn balance(&self) -> i64 {
         let mut balance: i64 = 0;
@@ -396,6 +447,10 @@ impl WalletService {
 
     fn on_epoch_changed(&mut self, epoch: u64) {
         self.epoch = epoch;
+
+        if let Err(e) = self.restake_expiring() {
+            error!("Failed to re-stake: {}", e);
+        }
     }
 
     fn notify(&mut self, notification: WalletNotification) {
@@ -450,6 +505,7 @@ impl Future for WalletService {
                             WalletRequest::Stake { amount } => self.stake(amount).into(),
                             WalletRequest::Unstake { amount } => self.unstake(amount).into(),
                             WalletRequest::UnstakeAll {} => self.unstake_all().into(),
+                            WalletRequest::RestakeAll {} => self.restake_all().into(),
                             WalletRequest::KeysInfo {} => WalletResponse::KeysInfo {
                                 wallet_pkey: self.keys.wallet_pkey,
                                 network_pkey: self.keys.network_pkey,

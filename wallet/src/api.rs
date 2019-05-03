@@ -80,6 +80,7 @@ pub enum WalletRequest {
         amount: i64,
     },
     UnstakeAll {},
+    RestakeAll {},
     KeysInfo {},
     BalanceInfo {},
     UnspentInfo {},

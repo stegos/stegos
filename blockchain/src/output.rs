@@ -75,11 +75,6 @@ pub enum OutputError {
     NegativeAmount(Hash, i64),
     #[fail(display = "Invalid signature on validator pkey: utxo={}", _0)]
     InvalidStakeSignature(Hash),
-    #[fail(
-        display = "Stake is locked: utxo={}, validator={}, until_epoch={}, current_epoch={}",
-        _0, _1, _2, _3
-    )]
-    StakeIsActive(Hash, secure::PublicKey, u64, u64),
 }
 
 /// Payment UTXO.

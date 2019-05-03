@@ -1173,7 +1173,7 @@ impl Blockchain {
         self.balance.insert(version, (), balance);
         assert_eq!(self.balance.current_version(), version);
         self.last_block_hash = block_hash.clone();
-        self.election_result.view_change = block.header.base.view_change + 1;
+        self.election_result.view_change = 0;
         self.election_result.random = block.header.base.random;
         self.height += 1;
         assert_eq!(self.height, version);
@@ -1229,10 +1229,7 @@ impl Blockchain {
         assert_eq!(self.height, version);
         self.last_block_hash = Hash::digest(&previous);
         self.election_result.random = previous.base_header().random;
-        self.election_result.view_change = match previous {
-            Block::KeyBlock(ref _previous) => 0,
-            Block::MicroBlock(ref previous) => previous.header.base.view_change + 1,
-        };
+        self.election_result.view_change = 0;
         metrics::HEIGHT.set(self.height as i64);
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
 
@@ -1619,7 +1616,7 @@ pub mod tests {
             .push_micro_block(block1, timestamp)
             .expect("block is valid");
         assert_eq!(height0 + 1, chain.height());
-        assert_eq!(view_change0 + 1, chain.view_change());
+        assert_eq!(view_change0, chain.view_change());
         assert_ne!(block_hash0, chain.last_block_hash());
         assert_eq!(chain.blocks().count() as u64, chain.height());
         assert_ne!(&balance0, chain.balance());
@@ -1631,7 +1628,6 @@ pub mod tests {
             assert!(chain.contains_output(output_hash));
         }
         let height1 = chain.height();
-        let view_change1 = 1;
         let block_hash1 = chain.last_block_hash();
         let balance1 = chain.balance().clone();
         let escrow1 = chain.escrow_info().clone();
@@ -1644,7 +1640,7 @@ pub mod tests {
             .push_micro_block(block2, timestamp)
             .expect("block is valid");
         assert_eq!(height1 + 1, chain.height());
-        assert_eq!(view_change1 + 1, chain.view_change());
+        assert_eq!(view_change0, chain.view_change());
         assert_ne!(block_hash1, chain.last_block_hash());
         assert_eq!(chain.blocks().count() as u64, chain.height());
         assert_ne!(&balance1, chain.balance());
@@ -1659,7 +1655,7 @@ pub mod tests {
         // Pop the last micro block.
         chain.pop_micro_block().expect("no disk errors");
         assert_eq!(height1, chain.height());
-        assert_eq!(view_change1, chain.view_change());
+        assert_eq!(view_change0, chain.view_change());
         assert_eq!(block_hash1, chain.last_block_hash());
         assert_eq!(chain.blocks().count() as u64, chain.height());
         assert_eq!(&balance1, chain.balance());

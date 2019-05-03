@@ -42,7 +42,7 @@ pub fn genesis(
 
     // Both block are created at the same time in the same epoch.
     let version: u64 = 1;
-    let mut view_change: u32 = 0;
+    let view_change: u32 = 0;
     let mut height: u64 = 0;
 
     let mut init_random = Hash::digest("random");
@@ -101,7 +101,6 @@ pub fn genesis(
             &keychains[0].network_skey,
         )
     };
-    view_change += 1;
     height += 1;
 
     //

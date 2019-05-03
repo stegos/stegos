@@ -84,7 +84,7 @@ fn dead_leader() {
             if next_leader == node.node_service.keys.network_pkey {
                 let _: Block = node.network_service.get_broadcast(SEALED_BLOCK_TOPIC);
                 // If node was leader, they have produced micro block,
-                assert_eq!(node.node_service.chain.view_change(), 2);
+                assert_eq!(node.node_service.chain.view_change(), 0);
             } else {
                 assert_eq!(node.node_service.chain.view_change(), 1);
             }
@@ -184,15 +184,8 @@ fn silent_view_change() {
             // and go to the next view_change.
             for node in &mut r.parts.1.nodes {
                 info!("processing validator = {:?}", node.validator_id());
-                assert_eq!(
-                    node.node_service.chain.view_change(),
-                    starting_view_changes + 2
-                );
+                assert_eq!(node.node_service.chain.view_change(), 0);
                 assert_eq!(node.node_service.chain.last_block_hash(), last_block_hash);
-                assert_eq!(
-                    node.node_service.chain.height(),
-                    starting_view_changes as u64 + 3
-                );
             }
             let first_leader = r.parts.0.first_mut();
 
@@ -231,7 +224,7 @@ fn double_view_change() {
             assert_eq!(node.node_service.chain.height(), 2);
         }
 
-        let mut starting_view_changes = 0;
+        let mut blocks = 0;
 
         for _ in 0..s.cfg().blocks_in_epoch {
             let view_change = s.first_mut().node_service.chain.view_change();
@@ -253,9 +246,10 @@ fn double_view_change() {
 
             s.wait(s.cfg().tx_wait_timeout);
             s.skip_micro_block();
-            starting_view_changes += 1;
+            blocks += 1;
         }
-        assert!(starting_view_changes < s.cfg().blocks_in_epoch as u32 - 2);
+        assert!(blocks < s.cfg().blocks_in_epoch as u32 - 2);
+        let starting_view_changes = 0;
         let leader_pk = s.nodes[0].node_service.chain.leader();
         s.for_each(|node| assert_eq!(starting_view_changes, node.chain.view_change()));
 
@@ -378,6 +372,7 @@ fn resolve_fork_for_view_change() {
         precondition_2_different_leaderers(&mut s);
 
         let starting_view_changes = s.nodes[0].node_service.chain.view_change();
+        let starting_height = s.nodes[0].node_service.chain.height();
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
 
@@ -446,17 +441,14 @@ fn resolve_fork_for_view_change() {
         first_leader.poll();
 
         info!("processing validator = {:?}", first_leader.validator_id());
-        assert_eq!(
-            first_leader.node_service.chain.view_change(),
-            starting_view_changes + 2
-        );
+        assert_eq!(first_leader.node_service.chain.view_change(), 0);
         assert_eq!(
             first_leader.node_service.chain.last_block_hash(),
             last_block_hash
         );
         assert_eq!(
             first_leader.node_service.chain.height(),
-            starting_view_changes as u64 + 3
+            starting_height + 1
         );
     });
 }

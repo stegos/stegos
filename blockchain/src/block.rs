@@ -59,6 +59,9 @@ pub struct BaseBlockHeader {
 
     /// Timestamp at which the block was built.
     pub timestamp: SystemTime,
+
+    /// Latest random of the leader.
+    pub random: VRF,
 }
 
 impl BaseBlockHeader {
@@ -68,13 +71,20 @@ impl BaseBlockHeader {
         height: u64,
         view_change: u32,
         timestamp: SystemTime,
+        random: VRF,
     ) -> Self {
+        debug_assert!(
+            secure::validate_VRF_randomness(&random),
+            "Cannot verify VRF."
+        );
+
         BaseBlockHeader {
             version,
             previous,
             height,
             view_change,
             timestamp,
+            random,
         }
     }
 }
@@ -86,6 +96,7 @@ impl Hashable for BaseBlockHeader {
         self.height.hash(state);
         self.view_change.hash(state);
         self.timestamp.hash(state);
+        self.random.hash(state);
     }
 }
 
@@ -94,9 +105,6 @@ impl Hashable for BaseBlockHeader {
 pub struct KeyBlockHeader {
     /// Common header.
     pub base: BaseBlockHeader,
-
-    /// Initial seed of epoch.
-    pub random: VRF,
 }
 
 impl Hashable for KeyBlockHeader {
@@ -167,6 +175,9 @@ impl Hashable for MicroBlockHeader {
 /// Monetary Block.
 #[derive(Debug, Clone)]
 pub struct MicroBlockBody {
+    /// Public key of leader.
+    pub pkey: secure::PublicKey,
+
     /// BLS signature.
     pub sig: secure::Signature,
 
@@ -197,14 +208,9 @@ pub struct KeyBlock {
 }
 
 impl KeyBlock {
-    pub fn new(base: BaseBlockHeader, random: VRF) -> Self {
-        debug_assert!(
-            secure::validate_VRF_randomness(&random),
-            "Cannot verify VRF."
-        );
-
+    pub fn new(base: BaseBlockHeader) -> Self {
         // Create header
-        let header = KeyBlockHeader { base, random };
+        let header = KeyBlockHeader { base };
 
         // Create body
         let multisig = secure::Signature::zero();
@@ -250,6 +256,8 @@ impl MicroBlock {
         inputs: &[Hash],
         outputs: &[Output],
         proof: Option<ViewChangeProof>,
+        pkey: secure::PublicKey,
+        skey: &secure::SecretKey,
     ) -> MicroBlock {
         // Re-order all inputs to blur transaction boundaries.
         // Current algorithm just sorts this list.
@@ -299,13 +307,18 @@ impl MicroBlock {
         // Create body
         let sig = secure::Signature::zero();
         let body = MicroBlockBody {
+            pkey,
             sig,
             inputs,
             outputs,
         };
 
         // Create the block.
-        let block = MicroBlock { header, body };
+        let mut block = MicroBlock { header, body };
+        let h = Hash::digest(&block);
+        let sig = secure::sign_hash(&h, &skey);
+        block.body.sig = sig;
+
         block
     }
 
@@ -407,6 +420,7 @@ impl Hashable for Block {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::mix;
     use std::time::SystemTime;
     use stegos_crypto::curve1174::cpt::make_random_keys;
     use stegos_crypto::pbc::secure::make_random_keys as make_secure_random_keys;
@@ -416,6 +430,7 @@ pub mod tests {
         let (skey0, _pkey0) = make_random_keys();
         let (skey1, pkey1) = make_random_keys();
         let (_skey2, pkey2) = make_random_keys();
+        let (pbc_skey, pbc_pkey) = make_secure_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -423,18 +438,23 @@ pub mod tests {
         let view_change = 0;
         let amount: i64 = 1_000_000;
         let previous = Hash::digest("test");
+        let seed = mix(Hash::zero(), view_change);
+        let random = secure::make_VRF(&pbc_skey, &seed);
 
         //
         // Valid block with transaction from 1 to 2
         //
         {
             let (output0, gamma0) = Output::new_payment(timestamp, &skey0, &pkey1, amount).unwrap();
-            let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
+            let base =
+                BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
             let inputs1 = [Hash::digest(&output0)];
             let (output1, gamma1) = Output::new_payment(timestamp, &skey1, &pkey2, amount).unwrap();
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
-            let block = MicroBlock::new(base, gamma, 0, &inputs1, &outputs1, None);
+            let block = MicroBlock::new(
+                base, gamma, 0, &inputs1, &outputs1, None, pbc_pkey, &pbc_skey,
+            );
             block.validate_balance(&[output0]).expect("block is valid");
         }
 
@@ -443,13 +463,16 @@ pub mod tests {
         //
         {
             let (output0, gamma0) = Output::new_payment(timestamp, &skey0, &pkey1, amount).unwrap();
-            let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
+            let base =
+                BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
             let inputs1 = [Hash::digest(&output0)];
             let (output1, gamma1) =
                 Output::new_payment(timestamp, &skey1, &pkey2, amount - 1).unwrap();
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
-            let block = MicroBlock::new(base, gamma, 0, &inputs1, &outputs1, None);
+            let block = MicroBlock::new(
+                base, gamma, 0, &inputs1, &outputs1, None, pbc_pkey, &pbc_skey,
+            );
             match block.validate_balance(&[output0]) {
                 Err(e) => match e.downcast::<BlockError>().unwrap() {
                     BlockError::InvalidBlockBalance(_height, _hash) => {}
@@ -463,6 +486,7 @@ pub mod tests {
     #[test]
     fn validate_pruned_micro_block() {
         let (skey, pkey) = make_random_keys();
+        let (pbc_skey, pbc_pkey) = make_secure_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -471,14 +495,26 @@ pub mod tests {
         let amount: i64 = 1_000_000;
         let previous = Hash::digest(&"test".to_string());
 
+        let seed = mix(Hash::zero(), view_change);
+        let random = secure::make_VRF(&pbc_skey, &seed);
+
         let (input, gamma0) = Output::new_payment(timestamp, &skey, &pkey, amount).unwrap();
-        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
+        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
         let input_hashes = [Hash::digest(&input)];
         let inputs = [input];
         let (output, gamma1) = Output::new_payment(timestamp, &skey, &pkey, amount).unwrap();
         let outputs = [output];
         let gamma = gamma0 - gamma1;
-        let block = MicroBlock::new(base, gamma, 0, &input_hashes, &outputs, None);
+        let block = MicroBlock::new(
+            base,
+            gamma,
+            0,
+            &input_hashes,
+            &outputs,
+            None,
+            pbc_pkey,
+            &pbc_skey,
+        );
         block.validate_balance(&inputs).expect("block is valid");
 
         {
@@ -508,6 +544,8 @@ pub mod tests {
         let view_change = 0;
         let amount: i64 = 1_000_000;
         let previous = Hash::digest(&"test".to_string());
+        let seed = mix(Hash::zero(), view_change);
+        let random = secure::make_VRF(&secure_skey1, &seed);
 
         //
         // Escrow as an input.
@@ -530,8 +568,18 @@ pub mod tests {
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;
 
-            let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
-            let block = MicroBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None);
+            let base =
+                BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
+            let block = MicroBlock::new(
+                base,
+                gamma,
+                0,
+                &input_hashes[..],
+                &outputs[..],
+                None,
+                secure_pkey1,
+                &secure_skey1,
+            );
             block.validate_balance(&inputs).expect("block is valid");
         }
 
@@ -556,8 +604,18 @@ pub mod tests {
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;
 
-            let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
-            let block = MicroBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None);
+            let base =
+                BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
+            let block = MicroBlock::new(
+                base,
+                gamma,
+                0,
+                &input_hashes[..],
+                &outputs[..],
+                None,
+                secure_pkey1,
+                &secure_skey1,
+            );
             block.validate_balance(&inputs).expect("block is valid");
         }
 
@@ -584,8 +642,18 @@ pub mod tests {
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;
 
-            let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
-            let block = MicroBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None);
+            let base =
+                BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
+            let block = MicroBlock::new(
+                base,
+                gamma,
+                0,
+                &input_hashes[..],
+                &outputs[..],
+                None,
+                secure_pkey1,
+                &secure_skey1,
+            );
             match block.validate_balance(&inputs) {
                 Err(e) => match e.downcast::<BlockError>().unwrap() {
                     BlockError::InvalidBlockBalance(_height, _hash) => {}
@@ -618,8 +686,18 @@ pub mod tests {
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;
 
-            let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
-            let block = MicroBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None);
+            let base =
+                BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
+            let block = MicroBlock::new(
+                base,
+                gamma,
+                0,
+                &input_hashes[..],
+                &outputs[..],
+                None,
+                secure_pkey1,
+                &secure_skey1,
+            );
             match block.validate_balance(&inputs) {
                 Err(e) => match e.downcast::<OutputError>().unwrap() {
                     OutputError::InvalidStake(_output_hash) => {}
@@ -632,6 +710,7 @@ pub mod tests {
 
     fn create_burn_money(input_amount: i64, output_amount: i64) {
         let (skey, pkey) = make_random_keys();
+        let (secure_skey1, secure_pkey1) = make_secure_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -639,11 +718,13 @@ pub mod tests {
         let view_change = 0;
         let previous = Hash::digest(&"test".to_string());
 
+        let seed = mix(Hash::zero(), view_change);
+        let random = secure::make_VRF(&secure_skey1, &seed);
         let monetary_adjustment: i64 = output_amount - input_amount;
 
         let (input, input_gamma) =
             Output::new_payment(timestamp, &skey, &pkey, input_amount).unwrap();
-        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
+        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
         let input_hashes = [Hash::digest(&input)];
         let inputs = [input];
         let (output, output_gamma) =
@@ -657,6 +738,8 @@ pub mod tests {
             &input_hashes,
             &outputs,
             None,
+            secure_pkey1,
+            &secure_skey1,
         );
         block.validate_balance(&inputs).expect("block is valid");
     }

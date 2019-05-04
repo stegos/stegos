@@ -119,6 +119,11 @@ pub enum BlockError {
     )]
     MoreThanOneSignatureAtPropose(u64, Hash),
     #[fail(
+        display = "Different leader found in received block: elected={}, sender={}",
+        _0, _1
+    )]
+    DifferentPublicKey(secure::PublicKey, secure::PublicKey),
+    #[fail(
         display = "Invalid leader signature found: height={}, block={}",
         _0, _1
     )]

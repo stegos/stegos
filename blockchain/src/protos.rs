@@ -172,6 +172,7 @@ impl ProtoConvert for BaseBlockHeader {
         proto.set_previous(self.previous.into_proto());
         proto.set_height(self.height);
         proto.set_view_change(self.view_change);
+        proto.set_random(self.random.into_proto());
         let since_the_epoch = self
             .timestamp
             .duration_since(std::time::UNIX_EPOCH)
@@ -188,12 +189,14 @@ impl ProtoConvert for BaseBlockHeader {
         let view_change = proto.get_view_change();
         let timestamp =
             std::time::UNIX_EPOCH + std::time::Duration::from_millis(proto.get_timestamp());
+        let random = secure::VRF::from_proto(proto.get_random())?;
         Ok(BaseBlockHeader {
             version,
             previous,
             height,
             view_change,
             timestamp,
+            random,
         })
     }
 }
@@ -203,15 +206,13 @@ impl ProtoConvert for KeyBlockHeader {
     fn into_proto(&self) -> Self::Proto {
         let mut proto = blockchain::KeyBlockHeader::new();
         proto.set_base(self.base.into_proto());
-        proto.set_random(self.random.into_proto());
         proto
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let base = BaseBlockHeader::from_proto(proto.get_base())?;
-        let random = secure::VRF::from_proto(proto.get_random())?;
 
-        Ok(KeyBlockHeader { base, random })
+        Ok(KeyBlockHeader { base })
     }
 }
 
@@ -361,9 +362,9 @@ impl ProtoConvert for MicroBlockBody {
     type Proto = blockchain::MicroBlockBody;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = blockchain::MicroBlockBody::new();
-        if !self.sig.is_zero() {
-            proto.set_sig(self.sig.into_proto());
-        }
+        proto.set_sig(self.sig.into_proto());
+        proto.set_pkey(self.pkey.into_proto());
+
         for input in &self.inputs {
             proto.inputs.push(input.into_proto());
         }
@@ -374,11 +375,10 @@ impl ProtoConvert for MicroBlockBody {
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let sig = if proto.has_sig() {
-            secure::Signature::from_proto(proto.get_sig())?
-        } else {
-            secure::Signature::zero()
-        };
+        let sig = secure::Signature::from_proto(proto.get_sig())?;
+
+        let pkey = secure::PublicKey::from_proto(proto.get_pkey())?;
+
         let mut inputs = Vec::<Hash>::with_capacity(proto.inputs.len());
         for input in proto.inputs.iter() {
             inputs.push(Hash::from_proto(input)?);
@@ -392,6 +392,7 @@ impl ProtoConvert for MicroBlockBody {
 
         Ok(MicroBlockBody {
             sig,
+            pkey,
             inputs,
             outputs,
         })
@@ -612,10 +613,10 @@ mod tests {
         let height: u64 = 0;
         let timestamp = SystemTime::now();
         let previous = Hash::digest(&"test".to_string());
-
-        let base = BaseBlockHeader::new(version, previous, height, 0, timestamp);
         let random = secure::make_VRF(&skey0, &Hash::digest("test"));
-        let block = KeyBlock::new(base, random);
+        let base = BaseBlockHeader::new(version, previous, height, 0, timestamp, random);
+        let block = KeyBlock::new(base);
+
         roundtrip(&block.header);
         roundtrip(&block.body);
         roundtrip(&block);
@@ -642,6 +643,7 @@ mod tests {
         let (skey0, _pkey0) = make_random_keys();
         let (skey1, pkey1) = make_random_keys();
         let (_skey2, pkey2) = make_random_keys();
+        let (skeypbc, pkeypbc) = make_secure_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -659,10 +661,21 @@ mod tests {
         let outputs1 = [output1];
         let gamma = gamma0 - gamma1;
 
-        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp);
+        let seed = mix(Hash::digest("random"), view_change);
+        let random = secure::make_VRF(&skeypbc, &seed);
+        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
         roundtrip(&base);
 
-        let block = MicroBlock::new(base, gamma.clone(), 0, &inputs1, &outputs1, None);
+        let block = MicroBlock::new(
+            base,
+            gamma.clone(),
+            0,
+            &inputs1,
+            &outputs1,
+            None,
+            pkeypbc,
+            &skeypbc,
+        );
         roundtrip(&block.header);
         roundtrip(&block.body);
         roundtrip(&block);

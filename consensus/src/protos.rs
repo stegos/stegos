@@ -189,9 +189,9 @@ mod tests {
         let timestamp = SystemTime::now();
         let previous = Hash::digest(&"test".to_string());
 
-        let base = BaseBlockHeader::new(version, previous, height, 0, timestamp);
         let random = secure::make_VRF(&skey0, &Hash::digest("test"));
-        let block = KeyBlock::new(base, random);
+        let base = BaseBlockHeader::new(version, previous, height, 0, timestamp, random);
+        let block = KeyBlock::new(base);
 
         //
         // KeyBlockProposal

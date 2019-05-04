@@ -129,11 +129,10 @@ mod test {
         let epoch: u64 = 1;
         let timestamp = SystemTime::now();
 
-        let base = BaseBlockHeader::new(version, previous, epoch, 0, timestamp);
-
         let random = secure::make_VRF(&skey0, &Hash::digest("random"));
+        let base = BaseBlockHeader::new(version, previous, epoch, 0, timestamp, random);
 
-        let block = KeyBlock::new(base, random);
+        let block = KeyBlock::new(base);
         Block::KeyBlock(block)
     }
     #[test]

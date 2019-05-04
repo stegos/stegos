@@ -138,24 +138,19 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
         epoch: u64,
         skey: secure::SecretKey,
         pkey: secure::PublicKey,
-        starting_view_change: u32,
         election_result: ElectionResult,
         validators: BTreeMap<secure::PublicKey, i64>,
     ) -> Self {
         assert!(validators.contains_key(&pkey));
         let state = ConsensusState::Propose;
-        debug!(
-            "New => {}({}:{})",
-            state.name(),
-            height,
-            starting_view_change
-        );
+        debug!("New => {}({}:{})", state.name(), height, 0);
         let prevotes: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();
         let precommits: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();
         let total_slots = validators.iter().map(|v| v.1).sum();
         let request = None;
         let proof = None;
         let locked_round = None;
+        let round = 0;
         let inbox: Vec<ConsensusMessage<Request, Proof>> = Vec::new();
         let outbox: Vec<ConsensusMessage<Request, Proof>> = Vec::new();
         Consensus {
@@ -166,7 +161,7 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
             state,
             election_result,
             height,
-            round: starting_view_change,
+            round,
             epoch,
             request,
             proof,

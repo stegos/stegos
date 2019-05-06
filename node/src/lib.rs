@@ -52,7 +52,6 @@ use serde_derive::Serialize;
 use std::collections::BTreeMap;
 use std::time::SystemTime;
 use std::time::{Duration, Instant};
-use stegos_blockchain::view_changes::ChainInfo;
 use stegos_blockchain::view_changes::ViewChangeProof;
 use stegos_blockchain::*;
 use stegos_consensus::optimistic::{ViewChangeCollector, ViewChangeMessage};

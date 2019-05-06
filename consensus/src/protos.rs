@@ -25,7 +25,6 @@ use stegos_serialization::traits::*;
 use crate::blockchain::*;
 use crate::message::*;
 use crate::optimistic::*;
-use stegos_blockchain::view_changes::*;
 use stegos_blockchain::*;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;

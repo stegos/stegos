@@ -19,41 +19,27 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-mod config;
-mod console;
-mod consts;
-mod generator;
-mod money;
+use stegos::*;
 
 use atty;
 use clap;
 use clap::{App, Arg, ArgMatches};
 use dirs;
-use failure::format_err;
 use failure::Error;
 use futures::Future;
 use hyper::server::Server;
 use hyper::service::service_fn_ok;
 use hyper::{Body, Request, Response};
 use log::*;
-use log4rs::append::console::ConsoleAppender;
-use log4rs::config::{Appender, Config as LogConfig, Logger, Root};
-use log4rs::encode::pattern::PatternEncoder;
-use log4rs::{Error as LogError, Handle as LogHandle};
 use prometheus::{self, Encoder};
-use resolve::{config::DnsConfig, record::Srv, resolver};
-use std::path::Path;
 use std::path::PathBuf;
 use std::process;
 use std::time::SystemTime;
 use stegos_api::WebSocketAPI;
-use stegos_blockchain::Block;
 use stegos_blockchain::Blockchain;
-use stegos_crypto::hash::Hash;
 use stegos_keychain::*;
 use stegos_network::Libp2pNetwork;
 use stegos_node::NodeService;
-use stegos_serialization::traits::*;
 use stegos_txpool::TransactionPoolService;
 use stegos_wallet::WalletService;
 use tokio::runtime::Runtime;
@@ -87,9 +73,8 @@ fn load_configuration_file(args: &ArgMatches<'_>) -> Result<config::Config, Erro
     Ok(Default::default())
 }
 
-fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
+pub fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
     let mut cfg = load_configuration_file(args)?;
-
     // Override global.chain via ENV.
     if let Ok(chain) = std::env::var("STEGOS_CHAIN") {
         cfg.general.chain = chain;
@@ -116,102 +101,6 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
     }
 
     Ok(cfg)
-}
-
-fn initialize_logger(cfg: &config::Config) -> Result<LogHandle, LogError> {
-    // Try to load log4rs config file
-    let path = Path::new(&cfg.general.log4rs_config);
-    if !cfg.general.log4rs_config.is_empty() && path.is_file() {
-        match log4rs::load_config_file(path, Default::default()) {
-            Ok(config) => return Ok(log4rs::init_config(config)?),
-            Err(e) => {
-                error!("Failed to read log4rs config file: {}", e);
-                println!("Failed to read log4rs config file: {}", e);
-            }
-        }
-    };
-
-    let stdout = ConsoleAppender::builder()
-        .encoder(Box::new(PatternEncoder::new(
-            "{d(%Y-%m-%d %H:%M:%S)(local)} {h({l})} [{M}] {m}{n}",
-        )))
-        .build();
-    let config = LogConfig::builder()
-        .appender(Appender::builder().build("stdout", Box::new(stdout)))
-        .logger(Logger::builder().build("stegos", LevelFilter::Info))
-        .logger(Logger::builder().build("stegos_blockchain", LevelFilter::Info))
-        .logger(Logger::builder().build("stegos_crypto", LevelFilter::Info))
-        .logger(Logger::builder().build("stegos_consensus", LevelFilter::Info))
-        .logger(Logger::builder().build("stegos_keychain", LevelFilter::Info))
-        .logger(Logger::builder().build("stegos_node", LevelFilter::Info))
-        .logger(Logger::builder().build("stegos_network", LevelFilter::Info))
-        .logger(Logger::builder().build("stegos_txpool", LevelFilter::Info))
-        .logger(Logger::builder().build("stegos_wallet", LevelFilter::Info))
-        .build(Root::builder().appender("stdout").build(LevelFilter::Warn))
-        .expect("console logger should never fail");
-
-    Ok(log4rs::init_config(config)?)
-}
-
-fn initialize_genesis(cfg: &config::Config) -> Result<Vec<Block>, Error> {
-    let (block1, block2): (&[u8], &[u8]) = match cfg.general.chain.as_ref() {
-        "dev" => (
-            include_bytes!("../chains/dev/genesis0.bin"),
-            include_bytes!("../chains/dev/genesis1.bin"),
-        ),
-        "testnet" => (
-            include_bytes!("../chains/testnet/genesis0.bin"),
-            include_bytes!("../chains/testnet/genesis1.bin"),
-        ),
-        "devnet" => (
-            include_bytes!("../chains/devnet/genesis0.bin"),
-            include_bytes!("../chains/devnet/genesis1.bin"),
-        ),
-        chain @ _ => {
-            return Err(format_err!("Unknown chain: {}", chain));
-        }
-    };
-    info!("Using genesis for '{}' chain", cfg.general.chain);
-    let mut blocks = Vec::<Block>::new();
-    for (i, block) in [block1.as_ref(), block2.as_ref()].iter().enumerate() {
-        let block = Block::from_buffer(&block)?;
-        let header = block.base_header();
-        info!(
-            "Block #{}: hash={}, version={}",
-            i,
-            Hash::digest(&block),
-            header.version,
-        );
-        blocks.push(block);
-    }
-    Ok(blocks)
-}
-
-fn resolve_pool(cfg: &mut config::Config) -> Result<(), Error> {
-    if cfg.network.seed_pool == "" {
-        return Ok(());
-    }
-
-    let config = DnsConfig::load_default()?;
-    let resolver = resolver::DnsResolver::new(config)?;
-
-    let rrs: Vec<Srv> = resolver.resolve_record(&cfg.network.seed_pool)?;
-
-    for r in rrs.iter() {
-        if let Ok(addrs) = resolver.resolve_host(&r.target) {
-            for a in addrs {
-                let maddr = format!("/ip4/{}/tcp/{}", a.to_string(), r.port);
-                // don't try to connect to ourselves or already configured seed nodes
-                if cfg.network.advertised_addresses.iter().all(|a| *a != maddr)
-                    && cfg.network.seed_nodes.iter().all(|a| *a != maddr)
-                {
-                    info!(target: "stegos_network::ncp", "Adding node from seed pool: {}", maddr);
-                    cfg.network.seed_nodes.push(maddr);
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 fn report_metrics(_req: Request<Body>) -> Response<Body> {

@@ -74,6 +74,9 @@ pub enum WalletRequest {
         amount: i64,
         comment: String,
     },
+    WaitForCommit {
+        tx_hash: Hash,
+    },
     Stake {
         amount: i64,
     },
@@ -99,7 +102,8 @@ pub enum WalletResponse {
         tx_hash: Hash,
         fee: i64,
     },
-    ValueShuffleStarted {},
+    ValueShuffleStarted {}, // TODO: Add info about valueshuffle session.
+    TransactionCommitted(TransactionCommitted),
     BalanceInfo {
         balance: i64,
     },
@@ -117,6 +121,16 @@ pub enum WalletResponse {
     Error {
         error: String,
     },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "result")]
+#[serde(rename_all = "snake_case")]
+pub enum TransactionCommitted {
+    // TODO: add info about rollback.
+    Committed {},
+    NotFoundInMempool {}, //TODO: replace, after persistent for all created transactions.
+    ConflictTransactionCommitted { conflicted_output: Hash },
 }
 
 ///

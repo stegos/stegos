@@ -29,6 +29,9 @@ mod error;
 mod transaction;
 mod valueshuffle;
 
+#[cfg(test)]
+mod tests;
+
 pub use crate::api::*;
 use crate::error::WalletError;
 use crate::transaction::*;
@@ -36,13 +39,14 @@ use crate::valueshuffle::ValueShuffle;
 use failure::Error;
 use futures::sync::mpsc::unbounded;
 use futures::sync::mpsc::UnboundedSender;
+use futures::sync::oneshot;
 use futures::Async;
 use futures::Future;
 use futures::Poll;
 use futures::Stream;
 use futures_stream_select_all_send::select_all;
 use log::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use stegos_blockchain::*;
 use stegos_crypto::curve1174::PublicKey;
 use stegos_crypto::hash::Hash;
@@ -107,6 +111,12 @@ pub struct WalletService {
     /// Node API.
     node: Node,
 
+    /// Map of inputs of transaction interests, that we wait for.
+    transactions_interest: HashMap<Hash, Hash>,
+
+    /// Set of unprocessed transactions, with pending sender.
+    unprocessed_transactions: HashMap<Hash, (Transaction, Vec<oneshot::Sender<WalletResponse>>)>,
+
     /// Triggered when state has changed.
     subscribers: Vec<UnboundedSender<WalletNotification>>,
 
@@ -141,6 +151,9 @@ impl WalletService {
             network.clone(),
             node.clone(),
         );
+
+        let transactions_interest = HashMap::new();
+        let unprocessed_transactions = HashMap::new();
 
         //
         // Subscriptions.
@@ -182,6 +195,8 @@ impl WalletService {
             node,
             subscribers,
             events,
+            transactions_interest,
+            unprocessed_transactions,
         };
 
         // Recover state.
@@ -196,7 +211,7 @@ impl WalletService {
 
     /// Send money.
     fn payment(
-        &self,
+        &mut self,
         recipient: &PublicKey,
         amount: i64,
         comment: String,
@@ -216,7 +231,27 @@ impl WalletService {
         let tx = PaymentTransaction::new(&self.keys.wallet_skey, &inputs, &outputs, gamma, fee)?;
         let tx_hash = Hash::digest(&tx);
         let fee = tx.fee;
-        self.node.send_transaction(tx.into())?;
+        let tx: Transaction = tx.into();
+        self.node.send_transaction(tx.clone())?;
+        //firstly check that no conflict input was found;
+        let mut conflict = false;
+        for input in tx.txins() {
+            if self.transactions_interest.contains_key(&input) {
+                error!("Conflict transaction found.");
+                conflict = true;
+                break;
+            }
+        }
+
+        if !conflict {
+            debug!("No conflict found, adding transaction into interest map.");
+            for input in tx.txins() {
+                assert!(self.transactions_interest.insert(*input, tx_hash).is_none())
+            }
+            self.unprocessed_transactions
+                .insert(tx_hash, (tx, Vec::new()));
+        }
+
         Ok((tx_hash, fee))
     }
 
@@ -352,6 +387,7 @@ impl WalletService {
         assert_eq!(self.epoch, epoch);
         let saved_balance = self.balance();
 
+        self.find_commited_txs(&inputs);
         for input in inputs {
             self.on_output_pruned(epoch, input);
         }
@@ -414,6 +450,55 @@ impl WalletService {
             }
         };
     }
+    fn wait_for_commit(&mut self, tx_hash: Hash, sender: oneshot::Sender<WalletResponse>) {
+        use std::collections::hash_map::Entry;
+        if let Entry::Occupied(mut o) = self.unprocessed_transactions.entry(tx_hash) {
+            debug!("Adding our sender to watcher: tx_hash = {}", tx_hash);
+            o.get_mut().1.push(sender);
+        } else {
+            debug!(
+                "Transaction was commited before, or not known to our wallet: tx_hash = {}",
+                tx_hash
+            );
+            let _ = sender.send(WalletResponse::TransactionCommitted(
+                TransactionCommitted::NotFoundInMempool {},
+            ));
+        }
+    }
+
+    fn find_commited_txs(&mut self, pruned_inputs: &[Output]) {
+        let hash_set: HashSet<Hash> = pruned_inputs.iter().map(Hash::digest).collect();
+        for input in &hash_set {
+            if let Some(tx_hash) = self.transactions_interest.get(input) {
+                let (tx, senders) = self
+                    .unprocessed_transactions
+                    .remove(tx_hash)
+                    .expect("Transaction not found in set.");
+
+                let mut conflict = false;
+                for input_hash in tx.txins() {
+                    self.transactions_interest.remove(input_hash).unwrap();
+                    if !hash_set.contains(input_hash) {
+                        conflict = true;
+                    }
+                }
+
+                let commited = if conflict {
+                    warn!("Conflicted transaction processed.");
+                    TransactionCommitted::Committed {}
+                } else {
+                    TransactionCommitted::ConflictTransactionCommitted {
+                        conflicted_output: *input,
+                    }
+                };
+                let msg = WalletResponse::TransactionCommitted(commited);
+                // send notification about committed transaction, drop errors if found.
+                senders
+                    .into_iter()
+                    .for_each(move |ch| drop(ch.send(msg.clone())));
+            }
+        }
+    }
 
     /// Called when UTXO is spent.
     fn on_output_pruned(&mut self, _epoch: u64, output: Output) {
@@ -421,6 +506,7 @@ impl WalletService {
             return;
         }
         let hash = Hash::digest(&output);
+
         match output {
             Output::PaymentOutput(o) => {
                 if let Ok(PaymentPayload { amount, data, .. }) =
@@ -509,6 +595,10 @@ impl Future for WalletService {
                                     error: format!("{}", e),
                                 },
                             },
+                            WalletRequest::WaitForCommit { tx_hash } => {
+                                self.wait_for_commit(tx_hash, tx);
+                                continue;
+                            }
                             WalletRequest::Stake { amount } => self.stake(amount).into(),
                             WalletRequest::Unstake { amount } => self.unstake(amount).into(),
                             WalletRequest::UnstakeAll {} => self.unstake_all().into(),

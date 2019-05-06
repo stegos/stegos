@@ -36,6 +36,7 @@ mod output;
 pub mod protos;
 mod storage;
 mod transaction;
+mod validation;
 pub mod view_changes;
 
 pub use crate::block::*;

@@ -28,7 +28,7 @@ use failure::Error;
 use log::{debug, info};
 use std::collections::HashMap;
 use stegos_blockchain::view_changes::*;
-use stegos_blockchain::{check_supermajority, Blockchain};
+use stegos_blockchain::{check_supermajority, Blockchain, ChainInfo, ValidatorId};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
 

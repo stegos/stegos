@@ -36,10 +36,6 @@ pub enum NodeTransactionError {
     TooLowFee(Hash, i64, i64),
     #[fail(display = "Transaction already exists in mempool: tx={}", _0)]
     AlreadyExists(Hash),
-    #[fail(display = "Missing transaction input: tx={}, utxo={}", _0, _1)]
-    MissingInput(Hash, Hash),
-    #[fail(display = "Output hash collision: tx={}, utxo={}", _0, _1)]
-    OutputHashCollision(Hash, Hash),
     #[fail(
         display = "Transaction is too large: tx={}, got_inout={}, max_inout={}",
         _0, _1, _2

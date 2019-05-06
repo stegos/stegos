@@ -22,7 +22,6 @@
 // SOFTWARE.
 
 use crate::block::*;
-use crate::check_multi_signature;
 use crate::config::*;
 use crate::election::ElectionInfo;
 use crate::election::{self, mix, ElectionResult};
@@ -34,15 +33,11 @@ use crate::multisignature::create_multi_signature;
 use crate::mvcc::MultiVersionedMap;
 use crate::output::*;
 use crate::storage::ListDb;
-use crate::view_changes::ChainInfo;
 use failure::Error;
 use log::*;
-use std::cmp::Ordering;
 use std::collections::BTreeMap;
-use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 use stegos_crypto::bulletproofs::fee_a;
-use stegos_crypto::bulletproofs::validate_range_proof;
 use stegos_crypto::curve1174::cpt::Pt;
 use stegos_crypto::curve1174::cpt::SecretKey;
 use stegos_crypto::curve1174::ecpt::ECp;
@@ -51,6 +46,48 @@ use stegos_crypto::curve1174::G;
 use stegos_crypto::hash::*;
 use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
+
+pub type ViewCounter = u32;
+pub type ValidatorId = u32;
+
+/// Information of current chain, that is used as proof of viewchange.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ChainInfo {
+    pub height: u64,
+    pub view_change: ViewCounter,
+    pub last_block: Hash,
+}
+
+impl ChainInfo {
+    /// Create ChainInfo from micro block.
+    /// ## Panics
+    /// if view_change is equal to 0
+    pub fn from_micro_block(block: &MicroBlock) -> Self {
+        assert_ne!(block.header.base.view_change, 0);
+        ChainInfo {
+            height: block.header.base.height,
+            view_change: block.header.base.view_change - 1,
+            last_block: block.header.base.previous,
+        }
+    }
+
+    /// Create ChainInfo from blockchain.
+    pub fn from_blockchain(blockchain: &Blockchain) -> Self {
+        ChainInfo {
+            height: blockchain.height(),
+            view_change: blockchain.view_change(),
+            last_block: blockchain.last_block_hash(),
+        }
+    }
+}
+
+impl Hashable for ChainInfo {
+    fn hash(&self, hasher: &mut Hasher) {
+        self.height.hash(hasher);
+        self.view_change.hash(hasher);
+        self.last_block.hash(hasher);
+    }
+}
 
 /// A helper to find UTXO in this blockchain.
 #[derive(Debug, Clone)]
@@ -63,15 +100,15 @@ struct OutputKey {
 
 /// A helper to store the global monetary balance in MultiVersionedMap.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Balance {
+pub(crate) struct Balance {
     /// The total sum of money created.
-    created: ECp,
+    pub created: ECp,
     /// The total sum of money burned.
-    burned: ECp,
+    pub burned: ECp,
     /// The total sum of gamma adjustments.
-    gamma: Fr,
+    pub gamma: Fr,
     /// The total sum of monetary adjustments.
-    monetary_adjustment: i64,
+    pub monetary_adjustment: i64,
 }
 
 type BlockByHashMap = MultiVersionedMap<Hash, u64, u64>;
@@ -404,7 +441,7 @@ impl Blockchain {
     }
 
     /// Return leader public key for specific view_change number.
-    pub fn select_leader(&self, view_change: u32) -> secure::PublicKey {
+    pub fn select_leader(&self, view_change: ViewCounter) -> secure::PublicKey {
         self.election_result.select_leader(view_change)
     }
 
@@ -462,27 +499,14 @@ impl Blockchain {
         self.epoch
     }
 
-    /// Check that the stake can be unstaked.
-    pub fn validate_staking_balance<'a, StakeIter>(
-        &self,
-        staking_balance: StakeIter,
-    ) -> Result<(), BlockchainError>
-    where
-        StakeIter: Iterator<Item = (&'a secure::PublicKey, &'a i64)>,
-    {
-        for (validator_pkey, balance) in staking_balance {
-            let (active_balance, expired_balance) = self.escrow.get(validator_pkey, self.epoch);
-            let expected_balance = active_balance + expired_balance + balance;
-            if expected_balance < active_balance {
-                return Err(BlockchainError::StakeIsLocked(
-                    *validator_pkey,
-                    expected_balance,
-                    active_balance,
-                ));
-            }
-        }
-
-        Ok(())
+    ///
+    /// Get staked value for validator.
+    ///
+    /// Returns (active_balance, expired_balance) stake.
+    ///
+    #[inline]
+    pub(crate) fn get_stake(&self, validator_pkey: &secure::PublicKey) -> (i64, i64) {
+        self.escrow.get(validator_pkey, self.epoch)
     }
 
     /// Return information about escrow.
@@ -493,7 +517,7 @@ impl Blockchain {
 
     /// Returns balance.
     #[inline]
-    fn balance(&self) -> &Balance {
+    pub(crate) fn balance(&self) -> &Balance {
         &self.balance.get(&()).unwrap()
     }
 
@@ -544,123 +568,6 @@ impl Blockchain {
         //
         self.register_key_block(block);
 
-        Ok(())
-    }
-
-    ///
-    /// Validate sealed key block.
-    ///
-    /// # Arguments
-    ///
-    /// * `block` - block to validate.
-    /// * `is_proposal` - don't check for the supermajority of votes.
-    ///                          Used to validating block proposals.
-    ///
-    pub fn validate_key_block(&self, block: &KeyBlock, is_proposal: bool) -> Result<(), Error> {
-        let height = block.header.base.height;
-        let block_hash = Hash::digest(&block);
-        debug!(
-            "Validating a key block: height={}, block={}",
-            height, &block_hash
-        );
-
-        // Check block version.
-        if block.header.base.version != VERSION {
-            return Err(BlockError::InvalidBlockVersion(
-                height,
-                block_hash,
-                VERSION,
-                block.header.base.version,
-            )
-            .into());
-        }
-
-        // Check height.
-        if block.header.base.height != self.height {
-            return Err(BlockError::OutOfOrderBlock(
-                block_hash,
-                self.height,
-                block.header.base.height,
-            )
-            .into());
-        }
-
-        // Check previous hash.
-        if self.height > 0 {
-            let previous_hash = self.last_block_hash();
-            if previous_hash != block.header.base.previous {
-                return Err(BlockError::InvalidPreviousHash(
-                    height,
-                    block_hash,
-                    block.header.base.previous,
-                    previous_hash,
-                )
-                .into());
-            }
-        }
-
-        // Check new hash.
-        if let Some(_) = self.block_by_hash.get(&block_hash) {
-            return Err(BlockError::BlockHashCollision(height, block_hash).into());
-        }
-
-        // skip leader selection and signature checking for genesis block.
-        if self.epoch > 0 {
-            // Skip view change check, just check supermajority.
-            let leader = self.select_leader(block.header.base.view_change);
-            debug!(
-                "Validating VRF: leader={}, round={}",
-                leader, block.header.base.view_change
-            );
-            let seed = mix(self.last_random(), block.header.base.view_change);
-            if !secure::validate_VRF_source(&block.header.base.random, &leader, &seed) {
-                return Err(BlockError::IncorrectRandom(height, block_hash).into());
-            }
-
-            // Currently macro block consensus uses public key as peer id.
-            // This adaptor allows converting PublicKey into integer identifier.
-            let validators_map: HashMap<secure::PublicKey, u32> = self
-                .validators()
-                .iter()
-                .enumerate()
-                .map(|(id, (pk, _))| (*pk, id as u32))
-                .collect();
-
-            if let Some(leader_id) = validators_map.get(&leader) {
-                // bit of leader should be always set.
-                if !block.body.multisigmap.contains(*leader_id as usize) {
-                    return Err(BlockError::NoLeaderSignatureFound(height, block_hash).into());
-                }
-            } else {
-                return Err(BlockError::LeaderIsNotValidator(height, block_hash).into());
-            }
-
-            // checks that proposal is signed only by leader.
-            if is_proposal {
-                if block.body.multisigmap.len() != 1 {
-                    return Err(
-                        BlockError::MoreThanOneSignatureAtPropose(height, block_hash).into(),
-                    );
-                }
-                if let Err(_e) = secure::check_hash(&block_hash, &block.body.multisig, &leader) {
-                    return Err(BlockError::InvalidLeaderSignature(height, block_hash).into());
-                }
-            } else {
-                check_multi_signature(
-                    &block_hash,
-                    &block.body.multisig,
-                    &block.body.multisigmap,
-                    self.validators(),
-                    self.total_slots(),
-                )
-                .map_err(|e| BlockError::InvalidBlockSignature(e, height, block_hash))?;
-            }
-        }
-
-        debug!(
-            "The key block is valid: height={}, block={}",
-            height, &block_hash
-        );
         Ok(())
     }
 
@@ -755,275 +662,6 @@ impl Blockchain {
         let (inputs, outputs) = self.register_micro_block(block, timestamp)?;
 
         Ok((inputs, outputs))
-    }
-
-    ///
-    /// Validate sealed micro block.
-    ///
-    /// # Arguments
-    ///
-    /// * `block` - block to validate.
-    /// * `is_proposal` - don't check for the supermajority of votes.
-    ///                          Used to validating block proposals.
-    /// * `timestamp` - current time.
-    ///                         Used to validating escrow.
-    ///
-    pub fn validate_micro_block(
-        &self,
-        block: &MicroBlock,
-        _timestamp: SystemTime,
-    ) -> Result<(), Error> {
-        let height = block.header.base.height;
-        let block_hash = Hash::digest(&block);
-        debug!(
-            "Validating a micro block: height={}, block={}",
-            height, &block_hash
-        );
-
-        // Check block version.
-        if block.header.base.version != VERSION {
-            return Err(BlockError::InvalidBlockVersion(
-                height,
-                block_hash,
-                block.header.base.version,
-                VERSION,
-            )
-            .into());
-        }
-
-        // Check height.
-        if height != self.height {
-            return Err(BlockError::OutOfOrderBlock(block_hash, height, self.height).into());
-        }
-
-        // Check previous hash.
-        if self.height > 0 {
-            let previous_hash = self.last_block_hash();
-            if previous_hash != block.header.base.previous {
-                return Err(BlockError::InvalidPreviousHash(
-                    height,
-                    block_hash,
-                    block.header.base.previous,
-                    previous_hash,
-                )
-                .into());
-            }
-        }
-
-        // Check new hash.
-        if let Some(_) = self.block_by_hash.get(&block_hash) {
-            return Err(BlockError::BlockHashCollision(height, block_hash).into());
-        }
-
-        // Check signature (exclude epoch == 0 for genesis).
-        if self.epoch > 0 {
-            let leader = match block.header.base.view_change.cmp(&self.view_change()) {
-                Ordering::Equal => self.leader(),
-                Ordering::Greater => {
-                    let chain = ChainInfo::from_micro_block(&block);
-                    match block.header.proof {
-                        Some(ref proof) => {
-                            if let Err(e) = proof.validate(&chain, &self) {
-                                return Err(BlockError::InvalidViewChangeProof(
-                                    height,
-                                    block_hash,
-                                    proof.clone(),
-                                    e,
-                                )
-                                .into());
-                            }
-                            self.select_leader(block.header.base.view_change)
-                        }
-                        _ => {
-                            return Err(BlockError::NoProofWasFound(
-                                height,
-                                block_hash,
-                                block.header.base.view_change,
-                                self.view_change(),
-                            )
-                            .into());
-                        }
-                    }
-                }
-                Ordering::Less => {
-                    return Err(BlockError::InvalidViewChange(
-                        height,
-                        block_hash,
-                        block.header.base.view_change,
-                        self.view_change(),
-                    )
-                    .into());
-                }
-            };
-            if leader != block.body.pkey {
-                return Err(BlockError::DifferentPublicKey(leader, block.body.pkey).into());
-            }
-            let seed = mix(self.last_random(), block.header.base.view_change);
-            if !secure::validate_VRF_source(&block.header.base.random, &leader, &seed) {
-                return Err(BlockError::IncorrectRandom(height, block_hash).into());
-            }
-        }
-
-        if let Err(_e) = secure::check_hash(&block_hash, &block.body.sig, &block.body.pkey) {
-            return Err(BlockError::InvalidLeaderSignature(height, block_hash).into());
-        }
-
-        let mut burned = ECp::inf();
-        let mut created = ECp::inf();
-        let mut staking_balance: HashMap<secure::PublicKey, i64> = HashMap::new();
-
-        //
-        // Validate inputs.
-        //
-        let mut hasher = Hasher::new();
-        let inputs_count: u64 = block.body.inputs.len() as u64;
-        inputs_count.hash(&mut hasher);
-        let mut input_set: HashSet<Hash> = HashSet::new();
-        for input_hash in block.body.inputs.iter() {
-            let input = match self.output_by_hash(input_hash)? {
-                Some(input) => input,
-                None => {
-                    return Err(
-                        BlockError::MissingBlockInput(height, block_hash, *input_hash).into(),
-                    );
-                }
-            };
-            // Check for the duplicate input.
-            if !input_set.insert(*input_hash) {
-                return Err(
-                    BlockError::DuplicateBlockInput(height, block_hash, *input_hash).into(),
-                );
-            }
-            // Check UTXO.
-            match input {
-                Output::PaymentOutput(o) => {
-                    burned += Pt::decompress(o.proof.vcmt)?;
-                }
-                Output::StakeOutput(o) => {
-                    // Validate staking signature.
-                    o.validate_pkey()?;
-                    burned += fee_a(o.amount);
-                    // Validate staking balance.
-                    let entry = staking_balance.entry(o.validator).or_insert(0);
-                    *entry -= o.amount;
-                }
-            }
-            input_hash.hash(&mut hasher);
-        }
-        drop(input_set);
-        let inputs_range_hash = hasher.result();
-        if block.header.inputs_range_hash != inputs_range_hash {
-            let expected = block.header.inputs_range_hash.clone();
-            let got = inputs_range_hash;
-            return Err(
-                BlockError::InvalidBlockInputsHash(height, block_hash, expected, got).into(),
-            );
-        }
-        //
-        // Validate outputs.
-        //
-        let mut output_set: HashSet<Hash> = HashSet::new();
-        for (output, _path) in block.body.outputs.leafs() {
-            // Check that hash is unique.
-            let output_hash = Hash::digest(output.as_ref());
-            if let Some(_) = self.output_by_hash.get(&output_hash) {
-                return Err(
-                    BlockError::OutputHashCollision(height, block_hash, output_hash).into(),
-                );
-            }
-            // Check for the duplicate output.
-            if !output_set.insert(output_hash) {
-                return Err(
-                    BlockError::DuplicateBlockOutput(height, block_hash, output_hash).into(),
-                );
-            }
-            // Check UTXO.
-            match output.as_ref() {
-                Output::PaymentOutput(o) => {
-                    // Validate bullet proofs.
-                    if !validate_range_proof(&o.proof) {
-                        return Err(OutputError::InvalidBulletProof(output_hash).into());
-                    }
-                    // Validate payload.
-                    if o.payload.ctxt.len() != PAYMENT_PAYLOAD_LEN {
-                        return Err(OutputError::InvalidPayloadLength(
-                            output_hash,
-                            PAYMENT_PAYLOAD_LEN,
-                            o.payload.ctxt.len(),
-                        )
-                        .into());
-                    }
-                    // Update balance.
-                    created += Pt::decompress(o.proof.vcmt)?;
-                }
-                Output::StakeOutput(o) => {
-                    // Validate staking signature.
-                    o.validate_pkey()?;
-                    // Validate payload.
-                    if o.payload.ctxt.len() != STAKE_PAYLOAD_LEN {
-                        return Err(OutputError::InvalidPayloadLength(
-                            output_hash,
-                            STAKE_PAYLOAD_LEN,
-                            o.payload.ctxt.len(),
-                        )
-                        .into());
-                    }
-                    // Validate amount.
-                    if o.amount <= 0 {
-                        return Err(OutputError::InvalidStake(output_hash).into());
-                    }
-                    // Validated staking balance.
-                    let entry = staking_balance.entry(o.validator).or_insert(0);
-                    *entry += o.amount;
-                    // Update balance.
-                    created += fee_a(o.amount);
-                }
-            }
-        }
-        drop(output_set);
-        if block.header.outputs_range_hash != *block.body.outputs.roothash() {
-            let expected = block.header.outputs_range_hash.clone();
-            let got = block.body.outputs.roothash().clone();
-            return Err(
-                BlockError::InvalidBlockOutputsHash(height, block_hash, expected, got).into(),
-            );
-        }
-
-        //
-        // Validate block monetary balance.
-        //
-        if fee_a(block.header.monetary_adjustment) + burned - created != block.header.gamma * (*G) {
-            return Err(BlockError::InvalidBlockBalance(height, block_hash).into());
-        }
-
-        //
-        // Validate the global monetary balance.
-        //
-        let orig_balance = self.balance();
-        let balance = Balance {
-            created: orig_balance.created + created,
-            burned: orig_balance.burned + burned,
-            gamma: orig_balance.gamma + block.header.gamma,
-            monetary_adjustment: orig_balance.monetary_adjustment
-                + block.header.monetary_adjustment,
-        };
-        if fee_a(balance.monetary_adjustment) + balance.burned - balance.created
-            != balance.gamma * (*G)
-        {
-            panic!(
-                "Invalid global monetary balance: height={}, block={}",
-                height, &block_hash
-            );
-        }
-
-        // Checks staking balance.
-        self.validate_staking_balance(staking_balance.iter())?;
-
-        debug!(
-            "The micro block is valid: height={}, block={}",
-            height, &block_hash
-        );
-        Ok(())
     }
 
     //

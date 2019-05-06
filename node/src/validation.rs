@@ -26,14 +26,12 @@ use crate::error::*;
 use crate::mempool::Mempool;
 use failure::Error;
 use log::*;
-use std::collections::HashMap;
 use std::time::SystemTime;
-use stegos_blockchain::Blockchain;
 use stegos_blockchain::KeyBlock;
 use stegos_blockchain::Output;
 use stegos_blockchain::Transaction;
+use stegos_blockchain::{Blockchain, TransactionError};
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure;
 
 ///
 /// Validate transaction.
@@ -42,28 +40,10 @@ pub(crate) fn validate_transaction(
     tx: &Transaction,
     mempool: &Mempool,
     chain: &Blockchain,
-    _timestamp: SystemTime,
+    timestamp: SystemTime,
     payment_fee: i64,
     stake_fee: i64,
 ) -> Result<(), Error> {
-    //
-    // Validation checklist:
-    //
-    // - TX hash is unique
-    // - Fee is acceptable.
-    // - At least one input or output is present.
-    // - Inputs can be resolved.
-    // - Inputs have not been spent by blocks.
-    // - Inputs are not claimed by other transactions in mempool.
-    // - Inputs are unique.
-    // - Outputs are unique.
-    // - Outputs don't overlap with other transactions in mempool.
-    // - Bulletpoofs/amounts are valid.
-    // - UTXO-specific checks.
-    // - Monetary balance is valid.
-    // - Signature is valid.
-    //
-
     let tx_hash = Hash::digest(tx);
 
     // Check that transaction exists in the mempool.
@@ -83,55 +63,28 @@ pub(crate) fn validate_transaction(
         return Err(NodeTransactionError::TooLowFee(tx_hash, min_fee, tx.body.fee).into());
     }
 
-    let mut staking_balance: HashMap<secure::PublicKey, i64> = HashMap::new();
+    // TODO: allow transaction with overlapping inputs/outputs in mempool.
+    // See https://github.com/stegos/stegos/issues/826.
 
-    // Validate inputs.
-    let mut inputs: Vec<Output> = Vec::new();
+    // Check for overlapping inputs in mempool.
     for input_hash in &tx.body.txins {
-        // Check that the input can be resolved.
-        // TODO: check outputs created by mempool transactions.
-        let input = match chain.output_by_hash(input_hash)? {
-            Some(input) => input,
-            None => {
-                return Err(NodeTransactionError::MissingInput(tx_hash, input_hash.clone()).into());
-            }
-        };
-
         // Check that the input is not claimed by other transactions.
         if mempool.contains_input(input_hash) {
-            return Err(NodeTransactionError::MissingInput(tx_hash, input_hash.clone()).into());
+            return Err(TransactionError::MissingInput(tx_hash, input_hash.clone()).into());
         }
-
-        // Check staking.
-        if let Output::StakeOutput(ref o) = input {
-            let entry = staking_balance.entry(o.validator).or_insert(0);
-            *entry -= o.amount;
-        }
-
-        inputs.push(input);
     }
 
-    // Check outputs.
+    // Check for overlapping outputs in mempool.
     for output in &tx.body.txouts {
         let output_hash = Hash::digest(output);
-
         // Check that the output is unique and don't overlap with other transactions.
-        if mempool.contains_output(&output_hash) || chain.contains_output(&output_hash) {
-            return Err(NodeTransactionError::OutputHashCollision(tx_hash, output_hash).into());
-        }
-
-        // Check stakes.
-        if let Output::StakeOutput(ref o) = output {
-            let entry = staking_balance.entry(o.validator).or_insert(0);
-            *entry += o.amount;
+        if mempool.contains_output(&output_hash) {
+            return Err(TransactionError::OutputHashCollision(tx_hash, output_hash).into());
         }
     }
 
-    // Check the monetary balance, Bulletpoofs/amounts and signature.
-    tx.validate(&inputs)?;
-
-    // Checks staking balance.
-    chain.validate_staking_balance(staking_balance.iter())?;
+    // Validate transaction.
+    chain.validate_tx(&tx, timestamp)?;
 
     Ok(())
 }
@@ -305,8 +258,8 @@ mod test {
             let tx = Transaction::new(&skey, &[input], &[output], outputs_gamma, fee).unwrap();
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect_err("transaction is not valid");
-            match e.downcast::<NodeTransactionError>().unwrap() {
-                NodeTransactionError::MissingInput(_tx_hash, hash) => {
+            match e.downcast::<TransactionError>().unwrap() {
+                TransactionError::MissingInput(_tx_hash, hash) => {
                     assert_eq!(hash, missing);
                 }
                 _ => panic!(),
@@ -345,8 +298,8 @@ mod test {
             };
             let e = validate_transaction(&tx2, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect_err("transaction is not valid");
-            match e.downcast::<NodeTransactionError>().expect("proper error") {
-                NodeTransactionError::MissingInput(_tx_hash, hash) => {
+            match e.downcast::<TransactionError>().expect("proper error") {
+                TransactionError::MissingInput(_tx_hash, hash) => {
                     assert_eq!(hash, input_hashes[0]);
                 }
                 _ => panic!(),
@@ -465,8 +418,8 @@ mod test {
             let tx = Transaction::unchecked(&skey, &inputs, &outputs, outputs_gamma, fee).unwrap();
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect_err("transaction is not valid");
-            match e.downcast::<NodeTransactionError>().expect("proper error") {
-                NodeTransactionError::OutputHashCollision(_tx_hash, hash) => {
+            match e.downcast::<TransactionError>().expect("proper error") {
+                TransactionError::OutputHashCollision(_tx_hash, hash) => {
                     assert_eq!(hash, output_hashes[0]);
                 }
                 _ => panic!(),
@@ -514,8 +467,8 @@ mod test {
                 .unwrap();
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect_err("transaction is not valid");
-            match e.downcast::<NodeTransactionError>().expect("proper error") {
-                NodeTransactionError::OutputHashCollision(_tx_hash, hash) => {
+            match e.downcast::<TransactionError>().expect("proper error") {
+                TransactionError::OutputHashCollision(_tx_hash, hash) => {
                     assert_eq!(hash, Hash::digest(&output));
                 }
                 _ => panic!(),

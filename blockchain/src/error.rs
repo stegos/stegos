@@ -41,6 +41,27 @@ pub enum BlockchainError {
     StakeIsLocked(secure::PublicKey, i64, i64),
 }
 
+/// Transaction errors.
+#[derive(Debug, Fail)]
+pub enum TransactionError {
+    #[fail(display = "Invalid signature: tx={}", _0)]
+    InvalidSignature(Hash),
+    #[fail(display = "Invalid monetary balance: tx={}", _0)]
+    InvalidMonetaryBalance(Hash),
+    #[fail(display = "Negative fee: tx={}", _0)]
+    NegativeFee(Hash),
+    #[fail(display = "No inputs: tx={}", _0)]
+    NoInputs(Hash),
+    #[fail(display = "Missing transaction input: tx={}, utxo={}", _0, _1)]
+    MissingInput(Hash, Hash),
+    #[fail(display = "Duplicate input: tx={}, utxo={}", _0, _1)]
+    DuplicateInput(Hash, Hash),
+    #[fail(display = "Duplicate output: tx={}, utxo={}", _0, _1)]
+    DuplicateOutput(Hash, Hash),
+    #[fail(display = "Output hash collision: tx={}, utxo={}", _0, _1)]
+    OutputHashCollision(Hash, Hash),
+}
+
 #[derive(Debug, Fail)]
 pub enum MultisignatureError {
     #[fail(

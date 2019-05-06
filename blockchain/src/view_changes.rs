@@ -19,47 +19,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::block::MicroBlock;
-use crate::blockchain::Blockchain;
+use crate::blockchain::{Blockchain, ChainInfo};
 use crate::error::MultisignatureError;
 use crate::multisignature::{check_multi_signature, create_multi_signature_index};
 use bitvector::BitVector;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure;
-
-pub type ViewCounter = u32;
-pub type ValidatorId = u32;
-
-/// Information of current chain, that is used as proof of viewchange.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ChainInfo {
-    pub height: u64,
-    pub view_change: ViewCounter,
-    pub last_block: Hash,
-}
-
-impl ChainInfo {
-    /// Create ChainInfo from micro block.
-    /// ## Panics
-    /// if view_change is equal to 0
-    pub fn from_micro_block(block: &MicroBlock) -> Self {
-        assert_ne!(block.header.base.view_change, 0);
-        ChainInfo {
-            height: block.header.base.height,
-            view_change: block.header.base.view_change - 1,
-            last_block: block.header.base.previous,
-        }
-    }
-
-    /// Create ChainInfo from blockchain.
-    pub fn from_blockchain(blockchain: &Blockchain) -> Self {
-        ChainInfo {
-            height: blockchain.height(),
-            view_change: blockchain.view_change(),
-            last_block: blockchain.last_block_hash(),
-        }
-    }
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ViewChangeProof {
@@ -90,14 +55,6 @@ impl ViewChangeProof {
             blockchain.total_slots(),
         )?;
         Ok(())
-    }
-}
-
-impl Hashable for ChainInfo {
-    fn hash(&self, hasher: &mut Hasher) {
-        self.height.hash(hasher);
-        self.view_change.hash(hasher);
-        self.last_block.hash(hasher);
     }
 }
 

@@ -39,7 +39,6 @@ use log::*;
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use stegos_crypto::bulletproofs::fee_a;
-use stegos_crypto::curve1174::cpt::Pt;
 use stegos_crypto::curve1174::cpt::SecretKey;
 use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
@@ -330,24 +329,15 @@ impl Blockchain {
     }
 
     /// Helper for recover_wallet()
-    fn check_wallet_output(&self, skey: &SecretKey, output: &Output) -> bool {
+    fn check_wallet_output(&self, _skey: &SecretKey, output: &Output) -> bool {
         let output_hash = Hash::digest(&output);
         if !self.contains_output(&output_hash) {
             return false; // Spent.
         }
-        match output {
-            Output::PaymentOutput(o) => {
-                if let Ok(_payload) = o.decrypt_payload(skey) {
-                    return true;
-                }
-            }
-            Output::StakeOutput(o) => {
-                if let Ok(_payload) = o.decrypt_payload(skey) {
-                    return true;
-                }
-            }
+        match output.validate() {
+            Err(_) => false,
+            Ok(_) => true,
         }
-        false
     }
 
     ///
@@ -686,7 +676,7 @@ impl Blockchain {
             &inputs,
             output_keys,
             &outputs,
-            block.header.gamma,
+            &block.header.gamma,
             block.header.block_reward,
             timestamp,
         );
@@ -770,7 +760,7 @@ impl Blockchain {
         inputs: &[Output],
         output_keys: Vec<OutputKey>,
         outputs: &[Output],
-        gamma: Fr,
+        gamma: &Fr,
         block_reward: i64,
         _timestamp: SystemTime,
     ) {
@@ -803,16 +793,18 @@ impl Blockchain {
                 );
             }
 
+            input.validate().expect("valid UTXO");
+            burned += input
+                .pedersen_commitment()
+                .expect("valid Pedersen commitment");
+
             match input {
-                Output::PaymentOutput(o) => {
-                    burned += Pt::decompress(o.proof.vcmt).expect("Invalid pedersen commitment");
-                }
+                Output::PaymentOutput(_o) => {}
+                Output::PublicPaymentOutput(_o) => {}
                 Output::StakeOutput(o) => {
-                    o.validate_pkey().expect("Invalid validator pkey");
                     self.escrow
                         .unstake(version, o.validator, input_hash.clone(), self.epoch);
                     assert_eq!(self.escrow.current_version(), version);
-                    burned += fee_a(o.amount);
                 }
             }
 
@@ -840,13 +832,15 @@ impl Blockchain {
             }
             assert_eq!(self.output_by_hash.current_version(), version);
 
+            output.validate().expect("valid UTXO");
+            created += output
+                .pedersen_commitment()
+                .expect("valid Pedersen commitment");
+
             match output {
-                Output::PaymentOutput(o) => {
-                    created += Pt::decompress(o.proof.vcmt).expect("Invalid pedersen commitment");
-                }
+                Output::PaymentOutput(_o) => {}
+                Output::PublicPaymentOutput(_o) => {}
                 Output::StakeOutput(o) => {
-                    o.validate_pkey().expect("Invalid validator pkey");
-                    created += fee_a(o.amount);
                     self.escrow.stake(
                         version,
                         o.validator,
@@ -882,10 +876,12 @@ impl Blockchain {
         let balance = Balance {
             created: orig_balance.created + created,
             burned: orig_balance.burned + burned,
-            gamma: orig_balance.gamma + gamma,
+            gamma: orig_balance.gamma.clone() + gamma.clone(),
             block_reward: orig_balance.block_reward + block_reward,
         };
-        if fee_a(balance.block_reward) + balance.burned - balance.created != balance.gamma * (*G) {
+        if fee_a(balance.block_reward) + balance.burned - balance.created
+            != balance.gamma.clone() * (*G)
+        {
             panic!(
                 "Invalid global monetary balance: height={}, block={}",
                 height, &block_hash
@@ -966,7 +962,7 @@ impl Blockchain {
             &inputs,
             output_keys,
             &outputs,
-            gamma,
+            &gamma,
             block.coinbase.block_reward,
             timestamp,
         );
@@ -1120,14 +1116,16 @@ pub fn create_fake_micro_block(
             .output_by_hash(&input_hash)
             .expect("no disk errors")
             .expect("exists");
+        input.validate().expect("Valid input");
         match input {
             Output::PaymentOutput(ref o) => {
                 let payload = o.decrypt_payload(&keys.wallet_skey).unwrap();
                 monetary_balance += payload.amount;
             }
+            Output::PublicPaymentOutput(ref o) => {
+                monetary_balance += o.amount;
+            }
             Output::StakeOutput(ref o) => {
-                o.validate_pkey().expect("valid network pkey signature");
-                o.decrypt_payload(&keys.wallet_skey).unwrap();
                 staking_balance += o.amount;
             }
         }
@@ -1139,13 +1137,8 @@ pub fn create_fake_micro_block(
     let mut outputs_gamma = Fr::zero();
     // Payments.
     if monetary_balance > 0 {
-        let (output, output_gamma) = PaymentOutput::new(
-            timestamp,
-            &keys.wallet_skey,
-            &keys.wallet_pkey,
-            monetary_balance,
-        )
-        .expect("keys are valid");
+        let (output, output_gamma) =
+            PaymentOutput::new(&keys.wallet_pkey, monetary_balance).expect("keys are valid");
         outputs.push(Output::PaymentOutput(output));
         outputs_gamma += output_gamma;
     }
@@ -1153,8 +1146,6 @@ pub fn create_fake_micro_block(
     // Stakes.
     if staking_balance > 0 {
         let output = StakeOutput::new(
-            timestamp,
-            &keys.wallet_skey,
             &keys.wallet_pkey,
             &keys.network_pkey,
             &keys.network_skey,
@@ -1170,7 +1161,7 @@ pub fn create_fake_micro_block(
         &keys.wallet_skey,
         &inputs,
         &outputs,
-        outputs_gamma,
+        &outputs_gamma,
         block_fee,
     )
     .expect("Invalid keys");
@@ -1182,8 +1173,6 @@ pub fn create_fake_micro_block(
         base,
         None,
         transactions,
-        timestamp,
-        &keys.wallet_skey,
         &keys.wallet_pkey,
         keys.network_pkey,
         block_reward,

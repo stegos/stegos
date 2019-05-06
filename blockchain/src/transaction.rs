@@ -21,15 +21,19 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::error::TransactionError;
 use crate::output::*;
 use failure::Error;
-use std::time::SystemTime;
 use stegos_crypto::curve1174::cpt::{
-    sign_hash, sign_hash_with_kval, Pt, PublicKey, SchnorrSig, SecretKey,
+    sign_hash, sign_hash_with_kval, PublicKey, SchnorrSig, SecretKey,
 };
 use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
+use stegos_crypto::pbc::secure::sign_hash as network_sign_hash;
+use stegos_crypto::pbc::secure::PublicKey as NetworkPublicKey;
+use stegos_crypto::pbc::secure::SecretKey as NetworkSecretKey;
+use stegos_crypto::pbc::secure::Signature as BlsSignature;
 
 /// Transaction body.
 #[derive(Clone, Debug)]
@@ -68,7 +72,7 @@ impl Hashable for TransactionBody {
     }
 }
 
-/// Transaction.
+/// PaymentTransaction.
 #[derive(Clone, Debug)]
 pub struct Transaction {
     /// Transaction body.
@@ -80,6 +84,138 @@ pub struct Transaction {
 impl Hashable for Transaction {
     fn hash(&self, state: &mut Hasher) {
         self.body.hash(state);
+    }
+}
+
+/// Transaction body.
+#[derive(Clone, Debug)]
+pub struct RestakeTransactionBody {
+    /// List of inputs.
+    pub txins: Vec<Hash>,
+    /// List of outputs.
+    pub txouts: Vec<Output>,
+}
+
+impl Hashable for RestakeTransactionBody {
+    fn hash(&self, state: &mut Hasher) {
+        // Sign txins.
+        let txins_count: u64 = self.txins.len() as u64;
+        txins_count.hash(state);
+        for txin_hash in &self.txins {
+            txin_hash.hash(state);
+        }
+
+        // Sign txouts.
+        let txouts_count: u64 = self.txouts.len() as u64;
+        txouts_count.hash(state);
+        for txout in &self.txouts {
+            txout.hash(state);
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct RestakeTransaction {
+    // Transaction body.
+    pub body: RestakeTransactionBody,
+    // Validator public key
+    pub sig: BlsSignature,
+}
+
+impl Hashable for RestakeTransaction {
+    fn hash(&self, state: &mut Hasher) {
+        self.body.hash(state);
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum XTransaction {
+    Transaction(Transaction),
+    RestakeTransaction(RestakeTransaction),
+}
+
+impl RestakeTransaction {
+    pub fn new(
+        inputs: &[Output],
+        outputs: &[Output],
+        pkey: &NetworkPublicKey,
+        skey: &NetworkSecretKey,
+    ) -> Result<RestakeTransaction, Error> {
+        let mut txins: Vec<Hash> = Vec::with_capacity(inputs.len());
+        let mut inp_amt = 0;
+        let mut owner = None;
+        for txin in inputs {
+            txin.validate()?;
+            match txin {
+                Output::PaymentOutput(_) => {
+                    return Err(TransactionError::InvalidRestakingInput.into());
+                }
+                Output::PublicPaymentOutput(_) => {}
+                Output::StakeOutput(o) => {
+                    inp_amt += o.amount;
+                    if *pkey != o.validator {
+                        return Err(TransactionError::RestakingValidatorKeyMismatch.into());
+                    }
+                    match owner {
+                        None => {
+                            owner = Some(o.recipient_pkey()?);
+                        }
+                        Some(owner_ecp) => {
+                            if owner_ecp != o.recipient_pkey()? {
+                                return Err(TransactionError::MixedRestakingOwners.into());
+                            }
+                        }
+                    }
+                    let hash = Hasher::digest(txin);
+                    txins.push(hash);
+                }
+            }
+        }
+        let owner = match owner {
+            Some(o) => o,
+            None => {
+                return Err(TransactionError::NoRestakingTxins.into());
+            }
+        };
+        let mut out_amt = 0;
+        let mut new_owner = None;
+        for txout in outputs {
+            txout.validate()?;
+            match txout {
+                Output::PaymentOutput(_) => {
+                    return Err(TransactionError::InvalidRestakingOutput.into())
+                }
+                Output::PublicPaymentOutput(_) => {
+                    return Err(TransactionError::InvalidRestakingInput.into())
+                }
+                Output::StakeOutput(o) => {
+                    if o.recipient_pkey()? != owner {
+                        return Err(TransactionError::MixedRestakingOwners.into());
+                    }
+                    match new_owner {
+                        None => {
+                            new_owner = Some(o.validator);
+                        }
+                        Some(no) => {
+                            if no != o.validator {
+                                return Err(TransactionError::MixedTxoutValidators.into());
+                            }
+                        }
+                    }
+                    out_amt += o.amount;
+                }
+            }
+        }
+        if out_amt != inp_amt {
+            return Err(TransactionError::ImbalancedRestaking.into());
+        };
+        let body = RestakeTransactionBody {
+            txins,
+            txouts: outputs.to_vec(),
+        };
+        let h = Hash::digest(&body);
+        let sig = network_sign_hash(&h, skey);
+        Ok(RestakeTransaction { body, sig })
     }
 }
 
@@ -110,7 +246,7 @@ impl Transaction {
         skey: &SecretKey,
         inputs: &[Output],
         outputs: &[Output],
-        outputs_gamma: Fr, // = sum(outputs.gamma)
+        outputs_gamma: &Fr, // = sum(outputs.gamma)
         fee: i64,
     ) -> Result<Self, Error> {
         assert!(fee >= 0);
@@ -123,7 +259,7 @@ impl Transaction {
         skey: &SecretKey,
         inputs: &[Output],
         outputs: &[Output],
-        outputs_gamma: Fr, // = sum(outputs.gamma)
+        outputs_gamma: &Fr, // = sum(outputs.gamma)
         fee: i64,
     ) -> Result<Self, Error> {
         //
@@ -136,17 +272,15 @@ impl Transaction {
         let mut txins: Vec<Hash> = Vec::with_capacity(inputs.len());
 
         for txin in inputs {
-            eff_skey += Fr::from(skey.clone());
+            eff_skey += &Fr::from(skey);
             match txin {
                 Output::PaymentOutput(o) => {
                     let payload = o.decrypt_payload(skey)?;
-                    gamma_adj += payload.gamma;
-                    eff_skey += payload.delta * payload.gamma;
+                    gamma_adj += &payload.gamma;
+                    eff_skey += &payload.delta * &payload.gamma;
                 }
-                Output::StakeOutput(o) => {
-                    let payload = o.decrypt_payload(skey)?;
-                    eff_skey += payload.delta;
-                }
+                Output::PublicPaymentOutput(_) => {}
+                Output::StakeOutput(_o) => {}
             }
             let hash = Hasher::digest(txin);
             txins.push(hash);
@@ -165,7 +299,7 @@ impl Transaction {
 
         // Create an effective private key and sign transaction.
         let tx_hash = Hasher::digest(&body);
-        let eff_skey: SecretKey = eff_skey.into();
+        let eff_skey: SecretKey = (&eff_skey).into();
         let sig = sign_hash(&tx_hash, &eff_skey);
 
         // Create signed transaction.
@@ -198,11 +332,11 @@ impl Transaction {
     ///
     pub fn new_super_transaction(
         skey: &SecretKey,
-        k_val: Fr,
+        k_val: &Fr,
         sum_cap_k: &ECp,
         inputs: &[Output],
         outputs: &[Output],
-        gamma_adj: Fr,
+        gamma_adj: &Fr,
         total_fee: i64,
     ) -> Result<Self, Error> {
         assert!(total_fee >= 0);
@@ -215,24 +349,20 @@ impl Transaction {
         for txin in inputs {
             let hash = Hasher::digest(txin);
             txins.push(hash);
-            let pkey = match txin {
-                Output::PaymentOutput(o) => o.recipient,
-                Output::StakeOutput(o) => o.recipient,
-            };
-            sum_pkey += Pt::from(pkey).decompress()?;
+            sum_pkey += txin.recipient_pkey()?;
         }
 
         // Create a transaction body and calculate the hash.
         let body = TransactionBody {
             txins,
             txouts: outputs.to_vec(),
-            gamma: gamma_adj,
+            gamma: gamma_adj.clone(),
             fee: total_fee,
         };
 
         // Create an effective private key and sign transaction.
         let tx_hash = Hasher::digest(&body);
-        let sig = sign_hash_with_kval(&tx_hash, &skey, k_val, sum_cap_k, &sum_pkey);
+        let sig = sign_hash_with_kval(&tx_hash, &skey, &k_val, sum_cap_k, &sum_pkey);
 
         // Create signed transaction.
         let tx = Transaction { body, sig };
@@ -254,23 +384,20 @@ impl Transaction {
         let mut inputs: Vec<Output> = Vec::with_capacity(input_count);
         let mut outputs: Vec<Output> = Vec::with_capacity(output_count);
 
-        let timestamp = SystemTime::now();
-
         for _ in 0..input_count {
-            let (input, _gamma) =
-                Output::new_payment(timestamp, &skey, &pkey, input_amount).expect("keys are valid");
+            let (input, _gamma) = Output::new_payment(&pkey, input_amount).expect("keys are valid");
             inputs.push(input);
         }
 
         let mut outputs_gamma: Fr = Fr::zero();
         for _ in 0..output_count {
-            let (output, gamma) = Output::new_payment(timestamp, &skey, &pkey, output_amount)
-                .expect("keys are valid");
+            let (output, gamma) =
+                Output::new_payment(&pkey, output_amount).expect("keys are valid");
             outputs.push(output);
-            outputs_gamma += gamma;
+            outputs_gamma += &gamma;
         }
 
-        match Transaction::new(&skey, &inputs, &outputs, outputs_gamma, fee) {
+        match Transaction::new(&skey, &inputs, &outputs, &outputs_gamma, fee) {
             Err(e) => Err(e),
             Ok(tx) => Ok((tx, inputs, outputs)),
         }

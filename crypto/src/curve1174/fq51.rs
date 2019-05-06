@@ -66,36 +66,36 @@ impl Fq51 {
         (tmp.0[0] & 1) != 0
     }
 
-    pub fn sqr(self) -> Fq51 {
+    pub fn sqr(&self) -> Fq51 {
         let mut tmp = Fq51::zero();
-        gsqr(&self, &mut tmp);
+        gsqr(self, &mut tmp);
         tmp
     }
 
     fn nbr_str(&self) -> String {
-        let U256(yv) = U256::from(*self);
+        let U256(yv, _) = U256::from(self);
         basic_nbr_str(&yv)
     }
 }
 
 impl From<i64> for Fq51 {
     fn from(x: i64) -> Fq51 {
-        Fq51::from(Fq::from(x))
+        Fq51::from(&Fq::from(x))
     }
 }
 
-impl From<Fq> for Fq51 {
-    fn from(x: Fq) -> Fq51 {
+impl<'a> From<&'a Fq> for Fq51 {
+    fn from(x: &'a Fq) -> Fq51 {
         let mut tmp = Fq51::zero();
         bin_to_elt(&x.unscaled().bits(), &mut tmp);
         tmp
     }
 }
 
-impl From<Fq51> for Fq {
-    fn from(x: Fq51) -> Fq {
+impl<'a> From<&'a Fq51> for Fq {
+    fn from(x: &'a Fq51) -> Fq {
         let mut tmp = U256::from(x);
-        Fq::from(tmp)
+        Fq::from(&tmp)
     }
 }
 
@@ -113,91 +113,9 @@ impl fmt::Debug for Fq51 {
     }
 }
 
-impl Add<Fq51> for Fq51 {
-    type Output = Fq51;
-    fn add(self, other: Fq51) -> Fq51 {
-        let mut dst = Fq51::zero();
-        for i in 0..5 {
-            dst.0[i] = self.0[i] + other.0[i];
-        }
-        dst
-    }
-}
+// ----------------------------------------------------
 
-impl Add<i64> for Fq51 {
-    type Output = Fq51;
-    fn add(self, other: i64) -> Fq51 {
-        let mut dst = self;
-        dst.0[0] += other;
-        dst
-    }
-}
-
-impl Add<Fq51> for i64 {
-    type Output = Fq51;
-    fn add(self, other: Fq51) -> Fq51 {
-        let mut dst = other;
-        dst.0[0] += self;
-        dst
-    }
-}
-
-impl AddAssign<Fq51> for Fq51 {
-    fn add_assign(&mut self, other: Fq51) {
-        for i in 0..5 {
-            self.0[i] += other.0[i];
-        }
-    }
-}
-
-impl AddAssign<i64> for Fq51 {
-    fn add_assign(&mut self, other: i64) {
-        self.0[0] += other;
-    }
-}
-
-impl Sub<Fq51> for Fq51 {
-    type Output = Fq51;
-    fn sub(self, other: Fq51) -> Fq51 {
-        let mut dst = Fq51::zero();
-        for i in 0..5 {
-            dst.0[i] = self.0[i] - other.0[i];
-        }
-        dst
-    }
-}
-
-impl Sub<i64> for Fq51 {
-    type Output = Fq51;
-    fn sub(self, other: i64) -> Fq51 {
-        let mut dst = self;
-        dst.0[0] -= other;
-        dst
-    }
-}
-
-impl Sub<Fq51> for i64 {
-    type Output = Fq51;
-    fn sub(self, other: Fq51) -> Fq51 {
-        Fq51::from(self) - other
-    }
-}
-
-impl SubAssign<Fq51> for Fq51 {
-    fn sub_assign(&mut self, other: Fq51) {
-        for i in 0..5 {
-            self.0[i] -= other.0[i];
-        }
-    }
-}
-
-impl SubAssign<i64> for Fq51 {
-    fn sub_assign(&mut self, other: i64) {
-        self.0[0] -= other;
-    }
-}
-
-impl Neg for Fq51 {
+impl<'a> Neg for &'a Fq51 {
     type Output = Fq51;
     fn neg(self) -> Fq51 {
         let mut dst = Fq51::zero();
@@ -208,27 +126,224 @@ impl Neg for Fq51 {
     }
 }
 
-impl Mul<Fq51> for Fq51 {
+impl Neg for Fq51 {
     type Output = Fq51;
-    fn mul(self, other: Fq51) -> Fq51 {
+    fn neg(self) -> Fq51 {
+        -(&self)
+    }
+}
+
+// ----------------------------------------------------
+
+impl<'a, 'b> Add<&'a Fq51> for &'b Fq51 {
+    type Output = Fq51;
+    fn add(self, other: &'a Fq51) -> Fq51 {
         let mut dst = Fq51::zero();
-        gmul(&self, &other, &mut dst);
+        for i in 0..5 {
+            dst.0[i] = self.0[i] + other.0[i];
+        }
         dst
     }
 }
 
-impl MulAssign<Fq51> for Fq51 {
-    fn mul_assign(&mut self, other: Fq51) {
-        let tmp = *self;
-        gmul(&tmp, &other, self);
+impl<'a> Add<&'a Fq51> for Fq51 {
+    type Output = Fq51;
+    fn add(self, other: &'a Fq51) -> Fq51 {
+        &self + other
     }
 }
 
-impl Mul<Fq51> for i64 {
+impl<'b> Add<Fq51> for &'b Fq51 {
+    type Output = Fq51;
+    fn add(self, other: Fq51) -> Fq51 {
+        self + &other
+    }
+}
+
+impl Add<Fq51> for Fq51 {
+    type Output = Fq51;
+    fn add(self, other: Fq51) -> Fq51 {
+        &self + &other
+    }
+}
+
+impl<'a> Add<i64> for &'a Fq51 {
+    type Output = Fq51;
+    fn add(self, other: i64) -> Fq51 {
+        let mut dst = self.clone();
+        dst.0[0] += other;
+        dst
+    }
+}
+
+impl Add<i64> for Fq51 {
+    type Output = Fq51;
+    fn add(self, other: i64) -> Fq51 {
+        &self + other
+    }
+}
+
+impl<'a> Add<&'a Fq51> for i64 {
+    type Output = Fq51;
+    fn add(self, other: &'a Fq51) -> Fq51 {
+        other + self
+    }
+}
+
+impl Add<Fq51> for i64 {
+    type Output = Fq51;
+    fn add(self, other: Fq51) -> Fq51 {
+        &other + self
+    }
+}
+
+// ----------------------------------------------------
+
+impl<'a> AddAssign<&'a Fq51> for Fq51 {
+    fn add_assign(&mut self, other: &'a Fq51) {
+        for i in 0..5 {
+            self.0[i] += other.0[i];
+        }
+    }
+}
+
+impl AddAssign<Fq51> for Fq51 {
+    fn add_assign(&mut self, other: Fq51) {
+        *self += &other;
+    }
+}
+
+impl AddAssign<i64> for Fq51 {
+    fn add_assign(&mut self, other: i64) {
+        self.0[0] += other;
+    }
+}
+
+// ----------------------------------------------------
+
+impl<'a, 'b> Sub<&'a Fq51> for &'b Fq51 {
+    type Output = Fq51;
+    fn sub(self, other: &'a Fq51) -> Fq51 {
+        let mut dst = Fq51::zero();
+        for i in 0..5 {
+            dst.0[i] = self.0[i] - other.0[i];
+        }
+        dst
+    }
+}
+
+impl<'a> Sub<&'a Fq51> for Fq51 {
+    type Output = Fq51;
+    fn sub(self, other: &'a Fq51) -> Fq51 {
+        &self - other
+    }
+}
+
+impl<'b> Sub<Fq51> for &'b Fq51 {
+    type Output = Fq51;
+    fn sub(self, other: Fq51) -> Fq51 {
+        self - &other
+    }
+}
+
+impl Sub<Fq51> for Fq51 {
+    type Output = Fq51;
+    fn sub(self, other: Fq51) -> Fq51 {
+        &self - &other
+    }
+}
+
+impl<'a> Sub<i64> for &'a Fq51 {
+    type Output = Fq51;
+    fn sub(self, other: i64) -> Fq51 {
+        let mut dst = self.clone();
+        dst.0[0] -= other;
+        dst
+    }
+}
+
+impl Sub<i64> for Fq51 {
+    type Output = Fq51;
+    fn sub(self, other: i64) -> Fq51 {
+        &self - other
+    }
+}
+
+impl<'a> Sub<&'a Fq51> for i64 {
+    type Output = Fq51;
+    fn sub(self, other: &'a Fq51) -> Fq51 {
+        &Fq51::from(self) - other
+    }
+}
+
+impl Sub<Fq51> for i64 {
+    type Output = Fq51;
+    fn sub(self, other: Fq51) -> Fq51 {
+        self - &other
+    }
+}
+
+// ----------------------------------------------------
+
+impl<'a> SubAssign<&'a Fq51> for Fq51 {
+    fn sub_assign(&mut self, other: &'a Fq51) {
+        for i in 0..5 {
+            self.0[i] -= other.0[i];
+        }
+    }
+}
+
+impl SubAssign<Fq51> for Fq51 {
+    fn sub_assign(&mut self, other: Fq51) {
+        *self -= &other;
+    }
+}
+
+impl SubAssign<i64> for Fq51 {
+    fn sub_assign(&mut self, other: i64) {
+        self.0[0] -= other;
+    }
+}
+
+// ----------------------------------------------------
+
+impl<'a, 'b> Mul<&'a Fq51> for &'b Fq51 {
+    type Output = Fq51;
+    fn mul(self, other: &'a Fq51) -> Fq51 {
+        let mut dst = Fq51::zero();
+        gmul(self, other, &mut dst);
+        dst
+    }
+}
+
+impl<'a> Mul<&'a Fq51> for Fq51 {
+    type Output = Fq51;
+    fn mul(self, other: &'a Fq51) -> Fq51 {
+        &self * other
+    }
+}
+
+impl<'b> Mul<Fq51> for &'b Fq51 {
     type Output = Fq51;
     fn mul(self, other: Fq51) -> Fq51 {
-        let mut dst = other;
-        gmuli(&mut dst, self);
+        self * &other
+    }
+}
+
+impl Mul<Fq51> for Fq51 {
+    type Output = Fq51;
+    fn mul(self, other: Fq51) -> Fq51 {
+        &self * &other
+    }
+}
+
+// ----------------------------------------------------
+
+impl<'a> Mul<i64> for &'a Fq51 {
+    type Output = Fq51;
+    fn mul(self, other: i64) -> Fq51 {
+        let mut dst = self.clone();
+        gmuli(&mut dst, other);
         dst
     }
 }
@@ -236,9 +351,36 @@ impl Mul<Fq51> for i64 {
 impl Mul<i64> for Fq51 {
     type Output = Fq51;
     fn mul(self, other: i64) -> Fq51 {
-        let mut dst = self;
-        gmuli(&mut dst, other);
-        dst
+        &self * other
+    }
+}
+
+impl<'a> Mul<&'a Fq51> for i64 {
+    type Output = Fq51;
+    fn mul(self, other: &'a Fq51) -> Fq51 {
+        other * self
+    }
+}
+
+impl Mul<Fq51> for i64 {
+    type Output = Fq51;
+    fn mul(self, other: Fq51) -> Fq51 {
+        &other * self
+    }
+}
+
+// ----------------------------------------------------
+
+impl<'a> MulAssign<&'a Fq51> for Fq51 {
+    fn mul_assign(&mut self, other: &'a Fq51) {
+        let tmp = self.clone();
+        gmul(&tmp, other, self);
+    }
+}
+
+impl MulAssign<Fq51> for Fq51 {
+    fn mul_assign(&mut self, other: Fq51) {
+        *self *= &other
     }
 }
 
@@ -248,16 +390,91 @@ impl MulAssign<i64> for Fq51 {
     }
 }
 
-impl Div<Fq51> for Fq51 {
+// ----------------------------------------------------
+
+impl<'a, 'b> Div<&'a Fq51> for &'b Fq51 {
     type Output = Fq51;
-    fn div(self, x: Fq51) -> Fq51 {
-        let mut tmp = x;
-        ginv(&mut tmp);
+    fn div(self, x: &'a Fq51) -> Fq51 {
+        let mut dtmp = x.clone();
+        ginv(&mut dtmp);
         let mut ans = Fq51::zero();
-        gmul(&self, &tmp, &mut ans);
+        gmul(self, &dtmp, &mut ans);
         ans
     }
 }
+
+impl<'a> Div<&'a Fq51> for Fq51 {
+    type Output = Fq51;
+    fn div(self, x: &'a Fq51) -> Fq51 {
+        &self / x
+    }
+}
+
+impl<'b> Div<Fq51> for &'b Fq51 {
+    type Output = Fq51;
+    fn div(self, x: Fq51) -> Fq51 {
+        self / &x
+    }
+}
+
+impl Div<Fq51> for Fq51 {
+    type Output = Fq51;
+    fn div(self, x: Fq51) -> Fq51 {
+        &self / &x
+    }
+}
+
+// ----------------------------------------------------
+
+impl<'a> Div<i64> for &'a Fq51 {
+    type Output = Fq51;
+    fn div(self, x: i64) -> Fq51 {
+        self / Fq51::from(x)
+    }
+}
+
+impl Div<i64> for Fq51 {
+    type Output = Fq51;
+    fn div(self, x: i64) -> Fq51 {
+        &self / x
+    }
+}
+
+impl<'a> Div<&'a Fq51> for i64 {
+    type Output = Fq51;
+    fn div(self, x: &'a Fq51) -> Fq51 {
+        Fq51::from(self) / x
+    }
+}
+
+impl Div<Fq51> for i64 {
+    type Output = Fq51;
+    fn div(self, x: Fq51) -> Fq51 {
+        self / &x
+    }
+}
+
+// ----------------------------------------------------
+
+impl<'a> DivAssign<&'a Fq51> for Fq51 {
+    fn div_assign(&mut self, other: &'a Fq51) {
+        *self = &*self / other;
+    }
+}
+
+impl DivAssign<Fq51> for Fq51 {
+    fn div_assign(&mut self, other: Fq51) {
+        *self = &*self / other;
+    }
+}
+
+impl DivAssign<i64> for Fq51 {
+    fn div_assign(&mut self, other: i64) {
+        *self = &*self / other;
+    }
+}
+
+// ----------------------------------------------------
 
 impl PartialEq for Fq51 {
     fn eq(&self, other: &Fq51) -> bool {
@@ -803,10 +1020,10 @@ impl Fq51 {
 
 // convert a frame Fq51 from 51-bit representation into
 // into a collection of 64-bit cells
-impl From<Fq51> for U256 {
-    fn from(x: Fq51) -> U256 {
+impl<'a> From<&'a Fq51> for U256 {
+    fn from(x: &'a Fq51) -> U256 {
         let mut tmp = Fq51::zero();
-        gnorm(&x, &mut tmp);
+        gnorm(x, &mut tmp);
         let mut y = U256::zero();
         clean_convert_Fq51_to_lev_u64(&tmp, &mut y.0);
         y
@@ -840,7 +1057,7 @@ pub mod tests {
     pub fn check_gsqrt() {
         for _ in 0..1000 {
             let x = Fq::random();
-            let x51 = Fq51::from(x);
+            let x51 = Fq51::from(&x);
             let mut xsq51 = x51;
             gsqr(&x51, &mut xsq51);
             let mut xsq51a = x51;
@@ -848,14 +1065,14 @@ pub mod tests {
             gmul(&x51, &x51, &mut xsq51a);
             assert!(xsq51a == xsq51);
             let xrt51 = gsqrt(&xsq51).expect("Valid root");
-            assert!(x51 == xrt51 || x51 == -xrt51);
+            assert!(x51 == xrt51 || x51 == -&xrt51);
             /* */
             let xb = Fq::random();
-            let xsq = xb * xb;
-            let xsq51b = Fq51::from(xsq);
+            let xsq = &xb * &xb;
+            let xsq51b = Fq51::from(&xsq);
             let xrt51b = gsqrt(&xsq51b).expect("Valid root");
-            let xrt = Fq::from(xrt51b);
-            assert!(xrt == xb || -xrt == xb);
+            let xrt = Fq::from(&xrt51b);
+            assert!(xrt == xb || -&xrt == xb);
             /* */
         }
     }
@@ -864,7 +1081,7 @@ pub mod tests {
     pub fn check_ginv() {
         for _ in 0..1000 {
             let x = Fq::random();
-            let x51 = Fq51::from(x);
+            let x51 = Fq51::from(&x);
             let mut xinv51 = x51;
             ginv(&mut xinv51);
             let mut xprod51 = xinv51;

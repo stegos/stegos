@@ -40,7 +40,7 @@ use std::hash as stdhash;
 // Client API - compressed points and simple fields
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct Pt([u8; 32]);
+pub struct Pt(pub [u8; 32]);
 
 impl Pt {
     // return a totally invalid point of all zeros
@@ -48,10 +48,10 @@ impl Pt {
         Pt([0u8; 32])
     }
 
-    pub fn flip_sign(cmt: &mut Pt) {
+    pub fn flip_sign(&mut self) {
         // flip sign bit in compressed Pt
         // used for test purposes in BulletProofs
-        cmt.0[31] ^= 0x80;
+        self.0[31] ^= 0x80;
     }
 
     /// Return random point on a curve.
@@ -71,28 +71,20 @@ impl Pt {
         }
         let mut bytes: [u8; 32] = [0u8; 32];
         bytes.copy_from_slice(bytes_slice);
-        ECp::try_from_bytes(bytes)?; // validate point
         let pt = Pt(bytes);
+        pt.decompress()?; // validate point
         Ok(pt)
-    }
-
-    /// Create from an uncompressed point.
-    #[inline]
-    pub fn compress(ept: ECp) -> Pt {
-        let pt_4 = ecpt::prescale_for_compression(ept);
-        let bytes = ECp::to_bytes(&pt_4);
-        Pt(bytes)
     }
 
     /// Decompress point.
     #[inline]
-    pub fn decompress(self) -> Result<ECp, CryptoError> {
+    pub fn decompress(&self) -> Result<ECp, CryptoError> {
         ECp::decompress(self)
     }
 
     /// Convert into hex string.
     pub fn to_hex(&self) -> String {
-        let v = Lev32(self.0);
+        let v = Lev32(self.0, false);
         basic_nbr_str(&v.to_lev_u64())
     }
 
@@ -100,7 +92,7 @@ impl Pt {
     pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
         let mut v = [0u8; 32];
         hexstr_to_lev_u8(&s, &mut v)?;
-        ECp::try_from_bytes(v)?; // validate point
+        ECp::try_from_bytes(&v)?; // validate point
         Ok(Pt(v))
     }
 }
@@ -118,8 +110,8 @@ impl Hashable for Pt {
     }
 }
 
-impl From<ECp> for Pt {
-    fn from(pt: ECp) -> Pt {
+impl<'a> From<&'a ECp> for Pt {
+    fn from(pt: &'a ECp) -> Pt {
         pt.compress()
     }
 }
@@ -129,13 +121,373 @@ impl Ord for Pt {
     fn cmp(&self, other: &Pt) -> Ordering {
         let me = self.decompress().unwrap().compress();
         let pt = other.decompress().unwrap().compress();
-        Lev32(me.to_bytes()).cmp(&Lev32(pt.to_bytes()))
+        Lev32(me.to_bytes(), false).cmp(&Lev32(pt.to_bytes(), false))
     }
 }
 
 impl PartialOrd for Pt {
     fn partial_cmp(&self, other: &Pt) -> Option<Ordering> {
         Some(Self::cmp(self, other))
+    }
+}
+
+// ---------------------------------------------------------
+// Be careful with these -- know your source...
+
+impl<'a> From<&'a Pt> for ECp {
+    fn from(pt: &'a Pt) -> ECp {
+        pt.decompress().unwrap()
+    }
+}
+
+impl From<Pt> for ECp {
+    fn from(pt: Pt) -> ECp {
+        ECp::from(&pt)
+    }
+}
+
+// ---------------------------------------------------------
+
+impl<'a> Neg for &'a Pt {
+    type Output = ECp;
+    fn neg(self) -> ECp {
+        -ECp::from(self)
+    }
+}
+
+impl Neg for Pt {
+    type Output = ECp;
+    fn neg(self) -> ECp {
+        -(&self)
+    }
+}
+
+// ----------------------------------------------------------
+// For signature composition
+
+impl<'a, 'b> Add<&'a Pt> for &'b Pt {
+    type Output = Pt;
+    fn add(self, other: &'a Pt) -> Pt {
+        (ECp::from(self) + ECp::from(other)).compress()
+    }
+}
+
+impl<'a> Add<&'a Pt> for Pt {
+    type Output = Pt;
+    fn add(self, other: &'a Pt) -> Pt {
+        &self + other
+    }
+}
+
+impl<'b> Add<Pt> for &'b Pt {
+    type Output = Pt;
+    fn add(self, other: Pt) -> Pt {
+        self + &other
+    }
+}
+
+impl Add<Pt> for Pt {
+    type Output = Pt;
+    fn add(self, other: Pt) -> Pt {
+        &self + &other
+    }
+}
+
+impl<'a> AddAssign<&'a Pt> for Pt {
+    fn add_assign(&mut self, other: &'a Pt) {
+        *self = &*self + other;
+    }
+}
+
+impl AddAssign<Pt> for Pt {
+    fn add_assign(&mut self, other: Pt) {
+        *self += &other;
+    }
+}
+
+// ----------------------------------------------------------
+
+impl<'a, 'b> Add<&'a ECp> for &'b Pt {
+    type Output = ECp;
+    fn add(self, other: &'a ECp) -> ECp {
+        ECp::from(self) + other
+    }
+}
+
+impl<'a> Add<&'a ECp> for Pt {
+    type Output = ECp;
+    fn add(self, other: &'a ECp) -> ECp {
+        &self + other
+    }
+}
+
+impl<'b> Add<ECp> for &'b Pt {
+    type Output = ECp;
+    fn add(self, other: ECp) -> ECp {
+        self + &other
+    }
+}
+
+impl Add<ECp> for Pt {
+    type Output = ECp;
+    fn add(self, other: ECp) -> ECp {
+        &self + &other
+    }
+}
+
+// -----------------------------------------
+
+impl<'a, 'b> Add<&'a Pt> for &'b ECp {
+    type Output = ECp;
+    fn add(self, other: &'a Pt) -> ECp {
+        self + ECp::from(other)
+    }
+}
+
+impl<'a> Add<&'a Pt> for ECp {
+    type Output = ECp;
+    fn add(self, other: &'a Pt) -> ECp {
+        &self + other
+    }
+}
+
+impl<'b> Add<Pt> for &'b ECp {
+    type Output = ECp;
+    fn add(self, other: Pt) -> ECp {
+        self + &other
+    }
+}
+
+impl Add<Pt> for ECp {
+    type Output = ECp;
+    fn add(self, other: Pt) -> ECp {
+        &self + &other
+    }
+}
+
+// ---------------------------------------------------------
+
+impl<'a> AddAssign<&'a ECp> for Pt {
+    fn add_assign(&mut self, other: &'a ECp) {
+        *self = (&*self + other).compress();
+    }
+}
+
+impl AddAssign<ECp> for Pt {
+    fn add_assign(&mut self, other: ECp) {
+        *self += &other;
+    }
+}
+
+// ---------------------------------------------------------
+// Be careful with these -- know your source...
+
+impl<'a, 'b> Sub<&'a ECp> for &'b Pt {
+    type Output = ECp;
+    fn sub(self, other: &'a ECp) -> ECp {
+        ECp::from(self) - other
+    }
+}
+
+impl<'a> Sub<&'a ECp> for Pt {
+    type Output = ECp;
+    fn sub(self, other: &'a ECp) -> ECp {
+        &self - other
+    }
+}
+
+impl<'b> Sub<ECp> for &'b Pt {
+    type Output = ECp;
+    fn sub(self, other: ECp) -> ECp {
+        self - &other
+    }
+}
+
+impl Sub<ECp> for Pt {
+    type Output = ECp;
+    fn sub(self, other: ECp) -> ECp {
+        &self - &other
+    }
+}
+
+// ---------------------------------------------------------
+// Be careful with these -- know your source...
+
+impl<'a, 'b> Sub<&'a Pt> for &'b ECp {
+    type Output = ECp;
+    fn sub(self, other: &'a Pt) -> ECp {
+        self - ECp::from(other)
+    }
+}
+
+impl<'a> Sub<&'a Pt> for ECp {
+    type Output = ECp;
+    fn sub(self, other: &'a Pt) -> ECp {
+        &self - other
+    }
+}
+
+impl<'b> Sub<Pt> for &'b ECp {
+    type Output = ECp;
+    fn sub(self, other: Pt) -> ECp {
+        self - &other
+    }
+}
+
+impl Sub<Pt> for ECp {
+    type Output = ECp;
+    fn sub(self, other: Pt) -> ECp {
+        &self - &other
+    }
+}
+
+// ---------------------------------------------------------
+
+impl<'a> SubAssign<&'a ECp> for Pt {
+    fn sub_assign(&mut self, other: &'a ECp) {
+        *self = (&*self - other).compress();
+    }
+}
+
+impl SubAssign<ECp> for Pt {
+    fn sub_assign(&mut self, other: ECp) {
+        *self -= &other;
+    }
+}
+
+// ---------------------------------------------------------
+
+impl<'a, 'b> Mul<&'a Fr> for &'b Pt {
+    type Output = ECp;
+    fn mul(self, other: &'a Fr) -> ECp {
+        ECp::from(self) * other
+    }
+}
+
+impl<'a> Mul<&'a Fr> for Pt {
+    type Output = ECp;
+    fn mul(self, other: &'a Fr) -> ECp {
+        &self * other
+    }
+}
+
+impl<'b> Mul<Fr> for &'b Pt {
+    type Output = ECp;
+    fn mul(self, other: Fr) -> ECp {
+        self * &other
+    }
+}
+
+impl Mul<Fr> for Pt {
+    type Output = ECp;
+    fn mul(self, other: Fr) -> ECp {
+        &self * &other
+    }
+}
+
+// ---------------------------------------------------------
+
+impl<'b> Mul<i64> for &'b Pt {
+    type Output = ECp;
+    fn mul(self, other: i64) -> ECp {
+        self * &Fr::from(other)
+    }
+}
+
+impl Mul<i64> for Pt {
+    type Output = ECp;
+    fn mul(self, other: i64) -> ECp {
+        &self * other
+    }
+}
+
+impl<'b> Mul<&'b Pt> for i64 {
+    type Output = ECp;
+    fn mul(self, other: &'b Pt) -> ECp {
+        other * self
+    }
+}
+
+impl Mul<Pt> for i64 {
+    type Output = ECp;
+    fn mul(self, other: Pt) -> ECp {
+        &other * self
+    }
+}
+
+// ---------------------------------------------------------
+
+impl<'a, 'b> Mul<&'a Pt> for &'b Fr {
+    type Output = ECp;
+    fn mul(self, other: &'a Pt) -> ECp {
+        self * ECp::from(other)
+    }
+}
+
+impl<'a> Mul<&'a Pt> for Fr {
+    type Output = ECp;
+    fn mul(self, other: &'a Pt) -> ECp {
+        &self * other
+    }
+}
+
+impl<'b> Mul<Pt> for &'b Fr {
+    type Output = ECp;
+    fn mul(self, other: Pt) -> ECp {
+        self * &other
+    }
+}
+
+impl Mul<Pt> for Fr {
+    type Output = ECp;
+    fn mul(self, other: Pt) -> ECp {
+        &self * &other
+    }
+}
+
+// ---------------------------------------------------------
+
+impl<'a, 'b> Div<&'a Fr> for &'b Pt {
+    type Output = ECp;
+    fn div(self, other: &'a Fr) -> ECp {
+        ECp::from(self) / other
+    }
+}
+
+impl<'a> Div<&'a Fr> for Pt {
+    type Output = ECp;
+    fn div(self, other: &'a Fr) -> ECp {
+        &self / other
+    }
+}
+
+impl<'b> Div<Fr> for &'b Pt {
+    type Output = ECp;
+    fn div(self, other: Fr) -> ECp {
+        self / &other
+    }
+}
+
+impl Div<Fr> for Pt {
+    type Output = ECp;
+    fn div(self, other: Fr) -> ECp {
+        &self / &other
+    }
+}
+
+// ---------------------------------------------------------
+
+impl<'b> Div<i64> for &'b Pt {
+    type Output = ECp;
+    fn div(self, other: i64) -> ECp {
+        ECp::from(self) / other
+    }
+}
+
+impl Div<i64> for Pt {
+    type Output = ECp;
+    fn div(self, other: i64) -> ECp {
+        &self / other
     }
 }
 
@@ -154,7 +506,7 @@ impl SecretKey {
     /// Try to convert from hex string.
     #[inline]
     pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
-        Ok(SecretKey(Fr::try_from_hex(s)?))
+        Ok(SecretKey(Fr::try_from_hex(s)?.make_safe()))
     }
 
     /// Convert into raw bytes.
@@ -165,20 +517,14 @@ impl SecretKey {
 
     /// Try to convert from raw bytes.
     #[inline]
-    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
-        Ok(SecretKey(Fr::try_from_bytes(bytes)?))
+    pub fn try_from_bytes(bytes: &mut [u8]) -> Result<Self, CryptoError> {
+        Ok(SecretKey(Fr::try_safely_from_bytes(bytes)?))
     }
 }
 
 impl fmt::Debug for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("SKey(*HIDDEN DATA*)")
-    }
-}
-
-impl Drop for SecretKey {
-    fn drop(&mut self) {
-        self.0.zap();
     }
 }
 
@@ -189,15 +535,27 @@ impl Hashable for SecretKey {
     }
 }
 
+impl<'a> From<&'a Fr> for SecretKey {
+    fn from(zr: &'a Fr) -> Self {
+        SecretKey(zr.unscaled().make_safe())
+    }
+}
+
 impl From<Fr> for SecretKey {
     fn from(zr: Fr) -> Self {
-        SecretKey(zr.unscaled())
+        SecretKey::from(&zr)
+    }
+}
+
+impl<'a> From<&'a SecretKey> for Fr {
+    fn from(skey: &'a SecretKey) -> Self {
+        skey.0.clone()
     }
 }
 
 impl From<SecretKey> for Fr {
     fn from(skey: SecretKey) -> Self {
-        skey.0
+        Fr::from(&skey)
     }
 }
 
@@ -236,6 +594,11 @@ impl PublicKey {
     pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
         Ok(PublicKey(Pt::try_from_hex(s)?))
     }
+
+    #[inline]
+    pub fn decompress(&self) -> Result<ECp, CryptoError> {
+        Pt::from(self).decompress()
+    }
 }
 
 impl fmt::Display for PublicKey {
@@ -266,9 +629,15 @@ impl stdhash::Hash for PublicKey {
     }
 }
 
-impl From<PublicKey> for Pt {
-    fn from(pkey: PublicKey) -> Self {
+impl<'a> From<&'a PublicKey> for Pt {
+    fn from(pkey: &'a PublicKey) -> Self {
         pkey.0
+    }
+}
+
+impl<'a> From<&'a Pt> for PublicKey {
+    fn from(pt: &'a Pt) -> Self {
+        PublicKey(*pt)
     }
 }
 
@@ -278,22 +647,34 @@ impl From<Pt> for PublicKey {
     }
 }
 
-impl From<ECp> for PublicKey {
-    fn from(pt: ECp) -> Self {
+impl<'a> From<&'a ECp> for PublicKey {
+    fn from(pt: &'a ECp) -> Self {
         PublicKey(Pt::from(pt))
+    }
+}
+
+impl From<ECp> for PublicKey {
+    fn from(ecp: ECp) -> Self {
+        PublicKey::from(&ecp)
+    }
+}
+
+impl<'a> From<&'a SecretKey> for PublicKey {
+    fn from(skey: &'a SecretKey) -> Self {
+        let pt = &Fr::from(skey) * &*G;
+        Self::from(&pt)
     }
 }
 
 impl From<SecretKey> for PublicKey {
     fn from(skey: SecretKey) -> Self {
-        let pt = Fr::from(skey) * *G;
-        Self::from(pt)
+        PublicKey::from(&skey)
     }
 }
 
 impl Ord for PublicKey {
     fn cmp(&self, other: &PublicKey) -> Ordering {
-        Pt::from(*self).cmp(&Pt::from(*other))
+        Pt::from(self).cmp(&Pt::from(other))
     }
 }
 
@@ -322,15 +703,57 @@ impl<'de> Deserialize<'de> for PublicKey {
     }
 }
 
+// -------------------------------------------------------------
+// Be careful with these... know your source!
+
+impl<'a> From<&'a PublicKey> for ECp {
+    fn from(pkey: &'a PublicKey) -> ECp {
+        ECp::from(&Pt::from(pkey))
+    }
+}
+
+impl From<PublicKey> for ECp {
+    fn from(pkey: PublicKey) -> ECp {
+        ECp::from(&pkey)
+    }
+}
+
+impl<'a, 'b> Add<&'a ECp> for &'b PublicKey {
+    type Output = PublicKey;
+    fn add(self, other: &'a ECp) -> PublicKey {
+        PublicKey::from(&(Pt::from(self) + other))
+    }
+}
+
+impl<'a> Add<&'a ECp> for PublicKey {
+    type Output = PublicKey;
+    fn add(self, other: &'a ECp) -> PublicKey {
+        &self + other
+    }
+}
+impl<'b> Add<ECp> for &'b PublicKey {
+    type Output = PublicKey;
+    fn add(self, other: ECp) -> PublicKey {
+        self + &other
+    }
+}
+
+impl Add<ECp> for PublicKey {
+    type Output = PublicKey;
+    fn add(self, other: ECp) -> PublicKey {
+        &self + &other
+    }
+}
+
 // -----------------------------------------------------------------------
 // Key Generation & Checking
 
 pub fn make_deterministic_keys(seed: &[u8]) -> (SecretKey, PublicKey) {
     let h = Hash::from_vector(&seed);
-    let zr = Fr::synthetic_random("skey", &*G, &h);
-    let pt = zr * *G;
-    let skey = SecretKey::from(zr);
-    let pkey = PublicKey::from(pt);
+    let zr = Fr::synthetic_random("skey", &*G, &h).make_safe();
+    let pt = &zr * (*G);
+    let skey = SecretKey::from(&zr);
+    let pkey = PublicKey::from(&pt);
     (skey, pkey)
 }
 
@@ -341,7 +764,7 @@ pub fn check_keying(skey: &SecretKey, pkey: &PublicKey) -> Result<(), CryptoErro
 }
 
 pub fn make_random_keys() -> (SecretKey, PublicKey) {
-    make_deterministic_keys(&Lev32::random().bits())
+    make_deterministic_keys(&Lev32::random().make_safe().bits())
 }
 
 // -----------------------------------------------------------------------
@@ -351,7 +774,7 @@ pub fn make_random_keys() -> (SecretKey, PublicKey) {
 // generate K = k*G for k = random Fr
 // generate u = k + Fr(H(K, P, msg)) * s
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct SchnorrSig {
     pub u: Fr,
     pub K: Pt,
@@ -375,27 +798,59 @@ impl Hashable for SchnorrSig {
     }
 }
 
-impl Add<SchnorrSig> for SchnorrSig {
-    type Output = Self;
-    fn add(self, other: Self) -> Self {
+// -------------------------------------------------------
+// Make SchnorrSig additive
+
+impl<'a, 'b> Add<&'a SchnorrSig> for &'b SchnorrSig {
+    type Output = SchnorrSig;
+    fn add(self, other: &'a SchnorrSig) -> SchnorrSig {
         // user should have ensured that sig.K are valid
         // before calling this operator
-        let errmsg = "Invalid SchnorrSig.K point";
-        let K_sum = self.K.decompress().expect(errmsg) + other.K.decompress().expect(errmsg);
         SchnorrSig {
-            u: self.u + other.u,
-            K: K_sum.compress(),
+            u: &self.u + &other.u,
+            K: &self.K + &other.K,
         }
     }
 }
 
-impl AddAssign<SchnorrSig> for SchnorrSig {
-    fn add_assign(&mut self, other: Self) {
-        let sum_sig = *self + other;
-        self.u = sum_sig.u;
-        self.K = sum_sig.K;
+impl<'a> Add<&'a SchnorrSig> for SchnorrSig {
+    type Output = SchnorrSig;
+    fn add(self, other: &'a SchnorrSig) -> SchnorrSig {
+        &self + other
     }
 }
+
+impl<'b> Add<SchnorrSig> for &'b SchnorrSig {
+    type Output = SchnorrSig;
+    fn add(self, other: SchnorrSig) -> SchnorrSig {
+        self + &other
+    }
+}
+
+impl Add<SchnorrSig> for SchnorrSig {
+    type Output = SchnorrSig;
+    fn add(self, other: SchnorrSig) -> SchnorrSig {
+        &self + &other
+    }
+}
+
+// ----------------------------------------------------
+
+impl<'a> AddAssign<&'a SchnorrSig> for SchnorrSig {
+    fn add_assign(&mut self, other: &'a SchnorrSig) {
+        let sum_sig = &*self + other;
+        self.u += &other.u;
+        self.K += &other.K;
+    }
+}
+
+impl AddAssign<SchnorrSig> for SchnorrSig {
+    fn add_assign(&mut self, other: SchnorrSig) {
+        *self += &other;
+    }
+}
+
+// ----------------------------------------------------
 
 pub fn sign_hash(hmsg: &Hash, skey: &SecretKey) -> SchnorrSig {
     // Note: While we want k random, it should be deterministically random.
@@ -410,21 +865,21 @@ pub fn sign_hash(hmsg: &Hash, skey: &SecretKey) -> SchnorrSig {
     // since that could also be used to find the secret key. So we rehash the k value, if necessary,
     // until its value lies within an acceptable range.
     //
-    let k = Fr::synthetic_random("sig-k", skey, hmsg);
-    let K = k * *G;
-    let pkey = PublicKey::from(skey.clone());
+    let k = Fr::synthetic_random("sig-k", skey, hmsg).make_safe();
+    let K = &k * (*G);
+    let pkey = PublicKey::from(skey);
     let h = Hash::digest_chain(&[&K, &pkey, hmsg]);
-    let u = k + Fr::from(h) * Fr::from(skey.clone());
+    let u = k + Fr::from(&h) * Fr::from(skey);
     SchnorrSig {
         u: u.unscaled(),
-        K: Pt::from(K),
+        K: Pt::from(&K),
     }
 }
 
 pub fn sign_hash_with_kval(
     hmsg: &Hash,
     skey: &SecretKey,
-    k_val: Fr,
+    k_val: &Fr,
     sumK: &ECp,
     sumPKey: &ECp,
 ) -> SchnorrSig {
@@ -452,21 +907,21 @@ pub fn sign_hash_with_kval(
     // values of the two messages. The common k_val cancels out in the sig.u_val sibtraction.
     // This is disastrous!
     //
-    let my_K = k_val * *G;
-    let pkey = PublicKey::from(Pt::from(*sumPKey));
+    let my_K = k_val * (*G);
+    let pkey = PublicKey::from(sumPKey);
     let h = Hash::digest_chain(&[sumK, &pkey, hmsg]);
-    let u = k_val + Fr::from(h) * Fr::from(skey.clone());
+    let u = k_val + Fr::from(&h) * Fr::from(skey);
     SchnorrSig {
         u: u.unscaled(),
-        K: Pt::from(my_K),
+        K: Pt::from(&my_K),
     }
 }
 
 pub fn validate_sig(hmsg: &Hash, sig: &SchnorrSig, pkey: &PublicKey) -> Result<(), CryptoError> {
     let h = Hash::digest_chain(&[&sig.K, pkey, hmsg]);
-    let Ppt = Pt::decompress(pkey.0)?;
-    let Kpt = Pt::decompress(sig.K)?;
-    if sig.u * *G == Kpt + Fr::from(h) * Ppt {
+    let Ppt = pkey.decompress()?;
+    let Kpt = sig.K.decompress()?;
+    if &sig.u * (*G) == Kpt + Fr::from(&h) * Ppt {
         return Ok(());
     } else {
         return Err(CryptoError::BadKeyingSignature);
@@ -503,51 +958,42 @@ impl Hashable for EncryptedPayload {
     }
 }
 
-fn aes_encrypt_with_key(msg: &[u8], key: &[u8; 32]) -> Vec<u8> {
+fn aes_encrypt_with_key(msg: &[u8], key: &mut [u8; 32]) -> Vec<u8> {
     // on input, key is 32B. AES128 only needs 16B for keying.
     // So take first 16B of key as keying,
     // and last 16B of key as CTR mode nonce
     let mut aes_enc = aes::ctr(aes::KeySize::KeySize128, &key[..16], &key[16..]);
     let mut ctxt: Vec<u8> = repeat(0).take(msg.len()).collect();
     aes_enc.process(msg, &mut ctxt);
+    // destroy key after use
+    for ix in 0..key.len() {
+        key[ix] = 0;
+    }
     ctxt
 }
 
 pub fn aes_encrypt(msg: &[u8], pkey: &PublicKey) -> Result<EncryptedPayload, CryptoError> {
-    if *pkey == PublicKey::zero() {
-        // construct an unencrypted payload that anyone can read.
-        Ok(EncryptedPayload {
-            ag: Pt::zero(),
-            ctxt: msg.to_vec(),
-        })
-    } else {
-        // normal encrytion with keying hint
-        let h = Hash::from_vector(msg);
-        let alpha = Fr::synthetic_random("encr-alpha", pkey, &h);
-        let ppt = ECp::decompress(Pt::from(*pkey))?; // could give CryptoError if invalid PublicKey
-        let ap = alpha * ppt; // generate key (alpha*s*G = alpha*P), and hint ag = alpha*G
-        let ag = alpha * *G;
-        let key = Hash::digest(&ap);
-        let ctxt = aes_encrypt_with_key(msg, &key.bits());
-        Ok(EncryptedPayload {
-            ag: Pt::from(ag),
-            ctxt,
-        })
-    }
+    // normal encrytion with keying hint
+    let h = Hash::from_vector(msg);
+    let alpha = Fr::synthetic_random("encr-alpha", pkey, &h).make_safe();
+    let ppt = pkey.decompress()?; // could give CryptoError if invalid PublicKey
+    let ap = &alpha * ppt; // generate key (alpha*s*G = alpha*P), and hint ag = alpha*G
+    let ag = &alpha * (*G);
+    let mut key = Hash::digest(&ap);
+    let ctxt = aes_encrypt_with_key(msg, &mut key.bits());
+    Ok(EncryptedPayload {
+        ag: Pt::from(&ag),
+        ctxt,
+    })
 }
 
 pub fn aes_decrypt(payload: &EncryptedPayload, skey: &SecretKey) -> Result<Vec<u8>, CryptoError> {
-    if payload.ag == Pt::zero() {
-        // universal unencrypted payload
-        Ok(payload.ctxt.clone())
-    } else {
-        // normal encryption, key = skey * AG
-        let zr = Fr::from(skey.clone());
-        let ag = ECp::decompress(payload.ag)?; // could give CryptoError if corrupted payload
-        let asg = zr * ag; // compute the actual key seed = s*alpha*G
-        let key = Hash::digest(&asg);
-        Ok(aes_encrypt_with_key(&payload.ctxt, &key.bits()))
-    }
+    // normal encryption, key = skey * AG
+    let zr = Fr::from(skey);
+    let ag = payload.ag.decompress()?; // could give CryptoError if corrupted payload
+    let asg = zr * ag; // compute the actual key seed = s*alpha*G
+    let mut key = Hash::digest(&asg);
+    Ok(aes_encrypt_with_key(&payload.ctxt, &mut key.bits()))
 }
 
 // -----------------------------------------------------------
@@ -563,7 +1009,7 @@ fn make_securing_keys(seed: &str) -> (SecretKey, PublicKey) {
     make_deterministic_keys(&seed.bits())
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct EncryptedKey {
     pub payload: EncryptedPayload,
     pub sig: SchnorrSig,
@@ -617,5 +1063,16 @@ pub mod tests {
         let recovered_skey =
             decrypt_key(my_cloaking_seed, &encr_key).expect("Key couldn't be decrypted");
         assert!(recovered_skey == skey.to_bytes());
+    }
+
+    #[test]
+    fn encrypted_payload() {
+        use stegos_serialization::traits::ProtoConvert;
+        let msg = b"Howdy! World!";
+        let (skey, pkey) = make_random_keys();
+        let ans = aes_encrypt(msg, &pkey).expect("Good encryption");
+        let sans = ans.into_buffer().expect("Can't serialize");
+        let usans = EncryptedPayload::from_buffer(&sans).expect("Good deserialization");
+        let uans = aes_decrypt(&usans, &skey).expect("Good decryption");
     }
 }

@@ -7,6 +7,7 @@ message Pt {
 
 message Fr {
     bytes data = 1;
+    bool safe = 2;
 }
 
 message G1 {

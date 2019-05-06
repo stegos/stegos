@@ -73,7 +73,7 @@ impl KeyChain {
             let (wallet_skey, wallet_pkey) = if !cfg.recovery_file.is_empty() {
                 info!("Recovering keys...");
                 let wallet_skey = read_recovery(&cfg.recovery_file)?;
-                let wallet_pkey: cpt::PublicKey = wallet_skey.clone().into();
+                let wallet_pkey: cpt::PublicKey = (&wallet_skey).into();
                 info!("Recovered a wallet key: pkey={}", wallet_pkey);
                 (wallet_skey, wallet_pkey)
             } else {

@@ -27,10 +27,14 @@ use crate::transaction::Transaction;
 use crate::view_changes::ViewChangeProof;
 use bitvector::BitVector;
 use std::time::SystemTime;
-use stegos_crypto::curve1174::cpt;
+use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc::secure::sign_hash as secure_sign_hash;
+use stegos_crypto::pbc::secure::validate_VRF_randomness;
+use stegos_crypto::pbc::secure::PublicKey as NetworkPublicKey; // names are a hoot! Curve1174 is more secure
+use stegos_crypto::pbc::secure::SecretKey as NetworkSecretKey;
+use stegos_crypto::pbc::secure::Signature as BlsSignature;
 use stegos_crypto::pbc::secure::VRF;
 
 /// Blockchain version.
@@ -73,10 +77,7 @@ impl BaseBlockHeader {
         timestamp: SystemTime,
         random: VRF,
     ) -> Self {
-        debug_assert!(
-            secure::validate_VRF_randomness(&random),
-            "Cannot verify VRF."
-        );
+        debug_assert!(validate_VRF_randomness(&random), "Cannot verify VRF.");
 
         BaseBlockHeader {
             version,
@@ -137,10 +138,10 @@ pub struct MicroBlock {
 
     // TODO: slashing
     /// PBC public key of slot owner.
-    pub pkey: secure::PublicKey,
+    pub pkey: NetworkPublicKey,
 
     /// BLS signature by slot owner.
-    pub sig: secure::Signature,
+    pub sig: BlsSignature,
 }
 
 impl Hashable for Coinbase {
@@ -190,9 +191,9 @@ impl MicroBlock {
         view_change_proof: Option<ViewChangeProof>,
         coinbase: Coinbase,
         transactions: Vec<Transaction>,
-        pkey: secure::PublicKey,
+        pkey: NetworkPublicKey,
     ) -> MicroBlock {
-        let sig = secure::Signature::zero();
+        let sig = BlsSignature::zero();
         let block = MicroBlock {
             base,
             view_change_proof,
@@ -207,7 +208,7 @@ impl MicroBlock {
     pub fn empty(
         base: BaseBlockHeader,
         view_change_proof: Option<ViewChangeProof>,
-        pkey: secure::PublicKey,
+        pkey: NetworkPublicKey,
     ) -> MicroBlock {
         let coinbase = Coinbase {
             block_reward: 0,
@@ -223,10 +224,8 @@ impl MicroBlock {
         base: BaseBlockHeader,
         view_change_proof: Option<ViewChangeProof>,
         transactions: Vec<Transaction>,
-        timestamp: SystemTime,
-        sender_skey: &cpt::SecretKey,
-        recipient_pkey: &cpt::PublicKey,
-        pkey: secure::PublicKey,
+        recipient_pkey: &PublicKey,
+        pkey: NetworkPublicKey,
         block_reward: i64,
     ) -> MicroBlock {
         let block_fee = transactions.iter().map(|tx| tx.body.fee).sum();
@@ -246,8 +245,7 @@ impl MicroBlock {
 
             let data = PaymentPayloadData::Comment(format!("Block {}", comment));
             let (output_fee, gamma_fee) =
-                PaymentOutput::with_payload(timestamp, sender_skey, recipient_pkey, amount, data)
-                    .expect("invalid keys");
+                PaymentOutput::with_payload(recipient_pkey, amount, data).expect("invalid keys");
             gamma -= gamma_fee;
             outputs.push(Output::PaymentOutput(output_fee));
         }
@@ -263,10 +261,10 @@ impl MicroBlock {
     }
 
     /// Sign block using leader's signature.
-    pub fn sign(&mut self, skey: &secure::SecretKey, pkey: &secure::PublicKey) {
+    pub fn sign(&mut self, skey: &NetworkSecretKey, pkey: &NetworkPublicKey) {
         assert_eq!(&self.pkey, pkey);
         let hash = Hash::digest(self);
-        let sig = secure::sign_hash(&hash, &skey);
+        let sig = secure_sign_hash(&hash, &skey);
         self.sig = sig;
     }
 }
@@ -316,10 +314,10 @@ impl Hashable for MacroBlockHeader {
 #[derive(Debug, Clone)]
 pub struct MacroBlockBody {
     /// Public key of leader.
-    pub pkey: secure::PublicKey,
+    pub pkey: NetworkPublicKey,
 
     /// BLS (multi-)signature.
-    pub multisig: secure::Signature,
+    pub multisig: BlsSignature,
 
     /// Bitmap of signers in the multi-signature.
     pub multisigmap: BitVector,
@@ -350,7 +348,7 @@ pub struct MacroBlock {
 }
 
 impl MacroBlock {
-    pub fn empty(base: BaseBlockHeader, pkey: secure::PublicKey) -> MacroBlock {
+    pub fn empty(base: BaseBlockHeader, pkey: NetworkPublicKey) -> MacroBlock {
         Self::new(base, Fr::zero(), 0, &[], &[], None, pkey)
     }
 
@@ -361,7 +359,7 @@ impl MacroBlock {
         inputs: &[Hash],
         outputs: &[Output],
         proof: Option<ViewChangeProof>,
-        pkey: secure::PublicKey,
+        pkey: NetworkPublicKey,
     ) -> MacroBlock {
         // Re-order all inputs to blur transaction boundaries.
         // Current algorithm just sorts this list.
@@ -409,7 +407,7 @@ impl MacroBlock {
         };
 
         // Create body
-        let multisig = secure::Signature::zero();
+        let multisig = BlsSignature::zero();
         let multisigmap = BitVector::new(VALIDATORS_MAX);
         let body = MacroBlockBody {
             pkey,

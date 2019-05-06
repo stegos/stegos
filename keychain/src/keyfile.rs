@@ -73,8 +73,8 @@ pub(crate) fn load_network_pkey(path: &Path) -> Result<secure::PublicKey, KeyErr
 }
 
 pub(crate) fn load_wallet_skey(path: &Path, password: &str) -> Result<cpt::SecretKey, KeyError> {
-    let bytes = load_encrypted_key(path, WALLET_ENCRYPTED_SKEY_TAG, password)?;
-    cpt::SecretKey::try_from_bytes(&bytes)
+    let mut bytes = load_encrypted_key(path, WALLET_ENCRYPTED_SKEY_TAG, password)?;
+    cpt::SecretKey::try_from_bytes(&mut bytes)
         .map_err(|e| KeyError::InvalidKey(path.to_string_lossy().to_string(), e))
 }
 

@@ -44,7 +44,7 @@ use std::ops::{Add, AddAssign, Neg};
 
 // --------------------------------------------------------------------------------
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 #[repr(C)]
 pub struct Zr([u8; ZR_SIZE_FR256]);
 
@@ -79,12 +79,12 @@ impl Zr {
 
     pub fn acceptable_maxval() -> Self {
         // approx = modulus - sqrt(modulus)
-        -*MIN_FR256
+        -(MIN_FR256.clone())
     }
 
     pub fn acceptable_random_rehash(k: Self) -> Self {
-        let min = *MIN_FR256;
-        let max = *MAX_FR256;
+        let min = MIN_FR256.clone();
+        let max = MAX_FR256.clone();
         let mut mk = k;
         while mk < min || mk > max {
             mk = Self::from(Hash::digest(&mk));
@@ -95,8 +95,8 @@ impl Zr {
     pub fn random() -> Self {
         let mut rng: ThreadRng = thread_rng();
         let mut zx = Zr(rng.gen::<[u8; ZR_SIZE_FR256]>());
-        let min = *MIN_FR256;
-        let max = *MAX_FR256;
+        let min = MIN_FR256.clone();
+        let max = MAX_FR256.clone();
         while zx < min || zx > max {
             zx = Zr(rng.gen::<[u8; ZR_SIZE_FR256]>());
         }
@@ -191,6 +191,12 @@ impl Neg for Zr {
             rust_libpbc::neg_Zr_val(*CONTEXT_FR256, ans.base_vector().as_ptr() as *mut _);
         }
         ans
+    }
+}
+
+impl Drop for Zr {
+    fn drop(&mut self) {
+        self.zap();
     }
 }
 

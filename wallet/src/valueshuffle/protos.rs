@@ -213,7 +213,7 @@ pub mod tests {
     fn vs_serialization() {
         let (_skey, pkey) = make_random_keys();
         let sid = Hash::digest("test");
-        let ksig = simple_commit(Fr::from(1), Fr::zero()).compress();
+        let ksig = simple_commit(&Fr::from(1), &Fr::zero()).compress();
         let msg = Message::VsMessage {
             sid,
             payload: VsPayload::SharedKeying { pkey, ksig },

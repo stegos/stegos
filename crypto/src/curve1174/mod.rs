@@ -91,6 +91,7 @@ pub const HASH_CONSTS: &str = "f68bce5c9388a3f20c8b3429ddd75333d156488a60a80ac37
 
 lazy_static! {
     pub static ref INIT: bool = {
+        use crate::pbc::secure;
         let mut state = Hasher::new();
         CURVE_R.hash(&mut state);
         CURVE_Q.hash(&mut state);
@@ -98,8 +99,11 @@ lazy_static! {
         GEN_Y.hash(&mut state);
         format!("D{} H{}", CURVE_D, CURVE_H).hash(&mut state);
         let h = state.result();
-        let chk = Hash::try_from_hex(&HASH_CONSTS).expect("Invalid hexstr: HASH_CONSTS");
-        assert!(h == chk, "Invalid curve constants checksum");
+        let sig_pkey =
+            secure::PublicKey::try_from_hex(&SIG_PKEY).expect("Invalid hexstr: SIG_PKEY");
+        let sig = secure::Signature::try_from_hex(&SIG_1174).expect("Invalid hexstr: SIG_1174");
+        secure::check_hash(&h, &sig, &sig_pkey).expect("Invalid Curve1174 init contants");
+        println!("Curve1174 parameters okay");
         check_prng();
         true
     };
@@ -125,6 +129,10 @@ lazy_static! {
         let gen_y = Fq::try_from_hex(GEN_Y).expect("Invalid Gen Y hexstr");
         ECp::try_from_xy(&gen_x, &gen_y).expect("Invalid generator description")
     };
+    pub static ref UNIQ: Fq = {
+        assert!(*INIT, "can't happen");
+        Fq::random()
+    };
 }
 
 fn check_prng() {
@@ -144,6 +152,7 @@ fn check_prng() {
     let msg = "plausible PRNG failure";
     assert!(f32::abs(mn) < delta, msg);
     assert!(f32::abs(stdev - invrt12) < delta, msg);
+    println!("PRNG appears okay");
 }
 
 // -------------------------------------------------------
@@ -221,7 +230,7 @@ mod tests {
 
         let gx = Coord::from_str(&sx).unwrap();
         let gy = Coord::from_str(&sy).unwrap();
-        let gz = gx + gy;
+        let gz = &gx + &gy;
 
         assert_eq!(gz, sum);
     }
@@ -229,8 +238,8 @@ mod tests {
     #[test]
     #[should_panic]
     fn check_bad_compression() {
-        let pt = ECp::compress(ECp::inf());
-        let ept = ECp::decompress(pt).unwrap();
+        let pt = ECp::inf().compress();
+        let ept = pt.decompress().unwrap();
     }
 
     #[test]
@@ -272,7 +281,7 @@ mod tests {
     fn chk_scalar_conversion() {
         let x = 6i64;
         let fx = Fr::from(x);
-        let uval = U256::from(fx.unscaled());
+        let uval = U256::from(&fx.unscaled());
         dbg!(&uval);
         let xx = fx.to_i64();
         dbg!(&xx);
@@ -293,22 +302,22 @@ pub fn curve1174_tests() {
     let mut pt2: ECp = ECp::inf();
     for _ in 0..100 {
         let pt1 = ECp::try_from_xy(&gx, &gy).unwrap();
-        pt2 = pt1 * mx;
+        pt2 = &pt1 * &mx;
     }
     println!("pt2: {:?}", pt2);
 
     let pt1 = ECp::try_from_xy(&gx, &gy).unwrap();
-    let pt2 = pt1 + pt1;
+    let pt2 = &pt1 + &pt1;
     println!("ptsum {:?}", pt2);
 
     let tmp = Fr::from(2);
-    let tmp2 = 1 / tmp;
+    let tmp2 = 1 / &tmp;
     // println!("1/mul: {}", 1/Fr::from(2));
     // println!("unity? {}", (1/Fr::from(2)) * 2);
     println!("mul: {:?}", tmp);
     println!("1/2 = {:?}", tmp2);
     println!("R = {:?}", *R);
-    println!("mx: {:?}", tmp * tmp2);
+    println!("mx: {:?}", &tmp * &tmp2);
     /* */
     let _ = StdRng::from_entropy();
     let mut r = StdRng::from_rng(thread_rng()).unwrap();
@@ -327,11 +336,11 @@ pub fn curve1174_tests() {
     println!("gen_y: {:?}", gen_y);
     println!("gen_pt: {:?}", pt);
 
-    println!("x+y: {:?}", gen_x + gen_y);
+    println!("x+y: {:?}", &gen_x + &gen_y);
     /* */
-    let ept = ECp::from(Hash::from_vector(b"Testing12")); // produces an odd Y
-    let cpt = Pt::from(ept); // MSB should be set
-    let ept2 = ECp::decompress(cpt).unwrap();
+    let ept = ECp::from(&Hash::from_vector(b"Testing12")); // produces an odd Y
+    let cpt = Pt::from(&ept); // MSB should be set
+    let ept2 = cpt.decompress().unwrap();
     println!("hash -> {:?}", ept);
     println!("hash -> {:?}", cpt);
     println!("hash -> {:?}", ept2);
@@ -344,12 +353,11 @@ pub fn curve1174_tests() {
     let delta = Fr::random();
     println!("delta = {:?}", delta);
 
-    let cpt = Pt::from(pkey);
-    let ept = ECp::decompress(cpt).unwrap() + delta * *G;
-    let delta_pkey = PublicKey::from(ept);
-    println!("delta_key = {:?}", Pt::from(delta_pkey));
+    let ept = Pt::from(&pkey) + &delta * &(*G);
+    let delta_pkey = PublicKey::from(&ept);
+    println!("delta_key = {:?}", Pt::from(&delta_pkey));
 
-    let delta_skey = SecretKey::from(Fr::from(skey.clone()) + delta);
+    let delta_skey = SecretKey::from(&(&Fr::from(&skey) + &delta));
 
     let hmsg = Hash::try_from_hex(&HASH_CONSTS).unwrap();
     let sig = sign_hash(&hmsg, &skey);

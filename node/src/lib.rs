@@ -87,6 +87,16 @@ impl Node {
         Ok(())
     }
 
+    pub fn send_restaking_transaction(&self, tx: RestakeTransaction) -> Result<(), Error> {
+        let proto = tx.into_proto();
+        let data = proto.write_to_bytes()?;
+        self.network.publish(&RESTAKE_TOPIC, data.clone())?;
+        info!("Sent transaction to the network: tx={}", Hash::digest(&tx));
+        let msg = NodeMessage::RestakeTransaction(data);
+        self.outbox.unbounded_send(msg)?;
+        Ok(())
+    }
+
     /// Execute a Node Request.
     pub fn request(&self, request: NodeRequest) -> oneshot::Receiver<NodeResponse> {
         let (tx, rx) = oneshot::channel();
@@ -183,6 +193,8 @@ pub struct OutputsChanged {
 
 /// Topic used for sending transactions.
 const TX_TOPIC: &'static str = "tx";
+/// Topic used for restaking transactions.
+const RESTAKE_TOPIC: &'static str = "restake";
 /// Topic used for consensus.
 const CONSENSUS_TOPIC: &'static str = "consensus";
 /// Topic for ViewChange message.
@@ -207,6 +219,7 @@ pub enum NodeMessage {
     // Network Events
     //
     Transaction(Vec<u8>),
+    RestakeTransaction(Vec<u8>),
     Consensus(Vec<u8>),
     SealedBlock(Vec<u8>),
     ViewChangeMessage(Vec<u8>),
@@ -299,6 +312,12 @@ impl NodeService {
             .map(|m| NodeMessage::Transaction(m));
         streams.push(Box::new(transaction_rx));
 
+        // RestakeTransaction Requests
+        let transaction_rx = network
+            .subscribe(&RESTAKE_TOPIC)?
+            .map(|m| NodeMessage::RestakeTransaction(m));
+        streams.push(Box::new(transaction_rx));
+
         // Consensus Requests
         let consensus_rx = network
             .subscribe(&CONSENSUS_TOPIC)?
@@ -381,6 +400,12 @@ impl NodeService {
         self.future_consensus_messages.clear();
         self.optimistic.on_new_consensus(&self.chain);
     }
+
+    /// Handle an incoming restaking transaction from network.
+    fn handle_restaking_transaction(&mut self, _tx: RestakeTransaction) -> Result<(), Error> {
+        Ok(()) // dummy up for now
+    }
+
     /// Handle incoming transactions received from network.
     fn handle_transaction(&mut self, tx: Transaction) -> Result<(), Error> {
         let tx_hash = Hash::digest(&tx);
@@ -1374,6 +1399,10 @@ impl Future for NodeService {
                         }
                         NodeMessage::Transaction(msg) => Transaction::from_buffer(&msg)
                             .and_then(|msg| self.handle_transaction(msg)),
+                        NodeMessage::RestakeTransaction(msg) => {
+                            RestakeTransaction::from_buffer(&msg)
+                                .and_then(|msg| self.handle_restaking_transaction(msg))
+                        }
                         NodeMessage::Consensus(msg) => BlockConsensusMessage::from_buffer(&msg)
                             .and_then(|msg| self.handle_consensus_message(msg)),
                         NodeMessage::ViewChangeMessage(msg) => ViewChangeMessage::from_buffer(&msg)

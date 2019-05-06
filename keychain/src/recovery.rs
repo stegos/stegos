@@ -42,11 +42,11 @@ pub fn wallet_skey_to_recovery(skey: &cpt::SecretKey) -> String {
 
 pub fn recovery_to_wallet_skey(recovery: &str) -> Result<cpt::SecretKey, KeyError> {
     let words: Vec<&str> = recovery.split(' ').collect();
-    let bytes = convert_wordlist_to_int(&words).map_err(|_| KeyError::InvalidRecoveryPhrase)?;
+    let mut bytes = convert_wordlist_to_int(&words).map_err(|_| KeyError::InvalidRecoveryPhrase)?;
     if checksum(&bytes[0..32]) != bytes[32] {
         return Err(KeyError::InvalidRecoveryPhrase);
     }
-    cpt::SecretKey::try_from_bytes(&bytes[0..32]).map_err(|e| KeyError::InvalidRecoveryKey(e))
+    cpt::SecretKey::try_from_bytes(&mut bytes[0..32]).map_err(|e| KeyError::InvalidRecoveryKey(e))
 }
 
 #[cfg(test)]

@@ -204,7 +204,6 @@ impl WalletService {
         let data = PaymentPayloadData::Comment(comment);
         let unspent_iter = self.payments.values().map(|v| (&v.output, v.amount));
         let (inputs, outputs, gamma, fee) = create_payment_transaction(
-            &self.keys.wallet_skey,
             &self.keys.wallet_pkey,
             recipient,
             unspent_iter,
@@ -214,7 +213,7 @@ impl WalletService {
         )?;
 
         // Transaction TXINs can generally have different keying for each one
-        let tx = Transaction::new(&self.keys.wallet_skey, &inputs, &outputs, gamma, fee)?;
+        let tx = Transaction::new(&self.keys.wallet_skey, &inputs, &outputs, &gamma, fee)?;
         let tx_hash = Hash::digest(&tx);
         let fee = tx.body.fee;
         self.node.send_transaction(tx)?;
@@ -298,14 +297,13 @@ impl WalletService {
 
         let stakes = self.stakes.values().map(|val| &val.output);
         let tx = create_restaking_transaction(
-            &self.keys.wallet_skey,
             &self.keys.wallet_pkey,
             &self.keys.network_pkey,
             &self.keys.network_skey,
             stakes,
         )?;
         let tx_hash = Hash::digest(&tx);
-        self.node.send_transaction(tx)?;
+        self.node.send_restaking_transaction(tx)?;
         Ok((tx_hash, 0))
     }
 
@@ -329,13 +327,12 @@ impl WalletService {
         }
 
         let tx = create_restaking_transaction(
-            &self.keys.wallet_skey,
             &self.keys.wallet_pkey,
             &self.keys.network_pkey,
             &self.keys.network_skey,
             stakes.into_iter(),
         )?;
-        self.node.send_transaction(tx)?;
+        self.node.send_restaking_transaction(tx)?;
         Ok(())
     }
 
@@ -392,22 +389,21 @@ impl WalletService {
                     self.notify(WalletNotification::Received(info));
                 }
             }
+            Output::PublicPaymentOutput(_o) => panic!("Not Yet Implemented"),
             Output::StakeOutput(o) => {
-                if let Ok(_payload) = o.decrypt_payload(&self.keys.wallet_skey) {
-                    let active_until_epoch = epoch + self.stake_epochs;
-                    info!(
-                        "Staked money to escrow: hash={}, amount={}, active_until_epoch={}",
-                        hash, o.amount, active_until_epoch
-                    );
-                    let value = StakeValue {
-                        output: o,
-                        active_until_epoch,
-                    };
-                    let info = value.to_info(self.epoch);
-                    let missing = self.stakes.insert(hash, value);
-                    assert!(missing.is_none(), "Inconsistent wallet state");
-                    self.notify(WalletNotification::Staked(info));
-                }
+                let active_until_epoch = epoch + self.stake_epochs;
+                info!(
+                    "Staked money to escrow: hash={}, amount={}, active_until_epoch={}",
+                    hash, o.amount, active_until_epoch
+                );
+                let value = StakeValue {
+                    output: o,
+                    active_until_epoch,
+                };
+                let info = value.to_info(self.epoch);
+                let missing = self.stakes.insert(hash, value);
+                assert!(missing.is_none(), "Inconsistent wallet state");
+                self.notify(WalletNotification::Staked(info));
             }
         };
     }
@@ -430,16 +426,17 @@ impl WalletService {
                     }
                 }
             }
+            Output::PublicPaymentOutput(_o) => {
+                panic!("Not Yet Implemented");
+            }
             Output::StakeOutput(o) => {
-                if let Ok(_payload) = o.decrypt_payload(&self.keys.wallet_skey) {
-                    info!("Unstaked: utxo={}, amount={}", hash, o.amount);
-                    match self.stakes.remove(&hash) {
-                        Some(value) => {
-                            let info = value.to_info(self.epoch);
-                            self.notify(WalletNotification::Unstaked(info));
-                        }
-                        None => panic!("Inconsistent wallet state"),
+                info!("Unstaked: utxo={}, amount={}", hash, o.amount);
+                match self.stakes.remove(&hash) {
+                    Some(value) => {
+                        let info = value.to_info(self.epoch);
+                        self.notify(WalletNotification::Unstaked(info));
                     }
+                    None => panic!("Inconsistent wallet state"),
                 }
             }
         }

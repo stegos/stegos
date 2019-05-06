@@ -60,6 +60,24 @@ pub enum TransactionError {
     DuplicateOutput(Hash, Hash),
     #[fail(display = "Output hash collision: tx={}, utxo={}", _0, _1)]
     OutputHashCollision(Hash, Hash),
+
+    #[fail(display = "Non-Stake UTXO in Restaking Inputs")]
+    InvalidRestakingInput,
+    #[fail(display = "Non-Stake UTXO in Restaking Outputs")]
+    InvalidRestakingOutput,
+    #[fail(display = "All stake UTXOs must belong to same recipient")]
+    MixedRestakingOwners,
+    #[fail(display = "Empty restaking inputs list")]
+    NoRestakingTxins,
+    #[fail(display = "Imbalanced Restaking")]
+    ImbalancedRestaking,
+    #[fail(
+        display = "Validator key in StakeOutput does not match validator making the transaction"
+    )]
+    RestakingValidatorKeyMismatch,
+
+    #[fail(display = "Validator keys in TXOUT StakeOutput are not all the same")]
+    MixedTxoutValidators,
 }
 
 #[derive(Debug, Fail)]

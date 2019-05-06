@@ -39,6 +39,7 @@ use stegos_node::OutputsChanged;
 pub struct PaymentInfo {
     pub utxo: Hash,
     pub amount: i64,
+    // PublicPaymentOutput has nothing else to share
     pub data: PaymentPayloadData,
 }
 

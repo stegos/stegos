@@ -22,18 +22,24 @@
 // SOFTWARE.
 
 use failure::{Error, Fail};
+use rand::prelude::*;
 use serde_derive::Serialize;
 use std::mem::transmute;
 use std::time::SystemTime;
-use stegos_crypto::bulletproofs::{make_range_proof, BulletProof};
+use stegos_crypto::bulletproofs::{fee_a, make_range_proof, validate_range_proof, BulletProof};
 use stegos_crypto::curve1174::cpt::{
     aes_decrypt, aes_encrypt, EncryptedPayload, Pt, PublicKey, SecretKey,
 };
 use stegos_crypto::curve1174::ecpt::ECp;
-use stegos_crypto::curve1174::fields::Fr;
-use stegos_crypto::curve1174::G;
+use stegos_crypto::curve1174::fields::{Fq, Fr};
+use stegos_crypto::curve1174::{G, UNIQ};
 use stegos_crypto::hash::{Hash, Hashable, Hasher, HASH_SIZE};
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc::secure::check_hash as network_check_hash;
+use stegos_crypto::pbc::secure::sign_hash as network_sign_hash;
+use stegos_crypto::pbc::secure::PublicKey as NetworkPublicKey;
+use stegos_crypto::pbc::secure::SecretKey as NetworkSecretKey;
+use stegos_crypto::pbc::secure::Signature as BlsSignature;
+use stegos_crypto::CryptoError;
 
 /// A magic value used to encode/decode payload.
 const PAYMENT_PAYLOAD_MAGIC: [u8; 4] = [112, 97, 121, 109]; // "paym"
@@ -46,7 +52,7 @@ pub const PAYMENT_PAYLOAD_LEN: usize = 1024;
 pub const PAYMENT_DATA_LEN: usize = PAYMENT_PAYLOAD_LEN - 4 - 32 - 32 - 8;
 
 /// A magic value used to encode/decode payload.
-const STAKE_PAYLOAD_MAGIC: [u8; 4] = [115, 116, 107, 101]; // "stke"
+/// const STAKE_PAYLOAD_MAGIC: [u8; 4] = [115, 116, 107, 101]; // "stke"
 
 /// Escrow payload size.
 pub const STAKE_PAYLOAD_LEN: usize = 36;
@@ -86,6 +92,9 @@ pub struct PaymentOutput {
     /// P_M + δG
     pub recipient: PublicKey,
 
+    // cloaking hint for recipient, to speed up UTXO search
+    pub cloaking_hint: Pt,
+
     /// Bulletproof on range on amount x.
     /// Contains Pedersen commitment.
     /// Size is approx. 1 KB (very structured data type).
@@ -101,6 +110,22 @@ pub struct PaymentOutput {
     pub payload: EncryptedPayload,
 }
 
+/// PublicPayment UTXO.
+/// Transaction output.
+/// (ID, P_{M, δ}, Bp, E_M(x, γ, δ))
+#[derive(Debug, Clone)]
+pub struct PublicPaymentOutput {
+    /// Uncloacked public key of recipient.
+    /// P_M + δG
+    pub recipient: PublicKey,
+
+    // randomize for hash collision avoidance
+    pub serno: i64,
+
+    // uncloaked amount
+    pub amount: i64,
+}
+
 /// Escrow UTXO.
 #[derive(Debug, Clone)]
 pub struct StakeOutput {
@@ -108,55 +133,50 @@ pub struct StakeOutput {
     pub recipient: PublicKey,
 
     /// Uncloaked network key of validator.
-    pub validator: secure::PublicKey,
-
-    /// BLS signature of recipient, validator and payload.
-    pub signature: secure::Signature,
+    pub validator: NetworkPublicKey,
 
     /// Amount to stake.
     pub amount: i64,
 
-    /// Encrypted payload.
-    pub payload: EncryptedPayload,
+    // some randomization to prevent hash collisions
+    pub serno: i64,
+
+    /// BLS signature of recipient, validator and payload.
+    pub signature: BlsSignature,
 }
 
 /// Blockchain UTXO.
 #[derive(Debug, Clone)]
 pub enum Output {
     PaymentOutput(PaymentOutput),
+    PublicPaymentOutput(PublicPaymentOutput),
     StakeOutput(StakeOutput),
 }
 
 /// Cloak recipient's public key.
-fn cloak_key(
-    sender_skey: &SecretKey,
-    recipient_pkey: &PublicKey,
-    gamma: &Fr,
-    timestamp: SystemTime,
-) -> Result<(PublicKey, Fr), Error> {
+fn cloak_key(recipient_pkey: &PublicKey, gamma: &Fr) -> Result<(PublicKey, Fr), Error> {
     // h is the digest of the recipients actual public key mixed with a timestamp.
+    let timestamp = SystemTime::now();
     let mut hasher = Hasher::new();
     recipient_pkey.hash(&mut hasher);
     timestamp.hash(&mut hasher);
+    Fq::random().hash(&mut hasher);
     let h = hasher.result();
+    let sender_skey = UNIQ.clone();
 
     // Use deterministic randomness here too, to protect against PRNG attacks.
-    let delta: Fr = Fr::synthetic_random(&"PKey", sender_skey, &h);
+    let delta: Fr = Fr::synthetic_random(&"PKey", &sender_skey, &h).make_safe();
 
     // Resulting publickey will be a random-like value in a safe range of the field,
     // not too small, and not too large. This helps avoid brute force attacks, looking
     // for the discrete log corresponding to delta.
 
-    let pt = Pt::from(*recipient_pkey);
-    let pt = ECp::decompress(pt)?;
-    let cloaked_pt = {
-        if (*gamma) == Fr::zero() {
-            pt + delta * (*G)
+    let cloaked_pkey = recipient_pkey
+        + (if *gamma == Fr::zero() {
+            &delta * &(*G)
         } else {
-            pt + (*gamma) * delta * (*G)
-        }
-    };
-    let cloaked_pkey = PublicKey::from(cloaked_pt);
+            gamma * &delta * &(*G)
+        });
     Ok((cloaked_pkey, delta))
 }
 
@@ -213,12 +233,12 @@ impl PaymentPayload {
         pos += PAYMENT_PAYLOAD_MAGIC.len();
 
         // Gamma.
-        let gamma_bytes: [u8; 32] = self.gamma.to_lev_u8();
+        let gamma_bytes: [u8; 32] = self.gamma.clone().to_lev_u8();
         payload[pos..pos + gamma_bytes.len()].copy_from_slice(&gamma_bytes);
         pos += gamma_bytes.len();
 
         // Delta.
-        let delta_bytes: [u8; 32] = self.delta.to_lev_u8();
+        let delta_bytes: [u8; 32] = self.delta.clone().to_lev_u8();
         payload[pos..pos + delta_bytes.len()].copy_from_slice(&delta_bytes);
         pos += delta_bytes.len();
 
@@ -290,7 +310,7 @@ impl PaymentPayload {
         let mut delta_bytes: [u8; 32] = [0u8; 32];
         delta_bytes.copy_from_slice(&payload[pos..pos + 32]);
         pos += delta_bytes.len();
-        let delta: Fr = Fr::from_lev_u8(delta_bytes);
+        let delta: Fr = Fr::from_safe_lev_u8(delta_bytes);
 
         // Amount.
         let mut amount_bytes: [u8; 8] = [0u8; 8];
@@ -339,73 +359,9 @@ impl PaymentPayload {
     }
 }
 
-/// Unpacked encrypted payload of PaymentOutput.
-#[derive(Debug, Eq, PartialEq)]
-pub struct StakePayload {
-    pub delta: Fr,
-}
-
-impl StakePayload {
-    /// Serialize and encrypt payload.
-    fn encrypt(&self, pkey: &PublicKey) -> Result<EncryptedPayload, Error> {
-        // Delta.
-        let delta_bytes: [u8; 32] = self.delta.to_lev_u8();
-
-        let payload: Vec<u8> = [&STAKE_PAYLOAD_MAGIC[..], &delta_bytes[..]].concat();
-
-        // Ensure that the total length of package is valid.
-        assert_eq!(payload.len(), STAKE_PAYLOAD_LEN);
-
-        // Encrypt payload.
-        let payload = aes_encrypt(&payload, &pkey)?;
-        Ok(payload)
-    }
-
-    /// Decrypt and deserialize payload.
-    fn decrypt(
-        output_hash: Hash,
-        payload: &EncryptedPayload,
-        skey: &SecretKey,
-    ) -> Result<Self, Error> {
-        if payload.ctxt.len() != STAKE_PAYLOAD_LEN {
-            return Err(OutputError::InvalidPayloadLength(
-                output_hash,
-                STAKE_PAYLOAD_LEN,
-                payload.ctxt.len(),
-            )
-            .into());
-        }
-        let payload: Vec<u8> = aes_decrypt(&payload, &skey)?;
-        assert_eq!(payload.len(), STAKE_PAYLOAD_LEN);
-        let mut pos: usize = 0;
-
-        // Magic.
-        let mut magic: [u8; 4] = [0u8; 4];
-        magic.copy_from_slice(&payload[pos..pos + 4]);
-        pos += 4;
-        if magic != STAKE_PAYLOAD_MAGIC {
-            // Invalid payload or invalid secret key supplied.
-            return Err(OutputError::PayloadDecryptionError(output_hash).into());
-        }
-
-        // Delta.
-        let mut delta_bytes: [u8; 32] = [0u8; 32];
-        delta_bytes.copy_from_slice(&payload[pos..pos + 32]);
-        pos += delta_bytes.len();
-        let delta: Fr = Fr::from_lev_u8(delta_bytes);
-
-        assert_eq!(pos, STAKE_PAYLOAD_LEN);
-
-        let payload = StakePayload { delta };
-        Ok(payload)
-    }
-}
-
 impl PaymentOutput {
     /// Create a new PaymentOutput with generic payload.
     pub fn with_payload(
-        timestamp: SystemTime,
-        sender_skey: &SecretKey,
         recipient_pkey: &PublicKey,
         amount: i64,
         data: PaymentPayloadData,
@@ -413,20 +369,25 @@ impl PaymentOutput {
         // Create range proofs.
         let (proof, gamma) = make_range_proof(amount);
 
-        // Clock recipient public key
-        let (cloaked_pkey, delta) = cloak_key(sender_skey, recipient_pkey, &gamma, timestamp)?;
+        // Cloak recipient public key
+        let (cloaked_pkey, delta) = cloak_key(recipient_pkey, &gamma)?;
 
         let payload = PaymentPayload {
-            delta,
-            gamma,
+            delta: delta.clone(),
+            gamma: gamma.clone(),
             amount,
             data,
         };
         // NOTE: real public key should be used to encrypt payload
         let payload = payload.encrypt(recipient_pkey)?;
 
+        // Key cloaking hint for recipient = gamma * delta * Pkey
+        let pt = Pt::from(recipient_pkey).decompress()?;
+        let hint = &pt * &gamma * &delta;
+
         let output = PaymentOutput {
             recipient: cloaked_pkey,
+            cloaking_hint: hint.compress(),
             proof,
             payload,
         };
@@ -435,46 +396,9 @@ impl PaymentOutput {
     }
 
     /// Create a new PaymentOutput.
-    pub fn new(
-        timestamp: SystemTime,
-        sender_skey: &SecretKey,
-        recipient_pkey: &PublicKey,
-        amount: i64,
-    ) -> Result<(Self, Fr), Error> {
+    pub fn new(recipient_pkey: &PublicKey, amount: i64) -> Result<(Self, Fr), Error> {
         let data = PaymentPayloadData::Comment(String::new());
-        Self::with_payload(timestamp, sender_skey, recipient_pkey, amount, data)
-    }
-
-    pub fn with_uncloaked_payload(
-        recipient_pkey: &PublicKey,
-        amount: i64,
-        data: PaymentPayloadData,
-    ) -> Result<(Self, Fr), Error> {
-        // Create range proofs.
-        let (proof, gamma) = make_range_proof(amount);
-
-        let payload = PaymentPayload {
-            delta: Fr::zero(),
-            gamma,
-            amount,
-            data,
-        };
-        // NOTE: dummy zero pubkey produces hint of Pt::zero()
-        // and unencrypted payload
-        let payload = payload.encrypt(&PublicKey::zero())?;
-
-        let output = PaymentOutput {
-            recipient: recipient_pkey.clone(),
-            proof,
-            payload,
-        };
-
-        Ok((output, gamma))
-    }
-
-    pub fn new_uncloaked(recipient_pkey: &PublicKey, amount: i64) -> Result<(Self, Fr), Error> {
-        let data = PaymentPayloadData::Comment(String::new());
-        Self::with_uncloaked_payload(recipient_pkey, amount, data)
+        Self::with_payload(recipient_pkey, amount, data)
     }
 
     /// Decrypt payload.
@@ -482,99 +406,185 @@ impl PaymentOutput {
         let output_hash = Hash::digest(&self);
         PaymentPayload::decrypt(output_hash, &self.payload, skey)
     }
+
+    pub fn validate(&self) -> Result<(), Error> {
+        // valid recipient PKey?
+        self.recipient.decompress()?;
+
+        // valid PKey cloaking?
+        if self.cloaking_hint != Pt::zero() {
+            self.cloaking_hint.decompress()?;
+        };
+
+        // check Bulletproof
+        if !validate_range_proof(&self.proof) {
+            let h = Hash::digest(self);
+            return Err(OutputError::InvalidBulletProof(h).into());
+        };
+
+        // Validate payload.
+        if self.payload.ctxt.len() != PAYMENT_PAYLOAD_LEN {
+            let h = Hash::digest(self);
+            return Err(OutputError::InvalidPayloadLength(
+                h,
+                PAYMENT_PAYLOAD_LEN,
+                self.payload.ctxt.len(),
+            )
+            .into());
+        }
+        Ok(())
+    }
+
+    pub fn pedersen_commitment(&self) -> Result<ECp, CryptoError> {
+        self.proof.vcmt.decompress()
+    }
+
+    pub fn is_my_utxo_with_cached_probes(
+        &self,
+        pkey_ecp: &ECp,
+        skey_fr: &Fr,
+    ) -> Result<bool, CryptoError> {
+        let its_ecp = self.recipient.decompress()?;
+        let its_cloak = self.cloaking_hint.decompress()?;
+        Ok(its_ecp == pkey_ecp + its_cloak / skey_fr)
+    }
+
+    pub fn is_my_utxo(&self, pkey: &PublicKey, skey: &SecretKey) -> Result<bool, CryptoError> {
+        // for iterated searches, it is best to precomppute the probes
+        self.is_my_utxo_with_cached_probes(&pkey.decompress()?, &Fr::from(skey))
+    }
+
+    pub fn recipient_pkey(&self) -> Result<ECp, CryptoError> {
+        self.recipient.decompress()
+    }
+}
+
+impl PublicPaymentOutput {
+    pub fn new(recipient_pkey: &PublicKey, amount: i64) -> Result<Self, Error> {
+        let serno = random::<i64>();
+        Ok(PublicPaymentOutput {
+            recipient: recipient_pkey.clone(),
+            serno,
+            amount,
+        })
+    }
+    pub fn validate(&self) -> Result<(), Error> {
+        self.recipient.decompress()?;
+        if self.amount <= 0 {
+            let h = Hash::digest(self);
+            return Err(OutputError::InvalidStake(h).into());
+        }
+        Ok(())
+    }
+
+    pub fn pedersen_commitment(&self) -> Result<ECp, CryptoError> {
+        Ok(fee_a(self.amount))
+    }
+
+    pub fn recipient_pkey(&self) -> Result<ECp, CryptoError> {
+        self.recipient.decompress()
+    }
 }
 
 impl StakeOutput {
     /// Create a new StakeOutput.
     pub fn new(
-        timestamp: SystemTime,
-        sender_skey: &SecretKey,
         recipient_pkey: &PublicKey,
-        validator_pkey: &secure::PublicKey,
-        validator_skey: &secure::SecretKey,
+        validator_pkey: &NetworkPublicKey,
+        validator_skey: &NetworkSecretKey,
         amount: i64,
     ) -> Result<Self, Error> {
         assert!(amount > 0);
 
-        // Cloak recipient public key.
-        let gamma = Fr::zero();
-        let (cloaked_pkey, delta) = cloak_key(sender_skey, recipient_pkey, &gamma, timestamp)?;
+        let serno = random::<i64>();
 
-        // Encrypt payload.
-        let payload = StakePayload { delta };
-        // NOTE: real public key should be used to encrypt payload
-        let payload = payload.encrypt(recipient_pkey)?;
-
-        // Form BLS signature on the validator PBC public key
-        let mut state = Hasher::new();
-        validator_pkey.hash(&mut state);
-        cloaked_pkey.hash(&mut state);
-        payload.hash(&mut state);
-        let h = state.result();
-        let sig = secure::sign_hash(&h, validator_skey);
-
-        let output = StakeOutput {
-            recipient: cloaked_pkey,
+        let mut output = StakeOutput {
+            recipient: recipient_pkey.clone(),
             validator: validator_pkey.clone(),
-            signature: sig.clone(),
             amount,
-            payload,
+            serno,
+            signature: BlsSignature::zero(),
         };
 
-        Ok(output)
-    }
+        // Form BLS signature on the Stake UTXO
+        let mut state = Hasher::new();
+        output.hash(&mut state);
+        let h = state.result();
+        output.signature = network_sign_hash(&h, validator_skey);
 
-    /// Decrypt payload of StakeOutput.
-    pub fn decrypt_payload(&self, skey: &SecretKey) -> Result<StakePayload, Error> {
-        let output_hash = Hash::digest(&self);
-        StakePayload::decrypt(output_hash, &self.payload, skey)
+        Ok(output)
     }
 
     /// Validate BLS signature of validator_pkey
     pub fn validate_pkey(&self) -> Result<(), Error> {
         let mut state = Hasher::new();
-        self.validator.hash(&mut state);
-        self.recipient.hash(&mut state);
-        self.payload.hash(&mut state);
+        self.hash(&mut state);
         let h = state.result();
-        if let Err(_e) = secure::check_hash(&h, &self.signature, &self.validator) {
+        if let Err(_e) = network_check_hash(&h, &self.signature, &self.validator) {
             let output_hash = Hash::digest(&self);
             return Err(OutputError::InvalidStakeSignature(output_hash).into());
         }
         Ok(())
     }
+
+    pub fn validate(&self) -> Result<(), Error> {
+        self.recipient.decompress()?;
+        if self.amount <= 0 {
+            let h = Hash::digest(self);
+            return Err(OutputError::InvalidStake(h).into());
+        }
+        self.validate_pkey()
+    }
+
+    pub fn pedersen_commitment(&self) -> Result<ECp, CryptoError> {
+        Ok(fee_a(self.amount))
+    }
+
+    pub fn recipient_pkey(&self) -> Result<ECp, CryptoError> {
+        self.recipient.decompress()
+    }
 }
 
 impl Output {
     /// Create a new payment UTXO.
-    pub fn new_payment(
-        timestamp: SystemTime,
-        sender_skey: &SecretKey,
-        recipient_pkey: &PublicKey,
-        amount: i64,
-    ) -> Result<(Self, Fr), Error> {
-        let (output, delta) = PaymentOutput::new(timestamp, sender_skey, recipient_pkey, amount)?;
+    pub fn new_payment(recipient_pkey: &PublicKey, amount: i64) -> Result<(Self, Fr), Error> {
+        let (output, delta) = PaymentOutput::new(recipient_pkey, amount)?;
         Ok((Output::PaymentOutput(output), delta))
     }
 
     /// Create a new escrow transaction.
     pub fn new_stake(
-        timestamp: SystemTime,
-        sender_skey: &SecretKey,
         recipient_pkey: &PublicKey,
-        validator_pkey: &secure::PublicKey,
-        validator_skey: &secure::SecretKey,
+        validator_pkey: &NetworkPublicKey,
+        validator_skey: &NetworkSecretKey,
         amount: i64,
     ) -> Result<Self, Error> {
-        let output = StakeOutput::new(
-            timestamp,
-            sender_skey,
-            recipient_pkey,
-            validator_pkey,
-            validator_skey,
-            amount,
-        )?;
+        let output = StakeOutput::new(recipient_pkey, validator_pkey, validator_skey, amount)?;
         Ok(Output::StakeOutput(output))
+    }
+
+    pub fn validate(&self) -> Result<(), Error> {
+        match self {
+            Output::PaymentOutput(o) => o.validate(),
+            Output::PublicPaymentOutput(o) => o.validate(),
+            Output::StakeOutput(o) => o.validate(),
+        }
+    }
+
+    pub fn recipient_pkey(&self) -> Result<ECp, CryptoError> {
+        match self {
+            Output::PaymentOutput(o) => o.recipient_pkey(),
+            Output::PublicPaymentOutput(o) => o.recipient_pkey(),
+            Output::StakeOutput(o) => o.recipient_pkey(),
+        }
+    }
+
+    pub fn pedersen_commitment(&self) -> Result<ECp, CryptoError> {
+        match self {
+            Output::PaymentOutput(o) => o.pedersen_commitment(),
+            Output::PublicPaymentOutput(o) => o.pedersen_commitment(),
+            Output::StakeOutput(o) => o.pedersen_commitment(),
+        }
     }
 }
 
@@ -582,8 +592,18 @@ impl Hashable for PaymentOutput {
     fn hash(&self, state: &mut Hasher) {
         "Payment".hash(state);
         self.recipient.hash(state);
+        self.cloaking_hint.hash(state);
         self.proof.hash(state);
         self.payload.hash(state);
+    }
+}
+
+impl Hashable for PublicPaymentOutput {
+    fn hash(&self, state: &mut Hasher) {
+        "PublicPayment".hash(state);
+        self.recipient.hash(state);
+        self.serno.hash(state);
+        self.amount.hash(state);
     }
 }
 
@@ -593,7 +613,7 @@ impl Hashable for StakeOutput {
         self.recipient.hash(state);
         self.validator.hash(state);
         self.amount.hash(state);
-        self.payload.hash(state);
+        self.serno.hash(state);
     }
 }
 
@@ -601,6 +621,7 @@ impl Hashable for Output {
     fn hash(&self, state: &mut Hasher) {
         match self {
             Output::PaymentOutput(payment) => payment.hash(state),
+            Output::PublicPaymentOutput(payment) => payment.hash(state),
             Output::StakeOutput(stake) => stake.hash(state),
         }
     }
@@ -619,7 +640,6 @@ pub mod tests {
 
     use rand::distributions::Alphanumeric;
     use rand::{thread_rng, Rng};
-    use std::time::SystemTime;
     use stegos_crypto::curve1174::cpt::make_random_keys;
 
     fn random_string(len: usize) -> String {
@@ -783,62 +803,6 @@ pub mod tests {
     }
 
     ///
-    /// Tests encoding/decoding of StakePayload used by StakeOutput.
-    ///
-    #[test]
-    fn stake_payload() {
-        use simple_logger;
-        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
-
-        fn rt(payload: &StakePayload, skey: &SecretKey, pkey: &PublicKey) {
-            let output_hash = Hash::digest("test");
-            let encrypted = payload.encrypt(&pkey).expect("keys are valid");
-            let payload2 =
-                StakePayload::decrypt(output_hash, &encrypted, &skey).expect("keys are valid");
-            assert_eq!(payload, &payload2);
-        }
-
-        let (skey, pkey) = make_random_keys();
-        let output_hash = Hash::digest("test");
-
-        // Basic.
-        let delta: Fr = Fr::random();
-        let payload = StakePayload { delta };
-        rt(&payload, &skey, &pkey);
-
-        //
-        // Corrupted payload.
-        //
-        let delta: Fr = Fr::random();
-        let payload = StakePayload { delta };
-        let encrypted = payload.encrypt(&pkey).expect("keys are valid");
-        let raw = aes_decrypt(&encrypted, &skey).expect("keys are valid");
-
-        // Invalid length.
-        let mut invalid = raw.clone();
-        invalid.push(0);
-        let invalid = aes_encrypt(&invalid, &pkey).expect("keys are valid");
-        let e = StakePayload::decrypt(output_hash, &invalid, &skey).unwrap_err();
-        match e.downcast::<OutputError>().unwrap() {
-            OutputError::InvalidPayloadLength(_output_hash, expected, got) => {
-                assert_eq!(expected, STAKE_PAYLOAD_LEN);
-                assert_eq!(got, STAKE_PAYLOAD_LEN + 1);
-            }
-            _ => unreachable!(),
-        }
-
-        // Invalid magic.
-        let mut invalid = raw.clone();
-        invalid[3] = 5;
-        let invalid = aes_encrypt(&invalid, &pkey).expect("keys are valid");
-        let e = StakePayload::decrypt(output_hash, &invalid, &skey).unwrap_err();
-        match e.downcast::<OutputError>().unwrap() {
-            OutputError::PayloadDecryptionError(_output_hash) => {}
-            _ => unreachable!(),
-        }
-    }
-
-    ///
     /// Tests PaymentOutput encryption/decryption.
     ///
     #[test]
@@ -846,11 +810,9 @@ pub mod tests {
         let (skey1, _pkey1) = make_random_keys();
         let (skey2, pkey2) = make_random_keys();
 
-        let timestamp = SystemTime::now();
         let amount: i64 = 100500;
 
-        let (output, gamma) =
-            PaymentOutput::new(timestamp, &skey1, &pkey2, amount).expect("encryption successful");
+        let (output, gamma) = PaymentOutput::new(&pkey2, amount).expect("encryption successful");
         let payload = output
             .decrypt_payload(&skey2)
             .expect("decryption successful");
@@ -867,59 +829,5 @@ pub mod tests {
         } else {
             assert!(false);
         }
-    }
-
-    ///
-    /// Tests StakeOutput encryption/decryption.
-    ///
-    #[test]
-    pub fn stake_encrypt_decrypt() {
-        let (skey1, _pkey1) = make_random_keys();
-        let (skey2, pkey2) = make_random_keys();
-        let (secure_skey1, secure_pkey1) = secure::make_random_keys();
-
-        let timestamp = SystemTime::now();
-        let amount: i64 = 100500;
-
-        let output = StakeOutput::new(
-            timestamp,
-            &skey1,
-            &pkey2,
-            &secure_pkey1,
-            &secure_skey1,
-            amount,
-        )
-        .expect("encryption successful");
-        let _payload = output
-            .decrypt_payload(&skey2)
-            .expect("decryption successful");
-
-        // Error handling
-        if let Err(e) = output.decrypt_payload(&skey1) {
-            match e.downcast::<OutputError>() {
-                Ok(OutputError::PayloadDecryptionError(_output_hash)) => (),
-                _ => assert!(false),
-            };
-        } else {
-            assert!(false);
-        }
-    }
-
-    #[test]
-    pub fn unencrypted_payload() {
-        let (skey, pkey) = make_random_keys();
-        let amount: i64 = 0x1234567;
-
-        let (output, gamma) =
-            PaymentOutput::new_uncloaked(&pkey, amount).expect("Can't generate uncloaked UTXO");
-        assert!(output.recipient == pkey);
-        let rec = output
-            .decrypt_payload(&skey)
-            .expect("Can't decrypt unencrypted payload");
-        assert!(rec.amount == amount);
-        assert!(rec.delta == Fr::zero());
-        assert!(rec.gamma == gamma);
-        println!("gamma = {}", gamma);
-        println!("output = {:?}", output);
     }
 }

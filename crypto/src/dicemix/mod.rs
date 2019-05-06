@@ -216,13 +216,13 @@ fn index_vec(dim: usize) -> Vec<usize> {
     ans
 }
 
-fn exp_vec(base: Fr, n: u64) -> Vec<Fr> {
+fn exp_vec(base: &Fr, n: u64) -> Vec<Fr> {
     let mut vans = Vec::<Fr>::new();
-    let mut tmp = base;
-    vans.push(base);
+    let mut tmp = base.clone();
+    vans.push(tmp.clone());
     for i in 1..n {
         tmp *= base;
-        vans.push(tmp);
+        vans.push(tmp.clone());
     }
     vans
 }
@@ -256,10 +256,10 @@ pub fn dc_encode_sheet(
     index_vec(nchunks)
         .par_iter()
         .map(|r_ix| {
-            let mut row = exp_vec(chunks[*r_ix], nparts as u64);
+            let mut row = exp_vec(&chunks[*r_ix], nparts as u64);
             for c_ix in 0..nparts {
                 let seed_str = gen_cell_seed(sheet, *r_ix, c_ix + 1);
-                row[c_ix] += dc_slot_pad(&parts, &my_id, share_cloaks, &seed_str);
+                row[c_ix] += &dc_slot_pad(&parts, &my_id, share_cloaks, &seed_str);
             }
             row
         })
@@ -282,11 +282,11 @@ fn dc_slot_pad(
         share_cloak.hash(&mut state);
         (*seed).hash(&mut state);
         let h = state.result();
-        let val = Fr::from(h);
+        let val = Fr::from(&h);
         if my_id < p_other {
-            sum -= val;
+            sum -= &val;
         } else if my_id > p_other {
-            sum += val;
+            sum += &val;
         }
     }
     sum
@@ -387,7 +387,7 @@ pub fn dc_decode(
             let mut msgs = Vec::<Vec<u8>>::new();
             for m_ix in 0..dim_c {
                 // scan all rows for msgs
-                let frval = sheet[0][m_ix];
+                let frval = sheet[0][m_ix].clone();
                 if frval != Fr::zero() {
                     // if leading chunk is zero, then no msg in this row
                     let mut msg = Vec::<u8>::new();
@@ -399,7 +399,7 @@ pub fn dc_decode(
                         let mut found = false;
                         for c in 0..dim_c {
                             // scanning all cols for a chunk in that column
-                            let frval = sheet[r][c];
+                            let frval = sheet[r][c].clone();
                             if frval != Fr::zero() {
                                 // ignore zero chunk values
                                 let chunk = frval.to_bytes();
@@ -445,12 +445,12 @@ fn dc_open(
     for (_, mat) in mats {
         // add contribs from all users to remove cloaking
         // and form power sum
-        pwrsum += mat[sheet][row][col];
+        pwrsum += &mat[sheet][row][col];
     }
     let seed_str = gen_cell_seed(sheet, row + 1, col);
     for p in p_excl {
         let kxs = k_excl.get(p).unwrap();
-        pwrsum -= dc_slot_pad(p_excl, &p, &kxs, &seed_str);
+        pwrsum -= &dc_slot_pad(p_excl, &p, &kxs, &seed_str);
     }
     pwrsum
 }
@@ -535,14 +535,14 @@ pub fn dc_keys(
     // my_sess_skey is the secret key invented for each specific session round
     //
     let mut out = HashMap::new();
-    let alpha = Fr::from(my_sess_skey.clone());
+    let alpha = Fr::from(my_sess_skey);
     for pkey in participants.iter().filter(|p| **p != *my_id) {
         let sess_pkey = sess_pkeys.get(pkey).unwrap();
-        let cpt = Pt::from(*sess_pkey);
-        let ecpt = ECp::decompress(cpt).unwrap();
+        let cpt = Pt::from(sess_pkey);
+        let ecpt = cpt.decompress().unwrap();
 
-        let comm_pt = alpha * ecpt;
-        let ccpt = Pt::from(comm_pt);
+        let comm_pt = &alpha * &ecpt;
+        let ccpt = Pt::from(&comm_pt);
 
         let mut state = Hasher::new();
         sess.hash(&mut state);
@@ -606,15 +606,17 @@ where
                 let sheet = &mat[s];
                 let mut msg = Vec::<u8>::new();
                 let seed_str = gen_cell_seed(s, 0, 1);
-                let mut chunk1 =
-                    (sheet[0][0] - dc_slot_pad(participants, pkey, &cloaks, &seed_str)).to_bytes();
+                let mut chunk1 = (&sheet[0][0]
+                    - &dc_slot_pad(participants, pkey, &cloaks, &seed_str))
+                    .to_bytes();
                 stuff_msg(&mut msg, &chunk1, 0, MAX_BYTES);
 
                 let dim_r = sheet.len(); // nbr of chunks
                 let dim_c = sheet[0].len(); // s.b. nbr of participants
                 for r in 1..dim_r {
                     let seed_str = gen_cell_seed(s, r, 1);
-                    let chunk = (sheet[r][0] - dc_slot_pad(participants, pkey, &cloaks, &seed_str))
+                    let chunk = (&sheet[r][0]
+                        - &dc_slot_pad(participants, pkey, &cloaks, &seed_str))
                         .to_bytes();
                     stuff_msg(&mut msg, &chunk, NPREF, NCHUNK);
                 }
@@ -640,10 +642,10 @@ where
             if !pkey_fail {
                 // recover component of shared sum and validate the payload
                 let seed_str = scalar_open_seed();
-                let r_adj = *sum_dc1.get(pkey).expect("Can't access sum_dc1")
-                    - dc_slot_pad(participants, pkey, &cloaks, &seed_str);
-                let fee = *sum_dc2.get(pkey).expect("Can't access sum_dc2")
-                    - dc_slot_pad(participants, pkey, &cloaks, &seed_str);
+                let r_adj = sum_dc1.get(pkey).expect("Can't access sum_dc1")
+                    - &dc_slot_pad(participants, pkey, &cloaks, &seed_str);
+                let fee = sum_dc2.get(pkey).expect("Can't access sum_dc2")
+                    - &dc_slot_pad(participants, pkey, &cloaks, &seed_str);
                 pkey_fail = !vfn(&pkey, &msgs, r_adj, fee, data);
             }
 
@@ -682,7 +684,7 @@ fn scalar_open_seed() -> Vec<u8> {
 }
 
 pub fn dc_encode_scalar(
-    x: Fr,
+    x: &Fr,
     participants: &Vec<ParticipantID>,
     my_id: &ParticipantID,
     share_cloaks: &HashMap<ParticipantID, Hash>,
@@ -695,7 +697,7 @@ pub fn dc_encode_scalar(
     // constant cloaking seed "sum". This is also assumed in the
     // dc_reconstruct() code used for blame discovery.
     let seed_str = scalar_open_seed();
-    x + dc_slot_pad(participants, my_id, &share_cloaks, &seed_str)
+    x + &dc_slot_pad(participants, my_id, &share_cloaks, &seed_str)
 }
 
 pub fn dc_scalar_open(
@@ -706,11 +708,11 @@ pub fn dc_scalar_open(
     let mut pwrsum = Fr::zero();
     // add contribs from all users to remove cloaking
     // and form power sum
-    elts.iter().for_each(|(&_, &elt)| pwrsum += elt);
+    elts.iter().for_each(|(_, elt)| pwrsum += elt);
     let seed_str = scalar_open_seed();
     for p in p_excl {
         let kxs = k_excl.get(p).unwrap();
-        pwrsum -= dc_slot_pad(p_excl, &p, &kxs, &seed_str);
+        pwrsum -= &dc_slot_pad(p_excl, &p, &kxs, &seed_str);
     }
     pwrsum
 }
@@ -832,10 +834,10 @@ mod tests {
         dbg!(&pad_1);
         dbg!(&pad_2);
         dbg!(&pad_3);
-        dbg!(pad_1 + pad_2 + pad_3);
+        dbg!(&pad_1 + &pad_2 + &pad_3);
 
         // show that adding together the padding from all of us, produces a zero Fr value
-        assert!(pad_1 + pad_2 + pad_3 == Fr::zero());
+        assert!(&pad_1 + &pad_2 + &pad_3 == Fr::zero());
 
         // Form a matrix sheet from each participant
         let msg_1 = b"From 1 - This is a message This is a message This is a message This is a message This is a message";
@@ -894,7 +896,7 @@ mod tests {
             for c in 0..3 {
                 let mut sum = Fr::zero();
                 for sheet in matrix.clone() {
-                    sum += sheet[r][c];
+                    sum += &sheet[r][c];
                 }
                 row.push(sum);
             }
@@ -903,16 +905,16 @@ mod tests {
         println!("Sum Sheet");
         show_sheet(&sum_sheet);
 
-        fn expi(base: Fr, expon: u64) -> Fr {
+        fn expi(base: &Fr, expon: u64) -> Fr {
             let mut tmp = Fr::one();
-            let mut x = base;
+            let mut x = base.clone();
             let mut ebits = expon;
             while ebits > 0 {
                 if (ebits & 1) != 0 {
-                    tmp *= x;
+                    tmp *= &x;
                 }
                 ebits >>= 1;
-                x *= x;
+                x *= &x.clone();
             }
             tmp
         }
@@ -924,7 +926,7 @@ mod tests {
             for c in 0..3 {
                 let mut sum = Fr::zero();
                 for rc in 0..3 {
-                    sum += expi(rows[rc][r], (c + 1) as u64);
+                    sum += &expi(&rows[rc][r], (c + 1) as u64);
                 }
                 assert!(sum == sum_sheet[r][c]);
             }
@@ -933,9 +935,9 @@ mod tests {
         // -------------------------------------------------
         // Try a real decode on the shared messages
         let mut mats = HashMap::new();
-        mats.insert(pk1, vec![sheet_1.clone()]);
-        mats.insert(pk2, vec![sheet_2.clone()]);
-        mats.insert(pk3, vec![sheet_3.clone()]);
+        mats.insert(pk1, vec![sheet_1]);
+        mats.insert(pk2, vec![sheet_2]);
+        mats.insert(pk3, vec![sheet_3]);
 
         let p_excl = Vec::<ParticipantID>::new();
         let k_excl: HashMap<ParticipantID, HashMap<ParticipantID, Hash>> = HashMap::new();
@@ -965,7 +967,7 @@ mod tests {
             &p_excl,
             &k_excl,
         );
-        let nmsgs = msgs.clone().len();
+        let nmsgs = msgs.len();
         assert!(3 == nmsgs);
         let mut cmsgs = Vec::<String>::new();
         for m_in in msgs {
@@ -1177,7 +1179,7 @@ mod tests {
             })
             .collect();
 
-        matrices.insert(my_id, matrix.clone());
+        matrices.insert(my_id, matrix);
         for (p, m) in mats {
             matrices.insert(p, m);
         }

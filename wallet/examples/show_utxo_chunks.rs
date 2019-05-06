@@ -36,18 +36,19 @@ use stegos_crypto::curve1174::cpt::SchnorrSig;
 use stegos_crypto::curve1174::cpt::SecretKey;
 use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
+use stegos_crypto::dicemix::*;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::hash::{Hashable, Hasher, HASH_SIZE};
+use stegos_crypto::pbc::secure::make_random_keys as make_network_random_keys;
 use stegos_serialization::traits::ProtoConvert;
-
-use stegos_crypto::dicemix::*;
 
 fn main() {
     // Determine number of DiceMix chunks needed to support our UTXO's
-    let (skey, pkey) = make_random_keys();
+    let (_skey, pkey) = make_random_keys();
+    let (sskey, spkey) = make_network_random_keys();
     let tstamp = SystemTime::now();
     let data = PaymentPayloadData::Comment("Testing".to_string());
-    let (out, gamma) = PaymentOutput::with_payload(tstamp, &skey, &pkey, 1500, data)
+    let (out, gamma) = PaymentOutput::with_payload(&pkey, 1500, data)
         .expect("Can't produce payment output");
     let msg = out.into_buffer().expect("can't serialize UTXO");
     println!("UTXO len = {}", msg.len());

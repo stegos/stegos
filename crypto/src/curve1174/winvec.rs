@@ -22,28 +22,66 @@
 // SOFTWARE.
 
 use super::*;
+use clear_on_drop::clear::Clear;
 
 // -----------------------------------------------------------------
 // window vector of 4-bit values, used for fast multiply of curve points
 
 pub const PANES: usize = 64; // nbr of 4-bit nibbles in 256-bit numbers
 
-pub struct WinVec(pub [i8; PANES]);
+pub struct WinVec(pub [i8; PANES], pub bool);
 
-pub const WINVEC_INIT: WinVec = WinVec([0; PANES]);
+pub const WINVEC_INIT: WinVec = WinVec([0; PANES], false);
 
-impl From<Fr> for WinVec {
-    fn from(x: Fr) -> WinVec {
+impl WinVec {
+    pub fn is_safe(&self) -> bool {
+        self.1
+    }
+
+    pub fn make_safe(&mut self) -> Self {
+        self.1 = true;
+        self.clone()
+    }
+
+    pub fn copy_safe(&mut self, other: &Self) {
+        self.1 |= other.1;
+    }
+
+    pub fn zap(&mut self) {
+        self.0.clear()
+    }
+
+    pub fn maybe_zap(&mut self) {
+        if self.1 {
+            self.0.clear();
+        }
+    }
+}
+
+impl Clone for WinVec {
+    fn clone(&self) -> Self {
+        WinVec(self.0.clone(), self.1.clone())
+    }
+}
+
+impl Drop for WinVec {
+    fn drop(&mut self) {
+        self.maybe_zap();
+    }
+}
+
+impl<'a> From<&'a Fr> for WinVec {
+    fn from(x: &'a Fr) -> WinVec {
         let bits = x.unscaled().bits().to_lev_u8();
         let mut wv = WINVEC_INIT;
-        cwin4(&bits, &mut wv);
+        cwin4(&bits, &mut wv.0);
         wv
     }
 }
 
 impl From<i64> for WinVec {
     fn from(x: i64) -> WinVec {
-        WinVec::from(Fr::from(x))
+        WinVec::from(&Fr::from(x))
     }
 }
 
@@ -53,14 +91,14 @@ impl WinVec {
         let mut w = WINVEC_INIT;
         let mut qv = [0u8; 32];
         hexstr_to_lev_u8(s, &mut qv);
-        cwin4(&qv, &mut w);
+        cwin4(&qv, &mut w.0);
         w
     }
 }
 
 // convert incoming LEV32 (byte vector) into a little endian vector
 // of bipolar window values [-8..8)
-fn cwin4(qv: &[u8; 32], w: &mut WinVec) {
+fn cwin4(qv: &[u8; 32], w: &mut [i8; PANES]) {
     // convert incoming N to bipolar 4-bit window vector - no branching
     let mut cy = 0;
     let mut cvbip = |v_in| {
@@ -76,8 +114,10 @@ fn cwin4(qv: &[u8; 32], w: &mut WinVec) {
         let byt = qv[ix];
         let v = cvbip(byt & 15);
         let jx = 2 * ix;
-        w.0[jx] = v;
+        w[jx] = v;
         let v = cvbip(byt >> 4);
-        w.0[jx + 1] = v;
+        w[jx + 1] = v;
     }
 }
+
+// ---------------------------------------------------------

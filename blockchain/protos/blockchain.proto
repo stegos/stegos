@@ -6,21 +6,29 @@ import "view_changes.proto";
 
 message PaymentOutput {
     stegos.crypto.PublicKey recipient = 1;
-    stegos.crypto.BulletProof proof = 2;
-    stegos.crypto.EncryptedPayload payload = 3;
+    stegos.crypto.Pt cloaking_hint = 2;
+    stegos.crypto.BulletProof proof = 3;
+    stegos.crypto.EncryptedPayload payload = 4;
+}
+
+message PublicPaymentOutput {
+    stegos.crypto.PublicKey recipient = 1;
+    int64 serno = 2;
+    int64 amount = 3;    
 }
 
 message StakeOutput {
     stegos.crypto.PublicKey recipient = 1;
     stegos.crypto.SecurePublicKey validator = 2;
-    stegos.crypto.SecureSignature signature = 3;
-    int64 amount = 4;
-    stegos.crypto.EncryptedPayload payload = 5;
+    int64 amount = 3;
+    int64 serno = 4;
+    stegos.crypto.SecureSignature signature = 5;
 }
 
 message Output {
     oneof output {
         PaymentOutput payment_output = 1;
+        PublicPaymentOutput public_payment_output = 2;
         StakeOutput stake_output = 3;
     }
 }
@@ -31,6 +39,12 @@ message Transaction {
     stegos.crypto.Fr gamma = 3;
     int64 fee = 4;
     stegos.crypto.SchnorrSig sig = 5;
+}
+
+message RestakeTransaction {
+    repeated stegos.crypto.Hash txins = 1;
+    repeated Output txouts = 2;
+    stegos.crypto.SecureSignature sig = 3;
 }
 
 message BaseBlockHeader {

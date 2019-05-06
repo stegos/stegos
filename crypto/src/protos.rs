@@ -53,10 +53,17 @@ impl ProtoConvert for Fr {
     fn into_proto(&self) -> Self::Proto {
         let mut proto = crypto::Fr::new();
         proto.set_data(self.to_bytes().to_vec());
+        // If it is safe = wipe after use, then shouldn't we be
+        // preventing this sort of thing...?
+        proto.set_safe(self.is_safe());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        Ok(Fr::try_from_bytes(proto.get_data())?)
+        if proto.get_safe() {
+            Ok(Fr::try_safely_from_bytes(proto.get_data())?)
+        } else {
+            Ok(Fr::try_from_bytes(proto.get_data())?)
+        }
     }
 }
 
@@ -100,13 +107,13 @@ impl ProtoConvert for SecretKey {
     type Proto = crypto::SecretKey;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = crypto::SecretKey::new();
-        let fval = Fr::from(self.clone());
+        let fval = Fr::from(self);
         proto.set_skeyf(fval.into_proto());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let fval = Fr::from_proto(proto.get_skeyf())?;
-        Ok(SecretKey::from(fval))
+        let fval = Fr::from_proto(proto.get_skeyf())?.make_safe();
+        Ok(SecretKey::from(&fval))
     }
 }
 
@@ -114,13 +121,13 @@ impl ProtoConvert for PublicKey {
     type Proto = crypto::PublicKey;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = crypto::PublicKey::new();
-        let pt: Pt = (*self).into();
+        let pt: Pt = self.into();
         proto.set_point(pt.into_proto());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let pt: Pt = Pt::from_proto(proto.get_point())?;
-        Ok(PublicKey::from(pt))
+        Ok(PublicKey::from(&pt))
     }
 }
 
@@ -345,7 +352,7 @@ mod tests {
 
     #[test]
     fn points() {
-        let pt: Pt = Pt::from(ECp::random());
+        let pt: Pt = Pt::from(&ECp::random());
         roundtrip(&pt);
 
         let fr = Fr::random();
@@ -380,8 +387,8 @@ mod tests {
     #[test]
     fn bulletproofs() {
         let lr = LR {
-            l: Pt::from(ECp::random()),
-            r: Pt::from(ECp::random()),
+            l: Pt::from(&ECp::random()),
+            r: Pt::from(&ECp::random()),
         };
         roundtrip(&lr);
 

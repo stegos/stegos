@@ -22,16 +22,40 @@
 // SOFTWARE.
 
 use super::*;
+use clear_on_drop::clear::Clear;
 use std::cmp::Ordering;
 
 // -----------------------------------------------------------------
 // type Lev32 represents a 256-bit bignum as a little-endian 32-byte vector
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub struct Lev32(pub [u8; 32]);
+#[derive(Eq, PartialEq)]
+pub struct Lev32(pub [u8; 32], pub bool);
 
 impl Lev32 {
-    pub fn to_lev_u64(self) -> [u64; 4] {
+    pub fn is_safe(&self) -> bool {
+        self.1
+    }
+
+    pub fn make_safe(&mut self) -> Self {
+        self.1 = true;
+        self.clone()
+    }
+
+    pub fn copy_safe(&mut self, other: &Self) {
+        self.1 |= other.1;
+    }
+
+    pub fn zap(&mut self) {
+        self.0.clear()
+    }
+
+    pub fn maybe_zap(&mut self) {
+        if self.1 {
+            self.0.clear();
+        }
+    }
+
+    pub fn to_lev_u64(&self) -> [u64; 4] {
         let mut ans = [0u64; 4];
         ans[0] = (self.0[0] as u64)
             | (self.0[1] as u64) << 8
@@ -70,16 +94,16 @@ impl Lev32 {
     }
 
     fn nbr_str(&self) -> String {
-        basic_nbr_str(&(*self).to_lev_u64())
+        basic_nbr_str(&self.to_lev_u64())
     }
 
     pub fn bits(&self) -> &[u8] {
-        &(*self).0
+        &self.0
     }
 
     pub fn random() -> Self {
         let mut rng: ThreadRng = thread_rng();
-        Lev32(rng.gen::<[u8; 32]>())
+        Lev32(rng.gen::<[u8; 32]>(), false)
     }
 }
 
@@ -91,10 +115,10 @@ impl fmt::Display for Lev32 {
 
 impl Ord for Lev32 {
     fn cmp(&self, other: &Lev32) -> Ordering {
-        for (a, b) in self.0.iter().zip(other.0.iter()).rev() {
-            if *a < *b {
+        for (&a, &b) in self.0.iter().zip(other.0.iter()).rev() {
+            if a < b {
                 return Ordering::Less;
-            } else if *a > *b {
+            } else if a > b {
                 return Ordering::Greater;
             }
         }
@@ -105,5 +129,17 @@ impl Ord for Lev32 {
 impl PartialOrd for Lev32 {
     fn partial_cmp(&self, other: &Lev32) -> Option<Ordering> {
         Some(Self::cmp(self, other))
+    }
+}
+
+impl Clone for Lev32 {
+    fn clone(&self) -> Self {
+        Lev32(self.0.clone(), self.1.clone())
+    }
+}
+
+impl Drop for Lev32 {
+    fn drop(&mut self) {
+        self.maybe_zap();
     }
 }

@@ -51,7 +51,7 @@ use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssi
 
 // ---------------------------------------------------------------------------------
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct Zr([u8; ZR_SIZE_AR160]);
 
 impl Zr {
@@ -92,12 +92,12 @@ impl Zr {
 
     pub fn acceptable_maxval() -> Self {
         // approx = modulus - sqrt(modulus)
-        -*MIN_AR160
+        -(MIN_AR160.clone())
     }
 
     pub fn acceptable_random_rehash(k: Self) -> Self {
-        let min = *MIN_AR160;
-        let max = *MAX_AR160;
+        let min = MIN_AR160.clone();
+        let max = MAX_AR160.clone();
         let mut mk = k;
         while mk < min || mk > max {
             mk = Self::from(Hash::digest(&mk));
@@ -108,8 +108,8 @@ impl Zr {
     pub fn random() -> Self {
         let mut rng: ThreadRng = thread_rng();
         let mut zx = Zr(rng.gen::<[u8; ZR_SIZE_AR160]>());
-        let min = *MIN_AR160;
-        let max = *MAX_AR160;
+        let min = MIN_AR160.clone();
+        let max = MAX_AR160.clone();
         while zx < min || zx > max {
             zx = Zr(rng.gen::<[u8; ZR_SIZE_AR160]>());
         }
@@ -139,6 +139,12 @@ impl Zr {
         let mut v = Self::wv();
         hexstr_to_bev_u8(&s, &mut v)?;
         Ok(Zr(v))
+    }
+}
+
+impl Drop for Zr {
+    fn drop(&mut self) {
+        self.zap();
     }
 }
 
@@ -331,25 +337,25 @@ impl DivAssign<i64> for Zr {
 
 impl AddAssign<Zr> for Zr {
     fn add_assign(&mut self, other: Self) {
-        *self = *self + other;
+        *self = self.clone() + other;
     }
 }
 
 impl SubAssign<Zr> for Zr {
     fn sub_assign(&mut self, other: Self) {
-        *self = *self - other;
+        *self = self.clone() - other;
     }
 }
 
 impl MulAssign<Zr> for Zr {
     fn mul_assign(&mut self, other: Self) {
-        *self = *self * other;
+        *self = self.clone() * other;
     }
 }
 
 impl DivAssign<Zr> for Zr {
     fn div_assign(&mut self, other: Self) {
-        *self = *self / other;
+        *self = self.clone() / other;
     }
 }
 
@@ -875,7 +881,7 @@ impl PartialEq for SecretKey {
 
 impl From<SecretKey> for Zr {
     fn from(skey: SecretKey) -> Zr {
-        skey.0
+        skey.0.clone()
     }
 }
 

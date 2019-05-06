@@ -48,12 +48,6 @@ impl Pt {
         Pt([0u8; 32])
     }
 
-    pub fn flip_sign(cmt: &mut Pt) {
-        // flip sign bit in compressed Pt
-        // used for test purposes in BulletProofs
-        cmt.0[31] ^= 0x80;
-    }
-
     /// Return random point on a curve.
     pub fn random() -> Self {
         ECp::random().compress()
@@ -79,15 +73,13 @@ impl Pt {
     /// Create from an uncompressed point.
     #[inline]
     pub fn compress(ept: ECp) -> Pt {
-        let pt_4 = ecpt::prescale_for_compression(ept);
-        let bytes = ECp::to_bytes(&pt_4);
-        Pt(bytes)
+        Pt(ECp::to_bytes(&ept))
     }
 
     /// Decompress point.
     #[inline]
     pub fn decompress(self) -> Result<ECp, CryptoError> {
-        ECp::decompress(self)
+        ECp::try_from_bytes(self.to_bytes())
     }
 
     /// Convert into hex string.
@@ -521,7 +513,7 @@ pub fn aes_encrypt(msg: &[u8], pkey: &PublicKey) -> Result<EncryptedPayload, Cry
         // normal encrytion with keying hint
         let h = Hash::from_vector(msg);
         let alpha = Fr::synthetic_random("encr-alpha", pkey, &h);
-        let ppt = ECp::decompress(Pt::from(*pkey))?; // could give CryptoError if invalid PublicKey
+        let ppt = Pt::from(*pkey).decompress()?; // could give CryptoError if invalid PublicKey
         let ap = alpha * ppt; // generate key (alpha*s*G = alpha*P), and hint ag = alpha*G
         let ag = alpha * *G;
         let key = Hash::digest(&ap);
@@ -540,7 +532,7 @@ pub fn aes_decrypt(payload: &EncryptedPayload, skey: &SecretKey) -> Result<Vec<u
     } else {
         // normal encryption, key = skey * AG
         let zr = Fr::from(skey.clone());
-        let ag = ECp::decompress(payload.ag)?; // could give CryptoError if corrupted payload
+        let ag = payload.ag.decompress()?; // could give CryptoError if corrupted payload
         let asg = zr * ag; // compute the actual key seed = s*alpha*G
         let key = Hash::digest(&asg);
         Ok(aes_encrypt_with_key(&payload.ctxt, &key.bits()))

@@ -98,8 +98,16 @@ lazy_static! {
         GEN_Y.hash(&mut state);
         format!("D{} H{}", CURVE_D, CURVE_H).hash(&mut state);
         let h = state.result();
-        let chk = Hash::try_from_hex(&HASH_CONSTS).expect("Invalid hexstr: HASH_CONSTS");
-        assert!(h == chk, "Invalid curve constants checksum");
+
+        // let chk = Hash::try_from_hex(&HASH_CONSTS).expect("Invalid hexstr: HASH_CONSTS");
+        // assert!(h == chk, "Invalid curve constants checksum");
+
+        use crate::pbc::secure;
+        let sig_pkey =
+            secure::PublicKey::try_from_hex(&SIG_PKEY).expect("Invalid hexstr: SIG_PKEY");
+        let sig = secure::Signature::try_from_hex(&SIG_1174).expect("Invalid hexstr: SIG_1174");
+        secure::check_hash(&h, &sig, &sig_pkey).expect("Invalid Curve1174 init contants");
+        println!("Curve constants checked out");
         check_prng();
         true
     };
@@ -144,6 +152,7 @@ fn check_prng() {
     let msg = "plausible PRNG failure";
     assert!(f32::abs(mn) < delta, msg);
     assert!(f32::abs(stdev - invrt12) < delta, msg);
+    println!("PRNG looks okay");
 }
 
 // -------------------------------------------------------
@@ -227,20 +236,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn check_bad_compression() {
         let pt = ECp::compress(ECp::inf());
-        let ept = ECp::decompress(pt).unwrap();
-    }
-
-    #[test]
-    fn chk_init() {
-        use crate::pbc::secure;
-        let sig_pkey =
-            secure::PublicKey::try_from_hex(&SIG_PKEY).expect("Invalid hexstr: SIG_PKEY");
-        let sig = secure::Signature::try_from_hex(&SIG_1174).expect("Invalid hexstr: SIG_1174");
-        let h = Hash::try_from_hex(&HASH_CONSTS).expect("Invalid hexstr: HASH_CONSTS");
-        secure::check_hash(&h, &sig, &sig_pkey).expect("Invalid Curve1174 init contants");
+        let ept = ECp::decompress(pt).expect_err("Expected bad decompression");
     }
 
     #[test]

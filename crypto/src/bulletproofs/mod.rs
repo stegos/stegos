@@ -819,32 +819,6 @@ pub mod tests {
         let (proof, _gamma) = make_range_proof(-1);
         assert!(validate_range_proof(&proof));
     }
-
-    #[test]
-    fn test_bp_quadrants() {
-        // show that interpreting the sign of compressed points
-        // incorrectly, invalidates a BulletProof
-        //
-        // This is a partial quadrant test. Ideally we also
-        // want to test -X on decompression, but I don't know
-        // how to override decompress() during testing...
-
-        let (proof, _gamma) = make_range_proof(1234567890);
-        assert!(validate_range_proof(&proof));
-
-        let mut dum = proof.clone();
-
-        fn diddle_cmts(proof: &mut BulletProof) {
-            Pt::flip_sign(&mut proof.vcmt);
-            Pt::flip_sign(&mut proof.acmt);
-            Pt::flip_sign(&mut proof.scmt);
-            Pt::flip_sign(&mut proof.t1_cmt);
-            Pt::flip_sign(&mut proof.t2_cmt);
-        }
-
-        diddle_cmts(&mut dum);
-        assert!(!validate_range_proof(&dum));
-    }
 }
 
 // ------------------------------------------------------------

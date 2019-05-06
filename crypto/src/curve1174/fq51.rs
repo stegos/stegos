@@ -94,8 +94,7 @@ impl From<Fq> for Fq51 {
 
 impl From<Fq51> for Fq {
     fn from(x: Fq51) -> Fq {
-        let mut tmp = U256::from(x);
-        Fq::from(tmp)
+        Fq::from(U256::from(x))
     }
 }
 
@@ -414,9 +413,9 @@ pub fn gnorm(x: &Fq51, y: &mut Fq51) {
 
 // equality comparison
 pub fn geq(x: &Fq51, y: &Fq51) -> bool {
-    let mut tmp1 = Fq51::zero();
-    gsub(x, y, &mut tmp1);
-    tmp1.is_zero()
+    let mut tmp = Fq51::zero();
+    gsub(x, y, &mut tmp);
+    tmp.is_zero()
 }
 
 // multiply w by a constant, w*=i

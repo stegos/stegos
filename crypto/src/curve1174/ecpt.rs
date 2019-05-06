@@ -65,25 +65,37 @@ impl ECp {
         self.z == FQ51_1
     }
 
+    pub fn to_affine(&mut self) -> Self {
+        norm(self);
+        *self
+    }
+
+    fn is_valid_pt(x: &Fq51, y: &Fq51) -> bool {
+        let xsq = x.sqr();
+        let ysq = y.sqr();
+        xsq + ysq == 1 + CURVE_D * xsq * ysq
+    }
+
     pub fn try_from_xy(x: &Fq, y: &Fq) -> Result<Self, CryptoError> {
         let x51 = Fq51::from(*x);
         let y51 = Fq51::from(*y);
+        if !Self::is_valid_pt(&x51, &y51) {
+            return Err(CryptoError::PointNotOnCurve);
+        }
         Self::make_valid_pt(&x51, &y51)
     }
 
     fn make_valid_pt(x: &Fq51, y: &Fq51) -> Result<Self, CryptoError> {
-        if !Self::is_valid_pt(x, y) {
-            return Err(CryptoError::PointNotOnCurve);
-        }
         // avoid small subgroup
         // this assumes cofactor CURVE_H = 4
-        let newpt = Self::new_from_xy51(x, y);
-        let newpt2 = newpt + newpt;
-        let newpt4 = newpt2 + newpt2;
-        if newpt4.is_inf() {
+        let mut pt = Self::inf();
+        init(x, y, &mut pt);
+        pt += pt;
+        pt += pt;
+        if pt.is_inf() {
             return Err(CryptoError::InSmallSubgroup);
         }
-        Ok(newpt4)
+        Ok(pt)
     }
 
     fn solve_y(xq: &Fq51) -> Result<Fq51, CryptoError> {
@@ -93,91 +105,61 @@ impl ECp {
         gsqrt(&ysq)
     }
 
-    fn is_valid_pt(x: &Fq51, y: &Fq51) -> bool {
-        let xsq = x.sqr();
-        let ysq = y.sqr();
-        (xsq + ysq == 1 + CURVE_D * xsq * ysq)
-    }
-
-    fn new_from_xy51(x: &Fq51, y: &Fq51) -> Self {
-        let mut pt = Self::inf();
-        init(&x, &y, &mut pt);
-        pt
-    }
-
     /// Try to convert from raw bytes.
-    pub fn try_from_bytes(mut x: [u8; 32]) -> Result<Self, CryptoError> {
-        let sgn = (x[31] & 0x80) != 0;
-        x[31] &= 0x7f;
-        let x256 = U256::from(Lev32(x));
+    pub fn try_from_bytes(x: [u8; 32]) -> Result<Self, CryptoError> {
+        let mut tmp = x;
+        let sign = tmp[31] & 0x80;
+        tmp[31] &= 0x7f;
+        let x256 = U256::from(Lev32(tmp));
         if !(x256 < *Q) {
             return Err(CryptoError::TooLarge);
         }
         let xq = Fq51::from(Fq::from(x256));
-        let ysqrt = Self::solve_y(&xq)?;
-        let yq = if ysqrt.is_odd() == sgn { ysqrt } else { -ysqrt };
+        let yqrt = Self::solve_y(&xq)?;
+        let need_inv = (yqrt.is_odd() && sign == 0) || (!yqrt.is_odd() && sign != 0);
+        let yq = if need_inv { -yqrt } else { yqrt };
         Self::make_valid_pt(&xq, &yq)
-    }
-
-    /// Try to convert from a compressed point.
-    #[inline]
-    pub fn decompress(pt: Pt) -> Result<Self, CryptoError> {
-        let bytes = pt.to_bytes();
-        ECp::try_from_bytes(bytes)
     }
 
     // internal routine for hashing onto the curve,
     // and for selecting random points. We ensure that
     // nobody will have any idea what the log_r(Pt) will be.
-    fn from_random_bits(bits: &[u8; 32]) -> Self {
-        let mut tmp: [u8; 32] = *bits;
-        let sgn = tmp[31] & 0x80 != 0;
-        tmp[31] &= 0x7f;
-        let mut x = U256::from(Lev32(tmp));
+    fn from_random_bits(bits: [u8; 32]) -> Self {
+        let mut x = U256::from(Lev32(bits));
         while x >= *Q {
             div2(&mut x.0);
         }
         let mut xq = Fq51::from(Fq::from(x));
-        let hpt: Self;
         loop {
-            if !xq.is_zero() {
-                // can't be pt at inf
-                match Self::solve_y(&xq) {
-                    // xq must be on curve
-                    Ok(ysqrt) => {
-                        let yq = if sgn == ysqrt.is_odd() { ysqrt } else { -ysqrt };
-                        // avoid small subgroup
-                        // this assumes cofactor CURVE_H = 4
-                        let pt = Self::new_from_xy51(&xq, &yq);
-                        let pt2 = pt + pt;
-                        let pt4 = pt2 + pt2;
-                        if !pt4.is_inf() {
-                            hpt = pt4;
-                            break;
-                        }
+            match Self::solve_y(&xq) {
+                // xq must be on curve
+                Ok(yq) => match Self::make_valid_pt(&xq, &yq) {
+                    Ok(pt) => {
+                        return pt;
                     }
-                    Err(_) => {}
-                }
+                    _ => {}
+                },
+                _ => {}
             }
             xq = xq.sqr() + 1;
         }
-        hpt
     }
 
     pub fn random() -> Self {
-        Self::from_random_bits(&random::<[u8; 32]>())
+        Self::from_random_bits(random::<[u8; 32]>())
     }
 
     /// Convert into raw bytes.
     pub fn to_bytes(&self) -> [u8; 32] {
-        let mut afpt = self.clone();
-        norm(&mut afpt);
-        let ptx = Fq::from(afpt.x);
-        let mut x = U256::from(ptx).to_lev_u8();
-        if afpt.y.is_odd() {
-            x[31] |= 0x80;
-        }
-        x
+        let mut pt = prescale_for_compression(*self);
+        norm(&mut pt);
+        let sign = pt.y.is_odd();
+        let ptxq = Fq::from(pt.x);
+        let mut ans = U256::from(ptxq).to_lev_u8();
+        if sign {
+            ans[31] |= 0x80
+        };
+        ans
     }
 
     /// Convert into compressed point.
@@ -185,11 +167,17 @@ impl ECp {
     pub fn compress(self) -> Pt {
         Pt::compress(self)
     }
+
+    /// Try to convert from a compressed point.
+    #[inline]
+    pub fn decompress(pt: Pt) -> Result<Self, CryptoError> {
+        ECp::try_from_bytes(pt.to_bytes())
+    }
 }
 
 impl From<Hash> for ECp {
     fn from(h: Hash) -> Self {
-        Self::from_random_bits(&h.bits())
+        Self::from_random_bits(h.bits())
     }
 }
 
@@ -273,7 +261,7 @@ const WV_4: WinVec = WinVec([
     0, 0, -8, 2, 0,
 ]);
 
-pub fn prescale_for_compression(pt: ECp) -> ECp {
+fn prescale_for_compression(pt: ECp) -> ECp {
     let mut tmp = pt;
     mul_to_proj(&WV_4, &mut tmp);
     tmp
@@ -447,9 +435,9 @@ fn add_2(qpt: &ECp, ppt: &mut ECp) {
 // incoming x,y coordinates -> ECp in projective coords
 
 fn init(x: &Fq51, y: &Fq51, pt: &mut ECp) {
-    (*pt).x = *x;
-    (*pt).y = *y;
-    (*pt).z = Fq51::one();
+    pt.x = *x;
+    pt.y = *y;
+    pt.z = Fq51::one();
 }
 
 // P=-Q
@@ -666,10 +654,10 @@ mod tests {
         // through point compression, and back again.
         // This tests curve solving, square roots, random hashing
         // onto curve, etc.
-        for _ in 0..1_000 {
+        for ix in 0..1_000 {
             let pt = ECp::random();
             let cpt = Pt::from(pt);
-            let ept = ECp::decompress(cpt).unwrap();
+            let ept = ECp::decompress(cpt).expect("Valid point");
             assert!(ept == pt);
         }
         for _ in 0..1_000 {

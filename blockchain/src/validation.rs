@@ -41,6 +41,8 @@ use stegos_crypto::curve1174::{cpt, G};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure;
 
+pub type StakingBalance = HashMap<secure::PublicKey, i64>;
+
 impl Transaction {
     /// Validate the monetary balance and signature of transaction.
     ///
@@ -48,7 +50,21 @@ impl Transaction {
     ///
     /// * - `inputs` - UTXOs referred by self.body.txins, in the same order as in self.body.txins.
     ///
-    pub fn validate(&self, inputs: &[Output]) -> Result<(), Error> {
+    pub fn validate(&self, inputs: &[Output]) -> Result<StakingBalance, Error> {
+        //
+        // Validation checklist:
+        //
+        // - At least one input or output is present.
+        // - Inputs can be resolved.
+        // - Inputs have not been spent by blocks.
+        // - Inputs are unique.
+        // - Outputs are unique.
+        // - Bulletpoofs/amounts are valid.
+        // - UTXO-specific checks.
+        // - Monetary balance is valid.
+        // - Signature is valid.
+        //
+
         let tx_hash = Hash::digest(&self);
 
         assert_eq!(self.body.txins.len(), inputs.len());
@@ -76,6 +92,7 @@ impl Transaction {
         let mut eff_pkey = ECp::inf();
         let mut txin_sum = ECp::inf();
         let mut txout_sum = ECp::inf();
+        let mut staking_balance: StakingBalance = HashMap::new();
 
         // +\sum{C_i} for i in txins
         let mut txins_set: HashSet<Hash> = HashSet::new();
@@ -95,6 +112,10 @@ impl Transaction {
                     let cmt = fee_a(o.amount);
                     txin_sum += cmt;
                     eff_pkey += cpt::Pt::from(o.recipient).decompress()? + cmt;
+
+                    // Update staking balance.
+                    let stake = staking_balance.entry(o.validator).or_insert(0);
+                    *stake -= o.amount;
                 }
             };
         }
@@ -141,6 +162,10 @@ impl Transaction {
                     let cmt = fee_a(o.amount);
                     txout_sum += cmt;
                     eff_pkey -= cmt;
+
+                    // Update staking balance.
+                    let stake = staking_balance.entry(o.validator).or_insert(0);
+                    *stake += o.amount;
                 }
             };
         }
@@ -160,10 +185,11 @@ impl Transaction {
         let eff_pkey: cpt::PublicKey = eff_pkey.into();
 
         // Check signature
-        match cpt::validate_sig(&tx_hash, &self.sig, &eff_pkey) {
-            Ok(_) => Ok(()),
-            Err(_) => Err(TransactionError::InvalidSignature(tx_hash).into()),
-        }
+        cpt::validate_sig(&tx_hash, &self.sig, &eff_pkey)
+            .map_err(|_e| TransactionError::InvalidSignature(tx_hash))?;
+
+        // Transaction is valid.
+        Ok(staking_balance)
     }
 }
 
@@ -234,7 +260,7 @@ impl MacroBlock {
 
 impl Blockchain {
     /// Check that the stake can be unstaked.
-    fn validate_staking_balance<'a, StakeIter>(
+    pub fn validate_staking_balance<'a, StakeIter>(
         &self,
         staking_balance: StakeIter,
     ) -> Result<(), BlockchainError>
@@ -252,74 +278,6 @@ impl Blockchain {
                 ));
             }
         }
-
-        Ok(())
-    }
-
-    ///
-    /// Validate transaction.
-    ///
-    pub fn validate_tx(&self, tx: &Transaction, _timestamp: SystemTime) -> Result<(), Error> {
-        //
-        // Validation checklist:
-        //
-        // - TX hash is unique
-        // - At least one input or output is present.
-        // - Inputs can be resolved.
-        // - Inputs have not been spent by blocks.
-        // - Inputs are unique.
-        // - Outputs are unique.
-        // - Bulletpoofs/amounts are valid.
-        // - UTXO-specific checks.
-        // - Monetary balance is valid.
-        // - Signature is valid.
-        //
-
-        let tx_hash = Hash::digest(tx);
-
-        let mut staking_balance: HashMap<secure::PublicKey, i64> = HashMap::new();
-
-        // Validate inputs.
-        let mut inputs: Vec<Output> = Vec::new();
-        for input_hash in &tx.body.txins {
-            // Check that the input can be resolved.
-            let input = match self.output_by_hash(input_hash)? {
-                Some(input) => input,
-                None => {
-                    return Err(TransactionError::MissingInput(tx_hash, input_hash.clone()).into());
-                }
-            };
-
-            // Check staking.
-            if let Output::StakeOutput(ref o) = input {
-                let stake = staking_balance.entry(o.validator).or_insert(0);
-                *stake -= o.amount;
-            }
-
-            inputs.push(input);
-        }
-
-        // Check outputs.
-        for output in &tx.body.txouts {
-            let output_hash = Hash::digest(output);
-
-            // Check that the output is unique and don't overlap with other transactions.
-            if self.contains_output(&output_hash) {
-                return Err(TransactionError::OutputHashCollision(tx_hash, output_hash).into());
-            }
-
-            // Check stakes.
-            if let Output::StakeOutput(ref o) = output {
-                let stake = staking_balance.entry(o.validator).or_insert(0);
-                *stake += o.amount;
-            }
-        }
-
-        // Check the monetary balance, Bulletpoofs/amounts and signature.
-        tx.validate(&inputs)?;
-
-        // Checks staking balance.
-        self.validate_staking_balance(staking_balance.iter())?;
 
         Ok(())
     }

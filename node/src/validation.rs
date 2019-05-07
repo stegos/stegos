@@ -40,7 +40,7 @@ pub(crate) fn validate_transaction(
     tx: &Transaction,
     mempool: &Mempool,
     chain: &Blockchain,
-    timestamp: SystemTime,
+    _timestamp: SystemTime,
     payment_fee: i64,
     stake_fee: i64,
 ) -> Result<(), Error> {
@@ -63,28 +63,43 @@ pub(crate) fn validate_transaction(
         return Err(NodeTransactionError::TooLowFee(tx_hash, min_fee, tx.body.fee).into());
     }
 
+    let mut inputs: Vec<Output> = Vec::new();
+
     // TODO: allow transaction with overlapping inputs/outputs in mempool.
     // See https://github.com/stegos/stegos/issues/826.
 
     // Check for overlapping inputs in mempool.
     for input_hash in &tx.body.txins {
+        // Check that the input can be resolved.
+        let input = match chain.output_by_hash(input_hash)? {
+            Some(input) => input,
+            None => {
+                return Err(TransactionError::MissingInput(tx_hash, input_hash.clone()).into());
+            }
+        };
+
         // Check that the input is not claimed by other transactions.
         if mempool.contains_input(input_hash) {
             return Err(TransactionError::MissingInput(tx_hash, input_hash.clone()).into());
         }
+
+        inputs.push(input);
     }
 
     // Check for overlapping outputs in mempool.
     for output in &tx.body.txouts {
         let output_hash = Hash::digest(output);
         // Check that the output is unique and don't overlap with other transactions.
-        if mempool.contains_output(&output_hash) {
+        if mempool.contains_output(&output_hash) || chain.contains_output(&output_hash) {
             return Err(TransactionError::OutputHashCollision(tx_hash, output_hash).into());
         }
     }
 
-    // Validate transaction.
-    chain.validate_tx(&tx, timestamp)?;
+    // Check the monetary balance, Bulletpoofs/amounts and signature.
+    let staking_balance = tx.validate(&inputs)?;
+
+    // Checks staking balance.
+    chain.validate_staking_balance(staking_balance.iter())?;
 
     Ok(())
 }

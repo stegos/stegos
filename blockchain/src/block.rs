@@ -94,42 +94,9 @@ impl Hashable for BaseBlockHeader {
     }
 }
 
-/// Header for Key Blocks.
+/// Macro Block Header.
 #[derive(Debug, Clone)]
-pub struct KeyBlockHeader {
-    /// Common header.
-    pub base: BaseBlockHeader,
-}
-
-impl Hashable for KeyBlockHeader {
-    fn hash(&self, state: &mut Hasher) {
-        "Key".hash(state);
-        self.base.hash(state);
-    }
-}
-
-/// Key Block Body.
-#[derive(Debug, Clone)]
-pub struct KeyBlockBody {
-    /// BLS multi-signature
-    pub multisig: secure::Signature,
-
-    /// Bitmap of signers in the multi-signature.
-    pub multisigmap: BitVector,
-}
-
-impl PartialEq for KeyBlockBody {
-    fn eq(&self, _other: &KeyBlockBody) -> bool {
-        // Required by enum Block.
-        unreachable!();
-    }
-}
-
-impl Eq for KeyBlockBody {}
-
-/// Monetary Block Header.
-#[derive(Debug, Clone)]
-pub struct MicroBlockHeader {
+pub struct MacroBlockHeader {
     /// Common header.
     pub base: BaseBlockHeader,
 
@@ -152,7 +119,7 @@ pub struct MicroBlockHeader {
     pub proof: Option<ViewChangeProof>,
 }
 
-impl Hashable for MicroBlockHeader {
+impl Hashable for MacroBlockHeader {
     fn hash(&self, state: &mut Hasher) {
         "Monetary".hash(state);
         self.base.hash(state);
@@ -168,12 +135,15 @@ impl Hashable for MicroBlockHeader {
 
 /// Monetary Block.
 #[derive(Debug, Clone)]
-pub struct MicroBlockBody {
+pub struct MacroBlockBody {
     /// Public key of leader.
     pub pkey: secure::PublicKey,
 
-    /// BLS signature.
-    pub sig: secure::Signature,
+    /// BLS (multi-)signature.
+    pub multisig: secure::Signature,
+
+    /// Bitmap of signers in the multi-signature.
+    pub multisigmap: BitVector,
 
     /// The list of transaction inputs in a Merkle Tree.
     pub inputs: Vec<Hash>,
@@ -182,67 +152,29 @@ pub struct MicroBlockBody {
     pub outputs: Merkle<Box<Output>>,
 }
 
-impl PartialEq for MicroBlockBody {
-    fn eq(&self, _other: &MicroBlockBody) -> bool {
+impl PartialEq for MacroBlockBody {
+    fn eq(&self, _other: &MacroBlockBody) -> bool {
         // Required by enum Block.
         unreachable!();
     }
 }
 
-impl Eq for MicroBlockBody {}
+impl Eq for MacroBlockBody {}
 
 /// Carries all cryptocurrency transactions.
 #[derive(Debug, Clone)]
-pub struct KeyBlock {
+pub struct MacroBlock {
     /// Header.
-    pub header: KeyBlockHeader,
-
-    /// Body.
-    pub body: KeyBlockBody,
-}
-
-impl KeyBlock {
-    pub fn new(base: BaseBlockHeader) -> Self {
-        // Create header
-        let header = KeyBlockHeader { base };
-
-        // Create body
-        let multisig = secure::Signature::zero();
-        let multisigmap = BitVector::new(VALIDATORS_MAX);
-        let body = KeyBlockBody {
-            multisig,
-            multisigmap,
-        };
-
-        // Create the block
-        KeyBlock { header, body }
-    }
-}
-
-impl Hashable for KeyBlock {
-    fn hash(&self, state: &mut Hasher) {
-        self.header.hash(state)
-    }
-}
-
-impl PartialEq for KeyBlock {
-    fn eq(&self, other: &KeyBlock) -> bool {
-        Hash::digest(self) == Hash::digest(other)
-    }
-}
-
-impl Eq for KeyBlock {}
-
-/// Carries administrative information to blockchain participants.
-#[derive(Debug, Clone)]
-pub struct MicroBlock {
-    /// Header.
-    pub header: MicroBlockHeader,
+    pub header: MacroBlockHeader,
     /// Body
-    pub body: MicroBlockBody,
+    pub body: MacroBlockBody,
 }
 
-impl MicroBlock {
+impl MacroBlock {
+    pub fn empty(base: BaseBlockHeader, pkey: secure::PublicKey) -> MacroBlock {
+        Self::new(base, Fr::zero(), 0, &[], &[], None, pkey)
+    }
+
     pub fn new(
         base: BaseBlockHeader,
         gamma: Fr,
@@ -251,8 +183,7 @@ impl MicroBlock {
         outputs: &[Output],
         proof: Option<ViewChangeProof>,
         pkey: secure::PublicKey,
-        skey: &secure::SecretKey,
-    ) -> MicroBlock {
+    ) -> MacroBlock {
         // Re-order all inputs to blur transaction boundaries.
         // Current algorithm just sorts this list.
         // Since Hash is random, it has the same effect as shuffling.
@@ -289,7 +220,7 @@ impl MicroBlock {
         let outputs_range_hash = outputs.roothash().clone();
 
         // Create header
-        let header = MicroBlockHeader {
+        let header = MacroBlockHeader {
             proof,
             base,
             gamma,
@@ -299,42 +230,55 @@ impl MicroBlock {
         };
 
         // Create body
-        let sig = secure::Signature::zero();
-        let body = MicroBlockBody {
+        let multisig = secure::Signature::zero();
+        let multisigmap = BitVector::new(VALIDATORS_MAX);
+        let body = MacroBlockBody {
             pkey,
-            sig,
+            multisig,
+            multisigmap,
             inputs,
             outputs,
         };
 
         // Create the block.
-        let mut block = MicroBlock { header, body };
-        let h = Hash::digest(&block);
-        let sig = secure::sign_hash(&h, &skey);
-        block.body.sig = sig;
+        MacroBlock { header, body }
+    }
 
-        block
+    /// Sign block using leader's signature.
+    pub fn sign(&mut self, skey: &secure::SecretKey, pkey: &secure::PublicKey) {
+        assert_eq!(&self.body.pkey, pkey);
+        let hash = Hash::digest(self);
+        let sig = secure::sign_hash(&hash, &skey);
+        self.body.multisig = sig;
     }
 }
 
-impl Hashable for MicroBlock {
+impl Hashable for MacroBlock {
     fn hash(&self, state: &mut Hasher) {
         self.header.hash(state)
     }
 }
 
+impl PartialEq for MacroBlock {
+    fn eq(&self, other: &MacroBlock) -> bool {
+        Hash::digest(self) == Hash::digest(other)
+    }
+}
+
+impl Eq for MacroBlock {}
+
 /// Types of blocks supported by this blockchain.
 #[derive(Clone, Debug)]
 pub enum Block {
-    KeyBlock(KeyBlock),
-    MicroBlock(MicroBlock),
+    MacroBlock(MacroBlock),
+    MicroBlock(MacroBlock),
 }
 
 impl Block {
     pub fn base_header(&self) -> &BaseBlockHeader {
         match self {
-            Block::KeyBlock(KeyBlock { header, .. }) => &header.base,
-            Block::MicroBlock(MicroBlock { header, .. }) => &header.base,
+            Block::MacroBlock(MacroBlock { header, .. }) => &header.base,
+            Block::MicroBlock(MacroBlock { header, .. }) => &header.base,
         }
     }
 }
@@ -342,7 +286,7 @@ impl Block {
 impl Hashable for Block {
     fn hash(&self, state: &mut Hasher) {
         match self {
-            Block::KeyBlock(key_block) => key_block.hash(state),
+            Block::MacroBlock(macro_block) => macro_block.hash(state),
             Block::MicroBlock(micro_block) => micro_block.hash(state),
         }
     }

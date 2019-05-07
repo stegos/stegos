@@ -46,7 +46,6 @@ fn dead_leader() {
 
     Sandbox::start(config, |mut s| {
         s.poll();
-        s.for_each(|node| assert_eq!(node.chain.height(), 2));
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
         // let leader shoot his block
@@ -124,9 +123,6 @@ fn silent_view_change() {
 
     Sandbox::start(config, |mut s| {
         s.poll();
-        for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height(), 2);
-        }
 
         precondition_2_different_leaderers(&mut s);
 
@@ -220,9 +216,6 @@ fn double_view_change() {
 
     Sandbox::start(config, |mut s| {
         s.poll();
-        for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height(), 2);
-        }
 
         let mut blocks = 0;
 
@@ -365,9 +358,6 @@ fn resolve_fork_for_view_change() {
 
     Sandbox::start(config, |mut s| {
         s.poll();
-        for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height(), 2);
-        }
 
         precondition_2_different_leaderers(&mut s);
 
@@ -462,9 +452,6 @@ fn out_of_order_keyblock_proposal() {
 
     Sandbox::start(config, |mut s| {
         s.poll();
-        for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height(), 2);
-        }
 
         s.wait(s.cfg().tx_wait_timeout);
         // Process N micro blocks.
@@ -484,7 +471,8 @@ fn out_of_order_keyblock_proposal() {
             let seed = mix(last_random, round);
             let random = secure::make_VRF(&leader_node.node_service.keys.network_skey, &seed);
             let base = BaseBlockHeader::new(version, previous, height, round, timestamp, random);
-            let request = KeyBlock::new(base);
+            let leader = leader_node.node_service.keys.network_pkey;
+            let request = MacroBlock::empty(base, leader);
             let hash = Hash::digest(&request);
             let body = ConsensusMessageBody::Proposal { request, proof: () };
             ConsensusMessage::new(
@@ -532,9 +520,6 @@ fn micro_block_without_signature() {
 
     Sandbox::start(config, |mut s| {
         s.poll();
-        for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height(), 2);
-        }
 
         let height = s.nodes[0].node_service.chain.height();
 
@@ -564,7 +549,7 @@ fn micro_block_without_signature() {
             timestamp,
             random,
         );
-        let block = MicroBlock::new(
+        let block = MacroBlock::new(
             base,
             gamma,
             0,
@@ -572,7 +557,6 @@ fn micro_block_without_signature() {
             &[],
             None,
             leader.node_service.keys.network_pkey,
-            &leader.node_service.keys.network_skey,
         );
 
         let block: Block = Block::MicroBlock(block);

@@ -62,7 +62,7 @@ impl ChainInfo {
     /// Create ChainInfo from micro block.
     /// ## Panics
     /// if view_change is equal to 0
-    pub fn from_micro_block(block: &MicroBlock) -> Self {
+    pub fn from_micro_block(block: &MacroBlock) -> Self {
         assert_ne!(block.header.base.view_change, 0);
         ChainInfo {
             height: block.header.base.height,
@@ -140,13 +140,13 @@ pub struct Blockchain {
     // Epoch Information.
     //
     /// Monotonically increasing 1-indexed identifier of the current epoch.
-    /// Equals to the number of key blocks in the blockchain.
-    /// 1-based indexed - the genetic key block starts epoch #1.
+    /// Equals to the number of macro blocks in the blockchain.
+    /// 1-based indexed - the genetic macro block starts epoch #1.
     epoch: u64,
-    /// Zero-indexed identifier of the last key block.
-    last_key_block_height: u64,
-    /// A timestamp from the last key block.
-    last_key_block_timestamp: SystemTime,
+    /// Zero-indexed identifier of the last macro block.
+    last_macro_block_height: u64,
+    /// A timestamp from the last macro block.
+    last_macro_block_timestamp: SystemTime,
     /// Last election result.
     election_result: ElectionResult,
 
@@ -208,8 +208,8 @@ impl Blockchain {
         // Epoch Information.
         //
         let epoch: u64 = 0;
-        let last_key_block_height: u64 = 0;
-        let last_key_block_timestamp = UNIX_EPOCH;
+        let last_macro_block_height: u64 = 0;
+        let last_macro_block_timestamp = UNIX_EPOCH;
         let election_result = ElectionResult::default();
 
         //
@@ -226,8 +226,8 @@ impl Blockchain {
             balance,
             escrow,
             epoch,
-            last_key_block_height,
-            last_key_block_timestamp,
+            last_macro_block_height,
+            last_macro_block_timestamp,
             election_result,
             height,
             last_block_hash,
@@ -254,7 +254,9 @@ impl Blockchain {
                     Block::MicroBlock(micro_block) => {
                         self.push_micro_block(micro_block, timestamp)?;
                     }
-                    Block::KeyBlock(key_block) => self.push_key_block(key_block)?,
+                    Block::MacroBlock(macro_block) => {
+                        self.push_macro_block(macro_block, timestamp)?
+                    }
                 }
             }
             info!(
@@ -298,7 +300,7 @@ impl Blockchain {
             block.base_header().height,
             Hash::digest(&block)
         );
-        // Skip validate_key_block()/validate_micro_block().
+        // Skip validate_macro_block()/validate_micro_block().
         match block {
             Block::MicroBlock(block) => {
                 if cfg!(debug_assertions) {
@@ -306,11 +308,11 @@ impl Blockchain {
                 }
                 let _ = self.register_micro_block(block, timestamp);
             }
-            Block::KeyBlock(block) => {
+            Block::MacroBlock(block) => {
                 if cfg!(debug_assertions) {
-                    self.validate_key_block(&block, false)?
+                    self.validate_macro_block(&block, timestamp, false)?
                 }
-                self.register_key_block(block);
+                let _ = self.register_macro_block(block, timestamp);
             }
         }
         Ok(())
@@ -326,7 +328,7 @@ impl Blockchain {
         let mut epoch: u64 = 0;
         for block in self.database.iter_starting(0) {
             match block {
-                Block::KeyBlock(_block) => {
+                Block::MacroBlock(_block) => {
                     epoch += 1;
                 }
                 Block::MicroBlock(block) => {
@@ -373,8 +375,8 @@ impl Blockchain {
 
     /// Returns the number of blocks in the current epoch.
     pub fn blocks_in_epoch(&self) -> u64 {
-        // Include the key block itself.
-        self.height - self.last_key_block_height
+        // Include the macro block itself.
+        self.height - self.last_macro_block_height
     }
 
     /// Returns an iterator over UTXO hashes.
@@ -394,15 +396,22 @@ impl Blockchain {
     pub fn output_by_hash(&self, output_hash: &Hash) -> Result<Option<Output>, Error> {
         if let Some(OutputKey { height, path }) = self.output_by_hash.get(output_hash) {
             let block = self.block_by_height(*height)?;
-            if let Block::MicroBlock(MicroBlock { header: _, body }) = block {
-                if let Some(output) = body.outputs.lookup(path) {
-                    return Ok(Some(output.as_ref().clone()));
-                } else {
-                    return Ok(None);
+            match block {
+                Block::MicroBlock(MacroBlock { body, .. }) => {
+                    if let Some(output) = body.outputs.lookup(path) {
+                        return Ok(Some(output.as_ref().clone()));
+                    } else {
+                        return Ok(None);
+                    }
                 }
-            } else {
-                unreachable!(); // Non-micro block
-            }
+                Block::MacroBlock(MacroBlock { body, .. }) => {
+                    if let Some(output) = body.outputs.lookup(path) {
+                        return Ok(Some(output.as_ref().clone()));
+                    } else {
+                        return Ok(None);
+                    }
+                }
+            };
         }
         return Ok(None);
     }
@@ -464,14 +473,14 @@ impl Blockchain {
 
     /// Returns the last block height.
     #[inline]
-    pub fn last_key_block_height(&self) -> u64 {
-        self.last_key_block_height
+    pub fn last_macro_block_height(&self) -> u64 {
+        self.last_macro_block_height
     }
 
-    /// Return the timestamp from the last key block.
+    /// Return the timestamp from the last macro block.
     #[inline]
-    pub fn last_key_block_timestamp(&self) -> SystemTime {
-        self.last_key_block_timestamp
+    pub fn last_macro_block_timestamp(&self) -> SystemTime {
+        self.last_macro_block_timestamp
     }
 
     /// Return the last random value.
@@ -551,22 +560,26 @@ impl Blockchain {
     ///
     /// Add a new block into blockchain.
     ///
-    pub fn push_key_block(&mut self, block: KeyBlock) -> Result<(), Error> {
+    pub fn push_macro_block(
+        &mut self,
+        block: MacroBlock,
+        timestamp: SystemTime,
+    ) -> Result<(), Error> {
         //
-        // Validate the key block.
+        // Validate the macro block.
         //
-        self.validate_key_block(&block, false)?;
+        self.validate_macro_block(&block, timestamp, false)?;
 
         //
-        // Write the key block to the disk.
+        // Write the macro block to the disk.
         //
         self.database
-            .insert(self.height, Block::KeyBlock(block.clone()))?;
+            .insert(self.height, Block::MacroBlock(block.clone()))?;
 
         //
         // Update in-memory indexes and metadata.
         //
-        self.register_key_block(block);
+        self.register_macro_block(block, timestamp)?;
 
         Ok(())
     }
@@ -574,48 +587,35 @@ impl Blockchain {
     ///
     /// Update indexes and metadata.
     ///
-    fn register_key_block(&mut self, block: KeyBlock) {
-        let version = self.height + 1;
-        let height = self.height;
-        assert_eq!(height, block.header.base.height);
+    fn register_macro_block(
+        &mut self,
+        block: MacroBlock,
+        timestamp: SystemTime,
+    ) -> Result<(Vec<Output>, Vec<Output>), Error> {
         let block_hash = Hash::digest(&block);
-
-        //
-        // Update indexes.
-        //
-        if let Some(_) = self
-            .block_by_hash
-            .insert(version, block_hash.clone(), height)
-        {
-            panic!(
-                "A block hash collision: height={}, block={}",
-                height, block_hash
-            );
-        }
-        assert_eq!(self.block_by_hash.current_version(), version);
+        let height = self.height;
+        let random = block.header.base.random.clone();
+        let last_macro_block_timestamp = block.header.base.timestamp;
+        let (inputs, outputs) = self.register_block(block, timestamp)?;
 
         //
         // Update metadata.
         //
 
-        self.last_block_hash = block_hash.clone();
-        self.height += 1;
         self.epoch += 1;
-        self.last_key_block_height = height;
-        self.last_key_block_timestamp = block.header.base.timestamp;
+        self.last_macro_block_height = height;
+        self.last_macro_block_timestamp = last_macro_block_timestamp;
         self.election_result = election::select_validators_slots(
             self.escrow
                 .get_stakers_majority(self.epoch, self.cfg.min_stake_amount),
-            block.header.base.random,
+            random,
             self.cfg.max_slot_count,
         );
         self.election_result.view_change = 0;
-        assert_eq!(self.height, version);
-        metrics::HEIGHT.set(self.height as i64);
         metrics::EPOCH.inc();
 
         info!(
-            "Registered a key block: height={}, block={}",
+            "Registered a macro block: height={}, block={}",
             height, block_hash
         );
         debug!("Validators: {:?}", &self.validators());
@@ -631,6 +631,8 @@ impl Blockchain {
         self.output_by_hash.checkpoint();
         self.balance.checkpoint();
         self.escrow.checkpoint();
+
+        Ok((inputs, outputs))
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -642,7 +644,7 @@ impl Blockchain {
     ///
     pub fn push_micro_block(
         &mut self,
-        block: MicroBlock,
+        block: MacroBlock,
         timestamp: SystemTime,
     ) -> Result<(Vec<Output>, Vec<Output>), Error> {
         //
@@ -665,9 +667,9 @@ impl Blockchain {
     }
 
     //
-    fn register_micro_block(
+    fn register_block(
         &mut self,
-        mut block: MicroBlock,
+        mut block: MacroBlock,
         _timestamp: SystemTime,
     ) -> Result<(Vec<Output>, Vec<Output>), Error> {
         let version = self.height + 1;
@@ -703,8 +705,12 @@ impl Blockchain {
                 assert_eq!(self.output_by_hash.current_version(), version);
                 let block = self.block_by_height(height)?;
                 let block_hash = Hash::digest(&block);
-                if let Block::MicroBlock(MicroBlock { header: _, body }) = block {
-                    // Remove from the block.
+                let body = match block {
+                    Block::MicroBlock(MacroBlock { body, .. }) => body,
+                    Block::MacroBlock(MacroBlock { body, .. }) => body,
+                };
+
+                {
                     match body.outputs.lookup(&path) {
                         Some(o) => {
                             match o.as_ref() {
@@ -733,8 +739,6 @@ impl Blockchain {
                             );
                         }
                     }
-                } else {
-                    panic!("Corrupted 'output_by_hash' index: utxo={}", &input_hash);
                 }
             } else {
                 panic!(
@@ -839,6 +843,21 @@ impl Blockchain {
         metrics::HEIGHT.set(self.height as i64);
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
 
+        Ok((inputs, outputs))
+    }
+
+    ///
+    /// Register a new micro block.
+    ///
+    fn register_micro_block(
+        &mut self,
+        block: MacroBlock,
+        timestamp: SystemTime,
+    ) -> Result<(Vec<Output>, Vec<Output>), Error> {
+        let block_hash = Hash::digest(&block);
+        let height = self.height;
+        let (inputs, outputs) = self.register_block(block, timestamp)?;
+
         info!(
             "Registered a micro block: height={}, block={}, inputs={}, outputs={}",
             height,
@@ -854,8 +873,8 @@ impl Blockchain {
         assert!(self.height > 1);
         let height = self.height - 1;
         assert_ne!(
-            height, self.last_key_block_height,
-            "attempt to revert the key block"
+            height, self.last_macro_block_height,
+            "attempt to revert the macro block"
         );
         let version = height;
 
@@ -924,11 +943,24 @@ impl Blockchain {
     }
 }
 
-pub fn create_fake_key_block(
+fn sign_fake_macro_block(block: &mut MacroBlock, chain: &Blockchain, keychains: &[KeyChain]) {
+    let block_hash = Hash::digest(block);
+    let validators = chain.validators();
+    let mut signatures: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();
+    for keychain in keychains {
+        let sig = secure::sign_hash(&block_hash, &keychain.network_skey);
+        signatures.insert(keychain.network_pkey.clone(), sig);
+    }
+    let (multisig, multisigmap) = create_multi_signature(&validators, &signatures);
+    block.body.multisig = multisig;
+    block.body.multisigmap = multisigmap;
+}
+
+pub fn create_fake_macro_block(
     chain: &Blockchain,
     keychains: &[KeyChain],
     timestamp: SystemTime,
-) -> KeyBlock {
+) -> MacroBlock {
     let version: u64 = VERSION;
     let height = chain.height();
     let view_change = chain.view_change();;
@@ -939,26 +971,26 @@ pub fn create_fake_key_block(
         let seed = mix(chain.last_random(), view_change);
         let random = secure::make_VRF(&keychain.network_skey, &seed);
         let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-        KeyBlock::new(base)
+        MacroBlock::empty(base, keychain.network_pkey)
     };
-    let block_hash = Hash::digest(&block);
-    let validators = chain.validators();
-    let mut signatures: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();
-    for keychain in keychains {
-        let sig = secure::sign_hash(&block_hash, &keychain.network_skey);
-        signatures.insert(keychain.network_pkey.clone(), sig);
-    }
-    let (multisig, multisigmap) = create_multi_signature(&validators, &signatures);
-    block.body.multisig = multisig;
-    block.body.multisigmap = multisigmap;
+    sign_fake_macro_block(&mut block, chain, keychains);
     block
 }
 
 pub fn create_fake_micro_block(
     chain: &Blockchain,
-    keys: &KeyChain,
+    keychains: &[KeyChain],
     timestamp: SystemTime,
-) -> (MicroBlock, Vec<Hash>, Vec<Hash>) {
+) -> (MacroBlock, Vec<Hash>, Vec<Hash>) {
+    let version: u64 = VERSION;
+    let height = chain.height();
+    let view_change = chain.view_change();
+    let key = chain.select_leader(view_change);
+    let keys = keychains.iter().find(|p| p.network_pkey == key).unwrap();
+    let previous = chain.last_block_hash().clone();
+    let seed = mix(chain.last_random(), view_change);
+    let random = secure::make_VRF(&keys.network_skey, &seed);
+
     let mut input_hashes: Vec<Hash> = Vec::new();
     let mut monetary_balance: i64 = 0;
     let mut staking_balance: i64 = 0;
@@ -1015,14 +1047,8 @@ pub fn create_fake_micro_block(
 
     let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
 
-    let version: u64 = VERSION;
-    let height = chain.height();
-    let view_change = chain.view_change();;
-    let previous = chain.last_block_hash().clone();
-    let seed = mix(chain.last_random(), view_change);
-    let random = secure::make_VRF(&keys.network_skey, &seed);
     let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-    let mut block = MicroBlock::new(
+    let mut block = MacroBlock::new(
         base,
         gamma,
         0,
@@ -1030,40 +1056,27 @@ pub fn create_fake_micro_block(
         &outputs,
         None,
         keys.network_pkey,
-        &keys.network_skey,
     );
-    let block_hash = Hash::digest(&block);
-    block.body.sig = secure::sign_hash(&block_hash, &keys.network_skey);
+    sign_fake_macro_block(&mut block, chain, keychains);
     (block, input_hashes, output_hashes)
 }
 
 pub fn create_empty_micro_block(
     chain: &Blockchain,
-    keys: &KeyChain,
+    keychains: &[KeyChain],
     timestamp: SystemTime,
-) -> MicroBlock {
-    let input_hashes: Vec<Hash> = Vec::new();
-    let outputs: Vec<Output> = Vec::new();
-    let gamma = Fr::zero();
+) -> MacroBlock {
     let version = VERSION;
     let previous = chain.last_block_hash().clone();
     let height = chain.height();
-    let view_change = chain.view_change();;
+    let view_change = chain.view_change();
+    let key = chain.select_leader(view_change);
+    let keys = keychains.iter().find(|p| p.network_pkey == key).unwrap();
     let seed = mix(chain.last_random(), view_change);
     let random = secure::make_VRF(&keys.network_skey, &seed);
     let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-    let mut block = MicroBlock::new(
-        base,
-        gamma,
-        0,
-        &input_hashes,
-        &outputs,
-        None,
-        keys.network_pkey,
-        &keys.network_skey,
-    );
-    let block_hash = Hash::digest(&block);
-    block.body.sig = secure::sign_hash(&block_hash, &keys.network_skey);
+    let mut block = MacroBlock::empty(base, keys.network_pkey);
+    sign_fake_macro_block(&mut block, chain, keychains);
     block
 }
 
@@ -1091,9 +1104,9 @@ pub mod tests {
             cfg.min_stake_amount,
             timestamp,
         );
-        assert_eq!(blocks.len(), 2);
-        let (block1, block2) = match &blocks[..] {
-            [Block::MicroBlock(block1), Block::KeyBlock(block2)] => (block1, block2),
+        assert_eq!(blocks.len(), 1);
+        let block1 = match &blocks[..] {
+            [Block::MacroBlock(block1)] => block1,
             _ => panic!(),
         };
         let blockchain = Blockchain::testing(cfg, blocks.clone(), timestamp)
@@ -1111,9 +1124,6 @@ pub mod tests {
         unspent2.sort();
         assert_eq!(unspent, unspent2);
 
-        assert_eq!(blockchain.height(), 2);
-        assert_eq!(blockchain.height, block2.header.base.height + 1);
-        assert_eq!(blockchain.blocks_in_epoch(), 1);
         let validators = blockchain
             .escrow
             .get_stakers_majority(blockchain.epoch, blockchain.cfg.min_stake_amount);
@@ -1123,28 +1133,22 @@ pub mod tests {
             let stake = validators_map.get(&keychain.network_pkey).expect("exists");
             assert_eq!(*stake, blockchain.cfg.min_stake_amount);
         }
-        assert_eq!(blockchain.last_block_hash(), Hash::digest(&block2));
+        assert_eq!(blockchain.last_block_hash(), Hash::digest(&block1));
         assert_eq!(
             Hash::digest(&blockchain.last_block().unwrap()),
-            Hash::digest(&block2)
+            Hash::digest(&block1)
         );
 
         let blocks2: Vec<Block> = blockchain.blocks().collect();
-        assert_eq!(blocks2.len(), 2);
+        assert_eq!(blocks2.len(), 1);
         assert_eq!(Hash::digest(&blocks2[0]), Hash::digest(&block1));
-        assert_eq!(Hash::digest(&blocks2[1]), Hash::digest(&block2));
 
         assert!(blockchain.contains_block(&Hash::digest(&block1)));
-        assert!(blockchain.contains_block(&Hash::digest(&block2)));
         assert!(!blockchain.contains_block(&Hash::digest("test")));
 
         assert_eq!(
             Hash::digest(&blockchain.block_by_height(0).unwrap()),
             Hash::digest(&block1)
-        );
-        assert_eq!(
-            Hash::digest(&blockchain.block_by_height(1).unwrap()),
-            Hash::digest(&block2)
         );
 
         assert!(!blockchain.contains_output(&Hash::digest("test")));
@@ -1189,7 +1193,7 @@ pub mod tests {
             //
             timestamp += Duration::from_millis(1);
             let (block, input_hashes, output_hashes) =
-                create_fake_micro_block(&mut chain, &keychains[0], timestamp);
+                create_fake_micro_block(&mut chain, &keychains, timestamp);
             let hash = Hash::digest(&block);
             let height = chain.height();
             chain
@@ -1208,7 +1212,7 @@ pub mod tests {
             // Empty block.
             //
             timestamp += Duration::from_millis(1);
-            let block = create_empty_micro_block(&mut chain, &keychains[0], timestamp);
+            let block = create_empty_micro_block(&mut chain, &keychains, timestamp);
             let hash = Hash::digest(&block);
             let height = chain.height();
             chain
@@ -1221,10 +1225,12 @@ pub mod tests {
             // Key block.
             //
             timestamp += Duration::from_millis(1);
-            let block = create_fake_key_block(&chain, &keychains, timestamp);
+            let block = create_fake_macro_block(&chain, &keychains, timestamp);
             let hash = Hash::digest(&block);
             let height = chain.height();
-            chain.push_key_block(block).expect("Invalid block");
+            chain
+                .push_macro_block(block, timestamp)
+                .expect("Invalid block");
             assert_eq!(hash, chain.last_block_hash());
             assert_eq!(height + 1, chain.height());
         }
@@ -1273,7 +1279,7 @@ pub mod tests {
         // Register a micro block.
         timestamp += Duration::from_millis(1);
         let (block1, input_hashes1, output_hashes1) =
-            create_fake_micro_block(&mut chain, &keychains[0], timestamp);
+            create_fake_micro_block(&mut chain, &keychains, timestamp);
         chain
             .push_micro_block(block1, timestamp)
             .expect("block is valid");
@@ -1296,7 +1302,7 @@ pub mod tests {
         // Register one more micro block.
         timestamp += Duration::from_millis(1);
         let (block2, input_hashes2, output_hashes2) =
-            create_fake_micro_block(&mut chain, &keychains[0], timestamp);
+            create_fake_micro_block(&mut chain, &keychains, timestamp);
         chain
             .push_micro_block(block2, timestamp)
             .expect("block is valid");
@@ -1372,7 +1378,7 @@ pub mod tests {
         assert!(blockchain.height() > 0);
         for _height in 2..12 {
             timestamp += Duration::from_millis(1);
-            let block = create_empty_micro_block(&blockchain, &keychains[0], timestamp);
+            let block = create_empty_micro_block(&blockchain, &keychains, timestamp);
             blockchain
                 .push_micro_block(block, timestamp)
                 .expect("Invalid block");

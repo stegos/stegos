@@ -35,9 +35,7 @@ fn request_on_timeout() {
 
     Sandbox::start(config, |mut s| {
         s.poll();
-        for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height(), 2);
-        }
+
         let leader_pk = s.nodes[0].node_service.chain.leader();
 
         // let leader shot his block

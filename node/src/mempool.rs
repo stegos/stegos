@@ -165,7 +165,7 @@ impl Mempool {
         view_change: u32,
         proof: Option<ViewChangeProof>,
         max_utxo_in_block: usize,
-    ) -> (MicroBlock, Option<Output>, Vec<Hash>) {
+    ) -> (MacroBlock, Option<Output>, Vec<Hash>) {
         let timestamp = SystemTime::now();
         let mut gamma = Fr::zero();
         let mut fee = 0i64;
@@ -230,7 +230,7 @@ impl Mempool {
         };
         // Create a new micro block.
         let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-        let block = MicroBlock::new(
+        let block = MacroBlock::new(
             base,
             gamma,
             monetary_adjustment,
@@ -238,7 +238,6 @@ impl Mempool {
             &outputs,
             proof,
             keychain.network_pkey,
-            &keychain.network_skey,
         );
 
         (block, output_fee, tx_hashes)

@@ -40,8 +40,8 @@ lazy_static! {
     )
     .unwrap();
     pub static ref KEY_BLOCK_VIEW_CHANGES: IntCounter = register_int_counter!(
-        "stegos_key_block_view_changes",
-        "The number of forced view_changes for the key blocks."
+        "stegos_macro_block_view_changes",
+        "The number of forced view_changes for the macro blocks."
     )
     .unwrap();
     pub static ref MICRO_BLOCK_VIEW_CHANGES: IntCounter = register_int_counter!(

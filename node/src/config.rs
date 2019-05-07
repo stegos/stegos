@@ -34,7 +34,7 @@ pub struct ChainConfig {
     /// How long wait for micro blocks.
     pub micro_block_timeout: Duration,
     /// How long wait for the keu blocks.
-    pub key_block_timeout: Duration,
+    pub macro_block_timeout: Duration,
     /// Time to lock stakes.
     pub stake_epochs: u64,
     /// The number of blocks per epoch.
@@ -65,14 +65,14 @@ impl Default for ChainConfig {
     fn default() -> Self {
         let tx_wait_timeout = Duration::from_secs(10);
         let micro_block_timeout = Duration::from_secs(30);
-        let key_block_timeout = Duration::from_secs(30);
+        let macro_block_timeout = Duration::from_secs(30);
 
         let blockchain_default: BlockchainConfig = Default::default();
 
         ChainConfig {
             tx_wait_timeout,
             micro_block_timeout,
-            key_block_timeout,
+            macro_block_timeout,
             stake_epochs: blockchain_default.stake_epochs,
             blocks_in_epoch: 5,
             max_utxo_in_tx: 10,

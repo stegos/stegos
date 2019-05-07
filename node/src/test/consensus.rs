@@ -42,9 +42,6 @@ fn smoke_test() {
     Sandbox::start(config, |mut s| {
         let topic = crate::CONSENSUS_TOPIC;
         s.poll();
-        for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height(), 2);
-        }
 
         let height = s.nodes[0].node_service.chain.height();
         let round = s.nodes[0].node_service.chain.view_change();
@@ -166,9 +163,6 @@ fn autocomit() {
     Sandbox::start(config, |mut s| {
         let topic = crate::CONSENSUS_TOPIC;
         s.poll();
-        for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height(), 2);
-        }
 
         let height = s.nodes[0].node_service.chain.height();
         let epoch = s.nodes[0].node_service.chain.epoch();
@@ -244,7 +238,7 @@ fn autocomit() {
         );
 
         // Wait for TX_WAIT_TIMEOUT.
-        s.wait(s.cfg().key_block_timeout);
+        s.wait(s.cfg().macro_block_timeout);
         let last_node = s.iter_except(&skip_leader).next().unwrap();
         last_node.poll();
 
@@ -277,9 +271,6 @@ fn round() {
     Sandbox::start(config, |mut s| {
         let topic = crate::CONSENSUS_TOPIC;
         s.poll();
-        for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height(), 2);
-        }
 
         let height = s.nodes[0].node_service.chain.height();
 
@@ -291,7 +282,7 @@ fn round() {
 
         let round = s.nodes[0].node_service.chain.view_change() + 1;
         let epoch = s.nodes[0].node_service.chain.epoch();
-        s.wait(s.cfg().key_block_timeout);
+        s.wait(s.cfg().macro_block_timeout);
 
         info!("====== Waiting for keyblock timeout. =====");
         s.poll();
@@ -365,8 +356,8 @@ fn round() {
 
 // check if rounds started at correct timeout
 // first immediatly after micro block
-// second at key_block_timeout
-// third at key_block_timeout * 2
+// second at macro_block_timeout
+// third at macro_block_timeout * 2
 #[test]
 fn multiple_rounds() {
     let mut cfg: ChainConfig = Default::default();
@@ -380,9 +371,7 @@ fn multiple_rounds() {
     Sandbox::start(config, |mut s| {
         let topic = crate::CONSENSUS_TOPIC;
         s.poll();
-        for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height(), 2);
-        }
+
         let view_change = s.nodes[0].node_service.chain.view_change();
         let leader_pk = s.nodes[0].node_service.chain.leader();
         let leader_node = s.node(&leader_pk).unwrap();
@@ -390,7 +379,7 @@ fn multiple_rounds() {
         let _proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
         let _prevote: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
 
-        s.wait(s.cfg().key_block_timeout - Duration::from_millis(1));
+        s.wait(s.cfg().macro_block_timeout - Duration::from_millis(1));
 
         s.poll();
         for i in 1..s.num_nodes() {
@@ -410,7 +399,7 @@ fn multiple_rounds() {
         let _proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
         let _prevote: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
 
-        s.wait(s.cfg().key_block_timeout * 2 - Duration::from_millis(1));
+        s.wait(s.cfg().macro_block_timeout * 2 - Duration::from_millis(1));
 
         s.poll();
         for i in 1..s.num_nodes() {
@@ -447,9 +436,6 @@ fn lock() {
     Sandbox::start(config, |mut s| {
         let topic = crate::CONSENSUS_TOPIC;
         s.poll();
-        for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height(), 2);
-        }
 
         let height = s.nodes[0].node_service.chain.height();
 
@@ -482,7 +468,7 @@ fn lock() {
             round += 1;
             // wait for current round end
             s.wait(
-                s.cfg().key_block_timeout * (round - s.nodes[0].node_service.chain.view_change()),
+                s.cfg().macro_block_timeout * (round - s.nodes[0].node_service.chain.view_change()),
             );
         }
         assert!(ready);
@@ -523,7 +509,7 @@ fn lock() {
             let _precommit: BlockConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
         }
         s.wait(
-            s.cfg().key_block_timeout * (round - s.nodes[0].node_service.chain.view_change() + 1),
+            s.cfg().macro_block_timeout * (round - s.nodes[0].node_service.chain.view_change() + 1),
         );
 
         info!("====== Waiting for keyblock timeout. =====");
@@ -558,9 +544,6 @@ fn out_of_order_micro_block() {
     Sandbox::start(config, |mut s| {
         let topic = crate::CONSENSUS_TOPIC;
         s.poll();
-        for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height(), 2);
-        }
 
         let height = s.nodes[0].node_service.chain.height();
         let leader_pk = s.nodes[0].node_service.chain.leader();
@@ -588,7 +571,7 @@ fn out_of_order_micro_block() {
             timestamp,
             random,
         );
-        let mut block = MicroBlock::new(
+        let mut block = MacroBlock::new(
             base,
             gamma,
             0,
@@ -596,12 +579,11 @@ fn out_of_order_micro_block() {
             &[],
             None,
             leader.node_service.keys.network_pkey,
-            &leader.node_service.keys.network_skey,
         );
 
         let block_hash = Hash::digest(&block);
         let leader_node = s.node(&leader_pk).unwrap();
-        block.body.sig =
+        block.body.multisig =
             secure::sign_hash(&block_hash, &leader_node.node_service.keys.network_skey);
         let block: Block = Block::MicroBlock(block);
 

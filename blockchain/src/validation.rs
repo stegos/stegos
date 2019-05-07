@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::block::{KeyBlock, MicroBlock, VERSION};
+use crate::block::{MacroBlock, VERSION};
 use crate::blockchain::{Balance, Blockchain, ChainInfo};
 use crate::election::mix;
 use crate::error::TransactionError;
@@ -167,7 +167,7 @@ impl Transaction {
     }
 }
 
-impl MicroBlock {
+impl MacroBlock {
     ///
     /// Validate the block monetary balance.
     ///
@@ -325,20 +325,18 @@ impl Blockchain {
     }
 
     ///
-    /// Validate sealed micro block.
+    /// Validate signed micro block.
     ///
     /// # Arguments
     ///
     /// * `block` - block to validate.
-    /// * `is_proposal` - don't check for the supermajority of votes.
-    ///                          Used to validating block proposals.
     /// * `timestamp` - current time.
     ///                         Used to validating escrow.
     ///
     pub fn validate_micro_block(
         &self,
-        block: &MicroBlock,
-        _timestamp: SystemTime,
+        block: &MacroBlock,
+        timestamp: SystemTime,
     ) -> Result<(), Error> {
         let height = block.header.base.height;
         let block_hash = Hash::digest(&block);
@@ -422,10 +420,38 @@ impl Blockchain {
                     .into());
                 }
             };
-            if let Err(_e) = secure::check_hash(&block_hash, &block.body.sig, &leader) {
+
+            if let Err(_e) = secure::check_hash(&block_hash, &block.body.multisig, &leader) {
                 return Err(BlockError::InvalidLeaderSignature(height, block_hash).into());
             }
+
+            debug!(
+                "Validating VRF: leader={}, round={}",
+                leader, block.header.base.view_change
+            );
+            let seed = mix(self.last_random(), block.header.base.view_change);
+            if !secure::validate_VRF_source(&block.header.base.random, &leader, &seed) {
+                return Err(BlockError::IncorrectRandom(height, block_hash).into());
+            }
         }
+
+        self.validate_macro_block_payments(block, timestamp)?;
+
+        debug!(
+            "The micro block is valid: height={}, block={}",
+            height, &block_hash
+        );
+
+        Ok(())
+    }
+
+    fn validate_macro_block_payments(
+        &self,
+        block: &MacroBlock,
+        _timestamp: SystemTime,
+    ) -> Result<(), Error> {
+        let height = block.header.base.height;
+        let block_hash = Hash::digest(&block);
 
         let mut burned = ECp::inf();
         let mut created = ECp::inf();
@@ -578,27 +604,30 @@ impl Blockchain {
         // Checks staking balance.
         self.validate_staking_balance(staking_balance.iter())?;
 
-        debug!(
-            "The micro block is valid: height={}, block={}",
-            height, &block_hash
-        );
         Ok(())
     }
 
     ///
-    /// Validate sealed key block.
+    /// Validate signed macro block.
     ///
     /// # Arguments
     ///
     /// * `block` - block to validate.
     /// * `is_proposal` - don't check for the supermajority of votes.
-    ///                          Used to validating block proposals.
+    ///                          Used to validate block proposals.
+    /// * `timestamp` - current time.
+    ///                          Used to validate escrow.
     ///
-    pub fn validate_key_block(&self, block: &KeyBlock, is_proposal: bool) -> Result<(), Error> {
+    pub fn validate_macro_block(
+        &self,
+        block: &MacroBlock,
+        timestamp: SystemTime,
+        is_proposal: bool,
+    ) -> Result<(), Error> {
         let height = block.header.base.height;
         let block_hash = Hash::digest(&block);
         debug!(
-            "Validating a key block: height={}, block={}",
+            "Validating a micro block: height={}, block={}",
             height, &block_hash
         );
 
@@ -607,20 +636,15 @@ impl Blockchain {
             return Err(BlockError::InvalidBlockVersion(
                 height,
                 block_hash,
-                VERSION,
                 block.header.base.version,
+                VERSION,
             )
             .into());
         }
 
         // Check height.
-        if block.header.base.height != self.height() {
-            return Err(BlockError::OutOfOrderBlock(
-                block_hash,
-                self.height(),
-                block.header.base.height,
-            )
-            .into());
+        if height != self.height() {
+            return Err(BlockError::OutOfOrderBlock(block_hash, height, self.height()).into());
         }
 
         // Check previous hash.
@@ -646,6 +670,7 @@ impl Blockchain {
         if self.epoch() > 0 {
             // Skip view change check, just check supermajority.
             let leader = self.select_leader(block.header.base.view_change);
+
             debug!(
                 "Validating VRF: leader={}, round={}",
                 leader, block.header.base.view_change
@@ -695,8 +720,10 @@ impl Blockchain {
             }
         }
 
+        self.validate_macro_block_payments(block, timestamp)?;
+
         debug!(
-            "The key block is valid: height={}, block={}",
+            "The macro block is valid: height={}, block={}",
             height, &block_hash
         );
         Ok(())
@@ -1185,9 +1212,7 @@ pub mod tests {
             let (output1, gamma1) = Output::new_payment(timestamp, &skey1, &pkey2, amount).unwrap();
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
-            let block = MicroBlock::new(
-                base, gamma, 0, &inputs1, &outputs1, None, pbc_pkey, &pbc_skey,
-            );
+            let block = MacroBlock::new(base, gamma, 0, &inputs1, &outputs1, None, pbc_pkey);
             block.validate_balance(&[output0]).expect("block is valid");
         }
 
@@ -1203,9 +1228,7 @@ pub mod tests {
                 Output::new_payment(timestamp, &skey1, &pkey2, amount - 1).unwrap();
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
-            let block = MicroBlock::new(
-                base, gamma, 0, &inputs1, &outputs1, None, pbc_pkey, &pbc_skey,
-            );
+            let block = MacroBlock::new(base, gamma, 0, &inputs1, &outputs1, None, pbc_pkey);
             match block.validate_balance(&[output0]) {
                 Err(e) => match e.downcast::<BlockError>().unwrap() {
                     BlockError::InvalidBlockBalance(_height, _hash) => {}
@@ -1238,16 +1261,7 @@ pub mod tests {
         let (output, gamma1) = Output::new_payment(timestamp, &skey, &pkey, amount).unwrap();
         let outputs = [output];
         let gamma = gamma0 - gamma1;
-        let block = MicroBlock::new(
-            base,
-            gamma,
-            0,
-            &input_hashes,
-            &outputs,
-            None,
-            pbc_pkey,
-            &pbc_skey,
-        );
+        let block = MacroBlock::new(base, gamma, 0, &input_hashes, &outputs, None, pbc_pkey);
         block.validate_balance(&inputs).expect("block is valid");
 
         {
@@ -1303,7 +1317,7 @@ pub mod tests {
 
             let base =
                 BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-            let block = MicroBlock::new(
+            let block = MacroBlock::new(
                 base,
                 gamma,
                 0,
@@ -1311,7 +1325,6 @@ pub mod tests {
                 &outputs[..],
                 None,
                 secure_pkey1,
-                &secure_skey1,
             );
             block.validate_balance(&inputs).expect("block is valid");
         }
@@ -1339,7 +1352,7 @@ pub mod tests {
 
             let base =
                 BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-            let block = MicroBlock::new(
+            let block = MacroBlock::new(
                 base,
                 gamma,
                 0,
@@ -1347,7 +1360,6 @@ pub mod tests {
                 &outputs[..],
                 None,
                 secure_pkey1,
-                &secure_skey1,
             );
             block.validate_balance(&inputs).expect("block is valid");
         }
@@ -1377,7 +1389,7 @@ pub mod tests {
 
             let base =
                 BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-            let block = MicroBlock::new(
+            let block = MacroBlock::new(
                 base,
                 gamma,
                 0,
@@ -1385,7 +1397,6 @@ pub mod tests {
                 &outputs[..],
                 None,
                 secure_pkey1,
-                &secure_skey1,
             );
             match block.validate_balance(&inputs) {
                 Err(e) => match e.downcast::<BlockError>().unwrap() {
@@ -1421,7 +1432,7 @@ pub mod tests {
 
             let base =
                 BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-            let block = MicroBlock::new(
+            let block = MacroBlock::new(
                 base,
                 gamma,
                 0,
@@ -1429,7 +1440,6 @@ pub mod tests {
                 &outputs[..],
                 None,
                 secure_pkey1,
-                &secure_skey1,
             );
             match block.validate_balance(&inputs) {
                 Err(e) => match e.downcast::<OutputError>().unwrap() {
@@ -1464,7 +1474,7 @@ pub mod tests {
             Output::new_payment(timestamp, &skey, &pkey, output_amount).unwrap();
         let outputs = [output];
         let gamma = input_gamma - output_gamma;
-        let block = MicroBlock::new(
+        let block = MacroBlock::new(
             base,
             gamma,
             monetary_adjustment,
@@ -1472,7 +1482,6 @@ pub mod tests {
             &outputs,
             None,
             secure_pkey1,
-            &secure_skey1,
         );
         block.validate_balance(&inputs).expect("block is valid");
     }

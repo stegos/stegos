@@ -5,9 +5,8 @@ import "crypto.proto";
 import "blockchain.proto";
 import "view_changes.proto";
 
-
-message KeyBlockProposal {
-    stegos.blockchain.KeyBlock block = 1;
+message MacroBlockProposal {
+    stegos.blockchain.MacroBlock block = 1;
 }
 
 message Prevote {}
@@ -21,7 +20,7 @@ message ConsensusMessageBody {
         Prevote prevote = 1;
         Precommit precommit= 2;
 
-        KeyBlockProposal key_block_proposal = 11;
+        MacroBlockProposal macro_block_proposal = 11;
     }
 }
 

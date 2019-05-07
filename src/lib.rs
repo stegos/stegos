@@ -74,26 +74,17 @@ pub fn initialize_logger(cfg: &config::Config) -> Result<LogHandle, LogError> {
 }
 
 pub fn initialize_genesis(cfg: &config::Config) -> Result<Vec<Block>, Error> {
-    let (block1, block2): (&[u8], &[u8]) = match cfg.general.chain.as_ref() {
-        "dev" => (
-            include_bytes!("../chains/dev/genesis0.bin"),
-            include_bytes!("../chains/dev/genesis1.bin"),
-        ),
-        "testnet" => (
-            include_bytes!("../chains/testnet/genesis0.bin"),
-            include_bytes!("../chains/testnet/genesis1.bin"),
-        ),
-        "devnet" => (
-            include_bytes!("../chains/devnet/genesis0.bin"),
-            include_bytes!("../chains/devnet/genesis1.bin"),
-        ),
+    let block1: &[u8] = match cfg.general.chain.as_ref() {
+        "dev" => include_bytes!("../chains/dev/genesis0.bin"),
+        "testnet" => include_bytes!("../chains/testnet/genesis0.bin"),
+        "devnet" => include_bytes!("../chains/devnet/genesis0.bin"),
         chain @ _ => {
             return Err(format_err!("Unknown chain: {}", chain));
         }
     };
     info!("Using genesis for '{}' chain", cfg.general.chain);
     let mut blocks = Vec::<Block>::new();
-    for (i, block) in [block1.as_ref(), block2.as_ref()].iter().enumerate() {
+    for (i, block) in [block1.as_ref()].iter().enumerate() {
         let block = Block::from_buffer(&block)?;
         let header = block.base_header();
         info!(

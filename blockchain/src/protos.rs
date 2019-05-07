@@ -31,7 +31,6 @@ use stegos_crypto::curve1174::cpt::{EncryptedPayload, PublicKey, SchnorrSig};
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
-use stegos_crypto::CryptoError;
 
 #[derive(Debug, Fail)]
 pub enum ProtoError {
@@ -43,6 +42,7 @@ pub enum ProtoError {
 
 // link protobuf dependencies
 use stegos_crypto::protos::*;
+use stegos_crypto::CryptoError;
 include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
 
 impl ProtoConvert for PaymentOutput {
@@ -201,78 +201,6 @@ impl ProtoConvert for BaseBlockHeader {
     }
 }
 
-impl ProtoConvert for KeyBlockHeader {
-    type Proto = blockchain::KeyBlockHeader;
-    fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::KeyBlockHeader::new();
-        proto.set_base(self.base.into_proto());
-        proto
-    }
-
-    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let base = BaseBlockHeader::from_proto(proto.get_base())?;
-
-        Ok(KeyBlockHeader { base })
-    }
-}
-
-impl ProtoConvert for KeyBlockBody {
-    type Proto = blockchain::KeyBlockBody;
-    fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::KeyBlockBody::new();
-        if !self.multisig.is_zero() {
-            proto.set_sig(self.multisig.into_proto());
-        }
-        if !self.multisigmap.is_empty() {
-            assert!(self.multisigmap.len() <= VALIDATORS_MAX);
-            proto.sigmap.resize(VALIDATORS_MAX, false);
-            for bit in self.multisigmap.iter() {
-                proto.sigmap[bit] = true;
-            }
-        }
-        proto
-    }
-
-    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let multisig = if proto.has_sig() {
-            secure::Signature::from_proto(proto.get_sig())?
-        } else {
-            secure::Signature::zero()
-        };
-        if proto.sigmap.len() > VALIDATORS_MAX {
-            return Err(
-                CryptoError::InvalidBinaryLength(VALIDATORS_MAX, proto.sigmap.len()).into(),
-            );
-        }
-        let mut multisigmap = BitVector::new(VALIDATORS_MAX);
-        for (bit, val) in proto.sigmap.iter().enumerate() {
-            if *val {
-                multisigmap.insert(bit);
-            }
-        }
-        Ok(KeyBlockBody {
-            multisig,
-            multisigmap,
-        })
-    }
-}
-
-impl ProtoConvert for KeyBlock {
-    type Proto = blockchain::KeyBlock;
-    fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::KeyBlock::new();
-        proto.set_header(self.header.into_proto());
-        proto.set_body(self.body.into_proto());
-        proto
-    }
-
-    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let header = KeyBlockHeader::from_proto(proto.get_header())?;
-        let body = KeyBlockBody::from_proto(proto.get_body())?;
-        Ok(KeyBlock { header, body })
-    }
-}
-
 impl ProtoConvert for SerializedNode<Box<Output>> {
     type Proto = blockchain::MerkleNode;
     fn into_proto(&self) -> Self::Proto {
@@ -320,10 +248,10 @@ impl ProtoConvert for SerializedNode<Box<Output>> {
     }
 }
 
-impl ProtoConvert for MicroBlockHeader {
-    type Proto = blockchain::MicroBlockHeader;
+impl ProtoConvert for MacroBlockHeader {
+    type Proto = blockchain::MacroBlockHeader;
     fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::MicroBlockHeader::new();
+        let mut proto = blockchain::MacroBlockHeader::new();
         proto.set_base(self.base.into_proto());
         proto.set_gamma(self.gamma.into_proto());
         proto.set_monetary_adjustment(self.monetary_adjustment);
@@ -347,7 +275,7 @@ impl ProtoConvert for MicroBlockHeader {
         } else {
             None
         };
-        Ok(MicroBlockHeader {
+        Ok(MacroBlockHeader {
             proof,
             base,
             gamma,
@@ -358,12 +286,19 @@ impl ProtoConvert for MicroBlockHeader {
     }
 }
 
-impl ProtoConvert for MicroBlockBody {
-    type Proto = blockchain::MicroBlockBody;
+impl ProtoConvert for MacroBlockBody {
+    type Proto = blockchain::MacroBlockBody;
     fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::MicroBlockBody::new();
-        proto.set_sig(self.sig.into_proto());
+        let mut proto = blockchain::MacroBlockBody::new();
+        proto.set_sig(self.multisig.into_proto());
         proto.set_pkey(self.pkey.into_proto());
+        if !self.multisigmap.is_empty() {
+            assert!(self.multisigmap.len() <= VALIDATORS_MAX);
+            proto.sigmap.resize(VALIDATORS_MAX, false);
+            for bit in self.multisigmap.iter() {
+                proto.sigmap[bit] = true;
+            }
+        }
 
         for input in &self.inputs {
             proto.inputs.push(input.into_proto());
@@ -375,9 +310,23 @@ impl ProtoConvert for MicroBlockBody {
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let sig = secure::Signature::from_proto(proto.get_sig())?;
-
         let pkey = secure::PublicKey::from_proto(proto.get_pkey())?;
+        let multisig = if proto.has_sig() {
+            secure::Signature::from_proto(proto.get_sig())?
+        } else {
+            secure::Signature::zero()
+        };
+        if proto.sigmap.len() > VALIDATORS_MAX {
+            return Err(
+                CryptoError::InvalidBinaryLength(VALIDATORS_MAX, proto.sigmap.len()).into(),
+            );
+        }
+        let mut multisigmap = BitVector::new(VALIDATORS_MAX);
+        for (bit, val) in proto.sigmap.iter().enumerate() {
+            if *val {
+                multisigmap.insert(bit);
+            }
+        }
 
         let mut inputs = Vec::<Hash>::with_capacity(proto.inputs.len());
         for input in proto.inputs.iter() {
@@ -390,28 +339,29 @@ impl ProtoConvert for MicroBlockBody {
         }
         let outputs = Merkle::deserialize(&outputs)?;
 
-        Ok(MicroBlockBody {
-            sig,
+        Ok(MacroBlockBody {
             pkey,
+            multisig,
+            multisigmap,
             inputs,
             outputs,
         })
     }
 }
 
-impl ProtoConvert for MicroBlock {
-    type Proto = blockchain::MicroBlock;
+impl ProtoConvert for MacroBlock {
+    type Proto = blockchain::MacroBlock;
     fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::MicroBlock::new();
+        let mut proto = blockchain::MacroBlock::new();
         proto.set_header(self.header.into_proto());
         proto.set_body(self.body.into_proto());
         proto
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let header = MicroBlockHeader::from_proto(proto.get_header())?;
-        let body = MicroBlockBody::from_proto(proto.get_body())?;
-        Ok(MicroBlock { header, body })
+        let header = MacroBlockHeader::from_proto(proto.get_header())?;
+        let body = MacroBlockBody::from_proto(proto.get_body())?;
+        Ok(MacroBlock { header, body })
     }
 }
 
@@ -420,7 +370,7 @@ impl ProtoConvert for Block {
     fn into_proto(&self) -> Self::Proto {
         let mut proto = blockchain::Block::new();
         match self {
-            Block::KeyBlock(key_block) => proto.set_key_block(key_block.into_proto()),
+            Block::MacroBlock(macro_block) => proto.set_macro_block(macro_block.into_proto()),
             Block::MicroBlock(micro_block) => proto.set_micro_block(micro_block.into_proto()),
         }
         proto
@@ -428,12 +378,12 @@ impl ProtoConvert for Block {
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let block = match proto.block {
-            Some(blockchain::Block_oneof_block::key_block(ref key_block)) => {
-                let key_block = KeyBlock::from_proto(key_block)?;
-                Block::KeyBlock(key_block)
+            Some(blockchain::Block_oneof_block::macro_block(ref macro_block)) => {
+                let macro_block = MacroBlock::from_proto(macro_block)?;
+                Block::MacroBlock(macro_block)
             }
             Some(blockchain::Block_oneof_block::micro_block(ref micro_block)) => {
-                let micro_block = MicroBlock::from_proto(micro_block)?;
+                let micro_block = MacroBlock::from_proto(micro_block)?;
                 Block::MicroBlock(micro_block)
             }
             None => {
@@ -595,40 +545,11 @@ mod tests {
         Transaction::from_buffer(&buf).expect_err("error");
     }
 
-    impl Hashable for KeyBlockBody {
-        fn hash(&self, state: &mut Hasher) {
-            "Key".hash(state);
-            self.multisig.hash(state);
-            for bit in self.multisigmap.iter() {
-                (bit as u64).hash(state);
-            }
-        }
-    }
-
-    #[test]
-    fn key_blocks() {
-        let (skey0, _pkey0) = make_secure_random_keys();
-
-        let version: u64 = 1;
-        let height: u64 = 0;
-        let timestamp = SystemTime::now();
-        let previous = Hash::digest(&"test".to_string());
-        let random = secure::make_VRF(&skey0, &Hash::digest("test"));
-        let base = BaseBlockHeader::new(version, previous, height, 0, timestamp, random);
-        let block = KeyBlock::new(base);
-
-        roundtrip(&block.header);
-        roundtrip(&block.body);
-        roundtrip(&block);
-
-        let block = Block::KeyBlock(block);
-        roundtrip(&block);
-    }
-
-    impl Hashable for MicroBlockBody {
+    impl Hashable for MacroBlockBody {
         fn hash(&self, state: &mut Hasher) {
             "Monetary".hash(state);
-            self.sig.hash(state);
+            self.multisig.hash(state);
+            // TODO: check mulitisigmap?
             let inputs_count: u64 = self.inputs.len() as u64;
             inputs_count.hash(state);
             for input in &self.inputs {
@@ -639,7 +560,7 @@ mod tests {
     }
 
     #[test]
-    fn micro_blocks() {
+    fn macro_blocks() {
         let (skey0, _pkey0) = make_random_keys();
         let (skey1, pkey1) = make_random_keys();
         let (_skey2, pkey2) = make_random_keys();
@@ -666,21 +587,12 @@ mod tests {
         let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
         roundtrip(&base);
 
-        let block = MicroBlock::new(
-            base,
-            gamma.clone(),
-            0,
-            &inputs1,
-            &outputs1,
-            None,
-            pkeypbc,
-            &skeypbc,
-        );
+        let block = MacroBlock::new(base, gamma.clone(), 0, &inputs1, &outputs1, None, pkeypbc);
         roundtrip(&block.header);
         roundtrip(&block.body);
         roundtrip(&block);
 
-        let block = Block::MicroBlock(block);
+        let block = Block::MacroBlock(block);
         roundtrip(&block);
     }
 }

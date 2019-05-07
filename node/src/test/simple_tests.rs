@@ -175,5 +175,5 @@ pub fn payments() {
     ];
     assert_eq!(amounts, expected);
 
-    assert_eq!(block_count, 3);
+    assert_eq!(block_count, 2);
 }

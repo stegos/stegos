@@ -87,6 +87,9 @@ impl<'timer> Sandbox<'timer> {
                 timer,
                 config: cfg,
             };
+            for node in sandbox.nodes.iter() {
+                assert_eq!(node.node_service.chain.height(), 1);
+            }
             test_routine(sandbox)
         });
     }

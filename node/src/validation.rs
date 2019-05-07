@@ -27,7 +27,7 @@ use crate::mempool::Mempool;
 use failure::Error;
 use log::*;
 use std::time::SystemTime;
-use stegos_blockchain::KeyBlock;
+use stegos_blockchain::MacroBlock;
 use stegos_blockchain::Output;
 use stegos_blockchain::Transaction;
 use stegos_blockchain::{Blockchain, TransactionError};
@@ -90,7 +90,7 @@ pub(crate) fn validate_transaction(
 }
 
 fn vetted_timestamp(
-    block: &KeyBlock,
+    block: &MacroBlock,
     cfg: &ChainConfig,
     last_block_time: SystemTime,
 ) -> Result<(), Error> {
@@ -110,7 +110,7 @@ fn vetted_timestamp(
             .duration_since(timestamp)
             .unwrap();
 
-        if duration > cfg.key_block_timeout {
+        if duration > cfg.macro_block_timeout {
             return Err(NodeBlockError::OutOfSyncTimestamp(
                 block.header.base.height,
                 Hash::digest(block),
@@ -125,14 +125,14 @@ fn vetted_timestamp(
 }
 
 ///
-/// Validate proposed key block.
+/// Validate proposed macro block.
 ///
-pub(crate) fn validate_proposed_key_block(
+pub(crate) fn validate_proposed_macro_block(
     cfg: &ChainConfig,
     chain: &Blockchain,
     view_change: u32,
     block_hash: Hash,
-    block: &KeyBlock,
+    block: &MacroBlock,
 ) -> Result<(), Error> {
     debug_assert_eq!(&Hash::digest(block), &block_hash);
 
@@ -146,8 +146,8 @@ pub(crate) fn validate_proposed_key_block(
         )
         .into());
     }
-    vetted_timestamp(block, cfg, chain.last_key_block_timestamp())?;
-    chain.validate_key_block(block, true)?;
+    vetted_timestamp(block, cfg, chain.last_macro_block_timestamp())?;
+    chain.validate_macro_block(block, block.header.base.timestamp, true)?;
 
     debug!("Key block proposal is valid: block={:?}", block_hash);
     Ok(())
@@ -446,7 +446,7 @@ mod test {
                 .expect("genesis has valid public keys");
             let outputs = vec![output.clone()];
             let gamma = -outputs_gamma;
-            let mut block = MicroBlock::new(
+            let mut block = MacroBlock::new(
                 base,
                 gamma,
                 amount - fee,
@@ -454,10 +454,9 @@ mod test {
                 &outputs,
                 None,
                 *validator_pkey,
-                &validator_skey,
             );
             let block_hash = Hash::digest(&block);
-            block.body.sig = secure::sign_hash(&block_hash, &validator_skey);
+            block.body.multisig = secure::sign_hash(&block_hash, &validator_skey);
 
             chain
                 .push_micro_block(block, timestamp)

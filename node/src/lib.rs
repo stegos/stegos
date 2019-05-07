@@ -260,7 +260,7 @@ pub struct NodeService {
     /// Aggregated stream of events.
     events: Box<Stream<Item = NodeMessage, Error = ()> + Send>,
     /// timer events
-    key_block_timer: Interval,
+    macro_block_timer: Interval,
     view_change_timer: Interval,
     propose_timer: Interval,
 }
@@ -329,8 +329,8 @@ impl NodeService {
         // Timer for the micro block view changes.
         let view_change_timer = Interval::new_interval(cfg.micro_block_timeout);
 
-        // Timer for the key block view changes.
-        let key_block_timer = Interval::new_interval(cfg.key_block_timeout);
+        // Timer for the macro block view changes.
+        let macro_block_timer = Interval::new_interval(cfg.macro_block_timeout);
 
         let mut service = NodeService {
             cfg,
@@ -348,7 +348,7 @@ impl NodeService {
             on_epoch_changed,
             on_outputs_changed,
             events,
-            key_block_timer,
+            macro_block_timer,
             propose_timer,
             view_change_timer,
         };
@@ -437,7 +437,7 @@ impl NodeService {
         let height = remote.base_header().height;
         assert!(height < self.chain.height());
         assert!(height > 0);
-        assert!(height > self.chain.last_key_block_height());
+        assert!(height > self.chain.last_macro_block_height());
 
         let remote_hash = Hash::digest(&remote);
         let remote = match remote {
@@ -457,7 +457,7 @@ impl NodeService {
         if leader != remote.body.pkey {
             return Err(BlockError::DifferentPublicKey(leader, remote.body.pkey).into());
         }
-        if let Err(_e) = secure::check_hash(&remote_hash, &remote.body.sig, &leader) {
+        if let Err(_e) = secure::check_hash(&remote_hash, &remote.body.multisig, &leader) {
             return Err(BlockError::InvalidLeaderSignature(height, remote_hash).into());
         }
 
@@ -629,7 +629,7 @@ impl NodeService {
         );
 
         // Check height.
-        if block_height <= self.chain.last_key_block_height() {
+        if block_height <= self.chain.last_macro_block_height() {
             // A duplicate block from a finalized epoch - ignore.
             debug!(
                 "Skip an outdated block: height={}, block={}, current_height={}, last_block={}",
@@ -642,7 +642,7 @@ impl NodeService {
         } else if block_height < self.chain.height() {
             // A duplicate block from the current epoch - try to resolve forks.
             return self.resolve_fork(block);
-        } else if block_height > self.chain.last_key_block_height() + self.cfg.blocks_in_epoch {
+        } else if block_height > self.chain.last_macro_block_height() + self.cfg.blocks_in_epoch {
             // An orphan block from later epochs - ignore.
             warn!("Skipped an orphan block from the future: height={}, block={}, current_height={}, last_block={}",
                   block_height,
@@ -655,13 +655,13 @@ impl NodeService {
         }
 
         // A block from the current epoch.
-        assert!(block_height > self.chain.last_key_block_height());
-        assert!(block_height <= self.chain.last_key_block_height() + self.cfg.blocks_in_epoch);
+        assert!(block_height > self.chain.last_macro_block_height());
+        assert!(block_height <= self.chain.last_macro_block_height() + self.cfg.blocks_in_epoch);
         let leader = self.chain.select_leader(block.base_header().view_change);
 
         // Check signature.
         match block {
-            Block::KeyBlock(ref block) => {
+            Block::MacroBlock(ref block) => {
                 check_multi_signature(
                     &block_hash,
                     &block.body.multisig,
@@ -672,7 +672,7 @@ impl NodeService {
                 .map_err(|e| BlockError::InvalidBlockSignature(e, block_height, block_hash))?;
             }
             Block::MicroBlock(ref block) => {
-                if let Err(_e) = secure::check_hash(&block_hash, &block.body.sig, &leader) {
+                if let Err(_e) = secure::check_hash(&block_hash, &block.body.multisig, &leader) {
                     return Err(BlockError::InvalidLeaderSignature(block_height, block_hash).into());
                 }
             }
@@ -729,7 +729,7 @@ impl NodeService {
         let height = block.base_header().height;
         let view_change = block.base_header().view_change;
         match block {
-            Block::KeyBlock(key_block) => {
+            Block::MacroBlock(macro_block) => {
                 let was_synchronized = self.is_synchronized();
 
                 // Check for the correct block order.
@@ -753,7 +753,7 @@ impl NodeService {
                         }
                     }
                 }
-                self.chain.push_key_block(key_block)?;
+                self.chain.push_macro_block(macro_block, timestamp)?;
 
                 if !was_synchronized && self.is_synchronized() {
                     info!(
@@ -772,7 +772,10 @@ impl NodeService {
                     return Err(NodeBlockError::ExpectedKeyBlock(self.chain.height(), hash).into());
                 }
 
-                assert!(self.consensus.is_none(), "consensus is for key blocks only");
+                assert!(
+                    self.consensus.is_none(),
+                    "consensus is for macro blocks only"
+                );
 
                 let timestamp = SystemTime::now();
 
@@ -876,7 +879,7 @@ impl NodeService {
             self.recover_consensus_state()?
         } else {
             error!(
-                "Attempt to revert a key block: height={}",
+                "Attempt to revert a macro block: height={}",
                 self.chain.height()
             );
         }
@@ -897,7 +900,7 @@ impl NodeService {
         let keys = &self.keys;
         assert_eq!(&leader, &self.keys.network_pkey);
 
-        let create_key_block = || {
+        let create_macro_block = || {
             let seed = mix(last_random, view_change);
             let random = secure::make_VRF(&keys.network_skey, &seed);
 
@@ -907,14 +910,14 @@ impl NodeService {
             let base =
                 BaseBlockHeader::new(VERSION, previous, height, view_change, timestamp, random);
             debug!(
-                "Creating a new key block proposal: height={}, epoch={}, leader={:?}",
+                "Creating a new macro block proposal: height={}, epoch={}, leader={:?}",
                 height,
                 blockchain.epoch() + 1,
                 leader
             );
 
             let validators = blockchain.validators();
-            let mut block = KeyBlock::new(base);
+            let mut block = MacroBlock::empty(base, keys.network_pkey);
 
             let block_hash = Hash::digest(&block);
 
@@ -930,11 +933,11 @@ impl NodeService {
 
             // Validate the block via blockchain (just double-checking here).
             blockchain
-                .validate_key_block(&block, true)
-                .expect("proposed key block is valid");
+                .validate_macro_block(&block, timestamp, true)
+                .expect("proposed macro block is valid");
 
             info!(
-                "Created a new key block proposal: height={}, epoch={}, hash={}",
+                "Created a new macro block proposal: height={}, epoch={}, hash={}",
                 height, epoch, block_hash
             );
 
@@ -942,7 +945,7 @@ impl NodeService {
             (block, proof)
         };
 
-        consensus.propose(create_key_block);
+        consensus.propose(create_macro_block);
         NodeService::flush_consensus_messages(consensus, &mut self.network)
     }
 
@@ -985,14 +988,14 @@ impl NodeService {
             self.chain.validators().iter().cloned().collect(),
         );
         // update timer, set current_time to now().
-        self.key_block_timer.reset(self.cfg.key_block_timeout);
+        self.macro_block_timer.reset(self.cfg.macro_block_timeout);
         self.consensus = Some(consensus);
         let consensus = self.consensus.as_ref().unwrap();
         if consensus.is_leader() {
             self.create_new_epoch()?;
         } else {
             info!(
-                "Waiting for a key block: height={}, last_block={}, epoch={}, leader={}",
+                "Waiting for a macro block: height={}, last_block={}, epoch={}, leader={}",
                 self.chain.height(),
                 self.chain.last_block_hash(),
                 self.chain.epoch(),
@@ -1023,7 +1026,7 @@ impl NodeService {
             Ok(())
         } else {
             debug!(
-                "The next block is a key block: height={}, last_block={}",
+                "The next block is a macro block: height={}, last_block={}",
                 self.chain.height(),
                 self.chain.last_block_hash()
             );
@@ -1070,8 +1073,8 @@ impl NodeService {
             self.future_consensus_messages.push(msg);
             return Ok(());
         }
-        let validate_request = |request_hash: Hash, block: &KeyBlock, round| {
-            validate_proposed_key_block(&self.cfg, &self.chain, round, request_hash, block)
+        let validate_request = |request_hash: Hash, block: &MacroBlock, round| {
+            validate_proposed_macro_block(&self.cfg, &self.chain, round, request_hash, block)
         };
         // Validate signature and content.
         msg.validate(validate_request)?;
@@ -1113,21 +1116,21 @@ impl NodeService {
     /// True if the node is synchronized with the network.
     fn is_synchronized(&self) -> bool {
         let timestamp = SystemTime::now();
-        let block_timestamp = self.chain.last_key_block_timestamp();
+        let block_timestamp = self.chain.last_macro_block_timestamp();
         block_timestamp
             + self.cfg.micro_block_timeout * (self.cfg.blocks_in_epoch as u32)
-            + self.cfg.key_block_timeout
+            + self.cfg.macro_block_timeout
             >= timestamp
     }
 
     /// Checks if it's time to perform a view change on a micro block.
-    fn handle_key_block_viewchange_timer(&mut self) -> Result<(), Error> {
+    fn handle_macro_block_viewchange_timer(&mut self) -> Result<(), Error> {
         if self.consensus.is_none() {
             return Ok(());
         }
 
         warn!(
-            "Timed out while waiting for a key block: height={}",
+            "Timed out while waiting for a macro block: height={}",
             self.chain.height(),
         );
 
@@ -1155,8 +1158,8 @@ impl NodeService {
                 // not at commit phase, go to the next round
                 consensus.next_round();
                 let relevant_round = 1 + consensus.round() - self.chain.view_change();
-                self.key_block_timer
-                    .reset(self.cfg.key_block_timeout * relevant_round);
+                self.macro_block_timer
+                    .reset(self.cfg.macro_block_timeout * relevant_round);
                 let consensus = self.consensus.as_ref().unwrap();
                 if consensus.is_leader() {
                     debug!("I am leader proposing a new block");
@@ -1249,7 +1252,7 @@ impl NodeService {
             height, previous
         );
         // Create a new micro block from the mempool.
-        let (block, _fee_output, _tx_hashes) = self.mempool.create_block(
+        let (mut block, _fee_output, _tx_hashes) = self.mempool.create_block(
             previous,
             VERSION,
             self.chain.height(),
@@ -1260,8 +1263,10 @@ impl NodeService {
             proof,
             self.cfg.max_utxo_in_block,
         );
-
         let block_hash = Hash::digest(&block);
+
+        // Sign block.
+        block.sign(&self.keys.network_skey, &self.keys.network_pkey);
 
         info!(
             "Created a micro block: height={}, block={}, inputs={}, outputs={}",
@@ -1286,16 +1291,16 @@ impl NodeService {
     ///
     fn commit_proposed_block(
         &mut self,
-        mut key_block: KeyBlock,
+        mut macro_block: MacroBlock,
         multisig: secure::Signature,
         multisigmap: BitVector,
     ) {
-        key_block.body.multisig = multisig;
-        key_block.body.multisigmap = multisigmap;
-        let key_block2 = key_block.clone();
-        self.apply_new_block(Block::KeyBlock(key_block))
+        macro_block.body.multisig = multisig;
+        macro_block.body.multisigmap = multisigmap;
+        let macro_block2 = macro_block.clone();
+        self.apply_new_block(Block::MacroBlock(macro_block))
             .expect("block is validated before");
-        self.send_sealed_block(Block::KeyBlock(key_block2))
+        self.send_sealed_block(Block::MacroBlock(macro_block2))
             .expect("failed to send sealed micro block");
     }
 
@@ -1305,7 +1310,7 @@ impl NodeService {
     /// If some of intevals return None.
     /// If some timer fails.
     pub fn poll_timers(&mut self) -> Async<TimerEvents> {
-        poll_timer!(TimerEvents::KeyBlockViewChangeTimer => self.key_block_timer);
+        poll_timer!(TimerEvents::KeyBlockViewChangeTimer => self.macro_block_timer);
         poll_timer!(TimerEvents::MicroBlockViewChangeTimer => self.view_change_timer);
         poll_timer!(TimerEvents::MicroBlockProposeTimer => self.propose_timer);
         return Async::NotReady;
@@ -1327,7 +1332,7 @@ impl Future for NodeService {
                     self.handle_micro_block_viewchange_timer()
                 }
                 TimerEvents::KeyBlockViewChangeTimer(_now) => {
-                    self.handle_key_block_viewchange_timer()
+                    self.handle_macro_block_viewchange_timer()
                 }
             };
             if let Err(e) = result {

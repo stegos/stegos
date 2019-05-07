@@ -53,12 +53,12 @@ pub enum NodeBlockError {
     )]
     InvalidMonetaryAdjustment(u64, Hash, i64, i64),
     #[fail(
-        display = "Expected a key block, got micro block: height={}, block={}",
+        display = "Expected a macro block, got micro block: height={}, block={}",
         _0, _1
     )]
     ExpectedKeyBlock(u64, Hash),
     #[fail(
-        display = "Expected a micro block, got key block: height={}, block={}",
+        display = "Expected a micro block, got macro block: height={}, block={}",
         _0, _1
     )]
     ExpectedMicroBlock(u64, Hash),

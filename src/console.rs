@@ -21,7 +21,7 @@
 // SOFTWARE.
 use crate::config::GeneralConfig;
 use crate::consts;
-use crate::generator::Generator;
+use crate::generator::{Generator, GeneratorMode};
 use crate::money::{format_money, parse_money};
 use dirs;
 use failure::Error;
@@ -113,6 +113,7 @@ impl ConsoleService {
             Some(Generator::new(
                 wallet.clone(),
                 cfg.generate_txs.clone(),
+                GeneratorMode::Regular,
                 true,
             ))
         } else {
@@ -497,7 +498,12 @@ impl ConsoleService {
                 if let Some(ref mut generator) = self.generator {
                     generator.add_destinations(keys)
                 } else {
-                    self.generator = Some(Generator::new(self.wallet.clone(), keys.clone(), false));
+                    self.generator = Some(Generator::new(
+                        self.wallet.clone(),
+                        keys.clone(),
+                        GeneratorMode::Regular,
+                        false,
+                    ));
                 }
             } else {
                 Self::help_generator()

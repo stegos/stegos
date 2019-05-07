@@ -38,11 +38,14 @@ fn compare<T: Serialize>(val: T, expected: Value) {
 
 #[test]
 fn response_create_tx() {
-    let response = WalletResponse::ValueShuffleStarted {};
+    let response = WalletResponse::ValueShuffleStarted {
+        session_id: Hash::zero(),
+    };
     compare(
         response,
         json!({
             "response": "value_shuffle_started",
+            "session_id": "0000000000000000000000000000000000000000000000000000000000000000",
         }),
     );
     let response = WalletResponse::TransactionCreated {

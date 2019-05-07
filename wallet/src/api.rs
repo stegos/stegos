@@ -102,7 +102,9 @@ pub enum WalletResponse {
         tx_hash: Hash,
         fee: i64,
     },
-    ValueShuffleStarted {}, // TODO: Add info about valueshuffle session.
+    ValueShuffleStarted {
+        session_id: Hash,
+    },
     TransactionCommitted(TransactionCommitted),
     BalanceInfo {
         balance: i64,

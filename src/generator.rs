@@ -37,6 +37,7 @@ pub struct Generator {
     wallet: Wallet,
     destinations: Vec<PublicKey>,
     state: GeneratorState,
+    mode: GeneratorMode,
 }
 
 #[derive(Debug)]
@@ -47,6 +48,7 @@ enum GeneratorState {
     WaitForConfirmation(oneshot::Receiver<WalletResponse>),
 }
 
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub enum GeneratorMode {
     Regular,
     ValueShuffle,
@@ -54,7 +56,12 @@ pub enum GeneratorMode {
 
 impl Generator {
     /// Crates new TransactionPool.
-    pub fn new(wallet: Wallet, destinations: Vec<PublicKey>, with_delay: bool) -> Generator {
+    pub fn new(
+        wallet: Wallet,
+        destinations: Vec<PublicKey>,
+        mode: GeneratorMode,
+        with_delay: bool,
+    ) -> Generator {
         info!("Creating generator with keys = {:?}", destinations);
         assert!(
             !destinations.is_empty(),
@@ -71,6 +78,7 @@ impl Generator {
             wallet,
             destinations,
             state,
+            mode,
         }
     }
     pub fn add_destinations(&mut self, destinations: Vec<PublicKey>) {
@@ -79,20 +87,35 @@ impl Generator {
     }
 
     fn handle_wait_creation(&mut self, response: WalletResponse) {
-        match response {
-            WalletResponse::TransactionCreated { tx_hash, .. } => {
-                debug!("Transaction was created: hash = {}", tx_hash);
-                self.state = GeneratorState::WaitForConfirmation(
-                    self.wallet
-                        .request(WalletRequest::WaitForCommit { tx_hash }),
-                );
+        let tx_hash = match response {
+            WalletResponse::TransactionCreated { tx_hash, .. }
+                if self.mode == GeneratorMode::Regular =>
+            {
+                tx_hash
+            }
+            WalletResponse::ValueShuffleStarted { session_id }
+                if self.mode == GeneratorMode::ValueShuffle =>
+            {
+                session_id
             }
             WalletResponse::Error { .. } => {
                 debug!("Error on transaction creation.");
-                self.state = GeneratorState::NotInited(self.wallet.subscribe())
+                self.state = GeneratorState::NotInited(self.wallet.subscribe());
+                return;
             }
-            e => warn!("Unexpected WalletResponse = {:?}", e),
-        }
+            e => {
+                warn!(
+                    "Unexpected WalletResponse = {:?}, mode = {:?}",
+                    e, self.mode
+                );
+                return;
+            }
+        };
+        debug!("Transaction was created: hash = {}", tx_hash);
+        self.state = GeneratorState::WaitForConfirmation(
+            self.wallet
+                .request(WalletRequest::WaitForCommit { tx_hash }),
+        );
     }
 
     /// Process wallet notification, transient to create new transaction.
@@ -127,11 +150,19 @@ impl Generator {
         let mut rng = rand::thread_rng();
 
         let recipient = self.destinations.choose(&mut rng).unwrap().clone();
-        let request = WalletRequest::Payment {
-            comment: "generator".into(),
-            amount: 1,
-            recipient,
+        let request = match self.mode {
+            GeneratorMode::ValueShuffle => WalletRequest::SecurePayment {
+                comment: "generator".into(),
+                amount: 1,
+                recipient,
+            },
+            GeneratorMode::Regular => WalletRequest::Payment {
+                comment: "generator".into(),
+                amount: 1,
+                recipient,
+            },
         };
+
         debug!("Sending new transaction: request={:?}", request);
 
         self.state = GeneratorState::WaitForWallet(self.wallet.request(request));

@@ -29,7 +29,7 @@ use log::*;
 use std::path::PathBuf;
 use std::process;
 use std::time::SystemTime;
-use stegos::generator::Generator;
+use stegos::generator::{Generator, GeneratorMode};
 use stegos_blockchain::Blockchain;
 use stegos_keychain::*;
 use stegos_network::Libp2pNetwork;
@@ -58,6 +58,7 @@ pub fn load_configuration(folder: &str) -> Result<config::Config, Error> {
     Ok(cfg)
 }
 
+//TODO: run single node and network.
 fn run() -> Result<(), Error> {
     let name = "stegos-generator";
     let version = format!(
@@ -82,23 +83,43 @@ fn run() -> Result<(), Error> {
                 .multiple(true)
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("mode")
+                .short("m")
+                .long("mode")
+                .value_name("MODE")
+                .help("Generator mode could be one of (VS, REGULAR).")
+                .default_value("REGULAR")
+                .takes_value(true),
+        )
         .get_matches();
     // Initialize logger
     initialize_logger(&config::Config::default())?;
+
+    let mode = match args.value_of("mode").unwrap() {
+        "VS" | "VALUESHUFFLE" | "VALUE_SHUFFLE" => GeneratorMode::ValueShuffle,
+        _ => GeneratorMode::Regular,
+    };
+
+    // Print welcome message
+    info!("{} {}", name, version);
+
     let values = args.values_of("folders").unwrap();
+
+    let mut node_configs = Vec::new();
+    for folder in values {
+        // Parse configuration
+        let cfg = load_configuration(&folder)?;
+        // Initialize keychain
+        let keychain = KeyChain::new(cfg.keychain.clone())?;
+        node_configs.push((cfg, keychain));
+    }
+
+    let keys: Vec<_> = node_configs.iter().map(|(_, k)| k.wallet_pkey).collect();
     // Initialize network
     let mut rt = Runtime::new()?;
     let mut nodes = Vec::new();
-    for folder in values {
-        // Parse configuration
-        let mut cfg = load_configuration(&folder)?;
-
-        // Print welcome message
-        info!("{} {}", name, version);
-
-        // Initialize keychain
-        let keychain = KeyChain::new(cfg.keychain.clone())?;
-
+    for (mut cfg, keychain) in node_configs {
         // Resolve seed pool (works, if chain=='testent', does nothing otherwise)
         resolve_pool(&mut cfg)?;
 
@@ -128,7 +149,8 @@ fn run() -> Result<(), Error> {
         );
         rt.spawn(wallet_service);
 
-        let bot = Generator::new(wallet, cfg.general.generate_txs, true);
+        cfg.general.generate_txs.extend_from_slice(&keys);
+        let bot = Generator::new(wallet, cfg.general.generate_txs, mode, true);
         rt.spawn(bot);
     }
     // Start main event loop

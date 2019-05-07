@@ -49,7 +49,7 @@ use log::*;
 use std::collections::{HashMap, HashSet};
 use stegos_blockchain::*;
 use stegos_crypto::curve1174::PublicKey;
-use stegos_crypto::hash::Hash;
+use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_keychain::KeyChain;
 use stegos_network::Network;
 use stegos_node::EpochChanged;
@@ -89,6 +89,43 @@ impl StakeValue {
     }
 }
 
+/// Transaction that is known by wallet.
+#[derive(Debug)]
+enum SavedTransaction {
+    Regular(Transaction),
+    /// Stub implementation for value shuffle transaction, which contain only inputs.
+    ValueShuffle(Vec<Hash>),
+}
+
+impl SavedTransaction {
+    fn txins(&self) -> &[Hash] {
+        match self {
+            SavedTransaction::Regular(t) => t.txins(),
+            SavedTransaction::ValueShuffle(inputs) => &inputs,
+        }
+    }
+}
+
+impl Hashable for SavedTransaction {
+    fn hash(&self, state: &mut Hasher) {
+        match self {
+            SavedTransaction::Regular(t) => t.hash(state),
+            SavedTransaction::ValueShuffle(hashes) => {
+                "ValueShuffle".hash(state);
+                for h in hashes {
+                    h.hash(state)
+                }
+            }
+        }
+    }
+}
+
+impl From<Transaction> for SavedTransaction {
+    fn from(tx: Transaction) -> SavedTransaction {
+        SavedTransaction::Regular(tx)
+    }
+}
+
 pub struct WalletService {
     /// Keys.
     keys: KeyChain,
@@ -115,7 +152,8 @@ pub struct WalletService {
     transactions_interest: HashMap<Hash, Hash>,
 
     /// Set of unprocessed transactions, with pending sender.
-    unprocessed_transactions: HashMap<Hash, (Transaction, Vec<oneshot::Sender<WalletResponse>>)>,
+    unprocessed_transactions:
+        HashMap<Hash, (SavedTransaction, Vec<oneshot::Sender<WalletResponse>>)>,
 
     /// Triggered when state has changed.
     subscribers: Vec<UnboundedSender<WalletNotification>>,
@@ -234,8 +272,17 @@ impl WalletService {
         let tx: Transaction = tx.into();
         self.node.send_transaction(tx.clone())?;
         //firstly check that no conflict input was found;
+        self.add_transaction_interest(tx.into());
+
+        Ok((tx_hash, fee))
+    }
+
+    fn add_transaction_interest(&mut self, tx: SavedTransaction) {
+        debug!("Add transaction in interest list: tx = {:?}", tx);
+        let tx_hash = Hash::digest(&tx);
+        let tx_ins = tx.txins();
         let mut conflict = false;
-        for input in tx.txins() {
+        for input in tx_ins {
             if self.transactions_interest.contains_key(&input) {
                 error!("Conflict transaction found.");
                 conflict = true;
@@ -245,14 +292,12 @@ impl WalletService {
 
         if !conflict {
             debug!("No conflict found, adding transaction into interest map.");
-            for input in tx.txins() {
+            for input in tx_ins {
                 assert!(self.transactions_interest.insert(*input, tx_hash).is_none())
             }
             self.unprocessed_transactions
-                .insert(tx_hash, (tx, Vec::new()));
+                .insert(tx_hash, (tx.into(), Vec::new()));
         }
-
-        Ok((tx_hash, fee))
     }
 
     /// Send money using value shuffle.
@@ -261,7 +306,7 @@ impl WalletService {
         recipient: &PublicKey,
         amount: i64,
         comment: String,
-    ) -> Result<(), Error> {
+    ) -> Result<Hash, Error> {
         let unspent_iter = self.payments.values().map(|v| (&v.output, v.amount));
         let (inputs, outputs, fee) = create_vs_payment_transaction(
             &self.keys.wallet_pkey,
@@ -272,7 +317,10 @@ impl WalletService {
             comment,
         )?;
         self.vs.queue_transaction(&inputs, &outputs, fee)?;
-        Ok(())
+        let saved_tx = SavedTransaction::ValueShuffle(inputs.iter().map(|(h, _)| *h).collect());
+        let hash = Hash::digest(&saved_tx);
+        self.add_transaction_interest(saved_tx);
+        Ok(hash)
     }
 
     /// Stake money into the escrow.
@@ -590,7 +638,9 @@ impl Future for WalletService {
                                 amount,
                                 comment,
                             } => match self.secure_payment(&recipient, amount, comment) {
-                                Ok(()) => WalletResponse::ValueShuffleStarted {},
+                                Ok(session_id) => {
+                                    WalletResponse::ValueShuffleStarted { session_id }
+                                }
                                 Err(e) => WalletResponse::Error {
                                     error: format!("{}", e),
                                 },

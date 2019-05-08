@@ -11,14 +11,6 @@ license = "MIT"
 repository = "https://github.com/stegos/stegos"
 description = "Stegos is a completely private, confidential, and scalable cryptocurrency that's friendly to the environment"
 
-[[bin]]
-name = "stegos"
-path = "src/stegos.rs"
-
-[[bin]]
-name = "bootstrap"
-path = "src/bootstrap.rs"
-
 [workspace]
 members = [
     "api",

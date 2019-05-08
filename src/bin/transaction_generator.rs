@@ -38,6 +38,7 @@ use stegos_wallet::WalletService;
 use tokio::runtime::Runtime;
 
 const CONFIG_NAME: &'static str = "stegos.toml";
+const LOG_CONFIG_NAME: &'static str = "stegos-log4rs.toml";
 
 pub fn load_configuration(folder: &str) -> Result<config::Config, Error> {
     let mut path = PathBuf::from(folder);
@@ -92,9 +93,24 @@ fn run() -> Result<(), Error> {
                 .default_value("REGULAR")
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("log-config")
+                .short("L")
+                .long("log-config")
+                .value_name("LOG_CONFIG")
+                .help("Path to log config.")
+                .takes_value(true),
+        )
         .get_matches();
+    let mut config = config::Config::default();
+
+    let path = match args.value_of("log-config") {
+        Some(config) => config,
+        _ => LOG_CONFIG_NAME,
+    };
+    config.general.log4rs_config = path.to_string();
     // Initialize logger
-    initialize_logger(&config::Config::default())?;
+    initialize_logger(&config)?;
 
     let mode = match args.value_of("mode").unwrap() {
         "VS" | "VALUESHUFFLE" | "VALUE_SHUFFLE" => GeneratorMode::ValueShuffle,

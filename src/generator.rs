@@ -98,8 +98,8 @@ impl Generator {
             {
                 session_id
             }
-            WalletResponse::Error { .. } => {
-                debug!("Error on transaction creation.");
+            WalletResponse::Error { error } => {
+                debug!("Error on transaction creation: error = {}", error);
                 self.state = GeneratorState::NotInited(self.wallet.subscribe());
                 return;
             }
@@ -125,8 +125,8 @@ impl Generator {
                 debug!("Transaction was processed: result = {:?}", result);
                 self.state = GeneratorState::CreateNew;
             }
-            WalletResponse::Error { .. } => {
-                debug!("Error on transaction creation.");
+            WalletResponse::Error { error } => {
+                debug!("Error on transaction creation: error:{}", error);
                 self.state = GeneratorState::NotInited(self.wallet.subscribe())
             }
             e => warn!("Unexpected WalletResponse = {:?}", e),

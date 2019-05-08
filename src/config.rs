@@ -44,7 +44,7 @@ use toml;
 ///
 /// Don't forget to update stegos.toml.example after adding new options.
 ///
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(default)]
 pub struct Config {
     /// General settings

@@ -59,6 +59,14 @@ pub struct PoolInfo {
     pub session_id: Hash,
 }
 
+#[derive(Debug, Clone)]
+pub enum PoolNotification {
+    /// Pool formed, information about pool.
+    Started(PoolInfo),
+    /// Pool canceled, in case of new facilitator.
+    Canceled,
+}
+
 // --------------------------------------------------
 
 impl Hashable for PoolJoin {
@@ -91,5 +99,23 @@ impl Hashable for PoolInfo {
             elt.hash(state);
         }
         self.session_id.hash(state);
+    }
+}
+
+impl Hashable for PoolNotification {
+    fn hash(&self, state: &mut Hasher) {
+        match self {
+            PoolNotification::Started(r) => {
+                "PoolNotification::Started".hash(state);
+                r.hash(state)
+            }
+            PoolNotification::Canceled => "PoolNotification::Canceled".hash(state),
+        }
+    }
+}
+
+impl From<PoolInfo> for PoolNotification {
+    fn from(info: PoolInfo) -> PoolNotification {
+        PoolNotification::Started(info)
     }
 }

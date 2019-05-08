@@ -17,7 +17,19 @@ message ParticipantTXINMap {
     stegos.crypto.SchnorrSig ownsig = 4;
 }
 
+
 message PoolInfo {
     repeated ParticipantTXINMap participants = 1;
     stegos.crypto.Hash session_id = 2;
 }
+
+message PoolCanceled {
+}
+
+message PoolNotification {
+    oneof body {
+        PoolInfo started = 1;
+        PoolCanceled canceled = 2;
+    }
+}
+

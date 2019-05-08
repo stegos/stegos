@@ -108,8 +108,8 @@ use stegos_crypto::hash::{Hash, Hashable, Hasher, HASH_SIZE};
 use stegos_network::Network;
 use stegos_node::Node;
 use stegos_serialization::traits::ProtoConvert;
-use stegos_txpool::PoolInfo;
 use stegos_txpool::PoolJoin;
+use stegos_txpool::PoolNotification;
 use stegos_txpool::POOL_ANNOUNCE_TOPIC;
 use stegos_txpool::POOL_JOIN_TOPIC;
 use tokio_timer::Interval;
@@ -162,6 +162,8 @@ enum State {
     PoolWait,
     PoolFormed,
     PoolFinished,
+    /// Last session was canceled, waiting for new facilitator.
+    PoolRestart,
 }
 
 /// ValueShuffle Service.
@@ -170,6 +172,9 @@ pub struct ValueShuffle {
     skey: SecretKey,
     /// Faciliator's PBC public key
     facilitator_pkey: ParticipantID,
+    /// Next facilitator's PBC public key.
+    /// Used if facilitator was changed during valueshuffle session.
+    future_facilitator: Option<ParticipantID>,
     /// State.
     state: State,
     /// My public txpool's key.
@@ -334,6 +339,7 @@ impl ValueShuffle {
         // State.
         //
         let facilitator_pkey: ParticipantID = ParticipantID::dum();
+        let future_facilitator = None;
         let participants: Vec<ParticipantID> = Vec::new();
         let session_id: Hash = Hash::random();
         let state = State::Offline;
@@ -375,6 +381,7 @@ impl ValueShuffle {
         ValueShuffle {
             skey: skey.clone(),
             facilitator_pkey,
+            future_facilitator,
             state,
             participant_pkey,
             participants: participants.clone(), // empty vector
@@ -464,9 +471,34 @@ impl ValueShuffle {
 
     /// Called when facilitator has been changed.
     fn on_facilitator_changed(&mut self, facilitator: ParticipantID) -> Result<(), Error> {
+        match self.state {
+            State::Offline | State::PoolFinished | State::PoolRestart => {}
+            // in progress some session, keep new facilitator in future facilitator.
+            _ => {
+                debug!(
+                    "Saving new facilitator, for future change: facilitator={}",
+                    facilitator
+                );
+                self.future_facilitator = Some(facilitator);
+                return Ok(());
+            }
+        }
         debug!("Changed facilitator: facilitator={}", facilitator);
         self.facilitator_pkey = facilitator;
+        // Last session was canceled, rejoining to new facilitator.
+        if self.state == State::PoolRestart {
+            debug!("Found new facilitator, rejoining to new pool.");
+            self.send_pool_join()?;
+        }
+
         Ok(())
+    }
+
+    fn try_update_facilitator(&mut self) {
+        if let Some(facilitator) = self.future_facilitator.take() {
+            debug!("Changed facilitator: facilitator={}", facilitator);
+            self.facilitator_pkey = facilitator;
+        }
     }
 
     /// Sends a request to join tx pool.
@@ -481,13 +513,13 @@ impl ValueShuffle {
     }
 
     fn try_send_pool_join(&mut self) -> Result<(), Error> {
+        debug!(
+            "Sending pool join request: to_facilitator={}",
+            self.facilitator_pkey
+        );
         let msg = self.form_pooljoin_message()?.into_buffer()?;
         self.network
             .send(self.facilitator_pkey, POOL_JOIN_TOPIC, msg)?;
-        debug!(
-            "Sent pool join request facilitator={}",
-            self.facilitator_pkey
-        );
         Ok(())
     }
 
@@ -495,6 +527,7 @@ impl ValueShuffle {
         self.waiting = 0; // reset timeout counter
         self.state = State::PoolFinished;
         self.msg_state = VsMsgType::None;
+        self.try_update_facilitator();
     }
 
     fn zap_state(&mut self) {
@@ -502,11 +535,16 @@ impl ValueShuffle {
         self.waiting = 0;
         self.state = State::Offline;
         self.msg_state = VsMsgType::None;
+        self.try_update_facilitator();
     }
 
     /// Called when a new txpool is formed.
-    fn on_pool_formed(&mut self, from: ParticipantID, pool_info: Vec<u8>) -> Result<(), Error> {
-        match self.try_on_pool_formed(from, pool_info) {
+    fn on_pool_notification(
+        &mut self,
+        from: ParticipantID,
+        pool_info: Vec<u8>,
+    ) -> Result<(), Error> {
+        match self.try_on_pool_notification(from, pool_info) {
             Err(err) => {
                 self.zap_state();
                 return Err(err);
@@ -517,12 +555,33 @@ impl ValueShuffle {
         }
     }
 
-    fn try_on_pool_formed(&mut self, from: ParticipantID, pool_info: Vec<u8>) -> Result<(), Error> {
+    fn try_on_pool_notification(
+        &mut self,
+        from: ParticipantID,
+        pool_info: Vec<u8>,
+    ) -> Result<(), Error> {
         self.ensure_facilitator(from)?;
 
-        let pool_info = PoolInfo::from_buffer(&pool_info)?;
+        let pool_info = PoolNotification::from_buffer(&pool_info)?;
         debug!("pool = {:?}", pool_info);
 
+        let pool_info = match pool_info {
+            PoolNotification::Canceled => {
+                debug!(
+                    "Old facilitator decide to stop forming pool, trying to rejoin to the new one."
+                );
+                let changed = self.future_facilitator.is_some();
+                self.zap_state();
+                if changed {
+                    debug!("Found new facilitator, rejoining to new pool.");
+                    self.send_pool_join()?;
+                } else {
+                    self.state = State::PoolRestart;
+                }
+                return Ok(());
+            }
+            PoolNotification::Started(info) => info,
+        };
         self.session_id = pool_info.session_id;
         let part_info = pool_info.participants;
         self.participants = Vec::<ParticipantID>::new();
@@ -696,7 +755,9 @@ impl Future for ValueShuffle {
                         ValueShuffleEvent::FacilitatorChanged(facilitator) => {
                             self.on_facilitator_changed(facilitator)
                         }
-                        ValueShuffleEvent::PoolFormed(from, msg) => self.on_pool_formed(from, msg),
+                        ValueShuffleEvent::PoolFormed(from, msg) => {
+                            self.on_pool_notification(from, msg)
+                        }
                         ValueShuffleEvent::MessageReceived(from, msg) => {
                             // debug!("in poll() dispatching to on_message_received()");
                             self.on_message_received(from, msg)

@@ -20,6 +20,8 @@ use stegos_serialization::traits::*;
 use tokio_timer::Interval;
 
 const MESSAGE_TIMEOUT: Duration = Duration::from_secs(30);
+const MIN_PARTICIPANTS: usize = 3;
+//const MAX_PARTICIPANTS: usize = 10;
 
 type TXIN = Hash;
 type UTXO = PaymentOutput;
@@ -131,22 +133,54 @@ impl TransactionPoolService {
             info!("I am facilitator.");
             NodeRole::Facilitator(FacilitatorState::new())
         } else {
+            // we was facilitator, send notify to everybody, that pool was not formed, or form pool.
+            if let NodeRole::Facilitator(_) = self.role {
+                if let Err(e) = self.notify_cancel() {
+                    error!("Error during notify participants: error={}", e)
+                }
+            }
             NodeRole::Regular
         };
+
         self.role = role;
         self.facilitator_pkey = epoch.facilitator;
         Ok(())
     }
 
-    pub fn handle_timer(&mut self) -> Result<(), Error> {
+    fn notify_cancel(&mut self) -> Result<(), Error> {
+        match &mut self.role {
+            NodeRole::Facilitator(ref mut state) => {
+                if state.participants.len() < MIN_PARTICIPANTS {
+                    let info = PoolNotification::Canceled;
+                    let data = info.into_buffer()?;
+                    for part in &state.take_pool() {
+                        self.network
+                            .send(*part.0, POOL_ANNOUNCE_TOPIC, data.clone())?;
+                    }
+                } else {
+                    self.try_notify_participants()?
+                }
+            }
+            NodeRole::Regular => unreachable!(),
+        }
+        Ok(())
+    }
+
+    pub fn try_notify_participants(&mut self) -> Result<(), Error> {
         match &mut self.role {
             NodeRole::Facilitator(state) => {
-                // after timeout facilitator should broadcast message to each node.
-                let parts = state.take_pool();
-                if parts.is_empty() {
-                    debug!("No requests received, skipping pool formation");
+                if state.participants.len() < MIN_PARTICIPANTS {
+                    debug!(
+                        "Found no enough participants, skipping pool formation: \
+                         pool_len={}, min_len={}",
+                        state.participants.len(),
+                        MIN_PARTICIPANTS
+                    );
                     return Ok(());
                 }
+                // after timeout facilitator should broadcast message to each node.
+                let parts = state.take_pool();
+
                 let mut participants = Vec::<ParticipantTXINMap>::new();
                 for (participant, (txins, utxos, ownsig)) in &parts {
                     /*
@@ -167,9 +201,10 @@ impl TransactionPoolService {
                     participants: participants.clone(),
                     session_id,
                 };
-                info!("Formed a new pool: participants={:?}", &info.participants);
-                let data = info.into_buffer()?;
-                for part in info.participants {
+                info!("Formed a new pool: participants={:?}", &participants);
+                let msg: PoolNotification = info.into();
+                let data = msg.into_buffer()?;
+                for part in participants {
                     self.network
                         .send(part.participant, POOL_ANNOUNCE_TOPIC, data.clone())?;
                 }
@@ -251,7 +286,7 @@ impl TransactionPoolService {
         };
         match timer.poll().expect("timer fails") {
             Async::Ready(Some(_)) => {
-                if let Err(e) = self.handle_timer() {
+                if let Err(e) = self.try_notify_participants() {
                     error!("Error: {}", e);
                 }
             }

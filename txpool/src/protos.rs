@@ -19,14 +19,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use failure::Error;
+use failure::{format_err, Error};
 use stegos_blockchain::PaymentOutput;
 use stegos_crypto::curve1174::SchnorrSig;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::PublicKey;
 use stegos_serialization::traits::*;
 
-use crate::messages::{ParticipantTXINMap, PoolInfo, PoolJoin};
+use crate::messages::{ParticipantTXINMap, PoolInfo, PoolJoin, PoolNotification};
 
 use stegos_blockchain::protos::*;
 use stegos_crypto::protos::*;
@@ -121,6 +121,31 @@ impl ProtoConvert for PoolInfo {
             participants,
             session_id,
         })
+    }
+}
+
+impl ProtoConvert for PoolNotification {
+    type Proto = txpool::PoolNotification;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = txpool::PoolNotification::new();
+        match self {
+            PoolNotification::Started(r) => proto.set_started(r.into_proto()),
+            PoolNotification::Canceled => proto.set_canceled(txpool::PoolCanceled::new()),
+        }
+        proto
+    }
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let ref body = proto
+            .body
+            .as_ref()
+            .ok_or_else(|| format_err!("No variants in PoolNotification found"))?;
+        let chain_message = match body {
+            txpool::PoolNotification_oneof_body::started(ref r) => {
+                PoolNotification::Started(PoolInfo::from_proto(r)?)
+            }
+            txpool::PoolNotification_oneof_body::canceled(_) => PoolNotification::Canceled,
+        };
+        Ok(chain_message)
     }
 }
 

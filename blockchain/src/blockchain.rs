@@ -593,22 +593,58 @@ impl Blockchain {
         timestamp: SystemTime,
     ) -> Result<(Vec<Output>, Vec<Output>), Error> {
         let block_hash = Hash::digest(&block);
+        assert_eq!(self.height, block.header.base.height);
         let height = self.height;
-        let random = block.header.base.random.clone();
-        let last_macro_block_timestamp = block.header.base.timestamp;
-        let (inputs, outputs) = self.register_block(block, timestamp)?;
+
+        //
+        // Prepare inputs.
+        //
+        let input_hashes = block.body.inputs;
+        let mut inputs: Vec<Output> = Vec::with_capacity(input_hashes.len());
+        for input_hash in &input_hashes {
+            let input = self.output_by_hash(input_hash)?.expect("Missing output");
+            inputs.push(input);
+        }
+
+        //
+        // Prepare outputs.
+        //
+        let mut outputs: Vec<Output> = Vec::new();
+        let mut output_keys: Vec<OutputKey> = Vec::new();
+        for (output, path) in block.body.outputs.leafs() {
+            let output = output.as_ref().clone();
+            outputs.push(output);
+            let output_key = OutputKey {
+                height: self.height,
+                path,
+            };
+            output_keys.push(output_key);
+        }
+
+        //
+        // Register block.
+        //
+        self.register_block(
+            block_hash,
+            input_hashes,
+            &inputs,
+            output_keys,
+            &outputs,
+            block.header.gamma,
+            block.header.monetary_adjustment,
+            timestamp,
+        );
 
         //
         // Update metadata.
         //
-
         self.epoch += 1;
         self.last_macro_block_height = height;
-        self.last_macro_block_timestamp = last_macro_block_timestamp;
+        self.last_macro_block_timestamp = block.header.base.timestamp;
         self.election_result = election::select_validators_slots(
             self.escrow
                 .get_stakers_majority(self.epoch, self.cfg.min_stake_amount),
-            random,
+            block.header.base.random,
             self.cfg.max_slot_count,
         );
         self.election_result.view_change = 0;
@@ -626,7 +662,9 @@ impl Blockchain {
                 .set(*stake);
         }
 
+        //
         // Finalize storage.
+        //
         self.block_by_hash.checkpoint();
         self.output_by_hash.checkpoint();
         self.balance.checkpoint();
@@ -666,24 +704,27 @@ impl Blockchain {
         Ok((inputs, outputs))
     }
 
-    //
+    ///
+    /// Common part of register_macro_block()/register_micro_block().
+    ///
     fn register_block(
         &mut self,
-        mut block: MacroBlock,
+        block_hash: Hash,
+        input_hashes: Vec<Hash>,
+        inputs: &[Output],
+        output_keys: Vec<OutputKey>,
+        outputs: &[Output],
+        gamma: Fr,
+        monetary_adjustment: i64,
         _timestamp: SystemTime,
-    ) -> Result<(Vec<Output>, Vec<Output>), Error> {
+    ) {
         let version = self.height + 1;
         let height = self.height;
-        assert_eq!(height, block.header.base.height);
-        let block_hash = Hash::digest(&block);
 
         //
-        // Update indexes.
+        // Update block_by_hash index.
         //
-        if let Some(_) = self
-            .block_by_hash
-            .insert(version, block_hash.clone(), height)
-        {
+        if let Some(_) = self.block_by_hash.insert(version, block_hash, height) {
             panic!(
                 "Block hash collision: height={}, block={}",
                 height, block_hash
@@ -697,71 +738,41 @@ impl Blockchain {
         //
         // Process inputs.
         //
-        let mut inputs: Vec<Output> = Vec::with_capacity(block.body.inputs.len());
-        for input_hash in &block.body.inputs {
-            if let Some(OutputKey { height, path }) =
-                self.output_by_hash.remove(version, input_hash)
-            {
-                assert_eq!(self.output_by_hash.current_version(), version);
-                let block = self.block_by_height(height)?;
-                let block_hash = Hash::digest(&block);
-                let body = match block {
-                    Block::MicroBlock(MacroBlock { body, .. }) => body,
-                    Block::MacroBlock(MacroBlock { body, .. }) => body,
-                };
-
-                {
-                    match body.outputs.lookup(&path) {
-                        Some(o) => {
-                            match o.as_ref() {
-                                Output::PaymentOutput(o) => {
-                                    burned += Pt::decompress(o.proof.vcmt)
-                                        .expect("pedersen commitment is valid");
-                                }
-                                Output::StakeOutput(o) => {
-                                    o.validate_pkey().expect("valid network pkey");
-                                    self.escrow.unstake(
-                                        version,
-                                        o.validator,
-                                        input_hash.clone(),
-                                        self.epoch,
-                                    );
-                                    assert_eq!(self.escrow.current_version(), version);
-                                    burned += fee_a(o.amount);
-                                }
-                            }
-                            inputs.push(o.as_ref().clone());
-                        }
-                        None => {
-                            panic!(
-                                "Corrupted 'output_by_hash' index or block: utxo={}, block={}",
-                                &input_hash, block_hash,
-                            );
-                        }
-                    }
-                }
-            } else {
+        for (input_hash, input) in input_hashes.iter().zip(inputs) {
+            debug_assert_eq!(input_hash, &Hash::digest(input));
+            if self.output_by_hash.remove(version, input_hash).is_none() {
                 panic!(
                     "Missing input UTXO: height={}, block={}, utxo={}",
-                    height, &block_hash, &input_hash
+                    height, block_hash, &input_hash
                 );
+            }
+
+            match input {
+                Output::PaymentOutput(o) => {
+                    burned += Pt::decompress(o.proof.vcmt).expect("Invalid pedersen commitment");
+                }
+                Output::StakeOutput(o) => {
+                    o.validate_pkey().expect("Invalid validator pkey");
+                    self.escrow
+                        .unstake(version, o.validator, input_hash.clone(), self.epoch);
+                    assert_eq!(self.escrow.current_version(), version);
+                    burned += fee_a(o.amount);
+                }
             }
 
             debug!(
                 "Pruned UXTO: height={}, block={}, utxo={}",
-                height, &block_hash, &input_hash
+                height, block_hash, input_hash
             );
         }
 
         //
         // Process outputs.
         //
-        let mut outputs: Vec<Output> = Vec::new();
-        for (output, path) in block.body.outputs.leafs() {
-            let output_hash = Hash::digest(output.as_ref());
+        for (output_key, output) in output_keys.into_iter().zip(outputs) {
+            let output_hash = Hash::digest(output);
 
             // Update indexes.
-            let output_key = OutputKey { height, path };
             if let Some(_) = self
                 .output_by_hash
                 .insert(version, output_hash.clone(), output_key)
@@ -773,12 +784,12 @@ impl Blockchain {
             }
             assert_eq!(self.output_by_hash.current_version(), version);
 
-            match output.as_ref() {
+            match output {
                 Output::PaymentOutput(o) => {
-                    created += Pt::decompress(o.proof.vcmt).expect("pedersen commitment is valid");
+                    created += Pt::decompress(o.proof.vcmt).expect("Invalid pedersen commitment");
                 }
                 Output::StakeOutput(o) => {
-                    o.validate_pkey().expect("valid network pkey signature");
+                    o.validate_pkey().expect("Invalid validator pkey");
                     created += fee_a(o.amount);
                     self.escrow.stake(
                         version,
@@ -792,38 +803,31 @@ impl Blockchain {
                 }
             }
 
-            outputs.push(output.as_ref().clone());
             debug!(
                 "Registered UXTO: height={}, block={}, utxo={}",
                 height, &block_hash, &output_hash
             );
         }
 
+        //
+        // Update monetary balance.
+        //
+
         // Check the block monetary balance.
-        if fee_a(block.header.monetary_adjustment) + burned - created != block.header.gamma * (*G) {
+        if fee_a(monetary_adjustment) + burned - created != gamma * (*G) {
             panic!(
                 "Invalid block monetary balance: height={}, block={}",
                 height, &block_hash
             )
         }
 
-        //
-        // Prune inputs.
-        //
-        block.body.inputs.clear();
-
-        //
-        // Update metadata.
-        //
-
         // Global monetary balance.
         let orig_balance = self.balance();
         let balance = Balance {
             created: orig_balance.created + created,
             burned: orig_balance.burned + burned,
-            gamma: orig_balance.gamma + block.header.gamma,
-            monetary_adjustment: orig_balance.monetary_adjustment
-                + block.header.monetary_adjustment,
+            gamma: orig_balance.gamma + gamma,
+            monetary_adjustment: orig_balance.monetary_adjustment + monetary_adjustment,
         };
         if fee_a(balance.monetary_adjustment) + balance.burned - balance.created
             != balance.gamma * (*G)
@@ -835,15 +839,15 @@ impl Blockchain {
         }
         self.balance.insert(version, (), balance);
         assert_eq!(self.balance.current_version(), version);
-        self.last_block_hash = block_hash.clone();
-        self.election_result.view_change = 0;
-        self.election_result.random = block.header.base.random;
+
+        //
+        // Update metadata.
+        //
+        self.last_block_hash = block_hash;
         self.height += 1;
         assert_eq!(self.height, version);
         metrics::HEIGHT.set(self.height as i64);
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
-
-        Ok((inputs, outputs))
     }
 
     ///
@@ -854,9 +858,54 @@ impl Blockchain {
         block: MacroBlock,
         timestamp: SystemTime,
     ) -> Result<(Vec<Output>, Vec<Output>), Error> {
-        let block_hash = Hash::digest(&block);
+        assert_eq!(self.height, block.header.base.height);
         let height = self.height;
-        let (inputs, outputs) = self.register_block(block, timestamp)?;
+        let block_hash = Hash::digest(&block);
+
+        //
+        // Prepare inputs.
+        //
+        let input_hashes = block.body.inputs;
+        let mut inputs: Vec<Output> = Vec::with_capacity(input_hashes.len());
+        for input_hash in &input_hashes {
+            let input = self.output_by_hash(input_hash)?.expect("Missing output");
+            inputs.push(input);
+        }
+
+        //
+        // Prepare outputs.
+        //
+        let mut outputs: Vec<Output> = Vec::new();
+        let mut output_keys: Vec<OutputKey> = Vec::new();
+        for (output, path) in block.body.outputs.leafs() {
+            let output = output.as_ref().clone();
+            outputs.push(output);
+            let output_key = OutputKey {
+                height: self.height,
+                path,
+            };
+            output_keys.push(output_key);
+        }
+
+        //
+        // Register block.
+        //
+        self.register_block(
+            block_hash,
+            input_hashes,
+            &inputs,
+            output_keys,
+            &outputs,
+            block.header.gamma,
+            block.header.monetary_adjustment,
+            timestamp,
+        );
+
+        //
+        // Update metadata.
+        //
+        self.election_result.view_change = 0;
+        self.election_result.random = block.header.base.random;
 
         info!(
             "Registered a micro block: height={}, block={}, inputs={}, outputs={}",

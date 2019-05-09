@@ -54,7 +54,7 @@ use std::time::SystemTime;
 use std::time::{Duration, Instant};
 use stegos_blockchain::view_changes::ViewChangeProof;
 use stegos_blockchain::*;
-use stegos_consensus::optimistic::{ViewChangeCollector, ViewChangeMessage};
+use stegos_consensus::optimistic::{SealedViewChangeProof, ViewChangeCollector, ViewChangeMessage};
 use stegos_consensus::{self as consensus, BlockConsensus, BlockConsensusMessage};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
@@ -187,6 +187,8 @@ const TX_TOPIC: &'static str = "tx";
 const CONSENSUS_TOPIC: &'static str = "consensus";
 /// Topic for ViewChange message.
 pub const VIEW_CHANGE_TOPIC: &'static str = "view_changes";
+/// Topic for ViewChange proofs.
+pub const VIEW_CHANGE_DIRECT: &'static str = "view_changes_direct";
 /// Topic used for sending sealed blocks.
 const SEALED_BLOCK_TOPIC: &'static str = "block";
 
@@ -210,6 +212,7 @@ pub enum NodeMessage {
     Consensus(Vec<u8>),
     SealedBlock(Vec<u8>),
     ViewChangeMessage(Vec<u8>),
+    ViewChangeProofMessage(UnicastMessage),
     ChainLoaderMessage(UnicastMessage),
 }
 
@@ -309,6 +312,11 @@ impl NodeService {
             .subscribe(&VIEW_CHANGE_TOPIC)?
             .map(|m| NodeMessage::ViewChangeMessage(m));
         streams.push(Box::new(view_change_rx));
+
+        let view_change_unicast_rx = network
+            .subscribe_unicast(&VIEW_CHANGE_DIRECT)?
+            .map(|m| NodeMessage::ViewChangeProofMessage(m));
+        streams.push(Box::new(view_change_unicast_rx));
 
         // Sealed blocks broadcast topic.
         let block_rx = network
@@ -433,7 +441,7 @@ impl NodeService {
     ///
     /// Resolve a fork using a duplicate micro block from the current epoch.
     ///
-    fn resolve_fork(&mut self, remote: Block) -> Result<(), Error> {
+    fn resolve_fork(&mut self, remote: &Block) -> ForkResult {
         let height = remote.base_header().height;
         assert!(height < self.chain.height());
         assert!(height > 0);
@@ -447,21 +455,7 @@ impl NodeService {
             }
         };
 
-        // Check signature first.
         let remote_view_change = remote.base.view_change;
-
-        let previous_block = self.chain.block_by_height(height - 1)?;
-        let mut election_result = self.chain.election_result();
-        election_result.random = previous_block.base_header().random;
-        let leader = election_result.select_leader(remote_view_change);
-        if leader != remote.pkey {
-            return Err(BlockError::DifferentPublicKey(leader, remote.pkey).into());
-        }
-        if let Err(_e) = secure::check_hash(&remote_hash, &remote.sig, &leader) {
-            return Err(BlockError::InvalidLeaderSignature(height, remote_hash).into());
-        }
-
-        // Get local block.
         let local = self.chain.block_by_height(height)?;
         let local_hash = Hash::digest(&local);
         let local = match local {
@@ -471,41 +465,24 @@ impl NodeService {
                 panic!("{}", e);
             }
         };
-        let local_view_change = local.base.view_change;
 
-        debug!("Started fork resolution: height={}, local_block={}, remote_block={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, local_proof={:?}, remote_proof={:?}, current_height={}, last_block={}",
-               height,
-               local_hash,
-               remote_hash,
-               local.base.previous,
-               remote.base.previous,
-               local_view_change,
-               remote_view_change,
-               local.view_change_proof,
-               remote.view_change_proof,
-               self.chain.height(),
-               self.chain.last_block_hash());
+        // check that validator is really leader for provided view_change.
+        let previous_block = self.chain.block_by_height(height - 1)?;
+        let mut election_result = self.chain.election_result();
+        election_result.random = previous_block.base_header().random;
+        let leader = election_result.select_leader(remote_view_change);
+        if leader != remote.pkey {
+            return Err(BlockError::DifferentPublicKey(leader, remote.pkey).into());
+        };
 
-        // Check view_change.
-        if remote_view_change < local_view_change {
-            warn!("Discarded a block with lesser view_change: height={}, local_block={}, remote_block={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, current_height={}, last_block={}",
-                  height,
-                  local_hash,
-                  remote_hash,
-                  local.base.previous,
-                  remote.base.previous,
-                  local_view_change,
-                  remote_view_change,
-                  self.chain.height(),
-                  self.chain.last_block_hash());
-            return Ok(());
-        } else if remote_view_change == local_view_change {
-            if local_hash == remote_hash {
+        // check multiple blocks with same view_change
+        if remote_view_change == local.base.view_change {
+            if local_hash == local_hash {
                 debug!(
                     "Skip a duplicate block with the same hash: height={}, block={}, current_height={}, last_block={}",
                     height, local_hash, self.chain.height(), self.chain.last_block_hash(),
                 );
-                return Ok(());
+                return Err(ForkError::Canceled);
             }
 
             warn!("Two micro-blocks from the same leader detected: height={}, local_block={}, remote_block={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, current_height={}, last_block={}",
@@ -514,74 +491,139 @@ impl NodeService {
                   remote_hash,
                   local.base.previous,
                   remote.base.previous,
-                  local_view_change,
-                  remote_view_change,
+                  local.base.view_change,
+                  remote.base.view_change,
                   self.chain.height(),
                   self.chain.last_block_hash());
 
             metrics::CHEATS.inc();
             // TODO: implement slashing.
 
-            return Ok(());
-        }
+            return Err(ForkError::Canceled);
+        } else if remote_view_change <= local.base.view_change {
+            debug!(
+                "Found a fork with lower view_change, sending blocks: pkey={}",
+                leader
+            );
 
-        assert!(remote_view_change > local_view_change);
-
-        // Check previous hash.
-        let previous = self.chain.block_by_height(height - 1)?;
-        let previous_hash = Hash::digest(&previous);
-        if remote.base.previous != previous_hash {
-            warn!("Found a block with invalid previous hash: height={}, local_block={}, remote_block={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, current_height={}, last_block={}",
-                  height,
-                  local_hash,
-                  remote_hash,
-                  local.base.previous,
-                  remote.base.previous,
-                  local_view_change,
-                  remote_view_change,
-                  self.chain.height(),
-                  self.chain.last_block_hash());
-            // Request history from that node.
-            let from = self.chain.select_leader(remote_view_change);
-            self.request_history_from(from)?;
-            return Ok(());
+            self.send_blocks(leader, height)?;
+            return Err(ForkError::Canceled);
         }
 
         // Check the proof.
-        assert_eq!(remote.base.previous, previous_hash);
         let chain = ChainInfo::from_block(&remote.base);
-        match remote.view_change_proof {
-            Some(ref proof) => {
-                if let Err(e) = proof.validate(&chain, &self.chain) {
-                    return Err(BlockError::InvalidViewChangeProof(
-                        height,
-                        remote_hash,
-                        proof.clone(),
-                        e,
-                    )
-                    .into());
-                }
-            }
+        let sealed_proof = match remote.view_change_proof {
+            Some(ref proof) => SealedViewChangeProof {
+                proof: proof.clone(),
+                chain,
+            },
             None => {
                 return Err(BlockError::NoProofWasFound(
                     height,
                     remote_hash,
                     remote_view_change,
-                    local_view_change,
+                    0,
                 )
                 .into());
             }
+        };
+        // seal proof, and try to resolve fork.
+        return self.try_rollback(remote.pkey, sealed_proof);
+    }
+
+    /// We receive info about view_change, rollback the blocks, and set view_change to new.
+    fn try_rollback(
+        &mut self,
+        pkey: secure::PublicKey,
+        proof: SealedViewChangeProof,
+    ) -> ForkResult {
+        let height = proof.chain.height;
+        // Check height.
+        if height <= self.chain.last_macro_block_height() {
+            debug!(
+                "Skip an outdated proof: height={}, current_height={}",
+                height,
+                self.chain.height()
+            );
+            return Err(ForkError::Canceled);
+        }
+
+        let local = if height < self.chain.height() {
+            // Get local block.
+            let local = self.chain.block_by_height(height)?;
+            let local_hash = Hash::digest(&local);
+            let local = match local {
+                Block::MicroBlock(local) => local,
+                _ => {
+                    let e = NodeBlockError::ExpectedMicroBlock(height, local_hash);
+                    panic!("{}", e);
+                }
+            };
+            ChainInfo {
+                height: local.base.height,
+                last_block: local.base.previous,
+                view_change: local.base.view_change,
+            }
+        } else if height == self.chain.height() {
+            ChainInfo::from_blockchain(&self.chain)
+        } else {
+            debug!("Received proof with future height, ignoring for now: proof_height={}, our_height={}",
+            height, self.chain.height());
+            return Err(ForkError::Canceled);
+        };
+
+        let local_view_change = local.view_change;
+        let remote_view_change = proof.chain.view_change;
+
+        debug!("Started fork resolution: height={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, remote_proof={:?}, current_height={}",
+               height,
+               local.last_block,
+               proof.chain.last_block,
+               local_view_change,
+               remote_view_change,
+               proof.proof,
+               self.chain.height(),
+        );
+
+        // Check view_change.
+        if remote_view_change < local_view_change {
+            warn!("View change proof with lesser or equal view_change: height={}, local_view_change={}, remote_view_change={}, current_height={}",
+                  height,
+                  local_view_change,
+                  remote_view_change,
+                  self.chain.height(),
+            );
+            return Err(ForkError::Canceled);
+        }
+        // Check previous hash.
+        if proof.chain.last_block != local.last_block {
+            warn!("Found a proof with invalid previous hash: height={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, current_height={}, last_block={}",
+                  height,
+                  local.last_block,
+                  proof.chain.last_block,
+                  local_view_change,
+                  remote_view_change,
+                  self.chain.height(),
+                  self.chain.last_block_hash());
+            // Request history from that node.
+            self.request_history_from(pkey)?;
+            return Err(ForkError::Canceled);
+        }
+
+        assert!(remote_view_change >= local_view_change);
+        assert_eq!(proof.chain.last_block, local.last_block);
+
+        if let Err(e) = proof.proof.validate(&proof.chain, &self.chain) {
+            return Err(BlockError::InvalidViewChangeProof(height, proof.proof, e).into());
         }
 
         metrics::FORKS.inc();
 
         warn!(
-            "A fork detected: height={}, local_block={}, remote_block={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, current_height={}, last_block={}",
+            "A fork detected: height={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, current_height={}, last_block={}",
             height,
-            local_hash,
-            remote_hash,
-            local.base.previous,
-            remote.base.previous,
+            local.last_block,
+            proof.chain.last_block,
             local_view_change,
             remote_view_change,
             self.chain.height(),
@@ -600,19 +642,9 @@ impl NodeService {
         }
         assert_eq!(height, self.chain.height());
 
-        // Apply the block from this fork.
-        self.apply_new_block(Block::MicroBlock(remote))?;
-        if let Some((min_orphan_height, _block)) = self.future_blocks.iter().next() {
-            assert!(
-                *min_orphan_height > self.chain.height(),
-                "nothing to process in orphan queue"
-            );
-        }
-
-        // Request history from the new leader.
-        self.request_history()?;
-
-        return Ok(());
+        self.chain
+            .set_view_change(proof.chain.view_change + 1, proof.proof);
+        Ok(())
     }
 
     /// Handle incoming blocks received from network.
@@ -639,9 +671,6 @@ impl NodeService {
                 self.chain.last_block_hash()
             );
             return Ok(());
-        } else if block_height < self.chain.height() {
-            // A duplicate block from the current epoch - try to resolve forks.
-            return self.resolve_fork(block);
         } else if block_height > self.chain.last_macro_block_height() + self.cfg.blocks_in_epoch {
             // An orphan block from later epochs - ignore.
             warn!("Skipped an orphan block from the future: height={}, block={}, current_height={}, last_block={}",
@@ -653,13 +682,11 @@ impl NodeService {
             self.request_history()?;
             return Ok(());
         }
-
         // A block from the current epoch.
         assert!(block_height > self.chain.last_macro_block_height());
         assert!(block_height <= self.chain.last_macro_block_height() + self.cfg.blocks_in_epoch);
-        let leader = self.chain.select_leader(block.base_header().view_change);
 
-        // Check signature.
+        // Check block consistency.
         match block {
             Block::MacroBlock(ref block) => {
                 check_multi_signature(
@@ -672,9 +699,43 @@ impl NodeService {
                 .map_err(|e| BlockError::InvalidBlockSignature(e, block_height, block_hash))?;
             }
             Block::MicroBlock(ref block) => {
+                let leader = block.pkey;
                 if let Err(_e) = secure::check_hash(&block_hash, &block.sig, &leader) {
                     return Err(BlockError::InvalidLeaderSignature(block_height, block_hash).into());
                 }
+                if !self.chain.is_validator(&leader) {
+                    return Err(BlockError::LeaderIsNotValidator(block_height, block_hash).into());
+                }
+            }
+        }
+
+        // A duplicate block from the current epoch - try to resolve forks.
+        if block_height < self.chain.height() {
+            match self.resolve_fork(&block) {
+                //TODO: Notify sender about our blocks?
+                Ok(()) => {
+                    debug!(
+                        "Fork resolution decide that remote chain is better: fork_height={}",
+                        block_height
+                    );
+                    assert_eq!(
+                        block_height,
+                        self.chain.height(),
+                        "Fork resolution rollback our chain"
+                    );
+                }
+                Err(ForkError::Canceled) => {
+                    debug!(
+                        "Fork resolution decide that our chain is better: fork_height={}",
+                        block_height
+                    );
+                    assert!(
+                        block_height < self.chain.height(),
+                        "Fork didn't remove any block"
+                    );
+                    return Ok(());
+                }
+                Err(ForkError::Error(e)) => return Err(e),
             }
         }
 
@@ -787,7 +848,6 @@ impl NodeService {
                     self.consensus.is_none(),
                     "consensus is for macro blocks only"
                 );
-
                 let timestamp = SystemTime::now();
 
                 // Check block reward.
@@ -804,8 +864,37 @@ impl NodeService {
                     .into());
                 }
 
-                let (inputs, outputs) = self.chain.push_micro_block(micro_block, timestamp)?;
+                let leader = micro_block.pkey;
+                let block_view_change = micro_block.base.view_change;
+                let (inputs, outputs) = match self.chain.push_micro_block(micro_block, timestamp) {
+                    Err(e @ BlockchainError::BlockError(BlockError::InvalidViewChange(..))) => {
+                        warn!("Discarded a block with lesser view_change: block_view_change={}, our_view_change={}",
+                              block_view_change, self.chain.view_change());
 
+                        let mut chain = ChainInfo::from_blockchain(&self.chain);
+                        let proof = self
+                            .chain
+                            .view_change_proof()
+                            .clone()
+                            .expect("last view_change proof.");
+                        debug!(
+                            "Sending view change proof to block sender: sender={}, proof={:?}",
+                            leader, proof
+                        );
+                        // correct information about proof, to refer previous on view_change;
+                        chain.view_change -= 1;
+                        let proof = SealedViewChangeProof {
+                            chain,
+                            proof: proof.clone(),
+                        };
+
+                        self.network
+                            .send(leader, VIEW_CHANGE_DIRECT, proof.into_buffer()?)?;
+                        return Err(e.into());
+                    }
+                    Err(e) => return Err(e.into()),
+                    Ok(v) => v,
+                };
                 // Remove old transactions from the mempool.
                 let input_hashes: Vec<Hash> = inputs.iter().map(|o| Hash::digest(o)).collect();
                 let output_hashes: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
@@ -1194,13 +1283,23 @@ impl NodeService {
     // Optimisitc consensus
     //
 
+    fn handle_view_change_direct(
+        &mut self,
+        proof: SealedViewChangeProof,
+        pkey: secure::PublicKey,
+    ) -> Result<(), Error> {
+        debug!("Received sealed view change proof: proof = {:?}", proof);
+        self.try_rollback(pkey, proof)?;
+        return Ok(());
+    }
     fn handle_view_change(&mut self, msg: ViewChangeMessage) -> Result<(), Error> {
         if let Some(proof) = self.optimistic.handle_message(&self.chain, msg)? {
             debug!(
                 "Received enough messages for change leader: height={}, last_block={}, view_change={}",
                 self.chain.height(), self.chain.last_block_hash(), self.chain.view_change()
             );
-            self.chain.set_view_change(self.chain.view_change() + 1);
+            self.chain
+                .set_view_change(self.chain.view_change() + 1, proof.clone());
 
             //TODO: save proof if you are not leader.
             if self.is_leader() {
@@ -1210,7 +1309,9 @@ impl NodeService {
                     self.chain.last_block_hash()
                 );
                 self.create_micro_block(Some(proof))?;
-            };
+            } else {
+                //save proof for future usage.
+            }
         }
         Ok(())
     }
@@ -1240,6 +1341,7 @@ impl NodeService {
                 "Sent a view change to the network: height={}, view_change={}, last_block={}",
                 msg.chain.height, msg.chain.view_change, msg.chain.last_block
             );
+            let msg: ViewChangeMessage = msg.into();
             self.network
                 .publish(VIEW_CHANGE_TOPIC, msg.into_buffer()?)?;
             self.handle_view_change(msg)?;
@@ -1378,6 +1480,10 @@ impl Future for NodeService {
                             .and_then(|msg| self.handle_consensus_message(msg)),
                         NodeMessage::ViewChangeMessage(msg) => ViewChangeMessage::from_buffer(&msg)
                             .and_then(|msg| self.handle_view_change(msg)),
+                        NodeMessage::ViewChangeProofMessage(msg) => {
+                            SealedViewChangeProof::from_buffer(&msg.data)
+                                .and_then(|proof| self.handle_view_change_direct(proof, msg.from))
+                        }
                         NodeMessage::SealedBlock(msg) => {
                             Block::from_buffer(&msg).and_then(|msg| self.handle_sealed_block(msg))
                         }

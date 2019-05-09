@@ -29,7 +29,7 @@ use log::{debug, info};
 use std::collections::HashMap;
 use stegos_blockchain::view_changes::*;
 use stegos_blockchain::{check_supermajority, Blockchain, ChainInfo, ValidatorId};
-use stegos_crypto::hash::Hash;
+use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -37,6 +37,20 @@ pub struct ViewChangeMessage {
     pub chain: ChainInfo,
     pub validator_id: ValidatorId,
     pub signature: secure::Signature,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SealedViewChangeProof {
+    pub chain: ChainInfo,
+    pub proof: ViewChangeProof,
+}
+
+impl Hashable for ViewChangeMessage {
+    fn hash(&self, state: &mut Hasher) {
+        self.chain.hash(state);
+        self.validator_id.hash(state);
+        self.signature.hash(state);
+    }
 }
 
 impl ViewChangeMessage {
@@ -111,6 +125,13 @@ impl ViewChangeCollector {
             return Err(ConsensusError::InvalidViewChangeHeight(
                 message.chain.height,
                 blockchain.height(),
+            ));
+        }
+
+        if message.chain.last_block != blockchain.last_block_hash() {
+            return Err(ConsensusError::InvalidLastBlockHash(
+                message.chain.last_block,
+                blockchain.last_block_hash(),
             ));
         }
         //TODO: Implement catch-up

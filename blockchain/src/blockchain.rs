@@ -34,6 +34,7 @@ use crate::mvcc::MultiVersionedMap;
 use crate::output::*;
 use crate::storage::ListDb;
 use crate::transaction::Transaction;
+use crate::view_changes::ViewChangeProof;
 use failure::Error;
 use log::*;
 use std::collections::BTreeMap;
@@ -46,6 +47,7 @@ use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::curve1174::G;
 use stegos_crypto::hash::*;
 use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc::secure::VRF;
 use stegos_keychain::KeyChain;
 
 pub type ViewCounter = u32;
@@ -160,6 +162,12 @@ pub struct Blockchain {
     last_macro_block_timestamp: SystemTime,
     /// Last election result.
     election_result: ElectionResult,
+    //
+    // Consensus information.
+    //
+    /// Last saved view change, if view change was happen at current height,
+    /// and we was not leader.
+    view_change_proof: Option<ViewChangeProof>,
 
     //
     // Height Information.
@@ -224,6 +232,10 @@ impl Blockchain {
         let election_result = ElectionResult::default();
 
         //
+        // Consensus information.
+        //
+        let view_change_proof = None;
+        //
         // Height Information.
         //
         let height: u64 = 0;
@@ -240,6 +252,7 @@ impl Blockchain {
             last_macro_block_height,
             last_macro_block_timestamp,
             election_result,
+            view_change_proof,
             height,
             last_block_hash,
         };
@@ -526,6 +539,15 @@ impl Blockchain {
         &self.election_result.validators
     }
 
+    /// Returns true if peer is validator in current epoch.
+    #[inline]
+    pub fn is_validator(&self, peer: &secure::PublicKey) -> bool {
+        self.validators()
+            .iter()
+            .find(|item| item.0 == *peer)
+            .is_some()
+    }
+
     /// Returns the last block height.
     #[inline]
     pub fn last_macro_block_height(&self) -> u64 {
@@ -591,6 +613,11 @@ impl Blockchain {
         self.election_result.view_change
     }
 
+    /// Returns proof of last view change, if it happen on current height.
+    pub fn view_change_proof(&self) -> &Option<ViewChangeProof> {
+        &self.view_change_proof
+    }
+
     /// Returns number of total slots in current epoch.
     /// Internally always return cfg.max_slot_count
     pub fn total_slots(&self) -> i64 {
@@ -600,9 +627,16 @@ impl Blockchain {
     /// ## Panics
     /// if new_view_change not greater than current.
     #[inline]
-    pub fn set_view_change(&mut self, new_view_change: u32) {
+    pub fn set_view_change(&mut self, new_view_change: u32, proof: ViewChangeProof) {
         assert!(self.view_change() < new_view_change);
         self.election_result.view_change = new_view_change;
+        self.view_change_proof = Some(proof);
+    }
+
+    /// Resets current view change counter.
+    pub fn reset_view_change(&mut self) {
+        self.election_result.view_change = 0;
+        self.view_change_proof = None;
     }
 
     pub fn election_result(&self) -> ElectionResult {
@@ -620,7 +654,7 @@ impl Blockchain {
         &mut self,
         block: MacroBlock,
         timestamp: SystemTime,
-    ) -> Result<(), Error> {
+    ) -> Result<(), BlockchainError> {
         //
         // Validate the macro block.
         //
@@ -647,7 +681,7 @@ impl Blockchain {
         &mut self,
         block: MacroBlock,
         timestamp: SystemTime,
-    ) -> Result<(Vec<Output>, Vec<Output>), Error> {
+    ) -> Result<(Vec<Output>, Vec<Output>), BlockchainError> {
         let block_hash = Hash::digest(&block);
         assert_eq!(self.height, block.header.base.height);
         let height = self.height;
@@ -688,6 +722,7 @@ impl Blockchain {
             &outputs,
             block.header.gamma,
             block.header.block_reward,
+            block.header.base.random,
             timestamp,
         );
 
@@ -703,7 +738,6 @@ impl Blockchain {
             block.header.base.random,
             self.cfg.max_slot_count,
         );
-        self.election_result.view_change = 0;
         metrics::EPOCH.inc();
 
         info!(
@@ -740,7 +774,7 @@ impl Blockchain {
         &mut self,
         block: MicroBlock,
         timestamp: SystemTime,
-    ) -> Result<(Vec<Output>, Vec<Output>), Error> {
+    ) -> Result<(Vec<Output>, Vec<Output>), BlockchainError> {
         //
         // Validate the micro block.
         //
@@ -772,6 +806,7 @@ impl Blockchain {
         outputs: &[Output],
         gamma: Fr,
         block_reward: i64,
+        random: VRF,
         _timestamp: SystemTime,
     ) {
         let version = self.height + 1;
@@ -898,6 +933,8 @@ impl Blockchain {
         // Update metadata.
         //
         self.last_block_hash = block_hash;
+        self.reset_view_change();
+        self.election_result.random = random;
         self.height += 1;
         assert_eq!(self.height, version);
         metrics::HEIGHT.set(self.height as i64);
@@ -911,7 +948,7 @@ impl Blockchain {
         &mut self,
         block: MicroBlock,
         timestamp: SystemTime,
-    ) -> Result<(Vec<Output>, Vec<Output>), Error> {
+    ) -> Result<(Vec<Output>, Vec<Output>), BlockchainError> {
         assert_eq!(self.height, block.base.height);
         let height = self.height;
         let block_hash = Hash::digest(&block);
@@ -968,6 +1005,7 @@ impl Blockchain {
             &outputs,
             gamma,
             block.coinbase.block_reward,
+            block.base.random,
             timestamp,
         );
 
@@ -988,7 +1026,7 @@ impl Blockchain {
         Ok((inputs, outputs))
     }
 
-    pub fn pop_micro_block(&mut self) -> Result<(Vec<Output>, Vec<Output>), Error> {
+    pub fn pop_micro_block(&mut self) -> Result<(Vec<Output>, Vec<Output>), BlockchainError> {
         assert!(self.height > 1);
         let height = self.height - 1;
         assert_ne!(
@@ -1026,7 +1064,7 @@ impl Blockchain {
         assert_eq!(self.height, version);
         self.last_block_hash = Hash::digest(&previous);
         self.election_result.random = previous.base_header().random;
-        self.election_result.view_change = 0;
+        self.reset_view_change();
         metrics::HEIGHT.set(self.height as i64);
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
 

@@ -22,9 +22,11 @@
 // SOFTWARE.
 
 use crate::view_changes::ViewChangeProof;
+use crate::OutputError;
 use failure::Fail;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
+use stegos_crypto::CryptoError;
 
 #[derive(Debug, Fail)]
 pub enum BlockchainError {
@@ -39,6 +41,16 @@ pub enum BlockchainError {
         _0, _1, _2
     )]
     StakeIsLocked(secure::PublicKey, i64, i64),
+    #[fail(display = "Internal storage error={}", _0)]
+    StorageError(failure::Error),
+    #[fail(display = "Transaction error={}", _0)]
+    TransactionError(TransactionError),
+    #[fail(display = "Block error={}", _0)]
+    BlockError(BlockError),
+    #[fail(display = "Output error={}", _0)]
+    OutputError(OutputError),
+    #[fail(display = "Crypto error={}", _0)]
+    CryptoError(CryptoError),
 }
 
 /// Transaction errors.
@@ -182,13 +194,43 @@ pub enum BlockError {
     )]
     InvalidViewChange(u64, Hash, u32, u32),
     #[fail(
-        display = "Invalid view change proof: height={}, block={}, proof={:?}, error={}",
-        _0, _1, _2, _3
+        display = "Invalid view change proof: height={}, proof={:?}, error={}",
+        _0, _1, _2
     )]
-    InvalidViewChangeProof(u64, Hash, ViewChangeProof, MultisignatureError),
+    InvalidViewChangeProof(u64, ViewChangeProof, MultisignatureError),
     #[fail(
         display = "No proof of view change found for out of order block: height={}, block={}, block_view_change={}, our_view_change={}",
         _0, _1, _2, _3
     )]
     NoProofWasFound(u64, Hash, u32, u32),
+}
+
+impl From<failure::Error> for BlockchainError {
+    fn from(error: failure::Error) -> BlockchainError {
+        BlockchainError::StorageError(error)
+    }
+}
+
+impl From<TransactionError> for BlockchainError {
+    fn from(error: TransactionError) -> BlockchainError {
+        BlockchainError::TransactionError(error)
+    }
+}
+
+impl From<BlockError> for BlockchainError {
+    fn from(error: BlockError) -> BlockchainError {
+        BlockchainError::BlockError(error)
+    }
+}
+
+impl From<OutputError> for BlockchainError {
+    fn from(error: OutputError) -> BlockchainError {
+        BlockchainError::OutputError(error)
+    }
+}
+
+impl From<CryptoError> for BlockchainError {
+    fn from(error: CryptoError) -> BlockchainError {
+        BlockchainError::CryptoError(error)
+    }
 }

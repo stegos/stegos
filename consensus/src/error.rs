@@ -55,10 +55,16 @@ pub enum ConsensusError {
     InvalidViewChangeHeight(u64, u64),
     #[fail(
         display = "Received ViewChangeMessage, with other view_change: \
-                   our_view_change={}, message_view_change={}",
+                   message_view_change={}, our_view_change={}",
         _0, _1
     )]
     InvalidViewChangeCounter(u32, u32),
+    #[fail(
+        display = "Received ViewChangeMessage, with other last block hash: \
+                   message_block_hash={}, our_block_hash={}",
+        _0, _1
+    )]
+    InvalidLastBlockHash(Hash, Hash),
     #[fail(
         display = "Malicious view change message found, validator_id greater than \
                    size of validators: validator_id={}",

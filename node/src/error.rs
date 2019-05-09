@@ -25,6 +25,7 @@
 
 use failure::Fail;
 use std::time::SystemTime;
+use stegos_blockchain::{BlockError, BlockchainError};
 use stegos_crypto::hash::Hash;
 
 #[derive(Debug, Fail, PartialEq, Eq)]
@@ -78,3 +79,37 @@ pub enum NodeBlockError {
     )]
     OutdatedBlock(SystemTime, SystemTime),
 }
+
+#[derive(Debug, Fail)]
+pub enum ForkError {
+    #[fail(display = "Our branch is more significant, drop this block.")]
+    Canceled,
+    #[fail(display = "We have found a error processing fork: error={}.", _0)]
+    Error(failure::Error),
+}
+
+impl From<failure::Error> for ForkError {
+    fn from(err: failure::Error) -> ForkError {
+        ForkError::Error(err)
+    }
+}
+
+impl From<NodeBlockError> for ForkError {
+    fn from(err: NodeBlockError) -> ForkError {
+        ForkError::Error(err.into())
+    }
+}
+
+impl From<BlockError> for ForkError {
+    fn from(err: BlockError) -> ForkError {
+        ForkError::Error(err.into())
+    }
+}
+
+impl From<BlockchainError> for ForkError {
+    fn from(err: BlockchainError) -> ForkError {
+        ForkError::Error(err.into())
+    }
+}
+
+pub type ForkResult = Result<(), ForkError>;

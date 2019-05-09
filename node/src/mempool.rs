@@ -28,7 +28,6 @@ use std::collections::HashSet;
 use std::time::SystemTime;
 use stegos_blockchain::view_changes::ViewChangeProof;
 use stegos_blockchain::*;
-use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
@@ -159,95 +158,62 @@ impl Mempool {
         previous: Hash,
         version: u64,
         height: u64,
-        reward: i64,
+        block_reward: i64,
         keychain: &KeyChain,
         last_random: Hash,
         view_change: u32,
-        proof: Option<ViewChangeProof>,
+        view_change_proof: Option<ViewChangeProof>,
         max_utxo_in_block: usize,
-    ) -> (MacroBlock, Option<Output>, Vec<Hash>) {
+    ) -> MicroBlock {
         let timestamp = SystemTime::now();
-        let mut gamma = Fr::zero();
-        let mut fee = 0i64;
-        let mut inputs: Vec<Hash> = Vec::new();
-        let mut outputs: Vec<Output> = Vec::new();
-        let mut tx_hashes: Vec<Hash> = Vec::new();
         let seed = mix(last_random, view_change);
         let random = secure::make_VRF(&keychain.network_skey, &seed);
 
+        //
+        // Transactions.
+        //
+        let mut utxo_in_block: usize = 2;
+        let mut transactions: Vec<Transaction> = Vec::new();
         for entry in self.pool.entries() {
             let tx_hash = entry.key();
             let tx = entry.get();
             debug_assert_eq!(tx_hash, &Hash::digest(&tx));
 
             // Check the maximum number of UTXO in block.
-            let utxo_in_block =
-                inputs.len() + tx.body.txins.len() + outputs.len() + tx.body.txouts.len();
-            if utxo_in_block >= max_utxo_in_block {
+            if utxo_in_block + tx.body.txins.len() + tx.body.txouts.len() >= max_utxo_in_block {
                 break;
             }
 
             debug!("Processing transaction: hash={}", &tx_hash);
-            tx_hashes.push(tx_hash.clone());
-            inputs.extend(tx.body.txins.iter().cloned());
-            outputs.extend(tx.body.txouts.iter().cloned());
-            gamma += tx.body.gamma;
-            fee += tx.body.fee;
+            transactions.push(tx.clone());
+            utxo_in_block += tx.body.txins.len();
+            utxo_in_block += tx.body.txouts.len();
         }
 
         debug!(
             "Processed {}/{} transactions from mempool",
-            tx_hashes.len(),
+            transactions.len(),
             self.pool.len()
         );
 
-        let monetary_adjustment: i64 = reward;
-
-        // Create an output for fee.
-        let output_fee = if fee + reward > 0 {
-            trace!("Creating reward UTXO...");
-            let data = PaymentPayloadData::Comment("Block reward".to_string());
-            let (output_fee, gamma_fee) = PaymentOutput::with_payload(
-                timestamp,
-                &keychain.wallet_skey,
-                &keychain.wallet_pkey,
-                fee + reward,
-                data.clone(),
-            )
-            .expect("invalid keys");
-            gamma -= gamma_fee;
-            info!(
-                "Created reward UTXO: hash={}, fee={}, reward={}, data={:?}",
-                Hash::digest(&output_fee),
-                fee,
-                reward,
-                data
-            );
-            outputs.push(Output::PaymentOutput(output_fee.clone()));
-            Some(Output::PaymentOutput(output_fee))
-        } else {
-            None
-        };
         // Create a new micro block.
         let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-        let block = MacroBlock::new(
+        MicroBlock::with_reward(
             base,
-            gamma,
-            monetary_adjustment,
-            &inputs,
-            &outputs,
-            proof,
+            view_change_proof,
+            transactions,
+            timestamp,
+            &keychain.wallet_skey,
+            &keychain.wallet_pkey,
             keychain.network_pkey,
-        );
-
-        (block, output_fee, tx_hashes)
+            block_reward,
+        )
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::collections::BTreeMap;
     use stegos_crypto::curve1174::cpt::make_random_keys;
 
     #[test]
@@ -360,13 +326,13 @@ mod test {
     #[test]
     fn create_block() {
         let keys = KeyChain::new_mem();
-        let max_utxo_in_block: usize = 7;
+        let max_utxo_in_block: usize = 9;
         let mut mempool = Mempool::new();
 
-        let (tx1, inputs1, _outputs1) =
+        let (tx1, _inputs1, _outputs1) =
             Transaction::new_test(&keys.wallet_skey, &keys.wallet_pkey, 3, 2, 2, 1, 4)
                 .expect("transaction valid");
-        let (tx2, inputs2, _outputs2) =
+        let (tx2, _inputs2, _outputs2) =
             Transaction::new_test(&keys.wallet_skey, &keys.wallet_pkey, 6, 1, 2, 2, 2)
                 .expect("transaction valid");
         let (tx3, _inputs3, _outputs3) =
@@ -384,11 +350,12 @@ mod test {
         let version = 1;
         let height = 0;
         let view_change = 0;
-        let (block, output_fee, tx_hashes) = mempool.create_block(
+        let reward = 10;
+        let block = mempool.create_block(
             previous,
             version,
             height,
-            0,
+            reward,
             &keys,
             Hash::digest("test"),
             view_change,
@@ -397,24 +364,26 @@ mod test {
         );
 
         // Used transactions - tx3 is not used because of max_utxo_in_block.
-        assert_eq!(tx_hashes, vec![tx_hash1, tx_hash2]);
-
-        // Monetary balance.
-        let mut inputs: BTreeMap<Hash, Output> = BTreeMap::new();
-        for input in inputs1.iter().chain(inputs2.iter()) {
-            let input_hash = Hash::digest(input);
-            inputs.insert(input_hash, input.clone());
-        }
-
-        let inputs: Vec<Output> = inputs.values().cloned().collect();
-        block.validate_balance(&inputs).expect("block is valid");
+        assert_eq!(block.transactions.len(), 2);
+        assert_eq!(Hash::digest(&block.transactions[0]), tx_hash1);
+        assert_eq!(Hash::digest(&block.transactions[1]), tx_hash2);
 
         // Fee.
-        if let Some(Output::PaymentOutput(o)) = output_fee {
+        if let Some(Output::PaymentOutput(o)) = block.coinbase.outputs.get(0) {
             let PaymentPayload { amount, .. } = o
                 .decrypt_payload(&keys.wallet_skey)
                 .expect("keys are valid");
             assert_eq!(amount, 6);
+        } else {
+            unreachable!();
+        }
+
+        // Reward.
+        if let Some(Output::PaymentOutput(o)) = block.coinbase.outputs.get(1) {
+            let PaymentPayload { amount, .. } = o
+                .decrypt_payload(&keys.wallet_skey)
+                .expect("keys are valid");
+            assert_eq!(amount, reward);
         } else {
             unreachable!();
         }

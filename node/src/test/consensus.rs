@@ -25,7 +25,6 @@ use super::*;
 use crate::*;
 use stegos_blockchain::Block;
 use stegos_consensus::ConsensusMessageBody;
-use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::pbc::secure;
 
 #[test]
@@ -562,7 +561,6 @@ fn out_of_order_micro_block() {
         );
         let random = secure::make_VRF(&leader.node_service.keys.network_skey, &seed);
 
-        let gamma: Fr = Fr::zero();
         let base = BaseBlockHeader::new(
             version,
             last_block_hash,
@@ -571,20 +569,11 @@ fn out_of_order_micro_block() {
             timestamp,
             random,
         );
-        let mut block = MacroBlock::new(
-            base,
-            gamma,
-            0,
-            &[],
-            &[],
-            None,
-            leader.node_service.keys.network_pkey,
-        );
+        let mut block = MicroBlock::empty(base, None, leader.node_service.keys.network_pkey);
 
         let block_hash = Hash::digest(&block);
         let leader_node = s.node(&leader_pk).unwrap();
-        block.body.multisig =
-            secure::sign_hash(&block_hash, &leader_node.node_service.keys.network_skey);
+        block.sig = secure::sign_hash(&block_hash, &leader_node.node_service.keys.network_skey);
         let block: Block = Block::MicroBlock(block);
 
         // Discard proposal from leader for a proposal from the leader.

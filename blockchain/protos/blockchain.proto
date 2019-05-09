@@ -64,7 +64,6 @@ message MacroBlockBody {
     stegos.crypto.SecurePublicKey pkey = 3;
     stegos.crypto.SecureSignature sig = 4;
     repeated bool sigmap = 5;
-
 }
 
 message MacroBlock {
@@ -72,9 +71,25 @@ message MacroBlock {
     MacroBlockBody body = 2;
 }
 
+message Coinbase {
+    int64 block_reward = 1;
+    int64 block_fee = 2;
+    stegos.crypto.Fr gamma = 3;
+    repeated Output outputs = 4;
+}
+
+message MicroBlock {
+    BaseBlockHeader base = 1;
+    ViewChangeProof view_change_proof = 2;
+    Coinbase coinbase = 3;
+    repeated Transaction transactions = 4;
+    stegos.crypto.SecurePublicKey pkey = 5;
+    stegos.crypto.SecureSignature sig = 6;
+}
+
 message Block {
     oneof block {
         MacroBlock macro_block = 1;
-        MacroBlock micro_block = 2;
+        MicroBlock micro_block = 2;
     }
 }

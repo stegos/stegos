@@ -171,11 +171,9 @@ pub(crate) fn validate_proposed_macro_block(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::VERSION;
     use std::time::{Duration, SystemTime};
     use stegos_blockchain::*;
     use stegos_crypto::curve1174::fields::Fr;
-    use stegos_crypto::pbc::secure;
     use stegos_keychain::KeyChain;
 
     #[test]
@@ -185,7 +183,6 @@ mod test {
         let stake_fee: i64 = 0;
         let amount: i64 = 10000;
         let mut timestamp = SystemTime::now();
-        let view_change = 0;
         let keychain = KeyChain::new_mem();
         let mut mempool = Mempool::new();
         let mut cfg: BlockchainConfig = Default::default();
@@ -193,7 +190,7 @@ mod test {
         cfg.stake_epochs = stake_epochs;
         let stake: i64 = cfg.min_stake_amount;
         let genesis = genesis(&[keychain.clone()], stake, amount + stake, timestamp);
-        let mut chain =
+        let chain =
             Blockchain::testing(cfg, genesis, timestamp).expect("Failed to create blockchain");
         let mut inputs: Vec<Output> = Vec::new();
         let mut stakes: Vec<Output> = Vec::new();
@@ -441,52 +438,6 @@ mod test {
             }
 
             mempool.prune(&[], &output_hashes);
-        }
-
-        //
-        // Output hash collision in blockchain.
-        //
-        {
-            // Register one more UTXO.
-            let fee = payment_fee;
-            let previous = chain.last_block_hash();
-            let height = chain.height();
-            let version = VERSION;
-
-            let seed = mix(chain.last_random(), chain.view_change());
-            let random = secure::make_VRF(&validator_skey, &seed);
-            let base =
-                BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-            let (output, outputs_gamma) = Output::new_payment(timestamp, skey, pkey, amount - fee)
-                .expect("genesis has valid public keys");
-            let outputs = vec![output.clone()];
-            let gamma = -outputs_gamma;
-            let mut block = MacroBlock::new(
-                base,
-                gamma,
-                amount - fee,
-                &[],
-                &outputs,
-                None,
-                *validator_pkey,
-            );
-            let block_hash = Hash::digest(&block);
-            block.body.multisig = secure::sign_hash(&block_hash, &validator_skey);
-
-            chain
-                .push_micro_block(block, timestamp)
-                .expect("block is valid");
-
-            let tx = Transaction::unchecked(&skey, &inputs, &[output.clone()], outputs_gamma, fee)
-                .unwrap();
-            let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
-                .expect_err("transaction is not valid");
-            match e.downcast::<TransactionError>().expect("proper error") {
-                TransactionError::OutputHashCollision(_tx_hash, hash) => {
-                    assert_eq!(hash, Hash::digest(&output));
-                }
-                _ => panic!(),
-            }
         }
     }
 }

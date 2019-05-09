@@ -448,16 +448,16 @@ impl NodeService {
         };
 
         // Check signature first.
-        let remote_view_change = remote.header.base.view_change;
+        let remote_view_change = remote.base.view_change;
 
         let previous_block = self.chain.block_by_height(height - 1)?;
         let mut election_result = self.chain.election_result();
         election_result.random = previous_block.base_header().random;
         let leader = election_result.select_leader(remote_view_change);
-        if leader != remote.body.pkey {
-            return Err(BlockError::DifferentPublicKey(leader, remote.body.pkey).into());
+        if leader != remote.pkey {
+            return Err(BlockError::DifferentPublicKey(leader, remote.pkey).into());
         }
-        if let Err(_e) = secure::check_hash(&remote_hash, &remote.body.multisig, &leader) {
+        if let Err(_e) = secure::check_hash(&remote_hash, &remote.sig, &leader) {
             return Err(BlockError::InvalidLeaderSignature(height, remote_hash).into());
         }
 
@@ -471,18 +471,18 @@ impl NodeService {
                 panic!("{}", e);
             }
         };
-        let local_view_change = local.header.base.view_change;
+        let local_view_change = local.base.view_change;
 
         debug!("Started fork resolution: height={}, local_block={}, remote_block={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, local_proof={:?}, remote_proof={:?}, current_height={}, last_block={}",
                height,
                local_hash,
                remote_hash,
-               local.header.base.previous,
-               remote.header.base.previous,
+               local.base.previous,
+               remote.base.previous,
                local_view_change,
                remote_view_change,
-               local.header.proof,
-               remote.header.proof,
+               local.view_change_proof,
+               remote.view_change_proof,
                self.chain.height(),
                self.chain.last_block_hash());
 
@@ -492,8 +492,8 @@ impl NodeService {
                   height,
                   local_hash,
                   remote_hash,
-                  local.header.base.previous,
-                  remote.header.base.previous,
+                  local.base.previous,
+                  remote.base.previous,
                   local_view_change,
                   remote_view_change,
                   self.chain.height(),
@@ -512,8 +512,8 @@ impl NodeService {
                   height,
                   local_hash,
                   remote_hash,
-                  local.header.base.previous,
-                  remote.header.base.previous,
+                  local.base.previous,
+                  remote.base.previous,
                   local_view_change,
                   remote_view_change,
                   self.chain.height(),
@@ -530,13 +530,13 @@ impl NodeService {
         // Check previous hash.
         let previous = self.chain.block_by_height(height - 1)?;
         let previous_hash = Hash::digest(&previous);
-        if remote.header.base.previous != previous_hash {
+        if remote.base.previous != previous_hash {
             warn!("Found a block with invalid previous hash: height={}, local_block={}, remote_block={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, current_height={}, last_block={}",
                   height,
                   local_hash,
                   remote_hash,
-                  local.header.base.previous,
-                  remote.header.base.previous,
+                  local.base.previous,
+                  remote.base.previous,
                   local_view_change,
                   remote_view_change,
                   self.chain.height(),
@@ -548,9 +548,9 @@ impl NodeService {
         }
 
         // Check the proof.
-        assert_eq!(remote.header.base.previous, previous_hash);
-        let chain = ChainInfo::from_micro_block(&remote);
-        match remote.header.proof {
+        assert_eq!(remote.base.previous, previous_hash);
+        let chain = ChainInfo::from_block(&remote.base);
+        match remote.view_change_proof {
             Some(ref proof) => {
                 if let Err(e) = proof.validate(&chain, &self.chain) {
                     return Err(BlockError::InvalidViewChangeProof(
@@ -580,8 +580,8 @@ impl NodeService {
             height,
             local_hash,
             remote_hash,
-            local.header.base.previous,
-            remote.header.base.previous,
+            local.base.previous,
+            remote.base.previous,
             local_view_change,
             remote_view_change,
             self.chain.height(),
@@ -672,7 +672,7 @@ impl NodeService {
                 .map_err(|e| BlockError::InvalidBlockSignature(e, block_height, block_hash))?;
             }
             Block::MicroBlock(ref block) => {
-                if let Err(_e) = secure::check_hash(&block_hash, &block.body.multisig, &leader) {
+                if let Err(_e) = secure::check_hash(&block_hash, &block.sig, &leader) {
                     return Err(BlockError::InvalidLeaderSignature(block_height, block_hash).into());
                 }
             }
@@ -739,6 +739,17 @@ impl NodeService {
                     );
                 }
 
+                // TODO: check monetary adjustment.
+                if self.chain.epoch() > 0 && macro_block.header.monetary_adjustment != 0 {
+                    // TODO: support slashing.
+                    return Err(NodeBlockError::InvalidMonetaryAdjustment(
+                        height,
+                        hash,
+                        macro_block.header.monetary_adjustment,
+                        self.cfg.block_reward,
+                    )
+                    .into());
+                }
                 // Check consensus.
                 if let Some(consensus) = &mut self.consensus {
                     if consensus.should_commit() {
@@ -781,13 +792,13 @@ impl NodeService {
 
                 // Check monetary adjustment.
                 if self.chain.epoch() > 0
-                    && micro_block.header.monetary_adjustment != self.cfg.block_reward
+                    && micro_block.coinbase.block_reward != self.cfg.block_reward
                 {
                     // TODO: support slashing.
                     return Err(NodeBlockError::InvalidMonetaryAdjustment(
                         height,
                         hash,
-                        micro_block.header.monetary_adjustment,
+                        micro_block.coinbase.block_reward,
                         self.cfg.block_reward,
                     )
                     .into());
@@ -1252,7 +1263,7 @@ impl NodeService {
             height, previous
         );
         // Create a new micro block from the mempool.
-        let (mut block, _fee_output, _tx_hashes) = self.mempool.create_block(
+        let mut block = self.mempool.create_block(
             previous,
             VERSION,
             self.chain.height(),
@@ -1269,11 +1280,10 @@ impl NodeService {
         block.sign(&self.keys.network_skey, &self.keys.network_pkey);
 
         info!(
-            "Created a micro block: height={}, block={}, inputs={}, outputs={}",
+            "Created a micro block: height={}, block={}, transactions={}",
             height,
             &block_hash,
-            block.body.inputs.len(),
-            block.body.outputs.leafs().len()
+            block.transactions.len(),
         );
 
         // TODO: swap send_sealed_block() and apply_new_block() order after removing VRF.

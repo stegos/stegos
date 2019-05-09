@@ -138,7 +138,8 @@ pub fn payments() {
     assert_eq!(
         amounts,
         vec![
-            cfg.payment_fee + cfg.block_reward,
+            cfg.payment_fee,
+            cfg.block_reward,
             total - stake - cfg.payment_fee
         ]
     );
@@ -170,8 +171,9 @@ pub fn payments() {
     amounts.sort();
     let expected = vec![
         100,
-        cfg.block_reward + 2 * cfg.payment_fee,
-        cfg.block_reward + total - stake - 100 - 2 * cfg.payment_fee,
+        3 * cfg.payment_fee,
+        cfg.block_reward,
+        cfg.block_reward + total - stake - 100 - 3 * cfg.payment_fee,
     ];
     assert_eq!(amounts, expected);
 

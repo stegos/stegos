@@ -33,6 +33,7 @@ use crate::multisignature::create_multi_signature;
 use crate::mvcc::MultiVersionedMap;
 use crate::output::*;
 use crate::storage::ListDb;
+use crate::transaction::Transaction;
 use failure::Error;
 use log::*;
 use std::collections::BTreeMap;
@@ -62,12 +63,12 @@ impl ChainInfo {
     /// Create ChainInfo from micro block.
     /// ## Panics
     /// if view_change is equal to 0
-    pub fn from_micro_block(block: &MacroBlock) -> Self {
-        assert_ne!(block.header.base.view_change, 0);
+    pub fn from_block(base_header: &BaseBlockHeader) -> Self {
+        assert_ne!(base_header.view_change, 0);
         ChainInfo {
-            height: block.header.base.height,
-            view_change: block.header.base.view_change - 1,
-            last_block: block.header.base.previous,
+            height: base_header.height,
+            view_change: base_header.view_change - 1,
+            last_block: base_header.previous,
         }
     }
 
@@ -91,11 +92,21 @@ impl Hashable for ChainInfo {
 
 /// A helper to find UTXO in this blockchain.
 #[derive(Debug, Clone)]
-struct OutputKey {
-    /// Block Height.
-    pub height: u64,
-    /// Merkle Tree path inside block.
-    pub path: MerklePath,
+enum OutputKey {
+    MacroBlock {
+        /// Block Height.
+        height: u64,
+        /// Merkle Tree path inside block.
+        path: MerklePath,
+    },
+    MicroBlock {
+        /// Block Height.
+        height: u64,
+        /// Transaction number.
+        tx_id: u32,
+        /// Output number.
+        txout_id: u32,
+    },
 }
 
 /// A helper to store the global monetary balance in MultiVersionedMap.
@@ -318,6 +329,27 @@ impl Blockchain {
         Ok(())
     }
 
+    /// Helper for recover_wallet()
+    fn check_wallet_output(&self, skey: &SecretKey, output: &Output) -> bool {
+        let output_hash = Hash::digest(&output);
+        if !self.contains_output(&output_hash) {
+            return false; // Spent.
+        }
+        match output {
+            Output::PaymentOutput(o) => {
+                if let Ok(_payload) = o.decrypt_payload(skey) {
+                    return true;
+                }
+            }
+            Output::StakeOutput(o) => {
+                if let Ok(_payload) = o.decrypt_payload(skey) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     ///
     /// Recovery wallet state from the blockchain.
     /// TODO: this method is a temporary solution until persistence is implemented in wallet.
@@ -328,26 +360,25 @@ impl Blockchain {
         let mut epoch: u64 = 0;
         for block in self.database.iter_starting(0) {
             match block {
-                Block::MacroBlock(_block) => {
+                Block::MacroBlock(block) => {
                     epoch += 1;
+                    for (output, _) in block.body.outputs.leafs() {
+                        if self.check_wallet_output(skey, &output) {
+                            wallet_state.push((output.as_ref().clone(), epoch));
+                        }
+                    }
                 }
                 Block::MicroBlock(block) => {
-                    for (output, _) in block.body.outputs.leafs() {
-                        let output_hash = Hash::digest(&output);
-                        if !self.contains_output(&output_hash) {
-                            continue; // Spent.
+                    for tx in block.transactions {
+                        for output in tx.body.txouts {
+                            if self.check_wallet_output(skey, &output) {
+                                wallet_state.push((output, epoch));
+                            }
                         }
-                        match output.as_ref() {
-                            Output::PaymentOutput(o) => {
-                                if let Ok(_payload) = o.decrypt_payload(skey) {
-                                    wallet_state.push((output.as_ref().clone(), epoch));
-                                }
-                            }
-                            Output::StakeOutput(o) => {
-                                if let Ok(_payload) = o.decrypt_payload(skey) {
-                                    wallet_state.push((output.as_ref().clone(), epoch));
-                                }
-                            }
+                    }
+                    for output in block.coinbase.outputs {
+                        if self.check_wallet_output(skey, &output) {
+                            wallet_state.push((output, epoch));
                         }
                     }
                 }
@@ -386,34 +417,58 @@ impl Blockchain {
 
     /// Returns true if blockchain contains unspent output.
     pub fn contains_output(&self, output_hash: &Hash) -> bool {
-        if let Some(OutputKey { .. }) = self.output_by_hash.get(output_hash) {
-            return true;
-        }
-        return false;
+        self.output_by_hash.get(output_hash).is_some()
     }
 
     /// Resolve UTXO by hash.
     pub fn output_by_hash(&self, output_hash: &Hash) -> Result<Option<Output>, Error> {
-        if let Some(OutputKey { height, path }) = self.output_by_hash.get(output_hash) {
-            let block = self.block_by_height(*height)?;
-            match block {
-                Block::MicroBlock(MacroBlock { body, .. }) => {
-                    if let Some(output) = body.outputs.lookup(path) {
-                        return Ok(Some(output.as_ref().clone()));
-                    } else {
-                        return Ok(None);
+        match self.output_by_hash.get(output_hash) {
+            Some(OutputKey::MacroBlock { height, path }) => {
+                let block = &self.block_by_height(*height)?;
+                match block {
+                    Block::MacroBlock(MacroBlock { ref body, .. }) => {
+                        if let Some(output) = body.outputs.lookup(path) {
+                            Ok(Some(output.as_ref().clone()))
+                        } else {
+                            Ok(None) // Pruned.
+                        }
+                    }
+                    Block::MicroBlock(_) => panic!("Corrupted outputs_by_hash (Macro-0)"),
+                }
+            }
+            Some(OutputKey::MicroBlock {
+                height,
+                tx_id,
+                txout_id,
+            }) => {
+                let block = &self.block_by_height(*height)?;
+                match block {
+                    Block::MacroBlock(_) => panic!("Corrupted outputs_by_hash (Micro-0)"),
+                    Block::MicroBlock(MicroBlock {
+                        ref coinbase,
+                        ref transactions,
+                        ..
+                    }) => {
+                        let output = if *tx_id == std::u32::MAX {
+                            coinbase
+                                .outputs
+                                .get(*txout_id as usize)
+                                .expect("Corrupted outputs_by_hash (Micro-1)")
+                        } else {
+                            let tx = transactions
+                                .get(*tx_id as usize)
+                                .expect("Corrupted outputs_by_hash (Micro-2)");
+                            tx.body
+                                .txouts
+                                .get(*txout_id as usize)
+                                .expect("Corrupted outputs_by_hash (Micro-3)")
+                        };
+                        Ok(Some(output.clone()))
                     }
                 }
-                Block::MacroBlock(MacroBlock { body, .. }) => {
-                    if let Some(output) = body.outputs.lookup(path) {
-                        return Ok(Some(output.as_ref().clone()));
-                    } else {
-                        return Ok(None);
-                    }
-                }
-            };
+            }
+            None => Ok(None),
         }
-        return Ok(None);
     }
 
     /// Checks whether a block exists or not.
@@ -553,8 +608,9 @@ impl Blockchain {
     pub fn election_result(&self) -> ElectionResult {
         self.election_result.clone()
     }
+
     //----------------------------------------------------------------------------------------------
-    // Key Blocks
+    // Macro Blocks
     //----------------------------------------------------------------------------------------------
 
     ///
@@ -614,7 +670,7 @@ impl Blockchain {
         for (output, path) in block.body.outputs.leafs() {
             let output = output.as_ref().clone();
             outputs.push(output);
-            let output_key = OutputKey {
+            let output_key = OutputKey::MacroBlock {
                 height: self.height,
                 path,
             };
@@ -674,7 +730,7 @@ impl Blockchain {
     }
 
     // ---------------------------------------------------------------------------------------------
-    // Monetary blocks
+    // Micro Blocks
     // ---------------------------------------------------------------------------------------------
 
     ///
@@ -682,7 +738,7 @@ impl Blockchain {
     ///
     pub fn push_micro_block(
         &mut self,
-        block: MacroBlock,
+        block: MicroBlock,
         timestamp: SystemTime,
     ) -> Result<(Vec<Output>, Vec<Output>), Error> {
         //
@@ -855,36 +911,52 @@ impl Blockchain {
     ///
     fn register_micro_block(
         &mut self,
-        block: MacroBlock,
+        block: MicroBlock,
         timestamp: SystemTime,
     ) -> Result<(Vec<Output>, Vec<Output>), Error> {
-        assert_eq!(self.height, block.header.base.height);
+        assert_eq!(self.height, block.base.height);
         let height = self.height;
         let block_hash = Hash::digest(&block);
 
         //
-        // Prepare inputs.
+        // Prepare inputs && outputs.
         //
-        let input_hashes = block.body.inputs;
-        let mut inputs: Vec<Output> = Vec::with_capacity(input_hashes.len());
-        for input_hash in &input_hashes {
-            let input = self.output_by_hash(input_hash)?.expect("Missing output");
-            inputs.push(input);
-        }
-
-        //
-        // Prepare outputs.
-        //
-        let mut outputs: Vec<Output> = Vec::new();
+        let mut input_hashes = Vec::new();
+        let mut inputs: Vec<Output> = Vec::new();
         let mut output_keys: Vec<OutputKey> = Vec::new();
-        for (output, path) in block.body.outputs.leafs() {
-            let output = output.as_ref().clone();
-            outputs.push(output);
-            let output_key = OutputKey {
-                height: self.height,
-                path,
+        let mut outputs: Vec<Output> = Vec::new();
+        let mut gamma: Fr = block.coinbase.gamma;
+        // Coinbase.
+        for (txout_id, output) in block.coinbase.outputs.into_iter().enumerate() {
+            assert!(txout_id < std::u32::MAX as usize);
+            let tx_id = std::u32::MAX;
+            let output_key = OutputKey::MicroBlock {
+                height,
+                tx_id,
+                txout_id: txout_id as u32,
             };
+            outputs.push(output);
             output_keys.push(output_key);
+        }
+        // Regular transactions.
+        for (tx_id, tx) in block.transactions.into_iter().enumerate() {
+            assert!(tx_id < std::u32::MAX as usize);
+            for input_hash in tx.body.txins {
+                let input = self.output_by_hash(&input_hash)?.expect("Missing output");
+                inputs.push(input);
+                input_hashes.push(input_hash);
+            }
+            for (txout_id, output) in tx.body.txouts.into_iter().enumerate() {
+                assert!(txout_id < std::u32::MAX as usize);
+                let output_key = OutputKey::MicroBlock {
+                    height,
+                    tx_id: tx_id as u32,
+                    txout_id: txout_id as u32,
+                };
+                outputs.push(output);
+                output_keys.push(output_key);
+            }
+            gamma += tx.body.gamma;
         }
 
         //
@@ -896,8 +968,8 @@ impl Blockchain {
             &inputs,
             output_keys,
             &outputs,
-            block.header.gamma,
-            block.header.monetary_adjustment,
+            gamma,
+            block.coinbase.block_reward,
             timestamp,
         );
 
@@ -905,7 +977,7 @@ impl Blockchain {
         // Update metadata.
         //
         self.election_result.view_change = 0;
-        self.election_result.random = block.header.base.random;
+        self.election_result.random = block.base.random;
 
         info!(
             "Registered a micro block: height={}, block={}, inputs={}, outputs={}",
@@ -960,30 +1032,32 @@ impl Blockchain {
         metrics::HEIGHT.set(self.height as i64);
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
 
+        let mut created: Vec<Output> = Vec::new();
         let mut pruned: Vec<Output> = Vec::new();
-        for (output, _path) in block.body.outputs.leafs() {
-            pruned.push(output.as_ref().clone());
-            let output_hash = Hash::digest(output.as_ref());
+        for tx in block.transactions {
+            for input_hash in &tx.body.txins {
+                let input = self.output_by_hash(input_hash)?.expect("exists");
+                created.push(input);
+                debug!(
+                    "Restored UXTO: height={}, block={}, utxo={}",
+                    height, &block_hash, &input_hash
+                );
+            }
+            pruned.extend(tx.body.txouts);
+        }
+        pruned.extend(block.coinbase.outputs);
+        for output in &pruned {
+            let output_hash = Hash::digest(output);
             debug!(
                 "Reverted UTXO: height={}, block={}, utxo={}",
                 height, &block_hash, &output_hash
             );
         }
 
-        let mut created: Vec<Output> = Vec::new();
-        for input_hash in &block.body.inputs {
-            let input = self.output_by_hash(input_hash)?.expect("exists");
-            created.push(input);
-            debug!(
-                "Restored UXTO: height={}, block={}, utxo={}",
-                height, &block_hash, &input_hash
-            );
-        }
-
         info!(
             "Reverted a micro block: height={}, block={}, inputs={}, outputs={}",
             self.height,
-            Hash::digest(&block),
+            &block_hash,
             created.len(),
             pruned.len()
         );
@@ -992,7 +1066,7 @@ impl Blockchain {
     }
 }
 
-fn sign_fake_macro_block(block: &mut MacroBlock, chain: &Blockchain, keychains: &[KeyChain]) {
+pub fn sign_fake_macro_block(block: &mut MacroBlock, chain: &Blockchain, keychains: &[KeyChain]) {
     let block_hash = Hash::digest(block);
     let validators = chain.validators();
     let mut signatures: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();
@@ -1010,18 +1084,16 @@ pub fn create_fake_macro_block(
     keychains: &[KeyChain],
     timestamp: SystemTime,
 ) -> MacroBlock {
-    let version: u64 = VERSION;
+    let version = VERSION;
+    let previous = chain.last_block_hash().clone();
     let height = chain.height();
-    let view_change = chain.view_change();;
+    let view_change = chain.view_change();
     let key = chain.select_leader(view_change);
-    let keychain = keychains.iter().find(|p| p.network_pkey == key).unwrap();
-    let mut block = {
-        let previous = chain.last_block_hash();
-        let seed = mix(chain.last_random(), view_change);
-        let random = secure::make_VRF(&keychain.network_skey, &seed);
-        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-        MacroBlock::empty(base, keychain.network_pkey)
-    };
+    let keys = keychains.iter().find(|p| p.network_pkey == key).unwrap();
+    let seed = mix(chain.last_random(), view_change);
+    let random = secure::make_VRF(&keys.network_skey, &seed);
+    let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
+    let mut block = MacroBlock::empty(base, keys.network_pkey);
     sign_fake_macro_block(&mut block, chain, keychains);
     block
 }
@@ -1030,7 +1102,8 @@ pub fn create_fake_micro_block(
     chain: &Blockchain,
     keychains: &[KeyChain],
     timestamp: SystemTime,
-) -> (MacroBlock, Vec<Hash>, Vec<Hash>) {
+    block_reward: i64,
+) -> (MicroBlock, Vec<Hash>, Vec<Hash>) {
     let version: u64 = VERSION;
     let height = chain.height();
     let view_change = chain.view_change();
@@ -1041,9 +1114,9 @@ pub fn create_fake_micro_block(
     let random = secure::make_VRF(&keys.network_skey, &seed);
 
     let mut input_hashes: Vec<Hash> = Vec::new();
+    let mut inputs: Vec<Output> = Vec::new();
     let mut monetary_balance: i64 = 0;
     let mut staking_balance: i64 = 0;
-    let mut gamma = Fr::zero();
     for input_hash in chain.unspent() {
         let input = chain
             .output_by_hash(&input_hash)
@@ -1052,21 +1125,20 @@ pub fn create_fake_micro_block(
         match input {
             Output::PaymentOutput(ref o) => {
                 let payload = o.decrypt_payload(&keys.wallet_skey).unwrap();
-                gamma += payload.gamma;
                 monetary_balance += payload.amount;
-                input_hashes.push(input_hash.clone());
             }
             Output::StakeOutput(ref o) => {
                 o.validate_pkey().expect("valid network pkey signature");
                 o.decrypt_payload(&keys.wallet_skey).unwrap();
                 staking_balance += o.amount;
-                input_hashes.push(input_hash.clone());
             }
         }
+        input_hashes.push(input_hash.clone());
+        inputs.push(input);
     }
 
     let mut outputs: Vec<Output> = Vec::new();
-
+    let mut outputs_gamma = Fr::zero();
     // Payments.
     if monetary_balance > 0 {
         let (output, output_gamma) = PaymentOutput::new(
@@ -1077,7 +1149,7 @@ pub fn create_fake_micro_block(
         )
         .expect("keys are valid");
         outputs.push(Output::PaymentOutput(output));
-        gamma -= output_gamma;
+        outputs_gamma += output_gamma;
     }
 
     // Stakes.
@@ -1095,18 +1167,30 @@ pub fn create_fake_micro_block(
     }
 
     let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
+    let block_fee: i64 = 0;
+    let tx = Transaction::new(
+        &keys.wallet_skey,
+        &inputs,
+        &outputs,
+        outputs_gamma,
+        block_fee,
+    )
+    .expect("Invalid keys");
+    tx.validate(&inputs).expect("Invalid transaction");
+    let transactions = vec![tx];
 
     let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-    let mut block = MacroBlock::new(
+    let mut block = MicroBlock::with_reward(
         base,
-        gamma,
-        0,
-        &input_hashes,
-        &outputs,
         None,
+        transactions,
+        timestamp,
+        &keys.wallet_skey,
+        &keys.wallet_pkey,
         keys.network_pkey,
+        block_reward,
     );
-    sign_fake_macro_block(&mut block, chain, keychains);
+    block.sign(&keys.network_skey, &keys.network_pkey);
     (block, input_hashes, output_hashes)
 }
 
@@ -1114,7 +1198,7 @@ pub fn create_empty_micro_block(
     chain: &Blockchain,
     keychains: &[KeyChain],
     timestamp: SystemTime,
-) -> MacroBlock {
+) -> MicroBlock {
     let version = VERSION;
     let previous = chain.last_block_hash().clone();
     let height = chain.height();
@@ -1124,8 +1208,8 @@ pub fn create_empty_micro_block(
     let seed = mix(chain.last_random(), view_change);
     let random = secure::make_VRF(&keys.network_skey, &seed);
     let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-    let mut block = MacroBlock::empty(base, keys.network_pkey);
-    sign_fake_macro_block(&mut block, chain, keychains);
+    let mut block = MicroBlock::empty(base, None, keys.network_pkey);
+    block.sign(&keys.network_skey, &keys.network_pkey);
     block
 }
 
@@ -1236,13 +1320,14 @@ pub mod tests {
         let mut chain = Blockchain::with_db(cfg.clone(), database, genesis.clone(), timestamp)
             .expect("Failed to create blockchain");
 
-        for _epoch in 0..2 {
+        for epoch in 0..2 {
             //
             // Non-empty block.
             //
             timestamp += Duration::from_millis(1);
+            let block_reward = if epoch % 2 == 0 { 60i64 } else { 0i64 };
             let (block, input_hashes, output_hashes) =
-                create_fake_micro_block(&mut chain, &keychains, timestamp);
+                create_fake_micro_block(&mut chain, &keychains, timestamp, block_reward);
             let hash = Hash::digest(&block);
             let height = chain.height();
             chain
@@ -1328,7 +1413,7 @@ pub mod tests {
         // Register a micro block.
         timestamp += Duration::from_millis(1);
         let (block1, input_hashes1, output_hashes1) =
-            create_fake_micro_block(&mut chain, &keychains, timestamp);
+            create_fake_micro_block(&mut chain, &keychains, timestamp, 60);
         chain
             .push_micro_block(block1, timestamp)
             .expect("block is valid");
@@ -1351,7 +1436,7 @@ pub mod tests {
         // Register one more micro block.
         timestamp += Duration::from_millis(1);
         let (block2, input_hashes2, output_hashes2) =
-            create_fake_micro_block(&mut chain, &keychains, timestamp);
+            create_fake_micro_block(&mut chain, &keychains, timestamp, 0);
         chain
             .push_micro_block(block2, timestamp)
             .expect("block is valid");

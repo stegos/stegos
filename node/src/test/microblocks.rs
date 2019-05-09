@@ -25,7 +25,6 @@ use super::*;
 use crate::*;
 use stegos_blockchain::Block;
 use stegos_consensus::{ConsensusMessage, ConsensusMessageBody};
-use stegos_crypto::curve1174::fields::Fr;
 
 // CASE partition:
 // Nodes [A, B, C, D]
@@ -533,8 +532,6 @@ fn micro_block_without_signature() {
         let round = s.nodes[0].node_service.chain.view_change();
         let last_block_hash = s.nodes[0].node_service.chain.last_block_hash();
 
-        let gamma: Fr = Fr::zero();
-
         let leader = s.node(&leader_pk).unwrap();
         let seed = mix(
             leader.node_service.chain.last_random(),
@@ -549,15 +546,7 @@ fn micro_block_without_signature() {
             timestamp,
             random,
         );
-        let block = MacroBlock::new(
-            base,
-            gamma,
-            0,
-            &[],
-            &[],
-            None,
-            leader.node_service.keys.network_pkey,
-        );
+        let block = MicroBlock::empty(base, None, leader.node_service.keys.network_pkey);
 
         let block: Block = Block::MicroBlock(block);
 

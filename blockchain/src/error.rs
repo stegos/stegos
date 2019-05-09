@@ -92,6 +92,18 @@ pub enum BlockError {
         _0, _1, _2
     )]
     OutOfOrderBlock(Hash, u64, u64),
+    #[fail(display = "Negative block reward: block={}, reward={}", _0, _1)]
+    NegativeReward(Hash, i64),
+    #[fail(
+        display = "Invalid block fee: block={}, expected={}, got={}",
+        _0, _1, _2
+    )]
+    InvalidFee(Hash, i64, i64),
+    #[fail(
+        display = "Coinbase must contain only PaymentUTXOs: block={}, coinbase_utxo={}",
+        _0, _1
+    )]
+    NonPaymentOutputInCoinbase(Hash, Hash),
     #[fail(
         display = "Invalid block monetary balance: height={}, block={}",
         _0, _1

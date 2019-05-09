@@ -203,6 +203,11 @@ impl<TSubstream> Floodsub<TSubstream> {
             event: FloodsubSendEvent::EnableOutgoing,
         });
 
+        if self.enabled_peers.len() >= 2 {
+            self.events
+                .push_back(NetworkBehaviourAction::GenerateEvent(FloodsubEvent::Ready));
+        }
+
         // We need to send our subscriptions to the newly-enabled node.
         for topic in self.subscribed_topics.iter() {
             self.events.push_back(NetworkBehaviourAction::SendEvent {

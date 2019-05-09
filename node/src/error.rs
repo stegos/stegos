@@ -48,10 +48,10 @@ pub enum NodeTransactionError {
 #[derive(Debug, Fail, PartialEq, Eq)]
 pub enum NodeBlockError {
     #[fail(
-        display = "Unexpected monetary adjustment: height={}, block={}, got={}, expected={}",
+        display = "Unexpected block reward: height={}, block={}, got={}, expected={}",
         _0, _1, _2, _3
     )]
-    InvalidMonetaryAdjustment(u64, Hash, i64, i64),
+    InvalidBlockReward(u64, Hash, i64, i64),
     #[fail(
         display = "Expected a macro block, got micro block: height={}, block={}",
         _0, _1

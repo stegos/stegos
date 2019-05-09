@@ -208,10 +208,10 @@ impl MacroBlock {
         //
         // Calculate the pedersen commitment difference in order to check the monetary balance:
         //
-        //     pedersen_commitment_diff = monetary_adjustment + \sum C_i - \sum C_o
+        //     pedersen_commitment_diff = block_reward + \sum C_i - \sum C_o
         //
 
-        let mut pedersen_commitment_diff: ECp = fee_a(self.header.monetary_adjustment);
+        let mut pedersen_commitment_diff: ECp = fee_a(self.header.block_reward);
 
         // +\sum{C_i} for i in txins
         for (txin_hash, txin) in self.body.inputs.iter().zip(inputs) {
@@ -659,7 +659,7 @@ impl Blockchain {
         //
         // Validate block monetary balance.
         //
-        if fee_a(block.header.monetary_adjustment) + burned - created != block.header.gamma * (*G) {
+        if fee_a(block.header.block_reward) + burned - created != block.header.gamma * (*G) {
             return Err(BlockError::InvalidBlockBalance(height, block_hash).into());
         }
 
@@ -671,12 +671,9 @@ impl Blockchain {
             created: orig_balance.created + created,
             burned: orig_balance.burned + burned,
             gamma: orig_balance.gamma + block.header.gamma,
-            monetary_adjustment: orig_balance.monetary_adjustment
-                + block.header.monetary_adjustment,
+            block_reward: orig_balance.block_reward + block.header.block_reward,
         };
-        if fee_a(balance.monetary_adjustment) + balance.burned - balance.created
-            != balance.gamma * (*G)
-        {
+        if fee_a(balance.block_reward) + balance.burned - balance.created != balance.gamma * (*G) {
             panic!(
                 "Invalid global monetary balance: height={}, block={}",
                 height, &block_hash
@@ -1545,7 +1542,7 @@ pub mod tests {
 
         let seed = mix(Hash::zero(), view_change);
         let random = secure::make_VRF(&secure_skey1, &seed);
-        let monetary_adjustment: i64 = output_amount - input_amount;
+        let block_reward: i64 = output_amount - input_amount;
 
         let (input, input_gamma) =
             Output::new_payment(timestamp, &skey, &pkey, input_amount).unwrap();
@@ -1559,7 +1556,7 @@ pub mod tests {
         let block = MacroBlock::new(
             base,
             gamma,
-            monetary_adjustment,
+            block_reward,
             &input_hashes,
             &outputs,
             None,

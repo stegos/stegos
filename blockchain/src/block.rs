@@ -285,10 +285,8 @@ pub struct MacroBlockHeader {
     /// Includes the γ_adj from the leader's fee distribution transaction.
     pub gamma: Fr,
 
-    /// Adjustment of the global monetary balance.
-    /// Positive value means that money has been created.
-    /// Negative value means that money has been burned.
-    pub monetary_adjustment: i64,
+    /// Block Reward.
+    pub block_reward: i64,
 
     /// Merklish root of all range proofs for inputs.
     pub inputs_range_hash: Hash,
@@ -305,7 +303,7 @@ impl Hashable for MacroBlockHeader {
         "Monetary".hash(state);
         self.base.hash(state);
         self.gamma.hash(state);
-        self.monetary_adjustment.hash(state);
+        self.block_reward.hash(state);
         self.inputs_range_hash.hash(state);
         self.outputs_range_hash.hash(state);
         if let Some(proof) = &self.proof {
@@ -359,7 +357,7 @@ impl MacroBlock {
     pub fn new(
         base: BaseBlockHeader,
         gamma: Fr,
-        monetary_adjustment: i64,
+        block_reward: i64,
         inputs: &[Hash],
         outputs: &[Output],
         proof: Option<ViewChangeProof>,
@@ -405,7 +403,7 @@ impl MacroBlock {
             proof,
             base,
             gamma,
-            monetary_adjustment,
+            block_reward,
             inputs_range_hash,
             outputs_range_hash,
         };

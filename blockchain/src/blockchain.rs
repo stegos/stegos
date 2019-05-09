@@ -118,8 +118,8 @@ pub(crate) struct Balance {
     pub burned: ECp,
     /// The total sum of gamma adjustments.
     pub gamma: Fr,
-    /// The total sum of monetary adjustments.
-    pub monetary_adjustment: i64,
+    /// The total sum of block rewards.
+    pub block_reward: i64,
 }
 
 type BlockByHashMap = MultiVersionedMap<Hash, u64, u64>;
@@ -210,7 +210,7 @@ impl Blockchain {
             created: ECp::inf(),
             burned: ECp::inf(),
             gamma: Fr::zero(),
-            monetary_adjustment: 0,
+            block_reward: 0,
         };
         balance.insert(0, (), initial_balance);
         let escrow = Escrow::new();
@@ -687,7 +687,7 @@ impl Blockchain {
             output_keys,
             &outputs,
             block.header.gamma,
-            block.header.monetary_adjustment,
+            block.header.block_reward,
             timestamp,
         );
 
@@ -771,7 +771,7 @@ impl Blockchain {
         output_keys: Vec<OutputKey>,
         outputs: &[Output],
         gamma: Fr,
-        monetary_adjustment: i64,
+        block_reward: i64,
         _timestamp: SystemTime,
     ) {
         let version = self.height + 1;
@@ -870,7 +870,7 @@ impl Blockchain {
         //
 
         // Check the block monetary balance.
-        if fee_a(monetary_adjustment) + burned - created != gamma * (*G) {
+        if fee_a(block_reward) + burned - created != gamma * (*G) {
             panic!(
                 "Invalid block monetary balance: height={}, block={}",
                 height, &block_hash
@@ -883,11 +883,9 @@ impl Blockchain {
             created: orig_balance.created + created,
             burned: orig_balance.burned + burned,
             gamma: orig_balance.gamma + gamma,
-            monetary_adjustment: orig_balance.monetary_adjustment + monetary_adjustment,
+            block_reward: orig_balance.block_reward + block_reward,
         };
-        if fee_a(balance.monetary_adjustment) + balance.burned - balance.created
-            != balance.gamma * (*G)
-        {
+        if fee_a(balance.block_reward) + balance.burned - balance.created != balance.gamma * (*G) {
             panic!(
                 "Invalid global monetary balance: height={}, block={}",
                 height, &block_hash

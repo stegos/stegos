@@ -739,13 +739,13 @@ impl NodeService {
                     );
                 }
 
-                // TODO: check monetary adjustment.
-                if self.chain.epoch() > 0 && macro_block.header.monetary_adjustment != 0 {
+                // TODO: add rewards for MacroBlocks.
+                if self.chain.epoch() > 0 && macro_block.header.block_reward != 0 {
                     // TODO: support slashing.
-                    return Err(NodeBlockError::InvalidMonetaryAdjustment(
+                    return Err(NodeBlockError::InvalidBlockReward(
                         height,
                         hash,
-                        macro_block.header.monetary_adjustment,
+                        macro_block.header.block_reward,
                         self.cfg.block_reward,
                     )
                     .into());
@@ -790,12 +790,12 @@ impl NodeService {
 
                 let timestamp = SystemTime::now();
 
-                // Check monetary adjustment.
+                // Check block reward.
                 if self.chain.epoch() > 0
                     && micro_block.coinbase.block_reward != self.cfg.block_reward
                 {
                     // TODO: support slashing.
-                    return Err(NodeBlockError::InvalidMonetaryAdjustment(
+                    return Err(NodeBlockError::InvalidBlockReward(
                         height,
                         hash,
                         micro_block.coinbase.block_reward,

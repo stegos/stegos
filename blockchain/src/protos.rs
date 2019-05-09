@@ -330,7 +330,7 @@ impl ProtoConvert for MacroBlockHeader {
         let mut proto = blockchain::MacroBlockHeader::new();
         proto.set_base(self.base.into_proto());
         proto.set_gamma(self.gamma.into_proto());
-        proto.set_monetary_adjustment(self.monetary_adjustment);
+        proto.set_block_reward(self.block_reward);
         proto.set_inputs_range_hash(self.inputs_range_hash.into_proto());
         proto.set_outputs_range_hash(self.outputs_range_hash.into_proto());
         if let Some(proof) = &self.proof {
@@ -342,7 +342,7 @@ impl ProtoConvert for MacroBlockHeader {
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let base = BaseBlockHeader::from_proto(proto.get_base())?;
         let gamma = Fr::from_proto(proto.get_gamma())?;
-        let monetary_adjustment = proto.get_monetary_adjustment();
+        let block_reward = proto.get_block_reward();
         let inputs_range_hash = Hash::from_proto(proto.get_inputs_range_hash())?;
         let outputs_range_hash = Hash::from_proto(proto.get_outputs_range_hash())?;
 
@@ -355,7 +355,7 @@ impl ProtoConvert for MacroBlockHeader {
             proof,
             base,
             gamma,
-            monetary_adjustment,
+            block_reward,
             inputs_range_hash,
             outputs_range_hash,
         })

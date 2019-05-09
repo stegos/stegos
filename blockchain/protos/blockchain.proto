@@ -45,7 +45,7 @@ message BaseBlockHeader {
 message MacroBlockHeader {
     BaseBlockHeader base = 1;
     stegos.crypto.Fr gamma = 2;
-    int64 monetary_adjustment = 3;
+    int64 block_reward = 3;
     stegos.crypto.Hash inputs_range_hash = 4;
     stegos.crypto.Hash outputs_range_hash = 5;
     ViewChangeProof proof = 6;

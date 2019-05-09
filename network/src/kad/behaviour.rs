@@ -180,6 +180,12 @@ impl<TSubstream> Kademlia<TSubstream> {
         &self.my_id
     }
 
+    /// Change node's id (secure::PublicKey)
+    pub fn change_id(&mut self, new_id: secure::PublicKey) {
+        self.kbuckets = self.kbuckets.new_table(new_id.clone());
+        self.my_id = new_id;
+    }
+
     #[inline]
     pub fn find_closest(&mut self, id: &secure::PublicKey) -> VecIntoIter<secure::PublicKey> {
         self.kbuckets.find_closest(id)

@@ -38,8 +38,6 @@ use std::{
     thread,
 };
 use stegos_crypto::hashcash::{self, HashCashProof};
-use stegos_crypto::pbc::secure;
-use stegos_keychain::KeyChain;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use super::handler::{GatekeeperHandler, GatekeeperSendEvent};
@@ -66,8 +64,6 @@ pub struct Gatekeeper<TSubstream> {
     events: VecDeque<NetworkBehaviourAction<GatekeeperSendEvent, GatekeeperOutEvent>>,
     /// List of connected peers
     connected_peers: HashSet<PeerId>,
-    /// My PBC PublicKey
-    my_pkey: secure::PublicKey,
     /// Peers we are trying to connect to
     connecting_peers: HashSet<PeerId>,
     /// Addresses we are trying to connect to
@@ -98,7 +94,7 @@ pub struct Gatekeeper<TSubstream> {
 
 impl<TSubstream> Gatekeeper<TSubstream> {
     /// Creates a NetworkBehaviour for Gatekeeper.
-    pub fn new(config: &NetworkConfig, keychain: &KeyChain) -> Self {
+    pub fn new(config: &NetworkConfig) -> Self {
         let mut connecting_addresses: HashSet<Multiaddr> = HashSet::new();
         let mut events: VecDeque<NetworkBehaviourAction<GatekeeperSendEvent, GatekeeperOutEvent>> =
             VecDeque::new();
@@ -128,7 +124,6 @@ impl<TSubstream> Gatekeeper<TSubstream> {
         Gatekeeper {
             events,
             connected_peers: HashSet::new(),
-            my_pkey: keychain.network_pkey.clone(),
             connecting_peers: HashSet::new(),
             connecting_addresses,
             pending_out_peers: ExpiringQueue::new(HANDSHAKE_STEP_TIMEOUT),

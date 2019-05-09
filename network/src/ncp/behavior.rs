@@ -96,6 +96,15 @@ impl<TSubstream> Ncp<TSubstream> {
             marker: PhantomData,
         }
     }
+
+    pub fn change_network_key(&mut self, new_pkey: secure::PublicKey) {
+        self.node_id = new_pkey;
+        // Update all connected peers with our new network key
+        for p in self.connected_peers.iter() {
+            self.events
+                .push_back(NcpEvent::SendPeers { peer_id: p.clone() });
+        }
+    }
 }
 
 impl<TSubstream> NetworkBehaviour for Ncp<TSubstream>

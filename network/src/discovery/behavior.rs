@@ -101,6 +101,11 @@ where
         }
     }
 
+    pub fn change_network_key(&mut self, new_pkey: secure::PublicKey) {
+        self.kademlia.change_id(new_pkey.clone());
+        self.my_id = new_pkey;
+    }
+
     /// Sets peer_id to the corresponging node_id
     pub fn set_peer_id(&mut self, node_id: &secure::PublicKey, peer_id: PeerId) {
         self.kademlia.set_peer_id(node_id, peer_id);
@@ -390,8 +395,9 @@ where
                 Ok(Async::NotReady) => break,
                 Ok(Async::Ready(_)) => {
                     debug!(target: "stegos_network::discovery", "Shooting at DHT to gather nodes information");
-                    let (_, random_node_id) = secure::make_random_keys();
+                    let random_node_id = secure::make_random_keys().1;
                     self.kademlia.find_node(random_node_id);
+                    self.kademlia.find_node(self.my_id.clone());
                     // Reset the `Delay` to the next random.
                     self.next_query
                         .reset(Instant::now() + self.delay_between_queries);

@@ -128,6 +128,17 @@ impl NetworkProvider for Libp2pNetwork {
     fn box_clone(&self) -> Network {
         Box::new((*self).clone())
     }
+
+    // Switch to new network keys
+    fn change_network_keys(
+        &self,
+        new_pkey: secure::PublicKey,
+        new_skey: secure::SecretKey,
+    ) -> Result<(), Error> {
+        let msg = ControlMessage::ChangeNetworkKeys { new_pkey, new_skey };
+        self.control_tx.unbounded_send(msg)?;
+        Ok(())
+    }
 }
 
 fn new_service(
@@ -227,7 +238,7 @@ where
         let mut behaviour = Libp2pBehaviour {
             floodsub: Floodsub::new(peer_id.clone()),
             ncp: Ncp::new(config, keychain),
-            gatekeeper: Gatekeeper::new(config, keychain),
+            gatekeeper: Gatekeeper::new(config),
             delivery: Delivery::new(),
             discovery: Discovery::new(keychain.network_pkey.clone()),
             consumers: HashMap::new(),
@@ -239,11 +250,7 @@ where
         };
         let unicast_topic = TopicBuilder::new(UNICAST_TOPIC).build();
         behaviour.floodsub.subscribe(unicast_topic);
-        // debug!(target: "stegos_network::pubsub",
-        //     "Listening for unicast message: my_key={:?}",
-        //     behaviour.my_pkey.clone().to_string()
-        // );
-        debug!(target: "stegos_network::delivery", "Network endpoints: node_id={}, peer_id={}", keychain.network_pkey, peer_id.to_base58());
+        info!(target: "stegos_network::delivery", "Network endpoints: node_id={}, peer_id={}", keychain.network_pkey, peer_id.to_base58());
         behaviour
     }
 
@@ -268,6 +275,13 @@ where
                 );
                 let floodsub_topic = TopicBuilder::new(topic).build();
                 self.floodsub.publish(floodsub_topic, data)
+            }
+            ControlMessage::ChangeNetworkKeys { new_pkey, new_skey } => {
+                debug!(target: "stegos_network::libp2p_network","changing network key: from={}, to={}", self.my_pkey, new_pkey);
+                self.ncp.change_network_key(new_pkey.clone());
+                self.discovery.change_network_key(new_pkey.clone());
+                self.my_pkey = new_pkey;
+                self.my_skey = new_skey;
             }
             ControlMessage::SubscribeUnicast {
                 protocol_id,
@@ -639,6 +653,10 @@ pub enum ControlMessage {
     SubscribeUnicast {
         protocol_id: String,
         consumer: mpsc::UnboundedSender<UnicastMessage>,
+    },
+    ChangeNetworkKeys {
+        new_pkey: secure::PublicKey,
+        new_skey: secure::SecretKey,
     },
 }
 

@@ -89,6 +89,14 @@ impl NetworkProvider for LoopbackNetwork {
         Ok(())
     }
 
+    fn change_network_keys(
+        &self,
+        _new_pkey: secure::PublicKey,
+        _new_skey: secure::SecretKey,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+
     // Clone self as a box
     fn box_clone(&self) -> Network {
         Box::new((*self).clone())

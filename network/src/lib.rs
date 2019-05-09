@@ -66,6 +66,13 @@ where
 
     /// Helper for cloning boxed object
     fn box_clone(&self) -> Network;
+
+    /// Change network keys
+    fn change_network_keys(
+        &self,
+        _new_pkey: secure::PublicKey,
+        _new_skey: secure::SecretKey,
+    ) -> Result<(), Error>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

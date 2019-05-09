@@ -181,6 +181,7 @@ impl KBucketsPeerId for Multihash {
 impl<TPeerId, TVal> KBucketsTable<TPeerId, TVal>
 where
     TPeerId: KBucketsPeerId + PartialEq,
+    TVal: Clone + Default,
 {
     /// Builds a new routing table.
     pub fn new(my_id: TPeerId, unresponsive_timeout: Duration) -> Self {
@@ -224,6 +225,24 @@ where
     #[inline]
     pub fn my_id(&self) -> &TPeerId {
         &self.my_id
+    }
+
+    /// Returns new table based on new id and values from this table
+    pub fn new_table(&mut self, new_id: TPeerId) -> Self {
+        let mut new_table = KBucketsTable::new(new_id, self.unresponsive_timeout);
+        for p in self.dump() {
+            let entry: &mut TVal = match new_table.entry_mut(&p) {
+                Some(e) => e,
+                None => continue,
+            };
+
+            let val: TVal = match self.get(&p) {
+                Some(v) => (*v).clone(),
+                None => continue,
+            };
+            *entry = val;
+        }
+        new_table
     }
 
     /// Returns the value associated to a node, if any is present.
@@ -431,6 +450,18 @@ where
             intermediate.push(self.my_id.clone());
         }
         intermediate.into_iter()
+    }
+
+    // Returns all ids stored in the table
+    fn dump(&mut self) -> VecIntoIter<TPeerId> {
+        let mut out = Vec::new();
+        for table in self.tables.iter_mut() {
+            table.flush(self.unresponsive_timeout);
+            for node in table.nodes.iter() {
+                out.push(node.id.clone());
+            }
+        }
+        out.into_iter()
     }
 }
 

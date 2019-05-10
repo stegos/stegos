@@ -203,7 +203,10 @@ impl NodeSandbox {
         let timestamp = SystemTime::now();
         let chain = Blockchain::testing(cfg.clone().into(), genesis, timestamp)
             .expect("Failed to create blockchain");
-        let (node_service, node) = NodeService::new(cfg, chain, keychain, network).unwrap();
+        let (mut node_service, node) = NodeService::new(cfg, chain, keychain, network).unwrap();
+        node_service
+            .handle_network_status(NETWORK_READY_TOKEN[..].to_vec())
+            .unwrap();
         Self {
             network_service,
             node,

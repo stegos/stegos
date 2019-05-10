@@ -61,6 +61,7 @@ use stegos_crypto::pbc::secure;
 use stegos_keychain::KeyChain;
 use stegos_network::Network;
 use stegos_network::UnicastMessage;
+use stegos_network::{NETWORK_READY_TOKEN, NETWORK_STATUS_TOPIC};
 use stegos_serialization::traits::ProtoConvert;
 use tokio_timer::clock;
 
@@ -251,6 +252,10 @@ pub struct NodeService {
     //
     /// Network interface.
     network: Network,
+    /// Flag that network is ready.
+    is_network_ready: bool,
+    /// Network statuses.
+    network_status_rx: UnboundedReceiver<Vec<u8>>,
     /// Triggered when height is changed.
     on_block_added: Vec<UnboundedSender<BlockAdded>>,
     /// Triggered when epoch is changed.
@@ -261,7 +266,7 @@ pub struct NodeService {
     events: Box<Stream<Item = NodeMessage, Error = ()> + Send>,
     /// timer events
     macro_block_timer: Interval,
-    view_change_timer: Interval,
+    micro_block_timer: Interval,
     propose_timer: Interval,
 }
 
@@ -287,6 +292,10 @@ impl NodeService {
         let on_block_added = Vec::<UnboundedSender<BlockAdded>>::new();
         let on_epoch_changed = Vec::<UnboundedSender<EpochChanged>>::new();
         let on_outputs_changed = Vec::<UnboundedSender<OutputsChanged>>::new();
+
+        // Network Statuses
+        let is_network_ready = false;
+        let network_status_rx = network.subscribe(&NETWORK_STATUS_TOPIC)?;
 
         let mut streams = Vec::<Box<Stream<Item = NodeMessage, Error = ()> + Send>>::new();
 
@@ -327,7 +336,7 @@ impl NodeService {
         let propose_timer = Interval::new_interval(cfg.tx_wait_timeout);
 
         // Timer for the micro block view changes.
-        let view_change_timer = Interval::new_interval(cfg.micro_block_timeout);
+        let micro_block_timer = Interval::new_interval(cfg.micro_block_timeout);
 
         // Timer for the macro block view changes.
         let macro_block_timer = Interval::new_interval(cfg.macro_block_timeout);
@@ -344,13 +353,15 @@ impl NodeService {
             optimistic,
             last_block_clock,
             network: network.clone(),
+            is_network_ready,
+            network_status_rx,
             on_block_added,
             on_epoch_changed,
             on_outputs_changed,
             events,
             macro_block_timer,
             propose_timer,
-            view_change_timer,
+            micro_block_timer,
         };
         service.recover_consensus_state()?;
 
@@ -360,6 +371,22 @@ impl NodeService {
         };
 
         Ok((service, handler))
+    }
+
+    /// Handle network status changes.
+    fn handle_network_status(&mut self, msg: Vec<u8>) -> Result<(), Error> {
+        if msg == NETWORK_READY_TOKEN && !self.is_network_ready {
+            self.is_network_ready = true;
+            info!("Network is ready");
+            if self.consensus.is_some() {
+                self.on_new_consensus()?;
+            } else {
+                self.micro_block_timer.reset(self.cfg.micro_block_timeout);
+                self.propose_timer.reset(self.cfg.tx_wait_timeout);
+            }
+            self.request_history()?;
+        }
+        Ok(())
     }
 
     /// Update consensus state, if chain has other view of consensus group.
@@ -988,8 +1015,6 @@ impl NodeService {
             return Ok(());
         }
 
-        info!("I am a part of consensus, trying choose new group.");
-        let leader = self.chain.leader();
         let consensus = BlockConsensus::new(
             self.chain.height() as u64,
             self.chain.epoch() + 1,
@@ -998,22 +1023,8 @@ impl NodeService {
             self.chain.election_result(),
             self.chain.validators().iter().cloned().collect(),
         );
-        // update timer, set current_time to now().
-        self.macro_block_timer.reset(self.cfg.macro_block_timeout);
         self.consensus = Some(consensus);
-        let consensus = self.consensus.as_ref().unwrap();
-        if consensus.is_leader() {
-            self.create_new_epoch()?;
-        } else {
-            info!(
-                "Waiting for a macro block: height={}, last_block={}, epoch={}, leader={}",
-                self.chain.height(),
-                self.chain.last_block_hash(),
-                self.chain.epoch(),
-                leader
-            );
-        }
-        self.on_new_consensus();
+        self.on_new_consensus()?;
 
         Ok(())
     }
@@ -1048,13 +1059,45 @@ impl NodeService {
     ///
     /// Try to process messages with new consensus.
     ///
-    fn on_new_consensus(&mut self) {
+    fn on_new_consensus(&mut self) -> Result<(), Error> {
+        info!("I'm validator");
+        if !self.is_network_ready {
+            info!("Waiting for the network...");
+            return Ok(());
+        }
+
+        // update timer, set current_time to now().
+        let consensus = self.consensus.as_ref().unwrap();
+        assert!(self.chain.view_change() <= consensus.round());
+        let relevant_round = 1 + consensus.round() - self.chain.view_change();
+        self.macro_block_timer
+            .reset(self.cfg.macro_block_timeout * relevant_round);
+        if consensus.should_propose() {
+            info!(
+                "I'm leader, proposing a new macro block: height={}, last_block={}, epoch={}",
+                self.chain.height(),
+                self.chain.last_block_hash(),
+                self.chain.epoch(),
+            );
+            self.create_new_epoch()?;
+        } else {
+            info!(
+                "I'm validator, waiting for a new macro block: height={}, last_block={}, epoch={}, leader={}",
+                self.chain.height(),
+                self.chain.last_block_hash(),
+                self.chain.epoch(),
+                self.chain.leader(),
+            );
+        }
+
         let outbox = std::mem::replace(&mut self.future_consensus_messages, Vec::new());
         for msg in outbox {
             if let Err(e) = self.handle_consensus_message(msg) {
                 debug!("Error in future consensus message: {}", e);
             }
         }
+
+        Ok(())
     }
 
     ///
@@ -1165,18 +1208,9 @@ impl NodeService {
                 // Auto-commit proposed block and send it to the network.
                 self.commit_proposed_block(block, multisig, multisigmap);
             } else {
-                assert!(self.chain.view_change() <= consensus.round());
                 // not at commit phase, go to the next round
                 consensus.next_round();
-                let relevant_round = 1 + consensus.round() - self.chain.view_change();
-                self.macro_block_timer
-                    .reset(self.cfg.macro_block_timeout * relevant_round);
-                let consensus = self.consensus.as_ref().unwrap();
-                if consensus.is_leader() {
-                    debug!("I am leader proposing a new block");
-                    self.create_new_epoch()?;
-                }
-                self.on_new_consensus();
+                self.on_new_consensus()?;
             }
         };
 
@@ -1321,7 +1355,7 @@ impl NodeService {
     /// If some timer fails.
     pub fn poll_timers(&mut self) -> Async<TimerEvents> {
         poll_timer!(TimerEvents::KeyBlockViewChangeTimer => self.macro_block_timer);
-        poll_timer!(TimerEvents::MicroBlockViewChangeTimer => self.view_change_timer);
+        poll_timer!(TimerEvents::MicroBlockViewChangeTimer => self.micro_block_timer);
         poll_timer!(TimerEvents::MicroBlockProposeTimer => self.propose_timer);
         return Async::NotReady;
     }
@@ -1333,6 +1367,22 @@ impl Future for NodeService {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        // Check network status first.
+        while let Async::Ready(Some(msg)) = self
+            .network_status_rx
+            .poll()
+            .expect("all errors are already handled")
+        {
+            if let Err(e) = self.handle_network_status(msg) {
+                error!("Error: {}", e);
+            }
+        }
+
+        if !self.is_network_ready {
+            // Network is not ready, postpone other events.
+            return Ok(Async::NotReady);
+        }
+
         while let Async::Ready(item) = self.poll_timers() {
             let result = match item {
                 TimerEvents::MicroBlockProposeTimer(_now) => {

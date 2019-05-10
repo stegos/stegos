@@ -90,6 +90,11 @@ pub fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error
             format!("_stegos._tcp.{}.aws.stegos.com", cfg.general.chain).to_string();
     }
 
+    // Simplify HashCash puzzle for 'dev' chain
+    if cfg.general.chain == "dev" {
+        cfg.network.hashcash_nbits = 4;
+    }
+
     // Password options.
     if let Some(password_file) = args.value_of("password-file") {
         cfg.keychain.password_file = password_file.to_string();

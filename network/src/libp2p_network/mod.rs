@@ -487,25 +487,6 @@ where
             FloodsubEvent::EnabledOutgoing { peer_id } => {
                 self.gatekeeper.notify(PeerEvent::EnabledDialer { peer_id });
             }
-            FloodsubEvent::Ready => {
-                debug!(target: "stegos_network::pubsub", "network is ready");
-                let status_topic = TopicBuilder::new(NETWORK_STATUS_TOPIC).build();
-                let topic_hash = status_topic.hash();
-                let consumers = self
-                    .consumers
-                    .entry(topic_hash.clone())
-                    .or_insert(SmallVec::new());
-                consumers.retain({
-                    move |c| {
-                        if let Err(e) = c.unbounded_send(NETWORK_READY_TOKEN.to_vec()) {
-                            error!(target: "stegos_network::pubsub", "Error sending network status to consumer: {}", e);
-                            false
-                        } else {
-                            true
-                        }
-                    }
-                })
-            }
             FloodsubEvent::Disabled { .. } => unimplemented!(),
             FloodsubEvent::Subscribed { .. } => {}
             FloodsubEvent::Unsubscribed { .. } => {}
@@ -534,6 +515,25 @@ where
             }
             GatekeeperOutEvent::Finished { peer_id } => {
                 self.floodsub.enable_outgoing(&peer_id);
+            }
+            GatekeeperOutEvent::NetworkReady => {
+                debug!(target: "stegos_network::gatekeeper", "network is ready");
+                let status_topic = TopicBuilder::new(NETWORK_STATUS_TOPIC).build();
+                let topic_hash = status_topic.hash();
+                let consumers = self
+                    .consumers
+                    .entry(topic_hash.clone())
+                    .or_insert(SmallVec::new());
+                consumers.retain({
+                    move |c| {
+                        if let Err(e) = c.unbounded_send(NETWORK_READY_TOKEN.to_vec()) {
+                            error!(target: "stegos_network::gatekeeper", "Error sending network status to consumer: {}", e);
+                            false
+                        } else {
+                            true
+                        }
+                    }
+                })
             }
             GatekeeperOutEvent::Message { .. } => {}
             GatekeeperOutEvent::Connected { .. } => {}

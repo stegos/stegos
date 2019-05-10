@@ -236,7 +236,11 @@ impl<TSubstream> Gatekeeper<TSubstream> {
             self.events.push_back(NetworkBehaviourAction::GenerateEvent(
                 GatekeeperOutEvent::PrepareDialer { peer_id },
             ));
-            return;
+            if self.unlocked_peers.len() >= 2 {
+                self.events.push_back(NetworkBehaviourAction::GenerateEvent(
+                    GatekeeperOutEvent::NetworkReady,
+                ));
+            }
         } else {
             debug!(target: "stegos_network::gatekeeper", "unlock request with invalid proof, sending new puzzle: peer_id={}", peer_id.to_base58());
             self.send_new_puzlle(peer_id);
@@ -352,7 +356,12 @@ where
                         GatekeeperOutEvent::Finished {
                             peer_id: propagation_source,
                         },
-                    ))
+                    ));
+                    if self.unlocked_peers.len() >= 2 {
+                        self.events.push_back(NetworkBehaviourAction::GenerateEvent(
+                            GatekeeperOutEvent::NetworkReady,
+                        ));
+                    }
                 }
             }
         }
@@ -561,6 +570,7 @@ pub enum GatekeeperOutEvent {
     Finished {
         peer_id: PeerId,
     },
+    NetworkReady,
 }
 
 type Solution = (PeerId, HashCashProof, Duration);

@@ -23,9 +23,11 @@
 
 use crate::merkle::*;
 use crate::output::*;
+use crate::transaction::Transaction;
 use crate::view_changes::ViewChangeProof;
 use bitvector::BitVector;
 use std::time::SystemTime;
+use stegos_crypto::curve1174::cpt;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc::secure;
@@ -35,6 +37,10 @@ use stegos_crypto::pbc::secure::VRF;
 pub const VERSION: u64 = 1;
 /// The maximum number of nodes in multi-signature.
 pub const VALIDATORS_MAX: usize = 512;
+
+//--------------------------------------------------------------------------------------------------
+// Base Header.
+//--------------------------------------------------------------------------------------------------
 
 /// General Block Header.
 #[derive(Debug, Clone)]
@@ -94,42 +100,184 @@ impl Hashable for BaseBlockHeader {
     }
 }
 
-/// Header for Key Blocks.
+//--------------------------------------------------------------------------------------------------
+// Micro Blocks.
+//--------------------------------------------------------------------------------------------------
+
+/// Coinbase Transaction.
 #[derive(Debug, Clone)]
-pub struct KeyBlockHeader {
-    /// Common header.
-    pub base: BaseBlockHeader,
+pub struct Coinbase {
+    /// Block reward.
+    pub block_reward: i64,
+
+    /// Sum of fees from all block transactions.
+    pub block_fee: i64,
+
+    /// Minus sum of gamma adjustments in outputs.
+    pub gamma: Fr,
+
+    /// Coinbase UTXOs.
+    pub outputs: Vec<Output>,
 }
 
-impl Hashable for KeyBlockHeader {
+/// Monetary Block Header.
+#[derive(Debug, Clone)]
+pub struct MicroBlock {
+    /// Common header.
+    pub base: BaseBlockHeader,
+
+    /// Proof of the happen view_change.
+    pub view_change_proof: Option<ViewChangeProof>,
+
+    /// Coinbase transaction.
+    pub coinbase: Coinbase,
+
+    /// Transactions.
+    pub transactions: Vec<Transaction>,
+
+    // TODO: slashing
+    /// PBC public key of slot owner.
+    pub pkey: secure::PublicKey,
+
+    /// BLS signature by slot owner.
+    pub sig: secure::Signature,
+}
+
+impl Hashable for Coinbase {
     fn hash(&self, state: &mut Hasher) {
-        "Key".hash(state);
-        self.base.hash(state);
+        self.block_reward.hash(state);
+        self.block_fee.hash(state);
+        self.gamma.hash(state);
+        let outputs_count: u64 = self.outputs.len() as u64;
+        outputs_count.hash(state);
+        for output in &self.outputs {
+            let output_hash = Hash::digest(&output);
+            output_hash.hash(state);
+        }
     }
 }
 
-/// Key Block Body.
-#[derive(Debug, Clone)]
-pub struct KeyBlockBody {
-    /// BLS multi-signature
-    pub multisig: secure::Signature,
-
-    /// Bitmap of signers in the multi-signature.
-    pub multisigmap: BitVector,
+impl Hashable for MicroBlock {
+    fn hash(&self, state: &mut Hasher) {
+        "Micro".hash(state);
+        self.base.hash(state);
+        if let Some(proof) = &self.view_change_proof {
+            proof.hash(state);
+        }
+        self.coinbase.hash(state);
+        let tx_count: u64 = self.transactions.len() as u64;
+        tx_count.hash(state);
+        for tx in &self.transactions {
+            tx.body.hash(state);
+            tx.sig.hash(state);
+        }
+        self.pkey.hash(state);
+    }
 }
 
-impl PartialEq for KeyBlockBody {
-    fn eq(&self, _other: &KeyBlockBody) -> bool {
+impl PartialEq for MicroBlock {
+    fn eq(&self, _other: &MicroBlock) -> bool {
         // Required by enum Block.
         unreachable!();
     }
 }
 
-impl Eq for KeyBlockBody {}
+impl Eq for MicroBlock {}
+
+impl MicroBlock {
+    pub fn new(
+        base: BaseBlockHeader,
+        view_change_proof: Option<ViewChangeProof>,
+        coinbase: Coinbase,
+        transactions: Vec<Transaction>,
+        pkey: secure::PublicKey,
+    ) -> MicroBlock {
+        let sig = secure::Signature::zero();
+        let block = MicroBlock {
+            base,
+            view_change_proof,
+            coinbase,
+            transactions,
+            pkey,
+            sig,
+        };
+        block
+    }
+
+    pub fn empty(
+        base: BaseBlockHeader,
+        view_change_proof: Option<ViewChangeProof>,
+        pkey: secure::PublicKey,
+    ) -> MicroBlock {
+        let coinbase = Coinbase {
+            block_reward: 0,
+            block_fee: 0,
+            gamma: Fr::zero(),
+            outputs: Vec::new(),
+        };
+        let transactions = Vec::new();
+        MicroBlock::new(base, view_change_proof, coinbase, transactions, pkey)
+    }
+
+    pub fn with_reward(
+        base: BaseBlockHeader,
+        view_change_proof: Option<ViewChangeProof>,
+        transactions: Vec<Transaction>,
+        timestamp: SystemTime,
+        sender_skey: &cpt::SecretKey,
+        recipient_pkey: &cpt::PublicKey,
+        pkey: secure::PublicKey,
+        block_reward: i64,
+    ) -> MicroBlock {
+        let block_fee = transactions.iter().map(|tx| tx.body.fee).sum();
+
+        //
+        // Coinbase.
+        //
+
+        let mut outputs: Vec<Output> = Vec::new();
+        let mut gamma = Fr::zero();
+
+        // Create outputs for fee and rewards.
+        for (amount, comment) in vec![(block_fee, "fee"), (block_reward, "reward")] {
+            if amount <= 0 {
+                continue;
+            }
+
+            let data = PaymentPayloadData::Comment(format!("Block {}", comment));
+            let (output_fee, gamma_fee) =
+                PaymentOutput::with_payload(timestamp, sender_skey, recipient_pkey, amount, data)
+                    .expect("invalid keys");
+            gamma -= gamma_fee;
+            outputs.push(Output::PaymentOutput(output_fee));
+        }
+
+        let coinbase = Coinbase {
+            block_reward,
+            block_fee,
+            gamma,
+            outputs,
+        };
+
+        MicroBlock::new(base, view_change_proof, coinbase, transactions, pkey)
+    }
+
+    /// Sign block using leader's signature.
+    pub fn sign(&mut self, skey: &secure::SecretKey, pkey: &secure::PublicKey) {
+        assert_eq!(&self.pkey, pkey);
+        let hash = Hash::digest(self);
+        let sig = secure::sign_hash(&hash, &skey);
+        self.sig = sig;
+    }
+}
+
+//--------------------------------------------------------------------------------------------------
+// Macro Blocks.
+//--------------------------------------------------------------------------------------------------
 
 /// Monetary Block Header.
 #[derive(Debug, Clone)]
-pub struct MicroBlockHeader {
+pub struct MacroBlockHeader {
     /// Common header.
     pub base: BaseBlockHeader,
 
@@ -137,10 +285,8 @@ pub struct MicroBlockHeader {
     /// Includes the γ_adj from the leader's fee distribution transaction.
     pub gamma: Fr,
 
-    /// Adjustment of the global monetary balance.
-    /// Positive value means that money has been created.
-    /// Negative value means that money has been burned.
-    pub monetary_adjustment: i64,
+    /// Block Reward.
+    pub block_reward: i64,
 
     /// Merklish root of all range proofs for inputs.
     pub inputs_range_hash: Hash,
@@ -152,12 +298,12 @@ pub struct MicroBlockHeader {
     pub proof: Option<ViewChangeProof>,
 }
 
-impl Hashable for MicroBlockHeader {
+impl Hashable for MacroBlockHeader {
     fn hash(&self, state: &mut Hasher) {
         "Monetary".hash(state);
         self.base.hash(state);
         self.gamma.hash(state);
-        self.monetary_adjustment.hash(state);
+        self.block_reward.hash(state);
         self.inputs_range_hash.hash(state);
         self.outputs_range_hash.hash(state);
         if let Some(proof) = &self.proof {
@@ -168,12 +314,15 @@ impl Hashable for MicroBlockHeader {
 
 /// Monetary Block.
 #[derive(Debug, Clone)]
-pub struct MicroBlockBody {
+pub struct MacroBlockBody {
     /// Public key of leader.
     pub pkey: secure::PublicKey,
 
-    /// BLS signature.
-    pub sig: secure::Signature,
+    /// BLS (multi-)signature.
+    pub multisig: secure::Signature,
+
+    /// Bitmap of signers in the multi-signature.
+    pub multisigmap: BitVector,
 
     /// The list of transaction inputs in a Merkle Tree.
     pub inputs: Vec<Hash>,
@@ -182,77 +331,38 @@ pub struct MicroBlockBody {
     pub outputs: Merkle<Box<Output>>,
 }
 
-impl PartialEq for MicroBlockBody {
-    fn eq(&self, _other: &MicroBlockBody) -> bool {
+impl PartialEq for MacroBlockBody {
+    fn eq(&self, _other: &MacroBlockBody) -> bool {
         // Required by enum Block.
         unreachable!();
     }
 }
 
-impl Eq for MicroBlockBody {}
+impl Eq for MacroBlockBody {}
 
 /// Carries all cryptocurrency transactions.
 #[derive(Debug, Clone)]
-pub struct KeyBlock {
+pub struct MacroBlock {
     /// Header.
-    pub header: KeyBlockHeader,
-
-    /// Body.
-    pub body: KeyBlockBody,
-}
-
-impl KeyBlock {
-    pub fn new(base: BaseBlockHeader) -> Self {
-        // Create header
-        let header = KeyBlockHeader { base };
-
-        // Create body
-        let multisig = secure::Signature::zero();
-        let multisigmap = BitVector::new(VALIDATORS_MAX);
-        let body = KeyBlockBody {
-            multisig,
-            multisigmap,
-        };
-
-        // Create the block
-        KeyBlock { header, body }
-    }
-}
-
-impl Hashable for KeyBlock {
-    fn hash(&self, state: &mut Hasher) {
-        self.header.hash(state)
-    }
-}
-
-impl PartialEq for KeyBlock {
-    fn eq(&self, other: &KeyBlock) -> bool {
-        Hash::digest(self) == Hash::digest(other)
-    }
-}
-
-impl Eq for KeyBlock {}
-
-/// Carries administrative information to blockchain participants.
-#[derive(Debug, Clone)]
-pub struct MicroBlock {
-    /// Header.
-    pub header: MicroBlockHeader,
+    pub header: MacroBlockHeader,
     /// Body
-    pub body: MicroBlockBody,
+    pub body: MacroBlockBody,
 }
 
-impl MicroBlock {
+impl MacroBlock {
+    pub fn empty(base: BaseBlockHeader, pkey: secure::PublicKey) -> MacroBlock {
+        Self::new(base, Fr::zero(), 0, &[], &[], None, pkey)
+    }
+
     pub fn new(
         base: BaseBlockHeader,
         gamma: Fr,
-        monetary_adjustment: i64,
+        block_reward: i64,
         inputs: &[Hash],
         outputs: &[Output],
         proof: Option<ViewChangeProof>,
         pkey: secure::PublicKey,
-        skey: &secure::SecretKey,
-    ) -> MicroBlock {
+    ) -> MacroBlock {
         // Re-order all inputs to blur transaction boundaries.
         // Current algorithm just sorts this list.
         // Since Hash is random, it has the same effect as shuffling.
@@ -289,52 +399,61 @@ impl MicroBlock {
         let outputs_range_hash = outputs.roothash().clone();
 
         // Create header
-        let header = MicroBlockHeader {
+        let header = MacroBlockHeader {
             proof,
             base,
             gamma,
-            monetary_adjustment,
+            block_reward,
             inputs_range_hash,
             outputs_range_hash,
         };
 
         // Create body
-        let sig = secure::Signature::zero();
-        let body = MicroBlockBody {
+        let multisig = secure::Signature::zero();
+        let multisigmap = BitVector::new(VALIDATORS_MAX);
+        let body = MacroBlockBody {
             pkey,
-            sig,
+            multisig,
+            multisigmap,
             inputs,
             outputs,
         };
 
         // Create the block.
-        let mut block = MicroBlock { header, body };
-        let h = Hash::digest(&block);
-        let sig = secure::sign_hash(&h, &skey);
-        block.body.sig = sig;
-
-        block
+        MacroBlock { header, body }
     }
 }
 
-impl Hashable for MicroBlock {
+impl Hashable for MacroBlock {
     fn hash(&self, state: &mut Hasher) {
         self.header.hash(state)
     }
 }
 
+impl PartialEq for MacroBlock {
+    fn eq(&self, other: &MacroBlock) -> bool {
+        Hash::digest(self) == Hash::digest(other)
+    }
+}
+
+impl Eq for MacroBlock {}
+
+//--------------------------------------------------------------------------------------------------
+// Block (enum).
+//--------------------------------------------------------------------------------------------------
+
 /// Types of blocks supported by this blockchain.
 #[derive(Clone, Debug)]
 pub enum Block {
-    KeyBlock(KeyBlock),
+    MacroBlock(MacroBlock),
     MicroBlock(MicroBlock),
 }
 
 impl Block {
     pub fn base_header(&self) -> &BaseBlockHeader {
         match self {
-            Block::KeyBlock(KeyBlock { header, .. }) => &header.base,
-            Block::MicroBlock(MicroBlock { header, .. }) => &header.base,
+            Block::MacroBlock(MacroBlock { header, .. }) => &header.base,
+            Block::MicroBlock(MicroBlock { base, .. }) => &base,
         }
     }
 }
@@ -342,7 +461,7 @@ impl Block {
 impl Hashable for Block {
     fn hash(&self, state: &mut Hasher) {
         match self {
-            Block::KeyBlock(key_block) => key_block.hash(state),
+            Block::MacroBlock(macro_block) => macro_block.hash(state),
             Block::MicroBlock(micro_block) => micro_block.hash(state),
         }
     }

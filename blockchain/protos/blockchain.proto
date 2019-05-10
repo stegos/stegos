@@ -42,10 +42,10 @@ message BaseBlockHeader {
     stegos.crypto.VRF random = 6;
 }
 
-message MicroBlockHeader {
+message MacroBlockHeader {
     BaseBlockHeader base = 1;
     stegos.crypto.Fr gamma = 2;
-    int64 monetary_adjustment = 3;
+    int64 block_reward = 3;
     stegos.crypto.Hash inputs_range_hash = 4;
     stegos.crypto.Hash outputs_range_hash = 5;
     ViewChangeProof proof = 6;
@@ -58,35 +58,38 @@ message MerkleNode {
     Output value = 4;
 }
 
-message MicroBlockBody {
-    stegos.crypto.SecurePublicKey pkey = 1;
-    stegos.crypto.SecureSignature sig = 2;
-    repeated stegos.crypto.Hash inputs = 3;
-    repeated MerkleNode outputs = 4;
+message MacroBlockBody {
+    repeated stegos.crypto.Hash inputs = 1;
+    repeated MerkleNode outputs = 2;
+    stegos.crypto.SecurePublicKey pkey = 3;
+    stegos.crypto.SecureSignature sig = 4;
+    repeated bool sigmap = 5;
+}
+
+message MacroBlock {
+    MacroBlockHeader header = 1;
+    MacroBlockBody body = 2;
+}
+
+message Coinbase {
+    int64 block_reward = 1;
+    int64 block_fee = 2;
+    stegos.crypto.Fr gamma = 3;
+    repeated Output outputs = 4;
 }
 
 message MicroBlock {
-    MicroBlockHeader header = 1;
-    MicroBlockBody body = 2;
-}
-
-message KeyBlockHeader {
     BaseBlockHeader base = 1;
-}
-
-message KeyBlockBody {
-    stegos.crypto.SecureSignature sig = 1;
-    repeated bool sigmap = 2;
-}
-
-message KeyBlock {
-    KeyBlockHeader header = 1;
-    KeyBlockBody body = 2;
+    ViewChangeProof view_change_proof = 2;
+    Coinbase coinbase = 3;
+    repeated Transaction transactions = 4;
+    stegos.crypto.SecurePublicKey pkey = 5;
+    stegos.crypto.SecureSignature sig = 6;
 }
 
 message Block {
     oneof block {
-        KeyBlock key_block = 1;
+        MacroBlock macro_block = 1;
         MicroBlock micro_block = 2;
     }
 }

@@ -43,9 +43,9 @@ impl ProtoConvert for BlockConsensusMessageBody {
                 request: block,
                 proof: _proof,
             } => {
-                let mut proposal = consensus::KeyBlockProposal::new();
+                let mut proposal = consensus::MacroBlockProposal::new();
                 proposal.set_block(block.into_proto());
-                proto.set_key_block_proposal(proposal);
+                proto.set_macro_block_proposal(proposal);
             }
             ConsensusMessageBody::Prevote {} => {
                 proto.set_prevote(consensus::Prevote::new());
@@ -61,8 +61,8 @@ impl ProtoConvert for BlockConsensusMessageBody {
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let msg = match proto.body {
-            Some(consensus::ConsensusMessageBody_oneof_body::key_block_proposal(ref msg)) => {
-                let request = KeyBlock::from_proto(msg.get_block())?;
+            Some(consensus::ConsensusMessageBody_oneof_body::macro_block_proposal(ref msg)) => {
+                let request = MacroBlock::from_proto(msg.get_block())?;
                 let proof = ();
                 ConsensusMessageBody::Proposal { request, proof }
             }
@@ -180,8 +180,8 @@ mod tests {
     }
 
     #[test]
-    fn key_blocks() {
-        let (skey0, _pkey0) = make_secure_random_keys();
+    fn macro_blocks() {
+        let (skey0, pkey0) = make_secure_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -190,10 +190,10 @@ mod tests {
 
         let random = secure::make_VRF(&skey0, &Hash::digest("test"));
         let base = BaseBlockHeader::new(version, previous, height, 0, timestamp, random);
-        let block = KeyBlock::new(base);
+        let block = MacroBlock::empty(base, pkey0);
 
         //
-        // KeyBlockProposal
+        // MacroBlockProposal
         //
         let proof = ();
         let proposal = ConsensusMessageBody::Proposal {

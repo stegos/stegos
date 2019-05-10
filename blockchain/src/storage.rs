@@ -118,13 +118,13 @@ impl ListDb {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::block::{BaseBlockHeader, KeyBlock};
+    use crate::block::{BaseBlockHeader, MacroBlock};
     use std::time::SystemTime;
     use stegos_crypto::hash::Hash;
     use stegos_crypto::pbc::secure;
 
     fn create_block(previous: Hash) -> Block {
-        let (skey0, _pkey0) = secure::make_random_keys();
+        let (skey0, pkey0) = secure::make_random_keys();
         let version: u64 = 1;
         let epoch: u64 = 1;
         let timestamp = SystemTime::now();
@@ -132,9 +132,10 @@ mod test {
         let random = secure::make_VRF(&skey0, &Hash::digest("random"));
         let base = BaseBlockHeader::new(version, previous, epoch, 0, timestamp, random);
 
-        let block = KeyBlock::new(base);
-        Block::KeyBlock(block)
+        let block = MacroBlock::empty(base, pkey0);
+        Block::MacroBlock(block)
     }
+
     #[test]
     fn push_iter() {
         let previous = Hash::digest(&"test".to_string());
@@ -150,7 +151,7 @@ mod test {
 
         for (block, saved) in blocks.iter().zip(db.iter()) {
             match (block, &saved) {
-                (Block::KeyBlock(b1), Block::KeyBlock(b2)) => {
+                (Block::MacroBlock(b1), Block::MacroBlock(b2)) => {
                     assert_eq!(Hash::digest(b1), Hash::digest(b2));
                 }
                 _ => panic!("different blocks found in database and generated."),

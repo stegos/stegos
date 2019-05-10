@@ -22,8 +22,8 @@
 // SOFTWARE.
 
 use crate::{Consensus, ConsensusMessage, ConsensusMessageBody};
-use stegos_blockchain::KeyBlock;
+use stegos_blockchain::MacroBlock;
 
-pub type BlockConsensus = Consensus<KeyBlock, ()>;
-pub type BlockConsensusMessage = ConsensusMessage<KeyBlock, ()>;
-pub type BlockConsensusMessageBody = ConsensusMessageBody<KeyBlock, ()>;
+pub type BlockConsensus = Consensus<MacroBlock, ()>;
+pub type BlockConsensusMessage = ConsensusMessage<MacroBlock, ()>;
+pub type BlockConsensusMessageBody = ConsensusMessageBody<MacroBlock, ()>;

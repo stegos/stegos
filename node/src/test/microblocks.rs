@@ -25,7 +25,6 @@ use super::*;
 use crate::*;
 use stegos_blockchain::Block;
 use stegos_consensus::{ConsensusMessage, ConsensusMessageBody};
-use stegos_crypto::curve1174::fields::Fr;
 
 // CASE partition:
 // Nodes [A, B, C, D]
@@ -46,7 +45,6 @@ fn dead_leader() {
 
     Sandbox::start(config, |mut s| {
         s.poll();
-        s.for_each(|node| assert_eq!(node.chain.height(), 2));
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
         // let leader shoot his block
@@ -124,9 +122,6 @@ fn silent_view_change() {
 
     Sandbox::start(config, |mut s| {
         s.poll();
-        for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height(), 2);
-        }
 
         precondition_2_different_leaderers(&mut s);
 
@@ -220,9 +215,6 @@ fn double_view_change() {
 
     Sandbox::start(config, |mut s| {
         s.poll();
-        for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height(), 2);
-        }
 
         let mut blocks = 0;
 
@@ -365,9 +357,6 @@ fn resolve_fork_for_view_change() {
 
     Sandbox::start(config, |mut s| {
         s.poll();
-        for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height(), 2);
-        }
 
         precondition_2_different_leaderers(&mut s);
 
@@ -462,9 +451,6 @@ fn out_of_order_keyblock_proposal() {
 
     Sandbox::start(config, |mut s| {
         s.poll();
-        for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height(), 2);
-        }
 
         s.wait(s.cfg().tx_wait_timeout);
         // Process N micro blocks.
@@ -484,7 +470,8 @@ fn out_of_order_keyblock_proposal() {
             let seed = mix(last_random, round);
             let random = secure::make_VRF(&leader_node.node_service.keys.network_skey, &seed);
             let base = BaseBlockHeader::new(version, previous, height, round, timestamp, random);
-            let request = KeyBlock::new(base);
+            let leader = leader_node.node_service.keys.network_pkey;
+            let request = MacroBlock::empty(base, leader);
             let hash = Hash::digest(&request);
             let body = ConsensusMessageBody::Proposal { request, proof: () };
             ConsensusMessage::new(
@@ -532,9 +519,6 @@ fn micro_block_without_signature() {
 
     Sandbox::start(config, |mut s| {
         s.poll();
-        for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height(), 2);
-        }
 
         let height = s.nodes[0].node_service.chain.height();
 
@@ -547,8 +531,6 @@ fn micro_block_without_signature() {
 
         let round = s.nodes[0].node_service.chain.view_change();
         let last_block_hash = s.nodes[0].node_service.chain.last_block_hash();
-
-        let gamma: Fr = Fr::zero();
 
         let leader = s.node(&leader_pk).unwrap();
         let seed = mix(
@@ -564,16 +546,7 @@ fn micro_block_without_signature() {
             timestamp,
             random,
         );
-        let block = MicroBlock::new(
-            base,
-            gamma,
-            0,
-            &[],
-            &[],
-            None,
-            leader.node_service.keys.network_pkey,
-            &leader.node_service.keys.network_skey,
-        );
+        let block = MicroBlock::empty(base, None, leader.node_service.keys.network_pkey);
 
         let block: Block = Block::MicroBlock(block);
 

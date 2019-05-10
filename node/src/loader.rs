@@ -135,7 +135,7 @@ impl NodeService {
             return Ok(());
         }
 
-        let start_height = self.chain.last_key_block_height();
+        let start_height = self.chain.last_macro_block_height();
         info!(
             "Downloading blocks: from={}, start_height={}, our_height={}",
             &from,

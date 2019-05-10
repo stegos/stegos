@@ -43,17 +43,17 @@ pub fn genesis(
     // Both block are created at the same time in the same epoch.
     let version: u64 = 1;
     let view_change: u32 = 0;
-    let mut height: u64 = 0;
+    let height: u64 = 0;
 
-    let mut init_random = Hash::digest("random");
+    let init_random = Hash::digest("random");
+
     //
-    // Create initial Monetary Block.
+    // Create initial Macro Block.
     //
     let block1 = {
         let previous = Hash::digest(&"genesis".to_string());
         let seed = mix(init_random, view_change);
         let random = secure::make_VRF(&keychains[0].network_skey, &seed);
-        init_random = random.rand;
         let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
         //
         // Genesis has one PaymentOutput + N * StakeOutput, where N is the number of validators.
@@ -90,7 +90,7 @@ pub fn genesis(
         assert_eq!(coins, coins1);
 
         let gamma = -outputs_gamma;
-        MicroBlock::new(
+        let mut block = MacroBlock::new(
             base,
             gamma,
             coins,
@@ -98,24 +98,9 @@ pub fn genesis(
             &outputs,
             None,
             keychains[0].network_pkey,
-            &keychains[0].network_skey,
-        )
-    };
-    height += 1;
+        );
 
-    //
-    // Create initial Key Block.
-    //
-    let block2 = {
-        let previous = Hash::digest(&block1);
-        let seed = crate::election::mix(init_random, view_change);
-        let random = secure::make_VRF(&keychains[0].network_skey, &seed);
-
-        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-
-        let mut block = KeyBlock::new(base);
         let block_hash = Hash::digest(&block);
-
         let mut signatures: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();
         let mut validators: BTreeMap<secure::PublicKey, i64> = BTreeMap::new();
         for keychain in keychains.iter() {
@@ -127,11 +112,9 @@ pub fn genesis(
         let (multisig, multisigmap) = create_multi_signature(&validators, &signatures);
         block.body.multisig = multisig;
         block.body.multisigmap = multisigmap;
-        block
+        (block)
     };
 
-    blocks.push(Block::MicroBlock(block1));
-    blocks.push(Block::KeyBlock(block2));
-
+    blocks.push(Block::MacroBlock(block1));
     blocks
 }

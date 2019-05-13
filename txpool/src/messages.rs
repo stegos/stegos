@@ -21,8 +21,8 @@
 
 use stegos_blockchain::PaymentOutput;
 use stegos_crypto::curve1174;
+use stegos_crypto::dicemix;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::pbc;
 
 /// A topic used for Join requests.
 pub const POOL_JOIN_TOPIC: &'static str = "txpool_join";
@@ -32,7 +32,7 @@ pub const POOL_ANNOUNCE_TOPIC: &'static str = "txpool_announce";
 type TXIN = Hash;
 type UTXO = PaymentOutput;
 type SchnorrSig = curve1174::SchnorrSig;
-type ParticipantID = pbc::PublicKey;
+type ParticipantID = dicemix::ParticipantID;
 
 // --------------------------------------------------
 
@@ -41,6 +41,7 @@ type ParticipantID = pbc::PublicKey;
 pub struct PoolJoin {
     pub txins: Vec<TXIN>,
     pub utxos: Vec<UTXO>,
+    pub seed: [u8; 32],
     pub ownsig: SchnorrSig,
 }
 
@@ -75,6 +76,7 @@ impl Hashable for PoolJoin {
         for txin in &self.txins {
             txin.hash(state);
         }
+        self.seed.hash(state);
         self.ownsig.hash(state);
     }
 }

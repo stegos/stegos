@@ -32,12 +32,12 @@ include!(concat!(env!("OUT_DIR"), "/valueshuffle/mod.rs"));
 
 use std::collections::HashMap;
 use stegos_crypto::curve1174::{Fr, Pt, PublicKey, SchnorrSig, SecretKey};
+use stegos_crypto::dicemix;
 use stegos_crypto::hash::Hash;
 
 type DcRow = Vec<Fr>;
 type DcSheet = Vec<DcRow>;
-type ParticipantID = stegos_crypto::pbc::PublicKey;
-
+type ParticipantID = dicemix::ParticipantID;
 impl ProtoConvert for VsPayload {
     type Proto = valueshuffle::VsPayload;
     fn into_proto(&self) -> Self::Proto {
@@ -196,6 +196,27 @@ impl ProtoConvert for Message {
             }
         };
         Ok(msg)
+    }
+}
+
+impl ProtoConvert for DirectMessage {
+    type Proto = valueshuffle::DirectMessage;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = valueshuffle::DirectMessage::new();
+        proto.set_source(self.source.into_proto());
+        proto.set_destination(self.destination.into_proto());
+        proto.set_message(self.message.into_proto());
+        proto
+    }
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let source = dicemix::ParticipantID::from_proto(proto.get_source())?;
+        let destination = dicemix::ParticipantID::from_proto(proto.get_destination())?;
+        let message = Message::from_proto(proto.get_message())?;
+        Ok(DirectMessage {
+            source,
+            destination,
+            message,
+        })
     }
 }
 

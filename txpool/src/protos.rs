@@ -23,7 +23,7 @@ use failure::{format_err, Error};
 use stegos_blockchain::PaymentOutput;
 use stegos_crypto::curve1174::SchnorrSig;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::PublicKey;
+use stegos_crypto::{dicemix, CryptoError};
 use stegos_serialization::traits::*;
 
 use crate::messages::{ParticipantTXINMap, PoolInfo, PoolJoin, PoolNotification};
@@ -47,6 +47,7 @@ impl ProtoConvert for PoolJoin {
             proto.utxos.push((*utxo).into_proto());
         }
         proto.set_ownsig(self.ownsig.into_proto());
+        proto.set_seed(self.seed.to_vec());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
@@ -58,10 +59,17 @@ impl ProtoConvert for PoolJoin {
         for utxo in proto.get_utxos() {
             utxos.push(UTXO::from_proto(utxo)?);
         }
+        let seed_slice = proto.get_seed();
+        if seed_slice.len() != 32 {
+            return Err(CryptoError::InvalidBinaryLength(32, seed_slice.len()).into());
+        }
+        let mut seed: [u8; 32] = [0u8; 32];
+        seed.copy_from_slice(seed_slice);
         let ownsig = SchnorrSig::from_proto(proto.get_ownsig())?;
         Ok(PoolJoin {
             txins,
             utxos,
+            seed,
             ownsig,
         })
     }
@@ -82,7 +90,7 @@ impl ProtoConvert for ParticipantTXINMap {
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let participant = PublicKey::from_proto(proto.get_participant())?;
+        let participant = dicemix::ParticipantID::from_proto(proto.get_participant())?;
         let mut txins = Vec::<TXIN>::new();
         let mut utxos = Vec::<UTXO>::new();
         for txin in proto.get_txins() {

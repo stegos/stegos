@@ -30,10 +30,12 @@ use crate::bulletproofs::*;
 use crate::curve1174;
 use crate::hash::{Hash, Hashable, Hasher};
 use crate::pbc;
+use crate::utils::u8v_to_hexstr;
 use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
+use std::fmt;
 use std::os::raw::{c_char, c_int};
 use std::time::{Duration, SystemTime};
 
@@ -90,10 +92,33 @@ use curve1174::ECp;
 use curve1174::Fr;
 use curve1174::Pt;
 
-pub type ParticipantID = pbc::secure::PublicKey;
 use curve1174::PublicKey;
 use curve1174::SchnorrSig;
 use curve1174::SecretKey;
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
+pub struct ParticipantID {
+    pub pkey: pbc::secure::PublicKey,
+    pub seed: [u8; 32],
+}
+
+impl ParticipantID {
+    pub fn new(pkey: pbc::secure::PublicKey, seed: [u8; 32]) -> Self {
+        ParticipantID { pkey, seed }
+    }
+}
+
+impl Hashable for ParticipantID {
+    fn hash(&self, state: &mut Hasher) {
+        self.pkey.hash(state);
+        self.seed.hash(state);
+    }
+}
+
+impl fmt::Display for ParticipantID {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.pkey, u8v_to_hexstr(&self.seed[0..3]))
+    }
+}
 
 pub type DcRow = Vec<Fr>; // one cell per chunk
 pub type DcSheet = Vec<DcRow>;

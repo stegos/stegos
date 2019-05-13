@@ -68,7 +68,7 @@ pub(crate) enum VsPayload {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum Message {
     VsMessage {
         sid: Hash,
@@ -78,6 +78,13 @@ pub(crate) enum Message {
         without_part: ParticipantID,
         session_id: Hash,
     },
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DirectMessage {
+    pub source: ParticipantID,
+    pub destination: ParticipantID,
+    pub message: Message,
 }
 
 impl fmt::Display for VsPayload {

@@ -343,6 +343,26 @@ impl ProtoConvert for VRF {
     }
 }
 
+impl ProtoConvert for crate::dicemix::ParticipantID {
+    type Proto = crypto::DiceMixParticipantID;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = crypto::DiceMixParticipantID::new();
+        proto.set_pkey(self.pkey.into_proto());
+        proto.set_seed(self.seed.to_vec());
+        proto
+    }
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let pkey = secure::PublicKey::from_proto(proto.get_pkey())?;
+        let seed_slice = proto.get_seed();
+        if seed_slice.len() != 32 {
+            return Err(CryptoError::InvalidBinaryLength(32, seed_slice.len()).into());
+        }
+        let mut seed: [u8; 32] = [0u8; 32];
+        seed.copy_from_slice(seed_slice);
+        Ok(crate::dicemix::ParticipantID { pkey, seed })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

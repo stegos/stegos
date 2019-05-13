@@ -119,13 +119,6 @@ impl ECp {
         Self::make_valid_pt(&xq, &yq)
     }
 
-    /// Try to convert from a compressed point.
-    #[inline]
-    pub fn decompress(pt: Pt) -> Result<Self, CryptoError> {
-        let bytes = pt.to_bytes();
-        ECp::try_from_bytes(bytes)
-    }
-
     // internal routine for hashing onto the curve,
     // and for selecting random points. We ensure that
     // nobody will have any idea what the log_r(Pt) will be.
@@ -669,14 +662,14 @@ mod tests {
         for _ in 0..1_000 {
             let pt = ECp::random();
             let cpt = Pt::from(pt);
-            let ept = ECp::decompress(cpt).unwrap();
+            let ept = cpt.decompress().unwrap();
             assert!(ept == pt);
         }
         for _ in 0..1_000 {
             let x = Fr::random();
             let pt = x * (*G);
             let cpt = Pt::from(pt);
-            let ept = ECp::decompress(cpt).unwrap();
+            let ept = cpt.decompress().unwrap();
             assert!(ept == pt);
         }
 

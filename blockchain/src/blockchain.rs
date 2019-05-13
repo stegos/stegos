@@ -39,7 +39,6 @@ use log::*;
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use stegos_crypto::bulletproofs::fee_a;
-use stegos_crypto::curve1174::cpt::Pt;
 use stegos_crypto::curve1174::cpt::SecretKey;
 use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
@@ -805,7 +804,11 @@ impl Blockchain {
 
             match input {
                 Output::PaymentOutput(o) => {
-                    burned += Pt::decompress(o.proof.vcmt).expect("Invalid pedersen commitment");
+                    burned += o
+                        .proof
+                        .vcmt
+                        .decompress()
+                        .expect("Invalid pedersen commitment");
                 }
                 Output::StakeOutput(o) => {
                     o.validate_pkey().expect("Invalid validator pkey");
@@ -842,7 +845,11 @@ impl Blockchain {
 
             match output {
                 Output::PaymentOutput(o) => {
-                    created += Pt::decompress(o.proof.vcmt).expect("Invalid pedersen commitment");
+                    created += o
+                        .proof
+                        .vcmt
+                        .decompress()
+                        .expect("Invalid pedersen commitment");
                 }
                 Output::StakeOutput(o) => {
                     o.validate_pkey().expect("Invalid validator pkey");

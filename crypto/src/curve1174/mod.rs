@@ -229,8 +229,8 @@ mod tests {
     #[test]
     #[should_panic]
     fn check_bad_compression() {
-        let pt = ECp::compress(ECp::inf());
-        let ept = ECp::decompress(pt).unwrap();
+        let pt = ECp::inf().compress();
+        let ept = pt.decompress().unwrap();
     }
 
     #[test]
@@ -331,7 +331,7 @@ pub fn curve1174_tests() {
     /* */
     let ept = ECp::from(Hash::from_vector(b"Testing12")); // produces an odd Y
     let cpt = Pt::from(ept); // MSB should be set
-    let ept2 = ECp::decompress(cpt).unwrap();
+    let ept2 = cpt.decompress().unwrap();
     println!("hash -> {:?}", ept);
     println!("hash -> {:?}", cpt);
     println!("hash -> {:?}", ept2);
@@ -344,8 +344,7 @@ pub fn curve1174_tests() {
     let delta = Fr::random();
     println!("delta = {:?}", delta);
 
-    let cpt = Pt::from(pkey);
-    let ept = ECp::decompress(cpt).unwrap() + delta * *G;
+    let ept = pkey.decompress().unwrap() + delta * *G;
     let delta_pkey = PublicKey::from(ept);
     println!("delta_key = {:?}", Pt::from(delta_pkey));
 

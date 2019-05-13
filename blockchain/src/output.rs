@@ -29,7 +29,6 @@ use stegos_crypto::bulletproofs::{make_range_proof, BulletProof};
 use stegos_crypto::curve1174::cpt::{
     aes_decrypt, aes_encrypt, EncryptedPayload, Pt, PublicKey, SecretKey,
 };
-use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::curve1174::G;
 use stegos_crypto::hash::{Hash, Hashable, Hasher, HASH_SIZE};
@@ -148,7 +147,7 @@ fn cloak_key(
     // for the discrete log corresponding to delta.
 
     let pt = Pt::from(*recipient_pkey);
-    let pt = ECp::decompress(pt)?;
+    let pt = pt.decompress()?;
     let cloaked_pt = {
         if (*gamma) == Fr::zero() {
             pt + delta * (*G)

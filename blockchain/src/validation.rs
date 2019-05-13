@@ -142,7 +142,7 @@ impl Transaction {
                         )
                         .into());
                     }
-                    let cmt = cpt::Pt::decompress(o.proof.vcmt)?;
+                    let cmt = o.proof.vcmt.decompress()?;
                     txout_sum += cmt;
                     eff_pkey -= cmt;
                 }
@@ -218,7 +218,7 @@ impl MacroBlock {
             assert_eq!(Hash::digest(txin), *txin_hash);
             match txin {
                 Output::PaymentOutput(o) => {
-                    pedersen_commitment_diff += cpt::Pt::decompress(o.proof.vcmt)?;
+                    pedersen_commitment_diff += o.proof.vcmt.decompress()?;
                 }
                 Output::StakeOutput(o) => {
                     pedersen_commitment_diff += fee_a(o.amount);
@@ -235,7 +235,7 @@ impl MacroBlock {
                     if !validate_range_proof(&o.proof) {
                         return Err(OutputError::InvalidBulletProof(output_hash).into());
                     }
-                    pedersen_commitment_diff -= cpt::Pt::decompress(o.proof.vcmt)?;
+                    pedersen_commitment_diff -= o.proof.vcmt.decompress()?;
                 }
                 Output::StakeOutput(ref o) => {
                     if o.amount <= 0 {
@@ -502,7 +502,7 @@ impl Blockchain {
                         )
                         .into());
                     }
-                    let cmt = cpt::Pt::decompress(o.proof.vcmt)?;
+                    let cmt = o.proof.vcmt.decompress()?;
                     mined += cmt;
                 }
                 _ => {
@@ -564,7 +564,7 @@ impl Blockchain {
             // Check UTXO.
             match input {
                 Output::PaymentOutput(o) => {
-                    burned += cpt::Pt::decompress(o.proof.vcmt)?;
+                    burned += o.proof.vcmt.decompress()?;
                 }
                 Output::StakeOutput(o) => {
                     // Validate staking signature.
@@ -621,7 +621,7 @@ impl Blockchain {
                         .into());
                     }
                     // Update balance.
-                    created += cpt::Pt::decompress(o.proof.vcmt)?;
+                    created += o.proof.vcmt.decompress()?;
                 }
                 Output::StakeOutput(o) => {
                     // Validate staking signature.

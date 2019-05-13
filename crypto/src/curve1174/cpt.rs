@@ -78,7 +78,7 @@ impl Pt {
 
     /// Create from an uncompressed point.
     #[inline]
-    pub fn compress(ept: ECp) -> Pt {
+    pub(crate) fn compress(ept: ECp) -> Pt {
         let pt_4 = ecpt::prescale_for_compression(ept);
         let bytes = ECp::to_bytes(&pt_4);
         Pt(bytes)
@@ -86,8 +86,8 @@ impl Pt {
 
     /// Decompress point.
     #[inline]
-    pub fn decompress(self) -> Result<ECp, CryptoError> {
-        ECp::decompress(self)
+    pub fn decompress(&self) -> Result<ECp, CryptoError> {
+        ECp::try_from_bytes(self.0)
     }
 
     /// Convert into hex string.
@@ -211,6 +211,12 @@ impl PublicKey {
     // universal encryption
     pub fn zero() -> Self {
         PublicKey(Pt::zero())
+    }
+
+    /// Decompress into a point.
+    #[inline]
+    pub fn decompress(self) -> Result<ECp, CryptoError> {
+        self.0.decompress()
     }
 
     /// Convert into raw bytes.
@@ -464,8 +470,8 @@ pub fn sign_hash_with_kval(
 
 pub fn validate_sig(hmsg: &Hash, sig: &SchnorrSig, pkey: &PublicKey) -> Result<(), CryptoError> {
     let h = Hash::digest_chain(&[&sig.K, pkey, hmsg]);
-    let Ppt = Pt::decompress(pkey.0)?;
-    let Kpt = Pt::decompress(sig.K)?;
+    let Ppt = pkey.0.decompress()?;
+    let Kpt = sig.K.decompress()?;
     if sig.u * *G == Kpt + Fr::from(h) * Ppt {
         return Ok(());
     } else {
@@ -524,7 +530,7 @@ pub fn aes_encrypt(msg: &[u8], pkey: &PublicKey) -> Result<EncryptedPayload, Cry
         // normal encrytion with keying hint
         let h = Hash::from_vector(msg);
         let alpha = Fr::synthetic_random("encr-alpha", pkey, &h);
-        let ppt = ECp::decompress(Pt::from(*pkey))?; // could give CryptoError if invalid PublicKey
+        let ppt = pkey.decompress()?; // could give CryptoError if invalid PublicKey
         let ap = alpha * ppt; // generate key (alpha*s*G = alpha*P), and hint ag = alpha*G
         let ag = alpha * *G;
         let key = Hash::digest(&ap);
@@ -543,7 +549,7 @@ pub fn aes_decrypt(payload: &EncryptedPayload, skey: &SecretKey) -> Result<Vec<u
     } else {
         // normal encryption, key = skey * AG
         let zr = Fr::from(skey.clone());
-        let ag = ECp::decompress(payload.ag)?; // could give CryptoError if corrupted payload
+        let ag = payload.ag.decompress()?; // could give CryptoError if corrupted payload
         let asg = zr * ag; // compute the actual key seed = s*alpha*G
         let key = Hash::digest(&asg);
         Ok(aes_encrypt_with_key(&payload.ctxt, &key.bits()))

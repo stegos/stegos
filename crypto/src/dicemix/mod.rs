@@ -539,7 +539,7 @@ pub fn dc_keys(
     for pkey in participants.iter().filter(|p| **p != *my_id) {
         let sess_pkey = sess_pkeys.get(pkey).unwrap();
         let cpt = Pt::from(*sess_pkey);
-        let ecpt = ECp::decompress(cpt).unwrap();
+        let ecpt = cpt.decompress().unwrap();
 
         let comm_pt = alpha * ecpt;
         let ccpt = Pt::from(comm_pt);

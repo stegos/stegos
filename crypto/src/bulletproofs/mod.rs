@@ -447,8 +447,8 @@ pub fn make_range_proof(v: i64) -> (BulletProof, Int) {
 
             // save this portion of the proof into list accumulator
             acc[aix] = LR {
-                l: Point::compress(l),
-                r: Point::compress(r),
+                l: l.compress(),
+                r: r.compress(),
             };
 
             let xs = x.scaled(); // do the scaling, unscaling just once = speedup below
@@ -466,8 +466,8 @@ pub fn make_range_proof(v: i64) -> (BulletProof, Int) {
         }
         // final dot-product composite proof
         DotProof {
-            u: Point::compress(u),
-            pcmt: Point::compress(pcmt),
+            u: u.compress(),
+            pcmt: pcmt.compress(),
             a: lvec[0].unscaled(),
             b: rvec[0].unscaled(),
             xlrs: acc,
@@ -550,11 +550,11 @@ pub fn make_range_proof(v: i64) -> (BulletProof, Int) {
 
     (
         BulletProof {
-            vcmt: Point::compress(vcmt), // this is the main commitment value
-            acmt: Point::compress(acmt),
-            scmt: Point::compress(scmt),
-            t1_cmt: Point::compress(t1_cmt),
-            t2_cmt: Point::compress(t2_cmt),
+            vcmt: vcmt.compress(), // this is the main commitment value
+            acmt: acmt.compress(),
+            scmt: scmt.compress(),
+            t1_cmt: t1_cmt.compress(),
+            t2_cmt: t2_cmt.compress(),
             tau_x: tau_x.unscaled(),
             mu: mu.unscaled(),
             t_hat: t_hat.unscaled(),
@@ -577,8 +577,8 @@ pub fn validate_range_proof(bp: &BulletProof) -> bool {
         fn compute_iter_commit(xlrs: &[LR; L2_NBASIS], init: Point) -> Result<Point, CryptoError> {
             let mut sum = init;
             for triple in xlrs.iter().rev() {
-                let l = Point::decompress(triple.l)?;
-                let r = Point::decompress(triple.r)?;
+                let l = triple.l.decompress()?;
+                let r = triple.r.decompress()?;
                 let x = Int::from(Hash::digest_chain(&[&l, &r])).scaled(); // hash challenge value
                 let xsq = x * x;
                 sum += xsq * l + r / xsq;
@@ -592,8 +592,8 @@ pub fn validate_range_proof(bp: &BulletProof) -> bool {
                 let mut prod = Int::one();
                 let mut jx = 0;
                 for triple in xlrs.iter().rev() {
-                    let l = Point::decompress(triple.l)?;
-                    let r = Point::decompress(triple.r)?;
+                    let l = triple.l.decompress()?;
+                    let r = triple.r.decompress()?;
                     let x = Int::from(Hash::digest_chain(&[&l, &r])).scaled(); // hash challenge value
                     prod *= if (ix & (1 << jx)) != 0 { x } else { 1 / x };
                     jx += 1;
@@ -605,11 +605,11 @@ pub fn validate_range_proof(bp: &BulletProof) -> bool {
 
         // -------------------------------------------------------------
 
-        let vcmt = Point::decompress(bp.vcmt)?;
-        let acmt = Point::decompress(bp.acmt)?;
-        let scmt = Point::decompress(bp.scmt)?;
-        let t1cmt = Point::decompress(bp.t1_cmt)?;
-        let t2cmt = Point::decompress(bp.t2_cmt)?;
+        let vcmt = bp.vcmt.decompress()?;
+        let acmt = bp.acmt.decompress()?;
+        let scmt = bp.scmt.decompress()?;
+        let t1cmt = bp.t1_cmt.decompress()?;
+        let t2cmt = bp.t2_cmt.decompress()?;
 
         // get challenge values: x, y, z
         let x = Int::from(Hash::digest_chain(&[&t1cmt, &t2cmt])).scaled();
@@ -648,7 +648,7 @@ pub fn validate_range_proof(bp: &BulletProof) -> bool {
 
         let chk_p_l = acmt + vec_commit(scmt, &gv, &hv, x, &gpows, &hpows);
         let dot_proof = bp.dot_proof;
-        let p = Point::decompress(dot_proof.pcmt)?;
+        let p = dot_proof.pcmt.decompress()?;
 
         // check that commitment to [L], [R] equal l(x), r(x)
         if chk_p_l != p {
@@ -657,7 +657,7 @@ pub fn validate_range_proof(bp: &BulletProof) -> bool {
 
         // -------------------------------------------------------------
 
-        let u = Point::decompress(dot_proof.u)?;
+        let u = dot_proof.u.decompress()?;
         let a = dot_proof.a.scaled();
         let b = dot_proof.b.scaled();
         let xlrs = dot_proof.xlrs;
@@ -689,11 +689,11 @@ pub mod tests {
 
     #[test]
     pub fn check_bp_init() {
-        debug!("G: {:?}", Point::compress(*G));
-        debug!("H: {:?}", Point::compress(BP.H));
+        debug!("G: {:?}", (*G).compress());
+        debug!("H: {:?}", BP.H.compress());
         for ix in 0..NBASIS {
-            debug!("GV{} = {:?}", ix, Point::compress(BP.GV[ix]));
-            debug!("HV{} = {:?}", ix, Point::compress(BP.HV[ix]));
+            debug!("GV{} = {:?}", ix, BP.GV[ix].compress());
+            debug!("HV{} = {:?}", ix, BP.HV[ix].compress());
         }
     }
 
@@ -723,8 +723,8 @@ pub mod tests {
                 }
             };
             let (cmt, _gamma) = pedersen_commitment(x);
-            let cpt = Point::compress(cmt);
-            let ept = Point::decompress(cpt).unwrap();
+            let cpt = cmt.compress();
+            let ept = cpt.decompress().unwrap();
             assert!(ept == cmt);
         }
     }
@@ -735,8 +735,8 @@ pub mod tests {
             let x = Int::random();
             let gamma = Int::random();
             let cmt = simple_commit(gamma, x);
-            let cpt = Point::compress(cmt);
-            let ept = Point::decompress(cpt).unwrap();
+            let cpt = cmt.compress();
+            let ept = cpt.decompress().unwrap();
             assert!(ept == cmt);
         }
     }
@@ -752,9 +752,9 @@ pub mod tests {
             let gamma = Int::random();
             let cmt = simple_commit(gamma, x);
             let data = Data {
-                cmt: Point::compress(cmt),
+                cmt: cmt.compress(),
             };
-            let ept = Point::decompress(data.cmt).unwrap();
+            let ept = data.cmt.decompress().unwrap();
             assert!(ept == cmt);
         }
     }

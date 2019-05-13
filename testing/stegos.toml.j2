@@ -16,6 +16,7 @@ network_pkey_file = "testing/node{{NODE_ID}}/network.pkey"
 bind_ip = "127.0.0.1"
 bind_port = {{ NODE_ID|int + 10054 }}
 advertise_local_ips = false
+hashcash_nbits = 4
 seed_nodes = [
 {%- for k in range(NUM_KEYS|int) %}
 {%- if 1+k|int != NODE_ID|int %}

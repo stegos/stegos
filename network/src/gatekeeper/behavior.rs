@@ -53,8 +53,6 @@ const HASH_CASH_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const HASH_CASH_PROOF_TTL: Duration = Duration::from_secs(365 * 24 * 60 * 60);
 // How long to wait for next event
 const HANDSHAKE_STEP_TIMEOUT: Duration = Duration::from_secs(30);
-// Complexity of HasCash puzzles.
-const HASH_CASH_NBITS: usize = 24;
 // Nuber of concurrent solver threads
 const SOLVER_THREADS: usize = 4;
 
@@ -88,6 +86,8 @@ pub struct Gatekeeper<TSubstream> {
     solvers: HashSet<PeerId>,
     /// Queue of puzzles, waiting to be solved
     puzzles_queue: VecDeque<PeerId>,
+    /// Hashcash complexity
+    hashcash_nbits: usize,
     /// Marker to pin the generics.
     marker: PhantomData<TSubstream>,
 }
@@ -141,6 +141,7 @@ impl<TSubstream> Gatekeeper<TSubstream> {
             solution_stream,
             solvers: HashSet::new(),
             puzzles_queue: VecDeque::new(),
+            hashcash_nbits: config.hashcash_nbits,
             marker: PhantomData,
         }
     }
@@ -174,7 +175,7 @@ impl<TSubstream> Gatekeeper<TSubstream> {
             peer_id.clone().into(),
             HashCashPuzzle {
                 seed: seed.clone(),
-                nbits: HASH_CASH_NBITS,
+                nbits: self.hashcash_nbits,
             },
         );
         self.pending_in_peers
@@ -183,7 +184,7 @@ impl<TSubstream> Gatekeeper<TSubstream> {
             peer_id,
             event: GatekeeperSendEvent::Send(GatekeeperMessage::ChallengeReply {
                 seed,
-                nbits: HASH_CASH_NBITS,
+                nbits: self.hashcash_nbits,
             }),
         })
     }
@@ -228,7 +229,10 @@ impl<TSubstream> Gatekeeper<TSubstream> {
             }
         };
 
-        if proof.seed == puzzle.seed && proof.nbits == puzzle.nbits && local_check_proof(&proof) {
+        if proof.seed == puzzle.seed
+            && proof.nbits == puzzle.nbits
+            && local_check_proof(&proof, self.hashcash_nbits)
+        {
             debug!(target: "stegos_network::gatekeeper", "unlock request with valid proof, peer_id={}", peer_id.to_base58());
             self.unlocked_peers.insert(peer_id.clone().into(), ());
             self.pending_in_peers
@@ -534,8 +538,8 @@ where
     }
 }
 
-fn local_check_proof(proof: &HashCashProof) -> bool {
-    hashcash::check_proof(proof, HASH_CASH_NBITS)
+fn local_check_proof(proof: &HashCashProof, nbits: usize) -> bool {
+    hashcash::check_proof(proof, nbits)
 }
 
 fn generate_puzzle(_peer_id: &PeerId) -> Vec<u8> {

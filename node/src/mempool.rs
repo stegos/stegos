@@ -80,11 +80,11 @@ impl Mempool {
     ///
     pub fn push_tx(&mut self, tx_hash: Hash, tx: Transaction) {
         debug_assert_eq!(&tx_hash, &Hash::digest(&tx));
-        for input_hash in &tx.txins {
+        for input_hash in tx.txins() {
             let exists = self.inputs.insert(input_hash.clone(), tx_hash.clone());
             assert!(exists.is_none());
         }
-        for output in &tx.txouts {
+        for output in tx.txouts() {
             let output_hash = Hash::digest(output);
             let exists = self.outputs.insert(output_hash, tx_hash.clone());
             assert!(exists.is_none());
@@ -114,13 +114,13 @@ impl Mempool {
         // Prune transactions.
         for tx_hash in tx_hashes {
             let tx = self.pool.remove(&tx_hash).expect("transaction exists");
-            for input_hash in tx.txins {
-                if let Some(tx_hash2) = self.inputs.remove(&input_hash) {
+            for input_hash in tx.txins() {
+                if let Some(tx_hash2) = self.inputs.remove(input_hash) {
                     assert_eq!(tx_hash2, tx_hash);
                 }
             }
-            for output in tx.txouts {
-                let output_hash = Hash::digest(&output);
+            for output in tx.txouts() {
+                let output_hash = Hash::digest(output);
                 if let Some(tx_hash2) = self.outputs.remove(&output_hash) {
                     assert_eq!(tx_hash2, tx_hash);
                 }
@@ -180,14 +180,14 @@ impl Mempool {
             debug_assert_eq!(tx_hash, &Hash::digest(&tx));
 
             // Check the maximum number of UTXO in block.
-            if utxo_in_block + tx.txins.len() + tx.txouts.len() >= max_utxo_in_block {
+            if utxo_in_block + tx.txins().len() + tx.txouts().len() >= max_utxo_in_block {
                 break;
             }
 
             debug!("Processing transaction: hash={}", &tx_hash);
             transactions.push(tx.clone());
-            utxo_in_block += tx.txins.len();
-            utxo_in_block += tx.txouts.len();
+            utxo_in_block += tx.txins().len();
+            utxo_in_block += tx.txouts().len();
         }
 
         debug!(
@@ -220,14 +220,16 @@ mod test {
         let mut mempool = Mempool::new();
 
         let (tx1, inputs1, outputs1) =
-            Transaction::new_test(&skey, &pkey, 100, 2, 200, 1, 0).expect("transaction valid");
+            PaymentTransaction::new_test(&skey, &pkey, 100, 2, 200, 1, 0)
+                .expect("transaction valid");
         let (tx2, inputs2, outputs2) =
-            Transaction::new_test(&skey, &pkey, 300, 1, 100, 3, 0).expect("transaction valid");
+            PaymentTransaction::new_test(&skey, &pkey, 300, 1, 100, 3, 0)
+                .expect("transaction valid");
         let tx_hash1 = Hash::digest(&tx1);
         let tx_hash2 = Hash::digest(&tx2);
 
-        mempool.push_tx(tx_hash1.clone(), tx1.clone());
-        mempool.push_tx(tx_hash2.clone(), tx2.clone());
+        mempool.push_tx(tx_hash1.clone(), tx1.clone().into());
+        mempool.push_tx(tx_hash2.clone(), tx2.clone().into());
         assert!(mempool.contains_tx(&tx_hash1));
         assert!(mempool.contains_tx(&tx_hash2));
         assert_eq!(mempool.len(), 2);
@@ -268,7 +270,7 @@ mod test {
         }
         assert_eq!(mempool.len(), 1);
 
-        mempool.push_tx(tx_hash1.clone(), tx1.clone());
+        mempool.push_tx(tx_hash1.clone(), tx1.clone().into());
         assert!(mempool.contains_tx(&tx_hash1));
         assert_eq!(mempool.len(), 2);
 
@@ -284,10 +286,10 @@ mod test {
         let (skey, pkey) = make_random_keys();
         let mut mempool = Mempool::new();
 
-        let (tx, inputs, outputs) =
-            Transaction::new_test(&skey, &pkey, 100, 2, 100, 2, 0).expect("transaction valid");
+        let (tx, inputs, outputs) = PaymentTransaction::new_test(&skey, &pkey, 100, 2, 100, 2, 0)
+            .expect("transaction valid");
         let tx_hash = Hash::digest(&tx);
-        mempool.push_tx(tx_hash.clone(), tx.clone());
+        mempool.push_tx(tx_hash.clone(), tx.clone().into());
         mempool.prune(&vec![Hash::digest(&inputs[0])], &vec![]);
         assert!(!mempool.contains_tx(&tx_hash));
         for input in inputs {
@@ -305,10 +307,10 @@ mod test {
         let (skey, pkey) = make_random_keys();
         let mut mempool = Mempool::new();
 
-        let (tx, inputs, outputs) =
-            Transaction::new_test(&skey, &pkey, 100, 2, 100, 2, 0).expect("transaction valid");
+        let (tx, inputs, outputs) = PaymentTransaction::new_test(&skey, &pkey, 100, 2, 100, 2, 0)
+            .expect("transaction valid");
         let tx_hash = Hash::digest(&tx);
-        mempool.push_tx(tx_hash.clone(), tx.clone());
+        mempool.push_tx(tx_hash.clone(), tx.clone().into());
         mempool.prune(&vec![], &vec![Hash::digest(&outputs[0])]);
         assert!(!mempool.contains_tx(&tx_hash));
         for input in inputs {
@@ -328,21 +330,21 @@ mod test {
         let mut mempool = Mempool::new();
 
         let (tx1, _inputs1, _outputs1) =
-            Transaction::new_test(&keys.wallet_skey, &keys.wallet_pkey, 3, 2, 2, 1, 4)
+            PaymentTransaction::new_test(&keys.wallet_skey, &keys.wallet_pkey, 3, 2, 2, 1, 4)
                 .expect("transaction valid");
         let (tx2, _inputs2, _outputs2) =
-            Transaction::new_test(&keys.wallet_skey, &keys.wallet_pkey, 6, 1, 2, 2, 2)
+            PaymentTransaction::new_test(&keys.wallet_skey, &keys.wallet_pkey, 6, 1, 2, 2, 2)
                 .expect("transaction valid");
         let (tx3, _inputs3, _outputs3) =
-            Transaction::new_test(&keys.wallet_skey, &keys.wallet_pkey, 6, 1, 2, 2, 2)
+            PaymentTransaction::new_test(&keys.wallet_skey, &keys.wallet_pkey, 6, 1, 2, 2, 2)
                 .expect("transaction valid");
 
         let tx_hash1 = Hash::digest(&tx1);
         let tx_hash2 = Hash::digest(&tx2);
         let tx_hash3 = Hash::digest(&tx3);
-        mempool.push_tx(tx_hash1.clone(), tx1.clone());
-        mempool.push_tx(tx_hash2.clone(), tx2.clone());
-        mempool.push_tx(tx_hash3.clone(), tx3.clone());
+        mempool.push_tx(tx_hash1.clone(), tx1.clone().into());
+        mempool.push_tx(tx_hash2.clone(), tx2.clone().into());
+        mempool.push_tx(tx_hash3.clone(), tx3.clone().into());
 
         let previous = Hash::digest(&1u64);
         let version = 1;

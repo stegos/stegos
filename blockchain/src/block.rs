@@ -169,7 +169,9 @@ impl Hashable for MicroBlock {
         tx_count.hash(state);
         for tx in &self.transactions {
             tx.hash(state);
-            tx.sig.hash(state);
+            match tx {
+                Transaction::PaymentTransaction(tx) => tx.sig.hash(state),
+            }
         }
         self.pkey.hash(state);
     }
@@ -227,7 +229,7 @@ impl MicroBlock {
         pkey: secure::PublicKey,
         block_reward: i64,
     ) -> MicroBlock {
-        let block_fee = transactions.iter().map(|tx| tx.fee).sum();
+        let block_fee = transactions.iter().map(|tx| tx.fee()).sum();
 
         //
         // Coinbase.

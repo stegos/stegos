@@ -246,7 +246,7 @@ pub(crate) fn create_staking_transaction<'a, UnspentIter>(
     amount: i64,
     payment_fee: i64,
     stake_fee: i64,
-) -> Result<Transaction, Error>
+) -> Result<PaymentTransaction, Error>
 where
     UnspentIter: Iterator<Item = (&'a PaymentOutput, i64)>,
 {
@@ -323,7 +323,7 @@ where
     }
 
     trace!("Signing transaction...");
-    let tx = Transaction::new(&sender_skey, &inputs, &outputs, gamma, fee)?;
+    let tx = PaymentTransaction::new(&sender_skey, &inputs, &outputs, gamma, fee)?;
     let tx_hash = Hash::digest(&tx);
     info!(
         "Signed stake transaction: hash={}, validator={}, stake={}, withdrawn={}, change={}, fee={}",
@@ -349,7 +349,7 @@ pub(crate) fn create_unstaking_transaction<'a, UnspentIter>(
     amount: i64,
     payment_fee: i64,
     stake_fee: i64,
-) -> Result<Transaction, Error>
+) -> Result<PaymentTransaction, Error>
 where
     UnspentIter: Iterator<Item = &'a StakeOutput>,
 {
@@ -421,7 +421,7 @@ where
     }
 
     trace!("Signing transaction...");
-    let tx = Transaction::new(&sender_skey, &inputs, &outputs, gamma, fee)?;
+    let tx = PaymentTransaction::new(&sender_skey, &inputs, &outputs, gamma, fee)?;
     let tx_hash = Hash::digest(&tx);
     info!(
         "Signed unstake transaction: hash={}, validator={}, unstake={}, stake={}, fee={}",
@@ -438,7 +438,7 @@ pub(crate) fn create_restaking_transaction<'a, UnspentIter>(
     validator_pkey: &secure::PublicKey,
     validator_skey: &secure::SecretKey,
     stakes_iter: UnspentIter,
-) -> Result<Transaction, Error>
+) -> Result<PaymentTransaction, Error>
 where
     UnspentIter: Iterator<Item = &'a StakeOutput>,
 {
@@ -471,7 +471,7 @@ where
 
     trace!("Signing transaction...");
     let fee = 0;
-    let tx = Transaction::new(&sender_skey, &inputs, &outputs, Fr::zero(), fee)?;
+    let tx = PaymentTransaction::new(&sender_skey, &inputs, &outputs, Fr::zero(), fee)?;
     let tx_hash = Hash::digest(&tx);
     info!(
         "Created a restaking transaction: hash={}, inputs={}, outputs={}",

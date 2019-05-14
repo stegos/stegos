@@ -88,8 +88,8 @@ fn simulate_payment(node: &mut NodeService, amount: i64) -> Result<(), Error> {
         outputs_gamma += gamma2;
     }
 
-    let tx = Transaction::new(sender_skey, &inputs, &outputs, outputs_gamma, fee)?;
-    node.handle_transaction(tx)?;
+    let tx = PaymentTransaction::new(sender_skey, &inputs, &outputs, outputs_gamma, fee)?;
+    node.handle_transaction(tx.into())?;
     Ok(())
 }
 

@@ -30,9 +30,13 @@ use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 
+//--------------------------------------------------------------------------------------------------
+// Payment Transaction.
+//--------------------------------------------------------------------------------------------------
+
 /// PaymentTransaction.
 #[derive(Clone, Debug)]
-pub struct Transaction {
+pub struct PaymentTransaction {
     /// List of inputs.
     pub txins: Vec<Hash>,
     /// List of outputs.
@@ -45,7 +49,7 @@ pub struct Transaction {
     pub sig: SchnorrSig,
 }
 
-impl Hashable for Transaction {
+impl Hashable for PaymentTransaction {
     fn hash(&self, state: &mut Hasher) {
         // Sign txins.
         let txins_count: u64 = self.txins.len() as u64;
@@ -69,9 +73,9 @@ impl Hashable for Transaction {
     }
 }
 
-impl Transaction {
+impl PaymentTransaction {
     pub fn dum() -> Self {
-        Transaction {
+        PaymentTransaction {
             txins: Vec::new(),
             txouts: Vec::new(),
             gamma: Fr::zero(),
@@ -138,7 +142,7 @@ impl Transaction {
         gamma_adj -= outputs_gamma;
 
         // Create a transaction body and calculate the hash.
-        let mut tx = Transaction {
+        let mut tx = PaymentTransaction {
             txins,
             txouts: outputs.to_vec(),
             gamma: gamma_adj,
@@ -200,7 +204,7 @@ impl Transaction {
         }
 
         // Create a transaction body and calculate the hash.
-        let mut tx = Transaction {
+        let mut tx = PaymentTransaction {
             txins,
             txouts: outputs.to_vec(),
             gamma: gamma_adj.clone(),
@@ -226,7 +230,7 @@ impl Transaction {
         output_amount: i64,
         output_count: usize,
         fee: i64,
-    ) -> Result<(Transaction, Vec<Output>, Vec<Output>), Error> {
+    ) -> Result<(PaymentTransaction, Vec<Output>, Vec<Output>), Error> {
         let mut inputs: Vec<Output> = Vec::with_capacity(input_count);
         let mut outputs: Vec<Output> = Vec::with_capacity(output_count);
 
@@ -243,9 +247,56 @@ impl Transaction {
             outputs_gamma += gamma;
         }
 
-        match Transaction::new(&skey, &inputs, &outputs, outputs_gamma, fee) {
+        match PaymentTransaction::new(&skey, &inputs, &outputs, outputs_gamma, fee) {
             Err(e) => Err(e),
             Ok(tx) => Ok((tx, inputs, outputs)),
         }
+    }
+}
+
+//--------------------------------------------------------------------------------------------------
+// Transaction (enum).
+//--------------------------------------------------------------------------------------------------
+
+/// Transaction.
+#[derive(Clone, Debug)]
+pub enum Transaction {
+    PaymentTransaction(PaymentTransaction),
+}
+
+impl Transaction {
+    #[inline]
+    pub fn fee(&self) -> i64 {
+        match self {
+            Transaction::PaymentTransaction(tx) => tx.fee,
+        }
+    }
+
+    #[inline]
+    pub fn txins(&self) -> &[Hash] {
+        match self {
+            Transaction::PaymentTransaction(tx) => &tx.txins,
+        }
+    }
+
+    #[inline]
+    pub fn txouts(&self) -> &[Output] {
+        match self {
+            Transaction::PaymentTransaction(tx) => &tx.txouts,
+        }
+    }
+}
+
+impl Hashable for Transaction {
+    fn hash(&self, state: &mut Hasher) {
+        match self {
+            Transaction::PaymentTransaction(tx) => tx.hash(state),
+        }
+    }
+}
+
+impl From<PaymentTransaction> for Transaction {
+    fn from(tx: PaymentTransaction) -> Self {
+        Transaction::PaymentTransaction(tx)
     }
 }

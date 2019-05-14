@@ -27,7 +27,7 @@
 
 use std::time::SystemTime;
 use stegos_blockchain::Output;
-use stegos_blockchain::Transaction;
+use stegos_blockchain::PaymentTransaction;
 use stegos_blockchain::{PaymentOutput, PaymentPayloadData};
 use stegos_crypto::curve1174::cpt::make_random_keys;
 use stegos_crypto::curve1174::cpt::Pt;

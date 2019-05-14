@@ -33,7 +33,7 @@ use crate::multisignature::create_multi_signature;
 use crate::mvcc::MultiVersionedMap;
 use crate::output::*;
 use crate::storage::ListDb;
-use crate::transaction::Transaction;
+use crate::transaction::{PaymentTransaction, Transaction};
 use crate::view_changes::ViewChangeProof;
 use failure::Error;
 use log::*;
@@ -374,9 +374,9 @@ impl Blockchain {
                 }
                 Block::MicroBlock(block) => {
                     for tx in block.transactions {
-                        for output in tx.txouts {
+                        for output in tx.txouts() {
                             if self.check_wallet_output(skey, pkey, &output) {
-                                wallet_state.push((output, epoch));
+                                wallet_state.push((output.clone(), epoch));
                             }
                         }
                     }
@@ -462,7 +462,7 @@ impl Blockchain {
                             let tx = transactions
                                 .get(*tx_id as usize)
                                 .expect("Corrupted outputs_by_hash (Micro-2)");
-                            tx.txouts
+                            tx.txouts()
                                 .get(*txout_id as usize)
                                 .expect("Corrupted outputs_by_hash (Micro-3)")
                         };
@@ -970,22 +970,24 @@ impl Blockchain {
         // Regular transactions.
         for (tx_id, tx) in block.transactions.into_iter().enumerate() {
             assert!(tx_id < std::u32::MAX as usize);
-            for input_hash in tx.txins {
-                let input = self.output_by_hash(&input_hash)?.expect("Missing output");
+            for input_hash in tx.txins() {
+                let input = self.output_by_hash(input_hash)?.expect("Missing output");
                 inputs.push(input);
-                input_hashes.push(input_hash);
+                input_hashes.push(input_hash.clone());
             }
-            for (txout_id, output) in tx.txouts.into_iter().enumerate() {
+            for (txout_id, output) in tx.txouts().iter().enumerate() {
                 assert!(txout_id < std::u32::MAX as usize);
                 let output_key = OutputKey::MicroBlock {
                     height,
                     tx_id: tx_id as u32,
                     txout_id: txout_id as u32,
                 };
-                outputs.push(output);
+                outputs.push(output.clone());
                 output_keys.push(output_key);
             }
-            gamma += tx.gamma;
+            match tx {
+                Transaction::PaymentTransaction(tx) => gamma += tx.gamma,
+            }
         }
 
         //
@@ -1065,7 +1067,7 @@ impl Blockchain {
         let mut created: Vec<Output> = Vec::new();
         let mut pruned: Vec<Output> = Vec::new();
         for tx in block.transactions {
-            for input_hash in &tx.txins {
+            for input_hash in tx.txins() {
                 let input = self.output_by_hash(input_hash)?.expect("exists");
                 created.push(input);
                 debug!(
@@ -1073,7 +1075,9 @@ impl Blockchain {
                     height, &block_hash, &input_hash
                 );
             }
-            pruned.extend(tx.txouts);
+            for output in tx.txouts() {
+                pruned.push(output.clone());
+            }
         }
         pruned.extend(block.coinbase.outputs);
         for output in &pruned {
@@ -1193,7 +1197,7 @@ pub fn create_fake_micro_block(
 
     let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
     let block_fee: i64 = 0;
-    let tx = Transaction::new(
+    let tx = PaymentTransaction::new(
         &keys.wallet_skey,
         &inputs,
         &outputs,
@@ -1202,7 +1206,7 @@ pub fn create_fake_micro_block(
     )
     .expect("Invalid keys");
     tx.validate(&inputs).expect("Invalid transaction");
-    let transactions = vec![tx];
+    let transactions: Vec<Transaction> = vec![tx.into()];
 
     let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
     let mut block = MicroBlock::with_reward(

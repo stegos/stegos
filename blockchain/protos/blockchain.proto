@@ -33,12 +33,18 @@ message Output {
     }
 }
 
-message Transaction {
+message PaymentTransaction {
     repeated stegos.crypto.Hash txins = 1;
     repeated Output txouts = 2;
     stegos.crypto.Fr gamma = 3;
     int64 fee = 4;
     stegos.crypto.SchnorrSig sig = 5;
+}
+
+message Transaction {
+    oneof transaction {
+        PaymentTransaction payment_transaction = 1;
+    }
 }
 
 message BaseBlockHeader {

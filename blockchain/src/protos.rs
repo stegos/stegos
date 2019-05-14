@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::transaction::Transaction;
+use crate::transaction::PaymentTransaction;
 use failure::{ensure, format_err, Error, Fail};
 use stegos_serialization::traits::*;
 
@@ -155,10 +155,10 @@ impl ProtoConvert for Output {
     }
 }
 
-impl ProtoConvert for Transaction {
-    type Proto = blockchain::Transaction;
+impl ProtoConvert for PaymentTransaction {
+    type Proto = blockchain::PaymentTransaction;
     fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::Transaction::new();
+        let mut proto = blockchain::PaymentTransaction::new();
 
         for txin in &self.txins {
             proto.txins.push(txin.into_proto());
@@ -185,13 +185,45 @@ impl ProtoConvert for Transaction {
         let fee = proto.get_fee();
         let sig = SchnorrSig::from_proto(proto.get_sig())?;
 
-        Ok(Transaction {
+        Ok(PaymentTransaction {
             txins,
             txouts,
             gamma,
             fee,
             sig,
         })
+    }
+}
+
+impl ProtoConvert for Transaction {
+    type Proto = blockchain::Transaction;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = blockchain::Transaction::new();
+        match self {
+            Transaction::PaymentTransaction(payment_transaction) => {
+                proto.set_payment_transaction(payment_transaction.into_proto())
+            }
+        }
+        proto
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let transaction = match proto.transaction {
+            Some(blockchain::Transaction_oneof_transaction::payment_transaction(
+                ref payment_transaction,
+            )) => {
+                let payment_transaction = PaymentTransaction::from_proto(payment_transaction)?;
+                Transaction::PaymentTransaction(payment_transaction)
+            }
+            None => {
+                return Err(ProtoError::MissingField(
+                    "transaction".to_string(),
+                    "transaction".to_string(),
+                )
+                .into());
+            }
+        };
+        Ok(transaction)
     }
 }
 
@@ -599,7 +631,7 @@ mod tests {
         Output::from_buffer(&buf).expect_err("error");
     }
 
-    fn mktransaction() -> Transaction {
+    fn mktransaction() -> PaymentTransaction {
         let (skey1, pkey1) = make_random_keys();
         let (_skey2, pkey2) = make_random_keys();
 
@@ -618,7 +650,7 @@ mod tests {
 
         let outputs_gamma = gamma11;
 
-        let tx = Transaction::new(&skey1, &inputs1, &[output11], outputs_gamma, fee)
+        let tx = PaymentTransaction::new(&skey1, &inputs1, &[output11], outputs_gamma, fee)
             .expect("keys are valid");
         tx.validate(&inputs1).unwrap();
 
@@ -632,10 +664,12 @@ mod tests {
     fn transactions() {
         let tx = mktransaction();
         roundtrip(&tx);
+        let tx: Transaction = tx.into();
+        roundtrip(&tx);
 
         let mut buf = tx.into_buffer().unwrap();
         buf.pop();
-        Transaction::from_buffer(&buf).expect_err("error");
+        PaymentTransaction::from_buffer(&buf).expect_err("error");
     }
 
     #[test]
@@ -670,8 +704,9 @@ mod tests {
 
         // Transactions.
         let (tx, _inputs, _outputs) =
-            Transaction::new_test(&skey, &pkey, 300, 2, 100, 1, 100).expect("Invalid transaction");
-        let transactions = vec![tx];
+            PaymentTransaction::new_test(&skey, &pkey, 300, 2, 100, 1, 100)
+                .expect("Invalid transaction");
+        let transactions: Vec<Transaction> = vec![tx.into()];
 
         let mut block = MicroBlock::new(base, view_change_proof, coinbase, transactions, pkeypbc);
         block.sign(&skeypbc, &pkeypbc);

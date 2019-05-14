@@ -213,10 +213,10 @@ impl WalletService {
         )?;
 
         // Transaction TXINs can generally have different keying for each one
-        let tx = Transaction::new(&self.keys.wallet_skey, &inputs, &outputs, gamma, fee)?;
+        let tx = PaymentTransaction::new(&self.keys.wallet_skey, &inputs, &outputs, gamma, fee)?;
         let tx_hash = Hash::digest(&tx);
         let fee = tx.fee;
-        self.node.send_transaction(tx)?;
+        self.node.send_transaction(tx.into())?;
         Ok((tx_hash, fee))
     }
 
@@ -255,7 +255,7 @@ impl WalletService {
         )?;
         let tx_hash = Hash::digest(&tx);
         let fee = tx.fee;
-        self.node.send_transaction(tx)?;
+        self.node.send_transaction(tx.into())?;
         Ok((tx_hash, fee))
     }
 
@@ -275,7 +275,7 @@ impl WalletService {
         )?;
         let tx_hash = Hash::digest(&tx);
         let fee = tx.fee;
-        self.node.send_transaction(tx)?;
+        self.node.send_transaction(tx.into())?;
         Ok((tx_hash, fee))
     }
 
@@ -304,7 +304,7 @@ impl WalletService {
             stakes,
         )?;
         let tx_hash = Hash::digest(&tx);
-        self.node.send_transaction(tx)?;
+        self.node.send_transaction(tx.into())?;
         Ok((tx_hash, 0))
     }
 
@@ -334,7 +334,7 @@ impl WalletService {
             &self.keys.network_skey,
             stakes.into_iter(),
         )?;
-        self.node.send_transaction(tx)?;
+        self.node.send_transaction(tx.into())?;
         Ok(())
     }
 

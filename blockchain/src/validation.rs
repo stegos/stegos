@@ -28,7 +28,7 @@ use crate::error::TransactionError;
 use crate::error::{BlockError, BlockchainError};
 use crate::multisignature::check_multi_signature;
 use crate::output::Output;
-use crate::transaction::Transaction;
+use crate::transaction::{PaymentTransaction, Transaction};
 use failure::Error;
 use log::*;
 use std::cmp::Ordering;
@@ -43,7 +43,7 @@ use stegos_crypto::pbc::secure;
 
 pub type StakingBalance = HashMap<secure::PublicKey, i64>;
 
-impl Transaction {
+impl PaymentTransaction {
     /// Validate the monetary balance and signature of transaction.
     ///
     /// # Arguments
@@ -162,6 +162,20 @@ impl Transaction {
     }
 }
 
+impl Transaction {
+    /// Validate the monetary balance and signature of transaction.
+    ///
+    /// # Arguments
+    ///
+    /// * - `inputs` - UTXOs referred by self.body.txins, in the same order as in self.body.txins.
+    ///
+    pub fn validate(&self, inputs: &[Output]) -> Result<StakingBalance, Error> {
+        match self {
+            Transaction::PaymentTransaction(tx) => tx.validate(inputs),
+        }
+    }
+}
+
 impl MacroBlock {
     ///
     /// Validate the block monetary balance.
@@ -244,7 +258,7 @@ impl Blockchain {
         let mut inputs: Vec<Output> = Vec::new();
 
         // Validate inputs.
-        for input_hash in &tx.txins {
+        for input_hash in tx.txins() {
             // Check that the input can be resolved.
             let input = match self.output_by_hash(input_hash)? {
                 Some(input) => input,
@@ -262,7 +276,7 @@ impl Blockchain {
         }
 
         // Check for overlapping outputs.
-        for output in &tx.txouts {
+        for output in tx.txouts() {
             let output_hash = Hash::digest(output);
             // Check that the output is unique and don't overlap with other transactions.
             if outputs_set.contains(&output_hash) || self.contains_output(&output_hash) {
@@ -400,14 +414,14 @@ impl Blockchain {
         //
         for tx in &block.transactions {
             self.validate_micro_block_tx(tx, timestamp, &inputs_set, &outputs_set)?;
-            for input_hash in &tx.txins {
+            for input_hash in tx.txins() {
                 inputs_set.insert(input_hash.clone());
             }
-            for output in &tx.txouts {
+            for output in tx.txouts() {
                 let output_hash = Hash::digest(&output);
                 outputs_set.insert(output_hash.clone());
             }
-            fee += tx.fee;
+            fee += tx.fee();
         }
 
         //
@@ -736,7 +750,7 @@ pub mod tests {
         let (input, _gamma1) = Output::new_payment(&pkey, amount).expect("keys are valid");
         let inputs = [input];
         let mut tx =
-            Transaction::new(&skey, &inputs, &[], Fr::zero(), fee).expect("keys are valid");
+            PaymentTransaction::new(&skey, &inputs, &[], Fr::zero(), fee).expect("keys are valid");
         tx.txins.clear(); // remove all inputs
         tx.validate(&[]).expect_err("tx is invalid");
     }
@@ -748,8 +762,8 @@ pub mod tests {
     pub fn no_outputs() {
         // No outputs
         let (skey, pkey) = cpt::make_random_keys();
-        let (tx, inputs, _outputs) =
-            Transaction::new_test(&skey, &pkey, 100, 1, 0, 0, 100).expect("transaction is valid");
+        let (tx, inputs, _outputs) = PaymentTransaction::new_test(&skey, &pkey, 100, 1, 0, 0, 100)
+            .expect("transaction is valid");
         tx.validate(&inputs).expect("transaction is valid");
     }
 
@@ -770,7 +784,8 @@ pub mod tests {
         //
         {
             let (tx, inputs, _outputs) =
-                Transaction::new_test(&skey0, &pkey0, 0, 2, 0, 1, 0).expect("transaction is valid");
+                PaymentTransaction::new_test(&skey0, &pkey0, 0, 2, 0, 1, 0)
+                    .expect("transaction is valid");
             tx.validate(&inputs).expect("transaction is valid");
         }
 
@@ -778,8 +793,9 @@ pub mod tests {
         // Non-zero amount.
         //
         {
-            let (tx, inputs, _outputs) = Transaction::new_test(&skey0, &pkey0, 100, 2, 200, 1, 0)
-                .expect("transaction is valid");
+            let (tx, inputs, _outputs) =
+                PaymentTransaction::new_test(&skey0, &pkey0, 100, 2, 200, 1, 0)
+                    .expect("transaction is valid");
             tx.validate(&inputs).expect("transaction is valid");
         }
 
@@ -787,7 +803,7 @@ pub mod tests {
         // Negative amount.
         //
         {
-            match Transaction::new_test(&skey0, &pkey0, 0, 1, -1, 1, 0) {
+            match PaymentTransaction::new_test(&skey0, &pkey0, 0, 1, -1, 1, 0) {
                 Err(e) => match e.downcast::<OutputError>().unwrap() {
                     OutputError::InvalidBulletProof(_output_hash) => {}
                     _ => panic!(),
@@ -801,7 +817,7 @@ pub mod tests {
         //
         {
             let (mut tx, inputs, _outputs) =
-                Transaction::new_test(&skey0, &pkey0, 100, 1, 100, 1, 0)
+                PaymentTransaction::new_test(&skey0, &pkey0, 100, 1, 100, 1, 0)
                     .expect("transaction is valid");
             let output = &mut tx.txouts[0];
             match output {
@@ -830,7 +846,7 @@ pub mod tests {
         let inputs1 = [output0.clone()];
         let (output1, gamma1) = Output::new_payment(&pkey2, amount - fee).expect("keys are valid");
         let outputs_gamma = gamma1;
-        let mut tx = Transaction::new(&skey1, &inputs1, &[output1], outputs_gamma, fee)
+        let mut tx = PaymentTransaction::new(&skey1, &inputs1, &[output1], outputs_gamma, fee)
             .expect("keys are valid");
 
         // Validation
@@ -897,7 +913,8 @@ pub mod tests {
         // Invalid gamma
         //
         let (mut tx, inputs, _outputs) =
-            Transaction::new_test(&skey0, &pkey0, 100, 2, 200, 1, 0).expect("transaction is valid");
+            PaymentTransaction::new_test(&skey0, &pkey0, 100, 2, 200, 1, 0)
+                .expect("transaction is valid");
         tx.gamma = Fr::random();
         match tx.validate(&inputs) {
             Err(e) => match e.downcast::<TransactionError>().unwrap() {
@@ -914,7 +931,7 @@ pub mod tests {
             Output::new_payment(&pkey2, amount - fee - 1).expect("keys are valid");
         let outputs = [output_invalid1];
         let outputs_gamma = gamma_invalid1;
-        let tx = Transaction::new(&skey1, &inputs1, &outputs, outputs_gamma, fee)
+        let tx = PaymentTransaction::new(&skey1, &inputs1, &outputs, outputs_gamma, fee)
             .expect("keys are valid");
         match tx.validate(&inputs1) {
             Err(e) => match e.downcast::<TransactionError>().unwrap() {
@@ -943,7 +960,7 @@ pub mod tests {
         let inputs = [input];
         let (output, outputs_gamma) =
             Output::new_payment(&pkey1, amount - fee).expect("keys are valid");
-        let tx = Transaction::new(&skey1, &inputs, &[output], outputs_gamma, fee)
+        let tx = PaymentTransaction::new(&skey1, &inputs, &[output], outputs_gamma, fee)
             .expect("keys are valid");
         tx.validate(&inputs).expect("tx is valid");
 
@@ -955,7 +972,7 @@ pub mod tests {
         let output =
             Output::new_stake(&pkey1, &nskey, &npkey, amount - fee).expect("keys are valid");
         let outputs_gamma = Fr::zero();
-        let tx = Transaction::new(&skey1, &inputs, &[output], outputs_gamma, fee)
+        let tx = PaymentTransaction::new(&skey1, &inputs, &[output], outputs_gamma, fee)
             .expect("keys are valid");
         tx.validate(&inputs).expect("tx is valid");
 
@@ -970,8 +987,8 @@ pub mod tests {
         let output = Output::StakeOutput(output);
         let outputs = [output];
         let outputs_gamma = Fr::zero();
-        let tx =
-            Transaction::new(&skey1, &inputs, &outputs, outputs_gamma, fee).expect("Invalid keys");
+        let tx = PaymentTransaction::new(&skey1, &inputs, &outputs, outputs_gamma, fee)
+            .expect("Invalid keys");
         match tx.validate(&inputs) {
             Err(e) => match e.downcast::<TransactionError>().unwrap() {
                 TransactionError::InvalidMonetaryBalance(_tx_hash) => {}
@@ -990,7 +1007,7 @@ pub mod tests {
         output.amount = 0;
         let output = Output::StakeOutput(output);
         let outputs_gamma = Fr::zero();
-        let tx = Transaction::new(&skey1, &inputs, &[output], outputs_gamma, fee)
+        let tx = PaymentTransaction::new(&skey1, &inputs, &[output], outputs_gamma, fee)
             .expect("keys are valid");
         match tx.validate(&inputs) {
             Err(e) => match e.downcast::<OutputError>().unwrap() {
@@ -1008,7 +1025,7 @@ pub mod tests {
         let output =
             Output::new_stake(&pkey1, &nskey, &npkey, amount - fee).expect("keys are valid");
         let outputs_gamma = Fr::zero();
-        let mut tx = Transaction::new(&skey1, &inputs, &[output], outputs_gamma, fee)
+        let mut tx = PaymentTransaction::new(&skey1, &inputs, &[output], outputs_gamma, fee)
             .expect("keys are valid");
         tx.validate(&inputs).expect("tx is valid");
         let output = &mut tx.txouts[0];
@@ -1096,15 +1113,15 @@ pub mod tests {
         let sum_cap_k = simple_commit(k_val1 + k_val2 + k_val3, Fr::zero());
 
         let err_stx = "Can't construct supertransaction";
-        let mut stx1 = Transaction::new_super_transaction(
+        let mut stx1 = PaymentTransaction::new_super_transaction(
             &skeff1, k_val1, &sum_cap_k, &inputs, &outputs, gamma_adj, total_fee,
         )
         .expect(err_stx);
-        let stx2 = Transaction::new_super_transaction(
+        let stx2 = PaymentTransaction::new_super_transaction(
             &skeff2, k_val2, &sum_cap_k, &inputs, &outputs, gamma_adj, total_fee,
         )
         .expect(err_stx);
-        let stx3 = Transaction::new_super_transaction(
+        let stx3 = PaymentTransaction::new_super_transaction(
             &skeff3, k_val3, &sum_cap_k, &inputs, &outputs, gamma_adj, total_fee,
         )
         .expect(err_stx);

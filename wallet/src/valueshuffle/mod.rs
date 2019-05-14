@@ -97,7 +97,7 @@ use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::time::{Duration, SystemTime};
 use stegos_blockchain::Output;
-use stegos_blockchain::Transaction;
+use stegos_blockchain::PaymentTransaction;
 use stegos_blockchain::{PaymentOutput, PaymentPayloadData};
 use stegos_crypto::bulletproofs::{simple_commit, validate_range_proof};
 use stegos_crypto::curve1174::cpt::Pt;
@@ -146,7 +146,7 @@ struct ValidationData {
     // used to pass extra data to the blame discovery validator fn
     pub all_txins: HashMap<ParticipantID, Vec<(TXIN, UTXO)>>,
     pub signatures: HashMap<ParticipantID, SchnorrSig>,
-    pub transaction: Transaction,
+    pub transaction: PaymentTransaction,
     pub serialized_utxo_size: usize,
 }
 
@@ -281,7 +281,7 @@ pub struct ValueShuffle {
 
     // the super-transaction that each remaining participant should have
     // all of us should compute the same body, different individual signatures
-    trans: Transaction,
+    trans: PaymentTransaction,
 
     // the list of signatures from each remaining participant
     // Individual signatures are based on hash of common transaction body,
@@ -413,7 +413,7 @@ impl ValueShuffle {
             pending_participants: HashSet::new(),
             excl_participants_with_cloaks: Vec::new(),
             msg_state: VsMsgType::None,
-            trans: Transaction::dum(),
+            trans: PaymentTransaction::dum(),
             wait_start: SystemTime::now(),
             waiting: 0,
             msg_queue: VecDeque::new(),
@@ -1564,14 +1564,14 @@ impl ValueShuffle {
         utxos: &Vec<UTXO>,
         total_fee: i64,
         gamma_adj: Fr,
-    ) -> Transaction {
+    ) -> PaymentTransaction {
         fn map_to_outputs(v: &Vec<UTXO>) -> Vec<Output> {
             v.iter().map(|u| Output::PaymentOutput(u.clone())).collect()
         }
         let inputs = map_to_outputs(txins);
         let outputs = map_to_outputs(utxos);
 
-        Transaction::new_super_transaction(
+        PaymentTransaction::new_super_transaction(
             my_skey, my_k, K_val, &inputs, &outputs, gamma_adj, total_fee,
         )
         .expect("Can't construct the super-transaction")
@@ -1824,7 +1824,7 @@ impl ValueShuffle {
     fn send_super_transaction(&self) {
         // send final superTransaction to blockchain
         self.node
-            .send_transaction(self.trans.clone())
+            .send_transaction(self.trans.clone().into())
             .expect("Can't send super-transaction");
     }
 

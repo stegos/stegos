@@ -423,13 +423,13 @@ impl NodeService {
         info!(
             "Received transaction from the network: tx={}, inputs={}, outputs={}, fee={}",
             &tx_hash,
-            tx.txins.len(),
-            tx.txouts.len(),
-            tx.fee
+            tx.txins().len(),
+            tx.txouts().len(),
+            tx.fee()
         );
 
         // Limit the number of inputs and outputs.
-        let utxo_count = tx.txins.len() + tx.txouts.len();
+        let utxo_count = tx.txins().len() + tx.txouts().len();
         if utxo_count > self.cfg.max_utxo_in_tx {
             return Err(NodeTransactionError::TooLarge(
                 tx_hash,

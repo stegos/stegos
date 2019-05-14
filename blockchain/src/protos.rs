@@ -160,14 +160,14 @@ impl ProtoConvert for Transaction {
     fn into_proto(&self) -> Self::Proto {
         let mut proto = blockchain::Transaction::new();
 
-        for txin in &self.body.txins {
+        for txin in &self.txins {
             proto.txins.push(txin.into_proto());
         }
-        for txout in &self.body.txouts {
+        for txout in &self.txouts {
             proto.txouts.push(txout.into_proto());
         }
-        proto.set_gamma(self.body.gamma.into_proto());
-        proto.set_fee(self.body.fee);
+        proto.set_gamma(self.gamma.into_proto());
+        proto.set_fee(self.fee);
         proto.set_sig(self.sig.into_proto());
         proto
     }
@@ -186,12 +186,10 @@ impl ProtoConvert for Transaction {
         let sig = SchnorrSig::from_proto(proto.get_sig())?;
 
         Ok(Transaction {
-            body: TransactionBody {
-                txins,
-                txouts,
-                gamma,
-                fee,
-            },
+            txins,
+            txouts,
+            gamma,
+            fee,
             sig,
         })
     }

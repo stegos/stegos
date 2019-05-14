@@ -30,9 +30,9 @@ use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 
-/// Transaction body.
+/// PaymentTransaction.
 #[derive(Clone, Debug)]
-pub struct TransactionBody {
+pub struct Transaction {
     /// List of inputs.
     pub txins: Vec<Hash>,
     /// List of outputs.
@@ -41,9 +41,11 @@ pub struct TransactionBody {
     pub gamma: Fr,
     /// Fee.
     pub fee: i64,
+    /// Transaction signature.
+    pub sig: SchnorrSig,
 }
 
-impl Hashable for TransactionBody {
+impl Hashable for Transaction {
     fn hash(&self, state: &mut Hasher) {
         // Sign txins.
         let txins_count: u64 = self.txins.len() as u64;
@@ -67,30 +69,13 @@ impl Hashable for TransactionBody {
     }
 }
 
-/// PaymentTransaction.
-#[derive(Clone, Debug)]
-pub struct Transaction {
-    /// Transaction body.
-    pub body: TransactionBody,
-    /// Transaction signature.
-    pub sig: SchnorrSig,
-}
-
-impl Hashable for Transaction {
-    fn hash(&self, state: &mut Hasher) {
-        self.body.hash(state);
-    }
-}
-
 impl Transaction {
     pub fn dum() -> Self {
         Transaction {
-            body: TransactionBody {
-                txins: Vec::new(),
-                txouts: Vec::new(),
-                gamma: Fr::zero(),
-                fee: 0,
-            },
+            txins: Vec::new(),
+            txouts: Vec::new(),
+            gamma: Fr::zero(),
+            fee: 0,
             sig: SchnorrSig::new(),
         }
     }
@@ -153,20 +138,19 @@ impl Transaction {
         gamma_adj -= outputs_gamma;
 
         // Create a transaction body and calculate the hash.
-        let body = TransactionBody {
+        let mut tx = Transaction {
             txins,
             txouts: outputs.to_vec(),
             gamma: gamma_adj,
             fee,
+            sig: SchnorrSig::new(),
         };
 
         // Create an effective private key and sign transaction.
-        let tx_hash = Hasher::digest(&body);
+        let tx_hash = Hasher::digest(&tx);
         let eff_skey: SecretKey = eff_skey.into();
-        let sig = sign_hash(&tx_hash, &eff_skey);
+        tx.sig = sign_hash(&tx_hash, &eff_skey);
 
-        // Create signed transaction.
-        let tx = Transaction { body, sig };
         Ok(tx)
     }
 
@@ -216,19 +200,18 @@ impl Transaction {
         }
 
         // Create a transaction body and calculate the hash.
-        let body = TransactionBody {
+        let mut tx = Transaction {
             txins,
             txouts: outputs.to_vec(),
             gamma: gamma_adj.clone(),
             fee: total_fee,
+            sig: SchnorrSig::new(),
         };
 
         // Create an effective private key and sign transaction.
-        let tx_hash = Hasher::digest(&body);
-        let sig = sign_hash_with_kval(&tx_hash, &skey, k_val, sum_cap_k, &sum_pkey);
+        let tx_hash = Hasher::digest(&tx);
+        tx.sig = sign_hash_with_kval(&tx_hash, &skey, k_val, sum_cap_k, &sum_pkey);
 
-        // Create signed transaction.
-        let tx = Transaction { body, sig };
         Ok(tx)
     }
 

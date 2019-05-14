@@ -53,15 +53,15 @@ pub(crate) fn validate_transaction(
 
     // Check fee.
     let mut min_fee: i64 = 0;
-    for txout in &tx.body.txouts {
+    for txout in &tx.txouts {
         min_fee += match txout {
             Output::PaymentOutput(_o) => payment_fee,
             Output::PublicPaymentOutput(_o) => payment_fee,
             Output::StakeOutput(_o) => stake_fee,
         };
     }
-    if tx.body.fee < min_fee {
-        return Err(NodeTransactionError::TooLowFee(tx_hash, min_fee, tx.body.fee).into());
+    if tx.fee < min_fee {
+        return Err(NodeTransactionError::TooLowFee(tx_hash, min_fee, tx.fee).into());
     }
 
     let mut inputs: Vec<Output> = Vec::new();
@@ -70,7 +70,7 @@ pub(crate) fn validate_transaction(
     // See https://github.com/stegos/stegos/issues/826.
 
     // Check for overlapping inputs in mempool.
-    for input_hash in &tx.body.txins {
+    for input_hash in &tx.txins {
         // Check that the input can be resolved.
         let input = match chain.output_by_hash(input_hash)? {
             Some(input) => input,
@@ -88,7 +88,7 @@ pub(crate) fn validate_transaction(
     }
 
     // Check for overlapping outputs in mempool.
-    for output in &tx.body.txouts {
+    for output in &tx.txouts {
         let output_hash = Hash::digest(output);
         // Check that the output is unique and don't overlap with other transactions.
         if mempool.contains_output(&output_hash) || chain.contains_output(&output_hash) {

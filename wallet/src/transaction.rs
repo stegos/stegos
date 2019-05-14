@@ -476,8 +476,8 @@ where
     info!(
         "Created a restaking transaction: hash={}, inputs={}, outputs={}",
         tx_hash,
-        tx.body.txins.len(),
-        tx.body.txouts.len()
+        tx.txins.len(),
+        tx.txouts.len()
     );
 
     Ok(tx)
@@ -521,9 +521,9 @@ pub mod tests {
         )
         .expect("tx is created");
         tx.validate(&inputs).expect("tx is valid");
-        assert_eq!(tx.body.fee, payment_fee);
-        assert_eq!(tx.body.txouts.len(), 1);
-        match &tx.body.txouts.first().unwrap() {
+        assert_eq!(tx.fee, payment_fee);
+        assert_eq!(tx.txouts.len(), 1);
+        match &tx.txouts.first().unwrap() {
             Output::PaymentOutput(o) => {
                 let PaymentPayload { amount, .. } = o.decrypt_payload(&skey).expect("key is valid");
                 assert_eq!(amount, stake - payment_fee);
@@ -545,16 +545,16 @@ pub mod tests {
         )
         .expect("tx is created");
         tx.validate(&inputs).expect("tx is valid");
-        assert_eq!(tx.body.fee, payment_fee + stake_fee);
-        assert_eq!(tx.body.txouts.len(), 2);
-        match &tx.body.txouts[0] {
+        assert_eq!(tx.fee, payment_fee + stake_fee);
+        assert_eq!(tx.txouts.len(), 2);
+        match &tx.txouts[0] {
             Output::PaymentOutput(o) => {
                 let PaymentPayload { amount, .. } = o.decrypt_payload(&skey).expect("key is valid");
                 assert_eq!(amount, unstake - payment_fee);
             }
             _ => panic!("invalid tx"),
         }
-        match &tx.body.txouts[1] {
+        match &tx.txouts[1] {
             Output::StakeOutput(o) => {
                 assert_eq!(o.amount, stake - unstake - stake_fee);
             }

@@ -215,7 +215,7 @@ impl WalletService {
         // Transaction TXINs can generally have different keying for each one
         let tx = Transaction::new(&self.keys.wallet_skey, &inputs, &outputs, gamma, fee)?;
         let tx_hash = Hash::digest(&tx);
-        let fee = tx.body.fee;
+        let fee = tx.fee;
         self.node.send_transaction(tx)?;
         Ok((tx_hash, fee))
     }
@@ -254,7 +254,7 @@ impl WalletService {
             self.stake_fee,
         )?;
         let tx_hash = Hash::digest(&tx);
-        let fee = tx.body.fee;
+        let fee = tx.fee;
         self.node.send_transaction(tx)?;
         Ok((tx_hash, fee))
     }
@@ -274,7 +274,7 @@ impl WalletService {
             self.stake_fee,
         )?;
         let tx_hash = Hash::digest(&tx);
-        let fee = tx.body.fee;
+        let fee = tx.fee;
         self.node.send_transaction(tx)?;
         Ok((tx_hash, fee))
     }

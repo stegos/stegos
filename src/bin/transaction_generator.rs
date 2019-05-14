@@ -106,7 +106,8 @@ fn run() -> Result<(), Error> {
         let genesis = initialize_genesis(&cfg)?;
         let timestamp = SystemTime::now();
         let chain = Blockchain::new(cfg.chain.clone().into(), cfg.storage, genesis, timestamp)?;
-        let wallet_persistent_state = chain.recover_wallet(&keychain.wallet_skey)?;
+        let wallet_persistent_state =
+            chain.recover_wallet(&keychain.wallet_skey, &keychain.wallet_pkey)?;
         let (network, network_service) = Libp2pNetwork::new(&cfg.network, &keychain)?;
         rt.spawn(network_service);
 

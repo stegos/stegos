@@ -223,8 +223,6 @@ impl MicroBlock {
         base: BaseBlockHeader,
         view_change_proof: Option<ViewChangeProof>,
         transactions: Vec<Transaction>,
-        timestamp: SystemTime,
-        sender_skey: &cpt::SecretKey,
         recipient_pkey: &cpt::PublicKey,
         pkey: secure::PublicKey,
         block_reward: i64,
@@ -246,8 +244,7 @@ impl MicroBlock {
 
             let data = PaymentPayloadData::Comment(format!("Block {}", comment));
             let (output_fee, gamma_fee) =
-                PaymentOutput::with_payload(timestamp, sender_skey, recipient_pkey, amount, data)
-                    .expect("invalid keys");
+                PaymentOutput::with_payload(recipient_pkey, amount, data).expect("invalid keys");
             gamma -= gamma_fee;
             outputs.push(Output::PaymentOutput(output_fee));
         }

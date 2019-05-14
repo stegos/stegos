@@ -202,8 +202,6 @@ impl Mempool {
             base,
             view_change_proof,
             transactions,
-            timestamp,
-            &keychain.wallet_skey,
             &keychain.wallet_pkey,
             keychain.network_pkey,
             block_reward,

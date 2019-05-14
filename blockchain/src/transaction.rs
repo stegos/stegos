@@ -23,9 +23,8 @@
 
 use crate::output::*;
 use failure::Error;
-use std::time::SystemTime;
 use stegos_crypto::curve1174::cpt::{
-    sign_hash, sign_hash_with_kval, Pt, PublicKey, SchnorrSig, SecretKey,
+    sign_hash, sign_hash_with_kval, PublicKey, SchnorrSig, SecretKey,
 };
 use stegos_crypto::curve1174::ecpt::ECp;
 use stegos_crypto::curve1174::fields::Fr;
@@ -68,7 +67,7 @@ impl Hashable for TransactionBody {
     }
 }
 
-/// Transaction.
+/// PaymentTransaction.
 #[derive(Clone, Debug)]
 pub struct Transaction {
     /// Transaction body.
@@ -143,10 +142,8 @@ impl Transaction {
                     gamma_adj += payload.gamma;
                     eff_skey += payload.delta * payload.gamma;
                 }
-                Output::StakeOutput(o) => {
-                    let payload = o.decrypt_payload(skey)?;
-                    eff_skey += payload.delta;
-                }
+                Output::PublicPaymentOutput(_) => {}
+                Output::StakeOutput(_o) => {}
             }
             let hash = Hasher::digest(txin);
             txins.push(hash);
@@ -215,18 +212,14 @@ impl Transaction {
         for txin in inputs {
             let hash = Hasher::digest(txin);
             txins.push(hash);
-            let pkey = match txin {
-                Output::PaymentOutput(o) => o.recipient,
-                Output::StakeOutput(o) => o.recipient,
-            };
-            sum_pkey += Pt::from(pkey).decompress()?;
+            sum_pkey += txin.recipient_pkey()?;
         }
 
         // Create a transaction body and calculate the hash.
         let body = TransactionBody {
             txins,
             txouts: outputs.to_vec(),
-            gamma: gamma_adj,
+            gamma: gamma_adj.clone(),
             fee: total_fee,
         };
 
@@ -254,18 +247,15 @@ impl Transaction {
         let mut inputs: Vec<Output> = Vec::with_capacity(input_count);
         let mut outputs: Vec<Output> = Vec::with_capacity(output_count);
 
-        let timestamp = SystemTime::now();
-
         for _ in 0..input_count {
-            let (input, _gamma) =
-                Output::new_payment(timestamp, &skey, &pkey, input_amount).expect("keys are valid");
+            let (input, _gamma) = Output::new_payment(&pkey, input_amount).expect("keys are valid");
             inputs.push(input);
         }
 
         let mut outputs_gamma: Fr = Fr::zero();
         for _ in 0..output_count {
-            let (output, gamma) = Output::new_payment(timestamp, &skey, &pkey, output_amount)
-                .expect("keys are valid");
+            let (output, gamma) =
+                Output::new_payment(&pkey, output_amount).expect("keys are valid");
             outputs.push(output);
             outputs_gamma += gamma;
         }

@@ -125,6 +125,10 @@ lazy_static! {
         let gen_y = Fq::try_from_hex(GEN_Y).expect("Invalid Gen Y hexstr");
         ECp::try_from_xy(&gen_x, &gen_y).expect("Invalid generator description")
     };
+    pub static ref UNIQ: Fq = {
+        assert!(*INIT, "can't happen");
+        Fq::random()
+    };
 }
 
 fn check_prng() {

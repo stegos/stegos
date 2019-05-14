@@ -177,7 +177,7 @@ pub struct ValueShuffle {
     /// State.
     state: State,
     /// My public txpool's key.
-    participant_key: ParticipantID,
+    participant_pkey: ParticipantID,
     /// Public keys of txpool's members,
     participants: Vec<ParticipantID>,
     // My Node
@@ -330,7 +330,7 @@ impl ValueShuffle {
     pub fn new(
         skey: SecretKey,
         pkey: PublicKey,
-        participant_key: ParticipantID,
+        participant_pkey: ParticipantID,
         network: Network,
         node: Node,
     ) -> ValueShuffle {
@@ -380,7 +380,7 @@ impl ValueShuffle {
             skey: skey.clone(),
             facilitator_pkey,
             state,
-            participant_key,
+            participant_pkey,
             participants: participants.clone(), // empty vector
             session_id,
             node,
@@ -557,7 +557,7 @@ impl ValueShuffle {
             debug!("{}", pkey);
         }
 
-        if !self.participants.contains(&self.participant_key) {
+        if !self.participants.contains(&self.participant_pkey) {
             return Err(VsError::VsNotInParticipantList.into());
         }
 
@@ -655,7 +655,7 @@ impl ValueShuffle {
     fn send_message(&self, msg: Message) -> Result<(), Error> {
         let bmsg = msg.into_buffer()?;
         for pkey in &self.participants {
-            if *pkey != self.participant_key {
+            if *pkey != self.participant_pkey {
                 debug!("sending msg {} to {}", &msg, pkey);
                 self.network
                     .send(pkey.clone(), VALUE_SHUFFLE_TOPIC, bmsg.clone())?;
@@ -963,7 +963,7 @@ impl ValueShuffle {
         // our proof of ownership signature on all of them.
 
         self.all_txins
-            .insert(self.participant_key, self.my_txins.clone());
+            .insert(self.participant_pkey, self.my_txins.clone());
 
         let msg_txins: Vec<TXIN> = self.my_txins.iter().map(|(k, _u)| k.clone()).collect();
         let msg = PoolJoin {
@@ -979,12 +979,12 @@ impl ValueShuffle {
         // and set new msg_state for expected kind of messages
         self.pending_participants = HashSet::new();
         for p in &self.participants {
-            if *p != self.participant_key {
+            if *p != self.participant_pkey {
                 self.pending_participants.insert(*p);
             }
         }
         self.participants = Vec::new();
-        self.participants.push(self.participant_key);
+        self.participants.push(self.participant_pkey);
 
         // arrange to ignore enqueue timer events unless they
         // are timestamped later than now.
@@ -1069,7 +1069,7 @@ impl ValueShuffle {
         let my_sigKcmp = my_sigK.compress();
 
         self.sigK_vals = HashMap::new();
-        self.sigK_vals.insert(self.participant_key, my_sigK);
+        self.sigK_vals.insert(self.participant_pkey, my_sigK);
 
         // Generate new cloaked sharing key set and share with others
         // also shares our sigK value at this time.
@@ -1078,7 +1078,7 @@ impl ValueShuffle {
         self.sess_skey = sess_sk.clone();
 
         self.sess_pkeys = HashMap::new();
-        self.sess_pkeys.insert(self.participant_key, sess_pk);
+        self.sess_pkeys.insert(self.participant_pkey, sess_pk);
 
         self.send_session_pkey(&sess_pk, &my_sigKcmp);
 
@@ -1113,13 +1113,13 @@ impl ValueShuffle {
         self.k_cloaks = dc_keys(
             &self.participants,
             &self.sess_pkeys,
-            &self.participant_key,
+            &self.participant_pkey,
             &self.sess_skey,
             &self.session_id,
         );
 
         // Construct fresh UTXOS and gamma_adj
-        let my_pairs = Self::generate_fresh_utxos(&self.my_txouts, &self.sess_skey);
+        let my_pairs = Self::generate_fresh_utxos(&self.my_txouts);
         let mut my_utxos = Vec::<UTXO>::new();
         let mut my_gamma_adj = self.txin_gamma_sum;
         self.my_utxos = Vec::new();
@@ -1157,41 +1157,41 @@ impl ValueShuffle {
         let my_matrix = Self::encode_matrix(
             &self.participants,
             &my_utxos,
-            &self.participant_key,
+            &self.participant_pkey,
             &self.k_cloaks,
             self.dicemix_nbr_utxo_chunks.unwrap(),
         );
         self.matrices = HashMap::new();
         self.matrices
-            .insert(self.participant_key, my_matrix.clone());
+            .insert(self.participant_pkey, my_matrix.clone());
 
         // cloaked gamma_adj for sharing
         self.cloaked_gamma_adjs = HashMap::new();
         let my_cloaked_gamma_adj = dc_encode_scalar(
             my_gamma_adj,
             &self.participants,
-            &self.participant_key,
+            &self.participant_pkey,
             &self.k_cloaks,
         );
         self.cloaked_gamma_adjs
-            .insert(self.participant_key, my_cloaked_gamma_adj);
+            .insert(self.participant_pkey, my_cloaked_gamma_adj);
 
         self.cloaked_fees = HashMap::new();
         let my_cloaked_fee = dc_encode_scalar(
             Fr::from(self.my_fee),
             &self.participants,
-            &self.participant_key,
+            &self.participant_pkey,
             &self.k_cloaks,
         );
         self.cloaked_fees
-            .insert(self.participant_key, my_cloaked_fee);
+            .insert(self.participant_pkey, my_cloaked_fee);
 
         // form commitments to our matrix and gamma sum
         let my_commit = hash_data(&my_matrix, my_cloaked_gamma_adj, my_cloaked_fee);
 
         // Collect and validate commitments from other participants
         self.commits = HashMap::new();
-        self.commits.insert(self.participant_key, my_commit);
+        self.commits.insert(self.participant_pkey, my_commit);
 
         // send sharing commitment to other participants
         self.send_commitment(&my_commit);
@@ -1253,20 +1253,20 @@ impl ValueShuffle {
             my_excl_k_cloaks.insert(*p, *cloak);
         }
         self.all_excl_k_cloaks
-            .insert(self.participant_key, my_excl_k_cloaks.clone());
+            .insert(self.participant_pkey, my_excl_k_cloaks.clone());
 
         // send committed and cloaked data to all participants
         let my_matrix = self
             .matrices
-            .get(&self.participant_key)
+            .get(&self.participant_pkey)
             .expect("Can't access my own matrix");
         let my_cloaked_gamma_adj = self
             .cloaked_gamma_adjs
-            .get(&self.participant_key)
+            .get(&self.participant_pkey)
             .expect("Can't access my own gamma_adj");
         let my_cloaked_fee = self
             .cloaked_fees
-            .get(&self.participant_key)
+            .get(&self.participant_pkey)
             .expect("Can't access my own fee");
 
         self.send_cloaked_data(
@@ -1331,7 +1331,7 @@ impl ValueShuffle {
         let msgs = dc_decode(
             &self.participants,
             &self.matrices,
-            &self.participant_key,
+            &self.participant_pkey,
             MAX_UTXOS,
             self.dicemix_nbr_utxo_chunks.unwrap(),
             &self.excl_participants_with_cloaks, // the excluded participants
@@ -1410,7 +1410,7 @@ impl ValueShuffle {
         // fill in multi-signature...
         self.signatures = HashMap::new();
         let sig = self.trans.sig;
-        self.signatures.insert(self.participant_key, sig);
+        self.signatures.insert(self.participant_pkey, sig);
 
         self.send_signature(&sig);
 
@@ -1445,7 +1445,7 @@ impl ValueShuffle {
 
         let mut sig = self.trans.sig;
         for p in &self.participants {
-            if *p != self.participant_key {
+            if *p != self.participant_pkey {
                 let other_sig = self.signatures.get(p).expect("Can't access sig");
                 sig += *other_sig;
             }
@@ -1456,7 +1456,7 @@ impl ValueShuffle {
         if self.validate_transaction() {
             let leader = self.leader_id();
             debug!("Leader = {}", leader);
-            if self.participant_key == leader {
+            if self.participant_pkey == leader {
                 // if I'm leader, then send the completed super-transaction
                 // to the blockchain.
                 self.send_super_transaction();
@@ -1481,7 +1481,7 @@ impl ValueShuffle {
         // broadcast our session skey and begin a round of blame discovery
         self.sess_skeys = HashMap::new();
         self.sess_skeys
-            .insert(self.participant_key, self.sess_skey.clone());
+            .insert(self.participant_pkey, self.sess_skey.clone());
 
         self.send_session_skey(&self.sess_skey);
 
@@ -1519,7 +1519,7 @@ impl ValueShuffle {
             let new_p_excl = dc_reconstruct(
                 &self.participants,
                 &self.sess_pkeys,
-                &self.participant_key,
+                &self.participant_pkey,
                 &self.sess_skeys,
                 &self.matrices,
                 &self.cloaked_gamma_adjs,
@@ -1696,17 +1696,15 @@ impl ValueShuffle {
         matrix
     }
 
-    fn generate_fresh_utxos(txouts: &Vec<ProposedUTXO>, my_skey: &SecretKey) -> Vec<(UTXO, Fr)> {
+    fn generate_fresh_utxos(txouts: &Vec<ProposedUTXO>) -> Vec<(UTXO, Fr)> {
         // generate a fresh set of UTXOs based on the list of proposed UTXOs
         // Return new UTXOs with fresh randomness, and the sum of all gamma factors
 
-        let tstamp = SystemTime::now();
         let mut outs = Vec::<(UTXO, Fr)>::new();
         for txout in txouts.clone() {
             let data = PaymentPayloadData::Comment(txout.data);
-            let pair =
-                PaymentOutput::with_payload(tstamp, my_skey, &txout.recip, txout.amount, data)
-                    .expect("Can't produce Payment UTXO");
+            let pair = PaymentOutput::with_payload(&txout.recip, txout.amount, data)
+                .expect("Can't produce Payment UTXO");
             outs.push(pair);
         }
         outs

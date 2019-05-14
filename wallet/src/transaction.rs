@@ -26,7 +26,6 @@ use crate::error::*;
 use crate::valueshuffle::ProposedUTXO;
 use failure::Error;
 use log::*;
-use std::time::SystemTime;
 use stegos_blockchain::*;
 use stegos_crypto::curve1174::cpt::PublicKey;
 use stegos_crypto::curve1174::cpt::SecretKey;
@@ -145,7 +144,6 @@ where
 
 /// Create a new payment transaction.
 pub(crate) fn create_payment_transaction<'a, UnspentIter>(
-    sender_skey: &SecretKey,
     sender_pkey: &PublicKey,
     recipient: &PublicKey,
     unspent_iter: UnspentIter,
@@ -197,13 +195,11 @@ where
     // Create outputs
     //
 
-    let timestamp = SystemTime::now();
     let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
 
     // Create an output for payment
     trace!("Creating change UTXO...");
-    let (output1, gamma1) =
-        PaymentOutput::with_payload(timestamp, sender_skey, recipient, amount, data.clone())?;
+    let (output1, gamma1) = PaymentOutput::with_payload(recipient, amount, data.clone())?;
     let output1_hash = Hash::digest(&output1);
     info!(
         "Created payment UTXO: hash={}, recipient={}, amount={}, data={:?}",
@@ -216,8 +212,7 @@ where
         // Create an output for change
         trace!("Creating change UTXO...");
         let data = PaymentPayloadData::Comment("Change".to_string());
-        let (output2, gamma2) =
-            PaymentOutput::with_payload(timestamp, sender_skey, sender_pkey, change, data.clone())?;
+        let (output2, gamma2) = PaymentOutput::with_payload(sender_pkey, change, data.clone())?;
         info!(
             "Created change UTXO: hash={}, recipient={}, change={}, data={:?}",
             Hash::digest(&output2),
@@ -298,19 +293,11 @@ where
     // Create outputs
     //
 
-    let timestamp = SystemTime::now();
     let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
 
     // Create an output for staking.
     trace!("Creating stake UTXO...");
-    let output1 = Output::new_stake(
-        timestamp,
-        sender_skey,
-        sender_pkey,
-        validator_pkey,
-        validator_skey,
-        amount,
-    )?;
+    let output1 = Output::new_stake(sender_pkey, validator_skey, validator_pkey, amount)?;
     info!(
         "Created stake UTXO: hash={}, recipient={}, validator={}, amount={}",
         Hash::digest(&output1),
@@ -324,7 +311,7 @@ where
     if change > 0 {
         // Create an output for change
         trace!("Creating change UTXO...");
-        let (output2, gamma2) = Output::new_payment(timestamp, sender_skey, sender_pkey, change)?;
+        let (output2, gamma2) = Output::new_payment(sender_pkey, change)?;
         info!(
             "Created change UTXO: hash={}, recipient={}, change={}",
             Hash::digest(&output2),
@@ -405,12 +392,11 @@ where
     // Create outputs
     //
 
-    let timestamp = SystemTime::now();
     let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
 
     // Create an output for payment
     trace!("Creating payment UTXO...");
-    let (output1, gamma1) = Output::new_payment(timestamp, sender_skey, sender_pkey, amount)?;
+    let (output1, gamma1) = Output::new_payment(sender_pkey, amount)?;
     info!(
         "Created payment UTXO: hash={}, recipient={}, amount={}",
         Hash::digest(&output1),
@@ -424,14 +410,7 @@ where
         // Create an output for staking.
         assert_eq!(fee, payment_fee + stake_fee);
         trace!("Creating stake UTXO...");
-        let output2 = Output::new_stake(
-            timestamp,
-            sender_skey,
-            sender_pkey,
-            validator_pkey,
-            validator_skey,
-            change,
-        )?;
+        let output2 = Output::new_stake(sender_pkey, validator_skey, validator_pkey, change)?;
         info!(
             "Created stake UTXO: hash={}, validator={}, amount={}",
             Hash::digest(&output2),
@@ -468,10 +447,8 @@ where
         sender_pkey, validator_pkey
     );
 
-    let timestamp = SystemTime::now();
     let mut inputs: Vec<Output> = Vec::new();
     let mut outputs: Vec<Output> = Vec::new();
-    let outputs_gamma = Fr::zero();
     for input in stakes_iter {
         debug!(
             "Unstake: hash={}, validator={}, amount={}",
@@ -482,14 +459,7 @@ where
         inputs.push(Output::StakeOutput(input.clone()));
 
         trace!("Creating StakeUTXO...");
-        let output = Output::new_stake(
-            timestamp,
-            sender_skey,
-            sender_pkey,
-            validator_pkey,
-            validator_skey,
-            input.amount,
-        )?;
+        let output = Output::new_stake(sender_pkey, validator_skey, validator_pkey, input.amount)?;
         debug!(
             "Stake: hash={}, validator={}, amount={}",
             Hash::digest(&output),
@@ -501,7 +471,7 @@ where
 
     trace!("Signing transaction...");
     let fee = 0;
-    let tx = Transaction::new(&sender_skey, &inputs, &outputs, outputs_gamma, fee)?;
+    let tx = Transaction::new(&sender_skey, &inputs, &outputs, Fr::zero(), fee)?;
     let tx_hash = Hash::digest(&tx);
     info!(
         "Created a restaking transaction: hash={}, inputs={}, outputs={}",
@@ -530,19 +500,11 @@ pub mod tests {
         let (skey, pkey) = make_random_keys();
         let (validator_skey, validator_pkey) = secure::make_random_keys();
 
-        let timestamp = SystemTime::now();
         let stake: i64 = 100;
 
         // Stake money.
-        let output = StakeOutput::new(
-            timestamp,
-            &skey,
-            &pkey,
-            &validator_pkey,
-            &validator_skey,
-            stake,
-        )
-        .expect("keys are valid");
+        let output = StakeOutput::new(&pkey, &validator_skey, &validator_pkey, stake)
+            .expect("keys are valid");
         let inputs = [Output::StakeOutput(output.clone())];
         let unspent: Vec<StakeOutput> = vec![output];
 

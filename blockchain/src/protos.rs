@@ -19,6 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::transaction::Transaction;
 use failure::{ensure, format_err, Error, Fail};
 use stegos_serialization::traits::*;
 
@@ -27,7 +28,7 @@ use bitvector::BitVector;
 use crate::view_changes::*;
 use crate::*;
 use stegos_crypto::bulletproofs::BulletProof;
-use stegos_crypto::curve1174::cpt::{EncryptedPayload, PublicKey, SchnorrSig};
+use stegos_crypto::curve1174::cpt::{EncryptedPayload, Pt, PublicKey, SchnorrSig};
 use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
@@ -50,18 +51,43 @@ impl ProtoConvert for PaymentOutput {
     fn into_proto(&self) -> Self::Proto {
         let mut proto = blockchain::PaymentOutput::new();
         proto.set_recipient(self.recipient.into_proto());
+        proto.set_cloaking_hint(self.cloaking_hint.into_proto());
         proto.set_proof(self.proof.into_proto());
         proto.set_payload(self.payload.into_proto());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let recipient = PublicKey::from_proto(proto.get_recipient())?;
+        let cloaking_hint = Pt::from_proto(proto.get_cloaking_hint())?;
         let proof = BulletProof::from_proto(proto.get_proof())?;
         let payload = EncryptedPayload::from_proto(proto.get_payload())?;
         Ok(PaymentOutput {
             recipient,
+            cloaking_hint,
             proof,
             payload,
+        })
+    }
+}
+
+impl ProtoConvert for PublicPaymentOutput {
+    type Proto = blockchain::PublicPaymentOutput;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = blockchain::PublicPaymentOutput::new();
+        proto.set_recipient(self.recipient.into_proto());
+        proto.set_amount(self.amount);
+        proto.set_serno(self.serno);
+        proto
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let recipient = PublicKey::from_proto(proto.get_recipient())?;
+        let amount = proto.get_amount();
+        let serno = proto.get_serno();
+        Ok(PublicPaymentOutput {
+            recipient,
+            amount,
+            serno,
         })
     }
 }
@@ -72,24 +98,24 @@ impl ProtoConvert for StakeOutput {
         let mut proto = blockchain::StakeOutput::new();
         proto.set_recipient(self.recipient.into_proto());
         proto.set_validator(self.validator.into_proto());
-        proto.set_signature(self.signature.into_proto());
         proto.set_amount(self.amount);
-        proto.set_payload(self.payload.into_proto());
+        proto.set_serno(self.serno);
+        proto.set_signature(self.signature.into_proto());
         proto
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let recipient = PublicKey::from_proto(proto.get_recipient())?;
         let validator = secure::PublicKey::from_proto(proto.get_validator())?;
-        let signature = secure::Signature::from_proto(proto.get_signature())?;
         let amount = proto.get_amount();
-        let payload = EncryptedPayload::from_proto(proto.get_payload())?;
+        let serno = proto.get_serno();
+        let signature = secure::Signature::from_proto(proto.get_signature())?;
         Ok(StakeOutput {
             recipient,
             validator,
-            signature,
             amount,
-            payload,
+            serno,
+            signature,
         })
     }
 }
@@ -100,6 +126,9 @@ impl ProtoConvert for Output {
         let mut proto = blockchain::Output::new();
         match self {
             Output::PaymentOutput(output) => proto.set_payment_output(output.into_proto()),
+            Output::PublicPaymentOutput(output) => {
+                proto.set_public_payment_output(output.into_proto())
+            }
             Output::StakeOutput(output) => proto.set_stake_output(output.into_proto()),
         }
         proto
@@ -110,6 +139,10 @@ impl ProtoConvert for Output {
             Some(blockchain::Output_oneof_output::payment_output(ref output)) => {
                 let output = PaymentOutput::from_proto(output)?;
                 Ok(Output::PaymentOutput(output))
+            }
+            Some(blockchain::Output_oneof_output::public_payment_output(ref output)) => {
+                let output = PublicPaymentOutput::from_proto(output)?;
+                Ok(Output::PublicPaymentOutput(output))
             }
             Some(blockchain::Output_oneof_output::stake_output(ref output)) => {
                 let output = StakeOutput::from_proto(output)?;
@@ -538,7 +571,7 @@ mod tests {
     use std::time::SystemTime;
     use stegos_crypto::curve1174::cpt::make_random_keys;
     use stegos_crypto::hash::{Hash, Hashable, Hasher};
-    use stegos_crypto::pbc::secure::make_random_keys as make_secure_random_keys;
+    use stegos_crypto::pbc::secure::make_random_keys as make_network_random_keys;
 
     fn roundtrip<T>(x: &T) -> T
     where
@@ -551,26 +584,16 @@ mod tests {
 
     #[test]
     fn outputs() {
-        let (skey0, _pkey0) = make_random_keys();
-        let (skey1, pkey1) = make_random_keys();
-        let (secure_skey1, secure_pkey1) = make_secure_random_keys();
+        let (_skey1, pkey1) = make_random_keys();
+        let (network_skey1, network_pkey1) = make_network_random_keys();
 
         let amount = 1_000_000;
-        let timestamp = SystemTime::now();
 
-        let (output, _gamma) =
-            Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
+        let (output, _gamma) = Output::new_payment(&pkey1, amount).expect("keys are valid");
         roundtrip(&output);
 
-        let output = Output::new_stake(
-            timestamp,
-            &skey1,
-            &pkey1,
-            &secure_pkey1,
-            &secure_skey1,
-            amount,
-        )
-        .expect("keys are valid");
+        let output = Output::new_stake(&pkey1, &network_skey1, &network_pkey1, amount)
+            .expect("keys are valid");
         roundtrip(&output);
 
         let mut buf = output.into_buffer().unwrap();
@@ -579,22 +602,18 @@ mod tests {
     }
 
     fn mktransaction() -> Transaction {
-        let (skey0, _pkey0) = make_random_keys();
         let (skey1, pkey1) = make_random_keys();
         let (_skey2, pkey2) = make_random_keys();
 
-        let timestamp = SystemTime::now();
         let amount: i64 = 1_000_000;
         let fee: i64 = 0;
 
         // "genesis" output by 0
-        let (output0, _delta0) =
-            Output::new_payment(timestamp, &skey0, &pkey1, amount).expect("keys are valid");
+        let (output0, _delta0) = Output::new_payment(&pkey1, amount).expect("keys are valid");
 
         // Transaction from 1 to 2
         let inputs1 = [output0];
-        let (output11, gamma11) =
-            Output::new_payment(timestamp, &skey1, &pkey2, amount).expect("keys are valid");
+        let (output11, gamma11) = Output::new_payment(&pkey2, amount).expect("keys are valid");
 
         roundtrip(&output11);
         roundtrip(&gamma11);
@@ -624,7 +643,7 @@ mod tests {
     #[test]
     fn micro_blocks() {
         let (skey, pkey) = make_random_keys();
-        let (skeypbc, pkeypbc) = make_secure_random_keys();
+        let (skeypbc, pkeypbc) = make_network_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -642,8 +661,7 @@ mod tests {
         let view_change_proof = Some(ViewChangeProof::new(signatures.into_iter()));
 
         // Coinbase.
-        let (output, gamma) =
-            Output::new_payment(timestamp, &skey, &pkey, 100).expect("Invalid keys");
+        let (output, gamma) = Output::new_payment(&pkey, 100).expect("Invalid keys");
         let coinbase = Coinbase {
             block_reward: 15,
             block_fee: 100,
@@ -680,10 +698,9 @@ mod tests {
 
     #[test]
     fn macro_blocks() {
-        let (skey0, _pkey0) = make_random_keys();
-        let (skey1, pkey1) = make_random_keys();
+        let (_skey1, pkey1) = make_random_keys();
         let (_skey2, pkey2) = make_random_keys();
-        let (skeypbc, pkeypbc) = make_secure_random_keys();
+        let (skeypbc, pkeypbc) = make_network_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -693,11 +710,11 @@ mod tests {
         let previous = Hash::digest(&"test".to_string());
 
         // "genesis" output by 0
-        let (output0, gamma0) = Output::new_payment(timestamp, &skey0, &pkey1, amount).unwrap();
+        let (output0, gamma0) = Output::new_payment(&pkey1, amount).unwrap();
 
         // Transaction from 1 to 2
         let inputs1 = [Hash::digest(&output0)];
-        let (output1, gamma1) = Output::new_payment(timestamp, &skey1, &pkey2, amount).unwrap();
+        let (output1, gamma1) = Output::new_payment(&pkey2, amount).unwrap();
         let outputs1 = [output1];
         let gamma = gamma0 - gamma1;
 
@@ -706,7 +723,7 @@ mod tests {
         let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
         roundtrip(&base);
 
-        let block = MacroBlock::new(base, gamma.clone(), 0, &inputs1, &outputs1, None, pkeypbc);
+        let block = MacroBlock::new(base, gamma, 0, &inputs1, &outputs1, None, pkeypbc);
         roundtrip(&block.header);
         roundtrip(&block.body);
         roundtrip(&block);

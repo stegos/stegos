@@ -65,22 +65,18 @@ pub fn genesis(
         let mut outputs: Vec<Output> = Vec::with_capacity(1 + keychains.len());
 
         // Create PaymentOutput for node #1.
-        let sender_skey = &keychains[0].wallet_skey;
         let recipient_pkey = &keychains[0].wallet_pkey;
         let mut coins1: i64 = coins - keychains.len() as i64 * stake;
         let (output, outputs_gamma) =
-            Output::new_payment(timestamp, sender_skey, recipient_pkey, coins1)
-                .expect("genesis has valid public keys");
+            Output::new_payment(recipient_pkey, coins1).expect("genesis has valid public keys");
         outputs.push(output);
 
         // Create StakeOutput for each node.
         for keys in keychains {
             let output = Output::new_stake(
-                timestamp,
-                &keys.wallet_skey,
                 &keys.wallet_pkey,
-                &keys.network_pkey,
                 &keys.network_skey,
+                &keys.network_pkey,
                 stake,
             )
             .expect("genesis has valid public keys");

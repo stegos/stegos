@@ -78,13 +78,12 @@ fn simulate_payment(node: &mut NodeService, amount: i64) -> Result<(), Error> {
     let fee: i64 = node.cfg.payment_fee * inputs.len() as i64;
     assert!(inputs_amount >= amount + fee);
     let change = inputs_amount - amount - fee;
-    let timestamp = SystemTime::now();
     let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
-    let (output1, gamma1) = PaymentOutput::new(timestamp, sender_skey, sender_pkey, amount)?;
+    let (output1, gamma1) = PaymentOutput::new(sender_pkey, amount)?;
     outputs.push(Output::PaymentOutput(output1));
     let mut outputs_gamma = gamma1;
     if change > 0 {
-        let (output2, gamma2) = PaymentOutput::new(timestamp, sender_skey, sender_pkey, change)?;
+        let (output2, gamma2) = PaymentOutput::new(sender_pkey, change)?;
         outputs.push(Output::PaymentOutput(output2));
         outputs_gamma += gamma2;
     }
@@ -129,6 +128,9 @@ pub fn payments() {
                 let PaymentPayload { amount, .. } = o.decrypt_payload(&keys.wallet_skey).unwrap();
                 amounts.push(amount);
             }
+            Output::PublicPaymentOutput(_o) => {
+                unimplemented!();
+            }
             Output::StakeOutput(o) => {
                 assert_eq!(o.amount, stake);
             }
@@ -162,6 +164,9 @@ pub fn payments() {
             Output::PaymentOutput(o) => {
                 let PaymentPayload { amount, .. } = o.decrypt_payload(&keys.wallet_skey).unwrap();
                 amounts.push(amount);
+            }
+            Output::PublicPaymentOutput(_o) => {
+                unimplemented!();
             }
             Output::StakeOutput(o) => {
                 assert_eq!(o.amount, stake);

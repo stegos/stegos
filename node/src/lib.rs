@@ -381,6 +381,7 @@ impl NodeService {
         self.future_consensus_messages.clear();
         self.optimistic.on_new_consensus(&self.chain);
     }
+
     /// Handle incoming transactions received from network.
     fn handle_transaction(&mut self, tx: Transaction) -> Result<(), Error> {
         let tx_hash = Hash::digest(&tx);

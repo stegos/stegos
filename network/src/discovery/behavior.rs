@@ -34,7 +34,7 @@ use lru_time_cache::LruCache;
 use std::cmp;
 use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 use stegos_crypto::utils::u8v_to_hexstr;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::timer::Delay;
@@ -56,11 +56,11 @@ pub enum DiscoveryOutEvent {
 
 /// Kademlia-based network discovery
 pub struct Discovery<TSubstream> {
-    my_id: secure::PublicKey,
+    my_id: pbc::PublicKey,
     /// Kademlia systems
     kademlia: Kademlia<TSubstream>,
     /// Known nodes
-    known_nodes: LruBimap<secure::PublicKey, PeerId>,
+    known_nodes: LruBimap<pbc::PublicKey, PeerId>,
     /// Outbound events
     out_events: VecDeque<DiscoveryOutEvent>,
     /// Set of currently connected peers
@@ -82,11 +82,11 @@ impl<TSubstream> Discovery<TSubstream>
 where
     TSubstream: AsyncRead + AsyncWrite,
 {
-    pub fn new(local_node_id: secure::PublicKey) -> Self {
+    pub fn new(local_node_id: pbc::PublicKey) -> Self {
         Discovery {
             my_id: local_node_id.clone(),
             kademlia: Kademlia::without_init(local_node_id),
-            known_nodes: LruBimap::<secure::PublicKey, PeerId>::with_expiry_duration(NODES_TTL),
+            known_nodes: LruBimap::<pbc::PublicKey, PeerId>::with_expiry_duration(NODES_TTL),
             out_events: VecDeque::new(),
             connected_peers: HashSet::new(),
             next_query: Delay::new(Instant::now() + Duration::from_secs(30)),
@@ -101,32 +101,32 @@ where
         }
     }
 
-    pub fn change_network_key(&mut self, new_pkey: secure::PublicKey) {
+    pub fn change_network_key(&mut self, new_pkey: pbc::PublicKey) {
         self.kademlia.change_id(new_pkey.clone());
         self.my_id = new_pkey;
     }
 
     /// Sets peer_id to the corresponging node_id
-    pub fn set_peer_id(&mut self, node_id: &secure::PublicKey, peer_id: PeerId) {
+    pub fn set_peer_id(&mut self, node_id: &pbc::PublicKey, peer_id: PeerId) {
         self.kademlia.set_peer_id(node_id, peer_id);
     }
 
     /// Adds a known address for the given `PeerId`. We are connected to this address.
-    pub fn add_connected_address(&mut self, node_id: &secure::PublicKey, address: Multiaddr) {
+    pub fn add_connected_address(&mut self, node_id: &pbc::PublicKey, address: Multiaddr) {
         self.kademlia.add_connected_address(node_id, address);
     }
 
     /// Adds a known address for the given `PeerId`. We are not connected or don't know whether we
     /// are connected to this address.
-    pub fn add_not_connected_address(&mut self, node_id: &secure::PublicKey, address: Multiaddr) {
+    pub fn add_not_connected_address(&mut self, node_id: &pbc::PublicKey, address: Multiaddr) {
         self.kademlia.add_not_connected_address(node_id, address);
     }
 
-    pub fn add_node(&mut self, node_id: secure::PublicKey, peer_id: PeerId) {
+    pub fn add_node(&mut self, node_id: pbc::PublicKey, peer_id: PeerId) {
         self.known_nodes.insert(node_id, peer_id);
     }
 
-    pub fn deliver_unicast(&mut self, to: &secure::PublicKey, payload: Vec<u8>) {
+    pub fn deliver_unicast(&mut self, to: &pbc::PublicKey, payload: Vec<u8>) {
         let mut message = Unicast {
             to: to.clone(),
             payload,
@@ -149,7 +149,7 @@ where
         self.route(to, message);
     }
 
-    pub fn route(&mut self, to: &secure::PublicKey, message: Unicast) {
+    pub fn route(&mut self, to: &pbc::PublicKey, message: Unicast) {
         // Check if we already know node's peer_id
         if let Some(peer_id) = self.known_nodes.get_by_key(to) {
             debug!(target: "stegos_network::delivery", "found node's peer_id: node_id={}, peer_id={}, seq_no={}", to, peer_id.to_base58(), u8v_to_hexstr(&message.seq_no));
@@ -176,12 +176,12 @@ where
 
         debug!(target: "stegos_network::delivery", "finding route to node: node_id={}, seq_no={}", to, u8v_to_hexstr(&message.seq_no));
         // Collect DELIVERY_REPLICATION closest nodes with both peer_id and IPs known
-        let closer_peers_temp: Vec<secure::PublicKey> =
+        let closer_peers_temp: Vec<pbc::PublicKey> =
             self.kademlia.find_closest_with_self(to).collect();
 
         debug!(target: "stegos_network::delivery", "found closer ppers: count={}", closer_peers_temp.len());
 
-        let closer_peers: Vec<(secure::PublicKey, NodeInfo)> = closer_peers_temp
+        let closer_peers: Vec<(pbc::PublicKey, NodeInfo)> = closer_peers_temp
             .into_iter()
             .take_while(|p| p.distance_with(to) <= self.my_id.distance_with(to))
             .filter_map(|n| {
@@ -357,7 +357,7 @@ where
                     self.next_connection_check
                         .reset(Instant::now() + Duration::from_secs(MONITORING_INTERVAL));
                     let my_id = self.kademlia.my_id().clone();
-                    let closest_nodes: Vec<secure::PublicKey> = self
+                    let closest_nodes: Vec<pbc::PublicKey> = self
                         .kademlia
                         .find_closest(&my_id)
                         .take(MIN_CLOSEST_PEERS)
@@ -395,7 +395,7 @@ where
                 Ok(Async::NotReady) => break,
                 Ok(Async::Ready(_)) => {
                     debug!(target: "stegos_network::discovery", "Shooting at DHT to gather nodes information");
-                    let random_node_id = secure::make_random_keys().1;
+                    let random_node_id = pbc::make_random_keys().1;
                     self.kademlia.find_node(random_node_id);
                     self.kademlia.find_node(self.my_id.clone());
                     // Reset the `Delay` to the next random.

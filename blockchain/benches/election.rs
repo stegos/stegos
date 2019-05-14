@@ -24,7 +24,7 @@ use rand::{Rng, SeedableRng};
 use rand_isaac::IsaacRng;
 use stegos_blockchain::election;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 extern crate test;
 use test::Bencher;
 
@@ -61,13 +61,13 @@ fn select_1000_slots_out_of_16(b: &mut Bencher) {
     const STAKE: i64 = 100_000;
 
     let random = Hash::digest("bla");
-    let (skey, _pkey) = secure::make_random_keys();
+    let (skey, _pkey) = pbc::make_random_keys();
 
-    let random = secure::make_VRF(&skey, &random);
+    let random = pbc::make_VRF(&skey, &random);
 
     let mut stakers = Vec::new();
     for _ in 0..GROUP_SIZE {
-        let (_, pkey) = secure::make_random_keys();
+        let (_, pkey) = pbc::make_random_keys();
         stakers.push((pkey, STAKE));
     }
 
@@ -83,21 +83,21 @@ fn select_1000_slots_out_of_16(b: &mut Bencher) {
 #[bench]
 fn create_vrf(b: &mut Bencher) {
     let random = Hash::digest("bla");
-    let (skey, _pkey) = secure::make_random_keys();
+    let (skey, _pkey) = pbc::make_random_keys();
 
     b.iter(|| {
-        test::black_box(secure::make_VRF(&skey, &random));
+        test::black_box(pbc::make_VRF(&skey, &random));
     });
 }
 
 #[bench]
 fn verify_vrf(b: &mut Bencher) {
     let random = Hash::digest("bla");
-    let (skey, pkey) = secure::make_random_keys();
-    let vrf = secure::make_VRF(&skey, &random);
+    let (skey, pkey) = pbc::make_random_keys();
+    let vrf = pbc::make_VRF(&skey, &random);
 
     b.iter(|| {
-        assert!(test::black_box(secure::validate_VRF_source(
+        assert!(test::black_box(pbc::validate_VRF_source(
             &vrf, &pkey, &random
         )));
     });

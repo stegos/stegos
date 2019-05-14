@@ -25,7 +25,7 @@
 // ========================================================================
 // When a wallet wants to participate in a ValueShuffle session,
 // it should advertise its desire by sending a message to the Facilitator
-// node, along with its network ID (currently a pbc::secure::PublicKey).
+// node, along with its network ID (currently a pbc::pbc::PublicKey).
 //
 // When the Facilitator has accumulated a sufficient number of requestor
 // nodes, it collects those ID's and sends a message to each of them, to
@@ -100,16 +100,11 @@ use stegos_blockchain::Output;
 use stegos_blockchain::PaymentTransaction;
 use stegos_blockchain::{PaymentOutput, PaymentPayloadData};
 use stegos_crypto::bulletproofs::{simple_commit, validate_range_proof};
-use stegos_crypto::curve1174::cpt::Pt;
-use stegos_crypto::curve1174::cpt::PublicKey;
-use stegos_crypto::curve1174::cpt::SchnorrSig;
-use stegos_crypto::curve1174::cpt::SecretKey;
-use stegos_crypto::curve1174::cpt::{make_deterministic_keys, sign_hash, validate_sig};
-use stegos_crypto::curve1174::ecpt::ECp;
-use stegos_crypto::curve1174::fields::Fr;
+use stegos_crypto::curve1174::{
+    make_deterministic_keys, sign_hash, validate_sig, ECp, Fr, Pt, PublicKey, SchnorrSig, SecretKey,
+};
 use stegos_crypto::dicemix::*;
-use stegos_crypto::hash::Hash;
-use stegos_crypto::hash::{Hashable, Hasher, HASH_SIZE};
+use stegos_crypto::hash::{Hash, Hashable, Hasher, HASH_SIZE};
 use stegos_network::Network;
 use stegos_node::Node;
 use stegos_serialization::traits::ProtoConvert;
@@ -129,7 +124,7 @@ pub const MAX_UTXOS: usize = 5; // max nbr of txout UTXO permitted
 
 // ==============================================================
 
-type ParticipantID = stegos_crypto::pbc::secure::PublicKey;
+type ParticipantID = stegos_crypto::pbc::PublicKey;
 
 type TXIN = Hash;
 type UTXO = PaymentOutput;
@@ -459,7 +454,7 @@ impl ValueShuffle {
 
     // When a wallet wants to participate in a ValueShuffle session,
     // it should advertise its desire by sending a message to the Facilitator
-    // node, along with its network ID (currently a pbc::secure::PublicKey).
+    // node, along with its network ID (currently a pbc::pbc::PublicKey).
     //
     // When the Facilitator has accumulated a sufficient number of requestor
     // nodes, it collects those ID's and sends a message to each of them, to

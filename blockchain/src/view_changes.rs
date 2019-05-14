@@ -24,18 +24,18 @@ use crate::error::MultisignatureError;
 use crate::multisignature::{check_multi_signature, create_multi_signature_index};
 use bitvector::BitVector;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ViewChangeProof {
     pub multimap: BitVector,
-    pub multisig: secure::Signature,
+    pub multisig: pbc::Signature,
 }
 
 impl ViewChangeProof {
     pub fn new<'a, I>(signatures: I) -> Self
     where
-        I: Iterator<Item = (u32, &'a secure::Signature)>,
+        I: Iterator<Item = (u32, &'a pbc::Signature)>,
     {
         let (multisig, multimap) = create_multi_signature_index(signatures);
         ViewChangeProof { multisig, multimap }

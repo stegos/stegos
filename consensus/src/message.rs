@@ -24,7 +24,7 @@
 use crate::error::*;
 use failure::Error;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 
 /// Consensus Message Payload.
 #[derive(Clone, Debug)]
@@ -34,7 +34,7 @@ pub enum ConsensusMessageBody<Request, Proof> {
     /// Pre-vote Message (prepare).
     Prevote {},
     /// Pre-commit Message (commit).
-    Precommit { request_hash_sig: secure::Signature },
+    Precommit { request_hash_sig: pbc::Signature },
 }
 
 impl<Request: Hashable, Proof: Hashable> Hashable for ConsensusMessageBody<Request, Proof> {
@@ -68,9 +68,9 @@ pub struct ConsensusMessage<Request, Proof> {
     /// Message Body.
     pub body: ConsensusMessageBody<Request, Proof>,
     /// Sender of this message.
-    pub pkey: secure::PublicKey,
+    pub pkey: pbc::PublicKey,
     /// Signature of this message.
-    pub sig: secure::Signature,
+    pub sig: pbc::Signature,
 }
 
 impl<Request, Proof> ConsensusMessage<Request, Proof> {
@@ -91,8 +91,8 @@ impl<Request: Hashable, Proof: Hashable> ConsensusMessage<Request, Proof> {
         height: u64,
         round: u32,
         request_hash: Hash,
-        skey: &secure::SecretKey,
-        pkey: &secure::PublicKey,
+        skey: &pbc::SecretKey,
+        pkey: &pbc::PublicKey,
         body: ConsensusMessageBody<Request, Proof>,
     ) -> ConsensusMessage<Request, Proof> {
         let mut hasher = Hasher::new();
@@ -101,7 +101,7 @@ impl<Request: Hashable, Proof: Hashable> ConsensusMessage<Request, Proof> {
         request_hash.hash(&mut hasher);
         body.hash(&mut hasher);
         let hash = hasher.result();
-        let sig = secure::sign_hash(&hash, skey);
+        let sig = pbc::sign_hash(&hash, skey);
         ConsensusMessage {
             height,
             round,
@@ -125,7 +125,7 @@ impl<Request: Hashable, Proof: Hashable> ConsensusMessage<Request, Proof> {
         self.request_hash.hash(&mut hasher);
         self.body.hash(&mut hasher);
         let hash = hasher.result();
-        if let Err(_e) = secure::check_hash(&hash, &self.sig, &self.pkey) {
+        if let Err(_e) = pbc::check_hash(&hash, &self.sig, &self.pkey) {
             return Err(ConsensusError::InvalidMessageSignature);
         }
         match &self.body {

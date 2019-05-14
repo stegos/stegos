@@ -86,14 +86,14 @@ participants engage.
 
 // -------------------------------------------------
 
-type Fr = curve1174::fields::Fr;
-type Pt = curve1174::cpt::Pt;
-type ECp = curve1174::ecpt::ECp;
+use curve1174::ECp;
+use curve1174::Fr;
+use curve1174::Pt;
 
 pub type ParticipantID = pbc::secure::PublicKey;
-type PublicKey = curve1174::cpt::PublicKey;
-type SecretKey = curve1174::cpt::SecretKey;
-type SchnorrSig = curve1174::cpt::SchnorrSig;
+use curve1174::PublicKey;
+use curve1174::SchnorrSig;
+use curve1174::SecretKey;
 
 pub type DcRow = Vec<Fr>; // one cell per chunk
 pub type DcSheet = Vec<DcRow>;
@@ -800,9 +800,9 @@ mod tests {
         let participants_3 = vec![pk1, pk2];
 
         let sess = Hash::from_str("session1");
-        let (sess_sk1, sess_pk1) = curve1174::cpt::make_deterministic_keys(b"User1-session1");
-        let (sess_sk2, sess_pk2) = curve1174::cpt::make_deterministic_keys(b"User2-session1");
-        let (sess_sk3, sess_pk3) = curve1174::cpt::make_deterministic_keys(b"User3-session1");
+        let (sess_sk1, sess_pk1) = curve1174::make_deterministic_keys(b"User1-session1");
+        let (sess_sk2, sess_pk2) = curve1174::make_deterministic_keys(b"User2-session1");
+        let (sess_sk3, sess_pk3) = curve1174::make_deterministic_keys(b"User3-session1");
 
         let mut npk1 = HashMap::new();
         npk1.insert(pk2, sess_pk2);
@@ -1062,7 +1062,7 @@ mod tests {
         let mut sess_skeys = HashMap::new();
         for ix in 0..nparts {
             let seed = format!("User_{}_Session_Key", ix).into_bytes();
-            let (sk, pk) = curve1174::cpt::make_deterministic_keys(&seed);
+            let (sk, pk) = curve1174::make_deterministic_keys(&seed);
             let p = participants[ix];
             sess_pkeys.insert(p, pk);
             sess_skeys.insert(p, sk);

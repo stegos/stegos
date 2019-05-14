@@ -25,7 +25,7 @@ use log::*;
 use rpassword::prompt_password_stdout;
 use std::fs;
 use std::path::Path;
-use stegos_crypto::curve1174::cpt;
+use stegos_crypto::curve1174;
 
 /// PEM tag for encrypted wallet secret key.
 const RECOVERY_PROMPT: &'static str = "Enter 24-word recovery phrase: ";
@@ -41,7 +41,7 @@ fn fix_newline(password: &mut String) {
     }
 }
 
-fn read_recovery_from_stdin() -> Result<cpt::SecretKey, KeyError> {
+fn read_recovery_from_stdin() -> Result<curve1174::SecretKey, KeyError> {
     loop {
         let recovery = prompt_password_stdout(RECOVERY_PROMPT)
             .map_err(|e| KeyError::InputOutputError("stdin".to_string(), e))?;
@@ -55,7 +55,7 @@ fn read_recovery_from_stdin() -> Result<cpt::SecretKey, KeyError> {
     }
 }
 
-fn read_recovery_from_file(recovery_file: &str) -> Result<cpt::SecretKey, KeyError> {
+fn read_recovery_from_file(recovery_file: &str) -> Result<curve1174::SecretKey, KeyError> {
     info!("Reading recovery phrase from file {}...", recovery_file);
     let recovery_file_path = Path::new(recovery_file);
     let mut recovery = fs::read_to_string(recovery_file_path)
@@ -64,7 +64,7 @@ fn read_recovery_from_file(recovery_file: &str) -> Result<cpt::SecretKey, KeyErr
     Ok(recovery_to_wallet_skey(&recovery)?)
 }
 
-pub(crate) fn read_recovery(recovery_file: &str) -> Result<cpt::SecretKey, KeyError> {
+pub(crate) fn read_recovery(recovery_file: &str) -> Result<curve1174::SecretKey, KeyError> {
     if recovery_file == "-" && atty::is(atty::Stream::Stdin) {
         read_recovery_from_stdin()
     } else {

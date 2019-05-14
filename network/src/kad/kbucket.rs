@@ -36,7 +36,7 @@ use libp2p::multihash::Multihash;
 use std::slice::IterMut as SliceIterMut;
 use std::time::{Duration, Instant};
 use std::vec::IntoIter as VecIntoIter;
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 
 /// Maximum number of nodes in a bucket.
 pub const MAX_NODES_PER_BUCKET: usize = 20;
@@ -134,7 +134,7 @@ impl KBucketsPeerId<Multihash> for PeerId {
     }
 }
 
-impl KBucketsPeerId for secure::PublicKey {
+impl KBucketsPeerId for pbc::PublicKey {
     #[inline]
     fn distance_with(&self, other: &Self) -> u32 {
         Multihash::distance_with(
@@ -149,7 +149,7 @@ impl KBucketsPeerId for secure::PublicKey {
     }
 }
 
-impl KBucketsPeerId<Multihash> for secure::PublicKey {
+impl KBucketsPeerId<Multihash> for pbc::PublicKey {
     #[inline]
     fn distance_with(&self, other: &Multihash) -> u32 {
         Multihash::distance_with(&self.clone().into_multihash(), other)
@@ -539,7 +539,7 @@ mod tests {
     use rand::random;
     use std::thread;
     use std::time::Duration;
-    use stegos_crypto::pbc::secure;
+    use stegos_crypto::pbc;
 
     #[test]
     fn basic_closest() {
@@ -681,8 +681,8 @@ mod tests {
 
     #[test]
     fn pbc_distance_between_keys() {
-        let (_, a) = secure::make_random_keys();
-        let (_, b) = secure::make_random_keys();
+        let (_, a) = pbc::make_random_keys();
+        let (_, b) = pbc::make_random_keys();
         assert_eq!(a.distance_with(&a), 0);
         assert!(a.distance_with(&a) < b.distance_with(&a));
         assert!(a.distance_with(&b) > b.distance_with(&b));
@@ -690,8 +690,8 @@ mod tests {
 
     #[test]
     fn pbc_basic_closest() {
-        let (_, my_id) = secure::make_random_keys();
-        let (_, other_id) = secure::make_random_keys();
+        let (_, my_id) = pbc::make_random_keys();
+        let (_, other_id) = pbc::make_random_keys();
 
         let mut table = KBucketsTable::<_, ()>::new(my_id, Duration::from_secs(5));
         table.entry_mut(&other_id);
@@ -703,7 +703,7 @@ mod tests {
 
     #[test]
     fn pbc_update_local_id_fails() {
-        let (_, my_id) = secure::make_random_keys();
+        let (_, my_id) = pbc::make_random_keys();
 
         let mut table = KBucketsTable::<_, ()>::new(my_id.clone(), Duration::from_secs(5));
         assert!(table.entry_mut(&my_id).is_none());
@@ -715,13 +715,13 @@ mod tests {
 
     #[test]
     fn pbc_update_time_last_refresh() {
-        let (_, my_id) = secure::make_random_keys();
+        let (_, my_id) = pbc::make_random_keys();
         let mut table = KBucketsTable::<_, ()>::new(my_id, Duration::from_secs(5));
 
         // Generate some other IDs varying by just one bit.
         let other_ids = (0..random::<usize>() % 128)
             .map(|_| {
-                let (_, id) = secure::make_random_keys();
+                let (_, id) = pbc::make_random_keys();
                 (id, table.bucket_num(&id).unwrap())
             })
             .collect::<Vec<_>>();

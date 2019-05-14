@@ -44,17 +44,17 @@ use self::lev32::*;
 mod u256; // internal represntation of field elements
 use self::u256::*;
 
-pub mod fields;
-use self::fields::*;
+mod fields;
+pub use self::fields::*;
 
 mod fq51; // coord representation for Elliptic curve points
 use self::fq51::*;
 
-pub mod ecpt; // uncompressed points, affine & projective coords
-use self::ecpt::*;
+mod ecpt; // uncompressed points, affine & projective coords
+pub use self::ecpt::*;
 
-pub mod cpt; // compressed point representation
-use self::cpt::*;
+mod cpt; // compressed point representation
+pub use self::cpt::*;
 
 // -------------------------------------------------------------------
 // Signature Public Key - for checking curve constants validity

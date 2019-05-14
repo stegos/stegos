@@ -30,13 +30,13 @@ use std::collections::HashMap;
 use stegos_blockchain::view_changes::*;
 use stegos_blockchain::{check_supermajority, Blockchain, ChainInfo, ValidatorId};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ViewChangeMessage {
     pub chain: ChainInfo,
     pub validator_id: ValidatorId,
-    pub signature: secure::Signature,
+    pub signature: pbc::Signature,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -54,9 +54,9 @@ impl Hashable for ViewChangeMessage {
 }
 
 impl ViewChangeMessage {
-    pub fn new(chain: ChainInfo, validator_id: ValidatorId, skey: &secure::SecretKey) -> Self {
+    pub fn new(chain: ChainInfo, validator_id: ValidatorId, skey: &pbc::SecretKey) -> Self {
         let hash = Hash::digest(&chain);
-        let signature = secure::sign_hash(&hash, skey);
+        let signature = pbc::sign_hash(&hash, skey);
         ViewChangeMessage {
             chain,
             validator_id,
@@ -72,7 +72,7 @@ impl ViewChangeMessage {
         }
         let hash = Hash::digest(&self.chain);
         let author = blockchain.validators()[validator_id as usize].0;
-        if let Err(_e) = secure::check_hash(&hash, &self.signature, &author) {
+        if let Err(_e) = pbc::check_hash(&hash, &self.signature, &author) {
             return Err(ConsensusError::InvalidViewChangeSignature);
         }
         Ok(())
@@ -89,15 +89,15 @@ pub struct ViewChangeCollector {
     /// validator_id of current node.
     /// If None, ignore events for current epoch.
     validator_id: Option<ValidatorId>,
-    pkey: secure::PublicKey,
-    skey: secure::SecretKey,
+    pkey: pbc::PublicKey,
+    skey: pbc::SecretKey,
 }
 
 impl ViewChangeCollector {
     pub fn new(
         blockchain: &Blockchain,
-        pkey: secure::PublicKey,
-        skey: secure::SecretKey,
+        pkey: pbc::PublicKey,
+        skey: pbc::SecretKey,
     ) -> ViewChangeCollector {
         let mut collector = ViewChangeCollector {
             pkey,

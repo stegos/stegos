@@ -44,7 +44,7 @@ use futures_stream_select_all_send::select_all;
 use log::*;
 use std::collections::HashMap;
 use stegos_blockchain::*;
-use stegos_crypto::curve1174::cpt::PublicKey;
+use stegos_crypto::curve1174::PublicKey;
 use stegos_crypto::hash::Hash;
 use stegos_keychain::KeyChain;
 use stegos_network::Network;

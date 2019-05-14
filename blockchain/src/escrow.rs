@@ -29,11 +29,11 @@ use serde_derive::Serialize;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 
 #[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd)]
 struct EscrowKey {
-    validator_pkey: secure::PublicKey,
+    validator_pkey: pbc::PublicKey,
     output_hash: Hash,
 }
 
@@ -58,7 +58,7 @@ pub struct EscrowInfo {
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct ValidatorInfo {
-    pub network_pkey: secure::PublicKey,
+    pub network_pkey: pbc::PublicKey,
     pub active_stake: i64,
     pub expired_stake: i64,
     pub stakes: Vec<StakeInfo>,
@@ -86,7 +86,7 @@ impl Escrow {
     pub fn stake(
         &mut self,
         version: u64,
-        validator_pkey: secure::PublicKey,
+        validator_pkey: pbc::PublicKey,
         output_hash: Hash,
         epoch: u64,
         stakes_epoch: u64,
@@ -122,7 +122,7 @@ impl Escrow {
     pub fn unstake(
         &mut self,
         version: u64,
-        validator_pkey: secure::PublicKey,
+        validator_pkey: pbc::PublicKey,
         output_hash: Hash,
         epoch: u64,
     ) {
@@ -144,7 +144,7 @@ impl Escrow {
     ///
     /// Returns (active_balance, expired_balance) stake.
     ///
-    pub fn get(&self, validator_pkey: &secure::PublicKey, epoch: u64) -> (i64, i64) {
+    pub fn get(&self, validator_pkey: &pbc::PublicKey, epoch: u64) -> (i64, i64) {
         let (hash_min, hash_max) = Hash::bounds();
         let key_min = EscrowKey {
             validator_pkey: validator_pkey.clone(),
@@ -177,8 +177,8 @@ impl Escrow {
         &self,
         epoch: u64,
         min_stake_amount: i64,
-    ) -> Vec<(secure::PublicKey, i64)> {
-        let mut stakes: BTreeMap<secure::PublicKey, i64> = BTreeMap::new();
+    ) -> Vec<(pbc::PublicKey, i64)> {
+        let mut stakes: BTreeMap<pbc::PublicKey, i64> = BTreeMap::new();
         for (k, v) in self.escrow.iter() {
             if v.active_until_epoch < epoch {
                 // Skip expired stakes.
@@ -197,7 +197,7 @@ impl Escrow {
 
     /// Returns an object that represent printable part of the state.
     pub fn info(&self, epoch: u64) -> EscrowInfo {
-        let mut validators: HashMap<secure::PublicKey, ValidatorInfo> = HashMap::new();
+        let mut validators: HashMap<pbc::PublicKey, ValidatorInfo> = HashMap::new();
         for (k, v) in self.escrow.iter() {
             let entry = validators
                 .entry(k.validator_pkey.clone())

@@ -23,8 +23,8 @@ use crate::error::KeyError;
 use crate::pem;
 use std::fs;
 use std::path::Path;
-use stegos_crypto::curve1174::cpt;
-use stegos_crypto::pbc::secure;
+use stegos_crypto::curve1174;
+use stegos_crypto::pbc;
 use stegos_serialization::traits::ProtoConvert;
 
 /// PEM tag for encrypted wallet secret key.
@@ -53,37 +53,37 @@ fn load_key(path: &Path, tag: &str) -> Result<Vec<u8>, KeyError> {
 
 fn load_encrypted_key(path: &Path, tag: &str, password: &str) -> Result<Vec<u8>, KeyError> {
     let skey = load_key(path, tag)?;
-    let skey = cpt::EncryptedKey::from_buffer(&skey)
+    let skey = curve1174::EncryptedKey::from_buffer(&skey)
         .map_err(|e| KeyError::InvalidPayload(path.to_string_lossy().to_string(), e))?;
-    let skey = cpt::decrypt_key(&password, &skey)
+    let skey = curve1174::decrypt_key(&password, &skey)
         .map_err(|_e| KeyError::InvalidPasswordPhrase(path.to_string_lossy().to_string()))?;
     Ok(skey)
 }
 
-pub(crate) fn load_wallet_pkey(path: &Path) -> Result<cpt::PublicKey, KeyError> {
+pub(crate) fn load_wallet_pkey(path: &Path) -> Result<curve1174::PublicKey, KeyError> {
     let pkey = load_key(path, WALLET_PKEY_TAG)?;
-    cpt::PublicKey::try_from_bytes(&pkey)
+    curve1174::PublicKey::try_from_bytes(&pkey)
         .map_err(|e| KeyError::InvalidKey(path.to_string_lossy().to_string(), e))
 }
 
-pub(crate) fn load_network_pkey(path: &Path) -> Result<secure::PublicKey, KeyError> {
+pub(crate) fn load_network_pkey(path: &Path) -> Result<pbc::PublicKey, KeyError> {
     let pkey = load_key(path, NETWORK_PKEY_TAG)?;
-    secure::PublicKey::try_from_bytes(&pkey)
+    pbc::PublicKey::try_from_bytes(&pkey)
         .map_err(|e| KeyError::InvalidKey(path.to_string_lossy().to_string(), e))
 }
 
-pub(crate) fn load_wallet_skey(path: &Path, password: &str) -> Result<cpt::SecretKey, KeyError> {
-    let bytes = load_encrypted_key(path, WALLET_ENCRYPTED_SKEY_TAG, password)?;
-    cpt::SecretKey::try_from_bytes(&bytes)
-        .map_err(|e| KeyError::InvalidKey(path.to_string_lossy().to_string(), e))
-}
-
-pub(crate) fn load_network_skey(
+pub(crate) fn load_wallet_skey(
     path: &Path,
     password: &str,
-) -> Result<secure::SecretKey, KeyError> {
+) -> Result<curve1174::SecretKey, KeyError> {
+    let bytes = load_encrypted_key(path, WALLET_ENCRYPTED_SKEY_TAG, password)?;
+    curve1174::SecretKey::try_from_bytes(&bytes)
+        .map_err(|e| KeyError::InvalidKey(path.to_string_lossy().to_string(), e))
+}
+
+pub(crate) fn load_network_skey(path: &Path, password: &str) -> Result<pbc::SecretKey, KeyError> {
     let bytes = load_encrypted_key(path, NETWORK_ENCRYPTED_SKEY_TAG, password)?;
-    secure::SecretKey::try_from_bytes(&bytes)
+    pbc::SecretKey::try_from_bytes(&bytes)
         .map_err(|e| KeyError::InvalidKey(path.to_string_lossy().to_string(), e))
 }
 
@@ -102,23 +102,23 @@ fn write_encrypted_key(
     contents: Vec<u8>,
     password: &str,
 ) -> Result<(), KeyError> {
-    let contents = cpt::encrypt_key(&password, &contents)
+    let contents = curve1174::encrypt_key(&password, &contents)
         .into_buffer()
         .expect("Failed to encode encrypted payload");
     write_key(path, tag, contents)
 }
 
-pub(crate) fn write_wallet_pkey(path: &Path, pkey: &cpt::PublicKey) -> Result<(), KeyError> {
+pub(crate) fn write_wallet_pkey(path: &Path, pkey: &curve1174::PublicKey) -> Result<(), KeyError> {
     write_key(path, WALLET_PKEY_TAG, pkey.to_bytes().to_vec())
 }
 
-pub(crate) fn write_network_pkey(path: &Path, pkey: &secure::PublicKey) -> Result<(), KeyError> {
+pub(crate) fn write_network_pkey(path: &Path, pkey: &pbc::PublicKey) -> Result<(), KeyError> {
     write_key(path, NETWORK_PKEY_TAG, pkey.to_bytes().to_vec())
 }
 
 pub(crate) fn write_wallet_skey(
     path: &Path,
-    skey: &cpt::SecretKey,
+    skey: &curve1174::SecretKey,
     password: &str,
 ) -> Result<(), KeyError> {
     let contents = skey.to_bytes().to_vec();
@@ -127,7 +127,7 @@ pub(crate) fn write_wallet_skey(
 
 pub(crate) fn write_network_skey(
     path: &Path,
-    skey: &secure::SecretKey,
+    skey: &pbc::SecretKey,
     password: &str,
 ) -> Result<(), KeyError> {
     let contents = skey.to_bytes().to_vec();

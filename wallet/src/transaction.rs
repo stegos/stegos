@@ -27,11 +27,11 @@ use crate::valueshuffle::ProposedUTXO;
 use failure::Error;
 use log::*;
 use stegos_blockchain::*;
-use stegos_crypto::curve1174::cpt::PublicKey;
-use stegos_crypto::curve1174::cpt::SecretKey;
-use stegos_crypto::curve1174::fields::Fr;
+use stegos_crypto::curve1174::Fr;
+use stegos_crypto::curve1174::PublicKey;
+use stegos_crypto::curve1174::SecretKey;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 
 /// Create a new ValueShuffle payment transaction. (no data)
 pub(crate) fn create_vs_payment_transaction<'a, UnspentIter>(
@@ -240,8 +240,8 @@ where
 pub(crate) fn create_staking_transaction<'a, UnspentIter>(
     sender_skey: &SecretKey,
     sender_pkey: &PublicKey,
-    validator_pkey: &secure::PublicKey,
-    validator_skey: &secure::SecretKey,
+    validator_pkey: &pbc::PublicKey,
+    validator_skey: &pbc::SecretKey,
     unspent_iter: UnspentIter,
     amount: i64,
     payment_fee: i64,
@@ -343,8 +343,8 @@ where
 pub(crate) fn create_unstaking_transaction<'a, UnspentIter>(
     sender_skey: &SecretKey,
     sender_pkey: &PublicKey,
-    validator_pkey: &secure::PublicKey,
-    validator_skey: &secure::SecretKey,
+    validator_pkey: &pbc::PublicKey,
+    validator_skey: &pbc::SecretKey,
     unspent_iter: UnspentIter,
     amount: i64,
     payment_fee: i64,
@@ -435,8 +435,8 @@ where
 pub(crate) fn create_restaking_transaction<'a, UnspentIter>(
     sender_skey: &SecretKey,
     sender_pkey: &PublicKey,
-    validator_pkey: &secure::PublicKey,
-    validator_skey: &secure::SecretKey,
+    validator_pkey: &pbc::PublicKey,
+    validator_skey: &pbc::SecretKey,
     stakes_iter: UnspentIter,
 ) -> Result<PaymentTransaction, Error>
 where
@@ -486,8 +486,8 @@ where
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use stegos_crypto::curve1174::cpt::make_random_keys;
-    use stegos_crypto::pbc::secure;
+    use stegos_crypto::curve1174::make_random_keys;
+    use stegos_crypto::pbc;
 
     /// Check transaction signing and validation.
     #[test]
@@ -498,7 +498,7 @@ pub mod tests {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
         let (skey, pkey) = make_random_keys();
-        let (validator_skey, validator_pkey) = secure::make_random_keys();
+        let (validator_skey, validator_pkey) = pbc::make_random_keys();
 
         let stake: i64 = 100;
 

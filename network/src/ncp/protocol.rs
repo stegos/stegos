@@ -27,7 +27,7 @@ use libp2p::core::{InboundUpgrade, OutboundUpgrade, PeerId, UpgradeInfo};
 use libp2p::Multiaddr;
 use protobuf::Message;
 use std::{io, iter};
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 use tokio::codec::{Decoder, Encoder, Framed};
 use tokio::io::{AsyncRead, AsyncWrite};
 use unsigned_varint::codec;
@@ -169,7 +169,7 @@ impl Decoder for NcpCodec {
                             )
                         })?;
                     let node_id =
-                        secure::PublicKey::try_from_bytes(peer.get_node_id()).map_err(|_| {
+                        pbc::PublicKey::try_from_bytes(peer.get_node_id()).map_err(|_| {
                             io::Error::new(
                                 io::ErrorKind::InvalidData,
                                 "bad protobuf encoding, failed to decode node_id",
@@ -204,7 +204,7 @@ pub enum NcpMessage {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PeerInfo {
     pub peer_id: PeerId,
-    pub node_id: secure::PublicKey,
+    pub node_id: pbc::PublicKey,
     pub addresses: Vec<Multiaddr>,
 }
 
@@ -214,7 +214,7 @@ pub struct GetPeersResponse {
 }
 
 impl PeerInfo {
-    pub fn new(peer_id: &PeerId, node_id: &secure::PublicKey) -> Self {
+    pub fn new(peer_id: &PeerId, node_id: &pbc::PublicKey) -> Self {
         Self {
             peer_id: peer_id.clone(),
             node_id: node_id.clone(),
@@ -229,14 +229,14 @@ mod tests {
     use futures::{Future, Sink, Stream};
     use libp2p::core::upgrade::{InboundUpgrade, OutboundUpgrade};
     use libp2p::core::PeerId;
-    use stegos_crypto::pbc::secure;
+    use stegos_crypto::pbc;
     use tokio::net::{TcpListener, TcpStream};
 
     #[test]
     fn correct_transfer() {
         test_one(NcpMessage::GetPeersRequest);
 
-        let (_, node_id) = secure::make_random_keys();
+        let (_, node_id) = pbc::make_random_keys();
 
         let msg = NcpMessage::GetPeersResponse {
             response: GetPeersResponse {

@@ -28,10 +28,9 @@ use bitvector::BitVector;
 use crate::view_changes::*;
 use crate::*;
 use stegos_crypto::bulletproofs::BulletProof;
-use stegos_crypto::curve1174::cpt::{EncryptedPayload, Pt, PublicKey, SchnorrSig};
-use stegos_crypto::curve1174::fields::Fr;
+use stegos_crypto::curve1174::{EncryptedPayload, Fr, Pt, PublicKey, SchnorrSig};
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 
 #[derive(Debug, Fail)]
 pub enum ProtoError {
@@ -106,10 +105,10 @@ impl ProtoConvert for StakeOutput {
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let recipient = PublicKey::from_proto(proto.get_recipient())?;
-        let validator = secure::PublicKey::from_proto(proto.get_validator())?;
+        let validator = pbc::PublicKey::from_proto(proto.get_validator())?;
         let amount = proto.get_amount();
         let serno = proto.get_serno();
-        let signature = secure::Signature::from_proto(proto.get_signature())?;
+        let signature = pbc::Signature::from_proto(proto.get_signature())?;
         Ok(StakeOutput {
             recipient,
             validator,
@@ -252,7 +251,7 @@ impl ProtoConvert for BaseBlockHeader {
         let view_change = proto.get_view_change();
         let timestamp =
             std::time::UNIX_EPOCH + std::time::Duration::from_millis(proto.get_timestamp());
-        let random = secure::VRF::from_proto(proto.get_random())?;
+        let random = pbc::VRF::from_proto(proto.get_random())?;
         Ok(BaseBlockHeader {
             version,
             previous,
@@ -323,11 +322,11 @@ impl ProtoConvert for MicroBlock {
         for transaction in proto.transactions.iter() {
             transactions.push(Transaction::from_proto(transaction)?);
         }
-        let pkey = secure::PublicKey::from_proto(proto.get_pkey())?;
+        let pkey = pbc::PublicKey::from_proto(proto.get_pkey())?;
         let sig = if proto.has_sig() {
-            secure::Signature::from_proto(proto.get_sig())?
+            pbc::Signature::from_proto(proto.get_sig())?
         } else {
-            secure::Signature::zero()
+            pbc::Signature::zero()
         };
         Ok(MicroBlock {
             base,
@@ -449,11 +448,11 @@ impl ProtoConvert for MacroBlockBody {
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let pkey = secure::PublicKey::from_proto(proto.get_pkey())?;
+        let pkey = pbc::PublicKey::from_proto(proto.get_pkey())?;
         let multisig = if proto.has_sig() {
-            secure::Signature::from_proto(proto.get_sig())?
+            pbc::Signature::from_proto(proto.get_sig())?
         } else {
-            secure::Signature::zero()
+            pbc::Signature::zero()
         };
         if proto.sigmap.len() > VALIDATORS_MAX {
             return Err(
@@ -574,9 +573,9 @@ impl ProtoConvert for ViewChangeProof {
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let multisig = if proto.has_multisig() {
-            secure::Signature::from_proto(proto.get_multisig())?
+            pbc::Signature::from_proto(proto.get_multisig())?
         } else {
-            secure::Signature::zero()
+            pbc::Signature::zero()
         };
         ensure!(
             proto.multimap.len() <= VALIDATORS_MAX,
@@ -599,9 +598,9 @@ impl ProtoConvert for ViewChangeProof {
 mod tests {
     use super::*;
     use std::time::SystemTime;
-    use stegos_crypto::curve1174::cpt::make_random_keys;
+    use stegos_crypto::curve1174;
     use stegos_crypto::hash::{Hash, Hashable, Hasher};
-    use stegos_crypto::pbc::secure::make_random_keys as make_network_random_keys;
+    use stegos_crypto::pbc;
 
     fn roundtrip<T>(x: &T) -> T
     where
@@ -614,8 +613,8 @@ mod tests {
 
     #[test]
     fn outputs() {
-        let (_skey1, pkey1) = make_random_keys();
-        let (network_skey1, network_pkey1) = make_network_random_keys();
+        let (_skey1, pkey1) = curve1174::make_random_keys();
+        let (network_skey1, network_pkey1) = pbc::make_random_keys();
 
         let amount = 1_000_000;
 
@@ -632,8 +631,8 @@ mod tests {
     }
 
     fn mktransaction() -> PaymentTransaction {
-        let (skey1, pkey1) = make_random_keys();
-        let (_skey2, pkey2) = make_random_keys();
+        let (skey1, pkey1) = curve1174::make_random_keys();
+        let (_skey2, pkey2) = curve1174::make_random_keys();
 
         let amount: i64 = 1_000_000;
         let fee: i64 = 0;
@@ -674,8 +673,8 @@ mod tests {
 
     #[test]
     fn micro_blocks() {
-        let (skey, pkey) = make_random_keys();
-        let (skeypbc, pkeypbc) = make_network_random_keys();
+        let (skey, pkey) = curve1174::make_random_keys();
+        let (skeypbc, pkeypbc) = pbc::make_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -683,12 +682,12 @@ mod tests {
         let view_change = 0;
         let previous = Hash::digest(&"test".to_string());
         let seed = mix(Hash::digest("random"), view_change);
-        let random = secure::make_VRF(&skeypbc, &seed);
+        let random = pbc::make_VRF(&skeypbc, &seed);
         let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
         roundtrip(&base);
 
         // View Changes Proof.
-        let sig = secure::sign_hash(&previous, &skeypbc);
+        let sig = pbc::sign_hash(&previous, &skeypbc);
         let signatures = vec![(1u32, &sig)];
         let view_change_proof = Some(ViewChangeProof::new(signatures.into_iter()));
 
@@ -731,9 +730,9 @@ mod tests {
 
     #[test]
     fn macro_blocks() {
-        let (_skey1, pkey1) = make_random_keys();
-        let (_skey2, pkey2) = make_random_keys();
-        let (skeypbc, pkeypbc) = make_network_random_keys();
+        let (_skey1, pkey1) = curve1174::make_random_keys();
+        let (_skey2, pkey2) = curve1174::make_random_keys();
+        let (skeypbc, pkeypbc) = pbc::make_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -752,7 +751,7 @@ mod tests {
         let gamma = gamma0 - gamma1;
 
         let seed = mix(Hash::digest("random"), view_change);
-        let random = secure::make_VRF(&skeypbc, &seed);
+        let random = pbc::make_VRF(&skeypbc, &seed);
         let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
         roundtrip(&base);
 

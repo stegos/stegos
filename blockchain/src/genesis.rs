@@ -28,7 +28,7 @@ use crate::output::*;
 use std::collections::BTreeMap;
 use std::time::SystemTime;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 use stegos_keychain::KeyChain;
 
 /// Genesis blocks.
@@ -53,7 +53,7 @@ pub fn genesis(
     let block1 = {
         let previous = Hash::digest(&"genesis".to_string());
         let seed = mix(init_random, view_change);
-        let random = secure::make_VRF(&keychains[0].network_skey, &seed);
+        let random = pbc::make_VRF(&keychains[0].network_skey, &seed);
         let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
         //
         // Genesis has one PaymentOutput + N * StakeOutput, where N is the number of validators.
@@ -97,10 +97,10 @@ pub fn genesis(
         );
 
         let block_hash = Hash::digest(&block);
-        let mut signatures: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();
-        let mut validators: BTreeMap<secure::PublicKey, i64> = BTreeMap::new();
+        let mut signatures: BTreeMap<pbc::PublicKey, pbc::Signature> = BTreeMap::new();
+        let mut validators: BTreeMap<pbc::PublicKey, i64> = BTreeMap::new();
         for keychain in keychains.iter() {
-            let sig = secure::sign_hash(&block_hash, &keychain.network_skey);
+            let sig = pbc::sign_hash(&block_hash, &keychain.network_skey);
             signatures.insert(keychain.network_pkey.clone(), sig);
             validators.insert(keychain.network_pkey.clone(), stake);
         }

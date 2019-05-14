@@ -32,10 +32,10 @@ use std::mem;
 use stegos_blockchain::create_multi_signature;
 use stegos_blockchain::{check_supermajority, ElectionResult};
 use stegos_crypto::hash::{Hash, Hashable};
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 
 struct LockedRound<Request, Proof> {
-    precommits: BTreeMap<secure::PublicKey, secure::Signature>,
+    precommits: BTreeMap<pbc::PublicKey, pbc::Signature>,
     request: Request,
     proof: Proof,
 }
@@ -70,14 +70,14 @@ pub struct Consensus<Request, Proof> {
     // Network node keys
     //
     /// Public key of current node.
-    skey: secure::SecretKey,
+    skey: pbc::SecretKey,
     /// Public key of current node.
-    pkey: secure::PublicKey,
+    pkey: pbc::PublicKey,
     //
     // Consensus params.
     //
     /// Public keys and slots count of participating nodes.
-    validators: BTreeMap<secure::PublicKey, i64>,
+    validators: BTreeMap<pbc::PublicKey, i64>,
     /// total number of slots for specific node.
     total_slots: i64,
     //
@@ -105,9 +105,9 @@ pub struct Consensus<Request, Proof> {
     /// locked to some round, and didn't produce any new proposes.
     locked_round: Option<LockedRound<Request, Proof>>,
     /// Collected Prevotes.
-    prevotes: BTreeMap<secure::PublicKey, secure::Signature>,
+    prevotes: BTreeMap<pbc::PublicKey, pbc::Signature>,
     /// Collected Precommits.
-    precommits: BTreeMap<secure::PublicKey, secure::Signature>,
+    precommits: BTreeMap<pbc::PublicKey, pbc::Signature>,
 
     //
     // External events
@@ -136,16 +136,16 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
     pub fn new(
         height: u64,
         epoch: u64,
-        skey: secure::SecretKey,
-        pkey: secure::PublicKey,
+        skey: pbc::SecretKey,
+        pkey: pbc::PublicKey,
         election_result: ElectionResult,
-        validators: BTreeMap<secure::PublicKey, i64>,
+        validators: BTreeMap<pbc::PublicKey, i64>,
     ) -> Self {
         assert!(validators.contains_key(&pkey));
         let state = ConsensusState::Propose;
         debug!("New => {}({}:{})", state.name(), height, 0);
-        let prevotes: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();
-        let precommits: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();
+        let prevotes: BTreeMap<pbc::PublicKey, pbc::Signature> = BTreeMap::new();
+        let precommits: BTreeMap<pbc::PublicKey, pbc::Signature> = BTreeMap::new();
         let total_slots = validators.iter().map(|v| v.1).sum();
         let request = None;
         let proof = None;
@@ -316,7 +316,7 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
             self.round,
             &request_hash
         );
-        let request_hash_sig = secure::sign_hash(&request_hash, &self.skey);
+        let request_hash_sig = pbc::sign_hash(&request_hash, &self.skey);
         let body = ConsensusMessageBody::Precommit { request_hash_sig };
         let msg = ConsensusMessage::new(
             self.height,
@@ -555,7 +555,7 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
 
                 // Check signature.
                 let request_hash = Hash::digest(self.request.as_ref().unwrap());
-                if let Err(_e) = secure::check_hash(&request_hash, &request_hash_sig, &msg.pkey) {
+                if let Err(_e) = pbc::check_hash(&request_hash, &request_hash_sig, &msg.pkey) {
                     error!(
                         "{}({}:{}): a pre-commit signature is not valid: from={:?}",
                         self.state.name(),
@@ -654,7 +654,7 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
     ///
     /// Returns public key of the current leader.
     ///
-    pub fn leader(&self) -> secure::PublicKey {
+    pub fn leader(&self) -> pbc::PublicKey {
         self.election_result.select_leader(self.round)
     }
 
@@ -675,7 +675,7 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
     ///
     /// Returns snapshot of the consensus group.
     ///
-    pub fn validators(&self) -> &BTreeMap<secure::PublicKey, i64> {
+    pub fn validators(&self) -> &BTreeMap<pbc::PublicKey, i64> {
         &self.validators
     }
 
@@ -705,7 +705,7 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
     ///
     /// Returns negotiated request with proof and created multisignature.
     ///
-    pub fn sign_and_commit(&mut self) -> (Request, Proof, secure::Signature, BitVector) {
+    pub fn sign_and_commit(&mut self) -> (Request, Proof, pbc::Signature, BitVector) {
         assert!(self.should_commit());
 
         // TODO: Use id instead of PublicKey.
@@ -725,10 +725,7 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
     ///
     /// Checks that supermajority of votes has been collected.
     ///
-    fn check_supermajority(
-        &self,
-        accepts: &BTreeMap<secure::PublicKey, secure::Signature>,
-    ) -> bool {
+    fn check_supermajority(&self, accepts: &BTreeMap<pbc::PublicKey, pbc::Signature>) -> bool {
         trace!(
             "{}({}:{}): check for supermajority: accepts={:?}, total={:?}",
             self.state.name(),

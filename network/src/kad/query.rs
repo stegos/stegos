@@ -31,7 +31,7 @@ use libp2p::multihash::Multihash;
 use log::debug;
 use smallvec::SmallVec;
 use std::time::{Duration, Instant};
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 use stegos_crypto::utils::u8v_to_hexstr;
 use tokio_timer::Delay;
 
@@ -58,7 +58,7 @@ pub struct QueryState {
     /// Ordered list of the peers closest to the result we're looking for.
     /// Entries that are `InProgress` shouldn't be removed from the list before they complete.
     /// Must never contain two entries with the same peer IDs.
-    closest_peers: SmallVec<[(secure::PublicKey, QueryPeerState); 32]>,
+    closest_peers: SmallVec<[(pbc::PublicKey, QueryPeerState); 32]>,
 
     /// Allowed level of parallelism.
     parallelism: usize,
@@ -110,7 +110,7 @@ impl QueryState {
     /// Creates a new query.
     ///
     /// You should call `poll()` this function returns in order to know what to do.
-    pub fn new(config: QueryConfig<impl IntoIterator<Item = secure::PublicKey>>) -> QueryState {
+    pub fn new(config: QueryConfig<impl IntoIterator<Item = pbc::PublicKey>>) -> QueryState {
         let mut closest_peers: SmallVec<[_; 32]> = config
             .known_closest_peers
             .into_iter()
@@ -148,8 +148,8 @@ impl QueryState {
     /// After this function returns, you should call `poll()` again.
     pub fn inject_rpc_result(
         &mut self,
-        result_source: &secure::PublicKey,
-        closer_peers: impl IntoIterator<Item = secure::PublicKey>,
+        result_source: &pbc::PublicKey,
+        closer_peers: impl IntoIterator<Item = pbc::PublicKey>,
     ) {
         // Mark the peer as succeeded.
         for (peer_id, state) in self.closest_peers.iter_mut() {
@@ -238,7 +238,7 @@ impl QueryState {
     /// Returns true if we are waiting for a query answer from that peer.
     ///
     /// After `poll()` returned `SendRpc`, this function will return `true`.
-    pub fn is_waiting(&self, id: &secure::PublicKey) -> bool {
+    pub fn is_waiting(&self, id: &pbc::PublicKey) -> bool {
         let state = self
             .closest_peers
             .iter()
@@ -269,7 +269,7 @@ impl QueryState {
     /// function whenever an error happens on the network.
     ///
     /// After this function returns, you should call `poll()` again.
-    pub fn inject_rpc_error(&mut self, id: &secure::PublicKey) {
+    pub fn inject_rpc_error(&mut self, id: &pbc::PublicKey) {
         let state = self
             .closest_peers
             .iter_mut()
@@ -383,7 +383,7 @@ impl QueryState {
     ///
     /// > **Note**: This can be called at any time, but you normally only do that once the query
     /// >           is finished.
-    pub fn into_closest_peers(self) -> impl Iterator<Item = secure::PublicKey> {
+    pub fn into_closest_peers(self) -> impl Iterator<Item = pbc::PublicKey> {
         self.closest_peers
             .into_iter()
             .filter_map(|(node_id, state)| {
@@ -420,7 +420,7 @@ pub enum QueryStatePollOut<'a> {
     /// `inject_rpc_error` at a later point in time.
     SendRpc {
         /// The peer to send the RPC query to.
-        node_id: &'a secure::PublicKey,
+        node_id: &'a pbc::PublicKey,
         /// A reminder of the query target. Same as what you obtain by calling `target()`.
         query_target: &'a QueryTarget,
     },
@@ -430,7 +430,7 @@ pub enum QueryStatePollOut<'a> {
     /// It is guaranteed that an earlier polling returned `SendRpc` with this peer id.
     CancelRpc {
         /// The target.
-        node_id: &'a secure::PublicKey,
+        node_id: &'a pbc::PublicKey,
     },
 }
 
@@ -486,12 +486,12 @@ mod tests {
     use futures::{self, prelude::*, try_ready};
     use libp2p::multihash::{Hash, Multihash};
     use std::{iter, sync::Arc, sync::Mutex, thread, time::Duration};
-    use stegos_crypto::pbc::secure;
+    use stegos_crypto::pbc;
     use tokio;
 
     #[test]
     fn start_by_sending_rpc_to_known_peers() {
-        let (_, random_id) = secure::make_random_keys();
+        let (_, random_id) = pbc::make_random_keys();
         let random_target = Multihash::random(Hash::SHA3512);
 
         let target = QueryTarget::FindPeer(random_target);
@@ -516,8 +516,8 @@ mod tests {
 
     #[test]
     fn continue_second_result() {
-        let (_, random_id) = secure::make_random_keys();
-        let (_, random_id2) = secure::make_random_keys();
+        let (_, random_id) = pbc::make_random_keys();
+        let (_, random_id2) = pbc::make_random_keys();
         let random_target = Multihash::random(Hash::SHA3512);
         let target = QueryTarget::FindPeer(random_target);
 
@@ -561,7 +561,7 @@ mod tests {
 
     #[test]
     fn timeout_works() {
-        let (_, random_id) = secure::make_random_keys();
+        let (_, random_id) = pbc::make_random_keys();
         let random_target = Multihash::random(Hash::SHA3512);
         let target = QueryTarget::FindPeer(random_target);
 

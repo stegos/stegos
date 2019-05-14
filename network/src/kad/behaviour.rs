@@ -38,7 +38,7 @@ use rand;
 use smallvec::SmallVec;
 use std::vec::IntoIter as VecIntoIter;
 use std::{cmp::Ordering, error, marker::PhantomData, time::Duration, time::Instant};
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 use stegos_crypto::utils::u8v_to_hexstr;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::timer::Interval;
@@ -53,16 +53,16 @@ const METRICS_UPDATE_INTERVAL: u64 = 1;
 /// Network behaviour that handles Kademlia.
 pub struct Kademlia<TSubstream> {
     /// NodeId of this node
-    my_id: secure::PublicKey,
+    my_id: pbc::PublicKey,
     /// Storage for the nodes. Contains the known multiaddresses for this node.
-    kbuckets: KBucketsTable<secure::PublicKey, NodeInfo>,
+    kbuckets: KBucketsTable<pbc::PublicKey, NodeInfo>,
 
-    /// Mapping PeerId -> secure::PublicKey (we use Vec<u8> here, 'cause PeerId doesn't implement Ord)
-    known_peers: LruCache<Vec<u8>, secure::PublicKey>,
+    /// Mapping PeerId -> pbc::PublicKey (we use Vec<u8> here, 'cause PeerId doesn't implement Ord)
+    known_peers: LruCache<Vec<u8>, pbc::PublicKey>,
 
     /// All the iterative queries we are currently performing, with their ID. The last parameter
     /// is the list of accumulated providers for `GET_PROVIDERS` queries.
-    active_queries: FnvHashMap<QueryId, (QueryState, QueryPurpose, Vec<secure::PublicKey>)>,
+    active_queries: FnvHashMap<QueryId, (QueryState, QueryPurpose, Vec<pbc::PublicKey>)>,
 
     /// List of queries to start once we are inside `poll()`.
     queries_to_starts: SmallVec<[(QueryId, QueryTarget, QueryPurpose); 8]>,
@@ -72,7 +72,7 @@ pub struct Kademlia<TSubstream> {
 
     /// Contains a list of peer IDs which we are not connected to, and an RPC query to send to them
     /// once they connect.
-    pending_rpcs: SmallVec<[(secure::PublicKey, KademliaHandlerIn<QueryId>); 8]>,
+    pending_rpcs: SmallVec<[(pbc::PublicKey, KademliaHandlerIn<QueryId>); 8]>,
 
     /// Identifier for the next query that we start.
     next_query_id: QueryId,
@@ -84,7 +84,7 @@ pub struct Kademlia<TSubstream> {
     ///
     /// Our local peer ID can be in this container.
     // TODO: Note that in reality the value is a SHA-256 of the actual value (https://github.com/libp2p/rust-libp2p/issues/694)
-    values_providers: FnvHashMap<Multihash, SmallVec<[secure::PublicKey; 20]>>,
+    values_providers: FnvHashMap<Multihash, SmallVec<[pbc::PublicKey; 20]>>,
 
     /// List of values that we are providing ourselves. Must be kept in sync with
     /// `values_providers`.
@@ -107,7 +107,7 @@ pub struct Kademlia<TSubstream> {
     queued_events: SmallVec<[NetworkBehaviourAction<KademliaHandlerIn<QueryId>, KademliaOut>; 32]>,
 
     /// List of providers to add to the topology as soon as we are in `poll()`.
-    add_provider: SmallVec<[(Multihash, secure::PublicKey); 32]>,
+    add_provider: SmallVec<[(Multihash, pbc::PublicKey); 32]>,
 
     /// When metrics were updated last time
     metrics_last_update: Instant,
@@ -161,7 +161,7 @@ enum QueryPurpose {
 impl<TSubstream> Kademlia<TSubstream> {
     /// Creates a `Kademlia`.
     #[inline]
-    pub fn new(local_node_id: secure::PublicKey) -> Self {
+    pub fn new(local_node_id: pbc::PublicKey) -> Self {
         Self::new_inner(local_node_id, true)
     }
 
@@ -170,37 +170,34 @@ impl<TSubstream> Kademlia<TSubstream> {
     /// Contrary to `new`, doesn't perform the initialization queries that store our local ID into
     /// the DHT.
     #[inline]
-    pub fn without_init(local_node_id: secure::PublicKey) -> Self {
+    pub fn without_init(local_node_id: pbc::PublicKey) -> Self {
         Self::new_inner(local_node_id, false)
     }
 
-    /// Returns local node's id (secure::PublicKey)
+    /// Returns local node's id (pbc::PublicKey)
     #[inline]
-    pub fn my_id(&self) -> &secure::PublicKey {
+    pub fn my_id(&self) -> &pbc::PublicKey {
         &self.my_id
     }
 
-    /// Change node's id (secure::PublicKey)
-    pub fn change_id(&mut self, new_id: secure::PublicKey) {
+    /// Change node's id (pbc::PublicKey)
+    pub fn change_id(&mut self, new_id: pbc::PublicKey) {
         self.kbuckets = self.kbuckets.new_table(new_id.clone());
         self.my_id = new_id;
     }
 
     #[inline]
-    pub fn find_closest(&mut self, id: &secure::PublicKey) -> VecIntoIter<secure::PublicKey> {
+    pub fn find_closest(&mut self, id: &pbc::PublicKey) -> VecIntoIter<pbc::PublicKey> {
         self.kbuckets.find_closest(id)
     }
 
     #[inline]
-    pub fn find_closest_with_self(
-        &mut self,
-        id: &secure::PublicKey,
-    ) -> VecIntoIter<secure::PublicKey> {
+    pub fn find_closest_with_self(&mut self, id: &pbc::PublicKey) -> VecIntoIter<pbc::PublicKey> {
         self.kbuckets.find_closest_with_self(id)
     }
 
     #[inline]
-    pub fn get_node(&self, node_id: &secure::PublicKey) -> Option<NodeInfo> {
+    pub fn get_node(&self, node_id: &pbc::PublicKey) -> Option<NodeInfo> {
         match self.kbuckets.get(node_id) {
             Some(n) => Some(n.clone()),
             None => None,
@@ -208,7 +205,7 @@ impl<TSubstream> Kademlia<TSubstream> {
     }
 
     /// Sets peer_id to the corresponging node_id
-    pub fn set_peer_id(&mut self, node_id: &secure::PublicKey, peer_id: PeerId) {
+    pub fn set_peer_id(&mut self, node_id: &pbc::PublicKey, peer_id: PeerId) {
         if let Some(node_info) = self.kbuckets.entry_mut(node_id) {
             node_info.peer_id = Some(peer_id.clone());
         }
@@ -217,7 +214,7 @@ impl<TSubstream> Kademlia<TSubstream> {
     }
 
     /// Adds a known address for the given `PeerId`. We are connected to this address.
-    pub fn add_connected_address(&mut self, node_id: &secure::PublicKey, address: Multiaddr) {
+    pub fn add_connected_address(&mut self, node_id: &pbc::PublicKey, address: Multiaddr) {
         if let Some(node_info) = self.kbuckets.entry_mut(node_id) {
             node_info.addresses.insert_connected(address);
         }
@@ -225,14 +222,14 @@ impl<TSubstream> Kademlia<TSubstream> {
 
     /// Adds a known address for the given `PeerId`. We are not connected or don't know whether we
     /// are connected to this address.
-    pub fn add_not_connected_address(&mut self, node_id: &secure::PublicKey, address: Multiaddr) {
+    pub fn add_not_connected_address(&mut self, node_id: &pbc::PublicKey, address: Multiaddr) {
         if let Some(node_info) = self.kbuckets.entry_mut(node_id) {
             node_info.addresses.insert_not_connected(address);
         }
     }
 
     /// Inner implementation of the constructors.
-    fn new_inner(local_node_id: secure::PublicKey, initialize: bool) -> Self {
+    fn new_inner(local_node_id: pbc::PublicKey, initialize: bool) -> Self {
         let parallelism = 3;
 
         let mut behaviour = Kademlia {
@@ -241,7 +238,7 @@ impl<TSubstream> Kademlia<TSubstream> {
                 local_node_id,
                 Duration::from_secs(BUCKET_EXPIRATION_PERIOD),
             ),
-            known_peers: LruCache::<Vec<u8>, secure::PublicKey>::with_capacity(512 * (20 + 1)), // Total size of kBucketsTable
+            known_peers: LruCache::<Vec<u8>, pbc::PublicKey>::with_capacity(512 * (20 + 1)), // Total size of kBucketsTable
             queued_events: SmallVec::new(),
             queries_to_starts: SmallVec::new(),
             active_queries: Default::default(),
@@ -333,7 +330,7 @@ impl<TSubstream> Kademlia<TSubstream> {
     /// This will eventually produce an event containing the nodes of the DHT closest to the
     /// requested `PeerId`.
     #[inline]
-    pub fn find_node(&mut self, node_id: secure::PublicKey) {
+    pub fn find_node(&mut self, node_id: pbc::PublicKey) {
         self.start_query(
             QueryTarget::FindPeer(node_id.into_multihash()),
             QueryPurpose::UserRequest,
@@ -360,7 +357,7 @@ impl<TSubstream> Kademlia<TSubstream> {
     ///
     /// The actual meaning of *providing* the value of a key is not defined, and is specific to
     /// the value whose key is the hash.
-    pub fn add_providing(&mut self, key: secure::PublicKey) {
+    pub fn add_providing(&mut self, key: pbc::PublicKey) {
         self.providing_keys.insert(key.clone().into_multihash());
         let providers = self
             .values_providers
@@ -745,7 +742,7 @@ where
 
             // If iterating finds a query that is finished, stores it here and stops looping.
             let mut finished_query = None;
-            let mut nodes_without_peerids: Vec<secure::PublicKey> = Vec::new();
+            let mut nodes_without_peerids: Vec<pbc::PublicKey> = Vec::new();
 
             'queries_iter: for (&query_id, (query, _, _)) in self.active_queries.iter_mut() {
                 loop {
@@ -867,7 +864,7 @@ pub enum KademliaOut {
     /// We have discovered a node.
     Discovered {
         /// PBC PublicKey of the Node
-        node_id: secure::PublicKey,
+        node_id: pbc::PublicKey,
         /// Id of the node that was discovered.
         peer_id: Option<PeerId>,
         /// Addresses of the node.
@@ -881,7 +878,7 @@ pub enum KademliaOut {
         /// The key that we looked for in the query.
         key: Multihash,
         /// List of peers ordered from closest to furthest away.
-        closer_peers: Vec<secure::PublicKey>,
+        closer_peers: Vec<pbc::PublicKey>,
     },
 
     /// Result of a `GET_PROVIDERS` iterative query.
@@ -889,9 +886,9 @@ pub enum KademliaOut {
         /// The key that we looked for in the query.
         key: Multihash,
         /// The peers that are providing the requested key.
-        provider_peers: Vec<secure::PublicKey>,
+        provider_peers: Vec<pbc::PublicKey>,
         /// List of peers ordered from closest to furthest away.
-        closer_peers: Vec<secure::PublicKey>,
+        closer_peers: Vec<pbc::PublicKey>,
     },
 }
 
@@ -933,9 +930,9 @@ fn gen_random_hash(my_id: &Multihash, bucket_num: usize) -> Result<Multihash, ()
 ///
 /// > **Note**: This is just a convenience function that doesn't do anything note-worthy.
 fn build_kad_peer(
-    node_id: secure::PublicKey,
+    node_id: pbc::PublicKey,
     parameters: &mut PollParameters<'_>,
-    kbuckets: &KBucketsTable<secure::PublicKey, NodeInfo>,
+    kbuckets: &KBucketsTable<pbc::PublicKey, NodeInfo>,
 ) -> KadPeer {
     let is_self = node_id == *kbuckets.my_id();
 

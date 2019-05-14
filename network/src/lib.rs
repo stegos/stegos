@@ -36,7 +36,7 @@ mod utils;
 use failure::{Error, Fail};
 use futures::sync::mpsc;
 use std::fmt;
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 
 pub use self::config::*;
 pub use self::kad::KBucketsPeerId;
@@ -64,7 +64,7 @@ where
     ) -> Result<mpsc::UnboundedReceiver<UnicastMessage>, Error>;
 
     /// Send unicast message to peer identified by network public key
-    fn send(&self, dest: secure::PublicKey, protocol_id: &str, data: Vec<u8>) -> Result<(), Error>;
+    fn send(&self, dest: pbc::PublicKey, protocol_id: &str, data: Vec<u8>) -> Result<(), Error>;
 
     /// Helper for cloning boxed object
     fn box_clone(&self) -> Network;
@@ -72,14 +72,14 @@ where
     /// Change network keys
     fn change_network_keys(
         &self,
-        _new_pkey: secure::PublicKey,
-        _new_skey: secure::SecretKey,
+        _new_pkey: pbc::PublicKey,
+        _new_skey: pbc::SecretKey,
     ) -> Result<(), Error>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnicastMessage {
-    pub from: secure::PublicKey,
+    pub from: pbc::PublicKey,
     pub data: Vec<u8>,
 }
 
@@ -94,5 +94,5 @@ impl Clone for Network {
 #[derive(Clone, Debug, Fail, PartialEq, Eq)]
 pub enum NetworkError {
     #[fail(display = "Generic network error talking to node: {:#?}", _0)]
-    GenericError(secure::PublicKey),
+    GenericError(pbc::PublicKey),
 }

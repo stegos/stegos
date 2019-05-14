@@ -121,15 +121,15 @@ mod test {
     use crate::block::{BaseBlockHeader, MacroBlock};
     use std::time::SystemTime;
     use stegos_crypto::hash::Hash;
-    use stegos_crypto::pbc::secure;
+    use stegos_crypto::pbc;
 
     fn create_block(previous: Hash) -> Block {
-        let (skey0, pkey0) = secure::make_random_keys();
+        let (skey0, pkey0) = pbc::make_random_keys();
         let version: u64 = 1;
         let epoch: u64 = 1;
         let timestamp = SystemTime::now();
 
-        let random = secure::make_VRF(&skey0, &Hash::digest("random"));
+        let random = pbc::make_VRF(&skey0, &Hash::digest("random"));
         let base = BaseBlockHeader::new(version, previous, epoch, 0, timestamp, random);
 
         let block = MacroBlock::empty(base, pkey0);

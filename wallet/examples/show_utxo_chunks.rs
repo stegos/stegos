@@ -29,23 +29,23 @@ use std::time::SystemTime;
 use stegos_blockchain::Output;
 use stegos_blockchain::PaymentTransaction;
 use stegos_blockchain::{PaymentOutput, PaymentPayloadData};
-use stegos_crypto::curve1174::cpt::make_random_keys;
-use stegos_crypto::curve1174::cpt::Pt;
-use stegos_crypto::curve1174::cpt::PublicKey;
-use stegos_crypto::curve1174::cpt::SchnorrSig;
-use stegos_crypto::curve1174::cpt::SecretKey;
-use stegos_crypto::curve1174::ecpt::ECp;
-use stegos_crypto::curve1174::fields::Fr;
+use stegos_crypto::curve1174::make_random_keys;
+use stegos_crypto::curve1174::ECp;
+use stegos_crypto::curve1174::Fr;
+use stegos_crypto::curve1174::Pt;
+use stegos_crypto::curve1174::PublicKey;
+use stegos_crypto::curve1174::SchnorrSig;
+use stegos_crypto::curve1174::SecretKey;
 use stegos_crypto::dicemix::*;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::hash::{Hashable, Hasher, HASH_SIZE};
-use stegos_crypto::pbc::secure::make_random_keys as make_secure_random_keys;
+use stegos_crypto::pbc;
 use stegos_serialization::traits::ProtoConvert;
 
 fn main() {
     // Determine number of DiceMix chunks needed to support our UTXO's
     let (_skey, pkey) = make_random_keys();
-    let (sskey, spkey) = make_secure_random_keys();
+    let (sskey, spkey) = pbc::make_random_keys();
     let tstamp = SystemTime::now();
     let data = PaymentPayloadData::Comment("Testing".to_string());
     let (out, gamma) =

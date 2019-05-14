@@ -21,9 +21,9 @@
 
 use failure::Error;
 use stegos_blockchain::PaymentOutput;
-use stegos_crypto::curve1174::cpt::SchnorrSig;
+use stegos_crypto::curve1174::SchnorrSig;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure::PublicKey;
+use stegos_crypto::pbc::PublicKey;
 use stegos_serialization::traits::*;
 
 use crate::messages::{ParticipantTXINMap, PoolInfo, PoolJoin};
@@ -149,12 +149,12 @@ mod tests {
 
     #[test]
     fn pool_info() {
-        let (_, pkey) = secure::make_random_keys();
-        let (_, pkey1) = secure::make_random_keys();
+        let (_, pkey) = pbc::make_random_keys();
+        let (_, pkey1) = pbc::make_random_keys();
 
         let session_id = Hash::digest(&1u64);
-        let mut participants: Vec<secure::PublicKey> = Vec::new();
-        participants.push((pkey.clone(), Vec::new(), cpt::SchnorrSig::new()));
+        let mut participants: Vec<pbc::PublicKey> = Vec::new();
+        participants.push((pkey.clone(), Vec::new(), curve1174::SchnorrSig::new()));
         participants.push(pkey1);
         let pool = PoolInfo {
             participants,

@@ -35,7 +35,7 @@ use libp2p::multihash::Multihash;
 use protobuf::{self, Message};
 use std::io::{Error as IoError, ErrorKind as IoErrorKind};
 use std::iter;
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 use tokio::codec::Framed;
 use tokio::io::{AsyncRead, AsyncWrite};
 use unsigned_varint::codec;
@@ -87,7 +87,7 @@ impl Into<dht_proto::dht::Message_ConnectionType> for KadConnectionType {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KadPeer {
     /// Identifier of the peer.
-    pub node_id: secure::PublicKey,
+    pub node_id: pbc::PublicKey,
     /// Network PeerId
     pub peer_id: Option<PeerId>,
     /// The multiaddresses that the sender think can be used in order to reach the peer.
@@ -98,7 +98,7 @@ pub struct KadPeer {
 
 impl KadPeer {
     fn from_peer(peer: &mut dht_proto::dht::Message_Peer) -> Result<KadPeer, IoError> {
-        let node_id = secure::PublicKey::try_from_bytes(peer.get_id()).map_err(|_| {
+        let node_id = pbc::PublicKey::try_from_bytes(peer.get_id()).map_err(|_| {
             IoError::new(
                 IoErrorKind::InvalidData,
                 "bad protobuf encoding, failed to decode node_id",
@@ -485,7 +485,7 @@ mod tests {
         PeerId,
     };
     use libp2p::multihash::{encode, Hash, Multihash};
-    use stegos_crypto::pbc::secure;
+    use stegos_crypto::pbc;
     use tokio::net::{TcpListener, TcpStream};
 
     #[test]
@@ -504,7 +504,7 @@ mod tests {
         test_one_req(KadRequestMsg::AddProvider {
             key: encode(Hash::SHA3512, &[9, 12, 0, 245, 245, 201, 28, 95]).unwrap(),
             provider_peer: KadPeer {
-                node_id: secure::PublicKey::from(secure::G2::generator()),
+                node_id: pbc::PublicKey::from(pbc::G2::generator()),
                 peer_id: Some(PeerId::random()),
                 multiaddrs: vec!["/ip4/9.1.2.3/udp/23".parse().unwrap()],
                 connection_ty: KadConnectionType::Connected,
@@ -515,7 +515,7 @@ mod tests {
         test_one_res(KadResponseMsg::Pong);
         test_one_res(KadResponseMsg::FindNode {
             closer_peers: vec![KadPeer {
-                node_id: secure::PublicKey::from(secure::G2::generator()),
+                node_id: pbc::PublicKey::from(pbc::G2::generator()),
                 peer_id: Some(PeerId::random()),
                 multiaddrs: vec!["/ip4/100.101.102.103/tcp/20105".parse().unwrap()],
                 connection_ty: KadConnectionType::Connected,
@@ -523,13 +523,13 @@ mod tests {
         });
         test_one_res(KadResponseMsg::GetProviders {
             closer_peers: vec![KadPeer {
-                node_id: secure::PublicKey::from(secure::G2::generator()),
+                node_id: pbc::PublicKey::from(pbc::G2::generator()),
                 peer_id: Some(PeerId::random()),
                 multiaddrs: vec!["/ip4/100.101.102.103/tcp/20105".parse().unwrap()],
                 connection_ty: KadConnectionType::Connected,
             }],
             provider_peers: vec![KadPeer {
-                node_id: secure::PublicKey::from(secure::G2::generator()),
+                node_id: pbc::PublicKey::from(pbc::G2::generator()),
                 peer_id: Some(PeerId::random()),
                 multiaddrs: vec!["/ip4/200.201.202.203/tcp/1999".parse().unwrap()],
                 connection_ty: KadConnectionType::NotConnected,

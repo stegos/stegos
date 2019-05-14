@@ -36,8 +36,8 @@ use rustyline as rl;
 use std::fmt;
 use std::path::PathBuf;
 use std::thread;
-use stegos_crypto::curve1174::cpt::PublicKey;
-use stegos_crypto::pbc::secure;
+use stegos_crypto::curve1174::PublicKey;
+use stegos_crypto::pbc;
 use stegos_network::Network;
 use stegos_network::UnicastMessage;
 use stegos_node::{Node, NodeRequest, NodeResponse};
@@ -292,7 +292,7 @@ impl ConsoleService {
             };
 
             let recipient = caps.name("recipient").unwrap().as_str();
-            let recipient = match secure::PublicKey::try_from_hex(recipient) {
+            let recipient = match pbc::PublicKey::try_from_hex(recipient) {
                 Ok(r) => r,
                 Err(e) => {
                     println!("Invalid network public key '{}': {}", recipient, e);

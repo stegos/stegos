@@ -26,7 +26,7 @@ use crate::VALIDATORS_MAX;
 use bitvector::BitVector;
 use std::collections::BTreeMap;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 
 ///
 /// Return true if supermajority of votes has been collected.
@@ -43,9 +43,9 @@ pub fn check_supermajority(got_votes: i64, total_votes: i64) -> bool {
 /// Create a new multi-signature from individual signatures
 ///
 pub fn create_multi_signature(
-    validators: &Vec<(secure::PublicKey, i64)>,
-    signatures: &BTreeMap<secure::PublicKey, secure::Signature>,
-) -> (secure::Signature, BitVector) {
+    validators: &Vec<(pbc::PublicKey, i64)>,
+    signatures: &BTreeMap<pbc::PublicKey, pbc::Signature>,
+) -> (pbc::Signature, BitVector) {
     create_multi_signature_index(
         // convert Map<Pk, Signature> -> Iterator<(id, Signature)>
         validators
@@ -63,24 +63,24 @@ pub fn create_multi_signature(
 /// Create a new multi-signature from individual signatures
 /// version which work for array of validators id's
 ///
-pub fn create_multi_signature_index<'a, I>(signatures: I) -> (secure::Signature, BitVector)
+pub fn create_multi_signature_index<'a, I>(signatures: I) -> (pbc::Signature, BitVector)
 where
-    I: Iterator<Item = (u32, &'a secure::Signature)>,
+    I: Iterator<Item = (u32, &'a pbc::Signature)>,
 {
-    let mut multisig = secure::G1::zero();
+    let mut multisig = pbc::G1::zero();
     let mut multisigmap = BitVector::new(VALIDATORS_MAX);
     let mut vec: Vec<_> = signatures.collect();
     vec.sort_by_key(|i| i.0);
 
     for (bit, sig) in vec {
         assert!(bit < VALIDATORS_MAX as u32);
-        let sig: secure::G1 = sig.clone().into();
+        let sig: pbc::G1 = sig.clone().into();
         multisig += sig;
         let ok = multisigmap.insert(bit as usize);
         assert!(ok);
     }
 
-    let multisig: secure::Signature = multisig.into();
+    let multisig: pbc::Signature = multisig.into();
 
     (multisig, multisigmap)
 }
@@ -90,9 +90,9 @@ where
 ///
 pub fn check_multi_signature(
     hash: &Hash,
-    multisig: &secure::Signature,
+    multisig: &pbc::Signature,
     multisigmap: &BitVector,
-    validators: &Vec<(secure::PublicKey, i64)>,
+    validators: &Vec<(pbc::PublicKey, i64)>,
     total_slots: i64,
 ) -> Result<(), MultisignatureError> {
     // Check for trailing bits in the bitmap.
@@ -103,13 +103,13 @@ pub fn check_multi_signature(
         ));
     };
 
-    let mut multisigpkey = secure::G2::zero();
+    let mut multisigpkey = pbc::G2::zero();
     // total count of group slots
     let mut group_total_slots = 0;
 
     for bit in multisigmap.iter() {
         let validator = &validators[bit];
-        let pkey: secure::G2 = validator.0.into();
+        let pkey: pbc::G2 = validator.0.into();
         let slots = validator.1;
         assert!(slots > 0);
 
@@ -126,8 +126,8 @@ pub fn check_multi_signature(
     }
 
     // The hash must match the signature.
-    let multipkey: secure::PublicKey = multisigpkey.into();
-    if let Err(_e) = secure::check_hash(&hash, &multisig, &multipkey) {
+    let multipkey: pbc::PublicKey = multisigpkey.into();
+    if let Err(_e) = pbc::check_hash(&hash, &multisig, &multipkey) {
         return Err(MultisignatureError::InvalidSignature(*hash));
     }
     Ok(())
@@ -138,12 +138,12 @@ pub fn check_multi_signature(
 ///
 pub fn create_proposal_signature(
     hash: &Hash,
-    skey: &secure::SecretKey,
-    pkey: &secure::PublicKey,
-    validators: &Vec<(secure::PublicKey, i64)>,
-) -> (secure::Signature, BitVector) {
-    let mut signatures: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();
-    let sig = secure::sign_hash(hash, skey);
+    skey: &pbc::SecretKey,
+    pkey: &pbc::PublicKey,
+    validators: &Vec<(pbc::PublicKey, i64)>,
+) -> (pbc::Signature, BitVector) {
+    let mut signatures: BTreeMap<pbc::PublicKey, pbc::Signature> = BTreeMap::new();
+    let sig = pbc::sign_hash(hash, skey);
     signatures.insert(pkey.clone(), sig);
     create_multi_signature(validators, &signatures)
 }
@@ -152,9 +152,9 @@ pub fn create_proposal_signature(
 /// Merge two multisignatures.
 ///
 pub fn merge_multi_signature(
-    dst_multisig: &mut secure::Signature,
+    dst_multisig: &mut pbc::Signature,
     dst_multisigmap: &mut BitVector,
-    src_multisig: &secure::Signature,
+    src_multisig: &pbc::Signature,
     src_multisigmap: &BitVector,
 ) {
     let orig_dst_len = dst_multisigmap.len();
@@ -184,7 +184,7 @@ mod tests {
         let mut validators = Vec::new();
         const NUM_VALIDATORS: usize = 1;
         for _i in 0..NUM_VALIDATORS {
-            let (s, p) = secure::make_random_keys();
+            let (s, p) = pbc::make_random_keys();
             validators.push((p, 1));
             skeys.push(s);
         }
@@ -193,9 +193,9 @@ mod tests {
         let mut signatures = Vec::new();
 
         for i in 0..NUM_VALIDATORS {
-            let sign = secure::sign_hash(hash, &skeys[i]);
+            let sign = pbc::sign_hash(hash, &skeys[i]);
             signatures.push((sign, i as u32));
-            secure::check_hash(hash, &signatures[i].0, &validators[i].0).unwrap();
+            pbc::check_hash(hash, &signatures[i].0, &validators[i].0).unwrap();
         }
 
         let multisig = create_multi_signature_index(signatures.iter().map(|p| (p.1, &p.0)));

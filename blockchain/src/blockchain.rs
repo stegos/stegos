@@ -361,7 +361,7 @@ impl Blockchain {
                 }
                 Block::MicroBlock(block) => {
                     for tx in block.transactions {
-                        for output in tx.body.txouts {
+                        for output in tx.txouts {
                             if self.check_wallet_output(skey, pkey, &output) {
                                 wallet_state.push((output, epoch));
                             }
@@ -449,8 +449,7 @@ impl Blockchain {
                             let tx = transactions
                                 .get(*tx_id as usize)
                                 .expect("Corrupted outputs_by_hash (Micro-2)");
-                            tx.body
-                                .txouts
+                            tx.txouts
                                 .get(*txout_id as usize)
                                 .expect("Corrupted outputs_by_hash (Micro-3)")
                         };
@@ -934,12 +933,12 @@ impl Blockchain {
         // Regular transactions.
         for (tx_id, tx) in block.transactions.into_iter().enumerate() {
             assert!(tx_id < std::u32::MAX as usize);
-            for input_hash in tx.body.txins {
+            for input_hash in tx.txins {
                 let input = self.output_by_hash(&input_hash)?.expect("Missing output");
                 inputs.push(input);
                 input_hashes.push(input_hash);
             }
-            for (txout_id, output) in tx.body.txouts.into_iter().enumerate() {
+            for (txout_id, output) in tx.txouts.into_iter().enumerate() {
                 assert!(txout_id < std::u32::MAX as usize);
                 let output_key = OutputKey::MicroBlock {
                     height,
@@ -949,7 +948,7 @@ impl Blockchain {
                 outputs.push(output);
                 output_keys.push(output_key);
             }
-            gamma += tx.body.gamma;
+            gamma += tx.gamma;
         }
 
         //
@@ -1028,7 +1027,7 @@ impl Blockchain {
         let mut created: Vec<Output> = Vec::new();
         let mut pruned: Vec<Output> = Vec::new();
         for tx in block.transactions {
-            for input_hash in &tx.body.txins {
+            for input_hash in &tx.txins {
                 let input = self.output_by_hash(input_hash)?.expect("exists");
                 created.push(input);
                 debug!(
@@ -1036,7 +1035,7 @@ impl Blockchain {
                     height, &block_hash, &input_hash
                 );
             }
-            pruned.extend(tx.body.txouts);
+            pruned.extend(tx.txouts);
         }
         pruned.extend(block.coinbase.outputs);
         for output in &pruned {

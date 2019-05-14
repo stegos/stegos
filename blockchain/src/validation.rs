@@ -67,15 +67,15 @@ impl Transaction {
 
         let tx_hash = Hash::digest(&self);
 
-        assert_eq!(self.body.txins.len(), inputs.len());
+        assert_eq!(self.txins.len(), inputs.len());
 
         // Check that transaction has inputs.
-        if self.body.txins.is_empty() {
+        if self.txins.is_empty() {
             return Err(TransactionError::NoInputs(tx_hash).into());
         }
 
         // Check fee.
-        if self.body.fee < 0 {
+        if self.fee < 0 {
             return Err(TransactionError::NegativeFee(tx_hash).into());
         }
 
@@ -96,7 +96,7 @@ impl Transaction {
 
         // +\sum{C_i} for i in txins
         let mut txins_set: HashSet<Hash> = HashSet::new();
-        for (txin_hash, txin) in self.body.txins.iter().zip(inputs) {
+        for (txin_hash, txin) in self.txins.iter().zip(inputs) {
             assert_eq!(Hash::digest(txin), *txin_hash);
             if !txins_set.insert(*txin_hash) {
                 return Err(TransactionError::DuplicateInput(tx_hash, *txin_hash).into());
@@ -119,7 +119,7 @@ impl Transaction {
 
         // -\sum{C_o} for o in txouts
         let mut txouts_set: HashSet<Hash> = HashSet::new();
-        for txout in &self.body.txouts {
+        for txout in &self.txouts {
             let txout_hash = Hash::digest(txout);
             if !txouts_set.insert(txout_hash) {
                 return Err(TransactionError::DuplicateOutput(tx_hash, txout_hash).into());
@@ -141,7 +141,7 @@ impl Transaction {
         drop(txouts_set);
 
         // C(fee, gamma_adj) = fee * A + gamma_adj * G
-        let adj: ECp = simple_commit(self.body.gamma, Fr::from(self.body.fee));
+        let adj: ECp = simple_commit(self.gamma, Fr::from(self.fee));
 
         // technically, this test is no longer needed since it has been
         // absorbed into the signature check...
@@ -244,7 +244,7 @@ impl Blockchain {
         let mut inputs: Vec<Output> = Vec::new();
 
         // Validate inputs.
-        for input_hash in &tx.body.txins {
+        for input_hash in &tx.txins {
             // Check that the input can be resolved.
             let input = match self.output_by_hash(input_hash)? {
                 Some(input) => input,
@@ -262,7 +262,7 @@ impl Blockchain {
         }
 
         // Check for overlapping outputs.
-        for output in &tx.body.txouts {
+        for output in &tx.txouts {
             let output_hash = Hash::digest(output);
             // Check that the output is unique and don't overlap with other transactions.
             if outputs_set.contains(&output_hash) || self.contains_output(&output_hash) {
@@ -401,14 +401,14 @@ impl Blockchain {
         //
         for tx in &block.transactions {
             self.validate_micro_block_tx(tx, timestamp, &inputs_set, &outputs_set)?;
-            for input_hash in &tx.body.txins {
+            for input_hash in &tx.txins {
                 inputs_set.insert(input_hash.clone());
             }
-            for output in &tx.body.txouts {
+            for output in &tx.txouts {
                 let output_hash = Hash::digest(&output);
                 outputs_set.insert(output_hash.clone());
             }
-            fee += tx.body.fee;
+            fee += tx.fee;
         }
 
         //
@@ -738,7 +738,7 @@ pub mod tests {
         let inputs = [input];
         let mut tx =
             Transaction::new(&skey, &inputs, &[], Fr::zero(), fee).expect("keys are valid");
-        tx.body.txins.clear(); // remove all inputs
+        tx.txins.clear(); // remove all inputs
         tx.validate(&[]).expect_err("tx is invalid");
     }
 
@@ -804,7 +804,7 @@ pub mod tests {
             let (mut tx, inputs, _outputs) =
                 Transaction::new_test(&skey0, &pkey0, 100, 1, 100, 1, 0)
                     .expect("transaction is valid");
-            let output = &mut tx.body.txouts[0];
+            let output = &mut tx.txouts[0];
             match output {
                 Output::PaymentOutput(ref mut o) => {
                     let pt = cpt::Pt::random();
@@ -816,7 +816,7 @@ pub mod tests {
             match e.downcast::<TransactionError>().unwrap() {
                 TransactionError::InvalidSignature(tx_hash) => {
                     // the hash of a transaction excludes its signature
-                    assert_eq!(tx_hash, Hash::digest(&tx.body))
+                    assert_eq!(tx_hash, Hash::digest(&tx))
                 }
                 _ => panic!(),
             }
@@ -840,8 +840,8 @@ pub mod tests {
         //
         // Invalid fee
         //
-        let fee = tx.body.fee;
-        tx.body.fee = -1i64;
+        let fee = tx.fee;
+        tx.fee = -1i64;
         match tx.validate(&inputs1) {
             Err(e) => match e.downcast::<TransactionError>().unwrap() {
                 TransactionError::NegativeFee(_) => {}
@@ -849,38 +849,38 @@ pub mod tests {
             },
             _ => panic!(),
         };
-        tx.body.fee = fee;
+        tx.fee = fee;
 
         //
         // Duplicate input
         //
-        tx.body.txins.push(tx.body.txins.last().unwrap().clone());
+        tx.txins.push(tx.txins.last().unwrap().clone());
         let inputs11 = &[output0.clone(), output0.clone()];
         match tx.validate(inputs11) {
             Err(e) => match e.downcast::<TransactionError>().unwrap() {
                 TransactionError::DuplicateInput(_tx_hash, txin_hash) => {
-                    assert_eq!(&txin_hash, tx.body.txins.last().unwrap());
+                    assert_eq!(&txin_hash, tx.txins.last().unwrap());
                 }
                 _ => panic!(),
             },
             _ => panic!(),
         };
-        tx.body.txins.pop().unwrap();
+        tx.txins.pop().unwrap();
 
         //
         // Duplicate output
         //
-        tx.body.txouts.push(tx.body.txouts.last().unwrap().clone());
+        tx.txouts.push(tx.txouts.last().unwrap().clone());
         match tx.validate(&inputs1) {
             Err(e) => match e.downcast::<TransactionError>().unwrap() {
                 TransactionError::DuplicateOutput(_tx_hash, txout_hash) => {
-                    assert_eq!(txout_hash, Hash::digest(tx.body.txouts.last().unwrap()));
+                    assert_eq!(txout_hash, Hash::digest(tx.txouts.last().unwrap()));
                 }
                 _ => panic!(),
             },
             _ => panic!(),
         };
-        tx.body.txouts.pop().unwrap();
+        tx.txouts.pop().unwrap();
 
         //
         // Invalid signature
@@ -899,7 +899,7 @@ pub mod tests {
         //
         let (mut tx, inputs, _outputs) =
             Transaction::new_test(&skey0, &pkey0, 100, 2, 200, 1, 0).expect("transaction is valid");
-        tx.body.gamma = Fr::random();
+        tx.gamma = Fr::random();
         match tx.validate(&inputs) {
             Err(e) => match e.downcast::<TransactionError>().unwrap() {
                 TransactionError::InvalidMonetaryBalance(_tx_hash) => {}
@@ -1012,7 +1012,7 @@ pub mod tests {
         let mut tx = Transaction::new(&skey1, &inputs, &[output], outputs_gamma, fee)
             .expect("keys are valid");
         tx.validate(&inputs).expect("tx is valid");
-        let output = &mut tx.body.txouts[0];
+        let output = &mut tx.txouts[0];
         match output {
             Output::StakeOutput(ref mut o) => {
                 let pt = cpt::Pt::random();

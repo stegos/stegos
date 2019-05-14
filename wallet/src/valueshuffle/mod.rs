@@ -1581,7 +1581,7 @@ impl ValueShuffle {
         // Check that super-transaction signature validates
         // against transaction contents, just like a validator would do.
 
-        let inputs = self.collect_txin_outputs(&self.trans.body.txins);
+        let inputs = self.collect_txin_outputs(&self.trans.txins);
         match self.trans.validate(&inputs) {
             Ok(_) => true,
             Err(err) => {
@@ -1652,7 +1652,7 @@ impl ValueShuffle {
         let eff_pkey = PublicKey::from(eff_pkey);
         let sig = data.signatures.get(pid).expect("Can't access signature");
         let tx = &data.transaction;
-        let hash = Hasher::digest(&tx.body);
+        let hash = Hasher::digest(&tx);
 
         // check signature on this portion of transaction
         match validate_sig(&hash, &sig, &eff_pkey) {

@@ -80,11 +80,11 @@ impl Mempool {
     ///
     pub fn push_tx(&mut self, tx_hash: Hash, tx: Transaction) {
         debug_assert_eq!(&tx_hash, &Hash::digest(&tx));
-        for input_hash in &tx.body.txins {
+        for input_hash in &tx.txins {
             let exists = self.inputs.insert(input_hash.clone(), tx_hash.clone());
             assert!(exists.is_none());
         }
-        for output in &tx.body.txouts {
+        for output in &tx.txouts {
             let output_hash = Hash::digest(output);
             let exists = self.outputs.insert(output_hash, tx_hash.clone());
             assert!(exists.is_none());
@@ -114,12 +114,12 @@ impl Mempool {
         // Prune transactions.
         for tx_hash in tx_hashes {
             let tx = self.pool.remove(&tx_hash).expect("transaction exists");
-            for input_hash in tx.body.txins {
+            for input_hash in tx.txins {
                 if let Some(tx_hash2) = self.inputs.remove(&input_hash) {
                     assert_eq!(tx_hash2, tx_hash);
                 }
             }
-            for output in tx.body.txouts {
+            for output in tx.txouts {
                 let output_hash = Hash::digest(&output);
                 if let Some(tx_hash2) = self.outputs.remove(&output_hash) {
                     assert_eq!(tx_hash2, tx_hash);
@@ -180,14 +180,14 @@ impl Mempool {
             debug_assert_eq!(tx_hash, &Hash::digest(&tx));
 
             // Check the maximum number of UTXO in block.
-            if utxo_in_block + tx.body.txins.len() + tx.body.txouts.len() >= max_utxo_in_block {
+            if utxo_in_block + tx.txins.len() + tx.txouts.len() >= max_utxo_in_block {
                 break;
             }
 
             debug!("Processing transaction: hash={}", &tx_hash);
             transactions.push(tx.clone());
-            utxo_in_block += tx.body.txins.len();
-            utxo_in_block += tx.body.txouts.len();
+            utxo_in_block += tx.txins.len();
+            utxo_in_block += tx.txouts.len();
         }
 
         debug!(

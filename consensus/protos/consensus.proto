@@ -38,3 +38,8 @@ message ViewChangeMessage {
     uint32 validator_id = 2;
     stegos.crypto.SecureSignature signature = 3;
 }
+
+message SealedViewChangeProof {
+    stegos.blockchain.ChainInfo chain = 1;
+    stegos.blockchain.ViewChangeProof proof = 2;
+}

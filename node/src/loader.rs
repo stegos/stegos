@@ -161,13 +161,22 @@ impl NodeService {
             return Ok(());
         }
 
+        self.send_blocks(pkey, starting_height)
+    }
+
+    pub fn send_blocks(
+        &mut self,
+        pkey: secure::PublicKey,
+        starting_height: u64,
+    ) -> Result<(), Error> {
+        assert!(starting_height < self.chain.height());
         // Send one epoch.
         let blocks = self.chain.blocks_range(
             starting_height,
             self.cfg.blocks_in_epoch * self.cfg.chain_loader_speed_in_epoch,
         );
         info!("Feeding blocks: to={}, num_blocks={}", pkey, blocks.len());
-        let msg = ChainLoaderMessage::Response(ResponseBlocks::new(height, blocks));
+        let msg = ChainLoaderMessage::Response(ResponseBlocks::new(self.chain.height(), blocks));
         self.network
             .send(pkey, CHAIN_LOADER_TOPIC, msg.into_buffer()?)?;
         Ok(())

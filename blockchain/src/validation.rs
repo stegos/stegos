@@ -239,7 +239,7 @@ impl Blockchain {
         _timestamp: SystemTime,
         inputs_set: &HashSet<Hash>,
         outputs_set: &HashSet<Hash>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), BlockchainError> {
         let tx_hash = Hash::digest(&tx);
         let mut inputs: Vec<Output> = Vec::new();
 
@@ -294,7 +294,7 @@ impl Blockchain {
         &self,
         block: &MicroBlock,
         timestamp: SystemTime,
-    ) -> Result<(), Error> {
+    ) -> Result<(), BlockchainError> {
         let height = block.base.height;
         let block_hash = Hash::digest(&block);
         debug!(
@@ -348,7 +348,6 @@ impl Blockchain {
                             if let Err(e) = proof.validate(&chain, &self) {
                                 return Err(BlockError::InvalidViewChangeProof(
                                     height,
-                                    block_hash,
                                     proof.clone(),
                                     e,
                                 )
@@ -467,7 +466,7 @@ impl Blockchain {
         &self,
         block: &MacroBlock,
         _timestamp: SystemTime,
-    ) -> Result<(), Error> {
+    ) -> Result<(), BlockchainError> {
         let height = block.header.base.height;
         let block_hash = Hash::digest(&block);
 
@@ -610,7 +609,7 @@ impl Blockchain {
         block: &MacroBlock,
         timestamp: SystemTime,
         is_proposal: bool,
-    ) -> Result<(), Error> {
+    ) -> Result<(), BlockchainError> {
         let height = block.header.base.height;
         let block_hash = Hash::digest(&block);
         debug!(

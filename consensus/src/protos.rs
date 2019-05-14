@@ -25,6 +25,7 @@ use stegos_serialization::traits::*;
 use crate::blockchain::*;
 use crate::message::*;
 use crate::optimistic::*;
+use stegos_blockchain::view_changes::ViewChangeProof;
 use stegos_blockchain::*;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc::secure;
@@ -134,6 +135,22 @@ impl ProtoConvert for ViewChangeMessage {
     }
 }
 
+impl ProtoConvert for SealedViewChangeProof {
+    type Proto = consensus::SealedViewChangeProof;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = consensus::SealedViewChangeProof::new();
+        proto.set_chain(self.chain.into_proto());
+        proto.set_proof(self.proof.into_proto());
+        proto
+    }
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let chain = ChainInfo::from_proto(proto.get_chain())?;
+        let proof = ViewChangeProof::from_proto(proto.get_proof())?;
+
+        Ok(SealedViewChangeProof { chain, proof })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,5 +218,18 @@ mod tests {
             proof,
         };
         roundtrip(&proposal);
+    }
+
+    #[test]
+    fn view_change() {
+        let (skey0, _pkey0) = make_secure_random_keys();
+
+        let chain = ChainInfo {
+            height: 41,
+            view_change: 12,
+            last_block: Hash::digest("test"),
+        };
+        let view_change_vote = ViewChangeMessage::new(chain, 1, &skey0);
+        roundtrip(&view_change_vote);
     }
 }

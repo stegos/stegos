@@ -412,7 +412,9 @@ where
                     self.solvers.insert(peer_id.clone());
                     thread::spawn(move || {
                         let start = SystemTime::now();
+                        info!("Solving a hashcash puzzle: peer_id={:?}", peer_id);
                         let proof = hashcash::delay(p.nbits, &p.seed);
+                        info!("Solved a hashcash puzzle: peer_id={:?}", peer_id);
                         if let Err(e) = tx.unbounded_send((
                             peer_id,
                             proof,

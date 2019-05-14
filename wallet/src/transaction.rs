@@ -433,12 +433,12 @@ where
 
 /// Create a restaking transaction.
 pub(crate) fn create_restaking_transaction<'a, UnspentIter>(
-    sender_skey: &SecretKey,
+    _sender_skey: &SecretKey,
     sender_pkey: &PublicKey,
     validator_pkey: &pbc::PublicKey,
     validator_skey: &pbc::SecretKey,
     stakes_iter: UnspentIter,
-) -> Result<PaymentTransaction, Error>
+) -> Result<RestakeTransaction, Error>
 where
     UnspentIter: Iterator<Item = &'a StakeOutput>,
 {
@@ -470,8 +470,7 @@ where
     }
 
     trace!("Signing transaction...");
-    let fee = 0;
-    let tx = PaymentTransaction::new(&sender_skey, &inputs, &outputs, Fr::zero(), fee)?;
+    let tx = RestakeTransaction::new(validator_skey, validator_pkey, &inputs, &outputs)?;
     let tx_hash = Hash::digest(&tx);
     info!(
         "Created a restaking transaction: hash={}, inputs={}, outputs={}",

@@ -28,7 +28,7 @@ use crate::error::TransactionError;
 use crate::error::{BlockError, BlockchainError};
 use crate::multisignature::check_multi_signature;
 use crate::output::Output;
-use crate::transaction::{PaymentTransaction, Transaction};
+use crate::transaction::{PaymentTransaction, RestakeTransaction, Transaction};
 use failure::Error;
 use log::*;
 use std::cmp::Ordering;
@@ -160,6 +160,148 @@ impl PaymentTransaction {
     }
 }
 
+impl RestakeTransaction {
+    /// Validate the monetary balance and signature of transaction.
+    ///
+    /// # Arguments
+    ///
+    /// * - `inputs` - UTXOs referred by self.body.txins, in the same order as in self.body.txins.
+    ///
+    pub fn validate(&self, inputs: &[Output]) -> Result<StakingBalance, Error> {
+        //
+        // Validation checklist:
+        //
+        // - At least one input or output is present.
+        // - Inputs can be resolved.
+        // - Inputs have not been spent by blocks.
+        // - Inputs are unique.
+        // - Outputs are unique.
+        // - UTXO-specific checks.
+        // - Monetary balance is valid.
+        // - Signature is valid.
+        //
+
+        let tx_hash = Hash::digest(&self);
+
+        assert_eq!(self.txins.len(), inputs.len());
+
+        // Check that transaction has inputs.
+        if self.txins.is_empty() {
+            return Err(TransactionError::NoInputs(tx_hash).into());
+        }
+
+        //
+        // Calculate the pedersen commitment difference in order to check the monetary balance:
+        //
+        //     pedersen_commitment_diff = \sum C_i - \sum C_o - fee * A
+        //
+        // Calculate `P_eff` to validate transaction's signature:
+        //
+        //     P_eff = pedersen_commitment_diff + \sum P_i
+        //
+
+        let mut eff_vkey = None;
+        let mut txin_sum = 0;
+        let mut txout_sum = 0;
+        let mut staking_balance: StakingBalance = HashMap::new();
+
+        // +\sum{C_i} for i in txins
+        let mut txins_set: HashSet<Hash> = HashSet::new();
+        for (txin_hash, txin) in self.txins.iter().zip(inputs) {
+            assert_eq!(Hash::digest(txin), *txin_hash);
+            if !txins_set.insert(*txin_hash) {
+                return Err(TransactionError::DuplicateInput(tx_hash, *txin_hash).into());
+            }
+            txin.validate()?;
+            match txin {
+                Output::PaymentOutput(_) | Output::PublicPaymentOutput(_) => {
+                    return Err(TransactionError::InvalidRestakingInput(tx_hash, *txin_hash).into());
+                }
+                Output::StakeOutput(o) => {
+                    match eff_vkey {
+                        None => {
+                            eff_vkey = Some(o.validator);
+                        }
+                        Some(v) => {
+                            if v != o.validator {
+                                return Err(TransactionError::MixedRestakingOwners(
+                                    tx_hash, *txin_hash,
+                                )
+                                .into());
+                            }
+                        }
+                    }
+                    // Update staking balance.
+                    let stake = staking_balance.entry(o.validator).or_insert(0);
+                    *stake -= o.amount;
+                    txin_sum += o.amount;
+                }
+            };
+        }
+        drop(txins_set);
+
+        let eff_vkey = {
+            match eff_vkey {
+                None => {
+                    return Err(TransactionError::NoRestakingTxins(tx_hash).into());
+                }
+                Some(v) => v,
+            }
+        };
+
+        let mut out_pkey = None;
+        // -\sum{C_o} for o in txouts
+        let mut txouts_set: HashSet<Hash> = HashSet::new();
+        for txout in &self.txouts {
+            let txout_hash = Hash::digest(txout);
+            if !txouts_set.insert(txout_hash) {
+                return Err(TransactionError::DuplicateOutput(tx_hash, txout_hash).into());
+            }
+            txout.validate()?;
+            match txout {
+                Output::PaymentOutput(_) | Output::PublicPaymentOutput(_) => {
+                    return Err(
+                        TransactionError::InvalidRestakingOutput(tx_hash, txout_hash).into(),
+                    );
+                }
+                Output::StakeOutput(o) => {
+                    match out_pkey {
+                        None => {
+                            out_pkey = Some(o.validator);
+                        }
+                        Some(v) => {
+                            if v != o.validator {
+                                return Err(TransactionError::MixedRestakingOwners(
+                                    tx_hash, txout_hash,
+                                )
+                                .into());
+                            }
+                        }
+                    }
+                    // Update staking balance.
+                    let stake = staking_balance.entry(o.validator).or_insert(0);
+                    *stake += o.amount;
+                    txout_sum += o.amount;
+                }
+            };
+        }
+        drop(txouts_set);
+
+        // technically, this test is no longer needed since it has been
+        // absorbed into the signature check...
+        if txin_sum != txout_sum {
+            return Err(TransactionError::InvalidMonetaryBalance(tx_hash).into());
+        }
+
+        // Check signature
+        pbc::check_hash(&tx_hash, &self.sig, &eff_vkey)
+            .map_err(|_e| TransactionError::InvalidSignature(tx_hash))?;
+
+        // Transaction is valid.
+        Ok(staking_balance)
+    }
+}
+
 impl Transaction {
     /// Validate the monetary balance and signature of transaction.
     ///
@@ -170,6 +312,7 @@ impl Transaction {
     pub fn validate(&self, inputs: &[Output]) -> Result<StakingBalance, Error> {
         match self {
             Transaction::PaymentTransaction(tx) => tx.validate(inputs),
+            Transaction::RestakeTransaction(tx) => tx.validate(inputs),
         }
     }
 }

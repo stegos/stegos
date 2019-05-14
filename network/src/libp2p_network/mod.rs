@@ -38,7 +38,7 @@ use protobuf::Message as ProtoMessage;
 use smallvec::SmallVec;
 use std::collections::{HashMap, HashSet};
 use stegos_crypto::hash::{Hashable, Hasher};
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 use stegos_crypto::utils::u8v_to_hexstr;
 use stegos_keychain::KeyChain;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -113,7 +113,7 @@ impl NetworkProvider for Libp2pNetwork {
     }
 
     // Send direct message to public key
-    fn send(&self, to: secure::PublicKey, protocol_id: &str, data: Vec<u8>) -> Result<(), Error> {
+    fn send(&self, to: pbc::PublicKey, protocol_id: &str, data: Vec<u8>) -> Result<(), Error> {
         let protocol_id: String = protocol_id.clone().into();
         let msg = ControlMessage::SendUnicast {
             to,
@@ -132,8 +132,8 @@ impl NetworkProvider for Libp2pNetwork {
     // Switch to new network keys
     fn change_network_keys(
         &self,
-        new_pkey: secure::PublicKey,
-        new_skey: secure::SecretKey,
+        new_pkey: pbc::PublicKey,
+        new_skey: pbc::SecretKey,
     ) -> Result<(), Error> {
         let msg = ControlMessage::ChangeNetworkKeys { new_pkey, new_skey };
         self.control_tx.unbounded_send(msg)?;
@@ -221,9 +221,9 @@ pub struct Libp2pBehaviour<TSubstream: AsyncRead + AsyncWrite> {
     #[behaviour(ignore)]
     unicast_consumers: HashMap<String, SmallVec<[mpsc::UnboundedSender<UnicastMessage>; 3]>>,
     #[behaviour(ignore)]
-    my_pkey: secure::PublicKey,
+    my_pkey: pbc::PublicKey,
     #[behaviour(ignore)]
-    my_skey: secure::SecretKey,
+    my_skey: pbc::SecretKey,
     #[behaviour(ignore)]
     topics_map: HashMap<TopicHash, String>,
     #[behaviour(ignore)]
@@ -646,7 +646,7 @@ pub enum ControlMessage {
         data: Vec<u8>,
     },
     SendUnicast {
-        to: secure::PublicKey,
+        to: pbc::PublicKey,
         protocol_id: String,
         data: Vec<u8>,
     },
@@ -655,8 +655,8 @@ pub enum ControlMessage {
         consumer: mpsc::UnboundedSender<UnicastMessage>,
     },
     ChangeNetworkKeys {
-        new_pkey: secure::PublicKey,
-        new_skey: secure::SecretKey,
+        new_pkey: pbc::PublicKey,
+        new_skey: pbc::SecretKey,
     },
 }
 
@@ -701,17 +701,17 @@ fn my_external_address(config: &NetworkConfig) -> Vec<Multiaddr> {
 
 #[derive(Clone, Debug)]
 pub struct UnicastPayload {
-    from: secure::PublicKey,
-    to: secure::PublicKey,
+    from: pbc::PublicKey,
+    to: pbc::PublicKey,
     protocol_id: String,
     data: Vec<u8>,
 }
 
 // Encode unicast message
-fn encode_unicast(payload: UnicastPayload, sign_key: &secure::SecretKey) -> Vec<u8> {
+fn encode_unicast(payload: UnicastPayload, sign_key: &pbc::SecretKey) -> Vec<u8> {
     let mut msg = unicast_proto::Message::new();
 
-    let enc_packet = secure::ibe_encrypt(&payload.data, &payload.to, IBE_ID);
+    let enc_packet = pbc::ibe_encrypt(&payload.data, &payload.to, IBE_ID);
 
     let mut hasher = Hasher::new();
     payload.from.hash(&mut hasher);
@@ -720,7 +720,7 @@ fn encode_unicast(payload: UnicastPayload, sign_key: &secure::SecretKey) -> Vec<
     enc_packet.rval().hash(&mut hasher);
     enc_packet.cmsg().hash(&mut hasher);
     let hash = hasher.result();
-    let sig = secure::sign_hash(&hash, sign_key);
+    let sig = pbc::sign_hash(&hash, sign_key);
 
     msg.set_data(enc_packet.cmsg().to_vec());
     msg.set_rval(enc_packet.rval().to_bytes().to_vec());
@@ -733,18 +733,16 @@ fn encode_unicast(payload: UnicastPayload, sign_key: &secure::SecretKey) -> Vec<
         .expect("protobuf encoding should never fail")
 }
 
-fn decode_unicast(
-    input: Vec<u8>,
-) -> Result<(UnicastPayload, secure::Signature, secure::RVal), Error> {
+fn decode_unicast(input: Vec<u8>) -> Result<(UnicastPayload, pbc::Signature, pbc::RVal), Error> {
     let mut msg: unicast_proto::Message = protobuf::parse_from_bytes(&input)?;
 
-    let from = secure::PublicKey::try_from_bytes(&msg.take_from().to_vec())?;
-    let to = secure::PublicKey::try_from_bytes(&msg.take_to().to_vec())?;
-    let signature = secure::Signature::try_from_bytes(&msg.take_signature().to_vec())?;
+    let from = pbc::PublicKey::try_from_bytes(&msg.take_from().to_vec())?;
+    let to = pbc::PublicKey::try_from_bytes(&msg.take_to().to_vec())?;
+    let signature = pbc::Signature::try_from_bytes(&msg.take_signature().to_vec())?;
     let protocol_id_bytes = &msg.get_protocol_id();
     let protocol_id = String::from_utf8(protocol_id_bytes.to_vec())?;
     let data = msg.take_data().to_vec();
-    let rval = secure::RVal::try_from_bytes(&msg.take_rval().to_vec())?;
+    let rval = pbc::RVal::try_from_bytes(&msg.take_rval().to_vec())?;
 
     let payload = UnicastPayload {
         from,
@@ -757,12 +755,12 @@ fn decode_unicast(
 }
 
 fn decrypt_message(
-    my_skey: &secure::SecretKey,
+    my_skey: &pbc::SecretKey,
     mut payload: UnicastPayload,
-    signature: secure::Signature,
-    rval: secure::RVal,
+    signature: pbc::Signature,
+    rval: pbc::RVal,
 ) -> Result<UnicastPayload, Error> {
-    let enc_packet = secure::EncryptedPacket::new(&payload.to, IBE_ID, &rval, &payload.data);
+    let enc_packet = pbc::EncryptedPacket::new(&payload.to, IBE_ID, &rval, &payload.data);
 
     let mut hasher = Hasher::new();
     payload.from.hash(&mut hasher);
@@ -772,11 +770,11 @@ fn decrypt_message(
     payload.data.hash(&mut hasher);
     let hash = hasher.result();
 
-    if let Err(_e) = secure::check_hash(&hash, &signature, &payload.from) {
+    if let Err(_e) = pbc::check_hash(&hash, &signature, &payload.from) {
         return Err(format_err!("Bad packet signature."));
     }
 
-    if let Some(data) = secure::ibe_decrypt(&enc_packet, my_skey) {
+    if let Some(data) = pbc::ibe_decrypt(&enc_packet, my_skey) {
         // if decrypted fine, check the signature
         payload.data = data;
         Ok(payload)
@@ -788,12 +786,12 @@ fn decrypt_message(
 #[cfg(test)]
 mod tests {
     use super::UnicastPayload;
-    use stegos_crypto::pbc::secure;
+    use stegos_crypto::pbc;
 
     #[test]
     fn encode_decode() {
-        let (from_skey, from) = secure::make_random_keys();
-        let (to_skey, to) = secure::make_random_keys();
+        let (from_skey, from) = pbc::make_random_keys();
+        let (to_skey, to) = pbc::make_random_keys();
         let protocol_id = "the quick brown fox".to_string();
         let data = random_vec(1024);
 

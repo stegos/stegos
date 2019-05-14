@@ -597,7 +597,7 @@ fn out_of_order_keyblock_proposal() {
             let version = 1;
             let timestamp = SystemTime::now();
             let seed = mix(last_random, round);
-            let random = secure::make_VRF(&leader_node.node_service.keys.network_skey, &seed);
+            let random = pbc::make_VRF(&leader_node.node_service.keys.network_skey, &seed);
             let base = BaseBlockHeader::new(version, previous, height, round, timestamp, random);
             let leader = leader_node.node_service.keys.network_pkey;
             let request = MacroBlock::empty(base, leader);
@@ -666,7 +666,7 @@ fn micro_block_without_signature() {
             leader.node_service.chain.last_random(),
             leader.node_service.chain.view_change(),
         );
-        let random = secure::make_VRF(&leader.node_service.keys.network_skey, &seed);
+        let random = pbc::make_VRF(&leader.node_service.keys.network_skey, &seed);
         let base = BaseBlockHeader::new(
             version,
             last_block_hash,

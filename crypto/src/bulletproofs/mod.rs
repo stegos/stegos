@@ -25,9 +25,6 @@
 #![allow(non_snake_case)]
 #![allow(unused)]
 
-use crate::curve1174::cpt::*;
-use crate::curve1174::ecpt::*;
-use crate::curve1174::fields::*;
 use crate::curve1174::*;
 use crate::hash::*;
 use crate::utils::*;

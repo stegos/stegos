@@ -25,7 +25,7 @@ use crate::view_changes::ViewChangeProof;
 use crate::OutputError;
 use failure::Fail;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 use stegos_crypto::CryptoError;
 
 #[derive(Debug, Fail)]
@@ -40,7 +40,7 @@ pub enum BlockchainError {
         display = "Stake is locked: validator={}, expected_balance={}, minimum_balance={}",
         _0, _1, _2
     )]
-    StakeIsLocked(secure::PublicKey, i64, i64),
+    StakeIsLocked(pbc::PublicKey, i64, i64),
     #[fail(display = "Internal storage error={}", _0)]
     StorageError(failure::Error),
     #[fail(display = "Transaction error={}", _0)]
@@ -167,7 +167,7 @@ pub enum BlockError {
         display = "Different leader found in received block: elected={}, sender={}",
         _0, _1
     )]
-    DifferentPublicKey(secure::PublicKey, secure::PublicKey),
+    DifferentPublicKey(pbc::PublicKey, pbc::PublicKey),
     #[fail(
         display = "Invalid leader signature found: height={}, block={}",
         _0, _1

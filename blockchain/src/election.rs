@@ -25,11 +25,9 @@ use log::error;
 use serde_derive::Serialize;
 use std::collections::BTreeMap;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::pbc::secure;
-use stegos_crypto::pbc::secure::G1;
-use stegos_crypto::pbc::secure::VRF;
+use stegos_crypto::pbc;
 
-pub type StakersGroup = Vec<(secure::PublicKey, i64)>;
+pub type StakersGroup = Vec<(pbc::PublicKey, i64)>;
 
 /// User-friendly printable representation of state.
 #[derive(Serialize, Clone, Debug)]
@@ -37,31 +35,31 @@ pub struct ElectionInfo {
     pub height: u64,
     pub view_change: u32,
     pub slots_count: i64,
-    pub current_leader: secure::PublicKey,
-    pub next_leader: secure::PublicKey,
+    pub current_leader: pbc::PublicKey,
+    pub next_leader: pbc::PublicKey,
 }
 
 /// Result of election.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ElectionResult {
     /// Initial random of election
-    pub random: VRF,
+    pub random: pbc::VRF,
     /// Count of retries, during creating new epoch.
     pub view_change: u32,
     /// List of Validators
     pub validators: StakersGroup,
     /// Facilitator of the transaction pool
-    pub facilitator: secure::PublicKey,
+    pub facilitator: pbc::PublicKey,
 }
 
 impl Default for ElectionResult {
     fn default() -> Self {
-        let facilitator: secure::PublicKey = secure::G2::generator().into(); // some fake key
+        let facilitator: pbc::PublicKey = pbc::G2::generator().into(); // some fake key
         let view_change = 0;
         let validators = Vec::new();
-        let random = VRF {
+        let random = pbc::VRF {
             rand: Hash::digest("random"),
-            proof: G1::zero(),
+            proof: pbc::G1::zero(),
         };
         ElectionResult {
             facilitator,
@@ -73,7 +71,7 @@ impl Default for ElectionResult {
 }
 
 impl ElectionResult {
-    pub fn select_leader(&self, view_change: u32) -> secure::PublicKey {
+    pub fn select_leader(&self, view_change: u32) -> pbc::PublicKey {
         let random = generate_u64(self.random.rand, view_change);
         let leader_id =
             select_winner(self.validators.iter().map(|(_k, slots)| slots), random).unwrap();
@@ -123,7 +121,7 @@ where
 /// slots_count is a count of slots owned by specific validator.
 pub fn select_validators_slots(
     stakers: StakersGroup,
-    random: VRF,
+    random: pbc::VRF,
     slot_count: i64,
 ) -> ElectionResult {
     assert!(!stakers.is_empty(), "Have stakes");
@@ -189,7 +187,7 @@ mod test {
     use std::collections::{HashMap, HashSet};
 
     use stegos_crypto::hash::Hash;
-    use stegos_crypto::pbc::secure;
+    use stegos_crypto::pbc;
 
     fn broken_random(nums: i64) -> impl Iterator<Item = i64> {
         (0..nums).into_iter()
@@ -285,10 +283,10 @@ mod test {
     /// Check if group size actually depends on limit.
     #[test]
     fn test_group_size() {
-        let (skey, _pkey) = secure::make_random_keys();
-        let key = secure::PublicKey::dum();
+        let (skey, _pkey) = pbc::make_random_keys();
+        let key = pbc::PublicKey::dum();
         let keys = vec![(key, 1), (key, 2), (key, 3), (key, 4)];
-        let rand = secure::make_VRF(&skey, &Hash::zero());
+        let rand = pbc::make_VRF(&skey, &Hash::zero());
         for i in 1..5 {
             assert!(
                 select_validators_slots(keys.clone(), rand, i)

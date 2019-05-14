@@ -28,7 +28,7 @@ use protobuf::Message;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::{io, iter};
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 use tokio::codec::{Decoder, Encoder, Framed};
 use tokio::io::{AsyncRead, AsyncWrite};
 use unsigned_varint::codec;
@@ -161,7 +161,7 @@ impl Decoder for DeliveryCodec {
 
         match message.typ {
             Some(delivery_proto::Message_oneof_typ::unicast(msg)) => {
-                let to = secure::PublicKey::try_from_bytes(msg.get_to()).map_err(|_| {
+                let to = pbc::PublicKey::try_from_bytes(msg.get_to()).map_err(|_| {
                     io::Error::new(
                         io::ErrorKind::InvalidData,
                         "bad protobuf encoding, failed to decode unicast to field",
@@ -178,7 +178,7 @@ impl Decoder for DeliveryCodec {
             }
             Some(delivery_proto::Message_oneof_typ::broadcast(msg)) => {
                 let mut topics: Vec<String> = Vec::new();
-                let from = secure::PublicKey::try_from_bytes(msg.get_from()).map_err(|_| {
+                let from = pbc::PublicKey::try_from_bytes(msg.get_from()).map_err(|_| {
                     io::Error::new(
                         io::ErrorKind::InvalidData,
                         "bad protobuf encoding, failed to decode broadcast from field",
@@ -214,7 +214,7 @@ pub enum DeliveryMessage {
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Unicast {
-    pub to: secure::PublicKey,
+    pub to: pbc::PublicKey,
     pub payload: Vec<u8>,
     pub dont_route: bool,
     pub seq_no: Vec<u8>,
@@ -222,7 +222,7 @@ pub struct Unicast {
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Broadcast {
-    pub from: secure::PublicKey,
+    pub from: pbc::PublicKey,
     pub topics: Vec<String>,
     pub payload: Vec<u8>,
     pub seq_no: Vec<u8>,
@@ -250,12 +250,12 @@ mod tests {
     use futures::{Future, Sink, Stream};
     use libp2p::core::upgrade::{InboundUpgrade, OutboundUpgrade};
     use rand;
-    use stegos_crypto::pbc::secure;
+    use stegos_crypto::pbc;
     use tokio::net::{TcpListener, TcpStream};
 
     #[test]
     fn correct_transfer() {
-        let (_, pkey) = secure::make_random_keys();
+        let (_, pkey) = pbc::make_random_keys();
 
         let msg = DeliveryMessage::UnicastMessage(Unicast {
             to: pkey,
@@ -266,7 +266,7 @@ mod tests {
 
         test_one(msg);
 
-        let (_, node_id) = secure::make_random_keys();
+        let (_, node_id) = pbc::make_random_keys();
 
         let msg = DeliveryMessage::BroadcastMessage(Broadcast {
             from: node_id,

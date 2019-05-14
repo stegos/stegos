@@ -40,13 +40,9 @@ use log::*;
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use stegos_crypto::bulletproofs::fee_a;
-use stegos_crypto::curve1174::cpt::{PublicKey, SecretKey};
-use stegos_crypto::curve1174::ecpt::ECp;
-use stegos_crypto::curve1174::fields::Fr;
-use stegos_crypto::curve1174::G;
+use stegos_crypto::curve1174::{ECp, Fr, PublicKey, SecretKey, G};
 use stegos_crypto::hash::*;
-use stegos_crypto::pbc::secure;
-use stegos_crypto::pbc::secure::VRF;
+use stegos_crypto::pbc;
 use stegos_keychain::KeyChain;
 
 pub type ViewCounter = u32;
@@ -508,30 +504,30 @@ impl Blockchain {
     }
 
     /// Return leader public key for specific view_change number.
-    pub fn select_leader(&self, view_change: ViewCounter) -> secure::PublicKey {
+    pub fn select_leader(&self, view_change: ViewCounter) -> pbc::PublicKey {
         self.election_result.select_leader(view_change)
     }
 
     /// Returns public key of the active leader.
-    pub fn leader(&self) -> secure::PublicKey {
+    pub fn leader(&self) -> pbc::PublicKey {
         self.select_leader(self.view_change())
     }
 
     /// Return the current epoch facilitator.
     #[inline]
-    pub fn facilitator(&self) -> &secure::PublicKey {
+    pub fn facilitator(&self) -> &pbc::PublicKey {
         &self.election_result.facilitator
     }
 
     /// Return the current epoch validators with their stakes.
     #[inline]
-    pub fn validators(&self) -> &Vec<(secure::PublicKey, i64)> {
+    pub fn validators(&self) -> &Vec<(pbc::PublicKey, i64)> {
         &self.election_result.validators
     }
 
     /// Returns true if peer is validator in current epoch.
     #[inline]
-    pub fn is_validator(&self, peer: &secure::PublicKey) -> bool {
+    pub fn is_validator(&self, peer: &pbc::PublicKey) -> bool {
         self.validators()
             .iter()
             .find(|item| item.0 == *peer)
@@ -581,7 +577,7 @@ impl Blockchain {
     /// Returns (active_balance, expired_balance) stake.
     ///
     #[inline]
-    pub(crate) fn get_stake(&self, validator_pkey: &secure::PublicKey) -> (i64, i64) {
+    pub(crate) fn get_stake(&self, validator_pkey: &pbc::PublicKey) -> (i64, i64) {
         self.escrow.get(validator_pkey, self.epoch)
     }
 
@@ -796,7 +792,7 @@ impl Blockchain {
         outputs: &[Output],
         gamma: Fr,
         block_reward: i64,
-        random: VRF,
+        random: pbc::VRF,
         _timestamp: SystemTime,
     ) {
         let version = self.height + 1;
@@ -1103,9 +1099,9 @@ impl Blockchain {
 pub fn sign_fake_macro_block(block: &mut MacroBlock, chain: &Blockchain, keychains: &[KeyChain]) {
     let block_hash = Hash::digest(block);
     let validators = chain.validators();
-    let mut signatures: BTreeMap<secure::PublicKey, secure::Signature> = BTreeMap::new();
+    let mut signatures: BTreeMap<pbc::PublicKey, pbc::Signature> = BTreeMap::new();
     for keychain in keychains {
-        let sig = secure::sign_hash(&block_hash, &keychain.network_skey);
+        let sig = pbc::sign_hash(&block_hash, &keychain.network_skey);
         signatures.insert(keychain.network_pkey.clone(), sig);
     }
     let (multisig, multisigmap) = create_multi_signature(&validators, &signatures);
@@ -1125,7 +1121,7 @@ pub fn create_fake_macro_block(
     let key = chain.select_leader(view_change);
     let keys = keychains.iter().find(|p| p.network_pkey == key).unwrap();
     let seed = mix(chain.last_random(), view_change);
-    let random = secure::make_VRF(&keys.network_skey, &seed);
+    let random = pbc::make_VRF(&keys.network_skey, &seed);
     let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
     let mut block = MacroBlock::empty(base, keys.network_pkey);
     sign_fake_macro_block(&mut block, chain, keychains);
@@ -1145,7 +1141,7 @@ pub fn create_fake_micro_block(
     let keys = keychains.iter().find(|p| p.network_pkey == key).unwrap();
     let previous = chain.last_block_hash().clone();
     let seed = mix(chain.last_random(), view_change);
-    let random = secure::make_VRF(&keys.network_skey, &seed);
+    let random = pbc::make_VRF(&keys.network_skey, &seed);
 
     let mut input_hashes: Vec<Hash> = Vec::new();
     let mut inputs: Vec<Output> = Vec::new();
@@ -1233,7 +1229,7 @@ pub fn create_empty_micro_block(
     let key = chain.select_leader(view_change);
     let keys = keychains.iter().find(|p| p.network_pkey == key).unwrap();
     let seed = mix(chain.last_random(), view_change);
-    let random = secure::make_VRF(&keys.network_skey, &seed);
+    let random = pbc::make_VRF(&keys.network_skey, &seed);
     let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
     let mut block = MicroBlock::empty(base, None, keys.network_pkey);
     block.sign(&keys.network_skey, &keys.network_pkey);

@@ -22,7 +22,7 @@
 use stegos_blockchain::PaymentOutput;
 use stegos_crypto::curve1174;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 
 /// A topic used for Join requests.
 pub const POOL_JOIN_TOPIC: &'static str = "txpool_join";
@@ -31,8 +31,8 @@ pub const POOL_ANNOUNCE_TOPIC: &'static str = "txpool_announce";
 
 type TXIN = Hash;
 type UTXO = PaymentOutput;
-type SchnorrSig = curve1174::cpt::SchnorrSig;
-type ParticipantID = secure::PublicKey;
+type SchnorrSig = curve1174::SchnorrSig;
+type ParticipantID = pbc::PublicKey;
 
 // --------------------------------------------------
 

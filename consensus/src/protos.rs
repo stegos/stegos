@@ -28,7 +28,7 @@ use crate::optimistic::*;
 use stegos_blockchain::view_changes::ViewChangeProof;
 use stegos_blockchain::*;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 // link protobuf dependencies
 use stegos_blockchain::protos::view_changes;
 use stegos_blockchain::protos::*;
@@ -71,7 +71,7 @@ impl ProtoConvert for BlockConsensusMessageBody {
                 ConsensusMessageBody::Prevote {}
             }
             Some(consensus::ConsensusMessageBody_oneof_body::precommit(ref msg)) => {
-                let request_hash_sig = secure::Signature::from_proto(msg.get_request_hash_sig())?;
+                let request_hash_sig = pbc::Signature::from_proto(msg.get_request_hash_sig())?;
                 ConsensusMessageBody::Precommit { request_hash_sig }
             }
             None => {
@@ -101,8 +101,8 @@ impl ProtoConvert for BlockConsensusMessage {
         let round = proto.get_round();
         let request_hash = Hash::from_proto(proto.get_request_hash())?;
         let body = ConsensusMessageBody::from_proto(proto.get_body())?;
-        let sig = secure::Signature::from_proto(proto.get_sig())?;
-        let pkey = secure::PublicKey::from_proto(proto.get_pkey())?;
+        let sig = pbc::Signature::from_proto(proto.get_sig())?;
+        let pkey = pbc::PublicKey::from_proto(proto.get_pkey())?;
         Ok(ConsensusMessage {
             height,
             round,
@@ -125,7 +125,7 @@ impl ProtoConvert for ViewChangeMessage {
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let chain = ChainInfo::from_proto(proto.get_chain())?;
         let validator_id = proto.get_validator_id();
-        let signature = secure::Signature::from_proto(proto.get_signature())?;
+        let signature = pbc::Signature::from_proto(proto.get_signature())?;
 
         Ok(ViewChangeMessage {
             chain,
@@ -156,8 +156,7 @@ mod tests {
     use super::*;
     use std::time::SystemTime;
     use stegos_crypto::hash::Hashable;
-    use stegos_crypto::pbc::secure::make_random_keys as make_secure_random_keys;
-    use stegos_crypto::pbc::secure::sign_hash as secure_sign_hash;
+    use stegos_crypto::pbc;
 
     fn roundtrip<T>(x: &T) -> T
     where
@@ -170,7 +169,7 @@ mod tests {
 
     #[test]
     fn consensus() {
-        let (network_skey, network_pkey) = make_secure_random_keys();
+        let (network_skey, network_pkey) = pbc::make_random_keys();
 
         let body = ConsensusMessageBody::Prevote {};
         let msg = ConsensusMessage::new(
@@ -183,7 +182,7 @@ mod tests {
         );
         roundtrip(&msg);
 
-        let request_hash_sig = secure_sign_hash(&Hash::digest("test"), &network_skey);
+        let request_hash_sig = pbc::sign_hash(&Hash::digest("test"), &network_skey);
         let body = ConsensusMessageBody::Precommit { request_hash_sig };
         let msg = ConsensusMessage::new(
             1,
@@ -198,14 +197,14 @@ mod tests {
 
     #[test]
     fn macro_blocks() {
-        let (skey0, pkey0) = make_secure_random_keys();
+        let (skey0, pkey0) = pbc::make_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
         let timestamp = SystemTime::now();
         let previous = Hash::digest(&"test".to_string());
 
-        let random = secure::make_VRF(&skey0, &Hash::digest("test"));
+        let random = pbc::make_VRF(&skey0, &Hash::digest("test"));
         let base = BaseBlockHeader::new(version, previous, height, 0, timestamp, random);
         let block = MacroBlock::empty(base, pkey0);
 
@@ -222,7 +221,7 @@ mod tests {
 
     #[test]
     fn view_change() {
-        let (skey0, _pkey0) = make_secure_random_keys();
+        let (skey0, _pkey0) = pbc::make_random_keys();
 
         let chain = ChainInfo {
             height: 41,

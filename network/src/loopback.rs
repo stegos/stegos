@@ -29,7 +29,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::mem;
 use std::sync::{Arc, Mutex};
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 use stegos_serialization::traits::ProtoConvert;
 
 #[derive(Debug, Clone)]
@@ -71,7 +71,7 @@ impl NetworkProvider for LoopbackNetwork {
         Ok(rx)
     }
 
-    fn send(&self, to: secure::PublicKey, protocol_id: &str, data: Vec<u8>) -> Result<(), Error> {
+    fn send(&self, to: pbc::PublicKey, protocol_id: &str, data: Vec<u8>) -> Result<(), Error> {
         let msg = MessageFromNode::SendUnicast {
             to,
             protocol_id: protocol_id.to_string(),
@@ -91,8 +91,8 @@ impl NetworkProvider for LoopbackNetwork {
 
     fn change_network_keys(
         &self,
-        _new_pkey: secure::PublicKey,
-        _new_skey: secure::SecretKey,
+        _new_pkey: pbc::PublicKey,
+        _new_skey: pbc::SecretKey,
     ) -> Result<(), Error> {
         Ok(())
     }
@@ -163,7 +163,7 @@ impl Loopback {
         }
     }
 
-    pub fn get_unicast<M: ProtoConvert>(&mut self, topic: &str, peer: &secure::PublicKey) -> M {
+    pub fn get_unicast<M: ProtoConvert>(&mut self, topic: &str, peer: &pbc::PublicKey) -> M {
         let ref mut state = self.state.lock().unwrap();
         match state.queue.pop_front().unwrap() {
             MessageFromNode::SendUnicast {
@@ -230,7 +230,7 @@ impl Loopback {
 
     pub fn assert_unicast<M: ProtoConvert + Debug + PartialEq>(
         &mut self,
-        to: secure::PublicKey,
+        to: pbc::PublicKey,
         protocol_id: &str,
         data: M,
     ) {
@@ -261,7 +261,7 @@ impl Loopback {
         self.receive_broadcast_raw(topic, msg.into_buffer().unwrap());
     }
 
-    pub fn receive_unicast_raw(&mut self, peer: secure::PublicKey, topic: &str, data: Vec<u8>) {
+    pub fn receive_unicast_raw(&mut self, peer: pbc::PublicKey, topic: &str, data: Vec<u8>) {
         let ref mut state = self.state.lock().unwrap();
         let ref mut node = state
             .unicast_consumers
@@ -271,12 +271,7 @@ impl Loopback {
         node.unbounded_send(message).expect("channel error")
     }
 
-    pub fn receive_unicast<M: ProtoConvert>(
-        &mut self,
-        peer: secure::PublicKey,
-        topic: &str,
-        msg: M,
-    ) {
+    pub fn receive_unicast<M: ProtoConvert>(&mut self, peer: pbc::PublicKey, topic: &str, msg: M) {
         self.receive_unicast_raw(peer, topic, msg.into_buffer().unwrap());
     }
 }
@@ -284,7 +279,7 @@ impl Loopback {
 #[derive(Debug, Clone)]
 pub enum MessageFromNode {
     SendUnicast {
-        to: secure::PublicKey,
+        to: pbc::PublicKey,
         protocol_id: String,
         data: Vec<u8>,
     },

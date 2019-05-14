@@ -35,13 +35,11 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 use stegos_crypto::bulletproofs::{fee_a, simple_commit};
-use stegos_crypto::curve1174::ecpt::ECp;
-use stegos_crypto::curve1174::fields::Fr;
-use stegos_crypto::curve1174::{cpt, G};
+use stegos_crypto::curve1174::{ECp, Fr, G};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::pbc::secure;
+use stegos_crypto::{curve1174, pbc};
 
-pub type StakingBalance = HashMap<secure::PublicKey, i64>;
+pub type StakingBalance = HashMap<pbc::PublicKey, i64>;
 
 impl PaymentTransaction {
     /// Validate the monetary balance and signature of transaction.
@@ -151,10 +149,10 @@ impl PaymentTransaction {
         eff_pkey -= adj;
 
         // Create public key and check signature
-        let eff_pkey: cpt::PublicKey = eff_pkey.into();
+        let eff_pkey: curve1174::PublicKey = eff_pkey.into();
 
         // Check signature
-        cpt::validate_sig(&tx_hash, &self.sig, &eff_pkey)
+        curve1174::validate_sig(&tx_hash, &self.sig, &eff_pkey)
             .map_err(|_e| TransactionError::InvalidSignature(tx_hash))?;
 
         // Transaction is valid.
@@ -227,7 +225,7 @@ impl Blockchain {
         staking_balance: StakeIter,
     ) -> Result<(), BlockchainError>
     where
-        StakeIter: Iterator<Item = (&'a secure::PublicKey, &'a i64)>,
+        StakeIter: Iterator<Item = (&'a pbc::PublicKey, &'a i64)>,
     {
         for (validator_pkey, balance) in staking_balance {
             let (active_balance, expired_balance) = self.get_stake(validator_pkey);
@@ -391,7 +389,7 @@ impl Blockchain {
                 }
             };
 
-            if let Err(_e) = secure::check_hash(&block_hash, &block.sig, &leader) {
+            if let Err(_e) = pbc::check_hash(&block_hash, &block.sig, &leader) {
                 return Err(BlockError::InvalidLeaderSignature(height, block_hash).into());
             }
 
@@ -400,7 +398,7 @@ impl Blockchain {
                 leader, block.base.view_change
             );
             let seed = mix(self.last_random(), block.base.view_change);
-            if !secure::validate_VRF_source(&block.base.random, &leader, &seed) {
+            if !pbc::validate_VRF_source(&block.base.random, &leader, &seed) {
                 return Err(BlockError::IncorrectRandom(height, block_hash).into());
             }
         }
@@ -486,7 +484,7 @@ impl Blockchain {
 
         let mut burned = ECp::inf();
         let mut created = ECp::inf();
-        let mut staking_balance: HashMap<secure::PublicKey, i64> = HashMap::new();
+        let mut staking_balance: HashMap<pbc::PublicKey, i64> = HashMap::new();
 
         //
         // Validate inputs.
@@ -676,13 +674,13 @@ impl Blockchain {
                 leader, block.header.base.view_change
             );
             let seed = mix(self.last_random(), block.header.base.view_change);
-            if !secure::validate_VRF_source(&block.header.base.random, &leader, &seed) {
+            if !pbc::validate_VRF_source(&block.header.base.random, &leader, &seed) {
                 return Err(BlockError::IncorrectRandom(height, block_hash).into());
             }
 
             // Currently macro block consensus uses public key as peer id.
             // This adaptor allows converting PublicKey into integer identifier.
-            let validators_map: HashMap<secure::PublicKey, u32> = self
+            let validators_map: HashMap<pbc::PublicKey, u32> = self
                 .validators()
                 .iter()
                 .enumerate()
@@ -705,7 +703,7 @@ impl Blockchain {
                         BlockError::MoreThanOneSignatureAtPropose(height, block_hash).into(),
                     );
                 }
-                if let Err(_e) = secure::check_hash(&block_hash, &block.body.multisig, &leader) {
+                if let Err(_e) = pbc::check_hash(&block_hash, &block.body.multisig, &leader) {
                     return Err(BlockError::InvalidLeaderSignature(height, block_hash).into());
                 }
             } else {
@@ -737,14 +735,14 @@ pub mod tests {
     use crate::output::OutputError;
     use crate::output::StakeOutput;
     use std::time::SystemTime;
-    use stegos_crypto::pbc::secure;
+    use stegos_crypto::pbc;
 
     ///
     /// Tests that transactions without inputs are prohibited.
     ///
     #[test]
     pub fn no_inputs() {
-        let (skey, pkey) = cpt::make_random_keys();
+        let (skey, pkey) = curve1174::make_random_keys();
         let amount: i64 = 1_000_000;
         let fee: i64 = amount;
         let (input, _gamma1) = Output::new_payment(&pkey, amount).expect("keys are valid");
@@ -761,7 +759,7 @@ pub mod tests {
     #[test]
     pub fn no_outputs() {
         // No outputs
-        let (skey, pkey) = cpt::make_random_keys();
+        let (skey, pkey) = curve1174::make_random_keys();
         let (tx, inputs, _outputs) = PaymentTransaction::new_test(&skey, &pkey, 100, 1, 0, 0, 100)
             .expect("transaction is valid");
         tx.validate(&inputs).expect("transaction is valid");
@@ -772,9 +770,9 @@ pub mod tests {
     ///
     #[test]
     pub fn payment_utxo() {
-        let (skey0, pkey0) = cpt::make_random_keys();
-        let (skey1, pkey1) = cpt::make_random_keys();
-        let (_skey2, pkey2) = cpt::make_random_keys();
+        let (skey0, pkey0) = curve1174::make_random_keys();
+        let (skey1, pkey1) = curve1174::make_random_keys();
+        let (_skey2, pkey2) = curve1174::make_random_keys();
 
         let amount: i64 = 1_000_000;
         let fee: i64 = 1;
@@ -822,7 +820,7 @@ pub mod tests {
             let output = &mut tx.txouts[0];
             match output {
                 Output::PaymentOutput(ref mut o) => {
-                    let pt = cpt::Pt::random();
+                    let pt = curve1174::Pt::random();
                     o.recipient = pt.into();
                 }
                 _ => panic!(),
@@ -947,8 +945,8 @@ pub mod tests {
     ///
     #[test]
     pub fn stake_utxo() {
-        let (skey1, pkey1) = cpt::make_random_keys();
-        let (nskey, npkey) = secure::make_random_keys();
+        let (skey1, pkey1) = curve1174::make_random_keys();
+        let (nskey, npkey) = pbc::make_random_keys();
 
         let amount: i64 = 1_000_000;
         let fee: i64 = 1;
@@ -1031,7 +1029,7 @@ pub mod tests {
         let output = &mut tx.txouts[0];
         match output {
             Output::StakeOutput(ref mut o) => {
-                let pt = cpt::Pt::random();
+                let pt = curve1174::Pt::random();
                 o.recipient = pt.into();
             }
             _ => panic!(),
@@ -1046,9 +1044,9 @@ pub mod tests {
 
     #[test]
     fn test_supertransaction() {
-        let (skey1, pkey1) = cpt::make_random_keys();
-        let (skey2, pkey2) = cpt::make_random_keys();
-        let (skey3, pkey3) = cpt::make_random_keys();
+        let (skey1, pkey1) = curve1174::make_random_keys();
+        let (skey2, pkey2) = curve1174::make_random_keys();
+        let (skey3, pkey3) = curve1174::make_random_keys();
 
         let err_utxo = "Can't construct UTXO";
         let iamt1 = 101;
@@ -1059,33 +1057,33 @@ pub mod tests {
         let (inp3, gamma_i3) = Output::new_payment(&pkey3, iamt3).expect(err_utxo);
 
         let decr_err = "Can't decrypt UTXO payload";
-        let skeff1: cpt::SecretKey = match inp1.clone() {
+        let skeff1: curve1174::SecretKey = match inp1.clone() {
             Output::PaymentOutput(o) => {
                 let payload = o.decrypt_payload(&skey1).expect(decr_err);
                 assert!(payload.gamma == gamma_i1);
-                let skeff: cpt::SecretKey =
+                let skeff: curve1174::SecretKey =
                     (Fr::from(skey1) + payload.gamma * payload.delta).into();
                 skeff
             }
             _ => panic!("Invalid UTXO"),
         };
 
-        let skeff2: cpt::SecretKey = match inp2.clone() {
+        let skeff2: curve1174::SecretKey = match inp2.clone() {
             Output::PaymentOutput(o) => {
                 let payload = o.decrypt_payload(&skey2).expect(decr_err);
                 assert!(payload.gamma == gamma_i2);
-                let skeff: cpt::SecretKey =
+                let skeff: curve1174::SecretKey =
                     (Fr::from(skey2.clone()) + payload.gamma * payload.delta).into();
                 skeff
             }
             _ => panic!("Invalid UTXO"),
         };
 
-        let skeff3: cpt::SecretKey = match inp3.clone() {
+        let skeff3: curve1174::SecretKey = match inp3.clone() {
             Output::PaymentOutput(o) => {
                 let payload = o.decrypt_payload(&skey3).expect(decr_err);
                 assert!(payload.gamma == gamma_i3);
-                let skeff: cpt::SecretKey =
+                let skeff: curve1174::SecretKey =
                     (Fr::from(skey3.clone()) + payload.gamma * payload.delta).into();
                 skeff
             }
@@ -1136,9 +1134,9 @@ pub mod tests {
 
     #[test]
     fn create_validate_macro_block() {
-        let (_skey1, pkey1) = cpt::make_random_keys();
-        let (_skey2, pkey2) = cpt::make_random_keys();
-        let (nskey, npkey) = secure::make_random_keys();
+        let (_skey1, pkey1) = curve1174::make_random_keys();
+        let (_skey2, pkey2) = curve1174::make_random_keys();
+        let (nskey, npkey) = pbc::make_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -1147,7 +1145,7 @@ pub mod tests {
         let amount: i64 = 1_000_000;
         let previous = Hash::digest("test");
         let seed = mix(Hash::zero(), view_change);
-        let random = secure::make_VRF(&nskey, &seed);
+        let random = pbc::make_VRF(&nskey, &seed);
 
         //
         // Valid block with transaction from 1 to 2
@@ -1188,8 +1186,8 @@ pub mod tests {
 
     #[test]
     fn validate_pruned_micro_block() {
-        let (_skey, pkey) = cpt::make_random_keys();
-        let (nskey, npkey) = secure::make_random_keys();
+        let (_skey, pkey) = curve1174::make_random_keys();
+        let (nskey, npkey) = pbc::make_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -1199,7 +1197,7 @@ pub mod tests {
         let previous = Hash::digest(&"test".to_string());
 
         let seed = mix(Hash::zero(), view_change);
-        let random = secure::make_VRF(&nskey, &seed);
+        let random = pbc::make_VRF(&nskey, &seed);
 
         let (input, gamma0) = Output::new_payment(&pkey, amount).unwrap();
         let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
@@ -1228,8 +1226,8 @@ pub mod tests {
 
     #[test]
     fn create_validate_macro_block_with_staking() {
-        let (_skey1, pkey1) = cpt::make_random_keys();
-        let (nskey, npkey) = secure::make_random_keys();
+        let (_skey1, pkey1) = curve1174::make_random_keys();
+        let (nskey, npkey) = pbc::make_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -1238,7 +1236,7 @@ pub mod tests {
         let amount: i64 = 1_000_000;
         let previous = Hash::digest(&"test".to_string());
         let seed = mix(Hash::zero(), view_change);
-        let random = secure::make_VRF(&nskey, &seed);
+        let random = pbc::make_VRF(&nskey, &seed);
 
         //
         // Escrow as an input.
@@ -1339,8 +1337,8 @@ pub mod tests {
     }
 
     fn create_burn_money(input_amount: i64, output_amount: i64) {
-        let (_skey, pkey) = cpt::make_random_keys();
-        let (nskey, npkey) = secure::make_random_keys();
+        let (_skey, pkey) = curve1174::make_random_keys();
+        let (nskey, npkey) = pbc::make_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -1349,7 +1347,7 @@ pub mod tests {
         let previous = Hash::digest(&"test".to_string());
 
         let seed = mix(Hash::zero(), view_change);
-        let random = secure::make_VRF(&nskey, &seed);
+        let random = pbc::make_VRF(&nskey, &seed);
         let block_reward: i64 = output_amount - input_amount;
 
         let (input, input_gamma) = Output::new_payment(&pkey, input_amount).unwrap();

@@ -36,7 +36,7 @@ use std::{
     marker::PhantomData,
     time::{Duration, Instant},
 };
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 use stegos_keychain::KeyChain;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::timer::Delay;
@@ -51,7 +51,7 @@ const KNOWN_PEERS_TABLE_SIZE: usize = 1024;
 /// about them.
 pub struct Ncp<TSubstream> {
     /// Out network key
-    node_id: secure::PublicKey,
+    node_id: pbc::PublicKey,
     /// Queue of internal events
     events: VecDeque<NcpEvent>,
     /// Events that need to be yielded to the outside when polling.
@@ -59,7 +59,7 @@ pub struct Ncp<TSubstream> {
     /// List of connected peers (including disabled)
     connected_peers: HashSet<PeerId>,
     /// Known peers
-    known_peers: LruCache<Vec<u8>, (secure::PublicKey, SmallVec<[Multiaddr; 16]>)>,
+    known_peers: LruCache<Vec<u8>, (pbc::PublicKey, SmallVec<[Multiaddr; 16]>)>,
     /// Maximum connections allowd
     max_connections: usize,
     /// Minimum connections to keep
@@ -82,7 +82,7 @@ impl<TSubstream> Ncp<TSubstream> {
             out_events: VecDeque::new(),
             connected_peers: HashSet::new(),
             known_peers:
-                LruCache::<Vec<u8>, (secure::PublicKey, SmallVec<[Multiaddr; 16]>)>::with_capacity(
+                LruCache::<Vec<u8>, (pbc::PublicKey, SmallVec<[Multiaddr; 16]>)>::with_capacity(
                     KNOWN_PEERS_TABLE_SIZE,
                 ),
             max_connections: config.max_connections,
@@ -97,7 +97,7 @@ impl<TSubstream> Ncp<TSubstream> {
         }
     }
 
-    pub fn change_network_key(&mut self, new_pkey: secure::PublicKey) {
+    pub fn change_network_key(&mut self, new_pkey: pbc::PublicKey) {
         self.node_id = new_pkey;
         // Update all connected peers with our new network key
         for p in self.connected_peers.iter() {
@@ -365,7 +365,7 @@ pub enum NcpOutEvent {
         peer_id: PeerId,
     },
     DiscoveredPeer {
-        node_id: secure::PublicKey,
+        node_id: pbc::PublicKey,
         peer_id: PeerId,
         addresses: Vec<Multiaddr>,
     },

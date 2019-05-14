@@ -31,8 +31,8 @@ mod requests;
 use crate::*;
 use assert_matches::assert_matches;
 use log::Level;
-use stegos_crypto::pbc::secure;
-use stegos_crypto::pbc::secure::VRF;
+use stegos_crypto::pbc;
+use stegos_crypto::pbc::VRF;
 use stegos_keychain::KeyChain;
 use tokio_timer::Timer;
 
@@ -102,7 +102,7 @@ impl<'timer> Sandbox<'timer> {
         &self.config
     }
 
-    fn split<'a>(&'a mut self, first_partitions_nodes: &[secure::PublicKey]) -> PartitionGuard<'a> {
+    fn split<'a>(&'a mut self, first_partitions_nodes: &[pbc::PublicKey]) -> PartitionGuard<'a> {
         let divider = |key| {
             first_partitions_nodes
                 .iter()
@@ -225,7 +225,7 @@ impl NodeSandbox {
     #[allow(dead_code)]
     fn create_vrf_from_seed(&self, random: Hash, view_change: u32) -> VRF {
         let seed = mix(random, view_change);
-        secure::make_VRF(&self.node_service.keys.network_skey, &seed)
+        pbc::make_VRF(&self.node_service.keys.network_skey, &seed)
     }
 
     fn validator_id(&self) -> Option<usize> {
@@ -273,7 +273,7 @@ trait Api<'p> {
     /// Iterator among all nodes, except one of
     fn iter_except<'a>(
         &'a mut self,
-        validators: &'a [secure::PublicKey],
+        validators: &'a [pbc::PublicKey],
     ) -> Box<dyn Iterator<Item = &'a mut NodeSandbox> + 'a>
     where
         'p: 'a,
@@ -347,13 +347,13 @@ trait Api<'p> {
         self.poll();
     }
 
-    fn leader(&mut self) -> secure::PublicKey {
+    fn leader(&mut self) -> pbc::PublicKey {
         self.first_mut().node_service.chain.leader()
     }
 
     /// Returns next leader publicKey.
     /// Returns None if current leader was not found in current partition.
-    fn next_leader(&mut self) -> Option<secure::PublicKey> {
+    fn next_leader(&mut self) -> Option<pbc::PublicKey> {
         let first_leader_pk = self.first_mut().node_service.chain.leader();
         let view_change = self.first_mut().node_service.chain.view_change();
 
@@ -363,7 +363,7 @@ trait Api<'p> {
         Some(election.select_leader(view_change + 1))
     }
 
-    fn next_view_change_leader(&mut self) -> secure::PublicKey {
+    fn next_view_change_leader(&mut self) -> pbc::PublicKey {
         let view_change = self.first_mut().node_service.chain.view_change();
         self.first_mut()
             .node_service
@@ -382,7 +382,7 @@ trait Api<'p> {
     }
 
     /// Return node for publickey.
-    fn node<'a>(&'a mut self, pk: &secure::PublicKey) -> Option<&'a mut NodeSandbox>
+    fn node<'a>(&'a mut self, pk: &pbc::PublicKey) -> Option<&'a mut NodeSandbox>
     where
         'p: 'a,
     {
@@ -391,7 +391,7 @@ trait Api<'p> {
     }
 
     /// Return node for publickey.
-    fn node_ref<'a>(&'a mut self, pk: &secure::PublicKey) -> Option<&'a NodeSandbox>
+    fn node_ref<'a>(&'a mut self, pk: &pbc::PublicKey) -> Option<&'a NodeSandbox>
     where
         'p: 'a,
     {

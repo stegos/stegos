@@ -29,9 +29,9 @@ use serde_derive::Deserialize;
 use serde_derive::Serialize;
 pub use stegos_blockchain::PaymentPayloadData;
 pub use stegos_blockchain::StakeInfo;
-use stegos_crypto::curve1174::cpt::PublicKey;
+use stegos_crypto::curve1174::PublicKey;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 use stegos_node::EpochChanged;
 use stegos_node::OutputsChanged;
 
@@ -105,7 +105,7 @@ pub enum WalletResponse {
     },
     KeysInfo {
         wallet_pkey: PublicKey,
-        network_pkey: secure::PublicKey,
+        network_pkey: pbc::PublicKey,
     },
     UnspentInfo {
         payments: Vec<PaymentInfo>,

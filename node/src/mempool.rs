@@ -29,7 +29,7 @@ use std::time::SystemTime;
 use stegos_blockchain::view_changes::ViewChangeProof;
 use stegos_blockchain::*;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 use stegos_keychain::KeyChain;
 
 /// Memory Pool of Transactions.
@@ -167,7 +167,7 @@ impl Mempool {
     ) -> MicroBlock {
         let timestamp = SystemTime::now();
         let seed = mix(last_random, view_change);
-        let random = secure::make_VRF(&keychain.network_skey, &seed);
+        let random = pbc::make_VRF(&keychain.network_skey, &seed);
 
         //
         // Transactions.
@@ -212,7 +212,7 @@ impl Mempool {
 #[cfg(test)]
 mod test {
     use super::*;
-    use stegos_crypto::curve1174::cpt::make_random_keys;
+    use stegos_crypto::curve1174::make_random_keys;
 
     #[test]
     fn basic() {

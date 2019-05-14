@@ -26,14 +26,11 @@ use rand::random;
 use serde_derive::Serialize;
 use std::mem::transmute;
 use stegos_crypto::bulletproofs::{fee_a, make_range_proof, validate_range_proof, BulletProof};
-use stegos_crypto::curve1174::cpt::{
-    aes_decrypt, aes_encrypt, EncryptedPayload, Pt, PublicKey, SecretKey,
+use stegos_crypto::curve1174::{
+    aes_decrypt, aes_encrypt, ECp, EncryptedPayload, Fq, Fr, Pt, PublicKey, SecretKey, G, UNIQ,
 };
-use stegos_crypto::curve1174::ecpt::ECp;
-use stegos_crypto::curve1174::fields::{Fq, Fr};
-use stegos_crypto::curve1174::{G, UNIQ};
 use stegos_crypto::hash::{Hash, Hashable, Hasher, HASH_SIZE};
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 use stegos_crypto::CryptoError;
 
 /// A magic value used to encode/decode payload.
@@ -116,7 +113,7 @@ pub struct StakeOutput {
     pub recipient: PublicKey,
 
     /// Uncloaked network key of validator.
-    pub validator: secure::PublicKey,
+    pub validator: pbc::PublicKey,
 
     /// Amount to stake.
     pub amount: i64,
@@ -125,7 +122,7 @@ pub struct StakeOutput {
     pub serno: i64,
 
     /// BLS signature of recipient, validator and payload.
-    pub signature: secure::Signature,
+    pub signature: pbc::Signature,
 }
 
 /// Blockchain UTXO.
@@ -467,8 +464,8 @@ impl StakeOutput {
     /// Create a new StakeOutput.
     pub fn new(
         recipient_pkey: &PublicKey,
-        validator_skey: &secure::SecretKey,
-        validator_pkey: &secure::PublicKey,
+        validator_skey: &pbc::SecretKey,
+        validator_pkey: &pbc::PublicKey,
         amount: i64,
     ) -> Result<Self, Error> {
         assert!(amount > 0);
@@ -480,12 +477,12 @@ impl StakeOutput {
             validator: validator_pkey.clone(),
             amount,
             serno,
-            signature: secure::Signature::zero(),
+            signature: pbc::Signature::zero(),
         };
 
         // Form BLS signature on the Stake UTXO
         let h = Hash::digest(&output);
-        output.signature = secure::sign_hash(&h, validator_skey);
+        output.signature = pbc::sign_hash(&h, validator_skey);
 
         Ok(output)
     }
@@ -499,7 +496,7 @@ impl StakeOutput {
         }
 
         // Validate BLS signature of validator_pkey
-        if let Err(_e) = secure::check_hash(&output_hash, &self.signature, &self.validator) {
+        if let Err(_e) = pbc::check_hash(&output_hash, &self.signature, &self.validator) {
             return Err(OutputError::InvalidStakeSignature(output_hash).into());
         }
         Ok(())
@@ -526,8 +523,8 @@ impl Output {
     /// Create a new escrow transaction.
     pub fn new_stake(
         recipient_pkey: &PublicKey,
-        validator_skey: &secure::SecretKey,
-        validator_pkey: &secure::PublicKey,
+        validator_skey: &pbc::SecretKey,
+        validator_pkey: &pbc::PublicKey,
         amount: i64,
     ) -> Result<Self, Error> {
         let output = StakeOutput::new(recipient_pkey, validator_skey, validator_pkey, amount)?;
@@ -624,7 +621,7 @@ pub mod tests {
 
     use rand::distributions::Alphanumeric;
     use rand::{thread_rng, Rng};
-    use stegos_crypto::curve1174::cpt::make_random_keys;
+    use stegos_crypto::curve1174::make_random_keys;
 
     fn random_string(len: usize) -> String {
         thread_rng().sample_iter(&Alphanumeric).take(len).collect()

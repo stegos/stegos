@@ -12,7 +12,7 @@ use std::time::Duration;
 use stegos_blockchain::PaymentOutput;
 use stegos_crypto::curve1174;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 use stegos_keychain::KeyChain;
 use stegos_network::Network;
 use stegos_node::EpochChanged;
@@ -24,8 +24,8 @@ const MESSAGE_TIMEOUT: Duration = Duration::from_secs(30);
 
 type TXIN = Hash;
 type UTXO = PaymentOutput;
-type SchnorrSig = curve1174::cpt::SchnorrSig;
-type ParticipantID = secure::PublicKey;
+type SchnorrSig = curve1174::SchnorrSig;
+type ParticipantID = pbc::PublicKey;
 
 struct FacilitatorState {
     participants: HashMap<ParticipantID, (Vec<TXIN>, Vec<UTXO>, SchnorrSig)>,

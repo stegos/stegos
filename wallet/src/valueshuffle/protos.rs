@@ -31,13 +31,12 @@ use stegos_crypto::protos::*;
 include!(concat!(env!("OUT_DIR"), "/valueshuffle/mod.rs"));
 
 use std::collections::HashMap;
-use stegos_crypto::curve1174::cpt::{Pt, PublicKey, SchnorrSig, SecretKey};
-use stegos_crypto::curve1174::fields::Fr;
+use stegos_crypto::curve1174::{Fr, Pt, PublicKey, SchnorrSig, SecretKey};
 use stegos_crypto::hash::Hash;
 
 type DcRow = Vec<Fr>;
 type DcSheet = Vec<DcRow>;
-type ParticipantID = stegos_crypto::pbc::secure::PublicKey;
+type ParticipantID = stegos_crypto::pbc::PublicKey;
 
 impl ProtoConvert for VsPayload {
     type Proto = valueshuffle::VsPayload;
@@ -207,7 +206,7 @@ pub mod tests {
     use super::*;
     use std::dbg;
     use stegos_crypto::bulletproofs::simple_commit;
-    use stegos_crypto::curve1174::cpt::make_random_keys;
+    use stegos_crypto::curve1174::make_random_keys;
 
     #[test]
     fn vs_serialization() {

@@ -171,7 +171,7 @@ mod test {
     use super::*;
     use std::time::{Duration, SystemTime};
     use stegos_blockchain::*;
-    use stegos_crypto::curve1174::fields::Fr;
+    use stegos_crypto::curve1174::Fr;
     use stegos_keychain::KeyChain;
 
     #[test]

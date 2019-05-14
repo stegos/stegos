@@ -24,11 +24,11 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use stegos_crypto::curve1174::cpt::Pt;
-use stegos_crypto::curve1174::cpt::PublicKey;
-use stegos_crypto::curve1174::cpt::SchnorrSig;
-use stegos_crypto::curve1174::cpt::SecretKey;
-use stegos_crypto::curve1174::fields::Fr;
+use stegos_crypto::curve1174::Fr;
+use stegos_crypto::curve1174::Pt;
+use stegos_crypto::curve1174::PublicKey;
+use stegos_crypto::curve1174::SchnorrSig;
+use stegos_crypto::curve1174::SecretKey;
 use stegos_crypto::dicemix::DcMatrix;
 use stegos_crypto::dicemix::ParticipantID;
 use stegos_crypto::hash::Hash;

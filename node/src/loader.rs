@@ -25,7 +25,7 @@ use log::*;
 use rand::seq::IteratorRandom;
 use stegos_blockchain::Block;
 use stegos_crypto::hash::{Hashable, Hasher};
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 use stegos_serialization::traits::ProtoConvert;
 use tokio_timer::clock;
 
@@ -93,7 +93,7 @@ pub const CHAIN_LOADER_TOPIC: &'static str = "chain-loader";
 
 impl NodeService {
     /// Choose a master node to download blocks from.
-    fn choose_master(&self) -> Option<secure::PublicKey> {
+    fn choose_master(&self) -> Option<pbc::PublicKey> {
         let mut rng = rand::thread_rng();
         // use latest known validators list.
         let validators = self
@@ -125,7 +125,7 @@ impl NodeService {
         self.request_history_from(from)
     }
 
-    pub fn request_history_from(&mut self, from: secure::PublicKey) -> Result<(), Error> {
+    pub fn request_history_from(&mut self, from: pbc::PublicKey) -> Result<(), Error> {
         let elapsed = clock::now().duration_since(self.last_sync_clock);
         if elapsed < self.cfg.loader_timeout {
             debug!(
@@ -150,7 +150,7 @@ impl NodeService {
 
     fn handle_request_blocks(
         &mut self,
-        pkey: secure::PublicKey,
+        pkey: pbc::PublicKey,
         request: RequestBlocks,
     ) -> Result<(), Error> {
         let starting_height = request.starting_height;
@@ -164,11 +164,7 @@ impl NodeService {
         self.send_blocks(pkey, starting_height)
     }
 
-    pub fn send_blocks(
-        &mut self,
-        pkey: secure::PublicKey,
-        starting_height: u64,
-    ) -> Result<(), Error> {
+    pub fn send_blocks(&mut self, pkey: pbc::PublicKey, starting_height: u64) -> Result<(), Error> {
         assert!(starting_height < self.chain.height());
         // Send one epoch.
         let blocks = self.chain.blocks_range(
@@ -184,7 +180,7 @@ impl NodeService {
 
     fn handle_response_blocks(
         &mut self,
-        pkey: secure::PublicKey,
+        pkey: pbc::PublicKey,
         response: ResponseBlocks,
     ) -> Result<(), Error> {
         info!(
@@ -214,7 +210,7 @@ impl NodeService {
 
     pub fn handle_chain_loader_message(
         &mut self,
-        pkey: secure::PublicKey,
+        pkey: pbc::PublicKey,
         msg: ChainLoaderMessage,
     ) -> Result<(), Error> {
         match msg {

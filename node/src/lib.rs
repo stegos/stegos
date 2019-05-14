@@ -57,7 +57,7 @@ use stegos_blockchain::*;
 use stegos_consensus::optimistic::{SealedViewChangeProof, ViewChangeCollector, ViewChangeMessage};
 use stegos_consensus::{self as consensus, BlockConsensus, BlockConsensusMessage};
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 use stegos_keychain::KeyChain;
 use stegos_network::Network;
 use stegos_network::UnicastMessage;
@@ -166,8 +166,8 @@ pub struct BlockAdded {
 #[derive(Clone, Debug, Serialize)]
 pub struct EpochChanged {
     pub epoch: u64,
-    pub facilitator: secure::PublicKey,
-    pub validators: Vec<(secure::PublicKey, i64)>,
+    pub facilitator: pbc::PublicKey,
+    pub validators: Vec<(pbc::PublicKey, i64)>,
 }
 
 /// Send when outputs created and/or pruned.
@@ -560,11 +560,7 @@ impl NodeService {
     }
 
     /// We receive info about view_change, rollback the blocks, and set view_change to new.
-    fn try_rollback(
-        &mut self,
-        pkey: secure::PublicKey,
-        proof: SealedViewChangeProof,
-    ) -> ForkResult {
+    fn try_rollback(&mut self, pkey: pbc::PublicKey, proof: SealedViewChangeProof) -> ForkResult {
         let height = proof.chain.height;
         // Check height.
         if height <= self.chain.last_macro_block_height() {
@@ -728,7 +724,7 @@ impl NodeService {
             }
             Block::MicroBlock(ref block) => {
                 let leader = block.pkey;
-                if let Err(_e) = secure::check_hash(&block_hash, &block.sig, &leader) {
+                if let Err(_e) = pbc::check_hash(&block_hash, &block.sig, &leader) {
                     return Err(BlockError::InvalidLeaderSignature(block_height, block_hash).into());
                 }
                 if !self.chain.is_validator(&leader) {
@@ -1030,7 +1026,7 @@ impl NodeService {
 
         let create_macro_block = || {
             let seed = mix(last_random, view_change);
-            let random = secure::make_VRF(&keys.network_skey, &seed);
+            let random = pbc::make_VRF(&keys.network_skey, &seed);
 
             let previous = blockchain.last_block_hash();
             let height = blockchain.height();
@@ -1321,7 +1317,7 @@ impl NodeService {
     fn handle_view_change_direct(
         &mut self,
         proof: SealedViewChangeProof,
-        pkey: secure::PublicKey,
+        pkey: pbc::PublicKey,
     ) -> Result<(), Error> {
         debug!("Received sealed view change proof: proof = {:?}", proof);
         self.try_rollback(pkey, proof)?;
@@ -1439,7 +1435,7 @@ impl NodeService {
     fn commit_proposed_block(
         &mut self,
         mut macro_block: MacroBlock,
-        multisig: secure::Signature,
+        multisig: pbc::Signature,
         multisigmap: BitVector,
     ) {
         macro_block.body.multisig = multisig;

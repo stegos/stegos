@@ -23,9 +23,7 @@ use failure::Error;
 use stegos_serialization::traits::*;
 
 use crate::bulletproofs::{BulletProof, DotProof, L2_NBASIS, LR};
-use crate::curve1174::cpt::Pt;
-use crate::curve1174::cpt::{EncryptedKey, EncryptedPayload, PublicKey, SchnorrSig, SecretKey};
-use crate::curve1174::fields::Fr;
+use crate::curve1174::{EncryptedKey, EncryptedPayload, Fr, Pt, PublicKey, SchnorrSig, SecretKey};
 use crate::hash::Hash;
 use crate::hashcash::HashCashProof;
 use crate::pbc::secure;
@@ -326,10 +324,9 @@ impl ProtoConvert for VRF {
 mod tests {
     use super::*;
     use crate::bulletproofs::make_range_proof;
-    use crate::curve1174::cpt::{decrypt_key, encrypt_key, make_random_keys};
-    use crate::curve1174::ecpt::ECp;
+    use crate::curve1174::{decrypt_key, encrypt_key, make_random_keys, ECp};
     use crate::hash::Hashable;
-    use crate::pbc::secure::make_random_keys as make_secure_random_keys;
+    use crate::pbc;
     use rand::rngs::ThreadRng;
     use rand::thread_rng;
     use rand::Rng;
@@ -366,7 +363,7 @@ mod tests {
 
     #[test]
     fn secure_keys() {
-        let (_skey, pkey) = make_secure_random_keys();
+        let (_skey, pkey) = pbc::make_random_keys();
         roundtrip(&pkey);
     }
 

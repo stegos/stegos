@@ -28,6 +28,7 @@ pub mod fast;
 pub mod secure;
 use crate::hash::*;
 use crate::utils::*;
+pub use secure::*;
 
 use lazy_static::lazy_static;
 use rust_libpbc;

@@ -23,13 +23,13 @@
 
 use libp2p::core::PeerId;
 use libp2p::multihash::{encode, Hash::SHA3512, Multihash};
-use stegos_crypto::pbc::secure;
+use stegos_crypto::pbc;
 
 pub trait IntoMultihash {
     fn into_multihash(self) -> Multihash;
 }
 
-impl IntoMultihash for secure::PublicKey {
+impl IntoMultihash for pbc::PublicKey {
     fn into_multihash(self) -> Multihash {
         encode(SHA3512, &self.to_bytes()).expect("should never fail")
     }

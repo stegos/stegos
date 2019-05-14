@@ -37,8 +37,8 @@ use failure::Error;
 use log::*;
 use secp256k1::rand::{ChaChaRng, SeedableRng};
 use std::path::Path;
-use stegos_crypto::curve1174::cpt;
-use stegos_crypto::pbc::secure;
+use stegos_crypto::curve1174;
+use stegos_crypto::pbc;
 
 /// Wallet implementation.
 #[derive(Clone, Debug)]
@@ -46,13 +46,13 @@ pub struct KeyChain {
     /// Configuration.
     cfg: KeyChainConfig,
     /// Wallet Secret Key.
-    pub wallet_skey: cpt::SecretKey,
+    pub wallet_skey: curve1174::SecretKey,
     /// Wallet Public Key.
-    pub wallet_pkey: cpt::PublicKey,
+    pub wallet_pkey: curve1174::PublicKey,
     /// Network Secret Key.
-    pub network_skey: secure::SecretKey,
+    pub network_skey: pbc::SecretKey,
     /// Network Public Key.
-    pub network_pkey: secure::PublicKey,
+    pub network_pkey: pbc::PublicKey,
 }
 
 impl KeyChain {
@@ -73,18 +73,18 @@ impl KeyChain {
             let (wallet_skey, wallet_pkey) = if !cfg.recovery_file.is_empty() {
                 info!("Recovering keys...");
                 let wallet_skey = read_recovery(&cfg.recovery_file)?;
-                let wallet_pkey: cpt::PublicKey = wallet_skey.clone().into();
+                let wallet_pkey: curve1174::PublicKey = wallet_skey.clone().into();
                 info!("Recovered a wallet key: pkey={}", wallet_pkey);
                 (wallet_skey, wallet_pkey)
             } else {
                 debug!("Generating a new wallet key pair...");
-                let (wallet_skey, wallet_pkey) = cpt::make_random_keys();
+                let (wallet_skey, wallet_pkey) = curve1174::make_random_keys();
                 info!("Generated a new wallet key pair: pkey={}", wallet_pkey);
                 (wallet_skey, wallet_pkey)
             };
 
             debug!("Generating a new network key pair...");
-            let (network_skey, network_pkey) = secure::make_random_keys();
+            let (network_skey, network_pkey) = pbc::make_random_keys();
             info!("Generated a new network key pair: pkey={}", network_pkey);
 
             let password = read_password(&cfg.password_file, true)?;
@@ -122,7 +122,7 @@ impl KeyChain {
             );
             let wallet_pkey = load_wallet_pkey(wallet_pkey_path)?;
             let wallet_skey = load_wallet_skey(wallet_skey_path, &password)?;
-            if let Err(_e) = cpt::check_keying(&wallet_skey, &wallet_pkey) {
+            if let Err(_e) = curve1174::check_keying(&wallet_skey, &wallet_pkey) {
                 return Err(KeyError::InvalidKeying(
                     cfg.wallet_skey_file,
                     cfg.wallet_pkey_file,
@@ -136,7 +136,7 @@ impl KeyChain {
             );
             let network_pkey = load_network_pkey(network_pkey_path)?;
             let network_skey = load_network_skey(network_skey_path, &password)?;
-            if let Err(_e) = secure::check_keying(&network_skey, &network_pkey) {
+            if let Err(_e) = pbc::check_keying(&network_skey, &network_pkey) {
                 return Err(KeyError::InvalidKeying(
                     cfg.network_skey_file,
                     cfg.network_pkey_file,
@@ -160,8 +160,8 @@ impl KeyChain {
 
     /// Temporary KeyChain for tests.
     pub fn new_mem() -> Self {
-        let (wallet_skey, wallet_pkey) = cpt::make_random_keys();
-        let (network_skey, network_pkey) = secure::make_random_keys();
+        let (wallet_skey, wallet_pkey) = curve1174::make_random_keys();
+        let (network_skey, network_pkey) = pbc::make_random_keys();
 
         let keychain = KeyChain {
             cfg: Default::default(),

@@ -23,11 +23,9 @@
 
 use crate::output::*;
 use failure::Error;
-use stegos_crypto::curve1174::cpt::{
-    sign_hash, sign_hash_with_kval, PublicKey, SchnorrSig, SecretKey,
+use stegos_crypto::curve1174::{
+    sign_hash, sign_hash_with_kval, ECp, Fr, PublicKey, SchnorrSig, SecretKey,
 };
-use stegos_crypto::curve1174::ecpt::ECp;
-use stegos_crypto::curve1174::fields::Fr;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 
 //--------------------------------------------------------------------------------------------------

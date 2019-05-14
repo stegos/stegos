@@ -25,7 +25,7 @@ use futures::{Async, Future, Poll, Stream};
 use log::*;
 use rand::seq::SliceRandom;
 use std::time::Duration;
-use stegos_crypto::curve1174::cpt::PublicKey;
+use stegos_crypto::curve1174::PublicKey;
 use stegos_wallet::{Wallet, WalletNotification, WalletRequest, WalletResponse};
 use tokio_timer::Delay;
 

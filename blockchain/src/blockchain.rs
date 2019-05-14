@@ -982,7 +982,10 @@ impl Blockchain {
                 output_keys.push(output_key);
             }
             match tx {
-                Transaction::PaymentTransaction(tx) => gamma += tx.gamma,
+                Transaction::PaymentTransaction(tx) => {
+                    gamma += tx.gamma;
+                }
+                Transaction::RestakeTransaction(_tx) => {}
             }
         }
 

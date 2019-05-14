@@ -41,9 +41,16 @@ message PaymentTransaction {
     stegos.crypto.SchnorrSig sig = 5;
 }
 
+message RestakeTransaction {
+    repeated stegos.crypto.Hash txins = 1;
+    repeated Output txouts = 2;
+    stegos.crypto.SecureSignature signature = 3;
+}
+
 message Transaction {
     oneof transaction {
         PaymentTransaction payment_transaction = 1;
+        RestakeTransaction restake_transaction = 2;
     }
 }
 

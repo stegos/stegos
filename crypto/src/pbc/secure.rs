@@ -715,6 +715,11 @@ pub struct Signature(G1);
 
 impl Signature {
     /// Create a new point which binary representation consists of all zeros.
+    pub fn new() -> Signature {
+        Signature(G1::zero())
+    }
+
+    /// Create a new point which binary representation consists of all zeros.
     pub fn zero() -> Signature {
         Signature(G1::zero())
     }

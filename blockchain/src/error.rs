@@ -72,6 +72,30 @@ pub enum TransactionError {
     DuplicateOutput(Hash, Hash),
     #[fail(display = "Output hash collision: tx={}, utxo={}", _0, _1)]
     OutputHashCollision(Hash, Hash),
+
+    #[fail(display = "Non-StakeUTXO found in TXINs: tx = {}. utxo={}", _0, _1)]
+    InvalidRestakingInput(Hash, Hash),
+
+    #[fail(display = "TXINs with mixed validator keys: tx = {}, utxo={}", _0, _1)]
+    RestakingValidatorKeyMismatch(Hash, Hash),
+
+    #[fail(
+        display = "StakeUTXOs with mixed recipient keys: tx = {}, utxo={}",
+        _0, _1
+    )]
+    MixedRestakingOwners(Hash, Hash),
+
+    #[fail(display = "No TXINs: tx={}", _0)]
+    NoRestakingTxins(Hash),
+
+    #[fail(display = "Non-StakeUTXO found in TXOUTs: tx={}, utxo={}", _0, _1)]
+    InvalidRestakingOutput(Hash, Hash),
+
+    #[fail(display = "TXOUTs with mixed validator keys: tx={}, utxo={}", _0, _1)]
+    MixedTxoutValidators(Hash, Hash),
+
+    #[fail(display = "TXIN amount .ne. TXOUT amount: tx={}", _0)]
+    ImbalancedRestaking(Hash),
 }
 
 #[derive(Debug, Fail)]

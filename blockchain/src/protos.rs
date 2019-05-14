@@ -194,6 +194,36 @@ impl ProtoConvert for PaymentTransaction {
     }
 }
 
+impl ProtoConvert for RestakeTransaction {
+    type Proto = blockchain::RestakeTransaction;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = blockchain::RestakeTransaction::new();
+
+        for txin in &self.txins {
+            proto.txins.push(txin.into_proto());
+        }
+        for txout in &self.txouts {
+            proto.txouts.push(txout.into_proto());
+        }
+        proto.set_signature(self.sig.into_proto());
+        proto
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let mut txins = Vec::<Hash>::with_capacity(proto.txins.len());
+        for txin in proto.txins.iter() {
+            txins.push(Hash::from_proto(txin)?);
+        }
+        let mut txouts = Vec::<Output>::with_capacity(proto.txouts.len());
+        for txout in proto.txouts.iter() {
+            txouts.push(Output::from_proto(txout)?);
+        }
+        let sig = pbc::secure::Signature::from_proto(proto.get_signature())?;
+
+        Ok(RestakeTransaction { txins, txouts, sig })
+    }
+}
+
 impl ProtoConvert for Transaction {
     type Proto = blockchain::Transaction;
     fn into_proto(&self) -> Self::Proto {
@@ -201,6 +231,9 @@ impl ProtoConvert for Transaction {
         match self {
             Transaction::PaymentTransaction(payment_transaction) => {
                 proto.set_payment_transaction(payment_transaction.into_proto())
+            }
+            Transaction::RestakeTransaction(restake_transaction) => {
+                proto.set_restake_transaction(restake_transaction.into_proto())
             }
         }
         proto
@@ -213,6 +246,12 @@ impl ProtoConvert for Transaction {
             )) => {
                 let payment_transaction = PaymentTransaction::from_proto(payment_transaction)?;
                 Transaction::PaymentTransaction(payment_transaction)
+            }
+            Some(blockchain::Transaction_oneof_transaction::restake_transaction(
+                ref restake_transaction,
+            )) => {
+                let restake_transaction = RestakeTransaction::from_proto(restake_transaction)?;
+                Transaction::RestakeTransaction(restake_transaction)
             }
             None => {
                 return Err(ProtoError::MissingField(

@@ -166,6 +166,7 @@ impl Hashable for MicroBlock {
             tx.hash(state);
             match tx {
                 Transaction::PaymentTransaction(tx) => tx.sig.hash(state),
+                Transaction::RestakeTransaction(tx) => tx.sig.hash(state),
             }
         }
         self.pkey.hash(state);

@@ -21,12 +21,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::error::*;
 use crate::output::*;
 use failure::Error;
 use stegos_crypto::curve1174::{
     sign_hash, sign_hash_with_kval, ECp, Fr, PublicKey, SchnorrSig, SecretKey,
 };
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
+use stegos_crypto::pbc;
 
 //--------------------------------------------------------------------------------------------------
 // Payment Transaction.
@@ -253,6 +255,176 @@ impl PaymentTransaction {
 }
 
 //--------------------------------------------------------------------------------------------------
+// Restake Transaction.
+//--------------------------------------------------------------------------------------------------
+
+/// RestakeTransaction.
+#[derive(Clone, Debug)]
+pub struct RestakeTransaction {
+    /// List of inputs.
+    pub txins: Vec<Hash>,
+    /// List of outputs.
+    pub txouts: Vec<Output>,
+    /// Transaction signature.
+    pub sig: pbc::Signature,
+}
+
+impl Hashable for RestakeTransaction {
+    fn hash(&self, state: &mut Hasher) {
+        // Sign txins.
+        let txins_count: u64 = self.txins.len() as u64;
+        txins_count.hash(state);
+        for txin_hash in &self.txins {
+            txin_hash.hash(state);
+        }
+
+        // Sign txouts.
+        let txouts_count: u64 = self.txouts.len() as u64;
+        txouts_count.hash(state);
+        for txout in &self.txouts {
+            txout.hash(state);
+        }
+    }
+}
+
+impl RestakeTransaction {
+    /// Create a new transaction.
+    ///
+    /// # Arguments
+    ///
+    /// * `skey` - Validator's secret key
+    /// * `pkey` - Validator's public key
+    /// * `inputs` - UXTO to spent
+    /// * `outputs` - UXTO to create
+    ///
+    pub fn new(
+        skey: &pbc::SecretKey,
+        pkey: &pbc::PublicKey,
+        inputs: &[Output],
+        outputs: &[Output],
+    ) -> Result<Self, Error> {
+        let tx = Self::unchecked(skey, pkey, inputs, outputs)?;
+        Ok(tx)
+    }
+
+    /// Same as new(), but without checks and assertions.
+    pub fn unchecked(
+        skey: &pbc::SecretKey,
+        pkey: &pbc::PublicKey,
+        inputs: &[Output],
+        outputs: &[Output],
+    ) -> Result<Self, Error> {
+        let mut txins: Vec<Hash> = Vec::with_capacity(inputs.len());
+        let mut inp_amt = 0;
+        let mut owner = None;
+        let htx = Hash::digest("");
+        for txin in inputs {
+            txin.validate()?;
+            let h = Hash::digest(&txin);
+            match txin {
+                Output::PaymentOutput(_) | Output::PublicPaymentOutput(_) => {
+                    return Err(TransactionError::InvalidRestakingInput(htx, h).into());
+                }
+                Output::StakeOutput(o) => {
+                    inp_amt += o.amount;
+                    if *pkey != o.validator {
+                        return Err(TransactionError::RestakingValidatorKeyMismatch(htx, h).into());
+                    }
+                    match owner {
+                        None => {
+                            owner = Some(txin.recipient_pkey()?);
+                        }
+                        Some(owner_ecp) => {
+                            if owner_ecp != txin.recipient_pkey()? {
+                                return Err(TransactionError::MixedRestakingOwners(htx, h).into());
+                            }
+                        }
+                    }
+                    txins.push(h);
+                }
+            }
+        }
+        let owner = match owner {
+            Some(o) => o,
+            None => {
+                return Err(TransactionError::NoRestakingTxins(htx).into());
+            }
+        };
+        let mut out_amt = 0;
+        let mut new_validator = None;
+        for txout in outputs {
+            txout.validate()?;
+            let h = Hash::digest(txout);
+            match txout {
+                Output::PaymentOutput(_) | Output::PublicPaymentOutput(_) => {
+                    return Err(TransactionError::InvalidRestakingOutput(htx, h).into())
+                }
+                Output::StakeOutput(o) => {
+                    if txout.recipient_pkey()? != owner {
+                        return Err(TransactionError::MixedRestakingOwners(htx, h).into());
+                    }
+                    match new_validator {
+                        None => {
+                            new_validator = Some(o.validator);
+                        }
+                        Some(nv) => {
+                            if nv != o.validator {
+                                return Err(TransactionError::MixedTxoutValidators(htx, h).into());
+                            }
+                        }
+                    }
+                    out_amt += o.amount;
+                }
+            }
+        }
+        if out_amt != inp_amt {
+            return Err(TransactionError::ImbalancedRestaking(htx).into());
+        };
+        let mut tx = RestakeTransaction {
+            txins,
+            txouts: outputs.to_vec(),
+            sig: pbc::Signature::new(),
+        };
+        let h = Hash::digest(&tx);
+        tx.sig = pbc::sign_hash(&h, skey);
+        Ok(tx)
+    }
+
+    /// Used only for tests.
+    //#[cfg(test)]
+    #[doc(hidden)]
+    pub fn new_test(
+        pkey: PublicKey,
+        nskey: &pbc::SecretKey,
+        npkey: &pbc::PublicKey,
+        input_amount: i64,
+        input_count: usize,
+        output_amount: i64,
+        output_count: usize,
+    ) -> Result<(RestakeTransaction, Vec<Output>, Vec<Output>), Error> {
+        let mut inputs: Vec<Output> = Vec::with_capacity(input_count);
+        let mut outputs: Vec<Output> = Vec::with_capacity(output_count);
+
+        for _ in 0..input_count {
+            let input =
+                Output::new_stake(&pkey, &nskey, &npkey, input_amount).expect("keys are valid");
+            inputs.push(input);
+        }
+
+        for _ in 0..output_count {
+            let output =
+                Output::new_stake(&pkey, &nskey, &npkey, output_amount).expect("keys are valid");
+            outputs.push(output);
+        }
+
+        match RestakeTransaction::new(&nskey, &npkey, &inputs, &outputs) {
+            Err(e) => Err(e),
+            Ok(tx) => Ok((tx, inputs, outputs)),
+        }
+    }
+}
+
+//--------------------------------------------------------------------------------------------------
 // Transaction (enum).
 //--------------------------------------------------------------------------------------------------
 
@@ -260,6 +432,7 @@ impl PaymentTransaction {
 #[derive(Clone, Debug)]
 pub enum Transaction {
     PaymentTransaction(PaymentTransaction),
+    RestakeTransaction(RestakeTransaction),
 }
 
 impl Transaction {
@@ -267,6 +440,7 @@ impl Transaction {
     pub fn fee(&self) -> i64 {
         match self {
             Transaction::PaymentTransaction(tx) => tx.fee,
+            Transaction::RestakeTransaction(_tx) => 0,
         }
     }
 
@@ -274,6 +448,7 @@ impl Transaction {
     pub fn txins(&self) -> &[Hash] {
         match self {
             Transaction::PaymentTransaction(tx) => &tx.txins,
+            Transaction::RestakeTransaction(tx) => &tx.txins,
         }
     }
 
@@ -281,6 +456,7 @@ impl Transaction {
     pub fn txouts(&self) -> &[Output] {
         match self {
             Transaction::PaymentTransaction(tx) => &tx.txouts,
+            Transaction::RestakeTransaction(tx) => &tx.txouts,
         }
     }
 }
@@ -289,6 +465,7 @@ impl Hashable for Transaction {
     fn hash(&self, state: &mut Hasher) {
         match self {
             Transaction::PaymentTransaction(tx) => tx.hash(state),
+            Transaction::RestakeTransaction(tx) => tx.hash(state),
         }
     }
 }
@@ -296,5 +473,11 @@ impl Hashable for Transaction {
 impl From<PaymentTransaction> for Transaction {
     fn from(tx: PaymentTransaction) -> Self {
         Transaction::PaymentTransaction(tx)
+    }
+}
+
+impl From<RestakeTransaction> for Transaction {
+    fn from(tx: RestakeTransaction) -> Transaction {
+        Transaction::RestakeTransaction(tx)
     }
 }

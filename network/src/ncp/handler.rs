@@ -26,8 +26,8 @@ use super::protocol::{NcpCodec, NcpConfig, NcpMessage};
 
 use futures::prelude::*;
 use libp2p::core::{
-    protocols_handler::{KeepAlive, ProtocolsHandlerUpgrErr},
-    upgrade::{InboundUpgrade, OutboundUpgrade},
+    protocols_handler::{KeepAlive, ProtocolsHandlerUpgrErr, SubstreamProtocol},
+    upgrade::{InboundUpgrade, Negotiated, OutboundUpgrade},
     ProtocolsHandler, ProtocolsHandlerEvent,
 };
 use log::{debug, trace, warn};
@@ -70,13 +70,13 @@ where
     TSubstream: AsyncRead + AsyncWrite,
 {
     /// Waiting for a message from the remote.
-    WaitingInput(Framed<TSubstream, NcpCodec>),
+    WaitingInput(Framed<Negotiated<TSubstream>, NcpCodec>),
     /// Waiting to send a message to the remote.
-    PendingSend(Framed<TSubstream, NcpCodec>, NcpMessage),
+    PendingSend(Framed<Negotiated<TSubstream>, NcpCodec>, NcpMessage),
     /// Waiting to flush the substream so that the data arrives to the remote.
-    PendingFlush(Framed<TSubstream, NcpCodec>),
+    PendingFlush(Framed<Negotiated<TSubstream>, NcpCodec>),
     /// The substream is being closed.
-    Closing(Framed<TSubstream, NcpCodec>),
+    Closing(Framed<Negotiated<TSubstream>, NcpCodec>),
 }
 
 impl<TSubstream> NcpHandler<TSubstream>
@@ -91,7 +91,7 @@ where
             substreams: Vec::new(),
             send_queue: SmallVec::new(),
             out_events: VecDeque::new(),
-            keep_alive: KeepAlive::Forever,
+            keep_alive: KeepAlive::Yes,
         }
     }
 }
@@ -101,7 +101,7 @@ where
     TSubstream: AsyncRead + AsyncWrite,
 {
     /// Consumes this state and produces the substream.
-    fn into_substream(self) -> Framed<TSubstream, NcpCodec> {
+    fn into_substream(self) -> Framed<Negotiated<TSubstream>, NcpCodec> {
         match self {
             SubstreamState::WaitingInput(substream) => substream,
             SubstreamState::PendingSend(substream, _) => substream,
@@ -124,8 +124,8 @@ where
     type OutboundOpenInfo = NcpMessage;
 
     #[inline]
-    fn listen_protocol(&self) -> Self::InboundProtocol {
-        self.config.clone()
+    fn listen_protocol(&self) -> SubstreamProtocol<Self::InboundProtocol> {
+        SubstreamProtocol::new(self.config.clone())
     }
 
     fn inject_fully_negotiated_inbound(
@@ -184,7 +184,7 @@ where
             return Ok(Async::Ready(
                 ProtocolsHandlerEvent::OutboundSubstreamRequest {
                     info: message,
-                    upgrade: self.config.clone(),
+                    protocol: SubstreamProtocol::new(self.config.clone()),
                 },
             ));
         }
@@ -257,7 +257,7 @@ where
         if self.substreams.is_empty() {
             self.keep_alive = KeepAlive::Until(Instant::now() + Duration::from_secs(10));
         } else {
-            self.keep_alive = KeepAlive::Forever;
+            self.keep_alive = KeepAlive::Yes;
         }
 
         Ok(Async::NotReady)

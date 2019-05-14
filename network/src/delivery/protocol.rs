@@ -23,7 +23,7 @@
 
 use bytes::{BufMut, BytesMut};
 use futures::future;
-use libp2p::core::{InboundUpgrade, OutboundUpgrade, UpgradeInfo};
+use libp2p::core::{upgrade::Negotiated, InboundUpgrade, OutboundUpgrade, UpgradeInfo};
 use protobuf::Message;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -61,12 +61,12 @@ impl<TSocket> InboundUpgrade<TSocket> for DeliveryConfig
 where
     TSocket: AsyncRead + AsyncWrite,
 {
-    type Output = Framed<TSocket, DeliveryCodec>;
+    type Output = Framed<Negotiated<TSocket>, DeliveryCodec>;
     type Error = io::Error;
     type Future = future::FutureResult<Self::Output, Self::Error>;
 
     #[inline]
-    fn upgrade_inbound(self, socket: TSocket, _: Self::Info) -> Self::Future {
+    fn upgrade_inbound(self, socket: Negotiated<TSocket>, _: Self::Info) -> Self::Future {
         future::ok(Framed::new(
             socket,
             DeliveryCodec {
@@ -80,12 +80,12 @@ impl<TSocket> OutboundUpgrade<TSocket> for DeliveryConfig
 where
     TSocket: AsyncRead + AsyncWrite,
 {
-    type Output = Framed<TSocket, DeliveryCodec>;
+    type Output = Framed<Negotiated<TSocket>, DeliveryCodec>;
     type Error = io::Error;
     type Future = future::FutureResult<Self::Output, Self::Error>;
 
     #[inline]
-    fn upgrade_outbound(self, socket: TSocket, _: Self::Info) -> Self::Future {
+    fn upgrade_outbound(self, socket: Negotiated<TSocket>, _: Self::Info) -> Self::Future {
         future::ok(Framed::new(
             socket,
             DeliveryCodec {
@@ -246,11 +246,11 @@ impl Broadcast {
 
 #[cfg(test)]
 mod tests {
-    use super::{Broadcast, DeliveryConfig, DeliveryMessage, Unicast};
-    use futures::{Future, Sink, Stream};
-    use libp2p::core::upgrade::{InboundUpgrade, OutboundUpgrade};
+    use super::{Broadcast, DeliveryCodec, DeliveryMessage, Unicast};
+    use futures::{future, Future, Sink, Stream};
     use rand;
     use stegos_crypto::pbc;
+    use tokio::codec::Framed;
     use tokio::net::{TcpListener, TcpStream};
 
     #[test]
@@ -295,7 +295,12 @@ mod tests {
             .into_future()
             .map_err(|(e, _)| e)
             .and_then(|(c, _)| {
-                DeliveryConfig::new().upgrade_inbound(c.unwrap(), b"/stegos/delivery/1.0.0")
+                future::ok(Framed::new(
+                    c.unwrap(),
+                    DeliveryCodec {
+                        length_prefix: Default::default(),
+                    },
+                ))
             })
             .and_then({
                 let msg_server = msg_server.clone();
@@ -308,7 +313,14 @@ mod tests {
             });
 
         let client = TcpStream::connect(&listener_addr)
-            .and_then(|c| DeliveryConfig::new().upgrade_outbound(c, b"/stegos/delivery/1.0.0"))
+            .and_then(|c| {
+                future::ok(Framed::new(
+                    c,
+                    DeliveryCodec {
+                        length_prefix: Default::default(),
+                    },
+                ))
+            })
             .and_then(|s| s.send(msg_client))
             .map(|_| ());
 

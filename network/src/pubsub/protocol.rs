@@ -23,7 +23,7 @@ use crate::pubsub::topic::TopicHash;
 
 use bytes::{BufMut, BytesMut};
 use futures::future;
-use libp2p::core::{InboundUpgrade, OutboundUpgrade, PeerId, UpgradeInfo};
+use libp2p::core::{upgrade::Negotiated, InboundUpgrade, OutboundUpgrade, PeerId, UpgradeInfo};
 use protobuf::Message as ProtobufMessage;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -58,12 +58,12 @@ impl<TSocket> InboundUpgrade<TSocket> for FloodsubConfig
 where
     TSocket: AsyncRead + AsyncWrite,
 {
-    type Output = Framed<TSocket, FloodsubCodec>;
+    type Output = Framed<Negotiated<TSocket>, FloodsubCodec>;
     type Error = io::Error;
     type Future = future::FutureResult<Self::Output, Self::Error>;
 
     #[inline]
-    fn upgrade_inbound(self, socket: TSocket, _: Self::Info) -> Self::Future {
+    fn upgrade_inbound(self, socket: Negotiated<TSocket>, _: Self::Info) -> Self::Future {
         future::ok(Framed::new(
             socket,
             FloodsubCodec {
@@ -77,12 +77,12 @@ impl<TSocket> OutboundUpgrade<TSocket> for FloodsubConfig
 where
     TSocket: AsyncRead + AsyncWrite,
 {
-    type Output = Framed<TSocket, FloodsubCodec>;
+    type Output = Framed<Negotiated<TSocket>, FloodsubCodec>;
     type Error = io::Error;
     type Future = future::FutureResult<Self::Output, Self::Error>;
 
     #[inline]
-    fn upgrade_outbound(self, socket: TSocket, _: Self::Info) -> Self::Future {
+    fn upgrade_outbound(self, socket: Negotiated<TSocket>, _: Self::Info) -> Self::Future {
         future::ok(Framed::new(
             socket,
             FloodsubCodec {

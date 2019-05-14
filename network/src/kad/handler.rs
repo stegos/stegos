@@ -25,9 +25,11 @@ use super::protocol::{
 };
 use futures::prelude::*;
 use libp2p::core::protocols_handler::{
-    KeepAlive, ProtocolsHandler, ProtocolsHandlerEvent, ProtocolsHandlerUpgrErr,
+    KeepAlive, ProtocolsHandler, ProtocolsHandlerEvent, ProtocolsHandlerUpgrErr, SubstreamProtocol,
 };
-use libp2p::core::{either::EitherOutput, upgrade, InboundUpgrade, OutboundUpgrade};
+use libp2p::core::{
+    either::EitherOutput, upgrade, upgrade::Negotiated, InboundUpgrade, OutboundUpgrade,
+};
 use libp2p::multihash::Multihash;
 use std::{error, fmt, io, time::Duration, time::Instant};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -71,30 +73,34 @@ where
     OutPendingUpgrade(KadRequestMsg, Option<TUserData>),
     /// Waiting to send a message to the remote.
     OutPendingSend(
-        KadOutStreamSink<TSubstream>,
+        KadOutStreamSink<Negotiated<TSubstream>>,
         KadRequestMsg,
         Option<TUserData>,
     ),
     /// Waiting to send a message to the remote.
     /// Waiting to flush the substream so that the data arrives to the remote.
-    OutPendingFlush(KadOutStreamSink<TSubstream>, Option<TUserData>),
+    OutPendingFlush(KadOutStreamSink<Negotiated<TSubstream>>, Option<TUserData>),
     /// Waiting for an answer back from the remote.
     // TODO: add timeout
-    OutWaitingAnswer(KadOutStreamSink<TSubstream>, TUserData),
+    OutWaitingAnswer(KadOutStreamSink<Negotiated<TSubstream>>, TUserData),
     /// An error happened on the substream and we should report the error to the user.
     OutReportError(KademliaHandlerQueryErr, TUserData),
     /// The substream is being closed.
-    OutClosing(KadOutStreamSink<TSubstream>),
+    OutClosing(KadOutStreamSink<Negotiated<TSubstream>>),
     /// Waiting for a request from the remote.
-    InWaitingMessage(UniqueConnecId, KadInStreamSink<TSubstream>),
+    InWaitingMessage(UniqueConnecId, KadInStreamSink<Negotiated<TSubstream>>),
     /// Waiting for the user to send a `KademliaHandlerIn` event containing the response.
-    InWaitingUser(UniqueConnecId, KadInStreamSink<TSubstream>),
+    InWaitingUser(UniqueConnecId, KadInStreamSink<Negotiated<TSubstream>>),
     /// Waiting to send an answer back to the remote.
-    InPendingSend(UniqueConnecId, KadInStreamSink<TSubstream>, KadResponseMsg),
+    InPendingSend(
+        UniqueConnecId,
+        KadInStreamSink<Negotiated<TSubstream>>,
+        KadResponseMsg,
+    ),
     /// Waiting to flush an answer back to the remote.
-    InPendingFlush(UniqueConnecId, KadInStreamSink<TSubstream>),
+    InPendingFlush(UniqueConnecId, KadInStreamSink<Negotiated<TSubstream>>),
     /// The substream is being closed.
-    InClosing(KadInStreamSink<TSubstream>),
+    InClosing(KadInStreamSink<Negotiated<TSubstream>>),
 }
 
 impl<TSubstream, TUserData> SubstreamState<TSubstream, TUserData>
@@ -324,7 +330,7 @@ where
             allow_listening,
             next_connec_unique_id: UniqueConnecId(0),
             substreams: Vec::new(),
-            keep_alive: KeepAlive::Forever,
+            keep_alive: KeepAlive::Yes,
         }
     }
 }
@@ -354,11 +360,11 @@ where
     type OutboundOpenInfo = (KadRequestMsg, Option<TUserData>);
 
     #[inline]
-    fn listen_protocol(&self) -> Self::InboundProtocol {
+    fn listen_protocol(&self) -> SubstreamProtocol<Self::InboundProtocol> {
         if self.allow_listening {
-            upgrade::EitherUpgrade::A(self.config)
+            SubstreamProtocol::new(self.config).map_upgrade(upgrade::EitherUpgrade::A)
         } else {
-            upgrade::EitherUpgrade::B(upgrade::DeniedUpgrade)
+            SubstreamProtocol::new(upgrade::EitherUpgrade::B(upgrade::DeniedUpgrade))
         }
     }
 
@@ -523,7 +529,7 @@ where
         if self.substreams.is_empty() {
             self.keep_alive = KeepAlive::Until(Instant::now() + Duration::from_secs(10));
         } else {
-            self.keep_alive = KeepAlive::Forever;
+            self.keep_alive = KeepAlive::Yes;
         }
 
         Ok(Async::NotReady)
@@ -554,7 +560,7 @@ where
     match state {
         SubstreamState::OutPendingOpen(msg, user_data) => {
             let ev = ProtocolsHandlerEvent::OutboundSubstreamRequest {
-                upgrade,
+                protocol: SubstreamProtocol::new(upgrade),
                 info: (msg, user_data),
             };
             (None, Some(ev), false)

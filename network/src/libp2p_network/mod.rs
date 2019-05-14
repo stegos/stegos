@@ -28,9 +28,9 @@ use ipnetwork::IpNetwork;
 use libp2p::{
     core::swarm::NetworkBehaviourEventProcess,
     core::{identity, identity::secp256k1},
+    multiaddr::Multiaddr,
     multiaddr::Protocol,
-    multiaddr::ToMultiaddr,
-    Multiaddr, NetworkBehaviour, PeerId, Swarm,
+    NetworkBehaviour, PeerId, Swarm,
 };
 use log::*;
 use pnet::datalink;
@@ -179,7 +179,7 @@ fn new_service(
     }
 
     let mut bind_ip = Multiaddr::from(Protocol::Ip4(config.bind_ip.clone().parse()?));
-    bind_ip.append(Protocol::Tcp(config.bind_port));
+    bind_ip.push(Protocol::Tcp(config.bind_port));
 
     let addr = libp2p::Swarm::listen_on(&mut swarm, bind_ip).unwrap();
     info!("Listening on {:?}", addr);
@@ -697,9 +697,9 @@ fn my_external_address(config: &NetworkConfig) -> Vec<Multiaddr> {
                 IpNetwork::V4(net) => net.ip(),
                 IpNetwork::V6(_) => unreachable!(),
             })
-            .map(|a| a.to_multiaddr().unwrap())
+            .map(|a| Multiaddr::from(a))
             .map(|mut a| {
-                a.append(Protocol::Tcp(bind_port));
+                a.push(Protocol::Tcp(bind_port));
                 a
             })
             .collect();

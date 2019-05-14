@@ -23,9 +23,10 @@
 
 use bytes::{BufMut, BytesMut};
 use futures::future;
-use libp2p::core::{InboundUpgrade, OutboundUpgrade, PeerId, UpgradeInfo};
+use libp2p::core::{upgrade::Negotiated, InboundUpgrade, OutboundUpgrade, PeerId, UpgradeInfo};
 use libp2p::Multiaddr;
 use protobuf::Message;
+use std::convert::TryFrom;
 use std::{io, iter};
 use stegos_crypto::pbc;
 use tokio::codec::{Decoder, Encoder, Framed};
@@ -60,12 +61,12 @@ impl<TSocket> InboundUpgrade<TSocket> for NcpConfig
 where
     TSocket: AsyncRead + AsyncWrite,
 {
-    type Output = Framed<TSocket, NcpCodec>;
+    type Output = Framed<Negotiated<TSocket>, NcpCodec>;
     type Error = io::Error;
     type Future = future::FutureResult<Self::Output, Self::Error>;
 
     #[inline]
-    fn upgrade_inbound(self, socket: TSocket, _: Self::Info) -> Self::Future {
+    fn upgrade_inbound(self, socket: Negotiated<TSocket>, _: Self::Info) -> Self::Future {
         future::ok(Framed::new(
             socket,
             NcpCodec {
@@ -79,12 +80,12 @@ impl<TSocket> OutboundUpgrade<TSocket> for NcpConfig
 where
     TSocket: AsyncRead + AsyncWrite,
 {
-    type Output = Framed<TSocket, NcpCodec>;
+    type Output = Framed<Negotiated<TSocket>, NcpCodec>;
     type Error = io::Error;
     type Future = future::FutureResult<Self::Output, Self::Error>;
 
     #[inline]
-    fn upgrade_outbound(self, socket: TSocket, _: Self::Info) -> Self::Future {
+    fn upgrade_outbound(self, socket: Negotiated<TSocket>, _: Self::Info) -> Self::Future {
         future::ok(Framed::new(
             socket,
             NcpCodec {
@@ -120,7 +121,7 @@ impl Encoder for NcpCodec {
                     peer_info.set_peer_id(peer.peer_id.into_bytes());
                     peer_info.set_node_id(peer.node_id.to_bytes().to_vec());
                     for addr in peer.addresses.into_iter() {
-                        peer_info.mut_addrs().push(addr.to_bytes());
+                        peer_info.mut_addrs().push(addr.to_vec());
                     }
                     msg.mut_peers().push(peer_info);
                 }
@@ -182,7 +183,7 @@ impl Decoder for NcpCodec {
                         addresses: vec![],
                     };
                     for addr in peer.get_addrs().into_iter() {
-                        if let Ok(addr_) = Multiaddr::from_bytes(addr.to_vec()) {
+                        if let Ok(addr_) = Multiaddr::try_from(addr.to_vec()) {
                             peer_info.addresses.push(addr_);
                         }
                     }
@@ -225,11 +226,11 @@ impl PeerInfo {
 
 #[cfg(test)]
 mod tests {
-    use super::{GetPeersResponse, NcpConfig, NcpMessage, PeerInfo};
-    use futures::{Future, Sink, Stream};
-    use libp2p::core::upgrade::{InboundUpgrade, OutboundUpgrade};
+    use super::{GetPeersResponse, NcpCodec, NcpMessage, PeerInfo};
+    use futures::{future, Future, Sink, Stream};
     use libp2p::core::PeerId;
     use stegos_crypto::pbc;
+    use tokio::codec::Framed;
     use tokio::net::{TcpListener, TcpStream};
 
     #[test]
@@ -266,7 +267,14 @@ mod tests {
             .incoming()
             .into_future()
             .map_err(|(e, _)| e)
-            .and_then(|(c, _)| NcpConfig::new().upgrade_inbound(c.unwrap(), b"/stegos/ncp/1.0.0"))
+            .and_then(|(c, _)| {
+                future::ok(Framed::new(
+                    c.unwrap(),
+                    NcpCodec {
+                        length_prefix: Default::default(),
+                    },
+                ))
+            })
             .and_then({
                 let msg_server = msg_server.clone();
                 move |s| {
@@ -278,7 +286,14 @@ mod tests {
             });
 
         let client = TcpStream::connect(&listener_addr)
-            .and_then(|c| NcpConfig::new().upgrade_outbound(c, b"/stegos/ncp/1.0.0"))
+            .and_then(|c| {
+                future::ok(Framed::new(
+                    c,
+                    NcpCodec {
+                        length_prefix: Default::default(),
+                    },
+                ))
+            })
             .and_then(|s| s.send(msg_client))
             .map(|_| ());
 

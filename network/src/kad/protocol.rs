@@ -30,9 +30,12 @@
 use super::dht_proto;
 use bytes::BytesMut;
 use futures::{future, sink, stream, Sink, Stream};
-use libp2p::core::{InboundUpgrade, Multiaddr, OutboundUpgrade, PeerId, UpgradeInfo};
+use libp2p::core::{
+    upgrade::Negotiated, InboundUpgrade, Multiaddr, OutboundUpgrade, PeerId, UpgradeInfo,
+};
 use libp2p::multihash::Multihash;
 use protobuf::{self, Message};
+use std::convert::TryFrom;
 use std::io::{Error as IoError, ErrorKind as IoErrorKind};
 use std::iter;
 use stegos_crypto::pbc;
@@ -116,7 +119,7 @@ impl KadPeer {
 
         let mut addrs = Vec::with_capacity(peer.get_addrs().len());
         for addr in peer.take_addrs().into_iter() {
-            let as_ma = Multiaddr::from_bytes(addr)
+            let as_ma = Multiaddr::try_from(addr)
                 .map_err(|err| IoError::new(IoErrorKind::InvalidData, err))?;
             addrs.push(as_ma);
         }
@@ -141,7 +144,7 @@ impl Into<dht_proto::dht::Message_Peer> for KadPeer {
             out.set_peer_id(peer.into_bytes());
         }
         for addr in self.multiaddrs {
-            out.mut_addrs().push(addr.into_bytes());
+            out.mut_addrs().push(addr.to_vec());
         }
         out.set_connection(self.connection_ty.into());
         out
@@ -170,12 +173,12 @@ impl<C> InboundUpgrade<C> for KademliaProtocolConfig
 where
     C: AsyncRead + AsyncWrite,
 {
-    type Output = KadInStreamSink<C>;
+    type Output = KadInStreamSink<Negotiated<C>>;
     type Future = future::FutureResult<Self::Output, IoError>;
     type Error = IoError;
 
     #[inline]
-    fn upgrade_inbound(self, incoming: C, _: Self::Info) -> Self::Future {
+    fn upgrade_inbound(self, incoming: Negotiated<C>, _: Self::Info) -> Self::Future {
         let mut codec = codec::UviBytes::default();
         codec.set_max_len(4096);
 
@@ -200,12 +203,12 @@ impl<C> OutboundUpgrade<C> for KademliaProtocolConfig
 where
     C: AsyncRead + AsyncWrite,
 {
-    type Output = KadOutStreamSink<C>;
+    type Output = KadOutStreamSink<Negotiated<C>>;
     type Future = future::FutureResult<Self::Output, IoError>;
     type Error = IoError;
 
     #[inline]
-    fn upgrade_outbound(self, incoming: C, _: Self::Info) -> Self::Future {
+    fn upgrade_outbound(self, incoming: Negotiated<C>, _: Self::Info) -> Self::Future {
         let mut codec = codec::UviBytes::default();
         codec.set_max_len(4096);
 
@@ -476,17 +479,18 @@ fn proto_to_resp_msg(mut message: dht_proto::dht::Message) -> Result<KadResponse
 
 #[cfg(test)]
 mod tests {
-    use crate::kad::protocol::{
-        KadConnectionType, KadPeer, KadRequestMsg, KadResponseMsg, KademliaProtocolConfig,
-    };
-    use futures::{Future, Sink, Stream};
-    use libp2p::core::{
-        upgrade::{InboundUpgrade, OutboundUpgrade},
-        PeerId,
-    };
+    use super::{proto_to_req_msg, proto_to_resp_msg, req_msg_to_proto, resp_msg_to_proto};
+    use crate::kad::protocol::{KadConnectionType, KadPeer, KadRequestMsg, KadResponseMsg};
+    use bytes::BytesMut;
+    use futures::{future, Future, Sink, Stream};
+    use libp2p::core::PeerId;
     use libp2p::multihash::{encode, Hash, Multihash};
+    use protobuf::Message;
+    use std::io::{Error as IoError, ErrorKind as IoErrorKind};
     use stegos_crypto::pbc;
+    use tokio::codec::Framed;
     use tokio::net::{TcpListener, TcpStream};
+    use unsigned_varint::codec;
 
     #[test]
     fn correct_transfer() {
@@ -548,8 +552,23 @@ mod tests {
                 .into_future()
                 .map_err(|(e, _)| e)
                 .and_then(|(c, _)| {
-                    KademliaProtocolConfig::default()
-                        .upgrade_inbound(c.unwrap(), b"/stegos/kad/1.0.0")
+                    let mut codec = codec::UviBytes::default();
+                    codec.set_max_len(4096);
+
+                    future::ok(
+                        Framed::new(c.unwrap(), codec)
+                            .from_err::<IoError>()
+                            .with::<_, fn(_) -> _, _>(|response| -> Result<_, IoError> {
+                                let proto_struct = resp_msg_to_proto(response);
+                                proto_struct.write_to_bytes().map_err(|err| {
+                                    IoError::new(IoErrorKind::InvalidData, err.to_string())
+                                })
+                            })
+                            .and_then::<fn(_) -> _, _>(|bytes: BytesMut| {
+                                let request = protobuf::parse_from_bytes(&bytes)?;
+                                proto_to_req_msg(request)
+                            }),
+                    )
                 })
                 .and_then({
                     let msg_server = msg_server.clone();
@@ -563,7 +582,26 @@ mod tests {
 
             let client = TcpStream::connect(&listener_addr)
                 .and_then(|c| {
-                    KademliaProtocolConfig::default().upgrade_outbound(c, b"/stegos/kad/1.0.0")
+                    let mut codec = codec::UviBytes::default();
+                    codec.set_max_len(4096);
+
+                    future::ok(
+                        Framed::new(c, codec)
+                            .from_err::<IoError>()
+                            .with::<_, fn(_) -> _, _>(|request| -> Result<_, IoError> {
+                                let proto_struct = req_msg_to_proto(request);
+                                match proto_struct.write_to_bytes() {
+                                    Ok(msg) => Ok(msg),
+                                    Err(err) => {
+                                        Err(IoError::new(IoErrorKind::Other, err.to_string()))
+                                    }
+                                }
+                            })
+                            .and_then::<fn(_) -> _, _>(|bytes: BytesMut| {
+                                let response = protobuf::parse_from_bytes(&bytes)?;
+                                proto_to_resp_msg(response)
+                            }),
+                    )
                 })
                 .and_then(|s| s.send(msg_client))
                 .map(|_| ());
@@ -586,15 +624,49 @@ mod tests {
                 .into_future()
                 .map_err(|(e, _)| e)
                 .and_then(|(c, _)| {
-                    KademliaProtocolConfig::default()
-                        .upgrade_inbound(c.unwrap(), b"/stegos/kad/1.0.0")
+                    let mut codec = codec::UviBytes::default();
+                    codec.set_max_len(4096);
+
+                    future::ok(
+                        Framed::new(c.unwrap(), codec)
+                            .from_err::<IoError>()
+                            .with::<_, fn(_) -> _, _>(|response| -> Result<_, IoError> {
+                                let proto_struct = resp_msg_to_proto(response);
+                                proto_struct.write_to_bytes().map_err(|err| {
+                                    IoError::new(IoErrorKind::InvalidData, err.to_string())
+                                })
+                            })
+                            .and_then::<fn(_) -> _, _>(|bytes: BytesMut| {
+                                let request = protobuf::parse_from_bytes(&bytes)?;
+                                proto_to_req_msg(request)
+                            }),
+                    )
                 })
                 .and_then(|s| s.send(msg_server))
                 .map(|_| ());
 
             let client = TcpStream::connect(&listener_addr)
                 .and_then(|c| {
-                    KademliaProtocolConfig::default().upgrade_outbound(c, b"/stegos/kad/1.0.0")
+                    let mut codec = codec::UviBytes::default();
+                    codec.set_max_len(4096);
+
+                    future::ok(
+                        Framed::new(c, codec)
+                            .from_err::<IoError>()
+                            .with::<_, fn(_) -> _, _>(|request| -> Result<_, IoError> {
+                                let proto_struct = req_msg_to_proto(request);
+                                match proto_struct.write_to_bytes() {
+                                    Ok(msg) => Ok(msg),
+                                    Err(err) => {
+                                        Err(IoError::new(IoErrorKind::Other, err.to_string()))
+                                    }
+                                }
+                            })
+                            .and_then::<fn(_) -> _, _>(|bytes: BytesMut| {
+                                let response = protobuf::parse_from_bytes(&bytes)?;
+                                proto_to_resp_msg(response)
+                            }),
+                    )
                 })
                 .and_then({
                     let msg_client = msg_client.clone();
@@ -611,42 +683,5 @@ mod tests {
                 .block_on(server.select(client).map_err(|_| panic!()))
                 .unwrap();
         }
-
-        // fn test_one(msg_server: KadMsg) {
-        //     let msg_client = msg_server.clone();
-        //     let (tx, rx) = mpsc::channel();
-
-        //     let bg_thread = thread::spawn(move || {
-        //         let transport = TcpConfig::new().with_upgrade(KademliaProtocolConfig);
-
-        //         let (listener, addr) = transport
-        //             .listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap())
-        //             .unwrap();
-        //         tx.send(addr).unwrap();
-
-        //         let future = listener
-        //             .into_future()
-        //             .map_err(|(err, _)| err)
-        //             .and_then(|(client, _)| client.unwrap().0)
-        //             .and_then(|proto| proto.into_future().map_err(|(err, _)| err).map(|(v, _)| v))
-        //             .map(|recv_msg| {
-        //                 assert_eq!(recv_msg.unwrap(), msg_server);
-        //                 ()
-        //             });
-        //         let mut rt = Runtime::new().unwrap();
-        //         let _ = rt.block_on(future).unwrap();
-        //     });
-
-        //     let transport = TcpConfig::new().with_upgrade(KademliaProtocolConfig);
-
-        //     let future = transport
-        //         .dial(rx.recv().unwrap())
-        //         .unwrap()
-        //         .and_then(|proto| proto.send(msg_client))
-        //         .map(|_| ());
-        //     let mut rt = Runtime::new().unwrap();
-        //     let _ = rt.block_on(future).unwrap();
-        //     bg_thread.join().unwrap();
-        // }
     }
 }

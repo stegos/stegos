@@ -25,8 +25,8 @@ use super::protocol::{DeliveryCodec, DeliveryConfig, DeliveryMessage};
 
 use futures::prelude::*;
 use libp2p::core::{
-    protocols_handler::{KeepAlive, ProtocolsHandlerUpgrErr},
-    upgrade::{InboundUpgrade, OutboundUpgrade},
+    protocols_handler::{KeepAlive, ProtocolsHandlerUpgrErr, SubstreamProtocol},
+    upgrade::{InboundUpgrade, Negotiated, OutboundUpgrade},
     ProtocolsHandler, ProtocolsHandlerEvent,
 };
 use log::{debug, trace};
@@ -71,13 +71,16 @@ where
     TSubstream: AsyncRead + AsyncWrite,
 {
     /// Waiting for a message from the remote.
-    WaitingInput(Framed<TSubstream, DeliveryCodec>),
+    WaitingInput(Framed<Negotiated<TSubstream>, DeliveryCodec>),
     /// Waiting to send a message to the remote.
-    PendingSend(Framed<TSubstream, DeliveryCodec>, DeliveryMessage),
+    PendingSend(
+        Framed<Negotiated<TSubstream>, DeliveryCodec>,
+        DeliveryMessage,
+    ),
     /// Waiting to flush the substream so that the data arrives to the remote.
-    PendingFlush(Framed<TSubstream, DeliveryCodec>),
+    PendingFlush(Framed<Negotiated<TSubstream>, DeliveryCodec>),
     /// The substream is being closed.
-    Closing(Framed<TSubstream, DeliveryCodec>),
+    Closing(Framed<Negotiated<TSubstream>, DeliveryCodec>),
 }
 
 impl<TSubstream> SubstreamState<TSubstream>
@@ -85,7 +88,7 @@ where
     TSubstream: AsyncRead + AsyncWrite,
 {
     /// Consumes this state and produces the substream.
-    fn into_substream(self) -> Framed<TSubstream, DeliveryCodec> {
+    fn into_substream(self) -> Framed<Negotiated<TSubstream>, DeliveryCodec> {
         match self {
             SubstreamState::WaitingInput(substream) => substream,
             SubstreamState::PendingSend(substream, _) => substream,
@@ -104,7 +107,7 @@ where
         DeliveryHandler {
             config: DeliveryConfig::new(),
             substreams: Vec::new(),
-            keep_alive: KeepAlive::Forever,
+            keep_alive: KeepAlive::Yes,
             send_queue: SmallVec::new(),
             out_events: VecDeque::new(),
         }
@@ -124,8 +127,8 @@ where
     type OutboundOpenInfo = DeliveryMessage;
 
     #[inline]
-    fn listen_protocol(&self) -> Self::InboundProtocol {
-        self.config.clone()
+    fn listen_protocol(&self) -> SubstreamProtocol<Self::InboundProtocol> {
+        SubstreamProtocol::new(self.config.clone())
     }
 
     fn inject_fully_negotiated_inbound(
@@ -184,7 +187,7 @@ where
             return Ok(Async::Ready(
                 ProtocolsHandlerEvent::OutboundSubstreamRequest {
                     info: message,
-                    upgrade: self.config.clone(),
+                    protocol: SubstreamProtocol::new(self.config.clone()),
                 },
             ));
         }
@@ -261,7 +264,7 @@ where
         if self.substreams.is_empty() {
             self.keep_alive = KeepAlive::Until(Instant::now() + Duration::from_secs(10));
         } else {
-            self.keep_alive = KeepAlive::Forever;
+            self.keep_alive = KeepAlive::Yes;
         }
 
         Ok(Async::NotReady)

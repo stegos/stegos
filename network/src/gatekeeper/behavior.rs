@@ -55,6 +55,8 @@ const HASH_CASH_PROOF_TTL: Duration = Duration::from_secs(365 * 24 * 60 * 60);
 const HANDSHAKE_STEP_TIMEOUT: Duration = Duration::from_secs(30);
 // Nuber of concurrent solver threads
 const SOLVER_THREADS: usize = 4;
+// Unlocked peers threshold (how many peers should be unlock to treat network as ready)
+const NETWORK_READY_THRESHOLD: usize = 2;
 
 /// Network behavior to handle initial nodes handshake
 pub struct Gatekeeper<TSubstream> {
@@ -144,6 +146,10 @@ impl<TSubstream> Gatekeeper<TSubstream> {
             hashcash_nbits: config.hashcash_nbits,
             marker: PhantomData,
         }
+    }
+
+    pub fn is_network_ready(&self) -> bool {
+        self.unlocked_peers.len() >= NETWORK_READY_THRESHOLD
     }
 
     pub fn shutdown(&mut self, peer_id: &PeerId) {
@@ -240,7 +246,7 @@ impl<TSubstream> Gatekeeper<TSubstream> {
             self.events.push_back(NetworkBehaviourAction::GenerateEvent(
                 GatekeeperOutEvent::PrepareDialer { peer_id },
             ));
-            if self.unlocked_peers.len() >= 2 {
+            if self.unlocked_peers.len() >= NETWORK_READY_THRESHOLD {
                 self.events.push_back(NetworkBehaviourAction::GenerateEvent(
                     GatekeeperOutEvent::NetworkReady,
                 ));
@@ -361,7 +367,7 @@ where
                             peer_id: propagation_source,
                         },
                     ));
-                    if self.unlocked_peers.len() >= 2 {
+                    if self.unlocked_peers.len() >= NETWORK_READY_THRESHOLD {
                         self.events.push_back(NetworkBehaviourAction::GenerateEvent(
                             GatekeeperOutEvent::NetworkReady,
                         ));

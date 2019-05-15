@@ -260,12 +260,24 @@ where
             ControlMessage::Subscribe { topic, handler } => {
                 let floodsub_topic = TopicBuilder::new(topic.clone()).build();
                 let topic_hash = floodsub_topic.hash();
-                self.topics_map.insert(topic_hash.clone(), topic);
+                if topic != NETWORK_STATUS_TOPIC {
+                    self.topics_map.insert(topic_hash.clone(), topic);
+                    self.consumers
+                        .entry(topic_hash.clone())
+                        .or_insert(SmallVec::new())
+                        .push(handler);
+                    self.floodsub.subscribe(floodsub_topic);
+                    return;
+                }
+                if self.gatekeeper.is_network_ready() {
+                    if let Err(e) = handler.clone().unbounded_send(NETWORK_READY_TOKEN.to_vec()) {
+                        debug!(target: "stegos_network::gatekeeper", "Error sending Network::Ready event: error={}", e);
+                    }
+                }
                 self.consumers
                     .entry(topic_hash.clone())
                     .or_insert(SmallVec::new())
                     .push(handler);
-                self.floodsub.subscribe(floodsub_topic);
             }
             ControlMessage::Publish { topic, data } => {
                 debug!(target: "stegos_network::pubsub",

@@ -31,6 +31,8 @@ tokio-timer = "0.2"
 
 [dev-dependencies]
 simple_logger = "1.0"
+serde_json = "1.0"
+pretty_assertions = "0.6.1"
 
 [build-dependencies]
 stegos_serialization = { version = "0.2.0", path = "../serialization" }

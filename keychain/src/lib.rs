@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-// #![deny(warnings)]
+#![deny(warnings)]
 
 mod config;
 mod error;
@@ -74,18 +74,24 @@ impl KeyChain {
                 info!("Recovering keys...");
                 let wallet_skey = read_recovery(&cfg.recovery_file)?;
                 let wallet_pkey: curve1174::PublicKey = wallet_skey.clone().into();
-                info!("Recovered a wallet key: pkey={}", wallet_pkey);
+                info!("Recovered a wallet key: pkey={}", wallet_pkey.to_hex());
                 (wallet_skey, wallet_pkey)
             } else {
                 debug!("Generating a new wallet key pair...");
                 let (wallet_skey, wallet_pkey) = curve1174::make_random_keys();
-                info!("Generated a new wallet key pair: pkey={}", wallet_pkey);
+                info!(
+                    "Generated a new wallet key pair: pkey={}",
+                    wallet_pkey.to_hex()
+                );
                 (wallet_skey, wallet_pkey)
             };
 
             debug!("Generating a new network key pair...");
             let (network_skey, network_pkey) = pbc::make_random_keys();
-            info!("Generated a new network key pair: pkey={}", network_pkey);
+            info!(
+                "Generated a new network key pair: pkey={}",
+                network_pkey.to_hex()
+            );
 
             let password = read_password(&cfg.password_file, true)?;
 

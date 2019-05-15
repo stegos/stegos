@@ -24,13 +24,13 @@ use stegos::*;
 use clap;
 use clap::{App, Arg};
 use failure::Error;
-use futures::future::select_all;
 use log::*;
 use std::path::PathBuf;
 use std::process;
 use std::time::SystemTime;
-use stegos::generator::Generator;
-use stegos_blockchain::Blockchain;
+use stegos::config::Config;
+use stegos::generator::{Generator, GeneratorMode};
+use stegos_blockchain::{Blockchain, Output};
 use stegos_keychain::*;
 use stegos_network::Libp2pNetwork;
 use stegos_node::NodeService;
@@ -38,6 +38,7 @@ use stegos_wallet::WalletService;
 use tokio::runtime::Runtime;
 
 const CONFIG_NAME: &'static str = "stegos.toml";
+const LOG_CONFIG_NAME: &'static str = "stegos-log4rs.toml";
 
 pub fn load_configuration(folder: &str) -> Result<config::Config, Error> {
     let mut path = PathBuf::from(folder);
@@ -58,6 +59,61 @@ pub fn load_configuration(folder: &str) -> Result<config::Config, Error> {
     Ok(cfg)
 }
 
+fn load_nodes_configs<'a>(
+    folders: impl Iterator<Item = &'a str>,
+) -> Result<Vec<(Config, KeyChain)>, Error> {
+    let mut node_configs = Vec::new();
+    for folder in folders {
+        // Parse configuration
+        let cfg = load_configuration(&folder)?;
+        // Initialize keychain
+        let keychain = KeyChain::new(cfg.keychain.clone())?;
+        node_configs.push((cfg, keychain));
+    }
+    Ok(node_configs)
+}
+// TODO: as network config, we using first node config, replace with more straight way.
+fn base_config(nodes: &[(Config, KeyChain)]) -> (Config, KeyChain) {
+    nodes.first().expect("Expected atleast one node").clone()
+}
+
+fn recover_generator(
+    chain: &Blockchain,
+    node_configs: Vec<(Config, KeyChain)>,
+) -> Result<Vec<GeneratorInstance>, Error> {
+    let first_keys = node_configs
+        .first()
+        .expect("Expected atleast one generator.")
+        .1
+        .clone();
+
+    // get list of keys, for all validators.
+    let keys: Vec<_> = node_configs.iter().map(|(_, k)| k.wallet_pkey).collect();
+    info!("Recovering blockchain states.");
+
+    let mut instances = Vec::new();
+    for (mut config, mut keychain) in node_configs {
+        let wallet_recover = chain.recover_wallet(&keychain.wallet_skey, &keychain.wallet_pkey)?;
+        // use single node keys.
+        keychain.network_skey = first_keys.network_skey.clone();
+        keychain.network_pkey = first_keys.network_pkey;
+        config.general.generate_txs.extend_from_slice(&keys);
+        instances.push(GeneratorInstance {
+            config,
+            keychain,
+            wallet_recover,
+        })
+    }
+    Ok(instances)
+}
+
+struct GeneratorInstance {
+    config: Config,
+    keychain: KeyChain,
+    wallet_recover: Vec<(Output, u64)>,
+}
+
+//TODO: run single node and network.
 fn run() -> Result<(), Error> {
     let name = "stegos-generator";
     let version = format!(
@@ -82,45 +138,89 @@ fn run() -> Result<(), Error> {
                 .multiple(true)
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("mode")
+                .short("m")
+                .long("mode")
+                .value_name("MODE")
+                .help("Generator mode could be one of (VS, REGULAR).")
+                .default_value("REGULAR")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("log-config")
+                .short("L")
+                .long("log-config")
+                .value_name("LOG_CONFIG")
+                .help("Path to log config.")
+                .takes_value(true),
+        )
         .get_matches();
+
+    let path = match args.value_of("log-config") {
+        Some(config) => config,
+        _ => LOG_CONFIG_NAME,
+    };
+
+    let mode = match args.value_of("mode").unwrap() {
+        "VS" | "VALUESHUFFLE" | "VALUE_SHUFFLE" => GeneratorMode::ValueShuffle,
+        _ => GeneratorMode::Regular,
+    };
+
+    let folders = args.values_of("folders").unwrap();
+
+    // Print welcome message
+    info!("{} {}", name, version);
+
+    let node_configs = load_nodes_configs(folders)?;
+    let (mut base_config, network_keychain) = base_config(&node_configs);
+
+    base_config.general.log4rs_config = path.to_string();
+
     // Initialize logger
-    initialize_logger(&config::Config::default())?;
-    let values = args.values_of("folders").unwrap();
-    // Initialize network
+    initialize_logger(&base_config)?;
+
     let mut rt = Runtime::new()?;
-    let mut nodes = Vec::new();
-    for folder in values {
-        // Parse configuration
-        let mut cfg = load_configuration(&folder)?;
 
-        // Print welcome message
-        info!("{} {}", name, version);
+    // Resolve seed pool (works, if chain=='testent', does nothing otherwise)
+    resolve_pool(&mut base_config)?;
+    // Initialize network
+    let (network, network_service) = Libp2pNetwork::new(&base_config.network, &network_keychain)?;
+    rt.spawn(network_service);
 
-        // Initialize keychain
-        let keychain = KeyChain::new(cfg.keychain.clone())?;
+    // Initialize blockchain
+    info!("Loading blockchain.");
+    let genesis = initialize_genesis(&base_config)?;
+    let timestamp = SystemTime::now();
+    let chain = Blockchain::new(
+        base_config.chain.clone().into(),
+        base_config.storage,
+        genesis,
+        timestamp,
+    )?;
 
-        // Resolve seed pool (works, if chain=='testent', does nothing otherwise)
-        resolve_pool(&mut cfg)?;
+    let generator_configs = recover_generator(&chain, node_configs)?;
 
-        // Initialize blockchain
-        let genesis = initialize_genesis(&cfg)?;
-        let timestamp = SystemTime::now();
-        let chain = Blockchain::new(cfg.chain.clone().into(), cfg.storage, genesis, timestamp)?;
-        let wallet_persistent_state =
-            chain.recover_wallet(&keychain.wallet_skey, &keychain.wallet_pkey)?;
-        let (network, network_service) = Libp2pNetwork::new(&cfg.network, &keychain)?;
-        rt.spawn(network_service);
+    info!("Starting node service.");
+    // Initialize node
+    let (node_service, node) = NodeService::new(
+        base_config.chain.clone(),
+        chain,
+        network_keychain.clone(),
+        network.clone(),
+    )?;
 
-        // Initialize node
-        let (node_service, node) =
-            NodeService::new(cfg.chain.clone(), chain, keychain.clone(), network.clone())?;
-        nodes.push(node_service);
+    for generator in generator_configs {
+        let cfg = generator.config;
+        let keychain = generator.keychain;
+        let wallet_persistent_state = generator.wallet_recover;
 
+        info!("Starting wallet with generator.");
         // Initialize Wallet.
         let (wallet_service, wallet) = WalletService::new(
             keychain.clone(),
             network.clone(),
-            node,
+            node.clone(),
             cfg.chain.payment_fee,
             cfg.chain.stake_fee,
             cfg.chain.stake_epochs,
@@ -128,12 +228,11 @@ fn run() -> Result<(), Error> {
         );
         rt.spawn(wallet_service);
 
-        let bot = Generator::new(wallet, cfg.general.generate_txs, true);
+        let bot = Generator::new(wallet, cfg.general.generate_txs, mode, true);
         rt.spawn(bot);
     }
     // Start main event loop
-    rt.block_on(select_all(nodes))
-        .map_err(drop)
+    rt.block_on(node_service)
         .expect("errors are handled earlier");
 
     Ok(())

@@ -25,8 +25,8 @@ use super::protocol::{GatekeeperCodec, GatekeeperConfig, GatekeeperMessage};
 
 use futures::prelude::*;
 use libp2p::core::{
-    protocols_handler::{KeepAlive, ProtocolsHandlerUpgrErr},
-    upgrade::{InboundUpgrade, OutboundUpgrade},
+    protocols_handler::{KeepAlive, ProtocolsHandlerUpgrErr, SubstreamProtocol},
+    upgrade::{InboundUpgrade, Negotiated, OutboundUpgrade},
     ProtocolsHandler, ProtocolsHandlerEvent,
 };
 use log::{debug, trace};
@@ -80,13 +80,16 @@ where
     TSubstream: AsyncRead + AsyncWrite,
 {
     /// Waiting for a message from the remote.
-    WaitingInput(Framed<TSubstream, GatekeeperCodec>),
+    WaitingInput(Framed<Negotiated<TSubstream>, GatekeeperCodec>),
     /// Waiting to send a message to the remote.
-    PendingSend(Framed<TSubstream, GatekeeperCodec>, GatekeeperMessage),
+    PendingSend(
+        Framed<Negotiated<TSubstream>, GatekeeperCodec>,
+        GatekeeperMessage,
+    ),
     /// Waiting to flush the substream so that the data arrives to the remote.
-    PendingFlush(Framed<TSubstream, GatekeeperCodec>),
+    PendingFlush(Framed<Negotiated<TSubstream>, GatekeeperCodec>),
     /// The substream is being closed.
-    Closing(Framed<TSubstream, GatekeeperCodec>),
+    Closing(Framed<Negotiated<TSubstream>, GatekeeperCodec>),
 }
 
 impl<TSubstream> GatekeeperHandler<TSubstream>
@@ -108,7 +111,7 @@ where
     #[inline]
     fn shutdown(&mut self) {
         self.shutting_down = true;
-        self.keep_alive = KeepAlive::Now;
+        self.keep_alive = KeepAlive::No;
         for n in (0..self.substreams.len()).rev() {
             let substream = self.substreams.swap_remove(n);
             self.substreams
@@ -122,7 +125,7 @@ where
     TSubstream: AsyncRead + AsyncWrite,
 {
     /// Consumes this state and produces the substream.
-    fn into_substream(self) -> Framed<TSubstream, GatekeeperCodec> {
+    fn into_substream(self) -> Framed<Negotiated<TSubstream>, GatekeeperCodec> {
         match self {
             SubstreamState::WaitingInput(substream) => substream,
             SubstreamState::PendingSend(substream, _) => substream,
@@ -145,8 +148,8 @@ where
     type OutboundOpenInfo = GatekeeperMessage;
 
     #[inline]
-    fn listen_protocol(&self) -> Self::InboundProtocol {
-        self.config.clone()
+    fn listen_protocol(&self) -> SubstreamProtocol<Self::InboundProtocol> {
+        SubstreamProtocol::new(self.config.clone())
     }
 
     fn inject_fully_negotiated_inbound(
@@ -157,7 +160,7 @@ where
         if self.shutting_down {
             return ();
         }
-        self.keep_alive = KeepAlive::Forever;
+        self.keep_alive = KeepAlive::Yes;
         self.substreams.push(SubstreamState::WaitingInput(protocol))
     }
 
@@ -170,7 +173,7 @@ where
         if self.shutting_down {
             return;
         }
-        self.keep_alive = KeepAlive::Forever;
+        self.keep_alive = KeepAlive::Yes;
         self.substreams
             .push(SubstreamState::PendingSend(protocol, message))
     }
@@ -180,7 +183,7 @@ where
         match event {
             GatekeeperSendEvent::Shutdown => self.shutdown(),
             GatekeeperSendEvent::Send(message) => {
-                self.keep_alive = KeepAlive::Forever;
+                self.keep_alive = KeepAlive::Yes;
                 self.send_queue.push(message);
             }
         }
@@ -212,7 +215,7 @@ where
             return Ok(Async::Ready(
                 ProtocolsHandlerEvent::OutboundSubstreamRequest {
                     info: message,
-                    upgrade: self.config.clone(),
+                    protocol: SubstreamProtocol::new(self.config.clone()),
                 },
             ));
         }
@@ -296,7 +299,7 @@ where
         if self.substreams.is_empty() {
             self.keep_alive = KeepAlive::Until(Instant::now() + Duration::from_secs(10));
         } else {
-            self.keep_alive = KeepAlive::Forever;
+            self.keep_alive = KeepAlive::Yes;
         }
 
         Ok(Async::NotReady)

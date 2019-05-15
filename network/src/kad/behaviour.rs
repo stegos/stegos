@@ -458,7 +458,7 @@ where
         }
     }
 
-    fn inject_dial_failure(
+    fn inject_addr_reach_failure(
         &mut self,
         peer_id: Option<&PeerId>,
         addr: &Multiaddr,
@@ -477,6 +477,17 @@ where
                 //       to this peer
                 node_info.addresses.remove_addr(addr);
             }
+        }
+    }
+
+    fn inject_dial_failure(&mut self, peer_id: &PeerId) {
+        let peer_id = peer_id.clone().into_bytes();
+        let node_id = match self.known_peers.get(&peer_id) {
+            Some(id) => id,
+            None => return,
+        };
+        for query in self.active_queries.values_mut() {
+            query.0.inject_rpc_error(node_id);
         }
     }
 

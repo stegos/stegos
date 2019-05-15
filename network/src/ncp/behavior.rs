@@ -318,7 +318,7 @@ where
                     let peer = poll_parameters.local_peer_id().clone();
                     let mut peer_info = PeerInfo::new(&peer, &self.node_id);
                     for addr in poll_parameters.external_addresses() {
-                        peer_info.addresses.push(addr);
+                        peer_info.addresses.push(addr.clone());
                     }
                     response.peers.push(peer_info);
                     return Async::Ready(NetworkBehaviourAction::SendEvent {

@@ -139,6 +139,15 @@ impl QueryState {
         &self.target
     }
 
+    /// Returns the target of the query. Always the same as what was passed to `new()`.
+    ///
+    /// You shouldn't modify the target in such a way that modifies the target of the query,
+    /// otherwise logic errors will likely happen.
+    #[inline]
+    pub fn target_mut(&mut self) -> &mut QueryTarget {
+        &mut self.target
+    }
+
     /// After `poll()` returned `SendRpc`, this method should be called when the node sends back
     /// the result of the query.
     ///

@@ -23,8 +23,8 @@ use super::protocol::{FloodsubCodec, FloodsubConfig, FloodsubRpc};
 
 use futures::prelude::*;
 use libp2p::core::{
-    protocols_handler::{KeepAlive, ProtocolsHandlerUpgrErr},
-    upgrade::{InboundUpgrade, OutboundUpgrade},
+    protocols_handler::{KeepAlive, ProtocolsHandlerUpgrErr, SubstreamProtocol},
+    upgrade::{InboundUpgrade, Negotiated, OutboundUpgrade},
     ProtocolsHandler, ProtocolsHandlerEvent,
 };
 use log::{debug, trace};
@@ -68,13 +68,13 @@ where
     TSubstream: AsyncRead + AsyncWrite,
 {
     /// Waiting for a message from the remote.
-    WaitingInput(Framed<TSubstream, FloodsubCodec>),
+    WaitingInput(Framed<Negotiated<TSubstream>, FloodsubCodec>),
     /// Waiting to send a message to the remote.
-    PendingSend(Framed<TSubstream, FloodsubCodec>, FloodsubRpc),
+    PendingSend(Framed<Negotiated<TSubstream>, FloodsubCodec>, FloodsubRpc),
     /// Waiting to flush the substream so that the data arrives to the remote.
-    PendingFlush(Framed<TSubstream, FloodsubCodec>),
+    PendingFlush(Framed<Negotiated<TSubstream>, FloodsubCodec>),
     /// The substream is being closed.
-    Closing(Framed<TSubstream, FloodsubCodec>),
+    Closing(Framed<Negotiated<TSubstream>, FloodsubCodec>),
 }
 
 impl<TSubstream> SubstreamState<TSubstream>
@@ -82,7 +82,7 @@ where
     TSubstream: AsyncRead + AsyncWrite,
 {
     /// Consumes this state and produces the substream.
-    fn into_substream(self) -> Framed<TSubstream, FloodsubCodec> {
+    fn into_substream(self) -> Framed<Negotiated<TSubstream>, FloodsubCodec> {
         match self {
             SubstreamState::WaitingInput(substream) => substream,
             SubstreamState::PendingSend(substream, _) => substream,
@@ -133,8 +133,8 @@ where
     type OutboundOpenInfo = FloodsubRpc;
 
     #[inline]
-    fn listen_protocol(&self) -> Self::InboundProtocol {
-        self.config.clone()
+    fn listen_protocol(&self) -> SubstreamProtocol<Self::InboundProtocol> {
+        SubstreamProtocol::new(self.config.clone())
     }
 
     fn inject_fully_negotiated_inbound(
@@ -199,9 +199,9 @@ where
     #[inline]
     fn connection_keep_alive(&self) -> KeepAlive {
         if self.enabled_incoming || self.enabled_outgoing || !self.substreams.is_empty() {
-            KeepAlive::Forever
+            KeepAlive::Yes
         } else {
-            KeepAlive::Now
+            KeepAlive::No
         }
     }
 
@@ -221,7 +221,7 @@ where
             return Ok(Async::Ready(
                 ProtocolsHandlerEvent::OutboundSubstreamRequest {
                     info: message,
-                    upgrade: self.config.clone(),
+                    protocol: SubstreamProtocol::new(self.config.clone()),
                 },
             ));
         }

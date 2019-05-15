@@ -23,7 +23,7 @@
 
 use bytes::{BufMut, BytesMut};
 use futures::future;
-use libp2p::core::{InboundUpgrade, OutboundUpgrade, UpgradeInfo};
+use libp2p::core::{upgrade::Negotiated, InboundUpgrade, OutboundUpgrade, UpgradeInfo};
 use protobuf::Message as ProtobufMessage;
 use std::{io, iter};
 use stegos_crypto::hashcash::HashCashProof;
@@ -57,12 +57,12 @@ impl<TSocket> InboundUpgrade<TSocket> for GatekeeperConfig
 where
     TSocket: AsyncRead + AsyncWrite,
 {
-    type Output = Framed<TSocket, GatekeeperCodec>;
+    type Output = Framed<Negotiated<TSocket>, GatekeeperCodec>;
     type Error = io::Error;
     type Future = future::FutureResult<Self::Output, Self::Error>;
 
     #[inline]
-    fn upgrade_inbound(self, socket: TSocket, _: Self::Info) -> Self::Future {
+    fn upgrade_inbound(self, socket: Negotiated<TSocket>, _: Self::Info) -> Self::Future {
         future::ok(Framed::new(
             socket,
             GatekeeperCodec {
@@ -76,12 +76,12 @@ impl<TSocket> OutboundUpgrade<TSocket> for GatekeeperConfig
 where
     TSocket: AsyncRead + AsyncWrite,
 {
-    type Output = Framed<TSocket, GatekeeperCodec>;
+    type Output = Framed<Negotiated<TSocket>, GatekeeperCodec>;
     type Error = io::Error;
     type Future = future::FutureResult<Self::Output, Self::Error>;
 
     #[inline]
-    fn upgrade_outbound(self, socket: TSocket, _: Self::Info) -> Self::Future {
+    fn upgrade_outbound(self, socket: Negotiated<TSocket>, _: Self::Info) -> Self::Future {
         future::ok(Framed::new(
             socket,
             GatekeeperCodec {
@@ -210,10 +210,10 @@ pub enum GatekeeperMessage {
 
 #[cfg(test)]
 mod tests {
-    use super::{GatekeeperConfig, GatekeeperMessage};
-    use futures::{Future, Sink, Stream};
-    use libp2p::core::upgrade::{InboundUpgrade, OutboundUpgrade};
+    use super::{GatekeeperCodec, GatekeeperMessage};
+    use futures::{future, Future, Sink, Stream};
     use stegos_crypto::hashcash::HashCashProof;
+    use tokio::codec::Framed;
     use tokio::net::{TcpListener, TcpStream};
 
     #[test]
@@ -253,7 +253,12 @@ mod tests {
             .into_future()
             .map_err(|(e, _)| e)
             .and_then(|(c, _)| {
-                GatekeeperConfig::new().upgrade_inbound(c.unwrap(), b"/stegos/gatekeeper/0.1.0")
+                future::ok(Framed::new(
+                    c.unwrap(),
+                    GatekeeperCodec {
+                        length_prefix: Default::default(),
+                    },
+                ))
             })
             .and_then({
                 let msg_server = msg_server.clone();
@@ -266,7 +271,14 @@ mod tests {
             });
 
         let client = TcpStream::connect(&listener_addr)
-            .and_then(|c| GatekeeperConfig::new().upgrade_outbound(c, b"/stegos/gatekeeper/0.1.0"))
+            .and_then(|c| {
+                future::ok(Framed::new(
+                    c,
+                    GatekeeperCodec {
+                        length_prefix: Default::default(),
+                    },
+                ))
+            })
             .and_then(|s| s.send(msg_client))
             .map(|_| ());
 

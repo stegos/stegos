@@ -30,6 +30,8 @@ use stegos_crypto::hash::Hash;
 
 #[derive(Debug, Fail, PartialEq, Eq)]
 pub enum NodeTransactionError {
+    #[fail(display = "Invalid transaction type: tx={}", _0)]
+    InvalidType(Hash),
     #[fail(
         display = "Transaction fee is too low: tx={}, min={}, got={}",
         _0, _1, _2

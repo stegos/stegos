@@ -428,6 +428,13 @@ impl NodeService {
             tx.fee()
         );
 
+        // Check that transaction has proper type.
+        match &tx {
+            Transaction::PaymentTransaction(_tx) => {}
+            Transaction::RestakeTransaction(_tx) => {}
+            _ => return Err(NodeTransactionError::InvalidType(tx_hash).into()),
+        };
+
         // Limit the number of inputs and outputs.
         let utxo_count = tx.txins().len() + tx.txouts().len();
         if utxo_count > self.cfg.max_utxo_in_tx {
@@ -875,17 +882,24 @@ impl NodeService {
                 let timestamp = SystemTime::now();
 
                 // Check block reward.
-                if self.chain.epoch() > 0
-                    && micro_block.coinbase.block_reward != self.cfg.block_reward
-                {
-                    // TODO: support slashing.
-                    return Err(NodeBlockError::InvalidBlockReward(
-                        height,
-                        hash,
-                        micro_block.coinbase.block_reward,
-                        self.cfg.block_reward,
-                    )
-                    .into());
+                if self.chain.epoch() > 0 {
+                    if let Some(Transaction::CoinbaseTransaction(tx)) =
+                        micro_block.transactions.get(0)
+                    {
+                        if tx.block_reward != self.cfg.block_reward {
+                            // TODO: support slashing.
+                            return Err(NodeBlockError::InvalidBlockReward(
+                                height,
+                                hash,
+                                tx.block_reward,
+                                self.cfg.block_reward,
+                            )
+                            .into());
+                        }
+                    } else if self.cfg.block_reward > 0 {
+                        // Force coinbase if reward is not zero.
+                        return Err(BlockError::CoinbaseMustBeFirst(hash).into());
+                    }
                 }
 
                 let leader = micro_block.pkey;

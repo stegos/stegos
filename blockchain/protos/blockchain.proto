@@ -33,6 +33,13 @@ message Output {
     }
 }
 
+message CoinbaseTransaction {
+    int64 block_reward = 1;
+    int64 block_fee = 2;
+    stegos.crypto.Fr gamma = 3;
+    repeated Output txouts = 4;
+}
+
 message PaymentTransaction {
     repeated stegos.crypto.Hash txins = 1;
     repeated Output txouts = 2;
@@ -49,8 +56,9 @@ message RestakeTransaction {
 
 message Transaction {
     oneof transaction {
-        PaymentTransaction payment_transaction = 1;
-        RestakeTransaction restake_transaction = 2;
+        CoinbaseTransaction coinbase_transaction = 1;
+        PaymentTransaction payment_transaction = 2;
+        RestakeTransaction restake_transaction = 3;
     }
 }
 
@@ -92,17 +100,9 @@ message MacroBlock {
     MacroBlockBody body = 2;
 }
 
-message Coinbase {
-    int64 block_reward = 1;
-    int64 block_fee = 2;
-    stegos.crypto.Fr gamma = 3;
-    repeated Output outputs = 4;
-}
-
 message MicroBlock {
     BaseBlockHeader base = 1;
     ViewChangeProof view_change_proof = 2;
-    Coinbase coinbase = 3;
     repeated Transaction transactions = 4;
     stegos.crypto.SecurePublicKey pkey = 5;
     stegos.crypto.SecureSignature sig = 6;

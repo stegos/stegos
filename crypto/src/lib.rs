@@ -19,6 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+pub mod aont;
 pub mod bulletproofs;
 pub mod curve1174;
 pub mod dicemix;
@@ -72,6 +73,9 @@ pub enum CryptoError {
 
     #[fail(display = "Point not in principal subgroup")]
     NotInPrincipalSubgroup,
+
+    #[fail(display = "Not an AONT ciphertext")]
+    InvalidAontDecryption,
 }
 
 impl From<hex::FromHexError> for CryptoError {

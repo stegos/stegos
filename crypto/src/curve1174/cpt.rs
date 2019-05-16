@@ -191,12 +191,24 @@ impl Hashable for SecretKey {
 
 impl From<Fr> for SecretKey {
     fn from(zr: Fr) -> Self {
+        Self::from(&zr)
+    }
+}
+
+impl<'a> From<&'a Fr> for SecretKey {
+    fn from(zr: &'a Fr) -> Self {
         SecretKey(zr.unscaled())
     }
 }
 
 impl From<SecretKey> for Fr {
     fn from(skey: SecretKey) -> Self {
+        Fr::from(&skey)
+    }
+}
+
+impl<'a> From<&'a SecretKey> for Fr {
+    fn from(skey: &'a SecretKey) -> Self {
         skey.0
     }
 }

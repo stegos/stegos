@@ -35,7 +35,10 @@ use libp2p::{
 use log::*;
 use pnet::datalink;
 use protobuf::Message as ProtoMessage;
-use rand::{self, distributions::{Distribution, Uniform}};
+use rand::{
+    self,
+    distributions::{Distribution, Uniform},
+};
 use smallvec::SmallVec;
 use std::collections::{HashMap, HashSet};
 use std::thread;

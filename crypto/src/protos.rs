@@ -22,6 +22,7 @@
 use failure::Error;
 use stegos_serialization::traits::*;
 
+use crate::aont;
 use crate::bulletproofs::{BulletProof, DotProof, L2_NBASIS, LR};
 use crate::curve1174::{EncryptedKey, EncryptedPayload, Fr, Pt, PublicKey, SchnorrSig, SecretKey};
 use crate::hash::Hash;
@@ -96,15 +97,31 @@ impl ProtoConvert for Hash {
 
 impl ProtoConvert for SecretKey {
     type Proto = crypto::SecretKey;
+    // transfer of SecretKey via AONT
     fn into_proto(&self) -> Self::Proto {
+        let mut msg = Fr::from(self).to_lev_u8();
+        let cmsg = aont::aont_encrypt(&msg);
+        for ix in 0..msg.len() {
+            msg[ix] = 0;
+        }
         let mut proto = crypto::SecretKey::new();
-        let fval = Fr::from(self.clone());
-        proto.set_skeyf(fval.into_proto());
+        proto.set_skeyf(cmsg);
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let fval = Fr::from_proto(proto.get_skeyf())?;
-        Ok(SecretKey::from(fval))
+        let cmsg = proto.get_skeyf();
+        let mut frmsg = Vec::<u8>::new();
+        aont::aont_decrypt(&cmsg, &mut frmsg)?;
+        let mut frmsgx = [0u8; 32];
+        for ix in 0..32 {
+            frmsgx[ix] = frmsg[ix];
+            frmsg[ix] = 0;
+        }
+        let ans = SecretKey::from(Fr::from_lev_u8(frmsgx));
+        for ix in 0..frmsgx.len() {
+            frmsgx[ix] = 0;
+        }
+        Ok(ans)
     }
 }
 
@@ -405,5 +422,12 @@ mod tests {
         roundtrip(&encr_key);
         let key_to_encrypt2 = decrypt_key(&passphrase, &encr_key).expect("valid");
         assert_eq!(key_to_encrypt.to_vec(), key_to_encrypt2);
+    }
+
+    #[test]
+    fn aont_secret_key() {
+        // test AONT serialization of SecretKey
+        let (skey, _pkey) = make_random_keys();
+        roundtrip(&skey);
     }
 }

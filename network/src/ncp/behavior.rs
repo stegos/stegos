@@ -32,7 +32,7 @@ use lru_time_cache::LruCache;
 use rand::{thread_rng, Rng};
 use smallvec::SmallVec;
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::VecDeque,
     marker::PhantomData,
     time::{Duration, Instant},
 };
@@ -44,8 +44,13 @@ use tokio::timer::Delay;
 use crate::config::NetworkConfig;
 use crate::ncp::handler::NcpHandler;
 use crate::ncp::protocol::{GetPeersResponse, NcpMessage, PeerInfo};
+use crate::utils::ExpiringQueue;
 
+// Size of table for "known" peers
 const KNOWN_PEERS_TABLE_SIZE: usize = 1024;
+
+// Treat connection as dead after 5 minutes inactivity
+const IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// Network behaviour that automatically identifies nodes periodically, and returns information
 /// about them.
@@ -57,7 +62,7 @@ pub struct Ncp<TSubstream> {
     /// Events that need to be yielded to the outside when polling.
     out_events: VecDeque<NcpOutEvent>,
     /// List of connected peers (including disabled)
-    connected_peers: HashSet<PeerId>,
+    connected_peers: ExpiringQueue<PeerId, Instant>,
     /// Known peers
     known_peers: LruCache<Vec<u8>, (pbc::PublicKey, SmallVec<[Multiaddr; 16]>)>,
     /// Maximum connections allowd
@@ -68,7 +73,8 @@ pub struct Ncp<TSubstream> {
     monitor_delay: Delay,
     /// Interval between monitoring events
     delay_between_monitor_events: Duration,
-
+    /// Seed nodes (we keep them in case we were too long offline and need to restart the net)
+    seed_nodes: Vec<Multiaddr>,
     /// Marker to pin the generics.
     marker: PhantomData<TSubstream>,
 }
@@ -76,11 +82,19 @@ pub struct Ncp<TSubstream> {
 impl<TSubstream> Ncp<TSubstream> {
     /// Creates a NetworkBehaviour for NCP.
     pub fn new(config: &NetworkConfig, keychain: &KeyChain) -> Self {
+        let seed_nodes: Vec<Multiaddr> = config
+            .seed_nodes
+            .iter()
+            .filter_map(|a| match a.parse() {
+                Ok(addr) => Some(addr),
+                Err(_) => None,
+            })
+            .collect();
         Ncp {
             node_id: keychain.network_pkey.clone(),
             events: VecDeque::new(),
             out_events: VecDeque::new(),
-            connected_peers: HashSet::new(),
+            connected_peers: ExpiringQueue::new(IDLE_TIMEOUT),
             known_peers:
                 LruCache::<Vec<u8>, (pbc::PublicKey, SmallVec<[Multiaddr; 16]>)>::with_capacity(
                     KNOWN_PEERS_TABLE_SIZE,
@@ -93,6 +107,7 @@ impl<TSubstream> Ncp<TSubstream> {
                     + Duration::from_secs(thread_rng().gen_range(0, 30)),
             ),
             delay_between_monitor_events: Duration::from_secs(config.monitoring_interval),
+            seed_nodes,
             marker: PhantomData,
         }
     }
@@ -100,7 +115,7 @@ impl<TSubstream> Ncp<TSubstream> {
     pub fn change_network_key(&mut self, new_pkey: pbc::PublicKey) {
         self.node_id = new_pkey;
         // Update all connected peers with our new network key
-        for p in self.connected_peers.iter() {
+        for p in self.connected_peers.keys() {
             self.events
                 .push_back(NcpEvent::SendPeers { peer_id: p.clone() });
         }
@@ -136,7 +151,7 @@ where
         self.out_events.push_back(NcpOutEvent::Connected {
             peer_id: id.clone(),
         });
-        self.connected_peers.insert(id);
+        self.connected_peers.insert(id, Instant::now());
     }
 
     fn inject_disconnected(&mut self, id: &PeerId, _: ConnectedPoint) {
@@ -150,6 +165,8 @@ where
     fn inject_node_event(&mut self, propagation_source: PeerId, event: NcpRecvEvent) {
         // Process received NCP message (passed from Handler as Custom(message))
         debug!(target: "stegos_network::ncp", "Received a message: {:?}", event);
+        self.connected_peers
+            .insert(propagation_source.clone(), Instant::now());
         match event {
             NcpRecvEvent::Recv(NcpMessage::GetPeersRequest) => {
                 self.events.push_back(NcpEvent::SendPeers {
@@ -161,6 +178,15 @@ where
                     from: propagation_source,
                     message: response,
                 });
+            }
+            NcpRecvEvent::Recv(NcpMessage::Ping) => {
+                debug!(target: "stegos_network::ncp", "received ping request: peer_id={}", propagation_source.to_base58());
+                self.events.push_back(NcpEvent::SendPong {
+                    peer_id: propagation_source,
+                })
+            }
+            NcpRecvEvent::Recv(NcpMessage::Pong) => {
+                debug!(target: "stegos_network::ncp", "received pong request: peer_id={}", propagation_source.to_base58());
             }
         }
     }
@@ -189,8 +215,16 @@ where
                         self.connected_peers.len(),
                         self.known_peers.len(),
                     );
+                    // Setup delay to the next event
+                    self.monitor_delay.reset(
+                        Instant::now()
+                            + self.delay_between_monitor_events
+                            + Duration::from_secs(thread_rng().gen_range(0, 30)),
+                    );
                     // refresh peers in known peers, so they wouldn't be purged
-                    for p in self.connected_peers.iter() {
+                    for p in self.connected_peers.keys() {
+                        self.events
+                            .push_back(NcpEvent::SendPing { peer_id: p.clone() });
                         let _ = self.known_peers.get(p.as_bytes());
                     }
                     if self.connected_peers.len() >= self.max_connections {
@@ -204,7 +238,7 @@ where
                             if let Ok(peer) = PeerId::from_bytes(peer_bytes.clone()) {
                                 seen_peers.push(peer.clone());
                                 if peer == *poll_parameters.local_peer_id()
-                                    || self.connected_peers.contains(&peer)
+                                    || self.connected_peers.contains_key(&peer)
                                 {
                                     continue;
                                 }
@@ -223,25 +257,18 @@ where
                         // if nuymebr of connections is below threshold, ask all connected peers for theis neighbors
                         // otherwise pick 3 random peers from connected and ask them for their neighbors
                         if self.connected_peers.len() < self.min_connections {
-                            for p in self.connected_peers.iter() {
+                            for p in self.connected_peers.keys() {
                                 self.events
                                     .push_back(NcpEvent::RequestPeers { peer_id: p.clone() });
                             }
                         } else {
                             let idx = rand::thread_rng().gen_range(0, self.connected_peers.len());
-                            if let Some(p) = self.connected_peers.iter().nth(idx) {
+                            if let Some(p) = self.connected_peers.keys().nth(idx) {
                                 self.events
                                     .push_back(NcpEvent::RequestPeers { peer_id: p.clone() });
                             }
                         }
                     };
-                    // Share our connected peers info with others.
-                    // Setup delay to the next event
-                    self.monitor_delay.reset(
-                        Instant::now()
-                            + self.delay_between_monitor_events
-                            + Duration::from_secs(thread_rng().gen_range(0, 30)),
-                    );
                 }
                 Ok(Async::NotReady) => break,
                 Err(e) => {
@@ -250,6 +277,36 @@ where
                 }
             }
         }
+
+        // Check for expired idle connections
+        loop {
+            match self.connected_peers.poll() {
+                Ok(Async::Ready((peer, last_seen))) => {
+                    match last_seen {
+                        Some(instant) => {
+                            debug!(target: "stegos_network::ncp", "peer was inactive for {}.{:.3}s, terminating: peer_id={}", instant.elapsed().as_secs(), instant.elapsed().subsec_millis(), peer.to_base58());
+                        }
+                        None => {
+                            debug!(target: "stegos_network::ncp", "peer was inactive for too long, terminating: peer_id={}", peer.to_base58());
+                        }
+                    }
+                    self.events.push_back(NcpEvent::Terminate { peer_id: peer });
+                }
+                Ok(Async::NotReady) => break,
+                Err(e) => {
+                    error!(target: "stegos_network::ncp", "connected peers timer error: {}", e);
+                    break;
+                }
+            }
+        }
+
+        if self.connected_peers.len() == 0 && self.known_peers.len() == 0 {
+            for a in self.seed_nodes.iter() {
+                self.out_events
+                    .push_back(NcpOutEvent::DialAddress { address: a.clone() });
+            }
+        }
+
         if let Some(event) = self.events.pop_front() {
             match event {
                 NcpEvent::StorePeers { from, message } => {
@@ -298,8 +355,9 @@ where
                 NcpEvent::SendPeers { peer_id } => {
                     debug!(target: "stegos_network::ncp", "sending peers info: to_peer={}", peer_id.to_base58());
                     let mut response = GetPeersResponse { peers: vec![] };
-                    let mut connected = self.connected_peers.clone();
-                    for peer in connected.drain() {
+                    let mut connected: Vec<PeerId> =
+                        self.connected_peers.keys().map(|v| v.clone()).collect();
+                    for peer in connected.drain(..) {
                         if peer == peer_id {
                             continue;
                         }
@@ -333,6 +391,27 @@ where
                         event: NcpSendEvent::Send(NcpMessage::GetPeersRequest),
                     });
                 }
+                NcpEvent::SendPing { peer_id } => {
+                    debug!(target: "stegos_network::ncp", "sending ping request: to_peer={}", peer_id.to_base58());
+                    return Async::Ready(NetworkBehaviourAction::SendEvent {
+                        peer_id,
+                        event: NcpSendEvent::Send(NcpMessage::Ping),
+                    });
+                }
+                NcpEvent::SendPong { peer_id } => {
+                    debug!(target: "stegos_network::ncp", "sending pong reply: to_peer={}", peer_id.to_base58());
+                    return Async::Ready(NetworkBehaviourAction::SendEvent {
+                        peer_id,
+                        event: NcpSendEvent::Send(NcpMessage::Pong),
+                    });
+                }
+                NcpEvent::Terminate { peer_id } => {
+                    debug!(target: "stegos_network::ncp", "sending terminate to handler: peer_id={}", peer_id.to_base58());
+                    return Async::Ready(NetworkBehaviourAction::SendEvent {
+                        peer_id,
+                        event: NcpSendEvent::Terminate,
+                    });
+                }
             }
         }
         Async::NotReady
@@ -350,6 +429,12 @@ pub enum NcpEvent {
     SendPeers { peer_id: PeerId },
     /// Request list of connected peers from neighbor
     RequestPeers { peer_id: PeerId },
+    /// Send Ping request to the peer
+    SendPing { peer_id: PeerId },
+    /// Send Pong reply to the peer
+    SendPong { peer_id: PeerId },
+    /// Terminate connection to peer
+    Terminate { peer_id: PeerId },
 }
 
 /// Events to send to upper level
@@ -380,6 +465,7 @@ pub enum NcpOutEvent {
 /// Event passed to protocol handler
 pub enum NcpSendEvent {
     Send(NcpMessage),
+    Terminate,
 }
 
 // Event received from protocol handler

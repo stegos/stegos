@@ -128,6 +128,16 @@ impl Encoder for NcpCodec {
 
                 msg
             }
+            NcpMessage::Ping => {
+                let mut msg = ncp_proto::Message::new();
+                msg.set_field_type(ncp_proto::Message_MessageType::PING);
+                msg
+            }
+            NcpMessage::Pong => {
+                let mut msg = ncp_proto::Message::new();
+                msg.set_field_type(ncp_proto::Message_MessageType::PONG);
+                msg
+            }
         };
 
         let msg_size = proto.compute_size();
@@ -191,6 +201,8 @@ impl Decoder for NcpCodec {
                 }
                 Ok(Some(NcpMessage::GetPeersResponse { response }))
             }
+            ncp_proto::Message_MessageType::PING => Ok(Some(NcpMessage::Ping)),
+            ncp_proto::Message_MessageType::PONG => Ok(Some(NcpMessage::Ping)),
         }
     }
 }
@@ -200,6 +212,8 @@ impl Decoder for NcpCodec {
 pub enum NcpMessage {
     GetPeersRequest,
     GetPeersResponse { response: GetPeersResponse },
+    Ping,
+    Pong,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -236,6 +250,10 @@ mod tests {
     #[test]
     fn correct_transfer() {
         test_one(NcpMessage::GetPeersRequest);
+
+        test_one(NcpMessage::Ping);
+
+        test_one(NcpMessage::Pong);
 
         let (_, node_id) = pbc::make_random_keys();
 

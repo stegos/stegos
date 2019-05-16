@@ -62,6 +62,8 @@ where
 
     /// Keep alive for the connection
     keep_alive: KeepAlive,
+    /// Terminate connection on next poll()
+    terminating: bool,
 }
 
 /// State of an active substream, opened either by us or by the remote.
@@ -92,6 +94,7 @@ where
             send_queue: SmallVec::new(),
             out_events: VecDeque::new(),
             keep_alive: KeepAlive::Yes,
+            terminating: false,
         }
     }
 }
@@ -150,6 +153,7 @@ where
     fn inject_event(&mut self, event: Self::InEvent) {
         match event {
             NcpSendEvent::Send(message) => self.send_queue.push(message),
+            NcpSendEvent::Terminate => self.terminating = true,
         }
     }
 
@@ -174,6 +178,10 @@ where
         ProtocolsHandlerEvent<Self::OutboundProtocol, Self::OutboundOpenInfo, Self::OutEvent>,
         io::Error,
     > {
+        if self.terminating {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "stale connectio"));
+        }
+
         if !self.out_events.is_empty() {
             let message = self.out_events.pop_front().unwrap();
             return Ok(Async::Ready(ProtocolsHandlerEvent::Custom(message)));

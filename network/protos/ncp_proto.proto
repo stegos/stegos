@@ -4,7 +4,9 @@ package ncp.pb;
 message Message {
 	enum MessageType {
 		GET_PEERS_REQ = 1;
-		GET_PEERS_RES = 2;
+        GET_PEERS_RES = 2;
+        PING = 3;
+        PONG = 4;
     }
     
     message PeerInfo {

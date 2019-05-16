@@ -50,6 +50,10 @@ where
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
     pub fn insert(&mut self, key: K, value: V) {
         if let Some((cache_key, _)) = self.entries.remove(&key) {
             self.expirations.remove(&cache_key);
@@ -65,6 +69,12 @@ where
 
     pub fn contains_key(&self, key: &K) -> bool {
         self.entries.contains_key(key)
+    }
+
+    pub fn reset(&mut self, key: &K, timeout: Duration) {
+        if let Some((queue_key, _)) = self.entries.get(key) {
+            self.expirations.reset(queue_key, timeout);
+        }
     }
 
     pub fn remove(&mut self, key: &K) -> Option<V> {

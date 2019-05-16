@@ -361,12 +361,12 @@ impl Blockchain {
         for block in self.database.iter_starting(0) {
             match block {
                 Block::MacroBlock(block) => {
-                    epoch += 1;
                     for (output, _) in block.body.outputs.leafs() {
                         if self.check_wallet_output(skey, pkey, &output) {
                             wallet_state.push((output.as_ref().clone(), epoch));
                         }
                     }
+                    epoch += 1;
                 }
                 Block::MicroBlock(block) => {
                     for tx in block.transactions {

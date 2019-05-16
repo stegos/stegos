@@ -19,14 +19,14 @@ stegos_serialization = { version = "0.2.0", path = "../serialization" }
 bitvector = "0.1"
 failure = "0.1"
 log = "0.4"
-protobuf = "2.2"
+protobuf = "2.5"
 lazy_static = "1.2"
-prometheus = "0.5"
+prometheus = "0.6"
 
 [dev-dependencies]
 stegos_keychain = { version = "0.2.0", path = "../keychain" }
 rand = "0.6"
-simple_logger = "1.0"
+simple_logger = "1.2"
 
 [build-dependencies]
 stegos_serialization = { version = "0.2.0", path = "../serialization" }

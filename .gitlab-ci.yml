@@ -10,6 +10,7 @@ before_script:
 
 # Running fast-checks to notice an author that his pull-request fails our standatds.
 # This checks should not produce any artifacts
+# Allow to fail until fix for RUSTSEC-2019-0003 is released
 fast_checks:
   stage: fast_checks
   before_script: []
@@ -21,6 +22,7 @@ fast_checks:
   tags:
     - linux
   image: rust:1.34
+  allow_failure: true
 
 .build:
   stage: build

@@ -999,7 +999,14 @@ impl NodeService {
     fn handle_pop_block(&mut self) -> Result<(), Error> {
         warn!("Received a request to revert the latest block");
         if self.chain.blocks_in_epoch() > 1 {
-            self.chain.pop_micro_block()?;
+            let (inputs, outputs) = self.chain.pop_micro_block()?;
+            let msg = OutputsChanged {
+                epoch: self.chain.epoch(),
+                inputs,
+                outputs,
+            };
+            self.on_outputs_changed
+                .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
             self.recover_consensus_state()?
         } else {
             error!(

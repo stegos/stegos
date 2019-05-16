@@ -22,7 +22,7 @@ message Hash {
 }
 
 message SecretKey {
-    Fr skeyf = 1;
+    bytes skeyf = 1;
 }
 
 message PublicKey {

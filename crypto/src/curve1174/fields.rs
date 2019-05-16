@@ -204,7 +204,7 @@ macro_rules! field_impl {
 
             /// Convert into raw bytes.
             pub fn to_lev_u8(self) -> [u8; 32] {
-                self.bits().to_lev_u8()
+                self.unscaled_bits().to_lev_u8()
             }
 
             /// Convert into raw bytes.
@@ -214,6 +214,7 @@ macro_rules! field_impl {
             }
 
             /// Convert from raw bytes.
+            /// must use unscaled unless you want to encode serialized variant
             pub fn from_lev_u8(bytes: [u8; 32]) -> Self {
                 $name::Unscaled(U256::from_lev_u8(bytes))
             }

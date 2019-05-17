@@ -300,13 +300,6 @@ where
             }
         }
 
-        if self.connected_peers.len() == 0 && self.known_peers.len() == 0 {
-            for a in self.seed_nodes.iter() {
-                self.out_events
-                    .push_back(NcpOutEvent::DialAddress { address: a.clone() });
-            }
-        }
-
         if let Some(event) = self.events.pop_front() {
             match event {
                 NcpEvent::StorePeers { from, message } => {

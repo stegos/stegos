@@ -20,7 +20,10 @@
 // SOFTWARE.
 
 use assert_matches::assert_matches;
+use futures::executor::{with_notify, Notify};
 use futures::{lazy, Async, Future};
+use log::debug;
+use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::time::Instant;
@@ -30,6 +33,51 @@ use tokio_timer::{
     clock::{self, Now},
     timer::Timer,
 };
+
+/// helper trait that allow multiple polling of task in test, if notify was called.
+struct NodeNotify {
+    pub repeat_poll: Mutex<bool>,
+}
+
+impl NodeNotify {
+    fn reset(&self) {
+        *self.repeat_poll.lock().unwrap() = false;
+    }
+
+    fn set(&self) {
+        *self.repeat_poll.lock().unwrap() = true;
+    }
+
+    fn is_set(&self) -> bool {
+        *self.repeat_poll.lock().unwrap()
+    }
+}
+
+impl Notify for NodeNotify {
+    fn notify(&self, _: usize) {
+        self.set()
+    }
+}
+
+/// poll future as may times as it needs.
+pub fn execute<T: Future>(future: &mut T)
+where
+    <T as Future>::Item: Debug + Eq,
+    <T as Future>::Error: Debug + Eq,
+{
+    let ref node_notify = Arc::new(NodeNotify {
+        repeat_poll: Mutex::new(false),
+    });
+
+    with_notify(node_notify, 1, || loop {
+        assert_eq!(future.poll(), Ok(Async::NotReady));
+        if !node_notify.is_set() {
+            break;
+        }
+        debug!("POLL ONCE MORE");
+        node_notify.reset();
+    })
+}
 
 #[derive(Clone, Debug)]
 pub struct TestTimer {

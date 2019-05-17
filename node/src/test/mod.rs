@@ -21,10 +21,10 @@
 
 mod simple_tests;
 
-pub mod time;
+pub mod futures_testing;
 
+use futures_testing::{start_test, wait, TestTimer};
 pub use stegos_network::loopback::Loopback;
-use time::{start_test, wait, TestTimer};
 mod consensus;
 mod microblocks;
 mod requests;
@@ -240,7 +240,7 @@ impl NodeSandbox {
     }
 
     fn poll(&mut self) {
-        assert_eq!(self.node_service.poll(), Ok(Async::NotReady));
+        futures_testing::execute(&mut self.node_service);
     }
 }
 

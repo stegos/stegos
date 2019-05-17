@@ -301,9 +301,13 @@ where
             FloodsubRecvEvent::Message(event) => {
                 // Update connected peers topics
                 for subscription in event.subscriptions {
-                    let remote_peer_topics = self.enabled_peers
-                        .get_mut(&propagation_source)
-                        .expect("connected_peers is kept in sync with the peers we are connected to; we are guaranteed to only receive events from connected peers; QED");
+                    let remote_peer_topics = match self.enabled_peers.get_mut(&propagation_source) {
+                        Some(v) => v,
+                        None => {
+                            debug!(target: "stegos_network::pubsub", "message from not-enabled peer: peer_id={}", propagation_source.to_base58());
+                            return;
+                        }
+                    };
                     match subscription.action {
                         FloodsubSubscriptionAction::Subscribe => {
                             if !remote_peer_topics.contains(&subscription.topic) {

@@ -202,7 +202,7 @@ impl Decoder for NcpCodec {
                 Ok(Some(NcpMessage::GetPeersResponse { response }))
             }
             ncp_proto::Message_MessageType::PING => Ok(Some(NcpMessage::Ping)),
-            ncp_proto::Message_MessageType::PONG => Ok(Some(NcpMessage::Ping)),
+            ncp_proto::Message_MessageType::PONG => Ok(Some(NcpMessage::Pong)),
         }
     }
 }

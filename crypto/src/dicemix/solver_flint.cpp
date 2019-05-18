@@ -222,3 +222,9 @@ extern "C" int solve(char **const out_messages, const char *prime, const char **
         return RET_INTERNAL_ERROR;
     }
 }
+
+extern "C" void dum_wau(char *p, size_t nel)
+{
+    // external C do-nothing stub for WAU (Wipe After Use)
+    // to force Rust into not optimizing away in Drop
+}

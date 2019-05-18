@@ -56,6 +56,9 @@ pub use self::ecpt::*;
 mod cpt; // compressed point representation
 pub use self::cpt::*;
 
+use crate::dicemix::ffi;
+use clear_on_drop::clear::Clear;
+
 // -------------------------------------------------------------------
 // Signature Public Key - for checking curve constants validity
 //
@@ -105,7 +108,7 @@ lazy_static! {
     };
     pub static ref R: U256 = {
         assert!(*INIT, "can't happen");
-        U256::try_from_hex(CURVE_R).expect("Invalid hexstr: R")
+        U256::try_from_hex(CURVE_R, false).expect("Invalid hexstr: R")
     };
     pub static ref RMIN: Fr = {
         assert!(*INIT, "can't happen");
@@ -113,7 +116,7 @@ lazy_static! {
     };
     pub static ref Q: U256 = {
         assert!(*INIT, "can't happen");
-        U256::try_from_hex(CURVE_Q).expect("Invalid hexstr: Q")
+        U256::try_from_hex(CURVE_Q, false).expect("Invalid hexstr: Q")
     };
     pub static ref QMIN: Fq = {
         assert!(*INIT, "can't happen");
@@ -121,8 +124,8 @@ lazy_static! {
     };
     pub static ref G: ECp = {
         assert!(*INIT, "can't happen");
-        let gen_x = Fq::try_from_hex(GEN_X).expect("Invalid Gen X hexstr");
-        let gen_y = Fq::try_from_hex(GEN_Y).expect("Invalid Gen Y hexstr");
+        let gen_x = Fq::try_from_hex(GEN_X, false).expect("Invalid Gen X hexstr");
+        let gen_y = Fq::try_from_hex(GEN_Y, false).expect("Invalid Gen Y hexstr");
         ECp::try_from_xy(&gen_x, &gen_y).expect("Invalid generator description")
     };
     pub static ref UNIQ: Fq = {
@@ -148,6 +151,15 @@ fn check_prng() {
     let msg = "plausible PRNG failure";
     assert!(f32::abs(mn) < delta, msg);
     assert!(f32::abs(stdev - invrt12) < delta, msg);
+}
+
+pub fn zap_bytes(bytes: &mut [u8]) {
+    let nel = bytes.len();
+    bytes.clear();
+    unsafe {
+        // this is probably redundant - just a call/return
+        ffi::dum_wau(bytes.as_ptr() as *mut _, nel);
+    }
 }
 
 // -------------------------------------------------------
@@ -200,13 +212,13 @@ mod tests {
         let sx = "037FBB0CEA308C479343AEE7C029A190C021D96A492ECD6516123F27BCE29EDA";
         let sy = "06B72F82D47FB7CC6656841169840E0C4FE2DEE2AF3F976BA4CCB1BF9B46360E";
 
-        let gen_x = Fq::try_from_hex(sx).unwrap();
-        let gen_y = Fq::try_from_hex(sy).unwrap();
+        let gen_x = Fq::try_from_hex(sx, false).unwrap();
+        let gen_y = Fq::try_from_hex(sy, false).unwrap();
         let pt1 = ECp::try_from_xy(&gen_x, &gen_y).unwrap();
         dbg!((gen_x, gen_y, pt1));
 
-        let gx = Fq::try_from_hex(&sx).unwrap();
-        let gy = Fq::try_from_hex(&sy).unwrap();
+        let gx = Fq::try_from_hex(&sx, false).unwrap();
+        let gy = Fq::try_from_hex(&sy, false).unwrap();
         let pt2 = ECp::try_from_xy(&gx, &gy).unwrap();
 
         assert_eq!(pt1, pt2);
@@ -276,7 +288,7 @@ mod tests {
     fn chk_scalar_conversion() {
         let x = 6i64;
         let fx = Fr::from(x);
-        let uval = U256::from(fx.unscaled());
+        let uval = U256::from(fx.clone().unscaled());
         dbg!(&uval);
         let xx = fx.to_i64();
         dbg!(&xx);
@@ -291,13 +303,13 @@ pub fn curve1174_tests() {
     let sx = "037FBB0CEA308C479343AEE7C029A190C021D96A492ECD6516123F27BCE29EDA"; // *ed-gen* x
     let sy = "06B72F82D47FB7CC6656841169840E0C4FE2DEE2AF3F976BA4CCB1BF9B46360E"; // *ed-gen* y
 
-    let gx = Fq::try_from_hex(&sx).unwrap();
-    let gy = Fq::try_from_hex(&sy).unwrap();
-    let mx = Fr::try_from_hex(&smul).unwrap();
+    let gx = Fq::try_from_hex(&sx, false).unwrap();
+    let gy = Fq::try_from_hex(&sy, false).unwrap();
+    let mx = Fr::try_from_hex(&smul, false).unwrap();
     let mut pt2: ECp = ECp::inf();
     for _ in 0..100 {
         let pt1 = ECp::try_from_xy(&gx, &gy).unwrap();
-        pt2 = pt1 * mx;
+        pt2 = pt1 * mx.clone();
     }
     println!("pt2: {:?}", pt2);
 
@@ -306,7 +318,7 @@ pub fn curve1174_tests() {
     println!("ptsum {:?}", pt2);
 
     let tmp = Fr::from(2);
-    let tmp2 = 1 / tmp;
+    let tmp2 = 1 / tmp.clone();
     // println!("1/mul: {}", 1/Fr::from(2));
     // println!("unity? {}", (1/Fr::from(2)) * 2);
     println!("mul: {:?}", tmp);
@@ -322,8 +334,8 @@ pub fn curve1174_tests() {
         println!("{:?}", &x);
     }
 
-    let gen_x = Fq::try_from_hex(&sx).unwrap();
-    let gen_y = Fq::try_from_hex(&sy).unwrap();
+    let gen_x = Fq::try_from_hex(&sx, false).unwrap();
+    let gen_y = Fq::try_from_hex(&sy, false).unwrap();
     let pt = ECp::try_from_xy(&gen_x, &gen_y).unwrap();
 
     println!("The Generator Point");
@@ -348,7 +360,7 @@ pub fn curve1174_tests() {
     let delta = Fr::random();
     println!("delta = {:?}", delta);
 
-    let ept = pkey.decompress().unwrap() + delta * *G;
+    let ept = pkey.decompress().unwrap() + delta.clone() * *G;
     let delta_pkey = PublicKey::from(ept);
     println!("delta_key = {:?}", Pt::from(delta_pkey));
 

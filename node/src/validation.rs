@@ -218,7 +218,8 @@ mod test {
             let (output2, gamma2) = Output::new_payment(&pkey, amount - fee - 1).unwrap();
             let outputs: Vec<Output> = vec![output1, output2];
             let outputs_gamma = gamma1 + gamma2;
-            let tx = PaymentTransaction::new(&skey, &inputs, &outputs, outputs_gamma, fee).unwrap();
+            let tx =
+                PaymentTransaction::new(&skey, &inputs, &outputs, &outputs_gamma, fee).unwrap();
             validate_transaction(
                 &tx.into(),
                 &mempool,
@@ -236,7 +237,7 @@ mod test {
         {
             let fee = payment_fee + 1;
             let (output, gamma) = Output::new_payment(&pkey, amount - fee).unwrap();
-            let tx = PaymentTransaction::new(&skey, &inputs, &[output], gamma, fee)
+            let tx = PaymentTransaction::new(&skey, &inputs, &[output], &gamma, fee)
                 .unwrap()
                 .into();
             validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
@@ -249,7 +250,7 @@ mod test {
         {
             let fee = payment_fee - 1;
             let (output, gamma) = Output::new_payment(&pkey, amount - fee).unwrap();
-            let tx = PaymentTransaction::unchecked(&skey, &inputs, &[output], gamma, fee)
+            let tx = PaymentTransaction::unchecked(&skey, &inputs, &[output], &gamma, fee)
                 .unwrap()
                 .into();
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
@@ -272,7 +273,7 @@ mod test {
             let (input, _inputs_gamma) = Output::new_payment(&pkey, amount).unwrap();
             let (output, outputs_gamma) = Output::new_payment(&pkey, amount - fee).unwrap();
             let missing = Hash::digest(&input);
-            let tx = PaymentTransaction::new(&skey, &[input], &[output], outputs_gamma, fee)
+            let tx = PaymentTransaction::new(&skey, &[input], &[output], &outputs_gamma, fee)
                 .unwrap()
                 .into();
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
@@ -296,7 +297,7 @@ mod test {
             let input_hashes: Vec<Hash> = inputs.iter().map(|o| Hash::digest(o)).collect();
             let output_hashes: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
             let tx: Transaction =
-                PaymentTransaction::new(&skey, &inputs, &outputs, outputs_gamma, fee)
+                PaymentTransaction::new(&skey, &inputs, &outputs, &outputs_gamma, fee)
                     .unwrap()
                     .into();
             mempool.push_tx(Hash::digest(&tx), tx.clone());
@@ -314,7 +315,7 @@ mod test {
             // Claimed input in mempool.
             let tx2 = {
                 let (output2, outputs2_gamma) = Output::new_payment(&pkey, amount - fee).unwrap();
-                PaymentTransaction::new(&skey, &inputs, &[output2], outputs2_gamma, fee)
+                PaymentTransaction::new(&skey, &inputs, &[output2], &outputs2_gamma, fee)
                     .unwrap()
                     .into()
             };
@@ -342,7 +343,7 @@ mod test {
             let fee = stake_fee;
             let output =
                 Output::new_stake(&pkey, &validator_skey, &validator_pkey, amount - fee).unwrap();
-            let tx = PaymentTransaction::new(&skey, &inputs, &[output], Fr::zero(), fee)
+            let tx = PaymentTransaction::new(&skey, &inputs, &[output], &Fr::zero(), fee)
                 .unwrap()
                 .into();
             validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
@@ -362,7 +363,7 @@ mod test {
             let output2 = Output::StakeOutput(output2);
             let outputs: Vec<Output> = vec![output1, output2];
             let outputs_gamma = gamma1;
-            let tx = PaymentTransaction::unchecked(&skey, &inputs, &outputs, outputs_gamma, fee)
+            let tx = PaymentTransaction::unchecked(&skey, &inputs, &outputs, &outputs_gamma, fee)
                 .unwrap()
                 .into();
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
@@ -380,7 +381,7 @@ mod test {
             timestamp += Duration::from_millis(1);
             let fee = payment_fee;
             let (output, outputs_gamma) = Output::new_payment(&pkey, stake - fee).unwrap();
-            let tx = PaymentTransaction::unchecked(&skey, &stakes, &[output], outputs_gamma, fee)
+            let tx = PaymentTransaction::unchecked(&skey, &stakes, &[output], &outputs_gamma, fee)
                 .unwrap()
                 .into();
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
@@ -407,7 +408,7 @@ mod test {
             let output =
                 Output::new_stake(&pkey, &keychain.network_skey, &keychain.network_pkey, stake)
                     .unwrap();
-            let tx = PaymentTransaction::unchecked(&skey, &stakes, &[output], Fr::zero(), 0)
+            let tx = PaymentTransaction::unchecked(&skey, &stakes, &[output], &Fr::zero(), 0)
                 .unwrap()
                 .into();
             validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, 0)
@@ -423,12 +424,12 @@ mod test {
             let outputs: Vec<Output> = vec![output];
             let output_hashes: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
             // Claim output in mempool.
-            let claim_tx = PaymentTransaction::unchecked(&skey, &[], &outputs, outputs_gamma, fee)
+            let claim_tx = PaymentTransaction::unchecked(&skey, &[], &outputs, &outputs_gamma, fee)
                 .unwrap()
                 .into();
             mempool.push_tx(Hash::digest(&claim_tx), claim_tx);
 
-            let tx = PaymentTransaction::unchecked(&skey, &inputs, &outputs, outputs_gamma, fee)
+            let tx = PaymentTransaction::unchecked(&skey, &inputs, &outputs, &outputs_gamma, fee)
                 .unwrap()
                 .into();
             let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)

@@ -33,6 +33,7 @@
 use super::*;
 use crate::CryptoError;
 
+use crate::dicemix::ffi;
 use clear_on_drop::clear::Clear;
 use rand::rngs::ThreadRng;
 use rand::thread_rng;
@@ -44,7 +45,7 @@ use std::ops::{Add, AddAssign, Neg};
 
 // --------------------------------------------------------------------------------
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 #[repr(C)]
 pub struct Zr([u8; ZR_SIZE_FR256]);
 
@@ -63,6 +64,9 @@ impl Zr {
 
     pub fn zap(&mut self) {
         self.0.clear();
+        unsafe {
+            ffi::dum_wau(self.0.as_ptr() as *mut _, ZR_SIZE_FR256);
+        }
     }
 
     pub fn acceptable_minval() -> Self {
@@ -79,12 +83,12 @@ impl Zr {
 
     pub fn acceptable_maxval() -> Self {
         // approx = modulus - sqrt(modulus)
-        -*MIN_FR256
+        -MIN_FR256.clone()
     }
 
     pub fn acceptable_random_rehash(k: Self) -> Self {
-        let min = *MIN_FR256;
-        let max = *MAX_FR256;
+        let min = MIN_FR256.clone();
+        let max = MAX_FR256.clone();
         let mut mk = k;
         while mk < min || mk > max {
             mk = Self::from(Hash::digest(&mk));
@@ -95,8 +99,8 @@ impl Zr {
     pub fn random() -> Self {
         let mut rng: ThreadRng = thread_rng();
         let mut zx = Zr(rng.gen::<[u8; ZR_SIZE_FR256]>());
-        let min = *MIN_FR256;
-        let max = *MAX_FR256;
+        let min = MIN_FR256.clone();
+        let max = MAX_FR256.clone();
         while zx < min || zx > max {
             zx = Zr(rng.gen::<[u8; ZR_SIZE_FR256]>());
         }
@@ -139,6 +143,12 @@ impl Zr {
         let mut bits: [u8; ZR_SIZE_FR256] = [0u8; ZR_SIZE_FR256];
         bits.copy_from_slice(bytes);
         Ok(Zr(bits))
+    }
+}
+
+impl Drop for Zr {
+    fn drop(&mut self) {
+        self.zap();
     }
 }
 

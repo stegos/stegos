@@ -266,7 +266,7 @@ impl WalletService {
         )?;
 
         // Transaction TXINs can generally have different keying for each one
-        let tx = PaymentTransaction::new(&self.keys.wallet_skey, &inputs, &outputs, gamma, fee)?;
+        let tx = PaymentTransaction::new(&self.keys.wallet_skey, &inputs, &outputs, &gamma, fee)?;
         let tx_hash = Hash::digest(&tx);
         let fee = tx.fee;
         let tx: Transaction = tx.into();

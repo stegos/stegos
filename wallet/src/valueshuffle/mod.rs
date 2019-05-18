@@ -879,10 +879,10 @@ impl ValueShuffle {
             } => {
                 let cmt = self.commits.get(from).expect("Can't access commit");
                 debug!("Checking commitment {}", cmt);
-                if *cmt == hash_data(matrix, *gamma_sum, *fee_sum) {
+                if *cmt == hash_data(matrix, gamma_sum, fee_sum) {
                     self.matrices.insert(*from, matrix.clone());
-                    self.cloaked_gamma_adjs.insert(*from, *gamma_sum);
-                    self.cloaked_fees.insert(*from, *fee_sum);
+                    self.cloaked_gamma_adjs.insert(*from, gamma_sum.clone());
+                    self.cloaked_fees.insert(*from, fee_sum.clone());
                     self.all_excl_k_cloaks.insert(*from, cloaks.clone());
                     return self.maybe_do(from, Self::vs_make_supertransaction);
                 }
@@ -897,7 +897,7 @@ impl ValueShuffle {
         match msg {
             VsPayload::Signature { sig } => {
                 debug!("saving signature {:?}", sig);
-                self.signatures.insert(*from, *sig);
+                self.signatures.insert(*from, sig.clone());
                 return self.maybe_do(from, Self::vs_sign_supertransaction);
             }
             _ => {}
@@ -941,8 +941,8 @@ impl ValueShuffle {
             let (gamma, delta, amount) = open_utxo(&utxo, &self.skey)?;
             assert!(gamma != Fr::zero());
             amt_in += amount;
-            self.txin_gamma_sum += gamma;
-            my_signing_skeyF += Fr::from(self.skey.clone()) + gamma * delta;
+            self.txin_gamma_sum += &gamma;
+            my_signing_skeyF += Fr::from(&self.skey) + &gamma * delta;
         }
         self.my_signing_skey = my_signing_skeyF.into();
 
@@ -1046,7 +1046,7 @@ impl ValueShuffle {
         // on the super transaction, we must be careful here for ourselves.
         // ===============================================================
 
-        self.my_round_k = {
+        let mut k = {
             // construct a new session dependent secret sig.k val
             // We can't construct k based on hash of transaction to be
             // signed, since we don't have it yet.
@@ -1060,7 +1060,9 @@ impl ValueShuffle {
             self.my_signing_skey.hash(&mut state);
             Fr::from(state.result())
         };
-        let my_sigK = times_G(self.my_round_k); // = my_round_k * G
+        k.set_wau();
+        self.my_round_k = k;
+        let my_sigK = times_G(&self.my_round_k); // = my_round_k * G
         let my_sigKcmp = my_sigK.compress();
 
         self.sigK_vals = HashMap::new();
@@ -1116,11 +1118,11 @@ impl ValueShuffle {
         // Construct fresh UTXOS and gamma_adj
         let my_pairs = Self::generate_fresh_utxos(&self.my_txouts);
         let mut my_utxos = Vec::<UTXO>::new();
-        let mut my_gamma_adj = self.txin_gamma_sum;
+        let mut my_gamma_adj = self.txin_gamma_sum.clone();
         self.my_utxos = Vec::new();
         my_pairs.iter().for_each(|(utxo, gamma)| {
             my_utxos.push(utxo.clone());
-            my_gamma_adj -= *gamma;
+            my_gamma_adj -= gamma.clone();
             self.my_utxos.push(utxo.proof.vcmt);
         });
 
@@ -1145,7 +1147,7 @@ impl ValueShuffle {
             for u in my_utxos.clone() {
                 cmt_sum -= u.proof.vcmt.decompress()?;
             }
-            assert!(cmt_sum == simple_commit(my_gamma_adj, Fr::from(self.my_fee)));
+            assert!(cmt_sum == simple_commit(&my_gamma_adj, &Fr::from(self.my_fee)));
         }
         // -------------------------------------------------------------
 
@@ -1169,7 +1171,7 @@ impl ValueShuffle {
             &self.k_cloaks,
         );
         self.cloaked_gamma_adjs
-            .insert(self.participant_pkey, my_cloaked_gamma_adj);
+            .insert(self.participant_pkey, my_cloaked_gamma_adj.clone());
 
         self.cloaked_fees = HashMap::new();
         let my_cloaked_fee = dc_encode_scalar(
@@ -1179,10 +1181,10 @@ impl ValueShuffle {
             &self.k_cloaks,
         );
         self.cloaked_fees
-            .insert(self.participant_pkey, my_cloaked_fee);
+            .insert(self.participant_pkey, my_cloaked_fee.clone());
 
         // form commitments to our matrix and gamma sum
-        let my_commit = hash_data(&my_matrix, my_cloaked_gamma_adj, my_cloaked_fee);
+        let my_commit = hash_data(&my_matrix, &my_cloaked_gamma_adj, &my_cloaked_fee);
 
         // Collect and validate commitments from other participants
         self.commits = HashMap::new();
@@ -1369,7 +1371,7 @@ impl ValueShuffle {
             &self.all_excl_k_cloaks,
         );
         let total_fees = {
-            match total_fees_f.to_i64() {
+            match total_fees_f.clone().to_i64() {
                 Ok(val) => val,
                 _ => {
                     debug!("I failed in conversion of total_fees");
@@ -1377,7 +1379,7 @@ impl ValueShuffle {
                 }
             }
         };
-        debug!("total fees {:?} -> {:?}", total_fees_f, total_fees);
+        debug!("total fees {:?} -> {:?}", total_fees_f.clone(), total_fees);
         debug!("gamma_adj: {:?}", gamma_adj);
 
         let mut K_sum = ECp::inf();
@@ -1388,12 +1390,12 @@ impl ValueShuffle {
 
         self.trans = self.make_super_transaction(
             &self.my_signing_skey,
-            self.my_round_k,
+            &self.my_round_k,
             &K_sum,
             &trn_txins,
             &all_utxos,
             total_fees,
-            gamma_adj,
+            &gamma_adj,
         );
         {
             // for debugging - show the supertransaction hash at this node
@@ -1404,8 +1406,8 @@ impl ValueShuffle {
 
         // fill in multi-signature...
         self.signatures = HashMap::new();
-        let sig = self.trans.sig;
-        self.signatures.insert(self.participant_pkey, sig);
+        let sig = self.trans.sig.clone();
+        self.signatures.insert(self.participant_pkey, sig.clone());
 
         self.send_signature(&sig);
 
@@ -1438,11 +1440,11 @@ impl ValueShuffle {
             return self.vs_start();
         }
 
-        let mut sig = self.trans.sig;
+        let mut sig = self.trans.sig.clone();
         for p in &self.participants {
             if *p != self.participant_pkey {
                 let other_sig = self.signatures.get(p).expect("Can't access sig");
-                sig += *other_sig;
+                sig += &other_sig;
             }
         }
         self.trans.sig = sig;
@@ -1553,12 +1555,12 @@ impl ValueShuffle {
     fn make_super_transaction(
         &self,
         my_skey: &SecretKey,
-        my_k: Fr,
+        my_k: &Fr,
         K_val: &ECp, // grand sum K for composite signing
         txins: &Vec<UTXO>,
         utxos: &Vec<UTXO>,
         total_fee: i64,
-        gamma_adj: Fr,
+        gamma_adj: &Fr,
     ) -> PaymentTransaction {
         fn map_to_outputs(v: &Vec<UTXO>) -> Vec<Output> {
             v.iter().map(|u| Output::PaymentOutput(u.clone())).collect()
@@ -1636,7 +1638,7 @@ impl ValueShuffle {
             eff_pkey -= cmt_pt;
         }
 
-        let adj_cmt = simple_commit(gamma_adj, fee);
+        let adj_cmt = simple_commit(&gamma_adj, &fee);
         // check for zero balance condition
         if txin_sum != txout_sum + adj_cmt {
             return false; // user trying to pull a fast one...
@@ -1763,8 +1765,8 @@ impl ValueShuffle {
         // send matrix, sum, and excl_k_cloaks to all participants
         let payload = VsPayload::CloakedVals {
             matrix: matrix.clone(),
-            gamma_sum: *cloaked_gamma_adj,
-            fee_sum: *cloaked_fee,
+            gamma_sum: cloaked_gamma_adj.clone(),
+            fee_sum: cloaked_fee.clone(),
             cloaks: excl_k_cloaks.clone(),
         };
         self.send_signed_message(&payload);
@@ -1857,7 +1859,7 @@ impl ValueShuffle {
 // --------------------------------------------------------------------------
 // helper functions
 
-fn hash_data(matrix: &DcMatrix, cloaked_gamma_adj: Fr, cloaked_fee: Fr) -> Hash {
+fn hash_data(matrix: &DcMatrix, cloaked_gamma_adj: &Fr, cloaked_fee: &Fr) -> Hash {
     let mut state = Hasher::new();
     "CM".hash(&mut state);
     for sheet in matrix.clone() {
@@ -1953,9 +1955,9 @@ fn deserialize_utxo(msg: &Vec<u8>, ser_size: usize) -> Result<UTXO, Error> {
 // -------------------------------------------------
 // Domain helpers...
 
-fn times_G(val: Fr) -> ECp {
+fn times_G(val: &Fr) -> ECp {
     // produce Pt = val*G
-    simple_commit(val, Fr::zero())
+    simple_commit(val, &Fr::zero())
 }
 
 // -----------------------------------------------------------------

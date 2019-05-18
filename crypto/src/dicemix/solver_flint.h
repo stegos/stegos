@@ -18,3 +18,4 @@
  * \retval RET_INTERNAL_ERROR  An internal error occured.
  */
 int solve(char **const out_messages, const char *prime, const char **const sums, size_t n);
+void dum_wau(char *p, size_t nel);

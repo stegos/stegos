@@ -27,11 +27,29 @@ use std::cmp::Ordering;
 // -----------------------------------------------------------------
 // type Lev32 represents a 256-bit bignum as a little-endian 32-byte vector
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub struct Lev32(pub [u8; 32]);
+#[derive(Clone)]
+pub struct Lev32(pub [u8; 32], pub bool);
 
 impl Lev32 {
-    pub fn to_lev_u64(self) -> [u64; 4] {
+    pub fn zap(&mut self) {
+        zap_bytes(&mut self.0);
+    }
+
+    pub fn has_wau(&self) -> bool {
+        self.1
+    }
+
+    pub fn set_wau(&mut self) {
+        self.1 = true;
+    }
+
+    pub fn maybe_zap(&mut self) {
+        if Self::has_wau(self) {
+            Self::zap(self);
+        }
+    }
+
+    pub fn to_lev_u64(&self) -> [u64; 4] {
         let mut ans = [0u64; 4];
         ans[0] = (self.0[0] as u64)
             | (self.0[1] as u64) << 8
@@ -79,7 +97,7 @@ impl Lev32 {
 
     pub fn random() -> Self {
         let mut rng: ThreadRng = thread_rng();
-        Lev32(rng.gen::<[u8; 32]>())
+        Lev32(rng.gen::<[u8; 32]>(), false)
     }
 }
 
@@ -91,10 +109,10 @@ impl fmt::Display for Lev32 {
 
 impl Ord for Lev32 {
     fn cmp(&self, other: &Lev32) -> Ordering {
-        for (a, b) in self.0.iter().zip(other.0.iter()).rev() {
-            if *a < *b {
+        for (&a, &b) in self.0.iter().zip(other.0.iter()).rev() {
+            if a < b {
                 return Ordering::Less;
-            } else if *a > *b {
+            } else if a > b {
                 return Ordering::Greater;
             }
         }
@@ -105,5 +123,21 @@ impl Ord for Lev32 {
 impl PartialOrd for Lev32 {
     fn partial_cmp(&self, other: &Lev32) -> Option<Ordering> {
         Some(Self::cmp(self, other))
+    }
+}
+
+impl PartialEq for Lev32 {
+    fn eq(&self, other: &Lev32) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for Lev32 {}
+
+// -------------------------------------------
+
+impl Drop for Lev32 {
+    fn drop(&mut self) {
+        self.maybe_zap();
     }
 }

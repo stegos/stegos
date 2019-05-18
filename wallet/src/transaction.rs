@@ -323,7 +323,7 @@ where
     }
 
     trace!("Signing transaction...");
-    let tx = PaymentTransaction::new(&sender_skey, &inputs, &outputs, gamma, fee)?;
+    let tx = PaymentTransaction::new(&sender_skey, &inputs, &outputs, &gamma, fee)?;
     let tx_hash = Hash::digest(&tx);
     info!(
         "Signed stake transaction: hash={}, validator={}, stake={}, withdrawn={}, change={}, fee={}",
@@ -421,7 +421,7 @@ where
     }
 
     trace!("Signing transaction...");
-    let tx = PaymentTransaction::new(&sender_skey, &inputs, &outputs, gamma, fee)?;
+    let tx = PaymentTransaction::new(&sender_skey, &inputs, &outputs, &gamma, fee)?;
     let tx_hash = Hash::digest(&tx);
     info!(
         "Signed unstake transaction: hash={}, validator={}, unstake={}, stake={}, fee={}",

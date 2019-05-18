@@ -143,7 +143,7 @@ impl PaymentTransaction {
         skey: &SecretKey,
         inputs: &[Output],
         outputs: &[Output],
-        outputs_gamma: Fr, // = sum(outputs.gamma)
+        outputs_gamma: &Fr, // = sum(outputs.gamma)
         fee: i64,
     ) -> Result<Self, Error> {
         assert!(fee >= 0);
@@ -156,7 +156,7 @@ impl PaymentTransaction {
         skey: &SecretKey,
         inputs: &[Output],
         outputs: &[Output],
-        outputs_gamma: Fr, // = sum(outputs.gamma)
+        outputs_gamma: &Fr, // = sum(outputs.gamma)
         fee: i64,
     ) -> Result<Self, Error> {
         //
@@ -169,12 +169,12 @@ impl PaymentTransaction {
         let mut txins: Vec<Hash> = Vec::with_capacity(inputs.len());
 
         for txin in inputs {
-            eff_skey += Fr::from(skey.clone());
+            eff_skey += Fr::from(skey);
             match txin {
                 Output::PaymentOutput(o) => {
                     let payload = o.decrypt_payload(skey)?;
-                    gamma_adj += payload.gamma;
-                    eff_skey += payload.delta * payload.gamma;
+                    gamma_adj += &payload.gamma;
+                    eff_skey += payload.delta * &payload.gamma;
                 }
                 Output::PublicPaymentOutput(_) => {}
                 Output::StakeOutput(_o) => {}
@@ -228,11 +228,11 @@ impl PaymentTransaction {
     ///
     pub fn new_super_transaction(
         skey: &SecretKey,
-        k_val: Fr,
+        k_val: &Fr,
         sum_cap_k: &ECp,
         inputs: &[Output],
         outputs: &[Output],
-        gamma_adj: Fr,
+        gamma_adj: &Fr,
         total_fee: i64,
     ) -> Result<Self, Error> {
         assert!(total_fee >= 0);
@@ -292,7 +292,7 @@ impl PaymentTransaction {
             outputs_gamma += gamma;
         }
 
-        match PaymentTransaction::new(&skey, &inputs, &outputs, outputs_gamma, fee) {
+        match PaymentTransaction::new(&skey, &inputs, &outputs, &outputs_gamma, fee) {
             Err(e) => Err(e),
             Ok(tx) => Ok((tx, inputs, outputs)),
         }

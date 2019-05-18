@@ -694,7 +694,7 @@ mod tests {
 
         let outputs_gamma = gamma11;
 
-        let tx = PaymentTransaction::new(&skey1, &inputs1, &[output11], outputs_gamma, fee)
+        let tx = PaymentTransaction::new(&skey1, &inputs1, &[output11], &outputs_gamma, fee)
             .expect("keys are valid");
         tx.validate(&inputs1).unwrap();
 

@@ -28,22 +28,57 @@ use super::*;
 
 pub const PANES: usize = 64; // nbr of 4-bit nibbles in 256-bit numbers
 
-pub struct WinVec(pub [i8; PANES]);
+pub struct WinVec(pub [i8; PANES], pub bool);
 
-pub const WINVEC_INIT: WinVec = WinVec([0; PANES]);
+pub const WINVEC_INIT: WinVec = WinVec([0; PANES], false);
 
-impl From<Fr> for WinVec {
-    fn from(x: Fr) -> WinVec {
-        let bits = x.unscaled().bits().to_lev_u8();
+impl WinVec {
+    pub fn zap(&mut self) {
+        self.0.clear();
+        unsafe {
+            ffi::dum_wau(self.0.as_ptr() as *mut _, PANES);
+        }
+    }
+
+    pub fn has_wau(&self) -> bool {
+        self.1
+    }
+
+    pub fn set_wau(&mut self) {
+        self.1 = true;
+    }
+
+    pub fn maybe_zap(&mut self) {
+        if Self::has_wau(self) {
+            Self::zap(self);
+        }
+    }
+}
+
+// -------------------------------------------
+
+impl Drop for WinVec {
+    fn drop(&mut self) {
+        self.maybe_zap();
+    }
+}
+
+impl<'a> From<&'a Fr> for WinVec {
+    fn from(x: &'a Fr) -> WinVec {
+        let mut bits = x.clone().unscaled_bits().to_lev_u8();
         let mut wv = WINVEC_INIT;
         cwin4(&bits, &mut wv);
+        if x.has_wau() {
+            zap_bytes(&mut bits);
+            wv.set_wau();
+        }
         wv
     }
 }
 
 impl From<i64> for WinVec {
     fn from(x: i64) -> WinVec {
-        WinVec::from(Fr::from(x))
+        WinVec::from(&Fr::from(x))
     }
 }
 

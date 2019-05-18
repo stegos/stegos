@@ -35,22 +35,43 @@ use rand::Rng;
 // One must be careful to distinguish by context at this low level. Field values
 // should never be mixed without careful consideration.
 
-use clear_on_drop::clear::Clear;
-
-#[derive(Default, Copy, Clone, Eq, PartialEq)]
-pub struct U256(pub [u64; 4]);
+#[derive(Default, Clone)]
+pub struct U256(pub [u64; 4], pub bool);
 
 impl U256 {
     pub fn zero() -> U256 {
-        U256([0; 4])
+        U256([0; 4], false)
     }
 
     pub fn one() -> U256 {
-        U256([1, 0, 0, 0])
+        U256([1, 0, 0, 0], false)
     }
 
     pub fn zap(&mut self) {
-        self.0.clear()
+        self.0.clear();
+        unsafe {
+            ffi::dum_wau(self.0.as_ptr() as *mut _, 32);
+        }
+    }
+
+    pub fn has_wau(&self) -> bool {
+        self.1
+    }
+
+    pub fn set_wau(&mut self) {
+        self.1 = true;
+    }
+
+    pub fn maybe_zap(&mut self) {
+        if Self::has_wau(self) {
+            Self::zap(self);
+        }
+    }
+
+    pub fn inherit_wau(&mut self, other: &Self) {
+        if other.has_wau() {
+            Self::set_wau(self);
+        }
     }
 
     pub fn bits(self) -> [u64; 4] {
@@ -59,16 +80,16 @@ impl U256 {
 
     pub fn random() -> U256 {
         let mut rng: ThreadRng = thread_rng();
-        U256(rng.gen::<[u64; 4]>())
+        U256(rng.gen::<[u64; 4]>(), false)
     }
 
-    pub fn force_to_range(&mut self, range: U256) {
-        while *self >= range {
+    pub fn force_to_range(&mut self, range: &U256) {
+        while *self >= *range {
             div2(&mut self.0);
         }
     }
 
-    pub fn random_in_range(range: U256) -> U256 {
+    pub fn random_in_range(range: &U256) -> U256 {
         let mut x = Self::random();
         Self::force_to_range(&mut x, range);
         x
@@ -79,7 +100,7 @@ impl U256 {
     }
 
     /// Host Order to Little Endian.
-    pub fn to_lev_u8(self) -> [u8; 32] {
+    pub fn to_lev_u8(&self) -> [u8; 32] {
         let mut ans = [0u8; 32];
         ans[0] = (self.0[0] & 0x0ff) as u8;
         ans[1] = ((self.0[0] >> 8) & 0x0ff) as u8;
@@ -121,7 +142,7 @@ impl U256 {
     }
 
     /// Little Endian to Host Order.
-    pub fn from_lev_u8(src: [u8; 32]) -> Self {
+    pub fn from_lev_u8(src: [u8; 32], wau: bool) -> Self {
         let a0 = (src[0] as u64)
             | ((src[1] as u64) << 8)
             | ((src[2] as u64) << 16)
@@ -158,10 +179,11 @@ impl U256 {
             | ((src[30] as u64) << 48)
             | ((src[31] as u64) << 56);
 
-        U256([a0, a1, a2, a3])
+        U256([a0, a1, a2, a3], wau)
     }
 
     pub fn add_mod(&mut self, other: &U256, modulo: &U256) {
+        self.inherit_wau(other);
         add_nocarry(&mut self.0, &other.0);
         if *self >= *modulo {
             sub_noborrow(&mut self.0, &modulo.0);
@@ -169,6 +191,7 @@ impl U256 {
     }
 
     pub fn sub_mod(&mut self, other: &U256, modulo: &U256) {
+        self.inherit_wau(other);
         if *self < *other {
             add_nocarry(&mut self.0, &modulo.0);
         }
@@ -179,6 +202,7 @@ impl U256 {
         if *self > Self::zero() {
             let mut tmp = modulo.0;
             sub_noborrow(&mut tmp, &self.0);
+            self.maybe_zap();
             self.0 = tmp;
         }
     }
@@ -187,7 +211,7 @@ impl U256 {
     /// multiplication method.
     pub fn mul_mod(&mut self, other: &U256, modulo: &U256, inv: u64) {
         mul_reduce(&mut self.0, &other.0, &modulo.0, inv);
-
+        self.inherit_wau(other);
         if *self >= *modulo {
             sub_noborrow(&mut self.0, &modulo.0);
         }
@@ -198,37 +222,41 @@ impl U256 {
         self.0[0] & 1 == 0
     }
 
+    #[inline]
+    pub fn is_odd(&self) -> bool {
+        self.0[0] & 1 == 1
+    }
+
     /// Turn `self` into its multiplicative inverse (mod `modulo`)
     pub fn invert_mod(&mut self, modulo: &U256) {
         // Guajardo Kumar Paar Pelzl
         // Efficient Software-Implementation of Finite Fields with Applications to Cryptography
         // Algorithm 16 (BEA for Inversion in Fp)
 
-        let mut u = *self;
-        let mut v = *modulo;
+        let mut u = self.clone();
+        let mut v = modulo.clone();
         let mut b = U256::one();
         let mut c = U256::zero();
+        v.inherit_wau(self);
+        b.inherit_wau(self);
+        c.inherit_wau(self);
 
         while u != U256::one() && v != U256::one() {
             while u.is_even() {
                 div2(&mut u.0);
 
-                if b.is_even() {
-                    div2(&mut b.0);
-                } else {
+                if b.is_odd() {
                     add_nocarry(&mut b.0, &modulo.0);
-                    div2(&mut b.0);
                 }
+                div2(&mut b.0);
             }
             while v.is_even() {
                 div2(&mut v.0);
 
-                if c.is_even() {
-                    div2(&mut c.0);
-                } else {
+                if c.is_odd() {
                     add_nocarry(&mut c.0, &modulo.0);
-                    div2(&mut c.0);
                 }
+                div2(&mut c.0);
             }
 
             if u >= v {
@@ -240,6 +268,7 @@ impl U256 {
             }
         }
 
+        self.maybe_zap();
         if u == U256::one() {
             self.0 = b.0;
         } else {
@@ -268,12 +297,30 @@ impl fmt::Display for U256 {
 
 // -------------------------------------------
 
+impl Drop for U256 {
+    fn drop(&mut self) {
+        self.maybe_zap();
+    }
+}
+
+// -------------------------------------------
+
+impl PartialEq for U256 {
+    fn eq(&self, other: &U256) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for U256 {}
+
+// -------------------------------------------
+
 impl Ord for U256 {
     fn cmp(&self, other: &U256) -> Ordering {
-        for (a, b) in self.0.iter().zip(other.0.iter()).rev() {
-            if *a < *b {
+        for (&a, &b) in self.0.iter().zip(other.0.iter()).rev() {
+            if a < b {
                 return Ordering::Less;
-            } else if *a > *b {
+            } else if a > b {
                 return Ordering::Greater;
             }
         }
@@ -461,15 +508,31 @@ pub fn basic_nbr_str(x: &[u64; 4]) -> String {
 
 // -------------------------------------------
 
+impl<'a> From<&'a Lev32> for U256 {
+    fn from(v: &'a Lev32) -> U256 {
+        let wau = v.has_wau();
+        let bits = v.to_lev_u64();
+        U256(bits, wau)
+    }
+}
+
 impl From<Lev32> for U256 {
     fn from(v: Lev32) -> U256 {
-        U256(v.to_lev_u64())
+        U256::from(&v)
+    }
+}
+
+impl<'a> From<&'a U256> for Lev32 {
+    fn from(v: &'a U256) -> Lev32 {
+        let wau = v.has_wau();
+        let bits = v.to_lev_u8();
+        Lev32(bits, wau)
     }
 }
 
 impl From<U256> for Lev32 {
     fn from(v: U256) -> Lev32 {
-        Lev32(v.to_lev_u8())
+        Lev32::from(&v)
     }
 }
 
@@ -477,11 +540,11 @@ impl From<U256> for Lev32 {
 // the vector has little-endian order
 
 impl U256 {
-    pub fn try_from_hex(s: &str) -> Result<U256, CryptoError> {
+    pub fn try_from_hex(s: &str, wau: bool) -> Result<U256, CryptoError> {
         // construct a little-endian [u64;4] from a hexstring
         let mut x = [0u8; 32];
         hexstr_to_lev_u8(s, &mut x)?;
-        let v = Lev32(x);
+        let v = Lev32(x, wau);
         Ok(U256::from(v))
     }
 }
@@ -494,7 +557,23 @@ pub mod tests {
     pub fn to_from_lev_u8() {
         let uv = U256::random();
         let bytes = uv.to_lev_u8();
-        let uv2 = U256::from_lev_u8(bytes);
+        let uv2 = U256::from_lev_u8(bytes, false);
         assert_eq!(uv, uv2);
+    }
+
+    #[test]
+    pub fn test_inv() {
+        for _ in 0..1000 {
+            let u = Fr::random();
+            let v = 1 / &u;
+            assert!(v != u);
+            let w = 1 / &v;
+            if w != u {
+                println!("u = {:?}", u);
+                println!("w = {:?}", w);
+            }
+            assert!(w == u);
+            assert!(w * v == Fr::one());
+        }
     }
 }

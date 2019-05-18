@@ -882,7 +882,7 @@ impl Blockchain {
         //
 
         // Check the block monetary balance.
-        if fee_a(block_reward) + burned - created != gamma * (*G) {
+        if fee_a(block_reward) + burned - created != &gamma * (*G) {
             panic!(
                 "Invalid block monetary balance: height={}, block={}",
                 height, &block_hash
@@ -894,10 +894,10 @@ impl Blockchain {
         let balance = Balance {
             created: orig_balance.created + created,
             burned: orig_balance.burned + burned,
-            gamma: orig_balance.gamma + gamma,
+            gamma: &orig_balance.gamma + gamma,
             block_reward: orig_balance.block_reward + block_reward,
         };
-        if fee_a(balance.block_reward) + balance.burned - balance.created != balance.gamma * (*G) {
+        if fee_a(balance.block_reward) + balance.burned - balance.created != &balance.gamma * (*G) {
             panic!(
                 "Invalid global monetary balance: height={}, block={}",
                 height, &block_hash
@@ -1177,7 +1177,7 @@ pub fn create_fake_micro_block(
         &keys.wallet_skey,
         &inputs,
         &outputs,
-        outputs_gamma,
+        &outputs_gamma,
         block_fee,
     )
     .expect("Invalid keys");

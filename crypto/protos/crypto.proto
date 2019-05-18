@@ -6,7 +6,8 @@ message Pt {
 }
 
 message Fr {
-    bytes data = 1;
+    bool wau = 1;
+    bytes data = 2;
 }
 
 message G1 {
@@ -22,7 +23,7 @@ message Hash {
 }
 
 message SecretKey {
-    bytes skeyf = 1;
+    Fr skeyf = 1;
 }
 
 message PublicKey {

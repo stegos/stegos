@@ -22,7 +22,6 @@ fast_checks:
   tags:
     - linux
   image: rust:1.34
-  allow_failure: true
 
 .build:
   stage: build

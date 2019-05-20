@@ -315,8 +315,8 @@ where
         self.connected_peers.insert(id.clone());
         // FIXME: use LRU cache for dialing addresses/peers
         if let ConnectedPoint::Dialer { address } = cp {
-            if self.connecting_addresses.remove(&address) {
-                self.connecting_peers.remove(&id);
+            if self.connecting_addresses.contains(&address) {
+                self.connecting_peers.contains(&id);
                 self.pending_out_peers
                     .insert(id.clone().into(), DialerPeerState::Connected);
                 self.protocol_updates
@@ -325,7 +325,7 @@ where
             }
         }
 
-        if self.connecting_peers.remove(&id) {
+        if self.connecting_peers.contains(&id) {
             self.pending_out_peers
                 .insert(id.clone().into(), DialerPeerState::Connected);
             self.protocol_updates

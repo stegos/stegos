@@ -19,11 +19,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-mod simple_tests;
-
 pub mod futures_testing;
 
-use futures_testing::{start_test, wait, TestTimer};
+use self::futures_testing::{start_test, wait, TestTimer};
 pub use stegos_network::loopback::Loopback;
 mod consensus;
 mod microblocks;

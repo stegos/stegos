@@ -78,7 +78,7 @@ impl Pt {
 
     /// Create from an uncompressed point.
     #[inline]
-    pub(crate) fn compress(ept: ECp) -> Pt {
+    pub(crate) fn compress(ept: &ECp) -> Pt {
         let pt_4 = ecpt::prescale_for_compression(ept);
         let bytes = ECp::to_bytes(&pt_4);
         Pt(bytes)
@@ -92,7 +92,7 @@ impl Pt {
 
     /// Convert into hex string.
     pub fn to_hex(&self) -> String {
-        let v = Lev32(self.0);
+        let v = Lev32(self.0, false);
         basic_nbr_str(&v.to_lev_u64())
     }
 
@@ -118,9 +118,15 @@ impl Hashable for Pt {
     }
 }
 
+impl<'a> From<&'a ECp> for Pt {
+    fn from(pt: &'a ECp) -> Pt {
+        pt.compress()
+    }
+}
+
 impl From<ECp> for Pt {
     fn from(pt: ECp) -> Pt {
-        pt.compress()
+        Pt::from(&pt)
     }
 }
 
@@ -129,7 +135,7 @@ impl Ord for Pt {
     fn cmp(&self, other: &Pt) -> Ordering {
         let me = self.decompress().unwrap().compress();
         let pt = other.decompress().unwrap().compress();
-        Lev32(me.to_bytes()).cmp(&Lev32(pt.to_bytes()))
+        Lev32(me.to_bytes(), false).cmp(&Lev32(pt.to_bytes(), false))
     }
 }
 
@@ -154,7 +160,7 @@ impl SecretKey {
     /// Try to convert from hex string.
     #[inline]
     pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
-        Ok(SecretKey(Fr::try_from_hex(s)?))
+        Ok(SecretKey(Fr::try_from_hex(s, true)?))
     }
 
     /// Convert into raw bytes.
@@ -166,19 +172,13 @@ impl SecretKey {
     /// Try to convert from raw bytes.
     #[inline]
     pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
-        Ok(SecretKey(Fr::try_from_bytes(bytes)?))
+        Ok(SecretKey(Fr::try_from_bytes(bytes, true)?))
     }
 }
 
 impl fmt::Debug for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("SKey(*HIDDEN DATA*)")
-    }
-}
-
-impl Drop for SecretKey {
-    fn drop(&mut self) {
-        self.0.zap();
     }
 }
 
@@ -189,15 +189,30 @@ impl Hashable for SecretKey {
     }
 }
 
+impl<'a> From<&'a Fr> for SecretKey {
+    fn from(zr: &'a Fr) -> SecretKey {
+        // caller should be sure that zr also has WAU before calling
+        let mut ans = SecretKey(zr.unscaled());
+        ans.0.set_wau(); // just to be sure it happens
+        ans
+    }
+}
+
 impl From<Fr> for SecretKey {
-    fn from(zr: Fr) -> Self {
-        SecretKey(zr.unscaled())
+    fn from(zr: Fr) -> SecretKey {
+        SecretKey::from(&zr)
+    }
+}
+
+impl<'a> From<&'a SecretKey> for Fr {
+    fn from(skey: &'a SecretKey) -> Fr {
+        skey.clone().0
     }
 }
 
 impl From<SecretKey> for Fr {
     fn from(skey: SecretKey) -> Self {
-        skey.0
+        Fr::from(&skey)
     }
 }
 
@@ -215,7 +230,7 @@ impl PublicKey {
 
     /// Decompress into a point.
     #[inline]
-    pub fn decompress(self) -> Result<ECp, CryptoError> {
+    pub fn decompress(&self) -> Result<ECp, CryptoError> {
         self.0.decompress()
     }
 
@@ -272,28 +287,52 @@ impl stdhash::Hash for PublicKey {
     }
 }
 
-impl From<PublicKey> for Pt {
-    fn from(pkey: PublicKey) -> Self {
+impl<'a> From<&'a PublicKey> for Pt {
+    fn from(pkey: &'a PublicKey) -> Pt {
         pkey.0
     }
 }
 
-impl From<Pt> for PublicKey {
-    fn from(pt: Pt) -> Self {
-        PublicKey(pt)
+impl From<PublicKey> for Pt {
+    fn from(pkey: PublicKey) -> Pt {
+        Pt::from(&pkey)
     }
 }
 
-impl From<ECp> for PublicKey {
-    fn from(pt: ECp) -> Self {
+impl<'a> From<&'a Pt> for PublicKey {
+    fn from(pt: &'a Pt) -> PublicKey {
+        PublicKey(*pt)
+    }
+}
+
+impl From<Pt> for PublicKey {
+    fn from(pt: Pt) -> PublicKey {
+        PublicKey::from(&pt)
+    }
+}
+
+impl<'a> From<&'a ECp> for PublicKey {
+    fn from(pt: &'a ECp) -> PublicKey {
         PublicKey(Pt::from(pt))
     }
 }
 
-impl From<SecretKey> for PublicKey {
-    fn from(skey: SecretKey) -> Self {
+impl From<ECp> for PublicKey {
+    fn from(pt: ECp) -> PublicKey {
+        PublicKey::from(&pt)
+    }
+}
+
+impl<'a> From<&'a SecretKey> for PublicKey {
+    fn from(skey: &'a SecretKey) -> PublicKey {
         let pt = Fr::from(skey) * *G;
         Self::from(pt)
+    }
+}
+
+impl From<SecretKey> for PublicKey {
+    fn from(skey: SecretKey) -> PublicKey {
+        PublicKey::from(&skey)
     }
 }
 
@@ -333,8 +372,9 @@ impl<'de> Deserialize<'de> for PublicKey {
 
 pub fn make_deterministic_keys(seed: &[u8]) -> (SecretKey, PublicKey) {
     let h = Hash::from_vector(&seed);
-    let zr = Fr::synthetic_random("skey", &*G, &h);
-    let pt = zr * *G;
+    let mut zr = Fr::synthetic_random("skey", &*G, &h);
+    zr.set_wau();
+    let pt = &zr * *G;
     let skey = SecretKey::from(zr);
     let pkey = PublicKey::from(pt);
     (skey, pkey)
@@ -347,7 +387,9 @@ pub fn check_keying(skey: &SecretKey, pkey: &PublicKey) -> Result<(), CryptoErro
 }
 
 pub fn make_random_keys() -> (SecretKey, PublicKey) {
-    make_deterministic_keys(&Lev32::random().bits())
+    let mut lev = Lev32::random();
+    lev.set_wau();
+    make_deterministic_keys(&lev.bits())
 }
 
 // -----------------------------------------------------------------------
@@ -357,7 +399,7 @@ pub fn make_random_keys() -> (SecretKey, PublicKey) {
 // generate K = k*G for k = random Fr
 // generate u = k + Fr(H(K, P, msg)) * s
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct SchnorrSig {
     pub u: Fr,
     pub K: Pt,
@@ -381,23 +423,44 @@ impl Hashable for SchnorrSig {
     }
 }
 
-impl Add<SchnorrSig> for SchnorrSig {
-    type Output = Self;
-    fn add(self, other: Self) -> Self {
+impl<'a, 'b> Add<&'a SchnorrSig> for &'b SchnorrSig {
+    type Output = SchnorrSig;
+    fn add(self, other: &'a SchnorrSig) -> SchnorrSig {
         // user should have ensured that sig.K are valid
         // before calling this operator
         let errmsg = "Invalid SchnorrSig.K point";
         let K_sum = self.K.decompress().expect(errmsg) + other.K.decompress().expect(errmsg);
         SchnorrSig {
-            u: self.u + other.u,
+            u: &self.u + &other.u,
             K: K_sum.compress(),
         }
     }
 }
 
-impl AddAssign<SchnorrSig> for SchnorrSig {
-    fn add_assign(&mut self, other: Self) {
-        let sum_sig = *self + other;
+impl<'a> Add<&'a SchnorrSig> for SchnorrSig {
+    type Output = SchnorrSig;
+    fn add(self, other: &'a SchnorrSig) -> SchnorrSig {
+        &self + other
+    }
+}
+
+impl<'b> Add<SchnorrSig> for &'b SchnorrSig {
+    type Output = SchnorrSig;
+    fn add(self, other: SchnorrSig) -> SchnorrSig {
+        self + &other
+    }
+}
+
+impl Add<SchnorrSig> for SchnorrSig {
+    type Output = SchnorrSig;
+    fn add(self, other: SchnorrSig) -> SchnorrSig {
+        &self + &other
+    }
+}
+
+impl<'a> AddAssign<&'a SchnorrSig> for SchnorrSig {
+    fn add_assign(&mut self, other: &SchnorrSig) {
+        let sum_sig = &*self + other;
         self.u = sum_sig.u;
         self.K = sum_sig.K;
     }
@@ -416,11 +479,12 @@ pub fn sign_hash(hmsg: &Hash, skey: &SecretKey) -> SchnorrSig {
     // since that could also be used to find the secret key. So we rehash the k value, if necessary,
     // until its value lies within an acceptable range.
     //
-    let k = Fr::synthetic_random("sig-k", skey, hmsg);
-    let K = k * *G;
-    let pkey = PublicKey::from(skey.clone());
+    let mut k = Fr::synthetic_random("sig-k", skey, hmsg);
+    k.set_wau();
+    let K = &k * *G;
+    let pkey = PublicKey::from(skey);
     let h = Hash::digest_chain(&[&K, &pkey, hmsg]);
-    let u = k + Fr::from(h) * Fr::from(skey.clone());
+    let u = k + Fr::from(h) * Fr::from(skey);
     SchnorrSig {
         u: u.unscaled(),
         K: Pt::from(K),
@@ -430,7 +494,7 @@ pub fn sign_hash(hmsg: &Hash, skey: &SecretKey) -> SchnorrSig {
 pub fn sign_hash_with_kval(
     hmsg: &Hash,
     skey: &SecretKey,
-    k_val: Fr,
+    k_val: &Fr,
     sumK: &ECp,
     sumPKey: &ECp,
 ) -> SchnorrSig {
@@ -461,7 +525,7 @@ pub fn sign_hash_with_kval(
     let my_K = k_val * *G;
     let pkey = PublicKey::from(Pt::from(*sumPKey));
     let h = Hash::digest_chain(&[sumK, &pkey, hmsg]);
-    let u = k_val + Fr::from(h) * Fr::from(skey.clone());
+    let u = k_val + Fr::from(h) * Fr::from(skey);
     SchnorrSig {
         u: u.unscaled(),
         K: Pt::from(my_K),
@@ -472,7 +536,7 @@ pub fn validate_sig(hmsg: &Hash, sig: &SchnorrSig, pkey: &PublicKey) -> Result<(
     let h = Hash::digest_chain(&[&sig.K, pkey, hmsg]);
     let Ppt = pkey.0.decompress()?;
     let Kpt = sig.K.decompress()?;
-    if sig.u * *G == Kpt + Fr::from(h) * Ppt {
+    if &sig.u * *G == Kpt + Fr::from(h) * Ppt {
         return Ok(());
     } else {
         return Err(CryptoError::BadKeyingSignature);
@@ -529,12 +593,14 @@ pub fn aes_encrypt(msg: &[u8], pkey: &PublicKey) -> Result<EncryptedPayload, Cry
     } else {
         // normal encrytion with keying hint
         let h = Hash::from_vector(msg);
-        let alpha = Fr::synthetic_random("encr-alpha", pkey, &h);
+        let mut alpha = Fr::synthetic_random("encr-alpha", pkey, &h);
+        alpha.set_wau();
         let ppt = pkey.decompress()?; // could give CryptoError if invalid PublicKey
-        let ap = alpha * ppt; // generate key (alpha*s*G = alpha*P), and hint ag = alpha*G
-        let ag = alpha * *G;
-        let key = Hash::digest(&ap);
-        let ctxt = aes_encrypt_with_key(msg, &key.bits());
+        let ap = &alpha * ppt; // generate key (alpha*s*G = alpha*P), and hint ag = alpha*G
+        let ag = &alpha * *G;
+        let mut key = Hash::digest(&ap).bits();
+        let ctxt = aes_encrypt_with_key(msg, &key);
+        zap_bytes(&mut key);
         Ok(EncryptedPayload {
             ag: Pt::from(ag),
             ctxt,
@@ -548,11 +614,13 @@ pub fn aes_decrypt(payload: &EncryptedPayload, skey: &SecretKey) -> Result<Vec<u
         Ok(payload.ctxt.clone())
     } else {
         // normal encryption, key = skey * AG
-        let zr = Fr::from(skey.clone());
+        let zr = Fr::from(skey);
         let ag = payload.ag.decompress()?; // could give CryptoError if corrupted payload
         let asg = zr * ag; // compute the actual key seed = s*alpha*G
-        let key = Hash::digest(&asg);
-        Ok(aes_encrypt_with_key(&payload.ctxt, &key.bits()))
+        let mut key = Hash::digest(&asg).bits();
+        let ans = aes_encrypt_with_key(&payload.ctxt, &key);
+        zap_bytes(&mut key);
+        Ok(ans)
     }
 }
 
@@ -562,11 +630,13 @@ fn make_securing_keys(seed: &str) -> (SecretKey, PublicKey) {
     // Do we need a salt? We won't be storing these seed keys
     // anywhere, so there is nothing to guard against rainbow table
     // attacks. And so I don't think we need salting.
-    let mut seed = Hash::from_str(seed);
+    let mut seed = Hash::from_str(seed).bits();
     for _ in 1..1024 {
-        seed = Hash::from_vector(&seed.bits());
+        seed = Hash::from_vector(&seed).bits();
     }
-    make_deterministic_keys(&seed.bits())
+    let ans = make_deterministic_keys(&seed);
+    zap_bytes(&mut seed);
+    ans
 }
 
 #[derive(Debug, Clone)]

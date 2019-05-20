@@ -73,7 +73,7 @@ impl Fq51 {
     }
 
     fn nbr_str(&self) -> String {
-        let U256(yv) = U256::from(*self);
+        let U256(yv, _) = U256::from(*self);
         basic_nbr_str(&yv)
     }
 }
@@ -84,11 +84,18 @@ impl From<i64> for Fq51 {
     }
 }
 
+impl<'a> From<&'a Fq> for Fq51 {
+    fn from(x: &'a Fq) -> Fq51 {
+        let mut tmp = Fq51::zero();
+        let bits = x.clone().unscaled_bits();
+        bin_to_elt(&bits, &mut tmp);
+        tmp
+    }
+}
+
 impl From<Fq> for Fq51 {
     fn from(x: Fq) -> Fq51 {
-        let mut tmp = Fq51::zero();
-        bin_to_elt(&x.unscaled().bits(), &mut tmp);
-        tmp
+        Fq51::from(&x)
     }
 }
 
@@ -127,7 +134,7 @@ impl Add<Fq51> for Fq51 {
 impl Add<i64> for Fq51 {
     type Output = Fq51;
     fn add(self, other: i64) -> Fq51 {
-        let mut dst = self;
+        let mut dst = self.clone();
         dst.0[0] += other;
         dst
     }
@@ -136,7 +143,7 @@ impl Add<i64> for Fq51 {
 impl Add<Fq51> for i64 {
     type Output = Fq51;
     fn add(self, other: Fq51) -> Fq51 {
-        let mut dst = other;
+        let mut dst = other.clone();
         dst.0[0] += self;
         dst
     }
@@ -170,7 +177,7 @@ impl Sub<Fq51> for Fq51 {
 impl Sub<i64> for Fq51 {
     type Output = Fq51;
     fn sub(self, other: i64) -> Fq51 {
-        let mut dst = self;
+        let mut dst = self.clone();
         dst.0[0] -= other;
         dst
     }
@@ -219,7 +226,7 @@ impl Mul<Fq51> for Fq51 {
 
 impl MulAssign<Fq51> for Fq51 {
     fn mul_assign(&mut self, other: Fq51) {
-        let tmp = *self;
+        let tmp = self.clone();
         gmul(&tmp, &other, self);
     }
 }
@@ -227,7 +234,7 @@ impl MulAssign<Fq51> for Fq51 {
 impl Mul<Fq51> for i64 {
     type Output = Fq51;
     fn mul(self, other: Fq51) -> Fq51 {
-        let mut dst = other;
+        let mut dst = other.clone();
         gmuli(&mut dst, self);
         dst
     }
@@ -236,7 +243,7 @@ impl Mul<Fq51> for i64 {
 impl Mul<i64> for Fq51 {
     type Output = Fq51;
     fn mul(self, other: i64) -> Fq51 {
-        let mut dst = self;
+        let mut dst = self.clone();
         gmuli(&mut dst, other);
         dst
     }
@@ -251,7 +258,7 @@ impl MulAssign<i64> for Fq51 {
 impl Div<Fq51> for Fq51 {
     type Output = Fq51;
     fn div(self, x: Fq51) -> Fq51 {
-        let mut tmp = x;
+        let mut tmp = x.clone();
         ginv(&mut tmp);
         let mut ans = Fq51::zero();
         gmul(&self, &tmp, &mut ans);
@@ -791,7 +798,7 @@ pub fn bin_to_elt(y: &U256, x: &mut Fq51) {
 
 impl Fq51 {
     pub fn from_str(s: &str) -> Result<Fq51, CryptoError> {
-        let bin = U256::try_from_hex(s)?;
+        let bin = U256::try_from_hex(s, false)?;
         let mut e = Fq51::zero();
         bin_to_elt(&bin, &mut e);
         Ok(e)
@@ -851,11 +858,11 @@ pub mod tests {
             assert!(x51 == xrt51 || x51 == -xrt51);
             /* */
             let xb = Fq::random();
-            let xsq = xb * xb;
+            let xsq = xb.clone() * xb.clone();
             let xsq51b = Fq51::from(xsq);
             let xrt51b = gsqrt(&xsq51b).expect("Valid root");
             let xrt = Fq::from(xrt51b);
-            assert!(xrt == xb || -xrt == xb);
+            assert!(xrt == xb.clone() || -xrt == xb);
             /* */
         }
     }

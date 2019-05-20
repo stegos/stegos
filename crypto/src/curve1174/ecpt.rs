@@ -66,15 +66,21 @@ impl ECp {
     }
 
     pub fn try_from_xy(x: &Fq, y: &Fq) -> Result<Self, CryptoError> {
-        let x51 = Fq51::from(*x);
-        let y51 = Fq51::from(*y);
+        let x51 = Fq51::from(x.clone());
+        let y51 = Fq51::from(y.clone());
+        if !Self::is_valid_pt(&x51, &y51) {
+            return Err(CryptoError::PointNotOnCurve);
+        }
         Self::make_valid_pt(&x51, &y51)
     }
 
+    fn is_valid_pt(x: &Fq51, y: &Fq51) -> bool {
+        let xsq = x.sqr();
+        let ysq = y.sqr();
+        (xsq + ysq == 1 + CURVE_D * xsq * ysq)
+    }
+
     fn make_valid_pt(x: &Fq51, y: &Fq51) -> Result<Self, CryptoError> {
-        if !Self::is_valid_pt(x, y) {
-            return Err(CryptoError::PointNotOnCurve);
-        }
         // avoid small subgroup
         // this assumes cofactor CURVE_H = 4
         let newpt = Self::new_from_xy51(x, y);
@@ -93,12 +99,6 @@ impl ECp {
         gsqrt(&ysq)
     }
 
-    fn is_valid_pt(x: &Fq51, y: &Fq51) -> bool {
-        let xsq = x.sqr();
-        let ysq = y.sqr();
-        (xsq + ysq == 1 + CURVE_D * xsq * ysq)
-    }
-
     fn new_from_xy51(x: &Fq51, y: &Fq51) -> Self {
         let mut pt = Self::inf();
         init(&x, &y, &mut pt);
@@ -109,7 +109,7 @@ impl ECp {
     pub fn try_from_bytes(mut x: [u8; 32]) -> Result<Self, CryptoError> {
         let sgn = (x[31] & 0x80) != 0;
         x[31] &= 0x7f;
-        let x256 = U256::from(Lev32(x));
+        let x256 = U256::from(Lev32(x, false));
         if !(x256 < *Q) {
             return Err(CryptoError::TooLarge);
         }
@@ -126,7 +126,7 @@ impl ECp {
         let mut tmp: [u8; 32] = *bits;
         let sgn = tmp[31] & 0x80 != 0;
         tmp[31] &= 0x7f;
-        let mut x = U256::from(Lev32(tmp));
+        let mut x = U256::from(Lev32(tmp, false));
         while x >= *Q {
             div2(&mut x.0);
         }
@@ -163,7 +163,7 @@ impl ECp {
 
     /// Convert into raw bytes.
     pub fn to_bytes(&self) -> [u8; 32] {
-        let mut afpt = self.clone();
+        let mut afpt = *self;
         norm(&mut afpt);
         let ptx = Fq::from(afpt.x);
         let mut x = U256::from(ptx).to_lev_u8();
@@ -175,7 +175,7 @@ impl ECp {
 
     /// Convert into compressed point.
     #[inline]
-    pub fn compress(self) -> Pt {
+    pub fn compress(&self) -> Pt {
         Pt::compress(self)
     }
 }
@@ -208,83 +208,142 @@ impl PartialEq for ECp {
 // ---------------------------------------------------------
 
 impl Add<ECp> for ECp {
-    type Output = Self;
-    fn add(self, other: ECp) -> Self {
-        let mut tmp = Self::inf();
+    type Output = ECp;
+    fn add(self, other: ECp) -> ECp {
+        let mut tmp = ECp::inf();
         add_proj(&self, &other, &mut tmp);
         tmp
     }
 }
 
 impl AddAssign<ECp> for ECp {
-    fn add_assign(&mut self, other: Self) {
+    fn add_assign(&mut self, other: ECp) {
         let tmp = *self;
         add_proj(&tmp, &other, self);
     }
 }
 
 impl Neg for ECp {
-    type Output = Self;
-    fn neg(self) -> Self {
-        let mut tmp = Self::inf();
-        tmp.x = -self.x;
-        tmp.y = self.y;
-        tmp.z = self.z;
-        tmp.t = -self.t;
+    type Output = ECp;
+    fn neg(self) -> ECp {
+        let mut tmp = self.clone();
+        tmp.x = -tmp.x;
+        tmp.t = -tmp.t;
         tmp
     }
 }
 
 impl Sub<ECp> for ECp {
-    type Output = Self;
-    fn sub(self, other: Self) -> Self {
+    type Output = ECp;
+    fn sub(self, other: ECp) -> ECp {
         self + (-other)
     }
 }
 
 impl SubAssign<ECp> for ECp {
-    fn sub_assign(&mut self, other: Self) {
+    fn sub_assign(&mut self, other: ECp) {
         *self += -other;
     }
 }
 
-impl Mul<Fr> for ECp {
-    type Output = Self;
-    fn mul(self, other: Fr) -> Self {
+// ------------------------------------------------
+
+impl<'a, 'b> Mul<&'a Fr> for &'b ECp {
+    type Output = ECp;
+    fn mul(self, other: &'a Fr) -> ECp {
         let wv = WinVec::from(other);
-        let mut tmp = self;
+        let mut tmp = self.clone();
         mul_to_proj(&wv, &mut tmp);
         tmp
     }
 }
 
+impl<'a> Mul<&'a Fr> for ECp {
+    type Output = ECp;
+    fn mul(self, other: &'a Fr) -> ECp {
+        &self * other
+    }
+}
+
+impl<'b> Mul<Fr> for &'b ECp {
+    type Output = ECp;
+    fn mul(self, other: Fr) -> ECp {
+        self * &other
+    }
+}
+
+impl Mul<Fr> for ECp {
+    type Output = ECp;
+    fn mul(self, other: Fr) -> ECp {
+        &self * &other
+    }
+}
+
+// ------------------------------------------------
+
 // A window vector representing the Fr(1/4) scale factor
 // as prescale on compression of ECC points.
-const WV_4: WinVec = WinVec([
-    5, 1, 7, 1, -3, 1, -3, -2, -8, 5, -1, -6, 4, -1, 7, 6, 7, 6, 5, 4, -2, -2, -8, -5, 4, 5, -4, 1,
-    -5, -6, -6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, -8, 2, 0,
-]);
+const WV_4: WinVec = WinVec(
+    [
+        5, 1, 7, 1, -3, 1, -3, -2, -8, 5, -1, -6, 4, -1, 7, 6, 7, 6, 5, 4, -2, -2, -8, -5, 4, 5,
+        -4, 1, -5, -6, -6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, -8, 2, 0,
+    ],
+    false,
+);
 
-pub fn prescale_for_compression(pt: ECp) -> ECp {
-    let mut tmp = pt;
+pub fn prescale_for_compression(pt: &ECp) -> ECp {
+    let mut tmp = pt.clone();
     mul_to_proj(&WV_4, &mut tmp);
     tmp
+}
+
+// ------------------------------------------------
+
+impl<'a, 'b> Mul<&'a ECp> for &'b Fr {
+    type Output = ECp;
+    fn mul(self, other: &'a ECp) -> ECp {
+        other * self
+    }
+}
+
+impl<'a> Mul<&'a ECp> for Fr {
+    type Output = ECp;
+    fn mul(self, other: &'a ECp) -> ECp {
+        other * &self
+    }
+}
+
+impl<'b> Mul<ECp> for &'b Fr {
+    type Output = ECp;
+    fn mul(self, other: ECp) -> ECp {
+        &other * self
+    }
 }
 
 impl Mul<ECp> for Fr {
     type Output = ECp;
     fn mul(self, other: ECp) -> ECp {
-        other * self
+        &other * &self
+    }
+}
+
+// ------------------------------------------------
+
+impl<'a> MulAssign<&'a Fr> for ECp {
+    fn mul_assign(&mut self, other: &'a Fr) {
+        let wv = WinVec::from(other);
+        mul_to_proj(&wv, self);
     }
 }
 
 impl MulAssign<Fr> for ECp {
     fn mul_assign(&mut self, other: Fr) {
-        let wv = WinVec::from(other);
-        mul_to_proj(&wv, self);
+        *self *= &other;
     }
 }
+
+// ------------------------------------------------
 
 impl Mul<i64> for ECp {
     type Output = Self;
@@ -315,7 +374,7 @@ impl Mul<ECp> for i64 {
 impl MulAssign<i64> for ECp {
     fn mul_assign(&mut self, other: i64) {
         match other {
-            0 => *self = Self::inf(),
+            0 => *self = ECp::inf(),
             1 => (),
             -1 => *self = -*self,
             _ => {
@@ -326,18 +385,51 @@ impl MulAssign<i64> for ECp {
     }
 }
 
+// ------------------------------------------------
+
+impl<'a, 'b> Div<&'a Fr> for &'b ECp {
+    type Output = ECp;
+    fn div(self, other: &'a Fr) -> ECp {
+        self * other.clone().invert()
+    }
+}
+
+impl<'a> Div<&'a Fr> for ECp {
+    type Output = ECp;
+    fn div(self, other: &'a Fr) -> ECp {
+        &self / other
+    }
+}
+
+impl<'b> Div<Fr> for &'b ECp {
+    type Output = ECp;
+    fn div(self, other: Fr) -> ECp {
+        self / &other
+    }
+}
+
 impl Div<Fr> for ECp {
-    type Output = Self;
-    fn div(self, other: Fr) -> Self {
-        self * Fr::invert(other)
+    type Output = ECp;
+    fn div(self, other: Fr) -> ECp {
+        &self / &other
+    }
+}
+
+// ------------------------------------------------
+
+impl<'a> DivAssign<&'a Fr> for ECp {
+    fn div_assign(&mut self, other: &'a Fr) {
+        *self *= other.clone().invert();
     }
 }
 
 impl DivAssign<Fr> for ECp {
     fn div_assign(&mut self, other: Fr) {
-        *self *= Fr::invert(other);
+        *self /= &other;
     }
 }
+
+// ------------------------------------------------
 
 impl Div<i64> for ECp {
     type Output = Self;
@@ -584,7 +676,7 @@ fn mul_to_proj(w: &WinVec, ppt: &mut ECp) {
     let mut wpts = [PT_INF; NPREP];
     precomp(ppt, &mut wpts);
 
-    let WinVec(wv) = w;
+    let WinVec(wv, _) = w;
     let ix = w.0[PANES - 1] as usize;
     *ppt = wpts[ix];
     let mut qpt = PT_INF;
@@ -635,8 +727,8 @@ mod tests {
                                                                                      // multiplier in 4-bit window form
         let mut w = WinVec::from_str(&smul);
 
-        let gen_x = Fq::try_from_hex(&sx)?;
-        let gen_y = Fq::try_from_hex(&sy)?;
+        let gen_x = Fq::try_from_hex(&sx, false)?;
+        let gen_y = Fq::try_from_hex(&sy, false)?;
 
         println!("The Generator Point");
         println!("gen_x: {:?}", gen_x);
@@ -674,7 +766,7 @@ mod tests {
         }
 
         println!("WV(1/4)");
-        let wv = WinVec::from(Fr::invert(Fr::from(4)));
+        let wv = WinVec::from(&Fr::invert(&Fr::from(4)));
         for ix in 0..4 {
             let kx = ix * 16;
             let s = format!(

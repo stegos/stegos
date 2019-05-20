@@ -22,7 +22,9 @@
 use failure::Error;
 use stegos_serialization::traits::*;
 
+use crate::aont::{aont_decrypt, aont_encrypt};
 use crate::bulletproofs::{BulletProof, DotProof, L2_NBASIS, LR};
+use crate::curve1174::zap_bytes;
 use crate::curve1174::{EncryptedKey, EncryptedPayload, Fr, Pt, PublicKey, SchnorrSig, SecretKey};
 use crate::hash::Hash;
 use crate::hashcash::HashCashProof;
@@ -50,11 +52,33 @@ impl ProtoConvert for Fr {
     type Proto = crypto::Fr;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = crypto::Fr::new();
-        proto.set_data(self.to_bytes().to_vec());
+        let wau = self.has_wau();
+        let mut bytes = self.to_bytes();
+        proto.set_wau(wau);
+        if wau {
+            let ctxt = aont_encrypt(&bytes);
+            proto.set_data(ctxt);
+            zap_bytes(&mut bytes);
+        } else {
+            proto.set_data(bytes.to_vec());
+        }
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        Ok(Fr::try_from_bytes(proto.get_data())?)
+        let wau = proto.get_wau();
+        let mut bytes = if wau {
+            let ctxt = proto.get_data();
+            let mut decr = Vec::<u8>::new();
+            aont_decrypt(&ctxt, &mut decr)?;
+            decr
+        } else {
+            proto.get_data().to_vec()
+        };
+        let ans = Fr::try_from_bytes(&bytes, wau)?;
+        if wau {
+            zap_bytes(&mut bytes);
+        }
+        Ok(ans)
     }
 }
 
@@ -98,13 +122,12 @@ impl ProtoConvert for SecretKey {
     type Proto = crypto::SecretKey;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = crypto::SecretKey::new();
-        let fval = Fr::from(self.clone());
-        proto.set_skeyf(fval.into_proto());
+        proto.set_skeyf(Fr::from(self).into_proto());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let fval = Fr::from_proto(proto.get_skeyf())?;
-        Ok(SecretKey::from(fval))
+        let fr: Fr = Fr::from_proto(proto.get_skeyf())?;
+        Ok(SecretKey::from(fr))
     }
 }
 
@@ -335,7 +358,7 @@ mod tests {
     where
         T: ProtoConvert + Hashable + std::fmt::Debug,
     {
-        let r = T::from_proto(&x.clone().into_proto()).unwrap();
+        let r = T::from_proto(&x.into_proto()).unwrap();
         assert_eq!(Hash::digest(x), Hash::digest(&r));
         r
     }
@@ -405,5 +428,12 @@ mod tests {
         roundtrip(&encr_key);
         let key_to_encrypt2 = decrypt_key(&passphrase, &encr_key).expect("valid");
         assert_eq!(key_to_encrypt.to_vec(), key_to_encrypt2);
+    }
+
+    #[test]
+    fn aont_secret_key() {
+        // test AONT serialization of SecretKey
+        let (skey, _pkey) = make_random_keys();
+        roundtrip(&skey);
     }
 }

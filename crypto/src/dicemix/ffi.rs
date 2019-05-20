@@ -25,3 +25,10 @@ extern "C" {
         n: usize,
     ) -> ::std::os::raw::c_int;
 }
+
+extern "C" {
+    /**
+     * Dummy stub to force Rust to not optimize away Drop code
+     */
+    pub fn dum_wau(bytes: *mut ::std::os::raw::c_char, len: usize) -> ::std::os::raw::c_void;
+}

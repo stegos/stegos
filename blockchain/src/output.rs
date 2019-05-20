@@ -26,6 +26,7 @@ use rand::random;
 use serde_derive::Serialize;
 use std::mem::transmute;
 use stegos_crypto::bulletproofs::{fee_a, make_range_proof, validate_range_proof, BulletProof};
+use stegos_crypto::curve1174::zap_bytes;
 use stegos_crypto::curve1174::{
     aes_decrypt, aes_encrypt, ECp, EncryptedPayload, Fq, Fr, Pt, PublicKey, SecretKey, G, UNIQ,
 };
@@ -140,10 +141,10 @@ fn cloak_key(recipient_pkey: &PublicKey, gamma: &Fr) -> Result<(PublicKey, Fr), 
     recipient_pkey.hash(&mut hasher);
     Fq::random().hash(&mut hasher);
     let h = hasher.result();
-    let uniq = UNIQ.clone();
 
     // Use deterministic randomness here too, to protect against PRNG attacks.
-    let delta: Fr = Fr::synthetic_random(&"PKey", &uniq, &h);
+    let mut delta: Fr = Fr::synthetic_random(&"PKey", &*UNIQ, &h);
+    delta.set_wau();
 
     // Resulting publickey will be a random-like value in a safe range of the field,
     // not too small, and not too large. This helps avoid brute force attacks, looking
@@ -152,9 +153,9 @@ fn cloak_key(recipient_pkey: &PublicKey, gamma: &Fr) -> Result<(PublicKey, Fr), 
     let pt = recipient_pkey.decompress()?;
     let cloaked_pt = {
         if (*gamma) == Fr::zero() {
-            pt + delta * (*G)
+            pt + &delta * (*G)
         } else {
-            pt + (*gamma) * delta * (*G)
+            pt + gamma * &delta * (*G)
         }
     };
     let cloaked_pkey = PublicKey::from(cloaked_pt);
@@ -268,7 +269,7 @@ impl PaymentPayload {
             )
             .into());
         }
-        let payload: Vec<u8> = aes_decrypt(payload, skey)?;
+        let mut payload: Vec<u8> = aes_decrypt(payload, skey)?;
         assert_eq!(payload.len(), PAYMENT_PAYLOAD_LEN);
         let mut pos: usize = 0;
 
@@ -285,13 +286,15 @@ impl PaymentPayload {
         let mut gamma_bytes: [u8; 32] = [0u8; 32];
         gamma_bytes.copy_from_slice(&payload[pos..pos + 32]);
         pos += gamma_bytes.len();
-        let gamma: Fr = Fr::from_lev_u8(gamma_bytes);
+        let gamma: Fr = Fr::from_lev_u8(gamma_bytes, true);
+        zap_bytes(&mut gamma_bytes);
 
         // Delta.
         let mut delta_bytes: [u8; 32] = [0u8; 32];
         delta_bytes.copy_from_slice(&payload[pos..pos + 32]);
         pos += delta_bytes.len();
-        let delta: Fr = Fr::from_lev_u8(delta_bytes);
+        let delta: Fr = Fr::from_lev_u8(delta_bytes, true);
+        zap_bytes(&mut delta_bytes);
 
         // Amount.
         let mut amount_bytes: [u8; 8] = [0u8; 8];
@@ -329,6 +332,7 @@ impl PaymentPayload {
                 return Err(OutputError::TrailingGarbage(output_hash).into());
             }
         }
+        zap_bytes(&mut payload);
 
         let payload = PaymentPayload {
             delta,
@@ -354,8 +358,8 @@ impl PaymentOutput {
         let (cloaked_pkey, delta) = cloak_key(recipient_pkey, &gamma)?;
 
         let payload = PaymentPayload {
-            delta,
-            gamma,
+            delta: delta.clone(),
+            gamma: gamma.clone(),
             amount,
             data,
         };
@@ -363,7 +367,7 @@ impl PaymentOutput {
         let payload = payload.encrypt(recipient_pkey)?;
 
         // Key cloaking hint for recipient = gamma * delta * Pkey
-        let hint = recipient_pkey.decompress()? * gamma * delta;
+        let hint = recipient_pkey.decompress()? * &gamma * delta;
 
         let output = PaymentOutput {
             recipient: cloaked_pkey,
@@ -390,7 +394,7 @@ impl PaymentOutput {
     /// Validates UTXO structure and keying.
     pub fn validate(&self) -> Result<(), Error> {
         // valid recipient PKey?
-        let pt: Pt = self.recipient.clone().into();
+        let pt: Pt = self.recipient.into();
         pt.decompress()?;
 
         // valid PKey cloaking?

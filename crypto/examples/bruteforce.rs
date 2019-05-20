@@ -41,12 +41,12 @@ use stegos_crypto::keying::*;
 // -------------------------------------------------------------------------------
 fn main() {
     let x = 0x1_0000_000i64;
-    let cmt = simple_commit(Fr::zero(), Fr::from(x));
+    let cmt = simple_commit(&Fr::zero(), &Fr::from(x));
     println!("incr = {:?}", cmt);
     let minv = -0x8000_0000_0000_0000i128;
     let maxv = 0x7fff_ffff_ffff_ffffi128;
-    let mut sum = simple_commit(Fr::zero(), Fr::zero());
-    let incr = simple_commit(Fr::zero(), Fr::from(1));
+    let mut sum = simple_commit(&Fr::zero(), &Fr::zero());
+    let incr = simple_commit(&Fr::zero(), &Fr::from(1));
     println!("incr = {:?}", incr);
     let mut ct = 0u32;
     let start = SystemTime::now();

@@ -45,17 +45,17 @@ use std::time::{Duration, SystemTime};
 pub const NBASIS: usize = 64; // max bit size of validatable items - must be 2^N
 pub const L2_NBASIS: usize = 6; // must equal log2(NBASIS)
 
+type Int = Fr;
+type Point = ECp;
+
+type BasisVect = [Point; NBASIS];
+type ScalarVect = Vec<Int>;
+
 macro_rules! bpvec {
     ($elt: expr) => {
         [$elt; NBASIS]
     };
 }
-
-type Int = Fr;
-type Point = ECp;
-
-type BasisVect = [Point; NBASIS];
-type ScalarVect = [Int; NBASIS];
 
 pub struct BulletproofBasis {
     pub G: Point,      // for cloaking factor of Pedersen Commitment
@@ -76,16 +76,25 @@ lazy_static! {
         assert!(logn == L2_NBASIS, "L2_NBASIS not equal Log2(NBASIS)");
         true
     };
-    pub static ref TWOS : ScalarVect = pow_vec(Int::from(2));
+    pub static ref TWOS : ScalarVect = pow_vec(&Int::from(2));
     pub static ref MASK : Int =
         // NOTE: the mask value needs to = ((1 << NBASIS)-1)
         // ... one bit in mask for every valid bit of value range
         vec_sum(&(*TWOS));
     pub static ref BP: BulletproofBasis = make_bulletproof_basis();
-    pub static ref LR_INIT : [LR; L2_NBASIS] = [LR {
-        l: Point::compress(Point::inf()),
-        r: Point::compress(Point::inf()),
-    }; L2_NBASIS];
+    pub static ref LR_INIT : [LR; L2_NBASIS] = [
+        { let zpt = Point::inf().compress();
+        LR {
+            l: zpt.clone(),
+            r: zpt.clone(),
+        }}
+    ; L2_NBASIS];
+    pub static ref TLR : TransLR = TransLR {
+                l: Point::inf(),
+                r: Point::inf(),
+                x: Int::zero(),
+                xinv: Int::zero(),
+            };
 }
 
 fn make_bulletproof_basis() -> BulletproofBasis {
@@ -110,30 +119,44 @@ fn make_bulletproof_basis() -> BulletproofBasis {
 // ---------------------------------------------------------
 // Vector constructors
 
-fn pow_vec(n: Int) -> ScalarVect {
-    let mut v = bpvec!(Int::one());
+fn const_vec(z: &Int) -> ScalarVect {
+    let mut v = Vec::<Int>::new();
+    for _ in 0..NBASIS {
+        v.push(z.clone());
+    }
+    v
+}
+
+fn pow_vec(n: &Int) -> ScalarVect {
+    let mut v = Vec::<Int>::new();
+    v.push(Int::one());
     let ns = n.scaled();
     for ix in 1..NBASIS {
-        v[ix] = ns * v[ix - 1];
+        v.push(&ns * &v[ix - 1]);
     }
     v
 }
 
 fn bits_vec(x: i64) -> ScalarVect {
     // assert!(x >= 0);
-    let mut v = bpvec!(Int::zero());
+    let mut v = Vec::<Int>::new();
+    let mut one = Int::one();
+    one.set_wau();
     let mut bits = x as u64;
     for ix in 0..NBASIS {
-        v[ix] = (((bits & 1) as i64) * Int::one()).scaled();
+        let mut bit = ((bits & 1) as i64) * &one;
+        v.push(bit);
         bits >>= 1;
     }
     v
 }
 
 fn random_vec() -> ScalarVect {
-    let mut v = bpvec!(Int::zero());
+    let mut v = Vec::<Int>::new();
     for ix in 0..NBASIS {
-        v[ix] = Int::random().scaled();
+        let mut tmp = Int::random();
+        tmp.set_wau();
+        v.push(tmp.scaled());
     }
     v
 }
@@ -141,63 +164,63 @@ fn random_vec() -> ScalarVect {
 // -----------------------------------------------------------
 // vector operators over indefinitely sized vectors
 
-fn vec_add<T>(vdst: &mut [T], vsrc: &[T])
+fn vec_add<'a, T>(vdst: &'a mut [T], vsrc: &'a [T])
 where
-    T: Copy + AddAssign<T>,
+    T: AddAssign<&'a T>,
 {
     for (pdst, psrc) in vdst.into_iter().zip(vsrc.iter()) {
-        *pdst += *psrc;
+        *pdst += psrc;
     }
 }
 
-fn vec_sub<T>(vdst: &mut [T], vsrc: &[T])
+fn vec_sub<'a, T>(vdst: &'a mut [T], vsrc: &'a [T])
 where
-    T: Copy + SubAssign<T>,
+    T: SubAssign<&'a T>,
 {
     for (pdst, psrc) in vdst.into_iter().zip(vsrc.iter()) {
-        *pdst -= *psrc;
+        *pdst -= psrc;
     }
 }
 
-fn hadamard_prod<T>(vdst: &mut [T], vsrc: &[Int])
+fn hadamard_prod<'a, T>(vdst: &'a mut [T], vsrc: &'a [Int])
 where
-    T: MulAssign<Int>,
+    T: MulAssign<&'a Int>,
 {
     for (pdst, psrc) in vdst.into_iter().zip(vsrc.iter()) {
-        *pdst *= *psrc;
+        *pdst *= psrc;
     }
 }
 
-fn vec_incr<T>(vdst: &mut [T], k: T)
+fn vec_incr<'a, T>(vdst: &'a mut [T], k: &'a T)
 where
-    T: Copy + AddAssign<T>,
+    T: AddAssign<&'a T>,
 {
     for pdst in vdst.into_iter() {
-        *pdst += k;
+        *pdst += &k;
     }
 }
 
-fn vec_decr<T>(vdst: &mut [T], k: T)
+fn vec_decr<'a, T>(vdst: &'a mut [T], k: &'a T)
 where
-    T: Copy + SubAssign<T>,
+    T: SubAssign<&'a T>,
 {
     for pdst in vdst.into_iter() {
-        *pdst -= k;
+        *pdst -= &k;
     }
 }
 
-fn vec_scale<T>(vdst: &mut [T], k: Int)
+fn vec_scale<'a, T>(vdst: &'a mut [T], k: &'a Int)
 where
-    T: MulAssign<Int>,
+    T: MulAssign<&'a Int>,
 {
     for pdst in vdst.into_iter() {
-        *pdst *= k;
+        *pdst *= &k;
     }
 }
 
 fn vec_inv(vdst: &mut [Int]) {
     for pdst in vdst.into_iter() {
-        *pdst = 1 / *pdst;
+        *pdst = 1 / &*pdst;
     }
 }
 
@@ -219,26 +242,26 @@ impl HasZero<Point> for Point {
     }
 }
 
-fn dot_prod<T>(v1: &[T], v2: &[Int]) -> T
+fn dot_prod<'a, T>(v1: &'a [T], v2: &'a [Int]) -> T
 where
-    T: Copy + Add<T, Output = T> + Mul<Int, Output = T> + HasZero<T>,
+    T: Clone + Add<T, Output = T> + Mul<&'a Int, Output = T> + HasZero<T>,
 {
     v1.iter()
         .zip(v2.iter())
-        .fold(T::zero(), |sum, (a, b)| sum + *a * *b)
+        .fold(T::zero(), |sum, (a, b)| sum + a.clone() * b)
 }
 
-fn vec_sum<T>(v: &[T]) -> T
+fn vec_sum<'a, T>(v: &'a [T]) -> T
 where
-    T: Copy + Add<T, Output = T> + HasZero<T>,
+    T: Add<&'a T, Output = T> + HasZero<T>,
 {
-    v.iter().fold(T::zero(), |sum, x| sum + *x)
+    v.iter().fold(T::zero(), |sum, x| sum + x)
 }
 
 // ---------------------------------------------------------
 // Pedersen Commitments
 
-pub fn simple_commit(blind: Int, val: Int) -> Point {
+pub fn simple_commit(blind: &Int, val: &Int) -> Point {
     // blinding on G, value on H
     blind * BP.G + val * BP.H
 }
@@ -248,10 +271,10 @@ pub fn fee_a(val: i64) -> Point {
 }
 
 fn vec_commit(
-    gpt: Point,
+    gpt: &Point,
     gpts: &[Point],
     hpts: &[Point],
-    blind: Int,
+    blind: &Int,
     blindvec: &[Int],
     valvec: &[Int],
 ) -> Point {
@@ -262,8 +285,11 @@ fn vec_commit(
 pub fn pedersen_commitment(x: i64) -> (Point, Int) {
     // User API: for amount x, compute a Pedersen Commitment on G, H
     // Return commitment point, and random cloaking factor on G
-    let zr = Int::random();
-    (simple_commit(zr, Int::from(x)), zr)
+    let mut zr = Int::random();
+    zr.set_wau();
+    let mut frx = Int::from(x);
+    frx.set_wau();
+    (simple_commit(&zr, &frx), zr)
 }
 
 // -----------------------------------------------------------
@@ -277,8 +303,8 @@ fn poly_dot_prod(poly_l: &[ScalarVect; 2], poly_r: &[ScalarVect; 2]) -> [Int; 3]
     ]
 }
 
-fn poly_eval(poly: &[ScalarVect; 2], x: Int) -> ScalarVect {
-    let mut ans = poly[1];
+fn poly_eval(poly: &[ScalarVect; 2], x: &Int) -> ScalarVect {
+    let mut ans = poly[1].clone();
     vec_scale(&mut ans, x);
     vec_add(&mut ans, &poly[0]);
     ans
@@ -292,7 +318,7 @@ fn poly_eval(poly: &[ScalarVect; 2], x: Int) -> ScalarVect {
 // DotProof = 4 * 32 + 6 * 96 = 704
 // BulletProof = 11 * 32 + 704 = 1056
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct BulletProof {
     pub vcmt: Pt, // main commitment value - used by transactions as "the" Pedersen commitment
     pub acmt: Pt, // commitment on the value bit pattern
@@ -305,7 +331,7 @@ pub struct BulletProof {
     pub dot_proof: DotProof, // composite dot-product proof
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct DotProof {
     // represents the composite proof on the dot product
     pub u: Pt,
@@ -378,19 +404,19 @@ impl BulletProof {
 
 pub fn make_range_proof(v: i64) -> (BulletProof, Int) {
     fn make_lr_dot_proof(
-        y: Int,
-        mu: Int,
-        t_hat: Int,
+        y: &Int,
+        mu: &Int,
+        t_hat: &Int,
         lvec: &mut ScalarVect,
         rvec: &mut ScalarVect,
     ) -> DotProof {
-        fn fold_halves<T>(n: usize, v: &mut [T], lscale: Int, rscale: Int)
+        fn fold_halves<'a, T>(n: usize, v: &'a mut [T], lscale: &'a Int, rscale: &'a Int)
         where
-            T: Copy + Add<T, Output = T> + Mul<Int, Output = T>,
+            T: Clone + Mul<&'a Int, Output = T> + Add<T, Output = T>,
         {
             let n_2 = n >> 1;
             for (jx, kx) in (0..n_2).zip(n_2..n) {
-                v[jx] = v[jx] * lscale + v[kx] * rscale;
+                v[jx] = v[jx].clone() * lscale + v[kx].clone() * rscale;
             }
         }
 
@@ -404,7 +430,7 @@ pub fn make_range_proof(v: i64) -> (BulletProof, Int) {
 
         // compute commitment to [L],[R]:
         //  P = mu*G + [R].([G_i] o [1/y^n]) + [L].[H_i]
-        let pcmt = vec_commit(gpt, &gv, &hv, mu, rvec, lvec);
+        let pcmt = vec_commit(&gpt, &gv, &hv, &mu, rvec, lvec);
 
         let u = (mu / t_hat) * gpt; // the cloaking point for all following commitments
 
@@ -431,13 +457,13 @@ pub fn make_range_proof(v: i64) -> (BulletProof, Int) {
             // L = cl*U + [R>].[G'<] + [L<].[H>]
             let l = {
                 let cl = dot_prod(VL!(lvec), VR!(rvec)); // cl = [L<].[R>]
-                vec_commit(u, VL!(gv), VR!(hv), cl, VR!(rvec), VL!(lvec))
+                vec_commit(&u, VL!(gv), VR!(hv), &cl, VR!(rvec), VL!(lvec))
             };
 
             // R = cr*U + [R<].[G'>] + [L>].[H<]
             let r = {
                 let cr = dot_prod(VR!(lvec), VL!(rvec)); // cr = [L>].[R<]
-                vec_commit(u, VR!(gv), VL!(hv), cr, VL!(rvec), VR!(lvec))
+                vec_commit(&u, VR!(gv), VL!(hv), &cr, VL!(rvec), VR!(lvec))
             };
 
             let x = Int::from(Hash::digest_chain(&[&l, &r])); // hash challenge value
@@ -449,14 +475,14 @@ pub fn make_range_proof(v: i64) -> (BulletProof, Int) {
             };
 
             let xs = x.scaled(); // do the scaling, unscaling just once = speedup below
-            let xinv = 1 / xs;
+            let xinv = 1 / &xs;
             let xinvu = xinv.unscaled();
 
             // form half-size vectors for next pass
-            fold_halves(n, &mut gv, x, xinvu); // [G'] <- x*[G'<] + [G'>]/x
-            fold_halves(n, &mut hv, xinvu, x); // [H]  <- [H<]/x + x*[H>]
-            fold_halves(n, lvec, xs, xinv); // [L] <- x*[L<] + [L>]/x
-            fold_halves(n, rvec, xinv, xs); // [R] <- [R<]/x + x*[R>]
+            fold_halves(n, &mut gv, &x, &xinvu); // [G'] <- x*[G'<] + [G'>]/x
+            fold_halves(n, &mut hv, &xinvu, &x); // [H]  <- [H<]/x + x*[H>]
+            fold_halves(n, lvec, &xs, &xinv); // [L] <- x*[L<] + [L>]/x
+            fold_halves(n, rvec, &xinv, &xs); // [R] <- [R<]/x + x*[R>]
 
             aix += 1;
             n = n2;
@@ -482,18 +508,20 @@ pub fn make_range_proof(v: i64) -> (BulletProof, Int) {
     // a_l = bits of value
     // a_r = ones complement of a_l
     let mut a_l = bits_vec(v);
-    let mut a_r = a_l;
-    vec_decr(&mut a_r, Int::one());
-    let alpha = Int::random();
+    let mut a_r = a_l.clone();
+    vec_decr(&mut a_r, &Int::one());
+    let mut alpha = Int::random();
+    alpha.set_wau();
     // A = alpha*G + [a_r].[G_i] + [a_l].[H_i]
-    let acmt = vec_commit(gpt, &gv, &hv, alpha, &a_r, &a_l);
+    let acmt = vec_commit(&gpt, &gv, &hv, &alpha, &a_r, &a_l);
 
     // form blinding factors
     let s_l = random_vec();
     let s_r = random_vec();
-    let rho = Int::random();
+    let mut rho = Int::random();
+    rho.set_wau();
     // S = rho*G + [s_r].[G_i] + [s_l].[H_i]
-    let scmt = vec_commit(gpt, &gv, &hv, rho, &s_r, &s_l);
+    let scmt = vec_commit(&gpt, &gv, &hv, &rho, &s_r, &s_l);
 
     // get challenge values: y, z
     let h = Hash::digest_chain(&[&vcmt, &acmt, &scmt]);
@@ -504,18 +532,18 @@ pub fn make_range_proof(v: i64) -> (BulletProof, Int) {
 
     // form poly_l: l(X) = ([a_l] - z*[1]) + [s_l]*X
     let mut poly_l0 = a_l;
-    vec_decr(&mut poly_l0, z);
+    vec_decr(&mut poly_l0, &z);
     let poly_l1 = s_l;
     let poly_l = [poly_l0, poly_l1];
 
     // form poly_r: r(X) = [y^n] o ([a_r] + z*[1] + [s_r]*X) + z^2*[2^n]
-    let yvec = pow_vec(y);
-    let zsq = z * z;
+    let yvec = pow_vec(&y);
+    let zsq = &z * &z;
     let mut poly_r0 = a_r;
-    vec_incr(&mut poly_r0, z);
+    vec_incr(&mut poly_r0, &z);
     hadamard_prod(&mut poly_r0, &yvec);
-    let mut vprod_2 = *TWOS;
-    vec_scale(&mut vprod_2, zsq);
+    let mut vprod_2 = TWOS.clone();
+    vec_scale(&mut vprod_2, &zsq);
     vec_add(&mut poly_r0, &vprod_2);
 
     let mut poly_r1 = s_r;
@@ -525,24 +553,26 @@ pub fn make_range_proof(v: i64) -> (BulletProof, Int) {
     // form the dot-prod polynoomial between poly_l and poly_r
     // t(X) = l(X) . r(X) = t_0 + t_1 * X + t_2 * X^2
     let poly_t = poly_dot_prod(&poly_l, &poly_r);
-    let t1 = poly_t[1];
-    let t2 = poly_t[2];
+    let t1 = poly_t[1].clone();
+    let t2 = poly_t[2].clone();
 
-    let tau1 = Int::random();
-    let tau2 = Int::random();
+    let mut tau1 = Int::random();
+    tau1.set_wau();
+    let mut tau2 = Int::random();
+    tau2.set_wau();
 
-    let t1_cmt = simple_commit(tau1, t1); // T_1 = tau_1 * G + t_1 * H
-    let t2_cmt = simple_commit(tau2, t2); // T_2 = tau_2 * G + t_2 * H
+    let t1_cmt = simple_commit(&tau1, &t1); // T_1 = tau_1 * G + t_1 * H
+    let t2_cmt = simple_commit(&tau2, &t2); // T_2 = tau_2 * G + t_2 * H
 
     // get challenge value: x
     let x = Int::from(Hash::digest_chain(&[&t1_cmt, &t2_cmt])).scaled();
 
     // eval poly_l and poly_r at x
-    let mut lvec = poly_eval(&poly_l, x); // [L] = [PL_0] + x*[PL_1]
-    let mut rvec = poly_eval(&poly_r, x); // [R] = [PR_0] + x*[PR_1]
+    let mut lvec = poly_eval(&poly_l, &x); // [L] = [PL_0] + x*[PL_1]
+    let mut rvec = poly_eval(&poly_r, &x); // [R] = [PR_0] + x*[PR_1]
 
     let t_hat = dot_prod(&lvec, &rvec); // t_hat = [L].[R]
-    let tau_x = gamma * zsq + tau1 * x + tau2 * x * x; // tau_x = gamma * z^2 + tau_1 * x + tau_2 * x^2
+    let tau_x = &gamma * zsq + tau1 * &x + tau2 * &x * &x; // tau_x = gamma * z^2 + tau_1 * x + tau_2 * x^2
     let mu = alpha + rho * x;
 
     (
@@ -555,44 +585,77 @@ pub fn make_range_proof(v: i64) -> (BulletProof, Int) {
             tau_x: tau_x.unscaled(),
             mu: mu.unscaled(),
             t_hat: t_hat.unscaled(),
-            dot_proof: make_lr_dot_proof(y, mu, t_hat, &mut lvec, &mut rvec),
+            dot_proof: make_lr_dot_proof(&y, &mu, &t_hat, &mut lvec, &mut rvec),
         },
         gamma.unscaled(),
     )
 }
 
-fn basis_vectors(y: Int) -> (Point, BasisVect, BasisVect) {
+fn basis_vectors(y: &Int) -> (Point, BasisVect, BasisVect) {
     let mut gv = BP.GV;
-    hadamard_prod(&mut gv, &pow_vec(1 / y));
+    hadamard_prod(&mut gv, &pow_vec(&(1 / y)));
     (BP.G, gv, BP.HV)
 }
 
 // ---------------------------------------------------------------------
 
+#[derive(Clone, Debug)]
+pub struct TransLR {
+    pub l: Point,
+    pub r: Point,
+    pub x: Int,
+    pub xinv: Int,
+}
+
 pub fn validate_range_proof(bp: &BulletProof) -> bool {
     fn try_validate_range_proof(bp: &BulletProof) -> Result<bool, CryptoError> {
-        fn compute_iter_commit(xlrs: &[LR; L2_NBASIS], init: Point) -> Result<Point, CryptoError> {
+        fn expand_bp(
+            xlrs: &[LR; L2_NBASIS],
+            txlrs: &mut [TransLR; L2_NBASIS],
+        ) -> Result<(), CryptoError> {
+            // pre-expansion to avoid redundant point decompression and hashing
+            for ix in 0..L2_NBASIS {
+                let l = xlrs[ix].l.decompress()?;
+                let r = xlrs[ix].r.decompress()?;
+                txlrs[ix].l = l;
+                txlrs[ix].r = r;
+                let x = Int::from(Hash::digest_chain(&[&l, &r])).scaled();
+                txlrs[ix].x = x.clone();
+                txlrs[ix].xinv = 1 / x;
+            }
+            Ok(())
+        }
+
+        fn compute_iter_commit(
+            xlrs: &[TransLR; L2_NBASIS],
+            init: Point,
+        ) -> Result<Point, CryptoError> {
             let mut sum = init;
-            for triple in xlrs.iter().rev() {
-                let l = triple.l.decompress()?;
-                let r = triple.r.decompress()?;
-                let x = Int::from(Hash::digest_chain(&[&l, &r])).scaled(); // hash challenge value
-                let xsq = x * x;
-                sum += xsq * l + r / xsq;
+            for triple in xlrs.iter() {
+                let l = triple.l;
+                let r = triple.r;
+                let x = triple.x.clone();
+                let xinv = triple.xinv.clone();
+                let xsq = &x * &x;
+                let xinvsq = &xinv * &xinv;
+                sum += &xsq * l + r * &xinvsq;
             }
             Ok(sum)
         }
 
-        fn compute_svec(xlrs: &[LR; L2_NBASIS]) -> Result<ScalarVect, CryptoError> {
-            let mut svec = *TWOS;
+        fn compute_svec(xlrs: &[TransLR; L2_NBASIS]) -> Result<ScalarVect, CryptoError> {
+            let mut svec = TWOS.clone();
             for ix in 0..NBASIS {
                 let mut prod = Int::one();
                 let mut jx = 0;
                 for triple in xlrs.iter().rev() {
-                    let l = triple.l.decompress()?;
-                    let r = triple.r.decompress()?;
-                    let x = Int::from(Hash::digest_chain(&[&l, &r])).scaled(); // hash challenge value
-                    prod *= if (ix & (1 << jx)) != 0 { x } else { 1 / x };
+                    let l = triple.l;
+                    let r = triple.r;
+                    prod *= if (ix & (1 << jx)) != 0 {
+                        &triple.x
+                    } else {
+                        &triple.xinv
+                    };
                     jx += 1;
                 }
                 svec[ix] = prod;
@@ -617,14 +680,14 @@ pub fn validate_range_proof(bp: &BulletProof) -> bool {
         let h = Hash::digest(&h);
         let z = Int::from(h).scaled();
 
-        let yvec = pow_vec(y);
-        let zsq = z * z;
-        let delta = (z - zsq) * vec_sum(&yvec) - *MASK * z * zsq;
+        let yvec = pow_vec(&y);
+        let zsq = &z * &z;
+        let delta = (&z - &zsq) * vec_sum(&yvec) - &*MASK * &z * &zsq;
 
-        let xsq = x * x;
-        let chk_v_r = zsq * vcmt + delta * BP.H + x * t1cmt + xsq * t2cmt;
+        let xsq = &x * &x;
+        let chk_v_r = &zsq * vcmt + delta * BP.H + &x * t1cmt + xsq * t2cmt;
 
-        let chk_v_l = simple_commit(bp.tau_x, bp.t_hat);
+        let chk_v_l = simple_commit(&bp.tau_x, &bp.t_hat);
 
         // check that: t_hat = t_0 + t_1 * x + t_2 * x^2
         if chk_v_l != chk_v_r {
@@ -633,18 +696,18 @@ pub fn validate_range_proof(bp: &BulletProof) -> bool {
 
         // -------------------------------------------------------------
 
-        let (_, mut gv, mut hv) = basis_vectors(y);
+        let (_, mut gv, mut hv) = basis_vectors(&y);
 
         let mut gpows = yvec;
-        vec_scale(&mut gpows, z);
-        let mut gp2 = *TWOS;
-        vec_scale(&mut gp2, zsq);
+        vec_scale(&mut gpows, &z);
+        let mut gp2 = TWOS.clone();
+        vec_scale(&mut gp2, &zsq);
         vec_add(&mut gpows, &gp2);
 
-        let hpows = bpvec!(-z);
+        let hpows = const_vec(&(-z));
 
-        let chk_p_l = acmt + vec_commit(scmt, &gv, &hv, x, &gpows, &hpows);
-        let dot_proof = bp.dot_proof;
+        let chk_p_l = acmt + vec_commit(&scmt, &gv, &hv, &x, &gpows, &hpows);
+        let dot_proof = bp.dot_proof.clone();
         let p = dot_proof.pcmt.decompress()?;
 
         // check that commitment to [L], [R] equal l(x), r(x)
@@ -657,14 +720,24 @@ pub fn validate_range_proof(bp: &BulletProof) -> bool {
         let u = dot_proof.u.decompress()?;
         let a = dot_proof.a.scaled();
         let b = dot_proof.b.scaled();
-        let xlrs = dot_proof.xlrs;
-        let mut sv = compute_svec(&xlrs)?;
-        let mut svinv = sv;
+
+        let mut txlrs = [
+            TLR.clone(),
+            TLR.clone(),
+            TLR.clone(),
+            TLR.clone(),
+            TLR.clone(),
+            TLR.clone(),
+        ];
+        expand_bp(&dot_proof.xlrs, &mut txlrs)?;
+
+        let mut sv = compute_svec(&txlrs)?;
+        let mut svinv = sv.clone();
         vec_inv(&mut svinv);
-        vec_scale(&mut sv, a);
-        vec_scale(&mut svinv, b);
-        let chk_l = vec_commit(u, &gv, &hv, a * b, &svinv, &sv);
-        let chk_r = compute_iter_commit(&xlrs, p)?;
+        vec_scale(&mut sv, &a);
+        vec_scale(&mut svinv, &b);
+        let chk_l = vec_commit(&u, &gv, &hv, &(a * b), &svinv, &sv);
+        let chk_r = compute_iter_commit(&txlrs, p)?;
 
         Ok(chk_l == chk_r)
     }
@@ -697,11 +770,11 @@ pub mod tests {
     #[test]
     pub fn test_vector_operations() {
         let mut v1 = [Int::zero(), Int::one(), Int::from(2)];
-        vec_incr(&mut v1, Int::from(1));
+        vec_incr(&mut v1, &Int::one());
         assert!(v1[0] == Int::one());
         assert!(v1[1] == Int::from(2));
         assert!(v1[2] == Int::from(3));
-        let v2 = [Int::one(); 3];
+        let v2 = [Int::one(), Int::one(), Int::one()];
         vec_add(&mut v1, &v2);
         assert!(v1[0] == Int::from(2));
         assert!(v1[1] == Int::from(3));
@@ -730,8 +803,9 @@ pub mod tests {
     pub fn test_Int_commitments() {
         for _ in 0..1000 {
             let x = Int::random();
-            let gamma = Int::random();
-            let cmt = simple_commit(gamma, x);
+            let mut gamma = Int::random();
+            gamma.set_wau();
+            let cmt = simple_commit(&gamma, &x);
             let cpt = cmt.compress();
             let ept = cpt.decompress().unwrap();
             assert!(ept == cmt);
@@ -746,8 +820,9 @@ pub mod tests {
     pub fn test_Int_packed_commitments() {
         for _ in 0..1000 {
             let x = Int::random();
-            let gamma = Int::random();
-            let cmt = simple_commit(gamma, x);
+            let mut gamma = Int::random();
+            gamma.set_wau();
+            let cmt = simple_commit(&gamma, &x);
             let data = Data {
                 cmt: cmt.compress(),
             };
@@ -779,14 +854,14 @@ pub mod tests {
         let x = Int::random(); // NOS test value
 
         // eval pl, pr at x
-        let l = poly_eval(&pl, x);
-        let r = poly_eval(&pr, x);
+        let l = poly_eval(&pl, &x);
+        let r = poly_eval(&pr, &x);
 
         // now take dot product: pl dot pr
         let lr = dot_prod(&l, &r);
 
         // eval the dot-product polynomial at x
-        let t = pt[0] + x * pt[1] + x * x * pt[2];
+        let t = &pt[0] + &x * &pt[1] + &x * &x * &pt[2];
 
         assert!(lr == t);
     }
@@ -800,8 +875,8 @@ pub mod tests {
 
         let xs = x.scaled();
         let xu = x.unscaled();
-        assert!(-xs == -xu);
-        assert!((-xs).unscaled() == (-xu).scaled());
+        assert!(-&xs == -&xu);
+        assert!(-xs.unscaled() == -xu.scaled());
     }
 
     #[test]
@@ -856,21 +931,21 @@ pub fn bulletproofs_tests() {
     }
     let (proof, gamma) = make_range_proof(1234567890);
     let timing = start.elapsed();
-    debug!("proof = {:#?}", proof);
-    debug!("gamma = {:?}", gamma);
-    debug!("Time: {:?}", timing);
-    debug!("");
-    debug!("Start Validation");
+    println!("proof = {:#?}", proof);
+    println!("gamma = {:?}", gamma);
+    println!("Time: {:?}", timing);
+    println!("");
+    println!("Start Validation");
     let start = SystemTime::now();
     let ans = validate_range_proof(&proof);
-    if false {
+    if true {
         for _ in 1..1000 {
             validate_range_proof(&proof);
         }
     }
     let timing = start.elapsed();
-    debug!("Check = {}", ans);
-    debug!("Time: {:?}", timing);
+    println!("Check = {}", ans);
+    println!("Time: {:?}", timing);
 }
 
 // -------------------------------------------------------------

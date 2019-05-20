@@ -6,7 +6,8 @@ message Pt {
 }
 
 message Fr {
-    bytes data = 1;
+    bool wau = 1;
+    bytes data = 2;
 }
 
 message G1 {

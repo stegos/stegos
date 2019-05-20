@@ -28,7 +28,9 @@ use crate::error::TransactionError;
 use crate::error::{BlockError, BlockchainError};
 use crate::multisignature::check_multi_signature;
 use crate::output::Output;
-use crate::transaction::{PaymentTransaction, RestakeTransaction, Transaction};
+use crate::transaction::{
+    CoinbaseTransaction, PaymentTransaction, RestakeTransaction, Transaction,
+};
 use failure::Error;
 use log::*;
 use std::cmp::Ordering;
@@ -40,6 +42,49 @@ use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::{curve1174, pbc};
 
 pub type StakingBalance = HashMap<pbc::PublicKey, i64>;
+
+impl CoinbaseTransaction {
+    pub fn validate(&self) -> Result<(), Error> {
+        let tx_hash = Hash::digest(&self);
+
+        // Validate that reward is not negative.
+        // Exact value is checked by upper levels (Node).
+        if self.block_reward < 0 {
+            return Err(TransactionError::NegativeReward(tx_hash).into());
+        }
+
+        // Validate that fee is not negative.
+        // Exact value is checked by upper levels (validate_micro_block()).
+        if self.block_fee < 0 {
+            return Err(TransactionError::NegativeFee(tx_hash).into());
+        }
+
+        // Validate outputs.
+        let mut mined: ECp = ECp::inf();
+        for output in &self.txouts {
+            let output_hash = Hash::digest(output);
+            match output {
+                Output::PaymentOutput(_o) => {
+                    output.validate()?;
+                    mined += output.pedersen_commitment()?;
+                }
+                _ => {
+                    return Err(
+                        TransactionError::NonPaymentOutputInCoinbase(tx_hash, output_hash).into(),
+                    );
+                }
+            }
+        }
+
+        // Validate monetary balance.
+        let total_fee = self.block_reward + self.block_fee;
+        if mined + self.gamma * (*G) != fee_a(total_fee) {
+            return Err(TransactionError::InvalidMonetaryBalance(tx_hash).into());
+        }
+
+        Ok(())
+    }
+}
 
 impl PaymentTransaction {
     /// Validate the monetary balance and signature of transaction.
@@ -311,6 +356,11 @@ impl Transaction {
     ///
     pub fn validate(&self, inputs: &[Output]) -> Result<StakingBalance, Error> {
         match self {
+            Transaction::CoinbaseTransaction(tx) => {
+                assert_eq!(inputs.len(), 0);
+                tx.validate()?;
+                Ok(StakingBalance::new())
+            }
             Transaction::PaymentTransaction(tx) => tx.validate(inputs),
             Transaction::RestakeTransaction(tx) => tx.validate(inputs),
         }
@@ -392,8 +442,8 @@ impl Blockchain {
         &self,
         tx: &Transaction,
         _timestamp: SystemTime,
-        inputs_set: &HashSet<Hash>,
-        outputs_set: &HashSet<Hash>,
+        inputs_set: &mut HashSet<Hash>,
+        outputs_set: &mut HashSet<Hash>,
     ) -> Result<(), BlockchainError> {
         let tx_hash = Hash::digest(&tx);
         let mut inputs: Vec<Output> = Vec::new();
@@ -413,6 +463,7 @@ impl Blockchain {
                 return Err(TransactionError::MissingInput(tx_hash, input_hash.clone()).into());
             }
 
+            inputs_set.insert(input_hash.clone());
             inputs.push(input);
         }
 
@@ -423,6 +474,7 @@ impl Blockchain {
             if outputs_set.contains(&output_hash) || self.contains_output(&output_hash) {
                 return Err(TransactionError::OutputHashCollision(tx_hash, output_hash).into());
             }
+            outputs_set.insert(output_hash.clone());
         }
 
         // Check the monetary balance, Bulletpoofs/amounts and signature.
@@ -553,60 +605,20 @@ impl Blockchain {
         //
         // Validate transactions.
         //
-        for tx in &block.transactions {
-            self.validate_micro_block_tx(tx, timestamp, &inputs_set, &outputs_set)?;
-            for input_hash in tx.txins() {
-                inputs_set.insert(input_hash.clone());
+        let mut coinbase_fee: i64 = 0;
+        for (i, tx) in block.transactions.iter().enumerate() {
+            if let Transaction::CoinbaseTransaction(tx) = tx {
+                // Coinbase transaction must be a first.
+                if i > 0 {
+                    return Err(BlockError::CoinbaseMustBeFirst(block_hash).into());
+                }
+                coinbase_fee += tx.block_fee;
             }
-            for output in tx.txouts() {
-                let output_hash = Hash::digest(&output);
-                outputs_set.insert(output_hash.clone());
-            }
+            self.validate_micro_block_tx(tx, timestamp, &mut inputs_set, &mut outputs_set)?;
             fee += tx.fee();
         }
-
-        //
-        // Validate coinbase.
-        //
-
-        // Validate that reward is not negative.
-        // Exact value is checked by upper levels (Node).
-        if block.coinbase.block_reward < 0 {
-            return Err(BlockError::NegativeReward(block_hash, block.coinbase.block_reward).into());
-        }
-
-        // Validate fee.
-        if block.coinbase.block_fee != fee {
-            return Err(BlockError::InvalidFee(block_hash, fee, block.coinbase.block_fee).into());
-        }
-
-        // Validate outputs.
-        let mut mined: ECp = ECp::inf();
-        for output in &block.coinbase.outputs {
-            let output_hash = Hash::digest(output);
-            // Check that the output is unique and don't overlap with other transactions.
-            if outputs_set.contains(&output_hash) || self.contains_output(&output_hash) {
-                return Err(
-                    BlockError::OutputHashCollision(height, block_hash, output_hash).into(),
-                );
-            }
-            match output {
-                Output::PaymentOutput(_o) => {
-                    output.validate()?;
-                    mined += output.pedersen_commitment()?;
-                }
-                _ => {
-                    return Err(
-                        BlockError::NonPaymentOutputInCoinbase(block_hash, output_hash).into(),
-                    );
-                }
-            }
-        }
-
-        // Validate coinbase monetary balance.
-        let total_fee = block.coinbase.block_reward + block.coinbase.block_fee;
-        if mined + block.coinbase.gamma * (*G) != fee_a(total_fee) {
-            return Err(BlockError::InvalidBlockBalance(height, block_hash).into());
+        if coinbase_fee != fee {
+            return Err(BlockError::InvalidFee(block_hash, fee, coinbase_fee).into());
         }
 
         debug!(

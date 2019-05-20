@@ -62,6 +62,8 @@ pub enum TransactionError {
     InvalidMonetaryBalance(Hash),
     #[fail(display = "Negative fee: tx={}", _0)]
     NegativeFee(Hash),
+    #[fail(display = "Negative reward: tx={}", _0)]
+    NegativeReward(Hash),
     #[fail(display = "No inputs: tx={}", _0)]
     NoInputs(Hash),
     #[fail(display = "Missing transaction input: tx={}, utxo={}", _0, _1)]
@@ -72,6 +74,12 @@ pub enum TransactionError {
     DuplicateOutput(Hash, Hash),
     #[fail(display = "Output hash collision: tx={}, utxo={}", _0, _1)]
     OutputHashCollision(Hash, Hash),
+
+    #[fail(
+        display = "CoinbaseTransaction must contain only PaymentUTXOs: tx={}, utxo={}",
+        _0, _1
+    )]
+    NonPaymentOutputInCoinbase(Hash, Hash),
 
     #[fail(display = "Non-StakeUTXO found in TXINs: tx = {}. utxo={}", _0, _1)]
     InvalidRestakingInput(Hash, Hash),
@@ -128,18 +136,16 @@ pub enum BlockError {
         _0, _1, _2
     )]
     OutOfOrderBlock(Hash, u64, u64),
-    #[fail(display = "Negative block reward: block={}, reward={}", _0, _1)]
-    NegativeReward(Hash, i64),
     #[fail(
         display = "Invalid block fee: block={}, expected={}, got={}",
         _0, _1, _2
     )]
     InvalidFee(Hash, i64, i64),
     #[fail(
-        display = "Coinbase must contain only PaymentUTXOs: block={}, coinbase_utxo={}",
-        _0, _1
+        display = "Coinbase transaction must be first in the block: block={}",
+        _0
     )]
-    NonPaymentOutputInCoinbase(Hash, Hash),
+    CoinbaseMustBeFirst(Hash),
     #[fail(
         display = "Invalid block monetary balance: height={}, block={}",
         _0, _1

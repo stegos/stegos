@@ -31,6 +31,51 @@ use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
 
 //--------------------------------------------------------------------------------------------------
+// Coinbase Transaction.
+//--------------------------------------------------------------------------------------------------
+
+/// Coinbase Transaction.
+#[derive(Debug, Clone)]
+pub struct CoinbaseTransaction {
+    /// Block reward.
+    pub block_reward: i64,
+
+    /// Sum of fees from all block transactions.
+    pub block_fee: i64,
+
+    /// Minus sum of gamma adjustments in outputs.
+    pub gamma: Fr,
+
+    /// Coinbase UTXOs.
+    pub txouts: Vec<Output>,
+}
+
+impl Default for CoinbaseTransaction {
+    fn default() -> Self {
+        CoinbaseTransaction {
+            block_reward: 0,
+            block_fee: 0,
+            gamma: Fr::zero(),
+            txouts: Vec::new(),
+        }
+    }
+}
+
+impl Hashable for CoinbaseTransaction {
+    fn hash(&self, state: &mut Hasher) {
+        self.block_reward.hash(state);
+        self.block_fee.hash(state);
+        self.gamma.hash(state);
+        let outputs_count: u64 = self.txouts.len() as u64;
+        outputs_count.hash(state);
+        for output in &self.txouts {
+            let output_hash = Hash::digest(&output);
+            output_hash.hash(state);
+        }
+    }
+}
+
+//--------------------------------------------------------------------------------------------------
 // Payment Transaction.
 //--------------------------------------------------------------------------------------------------
 
@@ -431,6 +476,7 @@ impl RestakeTransaction {
 /// Transaction.
 #[derive(Clone, Debug)]
 pub enum Transaction {
+    CoinbaseTransaction(CoinbaseTransaction),
     PaymentTransaction(PaymentTransaction),
     RestakeTransaction(RestakeTransaction),
 }
@@ -439,6 +485,7 @@ impl Transaction {
     #[inline]
     pub fn fee(&self) -> i64 {
         match self {
+            Transaction::CoinbaseTransaction(_tx) => 0,
             Transaction::PaymentTransaction(tx) => tx.fee,
             Transaction::RestakeTransaction(_tx) => 0,
         }
@@ -447,6 +494,7 @@ impl Transaction {
     #[inline]
     pub fn txins(&self) -> &[Hash] {
         match self {
+            Transaction::CoinbaseTransaction(_tx) => &[],
             Transaction::PaymentTransaction(tx) => &tx.txins,
             Transaction::RestakeTransaction(tx) => &tx.txins,
         }
@@ -455,6 +503,7 @@ impl Transaction {
     #[inline]
     pub fn txouts(&self) -> &[Output] {
         match self {
+            Transaction::CoinbaseTransaction(tx) => &tx.txouts,
             Transaction::PaymentTransaction(tx) => &tx.txouts,
             Transaction::RestakeTransaction(tx) => &tx.txouts,
         }
@@ -464,9 +513,16 @@ impl Transaction {
 impl Hashable for Transaction {
     fn hash(&self, state: &mut Hasher) {
         match self {
+            Transaction::CoinbaseTransaction(tx) => tx.hash(state),
             Transaction::PaymentTransaction(tx) => tx.hash(state),
             Transaction::RestakeTransaction(tx) => tx.hash(state),
         }
+    }
+}
+
+impl From<CoinbaseTransaction> for Transaction {
+    fn from(tx: CoinbaseTransaction) -> Self {
+        Transaction::CoinbaseTransaction(tx)
     }
 }
 

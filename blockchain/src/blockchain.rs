@@ -33,7 +33,7 @@ use crate::multisignature::create_multi_signature;
 use crate::mvcc::MultiVersionedMap;
 use crate::output::*;
 use crate::storage::ListDb;
-use crate::transaction::{PaymentTransaction, Transaction};
+use crate::transaction::{CoinbaseTransaction, PaymentTransaction, Transaction};
 use crate::view_changes::ViewChangeProof;
 use failure::Error;
 use log::*;
@@ -376,11 +376,6 @@ impl Blockchain {
                             }
                         }
                     }
-                    for output in block.coinbase.outputs {
-                        if self.check_wallet_output(skey, pkey, &output) {
-                            wallet_state.push((output, epoch));
-                        }
-                    }
                 }
             }
         }
@@ -445,23 +440,15 @@ impl Blockchain {
                 match block {
                     Block::MacroBlock(_) => panic!("Corrupted outputs_by_hash (Micro-0)"),
                     Block::MicroBlock(MicroBlock {
-                        ref coinbase,
-                        ref transactions,
-                        ..
+                        ref transactions, ..
                     }) => {
-                        let output = if *tx_id == std::u32::MAX {
-                            coinbase
-                                .outputs
-                                .get(*txout_id as usize)
-                                .expect("Corrupted outputs_by_hash (Micro-1)")
-                        } else {
-                            let tx = transactions
-                                .get(*tx_id as usize)
-                                .expect("Corrupted outputs_by_hash (Micro-2)");
-                            tx.txouts()
-                                .get(*txout_id as usize)
-                                .expect("Corrupted outputs_by_hash (Micro-3)")
-                        };
+                        let tx = transactions
+                            .get(*tx_id as usize)
+                            .expect("Corrupted outputs_by_hash (Micro-2)");
+                        let output = tx
+                            .txouts()
+                            .get(*txout_id as usize)
+                            .expect("Corrupted outputs_by_hash (Micro-3)");
                         Ok(Some(output.clone()))
                     }
                 }
@@ -950,19 +937,8 @@ impl Blockchain {
         let mut inputs: Vec<Output> = Vec::new();
         let mut output_keys: Vec<OutputKey> = Vec::new();
         let mut outputs: Vec<Output> = Vec::new();
-        let mut gamma: Fr = block.coinbase.gamma;
-        // Coinbase.
-        for (txout_id, output) in block.coinbase.outputs.into_iter().enumerate() {
-            assert!(txout_id < std::u32::MAX as usize);
-            let tx_id = std::u32::MAX;
-            let output_key = OutputKey::MicroBlock {
-                height,
-                tx_id,
-                txout_id: txout_id as u32,
-            };
-            outputs.push(output);
-            output_keys.push(output_key);
-        }
+        let mut gamma = Fr::zero();
+        let mut block_reward: i64 = 0;
         // Regular transactions.
         for (tx_id, tx) in block.transactions.into_iter().enumerate() {
             assert!(tx_id < std::u32::MAX as usize);
@@ -982,6 +958,10 @@ impl Blockchain {
                 output_keys.push(output_key);
             }
             match tx {
+                Transaction::CoinbaseTransaction(tx) => {
+                    block_reward += tx.block_reward;
+                    gamma += tx.gamma;
+                }
                 Transaction::PaymentTransaction(tx) => {
                     gamma += tx.gamma;
                 }
@@ -999,7 +979,7 @@ impl Blockchain {
             output_keys,
             &outputs,
             gamma,
-            block.coinbase.block_reward,
+            block_reward,
             block.base.random,
             timestamp,
         );
@@ -1076,15 +1056,12 @@ impl Blockchain {
             }
             for output in tx.txouts() {
                 pruned.push(output.clone());
+                let output_hash = Hash::digest(output);
+                debug!(
+                    "Reverted UTXO: height={}, block={}, utxo={}",
+                    height, &block_hash, &output_hash
+                );
             }
-        }
-        pruned.extend(block.coinbase.outputs);
-        for output in &pruned {
-            let output_hash = Hash::digest(output);
-            debug!(
-                "Reverted UTXO: height={}, block={}, utxo={}",
-                height, &block_hash, &output_hash
-            );
         }
 
         info!(
@@ -1205,17 +1182,24 @@ pub fn create_fake_micro_block(
     )
     .expect("Invalid keys");
     tx.validate(&inputs).expect("Invalid transaction");
-    let transactions: Vec<Transaction> = vec![tx.into()];
+
+    let coinbase_tx = {
+        let data = PaymentPayloadData::Comment(format!("Block reward"));
+        let (output, gamma) = PaymentOutput::with_payload(&keys.wallet_pkey, block_reward, data)
+            .expect("invalid keys");
+        CoinbaseTransaction {
+            block_reward,
+            block_fee,
+            gamma: -gamma,
+            txouts: vec![Output::PaymentOutput(output)],
+        }
+    };
+    coinbase_tx.validate().expect("Invalid transaction");
+
+    let transactions: Vec<Transaction> = vec![coinbase_tx.into(), tx.into()];
 
     let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-    let mut block = MicroBlock::with_reward(
-        base,
-        None,
-        transactions,
-        &keys.wallet_pkey,
-        keys.network_pkey,
-        block_reward,
-    );
+    let mut block = MicroBlock::new(base, None, transactions, keys.network_pkey);
     block.sign(&keys.network_skey, &keys.network_pkey);
     (block, input_hashes, output_hashes)
 }

@@ -27,7 +27,7 @@ use crate::transaction::Transaction;
 use crate::view_changes::ViewChangeProof;
 use bitvector::BitVector;
 use std::time::SystemTime;
-use stegos_crypto::curve1174::{self, Fr};
+use stegos_crypto::curve1174::Fr;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
 
@@ -99,22 +99,6 @@ impl Hashable for BaseBlockHeader {
 // Micro Blocks.
 //--------------------------------------------------------------------------------------------------
 
-/// Coinbase Transaction.
-#[derive(Debug, Clone)]
-pub struct Coinbase {
-    /// Block reward.
-    pub block_reward: i64,
-
-    /// Sum of fees from all block transactions.
-    pub block_fee: i64,
-
-    /// Minus sum of gamma adjustments in outputs.
-    pub gamma: Fr,
-
-    /// Coinbase UTXOs.
-    pub outputs: Vec<Output>,
-}
-
 /// Monetary Block Header.
 #[derive(Debug, Clone)]
 pub struct MicroBlock {
@@ -123,9 +107,6 @@ pub struct MicroBlock {
 
     /// Proof of the happen view_change.
     pub view_change_proof: Option<ViewChangeProof>,
-
-    /// Coinbase transaction.
-    pub coinbase: Coinbase,
 
     /// Transactions.
     pub transactions: Vec<Transaction>,
@@ -138,20 +119,6 @@ pub struct MicroBlock {
     pub sig: pbc::Signature,
 }
 
-impl Hashable for Coinbase {
-    fn hash(&self, state: &mut Hasher) {
-        self.block_reward.hash(state);
-        self.block_fee.hash(state);
-        self.gamma.hash(state);
-        let outputs_count: u64 = self.outputs.len() as u64;
-        outputs_count.hash(state);
-        for output in &self.outputs {
-            let output_hash = Hash::digest(&output);
-            output_hash.hash(state);
-        }
-    }
-}
-
 impl Hashable for MicroBlock {
     fn hash(&self, state: &mut Hasher) {
         "Micro".hash(state);
@@ -159,12 +126,12 @@ impl Hashable for MicroBlock {
         if let Some(proof) = &self.view_change_proof {
             proof.hash(state);
         }
-        self.coinbase.hash(state);
         let tx_count: u64 = self.transactions.len() as u64;
         tx_count.hash(state);
         for tx in &self.transactions {
             tx.hash(state);
             match tx {
+                Transaction::CoinbaseTransaction(_tx) => {}
                 Transaction::PaymentTransaction(tx) => tx.sig.hash(state),
                 Transaction::RestakeTransaction(tx) => tx.sig.hash(state),
             }
@@ -186,7 +153,6 @@ impl MicroBlock {
     pub fn new(
         base: BaseBlockHeader,
         view_change_proof: Option<ViewChangeProof>,
-        coinbase: Coinbase,
         transactions: Vec<Transaction>,
         pkey: pbc::PublicKey,
     ) -> MicroBlock {
@@ -194,7 +160,6 @@ impl MicroBlock {
         let block = MicroBlock {
             base,
             view_change_proof,
-            coinbase,
             transactions,
             pkey,
             sig,
@@ -207,54 +172,8 @@ impl MicroBlock {
         view_change_proof: Option<ViewChangeProof>,
         pkey: pbc::PublicKey,
     ) -> MicroBlock {
-        let coinbase = Coinbase {
-            block_reward: 0,
-            block_fee: 0,
-            gamma: Fr::zero(),
-            outputs: Vec::new(),
-        };
         let transactions = Vec::new();
-        MicroBlock::new(base, view_change_proof, coinbase, transactions, pkey)
-    }
-
-    pub fn with_reward(
-        base: BaseBlockHeader,
-        view_change_proof: Option<ViewChangeProof>,
-        transactions: Vec<Transaction>,
-        recipient_pkey: &curve1174::PublicKey,
-        pkey: pbc::PublicKey,
-        block_reward: i64,
-    ) -> MicroBlock {
-        let block_fee = transactions.iter().map(|tx| tx.fee()).sum();
-
-        //
-        // Coinbase.
-        //
-
-        let mut outputs: Vec<Output> = Vec::new();
-        let mut gamma = Fr::zero();
-
-        // Create outputs for fee and rewards.
-        for (amount, comment) in vec![(block_fee, "fee"), (block_reward, "reward")] {
-            if amount <= 0 {
-                continue;
-            }
-
-            let data = PaymentPayloadData::Comment(format!("Block {}", comment));
-            let (output_fee, gamma_fee) =
-                PaymentOutput::with_payload(recipient_pkey, amount, data).expect("invalid keys");
-            gamma -= gamma_fee;
-            outputs.push(Output::PaymentOutput(output_fee));
-        }
-
-        let coinbase = Coinbase {
-            block_reward,
-            block_fee,
-            gamma,
-            outputs,
-        };
-
-        MicroBlock::new(base, view_change_proof, coinbase, transactions, pkey)
+        MicroBlock::new(base, view_change_proof, transactions, pkey)
     }
 
     /// Sign block using leader's signature.

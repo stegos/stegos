@@ -154,6 +154,36 @@ impl ProtoConvert for Output {
     }
 }
 
+impl ProtoConvert for CoinbaseTransaction {
+    type Proto = blockchain::CoinbaseTransaction;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = blockchain::CoinbaseTransaction::new();
+        proto.set_block_reward(self.block_reward);
+        proto.set_block_fee(self.block_fee);
+        proto.set_gamma(self.gamma.into_proto());
+        for output in &self.txouts {
+            proto.txouts.push(output.into_proto());
+        }
+        proto
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let block_reward = proto.get_block_reward();
+        let block_fee = proto.get_block_fee();
+        let gamma = Fr::from_proto(proto.get_gamma())?;
+        let mut txouts = Vec::<Output>::with_capacity(proto.txouts.len());
+        for output in proto.txouts.iter() {
+            txouts.push(Output::from_proto(output)?);
+        }
+        Ok(CoinbaseTransaction {
+            block_reward,
+            block_fee,
+            gamma,
+            txouts,
+        })
+    }
+}
+
 impl ProtoConvert for PaymentTransaction {
     type Proto = blockchain::PaymentTransaction;
     fn into_proto(&self) -> Self::Proto {
@@ -229,6 +259,9 @@ impl ProtoConvert for Transaction {
     fn into_proto(&self) -> Self::Proto {
         let mut proto = blockchain::Transaction::new();
         match self {
+            Transaction::CoinbaseTransaction(coinbase_transaction) => {
+                proto.set_coinbase_transaction(coinbase_transaction.into_proto())
+            }
             Transaction::PaymentTransaction(payment_transaction) => {
                 proto.set_payment_transaction(payment_transaction.into_proto())
             }
@@ -241,6 +274,12 @@ impl ProtoConvert for Transaction {
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let transaction = match proto.transaction {
+            Some(blockchain::Transaction_oneof_transaction::coinbase_transaction(
+                ref coinbase_transaction,
+            )) => {
+                let coinbase_transaction = CoinbaseTransaction::from_proto(coinbase_transaction)?;
+                Transaction::CoinbaseTransaction(coinbase_transaction)
+            }
             Some(blockchain::Transaction_oneof_transaction::payment_transaction(
                 ref payment_transaction,
             )) => {
@@ -302,36 +341,6 @@ impl ProtoConvert for BaseBlockHeader {
     }
 }
 
-impl ProtoConvert for Coinbase {
-    type Proto = blockchain::Coinbase;
-    fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::Coinbase::new();
-        proto.set_block_reward(self.block_reward);
-        proto.set_block_fee(self.block_fee);
-        proto.set_gamma(self.gamma.into_proto());
-        for output in &self.outputs {
-            proto.outputs.push(output.into_proto());
-        }
-        proto
-    }
-
-    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let block_reward = proto.get_block_reward();
-        let block_fee = proto.get_block_fee();
-        let gamma = Fr::from_proto(proto.get_gamma())?;
-        let mut outputs = Vec::<Output>::with_capacity(proto.outputs.len());
-        for output in proto.outputs.iter() {
-            outputs.push(Output::from_proto(output)?);
-        }
-        Ok(Coinbase {
-            block_reward,
-            block_fee,
-            gamma,
-            outputs,
-        })
-    }
-}
-
 impl ProtoConvert for MicroBlock {
     type Proto = blockchain::MicroBlock;
     fn into_proto(&self) -> Self::Proto {
@@ -340,7 +349,6 @@ impl ProtoConvert for MicroBlock {
         if let Some(view_change_proof) = &self.view_change_proof {
             proto.set_view_change_proof(view_change_proof.into_proto())
         }
-        proto.set_coinbase(self.coinbase.into_proto());
         for transaction in &self.transactions {
             proto.transactions.push(transaction.into_proto());
         }
@@ -356,7 +364,6 @@ impl ProtoConvert for MicroBlock {
         } else {
             None
         };
-        let coinbase = Coinbase::from_proto(proto.get_coinbase())?;
         let mut transactions = Vec::<Transaction>::with_capacity(proto.transactions.len());
         for transaction in proto.transactions.iter() {
             transactions.push(Transaction::from_proto(transaction)?);
@@ -370,7 +377,6 @@ impl ProtoConvert for MicroBlock {
         Ok(MicroBlock {
             base,
             view_change_proof,
-            coinbase,
             transactions,
             pkey,
             sig,
@@ -699,7 +705,20 @@ mod tests {
     }
 
     #[test]
-    fn transactions() {
+    fn coinbase_transaction() {
+        let (_skey, pkey) = curve1174::make_random_keys();
+        let (output, gamma) = Output::new_payment(&pkey, 100).expect("Invalid keys");
+        let coinbase = CoinbaseTransaction {
+            block_reward: 15,
+            block_fee: 100,
+            gamma: -gamma,
+            txouts: vec![output],
+        };
+        roundtrip(&coinbase);
+    }
+
+    #[test]
+    fn payment_transaction() {
         let tx = mktransaction();
         roundtrip(&tx);
         let tx: Transaction = tx.into();
@@ -730,23 +749,13 @@ mod tests {
         let signatures = vec![(1u32, &sig)];
         let view_change_proof = Some(ViewChangeProof::new(signatures.into_iter()));
 
-        // Coinbase.
-        let (output, gamma) = Output::new_payment(&pkey, 100).expect("Invalid keys");
-        let coinbase = Coinbase {
-            block_reward: 15,
-            block_fee: 100,
-            gamma,
-            outputs: vec![output],
-        };
-        roundtrip(&coinbase);
-
         // Transactions.
         let (tx, _inputs, _outputs) =
             PaymentTransaction::new_test(&skey, &pkey, 300, 2, 100, 1, 100)
                 .expect("Invalid transaction");
         let transactions: Vec<Transaction> = vec![tx.into()];
 
-        let mut block = MicroBlock::new(base, view_change_proof, coinbase, transactions, pkeypbc);
+        let mut block = MicroBlock::new(base, view_change_proof, transactions, pkeypbc);
         block.sign(&skeypbc, &pkeypbc);
         let block2 = roundtrip(&block);
         assert_eq!(block2.pkey, block.pkey);

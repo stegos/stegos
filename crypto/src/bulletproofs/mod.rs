@@ -33,6 +33,7 @@ use crate::CryptoError;
 use lazy_static::lazy_static;
 use log::*;
 use rand::prelude::*;
+use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::fmt;
 use std::fmt::Debug;
@@ -242,6 +243,36 @@ impl HasZero<Point> for Point {
     }
 }
 
+#[inline]
+fn is_even(x: usize) -> bool {
+    0 == (x & 1)
+}
+
+fn dot_prod_pi(v1: &[Point], v2: &[Int]) -> Point {
+    // Parallelized version for cross-domain dot-product
+    let nel = v1.len();
+    if is_even(nel) {
+        // don't worry, we never get handed empty vectors
+        let n2 = nel >> 1;
+        let mut lsum = Point::zero();
+        let mut rsum = Point::zero();
+        let fnL = || {
+            lsum = dot_prod_pi(&v1[0..n2], &v2[0..n2]);
+        };
+        let fnR = || {
+            rsum = dot_prod_pi(&v1[n2..nel], &v2[n2..nel]);
+        };
+        rayon::join(fnL, fnR);
+        lsum + rsum
+    } else if nel == 1 {
+        v1[0] * &v2[0]
+    } else {
+        v1.iter()
+            .zip(v2.iter())
+            .fold(Point::zero(), |sum, (a, b)| sum + a.clone() * b)
+    }
+}
+
 fn dot_prod<'a, T>(v1: &'a [T], v2: &'a [Int]) -> T
 where
     T: Clone + Add<T, Output = T> + Mul<&'a Int, Output = T> + HasZero<T>,
@@ -279,7 +310,18 @@ fn vec_commit(
     valvec: &[Int],
 ) -> Point {
     // blinding on G, value on H
-    blind * gpt + dot_prod(gpts, blindvec) + dot_prod(hpts, valvec)
+    // blind * gpt + dot_prod(gpts, blindvec) + dot_prod(hpts, valvec)
+    let dst0 = blind * gpt;
+    let mut dstg = Point::zero();
+    let mut dsth = Point::zero();
+    let fng = || {
+        dstg = dot_prod_pi(gpts, blindvec);
+    };
+    let fnh = || {
+        dsth = dot_prod_pi(hpts, valvec);
+    };
+    rayon::join(fng, fnh);
+    dst0 + dstg + dsth
 }
 
 pub fn pedersen_commitment(x: i64) -> (Point, Int) {
@@ -614,15 +656,36 @@ pub fn validate_range_proof(bp: &BulletProof) -> bool {
             txlrs: &mut [TransLR; L2_NBASIS],
         ) -> Result<(), CryptoError> {
             // pre-expansion to avoid redundant point decompression and hashing
+            /*
             for ix in 0..L2_NBASIS {
                 let l = xlrs[ix].l.decompress()?;
                 let r = xlrs[ix].r.decompress()?;
                 txlrs[ix].l = l;
                 txlrs[ix].r = r;
                 let x = Int::from(Hash::digest_chain(&[&l, &r])).scaled();
-                txlrs[ix].x = x.clone();
-                txlrs[ix].xinv = 1 / x;
+                txlrs[ix].xinv = 1 / &x;
+                txlrs[ix].x = x;
             }
+            */
+            fn get_pt(cpt: &Pt) -> Point {
+                match cpt.decompress() {
+                    Ok(p) => p,
+                    Err(_) => Point::inf(),
+                }
+            }
+
+            txlrs
+                .par_iter_mut()
+                .zip_eq(xlrs.par_iter())
+                .for_each(|(tx, x)| {
+                    let l = get_pt(&x.l);
+                    let r = get_pt(&x.r);
+                    tx.l = l;
+                    tx.r = r;
+                    let x = Int::from(Hash::digest_chain(&[&l, &r])).scaled();
+                    tx.xinv = 1 / &x;
+                    tx.x = x;
+                });
             Ok(())
         }
 
@@ -630,27 +693,44 @@ pub fn validate_range_proof(bp: &BulletProof) -> bool {
             xlrs: &[TransLR; L2_NBASIS],
             init: Point,
         ) -> Result<Point, CryptoError> {
+            // this is a point arithmetic computation
+            /*
             let mut sum = init;
             for triple in xlrs.iter() {
                 let l = triple.l;
                 let r = triple.r;
-                let x = triple.x.clone();
-                let xinv = triple.xinv.clone();
-                let xsq = &x * &x;
-                let xinvsq = &xinv * &xinv;
+                let x = &triple.x;
+                let xinv = &triple.xinv;
+                let xsq = x * x;
+                let xinvsq = xinv * xinv;
                 sum += &xsq * l + r * &xinvsq;
             }
             Ok(sum)
+            */
+            let mut dst = [Point::zero(); L2_NBASIS];
+            xlrs.par_iter()
+                .zip_eq(dst.par_iter_mut())
+                .for_each(|(xlr, d)| {
+                    let l = xlr.l;
+                    let r = xlr.r;
+                    let x = &xlr.x;
+                    let xinv = &xlr.xinv;
+                    let xsq = x * x;
+                    let xinvsq = xinv * xinv;
+                    *d = &xsq * l + r * &xinvsq;
+                });
+            Ok(init + vec_sum(&dst))
+            /* */
         }
 
         fn compute_svec(xlrs: &[TransLR; L2_NBASIS]) -> Result<ScalarVect, CryptoError> {
+            // this is a pure Fr field computation
             let mut svec = TWOS.clone();
+            /*
             for ix in 0..NBASIS {
                 let mut prod = Int::one();
                 let mut jx = 0;
                 for triple in xlrs.iter().rev() {
-                    let l = triple.l;
-                    let r = triple.r;
                     prod *= if (ix & (1 << jx)) != 0 {
                         &triple.x
                     } else {
@@ -660,10 +740,66 @@ pub fn validate_range_proof(bp: &BulletProof) -> bool {
                 }
                 svec[ix] = prod;
             }
+            */
+            let mut ixvec = Vec::<usize>::new();
+            for ix in 0..NBASIS {
+                ixvec.push(ix)
+            }
+            svec.par_iter_mut()
+                .zip_eq(ixvec.par_iter())
+                .for_each(|(sv, ix)| {
+                    let mut prod = Int::one();
+                    let mut jx = 0;
+                    for triple in xlrs.iter().rev() {
+                        prod *= if (ix & (1 << jx)) != 0 {
+                            &triple.x
+                        } else {
+                            &triple.xinv
+                        };
+                        jx += 1;
+                    }
+                    *sv = prod;
+                });
             Ok(svec)
         }
 
         // -------------------------------------------------------------
+        // Preamble Timing: 0.77 ms
+        if false {
+            let start = SystemTime::now();
+            for _ in 0..1000 {
+                let vcmt = bp.vcmt.decompress()?;
+                let acmt = bp.acmt.decompress()?;
+                let scmt = bp.scmt.decompress()?;
+                let t1cmt = bp.t1_cmt.decompress()?;
+                let t2cmt = bp.t2_cmt.decompress()?;
+
+                // get challenge values: x, y, z
+                let x = Int::from(Hash::digest_chain(&[&t1cmt, &t2cmt])).scaled();
+
+                let h = Hash::digest_chain(&[&vcmt, &acmt, &scmt]);
+                let y = Int::from(h).scaled();
+
+                let h = Hash::digest(&h);
+                let z = Int::from(h).scaled();
+
+                let yvec = pow_vec(&y);
+                let zsq = &z * &z;
+                let delta = (&z - &zsq) * vec_sum(&yvec) - &*MASK * &z * &zsq;
+
+                let xsq = &x * &x;
+                let chk_v_r = &zsq * vcmt + delta * BP.H + &x * t1cmt + xsq * t2cmt;
+
+                let chk_v_l = simple_commit(&bp.tau_x, &bp.t_hat);
+
+                // check that: t_hat = t_0 + t_1 * x + t_2 * x^2
+                if chk_v_l != chk_v_r {
+                    return Ok(false);
+                }
+            }
+            let timing = start.elapsed().expect("ok");
+            println!("head section time = {:?}", timing / 1000);
+        }
 
         let vcmt = bp.vcmt.decompress()?;
         let acmt = bp.acmt.decompress()?;
@@ -695,6 +831,33 @@ pub fn validate_range_proof(bp: &BulletProof) -> bool {
         }
 
         // -------------------------------------------------------------
+        // MidSection Timing: 6.5 ms
+
+        if false {
+            let start = SystemTime::now();
+            for _ in 0..1000 {
+                let (_, mut gv, mut hv) = basis_vectors(&y);
+
+                let mut gpows = yvec.clone();
+                vec_scale(&mut gpows, &z.clone());
+                let mut gp2 = TWOS.clone();
+                vec_scale(&mut gp2, &zsq);
+                vec_add(&mut gpows, &gp2);
+
+                let hpows = const_vec(&(-z.clone()));
+
+                let chk_p_l = acmt + vec_commit(&scmt, &gv, &hv, &x, &gpows, &hpows);
+                let dot_proof = bp.dot_proof.clone();
+                let p = dot_proof.pcmt.decompress()?;
+
+                // check that commitment to [L], [R] equal l(x), r(x)
+                if chk_p_l != p {
+                    return Ok(false);
+                }
+            }
+            let timing = start.elapsed().expect("ok");
+            println!("midsection time = {:?}", timing / 1000);
+        }
 
         let (_, mut gv, mut hv) = basis_vectors(&y);
 
@@ -716,6 +879,40 @@ pub fn validate_range_proof(bp: &BulletProof) -> bool {
         }
 
         // -------------------------------------------------------------
+        // Tail Section Timing: 9.0 ms
+
+        if false {
+            let start = SystemTime::now();
+            for _ in 0..1000 {
+                let u = dot_proof.u.decompress()?;
+                let a = dot_proof.a.scaled();
+                let b = dot_proof.b.scaled();
+
+                let mut txlrs = [
+                    TLR.clone(),
+                    TLR.clone(),
+                    TLR.clone(),
+                    TLR.clone(),
+                    TLR.clone(),
+                    TLR.clone(),
+                ];
+                expand_bp(&dot_proof.xlrs, &mut txlrs)?;
+
+                let mut sv = compute_svec(&txlrs)?;
+                let mut svinv = sv.clone();
+                vec_inv(&mut svinv);
+                vec_scale(&mut sv, &a);
+                vec_scale(&mut svinv, &b);
+                let chk_l = vec_commit(&u, &gv, &hv, &(a * b), &svinv, &sv);
+                let chk_r = compute_iter_commit(&txlrs, p)?;
+
+                if (chk_l.clone() != chk_r.clone()) {
+                    return Ok(false);
+                }
+            }
+            let timing = start.elapsed().expect("ok");
+            println!("tail section time = {:?}", timing / 1000);
+        }
 
         let u = dot_proof.u.decompress()?;
         let a = dot_proof.a.scaled();
@@ -921,31 +1118,56 @@ pub mod tests {
 
 // ------------------------------------------------------------
 pub fn bulletproofs_tests() {
+    /// run this code using:
+    ///   cargo run -p stegos_crypto --example bulletproofs --release
+    ///
     let (proof, gamma) = make_range_proof(-1); // to pre-compute constants
-    debug!("Start BulletProofs");
+    println!("Start BulletProofs");
+    let mut niter = 1;
     let start = SystemTime::now();
-    if false {
-        for _ in 1..1000 {
+    if true {
+        niter = 1000;
+        for _ in 1..niter {
             make_range_proof(1234567890);
         }
     }
     let (proof, gamma) = make_range_proof(1234567890);
-    let timing = start.elapsed();
+    let timing = start.elapsed().expect("ok");
     println!("proof = {:#?}", proof);
     println!("gamma = {:?}", gamma);
-    println!("Time: {:?}", timing);
+    println!("BP construction time: {:?}", timing / niter);
     println!("");
+
+    let niter = 1000;
+    let cpt = Point::random().compress();
+    let start = SystemTime::now();
+    for _ in 0..niter {
+        cpt.decompress();
+    }
+    let timing = start.elapsed().expect("ok");
+    println!("decompress: {:?}", timing / niter);
+
+    let pt = cpt.decompress().expect("okay");
+    let start = SystemTime::now();
+    for _ in 0..niter {
+        pt.compress();
+    }
+    let timing = start.elapsed().expect("ok");
+    println!("compress: {:?}", timing / niter);
+
     println!("Start Validation");
+    let mut niter = 1;
     let start = SystemTime::now();
     let ans = validate_range_proof(&proof);
     if true {
-        for _ in 1..1000 {
+        niter = 1000;
+        for _ in 1..niter {
             validate_range_proof(&proof);
         }
     }
-    let timing = start.elapsed();
+    let timing = start.elapsed().expect("ok");
     println!("Check = {}", ans);
-    println!("Time: {:?}", timing);
+    println!("BP validation time: {:?}", timing / niter);
 }
 
 // -------------------------------------------------------------

@@ -588,10 +588,6 @@ impl Blockchain {
                 return Err(BlockError::InvalidLeaderSignature(height, block_hash).into());
             }
 
-            debug!(
-                "Validating VRF: leader={}, round={}",
-                leader, block.base.view_change
-            );
             let seed = mix(self.last_random(), block.base.view_change);
             if !pbc::validate_VRF_source(&block.base.random, &leader, &seed) {
                 return Err(BlockError::IncorrectRandom(height, block_hash).into());
@@ -780,7 +776,7 @@ impl Blockchain {
         let height = block.header.base.height;
         let block_hash = Hash::digest(&block);
         debug!(
-            "Validating a micro block: height={}, block={}",
+            "Validating a macro block: height={}, block={}",
             height, &block_hash
         );
 
@@ -824,10 +820,6 @@ impl Blockchain {
             // Skip view change check, just check supermajority.
             let leader = self.select_leader(block.header.base.view_change);
 
-            debug!(
-                "Validating VRF: leader={}, round={}",
-                leader, block.header.base.view_change
-            );
             let seed = mix(self.last_random(), block.header.base.view_change);
             if !pbc::validate_VRF_source(&block.header.base.random, &leader, &seed) {
                 return Err(BlockError::IncorrectRandom(height, block_hash).into());

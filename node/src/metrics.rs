@@ -32,14 +32,12 @@ pub fn time_to_timestamp_ms(time: SystemTime) -> i64 {
 }
 
 lazy_static! {
-    pub static ref MEMPOOL_LEN: IntGauge =
-        register_int_gauge!("stegos_blockchain_mempool", "Size of mempool.").unwrap();
     pub static ref AUTOCOMMIT: IntCounter = register_int_counter!(
         "stegos_consensus_autocommit",
         "The number of auto-commits of proposed block"
     )
     .unwrap();
-    pub static ref KEY_BLOCK_VIEW_CHANGES: IntCounter = register_int_counter!(
+    pub static ref MACRO_BLOCK_VIEW_CHANGES: IntCounter = register_int_counter!(
         "stegos_macro_block_view_changes",
         "The number of forced view_changes for the macro blocks."
     )
@@ -76,27 +74,4 @@ lazy_static! {
         register_int_gauge!("stegos_mempool_outputs", "The number of outputs in mempool.").unwrap();
     pub static ref MEMPOOL_TRANSACTIONS: IntGauge =
         register_int_gauge!("stegos_mempool_transactions", "The number of transactions in mempool.").unwrap();
-}
-
-pub mod vrf {
-    use super::*;
-    lazy_static! {
-        pub static ref IS_ACTIVE: IntGauge = register_int_gauge!(
-            "stegos_vrf_state",
-            "Current node vrf state (0 = disabled, 1 = active)."
-        )
-        .unwrap();
-        pub static ref VIEW_CHANGE: IntGauge =
-            register_int_gauge!("stegos_vrf_view_change", "Current node vrf state.").unwrap();
-        pub static ref TICKETS_COLLECTED: IntGauge =
-            register_int_gauge!("stegos_vrf_tickets_len", "Count of collected tickets.").unwrap();
-        pub static ref TICKETS_HANDLED: IntGauge = register_int_gauge!(
-            "stegos_vrf_tickets_handled_len",
-            "Count of tickets received since last view change."
-        )
-        .unwrap();
-        pub static ref TICKETS_QUEUED: IntGauge =
-            register_int_gauge!("stegos_vrf_tickets_queue_len", "Count of tickets queued.")
-                .unwrap();
-    }
 }

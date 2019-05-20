@@ -202,7 +202,7 @@ impl NodeService {
         // b) At least two blocks have been applied.
         //
         if !self.is_synchronized() || (self.chain.height() >= initial_height + 2) {
-            self.request_history()?;
+            //self.request_history()?;
         }
 
         Ok(())

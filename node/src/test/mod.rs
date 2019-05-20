@@ -19,18 +19,17 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-mod simple_tests;
+pub mod futures_testing;
 
-pub mod time;
-
+use self::futures_testing::{start_test, wait, TestTimer};
 pub use stegos_network::loopback::Loopback;
-use time::{start_test, wait, TestTimer};
 mod consensus;
 mod microblocks;
 mod requests;
 use crate::*;
 use assert_matches::assert_matches;
 use log::Level;
+use std::time::Duration;
 use stegos_crypto::pbc;
 use stegos_crypto::pbc::VRF;
 use stegos_keychain::KeyChain;
@@ -204,9 +203,7 @@ impl NodeSandbox {
         let chain = Blockchain::testing(cfg.clone().into(), genesis, timestamp)
             .expect("Failed to create blockchain");
         let (mut node_service, node) = NodeService::new(cfg, chain, keychain, network).unwrap();
-        node_service
-            .handle_network_status(NETWORK_READY_TOKEN[..].to_vec())
-            .unwrap();
+        node_service.init().unwrap();
         Self {
             network_service,
             node,
@@ -240,7 +237,7 @@ impl NodeSandbox {
     }
 
     fn poll(&mut self) {
-        assert_eq!(self.node_service.poll(), Ok(Async::NotReady));
+        futures_testing::execute(&mut self.node_service);
     }
 }
 

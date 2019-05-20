@@ -19,7 +19,7 @@ stegos_serialization = { version = "0.2.0", path = "../serialization" }
 bitvector = "0.1"
 failure = "0.1"
 log = "0.4"
-protobuf = "2.5"
+protobuf = "2.6"
 lazy_static = "1.2"
 prometheus = "0.6"
 

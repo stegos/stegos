@@ -12,6 +12,6 @@ description = "Stegos - Serialization Library"
 
 [dependencies]
 failure = "0.1"
-protobuf = "2.5"
+protobuf = "2.6"
 protobuf-codegen-pure = "2.5"
 walkdir = "2.2"

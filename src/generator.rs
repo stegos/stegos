@@ -30,6 +30,7 @@ use stegos_wallet::{Wallet, WalletNotification, WalletRequest, WalletResponse};
 use tokio_timer::Delay;
 
 static WAIT_TIMEOUT: Duration = Duration::from_secs(15);
+const MIN_BALANCE: i64 = 10_000; // just some small number
 
 pub struct Generator {
     // start generator with specific delay, because our network could be not ready.
@@ -42,7 +43,8 @@ pub struct Generator {
 
 #[derive(Debug)]
 enum GeneratorState {
-    NotInited(UnboundedReceiver<WalletNotification>),
+    NotInited(oneshot::Receiver<WalletResponse>),
+    WaitForBalance(UnboundedReceiver<WalletNotification>),
     CreateNew,
     WaitForWallet(oneshot::Receiver<WalletResponse>),
     WaitForConfirmation(oneshot::Receiver<WalletResponse>),
@@ -67,7 +69,7 @@ impl Generator {
             !destinations.is_empty(),
             "Started generator without destinations keys."
         );
-        let state = GeneratorState::NotInited(wallet.subscribe());
+        let state = GeneratorState::NotInited(wallet.request(WalletRequest::BalanceInfo {}));
         let timeout = if with_delay {
             Delay::new(tokio_timer::clock::now() + WAIT_TIMEOUT).into()
         } else {
@@ -100,7 +102,8 @@ impl Generator {
             }
             WalletResponse::Error { error } => {
                 debug!("Error on transaction creation: error = {}", error);
-                self.state = GeneratorState::NotInited(self.wallet.subscribe());
+                self.state =
+                    GeneratorState::NotInited(self.wallet.request(WalletRequest::BalanceInfo {}));
                 return;
             }
             e => {
@@ -127,19 +130,43 @@ impl Generator {
             }
             WalletResponse::Error { error } => {
                 debug!("Error on transaction creation: error:{}", error);
-                self.state = GeneratorState::NotInited(self.wallet.subscribe())
+                self.state =
+                    GeneratorState::NotInited(self.wallet.request(WalletRequest::BalanceInfo {}))
             }
             e => warn!("Unexpected WalletResponse = {:?}", e),
         }
     }
 
-    /// Process wallet notification, wait for blockchain initialisation.
-    fn handle_wait_init(&mut self, info: WalletNotification) {
+    /// Wait for wallet initialization.
+    fn handle_wait_init(&mut self, info: WalletResponse) {
         match info {
-            WalletNotification::BalanceChanged { .. } => {
-                debug!("Wallet inited");
-                self.state = GeneratorState::CreateNew;
+            WalletResponse::BalanceInfo { balance } => self.try_init(balance),
+            WalletResponse::Error { error } => {
+                debug!("Error on requesting balance: error:{}", error);
+                self.state =
+                    GeneratorState::NotInited(self.wallet.request(WalletRequest::BalanceInfo {}))
             }
+            e => warn!("Unexpected WalletResponse = {:?}", e),
+        }
+    }
+
+    fn try_init(&mut self, balance: i64) {
+        if balance < MIN_BALANCE {
+            debug!(
+                "Balance is too small, stop working, wait for balance changed = {}",
+                balance
+            );
+            self.state = GeneratorState::WaitForBalance(self.wallet.subscribe());
+        } else {
+            debug!("Wallet inited, with balance = {}", balance);
+            self.state = GeneratorState::CreateNew;
+        }
+    }
+
+    /// Wait for balance changed.
+    fn handle_wait_for_balance(&mut self, info: WalletNotification) {
+        match info {
+            WalletNotification::BalanceChanged { balance } => self.try_init(balance),
             _ => {} // we just waiting for concrete notification, ignore other.
         }
     }
@@ -206,11 +233,18 @@ impl Future for Generator {
                     info!("Starting transaction generator.");
                     self.generate_tx();
                 }
-                GeneratorState::NotInited(ref mut sender) => {
+                GeneratorState::NotInited(ref mut sender) => match sender.poll() {
+                    Ok(Async::Ready(response)) => {
+                        self.handle_wait_init(response);
+                    }
+                    Ok(Async::NotReady) => break,
+                    _ => panic!("Node disconnected."),
+                },
+                GeneratorState::WaitForBalance(ref mut sender) => {
                     match sender.poll() {
                         Ok(Async::Ready(Some(response))) => {
                             // process all notifications, if receiving balance changed create new tx.
-                            self.handle_wait_init(response);
+                            self.handle_wait_for_balance(response);
                         }
                         Ok(Async::NotReady) => break,
                         _ => panic!("Node disconnected."),

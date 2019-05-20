@@ -21,9 +21,13 @@
 
 use stegos::*;
 
+use crate::report_metrics;
 use clap;
 use clap::{App, Arg};
 use failure::Error;
+use futures::Future;
+use hyper::server::Server;
+use hyper::service::service_fn_ok;
 use log::*;
 use std::path::PathBuf;
 use std::process;
@@ -187,6 +191,20 @@ fn run() -> Result<(), Error> {
     // Initialize network
     let (network, network_service) = Libp2pNetwork::new(&base_config.network, &network_keychain)?;
     rt.spawn(network_service);
+
+    // Start metrics exporter
+    if base_config.general.prometheus_endpoint != "" {
+        // Prepare HTTP service to export Prometheus metrics
+        let prom_serv = || service_fn_ok(report_metrics);
+        let addr = base_config.general.prometheus_endpoint.as_str().parse()?;
+
+        let hyper_service = Server::bind(&addr)
+            .serve(prom_serv)
+            .map_err(|e| error!("failed to bind prometheus exporter: {}", e));
+
+        // Run hyper server to export Prometheus metrics
+        rt.spawn(hyper_service);
+    }
 
     // Initialize blockchain
     info!("Loading blockchain.");

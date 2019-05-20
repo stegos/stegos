@@ -23,6 +23,7 @@
 
 use super::*;
 use crate::CryptoError;
+use rayon::prelude::*;
 use std::num::Wrapping;
 
 const BOT_51_BITS_64: i64 = ((1 << 51) - 1); // Fq51 frames contain 51 bits

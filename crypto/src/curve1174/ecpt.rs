@@ -24,6 +24,7 @@
 
 use super::*;
 use crate::CryptoError;
+use rayon::prelude::*;
 
 // -----------------------------------------------------------------------------------
 
@@ -207,12 +208,33 @@ impl PartialEq for ECp {
 
 // ---------------------------------------------------------
 
+impl<'a, 'b> Add<&'a ECp> for &'b ECp {
+    type Output = ECp;
+    fn add(self, other: &'a ECp) -> ECp {
+        let mut tmp = ECp::inf();
+        add_proj(&self, other, &mut tmp);
+        tmp
+    }
+}
+
+impl<'a> Add<&'a ECp> for ECp {
+    type Output = ECp;
+    fn add(self, other: &'a ECp) -> ECp {
+        &self + other
+    }
+}
+
+impl<'b> Add<ECp> for &'b ECp {
+    type Output = ECp;
+    fn add(self, other: ECp) -> ECp {
+        self + &other
+    }
+}
+
 impl Add<ECp> for ECp {
     type Output = ECp;
     fn add(self, other: ECp) -> ECp {
-        let mut tmp = ECp::inf();
-        add_proj(&self, &other, &mut tmp);
-        tmp
+        &self + &other
     }
 }
 

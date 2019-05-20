@@ -24,7 +24,6 @@
 //!
 
 use crate::error::ConsensusError;
-use failure::Error;
 use log::{debug, info};
 use std::collections::HashMap;
 use stegos_blockchain::view_changes::*;
@@ -87,8 +86,7 @@ pub struct ViewChangeCollector {
     actual_view_changes: HashMap<ValidatorId, ViewChangeMessage>,
     collected_slots: i64,
     /// validator_id of current node.
-    /// If None, ignore events for current epoch.
-    validator_id: Option<ValidatorId>,
+    validator_id: ValidatorId,
     pkey: pbc::PublicKey,
     skey: pbc::SecretKey,
 }
@@ -99,15 +97,21 @@ impl ViewChangeCollector {
         pkey: pbc::PublicKey,
         skey: pbc::SecretKey,
     ) -> ViewChangeCollector {
-        let mut collector = ViewChangeCollector {
+        // get validator id, by public_key
+        let validator_id = blockchain
+            .validators()
+            .iter()
+            .enumerate()
+            .find(|(_id, validator)| validator.0 == pkey)
+            .map(|(id, _)| id as ValidatorId)
+            .expect("Node is not validator");
+        ViewChangeCollector {
             pkey,
             skey,
             collected_slots: 0,
-            validator_id: None,
+            validator_id,
             actual_view_changes: Default::default(),
-        };
-        collector.on_new_consensus(blockchain);
-        collector
+        }
     }
     //
     // External events
@@ -117,10 +121,6 @@ impl ViewChangeCollector {
         blockchain: &Blockchain,
         message: ViewChangeMessage,
     ) -> Result<Option<ViewChangeProof>, ConsensusError> {
-        if !self.is_validator() {
-            return Ok(None);
-        }
-
         if message.chain.height != blockchain.height() {
             return Err(ConsensusError::InvalidViewChangeHeight(
                 message.chain.height,
@@ -166,69 +166,20 @@ impl ViewChangeCollector {
                 .iter()
                 .map(|(k, v)| (*k, &v.signature));
             let proof = ViewChangeProof::new(signatures);
-            self.reset();
+            self.actual_view_changes.clear();
+            self.collected_slots = 0;
             return Ok(Some(proof));
         }
         Ok(None)
     }
 
     /// Handle block timeout, starting mooving to the next view change.
-    pub fn handle_timeout(
-        &mut self,
-        blockchain: &Blockchain,
-    ) -> Result<Option<ViewChangeMessage>, Error> {
-        if !self.is_validator() {
-            return Ok(None);
-        }
-        let id = self.validator_id.unwrap();
-
+    pub fn handle_timeout(&self, chain_info: ChainInfo) -> ViewChangeMessage {
         debug!(
             "Timeout at block receiving, trying to collect view changes: validator_id = {}",
-            id
+            self.validator_id
         );
         // on timeout, create view change message.
-        let chain = ChainInfo::from_blockchain(blockchain);
-        let msg = ViewChangeMessage::new(chain, id, &self.skey);
-        Ok(Some(msg))
-    }
-
-    //
-    // Internal events
-    //
-    /// Process new payment block.
-    pub fn on_new_payment_block(&mut self, _blockchain: &Blockchain) {
-        if !self.is_validator() {
-            return ();
-        }
-
-        self.reset()
-    }
-
-    /// Handle new group creation.
-    pub fn on_new_consensus(&mut self, blockchain: &Blockchain) {
-        // get validator id, by public_key
-        let validator_id = blockchain
-            .validators()
-            .iter()
-            .enumerate()
-            .find(|(_id, validator)| validator.0 == self.pkey)
-            .map(|(id, _)| id as ValidatorId);
-
-        self.reset();
-        self.validator_id = validator_id;
-    }
-
-    //
-    // Other methods
-    //
-    /// Is current node active validator.
-    pub fn is_validator(&self) -> bool {
-        self.validator_id.is_some()
-    }
-
-    /// Reset collector to initial state.
-    fn reset(&mut self) {
-        self.actual_view_changes.clear();
-        self.collected_slots = 0;
+        ViewChangeMessage::new(chain_info, self.validator_id, &self.skey)
     }
 }

@@ -26,6 +26,7 @@ use clap;
 use clap::{App, Arg, ArgMatches};
 use dirs;
 use failure::Error;
+use futures::stream::Stream;
 use futures::Future;
 use hyper::server::Server;
 use hyper::service::service_fn_ok;
@@ -38,7 +39,7 @@ use std::time::SystemTime;
 use stegos_api::WebSocketAPI;
 use stegos_blockchain::Blockchain;
 use stegos_keychain::*;
-use stegos_network::Libp2pNetwork;
+use stegos_network::{Libp2pNetwork, NETWORK_STATUS_TOPIC};
 use stegos_node::NodeService;
 use stegos_txpool::TransactionPoolService;
 use stegos_wallet::WalletService;
@@ -202,7 +203,6 @@ fn run() -> Result<(), Error> {
     // Initialize network
     let mut rt = Runtime::new()?;
     let (network, network_service) = Libp2pNetwork::new(&cfg.network, &keychain)?;
-    rt.spawn(network_service);
 
     // Start metrics exporter
     if cfg.general.prometheus_endpoint != "" {
@@ -226,12 +226,11 @@ fn run() -> Result<(), Error> {
         chain.recover_wallet(&keychain.wallet_skey, &keychain.wallet_pkey)?;
 
     // Initialize node
-    let (node_service, node) =
+    let (mut node_service, node) =
         NodeService::new(cfg.chain.clone(), chain, keychain.clone(), network.clone())?;
 
     // Initialize TransactionPool.
     let txpool_service = TransactionPoolService::new(&keychain, network.clone(), node.clone());
-    rt.spawn(txpool_service);
 
     // Initialize Wallet.
     let (wallet_service, wallet) = WalletService::new(
@@ -243,21 +242,46 @@ fn run() -> Result<(), Error> {
         cfg.chain.stake_epochs,
         wallet_persistent_state,
     );
-    rt.spawn(wallet_service);
 
     // Don't initialize REPL if stdin is not a TTY device
-    if atty::is(atty::Stream::Stdin) {
+    let console_service = if atty::is(atty::Stream::Stdin) {
         // Initialize console
-        let console_service =
-            ConsoleService::new(&cfg.general, network.clone(), wallet.clone(), node.clone())?;
-        rt.spawn(console_service);
-    }
+        Some(ConsoleService::new(
+            &cfg.general,
+            network.clone(),
+            wallet.clone(),
+            node.clone(),
+        )?)
+    } else {
+        None
+    };
 
     // Start WebSocket API server.
     WebSocketAPI::spawn(cfg.api, rt.executor(), wallet.clone(), node.clone())?;
 
+    // Start all services when network is ready.
+    let executor = rt.executor();
+    let network_ready_future = network
+        .subscribe(&NETWORK_STATUS_TOPIC)?
+        .into_future()
+        .map_err(drop)
+        .and_then(move |_s| {
+            info!("Network is ready");
+            // TODO: how to handle errors here?
+            node_service.init().expect("shit happens");
+            executor.spawn(node_service);
+            executor.spawn(txpool_service);
+            executor.spawn(wallet_service);
+            if let Some(console_service) = console_service {
+                executor.spawn(console_service);
+            }
+
+            Ok(())
+        });
+    rt.spawn(network_ready_future);
+
     // Start main event loop
-    rt.block_on(node_service)
+    rt.block_on(network_service)
         .expect("errors are handled earlier");
 
     Ok(())

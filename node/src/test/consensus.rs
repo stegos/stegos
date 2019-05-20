@@ -23,6 +23,7 @@
 
 use super::*;
 use crate::*;
+use std::time::Duration;
 use stegos_blockchain::Block;
 use stegos_consensus::ConsensusMessageBody;
 use stegos_crypto::pbc;
@@ -30,7 +31,7 @@ use stegos_crypto::pbc;
 #[test]
 fn smoke_test() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 1;
+    cfg.blocks_in_epoch = 2;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
@@ -39,9 +40,12 @@ fn smoke_test() {
     assert!(config.chain.stake_epochs > 1);
 
     Sandbox::start(config, |mut s| {
-        let topic = crate::CONSENSUS_TOPIC;
+        // Create one micro block.
         s.poll();
+        s.wait(s.cfg().tx_wait_timeout);
+        s.skip_micro_block();
 
+        let topic = crate::CONSENSUS_TOPIC;
         let height = s.nodes[0].node_service.chain.height();
         let round = s.nodes[0].node_service.chain.view_change();
         let epoch = s.nodes[0].node_service.chain.epoch();
@@ -151,7 +155,7 @@ fn smoke_test() {
 #[test]
 fn autocomit() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 1;
+    cfg.blocks_in_epoch = 2;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
@@ -160,9 +164,12 @@ fn autocomit() {
     assert!(config.chain.stake_epochs > 1);
 
     Sandbox::start(config, |mut s| {
-        let topic = crate::CONSENSUS_TOPIC;
+        // Create one micro block.
         s.poll();
+        s.wait(s.cfg().tx_wait_timeout);
+        s.skip_micro_block();
 
+        let topic = crate::CONSENSUS_TOPIC;
         let height = s.nodes[0].node_service.chain.height();
         let epoch = s.nodes[0].node_service.chain.epoch();
 
@@ -259,7 +266,7 @@ fn autocomit() {
 #[test]
 fn round() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 1;
+    cfg.blocks_in_epoch = 2;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
@@ -268,9 +275,12 @@ fn round() {
     assert!(config.chain.stake_epochs > 1);
 
     Sandbox::start(config, |mut s| {
-        let topic = crate::CONSENSUS_TOPIC;
+        // Create one micro block.
         s.poll();
+        s.wait(s.cfg().tx_wait_timeout);
+        s.skip_micro_block();
 
+        let topic = crate::CONSENSUS_TOPIC;
         let height = s.nodes[0].node_service.chain.height();
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
@@ -360,7 +370,7 @@ fn round() {
 #[test]
 fn multiple_rounds() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 1;
+    cfg.blocks_in_epoch = 2;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
@@ -368,9 +378,12 @@ fn multiple_rounds() {
     };
 
     Sandbox::start(config, |mut s| {
-        let topic = crate::CONSENSUS_TOPIC;
+        // Create one micro block.
         s.poll();
+        s.wait(s.cfg().tx_wait_timeout);
+        s.skip_micro_block();
 
+        let topic = crate::CONSENSUS_TOPIC;
         let view_change = s.nodes[0].node_service.chain.view_change();
         let leader_pk = s.nodes[0].node_service.chain.leader();
         let leader_node = s.node(&leader_pk).unwrap();
@@ -425,7 +438,7 @@ fn multiple_rounds() {
 #[test]
 fn lock() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 1;
+    cfg.blocks_in_epoch = 2;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
@@ -433,9 +446,12 @@ fn lock() {
     };
 
     Sandbox::start(config, |mut s| {
-        let topic = crate::CONSENSUS_TOPIC;
+        // Create one micro block.
         s.poll();
+        s.wait(s.cfg().tx_wait_timeout);
+        s.skip_micro_block();
 
+        let topic = crate::CONSENSUS_TOPIC;
         let height = s.nodes[0].node_service.chain.height();
 
         let mut round = s.nodes[0].node_service.chain.view_change();
@@ -475,8 +491,11 @@ fn lock() {
         s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
         let leader_pk = s.nodes[0].node_service.chain.select_leader(round);
         let leader_node = s.node(&leader_pk).unwrap();
-
         leader_node.poll();
+
+        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+
+        let leader_node = s.node(&leader_pk).unwrap();
         // skip proposal and prevote of last leader.
         let leader_proposal: BlockConsensusMessage =
             leader_node.network_service.get_broadcast(topic);

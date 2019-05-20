@@ -29,6 +29,7 @@ mod requests;
 use crate::*;
 use assert_matches::assert_matches;
 use log::Level;
+use std::time::Duration;
 use stegos_crypto::pbc;
 use stegos_crypto::pbc::VRF;
 use stegos_keychain::KeyChain;
@@ -202,9 +203,7 @@ impl NodeSandbox {
         let chain = Blockchain::testing(cfg.clone().into(), genesis, timestamp)
             .expect("Failed to create blockchain");
         let (mut node_service, node) = NodeService::new(cfg, chain, keychain, network).unwrap();
-        node_service
-            .handle_network_status(NETWORK_READY_TOKEN[..].to_vec())
-            .unwrap();
+        node_service.init().unwrap();
         Self {
             network_service,
             node,

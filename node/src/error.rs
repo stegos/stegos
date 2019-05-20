@@ -57,7 +57,7 @@ pub enum NodeBlockError {
         display = "Expected a macro block, got micro block: height={}, block={}",
         _0, _1
     )]
-    ExpectedKeyBlock(u64, Hash),
+    ExpectedMacroBlock(u64, Hash),
     #[fail(
         display = "Expected a micro block, got macro block: height={}, block={}",
         _0, _1

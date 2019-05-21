@@ -26,6 +26,7 @@
 mod api;
 mod change;
 mod error;
+mod metrics;
 mod transaction;
 mod valueshuffle;
 
@@ -175,7 +176,6 @@ impl WalletService {
     ) -> (Self, Wallet) {
         info!("My wallet key: {}", keys.wallet_pkey.to_hex());
         debug!("My network key: {}", keys.network_pkey.to_hex());
-
         //
         // State.
         //
@@ -242,6 +242,10 @@ impl WalletService {
             service.on_output_created(epoch, output);
         }
 
+        metrics::WALLET_BALANCES
+            .with_label_values(&[&service.keys.wallet_pkey.to_hex()])
+            .set(service.balance());
+
         let api = Wallet { outbox };
 
         (service, api)
@@ -271,6 +275,9 @@ impl WalletService {
         let fee = tx.fee;
         let tx: Transaction = tx.into();
         self.node.send_transaction(tx.clone())?;
+        metrics::WALLET_CREATEAD_PAYMENTS
+            .with_label_values(&[&self.keys.wallet_pkey.to_hex()])
+            .inc();
         //firstly check that no conflict input was found;
         self.add_transaction_interest(tx.into());
 
@@ -319,6 +326,9 @@ impl WalletService {
         self.vs.queue_transaction(&inputs, &outputs, fee)?;
         let saved_tx = SavedTransaction::ValueShuffle(inputs.iter().map(|(h, _)| *h).collect());
         let hash = Hash::digest(&saved_tx);
+        metrics::WALLET_CREATEAD_SECURE_PAYMENTS
+            .with_label_values(&[&self.keys.wallet_pkey.to_hex()])
+            .inc();
         self.add_transaction_interest(saved_tx);
         Ok(hash)
     }
@@ -435,7 +445,7 @@ impl WalletService {
         assert_eq!(self.epoch, epoch);
         let saved_balance = self.balance();
 
-        self.find_commited_txs(&inputs);
+        self.find_committed_txs(&inputs);
         for input in inputs {
             self.on_output_pruned(epoch, input);
         }
@@ -447,6 +457,9 @@ impl WalletService {
         let balance = self.balance();
         if saved_balance != balance {
             debug!("Balance changed");
+            metrics::WALLET_BALANCES
+                .with_label_values(&[&self.keys.wallet_pkey.to_hex()])
+                .set(balance);
             self.notify(WalletNotification::BalanceChanged { balance });
         }
     }
@@ -514,7 +527,7 @@ impl WalletService {
         }
     }
 
-    fn find_commited_txs(&mut self, pruned_inputs: &[Output]) {
+    fn find_committed_txs(&mut self, pruned_inputs: &[Output]) {
         let hash_set: HashSet<Hash> = pruned_inputs.iter().map(Hash::digest).collect();
         for input in &hash_set {
             if let Some(tx_hash) = self.transactions_interest.get(input) {
@@ -533,10 +546,24 @@ impl WalletService {
 
                 let commited = if conflict {
                     warn!("Conflicted transaction processed.");
-                    TransactionCommitted::Committed {}
-                } else {
+
                     TransactionCommitted::ConflictTransactionCommitted {
                         conflicted_output: *input,
+                    }
+                } else {
+                    TransactionCommitted::Committed {}
+                };
+
+                match tx {
+                    SavedTransaction::Regular(_) => {
+                        metrics::WALLET_COMMITTED_PAYMENTS
+                            .with_label_values(&[&self.keys.wallet_pkey.to_hex()])
+                            .inc();
+                    }
+                    SavedTransaction::ValueShuffle(_) => {
+                        metrics::WALLET_COMMITTED_SECURE_PAYMENTS
+                            .with_label_values(&[&self.keys.wallet_pkey.to_hex()])
+                            .inc();
                     }
                 };
                 let msg = WalletResponse::TransactionCommitted(commited);

@@ -28,6 +28,8 @@ futures-stream-select-all-send = "0.1"
 log = "0.4"
 protobuf = "2.6"
 tokio-timer = "0.2"
+lazy_static = "1.2"
+prometheus = "0.6"
 
 [dev-dependencies]
 simple_logger = "1.0"

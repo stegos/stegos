@@ -30,9 +30,7 @@ use futures::stream::Stream;
 use futures::Future;
 use hyper::server::Server;
 use hyper::service::service_fn_ok;
-use hyper::{Body, Request, Response};
 use log::*;
-use prometheus::{self, Encoder};
 use std::path::PathBuf;
 use std::process;
 use std::time::SystemTime;
@@ -46,6 +44,7 @@ use stegos_wallet::WalletService;
 use tokio::runtime::Runtime;
 
 use crate::console::*;
+use crate::report_metrics;
 
 fn load_configuration_file(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
     // Use --config argument for configuration.
@@ -102,28 +101,6 @@ pub fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error
     }
 
     Ok(cfg)
-}
-
-fn report_metrics(_req: Request<Body>) -> Response<Body> {
-    let mut response = Response::builder();
-    let encoder = prometheus::TextEncoder::new();
-    let metric_families = prometheus::gather();
-
-    //
-    // Calculate actual value of BLOCK_IDLE metric.
-    //
-    let block_local_timestamp = stegos_node::metrics::BLOCK_LOCAL_TIMESTAMP.get();
-    if block_local_timestamp > 0 {
-        let timestamp = stegos_node::metrics::time_to_timestamp_ms(SystemTime::now());
-        stegos_node::metrics::BLOCK_IDLE.set(timestamp - block_local_timestamp);
-    }
-    let mut buffer = vec![];
-    encoder.encode(&metric_families, &mut buffer).unwrap();
-    let res = response
-        .header("Content-Type", encoder.format_type())
-        .body(Body::from(buffer))
-        .unwrap();
-    res
 }
 
 fn run() -> Result<(), Error> {

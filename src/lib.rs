@@ -27,13 +27,16 @@ pub mod money;
 
 use failure::format_err;
 use failure::Error;
+use hyper::{Body, Request, Response};
 use log::*;
 use log4rs::append::console::ConsoleAppender;
 use log4rs::config::{Appender, Config as LogConfig, Logger, Root};
 use log4rs::encode::pattern::PatternEncoder;
 use log4rs::{Error as LogError, Handle as LogHandle};
+use prometheus::{self, Encoder};
 use resolve::{config::DnsConfig, record::Srv, resolver};
 use std::path::Path;
+use std::time::SystemTime;
 use stegos_blockchain::Block;
 use stegos_crypto::hash::Hash;
 use stegos_serialization::traits::*;
@@ -123,4 +126,26 @@ pub fn resolve_pool(cfg: &mut config::Config) -> Result<(), Error> {
         }
     }
     Ok(())
+}
+
+pub fn report_metrics(_req: Request<Body>) -> Response<Body> {
+    let mut response = Response::builder();
+    let encoder = prometheus::TextEncoder::new();
+    let metric_families = prometheus::gather();
+
+    //
+    // Calculate actual value of BLOCK_IDLE metric.
+    //
+    let block_local_timestamp = stegos_node::metrics::BLOCK_LOCAL_TIMESTAMP.get();
+    if block_local_timestamp > 0 {
+        let timestamp = stegos_node::metrics::time_to_timestamp_ms(SystemTime::now());
+        stegos_node::metrics::BLOCK_IDLE.set(timestamp - block_local_timestamp);
+    }
+    let mut buffer = vec![];
+    encoder.encode(&metric_families, &mut buffer).unwrap();
+    let res = response
+        .header("Content-Type", encoder.format_type())
+        .body(Body::from(buffer))
+        .unwrap();
+    res
 }

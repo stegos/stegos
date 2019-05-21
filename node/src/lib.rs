@@ -632,6 +632,7 @@ impl NodeService {
 
         self.chain
             .set_view_change(proof.chain.view_change + 1, proof.proof);
+        self.update_validation_status();
         Ok(())
     }
 

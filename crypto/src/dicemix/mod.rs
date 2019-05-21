@@ -105,6 +105,11 @@ impl ParticipantID {
     pub fn new(pkey: pbc::secure::PublicKey, seed: [u8; 32]) -> Self {
         ParticipantID { pkey, seed }
     }
+
+    pub fn from_pk(pkey: pbc::secure::PublicKey) -> Self {
+        let seed = [0u8; 32];
+        ParticipantID { pkey, seed }
+    }
 }
 
 impl Hashable for ParticipantID {
@@ -818,12 +823,16 @@ mod tests {
         let (sk1, pk1) = pbc::secure::make_deterministic_keys(b"User1");
         let (sk2, pk2) = pbc::secure::make_deterministic_keys(b"User2");
         let (sk3, pk3) = pbc::secure::make_deterministic_keys(b"User3");
-        let all_participants = vec![pk1, pk2, pk3];
+        let all_participants = vec![
+            ParticipantID::from_pk(pk1),
+            ParticipantID::from_pk(pk2),
+            ParticipantID::from_pk(pk3),
+        ];
         dbg!(&all_participants);
 
-        let participants_1 = vec![pk2, pk3];
-        let participants_2 = vec![pk1, pk3];
-        let participants_3 = vec![pk1, pk2];
+        let participants_1 = vec![ParticipantID::from_pk(pk2), ParticipantID::from_pk(pk3)];
+        let participants_2 = vec![ParticipantID::from_pk(pk1), ParticipantID::from_pk(pk3)];
+        let participants_3 = vec![ParticipantID::from_pk(pk1), ParticipantID::from_pk(pk2)];
 
         let sess = Hash::from_str("session1");
         let (sess_sk1, sess_pk1) = curve1174::make_deterministic_keys(b"User1-session1");
@@ -831,20 +840,38 @@ mod tests {
         let (sess_sk3, sess_pk3) = curve1174::make_deterministic_keys(b"User3-session1");
 
         let mut npk1 = HashMap::new();
-        npk1.insert(pk2, sess_pk2);
-        npk1.insert(pk3, sess_pk3);
+        npk1.insert(ParticipantID::from_pk(pk2), sess_pk2);
+        npk1.insert(ParticipantID::from_pk(pk3), sess_pk3);
 
         let mut npk2 = HashMap::new();
-        npk2.insert(pk1, sess_pk1);
-        npk2.insert(pk3, sess_pk3);
+        npk2.insert(ParticipantID::from_pk(pk1), sess_pk1);
+        npk2.insert(ParticipantID::from_pk(pk3), sess_pk3);
 
         let mut npk3 = HashMap::new();
-        npk3.insert(pk1, sess_pk1);
-        npk3.insert(pk2, sess_pk2);
+        npk3.insert(ParticipantID::from_pk(pk1), sess_pk1);
+        npk3.insert(ParticipantID::from_pk(pk2), sess_pk2);
 
-        let shared_cloaking_1 = dc_keys(&all_participants, &npk1, &pk1, &sess_sk1, &sess);
-        let shared_cloaking_2 = dc_keys(&participants_2, &npk2, &pk2, &sess_sk2, &sess);
-        let shared_cloaking_3 = dc_keys(&participants_3, &npk3, &pk3, &sess_sk3, &sess);
+        let shared_cloaking_1 = dc_keys(
+            &all_participants,
+            &npk1,
+            &ParticipantID::from_pk(pk1),
+            &sess_sk1,
+            &sess,
+        );
+        let shared_cloaking_2 = dc_keys(
+            &participants_2,
+            &npk2,
+            &ParticipantID::from_pk(pk2),
+            &sess_sk2,
+            &sess,
+        );
+        let shared_cloaking_3 = dc_keys(
+            &participants_3,
+            &npk3,
+            &ParticipantID::from_pk(pk3),
+            &sess_sk3,
+            &sess,
+        );
         dbg!(&shared_cloaking_1);
         dbg!(&shared_cloaking_2);
         dbg!(&shared_cloaking_3);
@@ -852,9 +879,27 @@ mod tests {
         let seed = gen_cell_seed(1, 1, 2);
         dbg!(&seed);
 
-        let pad_1 = dc_slot_pad(&all_participants, &pk1, &shared_cloaking_1, &seed).clone();
-        let pad_2 = dc_slot_pad(&participants_2, &pk2, &shared_cloaking_2, &seed).clone();
-        let pad_3 = dc_slot_pad(&participants_3, &pk3, &shared_cloaking_3, &seed).clone();
+        let pad_1 = dc_slot_pad(
+            &all_participants,
+            &ParticipantID::from_pk(pk1),
+            &shared_cloaking_1,
+            &seed,
+        )
+        .clone();
+        let pad_2 = dc_slot_pad(
+            &participants_2,
+            &ParticipantID::from_pk(pk2),
+            &shared_cloaking_2,
+            &seed,
+        )
+        .clone();
+        let pad_3 = dc_slot_pad(
+            &participants_3,
+            &ParticipantID::from_pk(pk3),
+            &shared_cloaking_3,
+            &seed,
+        )
+        .clone();
         dbg!(&pad_1);
         dbg!(&pad_2);
         dbg!(&pad_3);
@@ -873,7 +918,7 @@ mod tests {
             max_cells,
             &msg_1[..],
             &all_participants,
-            &pk1,
+            &ParticipantID::from_pk(pk1),
             &shared_cloaking_1,
         );
 
@@ -889,7 +934,7 @@ mod tests {
             max_cells,
             &msg_2[..],
             &all_participants,
-            &pk2,
+            &ParticipantID::from_pk(pk2),
             &shared_cloaking_2,
         );
         println!("Sheet_2");
@@ -903,7 +948,7 @@ mod tests {
             max_cells,
             &msg_3[..],
             &all_participants,
-            &pk3,
+            &ParticipantID::from_pk(pk3),
             &shared_cloaking_3,
         );
         println!("Sheet_3");
@@ -959,9 +1004,9 @@ mod tests {
         // -------------------------------------------------
         // Try a real decode on the shared messages
         let mut mats = HashMap::new();
-        mats.insert(pk1, vec![sheet_1.clone()]);
-        mats.insert(pk2, vec![sheet_2.clone()]);
-        mats.insert(pk3, vec![sheet_3.clone()]);
+        mats.insert(ParticipantID::from_pk(pk1), vec![sheet_1.clone()]);
+        mats.insert(ParticipantID::from_pk(pk2), vec![sheet_2.clone()]);
+        mats.insert(ParticipantID::from_pk(pk3), vec![sheet_3.clone()]);
 
         let p_excl = Vec::<ParticipantID>::new();
         let k_excl: HashMap<ParticipantID, HashMap<ParticipantID, Hash>> = HashMap::new();
@@ -985,7 +1030,7 @@ mod tests {
         let msgs = dc_decode(
             &all_participants,
             &mats,
-            &pk1,
+            &ParticipantID::from_pk(pk1),
             1,
             max_cells,
             &p_excl,
@@ -1073,7 +1118,7 @@ mod tests {
             let seed = format!("User_{}", ix).into_bytes();
             let (sk, pk) = pbc::secure::make_deterministic_keys(&seed);
             // skeys.push(sk);
-            participants.push(pk);
+            participants.push(ParticipantID::from_pk(pk));
         }
         let my_id = participants[0];
 

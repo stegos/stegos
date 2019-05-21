@@ -283,6 +283,7 @@ where
                     return;
                 }
                 if self.gatekeeper.is_network_ready() {
+                    // Err shouldn't happen, since channel is just subscribed
                     if let Err(e) = handler.clone().unbounded_send(NETWORK_READY_TOKEN.to_vec()) {
                         debug!(target: "stegos_network::gatekeeper", "Error sending Network::Ready event: error={}", e);
                     }
@@ -549,16 +550,7 @@ where
                     .consumers
                     .entry(topic_hash.clone())
                     .or_insert(SmallVec::new());
-                consumers.retain({
-                    move |c| {
-                        if let Err(e) = c.unbounded_send(NETWORK_READY_TOKEN.to_vec()) {
-                            error!(target: "stegos_network::gatekeeper", "Error sending network status to consumer: {}", e);
-                            false
-                        } else {
-                            true
-                        }
-                    }
-                })
+                consumers.retain(move |c| c.unbounded_send(NETWORK_READY_TOKEN.to_vec()).is_ok());
             }
             GatekeeperOutEvent::Message { .. } => {}
             GatekeeperOutEvent::Connected { .. } => {}

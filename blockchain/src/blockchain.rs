@@ -24,19 +24,18 @@
 use crate::awards::{Awards, ValidatorAwardState};
 use crate::block::*;
 use crate::config::*;
+use crate::election::mix;
 use crate::election::ElectionInfo;
-use crate::election::{self, mix, ElectionResult};
+use crate::election::{self, ElectionResult};
 use crate::error::*;
 use crate::escrow::*;
 use crate::merkle::*;
 use crate::metrics;
-use crate::multisignature::{check_multi_signature, create_multi_signature};
+use crate::multisignature::check_multi_signature;
 use crate::mvcc::MultiVersionedMap;
 use crate::output::*;
 use crate::storage::ListDb;
-use crate::transaction::{
-    CoinbaseTransaction, PaymentTransaction, ServiceAwardTransaction, Transaction,
-};
+use crate::transaction::{CoinbaseTransaction, ServiceAwardTransaction, Transaction};
 use crate::view_changes::ViewChangeProof;
 use bitvector::BitVector;
 use failure::Error;
@@ -49,7 +48,6 @@ use stegos_crypto::curve1174::{ECp, Fr, PublicKey, SecretKey, G};
 use stegos_crypto::hash::*;
 use stegos_crypto::pbc::secure::VRF;
 use stegos_crypto::{curve1174, pbc};
-use stegos_keychain::KeyChain;
 
 pub type ViewCounter = u32;
 pub type ValidatorId = u32;
@@ -1419,216 +1417,18 @@ impl Blockchain {
     }
 }
 
-pub fn sign_fake_macro_block(block: &mut MacroBlock, chain: &Blockchain, keychains: &[KeyChain]) {
-    let block_hash = Hash::digest(block);
-    let validators = chain.validators();
-    let mut signatures: BTreeMap<pbc::PublicKey, pbc::Signature> = BTreeMap::new();
-    for keychain in keychains {
-        let sig = pbc::sign_hash(&block_hash, &keychain.network_skey);
-        signatures.insert(keychain.network_pkey.clone(), sig);
-    }
-    let (multisig, multisigmap) = create_multi_signature(&validators, &signatures);
-    block.multisig = multisig;
-    block.multisigmap = multisigmap;
-}
-
-pub fn create_fake_macro_block(
-    chain: &Blockchain,
-    keychains: &[KeyChain],
-    timestamp: SystemTime,
-) -> (MacroBlock, Vec<Transaction>) {
-    let view_change = chain.view_change();
-    let key = chain.select_leader(view_change);
-    let keys = keychains.iter().find(|p| p.network_pkey == key).unwrap();
-    let (mut block, extra_transactions) = chain.create_macro_block(
-        view_change,
-        &keys.wallet_pkey,
-        &keys.network_skey,
-        keys.network_pkey,
-        timestamp,
-    );
-    sign_fake_macro_block(&mut block, chain, keychains);
-    (block, extra_transactions)
-}
-
-pub fn create_fake_micro_block(
-    chain: &Blockchain,
-    keychains: &[KeyChain],
-    timestamp: SystemTime,
-) -> (MicroBlock, Vec<Hash>, Vec<Hash>) {
-    let epoch = chain.epoch();
-    let offset = chain.offset();
-    let view_change = chain.view_change();
-    let key = chain.select_leader(view_change);
-    let keys = keychains.iter().find(|p| p.network_pkey == key).unwrap();
-    let previous = chain.last_block_hash().clone();
-    let seed = mix(chain.last_random(), view_change);
-    let random = pbc::make_VRF(&keys.network_skey, &seed);
-    let block_reward = chain.cfg().block_reward;
-    let mut input_hashes: Vec<Hash> = Vec::new();
-    let mut inputs: Vec<Output> = Vec::new();
-    let mut monetary_balance: i64 = 0;
-    let mut staking_balance: i64 = 0;
-    for input_hash in chain.unspent() {
-        let input = chain
-            .output_by_hash(&input_hash)
-            .expect("no disk errors")
-            .expect("exists");
-        if cfg!(debug_assertions) {
-            input.validate().expect("Valid input");
-        }
-        match input {
-            Output::PaymentOutput(ref o) => {
-                let payload = o.decrypt_payload(&keys.wallet_skey).unwrap();
-                monetary_balance += payload.amount;
-            }
-            Output::PublicPaymentOutput(ref o) => {
-                monetary_balance += o.amount;
-            }
-            Output::StakeOutput(ref o) => {
-                staking_balance += o.amount;
-            }
-        }
-        input_hashes.push(input_hash.clone());
-        inputs.push(input);
-    }
-
-    let mut outputs: Vec<Output> = Vec::new();
-    let mut outputs_gamma = Fr::zero();
-    // Payments.
-    if monetary_balance > 0 {
-        let (output, output_gamma) =
-            PaymentOutput::new(&keys.wallet_pkey, monetary_balance).expect("keys are valid");
-        outputs.push(Output::PaymentOutput(output));
-        outputs_gamma += output_gamma;
-    }
-
-    // Stakes.
-    if staking_balance > 0 {
-        let output = StakeOutput::new(
-            &keys.wallet_pkey,
-            &keys.network_skey,
-            &keys.network_pkey,
-            staking_balance,
-        )
-        .expect("keys are valid");
-        outputs.push(Output::StakeOutput(output));
-    }
-
-    let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
-    let block_fee: i64 = 0;
-    let tx = PaymentTransaction::new(
-        &keys.wallet_skey,
-        &inputs,
-        &outputs,
-        &outputs_gamma,
-        block_fee,
-    )
-    .expect("Invalid keys");
-    tx.validate(&inputs).expect("Invalid transaction");
-
-    let coinbase_tx = {
-        let data = PaymentPayloadData::Comment(format!("Block reward"));
-        let (output, gamma) =
-            PaymentOutput::with_payload(&keys.wallet_pkey, block_reward, data, None)
-                .expect("invalid keys");
-        CoinbaseTransaction {
-            block_reward,
-            block_fee,
-            gamma: -gamma,
-            txouts: vec![Output::PaymentOutput(output)],
-        }
-    };
-    coinbase_tx.validate().expect("Invalid transaction");
-
-    let transactions: Vec<Transaction> = vec![coinbase_tx.into(), tx.into()];
-
-    let mut block = MicroBlock::new(
-        previous,
-        epoch,
-        offset,
-        view_change,
-        None,
-        keys.network_pkey,
-        random,
-        timestamp,
-        transactions,
-    );
-    block.sign(&keys.network_skey, &keys.network_pkey);
-    (block, input_hashes, output_hashes)
-}
-
-pub fn create_micro_block_with_coinbase(
-    chain: &Blockchain,
-    keychains: &[KeyChain],
-    timestamp: SystemTime,
-) -> MicroBlock {
-    let previous = chain.last_block_hash().clone();
-    let epoch = chain.epoch();
-    let offset = chain.offset();
-    let view_change = chain.view_change();
-    let key = chain.select_leader(view_change);
-    let keys = keychains.iter().find(|p| p.network_pkey == key).unwrap();
-    let seed = mix(chain.last_random(), view_change);
-    let random = pbc::make_VRF(&keys.network_skey, &seed);
-    let mut txouts: Vec<Output> = Vec::new();
-    let mut gamma = Fr::zero();
-
-    let block_fee = 0;
-    let block_reward = chain.cfg().block_reward;
-    // Create outputs for fee and rewards.
-    for (amount, comment) in vec![(block_fee, "fee"), (block_reward, "reward")] {
-        if amount <= 0 {
-            continue;
-        }
-
-        let data = PaymentPayloadData::Comment(format!("Block {}", comment));
-        let (output_fee, gamma_fee) =
-            PaymentOutput::with_payload(&keys.wallet_pkey, amount, data.clone(), None)
-                .expect("invalid keys");
-        gamma -= gamma_fee;
-
-        info!(
-            "Created {} UTXO: hash={}, amount={}, data={:?}",
-            comment,
-            Hash::digest(&output_fee),
-            amount,
-            data
-        );
-        txouts.push(Output::PaymentOutput(output_fee));
-    }
-
-    let coinbase = CoinbaseTransaction {
-        block_reward,
-        block_fee,
-        gamma,
-        txouts,
-    };
-    let txs = vec![coinbase.into()];
-    let mut block = MicroBlock::new(
-        previous,
-        epoch,
-        offset,
-        view_change,
-        None,
-        keys.network_pkey,
-        random,
-        timestamp,
-        txs,
-    );
-    block.sign(&keys.network_skey, &keys.network_pkey);
-    block
-}
-
 #[cfg(test)]
 pub mod tests {
     use super::*;
 
     use crate::genesis::genesis;
+    use crate::test;
     use rand::distributions::Alphanumeric;
     use rand::{thread_rng, Rng};
     use simple_logger;
+    use std::collections::BTreeMap;
     use std::time::{Duration, SystemTime};
+    use stegos_keychain::KeyChain;
     use tempdir::TempDir;
 
     #[test]
@@ -1726,7 +1526,7 @@ pub mod tests {
             //
             timestamp += Duration::from_millis(1);
             let (block, input_hashes, output_hashes) =
-                create_fake_micro_block(&mut chain, &keychains, timestamp);
+                test::create_fake_micro_block(&mut chain, &keychains, timestamp);
             let hash = Hash::digest(&block);
             let offset = chain.offset();
             chain
@@ -1745,7 +1545,7 @@ pub mod tests {
             // Empty block.
             //
             timestamp += Duration::from_millis(1);
-            let block = create_micro_block_with_coinbase(&mut chain, &keychains, timestamp);
+            let block = test::create_micro_block_with_coinbase(&mut chain, &keychains, timestamp);
             let hash = Hash::digest(&block);
             let offset = chain.offset();
             chain
@@ -1761,7 +1561,7 @@ pub mod tests {
             // Create a macro block.
             timestamp += Duration::from_millis(1);
             let (block, extra_transactions) =
-                create_fake_macro_block(&chain, &keychains, timestamp);
+                test::create_fake_macro_block(&chain, &keychains, timestamp);
             let hash = Hash::digest(&block);
 
             // Collect unspent outputs.
@@ -1839,7 +1639,7 @@ pub mod tests {
         // Register a micro block.
         timestamp += Duration::from_millis(1);
         let (block1, input_hashes1, output_hashes1) =
-            create_fake_micro_block(&mut chain, &keychains, timestamp);
+            test::create_fake_micro_block(&mut chain, &keychains, timestamp);
         chain
             .push_micro_block(block1, timestamp)
             .expect("block is valid");
@@ -1863,7 +1663,7 @@ pub mod tests {
         // Register one more micro block.
         timestamp += Duration::from_millis(1);
         let (block2, input_hashes2, output_hashes2) =
-            create_fake_micro_block(&mut chain, &keychains, timestamp);
+            test::create_fake_micro_block(&mut chain, &keychains, timestamp);
         chain
             .push_micro_block(block2, timestamp)
             .expect("block is valid");
@@ -1952,7 +1752,7 @@ pub mod tests {
         assert!(blockchain.epoch() > 0);
         for _offset in 2..12 {
             timestamp += Duration::from_millis(1);
-            let block = create_micro_block_with_coinbase(&blockchain, &keychains, timestamp);
+            let block = test::create_micro_block_with_coinbase(&blockchain, &keychains, timestamp);
             blockchain
                 .push_micro_block(block, timestamp)
                 .expect("Invalid block");

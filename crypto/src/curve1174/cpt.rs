@@ -484,7 +484,8 @@ pub fn sign_hash(hmsg: &Hash, skey: &SecretKey) -> SchnorrSig {
     let K = &k * *G;
     let pkey = PublicKey::from(skey);
     let h = Hash::digest_chain(&[&K, &pkey, hmsg]);
-    let u = k + Fr::from(h) * Fr::from(skey);
+    let mut u = k + Fr::from(h) * Fr::from(skey);
+    u.clear_wau();
     SchnorrSig {
         u: u.unscaled(),
         K: Pt::from(K),
@@ -525,7 +526,8 @@ pub fn sign_hash_with_kval(
     let my_K = k_val * *G;
     let pkey = PublicKey::from(Pt::from(*sumPKey));
     let h = Hash::digest_chain(&[sumK, &pkey, hmsg]);
-    let u = k_val + Fr::from(h) * Fr::from(skey);
+    let mut u = k_val + Fr::from(h) * Fr::from(skey);
+    u.clear_wau();
     SchnorrSig {
         u: u.unscaled(),
         K: Pt::from(my_K),

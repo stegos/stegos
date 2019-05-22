@@ -111,6 +111,13 @@ macro_rules! field_impl {
                 }
             }
 
+            pub fn clear_wau(&mut self) {
+                match self {
+                    $name::Scaled(v) => v.clear_wau(),
+                    $name::Unscaled(v) => v.clear_wau(),
+                }
+            }
+
             pub fn maybe_zap(&mut self) {
                 match self {
                     $name::Scaled(v) => v.maybe_zap(),

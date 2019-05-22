@@ -62,6 +62,10 @@ impl U256 {
         self.1 = true;
     }
 
+    pub fn clear_wau(&mut self) {
+        self.1 = false;
+    }
+
     pub fn maybe_zap(&mut self) {
         if Self::has_wau(self) {
             Self::zap(self);

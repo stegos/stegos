@@ -21,13 +21,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::config::ChainConfig;
 use crate::error::*;
 use crate::mempool::Mempool;
 use failure::Error;
-use log::*;
 use std::time::SystemTime;
-use stegos_blockchain::{Blockchain, MacroBlock, Output, Transaction, TransactionError};
+use stegos_blockchain::{Blockchain, Output, Transaction, TransactionError};
 use stegos_crypto::hash::Hash;
 
 ///
@@ -103,70 +101,6 @@ pub(crate) fn validate_external_transaction(
         }
     }
 
-    Ok(())
-}
-
-fn vetted_timestamp(
-    block: &MacroBlock,
-    cfg: &ChainConfig,
-    last_block_time: SystemTime,
-) -> Result<(), Error> {
-    let timestamp = SystemTime::now();
-
-    if block.header.base.timestamp <= last_block_time {
-        return Err(
-            NodeBlockError::OutdatedBlock(block.header.base.timestamp, last_block_time).into(),
-        );
-    }
-
-    if block.header.base.timestamp >= timestamp {
-        let duration = block
-            .header
-            .base
-            .timestamp
-            .duration_since(timestamp)
-            .unwrap();
-
-        if duration > cfg.macro_block_timeout {
-            return Err(NodeBlockError::OutOfSyncTimestamp(
-                block.header.base.height,
-                Hash::digest(block),
-                block.header.base.timestamp,
-                timestamp,
-            )
-            .into());
-        }
-    }
-
-    Ok(())
-}
-
-///
-/// Validate proposed macro block.
-///
-pub(crate) fn validate_proposed_macro_block(
-    cfg: &ChainConfig,
-    chain: &Blockchain,
-    view_change: u32,
-    block_hash: Hash,
-    block: &MacroBlock,
-) -> Result<(), Error> {
-    debug_assert_eq!(&Hash::digest(block), &block_hash);
-
-    // Ensure that block was produced at round lower than current.
-    if block.header.base.view_change > view_change {
-        return Err(NodeBlockError::OutOfSyncViewChange(
-            block.header.base.height,
-            block_hash,
-            block.header.base.view_change,
-            view_change,
-        )
-        .into());
-    }
-    vetted_timestamp(block, cfg, chain.last_macro_block_timestamp())?;
-    chain.validate_macro_block(block, block.header.base.timestamp, true)?;
-
-    debug!("Key block proposal is valid: block={:?}", block_hash);
     Ok(())
 }
 

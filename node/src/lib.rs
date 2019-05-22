@@ -26,6 +26,7 @@ mod error;
 mod loader;
 mod mempool;
 pub mod metrics;
+mod proposal;
 pub mod protos;
 #[cfg(test)]
 mod test;
@@ -1009,54 +1010,6 @@ impl NodeService {
         Ok(())
     }
 
-    /// Handler for new epoch creation procedure.
-    /// This method called only on leader side, and when consensus is active.
-    /// Leader should create a KeyBlock based on last random provided by VRF.
-    fn create_macro_block(
-        blockchain: &Blockchain,
-        view_change: u32,
-        network_skey: &pbc::SecretKey,
-        network_pkey: &pbc::PublicKey,
-    ) -> MacroBlock {
-        let timestamp = SystemTime::now();
-        let seed = mix(blockchain.last_random(), view_change);
-        let random = pbc::make_VRF(&network_skey, &seed);
-
-        let previous = blockchain.last_block_hash();
-        let height = blockchain.height();
-        let epoch = blockchain.epoch() + 1;
-        let base = BaseBlockHeader::new(VERSION, previous, height, view_change, timestamp, random);
-        debug!(
-            "Creating a new macro block proposal: height={}, view_change={}, epoch={}",
-            height,
-            view_change,
-            blockchain.epoch() + 1,
-        );
-
-        let validators = blockchain.validators();
-        let mut block = MacroBlock::empty(base, network_pkey.clone());
-
-        let block_hash = Hash::digest(&block);
-
-        // Create initial multi-signature.
-        let (multisig, multisigmap) =
-            create_proposal_signature(&block_hash, network_skey, network_pkey, validators);
-        block.body.multisig = multisig;
-        block.body.multisigmap = multisigmap;
-
-        // Validate the block via blockchain (just double-checking here).
-        blockchain
-            .validate_macro_block(&block, timestamp, true)
-            .expect("proposed macro block is valid");
-
-        info!(
-            "Created a new macro block proposal: height={}, view_change={}, epoch={}, hash={}",
-            height, view_change, epoch, block_hash
-        );
-
-        block
-    }
-
     /// Send block to network.
     fn send_sealed_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
@@ -1233,7 +1186,13 @@ impl NodeService {
 
     fn validate_consensus_message(&self, msg: &BlockConsensusMessage) -> Result<(), Error> {
         let validate_request = |request_hash: Hash, block: &MacroBlock, round| {
-            validate_proposed_macro_block(&self.cfg, &self.chain, round, request_hash, block)
+            proposal::validate_proposed_macro_block(
+                &self.cfg,
+                &self.chain,
+                round,
+                request_hash,
+                block,
+            )
         };
         // Validate signature and content.
         msg.validate(validate_request)?;
@@ -1320,7 +1279,12 @@ impl NodeService {
         let network_skey = &self.keys.network_skey;
         let view_change = consensus.round();
         let create_macro_block = || {
-            let block = Self::create_macro_block(chain, view_change, network_skey, network_pkey);
+            let block = proposal::create_macro_block_proposal(
+                chain,
+                view_change,
+                network_skey,
+                network_pkey,
+            );
             let proof = ();
             (block, proof)
         };

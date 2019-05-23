@@ -266,7 +266,7 @@ mod tests {
         check_keying(&skey, &pkey).expect("Random keying failed");
         let msg = hash::hash_nbytes(72, b"This is a test");
         let mchk = Hash::from_vector(&msg);
-        let payload = aes_encrypt(&msg, &pkey).expect("AES Encryption failed");
+        let (payload, _rvalue) = aes_encrypt(&msg, &pkey).expect("AES Encryption failed");
         let echk = Hash::from_vector(&payload.ctxt);
         assert!(mchk != echk, "AES Encryption produced identity mapping");
         let dmsg = aes_decrypt(&payload, &skey).unwrap();
@@ -373,7 +373,7 @@ pub fn curve1174_tests() {
     use crate::hash;
     let msg = hash::hash_nbytes(72, b"This is a test");
     println!("msg = {}", Hash::from_vector(&msg));
-    let payload = aes_encrypt(&msg, &pkey).unwrap();
+    let (payload, _rvalue) = aes_encrypt(&msg, &pkey).unwrap();
     println!("cmsg = {}", Hash::from_vector(&payload.ctxt));
     let dmsg = aes_decrypt(&payload, &skey).unwrap();
     println!("dmsg = {}", Hash::from_vector(&dmsg));

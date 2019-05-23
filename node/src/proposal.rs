@@ -50,6 +50,7 @@ pub fn create_macro_block_proposal(
     let (block, transactions) = chain.create_macro_block(
         view_change,
         recipient_pkey,
+        recipient_pkey,
         network_skey,
         network_pkey.clone(),
         timestamp,

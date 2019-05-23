@@ -802,10 +802,12 @@ mod tests {
     fn outputs() {
         let (_skey1, pkey1) = curve1174::make_random_keys();
         let (network_skey1, network_pkey1) = pbc::make_random_keys();
+        let (_spender_skey, spender_pkey) = curve1174::make_random_keys();
 
         let amount = 1_000_000;
 
-        let (output, _gamma) = Output::new_payment(&pkey1, amount).expect("keys are valid");
+        let (output, _gamma, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey1, amount).expect("keys are valid");
         roundtrip(&output);
 
         let output = Output::new_stake(&pkey1, &network_skey1, &network_pkey1, amount)
@@ -820,16 +822,19 @@ mod tests {
     fn mktransaction() -> PaymentTransaction {
         let (skey1, pkey1) = curve1174::make_random_keys();
         let (_skey2, pkey2) = curve1174::make_random_keys();
+        let (_spender_skey, spender_pkey) = curve1174::make_random_keys();
 
         let amount: i64 = 1_000_000;
         let fee: i64 = 0;
 
         // "genesis" output by 0
-        let (output0, _delta0) = Output::new_payment(&pkey1, amount).expect("keys are valid");
+        let (output0, _gamma0, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey1, amount).expect("keys are valid");
 
         // Transaction from 1 to 2
         let inputs1 = [output0];
-        let (output11, gamma11) = Output::new_payment(&pkey2, amount).expect("keys are valid");
+        let (output11, gamma11, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey2, amount).expect("keys are valid");
 
         roundtrip(&output11);
         roundtrip(&gamma11);
@@ -849,7 +854,10 @@ mod tests {
     #[test]
     fn coinbase_transaction() {
         let (_skey, pkey) = curve1174::make_random_keys();
-        let (output, gamma) = Output::new_payment(&pkey, 100).expect("Invalid keys");
+        let (_spender_skey, spender_pkey) = curve1174::make_random_keys();
+
+        let (output, gamma, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey, 100).expect("Invalid keys");
         let coinbase = CoinbaseTransaction {
             block_reward: 15,
             block_fee: 100,
@@ -891,6 +899,7 @@ mod tests {
     fn micro_blocks() {
         let (skey, pkey) = curve1174::make_random_keys();
         let (skeypbc, pkeypbc) = pbc::make_random_keys();
+        let (_spender_skey, spender_pkey) = curve1174::make_random_keys();
 
         let epoch: u64 = 10;
         let timestamp = SystemTime::now();
@@ -907,7 +916,7 @@ mod tests {
 
         // Transactions.
         let (tx, _inputs, _outputs) =
-            PaymentTransaction::new_test(&skey, &pkey, 300, 2, 100, 1, 100)
+            PaymentTransaction::new_test(&spender_pkey, &skey, &pkey, 300, 2, 100, 1, 100)
                 .expect("Invalid transaction");
         let transactions: Vec<Transaction> = vec![tx.into()];
 
@@ -937,6 +946,7 @@ mod tests {
         let (_skey1, pkey1) = curve1174::make_random_keys();
         let (_skey2, pkey2) = curve1174::make_random_keys();
         let (skeypbc, pkeypbc) = pbc::make_random_keys();
+        let (_spender_skey, spender_pkey) = curve1174::make_random_keys();
 
         let epoch: u64 = 10;
         let timestamp = SystemTime::now();
@@ -946,11 +956,13 @@ mod tests {
         let previous = Hash::digest(&"test".to_string());
 
         // "genesis" output by 0
-        let (output0, gamma0) = Output::new_payment(&pkey1, amount).unwrap();
+        let (output0, gamma0, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey1, amount).unwrap();
 
         // Transaction from 1 to 2
         let inputs1 = [Hash::digest(&output0)];
-        let (output1, gamma1) = Output::new_payment(&pkey2, amount).unwrap();
+        let (output1, gamma1, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey2, amount).unwrap();
         let outputs1 = [output1];
         let gamma = gamma0 - gamma1;
 

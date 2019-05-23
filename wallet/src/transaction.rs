@@ -230,8 +230,13 @@ where
             data.validate()?;
             trace!("Creating payment UTXO...");
 
-            let (output1, gamma1) =
-                PaymentOutput::with_payload(recipient, amount, data.clone(), locked_timestamp)?;
+            let (output1, gamma1, _rvalue) = PaymentOutput::with_payload(
+                sender_pkey,
+                recipient,
+                amount,
+                data.clone(),
+                locked_timestamp,
+            )?;
             let output1_hash = Hash::digest(&output1);
             info!(
                 "Created payment UTXO: hash={}, recipient={}, amount={}, data={:?}, locked={}",
@@ -263,7 +268,7 @@ where
         trace!("Creating change UTXO...");
         let data = PaymentPayloadData::Comment("Change".to_string());
         let (output2, gamma2) =
-            PaymentOutput::with_payload(sender_pkey, change, data.clone(), None)?;
+            PaymentOutput::with_payload(sender_pkey, sender_pkey, change, data.clone(), None)?;
         info!(
             "Created change UTXO: hash={}, recipient={}, change={}, data={:?}",
             Hash::digest(&output2),
@@ -364,7 +369,7 @@ where
     if change > 0 {
         // Create an output for change
         trace!("Creating change UTXO...");
-        let (output2, gamma2) = Output::new_payment(sender_pkey, change)?;
+        let (output2, gamma2, _rvalue) = Output::new_payment(sender_pkey, sender_pkey, change)?;
         info!(
             "Created change UTXO: hash={}, recipient={}, change={}",
             Hash::digest(&output2),
@@ -455,7 +460,7 @@ where
 
     // Create an output for payment
     trace!("Creating payment UTXO...");
-    let (output1, gamma1) = Output::new_payment(sender_pkey, amount)?;
+    let (output1, gamma1, _rvalue) = Output::new_payment(sender_pkey, sender_pkey, amount)?;
     info!(
         "Created payment UTXO: hash={}, recipient={}, amount={}",
         Hash::digest(&output1),
@@ -609,7 +614,8 @@ where
     data.validate()?;
     trace!("Creating payment UTXO...");
 
-    let (output, gamma) = PaymentOutput::with_payload(recipient, total_amount, data.clone(), None)?;
+    let (output, gamma) =
+        PaymentOutput::with_payload(recipient, recipient, total_amount, data.clone(), None)?;
     let output1_hash = Hash::digest(&output);
     info!(
         "Created payment UTXO: hash={}, recipient={}, amount={}, data={:?}",

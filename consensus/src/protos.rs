@@ -238,7 +238,7 @@ mod tests {
         );
         // Transactions.
         let (tx, _inputs, _outputs) =
-            PaymentTransaction::new_test(&skey, &pkey, 300, 2, 100, 1, 100)
+            PaymentTransaction::new_test(&pkey, &skey, &pkey, 300, 2, 100, 1, 100)
                 .expect("Invalid transaction");
         let transactions: Vec<Transaction> = vec![tx.into()];
 

@@ -216,6 +216,9 @@ impl Mempool {
         // Coinbase Transaction.
         //
         {
+            // TODO: use the correct spender_pkey here
+            let spender_pkey = recipient_pkey;
+
             let mut txouts: Vec<Output> = Vec::new();
             let mut gamma = Fr::zero();
 
@@ -226,9 +229,14 @@ impl Mempool {
                 }
 
                 let data = PaymentPayloadData::Comment(format!("Block {}", comment));
-                let (output_fee, gamma_fee) =
-                    PaymentOutput::with_payload(recipient_pkey, amount, data.clone(), None)
-                        .expect("invalid keys");
+                let (output_fee, gamma_fee) = PaymentOutput::with_payload(
+                    &spender_pkey,
+                    recipient_pkey,
+                    amount,
+                    data.clone(),
+                    None,
+                )
+                .expect("invalid keys");
                 gamma -= gamma_fee;
 
                 info!(
@@ -279,10 +287,10 @@ mod test {
         let mut mempool = Mempool::new();
 
         let (tx1, inputs1, outputs1) =
-            PaymentTransaction::new_test(&skey, &pkey, 100, 2, 200, 1, 0)
+            PaymentTransaction::new_test(&spender_pkey, &skey, &pkey, 100, 2, 200, 1, 0)
                 .expect("transaction valid");
         let (tx2, inputs2, outputs2) =
-            PaymentTransaction::new_test(&skey, &pkey, 300, 1, 100, 3, 0)
+            PaymentTransaction::new_test(&spender_pkey, &skey, &pkey, 300, 1, 100, 3, 0)
                 .expect("transaction valid");
         let tx_hash1 = Hash::digest(&tx1);
         let tx_hash2 = Hash::digest(&tx2);
@@ -345,8 +353,9 @@ mod test {
         let (skey, pkey) = curve1174::make_random_keys();
         let mut mempool = Mempool::new();
 
-        let (tx, inputs, outputs) = PaymentTransaction::new_test(&skey, &pkey, 100, 2, 100, 2, 0)
-            .expect("transaction valid");
+        let (tx, inputs, outputs) =
+            PaymentTransaction::new_test(&spender_pkey, &skey, &pkey, 100, 2, 100, 2, 0)
+                .expect("transaction valid");
         let tx_hash = Hash::digest(&tx);
         mempool.push_tx(tx_hash.clone(), tx.clone().into());
         mempool.prune(&vec![Hash::digest(&inputs[0])], &vec![]);
@@ -366,8 +375,9 @@ mod test {
         let (skey, pkey) = curve1174::make_random_keys();
         let mut mempool = Mempool::new();
 
-        let (tx, inputs, outputs) = PaymentTransaction::new_test(&skey, &pkey, 100, 2, 100, 2, 0)
-            .expect("transaction valid");
+        let (tx, inputs, outputs) =
+            PaymentTransaction::new_test(&spender_pkey, &skey, &pkey, 100, 2, 100, 2, 0)
+                .expect("transaction valid");
         let tx_hash = Hash::digest(&tx);
         mempool.push_tx(tx_hash.clone(), tx.clone().into());
         mempool.prune(&vec![], &vec![Hash::digest(&outputs[0])]);

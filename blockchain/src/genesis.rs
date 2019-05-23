@@ -59,6 +59,9 @@ pub fn genesis(
         // Genesis has one PaymentOutput + N * StakeOutput, where N is the number of validators.
         //
 
+        // TODO: use correct spender pubkey
+        let spender_pkey = keychains[0].wallet_pkey;
+
         // Node #1 receives all moneys except stakes.
         // All nodes gets `stake` money staked.
         //
@@ -67,8 +70,9 @@ pub fn genesis(
         // Create PaymentOutput for node #1.
         let recipient_pkey = &keychains[0].wallet_pkey;
         let mut coins1: i64 = coins - keychains.len() as i64 * stake;
-        let (output, outputs_gamma) =
-            Output::new_payment(recipient_pkey, coins1).expect("genesis has valid public keys");
+        let (output, outputs_gamma, _rvalue) =
+            Output::new_payment(&spender_pkey, recipient_pkey, coins1)
+                .expect("genesis has valid public keys");
         outputs.push(output);
 
         // Create StakeOutput for each node.

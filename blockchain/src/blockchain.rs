@@ -1124,6 +1124,9 @@ pub fn create_fake_micro_block(
     let seed = mix(chain.last_random(), view_change);
     let random = pbc::make_VRF(&keys.network_skey, &seed);
 
+    // TODO: use the correct spender_pkey (if this isn't)
+    let spender_pkey = keys.wallet_pkey;
+
     let mut input_hashes: Vec<Hash> = Vec::new();
     let mut inputs: Vec<Output> = Vec::new();
     let mut monetary_balance: i64 = 0;
@@ -1154,8 +1157,9 @@ pub fn create_fake_micro_block(
     let mut outputs_gamma = Fr::zero();
     // Payments.
     if monetary_balance > 0 {
-        let (output, output_gamma) =
-            PaymentOutput::new(&keys.wallet_pkey, monetary_balance).expect("keys are valid");
+        let (output, output_gamma, _rvalue) =
+            PaymentOutput::new(&spender_pkey, &keys.wallet_pkey, monetary_balance)
+                .expect("keys are valid");
         outputs.push(Output::PaymentOutput(output));
         outputs_gamma += output_gamma;
     }
@@ -1186,8 +1190,9 @@ pub fn create_fake_micro_block(
 
     let coinbase_tx = {
         let data = PaymentPayloadData::Comment(format!("Block reward"));
-        let (output, gamma) = PaymentOutput::with_payload(&keys.wallet_pkey, block_reward, data)
-            .expect("invalid keys");
+        let (output, gamma, _rvalue) =
+            PaymentOutput::with_payload(&spender_pkey, &keys.wallet_pkey, block_reward, data)
+                .expect("invalid keys");
         CoinbaseTransaction {
             block_reward,
             block_fee,

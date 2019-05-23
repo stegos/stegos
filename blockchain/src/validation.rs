@@ -890,9 +890,12 @@ pub mod tests {
     #[test]
     pub fn no_inputs() {
         let (skey, pkey) = curve1174::make_random_keys();
+        let (_spender_skey, spender_pkey) = curve1174::make_random_keys();
+
         let amount: i64 = 1_000_000;
         let fee: i64 = amount;
-        let (input, _gamma1) = Output::new_payment(&pkey, amount).expect("keys are valid");
+        let (input, _gamma1, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey, amount).expect("keys are valid");
         let inputs = [input];
         let mut tx =
             PaymentTransaction::new(&skey, &inputs, &[], &Fr::zero(), fee).expect("keys are valid");
@@ -907,8 +910,10 @@ pub mod tests {
     pub fn no_outputs() {
         // No outputs
         let (skey, pkey) = curve1174::make_random_keys();
-        let (tx, inputs, _outputs) = PaymentTransaction::new_test(&skey, &pkey, 100, 1, 0, 0, 100)
-            .expect("transaction is valid");
+        let (_spender_skey, spender_pkey) = curve1174::make_random_keys();
+        let (tx, inputs, _outputs) =
+            PaymentTransaction::new_test(&spender_pkey, &skey, &pkey, 100, 1, 0, 0, 100)
+                .expect("transaction is valid");
         tx.validate(&inputs).expect("transaction is valid");
     }
 
@@ -920,6 +925,7 @@ pub mod tests {
         let (skey0, pkey0) = curve1174::make_random_keys();
         let (skey1, pkey1) = curve1174::make_random_keys();
         let (_skey2, pkey2) = curve1174::make_random_keys();
+        let (_spender_skey, spender_pkey) = curve1174::make_random_keys();
 
         let amount: i64 = 1_000_000;
         let fee: i64 = 1;
@@ -929,7 +935,7 @@ pub mod tests {
         //
         {
             let (tx, inputs, _outputs) =
-                PaymentTransaction::new_test(&skey0, &pkey0, 0, 2, 0, 1, 0)
+                PaymentTransaction::new_test(&spender_pkey, &skey0, &pkey0, 0, 2, 0, 1, 0)
                     .expect("transaction is valid");
             tx.validate(&inputs).expect("transaction is valid");
         }
@@ -939,7 +945,7 @@ pub mod tests {
         //
         {
             let (tx, inputs, _outputs) =
-                PaymentTransaction::new_test(&skey0, &pkey0, 100, 2, 200, 1, 0)
+                PaymentTransaction::new_test(&spender_pkey, &skey0, &pkey0, 100, 2, 200, 1, 0)
                     .expect("transaction is valid");
             tx.validate(&inputs).expect("transaction is valid");
         }
@@ -948,7 +954,7 @@ pub mod tests {
         // Negative amount.
         //
         {
-            match PaymentTransaction::new_test(&skey0, &pkey0, 0, 1, -1, 1, 0) {
+            match PaymentTransaction::new_test(&spender_pkey, &skey0, &pkey0, 0, 1, -1, 1, 0) {
                 Err(e) => match e.downcast::<OutputError>().unwrap() {
                     OutputError::InvalidBulletProof(_output_hash) => {}
                     _ => panic!(),
@@ -962,7 +968,7 @@ pub mod tests {
         //
         {
             let (mut tx, inputs, _outputs) =
-                PaymentTransaction::new_test(&skey0, &pkey0, 100, 1, 100, 1, 0)
+                PaymentTransaction::new_test(&spender_pkey, &skey0, &pkey0, 100, 1, 100, 1, 0)
                     .expect("transaction is valid");
             let output = &mut tx.txouts[0];
             match output {
@@ -983,13 +989,15 @@ pub mod tests {
         }
 
         // "genesis" output by 0
-        let (output0, _gamma0) = Output::new_payment(&pkey1, amount).expect("keys are valid");
+        let (output0, _gamma0, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey1, amount).expect("keys are valid");
 
         //
         // Valid transaction from 1 to 2
         //
         let inputs1 = [output0.clone()];
-        let (output1, gamma1) = Output::new_payment(&pkey2, amount - fee).expect("keys are valid");
+        let (output1, gamma1, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey2, amount - fee).expect("keys are valid");
         let outputs_gamma = gamma1;
         let mut tx = PaymentTransaction::new(&skey1, &inputs1, &[output1], &outputs_gamma, fee)
             .expect("keys are valid");
@@ -1058,7 +1066,7 @@ pub mod tests {
         // Invalid gamma
         //
         let (mut tx, inputs, _outputs) =
-            PaymentTransaction::new_test(&skey0, &pkey0, 100, 2, 200, 1, 0)
+            PaymentTransaction::new_test(&spender_pkey, &skey0, &pkey0, 100, 2, 200, 1, 0)
                 .expect("transaction is valid");
         tx.gamma = Fr::random();
         match tx.validate(&inputs) {
@@ -1072,8 +1080,8 @@ pub mod tests {
         //
         // Invalid monetary balance
         //
-        let (output_invalid1, gamma_invalid1) =
-            Output::new_payment(&pkey2, amount - fee - 1).expect("keys are valid");
+        let (output_invalid1, gamma_invalid1, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey2, amount - fee - 1).expect("keys are valid");
         let outputs = [output_invalid1];
         let outputs_gamma = gamma_invalid1;
         let tx = PaymentTransaction::new(&skey1, &inputs1, &outputs, &outputs_gamma, fee)
@@ -1094,6 +1102,7 @@ pub mod tests {
     pub fn stake_utxo() {
         let (skey1, pkey1) = curve1174::make_random_keys();
         let (nskey, npkey) = pbc::make_random_keys();
+        let (_spender_skey, spender_pkey) = curve1174::make_random_keys();
 
         let amount: i64 = 1_000_000;
         let fee: i64 = 1;
@@ -1103,8 +1112,8 @@ pub mod tests {
         //
         let input = Output::new_stake(&pkey1, &nskey, &npkey, amount).expect("keys are valid");
         let inputs = [input];
-        let (output, outputs_gamma) =
-            Output::new_payment(&pkey1, amount - fee).expect("keys are valid");
+        let (output, outputs_gamma, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey1, amount - fee).expect("keys are valid");
         let tx = PaymentTransaction::new(&skey1, &inputs, &[output], &outputs_gamma, fee)
             .expect("keys are valid");
         tx.validate(&inputs).expect("tx is valid");
@@ -1112,7 +1121,8 @@ pub mod tests {
         //
         // StakeUTXO as an output.
         //
-        let (input, _inputs_gamma) = Output::new_payment(&pkey1, amount).expect("keys are valid");
+        let (input, _inputs_gamma, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey1, amount).expect("keys are valid");
         let inputs = [input];
         let output =
             Output::new_stake(&pkey1, &nskey, &npkey, amount - fee).expect("keys are valid");
@@ -1124,7 +1134,8 @@ pub mod tests {
         //
         // Invalid monetary balance.
         //
-        let (input, _inputs_gamma) = Output::new_payment(&pkey1, amount).expect("keys are valid");
+        let (input, _inputs_gamma, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey1, amount).expect("keys are valid");
         let inputs = [input];
         let output =
             StakeOutput::new(&pkey1, &nskey, &npkey, amount - fee - 1).expect("keys are valid");
@@ -1145,7 +1156,8 @@ pub mod tests {
         //
         // Invalid stake.
         //
-        let (input, _inputs_gamma) = Output::new_payment(&pkey1, amount).expect("keys are valid");
+        let (input, _inputs_gamma, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey1, amount).expect("keys are valid");
         let inputs = [input];
         let mut output =
             StakeOutput::new(&pkey1, &nskey, &npkey, amount - fee).expect("keys are valid");
@@ -1165,7 +1177,8 @@ pub mod tests {
         //
         // Mutated recipient.
         //
-        let (input, _inputs_gamma) = Output::new_payment(&pkey1, amount).expect("keys are valid");
+        let (input, _inputs_gamma, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey1, amount).expect("keys are valid");
         let inputs = [input];
         let output =
             Output::new_stake(&pkey1, &nskey, &npkey, amount - fee).expect("keys are valid");
@@ -1194,14 +1207,18 @@ pub mod tests {
         let (skey1, pkey1) = curve1174::make_random_keys();
         let (skey2, pkey2) = curve1174::make_random_keys();
         let (skey3, pkey3) = curve1174::make_random_keys();
+        let (_spender_skey, spender_pkey) = curve1174::make_random_keys();
 
         let err_utxo = "Can't construct UTXO";
         let iamt1 = 101;
         let iamt2 = 102;
         let iamt3 = 103;
-        let (inp1, gamma_i1) = Output::new_payment(&pkey1, iamt1).expect(err_utxo);
-        let (inp2, gamma_i2) = Output::new_payment(&pkey2, iamt2).expect(err_utxo);
-        let (inp3, gamma_i3) = Output::new_payment(&pkey3, iamt3).expect(err_utxo);
+        let (inp1, gamma_i1, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey1, iamt1).expect(err_utxo);
+        let (inp2, gamma_i2, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey2, iamt2).expect(err_utxo);
+        let (inp3, gamma_i3, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey3, iamt3).expect(err_utxo);
 
         let decr_err = "Can't decrypt UTXO payload";
         let skeff1: curve1174::SecretKey = match inp1.clone() {
@@ -1242,10 +1259,14 @@ pub mod tests {
         let oamt2 = 52;
         let oamt3 = 53;
         let oamt4 = (iamt1 + iamt2 + iamt3) - (total_fee + oamt1 + oamt2 + oamt3);
-        let (out1, gamma_o1) = Output::new_payment(&pkey2, oamt1).expect(err_utxo);
-        let (out2, gamma_o2) = Output::new_payment(&pkey3, oamt2).expect(err_utxo);
-        let (out3, gamma_o3) = Output::new_payment(&pkey3, oamt3).expect(err_utxo);
-        let (out4, gamma_o4) = Output::new_payment(&pkey1, oamt4).expect(err_utxo);
+        let (out1, gamma_o1, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey2, oamt1).expect(err_utxo);
+        let (out2, gamma_o2, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey3, oamt2).expect(err_utxo);
+        let (out3, gamma_o3, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey3, oamt3).expect(err_utxo);
+        let (out4, gamma_o4, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey1, oamt4).expect(err_utxo);
 
         let inputs = [inp1, inp2, inp3];
         let outputs = [out1, out2, out3, out4];
@@ -1284,6 +1305,7 @@ pub mod tests {
         let (_skey1, pkey1) = curve1174::make_random_keys();
         let (_skey2, pkey2) = curve1174::make_random_keys();
         let (nskey, npkey) = pbc::make_random_keys();
+        let (_spender_skey, spender_pkey) = curve1174::make_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -1298,11 +1320,13 @@ pub mod tests {
         // Valid block with transaction from 1 to 2
         //
         {
-            let (output0, gamma0) = Output::new_payment(&pkey1, amount).unwrap();
+            let (output0, gamma0, _rvalue) =
+                Output::new_payment(&spender_pkey, &pkey1, amount).unwrap();
             let base =
                 BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
             let inputs1 = [Hash::digest(&output0)];
-            let (output1, gamma1) = Output::new_payment(&pkey2, amount).unwrap();
+            let (output1, gamma1, _rvalue) =
+                Output::new_payment(&spender_pkey, &pkey2, amount).unwrap();
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
             let block = MacroBlock::new(base, gamma, 0, &inputs1, &outputs1, npkey);
@@ -1313,11 +1337,13 @@ pub mod tests {
         // Block with invalid monetary balance
         //
         {
-            let (output0, gamma0) = Output::new_payment(&pkey1, amount).unwrap();
+            let (output0, gamma0, _rvalue) =
+                Output::new_payment(&spender_pkey, &pkey1, amount).unwrap();
             let base =
                 BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
             let inputs1 = [Hash::digest(&output0)];
-            let (output1, gamma1) = Output::new_payment(&pkey2, amount - 1).unwrap();
+            let (output1, gamma1, _rvalue) =
+                Output::new_payment(&spender_pkey, &pkey2, amount - 1).unwrap();
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
             let block = MacroBlock::new(base, gamma, 0, &inputs1, &outputs1, npkey);
@@ -1335,6 +1361,7 @@ pub mod tests {
     fn validate_pruned_micro_block() {
         let (_skey, pkey) = curve1174::make_random_keys();
         let (nskey, npkey) = pbc::make_random_keys();
+        let (_spender_skey, spender_pkey) = curve1174::make_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -1346,11 +1373,11 @@ pub mod tests {
         let seed = mix(Hash::zero(), view_change);
         let random = pbc::make_VRF(&nskey, &seed);
 
-        let (input, gamma0) = Output::new_payment(&pkey, amount).unwrap();
+        let (input, gamma0, _rvalue) = Output::new_payment(&spender_pkey, &pkey, amount).unwrap();
         let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
         let input_hashes = [Hash::digest(&input)];
         let inputs = [input];
-        let (output, gamma1) = Output::new_payment(&pkey, amount).unwrap();
+        let (output, gamma1, _rvalue) = Output::new_payment(&spender_pkey, &pkey, amount).unwrap();
         let outputs = [output];
         let gamma = gamma0 - gamma1;
         let block = MacroBlock::new(base, gamma, 0, &input_hashes, &outputs, npkey);
@@ -1375,6 +1402,7 @@ pub mod tests {
     fn create_validate_macro_block_with_staking() {
         let (_skey1, pkey1) = curve1174::make_random_keys();
         let (nskey, npkey) = pbc::make_random_keys();
+        let (_spender_skey, spender_pkey) = curve1174::make_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -1393,8 +1421,8 @@ pub mod tests {
             let input_hashes = [Hash::digest(&input)];
             let inputs = [input];
             let inputs_gamma = Fr::zero();
-            let (output, outputs_gamma) =
-                Output::new_payment(&pkey1, amount).expect("keys are valid");
+            let (output, outputs_gamma, _rvalue) =
+                Output::new_payment(&spender_pkey, &pkey1, amount).expect("keys are valid");
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;
 
@@ -1408,8 +1436,8 @@ pub mod tests {
         // Escrow as an output.
         //
         {
-            let (input, inputs_gamma) =
-                Output::new_payment(&pkey1, amount).expect("keys are valid");
+            let (input, inputs_gamma, _rvalue) =
+                Output::new_payment(&spender_pkey, &pkey1, amount).expect("keys are valid");
             let input_hashes = [Hash::digest(&input)];
             let inputs = [input];
             let output = Output::new_stake(&pkey1, &nskey, &npkey, amount).expect("keys are valid");
@@ -1427,8 +1455,8 @@ pub mod tests {
         // Invalid monetary balance.
         //
         {
-            let (input, inputs_gamma) =
-                Output::new_payment(&pkey1, amount).expect("keys are valid");
+            let (input, inputs_gamma, _rvalue) =
+                Output::new_payment(&spender_pkey, &pkey1, amount).expect("keys are valid");
             let input_hashes = [Hash::digest(&input)];
             let inputs = [input];
             let output =
@@ -1454,8 +1482,8 @@ pub mod tests {
         // Invalid stake.
         //
         {
-            let (input, inputs_gamma) =
-                Output::new_payment(&pkey1, amount).expect("keys are valid");
+            let (input, inputs_gamma, _rvalue) =
+                Output::new_payment(&spender_pkey, &pkey1, amount).expect("keys are valid");
             let input_hashes = [Hash::digest(&input)];
             let inputs = [input];
             let mut output =
@@ -1482,6 +1510,7 @@ pub mod tests {
     fn create_burn_money(input_amount: i64, output_amount: i64) {
         let (_skey, pkey) = curve1174::make_random_keys();
         let (nskey, npkey) = pbc::make_random_keys();
+        let (_spender_skey, spender_pkey) = curve1174::make_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
@@ -1493,11 +1522,13 @@ pub mod tests {
         let random = pbc::make_VRF(&nskey, &seed);
         let block_reward: i64 = output_amount - input_amount;
 
-        let (input, input_gamma) = Output::new_payment(&pkey, input_amount).unwrap();
+        let (input, input_gamma, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey, input_amount).unwrap();
         let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
         let input_hashes = [Hash::digest(&input)];
         let inputs = [input];
-        let (output, output_gamma) = Output::new_payment(&pkey, output_amount).unwrap();
+        let (output, output_gamma, _rvalue) =
+            Output::new_payment(&spender_pkey, &pkey, output_amount).unwrap();
         let outputs = [output];
         let gamma = input_gamma - output_gamma;
         let block = MacroBlock::new(base, gamma, block_reward, &input_hashes, &outputs, npkey);

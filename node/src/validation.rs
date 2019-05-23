@@ -208,14 +208,16 @@ mod test {
         let pkey = &keychain.wallet_pkey;
         let validator_skey = &keychain.network_skey;
         let validator_pkey = &keychain.network_pkey;
+        let spender_pkey = keychain.wallet_pkey;
 
         //
         // Valid transaction.
         //
         {
             let fee = 2 * payment_fee;
-            let (output1, gamma1) = Output::new_payment(&pkey, 1).unwrap();
-            let (output2, gamma2) = Output::new_payment(&pkey, amount - fee - 1).unwrap();
+            let (output1, gamma1, _rvalue) = Output::new_payment(&spender_pkey, &pkey, 1).unwrap();
+            let (output2, gamma2, _rvalue) =
+                Output::new_payment(&spender_pkey, &pkey, amount - fee - 1).unwrap();
             let outputs: Vec<Output> = vec![output1, output2];
             let outputs_gamma = gamma1 + gamma2;
             let tx =
@@ -236,7 +238,8 @@ mod test {
         //
         {
             let fee = payment_fee + 1;
-            let (output, gamma) = Output::new_payment(&pkey, amount - fee).unwrap();
+            let (output, gamma, _rvalue) =
+                Output::new_payment(&spender_pkey, &pkey, amount - fee).unwrap();
             let tx = PaymentTransaction::new(&skey, &inputs, &[output], &gamma, fee)
                 .unwrap()
                 .into();
@@ -249,7 +252,8 @@ mod test {
         //
         {
             let fee = payment_fee - 1;
-            let (output, gamma) = Output::new_payment(&pkey, amount - fee).unwrap();
+            let (output, gamma, _rvalue) =
+                Output::new_payment(&spender_pkey, &pkey, amount - fee).unwrap();
             let tx = PaymentTransaction::unchecked(&skey, &inputs, &[output], &gamma, fee)
                 .unwrap()
                 .into();
@@ -270,8 +274,10 @@ mod test {
         //
         {
             let fee = payment_fee;
-            let (input, _inputs_gamma) = Output::new_payment(&pkey, amount).unwrap();
-            let (output, outputs_gamma) = Output::new_payment(&pkey, amount - fee).unwrap();
+            let (input, _inputs_gamma, _rvalue) =
+                Output::new_payment(&spender_pkey, &pkey, amount).unwrap();
+            let (output, outputs_gamma, _rvalue) =
+                Output::new_payment(&spender_pkey, &pkey, amount - fee).unwrap();
             let missing = Hash::digest(&input);
             let tx = PaymentTransaction::new(&skey, &[input], &[output], &outputs_gamma, fee)
                 .unwrap()
@@ -292,7 +298,8 @@ mod test {
         //
         {
             let fee = payment_fee;
-            let (output, outputs_gamma) = Output::new_payment(&pkey, amount - fee).unwrap();
+            let (output, outputs_gamma, _rvalue) =
+                Output::new_payment(&spender_pkey, &pkey, amount - fee).unwrap();
             let outputs: Vec<Output> = vec![output];
             let input_hashes: Vec<Hash> = inputs.iter().map(|o| Hash::digest(o)).collect();
             let output_hashes: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
@@ -314,7 +321,8 @@ mod test {
 
             // Claimed input in mempool.
             let tx2 = {
-                let (output2, outputs2_gamma) = Output::new_payment(&pkey, amount - fee).unwrap();
+                let (output2, outputs2_gamma, _rvalue) =
+                    Output::new_payment(&spender_pkey, &pkey, amount - fee).unwrap();
                 PaymentTransaction::new(&skey, &inputs, &[output2], &outputs2_gamma, fee)
                     .unwrap()
                     .into()
@@ -357,7 +365,8 @@ mod test {
             timestamp += Duration::from_millis(1);
             let fee = payment_fee + stake_fee;
             let stake = 0;
-            let (output1, gamma1) = Output::new_payment(&pkey, amount - stake - fee).unwrap();
+            let (output1, gamma1, _rvalue) =
+                Output::new_payment(&spender_pkey, &pkey, amount - stake - fee).unwrap();
             let mut output2 = StakeOutput::new(&pkey, &validator_skey, &validator_pkey, 1).unwrap();
             output2.amount = stake; // StakeOutput::new() doesn't allow zero amount.
             let output2 = Output::StakeOutput(output2);
@@ -380,7 +389,8 @@ mod test {
         {
             timestamp += Duration::from_millis(1);
             let fee = payment_fee;
-            let (output, outputs_gamma) = Output::new_payment(&pkey, stake - fee).unwrap();
+            let (output, outputs_gamma, _rvalue) =
+                Output::new_payment(&spender_pkey, &pkey, stake - fee).unwrap();
             let tx = PaymentTransaction::unchecked(&skey, &stakes, &[output], &outputs_gamma, fee)
                 .unwrap()
                 .into();
@@ -420,7 +430,8 @@ mod test {
         //
         {
             let fee = payment_fee;
-            let (output, outputs_gamma) = Output::new_payment(&pkey, amount - fee).unwrap();
+            let (output, outputs_gamma, _rvalue) =
+                Output::new_payment(&spender_pkey, &pkey, amount - fee).unwrap();
             let outputs: Vec<Output> = vec![output];
             let output_hashes: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
             // Claim output in mempool.

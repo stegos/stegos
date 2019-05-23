@@ -212,6 +212,9 @@ impl Mempool {
         // Coinbase Transaction.
         //
         {
+            // TODO: use the correct spender_pkey here
+            let spender_pkey = keychain.wallet_pkey;
+
             let mut txouts: Vec<Output> = Vec::new();
             let mut gamma = Fr::zero();
 
@@ -222,9 +225,13 @@ impl Mempool {
                 }
 
                 let data = PaymentPayloadData::Comment(format!("Block {}", comment));
-                let (output_fee, gamma_fee) =
-                    PaymentOutput::with_payload(&keychain.wallet_pkey, amount, data.clone())
-                        .expect("invalid keys");
+                let (output_fee, gamma_fee, _rvalue) = PaymentOutput::with_payload(
+                    &spender_pkey,
+                    &keychain.wallet_pkey,
+                    amount,
+                    data.clone(),
+                )
+                .expect("invalid keys");
                 gamma -= gamma_fee;
 
                 info!(
@@ -264,13 +271,14 @@ mod test {
     #[test]
     fn basic() {
         let (skey, pkey) = make_random_keys();
+        let (_spender_skey, spender_pkey) = make_random_keys();
         let mut mempool = Mempool::new();
 
         let (tx1, inputs1, outputs1) =
-            PaymentTransaction::new_test(&skey, &pkey, 100, 2, 200, 1, 0)
+            PaymentTransaction::new_test(&spender_pkey, &skey, &pkey, 100, 2, 200, 1, 0)
                 .expect("transaction valid");
         let (tx2, inputs2, outputs2) =
-            PaymentTransaction::new_test(&skey, &pkey, 300, 1, 100, 3, 0)
+            PaymentTransaction::new_test(&spender_pkey, &skey, &pkey, 300, 1, 100, 3, 0)
                 .expect("transaction valid");
         let tx_hash1 = Hash::digest(&tx1);
         let tx_hash2 = Hash::digest(&tx2);
@@ -331,10 +339,12 @@ mod test {
     #[test]
     pub fn partial_pruning1() {
         let (skey, pkey) = make_random_keys();
+        let (_spender_skey, spender_pkey) = make_random_keys();
         let mut mempool = Mempool::new();
 
-        let (tx, inputs, outputs) = PaymentTransaction::new_test(&skey, &pkey, 100, 2, 100, 2, 0)
-            .expect("transaction valid");
+        let (tx, inputs, outputs) =
+            PaymentTransaction::new_test(&spender_pkey, &skey, &pkey, 100, 2, 100, 2, 0)
+                .expect("transaction valid");
         let tx_hash = Hash::digest(&tx);
         mempool.push_tx(tx_hash.clone(), tx.clone().into());
         mempool.prune(&vec![Hash::digest(&inputs[0])], &vec![]);
@@ -352,10 +362,12 @@ mod test {
     #[test]
     pub fn partial_pruning2() {
         let (skey, pkey) = make_random_keys();
+        let (_spender_skey, spender_pkey) = make_random_keys();
         let mut mempool = Mempool::new();
 
-        let (tx, inputs, outputs) = PaymentTransaction::new_test(&skey, &pkey, 100, 2, 100, 2, 0)
-            .expect("transaction valid");
+        let (tx, inputs, outputs) =
+            PaymentTransaction::new_test(&spender_pkey, &skey, &pkey, 100, 2, 100, 2, 0)
+                .expect("transaction valid");
         let tx_hash = Hash::digest(&tx);
         mempool.push_tx(tx_hash.clone(), tx.clone().into());
         mempool.prune(&vec![], &vec![Hash::digest(&outputs[0])]);
@@ -373,18 +385,43 @@ mod test {
     #[test]
     fn create_block() {
         let keys = KeyChain::new_mem();
+        let (_spender_skey, spender_pkey) = make_random_keys();
         let max_utxo_in_block: usize = 9;
         let mut mempool = Mempool::new();
 
-        let (tx1, _inputs1, _outputs1) =
-            PaymentTransaction::new_test(&keys.wallet_skey, &keys.wallet_pkey, 3, 2, 2, 1, 4)
-                .expect("transaction valid");
-        let (tx2, _inputs2, _outputs2) =
-            PaymentTransaction::new_test(&keys.wallet_skey, &keys.wallet_pkey, 6, 1, 2, 2, 2)
-                .expect("transaction valid");
-        let (tx3, _inputs3, _outputs3) =
-            PaymentTransaction::new_test(&keys.wallet_skey, &keys.wallet_pkey, 6, 1, 2, 2, 2)
-                .expect("transaction valid");
+        let (tx1, _inputs1, _outputs1) = PaymentTransaction::new_test(
+            &spender_pkey,
+            &keys.wallet_skey,
+            &keys.wallet_pkey,
+            3,
+            2,
+            2,
+            1,
+            4,
+        )
+        .expect("transaction valid");
+        let (tx2, _inputs2, _outputs2) = PaymentTransaction::new_test(
+            &spender_pkey,
+            &keys.wallet_skey,
+            &keys.wallet_pkey,
+            6,
+            1,
+            2,
+            2,
+            2,
+        )
+        .expect("transaction valid");
+        let (tx3, _inputs3, _outputs3) = PaymentTransaction::new_test(
+            &spender_pkey,
+            &keys.wallet_skey,
+            &keys.wallet_pkey,
+            6,
+            1,
+            2,
+            2,
+            2,
+        )
+        .expect("transaction valid");
 
         let tx_hash1 = Hash::digest(&tx1);
         let tx_hash2 = Hash::digest(&tx2);

@@ -65,6 +65,9 @@ pub struct Libp2pNetwork {
     control_tx: mpsc::UnboundedSender<ControlMessage>,
 }
 
+// Allow connection to terminate after that much idle time
+pub const NETWORK_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
+
 pub const NETWORK_STATUS_TOPIC: &'static str = "stegos-network-status";
 pub const NETWORK_READY_TOKEN: &'static [u8] = &[1, 0, 0, 0];
 
@@ -263,7 +266,7 @@ where
         };
         let unicast_topic = TopicBuilder::new(UNICAST_TOPIC).build();
         behaviour.floodsub.subscribe(unicast_topic);
-        info!(target: "stegos_network::delivery", "Network endpoints: node_id={}, peer_id={}", keychain.network_pkey, peer_id.to_base58());
+        info!(target: "stegos_network::delivery", "Network endpoints: node_id={}, peer_id={}", keychain.network_pkey, peer_id);
         behaviour
     }
 
@@ -366,7 +369,7 @@ where
     }
 
     fn shutdown(&mut self, peer_id: &PeerId) {
-        self.floodsub.disable(peer_id);
+        self.ncp.terminate(peer_id.clone());
     }
 }
 
@@ -393,7 +396,7 @@ where
                 peer_id,
                 addresses,
             } => {
-                debug!(target: "stegos_network::discovery", "discovered node: node_id={}, peer_id={}", node_id, peer_id.to_base58());
+                debug!(target: "stegos_network::discovery", "discovered node: node_id={}, peer_id={}", node_id, peer_id);
                 self.discovery.add_node(node_id.clone(), peer_id.clone());
                 if addresses.len() > 0 {
                     self.discovery.set_peer_id(&node_id, peer_id.clone());
@@ -513,7 +516,6 @@ where
             FloodsubEvent::EnabledOutgoing { peer_id } => {
                 self.gatekeeper.notify(PeerEvent::EnabledDialer { peer_id });
             }
-            FloodsubEvent::Disabled { .. } => unimplemented!(),
             FloodsubEvent::Subscribed { .. } => {}
             FloodsubEvent::Unsubscribed { .. } => {}
         }
@@ -566,11 +568,11 @@ where
     fn inject_event(&mut self, event: DiscoveryOutEvent) {
         match event {
             DiscoveryOutEvent::DialPeer { peer_id } => {
-                debug!(target: "stegos_network::kad", "connecting to closest peer: {}", peer_id.to_base58());
+                debug!(target: "stegos_network::kad", "connecting to closest peer: {}", peer_id);
                 self.gatekeeper.dial_peer(peer_id);
             }
             DiscoveryOutEvent::Route { next_hop, message } => {
-                debug!(target: "stegos_network::delivery", "delivering paylod: node_id={}, peer_id={}", message.to, next_hop.to_base58());
+                debug!(target: "stegos_network::delivery", "delivering paylod: node_id={}, peer_id={}", message.to, next_hop);
                 self.delivery.deliver_unicast(&next_hop, message);
             } // _ => {}
             DiscoveryOutEvent::KadEvent { .. } => {}

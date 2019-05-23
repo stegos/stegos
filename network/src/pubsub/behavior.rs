@@ -54,8 +54,11 @@ pub struct Floodsub<TSubstream> {
     /// List of peers the network is connected to, and the topics that they're subscribed to.
     connected_peers: HashSet<PeerId>,
 
-    /// List of peers enabled for PubSub
-    enabled_peers: HashMap<PeerId, SmallVec<[TopicHash; 8]>>,
+    /// List of peers we are allowed to send to
+    unlocked_remotes: HashMap<PeerId, SmallVec<[TopicHash; 8]>>,
+
+    /// List of peers we accept messages from
+    allowed_remotes: HashSet<PeerId>,
 
     // List of topics we're subscribed to. Necessary to filter out messages that we receive
     // erroneously.
@@ -76,7 +79,8 @@ impl<TSubstream> Floodsub<TSubstream> {
             events: VecDeque::new(),
             local_peer_id,
             connected_peers: HashSet::new(),
-            enabled_peers: HashMap::new(),
+            unlocked_remotes: HashMap::new(),
+            allowed_remotes: HashSet::new(),
             subscribed_topics: SmallVec::new(),
             received: LruCache::with_expiry_duration_and_capacity(
                 Duration::from_secs(60 * 15),
@@ -100,7 +104,7 @@ impl<TSubstream> Floodsub<TSubstream> {
             return false;
         }
 
-        for peer in self.enabled_peers.keys() {
+        for peer in self.unlocked_remotes.keys() {
             self.events.push_back(NetworkBehaviourAction::SendEvent {
                 peer_id: peer.clone(),
                 event: FloodsubSendEvent::Publish(FloodsubRpc {
@@ -165,7 +169,7 @@ impl<TSubstream> Floodsub<TSubstream> {
         super::metrics::LRU_CACHE_SIZE.set(self.received.len() as i64);
 
         // Send to peers we know are subscribed to the topic.
-        for (peer_id, sub_topic) in self.enabled_peers.iter() {
+        for (peer_id, sub_topic) in self.unlocked_remotes.iter() {
             if !sub_topic
                 .iter()
                 .any(|t| message.topics.iter().any(|u| t == u))
@@ -173,7 +177,7 @@ impl<TSubstream> Floodsub<TSubstream> {
                 continue;
             }
 
-            trace!(target: "stegos_network::pubsub", "sending message to peer: peer_id={}, seq_no={}", peer_id.to_base58(), u8v_to_hexstr(&message.sequence_number));
+            trace!(target: "stegos_network::pubsub", "sending message to peer: peer_id={}, seq_no={}", peer_id, u8v_to_hexstr(&message.sequence_number));
             self.events.push_back(NetworkBehaviourAction::SendEvent {
                 peer_id: peer_id.clone(),
                 event: FloodsubSendEvent::Publish(FloodsubRpc {
@@ -185,23 +189,25 @@ impl<TSubstream> Floodsub<TSubstream> {
     }
 
     pub fn enable_outgoing(&mut self, peer_id: &PeerId) {
-        debug!(target: "stegos_network::gatekeeper", "enabling pubsub dialer: peer_id={}", peer_id.to_base58());
+        debug!(target: "stegos_network::gatekeeper", "enabling pubsub dialer: peer_id={}", peer_id);
         if !self.connected_peers.contains(peer_id) {
+            debug!(target: "stegos_network::pubsub", "peer appears to be disconnected: peer_id={}", peer_id);
             return;
         }
 
-        if !self.enabled_peers.contains_key(peer_id) {
-            self.enabled_peers.insert(peer_id.clone(), SmallVec::new());
+        if !self.unlocked_remotes.contains_key(peer_id) {
+            self.unlocked_remotes
+                .insert(peer_id.clone(), SmallVec::new());
         }
 
-        for p in self.enabled_peers.keys() {
-            debug!(target: "stegos_network::pubsub", "peer enabled: {}", p.to_base58());
+        if !self.allowed_remotes.contains(peer_id) {
+            debug!(target: "stegos_network::pubsub", "autoenabling receive: peer_id={}", peer_id);
+            self.allowed_remotes.insert(peer_id.clone());
         }
 
-        self.events.push_back(NetworkBehaviourAction::SendEvent {
-            peer_id: peer_id.clone(),
-            event: FloodsubSendEvent::EnableOutgoing,
-        });
+        for p in self.unlocked_remotes.keys() {
+            debug!(target: "stegos_network::pubsub", "remote peer send unlocked: peer_id={}, receive_enabled={}", p, self.allowed_remotes.contains(peer_id));
+        }
 
         // We need to send our subscriptions to the newly-enabled node.
         for topic in self.subscribed_topics.iter() {
@@ -216,34 +222,36 @@ impl<TSubstream> Floodsub<TSubstream> {
                 }),
             });
         }
+
+        self.events.push_back(NetworkBehaviourAction::GenerateEvent(
+            FloodsubEvent::EnabledOutgoing {
+                peer_id: peer_id.clone(),
+            },
+        ));
     }
 
     pub fn enable_incoming(&mut self, peer_id: &PeerId) {
-        debug!(target: "stegos_network::gatekeeper", "enabling pubsub listener: peer_id={}", peer_id.to_base58());
+        debug!(target: "stegos_network::gatekeeper", "enabling pubsub listener: peer_id={}", peer_id);
         if !self.connected_peers.contains(peer_id) {
+            debug!(target: "stegos_network::pubsub", "peer appears to be disconnected: peer_id={}", peer_id);
             return;
         }
 
-        if !self.enabled_peers.contains_key(peer_id) {
-            self.enabled_peers.insert(peer_id.clone(), SmallVec::new());
+        if self.allowed_remotes.contains(peer_id) {
+            debug!(target: "stegos_network::pubsub", "peer is already allowed, skipping: peer_id={}", peer_id);
+            return;
         }
 
-        for p in self.enabled_peers.keys() {
-            debug!(target: "stegos_network::pubsub", "peer enabled: {}", p.to_base58());
+        self.allowed_remotes.insert(peer_id.clone());
+        for p in self.allowed_remotes.iter() {
+            debug!(target: "stegos_network::pubsub", "peer receive enabled: peer_id={}, send_enabled={}", p, self.unlocked_remotes.contains_key(p));
         }
 
-        self.events.push_back(NetworkBehaviourAction::SendEvent {
-            peer_id: peer_id.clone(),
-            event: FloodsubSendEvent::EnableIncoming,
-        });
-    }
-
-    pub fn disable(&mut self, peer_id: &PeerId) {
-        debug!(target: "stegos_network::gatekeeper", "disabling pubsub: peer_id={}", peer_id.to_base58());
-        self.events.push_back(NetworkBehaviourAction::SendEvent {
-            peer_id: peer_id.clone(),
-            event: FloodsubSendEvent::Disable,
-        });
+        self.events.push_back(NetworkBehaviourAction::GenerateEvent(
+            FloodsubEvent::EnabledIncoming {
+                peer_id: peer_id.clone(),
+            },
+        ));
     }
 }
 
@@ -263,51 +271,32 @@ where
     }
 
     fn inject_connected(&mut self, id: PeerId, _: ConnectedPoint) {
+        debug!(target: "stegos_network::pubsub", "peer connected: peer_id={}", id);
         self.connected_peers.insert(id.clone());
     }
 
     fn inject_disconnected(&mut self, id: &PeerId, _: ConnectedPoint) {
+        debug!(target: "stegos_network::pubsub", "peer disconnected: peer_id={}", id);
         let was_in = self.connected_peers.remove(id);
         debug_assert!(was_in);
-        self.enabled_peers.remove(id);
+        self.allowed_remotes.remove(id);
+        self.unlocked_remotes.remove(id);
     }
 
     fn inject_node_event(&mut self, propagation_source: PeerId, event: FloodsubRecvEvent) {
+        if !self.allowed_remotes.contains(&propagation_source) {
+            debug!(target: "stegos_network::pubsub", "event from unwanted peer, dropping: peer_id={}", propagation_source);
+            return;
+        }
+
         match event {
-            FloodsubRecvEvent::EnabledIncoming => {
-                self.events.push_back(NetworkBehaviourAction::GenerateEvent(
-                    FloodsubEvent::EnabledIncoming {
-                        peer_id: propagation_source,
-                    },
-                ));
-                return;
-            }
-            FloodsubRecvEvent::EnabledOutgoing => {
-                self.events.push_back(NetworkBehaviourAction::GenerateEvent(
-                    FloodsubEvent::EnabledOutgoing {
-                        peer_id: propagation_source,
-                    },
-                ));
-                return;
-            }
-            FloodsubRecvEvent::Disabled => {
-                self.events.push_back(NetworkBehaviourAction::GenerateEvent(
-                    FloodsubEvent::Disabled {
-                        peer_id: propagation_source,
-                    },
-                ));
-                return;
-            }
             FloodsubRecvEvent::Message(event) => {
                 // Update connected peers topics
                 for subscription in event.subscriptions {
-                    let remote_peer_topics = match self.enabled_peers.get_mut(&propagation_source) {
-                        Some(v) => v,
-                        None => {
-                            debug!(target: "stegos_network::pubsub", "message from not-enabled peer: peer_id={}", propagation_source.to_base58());
-                            return;
-                        }
-                    };
+                    let remote_peer_topics = self
+                        .unlocked_remotes
+                        .entry(propagation_source.clone())
+                        .or_insert(SmallVec::new());
                     match subscription.action {
                         FloodsubSubscriptionAction::Subscribe => {
                             if !remote_peer_topics.contains(&subscription.topic) {
@@ -349,7 +338,7 @@ where
                         continue;
                     }
                     super::metrics::LRU_CACHE_SIZE.set(self.received.len() as i64);
-                    trace!(target: "stegos_network::pubsub", "processing message: peer_id={}, seq_no={}", propagation_source.to_base58(), u8v_to_hexstr(&message.sequence_number));
+                    trace!(target: "stegos_network::pubsub", "processing message: peer_id={}, seq_no={}", propagation_source, u8v_to_hexstr(&message.sequence_number));
 
                     // Add the message to be dispatched to the user.
                     if self
@@ -363,7 +352,7 @@ where
                     }
 
                     // Propagate the message to everyone else who is subscribed to any of the topics.
-                    for (peer_id, subscr_topics) in self.enabled_peers.iter() {
+                    for (peer_id, subscr_topics) in self.unlocked_remotes.iter() {
                         if peer_id == &propagation_source {
                             continue;
                         }
@@ -445,21 +434,11 @@ pub enum FloodsubEvent {
         /// Enabled protocol for peer_id
         peer_id: PeerId,
     },
-    Disabled {
-        /// Disabled protocol for peer_id
-        peer_id: PeerId,
-    },
 }
 
 #[derive(Debug)]
 /// Event passed to protocol handler
 pub enum FloodsubSendEvent {
-    /// Enable pubsub substreams from peer
-    EnableIncoming,
-    /// Enable pubsub substreams to peer
-    EnableOutgoing,
-    /// Disable floodsub with peer, and close all existing substreams
-    Disable,
     /// Publish message
     Publish(FloodsubRpc),
 }
@@ -467,8 +446,5 @@ pub enum FloodsubSendEvent {
 #[derive(Debug)]
 /// Event received from handler
 pub enum FloodsubRecvEvent {
-    EnabledIncoming,
-    EnabledOutgoing,
-    Disabled,
     Message(FloodsubRpc),
 }

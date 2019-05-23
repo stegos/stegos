@@ -152,7 +152,7 @@ where
     pub fn route(&mut self, to: &pbc::PublicKey, message: Unicast) {
         // Check if we already know node's peer_id
         if let Some(peer_id) = self.known_nodes.get_by_key(to) {
-            debug!(target: "stegos_network::delivery", "found node's peer_id: node_id={}, peer_id={}, seq_no={}", to, peer_id.to_base58(), u8v_to_hexstr(&message.seq_no));
+            debug!(target: "stegos_network::delivery", "found node's peer_id: node_id={}, peer_id={}, seq_no={}", to, peer_id, u8v_to_hexstr(&message.seq_no));
             self.out_events.push_back(DiscoveryOutEvent::Route {
                 next_hop: peer_id.clone(),
                 message,
@@ -164,7 +164,7 @@ where
         if let Some(node_info) = self.kademlia.get_node(to) {
             if let Some(peer_id) = node_info.peer_id() {
                 if self.connected_peers.contains(&peer_id) || node_info.has_addresses() {
-                    debug!(target: "stegos_network::delivery", "node is connected, delivering: node_id={}, peer_id={}, seq_no={}", to, peer_id.to_base58(), u8v_to_hexstr(&message.seq_no));
+                    debug!(target: "stegos_network::delivery", "node is connected, delivering: node_id={}, peer_id={}, seq_no={}", to, peer_id, u8v_to_hexstr(&message.seq_no));
                     self.out_events.push_back(DiscoveryOutEvent::Route {
                         next_hop: peer_id,
                         message,
@@ -243,13 +243,13 @@ where
     }
 
     fn inject_connected(&mut self, peer_id: PeerId, endpoint: ConnectedPoint) {
-        debug!(target: "stegos_network::discovery", "new peer connected: peer_id={}", peer_id.to_base58());
+        debug!(target: "stegos_network::discovery", "new peer connected: peer_id={}", peer_id);
         self.connected_peers.insert(peer_id.clone());
         NetworkBehaviour::inject_connected(&mut self.kademlia, peer_id, endpoint)
     }
 
     fn inject_disconnected(&mut self, peer_id: &PeerId, endpoint: ConnectedPoint) {
-        debug!(target: "stegos_network::discovery", "peer disconnected: peer_id={}", peer_id.to_base58());
+        debug!(target: "stegos_network::discovery", "peer disconnected: peer_id={}", peer_id);
         self.connected_peers.remove(peer_id);
         NetworkBehaviour::inject_disconnected(&mut self.kademlia, peer_id, endpoint)
     }
@@ -310,7 +310,7 @@ where
                             self.known_nodes.insert(node_id.clone(), peer_id.clone());
                             debug!(target: "stegos_network::discovery",
                                 "Discovered peer: node_id={}, peer_id={}, addresses={:?}, connected={:?}",
-                                node_id, peer_id.to_base58(), addresses, ty
+                                node_id, peer_id, addresses, ty
                             );
                             if addresses.len() > 0 {
                                 self.kademlia.set_peer_id(node_id, peer_id.clone());
@@ -370,12 +370,12 @@ where
                             match node_info.peer_id() {
                                 Some(p) => {
                                     if !self.connected_peers.contains(&p) {
-                                        debug!(target: "stegos_network::discovery", "connecting to known closest peer: {}, distance: {}", p.to_base58(), &my_id.distance_with(node));
+                                        debug!(target: "stegos_network::discovery", "connecting to known closest peer: {}, distance: {}", p, &my_id.distance_with(node));
                                         self.out_events.push_back(DiscoveryOutEvent::DialPeer {
                                             peer_id: p.clone(),
                                         });
                                     } else {
-                                        debug!(target: "stegos_network::discovery", "already connected to closest peer: {}, distance: {}", p.to_base58(), &my_id.distance_with(node));
+                                        debug!(target: "stegos_network::discovery", "already connected to closest peer: {}, distance: {}", p, &my_id.distance_with(node));
                                     }
                                 }
                                 None => (),

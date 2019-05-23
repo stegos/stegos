@@ -33,10 +33,12 @@ use libp2p::core::{
 use log::{debug, trace, warn};
 use smallvec::SmallVec;
 use std::collections::VecDeque;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use std::{fmt, io};
 use tokio::codec::Framed;
 use tokio::io::{AsyncRead, AsyncWrite};
+
+use crate::NETWORK_IDLE_TIMEOUT;
 
 /// Protocol handler that handles communication with the remote for the NCP protocol.
 ///
@@ -263,7 +265,7 @@ where
         }
 
         if self.substreams.is_empty() {
-            self.keep_alive = KeepAlive::Until(Instant::now() + Duration::from_secs(10));
+            self.keep_alive = KeepAlive::Until(Instant::now() + NETWORK_IDLE_TIMEOUT);
         } else {
             self.keep_alive = KeepAlive::Yes;
         }

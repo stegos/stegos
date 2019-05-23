@@ -286,23 +286,24 @@ impl Blockchain {
         };
 
         info!("Recovering blockchain from the disk...");
+
+        // Recover genesis.
         self.recover_block(block, timestamp)?;
-        for block in blocks {
-            self.recover_block(block, timestamp)?;
-        }
 
         // Check genesis.
-        for (genesis, chain) in genesis.iter().zip(self.blocks()) {
-            let genesis_hash = Hash::digest(genesis);
-            let chain_hash = Hash::digest(&chain);
-            if genesis_hash != chain_hash {
-                return Err(BlockchainError::IncompatibleChain(
-                    chain.base_header().height,
-                    genesis_hash,
-                    chain_hash,
-                )
-                .into());
-            }
+        let genesis_hash = Hash::digest(&genesis[0]);
+        if genesis_hash != self.last_block_hash() {
+            return Err(BlockchainError::IncompatibleChain(
+                genesis[0].base_header().height,
+                genesis_hash,
+                self.last_block_hash(),
+            )
+            .into());
+        }
+
+        // Recover remaining blocks.
+        for block in blocks {
+            self.recover_block(block, timestamp)?;
         }
 
         info!(

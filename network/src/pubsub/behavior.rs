@@ -222,12 +222,6 @@ impl<TSubstream> Floodsub<TSubstream> {
                 }),
             });
         }
-
-        self.events.push_back(NetworkBehaviourAction::GenerateEvent(
-            FloodsubEvent::EnabledOutgoing {
-                peer_id: peer_id.clone(),
-            },
-        ));
     }
 
     pub fn enable_incoming(&mut self, peer_id: &PeerId) {
@@ -246,12 +240,6 @@ impl<TSubstream> Floodsub<TSubstream> {
         for p in self.allowed_remotes.iter() {
             debug!(target: "stegos_network::pubsub", "peer receive enabled: peer_id={}, send_enabled={}", p, self.unlocked_remotes.contains_key(p));
         }
-
-        self.events.push_back(NetworkBehaviourAction::GenerateEvent(
-            FloodsubEvent::EnabledIncoming {
-                peer_id: peer_id.clone(),
-            },
-        ));
     }
 }
 
@@ -425,14 +413,6 @@ pub enum FloodsubEvent {
         peer_id: PeerId,
         /// The topic it has subscribed from.
         topic: TopicHash,
-    },
-    EnabledIncoming {
-        /// Enabled protocol for peer_id
-        peer_id: PeerId,
-    },
-    EnabledOutgoing {
-        /// Enabled protocol for peer_id
-        peer_id: PeerId,
     },
 }
 

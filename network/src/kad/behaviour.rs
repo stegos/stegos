@@ -506,7 +506,6 @@ where
 
         if let ConnectedPoint::Dialer { address } = old_endpoint {
             if let Some(node_info) = self.kbuckets.get_mut(&node_id) {
-                debug_assert!(node_info.addresses.is_connected());
                 node_info.addresses.set_disconnected(&address);
             }
         }

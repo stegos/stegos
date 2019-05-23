@@ -264,6 +264,7 @@ fn run() -> Result<(), Error> {
     Ok(())
 }
 
+// 2
 fn main() {
     if let Err(e) = run() {
         println!("Failed with error: {}", e); // Logger can be not yet initialized.

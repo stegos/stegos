@@ -152,13 +152,6 @@ impl<TSubstream> Gatekeeper<TSubstream> {
         self.unlocked_peers.len() >= NETWORK_READY_THRESHOLD
     }
 
-    pub fn shutdown(&mut self, peer_id: &PeerId) {
-        self.events.push_back(NetworkBehaviourAction::SendEvent {
-            peer_id: peer_id.clone(),
-            event: GatekeeperSendEvent::Shutdown,
-        });
-    }
-
     pub fn dial_peer(&mut self, peer_id: PeerId) {
         self.connecting_peers.insert(peer_id.clone());
         self.events
@@ -197,7 +190,7 @@ impl<TSubstream> Gatekeeper<TSubstream> {
 
     fn handle_unlock_request(&mut self, peer_id: PeerId, proof: Option<HashCashProof>) {
         if self.unlocked_peers.contains_key(&peer_id.clone().into()) {
-            debug!(target: "stegos_network::gatekeeper", "unlock request from already unlocked peer: peer_id={}", peer_id.to_base58());
+            debug!(target: "stegos_network::gatekeeper", "unlock request from already unlocked peer: peer_id={}", peer_id);
             self.pending_in_peers
                 .insert(peer_id.clone(), ListenerPeerState::WaitingDialer);
             self.events.push_back(NetworkBehaviourAction::GenerateEvent(
@@ -207,7 +200,7 @@ impl<TSubstream> Gatekeeper<TSubstream> {
         }
 
         if self.pending_out_peers.contains_key(&peer_id) {
-            debug!(target: "stegos_network::gatekeeper", "unlock request from the peer we are interested in, let in without puzzle solving: peer_id={}", peer_id.to_base58());
+            debug!(target: "stegos_network::gatekeeper", "unlock request from the peer we are interested in, let in without puzzle solving: peer_id={}", peer_id);
             self.pending_in_peers
                 .insert(peer_id.clone(), ListenerPeerState::WaitingDialer);
             self.unlocked_peers.insert(peer_id.clone().into(), ());
@@ -220,7 +213,7 @@ impl<TSubstream> Gatekeeper<TSubstream> {
         let proof = match proof {
             Some(p) => p,
             None => {
-                debug!(target: "stegos_network::gatekeeper", "unlock request without proof: peer_id={}", peer_id.to_base58());
+                debug!(target: "stegos_network::gatekeeper", "unlock request without proof: peer_id={}", peer_id);
                 self.send_new_puzlle(peer_id);
                 return;
             }
@@ -229,7 +222,7 @@ impl<TSubstream> Gatekeeper<TSubstream> {
         let puzzle = match self.our_puzzles.get(&peer_id.clone().into()) {
             Some(p) => p,
             None => {
-                debug!(target: "stegos_network::gatekeeper", "unlock request with proof, but no puzzle, sending new puzzle: peer_id={}", peer_id.to_base58());
+                debug!(target: "stegos_network::gatekeeper", "unlock request with proof, but no puzzle, sending new puzzle: peer_id={}", peer_id);
                 self.send_new_puzlle(peer_id);
                 return;
             }
@@ -239,7 +232,7 @@ impl<TSubstream> Gatekeeper<TSubstream> {
             && proof.nbits == puzzle.nbits
             && local_check_proof(&proof, self.hashcash_nbits)
         {
-            debug!(target: "stegos_network::gatekeeper", "unlock request with valid proof, peer_id={}", peer_id.to_base58());
+            debug!(target: "stegos_network::gatekeeper", "unlock request with valid proof, peer_id={}", peer_id);
             self.unlocked_peers.insert(peer_id.clone().into(), ());
             self.pending_in_peers
                 .insert(peer_id.clone(), ListenerPeerState::WaitingDialer);
@@ -252,15 +245,15 @@ impl<TSubstream> Gatekeeper<TSubstream> {
                 ));
             }
         } else {
-            debug!(target: "stegos_network::gatekeeper", "unlock request with invalid proof, sending new puzzle: peer_id={}", peer_id.to_base58());
+            debug!(target: "stegos_network::gatekeeper", "unlock request with invalid proof, sending new puzzle: peer_id={}", peer_id);
             self.send_new_puzlle(peer_id);
         }
     }
 
     fn handle_challenge_reply(&mut self, peer_id: PeerId, seed: Vec<u8>, nbits: usize) {
-        debug!(target: "stegos_network::gatekeeper", "received puzzle: peer_id={}", peer_id.to_base58());
+        debug!(target: "stegos_network::gatekeeper", "received puzzle: peer_id={}", peer_id);
         if !self.pending_out_peers.contains_key(&peer_id) {
-            debug!(target: "stegos_network::gatekeeper", "puzzle from peer we are not going to connect to, ignoring: peer_id={}", peer_id.to_base58());
+            debug!(target: "stegos_network::gatekeeper", "puzzle from peer we are not going to connect to, ignoring: peer_id={}", peer_id);
             return;
         }
         let puzzle = HashCashPuzzle {
@@ -311,7 +304,7 @@ where
     }
 
     fn inject_connected(&mut self, id: PeerId, cp: ConnectedPoint) {
-        debug!(target: "stegos_network::gatekeeper", "peer connected: peer_id={}", id.to_base58());
+        debug!(target: "stegos_network::gatekeeper", "peer connected: peer_id={}", id);
         self.connected_peers.insert(id.clone());
         // FIXME: use LRU cache for dialing addresses/peers
         if let ConnectedPoint::Dialer { address } = cp {
@@ -334,7 +327,7 @@ where
     }
 
     fn inject_disconnected(&mut self, id: &PeerId, _cp: ConnectedPoint) {
-        debug!(target: "stegos_network::gatekeeper", "peer disconnected: peer_id={}", id.to_base58());
+        debug!(target: "stegos_network::gatekeeper", "peer disconnected: peer_id={}", id);
         self.connected_peers.remove(id);
         self.pending_out_peers.remove(&id.clone().into());
         self.pending_in_peers.remove(&id.clone().into());
@@ -357,7 +350,7 @@ where
             }
             GatekeeperMessage::PermitReply { connection_allowed } => {
                 if connection_allowed {
-                    debug!(target: "stegos_network::gatekeeper", "succesfully negotiated hashcash: peer_id={}", propagation_source.to_base58());
+                    debug!(target: "stegos_network::gatekeeper", "succesfully negotiated hashcash: peer_id={}", propagation_source);
                     self.unlocked_peers
                         .insert(propagation_source.clone().into(), ());
                     self.pending_out_peers
@@ -388,7 +381,7 @@ where
     > {
         match self.solution_stream.poll() {
             Ok(Async::Ready(Some((peer_id, proof, duration)))) => {
-                debug!(target: "stegos_network::gatekeeper", "solved puzzle: peer_id={}, duration={}.{}sec", peer_id.to_base58(), duration.as_secs(), duration.subsec_millis());
+                debug!(target: "stegos_network::gatekeeper", "solved puzzle: peer_id={}, duration={}.{}sec", peer_id, duration.as_secs(), duration.subsec_millis());
                 self.solvers.remove(&peer_id);
                 self.protocol_updates.push_back(PeerEvent::PuzzleSolved {
                     peer_id: peer_id.clone(),
@@ -411,7 +404,7 @@ where
                 }
                 let peer_id = self.puzzles_queue.pop_front().unwrap();
                 if let Some(puzzle) = self.input_puzzles.get(&peer_id.clone().into()) {
-                    debug!(target: "stegos_network::gatekeeper", "starting thread to solve puzzle: peer_id={}", peer_id.to_base58());
+                    debug!(target: "stegos_network::gatekeeper", "starting thread to solve puzzle: peer_id={}", peer_id);
                     let tx = self.solution_sink.clone();
                     let p = puzzle.0.clone();
                     let peer_id = peer_id.clone();
@@ -437,7 +430,7 @@ where
         if let Some(event) = self.protocol_updates.pop_front() {
             match event {
                 PeerEvent::Connected { peer_id } => {
-                    debug!(target: "stegos_network::gatekeeper", "peer is connected, enabling listener: peer_id={}", peer_id.to_base58());
+                    debug!(target: "stegos_network::gatekeeper", "peer is connected, enabling listener: peer_id={}", peer_id);
                     self.pending_out_peers
                         .insert(peer_id.clone().into(), DialerPeerState::WaitingListener);
                     self.events.push_back(NetworkBehaviourAction::GenerateEvent(
@@ -455,7 +448,7 @@ where
                         Some((_, None)) => None,
                         None => None,
                     };
-                    debug!(target: "stegos_network::gatekeeper", "listener enabled, sending unlock request: peer_id={}, with_proof={}", peer_id.to_base58(), proof.is_some());
+                    debug!(target: "stegos_network::gatekeeper", "listener enabled, sending unlock request: peer_id={}, with_proof={}", peer_id, proof.is_some());
                     self.pending_out_peers
                         .insert(peer_id.clone().into(), DialerPeerState::UnlockRequestSent);
                     self.events.push_back(NetworkBehaviourAction::SendEvent {
@@ -467,7 +460,7 @@ where
                 }
                 PeerEvent::EnabledDialer { peer_id } => {
                     if self.pending_in_peers.contains_key(&peer_id) {
-                        debug!(target: "stegos_network::gatekeeper", "dialer enabled, sending permit reply: peer_id={}", peer_id.to_base58());
+                        debug!(target: "stegos_network::gatekeeper", "dialer enabled, sending permit reply: peer_id={}", peer_id);
                         self.pending_in_peers.remove(&peer_id);
                         self.events.push_back(NetworkBehaviourAction::SendEvent {
                             peer_id,
@@ -476,13 +469,13 @@ where
                             }),
                         });
                     } else {
-                        debug!(target: "stegos_network::gatekeeper", "dialer enabled, peer fully negotiated: peer_id={}", peer_id.to_base58());
+                        debug!(target: "stegos_network::gatekeeper", "dialer enabled, peer fully negotiated: peer_id={}", peer_id);
                         self.pending_out_peers.remove(&peer_id);
                     }
                 }
                 PeerEvent::PuzzleSolved { peer_id, answer } => {
                     if let Some(mut puzzle) = self.input_puzzles.get_mut(&peer_id.clone().into()) {
-                        debug!(target: "stegos_network::gatekeeper", "puzzle solved, sending proof: peer_id={}", peer_id.to_base58());
+                        debug!(target: "stegos_network::gatekeeper", "puzzle solved, sending proof: peer_id={}", peer_id);
                         self.pending_out_peers
                             .insert(peer_id.clone().into(), DialerPeerState::ProofSent);
                         puzzle.1 = Some(answer);
@@ -499,11 +492,11 @@ where
                                 ),
                             })
                         } else {
-                            debug!(target: "stegos_network::gatekeeper", "peer already gone, trying to reconnect: peer_id={}", peer_id.to_base58());
+                            debug!(target: "stegos_network::gatekeeper", "peer already gone, trying to reconnect: peer_id={}", peer_id);
                             self.dial_peer(peer_id);
                         }
                     } else {
-                        debug!(target: "stegos_network::gatekeeper", "got answer, but puzzle not found: peer_id={}", peer_id.to_base58());
+                        debug!(target: "stegos_network::gatekeeper", "got answer, but puzzle not found: peer_id={}", peer_id);
                     }
                 }
             }
@@ -513,7 +506,7 @@ where
         loop {
             match self.pending_out_peers.poll() {
                 Ok(Async::Ready(ref entry)) => {
-                    debug!(target: "stegos_network::gatekeeper", "peer hashcash expired: peer_id={}", entry.clone().0.to_base58());
+                    debug!(target: "stegos_network::gatekeeper", "peer hashcash expired: peer_id={}", entry.clone().0);
                     // Do cleanup
                 }
                 Ok(Async::NotReady) => break,
@@ -527,7 +520,7 @@ where
         loop {
             match self.pending_in_peers.poll() {
                 Ok(Async::Ready(ref entry)) => {
-                    debug!(target: "stegos_network::gatekeeper", "peer hashcash expired: peer_id={}", entry.clone().0.to_base58());
+                    debug!(target: "stegos_network::gatekeeper", "peer hashcash expired: peer_id={}", entry.clone().0);
                     // Do cleanup
                 }
                 Ok(Async::NotReady) => break,

@@ -30,9 +30,11 @@ use libp2p::core::{
 use log::{debug, trace};
 use smallvec::SmallVec;
 use std::collections::VecDeque;
-use std::{fmt, io};
+use std::{fmt, io, time::Instant};
 use tokio::codec::Framed;
 use tokio::io::{AsyncRead, AsyncWrite};
+
+use crate::NETWORK_IDLE_TIMEOUT;
 
 /// Protocol handler that handles communication with the remote for the floodsub protocol.
 ///
@@ -45,17 +47,11 @@ where
 {
     /// Configuration for the floodsub protocol.
     config: FloodsubConfig,
-
-    /// Accept incoming substreams
-    enabled_incoming: bool,
-
-    /// Allow outgoing substreams
-    enabled_outgoing: bool,
-
     /// The active substreams.
     // TODO: add a limit to the number of allowed substreams
     substreams: Vec<SubstreamState<TSubstream>>,
-
+    /// KeepAlive status
+    keep_alive: KeepAlive,
     /// Queue of values that we want to send to the remote.
     send_queue: SmallVec<[FloodsubRpc; 16]>,
     /// Events to send upstream
@@ -100,22 +96,10 @@ where
     pub fn new() -> Self {
         FloodsubHandler {
             config: FloodsubConfig::new(),
-            enabled_incoming: false,
-            enabled_outgoing: false,
             substreams: Vec::new(),
+            keep_alive: KeepAlive::Yes,
             send_queue: SmallVec::new(),
             out_events: VecDeque::new(),
-        }
-    }
-
-    #[inline]
-    fn disable(&mut self) {
-        self.enabled_incoming = false;
-        self.enabled_outgoing = false;
-        for n in (0..self.substreams.len()).rev() {
-            let substream = self.substreams.swap_remove(n);
-            self.substreams
-                .push(SubstreamState::Closing(substream.into_substream()));
         }
     }
 }
@@ -141,10 +125,6 @@ where
         &mut self,
         protocol: <Self::InboundProtocol as InboundUpgrade<TSubstream>>::Output,
     ) {
-        if !self.enabled_incoming {
-            debug!(target: "stegos_network::pubsub", "protocol is disabled. dropping incoming substream");
-            return ();
-        }
         self.substreams.push(SubstreamState::WaitingInput(protocol))
     }
 
@@ -153,10 +133,6 @@ where
         protocol: <Self::OutboundProtocol as OutboundUpgrade<TSubstream>>::Output,
         message: Self::OutboundOpenInfo,
     ) {
-        if !self.enabled_outgoing {
-            debug!(target: "stegos_network::pubsub", "protocol is disabled. dropping outgoing substream");
-            return ();
-        }
         self.substreams
             .push(SubstreamState::PendingSend(protocol, message))
     }
@@ -164,21 +140,6 @@ where
     #[inline]
     fn inject_event(&mut self, event: Self::InEvent) {
         match event {
-            FloodsubSendEvent::EnableIncoming => {
-                self.enabled_incoming = true;
-                self.out_events
-                    .push_back(FloodsubRecvEvent::EnabledIncoming);
-            }
-            FloodsubSendEvent::EnableOutgoing => {
-                self.enabled_incoming = true;
-                self.enabled_outgoing = true;
-                self.out_events
-                    .push_back(FloodsubRecvEvent::EnabledOutgoing);
-            }
-            FloodsubSendEvent::Disable => {
-                self.disable();
-                self.out_events.push_back(FloodsubRecvEvent::Disabled);
-            }
             FloodsubSendEvent::Publish(message) => {
                 self.send_queue.push(message);
             }
@@ -198,11 +159,7 @@ where
 
     #[inline]
     fn connection_keep_alive(&self) -> KeepAlive {
-        if self.enabled_incoming || self.enabled_outgoing || !self.substreams.is_empty() {
-            KeepAlive::Yes
-        } else {
-            KeepAlive::No
-        }
+        self.keep_alive
     }
 
     fn poll(
@@ -295,6 +252,12 @@ where
             }
         }
 
+        if self.substreams.is_empty() {
+            self.keep_alive = KeepAlive::Until(Instant::now() + NETWORK_IDLE_TIMEOUT);
+        } else {
+            self.keep_alive = KeepAlive::Yes;
+        }
+
         Ok(Async::NotReady)
     }
 }
@@ -305,8 +268,7 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         f.debug_struct("FloodsubHandler")
-            .field("enabled_incoming", &self.enabled_incoming)
-            .field("enabled_outgoing", &self.enabled_outgoing)
+            .field("keep_alive", &self.keep_alive)
             .field("substreams", &self.substreams.len())
             .field("send_queue", &self.send_queue.len())
             .finish()

@@ -31,16 +31,14 @@ use libp2p::core::{
 };
 use log::{debug, trace};
 use smallvec::SmallVec;
-use std::{
-    fmt, io,
-    time::{Duration, Instant},
-};
+use std::{fmt, io, time::Instant};
 use tokio::codec::Framed;
 use tokio::io::{AsyncRead, AsyncWrite};
 
+use crate::NETWORK_IDLE_TIMEOUT;
+
 /// Event passed to protocol handler from upper level
 pub enum GatekeeperSendEvent {
-    Shutdown,
     Send(GatekeeperMessage),
 }
 
@@ -56,15 +54,8 @@ where
     /// Configuration for the Ncp protocol.
     config: GatekeeperConfig,
 
-    /// If true, we are trying to shut down the existing Gatekeeper substream and should refuse any
-    /// incoming connection.
-    shutting_down: bool,
-
     /// Keep connection alive for data to arrive
     keep_alive: KeepAlive,
-
-    /// Internal failure happened
-    internal_failure: bool,
 
     /// The active substreams.
     // TODO: add a limit to the number of allowed substreams
@@ -100,22 +91,9 @@ where
     pub fn new() -> Self {
         GatekeeperHandler {
             config: GatekeeperConfig::new(),
-            shutting_down: false,
-            keep_alive: KeepAlive::Until(Instant::now() + Duration::from_secs(5)),
-            internal_failure: false,
+            keep_alive: KeepAlive::Yes,
             substreams: Vec::new(),
             send_queue: SmallVec::new(),
-        }
-    }
-
-    #[inline]
-    fn shutdown(&mut self) {
-        self.shutting_down = true;
-        self.keep_alive = KeepAlive::No;
-        for n in (0..self.substreams.len()).rev() {
-            let substream = self.substreams.swap_remove(n);
-            self.substreams
-                .push(SubstreamState::Closing(substream.into_substream()));
         }
     }
 }
@@ -157,10 +135,6 @@ where
         protocol: <Self::InboundProtocol as InboundUpgrade<TSubstream>>::Output,
     ) {
         trace!(target: "stegos_network::gatekeeper", "successfully negotiated inbound substream");
-        if self.shutting_down {
-            return ();
-        }
-        self.keep_alive = KeepAlive::Yes;
         self.substreams.push(SubstreamState::WaitingInput(protocol))
     }
 
@@ -170,10 +144,6 @@ where
         message: Self::OutboundOpenInfo,
     ) {
         trace!(target: "stegos_network::gatekeeper", "successfully negotiated outbound substream");
-        if self.shutting_down {
-            return;
-        }
-        self.keep_alive = KeepAlive::Yes;
         self.substreams
             .push(SubstreamState::PendingSend(protocol, message))
     }
@@ -181,7 +151,6 @@ where
     #[inline]
     fn inject_event(&mut self, event: Self::InEvent) {
         match event {
-            GatekeeperSendEvent::Shutdown => self.shutdown(),
             GatekeeperSendEvent::Send(message) => {
                 self.keep_alive = KeepAlive::Yes;
                 self.send_queue.push(message);
@@ -230,11 +199,7 @@ where
                                 .push(SubstreamState::WaitingInput(substream));
                             return Ok(Async::Ready(ProtocolsHandlerEvent::Custom(message)));
                         }
-                        Ok(Async::Ready(None)) => {
-                            self.keep_alive =
-                                KeepAlive::Until(Instant::now() + Duration::from_secs(5));
-                            SubstreamState::Closing(substream)
-                        }
+                        Ok(Async::Ready(None)) => SubstreamState::Closing(substream),
                         Ok(Async::NotReady) => {
                             self.substreams
                                 .push(SubstreamState::WaitingInput(substream));
@@ -255,7 +220,6 @@ where
                             }
                             Err(e) => {
                                 debug!(target: "stegos_network::gatekeeper", "error sending message: error={}", e);
-                                self.internal_failure = true;
                                 return Ok(Async::NotReady);
                             }
                         }
@@ -270,16 +234,12 @@ where
                             }
                             Err(e) => {
                                 debug!(target: "stegos_network::gatekeeper", "error flushing substream: error={}", e);
-                                self.internal_failure = true;
                                 return Ok(Async::NotReady);
                             }
                         }
                     }
                     SubstreamState::Closing(mut substream) => match substream.close() {
                         Ok(Async::Ready(())) => {
-                            // Let connection be closed after 5 idle secs
-                            self.keep_alive =
-                                KeepAlive::Until(Instant::now() + Duration::from_secs(5));
                             self.substreams.shrink_to_fit();
                             break;
                         }
@@ -297,7 +257,7 @@ where
         }
 
         if self.substreams.is_empty() {
-            self.keep_alive = KeepAlive::Until(Instant::now() + Duration::from_secs(10));
+            self.keep_alive = KeepAlive::Until(Instant::now() + NETWORK_IDLE_TIMEOUT);
         } else {
             self.keep_alive = KeepAlive::Yes;
         }
@@ -312,7 +272,6 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         f.debug_struct("GatekeeperHandler")
-            .field("shutting_down", &self.shutting_down)
             .field("substreams", &self.substreams.len())
             .field("send_queue", &self.send_queue.len())
             .finish()

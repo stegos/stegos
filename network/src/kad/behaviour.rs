@@ -780,13 +780,13 @@ where
                             };
                             if let Some(peer_id) = target_peer {
                                 if self.connected_peers.contains(&peer_id) {
-                                    debug!(target: "stegos_network::kad", "sending event to node: node_id={}, peer_id={}", node_id, peer_id.to_base58());
+                                    debug!(target: "stegos_network::kad", "sending event to node: node_id={}, peer_id={}", node_id, peer_id);
                                     return Async::Ready(NetworkBehaviourAction::SendEvent {
                                         peer_id: peer_id.clone(),
                                         event: rpc,
                                     });
                                 } else {
-                                    debug!(target: "stegos_network::kad", "dialing node: node_id={}, peer_id={}", node_id, peer_id.to_base58());
+                                    debug!(target: "stegos_network::kad", "dialing node: node_id={}, peer_id={}", node_id, peer_id);
                                     self.pending_rpcs.push((node_id.clone(), rpc));
                                     return Async::Ready(NetworkBehaviourAction::DialPeer {
                                         peer_id: peer_id.clone(),

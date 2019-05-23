@@ -31,8 +31,10 @@ use libp2p::core::{
     either::EitherOutput, upgrade, upgrade::Negotiated, InboundUpgrade, OutboundUpgrade,
 };
 use libp2p::multihash::Multihash;
-use std::{error, fmt, io, time::Duration, time::Instant};
+use std::{error, fmt, io, time::Instant};
 use tokio::io::{AsyncRead, AsyncWrite};
+
+use crate::NETWORK_IDLE_TIMEOUT;
 
 /// Protocol handler that handles Kademlia communications with the remote.
 ///
@@ -527,7 +529,7 @@ where
         }
 
         if self.substreams.is_empty() {
-            self.keep_alive = KeepAlive::Until(Instant::now() + Duration::from_secs(10));
+            self.keep_alive = KeepAlive::Until(Instant::now() + NETWORK_IDLE_TIMEOUT);
         } else {
             self.keep_alive = KeepAlive::Yes;
         }

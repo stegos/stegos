@@ -120,6 +120,12 @@ impl<TSubstream> Ncp<TSubstream> {
                 .push_back(NcpEvent::SendPeers { peer_id: p.clone() });
         }
     }
+
+    // Terminate connection to peer
+    pub fn terminate(&mut self, peer_id: PeerId) {
+        debug!(target: "stegos_network::ncp", "terminating connection with peer: peer_id={}", peer_id);
+        self.events.push_back(NcpEvent::Terminate { peer_id });
+    }
 }
 
 impl<TSubstream> NetworkBehaviour for Ncp<TSubstream>

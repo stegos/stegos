@@ -78,7 +78,7 @@ impl<TSubstream> Delivery<TSubstream> {
 impl<TSubstream> Delivery<TSubstream> {
     pub fn deliver_unicast(&mut self, next_hop: &PeerId, message: Unicast) {
         if self.connected_peers.contains(next_hop) {
-            debug!(target: "stegos_network::delivery", "delivering message to connected peer: peer_id={}, seq_no={}", next_hop.to_base58(), u8v_to_hexstr(&message.seq_no));
+            debug!(target: "stegos_network::delivery", "delivering message to connected peer: peer_id={}, seq_no={}", next_hop, u8v_to_hexstr(&message.seq_no));
             self.events.push_back(NetworkBehaviourAction::SendEvent {
                 peer_id: next_hop.clone(),
                 event: DeliverySendEvent::Deliver(DeliveryMessage::UnicastMessage(message)),
@@ -86,7 +86,7 @@ impl<TSubstream> Delivery<TSubstream> {
             return;
         }
 
-        debug!(target: "stegos_network::delivery", "dialing peer for message delivery: peer_id={}, seq_no={}", next_hop.to_base58(), u8v_to_hexstr(&message.seq_no));
+        debug!(target: "stegos_network::delivery", "dialing peer for message delivery: peer_id={}, seq_no={}", next_hop, u8v_to_hexstr(&message.seq_no));
         if !self.dial_queue.contains_key(next_hop) {
             self.dial_queue.insert(next_hop.clone(), ());
             self.events.push_back(NetworkBehaviourAction::DialPeer {
@@ -116,12 +116,12 @@ where
     }
 
     fn inject_connected(&mut self, id: PeerId, _: ConnectedPoint) {
-        debug!(target: "stegos_network::delivery", "peer connected: peer_id={}", id.to_base58());
+        debug!(target: "stegos_network::delivery", "peer connected: peer_id={}", id);
         self.connected_peers.insert(id.clone());
         if self.dial_queue.contains_key(&id) {
             self.dial_queue.remove(&id);
             if let Some(queue) = self.send_queue.get_mut(&id) {
-                debug!(target: "stegos_network::delivery", "delivering queued messages: peer_id={}, queue_len={}", id.to_base58(), queue.len());
+                debug!(target: "stegos_network::delivery", "delivering queued messages: peer_id={}, queue_len={}", id, queue.len());
                 for m in queue.drain() {
                     self.events.push_back(NetworkBehaviourAction::SendEvent {
                         peer_id: id.clone(),
@@ -142,7 +142,7 @@ where
         match event {
             DeliveryRecvEvent::Message(msg) => match msg {
                 DeliveryMessage::UnicastMessage(unicast) => {
-                    debug!(target: "stegos_network::delivery", "received unicast message from peer: peer_id={}, seq_no={}", propagation_source.to_base58(), u8v_to_hexstr(&unicast.seq_no));
+                    debug!(target: "stegos_network::delivery", "received unicast message from peer: peer_id={}, seq_no={}", propagation_source, u8v_to_hexstr(&unicast.seq_no));
                     self.events.push_back(NetworkBehaviourAction::GenerateEvent(
                         DeliveryEvent::Message(DeliveryMessage::UnicastMessage(unicast)),
                     ))
@@ -169,7 +169,7 @@ where
         loop {
             match self.dial_queue.poll() {
                 Ok(Async::Ready(ref entry)) => {
-                    debug!(target: "stegos_network::delivery", "dialout timeout: peer_id={}", entry.0.clone().to_base58());
+                    debug!(target: "stegos_network::delivery", "dialout timeout: peer_id={}", entry.0.clone());
                     // Drop sending queue for the peer
                     self.send_queue.remove(&entry.0);
                 }

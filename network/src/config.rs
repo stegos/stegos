@@ -48,6 +48,8 @@ pub struct NetworkConfig {
     pub monitoring_interval: u64,
     /// HashCash complixity (nuber of 0-bits to calculate)
     pub hashcash_nbits: usize,
+    /// Network readiness threshold (number of HashCash-enabled established connections)
+    pub readiness_threshold: usize,
 }
 
 /// Default values for network configuration.
@@ -64,6 +66,7 @@ impl Default for NetworkConfig {
             max_connections: 32,
             monitoring_interval: 60,
             hashcash_nbits: 24,
+            readiness_threshold: 2,
         }
     }
 }

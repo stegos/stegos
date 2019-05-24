@@ -716,13 +716,44 @@ impl Blockchain {
         Ok(())
     }
 
-    fn validate_macro_block_payments(
+    ///
+    /// Validate signed macro block.
+    ///
+    /// # Arguments
+    ///
+    /// * `block` - block to validate.
+    /// * `is_proposal` - don't check for the supermajority of votes.
+    ///                          Used to validate block proposals.
+    /// * `timestamp` - current time.
+    ///                          Used to validate escrow.
+    ///
+    pub fn validate_macro_block(
         &self,
         block: &MacroBlock,
         _timestamp: SystemTime,
     ) -> Result<(), BlockchainError> {
         let height = block.header.base.height;
         let block_hash = Hash::digest(&block);
+        debug!(
+            "Validating a macro block: height={}, block={}",
+            height, &block_hash
+        );
+
+        // Validate base header.
+        self.validate_base_header(&block_hash, &block.header.base)?;
+
+        // Validate multi-signature (skip for genesis).
+        if height > 0 {
+            // Validate signature.
+            check_multi_signature(
+                &block_hash,
+                &block.body.multisig,
+                &block.body.multisigmap,
+                self.validators(),
+                self.total_slots(),
+            )
+            .map_err(|e| BlockError::InvalidBlockSignature(e, height, block_hash))?;
+        }
 
         let mut burned = ECp::inf();
         let mut created = ECp::inf();
@@ -773,6 +804,7 @@ impl Blockchain {
                 BlockError::InvalidBlockInputsHash(height, block_hash, expected, got).into(),
             );
         }
+
         //
         // Validate outputs.
         //
@@ -843,51 +875,6 @@ impl Blockchain {
 
         // Checks staking balance.
         self.validate_staking_balance(staking_balance.iter())?;
-
-        Ok(())
-    }
-
-    ///
-    /// Validate signed macro block.
-    ///
-    /// # Arguments
-    ///
-    /// * `block` - block to validate.
-    /// * `is_proposal` - don't check for the supermajority of votes.
-    ///                          Used to validate block proposals.
-    /// * `timestamp` - current time.
-    ///                          Used to validate escrow.
-    ///
-    pub fn validate_macro_block(
-        &self,
-        block: &MacroBlock,
-        timestamp: SystemTime,
-    ) -> Result<(), BlockchainError> {
-        let height = block.header.base.height;
-        let block_hash = Hash::digest(&block);
-        debug!(
-            "Validating a macro block: height={}, block={}",
-            height, &block_hash
-        );
-
-        // Validate base header.
-        self.validate_base_header(&block_hash, &block.header.base)?;
-
-        // Validate multi-signature (skip for genesis).
-        if height > 0 {
-            // Validate signature.
-            check_multi_signature(
-                &block_hash,
-                &block.body.multisig,
-                &block.body.multisigmap,
-                self.validators(),
-                self.total_slots(),
-            )
-            .map_err(|e| BlockError::InvalidBlockSignature(e, height, block_hash))?;
-        }
-
-        // Validate inputs and outputs.
-        self.validate_macro_block_payments(block, timestamp)?;
 
         debug!(
             "The macro block is valid: height={}, block={}",

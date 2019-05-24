@@ -13,7 +13,6 @@ use stegos_blockchain::PaymentOutput;
 use stegos_crypto::curve1174;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
-use stegos_keychain::KeyChain;
 use stegos_network::Network;
 use stegos_node::EpochChanged;
 use stegos_node::Node;
@@ -91,8 +90,11 @@ pub struct TransactionPoolService {
 
 impl TransactionPoolService {
     /// Crates new TransactionPool.
-    pub fn new(keychain: &KeyChain, network: Network, node: Node) -> TransactionPoolService {
-        let pkey = keychain.network_pkey.clone();
+    pub fn new(
+        network_pkey: pbc::PublicKey,
+        network: Network,
+        node: Node,
+    ) -> TransactionPoolService {
         let facilitator_pkey: ParticipantID = ParticipantID::dum();
 
         let events = || -> Result<_, Error> {
@@ -118,7 +120,7 @@ impl TransactionPoolService {
             facilitator_pkey,
             role: NodeRole::Regular,
             network,
-            pkey,
+            pkey: network_pkey,
             events,
         }
     }

@@ -32,7 +32,6 @@ use log::Level;
 use std::time::Duration;
 use stegos_crypto::pbc;
 use stegos_crypto::pbc::VRF;
-use stegos_keychain::KeyChain;
 use tokio_timer::Timer;
 
 pub struct SandboxConfig {
@@ -56,7 +55,6 @@ impl Default for SandboxConfig {
 #[allow(unused)]
 pub struct Sandbox<'timer> {
     nodes: Vec<NodeSandbox>,
-    nodes_keychains: Vec<KeyChain>,
     timer: &'timer mut Timer<TestTimer>,
     config: SandboxConfig,
 }
@@ -70,27 +68,37 @@ impl<'timer> Sandbox<'timer> {
             let _ = simple_logger::init_with_level(Level::Trace);
             let num_nodes = config.num_nodes;
             let timestamp = SystemTime::now();
-            let nodes_keychains: Vec<_> = (0..num_nodes).map(|_num| KeyChain::new_mem()).collect();
-            let genesis = stegos_blockchain::genesis(
-                &nodes_keychains,
-                config.chain.min_stake_amount,
-                1000 * config.chain.min_stake_amount,
-                timestamp,
-            );
-
-            let nodes: Vec<NodeSandbox> = (0..num_nodes)
-                .map(|i| {
-                    NodeSandbox::new(
-                        config.node.clone(),
-                        config.chain.clone(),
-                        nodes_keychains[i].clone(),
-                        genesis.clone(),
-                    )
-                })
-                .collect();
+            let mut keychains = Vec::new();
+            for _i in 0..num_nodes {
+                let (wallet_skey, wallet_pkey) = curve1174::make_random_keys();
+                let (network_skey, network_pkey) = pbc::make_random_keys();
+                keychains.push((wallet_skey, wallet_pkey, network_skey, network_pkey));
+            }
+            let mut stakes = Vec::with_capacity(num_nodes);
+            for i in 0..num_nodes {
+                let stake_def = StakeDef {
+                    beneficiary_pkey: &keychains[i].1,
+                    network_skey: &keychains[i].2,
+                    network_pkey: &keychains[i].3,
+                    amount: config.chain.min_stake_amount,
+                };
+                stakes.push(stake_def);
+            }
+            let genesis = genesis(&stakes, 1000 * config.chain.min_stake_amount, timestamp);
+            let mut nodes = Vec::new();
+            for keys in keychains {
+                let node = NodeSandbox::new(
+                    config.node.clone(),
+                    config.chain.clone(),
+                    keys.1,
+                    keys.2,
+                    keys.3,
+                    genesis.clone(),
+                );
+                nodes.push(node)
+            }
             let sandbox = Sandbox {
                 nodes,
-                nodes_keychains,
                 timer,
                 config,
             };
@@ -117,7 +125,7 @@ impl<'timer> Sandbox<'timer> {
         let mut part1 = Partition::default();
         let mut part2 = Partition::default();
         for node in self.nodes.iter_mut() {
-            if divider(node.node_service.keys.network_pkey) {
+            if divider(node.node_service.network_pkey) {
                 part1.nodes.push(node)
             } else {
                 part2.nodes.push(node)
@@ -202,7 +210,9 @@ impl NodeSandbox {
     fn new(
         node_cfg: NodeConfig,
         chain_cfg: ChainConfig,
-        keychain: KeyChain,
+        recipient_pkey: curve1174::PublicKey,
+        network_skey: pbc::SecretKey,
+        network_pkey: pbc::PublicKey,
         genesis: MacroBlock,
     ) -> Self {
         // init network
@@ -212,8 +222,15 @@ impl NodeSandbox {
         let timestamp = SystemTime::now();
         let chain = Blockchain::testing(chain_cfg, genesis, timestamp)
             .expect("Failed to create blockchain");
-        let (mut node_service, node) =
-            NodeService::new(node_cfg, chain, keychain, network).unwrap();
+        let (mut node_service, node) = NodeService::new(
+            node_cfg,
+            chain,
+            recipient_pkey,
+            network_skey,
+            network_pkey,
+            network,
+        )
+        .unwrap();
         node_service.init().unwrap();
         Self {
             network_service,
@@ -233,11 +250,11 @@ impl NodeSandbox {
     #[allow(dead_code)]
     fn create_vrf_from_seed(&self, random: Hash, view_change: u32) -> VRF {
         let seed = mix(random, view_change);
-        pbc::make_VRF(&self.node_service.keys.network_skey, &seed)
+        pbc::make_VRF(&self.node_service.network_skey, &seed)
     }
 
     fn validator_id(&self) -> Option<usize> {
-        let key = self.node_service.keys.network_pkey;
+        let key = self.node_service.network_pkey;
         self.node_service
             .chain
             .validators()
@@ -289,7 +306,7 @@ trait Api<'p> {
         Box::new(self.iter_mut().filter(move |node| {
             validators
                 .iter()
-                .find(|key| **key == node.node_service.keys.network_pkey)
+                .find(|key| **key == node.node_service.network_pkey)
                 .is_none()
         }))
     }
@@ -399,7 +416,7 @@ trait Api<'p> {
         'p: 'a,
     {
         self.iter_mut()
-            .find(|node| node.node_service.keys.network_pkey == *pk)
+            .find(|node| node.node_service.network_pkey == *pk)
     }
 
     /// Return node for publickey.
@@ -408,7 +425,7 @@ trait Api<'p> {
         'p: 'a,
     {
         self.iter()
-            .find(|node| node.node_service.keys.network_pkey == *pk)
+            .find(|node| node.node_service.network_pkey == *pk)
     }
 }
 

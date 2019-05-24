@@ -36,7 +36,7 @@ use std::process;
 use std::time::SystemTime;
 use stegos_api::WebSocketAPI;
 use stegos_blockchain::Blockchain;
-use stegos_keychain::*;
+use stegos_keychain::KeyChain;
 use stegos_network::{Libp2pNetwork, NETWORK_STATUS_TOPIC};
 use stegos_node::NodeService;
 use stegos_txpool::TransactionPoolService;
@@ -173,13 +173,21 @@ fn run() -> Result<(), Error> {
 
     // Initialize keychain
     let keychain = KeyChain::new(cfg.keychain.clone())?;
+    let (wallet_skey, wallet_pkey, network_skey, network_pkey) = (
+        keychain.wallet_skey.clone(),
+        keychain.wallet_pkey.clone(),
+        keychain.network_skey.clone(),
+        keychain.network_pkey.clone(),
+    );
+    let recipient_pkey = wallet_pkey.clone();
 
     // Resolve seed pool (works, if chain=='testent', does nothing otherwise)
     resolve_pool(&mut cfg)?;
 
     // Initialize network
     let mut rt = Runtime::new()?;
-    let (network, network_service) = Libp2pNetwork::new(&cfg.network, &keychain)?;
+    let (network, network_service) =
+        Libp2pNetwork::new(&cfg.network, network_skey.clone(), network_pkey.clone())?;
 
     // Start metrics exporter
     if cfg.general.prometheus_endpoint != "" {
@@ -199,15 +207,20 @@ fn run() -> Result<(), Error> {
     let genesis = initialize_genesis(&cfg)?;
     let timestamp = SystemTime::now();
     let chain = Blockchain::new(cfg.chain.clone().into(), cfg.storage, genesis, timestamp)?;
-    let wallet_persistent_state =
-        chain.recover_wallet(&keychain.wallet_skey, &keychain.wallet_pkey)?;
+    let wallet_persistent_state = chain.recover_wallet(&wallet_skey, &wallet_pkey)?;
 
     // Initialize node
-    let (mut node_service, node) =
-        NodeService::new(cfg.node.clone(), chain, keychain.clone(), network.clone())?;
+    let (mut node_service, node) = NodeService::new(
+        cfg.node.clone()
+        chain,
+        recipient_pkey.clone(),
+        network_skey.clone(),
+        network_pkey.clone(),
+        network.clone(),
+    )?;
 
     // Initialize TransactionPool.
-    let txpool_service = TransactionPoolService::new(&keychain, network.clone(), node.clone());
+    let txpool_service = TransactionPoolService::new(network_pkey, network.clone(), node.clone());
 
     // Initialize Wallet.
     let (wallet_service, wallet) = WalletService::new(

@@ -30,15 +30,9 @@ use std::collections::BTreeMap;
 use std::time::SystemTime;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
-use stegos_keychain::KeyChain;
 
 /// Genesis blocks.
-pub fn genesis(
-    keychains: &[KeyChain],
-    stake: i64,
-    coins: i64,
-    timestamp: SystemTime,
-) -> MacroBlock {
+pub fn genesis(stakes: &[StakeDef], coins: i64, timestamp: SystemTime) -> MacroBlock {
     // Both block are created at the same time in the same epoch.
     let view_change: u32 = 0;
     let epoch: u64 = 0;
@@ -51,7 +45,7 @@ pub fn genesis(
     let block1 = {
         let previous = Hash::digest(&"genesis".to_string());
         let seed = mix(init_random, view_change);
-        let random = pbc::make_VRF(&keychains[0].network_skey, &seed);
+        let random = pbc::make_VRF(stakes[0].network_skey, &seed);
         //
         // Genesis has one PaymentOutput + N * StakeOutput, where N is the number of validators.
         //
@@ -59,54 +53,49 @@ pub fn genesis(
         // Node #1 receives all moneys except stakes.
         // All nodes gets `stake` money staked.
         //
-        let mut outputs: Vec<Output> = Vec::with_capacity(1 + keychains.len());
+        let mut outputs: Vec<Output> = Vec::with_capacity(1 + stakes.len());
 
         // Create PaymentOutput for node #1.
-        let recipient_pkey = &keychains[0].wallet_pkey;
-        let mut coins1: i64 = coins - keychains.len() as i64 * stake;
-        let (output, outputs_gamma) =
-            Output::new_payment(recipient_pkey, coins1).expect("genesis has valid public keys");
-        outputs.push(output);
-
+        let beneficiary_pkey = stakes[0].beneficiary_pkey;
+        let mut payout = coins;
         // Create StakeOutput for each node.
-        for keys in keychains {
-            let output = Output::new_stake(
-                &keys.wallet_pkey,
-                &keys.network_skey,
-                &keys.network_pkey,
-                stake,
-            )
-            .expect("genesis has valid public keys");
-            coins1 += stake;
-            outputs.push(output);
+        for stake in stakes {
+            let output = StakeOutput::from_def(stake).expect("genesis has valid public keys");
+            payout -= stake.amount;
+            outputs.push(output.into());
         }
-        assert_eq!(coins, coins1);
+        assert!(payout > 0);
+        let (output, outputs_gamma) =
+            Output::new_payment(beneficiary_pkey, payout).expect("genesis has valid public keys");
+        outputs.push(output);
 
         let gamma = -outputs_gamma;
         let mut block = MacroBlock::new(
             previous,
             epoch,
             view_change,
-            keychains[0].network_pkey,
+            stakes[0].network_pkey.clone(),
             random,
             timestamp,
             coins,
-            BitVector::ones(keychains.len()),
+            BitVector::ones(stakes.len()),
             gamma,
             &[],
             &outputs,
         );
 
         let block_hash = Hash::digest(&block);
-        let mut signatures: BTreeMap<pbc::PublicKey, pbc::Signature> = BTreeMap::new();
-        let mut validators: BTreeMap<pbc::PublicKey, i64> = BTreeMap::new();
-        for keychain in keychains.iter() {
-            let sig = pbc::sign_hash(&block_hash, &keychain.network_skey);
-            signatures.insert(keychain.network_pkey.clone(), sig);
-            validators.insert(keychain.network_pkey.clone(), stake);
-        }
-        let validators = validators.into_iter().collect();
-        let (multisig, multisigmap) = create_multi_signature(&validators, &signatures);
+        let (multisig, multisigmap) = {
+            let mut signatures: BTreeMap<pbc::PublicKey, pbc::Signature> = BTreeMap::new();
+            let mut validators: BTreeMap<pbc::PublicKey, i64> = BTreeMap::new();
+            for stake in stakes {
+                let sig = pbc::sign_hash(&block_hash, &stake.network_skey);
+                signatures.insert(stake.network_pkey.clone(), sig);
+                validators.insert(stake.network_pkey.clone(), stake.amount);
+            }
+            let validators = validators.into_iter().collect();
+            create_multi_signature(&validators, &signatures)
+        };
         block.multisig = multisig;
         block.multisigmap = multisigmap;
         block

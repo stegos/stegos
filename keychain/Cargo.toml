@@ -20,6 +20,5 @@ lazy_static = "1.1"
 log = "0.4"
 regex = "1.0"
 rpassword = "3.0"
-secp256k1 = { version = "0.12", features = ["rand"] }
 serde = "1.0"
 serde_derive = "1.0"

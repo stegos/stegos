@@ -189,7 +189,11 @@ fn run() -> Result<(), Error> {
     // Resolve seed pool (works, if chain=='testent', does nothing otherwise)
     resolve_pool(&mut base_config)?;
     // Initialize network
-    let (network, network_service) = Libp2pNetwork::new(&base_config.network, &network_keychain)?;
+    let (network, network_service) = Libp2pNetwork::new(
+        &base_config.network,
+        network_keychain.network_skey.clone(),
+        network_keychain.network_pkey.clone(),
+    )?;
     rt.spawn(network_service);
 
     // Start metrics exporter
@@ -224,7 +228,9 @@ fn run() -> Result<(), Error> {
     let (node_service, node) = NodeService::new(
         base_config.node.clone(),
         chain,
-        network_keychain.clone(),
+        network_keychain.wallet_pkey.clone(),
+        network_keychain.network_skey.clone(),
+        network_keychain.network_pkey.clone(),
         network.clone(),
     )?;
 

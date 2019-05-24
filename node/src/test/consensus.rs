@@ -117,7 +117,7 @@ fn smoke_test() {
                 pbc::check_hash(
                     &proposal.block_hash,
                     &block_hash_sig,
-                    &node.node_service.keys.network_pkey,
+                    &node.node_service.network_pkey,
                 )
                 .unwrap();
             } else {
@@ -598,7 +598,7 @@ fn out_of_order_micro_block() {
             leader.node_service.chain.last_random(),
             leader.node_service.chain.view_change(),
         );
-        let random = pbc::make_VRF(&leader.node_service.keys.network_skey, &seed);
+        let random = pbc::make_VRF(&leader.node_service.network_skey, &seed);
 
         let mut block = MicroBlock::empty(
             last_block_hash,
@@ -606,14 +606,14 @@ fn out_of_order_micro_block() {
             offset,
             view_change + 1,
             None,
-            leader.node_service.keys.network_pkey,
+            leader.node_service.network_pkey,
             random,
             timestamp,
         );
         let leader_node = s.node(&leader_pk).unwrap();
         block.sign(
-            &leader_node.node_service.keys.network_skey,
-            &leader_node.node_service.keys.network_pkey,
+            &leader_node.node_service.network_skey,
+            &leader_node.node_service.network_pkey,
         );
         let block: Block = Block::MicroBlock(block);
 

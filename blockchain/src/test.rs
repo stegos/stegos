@@ -24,16 +24,66 @@
 use crate::block::{MacroBlock, MicroBlock};
 use crate::blockchain::Blockchain;
 use crate::election::mix;
+use crate::genesis::genesis;
 use crate::multisignature::create_multi_signature;
-use crate::output::{Output, PaymentOutput, PaymentPayloadData, StakeOutput};
+use crate::output::{Output, PaymentOutput, PaymentPayloadData, StakeDef, StakeOutput};
 use crate::transaction::{CoinbaseTransaction, PaymentTransaction, Transaction};
 use log::*;
 use std::collections::btree_map::BTreeMap;
 use std::time::SystemTime;
-use stegos_crypto::curve1174::Fr;
+use stegos_crypto::curve1174::{self, Fr};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
-use stegos_keychain::KeyChain;
+
+#[derive(Clone, Debug)]
+pub struct KeyChain {
+    /// Wallet Secret Key.
+    pub wallet_skey: curve1174::SecretKey,
+    /// Wallet Public Key.
+    pub wallet_pkey: curve1174::PublicKey,
+    /// Network Secret Key.
+    pub network_skey: pbc::SecretKey,
+    /// Network Public Key.
+    pub network_pkey: pbc::PublicKey,
+}
+
+impl KeyChain {
+    pub fn new() -> Self {
+        let (wallet_skey, wallet_pkey) = curve1174::make_random_keys();
+        let (network_skey, network_pkey) = pbc::make_random_keys();
+        Self {
+            wallet_skey,
+            wallet_pkey,
+            network_skey,
+            network_pkey,
+        }
+    }
+}
+
+pub fn fake_genesis(
+    stake: i64,
+    coins: i64,
+    num_nodes: usize,
+    timestamp: SystemTime,
+) -> (Vec<KeyChain>, MacroBlock) {
+    let mut keychains = Vec::with_capacity(num_nodes);
+    for _i in 0..num_nodes {
+        let keychain = KeyChain::new();
+        keychains.push(keychain);
+    }
+    let mut stakes = Vec::with_capacity(num_nodes);
+    for i in 0..num_nodes {
+        let stake_def = StakeDef {
+            beneficiary_pkey: &keychains[i].wallet_pkey,
+            network_skey: &keychains[i].network_skey,
+            network_pkey: &keychains[i].network_pkey,
+            amount: stake,
+        };
+        stakes.push(stake_def);
+    }
+    let genesis = genesis(&stakes, coins, timestamp);
+    (keychains, genesis)
+}
 
 pub fn sign_fake_macro_block(block: &mut MacroBlock, chain: &Blockchain, keychains: &[KeyChain]) {
     let block_hash = Hash::digest(block);

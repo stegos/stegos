@@ -33,9 +33,7 @@ use crate::error::KeyError;
 use crate::input::*;
 use crate::keyfile::*;
 use crate::recovery::wallet_skey_to_recovery;
-use failure::Error;
 use log::*;
-use secp256k1::rand::{ChaChaRng, SeedableRng};
 use std::path::Path;
 use stegos_crypto::curve1174;
 use stegos_crypto::pbc;
@@ -68,7 +66,7 @@ impl KeyChain {
             && !network_pkey_path.exists()
         {
             debug!("Can't find keys on the disk: wallet_skey_file={}, wallet_pkey_file={}, network_skey_file={}, network_pkey_file={}",
-                cfg.wallet_skey_file, cfg.wallet_pkey_file, cfg.network_skey_file, cfg.network_pkey_file);
+                   cfg.wallet_skey_file, cfg.wallet_pkey_file, cfg.network_skey_file, cfg.network_pkey_file);
 
             let (wallet_skey, wallet_pkey) = if !cfg.recovery_file.is_empty() {
                 info!("Recovering keys...");
@@ -164,48 +162,11 @@ impl KeyChain {
         Ok(keychain)
     }
 
-    /// Temporary KeyChain for tests.
-    pub fn new_mem() -> Self {
-        let (wallet_skey, wallet_pkey) = curve1174::make_random_keys();
-        let (network_skey, network_pkey) = pbc::make_random_keys();
-
-        let keychain = KeyChain {
-            cfg: Default::default(),
-            wallet_skey,
-            wallet_pkey,
-            network_skey,
-            network_pkey,
-        };
-
-        keychain
-    }
-
     /// Get recovery phrase.
     pub fn show_recovery(&self) -> Result<String, KeyError> {
         let password = read_password_from_stdin(false)?;
         let wallet_skey_path = Path::new(&self.cfg.wallet_skey_file);
         let wallet_skey = load_wallet_skey(wallet_skey_path, &password)?;
         Ok(wallet_skey_to_recovery(&wallet_skey))
-    }
-
-    /// Generate new secp256k1 keypair using KeyChain as seed.
-    pub fn generate_secp256k1_keypair(
-        &self,
-    ) -> Result<(secp256k1::key::SecretKey, secp256k1::key::PublicKey), Error> {
-        // seed generator, with validator key.
-        let seed: [u8; 32] = self.wallet_skey.to_bytes();
-        // convert seed to old rand version format.
-        let mut seed_converted = [0u32; 4];
-        for i in 0..4 {
-            seed_converted[i] = (seed[i * 4 + 0] as u32) << 24
-                | (seed[i * 4 + 1] as u32) << 16
-                | (seed[i * 4 + 2] as u32) << 8
-                | (seed[i * 4 + 3] as u32);
-        }
-
-        let mut rng = ChaChaRng::from_seed(&seed_converted);
-
-        let sec = secp256k1::Secp256k1::new();
-        Ok(sec.generate_keypair(&mut rng))
     }
 }

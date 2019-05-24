@@ -674,14 +674,10 @@ fn issue_896_resolve_fork() {
 
         let first_leader = r.parts.0.first_mut();
         assert_eq!(leader_pk, first_leader.node_service.keys.network_pkey);
+
         first_leader
             .network_service
             .filter_broadcast(&[crate::VIEW_CHANGE_TOPIC]);
-        // leader can send second block, if tx_wait_time << view_change timeout, and he is lucky
-        first_leader
-            .network_service
-            .filter_broadcast(&[crate::SEALED_BLOCK_TOPIC]);
-
         first_leader.poll();
         // unicast view_change proof to old leader.
         first_leader
@@ -713,6 +709,11 @@ fn issue_896_resolve_fork() {
         first_leader
             .network_service
             .filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+
+        // leader can send second block, if tx_wait_time << view_change timeout, and he is lucky
+        first_leader
+            .network_service
+            .filter_broadcast(&[crate::SEALED_BLOCK_TOPIC]);
 
         let msg: ViewChangeMessage = first_leader
             .network_service

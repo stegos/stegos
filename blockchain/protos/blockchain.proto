@@ -77,7 +77,6 @@ message MacroBlockHeader {
     int64 block_reward = 3;
     stegos.crypto.Hash inputs_range_hash = 4;
     stegos.crypto.Hash outputs_range_hash = 5;
-    ViewChangeProof proof = 6;
 }
 
 message MerkleNode {

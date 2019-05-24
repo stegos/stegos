@@ -1305,7 +1305,7 @@ pub mod tests {
             let (output1, gamma1) = Output::new_payment(&pkey2, amount).unwrap();
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
-            let block = MacroBlock::new(base, gamma, 0, &inputs1, &outputs1, None, npkey);
+            let block = MacroBlock::new(base, gamma, 0, &inputs1, &outputs1, npkey);
             block.validate_balance(&[output0]).expect("block is valid");
         }
 
@@ -1320,7 +1320,7 @@ pub mod tests {
             let (output1, gamma1) = Output::new_payment(&pkey2, amount - 1).unwrap();
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
-            let block = MacroBlock::new(base, gamma, 0, &inputs1, &outputs1, None, npkey);
+            let block = MacroBlock::new(base, gamma, 0, &inputs1, &outputs1, npkey);
             match block.validate_balance(&[output0]) {
                 Err(e) => match e.downcast::<BlockError>().unwrap() {
                     BlockError::InvalidBlockBalance(_height, _hash) => {}
@@ -1353,7 +1353,7 @@ pub mod tests {
         let (output, gamma1) = Output::new_payment(&pkey, amount).unwrap();
         let outputs = [output];
         let gamma = gamma0 - gamma1;
-        let block = MacroBlock::new(base, gamma, 0, &input_hashes, &outputs, None, npkey);
+        let block = MacroBlock::new(base, gamma, 0, &input_hashes, &outputs, npkey);
         block.validate_balance(&inputs).expect("block is valid");
 
         {
@@ -1400,8 +1400,7 @@ pub mod tests {
 
             let base =
                 BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-            let block =
-                MacroBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None, npkey);
+            let block = MacroBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], npkey);
             block.validate_balance(&inputs).expect("block is valid");
         }
 
@@ -1420,8 +1419,7 @@ pub mod tests {
 
             let base =
                 BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-            let block =
-                MacroBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None, npkey);
+            let block = MacroBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], npkey);
             block.validate_balance(&inputs).expect("block is valid");
         }
 
@@ -1442,8 +1440,7 @@ pub mod tests {
 
             let base =
                 BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-            let block =
-                MacroBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None, npkey);
+            let block = MacroBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], npkey);
             match block.validate_balance(&inputs) {
                 Err(e) => match e.downcast::<BlockError>().unwrap() {
                     BlockError::InvalidBlockBalance(_height, _hash) => {}
@@ -1471,8 +1468,7 @@ pub mod tests {
 
             let base =
                 BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-            let block =
-                MacroBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], None, npkey);
+            let block = MacroBlock::new(base, gamma, 0, &input_hashes[..], &outputs[..], npkey);
             match block.validate_balance(&inputs) {
                 Err(e) => match e.downcast::<OutputError>().unwrap() {
                     OutputError::InvalidStake(_output_hash) => {}
@@ -1504,15 +1500,7 @@ pub mod tests {
         let (output, output_gamma) = Output::new_payment(&pkey, output_amount).unwrap();
         let outputs = [output];
         let gamma = input_gamma - output_gamma;
-        let block = MacroBlock::new(
-            base,
-            gamma,
-            block_reward,
-            &input_hashes,
-            &outputs,
-            None,
-            npkey,
-        );
+        let block = MacroBlock::new(base, gamma, block_reward, &input_hashes, &outputs, npkey);
         block.validate_balance(&inputs).expect("block is valid");
     }
 

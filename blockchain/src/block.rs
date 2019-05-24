@@ -207,9 +207,6 @@ pub struct MacroBlockHeader {
 
     /// Merklish root of all range proofs for output.
     pub outputs_range_hash: Hash,
-
-    /// Proof of the happen view_change.
-    pub proof: Option<ViewChangeProof>,
 }
 
 impl Hashable for MacroBlockHeader {
@@ -220,9 +217,6 @@ impl Hashable for MacroBlockHeader {
         self.block_reward.hash(state);
         self.inputs_range_hash.hash(state);
         self.outputs_range_hash.hash(state);
-        if let Some(proof) = &self.proof {
-            proof.hash(state);
-        }
     }
 }
 
@@ -265,7 +259,7 @@ pub struct MacroBlock {
 
 impl MacroBlock {
     pub fn empty(base: BaseBlockHeader, pkey: pbc::PublicKey) -> MacroBlock {
-        Self::new(base, Fr::zero(), 0, &[], &[], None, pkey)
+        Self::new(base, Fr::zero(), 0, &[], &[], pkey)
     }
 
     pub fn new(
@@ -274,7 +268,6 @@ impl MacroBlock {
         block_reward: i64,
         inputs: &[Hash],
         outputs: &[Output],
-        proof: Option<ViewChangeProof>,
         pkey: pbc::PublicKey,
     ) -> MacroBlock {
         // Re-order all inputs to blur transaction boundaries.
@@ -314,7 +307,6 @@ impl MacroBlock {
 
         // Create header
         let header = MacroBlockHeader {
-            proof,
             base,
             gamma,
             block_reward,

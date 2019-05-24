@@ -440,9 +440,6 @@ impl ProtoConvert for MacroBlockHeader {
         proto.set_block_reward(self.block_reward);
         proto.set_inputs_range_hash(self.inputs_range_hash.into_proto());
         proto.set_outputs_range_hash(self.outputs_range_hash.into_proto());
-        if let Some(proof) = &self.proof {
-            proto.set_proof(proof.into_proto())
-        }
         proto
     }
 
@@ -453,13 +450,7 @@ impl ProtoConvert for MacroBlockHeader {
         let inputs_range_hash = Hash::from_proto(proto.get_inputs_range_hash())?;
         let outputs_range_hash = Hash::from_proto(proto.get_outputs_range_hash())?;
 
-        let proof = if proto.has_proof() {
-            Some(ViewChangeProof::from_proto(proto.get_proof())?)
-        } else {
-            None
-        };
         Ok(MacroBlockHeader {
-            proof,
             base,
             gamma,
             block_reward,
@@ -803,7 +794,7 @@ mod tests {
         let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
         roundtrip(&base);
 
-        let block = MacroBlock::new(base, gamma, 0, &inputs1, &outputs1, None, pkeypbc);
+        let block = MacroBlock::new(base, gamma, 0, &inputs1, &outputs1, pkeypbc);
         roundtrip(&block.header);
         roundtrip(&block.body);
         roundtrip(&block);

@@ -21,17 +21,16 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::block::{MacroBlock, MicroBlock, VERSION};
+use crate::block::{BaseBlockHeader, MacroBlock, MicroBlock, VERSION};
 use crate::blockchain::{Balance, Blockchain, ChainInfo};
 use crate::election::mix;
-use crate::error::TransactionError;
-use crate::error::{BlockError, BlockchainError};
+use crate::error::{BlockError, BlockchainError, SlashingError, TransactionError};
 use crate::multisignature::check_multi_signature;
-use crate::output::Output;
+use crate::output::{Output, PublicPaymentOutput};
+use crate::slashing::confiscate_tx;
 use crate::transaction::{
-    CoinbaseTransaction, PaymentTransaction, RestakeTransaction, Transaction,
+    CoinbaseTransaction, PaymentTransaction, RestakeTransaction, SlashingTransaction, Transaction,
 };
-use crate::{confiscate_tx, PublicPaymentOutput, SlashingError, SlashingTransaction};
 use log::*;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
@@ -492,6 +491,63 @@ impl Blockchain {
     }
 
     ///
+    /// Validate base block header.
+    ///
+    pub fn validate_base_header(
+        &self,
+        block_hash: &Hash,
+        base: &BaseBlockHeader,
+    ) -> Result<(), BlockchainError> {
+        let height = base.height;
+
+        // Check block version.
+        if base.version != VERSION {
+            return Err(BlockError::InvalidBlockVersion(
+                height,
+                *block_hash,
+                base.version,
+                VERSION,
+            )
+            .into());
+        }
+
+        // Check height.
+        if height != self.height() {
+            return Err(BlockError::OutOfOrderBlock(*block_hash, height, self.height()).into());
+        }
+
+        // Check new hash.
+        if self.contains_block(&block_hash) {
+            return Err(BlockError::BlockHashCollision(height, *block_hash).into());
+        }
+
+        // Check previous hash (skip for genesis).
+        if height > 0 {
+            let previous_hash = self.last_block_hash();
+            if previous_hash != base.previous {
+                return Err(BlockError::InvalidPreviousHash(
+                    height,
+                    *block_hash,
+                    base.previous,
+                    previous_hash,
+                )
+                .into());
+            }
+        }
+
+        // Check random (skip for genesis).
+        if height > 0 {
+            let leader = self.select_leader(base.view_change);
+            let seed = mix(self.last_random(), base.view_change);
+            if !pbc::validate_VRF_source(&base.random, &leader, &seed) {
+                return Err(BlockError::IncorrectRandom(height, *block_hash).into());
+            }
+        }
+
+        Ok(())
+    }
+
+    ///
     /// A helper for validate_micro_block().
     ///
     fn validate_micro_block_tx(
@@ -571,40 +627,8 @@ impl Blockchain {
             height, &block_hash
         );
 
-        // Check block version.
-        if block.base.version != VERSION {
-            return Err(BlockError::InvalidBlockVersion(
-                height,
-                block_hash,
-                block.base.version,
-                VERSION,
-            )
-            .into());
-        }
-
-        // Check height.
-        if height != self.height() {
-            return Err(BlockError::OutOfOrderBlock(block_hash, height, self.height()).into());
-        }
-
-        // Check previous hash.
-        if self.height() > 0 {
-            let previous_hash = self.last_block_hash();
-            if previous_hash != block.base.previous {
-                return Err(BlockError::InvalidPreviousHash(
-                    height,
-                    block_hash,
-                    block.base.previous,
-                    previous_hash,
-                )
-                .into());
-            }
-        }
-
-        // Check new hash.
-        if self.contains_block(&block_hash) {
-            return Err(BlockError::BlockHashCollision(height, block_hash).into());
-        }
+        // Validate base header.
+        self.validate_base_header(&block_hash, &block.base)?;
 
         // Check signature (exclude epoch == 0 for genesis).
         if self.epoch() > 0 {
@@ -653,11 +677,6 @@ impl Blockchain {
             if let Err(_e) = pbc::check_hash(&block_hash, &block.sig, &leader) {
                 return Err(BlockError::InvalidLeaderSignature(height, block_hash).into());
             }
-
-            let seed = mix(self.last_random(), block.base.view_change);
-            if !pbc::validate_VRF_source(&block.base.random, &leader, &seed) {
-                return Err(BlockError::IncorrectRandom(height, block_hash).into());
-            }
         }
 
         let mut inputs_set: HashSet<Hash> = HashSet::new();
@@ -697,13 +716,44 @@ impl Blockchain {
         Ok(())
     }
 
-    fn validate_macro_block_payments(
+    ///
+    /// Validate signed macro block.
+    ///
+    /// # Arguments
+    ///
+    /// * `block` - block to validate.
+    /// * `is_proposal` - don't check for the supermajority of votes.
+    ///                          Used to validate block proposals.
+    /// * `timestamp` - current time.
+    ///                          Used to validate escrow.
+    ///
+    pub fn validate_macro_block(
         &self,
         block: &MacroBlock,
         _timestamp: SystemTime,
     ) -> Result<(), BlockchainError> {
         let height = block.header.base.height;
         let block_hash = Hash::digest(&block);
+        debug!(
+            "Validating a macro block: height={}, block={}",
+            height, &block_hash
+        );
+
+        // Validate base header.
+        self.validate_base_header(&block_hash, &block.header.base)?;
+
+        // Validate multi-signature (skip for genesis).
+        if height > 0 {
+            // Validate signature.
+            check_multi_signature(
+                &block_hash,
+                &block.body.multisig,
+                &block.body.multisigmap,
+                self.validators(),
+                self.total_slots(),
+            )
+            .map_err(|e| BlockError::InvalidBlockSignature(e, height, block_hash))?;
+        }
 
         let mut burned = ECp::inf();
         let mut created = ECp::inf();
@@ -754,6 +804,7 @@ impl Blockchain {
                 BlockError::InvalidBlockInputsHash(height, block_hash, expected, got).into(),
             );
         }
+
         //
         // Validate outputs.
         //
@@ -824,93 +875,6 @@ impl Blockchain {
 
         // Checks staking balance.
         self.validate_staking_balance(staking_balance.iter())?;
-
-        Ok(())
-    }
-
-    ///
-    /// Validate signed macro block.
-    ///
-    /// # Arguments
-    ///
-    /// * `block` - block to validate.
-    /// * `is_proposal` - don't check for the supermajority of votes.
-    ///                          Used to validate block proposals.
-    /// * `timestamp` - current time.
-    ///                          Used to validate escrow.
-    ///
-    pub fn validate_macro_block(
-        &self,
-        block: &MacroBlock,
-        timestamp: SystemTime,
-        is_proposal: bool,
-    ) -> Result<(), BlockchainError> {
-        let height = block.header.base.height;
-        let block_hash = Hash::digest(&block);
-        debug!(
-            "Validating a macro block: height={}, block={}",
-            height, &block_hash
-        );
-
-        // Check block version.
-        if block.header.base.version != VERSION {
-            return Err(BlockError::InvalidBlockVersion(
-                height,
-                block_hash,
-                block.header.base.version,
-                VERSION,
-            )
-            .into());
-        }
-
-        // Check height.
-        if height != self.height() {
-            return Err(BlockError::OutOfOrderBlock(block_hash, height, self.height()).into());
-        }
-
-        // Check previous hash.
-        if self.height() > 0 {
-            let previous_hash = self.last_block_hash();
-            if previous_hash != block.header.base.previous {
-                return Err(BlockError::InvalidPreviousHash(
-                    height,
-                    block_hash,
-                    block.header.base.previous,
-                    previous_hash,
-                )
-                .into());
-            }
-        }
-
-        // Check new hash.
-        if self.contains_block(&block_hash) {
-            return Err(BlockError::BlockHashCollision(height, block_hash).into());
-        }
-
-        // skip leader selection and signature checking for genesis block.
-        if self.epoch() > 0 {
-            // Skip view change check, just check supermajority.
-            let leader = self.select_leader(block.header.base.view_change);
-
-            let seed = mix(self.last_random(), block.header.base.view_change);
-            if !pbc::validate_VRF_source(&block.header.base.random, &leader, &seed) {
-                return Err(BlockError::IncorrectRandom(height, block_hash).into());
-            }
-
-            // Validate signature.
-            if !is_proposal {
-                check_multi_signature(
-                    &block_hash,
-                    &block.body.multisig,
-                    &block.body.multisigmap,
-                    self.validators(),
-                    self.total_slots(),
-                )
-                .map_err(|e| BlockError::InvalidBlockSignature(e, height, block_hash))?;
-            }
-        }
-
-        self.validate_macro_block_payments(block, timestamp)?;
 
         debug!(
             "The macro block is valid: height={}, block={}",

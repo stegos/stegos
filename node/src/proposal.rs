@@ -87,11 +87,6 @@ pub fn create_macro_block_proposal(
             .expect("Invalid block");
     let block_hash = Hash::digest(&block);
 
-    // Validate the block via chain (just double-checking here).
-    chain
-        .validate_macro_block(&block, timestamp, true)
-        .expect("proposed macro block is valid");
-
     // Create block proposal.
     let block_proposal = MacroBlockProposal {
         base: block.header.base.clone(),
@@ -158,6 +153,11 @@ pub fn validate_proposed_macro_block(
     }
 
     //
+    // Validate base header.
+    //
+    chain.validate_base_header(block_hash, &block_proposal.base)?;
+
+    //
     // Validate transactions.
     //
 
@@ -212,9 +212,6 @@ pub fn validate_proposed_macro_block(
         )
         .into());
     }
-
-    // Validate this block through blockchain.
-    chain.validate_macro_block(&block, block.header.base.timestamp, true)?;
 
     debug!("Macro block proposal is valid: block={:?}", block_hash);
     Ok(block)

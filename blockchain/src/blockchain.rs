@@ -330,7 +330,7 @@ impl Blockchain {
             }
             Block::MacroBlock(block) => {
                 if cfg!(debug_assertions) {
-                    self.validate_macro_block(&block, timestamp, false)?
+                    self.validate_macro_block(&block, timestamp)?
                 }
                 let _ = self.register_macro_block(block, timestamp);
             }
@@ -670,7 +670,7 @@ impl Blockchain {
         //
         // Validate the macro block.
         //
-        self.validate_macro_block(&block, timestamp, false)?;
+        self.validate_macro_block(&block, timestamp)?;
 
         //
         // Write the macro block to the disk.

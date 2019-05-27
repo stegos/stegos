@@ -26,17 +26,23 @@ use crate::error::*;
 use failure::Error;
 use log::*;
 use std::time::SystemTime;
-use stegos_blockchain::{mix, BaseBlockHeader, BlockError, Blockchain, MacroBlock, VERSION};
+use stegos_blockchain::{
+    mix, BaseBlockHeader, BlockError, Blockchain, CoinbaseTransaction, MacroBlock, PaymentOutput,
+    PaymentPayloadData, Transaction, VERSION,
+};
 use stegos_consensus::MacroBlockProposal;
+use stegos_crypto::curve1174;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 
 pub fn create_macro_block_proposal(
     chain: &Blockchain,
     view_change: u32,
+    block_reward: i64,
+    recipient_pkey: &curve1174::PublicKey,
     network_skey: &pbc::SecretKey,
     network_pkey: &pbc::PublicKey,
-) -> MacroBlock {
+) -> (MacroBlock, MacroBlockProposal) {
     let timestamp = SystemTime::now();
     let seed = mix(chain.last_random(), view_change);
     let random = pbc::make_VRF(&network_skey, &seed);
@@ -52,7 +58,33 @@ pub fn create_macro_block_proposal(
         chain.epoch() + 1,
     );
 
-    let block = MacroBlock::empty(base, network_pkey.clone());
+    // Coinbase.
+    let coinbase_tx = {
+        let data = PaymentPayloadData::Comment("Block reward".to_string());
+        let (output, gamma) =
+            PaymentOutput::with_payload(&recipient_pkey, block_reward, data.clone())
+                .expect("invalid keys");
+
+        info!(
+            "Created reward UTXO: hash={}, amount={}, data={:?}",
+            Hash::digest(&output),
+            block_reward,
+            data
+        );
+
+        CoinbaseTransaction {
+            block_reward,
+            block_fee: 0,
+            gamma: -gamma,
+            txouts: vec![output.into()],
+        }
+    };
+
+    let transactions = vec![coinbase_tx.into()];
+
+    let block =
+        MacroBlock::from_transactions(base, &transactions, block_reward, network_pkey.clone())
+            .expect("Invalid block");
     let block_hash = Hash::digest(&block);
 
     // Validate the block via chain (just double-checking here).
@@ -60,12 +92,18 @@ pub fn create_macro_block_proposal(
         .validate_macro_block(&block, timestamp, true)
         .expect("proposed macro block is valid");
 
+    // Create block proposal.
+    let block_proposal = MacroBlockProposal {
+        base: block.header.base.clone(),
+        transactions,
+    };
+
     info!(
         "Created a new macro block proposal: height={}, view_change={}, epoch={}, hash={}",
         height, view_change, epoch, block_hash
     );
 
-    block
+    (block, block_proposal)
 }
 
 ///
@@ -123,14 +161,46 @@ pub fn validate_proposed_macro_block(
     // Validate transactions.
     //
 
-    // TODO: support reward, slashing, service awards.
-    if !block_proposal.transactions.is_empty() {
+    // Coinbase.
+    if let Some(Transaction::CoinbaseTransaction(tx)) = block_proposal.transactions.get(0) {
+        tx.validate()?;
+        if tx.block_reward != cfg.block_reward {
+            return Err(NodeBlockError::InvalidBlockReward(
+                height,
+                block_hash.clone(),
+                tx.block_reward,
+                cfg.block_reward,
+            )
+            .into());
+        }
+
+        if tx.block_fee != 0 {
+            return Err(NodeBlockError::InvalidBlockFee(
+                height,
+                block_hash.clone(),
+                tx.block_fee,
+                0,
+            )
+            .into());
+        }
+    } else {
+        // Force coinbase if reward is not zero.
+        return Err(BlockError::CoinbaseMustBeFirst(block_hash.clone()).into());
+    }
+
+    // TODO: support slashing && service awards.
+    if block_proposal.transactions.len() > 1 {
         return Err(BlockError::InvalidBlockBalance(height, block_hash.clone()).into());
     }
 
     // Re-create original block.
     let leader = chain.select_leader(block_proposal.base.view_change);
-    let block = MacroBlock::empty(block_proposal.base.clone(), leader);
+    let block = MacroBlock::from_transactions(
+        block_proposal.base.clone(),
+        &block_proposal.transactions,
+        cfg.block_reward,
+        leader,
+    )?;
 
     // Check that block has the same hash.
     let expected_block_hash = Hash::digest(&block);

@@ -752,13 +752,16 @@ fn out_of_order_keyblock_proposal() {
             let random = pbc::make_VRF(&leader_node.node_service.keys.network_skey, &seed);
             let base = BaseBlockHeader::new(version, previous, height, round, timestamp, random);
             let leader = leader_node.node_service.keys.network_pkey;
-            let request = MacroBlock::empty(base, leader);
-            let hash = Hash::digest(&request);
-            let body = ConsensusMessageBody::Proposal { request, proof: () };
+            let block = MacroBlock::empty(base, leader);
+            let block_hash = Hash::digest(&block);
+            let body = ConsensusMessageBody::Proposal(MacroBlockProposal {
+                base: block.header.base.clone(),
+                transactions: vec![],
+            });
             ConsensusMessage::new(
                 height,
                 round + 1,
-                hash,
+                block_hash,
                 &leader_node.node_service.keys.network_skey,
                 &leader_node.node_service.keys.network_pkey,
                 body,

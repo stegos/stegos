@@ -560,6 +560,16 @@ impl Transaction {
             Transaction::SlashingTransaction(_) => "SlashingTransaction",
         }
     }
+
+    pub fn fullhash(&self, state: &mut Hasher) {
+        self.hash(state);
+        match self {
+            Transaction::CoinbaseTransaction(_tx) => {}
+            Transaction::PaymentTransaction(tx) => tx.sig.hash(state),
+            Transaction::RestakeTransaction(tx) => tx.sig.hash(state),
+            Transaction::SlashingTransaction(_tx) => (),
+        }
+    }
 }
 
 impl Hashable for Transaction {

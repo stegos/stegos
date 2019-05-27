@@ -22,35 +22,51 @@
 // SOFTWARE.
 
 use crate::error::*;
-use failure::Error;
+use stegos_blockchain::{BaseBlockHeader, Transaction};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
 
-/// Consensus Message Payload.
 #[derive(Clone, Debug)]
-pub enum ConsensusMessageBody<Request, Proof> {
-    /// Propose Message (preprepare).
-    Proposal { request: Request, proof: Proof },
-    /// Pre-vote Message (prepare).
-    Prevote {},
-    /// Pre-commit Message (commit).
-    Precommit { request_hash_sig: pbc::Signature },
+pub struct MacroBlockProposal {
+    pub base: BaseBlockHeader,
+    pub transactions: Vec<Transaction>,
 }
 
-impl<Request: Hashable, Proof: Hashable> Hashable for ConsensusMessageBody<Request, Proof> {
+impl Hashable for MacroBlockProposal {
+    fn hash(&self, state: &mut Hasher) {
+        self.base.hash(state);
+        let tx_count: u64 = self.transactions.len() as u64;
+        tx_count.hash(state);
+        for tx in &self.transactions {
+            tx.fullhash(state);
+        }
+    }
+}
+
+/// Consensus Message Payload.
+#[derive(Clone, Debug)]
+pub enum ConsensusMessageBody {
+    /// Propose Message (preprepare).
+    Proposal(MacroBlockProposal),
+    /// Pre-vote Message (prepare).
+    Prevote,
+    /// Pre-commit Message (commit).
+    Precommit(pbc::Signature),
+}
+
+impl Hashable for ConsensusMessageBody {
     fn hash(&self, state: &mut Hasher) {
         match self {
-            ConsensusMessageBody::Proposal { request, proof } => {
+            ConsensusMessageBody::Proposal(proposal) => {
                 "Propose".hash(state);
-                request.hash(state);
-                proof.hash(state);
+                proposal.hash(state);
             }
-            ConsensusMessageBody::Prevote {} => {
+            ConsensusMessageBody::Prevote => {
                 "Prevote".hash(state);
             }
-            ConsensusMessageBody::Precommit { request_hash_sig } => {
+            ConsensusMessageBody::Precommit(block_sig) => {
                 "Precommit".hash(state);
-                request_hash_sig.hash(state);
+                block_sig.hash(state);
             }
         }
     }
@@ -58,22 +74,22 @@ impl<Request: Hashable, Proof: Hashable> Hashable for ConsensusMessageBody<Reque
 
 /// Consensus Message.
 #[derive(Clone, Debug)]
-pub struct ConsensusMessage<Request, Proof> {
+pub struct ConsensusMessage {
     /// Current round.
     pub round: u32,
     /// Current height.
     pub height: u64,
     /// Hash of proposed request.
-    pub request_hash: Hash,
+    pub block_hash: Hash,
     /// Message Body.
-    pub body: ConsensusMessageBody<Request, Proof>,
+    pub body: ConsensusMessageBody,
     /// Sender of this message.
     pub pkey: pbc::PublicKey,
     /// Signature of this message.
     pub sig: pbc::Signature,
 }
 
-impl<Request, Proof> ConsensusMessage<Request, Proof> {
+impl ConsensusMessage {
     pub fn name(&self) -> &'static str {
         match self.body {
             ConsensusMessageBody::Proposal { .. } => "Proposal",
@@ -83,29 +99,29 @@ impl<Request, Proof> ConsensusMessage<Request, Proof> {
     }
 }
 
-impl<Request: Hashable, Proof: Hashable> ConsensusMessage<Request, Proof> {
+impl ConsensusMessage {
     ///
     /// Create and sign a new consensus message.
     ///
     pub fn new(
         height: u64,
         round: u32,
-        request_hash: Hash,
+        block_hash: Hash,
         skey: &pbc::SecretKey,
         pkey: &pbc::PublicKey,
-        body: ConsensusMessageBody<Request, Proof>,
-    ) -> ConsensusMessage<Request, Proof> {
+        body: ConsensusMessageBody,
+    ) -> ConsensusMessage {
         let mut hasher = Hasher::new();
         height.hash(&mut hasher);
         round.hash(&mut hasher);
-        request_hash.hash(&mut hasher);
+        block_hash.hash(&mut hasher);
         body.hash(&mut hasher);
         let hash = hasher.result();
         let sig = pbc::sign_hash(&hash, skey);
         ConsensusMessage {
             height,
             round,
-            request_hash,
+            block_hash,
             body,
             pkey: pkey.clone(),
             sig,
@@ -115,41 +131,16 @@ impl<Request: Hashable, Proof: Hashable> ConsensusMessage<Request, Proof> {
     ///
     /// Validate signature of the message.
     ///
-    pub fn validate<F>(&self, mut validate_request: F) -> Result<(), ConsensusError>
-    where
-        F: FnMut(Hash, &Request, u32) -> Result<(), Error>,
-    {
+    pub fn validate(&self) -> Result<(), ConsensusError> {
         let mut hasher = Hasher::new();
         self.height.hash(&mut hasher);
         self.round.hash(&mut hasher);
-        self.request_hash.hash(&mut hasher);
+        self.block_hash.hash(&mut hasher);
         self.body.hash(&mut hasher);
         let hash = hasher.result();
         if let Err(_e) = pbc::check_hash(&hash, &self.sig, &self.pkey) {
             return Err(ConsensusError::InvalidMessageSignature);
         }
-        match &self.body {
-            ConsensusMessageBody::Proposal {
-                request,
-                proof: _proof,
-            } => {
-                validate_request(self.request_hash, request, self.round)
-                    .map_err(ConsensusError::InvalidPropose)?;
-            }
-            _ => {}
-        }
         Ok(())
-    }
-}
-
-/// Used by protobuf tests.
-impl<Request: Hashable, Proof: Hashable> Hashable for ConsensusMessage<Request, Proof> {
-    fn hash(&self, state: &mut Hasher) {
-        self.height.hash(state);
-        self.round.hash(state);
-        self.request_hash.hash(state);
-        self.body.hash(state);
-        self.pkey.hash(state);
-        self.sig.hash(state);
     }
 }

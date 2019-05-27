@@ -897,35 +897,8 @@ impl Blockchain {
                 return Err(BlockError::IncorrectRandom(height, block_hash).into());
             }
 
-            // Currently macro block consensus uses public key as peer id.
-            // This adaptor allows converting PublicKey into integer identifier.
-            let validators_map: HashMap<pbc::PublicKey, u32> = self
-                .validators()
-                .iter()
-                .enumerate()
-                .map(|(id, (pk, _))| (*pk, id as u32))
-                .collect();
-
-            if let Some(leader_id) = validators_map.get(&leader) {
-                // bit of leader should be always set.
-                if !block.body.multisigmap.contains(*leader_id as usize) {
-                    return Err(BlockError::NoLeaderSignatureFound(height, block_hash).into());
-                }
-            } else {
-                return Err(BlockError::LeaderIsNotValidator(height, block_hash).into());
-            }
-
-            // checks that proposal is signed only by leader.
-            if is_proposal {
-                if block.body.multisigmap.len() != 1 {
-                    return Err(
-                        BlockError::MoreThanOneSignatureAtPropose(height, block_hash).into(),
-                    );
-                }
-                if let Err(_e) = pbc::check_hash(&block_hash, &block.body.multisig, &leader) {
-                    return Err(BlockError::InvalidLeaderSignature(height, block_hash).into());
-                }
-            } else {
+            // Validate signature.
+            if !is_proposal {
                 check_multi_signature(
                     &block_hash,
                     &block.body.multisig,

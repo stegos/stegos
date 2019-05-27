@@ -133,46 +133,6 @@ pub fn check_multi_signature(
     Ok(())
 }
 
-///
-/// Create a new self-signed multisignature.
-///
-pub fn create_proposal_signature(
-    hash: &Hash,
-    skey: &pbc::SecretKey,
-    pkey: &pbc::PublicKey,
-    validators: &Vec<(pbc::PublicKey, i64)>,
-) -> (pbc::Signature, BitVector) {
-    let mut signatures: BTreeMap<pbc::PublicKey, pbc::Signature> = BTreeMap::new();
-    let sig = pbc::sign_hash(hash, skey);
-    signatures.insert(pkey.clone(), sig);
-    create_multi_signature(validators, &signatures)
-}
-
-///
-/// Merge two multisignatures.
-///
-pub fn merge_multi_signature(
-    dst_multisig: &mut pbc::Signature,
-    dst_multisigmap: &mut BitVector,
-    src_multisig: &pbc::Signature,
-    src_multisigmap: &BitVector,
-) {
-    let orig_dst_len = dst_multisigmap.len();
-    dst_multisigmap.union_inplace(src_multisigmap);
-    let new_dst_len = dst_multisigmap.len();
-    if new_dst_len == orig_dst_len {
-        // src is a subset of dst - nothing to merge.
-        return;
-    } else if new_dst_len == orig_dst_len + src_multisigmap.len() {
-        // Non-intersecting sets.
-        *dst_multisig += src_multisig.clone();
-        return;
-    } else {
-        // Intersecting sets.
-        panic!("Can't merge n intersected multi-signatures")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -24,20 +24,18 @@
 use crate::error::*;
 use crate::message::*;
 use crate::metrics;
-use bitvector::BitVector;
 use log::*;
 use std::collections::BTreeMap;
-use std::fmt::Debug;
 use std::mem;
-use stegos_blockchain::create_multi_signature;
-use stegos_blockchain::{check_supermajority, ElectionResult};
-use stegos_crypto::hash::{Hash, Hashable};
+use stegos_blockchain::{check_supermajority, create_multi_signature, ElectionResult, MacroBlock};
+use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 
-struct LockedRound<Request, Proof> {
+#[derive(Debug)]
+struct LockedRound {
     precommits: BTreeMap<pbc::PublicKey, pbc::Signature>,
-    request: Request,
-    proof: Proof,
+    block: MacroBlock,
+    block_proposal: MacroBlockProposal,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -65,7 +63,7 @@ impl ConsensusState {
 }
 
 /// Consensus State.
-pub struct Consensus<Request, Proof> {
+pub struct Consensus {
     //
     // Network node keys
     //
@@ -96,14 +94,16 @@ pub struct Consensus<Request, Proof> {
     state: ConsensusState,
     /// Current consensus round.
     round: u32,
-    /// Proposed request.
-    request: Option<Request>,
-    /// A proof need to validate request.
-    proof: Option<Proof>,
+    /// The block.
+    block: Option<MacroBlock>,
+    /// The Hash of block.
+    block_hash: Option<Hash>,
+    /// Information needed to re-create the block.
+    block_proposal: Option<MacroBlockProposal>,
     /// This state is used when some validator collect majority of prevotes.
     /// At this phase node is
     /// locked to some round, and didn't produce any new proposes.
-    locked_round: Option<LockedRound<Request, Proof>>,
+    locked_round: Option<LockedRound>,
     /// Collected Prevotes.
     prevotes: BTreeMap<pbc::PublicKey, pbc::Signature>,
     /// Collected Precommits.
@@ -113,14 +113,12 @@ pub struct Consensus<Request, Proof> {
     // External events
     //
     /// Pending messages.
-    inbox: Vec<ConsensusMessage<Request, Proof>>,
+    inbox: Vec<ConsensusMessage>,
     /// Outgoing messages.
-    pub outbox: Vec<ConsensusMessage<Request, Proof>>,
+    pub outbox: Vec<ConsensusMessage>,
 }
 
-impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
-    Consensus<Request, Proof>
-{
+impl Consensus {
     ///
     /// Start a new consensus protocol.
     ///
@@ -147,12 +145,13 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
         let prevotes: BTreeMap<pbc::PublicKey, pbc::Signature> = BTreeMap::new();
         let precommits: BTreeMap<pbc::PublicKey, pbc::Signature> = BTreeMap::new();
         let total_slots = validators.iter().map(|v| v.1).sum();
-        let request = None;
-        let proof = None;
+        let block = None;
+        let block_hash = None;
+        let block_proposal = None;
         let locked_round = None;
         let round = 0;
-        let inbox: Vec<ConsensusMessage<Request, Proof>> = Vec::new();
-        let outbox: Vec<ConsensusMessage<Request, Proof>> = Vec::new();
+        let inbox: Vec<ConsensusMessage> = Vec::new();
+        let outbox: Vec<ConsensusMessage> = Vec::new();
         Consensus {
             skey,
             pkey,
@@ -163,8 +162,9 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
             height,
             round,
             epoch,
-            request,
-            proof,
+            block,
+            block_hash,
+            block_proposal,
             locked_round,
             prevotes,
             precommits,
@@ -175,28 +175,36 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
 
     fn lock(&mut self) {
         assert_eq!(self.state, ConsensusState::Precommit);
-
-        self.state = ConsensusState::Propose;
+        let block = self.block.take().expect("expected some block");
+        let block_proposal = self
+            .block_proposal
+            .take()
+            .expect("expected some block_proposal");
         let locked_round = LockedRound {
             precommits: mem::replace(&mut self.precommits, BTreeMap::new()),
-            request: self.request.take().expect("expected some propose"),
-            proof: self.proof.take().expect("expected some proof"),
+            block,
+            block_proposal,
         };
-
-        self.prevotes.clear();
         self.locked_round = Some(locked_round);
-        self.proof = None;
-        self.outbox.clear();
-        self.process_inbox();
+        self.reset();
     }
 
     fn reset(&mut self) {
         self.state = ConsensusState::Propose;
         self.prevotes.clear();
         self.precommits.clear();
-        self.request = None;
-        self.proof = None;
+        self.block = None;
+        self.block_hash = None;
+        self.block_proposal = None;
         self.outbox.clear();
+        if self.is_leader() {
+            // Automatically re-propose locked block.
+            if let Some(locked_round) = &self.locked_round {
+                let block_hash = Hash::digest(&locked_round.block);
+                let block_proposal = locked_round.block_proposal.clone();
+                self.propose_unchecked(block_hash, block_proposal);
+            }
+        }
         self.process_inbox();
     }
 
@@ -227,37 +235,33 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
     }
 
     ///
-    /// Propose a new request with a proof.
-    /// If Consensus is locked at some state, then it should rebroadcast existing propose.
-    /// If not, then `propose_creator` is called to produce new propose.
+    /// Returns true if current node should propose a new request.
     ///
-    /// # Arguments
+    pub fn should_propose(&self) -> bool {
+        self.state == ConsensusState::Propose && self.is_leader() && self.locked_round.is_none()
+    }
+
     ///
-    /// * `propose_creator` - is a function that should create propose, if called.
+    /// Propose a new block.
     ///
-    pub fn propose<F>(&mut self, propose_creator: F)
-    where
-        F: FnOnce() -> (Request, Proof),
-    {
-        assert!(self.is_leader(), "only leader can propose");
-        assert_eq!(self.state, ConsensusState::Propose, "at propose state");
-        let (request, proof) = match &self.locked_round {
-            Some(locked_round) => (locked_round.request.clone(), locked_round.proof.clone()),
-            _ => propose_creator(),
-        };
-        let request_hash = Hash::digest(&request);
+    pub fn propose(&mut self, block_hash: Hash, block_proposal: MacroBlockProposal) {
+        assert!(self.should_propose(), "invalid state");
+        self.propose_unchecked(block_hash, block_proposal);
+    }
+
+    fn propose_unchecked(&mut self, block_hash: Hash, block_proposal: MacroBlockProposal) {
         debug!(
-            "{}({}:{}): propose request={:?}",
+            "{}({}:{}): propose block={:?}",
             self.state.name(),
             self.height,
             self.round,
-            &request_hash
+            &block_hash
         );
-        let body = ConsensusMessageBody::Proposal { request, proof };
+        let body = ConsensusMessageBody::Proposal(block_proposal);
         let msg = ConsensusMessage::new(
             self.height,
             self.round,
-            request_hash,
+            block_hash,
             &self.skey,
             &self.pkey,
             body,
@@ -267,29 +271,32 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
     }
 
     ///
+    /// Returns true if current node should validate a new request.
+    ///
+    pub fn should_prevote(&self) -> bool {
+        return self.state == ConsensusState::Prevote && !self.prevotes.contains_key(&self.pkey);
+    }
+
+    ///
     /// Pre-vote the request.
     ///
-    /// # Arguments
-    ///
-    /// * `request_hash` - a request's hash to ensure that the right request is pre-voted.
-    ///
-    fn prevote(&mut self, request_hash: Hash) {
-        assert_eq!(self.state, ConsensusState::Prevote);
-        let expected_request_hash = Hash::digest(self.request.as_ref().unwrap());
-        assert_eq!(&request_hash, &expected_request_hash);
-        assert!(!self.prevotes.contains_key(&self.pkey));
+    pub fn prevote(&mut self, block: MacroBlock) {
+        assert!(self.should_prevote());
+        let block_hash = Hash::digest(&block);
+        assert_eq!(&block_hash, self.block_hash.as_ref().unwrap());
         debug!(
-            "{}({}:{}): pre-vote request={:?}",
+            "{}({}:{}): pre-vote block={:?}",
             self.state.name(),
             self.height,
             self.round,
-            &request_hash
+            block_hash,
         );
-        let body = ConsensusMessageBody::Prevote {};
+        self.block = Some(block);
+        let body = ConsensusMessageBody::Prevote;
         let msg = ConsensusMessage::new(
             self.height,
             self.round,
-            request_hash,
+            block_hash,
             &self.skey,
             &self.pkey,
             body,
@@ -301,27 +308,23 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
     ///
     /// Pre-commit the request.
     ///
-    /// # Arguments
-    ///
-    /// * `request_hash` - a request's hash to ensure that the right request is pre-voted.
-    ///
-    fn precommit(&mut self, request_hash: Hash) {
+    fn precommit(&mut self) {
         assert_eq!(self.state, ConsensusState::Precommit);
-        let expected_request_hash = Hash::digest(self.request.as_ref().unwrap());
-        assert_eq!(&request_hash, &expected_request_hash);
+        assert!(self.block.is_some());
+        let block_hash = self.block_hash.as_ref().unwrap().clone();
         debug!(
-            "{}({}:{}): pre-commit request={:?}",
+            "{}({}:{}): pre-commit block={:?}",
             self.state.name(),
             self.height,
             self.round,
-            &request_hash
+            block_hash
         );
-        let request_hash_sig = pbc::sign_hash(&request_hash, &self.skey);
-        let body = ConsensusMessageBody::Precommit { request_hash_sig };
+        let block_hash_sig = pbc::sign_hash(&block_hash, &self.skey);
+        let body = ConsensusMessageBody::Precommit(block_hash_sig);
         let msg = ConsensusMessage::new(
             self.height,
             self.round,
-            request_hash,
+            block_hash,
             &self.skey,
             &self.pkey,
             body,
@@ -337,10 +340,7 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
     ///
     /// * `msg` - a message to process.
     ///
-    pub fn feed_message(
-        &mut self,
-        msg: ConsensusMessage<Request, Proof>,
-    ) -> Result<(), ConsensusError> {
+    pub fn feed_message(&mut self, msg: ConsensusMessage) -> Result<(), ConsensusError> {
         trace!(
             "{}({}:{}): process message: msg={:?}",
             self.state.name(),
@@ -348,6 +348,8 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
             self.round,
             &msg
         );
+
+        msg.validate()?;
 
         // Check sender.
         if !self.validators.contains_key(&msg.pkey) {
@@ -396,21 +398,21 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
         }
         assert_eq!(msg.round, self.round);
 
-        // Check request_hash.
+        // Check block_hash.
         if self.state != ConsensusState::Propose {
-            let expected_request_hash = Hash::digest(self.request.as_ref().unwrap());
-            if expected_request_hash != msg.request_hash {
+            let expected_block_hash = self.block_hash.as_ref().unwrap();
+            if expected_block_hash != &msg.block_hash {
                 warn!(
-                    "{}({}:{}): invalid request_hash: expected_request_hash={:?}, got_request_hash={:?}, msg={:?}",
+                    "{}({}:{}): invalid block_hash: expected_block_hash={:?}, got_block_hash={:?}, msg={:?}",
                     self.state.name(),
                     self.height, self.round,
-                    &expected_request_hash,
-                    &msg.request_hash,
+                    &expected_block_hash,
+                    &msg.block_hash,
                     &msg
                 );
                 return Err(ConsensusError::InvalidRequestHash(
-                    expected_request_hash,
-                    msg.request_hash,
+                    expected_block_hash.clone(),
+                    msg.block_hash,
                     msg.pkey,
                 ));
             }
@@ -431,18 +433,18 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
         // Check valid transitions.
         match (&msg.body, &self.state) {
             // Obvious cases.
-            (ConsensusMessageBody::Proposal { .. }, ConsensusState::Propose) => {}
-            (ConsensusMessageBody::Prevote { .. }, ConsensusState::Prevote) => {}
-            (ConsensusMessageBody::Precommit { .. }, ConsensusState::Precommit) => {}
+            (ConsensusMessageBody::Proposal(_), ConsensusState::Propose) => {}
+            (ConsensusMessageBody::Prevote, ConsensusState::Prevote) => {}
+            (ConsensusMessageBody::Precommit(_), ConsensusState::Precommit) => {}
 
             // Early pre-commits received in Prevote state.
-            (ConsensusMessageBody::Precommit { .. }, ConsensusState::Prevote) => {}
+            (ConsensusMessageBody::Precommit(_), ConsensusState::Prevote) => {}
 
             // Late pre-votes received in Precommit state.
-            (ConsensusMessageBody::Prevote { .. }, ConsensusState::Precommit) => {}
+            (ConsensusMessageBody::Prevote, ConsensusState::Precommit) => {}
 
             // Late pre-commits received in Commit state.
-            (ConsensusMessageBody::Precommit { .. }, ConsensusState::Commit) => {}
+            (ConsensusMessageBody::Precommit(_), ConsensusState::Commit) => {}
 
             // Early Prevotes and Precommits in Propose state
             (_, ConsensusState::Propose) => {
@@ -475,7 +477,7 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
 
         // Process received message.
         match msg.body {
-            ConsensusMessageBody::Proposal { request, proof } => {
+            ConsensusMessageBody::Proposal(block_proposal) => {
                 assert_eq!(self.state, ConsensusState::Propose);
 
                 // Check that message has been sent by leader.
@@ -489,26 +491,17 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
                         &msg.pkey
                     );
                     return Err(ConsensusError::ProposalFromNonLeader(
-                        msg.request_hash,
+                        msg.block_hash,
                         self.leader().clone(),
                         msg.pkey,
                     ));
                 }
 
-                // Check request hash.
-                let expected_request_hash = Hash::digest(&request);
-                if expected_request_hash != msg.request_hash {
-                    return Err(ConsensusError::InvalidRequestHash(
-                        expected_request_hash,
-                        msg.request_hash,
-                        msg.pkey,
-                    ));
-                }
-
                 // Move to Prevote
+                let block_hash = msg.block_hash;
                 assert!(self.prevotes.is_empty());
-                assert!(self.request.is_none());
-                assert!(self.proof.is_none());
+                assert!(self.block_hash.is_none());
+                assert!(self.block_proposal.is_none());
                 debug!(
                     "{}({}:{}) => {}({}:{}): received a new proposal hash={:?}, from={:?}",
                     self.state.name(),
@@ -517,27 +510,29 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
                     ConsensusState::Prevote.name(),
                     self.height,
                     self.round,
-                    &msg.request_hash,
+                    &msg.block_hash,
                     &msg.pkey
                 );
                 self.state = ConsensusState::Prevote;
                 metrics::CONSENSUS_STATE.set(metrics::ConsensusState::Prevote as i64);
-                self.request = Some(request);
-                self.proof = Some(proof);
+                self.block = None;
+                self.block_hash = Some(block_hash);
+                self.block_proposal = Some(block_proposal);
                 if let Some(locked_round) = &self.locked_round {
-                    if locked_round.request == *self.request.as_ref().unwrap() {
+                    if block_hash == Hash::digest(&locked_round.block)
+                        && Hash::digest(&locked_round.block_proposal)
+                            == Hash::digest(self.block_proposal.as_ref().unwrap())
+                    {
                         // Someone proposed a request that looks like our locked.
                         let locked = self.locked_round.take().unwrap();
                         self.precommits = locked.precommits;
                         // repeat prevote
-                        self.prevote(Hash::digest(&self.request));
+                        self.prevote(locked.block);
                     } // don't vote for request that is different from our locked.
-                } else {
-                    self.prevote(Hash::digest(&self.request));
                 }
                 self.process_inbox();
             }
-            ConsensusMessageBody::Prevote {} => {
+            ConsensusMessageBody::Prevote => {
                 assert_ne!(self.state, ConsensusState::Propose);
 
                 // Collect the vote.
@@ -550,12 +545,12 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
                 );
                 self.prevotes.insert(msg.pkey, msg.sig);
             }
-            ConsensusMessageBody::Precommit { request_hash_sig } => {
+            ConsensusMessageBody::Precommit(block_hash_sig) => {
                 assert_ne!(self.state, ConsensusState::Propose);
 
                 // Check signature.
-                let request_hash = Hash::digest(self.request.as_ref().unwrap());
-                if let Err(_e) = pbc::check_hash(&request_hash, &request_hash_sig, &msg.pkey) {
+                let block_hash = self.block_hash.as_ref().unwrap();
+                if let Err(_e) = pbc::check_hash(&block_hash, &block_hash_sig, &msg.pkey) {
                     error!(
                         "{}({}:{}): a pre-commit signature is not valid: from={:?}",
                         self.state.name(),
@@ -563,7 +558,7 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
                         self.round,
                         &msg.pkey
                     );
-                    return Err(ConsensusError::InvalidRequestSignature(request_hash));
+                    return Err(ConsensusError::InvalidRequestSignature(block_hash.clone()));
                 }
 
                 // Collect the vote.
@@ -574,7 +569,7 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
                     self.round,
                     &msg.pkey
                 );
-                self.precommits.insert(msg.pkey, request_hash_sig);
+                self.precommits.insert(msg.pkey, block_hash_sig);
             }
         }
 
@@ -598,7 +593,7 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
             metrics::CONSENSUS_STATE.set(metrics::ConsensusState::Precommit as i64);
             if self.prevotes.contains_key(&self.pkey) {
                 // Send a pre-commit vote.
-                self.precommit(Hash::digest(&self.request));
+                self.precommit();
             } else {
                 // Don't vote in this case and stay silent.
                 warn!(
@@ -680,13 +675,6 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
     }
 
     ///
-    /// Returns true if current node should propose a new request.
-    ///
-    pub fn should_propose(&self) -> bool {
-        self.state == ConsensusState::Propose && self.is_leader()
-    }
-
-    ///
     /// Returns true if current node should commit the request.
     ///
     pub fn should_commit(&self) -> bool {
@@ -696,30 +684,31 @@ impl<Request: Hashable + Clone + Debug + Eq, Proof: Hashable + Clone + Debug>
     ///
     /// Return a proposal to validate.
     ///
-    pub fn get_proposal(&self) -> (&Request, &Proof) {
-        (self.request.as_ref().unwrap(), self.proof.as_ref().unwrap())
+    pub fn get_proposal(&self) -> (&Hash, &MacroBlockProposal, u32) {
+        assert_ne!(self.state, ConsensusState::Propose, "Have no proposal");
+        (
+            self.block_hash.as_ref().unwrap(),
+            self.block_proposal.as_ref().unwrap(),
+            self.round,
+        )
     }
 
     ///
     /// Sign and commit the request and move to the next round.
     ///
-    /// Returns negotiated request with proof and created multisignature.
+    /// Returns negotiated MacroBlock.
     ///
-    pub fn sign_and_commit(&mut self) -> (Request, Proof, pbc::Signature, BitVector) {
+    pub fn commit(mut self) -> MacroBlock {
         assert!(self.should_commit());
 
         // TODO: Use id instead of PublicKey.
         let validators = self.validators.iter().map(|(k, v)| (*k, *v)).collect();
+        let mut block = self.block.take().unwrap();
         // Create multi-signature.
         let (multisig, multisigmap) = create_multi_signature(&validators, &self.precommits);
-        let r = (
-            self.request.take().unwrap(),
-            self.proof.take().unwrap(),
-            multisig,
-            multisigmap,
-        );
-        self.reset();
-        r
+        block.body.multisig = multisig;
+        block.body.multisigmap = multisigmap;
+        block
     }
 
     ///

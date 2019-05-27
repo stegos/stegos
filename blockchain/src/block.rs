@@ -129,13 +129,7 @@ impl Hashable for MicroBlock {
         let tx_count: u64 = self.transactions.len() as u64;
         tx_count.hash(state);
         for tx in &self.transactions {
-            tx.hash(state);
-            match tx {
-                Transaction::CoinbaseTransaction(_tx) => {}
-                Transaction::PaymentTransaction(tx) => tx.sig.hash(state),
-                Transaction::RestakeTransaction(tx) => tx.sig.hash(state),
-                Transaction::SlashingTransaction(_tx) => (),
-            }
+            tx.fullhash(state);
         }
         self.pkey.hash(state);
     }

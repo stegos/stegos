@@ -56,6 +56,11 @@ pub enum NodeBlockError {
     )]
     InvalidBlockReward(u64, Hash, i64, i64),
     #[fail(
+        display = "Invalid block proposal: height={}, expected={}, got={}",
+        _0, _1, _2
+    )]
+    InvalidBlockProposal(u64, Hash, Hash),
+    #[fail(
         display = "Expected a macro block, got micro block: height={}, block={}",
         _0, _1
     )]
@@ -76,10 +81,10 @@ pub enum NodeBlockError {
     )]
     OutOfSyncViewChange(u64, Hash, u32, u32),
     #[fail(
-        display = "Found a outdated block proposal: block_time={:?} last_block_time={:?}.",
-        _0, _1
+        display = "Found a outdated block proposal: height={}, block={}, block_time={:?} last_block_time={:?}.",
+        _0, _1, _2, _3
     )]
-    OutdatedBlock(SystemTime, SystemTime),
+    OutdatedBlock(u64, Hash, SystemTime, SystemTime),
 }
 
 #[derive(Debug, Fail)]

@@ -36,7 +36,6 @@ use crate::error::*;
 use crate::loader::ChainLoaderMessage;
 use crate::mempool::Mempool;
 use crate::validation::*;
-use bitvector::BitVector;
 use failure::Error;
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::sync::oneshot;
@@ -52,7 +51,7 @@ use std::time::Instant;
 use std::time::SystemTime;
 use stegos_blockchain::*;
 use stegos_consensus::optimistic::{SealedViewChangeProof, ViewChangeCollector, ViewChangeMessage};
-use stegos_consensus::{self as consensus, BlockConsensus, BlockConsensusMessage};
+use stegos_consensus::{self as consensus, Consensus, ConsensusMessage, MacroBlockProposal};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_keychain::KeyChain;
@@ -228,12 +227,12 @@ enum Validation {
         block_timer: BlockTimer,
         /// A queue of consensus message from the future epoch.
         // TODO: Resolve unknown blocks using requests-responses.
-        future_consensus_messages: Vec<BlockConsensusMessage>,
+        future_consensus_messages: Vec<ConsensusMessage>,
     },
     MacroBlockAuditor,
     MacroBlockValidator {
         /// pBFT consensus,
-        consensus: BlockConsensus,
+        consensus: Consensus,
         /// Propose or View Change timer
         block_timer: BlockTimer,
     },
@@ -799,9 +798,9 @@ impl NodeService {
                     MacroBlockValidator { consensus, .. } => {
                         if consensus.should_commit() {
                             // Check for forks.
-                            let (consensus_block, _proof) = consensus.get_proposal();
-                            let consensus_block_hash = Hash::digest(consensus_block);
-                            if hash != consensus_block_hash {
+                            let (consensus_block_hash, _block_proposal, _view_cahange) =
+                                consensus.get_proposal();
+                            if consensus_block_hash != consensus_block_hash {
                                 panic!(
                                     "Network fork: received_block={:?}, consensus_block={:?}",
                                     &hash, &consensus_block_hash
@@ -1088,8 +1087,11 @@ impl NodeService {
             );
             consensus::metrics::CONSENSUS_ROLE
                 .set(consensus::metrics::ConsensusRole::Leader as i64);
-            let deadline = clock::now();
-            std::mem::replace(block_timer, BlockTimer::Propose(Delay::new(deadline)));
+            // Consensus may have locked proposal.
+            if consensus.should_propose() {
+                let deadline = clock::now();
+                std::mem::replace(block_timer, BlockTimer::Propose(Delay::new(deadline)));
+            }
         } else {
             info!(
                 "I'm validator, waiting for the next macro block: height={}, view_change={}, last_block={}, leader={}",
@@ -1152,7 +1154,7 @@ impl NodeService {
                 return;
             }
 
-            let consensus = BlockConsensus::new(
+            let mut consensus = Consensus::new(
                 self.chain.height() as u64,
                 self.chain.epoch() + 1,
                 self.keys.network_skey.clone(),
@@ -1161,12 +1163,6 @@ impl NodeService {
                 self.chain.validators().iter().cloned().collect(),
             );
 
-            // Set validator state.
-            self.validation = MacroBlockValidator {
-                consensus,
-                block_timer: BlockTimer::None,
-            };
-
             // Flush pending messages.
             if let MicroBlockValidator {
                 future_consensus_messages,
@@ -1174,36 +1170,28 @@ impl NodeService {
             } = prev
             {
                 for msg in future_consensus_messages {
-                    if let Err(e) = self.handle_consensus_message(msg) {
+                    if let Err(e) = consensus.feed_message(msg) {
                         debug!("Error in future consensus message: {}", e);
                     }
                 }
             }
 
-            self.on_macro_block_leader_changed();
-        }
-    }
+            // Set validator state.
+            self.validation = MacroBlockValidator {
+                consensus,
+                block_timer: BlockTimer::None,
+            };
 
-    fn validate_consensus_message(&self, msg: &BlockConsensusMessage) -> Result<(), Error> {
-        let validate_request = |request_hash: Hash, block: &MacroBlock, round| {
-            proposal::validate_proposed_macro_block(
-                &self.cfg,
-                &self.chain,
-                round,
-                request_hash,
-                block,
-            )
-        };
-        // Validate signature and content.
-        msg.validate(validate_request)?;
-        Ok(())
+            self.on_macro_block_leader_changed();
+            self.handle_consensus_events();
+        }
     }
 
     ///
     /// Handles incoming consensus requests received from network.
     ///
-    fn handle_consensus_message(&mut self, msg: BlockConsensusMessage) -> Result<(), Error> {
-        match &mut self.validation {
+    fn handle_consensus_message(&mut self, msg: ConsensusMessage) -> Result<(), Error> {
+        let consensus = match &mut self.validation {
             MicroBlockAuditor | MacroBlockAuditor => {
                 return Ok(());
             }
@@ -1216,40 +1204,53 @@ impl NodeService {
                 future_consensus_messages.push(msg);
                 return Ok(());
             }
-            MacroBlockValidator { .. } => {}
-        }
-
-        self.validate_consensus_message(&msg)?;
-
-        let consensus = match &mut self.validation {
             MacroBlockValidator { consensus, .. } => consensus,
-            _ => panic!("Expected MacroValidator state"),
         };
 
         // Feed message into consensus module.
         consensus.feed_message(msg)?;
+        self.handle_consensus_events();
+        Ok(())
+    }
+
+    fn handle_consensus_events(&mut self) {
+        let consensus = match &mut self.validation {
+            MacroBlockValidator { consensus, .. } => consensus,
+            _ => panic!("Expected MacroBlockValidator state"),
+        };
+
+        if consensus.should_prevote() {
+            let (block_hash, block_proposal, view_change) = consensus.get_proposal();
+            match proposal::validate_proposed_macro_block(
+                &self.cfg,
+                &self.chain,
+                view_change,
+                block_hash,
+                block_proposal,
+            ) {
+                Ok(macro_block) => consensus.prevote(macro_block),
+                Err(e) => {
+                    error!(
+                        "Invalid block proposal: block_hash={}, error={}",
+                        block_hash, e
+                    );
+                }
+            }
+        }
 
         // Check if we can commit a block.
-        let block_info = if consensus.is_leader() && consensus.should_commit() {
-            Some(consensus.sign_and_commit())
-        } else {
-            None
-        };
+        if consensus.is_leader() && consensus.should_commit() {
+            return self.commit_proposed_block();
+        }
 
         // Flush pending messages.
         let outbox = std::mem::replace(&mut consensus.outbox, Vec::new());
         for msg in outbox {
-            let proto = msg.into_proto();
-            let data = proto.write_to_bytes()?;
-            self.network.publish(&CONSENSUS_TOPIC, data)?;
+            let data = msg.into_buffer().expect("Failed to serialize");
+            self.network
+                .publish(&CONSENSUS_TOPIC, data)
+                .expect("Connected");
         }
-
-        // Commit the block.
-        if let Some((block, _proof, multisig, multisigmap)) = block_info {
-            self.commit_proposed_block(block, multisig, multisigmap);
-        }
-
-        Ok(())
     }
 
     /// True if the node is synchronized with the network.
@@ -1272,38 +1273,30 @@ impl NodeService {
             } => (block_timer, consensus),
             _ => panic!("Expected MacroBlockValidator state"),
         };
-        assert!(consensus.is_leader());
         assert_eq!(self.chain.blocks_in_epoch(), self.cfg.blocks_in_epoch);
-        let chain = &self.chain;
-        let network_pkey = &self.keys.network_pkey;
-        let network_skey = &self.keys.network_skey;
-        let view_change = consensus.round();
-        let create_macro_block = || {
-            let block = proposal::create_macro_block_proposal(
-                chain,
-                view_change,
-                network_skey,
-                network_pkey,
-            );
-            let proof = ();
-            (block, proof)
-        };
-        consensus.propose(create_macro_block);
+        assert!(consensus.should_propose());
 
-        // Update timer.
+        // Set view_change timer.
         let relevant_round = 1 + consensus.round();
         let deadline = clock::now() + relevant_round * self.cfg.macro_block_timeout;
         std::mem::replace(block_timer, BlockTimer::ViewChange(Delay::new(deadline)));
         task::current().notify();
 
-        // Flush pending messages.
-        let outbox = std::mem::replace(&mut consensus.outbox, Vec::new());
-        for msg in outbox {
-            let proto = msg.into_proto();
-            let data = proto.write_to_bytes()?;
-            self.network.publish(&CONSENSUS_TOPIC, data)?;
-        }
-
+        // Propose a new block.
+        let block = proposal::create_macro_block_proposal(
+            &self.chain,
+            consensus.round(),
+            &self.keys.network_skey,
+            &self.keys.network_pkey,
+        );
+        let block_hash = Hash::digest(&block);
+        let block_proposal = MacroBlockProposal {
+            base: block.header.base.clone(),
+            transactions: vec![],
+        };
+        consensus.propose(block_hash, block_proposal);
+        consensus.prevote(block);
+        self.handle_consensus_events();
         Ok(())
     }
 
@@ -1318,14 +1311,12 @@ impl NodeService {
         };
         if consensus.should_commit() {
             assert!(!consensus.is_leader(), "never happens on leader");
-            let (block, _proof, multisig, multisigmap) = consensus.sign_and_commit();
-            let block_hash = Hash::digest(&block);
-            warn!("Timed out while waiting for the committed block from the leader, applying automatically: hash={}, height={}",
-                      block_hash, self.chain.height()
+            warn!("Timed out while waiting for the committed block from the leader, applying automatically: height={}",
+                  self.chain.height()
             );
             metrics::AUTOCOMMIT.inc();
             // Auto-commit proposed block and send it to the network.
-            self.commit_proposed_block(block, multisig, multisigmap);
+            self.commit_proposed_block();
             return Ok(());
         }
 
@@ -1335,9 +1326,10 @@ impl NodeService {
         );
 
         // Go to the next round.
-        consensus.next_round();
         metrics::MACRO_BLOCK_VIEW_CHANGES.inc();
+        consensus.next_round();
         self.on_macro_block_leader_changed();
+        self.handle_consensus_events();
 
         // Try to sync with the network.
         metrics::SYNCHRONIZED.set(0);
@@ -1506,19 +1498,19 @@ impl NodeService {
     /// Commit sealed block into blockchain and send it to the network.
     /// NOTE: commit must never fail. Please don't use Result<(), Error> here.
     ///
-    fn commit_proposed_block(
-        &mut self,
-        mut macro_block: MacroBlock,
-        multisig: pbc::Signature,
-        multisigmap: BitVector,
-    ) {
-        macro_block.body.multisig = multisig;
-        macro_block.body.multisigmap = multisigmap;
-        let macro_block2 = macro_block.clone();
-        self.send_sealed_block(Block::MacroBlock(macro_block2))
-            .expect("failed to send sealed micro block");
-        self.apply_new_block(Block::MacroBlock(macro_block))
-            .expect("block is validated before");
+    fn commit_proposed_block(&mut self) {
+        // Commit the block.
+        match std::mem::replace(&mut self.validation, Validation::MacroBlockAuditor) {
+            MacroBlockValidator { consensus, .. } => {
+                let macro_block = consensus.commit();
+                let macro_block2 = macro_block.clone();
+                self.apply_new_block(Block::MacroBlock(macro_block))
+                    .expect("block is validated before");
+                self.send_sealed_block(Block::MacroBlock(macro_block2))
+                    .expect("failed to send sealed micro block");
+            }
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -1598,7 +1590,7 @@ impl Future for NodeService {
                         }
                         NodeMessage::Transaction(msg) => Transaction::from_buffer(&msg)
                             .and_then(|msg| self.handle_transaction(msg)),
-                        NodeMessage::Consensus(msg) => BlockConsensusMessage::from_buffer(&msg)
+                        NodeMessage::Consensus(msg) => ConsensusMessage::from_buffer(&msg)
                             .and_then(|msg| self.handle_consensus_message(msg)),
                         NodeMessage::ViewChangeMessage(msg) => ViewChangeMessage::from_buffer(&msg)
                             .and_then(|msg| self.handle_view_change_message(msg)),

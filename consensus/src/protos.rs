@@ -22,7 +22,6 @@
 use failure::Error;
 use stegos_serialization::traits::*;
 
-use crate::blockchain::*;
 use crate::message::*;
 use crate::optimistic::*;
 use stegos_blockchain::view_changes::ViewChangeProof;
@@ -35,25 +34,25 @@ use stegos_blockchain::protos::*;
 use stegos_crypto::protos::*;
 include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
 
-impl ProtoConvert for BlockConsensusMessageBody {
+impl ProtoConvert for ConsensusMessageBody {
     type Proto = consensus::ConsensusMessageBody;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = consensus::ConsensusMessageBody::new();
         match self {
-            ConsensusMessageBody::Proposal {
-                request: block,
-                proof: _proof,
-            } => {
+            ConsensusMessageBody::Proposal(block_proposal) => {
                 let mut proposal = consensus::MacroBlockProposal::new();
-                proposal.set_block(block.into_proto());
+                proposal.set_base(block_proposal.base.into_proto());
+                for transaction in &block_proposal.transactions {
+                    proposal.transactions.push(transaction.into_proto());
+                }
                 proto.set_macro_block_proposal(proposal);
             }
-            ConsensusMessageBody::Prevote {} => {
+            ConsensusMessageBody::Prevote => {
                 proto.set_prevote(consensus::Prevote::new());
             }
-            ConsensusMessageBody::Precommit { request_hash_sig } => {
+            ConsensusMessageBody::Precommit(block_hash_sig) => {
                 let mut msg = consensus::Precommit::new();
-                msg.set_request_hash_sig(request_hash_sig.into_proto());
+                msg.set_block_hash_sig(block_hash_sig.into_proto());
                 proto.set_precommit(msg);
             }
         }
@@ -63,16 +62,20 @@ impl ProtoConvert for BlockConsensusMessageBody {
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let msg = match proto.body {
             Some(consensus::ConsensusMessageBody_oneof_body::macro_block_proposal(ref msg)) => {
-                let request = MacroBlock::from_proto(msg.get_block())?;
-                let proof = ();
-                ConsensusMessageBody::Proposal { request, proof }
+                let base = BaseBlockHeader::from_proto(msg.get_base())?;
+                let mut transactions = Vec::<Transaction>::with_capacity(msg.transactions.len());
+                for transaction in msg.transactions.iter() {
+                    transactions.push(Transaction::from_proto(transaction)?);
+                }
+                let block_proposal = MacroBlockProposal { base, transactions };
+                ConsensusMessageBody::Proposal(block_proposal)
             }
             Some(consensus::ConsensusMessageBody_oneof_body::prevote(ref _msg)) => {
-                ConsensusMessageBody::Prevote {}
+                ConsensusMessageBody::Prevote
             }
             Some(consensus::ConsensusMessageBody_oneof_body::precommit(ref msg)) => {
-                let request_hash_sig = pbc::Signature::from_proto(msg.get_request_hash_sig())?;
-                ConsensusMessageBody::Precommit { request_hash_sig }
+                let block_hash_sig = pbc::Signature::from_proto(msg.get_block_hash_sig())?;
+                ConsensusMessageBody::Precommit(block_hash_sig)
             }
             None => {
                 return Err(
@@ -84,13 +87,13 @@ impl ProtoConvert for BlockConsensusMessageBody {
     }
 }
 
-impl ProtoConvert for BlockConsensusMessage {
+impl ProtoConvert for ConsensusMessage {
     type Proto = consensus::ConsensusMessage;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = consensus::ConsensusMessage::new();
         proto.set_height(self.height);
         proto.set_round(self.round);
-        proto.set_request_hash(self.request_hash.into_proto());
+        proto.set_block_hash(self.block_hash.into_proto());
         proto.set_body(self.body.into_proto());
         proto.set_sig(self.sig.into_proto());
         proto.set_pkey(self.pkey.into_proto());
@@ -99,14 +102,14 @@ impl ProtoConvert for BlockConsensusMessage {
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let height = proto.get_height();
         let round = proto.get_round();
-        let request_hash = Hash::from_proto(proto.get_request_hash())?;
+        let block_hash = Hash::from_proto(proto.get_block_hash())?;
         let body = ConsensusMessageBody::from_proto(proto.get_body())?;
         let sig = pbc::Signature::from_proto(proto.get_sig())?;
         let pkey = pbc::PublicKey::from_proto(proto.get_pkey())?;
         Ok(ConsensusMessage {
             height,
             round,
-            request_hash,
+            block_hash,
             body,
             sig,
             pkey,
@@ -155,8 +158,8 @@ impl ProtoConvert for SealedViewChangeProof {
 mod tests {
     use super::*;
     use std::time::SystemTime;
-    use stegos_crypto::hash::Hashable;
-    use stegos_crypto::pbc;
+    use stegos_crypto::hash::{Hashable, Hasher};
+    use stegos_crypto::{curve1174, pbc};
 
     fn roundtrip<T>(x: &T) -> T
     where
@@ -165,6 +168,17 @@ mod tests {
         let r = T::from_proto(&x.clone().into_proto()).unwrap();
         assert_eq!(Hash::digest(x), Hash::digest(&r));
         r
+    }
+
+    impl Hashable for ConsensusMessage {
+        fn hash(&self, state: &mut Hasher) {
+            self.height.hash(state);
+            self.round.hash(state);
+            self.block_hash.hash(state);
+            self.body.hash(state);
+            self.pkey.hash(state);
+            self.sig.hash(state);
+        }
     }
 
     #[test]
@@ -182,8 +196,9 @@ mod tests {
         );
         roundtrip(&msg);
 
-        let request_hash_sig = pbc::sign_hash(&Hash::digest("test"), &network_skey);
-        let body = ConsensusMessageBody::Precommit { request_hash_sig };
+        let block_hash_sig = pbc::sign_hash(&Hash::digest("test"), &network_skey);
+        let body = ConsensusMessageBody::Precommit(block_hash_sig);
+
         let msg = ConsensusMessage::new(
             1,
             1,
@@ -197,25 +212,26 @@ mod tests {
 
     #[test]
     fn macro_blocks() {
-        let (skey0, pkey0) = pbc::make_random_keys();
+        let (skey, pkey) = curve1174::make_random_keys();
+        let (nskey, _npkey) = pbc::make_random_keys();
 
         let version: u64 = 1;
         let height: u64 = 0;
         let timestamp = SystemTime::now();
         let previous = Hash::digest(&"test".to_string());
 
-        let random = pbc::make_VRF(&skey0, &Hash::digest("test"));
+        let random = pbc::make_VRF(&nskey, &Hash::digest("test"));
         let base = BaseBlockHeader::new(version, previous, height, 0, timestamp, random);
-        let block = MacroBlock::empty(base, pkey0);
+        // Transactions.
+        let (tx, _inputs, _outputs) =
+            PaymentTransaction::new_test(&skey, &pkey, 300, 2, 100, 1, 100)
+                .expect("Invalid transaction");
+        let transactions: Vec<Transaction> = vec![tx.into()];
 
         //
         // MacroBlockProposal
         //
-        let proof = ();
-        let proposal = ConsensusMessageBody::Proposal {
-            request: block.clone(),
-            proof,
-        };
+        let proposal = ConsensusMessageBody::Proposal(MacroBlockProposal { base, transactions });
         roundtrip(&proposal);
     }
 

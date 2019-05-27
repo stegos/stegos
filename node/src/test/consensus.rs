@@ -54,7 +54,7 @@ fn smoke_test() {
         let leader_pk = s.nodes[0].node_service.chain.leader();
         let leader_node = s.node(&leader_pk).unwrap();
         // Check for a proposal from the leader.
-        let proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
         debug!("Proposal: {:?}", proposal);
         assert_eq!(proposal.height, height);
         assert_eq!(proposal.round, round);
@@ -68,13 +68,13 @@ fn smoke_test() {
         s.poll();
 
         // Check for pre-votes.
-        let mut prevotes: Vec<BlockConsensusMessage> = Vec::with_capacity(s.num_nodes());
+        let mut prevotes: Vec<ConsensusMessage> = Vec::with_capacity(s.num_nodes());
         for node in s.nodes.iter_mut() {
-            let prevote: BlockConsensusMessage = node.network_service.get_broadcast(topic);
+            let prevote: ConsensusMessage = node.network_service.get_broadcast(topic);
             assert_eq!(prevote.height, height);
             assert_eq!(prevote.round, round);
-            assert_eq!(prevote.request_hash, proposal.request_hash);
-            assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
+            assert_eq!(prevote.block_hash, proposal.block_hash);
+            assert_matches!(prevote.body, ConsensusMessageBody::Prevote);
             prevotes.push(prevote);
         }
 
@@ -91,19 +91,16 @@ fn smoke_test() {
         s.poll();
 
         // Check for pre-commits.
-        let mut precommits: Vec<BlockConsensusMessage> = Vec::with_capacity(s.num_nodes());
+        let mut precommits: Vec<ConsensusMessage> = Vec::with_capacity(s.num_nodes());
         for node in s.nodes.iter_mut() {
-            let precommit: BlockConsensusMessage = node.network_service.get_broadcast(topic);
+            let precommit: ConsensusMessage = node.network_service.get_broadcast(topic);
             assert_eq!(precommit.height, height);
             assert_eq!(precommit.round, round);
-            assert_eq!(precommit.request_hash, proposal.request_hash);
-            if let ConsensusMessageBody::Precommit {
-                request_hash_sig, ..
-            } = precommit.body
-            {
+            assert_eq!(precommit.block_hash, proposal.block_hash);
+            if let ConsensusMessageBody::Precommit(block_hash_sig) = precommit.body {
                 pbc::check_hash(
-                    &proposal.request_hash,
-                    &request_hash_sig,
+                    &proposal.block_hash,
+                    &block_hash_sig,
                     &node.node_service.keys.network_pkey,
                 )
                 .unwrap();
@@ -132,7 +129,7 @@ fn smoke_test() {
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
         let block_hash = Hash::digest(&block);
-        assert_eq!(block_hash, proposal.request_hash);
+        assert_eq!(block_hash, proposal.block_hash);
         assert_eq!(block.base_header().height, height);
         assert_eq!(block.base_header().previous, last_block_hash);
 
@@ -178,7 +175,7 @@ fn autocomit() {
         let leader_pk = s.nodes[0].node_service.chain.leader();
         let leader_node = s.node(&leader_pk).unwrap();
         // Check for a proposal from the leader.
-        let proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
         debug!("Proposal: {:?}", proposal);
         assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
 
@@ -190,7 +187,7 @@ fn autocomit() {
         s.poll();
 
         for i in 0..s.num_nodes() {
-            let prevote: BlockConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
+            let prevote: ConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
             assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
             for j in 0..s.num_nodes() {
                 s.nodes[j]
@@ -201,7 +198,7 @@ fn autocomit() {
         s.poll();
 
         for i in 0..s.num_nodes() {
-            let precommit: BlockConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
+            let precommit: ConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
             assert_matches!(precommit.body, ConsensusMessageBody::Precommit { .. });
             for j in 0..s.num_nodes() {
                 s.nodes[j]
@@ -286,8 +283,8 @@ fn round() {
         let leader_pk = s.nodes[0].node_service.chain.leader();
         let leader_node = s.node(&leader_pk).unwrap();
         // skip proposal and prevote of last leader.
-        let _proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
-        let _prevote: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
 
         let round = s.nodes[0].node_service.chain.view_change() + 1;
         let epoch = s.nodes[0].node_service.chain.epoch();
@@ -301,7 +298,7 @@ fn round() {
 
         let leader_pk = s.nodes[0].node_service.chain.select_leader(round);
         let leader_node = s.node(&leader_pk).unwrap();
-        let proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
         debug!("Proposal: {:?}", proposal);
         assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
 
@@ -313,11 +310,11 @@ fn round() {
         s.poll();
 
         for i in 0..s.num_nodes() {
-            let prevote: BlockConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
+            let prevote: ConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
             assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
             assert_eq!(prevote.height, height);
             assert_eq!(prevote.round, round);
-            assert_eq!(prevote.request_hash, proposal.request_hash);
+            assert_eq!(prevote.block_hash, proposal.block_hash);
             for j in 0..s.num_nodes() {
                 s.nodes[j]
                     .network_service
@@ -327,11 +324,11 @@ fn round() {
         s.poll();
 
         for i in 0..s.num_nodes() {
-            let precommit: BlockConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
+            let precommit: ConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
             assert_matches!(precommit.body, ConsensusMessageBody::Precommit { .. });
             assert_eq!(precommit.height, height);
             assert_eq!(precommit.round, round);
-            assert_eq!(precommit.request_hash, proposal.request_hash);
+            assert_eq!(precommit.block_hash, proposal.block_hash);
             for j in 0..s.num_nodes() {
                 s.nodes[j]
                     .network_service
@@ -388,8 +385,8 @@ fn multiple_rounds() {
         let leader_pk = s.nodes[0].node_service.chain.leader();
         let leader_node = s.node(&leader_pk).unwrap();
         // skip proposal and prevote of last leader.
-        let _proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
-        let _prevote: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
 
         s.wait(s.cfg().macro_block_timeout - Duration::from_millis(1));
 
@@ -408,8 +405,8 @@ fn multiple_rounds() {
 
         let leader_pk = s.nodes[0].node_service.chain.select_leader(view_change + 1);
         let leader_node = s.node(&leader_pk).unwrap();
-        let _proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
-        let _prevote: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
 
         s.wait(s.cfg().macro_block_timeout * 2 - Duration::from_millis(1));
 
@@ -428,8 +425,8 @@ fn multiple_rounds() {
 
         let leader_pk = s.nodes[0].node_service.chain.select_leader(view_change + 2);
         let leader_node = s.node(&leader_pk).unwrap();
-        let _proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
-        let _prevote: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
     });
 }
 
@@ -478,8 +475,8 @@ fn lock() {
             leader_node
                 .network_service
                 .filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
-            let _proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
-            let _prevote: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
+            let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+            let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             round += 1;
             // wait for current round end
             s.wait(
@@ -497,8 +494,7 @@ fn lock() {
 
         let leader_node = s.node(&leader_pk).unwrap();
         // skip proposal and prevote of last leader.
-        let leader_proposal: BlockConsensusMessage =
-            leader_node.network_service.get_broadcast(topic);
+        let leader_proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
 
         assert_matches!(leader_proposal.body, ConsensusMessageBody::Proposal { .. });
         // Send this proposal to other nodes.
@@ -511,11 +507,11 @@ fn lock() {
         s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
         // for now, every node is locked at leader_propose
         for i in 0..s.num_nodes() {
-            let prevote: BlockConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
+            let prevote: ConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
             assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
             assert_eq!(prevote.height, height);
             assert_eq!(prevote.round, round);
-            assert_eq!(prevote.request_hash, leader_proposal.request_hash);
+            assert_eq!(prevote.block_hash, leader_proposal.block_hash);
             for j in 0..s.num_nodes() {
                 s.nodes[j]
                     .network_service
@@ -524,7 +520,7 @@ fn lock() {
         }
         s.poll();
         for i in 0..s.num_nodes() {
-            let _precommit: BlockConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
+            let _precommit: ConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
         }
         s.wait(
             s.cfg().macro_block_timeout * (round - s.nodes[0].node_service.chain.view_change() + 1),
@@ -538,14 +534,15 @@ fn lock() {
 
         let leader_pk = s.nodes[0].node_service.chain.select_leader(round + 1);
         let leader_node = s.node(&leader_pk).unwrap();
-        let proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
 
-        let _prevote: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
         debug!("Proposal: {:?}", proposal);
         assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
         assert_eq!(proposal.round, leader_proposal.round + 1);
-        assert_eq!(proposal.request_hash, leader_proposal.request_hash);
+        assert_eq!(proposal.block_hash, leader_proposal.block_hash);
         s.poll();
+        s.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
     });
 }
 
@@ -596,7 +593,7 @@ fn out_of_order_micro_block() {
         let block: Block = Block::MicroBlock(block);
 
         // Discard proposal from leader for a proposal from the leader.
-        let _proposal: BlockConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
         // broadcast block to other nodes.
         for node in &mut s.iter_except(&[leader_pk]) {
             node.network_service

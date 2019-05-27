@@ -28,4 +28,10 @@ lazy_static! {
         "Size of LRU cache for messages."
     )
     .unwrap();
+    pub static ref INCOMING_RATES: GaugeVec = register_gauge_vec!(
+        "stegos_pubsub_incoming_rate",
+        "Incoming messages per sec",
+        &["peer"]
+    )
+    .unwrap();
 }

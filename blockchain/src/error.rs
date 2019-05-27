@@ -203,11 +203,6 @@ pub enum BlockError {
     #[fail(display = "The leader must be validator: height={}, block={}", _0, _1)]
     LeaderIsNotValidator(u64, Hash),
     #[fail(
-        display = "No leader signature was found in BLS signature: height={}, block={}",
-        _0, _1
-    )]
-    NoLeaderSignatureFound(u64, Hash),
-    #[fail(
         display = "Found propose with more than one signature: height={}, block={}",
         _0, _1
     )]

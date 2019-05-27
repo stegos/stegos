@@ -1318,17 +1318,10 @@ impl NodeService {
         };
         if consensus.should_commit() {
             assert!(!consensus.is_leader(), "never happens on leader");
-            let (block, _proof, mut multisig, mut multisigmap) = consensus.sign_and_commit();
+            let (block, _proof, multisig, multisigmap) = consensus.sign_and_commit();
             let block_hash = Hash::digest(&block);
             warn!("Timed out while waiting for the committed block from the leader, applying automatically: hash={}, height={}",
                       block_hash, self.chain.height()
-            );
-            // Augment multi-signature by leader's signature from the proposal.
-            merge_multi_signature(
-                &mut multisig,
-                &mut multisigmap,
-                &block.body.multisig,
-                &block.body.multisigmap,
             );
             metrics::AUTOCOMMIT.inc();
             // Auto-commit proposed block and send it to the network.

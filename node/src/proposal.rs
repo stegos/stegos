@@ -26,9 +26,7 @@ use crate::error::*;
 use failure::Error;
 use log::*;
 use std::time::SystemTime;
-use stegos_blockchain::{
-    create_proposal_signature, mix, BaseBlockHeader, Blockchain, MacroBlock, VERSION,
-};
+use stegos_blockchain::{mix, BaseBlockHeader, Blockchain, MacroBlock, VERSION};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 
@@ -53,16 +51,8 @@ pub fn create_macro_block_proposal(
         chain.epoch() + 1,
     );
 
-    let validators = chain.validators();
-    let mut block = MacroBlock::empty(base, network_pkey.clone());
-
+    let block = MacroBlock::empty(base, network_pkey.clone());
     let block_hash = Hash::digest(&block);
-
-    // Create initial multi-signature.
-    let (multisig, multisigmap) =
-        create_proposal_signature(&block_hash, network_skey, network_pkey, validators);
-    block.body.multisig = multisig;
-    block.body.multisigmap = multisigmap;
 
     // Validate the block via chain (just double-checking here).
     chain

@@ -24,6 +24,8 @@
 use crate::view_changes::ViewChangeProof;
 use crate::OutputError;
 use failure::Fail;
+use std::str::Utf8Error;
+use stegos_crypto::curve1174::PublicKey;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::CryptoError;
@@ -51,6 +53,8 @@ pub enum BlockchainError {
     OutputError(OutputError),
     #[fail(display = "Crypto error={}", _0)]
     CryptoError(CryptoError),
+    #[fail(display = "Cannot convert utf8 string = {}", _0)]
+    UtfError(Utf8Error),
 }
 
 /// Transaction errors.
@@ -74,6 +78,11 @@ pub enum TransactionError {
     DuplicateOutput(Hash, Hash),
     #[fail(display = "Output hash collision: tx={}, utxo={}", _0, _1)]
     OutputHashCollision(Hash, Hash),
+    #[fail(
+        display = "Received transaction from network, with invalid type: type={}",
+        _0
+    )]
+    ReceivedInvalidTransaction(&'static str),
 
     #[fail(
         display = "CoinbaseTransaction must contain only PaymentUTXOs: tx={}, utxo={}",
@@ -102,8 +111,18 @@ pub enum TransactionError {
     #[fail(display = "TXOUTs with mixed validator keys: tx={}, utxo={}", _0, _1)]
     MixedTxoutValidators(Hash, Hash),
 
+    #[fail(
+        display = "TXOUTs with different wallet key: wallet_key_before:{},\
+                   wallet_key_after={}, tx={}, utxo={}",
+        _0, _1, _2, _3
+    )]
+    StakeOutputWithDifferentWalletKey(PublicKey, PublicKey, Hash, Hash),
+
     #[fail(display = "TXIN amount .ne. TXOUT amount: tx={}", _0)]
     ImbalancedRestaking(Hash),
+
+    #[fail(display = "Slashing error ={}", _0)]
+    SlashingError(SlashingError),
 }
 
 #[derive(Debug, Fail)]
@@ -233,6 +252,76 @@ pub enum BlockError {
         _0, _1, _2, _3
     )]
     NoProofWasFound(u64, Hash, u32, u32),
+    #[fail(
+        display = "Election result could be taken only current epoch: \
+                   election_height={}, last_key_block={}",
+        _0, _1
+    )]
+    ElectionResultForPastEpoch(u64, u64),
+    #[fail(
+        display = "No election result are known for future blocks: election_height={}, blockchain_height={}",
+        _0, _1
+    )]
+    ElectionResultForFutureBlock(u64, u64),
+}
+
+#[derive(Debug, Fail)]
+pub enum SlashingError {
+    #[fail(
+        display = "Found a block from future height : proof_height={}, blockchain_height={}",
+        _0, _1
+    )]
+    InvalidProofHeight(u64, u64),
+    #[fail(
+        display = "Found block with past epoch : proof_height={}, last_key_block_height={}",
+        _0, _1
+    )]
+    InvalidProofEpoch(u64, u64),
+    #[fail(
+        display = "Other leader found at same height: view_change={}, blockchain_view_change={}",
+        _0, _1
+    )]
+    DifferentLeader(u32, u32),
+    #[fail(
+        display = "Found same block that already was committed : height={}",
+        _0
+    )]
+    BlockWithoutConflicts(u64),
+    #[fail(
+        display = "Found incorrect leader: leader_in_proof={}, actual_leader={}",
+        _0, _1
+    )]
+    WrongLeader(pbc::PublicKey, pbc::PublicKey),
+    #[fail(
+        display = "No active validators found after punishing cheater: validator = {}",
+        _0
+    )]
+    LastValidator(pbc::PublicKey),
+    #[fail(display = "Cheater was not validator: validator = {}", _0)]
+    NotValidator(pbc::PublicKey),
+    #[fail(
+        display = "Different parents was found for blocks in proofs: \
+                   block1_parent = {}, block2_parent = {}",
+        _0, _1
+    )]
+    DifferentHistory(Hash, Hash),
+
+    #[fail(
+        display = "Different height was found for blocks in proofs: \
+                   block1_height = {}, block2_height = {}",
+        _0, _1
+    )]
+    DifferentHeight(u64, u64),
+    #[fail(
+        display = "Found slashing transaction, with incorrect inputs, tx_hash = {}",
+        _0
+    )]
+    IncorrectTxins(Hash),
+    #[fail(
+        display = "Found slashing transaction, with incorrect outputs, tx_hash = {}",
+        _0
+    )]
+    IncorrectTxouts(Hash),
 }
 
 impl From<failure::Error> for BlockchainError {
@@ -262,5 +351,17 @@ impl From<OutputError> for BlockchainError {
 impl From<CryptoError> for BlockchainError {
     fn from(error: CryptoError) -> BlockchainError {
         BlockchainError::CryptoError(error)
+    }
+}
+
+impl From<SlashingError> for BlockchainError {
+    fn from(error: SlashingError) -> BlockchainError {
+        BlockchainError::TransactionError(TransactionError::SlashingError(error))
+    }
+}
+
+impl From<Utf8Error> for BlockchainError {
+    fn from(error: Utf8Error) -> BlockchainError {
+        BlockchainError::UtfError(error)
     }
 }

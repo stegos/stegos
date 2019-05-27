@@ -33,6 +33,12 @@ message Output {
     }
 }
 
+message SlashingTransaction {
+    SlashingProof proof = 1;
+    repeated stegos.crypto.Hash txins = 2;
+    repeated Output txouts = 3;
+}
+
 message CoinbaseTransaction {
     int64 block_reward = 1;
     int64 block_fee = 2;
@@ -59,6 +65,7 @@ message Transaction {
         CoinbaseTransaction coinbase_transaction = 1;
         PaymentTransaction payment_transaction = 2;
         RestakeTransaction restake_transaction = 3;
+        SlashingTransaction slashing_transaction = 4;
     }
 }
 
@@ -112,4 +119,9 @@ message Block {
         MacroBlock macro_block = 1;
         MicroBlock micro_block = 2;
     }
+}
+
+message SlashingProof {
+    MicroBlock block1 = 1;
+    MicroBlock block2 = 2;
 }

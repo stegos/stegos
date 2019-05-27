@@ -46,7 +46,7 @@ use protobuf;
 use protobuf::Message;
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Instant;
 use std::time::SystemTime;
 use stegos_blockchain::*;
@@ -262,6 +262,9 @@ pub struct NodeService {
     /// Monotonic clock when the latest block was registered.
     last_block_clock: Instant,
 
+    /// Cheating detection.
+    cheating_proofs: HashMap<pbc::PublicKey, SlashingProof>,
+
     //
     // Communication with environment.
     //
@@ -296,6 +299,7 @@ impl NodeService {
         } else {
             MacroBlockAuditor
         };
+        let cheating_proofs = HashMap::new();
 
         let on_block_added = Vec::<UnboundedSender<BlockAdded>>::new();
         let on_epoch_changed = Vec::<UnboundedSender<EpochChanged>>::new();
@@ -351,6 +355,7 @@ impl NodeService {
             mempool,
             validation,
             last_block_clock,
+            cheating_proofs,
             network: network.clone(),
             on_block_added,
             on_epoch_changed,
@@ -410,7 +415,7 @@ impl NodeService {
 
         // Validate transaction.
         let timestamp = SystemTime::now();
-        validate_transaction(
+        validate_external_transaction(
             &tx,
             &self.mempool,
             &self.chain,
@@ -468,10 +473,10 @@ impl NodeService {
 
         // check multiple blocks with same view_change
         if remote_view_change == local.base.view_change {
-            if local_hash == local_hash {
+            if remote_hash == local_hash {
                 debug!(
                     "Skip a duplicate block with the same hash: height={}, block={}, current_height={}, last_block={}",
-                    height, local_hash, self.chain.height(), self.chain.last_block_hash(),
+                    height, remote_hash, self.chain.height(), self.chain.last_block_hash(),
                 );
                 return Err(ForkError::Canceled);
             }
@@ -488,7 +493,12 @@ impl NodeService {
                   self.chain.last_block_hash());
 
             metrics::CHEATS.inc();
-            // TODO: implement slashing.
+
+            let proof = SlashingProof::new_unchecked(remote.clone(), local);
+
+            if let Some(_proof) = self.cheating_proofs.insert(leader, proof) {
+                debug!("Cheater was already detected: cheater = {}", leader);
+            }
 
             return Err(ForkError::Canceled);
         } else if remote_view_change <= local.base.view_change {
@@ -835,6 +845,7 @@ impl NodeService {
                 };
                 self.on_epoch_changed
                     .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
+                self.cheating_proofs.clear();
             }
             Block::MicroBlock(micro_block) => {
                 // Check for the correct block order.
@@ -1486,6 +1497,19 @@ impl NodeService {
             "Creating a new micro block: height={}, view_change={}, last_block={}",
             height, view_change, previous
         );
+
+        for (cheater, proof) in &self.cheating_proofs {
+            // the cheater was already punished, so we keep proofs for rollback case,
+            // but avoid punish them second time.
+            if !self.chain.is_validator(cheater) {
+                continue;
+            }
+            let slash_tx = confiscate_tx(&self.chain, &self.keys.network_pkey, proof.clone())?;
+            let tx: Transaction = slash_tx.into();
+            let tx_hash = Hash::digest(&tx);
+            self.mempool.push_tx(tx_hash, tx);
+        }
+
         // Create a new micro block from the mempool.
         let mut block = self.mempool.create_block(
             previous,
@@ -1498,6 +1522,7 @@ impl NodeService {
             view_change_proof,
             self.cfg.max_utxo_in_block,
         );
+
         let block_hash = Hash::digest(&block);
 
         // Sign block.

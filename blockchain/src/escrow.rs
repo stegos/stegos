@@ -170,6 +170,51 @@ impl Escrow {
     }
 
     ///
+    /// Returns list of utxos for specific validator.
+    ///
+    pub fn staker_outputs(&self, validator_pkey: &pbc::PublicKey, epoch: u64) -> (Vec<Hash>, i64) {
+        let (hash_min, hash_max) = Hash::bounds();
+        let key_min = EscrowKey {
+            validator_pkey: validator_pkey.clone(),
+            output_hash: hash_min,
+        };
+        let key_max = EscrowKey {
+            validator_pkey: validator_pkey.clone(),
+            output_hash: hash_max,
+        };
+
+        let mut result = Vec::new();
+        let mut stake = 0;
+        for (key, value) in self.escrow.range(&key_min..=&key_max) {
+            assert_eq!(&key.validator_pkey, validator_pkey);
+            if value.active_until_epoch >= epoch {
+                stake += value.amount;
+                result.push(key.output_hash)
+            }
+        }
+
+        (result, stake)
+    }
+
+    /// Returns Hash of the first output for validator.
+    /// If no output was found, return None.
+    pub fn get_first_output(&self, validator_pkey: &pbc::PublicKey) -> Option<Hash> {
+        let (hash_min, hash_max) = Hash::bounds();
+        let key_min = EscrowKey {
+            validator_pkey: validator_pkey.clone(),
+            output_hash: hash_min,
+        };
+        let key_max = EscrowKey {
+            validator_pkey: validator_pkey.clone(),
+            output_hash: hash_max,
+        };
+        self.escrow
+            .range(&key_min..=&key_max)
+            .next()
+            .map(|(k, _)| k.output_hash)
+    }
+
+    ///
     /// Get all staked values of all validators.
     /// Filter out stakers with stake lower than min_stake_amount.
     ///

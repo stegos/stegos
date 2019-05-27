@@ -23,12 +23,45 @@
 
 use crate::error::*;
 use crate::output::*;
+use crate::SlashingProof;
 use failure::Error;
 use stegos_crypto::curve1174::{
     sign_hash, sign_hash_with_kval, ECp, Fr, PublicKey, SchnorrSig, SecretKey,
 };
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
+
+//--------------------------------------------------------------------------------------------------
+// Slashing Transaction.
+//--------------------------------------------------------------------------------------------------
+
+/// Transaction that confiscate stake from cheater.
+#[derive(Debug, Clone)]
+pub struct SlashingTransaction {
+    pub proof: SlashingProof,
+    /// List of inputs.
+    pub txins: Vec<Hash>,
+    /// List of outputs.
+    pub txouts: Vec<Output>,
+}
+
+impl Hashable for SlashingTransaction {
+    fn hash(&self, state: &mut Hasher) {
+        self.proof.hash(state);
+
+        let txins_count: u64 = self.txins.len() as u64;
+        txins_count.hash(state);
+        for txin_hash in &self.txins {
+            txin_hash.hash(state);
+        }
+        // Sign txouts.
+        let txouts_count: u64 = self.txouts.len() as u64;
+        txouts_count.hash(state);
+        for txout in &self.txouts {
+            txout.hash(state);
+        }
+    }
+}
 
 //--------------------------------------------------------------------------------------------------
 // Coinbase Transaction.
@@ -72,6 +105,13 @@ impl Hashable for CoinbaseTransaction {
             let output_hash = Hash::digest(&output);
             output_hash.hash(state);
         }
+    }
+}
+
+impl SlashingTransaction {
+    pub fn cheater(&self) -> pbc::PublicKey {
+        assert_eq!(self.proof.block1.pkey, self.proof.block2.pkey);
+        self.proof.block1.pkey
     }
 }
 
@@ -436,7 +476,6 @@ impl RestakeTransaction {
     }
 
     /// Used only for tests.
-    //#[cfg(test)]
     #[doc(hidden)]
     pub fn new_test(
         pkey: PublicKey,
@@ -479,6 +518,7 @@ pub enum Transaction {
     CoinbaseTransaction(CoinbaseTransaction),
     PaymentTransaction(PaymentTransaction),
     RestakeTransaction(RestakeTransaction),
+    SlashingTransaction(SlashingTransaction),
 }
 
 impl Transaction {
@@ -488,6 +528,7 @@ impl Transaction {
             Transaction::CoinbaseTransaction(_tx) => 0,
             Transaction::PaymentTransaction(tx) => tx.fee,
             Transaction::RestakeTransaction(_tx) => 0,
+            Transaction::SlashingTransaction(_tx) => 0,
         }
     }
 
@@ -497,6 +538,7 @@ impl Transaction {
             Transaction::CoinbaseTransaction(_tx) => &[],
             Transaction::PaymentTransaction(tx) => &tx.txins,
             Transaction::RestakeTransaction(tx) => &tx.txins,
+            Transaction::SlashingTransaction(tx) => &tx.txins,
         }
     }
 
@@ -506,6 +548,16 @@ impl Transaction {
             Transaction::CoinbaseTransaction(tx) => &tx.txouts,
             Transaction::PaymentTransaction(tx) => &tx.txouts,
             Transaction::RestakeTransaction(tx) => &tx.txouts,
+            Transaction::SlashingTransaction(tx) => &tx.txouts,
+        }
+    }
+
+    pub fn to_type_str(&self) -> &'static str {
+        match self {
+            Transaction::CoinbaseTransaction(_) => "CoinbaseTransaction",
+            Transaction::PaymentTransaction(_) => "PaymentTransaction",
+            Transaction::RestakeTransaction(_) => "RestakeTransaction",
+            Transaction::SlashingTransaction(_) => "SlashingTransaction",
         }
     }
 }
@@ -516,6 +568,7 @@ impl Hashable for Transaction {
             Transaction::CoinbaseTransaction(tx) => tx.hash(state),
             Transaction::PaymentTransaction(tx) => tx.hash(state),
             Transaction::RestakeTransaction(tx) => tx.hash(state),
+            Transaction::SlashingTransaction(tx) => tx.hash(state),
         }
     }
 }
@@ -535,5 +588,11 @@ impl From<PaymentTransaction> for Transaction {
 impl From<RestakeTransaction> for Transaction {
     fn from(tx: RestakeTransaction) -> Transaction {
         Transaction::RestakeTransaction(tx)
+    }
+}
+
+impl From<SlashingTransaction> for Transaction {
+    fn from(tx: SlashingTransaction) -> Self {
+        Transaction::SlashingTransaction(tx)
     }
 }

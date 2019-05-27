@@ -35,13 +35,8 @@ use libp2p::{
 use log::*;
 use pnet::datalink;
 use protobuf::Message as ProtoMessage;
-use rand::{
-    self,
-    distributions::{Distribution, Uniform},
-};
 use smallvec::SmallVec;
 use std::collections::{HashMap, HashSet};
-use std::thread;
 use std::time::Duration;
 use stegos_crypto::hash::{Hashable, Hasher};
 use stegos_crypto::pbc;
@@ -160,13 +155,6 @@ fn new_service(
     ),
     Error,
 > {
-    // Random start delay
-    let mut rng = rand::thread_rng();
-    let uniform = Uniform::from(1..10000);
-    let delay_millis = uniform.sample(&mut rng);
-
-    thread::sleep(Duration::from_millis(delay_millis));
-
     let (secp256k1_key, _) = keychain
         .generate_secp256k1_keypair()
         .expect("Couldn't generate secp256k1 keypair for network communications");
@@ -509,13 +497,6 @@ where
                     })
                 }
             }
-            FloodsubEvent::EnabledIncoming { peer_id } => {
-                self.gatekeeper
-                    .notify(PeerEvent::EnabledListener { peer_id });
-            }
-            FloodsubEvent::EnabledOutgoing { peer_id } => {
-                self.gatekeeper.notify(PeerEvent::EnabledDialer { peer_id });
-            }
             FloodsubEvent::Subscribed { .. } => {}
             FloodsubEvent::Unsubscribed { .. } => {}
         }
@@ -530,9 +511,12 @@ where
         match event {
             GatekeeperOutEvent::PrepareListener { peer_id } => {
                 self.floodsub.enable_incoming(&peer_id);
+                self.gatekeeper
+                    .notify(PeerEvent::EnabledListener { peer_id });
             }
             GatekeeperOutEvent::PrepareDialer { peer_id } => {
                 self.floodsub.enable_outgoing(&peer_id);
+                self.gatekeeper.notify(PeerEvent::EnabledDialer { peer_id });
             }
             GatekeeperOutEvent::Solve { peer_id, .. } => {
                 // do puzzle solving

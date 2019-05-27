@@ -185,6 +185,10 @@ impl<'p> PartitionGuard<'p> {
     pub fn wait(&mut self, duration: Duration) {
         wait(&mut *self.timer, duration)
     }
+
+    pub fn cfg(&self) -> &ChainConfig {
+        &self.config
+    }
 }
 
 struct NodeSandbox {
@@ -357,9 +361,10 @@ trait Api<'p> {
         let vrf = self.node(&first_leader_pk)?.create_vrf();
         let mut election = self.first_mut().node_service.chain.election_result();
         election.random = vrf;
-        Some(election.select_leader(view_change + 1))
+        Some(election.select_leader(view_change))
     }
 
+    /// Same as next_leader, but for view_changes.
     fn next_view_change_leader(&mut self) -> pbc::PublicKey {
         let view_change = self.first_mut().node_service.chain.view_change();
         self.first_mut()

@@ -33,7 +33,7 @@ use stegos_crypto::hash::Hash;
 ///
 /// Validate transaction.
 ///
-pub(crate) fn validate_transaction(
+pub(crate) fn validate_external_transaction(
     tx: &Transaction,
     mempool: &Mempool,
     chain: &Blockchain,
@@ -93,11 +93,15 @@ pub(crate) fn validate_transaction(
         }
     }
 
+    chain.validate_staker(tx, &inputs)?;
     // Check the monetary balance, Bulletpoofs/amounts and signature.
-    let staking_balance = tx.validate(&inputs)?;
-
-    // Checks staking balance.
-    chain.validate_staking_balance(staking_balance.iter())?;
+    match tx {
+        Transaction::RestakeTransaction(tx) => tx.validate(&inputs)?,
+        Transaction::PaymentTransaction(tx) => tx.validate(&inputs)?,
+        Transaction::SlashingTransaction(..) | Transaction::CoinbaseTransaction(..) => {
+            return Err(TransactionError::ReceivedInvalidTransaction(tx.to_type_str()).into())
+        }
+    }
 
     Ok(())
 }
@@ -220,7 +224,7 @@ mod test {
             let outputs_gamma = gamma1 + gamma2;
             let tx =
                 PaymentTransaction::new(&skey, &inputs, &outputs, &outputs_gamma, fee).unwrap();
-            validate_transaction(
+            validate_external_transaction(
                 &tx.into(),
                 &mempool,
                 &chain,
@@ -240,7 +244,7 @@ mod test {
             let tx = PaymentTransaction::new(&skey, &inputs, &[output], &gamma, fee)
                 .unwrap()
                 .into();
-            validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
+            validate_external_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect("transaction is valid");
         }
 
@@ -253,8 +257,15 @@ mod test {
             let tx = PaymentTransaction::unchecked(&skey, &inputs, &[output], &gamma, fee)
                 .unwrap()
                 .into();
-            let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
-                .expect_err("transaction is not valid");
+            let e = validate_external_transaction(
+                &tx,
+                &mempool,
+                &chain,
+                timestamp,
+                payment_fee,
+                stake_fee,
+            )
+            .expect_err("transaction is not valid");
             match e.downcast::<NodeTransactionError>().unwrap() {
                 NodeTransactionError::TooLowFee(tx_hash, min, got) => {
                     assert_eq!(tx_hash, Hash::digest(&tx));
@@ -276,8 +287,15 @@ mod test {
             let tx = PaymentTransaction::new(&skey, &[input], &[output], &outputs_gamma, fee)
                 .unwrap()
                 .into();
-            let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
-                .expect_err("transaction is not valid");
+            let e = validate_external_transaction(
+                &tx,
+                &mempool,
+                &chain,
+                timestamp,
+                payment_fee,
+                stake_fee,
+            )
+            .expect_err("transaction is not valid");
             match e.downcast::<TransactionError>().unwrap() {
                 TransactionError::MissingInput(_tx_hash, hash) => {
                     assert_eq!(hash, missing);
@@ -303,8 +321,15 @@ mod test {
             mempool.push_tx(Hash::digest(&tx), tx.clone());
 
             // TX hash is unique.
-            let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
-                .expect_err("transaction is not valid");
+            let e = validate_external_transaction(
+                &tx,
+                &mempool,
+                &chain,
+                timestamp,
+                payment_fee,
+                stake_fee,
+            )
+            .expect_err("transaction is not valid");
             match e.downcast::<NodeTransactionError>().expect("proper error") {
                 NodeTransactionError::AlreadyExists(tx_hash) => {
                     assert_eq!(tx_hash, Hash::digest(&tx));
@@ -319,8 +344,15 @@ mod test {
                     .unwrap()
                     .into()
             };
-            let e = validate_transaction(&tx2, &mempool, &chain, timestamp, payment_fee, stake_fee)
-                .expect_err("transaction is not valid");
+            let e = validate_external_transaction(
+                &tx2,
+                &mempool,
+                &chain,
+                timestamp,
+                payment_fee,
+                stake_fee,
+            )
+            .expect_err("transaction is not valid");
             match e.downcast::<TransactionError>().expect("proper error") {
                 TransactionError::MissingInput(_tx_hash, hash) => {
                     assert_eq!(hash, input_hashes[0]);
@@ -329,10 +361,17 @@ mod test {
             }
 
             mempool.prune(&input_hashes, &output_hashes);
-            validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
+            validate_external_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect("transaction is valid");
-            validate_transaction(&tx2, &mempool, &chain, timestamp, payment_fee, stake_fee)
-                .expect("transaction is valid");
+            validate_external_transaction(
+                &tx2,
+                &mempool,
+                &chain,
+                timestamp,
+                payment_fee,
+                stake_fee,
+            )
+            .expect("transaction is valid");
         }
 
         //
@@ -346,7 +385,7 @@ mod test {
             let tx = PaymentTransaction::new(&skey, &inputs, &[output], &Fr::zero(), fee)
                 .unwrap()
                 .into();
-            validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
+            validate_external_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect("transaction is valid");
         }
 
@@ -366,10 +405,17 @@ mod test {
             let tx = PaymentTransaction::unchecked(&skey, &inputs, &outputs, &outputs_gamma, fee)
                 .unwrap()
                 .into();
-            let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
-                .expect_err("transaction is not valid");
-            match e.downcast::<OutputError>().expect("proper error") {
-                OutputError::InvalidStake(_output_hash) => {}
+            let e = validate_external_transaction(
+                &tx,
+                &mempool,
+                &chain,
+                timestamp,
+                payment_fee,
+                stake_fee,
+            )
+            .expect_err("transaction is not valid");
+            match e.downcast::<BlockchainError>().expect("proper error") {
+                BlockchainError::OutputError(OutputError::InvalidStake(_output_hash)) => {}
                 _ => panic!(),
             }
         }
@@ -384,8 +430,15 @@ mod test {
             let tx = PaymentTransaction::unchecked(&skey, &stakes, &[output], &outputs_gamma, fee)
                 .unwrap()
                 .into();
-            let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
-                .expect_err("transaction is not valid");
+            let e = validate_external_transaction(
+                &tx,
+                &mempool,
+                &chain,
+                timestamp,
+                payment_fee,
+                stake_fee,
+            )
+            .expect_err("transaction is not valid");
             match e.downcast::<BlockchainError>().expect("proper error") {
                 BlockchainError::StakeIsLocked(
                     validator_pkey2,
@@ -411,7 +464,7 @@ mod test {
             let tx = PaymentTransaction::unchecked(&skey, &stakes, &[output], &Fr::zero(), 0)
                 .unwrap()
                 .into();
-            validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, 0)
+            validate_external_transaction(&tx, &mempool, &chain, timestamp, payment_fee, 0)
                 .expect("transaction is valid");
         }
 
@@ -432,8 +485,15 @@ mod test {
             let tx = PaymentTransaction::unchecked(&skey, &inputs, &outputs, &outputs_gamma, fee)
                 .unwrap()
                 .into();
-            let e = validate_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
-                .expect_err("transaction is not valid");
+            let e = validate_external_transaction(
+                &tx,
+                &mempool,
+                &chain,
+                timestamp,
+                payment_fee,
+                stake_fee,
+            )
+            .expect_err("transaction is not valid");
             match e.downcast::<TransactionError>().expect("proper error") {
                 TransactionError::OutputHashCollision(_tx_hash, hash) => {
                     assert_eq!(hash, output_hashes[0]);

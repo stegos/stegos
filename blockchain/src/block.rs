@@ -134,6 +134,7 @@ impl Hashable for MicroBlock {
                 Transaction::CoinbaseTransaction(_tx) => {}
                 Transaction::PaymentTransaction(tx) => tx.sig.hash(state),
                 Transaction::RestakeTransaction(tx) => tx.sig.hash(state),
+                Transaction::SlashingTransaction(_tx) => (),
             }
         }
         self.pkey.hash(state);

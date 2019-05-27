@@ -187,7 +187,10 @@ impl Mempool {
             match tx {
                 Transaction::PaymentTransaction(_tx) => {}
                 Transaction::RestakeTransaction(_tx) => {}
-                _ => panic!("Invalid transaction type in mempool: tx={:?}", tx_hash),
+                Transaction::SlashingTransaction(_tx) => {}
+                Transaction::CoinbaseTransaction(_tx) => {
+                    panic!("Invalid transaction type in mempool: tx={:?}", tx_hash)
+                }
             };
 
             // Check the maximum number of UTXO in block.

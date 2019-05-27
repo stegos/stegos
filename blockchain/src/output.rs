@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::BlockchainError;
 use failure::{Error, Fail};
 use rand::random;
 use serde_derive::Serialize;
@@ -71,7 +72,7 @@ pub enum OutputError {
 }
 
 /// Payment UTXO.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct PaymentOutput {
     /// Cloaked public key of recipient.
     pub recipient: PublicKey,
@@ -95,7 +96,7 @@ pub struct PaymentOutput {
 }
 
 /// PublicPayment UTXO.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct PublicPaymentOutput {
     /// Uncloaked public key of recipient.
     pub recipient: PublicKey,
@@ -108,7 +109,7 @@ pub struct PublicPaymentOutput {
 }
 
 /// Stake UTXO.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct StakeOutput {
     /// Uncloaked wallet key of validator.
     pub recipient: PublicKey,
@@ -127,7 +128,7 @@ pub struct StakeOutput {
 }
 
 /// Blockchain UTXO.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Output {
     PaymentOutput(PaymentOutput),
     PublicPaymentOutput(PublicPaymentOutput),
@@ -206,7 +207,7 @@ pub struct PaymentPayload {
 
 impl PaymentPayload {
     /// Serialize and encrypt payload.
-    fn encrypt(&self, pkey: &PublicKey) -> Result<EncryptedPayload, Error> {
+    fn encrypt(&self, pkey: &PublicKey) -> Result<EncryptedPayload, BlockchainError> {
         let mut payload: [u8; PAYMENT_PAYLOAD_LEN] = [0u8; PAYMENT_PAYLOAD_LEN];
         let mut pos: usize = 0;
 
@@ -260,7 +261,7 @@ impl PaymentPayload {
         output_hash: Hash,
         payload: &EncryptedPayload,
         skey: &SecretKey,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, BlockchainError> {
         if payload.ctxt.len() != PAYMENT_PAYLOAD_LEN {
             return Err(OutputError::InvalidPayloadLength(
                 output_hash,
@@ -350,7 +351,7 @@ impl PaymentOutput {
         recipient_pkey: &PublicKey,
         amount: i64,
         data: PaymentPayloadData,
-    ) -> Result<(Self, Fr), Error> {
+    ) -> Result<(Self, Fr), BlockchainError> {
         // Create range proofs.
         let (proof, gamma) = make_range_proof(amount);
 
@@ -380,19 +381,19 @@ impl PaymentOutput {
     }
 
     /// Create a new PaymentOutput.
-    pub fn new(recipient_pkey: &PublicKey, amount: i64) -> Result<(Self, Fr), Error> {
+    pub fn new(recipient_pkey: &PublicKey, amount: i64) -> Result<(Self, Fr), BlockchainError> {
         let data = PaymentPayloadData::Comment(String::new());
         Self::with_payload(recipient_pkey, amount, data)
     }
 
     /// Decrypt payload.
-    pub fn decrypt_payload(&self, skey: &SecretKey) -> Result<PaymentPayload, Error> {
+    pub fn decrypt_payload(&self, skey: &SecretKey) -> Result<PaymentPayload, BlockchainError> {
         let output_hash = Hash::digest(&self);
         PaymentPayload::decrypt(output_hash, &self.payload, skey)
     }
 
     /// Validates UTXO structure and keying.
-    pub fn validate(&self) -> Result<(), Error> {
+    pub fn validate(&self) -> Result<(), BlockchainError> {
         // valid recipient PKey?
         let pt: Pt = self.recipient.into();
         pt.decompress()?;
@@ -434,7 +435,7 @@ impl PaymentOutput {
 }
 
 impl PublicPaymentOutput {
-    pub fn new(recipient_pkey: &PublicKey, amount: i64) -> Result<Self, Error> {
+    pub fn new(recipient_pkey: &PublicKey, amount: i64) -> Result<Self, BlockchainError> {
         let serno = random::<i64>();
         Ok(PublicPaymentOutput {
             recipient: recipient_pkey.clone(),
@@ -444,7 +445,7 @@ impl PublicPaymentOutput {
     }
 
     /// Validates UTXO structure and keying.
-    pub fn validate(&self) -> Result<(), Error> {
+    pub fn validate(&self) -> Result<(), BlockchainError> {
         self.recipient.decompress()?;
         if self.amount <= 0 {
             let h = Hash::digest(self);
@@ -492,7 +493,7 @@ impl StakeOutput {
     }
 
     /// Validates UTXO structure and keying.
-    pub fn validate(&self) -> Result<(), Error> {
+    pub fn validate(&self) -> Result<(), BlockchainError> {
         let output_hash = Hash::digest(self);
         self.recipient.decompress()?;
         if self.amount <= 0 {
@@ -536,7 +537,7 @@ impl Output {
     }
 
     /// Validates UTXO structure and keying.
-    pub fn validate(&self) -> Result<(), Error> {
+    pub fn validate(&self) -> Result<(), BlockchainError> {
         match self {
             Output::PaymentOutput(o) => o.validate(),
             Output::PublicPaymentOutput(o) => o.validate(),
@@ -570,6 +571,24 @@ impl Output {
             Output::PublicPaymentOutput(o) => o.is_my_utxo(&pkey),
             Output::StakeOutput(o) => o.is_my_utxo(&pkey),
         }
+    }
+}
+
+impl From<PaymentOutput> for Output {
+    fn from(output: PaymentOutput) -> Output {
+        Output::PaymentOutput(output)
+    }
+}
+
+impl From<StakeOutput> for Output {
+    fn from(output: StakeOutput) -> Output {
+        Output::StakeOutput(output)
+    }
+}
+
+impl From<PublicPaymentOutput> for Output {
+    fn from(output: PublicPaymentOutput) -> Output {
+        Output::PublicPaymentOutput(output)
     }
 }
 
@@ -735,8 +754,12 @@ pub mod tests {
         invalid.push(0);
         let invalid = aes_encrypt(&invalid, &pkey).expect("keys are valid");
         let e = PaymentPayload::decrypt(output_hash, &invalid, &skey).unwrap_err();
-        match e.downcast::<OutputError>().unwrap() {
-            OutputError::InvalidPayloadLength(_output_hash, expected, got) => {
+        match e {
+            BlockchainError::OutputError(OutputError::InvalidPayloadLength(
+                _output_hash,
+                expected,
+                got,
+            )) => {
                 assert_eq!(expected, PAYMENT_PAYLOAD_LEN);
                 assert_eq!(got, PAYMENT_PAYLOAD_LEN + 1);
             }
@@ -748,8 +771,8 @@ pub mod tests {
         invalid[3] = 5;
         let invalid = aes_encrypt(&invalid, &pkey).expect("keys are valid");
         let e = PaymentPayload::decrypt(output_hash, &invalid, &skey).unwrap_err();
-        match e.downcast::<OutputError>().unwrap() {
-            OutputError::PayloadDecryptionError(_output_hash) => {}
+        match e {
+            BlockchainError::OutputError(OutputError::PayloadDecryptionError(_output_hash)) => {}
             _ => unreachable!(),
         }
 
@@ -760,8 +783,10 @@ pub mod tests {
         invalid[68..68 + amount_bytes.len()].copy_from_slice(&amount_bytes);
         let invalid = aes_encrypt(&invalid, &pkey).expect("keys are valid");
         let e = PaymentPayload::decrypt(output_hash, &invalid, &skey).unwrap_err();
-        match e.downcast::<OutputError>().unwrap() {
-            OutputError::NegativeAmount(_output_hash, amount2) => assert_eq!(amount, amount2),
+        match e {
+            BlockchainError::OutputError(OutputError::NegativeAmount(_output_hash, amount2)) => {
+                assert_eq!(amount, amount2)
+            }
             _ => unreachable!(),
         }
 
@@ -771,8 +796,10 @@ pub mod tests {
         invalid[76] = code;
         let invalid = aes_encrypt(&invalid, &pkey).expect("keys are valid");
         let e = PaymentPayload::decrypt(output_hash, &invalid, &skey).unwrap_err();
-        match e.downcast::<OutputError>().unwrap() {
-            OutputError::UnsupportedDataType(_output_hash, code2) => assert_eq!(code, code2),
+        match e {
+            BlockchainError::OutputError(OutputError::UnsupportedDataType(_output_hash, code2)) => {
+                assert_eq!(code, code2)
+            }
             _ => unreachable!(),
         }
 
@@ -781,8 +808,8 @@ pub mod tests {
         invalid[77 + HASH_SIZE] = 1;
         let invalid = aes_encrypt(&invalid, &pkey).expect("keys are valid");
         let e = PaymentPayload::decrypt(output_hash, &invalid, &skey).unwrap_err();
-        match e.downcast::<OutputError>().unwrap() {
-            OutputError::TrailingGarbage(_output_hash) => {}
+        match e {
+            BlockchainError::OutputError(OutputError::TrailingGarbage(_output_hash)) => {}
             _ => unreachable!(),
         }
     }
@@ -806,13 +833,9 @@ pub mod tests {
         assert_eq!(gamma, payload.gamma);
 
         // Error handling
-        if let Err(e) = output.decrypt_payload(&skey1) {
-            match e.downcast::<OutputError>() {
-                Ok(OutputError::PayloadDecryptionError(_output_hash)) => (),
-                _ => assert!(false),
-            };
-        } else {
-            assert!(false);
-        }
+        match output.decrypt_payload(&skey1).unwrap_err() {
+            BlockchainError::OutputError(OutputError::PayloadDecryptionError(_output_hash)) => (),
+            _ => panic!(),
+        };
     }
 }

@@ -569,6 +569,15 @@ impl Blockchain {
         self.escrow.get(validator_pkey, self.epoch)
     }
 
+    ///
+    /// Get staked value for validator.
+    ///
+    /// Returns (active_balance, expired_balance) stake.
+    ///
+    #[inline]
+    pub(crate) fn staker_outputs(&self, validator_pkey: &pbc::PublicKey) -> (Vec<Hash>, i64) {
+        self.escrow.staker_outputs(validator_pkey, self.epoch)
+    }
     /// Return information about escrow.
     #[inline]
     pub fn escrow_info(&self) -> EscrowInfo {
@@ -613,8 +622,37 @@ impl Blockchain {
         self.view_change_proof = None;
     }
 
+    ///
+    /// Check if some of validator was caught on cheating in current epoch.
+    /// Returns proof of cheating.
+    ///
+    pub fn validator_wallet(&self, peer: &pbc::PublicKey) -> Option<PublicKey> {
+        self.escrow
+            .get_first_output(peer)
+            .map(|hash| match self.output_by_hash(&hash) {
+                Ok(Some(Output::StakeOutput(s))) => s.recipient,
+                e => panic!("Expected stake output, found = {:?}", e),
+            })
+    }
+
     pub fn election_result(&self) -> ElectionResult {
         self.election_result.clone()
+    }
+
+    /// Return election result, for specific moment of history, in past.
+    pub fn election_result_by_height(
+        &self,
+        height: u64,
+    ) -> Result<ElectionResult, BlockchainError> {
+        assert!(
+            height > self.last_macro_block_height(),
+            "Election info for past epoch."
+        );
+        assert!(height < self.height(), "Election info from future height.");
+        let mut election = self.election_result();
+        let block = self.block_by_height(height - 1)?;
+        election.random = block.base_header().random;
+        Ok(election)
     }
 
     //----------------------------------------------------------------------------------------------
@@ -967,6 +1005,19 @@ impl Blockchain {
                     gamma += tx.gamma;
                 }
                 Transaction::RestakeTransaction(_tx) => {}
+                Transaction::SlashingTransaction(tx) => {
+                    info!(
+                        "Found slashing transaction, removing validator, from list: cheater={}",
+                        tx.cheater()
+                    );
+                    let validators =
+                        std::mem::replace(&mut self.election_result.validators, Vec::new());
+                    // remove cheater for current epoch.
+                    self.election_result.validators = validators
+                        .into_iter()
+                        .filter(|(k, _)| k != &tx.cheater())
+                        .collect();
+                }
             }
         }
 

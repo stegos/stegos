@@ -23,6 +23,7 @@
 
 use super::*;
 use crate::*;
+use std::collections::HashSet;
 use stegos_blockchain::Block;
 use stegos_consensus::{optimistic::SealedViewChangeProof, ConsensusMessage, ConsensusMessageBody};
 
@@ -841,6 +842,111 @@ fn micro_block_without_signature() {
         r.parts
             .1
             .for_each(|node| assert_eq!(node.chain.height(), height));
+    });
+}
+
+// CASE partition:
+// Nodes [A, B, C, D]
+//
+// 1. Node A leader cheater and create multiple blocks (B1, B2).
+// 2. Nodes [B, C, D] receive B1 and B2, and punish node A.
+//
+// Asserts that in [A] no more validator.
+
+#[test]
+fn slash_cheater() {
+    let mut cfg: ChainConfig = Default::default();
+    cfg.blocks_in_epoch = 2000;
+    let config = SandboxConfig {
+        num_nodes: 4,
+        chain: cfg,
+        ..Default::default()
+    };
+
+    Sandbox::start(config, |mut s| {
+        s.poll();
+        for node in s.nodes.iter() {
+            assert_eq!(node.node_service.chain.height(), 1);
+        }
+
+        // next leader should be from different partition.
+        for _ in 0..(s.cfg().blocks_in_epoch - 2) {
+            let first_leader_pk = s.nodes[0].node_service.chain.leader();
+            let new_leader_pk = s.next_leader().unwrap();
+            info!(
+                "Checking that leader {} and {} are different.",
+                first_leader_pk, new_leader_pk
+            );
+            if first_leader_pk != new_leader_pk {
+                break;
+            }
+
+            info!("Skipping microlock.");
+            s.wait(s.cfg().tx_wait_timeout);
+            s.skip_micro_block();
+        }
+        let leader_pk = s.nodes[0].node_service.chain.leader();
+
+        info!("CREATE BLOCK. LEADER = {}", leader_pk);
+        s.wait(s.cfg().tx_wait_timeout);
+
+        s.poll();
+
+        let mut r = s.split(&[leader_pk]);
+        let leader = &mut r.parts.0.nodes[0];
+        let b1: Block = leader
+            .network_service
+            .get_broadcast(crate::SEALED_BLOCK_TOPIC);
+        let mut b2 = b1.clone();
+        // modify timestamp for block
+        match &mut b2 {
+            Block::MicroBlock(ref mut b) => {
+                b.base.timestamp += Duration::from_millis(1);
+                let block_hash = Hash::digest(&*b);
+                b.sig = pbc::sign_hash(&block_hash, &leader.node_service.keys.network_skey);
+            }
+            Block::MacroBlock(_) => unreachable!(),
+        }
+
+        info!("BROADCAST BLOCK, WITH COPY.");
+        for node in r.parts.1.iter_mut() {
+            node.network_service
+                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, b1.clone());
+        }
+        r.parts
+            .1
+            .for_each(|node| assert_eq!(node.cheating_proofs.len(), 0));
+
+        for node in r.parts.1.iter_mut() {
+            node.network_service
+                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, b2.clone());
+        }
+
+        r.parts.1.poll();
+        info!(
+            "CHECK IF CHEATER WAS DETECTED. LEADER={}",
+            r.parts.1.first().node_service.chain.leader()
+        );
+        // each node should add proof of slashing into state.
+        r.parts
+            .1
+            .for_each(|node| assert_eq!(node.cheating_proofs.len(), 1));
+
+        // wait for block;
+        r.wait(r.cfg().tx_wait_timeout);
+        r.parts.1.skip_micro_block();
+
+        // assert that nodes in partition 1 exclude node from partition 0.
+        for node in r.parts.1.iter() {
+            let validators: HashSet<_> = node
+                .node_service
+                .chain
+                .validators()
+                .iter()
+                .map(|(p, _)| *p)
+                .collect();
+            assert!(!validators.contains(&leader_pk))
+        }
     });
 }
 

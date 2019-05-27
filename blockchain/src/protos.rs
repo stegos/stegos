@@ -254,6 +254,38 @@ impl ProtoConvert for RestakeTransaction {
     }
 }
 
+impl ProtoConvert for SlashingTransaction {
+    type Proto = blockchain::SlashingTransaction;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = blockchain::SlashingTransaction::new();
+        proto.set_proof(self.proof.into_proto());
+        for txin in &self.txins {
+            proto.txins.push(txin.into_proto());
+        }
+        for txout in &self.txouts {
+            proto.txouts.push(txout.into_proto());
+        }
+        proto
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let proof = SlashingProof::from_proto(proto.get_proof())?;
+        let mut txins = Vec::<Hash>::with_capacity(proto.txins.len());
+        for txin in proto.txins.iter() {
+            txins.push(Hash::from_proto(txin)?);
+        }
+        let mut txouts = Vec::<Output>::with_capacity(proto.txouts.len());
+        for txout in proto.txouts.iter() {
+            txouts.push(Output::from_proto(txout)?);
+        }
+
+        Ok(SlashingTransaction {
+            proof,
+            txins,
+            txouts,
+        })
+    }
+}
 impl ProtoConvert for Transaction {
     type Proto = blockchain::Transaction;
     fn into_proto(&self) -> Self::Proto {
@@ -267,6 +299,9 @@ impl ProtoConvert for Transaction {
             }
             Transaction::RestakeTransaction(restake_transaction) => {
                 proto.set_restake_transaction(restake_transaction.into_proto())
+            }
+            Transaction::SlashingTransaction(slashing_transaction) => {
+                proto.set_slashing_transaction(slashing_transaction.into_proto())
             }
         }
         proto
@@ -291,6 +326,12 @@ impl ProtoConvert for Transaction {
             )) => {
                 let restake_transaction = RestakeTransaction::from_proto(restake_transaction)?;
                 Transaction::RestakeTransaction(restake_transaction)
+            }
+            Some(blockchain::Transaction_oneof_transaction::slashing_transaction(
+                ref slashing_transaction,
+            )) => {
+                let slashing_transaction = SlashingTransaction::from_proto(slashing_transaction)?;
+                Transaction::SlashingTransaction(slashing_transaction)
             }
             None => {
                 return Err(ProtoError::MissingField(
@@ -627,6 +668,21 @@ impl ProtoConvert for ViewChangeProof {
             }
         }
         Ok(ViewChangeProof { multisig, multimap })
+    }
+}
+
+impl ProtoConvert for SlashingProof {
+    type Proto = blockchain::SlashingProof;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = blockchain::SlashingProof::new();
+        proto.set_block1(self.block1.into_proto());
+        proto.set_block2(self.block2.into_proto());
+        proto
+    }
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let block1 = MicroBlock::from_proto(proto.get_block1())?;
+        let block2 = MicroBlock::from_proto(proto.get_block2())?;
+        Ok(SlashingProof { block1, block2 })
     }
 }
 

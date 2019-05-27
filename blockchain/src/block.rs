@@ -21,11 +21,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::error::TransactionError;
 use crate::merkle::*;
 use crate::output::*;
 use crate::transaction::Transaction;
 use crate::view_changes::ViewChangeProof;
 use bitvector::BitVector;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::time::SystemTime;
 use stegos_crypto::curve1174::Fr;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
@@ -255,6 +258,58 @@ pub struct MacroBlock {
 impl MacroBlock {
     pub fn empty(base: BaseBlockHeader, pkey: pbc::PublicKey) -> MacroBlock {
         Self::new(base, Fr::zero(), 0, &[], &[], pkey)
+    }
+
+    ///
+    /// Create a new macro block from the list of transactions.
+    ///
+    pub fn from_transactions(
+        base: BaseBlockHeader,
+        transactions: &[Transaction],
+        block_reward: i64,
+        pkey: pbc::PublicKey,
+    ) -> Result<MacroBlock, TransactionError> {
+        //
+        // Collect transactions.
+        //
+        let mut inputs: BTreeSet<Hash> = BTreeSet::new();
+        let mut outputs: BTreeMap<Hash, Output> = BTreeMap::new();
+        let mut gamma = Fr::zero();
+        for tx in transactions {
+            gamma += tx.gamma();
+            for input_hash in tx.txins() {
+                // Prune output if exists.outputs.
+                if let Some(_) = outputs.remove(input_hash) {
+                    continue;
+                }
+                if !inputs.insert(input_hash.clone()) {
+                    // Can happen due to double-spending in micro-blocks.
+                    return Err(TransactionError::DuplicateInput(
+                        Hash::digest(tx),
+                        input_hash.clone(),
+                    )
+                    .into());
+                }
+            }
+            for output in tx.txouts() {
+                let output_hash = Hash::digest(output);
+                if let Some(_) = outputs.insert(output_hash, output.clone()) {
+                    return Err(TransactionError::DuplicateOutput(
+                        Hash::digest(tx),
+                        output_hash.clone(),
+                    )
+                    .into());
+                }
+            }
+        }
+
+        //
+        // Create block.
+        //
+        let inputs: Vec<Hash> = inputs.into_iter().collect();
+        let outputs: Vec<Output> = outputs.into_iter().map(|(_, o)| o).collect();
+        let block = MacroBlock::new(base, gamma, block_reward, &inputs, &outputs, pkey);
+        Ok(block)
     }
 
     pub fn new(

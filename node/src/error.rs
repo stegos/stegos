@@ -56,6 +56,11 @@ pub enum NodeBlockError {
     )]
     InvalidBlockReward(u64, Hash, i64, i64),
     #[fail(
+        display = "Unexpected block fee: height={}, block={}, got={}, expected={}",
+        _0, _1, _2, _3
+    )]
+    InvalidBlockFee(u64, Hash, i64, i64),
+    #[fail(
         display = "Invalid block proposal: height={}, expected={}, got={}",
         _0, _1, _2
     )]

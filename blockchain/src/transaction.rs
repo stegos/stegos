@@ -523,6 +523,16 @@ pub enum Transaction {
 
 impl Transaction {
     #[inline]
+    pub fn gamma(&self) -> Fr {
+        match self {
+            Transaction::CoinbaseTransaction(tx) => tx.gamma.clone(),
+            Transaction::PaymentTransaction(tx) => tx.gamma.clone(),
+            Transaction::RestakeTransaction(_tx) => Fr::zero(),
+            Transaction::SlashingTransaction(_tx) => Fr::zero(),
+        }
+    }
+
+    #[inline]
     pub fn fee(&self) -> i64 {
         match self {
             Transaction::CoinbaseTransaction(_tx) => 0,

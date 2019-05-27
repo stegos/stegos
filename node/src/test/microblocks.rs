@@ -25,6 +25,7 @@ use super::*;
 use crate::*;
 use std::collections::HashSet;
 use stegos_blockchain::Block;
+use stegos_consensus::MacroBlockProposal;
 use stegos_consensus::{optimistic::SealedViewChangeProof, ConsensusMessage, ConsensusMessageBody};
 
 // CASE partition:

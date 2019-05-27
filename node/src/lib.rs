@@ -51,7 +51,7 @@ use std::time::Instant;
 use std::time::SystemTime;
 use stegos_blockchain::*;
 use stegos_consensus::optimistic::{SealedViewChangeProof, ViewChangeCollector, ViewChangeMessage};
-use stegos_consensus::{self as consensus, Consensus, ConsensusMessage, MacroBlockProposal};
+use stegos_consensus::{self as consensus, Consensus, ConsensusMessage};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_keychain::KeyChain;
@@ -815,8 +815,9 @@ impl NodeService {
                     }
                 }
 
-                // TODO: add rewards for MacroBlocks.
-                if self.chain.epoch() > 0 && macro_block.header.block_reward != 0 {
+                if self.chain.epoch() > 0
+                    && macro_block.header.block_reward != self.cfg.block_reward
+                {
                     // TODO: support slashing.
                     return Err(NodeBlockError::InvalidBlockReward(
                         height,
@@ -876,7 +877,7 @@ impl NodeService {
                             )
                             .into());
                         }
-                    } else if self.cfg.block_reward > 0 {
+                    } else {
                         // Force coinbase if reward is not zero.
                         return Err(BlockError::CoinbaseMustBeFirst(hash).into());
                     }
@@ -1283,17 +1284,15 @@ impl NodeService {
         task::current().notify();
 
         // Propose a new block.
-        let block = proposal::create_macro_block_proposal(
+        let (block, block_proposal) = proposal::create_macro_block_proposal(
             &self.chain,
             consensus.round(),
+            self.cfg.block_reward,
+            &self.keys.wallet_pkey,
             &self.keys.network_skey,
             &self.keys.network_pkey,
         );
         let block_hash = Hash::digest(&block);
-        let block_proposal = MacroBlockProposal {
-            base: block.header.base.clone(),
-            transactions: vec![],
-        };
         consensus.propose(block_hash, block_proposal);
         consensus.prevote(block);
         self.handle_consensus_events();

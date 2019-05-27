@@ -512,7 +512,7 @@ impl NodeService {
         }
 
         // Check the proof.
-        let chain = ChainInfo::from_block(&remote.base);
+        let chain = ChainInfo::from_micro_block(&remote);
         let sealed_proof = match remote.view_change_proof {
             Some(ref proof) => SealedViewChangeProof {
                 proof: proof.clone(),

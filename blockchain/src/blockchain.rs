@@ -60,12 +60,12 @@ impl ChainInfo {
     /// Create ChainInfo from micro block.
     /// ## Panics
     /// if view_change is equal to 0
-    pub fn from_block(base_header: &BaseBlockHeader) -> Self {
-        assert_ne!(base_header.view_change, 0);
+    pub fn from_micro_block(micro_block: &MicroBlock) -> Self {
+        assert_ne!(micro_block.base.view_change, 0);
         ChainInfo {
-            height: base_header.height,
-            view_change: base_header.view_change - 1,
-            last_block: base_header.previous,
+            height: micro_block.base.height,
+            view_change: micro_block.base.view_change - 1,
+            last_block: micro_block.base.previous,
         }
     }
 

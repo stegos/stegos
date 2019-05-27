@@ -22,19 +22,19 @@
 // SOFTWARE.
 
 use crate::error::*;
-use stegos_blockchain::{BaseBlockHeader, Transaction};
+use stegos_blockchain::{MacroBlockHeader, Transaction};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
 
 #[derive(Clone, Debug)]
 pub struct MacroBlockProposal {
-    pub base: BaseBlockHeader,
+    pub header: MacroBlockHeader,
     pub transactions: Vec<Transaction>,
 }
 
 impl Hashable for MacroBlockProposal {
     fn hash(&self, state: &mut Hasher) {
-        self.base.hash(state);
+        self.header.hash(state);
         let tx_count: u64 = self.transactions.len() as u64;
         tx_count.hash(state);
         for tx in &self.transactions {

@@ -756,7 +756,7 @@ fn out_of_order_keyblock_proposal() {
             let block = MacroBlock::empty(base, leader);
             let block_hash = Hash::digest(&block);
             let body = ConsensusMessageBody::Proposal(MacroBlockProposal {
-                base: block.header.base.clone(),
+                header: block.header.clone(),
                 transactions: vec![],
             });
             ConsensusMessage::new(

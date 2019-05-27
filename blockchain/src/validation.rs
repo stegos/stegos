@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::block::{BaseBlockHeader, MacroBlock, MicroBlock, VERSION};
+use crate::block::{MacroBlock, MacroBlockHeader, MicroBlock, VERSION};
 use crate::blockchain::{Balance, Blockchain, ChainInfo};
 use crate::election::mix;
 use crate::error::{BlockError, BlockchainError, SlashingError, TransactionError};
@@ -493,19 +493,19 @@ impl Blockchain {
     ///
     /// Validate base block header.
     ///
-    pub fn validate_base_header(
+    pub fn validate_macro_block_header(
         &self,
         block_hash: &Hash,
-        base: &BaseBlockHeader,
+        header: &MacroBlockHeader,
     ) -> Result<(), BlockchainError> {
-        let height = base.height;
+        let height = header.base.height;
 
         // Check block version.
-        if base.version != VERSION {
+        if header.base.version != VERSION {
             return Err(BlockError::InvalidBlockVersion(
                 height,
                 *block_hash,
-                base.version,
+                header.base.version,
                 VERSION,
             )
             .into());
@@ -524,11 +524,11 @@ impl Blockchain {
         // Check previous hash (skip for genesis).
         if height > 0 {
             let previous_hash = self.last_block_hash();
-            if previous_hash != base.previous {
+            if previous_hash != header.base.previous {
                 return Err(BlockError::InvalidPreviousHash(
                     height,
                     *block_hash,
-                    base.previous,
+                    header.base.previous,
                     previous_hash,
                 )
                 .into());
@@ -537,9 +537,9 @@ impl Blockchain {
 
         // Check random (skip for genesis).
         if height > 0 {
-            let leader = self.select_leader(base.view_change);
-            let seed = mix(self.last_random(), base.view_change);
-            if !pbc::validate_VRF_source(&base.random, &leader, &seed) {
+            let leader = self.select_leader(header.base.view_change);
+            let seed = mix(self.last_random(), header.base.view_change);
+            if !pbc::validate_VRF_source(&header.base.random, &leader, &seed) {
                 return Err(BlockError::IncorrectRandom(height, *block_hash).into());
             }
         }
@@ -627,15 +627,56 @@ impl Blockchain {
             height, &block_hash
         );
 
-        // Validate base header.
-        self.validate_base_header(&block_hash, &block.base)?;
+        // Check block version.
+        if block.base.version != VERSION {
+            return Err(BlockError::InvalidBlockVersion(
+                height,
+                block_hash,
+                block.base.version,
+                VERSION,
+            )
+            .into());
+        }
+
+        // Check height.
+        if height != self.height() {
+            return Err(BlockError::OutOfOrderBlock(block_hash, height, self.height()).into());
+        }
+
+        // Check new hash.
+        if self.contains_block(&block_hash) {
+            return Err(BlockError::BlockHashCollision(height, block_hash).into());
+        }
+
+        // Check previous hash (skip for genesis).
+        if height > 0 {
+            let previous_hash = self.last_block_hash();
+            if previous_hash != block.base.previous {
+                return Err(BlockError::InvalidPreviousHash(
+                    height,
+                    block_hash,
+                    block.base.previous,
+                    previous_hash,
+                )
+                .into());
+            }
+        }
+
+        // Check random (skip for genesis).
+        if height > 0 {
+            let leader = self.select_leader(block.base.view_change);
+            let seed = mix(self.last_random(), block.base.view_change);
+            if !pbc::validate_VRF_source(&block.base.random, &leader, &seed) {
+                return Err(BlockError::IncorrectRandom(height, block_hash).into());
+            }
+        }
 
         // Check signature (exclude epoch == 0 for genesis).
         if self.epoch() > 0 {
             let leader = match block.base.view_change.cmp(&self.view_change()) {
                 Ordering::Equal => self.leader(),
                 Ordering::Greater => {
-                    let chain = ChainInfo::from_block(&block.base);
+                    let chain = ChainInfo::from_micro_block(&block);
                     match block.view_change_proof {
                         Some(ref proof) => {
                             if let Err(e) = proof.validate(&chain, &self) {
@@ -740,7 +781,7 @@ impl Blockchain {
         );
 
         // Validate base header.
-        self.validate_base_header(&block_hash, &block.header.base)?;
+        self.validate_macro_block_header(&block_hash, &block.header)?;
 
         // Validate multi-signature (skip for genesis).
         if height > 0 {

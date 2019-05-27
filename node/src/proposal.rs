@@ -89,7 +89,7 @@ pub fn create_macro_block_proposal(
 
     // Create block proposal.
     let block_proposal = MacroBlockProposal {
-        base: block.header.base.clone(),
+        header: block.header.clone(),
         transactions,
     };
 
@@ -111,14 +111,14 @@ pub fn validate_proposed_macro_block(
     block_hash: &Hash,
     block_proposal: &MacroBlockProposal,
 ) -> Result<MacroBlock, Error> {
-    let height = block_proposal.base.height;
+    let height = block_proposal.header.base.height;
 
     // Ensure that block was produced at round lower than current.
-    if block_proposal.base.view_change > view_change {
+    if block_proposal.header.base.view_change > view_change {
         return Err(NodeBlockError::OutOfSyncViewChange(
             height,
             block_hash.clone(),
-            block_proposal.base.view_change,
+            block_proposal.header.base.view_change,
             view_change,
         )
         .into());
@@ -127,7 +127,7 @@ pub fn validate_proposed_macro_block(
     //
     // Validate timestamp.
     //
-    let block_timestamp = block_proposal.base.timestamp;
+    let block_timestamp = block_proposal.header.base.timestamp;
     let last_block_timestamp = chain.last_macro_block_timestamp();
     let current_timestamp = SystemTime::now();
     if block_timestamp <= last_block_timestamp {
@@ -155,7 +155,7 @@ pub fn validate_proposed_macro_block(
     //
     // Validate base header.
     //
-    chain.validate_base_header(block_hash, &block_proposal.base)?;
+    chain.validate_macro_block_header(block_hash, &block_proposal.header)?;
 
     //
     // Validate transactions.
@@ -194,9 +194,9 @@ pub fn validate_proposed_macro_block(
     }
 
     // Re-create original block.
-    let leader = chain.select_leader(block_proposal.base.view_change);
+    let leader = chain.select_leader(block_proposal.header.base.view_change);
     let block = MacroBlock::from_transactions(
-        block_proposal.base.clone(),
+        block_proposal.header.base.clone(),
         &block_proposal.transactions,
         cfg.block_reward,
         leader,

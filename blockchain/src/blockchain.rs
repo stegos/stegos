@@ -659,6 +659,33 @@ impl Blockchain {
     // Macro Blocks
     //----------------------------------------------------------------------------------------------
 
+    pub fn collect_epoch(&self) -> Vec<Transaction> {
+        let mut transactions: Vec<Transaction> = Vec::new();
+        if self.height() == 0 {
+            return transactions;
+        }
+
+        let last_macro_block_height = self.last_macro_block_height();
+        assert!(self.height() >= last_macro_block_height + 1);
+        let count = self.height() - last_macro_block_height - 1;
+        let blocks = self.blocks_range(last_macro_block_height + 1, count);
+
+        for block in blocks {
+            let block = if let Block::MicroBlock(block) = block {
+                block
+            } else {
+                panic!(
+                    "Expected micro block: height={}",
+                    block.base_header().height
+                );
+            };
+
+            transactions.extend(block.transactions);
+        }
+
+        transactions
+    }
+
     ///
     /// Add a new block into blockchain.
     ///
@@ -698,10 +725,14 @@ impl Blockchain {
         assert_eq!(self.height, block.header.base.height);
         let height = self.height;
 
+        // Extract extra inputs and outputs.
+        let transactions = self.collect_epoch();
+        let (extra_inputs, extra_outputs, extra_gamma) = block.diff(&transactions)?;
+
         //
         // Prepare inputs.
         //
-        let input_hashes = block.body.inputs;
+        let input_hashes: Vec<Hash> = extra_inputs.into_iter().collect();
         let mut inputs: Vec<Output> = Vec::with_capacity(input_hashes.len());
         for input_hash in &input_hashes {
             let input = self.output_by_hash(input_hash)?.expect("Missing output");
@@ -711,10 +742,9 @@ impl Blockchain {
         //
         // Prepare outputs.
         //
-        let mut outputs: Vec<Output> = Vec::new();
-        let mut output_keys: Vec<OutputKey> = Vec::new();
-        for (output, path) in block.body.outputs.leafs() {
-            let output = output.as_ref().clone();
+        let mut outputs: Vec<Output> = Vec::with_capacity(extra_outputs.len());
+        let mut output_keys: Vec<OutputKey> = Vec::with_capacity(extra_outputs.len());
+        for (_output_hash, (output, path)) in extra_outputs {
             outputs.push(output);
             let output_key = OutputKey::MacroBlock {
                 height: self.height,
@@ -732,7 +762,7 @@ impl Blockchain {
             &inputs,
             output_keys,
             &outputs,
-            block.header.gamma,
+            extra_gamma,
             block.header.block_reward,
             block.header.base.random,
             timestamp,
@@ -1155,7 +1185,9 @@ pub fn create_fake_macro_block(
     let seed = mix(chain.last_random(), view_change);
     let random = pbc::make_VRF(&keys.network_skey, &seed);
     let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-    let mut block = MacroBlock::empty(base, keys.network_pkey);
+    let transactions = chain.collect_epoch();
+    let mut block =
+        MacroBlock::from_transactions(base, &transactions, 0, keys.network_pkey).unwrap();
     sign_fake_macro_block(&mut block, chain, keychains);
     block
 }

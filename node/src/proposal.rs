@@ -58,6 +58,8 @@ pub fn create_macro_block_proposal(
         chain.epoch() + 1,
     );
 
+    // Collect transactions from epoch.
+    let mut transactions = chain.collect_epoch();
     // Coinbase.
     let coinbase_tx = {
         let data = PaymentPayloadData::Comment("Block reward".to_string());
@@ -80,7 +82,8 @@ pub fn create_macro_block_proposal(
         }
     };
 
-    let transactions = vec![coinbase_tx.into()];
+    let extra_transactions = vec![coinbase_tx.into()];
+    transactions.extend(extra_transactions.iter().cloned());
 
     let block =
         MacroBlock::from_transactions(base, &transactions, block_reward, network_pkey.clone())
@@ -90,7 +93,7 @@ pub fn create_macro_block_proposal(
     // Create block proposal.
     let block_proposal = MacroBlockProposal {
         base: block.header.base.clone(),
-        transactions,
+        transactions: extra_transactions,
     };
 
     info!(
@@ -193,11 +196,15 @@ pub fn validate_proposed_macro_block(
         return Err(BlockError::InvalidBlockBalance(height, block_hash.clone()).into());
     }
 
+    // Collect transactions from epoch.
+    let mut transactions = chain.collect_epoch();
+
     // Re-create original block.
+    transactions.extend(block_proposal.transactions.iter().cloned());
     let leader = chain.select_leader(block_proposal.base.view_change);
     let block = MacroBlock::from_transactions(
         block_proposal.base.clone(),
-        &block_proposal.transactions,
+        &transactions,
         cfg.block_reward,
         leader,
     )?;

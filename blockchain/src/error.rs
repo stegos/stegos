@@ -191,6 +191,11 @@ pub enum BlockError {
     )]
     DuplicateBlockInput(u64, Hash, Hash),
     #[fail(
+        display = "Missing block output: height={}, block={}, utxo={}",
+        _0, _1, _1
+    )]
+    MissingBlockOutput(u64, Hash, Hash),
+    #[fail(
         display = "Duplicate block output: height={}, block={}, utxo={}",
         _0, _1, _2
     )]

@@ -755,18 +755,43 @@ impl Blockchain {
             .map_err(|e| BlockError::InvalidBlockSignature(e, height, block_hash))?;
         }
 
+        // Validate inputs_range_hash.
+        let inputs_range_hash = {
+            let mut hasher = Hasher::new();
+            let inputs_count: u64 = block.body.inputs.len() as u64;
+            inputs_count.hash(&mut hasher);
+            for input_hash in &block.body.inputs {
+                input_hash.hash(&mut hasher);
+            }
+            hasher.result()
+        };
+        if block.header.inputs_range_hash != inputs_range_hash {
+            let expected = block.header.inputs_range_hash.clone();
+            let got = inputs_range_hash;
+            return Err(
+                BlockError::InvalidBlockInputsHash(height, block_hash, expected, got).into(),
+            );
+        }
+
+        // Validate outputs_range_hash.
+        if block.header.outputs_range_hash != *block.body.outputs.roothash() {
+            let expected = block.header.outputs_range_hash.clone();
+            let got = block.body.outputs.roothash().clone();
+            return Err(
+                BlockError::InvalidBlockOutputsHash(height, block_hash, expected, got).into(),
+            );
+        }
+
+        // Extract extra inputs and outputs.
+        let transactions = self.collect_epoch();
+        let (extra_inputs, extra_outputs, extra_gamma) = block.diff(&transactions)?;
+
         let mut burned = ECp::inf();
         let mut created = ECp::inf();
         let mut staking_balance: HashMap<pbc::PublicKey, i64> = HashMap::new();
 
-        //
-        // Validate inputs.
-        //
-        let mut hasher = Hasher::new();
-        let inputs_count: u64 = block.body.inputs.len() as u64;
-        inputs_count.hash(&mut hasher);
-        let mut input_set: HashSet<Hash> = HashSet::new();
-        for input_hash in block.body.inputs.iter() {
+        // Validate extra inputs.
+        for input_hash in &extra_inputs {
             let input = match self.output_by_hash(input_hash)? {
                 Some(input) => input,
                 None => {
@@ -775,12 +800,6 @@ impl Blockchain {
                     );
                 }
             };
-            // Check for the duplicate input.
-            if !input_set.insert(*input_hash) {
-                return Err(
-                    BlockError::DuplicateBlockInput(height, block_hash, *input_hash).into(),
-                );
-            }
             input.validate()?;
             burned += input.pedersen_commitment()?;
 
@@ -793,44 +812,23 @@ impl Blockchain {
                     *entry -= o.amount;
                 }
             }
-            input_hash.hash(&mut hasher);
-        }
-        drop(input_set);
-        let inputs_range_hash = hasher.result();
-        if block.header.inputs_range_hash != inputs_range_hash {
-            let expected = block.header.inputs_range_hash.clone();
-            let got = inputs_range_hash;
-            return Err(
-                BlockError::InvalidBlockInputsHash(height, block_hash, expected, got).into(),
-            );
         }
 
-        //
-        // Validate outputs.
-        //
-        let mut output_set: HashSet<Hash> = HashSet::new();
-        for (output, _path) in block.body.outputs.leafs() {
+        // Validate extra outputs.
+        for (output_hash, (output, _path)) in &extra_outputs {
             // Check that hash is unique.
-            let output_hash = Hash::digest(output.as_ref());
-            if self.contains_output(&output_hash) {
+            if self.contains_output(output_hash) {
                 return Err(
-                    BlockError::OutputHashCollision(height, block_hash, output_hash).into(),
-                );
-            }
-            // Check for the duplicate output.
-            if !output_set.insert(output_hash) {
-                return Err(
-                    BlockError::DuplicateBlockOutput(height, block_hash, output_hash).into(),
+                    BlockError::OutputHashCollision(height, block_hash, *output_hash).into(),
                 );
             }
 
             output.validate()?;
             // Update balance.
-            // Update balance.
             created += output.pedersen_commitment()?;
 
             // Check UTXO.
-            match output.as_ref() {
+            match output {
                 Output::PaymentOutput(_o) => {}
                 Output::PublicPaymentOutput(_o) => {}
                 Output::StakeOutput(o) => {
@@ -840,19 +838,11 @@ impl Blockchain {
                 }
             }
         }
-        drop(output_set);
-        if block.header.outputs_range_hash != *block.body.outputs.roothash() {
-            let expected = block.header.outputs_range_hash.clone();
-            let got = block.body.outputs.roothash().clone();
-            return Err(
-                BlockError::InvalidBlockOutputsHash(height, block_hash, expected, got).into(),
-            );
-        }
 
         //
-        // Validate block monetary balance.
+        // Validate monetary balance for extra inputs and outputs.
         //
-        if fee_a(block.header.block_reward) + burned - created != &block.header.gamma * (*G) {
+        if fee_a(block.header.block_reward) + burned - created != &extra_gamma * (*G) {
             return Err(BlockError::InvalidBlockBalance(height, block_hash).into());
         }
 
@@ -863,7 +853,7 @@ impl Blockchain {
         let balance = Balance {
             created: orig_balance.created + created,
             burned: orig_balance.burned + burned,
-            gamma: &orig_balance.gamma + &block.header.gamma,
+            gamma: &orig_balance.gamma + &extra_gamma,
             block_reward: orig_balance.block_reward + block.header.block_reward,
         };
         if fee_a(balance.block_reward) + balance.burned - balance.created != balance.gamma * (*G) {

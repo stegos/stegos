@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::error::TransactionError;
+use crate::error::{BlockError, BlockchainError, TransactionError};
 use crate::merkle::*;
 use crate::output::*;
 use crate::transaction::Transaction;
@@ -310,6 +310,86 @@ impl MacroBlock {
         let outputs: Vec<Output> = outputs.into_iter().map(|(_, o)| o).collect();
         let block = MacroBlock::new(base, gamma, block_reward, &inputs, &outputs, pkey);
         Ok(block)
+    }
+
+    ///
+    /// Returns the values that are in self but not in transactions.
+    ///
+    pub fn diff(
+        &self,
+        transactions: &[Transaction],
+    ) -> Result<(BTreeSet<Hash>, BTreeMap<Hash, (Output, MerklePath)>, Fr), BlockchainError> {
+        let height = self.header.base.height;
+        let block_hash = Hash::digest(&self);
+
+        let mut epoch_inputs: BTreeSet<Hash> = BTreeSet::new();
+        let mut epoch_outputs: BTreeMap<Hash, Output> = BTreeMap::new();
+        let mut gamma = Fr::zero();
+        for tx in transactions {
+            gamma += tx.gamma();
+            for input_hash in tx.txins() {
+                // Prune output if exists.outputs.
+                if let Some(_) = epoch_outputs.remove(input_hash) {
+                    continue;
+                }
+                if !epoch_inputs.insert(input_hash.clone()) {
+                    // Can happen due to double-spending in micro-blocks.
+                    return Err(TransactionError::DuplicateInput(
+                        Hash::digest(tx),
+                        input_hash.clone(),
+                    )
+                    .into());
+                }
+            }
+            for output in tx.txouts() {
+                let output_hash = Hash::digest(output);
+                if let Some(_) = epoch_outputs.insert(output_hash, output.clone()) {
+                    return Err(TransactionError::DuplicateOutput(
+                        Hash::digest(tx),
+                        output_hash.clone(),
+                    )
+                    .into());
+                }
+            }
+        }
+
+        let mut extra_inputs: BTreeSet<Hash> = BTreeSet::new();
+        for input_hash in &self.body.inputs {
+            // Check for the duplicate input.
+            if !epoch_inputs.remove(input_hash) {
+                if !extra_inputs.insert(*input_hash) {
+                    return Err(
+                        BlockError::DuplicateBlockInput(height, block_hash, *input_hash).into(),
+                    );
+                }
+            }
+        }
+
+        // Collect outputs.
+        let mut extra_outputs: BTreeMap<Hash, (Output, MerklePath)> = BTreeMap::new();
+        for (output, path) in self.body.outputs.leafs() {
+            let output_hash = Hash::digest(&output);
+            // Check for the duplicate output.
+            if epoch_outputs.remove(&output_hash).is_none() {
+                if let Some(_) = extra_outputs.insert(output_hash, (output.as_ref().clone(), path))
+                {
+                    return Err(
+                        BlockError::DuplicateBlockOutput(height, block_hash, output_hash).into(),
+                    );
+                }
+            }
+        }
+
+        if let Some(input_hash) = epoch_inputs.iter().next() {
+            return Err(BlockError::MissingBlockInput(height, block_hash, *input_hash).into());
+        }
+
+        if let Some(output_hash) = epoch_outputs.keys().next() {
+            return Err(BlockError::MissingBlockOutput(height, block_hash, *output_hash).into());
+        }
+
+        let extra_gamma: Fr = &self.header.gamma - gamma;
+        Ok((extra_inputs, extra_outputs, extra_gamma))
     }
 
     pub fn new(

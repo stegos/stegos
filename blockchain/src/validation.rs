@@ -533,14 +533,27 @@ impl Blockchain {
                 )
                 .into());
             }
-        }
 
-        // Check random (skip for genesis).
-        if height > 0 {
             let leader = self.select_leader(header.base.view_change);
             let seed = mix(self.last_random(), header.base.view_change);
             if !pbc::validate_VRF_source(&header.base.random, &leader, &seed) {
                 return Err(BlockError::IncorrectRandom(height, *block_hash).into());
+            }
+
+            // Check block reward. (skip for genesis)
+            let winner = self.try_produce_service_award(&header.base.random);
+
+            // calculate block reward + service award.
+            let full_reward = self.cfg().block_reward + winner.map(|(_, a)| a).unwrap_or(0);
+
+            if header.block_reward != full_reward {
+                return Err(BlockError::InvalidBlockReward(
+                    height,
+                    *block_hash,
+                    header.block_reward,
+                    full_reward,
+                )
+                .into());
             }
         }
 
@@ -599,6 +612,9 @@ impl Blockchain {
             Transaction::PaymentTransaction(tx) => tx.validate(&inputs)?,
             Transaction::RestakeTransaction(tx) => tx.validate(&inputs)?,
             Transaction::SlashingTransaction(tx) => tx.validate(self, leader)?,
+            Transaction::ServiceAwardTransaction(_) => {
+                return Err(TransactionError::UnexpectedTxType.into())
+            }
         }
 
         // Transaction is valid.
@@ -712,6 +728,21 @@ impl Blockchain {
 
         if let Err(_e) = pbc::check_hash(&block_hash, &block.sig, &leader) {
             return Err(BlockError::InvalidLeaderSignature(height, block_hash).into());
+        }
+        // Check block reward.
+        if let Some(Transaction::CoinbaseTransaction(tx)) = block.transactions.get(0) {
+            if tx.block_reward != self.cfg().block_reward {
+                return Err(BlockError::InvalidBlockReward(
+                    height,
+                    block_hash,
+                    tx.block_reward,
+                    self.cfg().block_reward,
+                )
+                .into());
+            }
+        } else {
+            // Force coinbase if reward is not zero.
+            return Err(BlockError::CoinbaseMustBeFirst(block_hash).into());
         }
 
         let mut inputs_set: HashSet<Hash> = HashSet::new();

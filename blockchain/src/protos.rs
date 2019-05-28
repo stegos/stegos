@@ -254,6 +254,25 @@ impl ProtoConvert for RestakeTransaction {
     }
 }
 
+impl ProtoConvert for ServiceAwardTransaction {
+    type Proto = blockchain::ServiceAwardTransaction;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = blockchain::ServiceAwardTransaction::new();
+        for txout in &self.winner_reward {
+            proto.winner_reward.push(txout.into_proto());
+        }
+        proto
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let mut winner_reward = Vec::<Output>::with_capacity(proto.winner_reward.len());
+        for txout in proto.winner_reward.iter() {
+            winner_reward.push(Output::from_proto(txout)?);
+        }
+        Ok(ServiceAwardTransaction { winner_reward })
+    }
+}
+
 impl ProtoConvert for SlashingTransaction {
     type Proto = blockchain::SlashingTransaction;
     fn into_proto(&self) -> Self::Proto {
@@ -303,6 +322,9 @@ impl ProtoConvert for Transaction {
             Transaction::SlashingTransaction(slashing_transaction) => {
                 proto.set_slashing_transaction(slashing_transaction.into_proto())
             }
+            Transaction::ServiceAwardTransaction(service_reward_transaction) => {
+                proto.set_service_reward_transaction(service_reward_transaction.into_proto())
+            }
         }
         proto
     }
@@ -332,6 +354,13 @@ impl ProtoConvert for Transaction {
             )) => {
                 let slashing_transaction = SlashingTransaction::from_proto(slashing_transaction)?;
                 Transaction::SlashingTransaction(slashing_transaction)
+            }
+            Some(blockchain::Transaction_oneof_transaction::service_reward_transaction(
+                ref service_reward_transaction,
+            )) => {
+                let service_reward_transaction =
+                    ServiceAwardTransaction::from_proto(service_reward_transaction)?;
+                Transaction::ServiceAwardTransaction(service_reward_transaction)
             }
             None => {
                 return Err(ProtoError::MissingField(

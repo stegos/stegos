@@ -786,17 +786,6 @@ impl NodeService {
             }
         }
 
-        if block.header.block_reward != self.cfg.block_reward {
-            // TODO: support slashing.
-            return Err(NodeBlockError::InvalidBlockReward(
-                height,
-                hash,
-                block.header.block_reward,
-                self.cfg.block_reward,
-            )
-            .into());
-        }
-
         let (inputs, outputs) = self.chain.push_macro_block(block, timestamp)?;
 
         if !was_synchronized && self.is_synchronized() {
@@ -836,23 +825,6 @@ impl NodeService {
             _ => {
                 return Err(NodeBlockError::ExpectedMicroBlock(self.chain.height(), hash).into());
             }
-        }
-
-        // Check block reward.
-        if let Some(Transaction::CoinbaseTransaction(tx)) = block.transactions.get(0) {
-            if tx.block_reward != self.cfg.block_reward {
-                // TODO: support slashing.
-                return Err(NodeBlockError::InvalidBlockReward(
-                    height,
-                    hash,
-                    tx.block_reward,
-                    self.cfg.block_reward,
-                )
-                .into());
-            }
-        } else {
-            // Force coinbase if reward is not zero.
-            return Err(BlockError::CoinbaseMustBeFirst(hash).into());
         }
 
         let leader = block.pkey;

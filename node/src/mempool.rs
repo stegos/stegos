@@ -188,7 +188,7 @@ impl Mempool {
                 Transaction::PaymentTransaction(_tx) => {}
                 Transaction::RestakeTransaction(_tx) => {}
                 Transaction::SlashingTransaction(_tx) => {}
-                Transaction::CoinbaseTransaction(_tx) => {
+                Transaction::CoinbaseTransaction(_) | Transaction::ServiceAwardTransaction(_) => {
                     panic!("Invalid transaction type in mempool: tx={:?}", tx_hash)
                 }
             };

@@ -37,6 +37,25 @@ use stegos_crypto::pbc;
 
 /// Transaction that confiscate stake from cheater.
 #[derive(Debug, Clone)]
+pub struct ServiceAwardTransaction {
+    pub winner_reward: Vec<Output>,
+}
+
+impl Hashable for ServiceAwardTransaction {
+    fn hash(&self, state: &mut Hasher) {
+        (self.winner_reward.len() as u64).hash(state);
+        for winner in &self.winner_reward {
+            winner.hash(state)
+        }
+    }
+}
+
+//--------------------------------------------------------------------------------------------------
+// Slashing Transaction.
+//--------------------------------------------------------------------------------------------------
+
+/// Transaction that confiscate stake from cheater.
+#[derive(Debug, Clone)]
 pub struct SlashingTransaction {
     pub proof: SlashingProof,
     /// List of inputs.
@@ -519,6 +538,7 @@ pub enum Transaction {
     PaymentTransaction(PaymentTransaction),
     RestakeTransaction(RestakeTransaction),
     SlashingTransaction(SlashingTransaction),
+    ServiceAwardTransaction(ServiceAwardTransaction),
 }
 
 impl Transaction {
@@ -529,6 +549,7 @@ impl Transaction {
             Transaction::PaymentTransaction(tx) => tx.gamma.clone(),
             Transaction::RestakeTransaction(_tx) => Fr::zero(),
             Transaction::SlashingTransaction(_tx) => Fr::zero(),
+            Transaction::ServiceAwardTransaction(_tx) => Fr::zero(),
         }
     }
 
@@ -539,6 +560,7 @@ impl Transaction {
             Transaction::PaymentTransaction(tx) => tx.fee,
             Transaction::RestakeTransaction(_tx) => 0,
             Transaction::SlashingTransaction(_tx) => 0,
+            Transaction::ServiceAwardTransaction(_tx) => 0,
         }
     }
 
@@ -549,6 +571,7 @@ impl Transaction {
             Transaction::PaymentTransaction(tx) => &tx.txins,
             Transaction::RestakeTransaction(tx) => &tx.txins,
             Transaction::SlashingTransaction(tx) => &tx.txins,
+            Transaction::ServiceAwardTransaction(_tx) => &[],
         }
     }
 
@@ -559,6 +582,7 @@ impl Transaction {
             Transaction::PaymentTransaction(tx) => &tx.txouts,
             Transaction::RestakeTransaction(tx) => &tx.txouts,
             Transaction::SlashingTransaction(tx) => &tx.txouts,
+            Transaction::ServiceAwardTransaction(tx) => &tx.winner_reward,
         }
     }
 
@@ -568,6 +592,7 @@ impl Transaction {
             Transaction::PaymentTransaction(_) => "PaymentTransaction",
             Transaction::RestakeTransaction(_) => "RestakeTransaction",
             Transaction::SlashingTransaction(_) => "SlashingTransaction",
+            Transaction::ServiceAwardTransaction(_) => "ServiceAwardTransaction",
         }
     }
 
@@ -578,6 +603,7 @@ impl Transaction {
             Transaction::PaymentTransaction(tx) => tx.sig.hash(state),
             Transaction::RestakeTransaction(tx) => tx.sig.hash(state),
             Transaction::SlashingTransaction(_tx) => (),
+            Transaction::ServiceAwardTransaction(_tx) => (),
         }
     }
 }
@@ -589,6 +615,7 @@ impl Hashable for Transaction {
             Transaction::PaymentTransaction(tx) => tx.hash(state),
             Transaction::RestakeTransaction(tx) => tx.hash(state),
             Transaction::SlashingTransaction(tx) => tx.hash(state),
+            Transaction::ServiceAwardTransaction(tx) => tx.hash(state),
         }
     }
 }
@@ -614,5 +641,11 @@ impl From<RestakeTransaction> for Transaction {
 impl From<SlashingTransaction> for Transaction {
     fn from(tx: SlashingTransaction) -> Self {
         Transaction::SlashingTransaction(tx)
+    }
+}
+
+impl From<ServiceAwardTransaction> for Transaction {
+    fn from(tx: ServiceAwardTransaction) -> Self {
+        Transaction::ServiceAwardTransaction(tx)
     }
 }

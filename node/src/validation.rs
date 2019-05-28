@@ -96,7 +96,9 @@ pub(crate) fn validate_external_transaction(
     match tx {
         Transaction::RestakeTransaction(tx) => tx.validate(&inputs)?,
         Transaction::PaymentTransaction(tx) => tx.validate(&inputs)?,
-        Transaction::SlashingTransaction(..) | Transaction::CoinbaseTransaction(..) => {
+        Transaction::SlashingTransaction(..)
+        | Transaction::CoinbaseTransaction(..)
+        | Transaction::ServiceAwardTransaction(..) => {
             return Err(TransactionError::ReceivedInvalidTransaction(tx.to_type_str()).into())
         }
     }

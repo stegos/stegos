@@ -27,8 +27,9 @@ use failure::Error;
 use log::*;
 use std::time::SystemTime;
 use stegos_blockchain::{
-    mix, BaseBlockHeader, BlockError, Blockchain, CoinbaseTransaction, MacroBlock, PaymentOutput,
-    PaymentPayloadData, Transaction, VERSION,
+    mix, BaseBlockHeader, BlockError, Blockchain, CoinbaseTransaction, MacroBlock, Output,
+    PaymentOutput, PaymentPayloadData, PublicPaymentOutput, ServiceAwardTransaction, Transaction,
+    VERSION,
 };
 use stegos_consensus::MacroBlockProposal;
 use stegos_crypto::curve1174;
@@ -38,7 +39,7 @@ use stegos_crypto::pbc;
 pub fn create_macro_block_proposal(
     chain: &Blockchain,
     view_change: u32,
-    block_reward: i64,
+    mut block_reward: i64,
     recipient_pkey: &curve1174::PublicKey,
     network_skey: &pbc::SecretKey,
     network_pkey: &pbc::PublicKey,
@@ -57,6 +58,8 @@ pub fn create_macro_block_proposal(
         view_change,
         chain.epoch() + 1,
     );
+
+    let winner = chain.try_produce_service_award(&base.random);
 
     // Coinbase.
     let coinbase_tx = {
@@ -80,7 +83,17 @@ pub fn create_macro_block_proposal(
         }
     };
 
-    let transactions = vec![coinbase_tx.into()];
+    let mut transactions = vec![coinbase_tx.into()];
+
+    // Add tx if winner found.
+    if let Some((k, reward)) = winner {
+        let output = PublicPaymentOutput::new(&k, reward);
+        let tx = ServiceAwardTransaction {
+            winner_reward: vec![output.into()],
+        };
+        block_reward += reward;
+        transactions.push(tx.into());
+    }
 
     let block =
         MacroBlock::from_transactions(base, &transactions, block_reward, network_pkey.clone())
@@ -157,15 +170,19 @@ pub fn validate_proposed_macro_block(
     //
     chain.validate_macro_block_header(block_hash, &block_proposal.header)?;
 
+    // validate award.
+    let winner = chain.try_produce_service_award(&block_proposal.header.base.random);
+
     //
     // Validate transactions.
     //
 
+    let mut tx_len = 1;
     // Coinbase.
     if let Some(Transaction::CoinbaseTransaction(tx)) = block_proposal.transactions.get(0) {
         tx.validate()?;
         if tx.block_reward != cfg.block_reward {
-            return Err(NodeBlockError::InvalidBlockReward(
+            return Err(BlockError::InvalidBlockReward(
                 height,
                 block_hash.clone(),
                 tx.block_reward,
@@ -187,9 +204,49 @@ pub fn validate_proposed_macro_block(
         // Force coinbase if reward is not zero.
         return Err(BlockError::CoinbaseMustBeFirst(block_hash.clone()).into());
     }
+    let mut block_reward = cfg.block_reward;
+
+    // Add tx if winner found.
+    if let Some((k, reward)) = winner {
+        tx_len += 1;
+        block_reward += reward;
+        if let Some(Transaction::ServiceAwardTransaction(tx)) = block_proposal.transactions.get(1) {
+            if tx.winner_reward.len() != 1 {
+                return Err(BlockError::AwardMoreThanOneWinner(
+                    block_hash.clone(),
+                    tx.winner_reward.len(),
+                )
+                .into());
+            }
+            let ref output = tx.winner_reward[0];
+
+            if let Output::PublicPaymentOutput(out) = output {
+                if out.recipient != k {
+                    return Err(BlockError::AwardDifferentWinner(
+                        block_hash.clone(),
+                        out.recipient,
+                        k,
+                    )
+                    .into());
+                }
+                if out.amount != reward {
+                    return Err(BlockError::AwardDifferentReward(
+                        block_hash.clone(),
+                        out.amount,
+                        reward,
+                    )
+                    .into());
+                }
+            } else {
+                return Err(BlockError::AwardDifferentOutputType(block_hash.clone()).into());
+            }
+        } else {
+            return Err(BlockError::NoServiceAwardTx(block_hash.clone()).into());
+        }
+    }
 
     // TODO: support slashing && service awards.
-    if block_proposal.transactions.len() > 1 {
+    if block_proposal.transactions.len() > tx_len {
         return Err(BlockError::InvalidBlockBalance(height, block_hash.clone()).into());
     }
 
@@ -198,7 +255,7 @@ pub fn validate_proposed_macro_block(
     let block = MacroBlock::from_transactions(
         block_proposal.header.base.clone(),
         &block_proposal.transactions,
-        cfg.block_reward,
+        block_reward,
         leader,
     )?;
 

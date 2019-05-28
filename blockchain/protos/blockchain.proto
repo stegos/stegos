@@ -39,6 +39,10 @@ message SlashingTransaction {
     repeated Output txouts = 3;
 }
 
+message ServiceAwardTransaction {
+    repeated Output winner_reward = 1;
+}
+
 message CoinbaseTransaction {
     int64 block_reward = 1;
     int64 block_fee = 2;
@@ -66,6 +70,7 @@ message Transaction {
         PaymentTransaction payment_transaction = 2;
         RestakeTransaction restake_transaction = 3;
         SlashingTransaction slashing_transaction = 4;
+        ServiceAwardTransaction service_reward_transaction = 5;
     }
 }
 

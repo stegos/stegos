@@ -116,6 +116,8 @@ pub enum TransactionError {
         _0, _1, _2, _3
     )]
     StakeOutputWithDifferentWalletKey(PublicKey, PublicKey, Hash, Hash),
+    #[fail(display = "Unexpected transaction type in MicroBlock.")]
+    UnexpectedTxType,
 
     #[fail(display = "TXIN amount .ne. TXOUT amount: tx={}", _0)]
     ImbalancedRestaking(Hash),
@@ -164,6 +166,30 @@ pub enum BlockError {
         _0
     )]
     CoinbaseMustBeFirst(Hash),
+    #[fail(
+        display = "Found that service award random produce winner, but no tx found: block={}",
+        _0
+    )]
+    NoServiceAwardTx(Hash),
+    #[fail(
+        display = "Found that service award with more than one winner: block={}, winner_count={}",
+        _0, _1
+    )]
+    AwardMoreThanOneWinner(Hash, usize),
+    #[fail(
+        display = "Found that service award produce different winner: block={}, \
+                   actual_winner={}, award_winner={}",
+        _0, _1, _2
+    )]
+    AwardDifferentWinner(Hash, PublicKey, PublicKey),
+    #[fail(display = "Found service award tx with different output: block={}", _0)]
+    AwardDifferentOutputType(Hash),
+    #[fail(
+        display = "Found that service award produce different reward: block={}, \
+                   actual_reward={}, award_reward={}",
+        _0, _1, _2
+    )]
+    AwardDifferentReward(Hash, i64, i64),
     #[fail(
         display = "Invalid block monetary balance: height={}, block={}",
         _0, _1
@@ -257,6 +283,11 @@ pub enum BlockError {
         _0, _1
     )]
     ElectionResultForFutureBlock(u64, u64),
+    #[fail(
+        display = "Unexpected block reward: height={}, block={}, got={}, expected={}",
+        _0, _1, _2, _3
+    )]
+    InvalidBlockReward(u64, Hash, i64, i64),
 }
 
 #[derive(Debug, Fail)]

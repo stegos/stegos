@@ -19,6 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use super::handler::FloodsubHandler;
+use super::metrics;
 use super::protocol::{
     FloodsubMessage, FloodsubRpc, FloodsubSubscription, FloodsubSubscriptionAction,
 };
@@ -41,6 +42,10 @@ use std::{
 };
 use stegos_crypto::utils::u8v_to_hexstr;
 use tokio::io::{AsyncRead, AsyncWrite};
+use update_rate::{RateCounter, RollingRateCounter};
+
+// How many samples to use for rate calculation
+const PUBSUB_SAMPLES: u64 = 100;
 
 /// Network behaviour that automatically identifies nodes periodically, and returns information
 /// about them.
@@ -60,14 +65,16 @@ pub struct Floodsub<TSubstream> {
     /// List of peers we accept messages from
     allowed_remotes: HashSet<PeerId>,
 
-    // List of topics we're subscribed to. Necessary to filter out messages that we receive
-    // erroneously.
+    /// List of topics we're subscribed to. Necessary to filter out messages that we receive
+    /// erroneously.
     subscribed_topics: SmallVec<[Topic; 16]>,
 
-    // We keep track of the messages we received (in the format `hash(source ID, seq_no)`) so that
-    // we don't dispatch the same message twice if we receive it twice on the network.
+    /// We keep track of the messages we received (in the format `hash(source ID, seq_no)`) so that
+    /// we don't dispatch the same message twice if we receive it twice on the network.
     received: LruCache<u64, ()>,
 
+    /// Tracking incoming message rate for peers
+    incoming_rates: HashMap<PeerId, RollingRateCounter>,
     /// Marker to pin the generics.
     marker: PhantomData<TSubstream>,
 }
@@ -86,6 +93,7 @@ impl<TSubstream> Floodsub<TSubstream> {
                 Duration::from_secs(60 * 15),
                 1_000_000,
             ),
+            incoming_rates: HashMap::new(),
             marker: PhantomData,
         }
     }
@@ -272,6 +280,17 @@ where
     }
 
     fn inject_node_event(&mut self, propagation_source: PeerId, event: FloodsubRecvEvent) {
+        let counter = self
+            .incoming_rates
+            .entry(propagation_source.clone())
+            .or_insert(RollingRateCounter::new(PUBSUB_SAMPLES));
+
+        counter.update();
+
+        metrics::INCOMING_RATES
+            .with_label_values(&[&propagation_source.clone().to_base58()])
+            .set(counter.rate());
+
         if !self.allowed_remotes.contains(&propagation_source) {
             debug!(target: "stegos_network::pubsub", "event from unwanted peer, dropping: peer_id={}", propagation_source);
             return;

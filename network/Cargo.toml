@@ -42,6 +42,7 @@ tokio-codec = "0.1"
 tokio-stdin-stdout = "0.1"
 tokio-timer = "0.2"
 unsigned-varint = "0.2"
+update_rate = "2.0"
 void = "1.0"
 
 [build-dependencies]

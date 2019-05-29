@@ -34,7 +34,7 @@ use log::{debug, trace};
 use lru_time_cache::LruCache;
 use rand;
 use smallvec::SmallVec;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{
     collections::{hash_map::HashMap, hash_set::HashSet, VecDeque},
     iter,
@@ -42,10 +42,12 @@ use std::{
 };
 use stegos_crypto::utils::u8v_to_hexstr;
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::timer::Delay;
 use update_rate::{RateCounter, RollingRateCounter};
 
 // How many samples to use for rate calculation
 const PUBSUB_SAMPLES: u64 = 100;
+const METRICS_UPDATE_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Network behaviour that automatically identifies nodes periodically, and returns information
 /// about them.
@@ -75,6 +77,10 @@ pub struct Floodsub<TSubstream> {
 
     /// Tracking incoming message rate for peers
     incoming_rates: HashMap<PeerId, RollingRateCounter>,
+
+    /// Metrics uodate delay (update metrics at this interval)
+    metrics_update_delay: Delay,
+
     /// Marker to pin the generics.
     marker: PhantomData<TSubstream>,
 }
@@ -94,6 +100,7 @@ impl<TSubstream> Floodsub<TSubstream> {
                 1_000_000,
             ),
             incoming_rates: HashMap::new(),
+            metrics_update_delay: Delay::new(Instant::now() + METRICS_UPDATE_INTERVAL),
             marker: PhantomData,
         }
     }
@@ -280,16 +287,10 @@ where
     }
 
     fn inject_node_event(&mut self, propagation_source: PeerId, event: FloodsubRecvEvent) {
-        let counter = self
-            .incoming_rates
+        self.incoming_rates
             .entry(propagation_source.clone())
-            .or_insert(RollingRateCounter::new(PUBSUB_SAMPLES));
-
-        counter.update();
-
-        metrics::INCOMING_RATES
-            .with_label_values(&[&propagation_source.clone().to_base58()])
-            .set(counter.rate());
+            .or_insert(RollingRateCounter::new(PUBSUB_SAMPLES))
+            .update();
 
         if !self.allowed_remotes.contains(&propagation_source) {
             debug!(target: "stegos_network::pubsub", "event from unwanted peer, dropping: peer_id={}", propagation_source);
@@ -404,6 +405,25 @@ where
             Self::OutEvent,
         >,
     > {
+        loop {
+            match self.metrics_update_delay.poll() {
+                Ok(Async::Ready(_)) => {
+                    for (peer_id, counter) in self.incoming_rates.iter() {
+                        metrics::INCOMING_RATES
+                            .with_label_values(&[&peer_id.clone().to_base58()])
+                            .set(counter.rate());
+                    }
+                    self.metrics_update_delay
+                        .reset(Instant::now() + METRICS_UPDATE_INTERVAL);
+                }
+                Ok(Async::NotReady) => break,
+                Err(e) => {
+                    debug!(target: "stegos_network::pubsub", "metrics delay timer error: error={}", e);
+                    break;
+                }
+            }
+        }
+
         if let Some(event) = self.events.pop_front() {
             return Async::Ready(event);
         }

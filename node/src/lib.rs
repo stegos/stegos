@@ -206,7 +206,7 @@ pub enum NodeMessage {
     //
     Transaction(Vec<u8>),
     Consensus(Vec<u8>),
-    SealedBlock(Vec<u8>),
+    Block(Vec<u8>),
     ViewChangeMessage(Vec<u8>),
     ViewChangeProofMessage(UnicastMessage),
     ChainLoaderMessage(UnicastMessage),
@@ -335,7 +335,7 @@ impl NodeService {
         // Sealed blocks broadcast topic.
         let block_rx = network
             .subscribe(&SEALED_BLOCK_TOPIC)?
-            .map(|m| NodeMessage::SealedBlock(m));
+            .map(|m| NodeMessage::Block(m));
         streams.push(Box::new(block_rx));
 
         // Chain loader messages.
@@ -647,7 +647,7 @@ impl NodeService {
     }
 
     /// Handle incoming blocks received from network.
-    fn handle_sealed_block(&mut self, block: Block) -> Result<(), Error> {
+    fn handle_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
         let block_height = block.base_header().height;
         debug!(
@@ -745,7 +745,11 @@ impl NodeService {
         while let Some(block) = self.future_blocks.remove(&self.chain.height()) {
             let hash = Hash::digest(&block);
             let view_change = block.base_header().view_change;
-            if let Err(e) = self.apply_new_block(block) {
+            let r = match block {
+                Block::MacroBlock(block) => self.apply_macro_block(block),
+                Block::MicroBlock(block) => self.apply_micro_block(block),
+            };
+            if let Err(e) = r {
                 error!(
                     "Failed to apply block: height={}, block={}, error={}",
                     self.chain.height(),
@@ -782,151 +786,167 @@ impl NodeService {
         Ok(())
     }
 
-    /// Try to apply a new block to the blockchain.
-    fn apply_new_block(&mut self, block: Block) -> Result<(), Error> {
+    /// Try to apply a new micro block into the blockchain.
+    fn apply_macro_block(&mut self, block: MacroBlock) -> Result<(), Error> {
         let hash = Hash::digest(&block);
-        let timestamp = block.base_header().timestamp;
-        let height = block.base_header().height;
-        let view_change = block.base_header().view_change;
-        match block {
-            Block::MacroBlock(macro_block) => {
-                let was_synchronized = self.is_synchronized();
+        let timestamp = block.header.base.timestamp;
+        let height = block.header.base.height;
+        let view_change = block.header.base.view_change;
+        let was_synchronized = self.is_synchronized();
 
-                // Check for the correct block order.
-                match &mut self.validation {
-                    MacroBlockAuditor => {}
-                    MacroBlockValidator { consensus, .. } => {
-                        if consensus.should_commit() {
-                            // Check for forks.
-                            let (consensus_block_hash, _block_proposal, _view_cahange) =
-                                consensus.get_proposal();
-                            if consensus_block_hash != consensus_block_hash {
-                                panic!(
-                                    "Network fork: received_block={:?}, consensus_block={:?}",
-                                    &hash, &consensus_block_hash
-                                );
-                            }
-                        }
-                    }
-                    _ => {
-                        return Err(
-                            NodeBlockError::ExpectedMacroBlock(self.chain.height(), hash).into(),
+        // Check for the correct block order.
+        match &mut self.validation {
+            MacroBlockAuditor => {}
+            MacroBlockValidator { consensus, .. } => {
+                if consensus.should_commit() {
+                    // Check for forks.
+                    let (consensus_block_hash, _block_proposal, _view_cahange) =
+                        consensus.get_proposal();
+                    if consensus_block_hash != consensus_block_hash {
+                        panic!(
+                            "Network fork: received_block={:?}, consensus_block={:?}",
+                            &hash, &consensus_block_hash
                         );
                     }
                 }
-
-                if macro_block.header.block_reward != self.cfg.block_reward {
-                    // TODO: support slashing.
-                    return Err(NodeBlockError::InvalidBlockReward(
-                        height,
-                        hash,
-                        macro_block.header.block_reward,
-                        self.cfg.block_reward,
-                    )
-                    .into());
-                }
-
-                self.chain.push_macro_block(macro_block, timestamp)?;
-
-                if !was_synchronized && self.is_synchronized() {
-                    info!(
-                        "Synchronized with the network: height={}, last_block={}",
-                        self.chain.height(),
-                        self.chain.last_block_hash()
-                    );
-                    metrics::SYNCHRONIZED.set(1);
-                }
-
-                let msg = EpochChanged {
-                    epoch: self.chain.epoch(),
-                    validators: self.chain.validators().clone(),
-                    facilitator: self.chain.facilitator().clone(),
-                };
-                self.on_epoch_changed
-                    .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
-                self.cheating_proofs.clear();
             }
-            Block::MicroBlock(micro_block) => {
-                // Check for the correct block order.
-                // Check for the correct block order.
-                match &self.validation {
-                    MicroBlockAuditor | MicroBlockValidator { .. } => {}
-                    _ => {
-                        return Err(
-                            NodeBlockError::ExpectedMicroBlock(self.chain.height(), hash).into(),
-                        );
-                    }
-                }
-
-                let timestamp = SystemTime::now();
-
-                // Check block reward.
-                if let Some(Transaction::CoinbaseTransaction(tx)) = micro_block.transactions.get(0)
-                {
-                    if tx.block_reward != self.cfg.block_reward {
-                        // TODO: support slashing.
-                        return Err(NodeBlockError::InvalidBlockReward(
-                            height,
-                            hash,
-                            tx.block_reward,
-                            self.cfg.block_reward,
-                        )
-                        .into());
-                    }
-                } else {
-                    // Force coinbase if reward is not zero.
-                    return Err(BlockError::CoinbaseMustBeFirst(hash).into());
-                }
-
-                let leader = micro_block.pkey;
-                let block_view_change = micro_block.base.view_change;
-                let (inputs, outputs) = match self.chain.push_micro_block(micro_block, timestamp) {
-                    Err(e @ BlockchainError::BlockError(BlockError::InvalidViewChange(..))) => {
-                        warn!("Discarded a block with lesser view_change: block_view_change={}, our_view_change={}",
-                              block_view_change, self.chain.view_change());
-
-                        let mut chain = ChainInfo::from_blockchain(&self.chain);
-                        let proof = self
-                            .chain
-                            .view_change_proof()
-                            .clone()
-                            .expect("last view_change proof.");
-                        debug!(
-                            "Sending view change proof to block sender: sender={}, proof={:?}",
-                            leader, proof
-                        );
-                        // correct information about proof, to refer previous on view_change;
-                        chain.view_change -= 1;
-                        let proof = SealedViewChangeProof {
-                            chain,
-                            proof: proof.clone(),
-                        };
-
-                        self.network
-                            .send(leader, VIEW_CHANGE_DIRECT, proof.into_buffer()?)?;
-                        return Err(e.into());
-                    }
-                    Err(e) => return Err(e.into()),
-                    Ok(v) => v,
-                };
-                // Remove old transactions from the mempool.
-                let input_hashes: Vec<Hash> = inputs.iter().map(|o| Hash::digest(o)).collect();
-                let output_hashes: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
-                self.mempool.prune(&input_hashes, &output_hashes);
-                metrics::MEMPOOL_TRANSACTIONS.set(self.mempool.len() as i64);
-                metrics::MEMPOOL_INPUTS.set(self.mempool.inputs_len() as i64);
-                metrics::MEMPOOL_OUTPUTS.set(self.mempool.inputs_len() as i64);
-
-                // Notify subscribers.
-                let msg = OutputsChanged {
-                    epoch: self.chain.epoch(),
-                    inputs,
-                    outputs,
-                };
-                self.on_outputs_changed
-                    .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
+            _ => {
+                return Err(NodeBlockError::ExpectedMacroBlock(self.chain.height(), hash).into());
             }
         }
+
+        if block.header.block_reward != self.cfg.block_reward {
+            // TODO: support slashing.
+            return Err(NodeBlockError::InvalidBlockReward(
+                height,
+                hash,
+                block.header.block_reward,
+                self.cfg.block_reward,
+            )
+            .into());
+        }
+
+        let (inputs, outputs) = self.chain.push_macro_block(block, timestamp)?;
+
+        if !was_synchronized && self.is_synchronized() {
+            info!(
+                "Synchronized with the network: height={}, last_block={}",
+                self.chain.height(),
+                self.chain.last_block_hash()
+            );
+            metrics::SYNCHRONIZED.set(1);
+        }
+
+        let msg = EpochChanged {
+            epoch: self.chain.epoch(),
+            validators: self.chain.validators().clone(),
+            facilitator: self.chain.facilitator().clone(),
+        };
+        self.on_epoch_changed
+            .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
+        self.cheating_proofs.clear();
+
+        self.on_block_added(height, view_change, hash, timestamp, inputs, outputs);
+        self.update_validation_status();
+
+        Ok(())
+    }
+
+    /// Try to apply a new micro block into the blockchain.
+    fn apply_micro_block(&mut self, block: MicroBlock) -> Result<(), Error> {
+        let hash = Hash::digest(&block);
+        let timestamp = block.base.timestamp;
+        let height = block.base.height;
+        let view_change = block.base.view_change;
+
+        // Check for the correct block order.
+        match &self.validation {
+            MicroBlockAuditor | MicroBlockValidator { .. } => {}
+            _ => {
+                return Err(NodeBlockError::ExpectedMicroBlock(self.chain.height(), hash).into());
+            }
+        }
+
+        // Check block reward.
+        if let Some(Transaction::CoinbaseTransaction(tx)) = block.transactions.get(0) {
+            if tx.block_reward != self.cfg.block_reward {
+                // TODO: support slashing.
+                return Err(NodeBlockError::InvalidBlockReward(
+                    height,
+                    hash,
+                    tx.block_reward,
+                    self.cfg.block_reward,
+                )
+                .into());
+            }
+        } else {
+            // Force coinbase if reward is not zero.
+            return Err(BlockError::CoinbaseMustBeFirst(hash).into());
+        }
+
+        let leader = block.pkey;
+        let block_view_change = block.base.view_change;
+        let (inputs, outputs) = match self.chain.push_micro_block(block, timestamp) {
+            Err(e @ BlockchainError::BlockError(BlockError::InvalidViewChange(..))) => {
+                warn!("Discarded a block with lesser view_change: block_view_change={}, our_view_change={}",
+                      block_view_change, self.chain.view_change());
+
+                let mut chain = ChainInfo::from_blockchain(&self.chain);
+                let proof = self
+                    .chain
+                    .view_change_proof()
+                    .clone()
+                    .expect("last view_change proof.");
+                debug!(
+                    "Sending view change proof to block sender: sender={}, proof={:?}",
+                    leader, proof
+                );
+                // correct information about proof, to refer previous on view_change;
+                chain.view_change -= 1;
+                let proof = SealedViewChangeProof {
+                    chain,
+                    proof: proof.clone(),
+                };
+
+                self.network
+                    .send(leader, VIEW_CHANGE_DIRECT, proof.into_buffer()?)?;
+                return Err(e.into());
+            }
+            Err(e) => return Err(e.into()),
+            Ok(v) => v,
+        };
+
+        self.on_block_added(height, view_change, hash, timestamp, inputs, outputs);
+        self.update_validation_status();
+
+        Ok(())
+    }
+
+    fn on_block_added(
+        &mut self,
+        height: u64,
+        view_change: u32,
+        hash: Hash,
+        timestamp: SystemTime,
+        inputs: Vec<Output>,
+        outputs: Vec<Output>,
+    ) {
+        // Remove old transactions from the mempool.
+        let input_hashes: Vec<Hash> = inputs.iter().map(|o| Hash::digest(o)).collect();
+        let output_hashes: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
+        self.mempool.prune(&input_hashes, &output_hashes);
+        metrics::MEMPOOL_TRANSACTIONS.set(self.mempool.len() as i64);
+        metrics::MEMPOOL_INPUTS.set(self.mempool.inputs_len() as i64);
+        metrics::MEMPOOL_OUTPUTS.set(self.mempool.inputs_len() as i64);
+
+        // Notify subscribers.
+        let msg = OutputsChanged {
+            epoch: self.chain.epoch(),
+            inputs,
+            outputs,
+        };
+        self.on_outputs_changed
+            .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
 
         self.last_block_clock = clock::now();
 
@@ -949,10 +969,6 @@ impl NodeService {
         };
         self.on_block_added
             .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
-
-        self.update_validation_status();
-
-        Ok(())
     }
 
     /// Handler for NodeMessage::SubscribeHeight.
@@ -1006,7 +1022,7 @@ impl NodeService {
     }
 
     /// Send block to network.
-    fn send_sealed_block(&mut self, block: Block) -> Result<(), Error> {
+    fn send_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
         let block_height = block.base_header().height;
         let data = block.into_buffer()?;
@@ -1479,11 +1495,11 @@ impl NodeService {
             block.transactions.len(),
         );
 
-        // TODO: swap send_sealed_block() and apply_new_block() order after removing VRF.
         let block2 = block.clone();
-        self.send_sealed_block(Block::MicroBlock(block2))
+        self.apply_micro_block(block)
+            .expect("created a valid block");
+        self.send_block(Block::MicroBlock(block2))
             .expect("failed to send sealed micro block");
-        self.apply_new_block(Block::MicroBlock(block))?;
 
         Ok(())
     }
@@ -1498,9 +1514,9 @@ impl NodeService {
             MacroBlockValidator { consensus, .. } => {
                 let macro_block = consensus.commit();
                 let macro_block2 = macro_block.clone();
-                self.apply_new_block(Block::MacroBlock(macro_block))
+                self.apply_macro_block(macro_block)
                     .expect("block is validated before");
-                self.send_sealed_block(Block::MacroBlock(macro_block2))
+                self.send_block(Block::MacroBlock(macro_block2))
                     .expect("failed to send sealed micro block");
             }
             _ => unreachable!(),
@@ -1592,8 +1608,8 @@ impl Future for NodeService {
                             SealedViewChangeProof::from_buffer(&msg.data)
                                 .and_then(|proof| self.handle_view_change_direct(proof, msg.from))
                         }
-                        NodeMessage::SealedBlock(msg) => {
-                            Block::from_buffer(&msg).and_then(|msg| self.handle_sealed_block(msg))
+                        NodeMessage::Block(msg) => {
+                            Block::from_buffer(&msg).and_then(|msg| self.handle_block(msg))
                         }
                         NodeMessage::ChainLoaderMessage(msg) => {
                             ChainLoaderMessage::from_buffer(&msg.data)

@@ -193,7 +193,7 @@ impl NodeService {
         let initial_height = self.chain.height();
         for block in response.blocks {
             // Fail on the first error.
-            self.handle_sealed_block(block)?;
+            self.handle_block(block)?;
         }
 
         //

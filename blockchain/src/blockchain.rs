@@ -655,7 +655,7 @@ impl Blockchain {
         &mut self,
         block: MacroBlock,
         timestamp: SystemTime,
-    ) -> Result<(), BlockchainError> {
+    ) -> Result<(Vec<Output>, Vec<Output>), BlockchainError> {
         //
         // Validate the macro block.
         //
@@ -670,9 +670,9 @@ impl Blockchain {
         //
         // Update in-memory indexes and metadata.
         //
-        self.register_macro_block(block, timestamp)?;
+        let (inputs, outputs) = self.register_macro_block(block, timestamp)?;
 
-        Ok(())
+        Ok((inputs, outputs))
     }
 
     ///

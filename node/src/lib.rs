@@ -46,7 +46,7 @@ use protobuf;
 use protobuf::Message;
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::time::Instant;
 use std::time::SystemTime;
 use stegos_blockchain::*;
@@ -250,9 +250,6 @@ pub struct NodeService {
     /// A time when loader was started the last time
     last_sync_clock: Instant,
 
-    /// Orphan blocks sorted by height.
-    future_blocks: BTreeMap<u64, Block>,
-
     /// Memory pool of pending transactions.
     mempool: Mempool,
 
@@ -290,7 +287,6 @@ impl NodeService {
     ) -> Result<(Self, Node), Error> {
         let (outbox, inbox) = unbounded();
         let last_sync_clock = clock::now();
-        let future_blocks: BTreeMap<u64, Block> = BTreeMap::new();
         let mempool = Mempool::new();
 
         let last_block_clock = clock::now();
@@ -349,7 +345,6 @@ impl NodeService {
         let service = NodeService {
             cfg,
             last_sync_clock,
-            future_blocks,
             chain,
             keys,
             mempool,
@@ -670,7 +665,7 @@ impl NodeService {
                 self.chain.last_block_hash()
             );
             return Ok(());
-        } else if block_height > self.chain.last_macro_block_height() + self.cfg.blocks_in_epoch {
+        } else if block_height > self.chain.height() {
             // An orphan block from later epochs - ignore.
             warn!("Skipped an orphan block from the future: height={}, block={}, current_height={}, last_block={}",
                   block_height,
@@ -738,49 +733,25 @@ impl NodeService {
             }
         }
 
-        // Add this block to a queue.
-        self.future_blocks.insert(block_height, block);
+        assert_eq!(block_height, self.chain.height());
 
-        // Process pending blocks.
-        while let Some(block) = self.future_blocks.remove(&self.chain.height()) {
-            let hash = Hash::digest(&block);
-            let view_change = block.base_header().view_change;
-            let r = match block {
-                Block::MacroBlock(block) => self.apply_macro_block(block),
-                Block::MicroBlock(block) => self.apply_micro_block(block),
-            };
-            if let Err(e) = r {
-                error!(
-                    "Failed to apply block: height={}, block={}, error={}",
-                    self.chain.height(),
-                    hash,
-                    e
-                );
-
-                if let Ok(BlockError::InvalidPreviousHash(_, _, _, _)) = e.downcast::<BlockError>()
-                {
-                    // A potential fork - request history from that node.
-                    let from = self.chain.select_leader(view_change);
-                    self.request_history_from(from)?;
-                }
-
-                break; // Stop processing.
+        let view_change = block.base_header().view_change;
+        let r = match block {
+            Block::MacroBlock(block) => self.apply_macro_block(block),
+            Block::MicroBlock(block) => self.apply_micro_block(block),
+        };
+        if let Err(e) = r {
+            error!(
+                "Failed to apply block: height={}, block={}, error={}",
+                self.chain.height(),
+                block_hash,
+                e
+            );
+            if let Ok(BlockError::InvalidPreviousHash(_, _, _, _)) = e.downcast::<BlockError>() {
+                // A potential fork - request history from that node.
+                let from = self.chain.select_leader(view_change);
+                self.request_history_from(from)?;
             }
-        }
-
-        // Queue is not empty - request history from the current leader.
-        if !self.future_blocks.is_empty() {
-            for (height, block) in self.future_blocks.iter() {
-                debug!(
-                    "Orphan block: height={}, block={}, previous={}, current_height={}, last_block={}",
-                    height,
-                    Hash::digest(block),
-                    block.base_header().previous,
-                    self.chain.height(),
-                    self.chain.last_block_hash()
-                );
-            }
-            self.request_history()?;
         }
 
         Ok(())

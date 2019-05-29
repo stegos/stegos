@@ -412,6 +412,46 @@ impl Block {
             Block::MicroBlock(MicroBlock { base, .. }) => &base,
         }
     }
+
+    ///
+    /// Unwrap a Micro Block.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the block is not Micro Block.
+    ///
+    pub fn unwrap_micro(self) -> MicroBlock {
+        match self {
+            Block::MicroBlock(micro_block) => micro_block,
+            Block::MacroBlock(macro_block) => {
+                panic!(
+                    "Expected a micro block: height={}, block={}",
+                    macro_block.header.base.height,
+                    Hash::digest(&macro_block)
+                );
+            }
+        }
+    }
+
+    ///
+    /// Unwrap a Micro Block.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the block is not Macro Block.
+    ///
+    pub fn unwrap_macro(self) -> MacroBlock {
+        match self {
+            Block::MacroBlock(macro_block) => macro_block,
+            Block::MicroBlock(micro_block) => {
+                panic!(
+                    "Expected a micro block: height={}, block={}",
+                    micro_block.base.height,
+                    Hash::digest(&micro_block)
+                );
+            }
+        }
+    }
 }
 
 impl Hashable for Block {

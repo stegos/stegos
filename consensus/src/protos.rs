@@ -41,7 +41,7 @@ impl ProtoConvert for ConsensusMessageBody {
         match self {
             ConsensusMessageBody::Proposal(block_proposal) => {
                 let mut proposal = consensus::MacroBlockProposal::new();
-                proposal.set_base(block_proposal.base.into_proto());
+                proposal.set_header(block_proposal.header.into_proto());
                 for transaction in &block_proposal.transactions {
                     proposal.transactions.push(transaction.into_proto());
                 }
@@ -62,12 +62,15 @@ impl ProtoConvert for ConsensusMessageBody {
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let msg = match proto.body {
             Some(consensus::ConsensusMessageBody_oneof_body::macro_block_proposal(ref msg)) => {
-                let base = BaseBlockHeader::from_proto(msg.get_base())?;
+                let header = MacroBlockHeader::from_proto(msg.get_header())?;
                 let mut transactions = Vec::<Transaction>::with_capacity(msg.transactions.len());
                 for transaction in msg.transactions.iter() {
                     transactions.push(Transaction::from_proto(transaction)?);
                 }
-                let block_proposal = MacroBlockProposal { base, transactions };
+                let block_proposal = MacroBlockProposal {
+                    header,
+                    transactions,
+                };
                 ConsensusMessageBody::Proposal(block_proposal)
             }
             Some(consensus::ConsensusMessageBody_oneof_body::prevote(ref _msg)) => {
@@ -158,6 +161,7 @@ impl ProtoConvert for SealedViewChangeProof {
 mod tests {
     use super::*;
     use std::time::SystemTime;
+    use stegos_crypto::curve1174::Fr;
     use stegos_crypto::hash::{Hashable, Hasher};
     use stegos_crypto::{curve1174, pbc};
 
@@ -222,6 +226,13 @@ mod tests {
 
         let random = pbc::make_VRF(&nskey, &Hash::digest("test"));
         let base = BaseBlockHeader::new(version, previous, height, 0, timestamp, random);
+        let header = MacroBlockHeader {
+            base,
+            gamma: Fr::random(),
+            block_reward: 0,
+            inputs_range_hash: Hash::digest(&"hello"),
+            outputs_range_hash: Hash::digest(&"world"),
+        };
         // Transactions.
         let (tx, _inputs, _outputs) =
             PaymentTransaction::new_test(&skey, &pkey, 300, 2, 100, 1, 100)
@@ -231,7 +242,10 @@ mod tests {
         //
         // MacroBlockProposal
         //
-        let proposal = ConsensusMessageBody::Proposal(MacroBlockProposal { base, transactions });
+        let proposal = ConsensusMessageBody::Proposal(MacroBlockProposal {
+            header,
+            transactions,
+        });
         roundtrip(&proposal);
     }
 

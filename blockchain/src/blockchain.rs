@@ -60,12 +60,12 @@ impl ChainInfo {
     /// Create ChainInfo from micro block.
     /// ## Panics
     /// if view_change is equal to 0
-    pub fn from_block(base_header: &BaseBlockHeader) -> Self {
-        assert_ne!(base_header.view_change, 0);
+    pub fn from_micro_block(micro_block: &MicroBlock) -> Self {
+        assert_ne!(micro_block.base.view_change, 0);
         ChainInfo {
-            height: base_header.height,
-            view_change: base_header.view_change - 1,
-            last_block: base_header.previous,
+            height: micro_block.base.height,
+            view_change: micro_block.base.view_change - 1,
+            last_block: micro_block.base.previous,
         }
     }
 
@@ -181,7 +181,7 @@ impl Blockchain {
     pub fn new(
         cfg: BlockchainConfig,
         storage_cfg: StorageConfig,
-        genesis: Vec<Block>,
+        genesis: MacroBlock,
         timestamp: SystemTime,
     ) -> Result<Blockchain, Error> {
         let database = ListDb::new(&storage_cfg.database_path);
@@ -190,7 +190,7 @@ impl Blockchain {
 
     pub fn testing(
         cfg: BlockchainConfig,
-        genesis: Vec<Block>,
+        genesis: MacroBlock,
         timestamp: SystemTime,
     ) -> Result<Blockchain, Error> {
         let database = ListDb::testing();
@@ -200,7 +200,7 @@ impl Blockchain {
     fn with_db(
         cfg: BlockchainConfig,
         database: ListDb,
-        genesis: Vec<Block>,
+        genesis: MacroBlock,
         timestamp: SystemTime,
     ) -> Result<Blockchain, Error> {
         //
@@ -260,24 +260,17 @@ impl Blockchain {
     // Recovery.
     //----------------------------------------------------------------------------------------------
 
-    fn recover(&mut self, genesis: Vec<Block>, timestamp: SystemTime) -> Result<(), Error> {
+    fn recover(&mut self, genesis: MacroBlock, timestamp: SystemTime) -> Result<(), Error> {
         let mut blocks = self.database.iter();
+
+        let genesis_hash = Hash::digest(&genesis);
 
         let block = blocks.next();
         let block = if let Some(block) = block {
             block
         } else {
             debug!("Creating a new blockchain...");
-            for block in genesis {
-                match block {
-                    Block::MicroBlock(micro_block) => {
-                        self.push_micro_block(micro_block, timestamp)?;
-                    }
-                    Block::MacroBlock(macro_block) => {
-                        self.push_macro_block(macro_block, timestamp)?
-                    }
-                }
-            }
+            self.push_macro_block(genesis, timestamp)?;
             info!(
                 "Initialized a new blockchain: height={}, last_block={}",
                 self.height, self.last_block_hash
@@ -291,14 +284,10 @@ impl Blockchain {
         self.recover_block(block, timestamp)?;
 
         // Check genesis.
-        let genesis_hash = Hash::digest(&genesis[0]);
         if genesis_hash != self.last_block_hash() {
-            return Err(BlockchainError::IncompatibleChain(
-                genesis[0].base_header().height,
-                genesis_hash,
-                self.last_block_hash(),
-            )
-            .into());
+            return Err(
+                BlockchainError::IncompatibleGenesis(genesis_hash, self.last_block_hash()).into(),
+            );
         }
 
         // Recover remaining blocks.
@@ -666,7 +655,7 @@ impl Blockchain {
         &mut self,
         block: MacroBlock,
         timestamp: SystemTime,
-    ) -> Result<(), BlockchainError> {
+    ) -> Result<(Vec<Output>, Vec<Output>), BlockchainError> {
         //
         // Validate the macro block.
         //
@@ -681,9 +670,9 @@ impl Blockchain {
         //
         // Update in-memory indexes and metadata.
         //
-        self.register_macro_block(block, timestamp)?;
+        let (inputs, outputs) = self.register_macro_block(block, timestamp)?;
 
-        Ok(())
+        Ok((inputs, outputs))
     }
 
     ///
@@ -1293,18 +1282,13 @@ pub mod tests {
         let keychains = [KeyChain::new_mem()];
         let timestamp = SystemTime::now();
         let cfg: BlockchainConfig = Default::default();
-        let blocks = genesis(
+        let block1 = genesis(
             &keychains,
             cfg.min_stake_amount,
             cfg.min_stake_amount,
             timestamp,
         );
-        assert_eq!(blocks.len(), 1);
-        let block1 = match &blocks[..] {
-            [Block::MacroBlock(block1)] => block1,
-            _ => panic!(),
-        };
-        let blockchain = Blockchain::testing(cfg, blocks.clone(), timestamp)
+        let blockchain = Blockchain::testing(cfg, block1.clone(), timestamp)
             .expect("Failed to create blockchain");
         let outputs: Vec<Output> = block1
             .body

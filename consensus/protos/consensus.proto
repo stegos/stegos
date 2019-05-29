@@ -6,7 +6,7 @@ import "blockchain.proto";
 import "view_changes.proto";
 
 message MacroBlockProposal {
-    stegos.blockchain.BaseBlockHeader base = 1;
+    stegos.blockchain.MacroBlockHeader header = 1;
     repeated stegos.blockchain.Transaction transactions = 2;
 }
 

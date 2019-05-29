@@ -33,11 +33,10 @@ use stegos_crypto::CryptoError;
 #[derive(Debug, Fail)]
 pub enum BlockchainError {
     #[fail(
-        display = "Found a saved chain that is not compatible to our genesis at height = {}, \
-                   genesis_block = {:?}, database_block = {:?}",
-        _0, _1, _2
+        display = "Found incompatible genesis: application={}, database={}",
+        _0, _1
     )]
-    IncompatibleChain(u64, Hash, Hash),
+    IncompatibleGenesis(Hash, Hash),
     #[fail(
         display = "Stake is locked: validator={}, expected_balance={}, minimum_balance={}",
         _0, _1, _2

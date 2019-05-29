@@ -37,9 +37,7 @@ pub fn genesis(
     stake: i64,
     coins: i64,
     timestamp: SystemTime,
-) -> Vec<Block> {
-    let mut blocks = Vec::with_capacity(2);
-
+) -> MacroBlock {
     // Both block are created at the same time in the same epoch.
     let version: u64 = 1;
     let view_change: u32 = 0;
@@ -101,9 +99,8 @@ pub fn genesis(
         let (multisig, multisigmap) = create_multi_signature(&validators, &signatures);
         block.body.multisig = multisig;
         block.body.multisigmap = multisigmap;
-        (block)
+        block
     };
 
-    blocks.push(Block::MacroBlock(block1));
-    blocks
+    block1
 }

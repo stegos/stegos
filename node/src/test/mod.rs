@@ -198,7 +198,7 @@ struct NodeSandbox {
 }
 
 impl NodeSandbox {
-    fn new(cfg: ChainConfig, keychain: KeyChain, genesis: Vec<Block>) -> Self {
+    fn new(cfg: ChainConfig, keychain: KeyChain, genesis: MacroBlock) -> Self {
         // init network
         let (network_service, network) = Loopback::new();
 

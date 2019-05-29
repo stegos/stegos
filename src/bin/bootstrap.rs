@@ -21,12 +21,11 @@
 
 use clap::{crate_version, App, Arg};
 use log::*;
-use protobuf::Message;
 use simple_logger;
 use std::fs;
 use std::process;
 use std::time::SystemTime;
-use stegos_blockchain::{genesis, BlockchainConfig};
+use stegos_blockchain::{genesis, Block, BlockchainConfig};
 use stegos_keychain::KeyChain;
 use stegos_keychain::KeyChainConfig;
 use stegos_serialization::traits::ProtoConvert;
@@ -148,12 +147,8 @@ fn main() {
 
     info!("Generating genesis blocks...");
     let timestamp = SystemTime::now();
-    let blocks = genesis(&keychains, stake, coins, timestamp);
-    for (i, block) in blocks.iter().enumerate() {
-        let block_data = block.into_proto();
-        let block_data = block_data.write_to_bytes().unwrap();
-        fs::write(format!("genesis{}.bin", i), &block_data).expect("failed to write genesis block");
-    }
-
+    let genesis_block = genesis(&keychains, stake, coins, timestamp);
+    let block_data = Block::MacroBlock(genesis_block).into_buffer().unwrap();
+    fs::write("genesis.bin", &block_data).expect("failed to write genesis block");
     info!("Done");
 }

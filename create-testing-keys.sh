@@ -27,4 +27,4 @@ done
 
 # Genesis block
 mkdir -p chains/dev/
-mv genesis0.bin chains/dev/
+mv genesis.bin chains/dev/

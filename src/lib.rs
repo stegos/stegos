@@ -37,7 +37,7 @@ use prometheus::{self, Encoder};
 use resolve::{config::DnsConfig, record::Srv, resolver};
 use std::path::Path;
 use std::time::SystemTime;
-use stegos_blockchain::Block;
+use stegos_blockchain::{Block, MacroBlock};
 use stegos_crypto::hash::Hash;
 use stegos_serialization::traits::*;
 
@@ -76,29 +76,20 @@ pub fn initialize_logger(cfg: &config::Config) -> Result<LogHandle, LogError> {
     Ok(log4rs::init_config(config)?)
 }
 
-pub fn initialize_genesis(cfg: &config::Config) -> Result<Vec<Block>, Error> {
-    let block1: &[u8] = match cfg.general.chain.as_ref() {
-        "dev" => include_bytes!("../chains/dev/genesis0.bin"),
-        "testnet" => include_bytes!("../chains/testnet/genesis0.bin"),
-        "devnet" => include_bytes!("../chains/devnet/genesis0.bin"),
+pub fn initialize_genesis(cfg: &config::Config) -> Result<MacroBlock, Error> {
+    let genesis: &[u8] = match cfg.general.chain.as_ref() {
+        "dev" => include_bytes!("../chains/dev/genesis.bin"),
+        "testnet" => include_bytes!("../chains/testnet/genesis.bin"),
+        "devnet" => include_bytes!("../chains/devnet/genesis.bin"),
         chain @ _ => {
             return Err(format_err!("Unknown chain: {}", chain));
         }
     };
-    info!("Using genesis for '{}' chain", cfg.general.chain);
-    let mut blocks = Vec::<Block>::new();
-    for (i, block) in [block1.as_ref()].iter().enumerate() {
-        let block = Block::from_buffer(&block)?;
-        let header = block.base_header();
-        info!(
-            "Block #{}: hash={}, version={}",
-            i,
-            Hash::digest(&block),
-            header.version,
-        );
-        blocks.push(block);
-    }
-    Ok(blocks)
+    let genesis = Block::from_buffer(genesis).expect("Invalid genesis");
+    let genesis = genesis.unwrap_macro();
+    let hash = Hash::digest(&genesis);
+    info!("Using genesis={} for '{}' chain", hash, cfg.general.chain);
+    Ok(genesis)
 }
 
 pub fn resolve_pool(cfg: &mut config::Config) -> Result<(), Error> {

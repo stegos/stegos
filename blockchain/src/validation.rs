@@ -648,76 +648,70 @@ impl Blockchain {
             return Err(BlockError::BlockHashCollision(height, block_hash).into());
         }
 
-        // Check previous hash (skip for genesis).
-        if height > 0 {
-            let previous_hash = self.last_block_hash();
-            if previous_hash != block.base.previous {
-                return Err(BlockError::InvalidPreviousHash(
-                    height,
-                    block_hash,
-                    block.base.previous,
-                    previous_hash,
-                )
-                .into());
-            }
+        // Check previous hash.
+        let previous_hash = self.last_block_hash();
+        if previous_hash != block.base.previous {
+            return Err(BlockError::InvalidPreviousHash(
+                height,
+                block_hash,
+                block.base.previous,
+                previous_hash,
+            )
+            .into());
         }
 
-        // Check random (skip for genesis).
-        if height > 0 {
-            let leader = self.select_leader(block.base.view_change);
-            let seed = mix(self.last_random(), block.base.view_change);
-            if !pbc::validate_VRF_source(&block.base.random, &leader, &seed) {
-                return Err(BlockError::IncorrectRandom(height, block_hash).into());
-            }
+        // Check random.
+        let leader = self.select_leader(block.base.view_change);
+        let seed = mix(self.last_random(), block.base.view_change);
+        if !pbc::validate_VRF_source(&block.base.random, &leader, &seed) {
+            return Err(BlockError::IncorrectRandom(height, block_hash).into());
         }
 
         // Check signature (exclude epoch == 0 for genesis).
-        if self.epoch() > 0 {
-            let leader = match block.base.view_change.cmp(&self.view_change()) {
-                Ordering::Equal => self.leader(),
-                Ordering::Greater => {
-                    let chain = ChainInfo::from_micro_block(&block);
-                    match block.view_change_proof {
-                        Some(ref proof) => {
-                            if let Err(e) = proof.validate(&chain, &self) {
-                                return Err(BlockError::InvalidViewChangeProof(
-                                    height,
-                                    proof.clone(),
-                                    e,
-                                )
-                                .into());
-                            }
-                            self.select_leader(block.base.view_change)
-                        }
-                        _ => {
-                            return Err(BlockError::NoProofWasFound(
+        let leader = match block.base.view_change.cmp(&self.view_change()) {
+            Ordering::Equal => self.leader(),
+            Ordering::Greater => {
+                let chain = ChainInfo::from_micro_block(&block);
+                match block.view_change_proof {
+                    Some(ref proof) => {
+                        if let Err(e) = proof.validate(&chain, &self) {
+                            return Err(BlockError::InvalidViewChangeProof(
                                 height,
-                                block_hash,
-                                block.base.view_change,
-                                self.view_change(),
+                                proof.clone(),
+                                e,
                             )
                             .into());
                         }
+                        self.select_leader(block.base.view_change)
+                    }
+                    _ => {
+                        return Err(BlockError::NoProofWasFound(
+                            height,
+                            block_hash,
+                            block.base.view_change,
+                            self.view_change(),
+                        )
+                        .into());
                     }
                 }
-                Ordering::Less => {
-                    return Err(BlockError::InvalidViewChange(
-                        height,
-                        block_hash,
-                        block.base.view_change,
-                        self.view_change(),
-                    )
-                    .into());
-                }
-            };
-
-            if leader != block.pkey {
-                return Err(BlockError::DifferentPublicKey(leader, block.pkey).into());
             }
-
-            if let Err(_e) = pbc::check_hash(&block_hash, &block.sig, &leader) {
-                return Err(BlockError::InvalidLeaderSignature(height, block_hash).into());
+            Ordering::Less => {
+                return Err(BlockError::InvalidViewChange(
+                    height,
+                    block_hash,
+                    block.base.view_change,
+                    self.view_change(),
+                )
+                .into());
             }
+        };
+
+        if leader != block.pkey {
+            return Err(BlockError::DifferentPublicKey(leader, block.pkey).into());
+        }
+
+        if let Err(_e) = pbc::check_hash(&block_hash, &block.sig, &leader) {
+            return Err(BlockError::InvalidLeaderSignature(height, block_hash).into());
         }
 
         let mut inputs_set: HashSet<Hash> = HashSet::new();

@@ -815,9 +815,7 @@ impl NodeService {
                     }
                 }
 
-                if self.chain.epoch() > 0
-                    && macro_block.header.block_reward != self.cfg.block_reward
-                {
+                if macro_block.header.block_reward != self.cfg.block_reward {
                     // TODO: support slashing.
                     return Err(NodeBlockError::InvalidBlockReward(
                         height,
@@ -863,24 +861,21 @@ impl NodeService {
                 let timestamp = SystemTime::now();
 
                 // Check block reward.
-                if self.chain.epoch() > 0 {
-                    if let Some(Transaction::CoinbaseTransaction(tx)) =
-                        micro_block.transactions.get(0)
-                    {
-                        if tx.block_reward != self.cfg.block_reward {
-                            // TODO: support slashing.
-                            return Err(NodeBlockError::InvalidBlockReward(
-                                height,
-                                hash,
-                                tx.block_reward,
-                                self.cfg.block_reward,
-                            )
-                            .into());
-                        }
-                    } else {
-                        // Force coinbase if reward is not zero.
-                        return Err(BlockError::CoinbaseMustBeFirst(hash).into());
+                if let Some(Transaction::CoinbaseTransaction(tx)) = micro_block.transactions.get(0)
+                {
+                    if tx.block_reward != self.cfg.block_reward {
+                        // TODO: support slashing.
+                        return Err(NodeBlockError::InvalidBlockReward(
+                            height,
+                            hash,
+                            tx.block_reward,
+                            self.cfg.block_reward,
+                        )
+                        .into());
                     }
+                } else {
+                    // Force coinbase if reward is not zero.
+                    return Err(BlockError::CoinbaseMustBeFirst(hash).into());
                 }
 
                 let leader = micro_block.pkey;

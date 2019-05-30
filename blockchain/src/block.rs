@@ -224,6 +224,9 @@ pub struct MacroBlockBody {
     /// Public key of leader.
     pub pkey: pbc::PublicKey,
 
+    /// Bitmap of active validators in epoch.
+    pub activity_map: BitVector,
+
     /// BLS (multi-)signature.
     pub multisig: pbc::Signature,
 
@@ -257,7 +260,7 @@ pub struct MacroBlock {
 
 impl MacroBlock {
     pub fn empty(base: BaseBlockHeader, pkey: pbc::PublicKey) -> MacroBlock {
-        Self::new(base, Fr::zero(), 0, &[], &[], pkey)
+        Self::new(base, Fr::zero(), 0, BitVector::new(0), &[], &[], pkey)
     }
 
     ///
@@ -267,6 +270,7 @@ impl MacroBlock {
         base: BaseBlockHeader,
         transactions: &[Transaction],
         block_reward: i64,
+        activity_map: BitVector,
         pkey: pbc::PublicKey,
     ) -> Result<MacroBlock, TransactionError> {
         //
@@ -308,7 +312,15 @@ impl MacroBlock {
         //
         let inputs: Vec<Hash> = inputs.into_iter().collect();
         let outputs: Vec<Output> = outputs.into_iter().map(|(_, o)| o).collect();
-        let block = MacroBlock::new(base, gamma, block_reward, &inputs, &outputs, pkey);
+        let block = MacroBlock::new(
+            base,
+            gamma,
+            block_reward,
+            activity_map,
+            &inputs,
+            &outputs,
+            pkey,
+        );
         Ok(block)
     }
 
@@ -316,6 +328,7 @@ impl MacroBlock {
         base: BaseBlockHeader,
         gamma: Fr,
         block_reward: i64,
+        activity_map: BitVector,
         inputs: &[Hash],
         outputs: &[Output],
         pkey: pbc::PublicKey,
@@ -368,6 +381,7 @@ impl MacroBlock {
         let multisig = pbc::Signature::zero();
         let multisigmap = BitVector::new(VALIDATORS_MAX);
         let body = MacroBlockBody {
+            activity_map,
             pkey,
             multisig,
             multisigmap,

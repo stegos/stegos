@@ -101,9 +101,10 @@ message MerkleNode {
 message MacroBlockBody {
     repeated stegos.crypto.Hash inputs = 1;
     repeated MerkleNode outputs = 2;
-    stegos.crypto.SecurePublicKey pkey = 3;
-    stegos.crypto.SecureSignature sig = 4;
-    repeated bool sigmap = 5;
+    repeated bool activity_map = 3;
+    stegos.crypto.SecurePublicKey pkey = 4;
+    stegos.crypto.SecureSignature sig = 5;
+    repeated bool sigmap = 6;
 }
 
 message MacroBlock {

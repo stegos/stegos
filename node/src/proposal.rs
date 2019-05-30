@@ -59,7 +59,7 @@ pub fn create_macro_block_proposal(
         chain.epoch() + 1,
     );
 
-    let winner = chain.try_produce_service_award(&base.random);
+    let (activity_map, winner) = chain.awards_from_active_epoch(&base.random);
 
     // Coinbase.
     let coinbase_tx = {
@@ -95,9 +95,14 @@ pub fn create_macro_block_proposal(
         transactions.push(tx.into());
     }
 
-    let block =
-        MacroBlock::from_transactions(base, &transactions, block_reward, network_pkey.clone())
-            .expect("Invalid block");
+    let block = MacroBlock::from_transactions(
+        base,
+        &transactions,
+        block_reward,
+        activity_map,
+        network_pkey.clone(),
+    )
+    .expect("Invalid block");
     let block_hash = Hash::digest(&block);
 
     // Create block proposal.
@@ -171,7 +176,7 @@ pub fn validate_proposed_macro_block(
     chain.validate_macro_block_header(block_hash, &block_proposal.header)?;
 
     // validate award.
-    let winner = chain.try_produce_service_award(&block_proposal.header.base.random);
+    let (activity_map, winner) = chain.awards_from_active_epoch(&block_proposal.header.base.random);
 
     //
     // Validate transactions.
@@ -256,6 +261,7 @@ pub fn validate_proposed_macro_block(
         block_proposal.header.base.clone(),
         &block_proposal.transactions,
         block_reward,
+        activity_map,
         leader,
     )?;
 

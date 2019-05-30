@@ -536,6 +536,15 @@ impl ProtoConvert for MacroBlockBody {
         let mut proto = blockchain::MacroBlockBody::new();
         proto.set_sig(self.multisig.into_proto());
         proto.set_pkey(self.pkey.into_proto());
+
+        if !self.activity_map.is_empty() {
+            assert!(self.activity_map.len() <= VALIDATORS_MAX);
+            proto.activity_map.resize(VALIDATORS_MAX, false);
+            for bit in self.activity_map.iter() {
+                proto.activity_map[bit] = true;
+            }
+        }
+
         if !self.multisigmap.is_empty() {
             assert!(self.multisigmap.len() <= VALIDATORS_MAX);
             proto.sigmap.resize(VALIDATORS_MAX, false);
@@ -565,10 +574,22 @@ impl ProtoConvert for MacroBlockBody {
                 CryptoError::InvalidBinaryLength(VALIDATORS_MAX, proto.sigmap.len()).into(),
             );
         }
+
         let mut multisigmap = BitVector::new(VALIDATORS_MAX);
         for (bit, val) in proto.sigmap.iter().enumerate() {
             if *val {
                 multisigmap.insert(bit);
+            }
+        }
+        if proto.activity_map.len() > VALIDATORS_MAX {
+            return Err(
+                CryptoError::InvalidBinaryLength(VALIDATORS_MAX, proto.activity_map.len()).into(),
+            );
+        }
+        let mut activity_map = BitVector::new(VALIDATORS_MAX);
+        for (bit, val) in proto.activity_map.iter().enumerate() {
+            if *val {
+                activity_map.insert(bit);
             }
         }
 
@@ -587,6 +608,7 @@ impl ProtoConvert for MacroBlockBody {
             pkey,
             multisig,
             multisigmap,
+            activity_map,
             inputs,
             outputs,
         })
@@ -842,6 +864,10 @@ mod tests {
         fn hash(&self, state: &mut Hasher) {
             "Monetary".hash(state);
             self.multisig.hash(state);
+            // hash index of each ones.
+            for bit in self.activity_map.iter() {
+                (bit as u32).hash(state);
+            }
             // TODO: check mulitisigmap?
             let inputs_count: u64 = self.inputs.len() as u64;
             inputs_count.hash(state);
@@ -879,7 +905,15 @@ mod tests {
         let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
         roundtrip(&base);
 
-        let block = MacroBlock::new(base, gamma, 0, &inputs1, &outputs1, pkeypbc);
+        let block = MacroBlock::new(
+            base,
+            gamma,
+            0,
+            BitVector::new(0),
+            &inputs1,
+            &outputs1,
+            pkeypbc,
+        );
         roundtrip(&block.header);
         roundtrip(&block.body);
         roundtrip(&block);

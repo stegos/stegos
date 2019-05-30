@@ -68,13 +68,13 @@ impl Awards {
     /// Add reward to service award budget.
     pub fn finalize_epoch<'a, I>(&mut self, reward: i64, epoch_activity: I)
     where
-        I: IntoIterator<Item = (&'a PublicKey, &'a ValidatorAwardState)>,
+        I: IntoIterator<Item = (PublicKey, ValidatorAwardState)>,
     {
         let epoch_activity = epoch_activity.into_iter();
 
         self.add_reward(reward);
         for (validator, state) in epoch_activity {
-            match self.validators_activity.get(validator) {
+            match self.validators_activity.get(&validator) {
                 Some(ValidatorAwardState::FailedAt(epoch, height)) => {
                     trace!(
                         "Found validator, that already failed his slot: epoch={}, height={}",
@@ -88,7 +88,7 @@ impl Awards {
                         validator,
                         state
                     );
-                    self.validators_activity.insert(*validator, *state);
+                    self.validators_activity.insert(validator, state);
                 }
             }
         }
@@ -191,7 +191,7 @@ mod test {
         assert_eq!(award.budget, 0);
         assert_eq!(award.validators_activity, BTreeMap::new());
 
-        award.finalize_epoch(100, &first_epoch);
+        award.finalize_epoch(100, first_epoch.clone());
 
         assert_eq!(award.budget, 100);
         assert_eq!(award.validators_activity, first_epoch);
@@ -227,7 +227,7 @@ mod test {
         assert_eq!(award.budget, 0);
         assert_eq!(award.validators_activity, BTreeMap::new());
 
-        award.finalize_epoch(100, &first_epoch);
+        award.finalize_epoch(100, first_epoch.clone());
 
         assert_eq!(award.budget, 100);
         assert_eq!(award.validators_activity, first_epoch);
@@ -259,7 +259,7 @@ mod test {
         assert_eq!(award.budget, 0);
         assert_eq!(award.validators_activity, BTreeMap::new());
 
-        award.finalize_epoch(100, &first_epoch);
+        award.finalize_epoch(100, first_epoch.clone());
 
         assert_eq!(award.budget, 100);
         assert_eq!(award.validators_activity, first_epoch);
@@ -303,7 +303,7 @@ mod test {
 
             info!("N={}", n);
             new_epoch.insert(validator, ValidatorAwardState::FailedAt(12, 12));
-            award.finalize_epoch(100, &new_epoch);
+            award.finalize_epoch(100, new_epoch.clone());
 
             old_budget += 100;
             assert_eq!(award.budget, old_budget);

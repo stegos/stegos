@@ -36,11 +36,10 @@ use crate::output::*;
 use crate::storage::ListDb;
 use crate::transaction::{CoinbaseTransaction, PaymentTransaction, Transaction};
 use crate::view_changes::ViewChangeProof;
+use bitvector::BitVector;
 use failure::Error;
 use log::*;
-use std::collections::btree_map::Iter;
 use std::collections::BTreeMap;
-use std::mem;
 use std::time::{SystemTime, UNIX_EPOCH};
 use stegos_crypto::bulletproofs::fee_a;
 use stegos_crypto::curve1174::{ECp, Fr, PublicKey, SecretKey, G};
@@ -127,7 +126,7 @@ type BlockByHashMap = MultiVersionedMap<Hash, u64, u64>;
 type OutputByHashMap = MultiVersionedMap<Hash, OutputKey, u64>;
 type BalanceMap = MultiVersionedMap<(), Balance, u64>;
 
-type ValidatorsActivity = MultiVersionedMap<PublicKey, ValidatorAwardState, u64>;
+type ValidatorsActivity = MultiVersionedMap<pbc::PublicKey, ValidatorAwardState, u64>;
 
 /// The blockchain database.
 pub struct Blockchain {
@@ -611,22 +610,78 @@ impl Blockchain {
     }
 
     /// Returns current service awards state.
-    fn service_awards(&self) -> &Awards {
+    pub(crate) fn service_awards(&self) -> &Awards {
         &self.awards
     }
 
     /// Returns current service awards state.
-    fn epoch_activity(&self) -> Iter<PublicKey, ValidatorAwardState> {
-        self.epoch_activity.iter()
+    pub fn epoch_activity(&self) -> &BTreeMap<pbc::PublicKey, ValidatorAwardState> {
+        self.epoch_activity.inner()
     }
 
     /// Try producing service awards.
-    /// Returns wallets PublicKey of the winner of service award, and amount of winning.
-    pub fn try_produce_service_award(&self, random: &VRF) -> Option<(PublicKey, i64)> {
+    /// Returns current activity map,
+    /// Also returns wallets PublicKey of the winner of service award,
+    /// and amount of winning, if winner was found.
+    pub fn awards_from_active_epoch(&self, random: &VRF) -> (BitVector, Option<(PublicKey, i64)>) {
         let mut service_awards = self.service_awards().clone();
-        let validators_activity = self.epoch_activity();
+
+        let mut epoch_activity = self.epoch_activity().clone();
+
+        let mut activity_map = BitVector::ones(self.validators().len());
+        for (id, (validator, _)) in self.validators().iter().enumerate() {
+            match epoch_activity.get(validator) {
+                // if validator failed, remove it from bitmap.
+                Some(ValidatorAwardState::FailedAt(..)) => {
+                    activity_map.remove(id);
+                }
+                // add info about missing validators
+                None => {
+                    epoch_activity.insert(*validator, ValidatorAwardState::Active);
+                }
+                _ => {}
+            }
+        }
+        let validators_activity = epoch_activity
+            .iter()
+            .map(|(k, v)| (self.validator_wallet(k).expect("validator has wallet"), *v));
         service_awards.finalize_epoch(self.cfg().service_award_per_epoch, validators_activity);
-        service_awards.check_winners(random.rand)
+        (activity_map, service_awards.check_winners(random.rand))
+    }
+
+    /// Returns epoch_activity recovered from MacroBlock activity_map.
+    /// This activity_map should be validated by consensus.
+    pub(crate) fn epoch_activity_from_macro_block(
+        &self,
+        activity_map: &BitVector,
+    ) -> Result<BTreeMap<PublicKey, ValidatorAwardState>, BlockchainError> {
+        let mut validators_activity = BTreeMap::new();
+        let validators = self.validators();
+        if activity_map.len() > validators.len() {
+            return Err(BlockError::TooBigActivitymap(activity_map.len(), validators.len()).into());
+        };
+        for (validator_id, (validator, _)) in validators.iter().enumerate() {
+            let activity = activity_map.contains(validator_id);
+            let validator_wallet = self
+                .validator_wallet(validator)
+                .expect("Validator with wallet");
+            let activity = if activity {
+                ValidatorAwardState::Active
+            } else {
+                ValidatorAwardState::FailedAt(self.epoch, self.height())
+            };
+
+            // multiple validators can have single wallet.
+            // So try to override only Active state.
+            if let Some(ValidatorAwardState::FailedAt(..)) =
+                validators_activity.get(&validator_wallet)
+            {
+                continue;
+            }
+
+            validators_activity.insert(validator_wallet, activity);
+        }
+        Ok(validators_activity)
     }
 
     /// Returns current blockchain config.
@@ -756,10 +811,15 @@ impl Blockchain {
             output_keys.push(output_key);
         }
 
-        let validators_activity = mem::replace(&mut self.epoch_activity, MultiVersionedMap::new());
-        self.awards
-            .finalize_epoch(self.cfg.service_award_per_epoch, validators_activity.iter());
-        self.awards.check_winners(block.header.base.random.rand);
+        // update award (skip genesis).
+        if height > 0 {
+            let validators_activity = self
+                .epoch_activity_from_macro_block(&block.body.activity_map)
+                .unwrap();
+            self.awards
+                .finalize_epoch(self.cfg.service_award_per_epoch, validators_activity);
+            let _ = self.awards.check_winners(block.header.base.random.rand);
+        }
         //
         // Register block.
         //
@@ -1066,22 +1126,18 @@ impl Blockchain {
         // Set skipped validators to inactive.
         for skiped_view_change in 0..block.base.view_change {
             let leader = self.election_result.select_leader(skiped_view_change);
-            let leader_wallet = self
-                .validator_wallet(&leader)
-                .expect("validator has wallet");
             self.epoch_activity.insert(
                 version,
-                leader_wallet,
+                leader,
                 ValidatorAwardState::FailedAt(self.epoch(), self.height()),
             );
         }
 
         // set current leader to active, if it was unknown.
         let leader = self.election_result.select_leader(block.base.view_change);
-        let leader_wallet = self.validator_wallet(&leader).expect("leader has wallet");
-        if self.epoch_activity.get(&leader_wallet).is_none() {
+        if self.epoch_activity.get(&leader).is_none() {
             self.epoch_activity
-                .insert(version, leader_wallet, ValidatorAwardState::Active);
+                .insert(version, leader, ValidatorAwardState::Active);
         }
 
         //
@@ -1232,16 +1288,27 @@ pub fn create_fake_macro_block(
         block_reward += reward;
     }
 
-    let mut block = MacroBlock::new(base, -gamma, block_reward, &[], &txs, keys.network_pkey);
+    let mut block = MacroBlock::new(
+        base,
+        -gamma,
+        block_reward,
+        BitVector::ones(keychains.len()),
+        &[],
+        &txs,
+        keys.network_pkey,
+    );
     sign_fake_macro_block(&mut block, chain, keychains);
     block
 }
 
 pub fn try_add_award(chain: &Blockchain, random: &VRF) -> Option<(Output, i64)> {
-    chain.try_produce_service_award(&random).map(|(k, reward)| {
-        let output = PublicPaymentOutput::new(&k, reward);
-        (output.into(), reward)
-    })
+    chain
+        .awards_from_active_epoch(&random)
+        .1
+        .map(|(k, reward)| {
+            let output = PublicPaymentOutput::new(&k, reward);
+            (output.into(), reward)
+        })
 }
 
 pub fn create_fake_micro_block(

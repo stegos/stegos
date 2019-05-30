@@ -288,6 +288,12 @@ pub enum BlockError {
         _0, _1, _2, _3
     )]
     InvalidBlockReward(u64, Hash, i64, i64),
+
+    #[fail(
+        display = "Activity bitmap too big: len={}, validators_len={} ",
+        _0, _1
+    )]
+    TooBigActivitymap(usize, usize),
 }
 
 #[derive(Debug, Fail)]

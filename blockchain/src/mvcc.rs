@@ -284,6 +284,11 @@ where
     pub fn into_iter(self) -> IntoIter<K, V> {
         self.map.into_iter()
     }
+
+    /// Returns pointer to inner map.
+    pub fn inner(&self) -> &BTreeMap<K, V> {
+        &self.map
+    }
 }
 
 #[cfg(test)]

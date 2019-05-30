@@ -32,7 +32,6 @@ use crate::transaction::{
     CoinbaseTransaction, PaymentTransaction, RestakeTransaction, SlashingTransaction, Transaction,
 };
 use log::*;
-use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 use stegos_crypto::bulletproofs::{fee_a, simple_commit};
@@ -660,56 +659,44 @@ impl Blockchain {
             .into());
         }
 
-        // Check random.
-        let leader = self.select_leader(block.base.view_change);
-        let seed = mix(self.last_random(), block.base.view_change);
-        if !pbc::validate_VRF_source(&block.base.random, &leader, &seed) {
-            return Err(BlockError::IncorrectRandom(height, block_hash).into());
-        }
-
-        // Check signature (exclude epoch == 0 for genesis).
-        let leader = match block.base.view_change.cmp(&self.view_change()) {
-            Ordering::Equal => self.leader(),
-            Ordering::Greater => {
-                let chain = ChainInfo::from_micro_block(&block);
-                match block.view_change_proof {
-                    Some(ref proof) => {
-                        if let Err(e) = proof.validate(&chain, &self) {
-                            return Err(BlockError::InvalidViewChangeProof(
-                                height,
-                                proof.clone(),
-                                e,
-                            )
-                            .into());
-                        }
-                        self.select_leader(block.base.view_change)
-                    }
-                    _ => {
-                        return Err(BlockError::NoProofWasFound(
-                            height,
-                            block_hash,
-                            block.base.view_change,
-                            self.view_change(),
-                        )
-                        .into());
+        // Check view change.
+        if block.base.view_change < self.view_change() {
+            return Err(BlockError::InvalidViewChange(
+                height,
+                block_hash,
+                block.base.view_change,
+                self.view_change(),
+            )
+            .into());
+        } else if block.base.view_change > 0 {
+            match block.view_change_proof {
+                Some(ref proof) => {
+                    let chain = ChainInfo::from_micro_block(&block);
+                    if let Err(e) = proof.validate(&chain, &self) {
+                        return Err(
+                            BlockError::InvalidViewChangeProof(height, proof.clone(), e).into()
+                        );
                     }
                 }
+                None => {
+                    return Err(BlockError::NoProofWasFound(
+                        height,
+                        block_hash,
+                        block.base.view_change,
+                        self.view_change(),
+                    )
+                    .into());
+                }
             }
-            Ordering::Less => {
-                return Err(BlockError::InvalidViewChange(
-                    height,
-                    block_hash,
-                    block.base.view_change,
-                    self.view_change(),
-                )
-                .into());
-            }
-        };
+        }
 
+        // Check leader.
+        let leader = self.select_leader(block.base.view_change);
         if leader != block.pkey {
             return Err(BlockError::DifferentPublicKey(leader, block.pkey).into());
         }
 
+        // Check signature.
         if let Err(_e) = pbc::check_hash(&block_hash, &block.sig, &leader) {
             return Err(BlockError::InvalidLeaderSignature(height, block_hash).into());
         }
@@ -727,6 +714,12 @@ impl Blockchain {
         } else {
             // Force coinbase if reward is not zero.
             return Err(BlockError::CoinbaseMustBeFirst(block_hash).into());
+        }
+
+        // Check random.
+        let seed = mix(self.last_random(), block.base.view_change);
+        if !pbc::validate_VRF_source(&block.base.random, &leader, &seed) {
+            return Err(BlockError::IncorrectRandom(height, block_hash).into());
         }
 
         let mut inputs_set: HashSet<Hash> = HashSet::new();

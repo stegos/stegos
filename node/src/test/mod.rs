@@ -87,7 +87,8 @@ impl<'timer> Sandbox<'timer> {
                 config: cfg,
             };
             for node in sandbox.nodes.iter() {
-                assert_eq!(node.node_service.chain.height(), 1);
+                assert_eq!(node.node_service.chain.epoch(), 1);
+                assert_eq!(node.node_service.chain.offset(), 0);
             }
             test_routine(sandbox)
         });
@@ -289,10 +290,12 @@ trait Api<'p> {
 
     /// Checks if all sandbox nodes synchronized.
     fn assert_synchronized(&self) {
-        let height = self.first().node_service.chain.height();
+        let epoch = self.first().node_service.chain.epoch();
+        let offset = self.first().node_service.chain.offset();
         let last_block = self.first().node_service.chain.last_block_hash();
         for node in self.iter() {
-            assert_eq!(node.node_service.chain.height(), height);
+            assert_eq!(node.node_service.chain.epoch(), epoch);
+            assert_eq!(node.node_service.chain.offset(), offset);
             assert_eq!(node.node_service.chain.last_block_hash(), last_block);
         }
     }
@@ -332,8 +335,8 @@ trait Api<'p> {
     fn skip_micro_block(&mut self) {
         self.assert_synchronized();
         assert!(
-            self.first().node_service.chain.blocks_in_epoch()
-                <= self.first().node_service.cfg.blocks_in_epoch
+            self.first().node_service.chain.offset()
+                <= self.first().node_service.cfg.micro_blocks_in_epoch
         );
         let leader_pk = self.first().node_service.chain.leader();
         self.poll();

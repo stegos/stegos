@@ -34,12 +34,12 @@ impl ProtoConvert for RequestBlocks {
     type Proto = loader::RequestBlocks;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = loader::RequestBlocks::new();
-        proto.set_starting_height(self.starting_height);
+        proto.set_epoch(self.epoch);
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let starting_height = proto.get_starting_height();
-        Ok(RequestBlocks { starting_height })
+        let epoch = proto.get_epoch();
+        Ok(RequestBlocks { epoch })
     }
 }
 
@@ -47,20 +47,18 @@ impl ProtoConvert for ResponseBlocks {
     type Proto = loader::ResponseBlocks;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = loader::ResponseBlocks::new();
-        proto.set_height(self.height);
         let blocks: Vec<_> = self.blocks.iter().map(ProtoConvert::into_proto).collect();
         proto.set_blocks(RepeatedField::from_vec(blocks));
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let height = proto.get_height();
         let blocks: Result<Vec<_>, _> = proto
             .get_blocks()
             .iter()
             .map(ProtoConvert::from_proto)
             .collect();
         let blocks = blocks?;
-        Ok(ResponseBlocks { height, blocks })
+        Ok(ResponseBlocks { blocks })
     }
 }
 

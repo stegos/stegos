@@ -40,9 +40,8 @@ pub fn genesis(
     timestamp: SystemTime,
 ) -> MacroBlock {
     // Both block are created at the same time in the same epoch.
-    let version: u64 = 1;
     let view_change: u32 = 0;
-    let height: u64 = 0;
+    let epoch: u64 = 0;
 
     let init_random = Hash::digest("random");
 
@@ -53,7 +52,6 @@ pub fn genesis(
         let previous = Hash::digest(&"genesis".to_string());
         let seed = mix(init_random, view_change);
         let random = pbc::make_VRF(&keychains[0].network_skey, &seed);
-        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
         //
         // Genesis has one PaymentOutput + N * StakeOutput, where N is the number of validators.
         //
@@ -86,13 +84,17 @@ pub fn genesis(
 
         let gamma = -outputs_gamma;
         let mut block = MacroBlock::new(
-            base,
-            gamma,
+            previous,
+            epoch,
+            view_change,
+            keychains[0].network_pkey,
+            random,
+            timestamp,
             coins,
             BitVector::ones(keychains.len()),
+            gamma,
             &[],
             &outputs,
-            keychains[0].network_pkey,
         );
 
         let block_hash = Hash::digest(&block);
@@ -105,8 +107,8 @@ pub fn genesis(
         }
         let validators = validators.into_iter().collect();
         let (multisig, multisigmap) = create_multi_signature(&validators, &signatures);
-        block.body.multisig = multisig;
-        block.body.multisigmap = multisigmap;
+        block.multisig = multisig;
+        block.multisigmap = multisigmap;
         block
     };
 

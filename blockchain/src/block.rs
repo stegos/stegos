@@ -40,101 +40,71 @@ pub const VERSION: u64 = 1;
 pub const VALIDATORS_MAX: usize = 512;
 
 //--------------------------------------------------------------------------------------------------
-// Base Header.
-//--------------------------------------------------------------------------------------------------
-
-/// General Block Header.
-#[derive(Debug, Clone)]
-pub struct BaseBlockHeader {
-    /// Version number.
-    pub version: u64,
-
-    /// Hash of the block previous to this in the chain.
-    pub previous: Hash,
-
-    /// Block height.
-    pub height: u64,
-
-    /// Number of leader changes in current validator groups.
-    pub view_change: u32,
-
-    /// Timestamp at which the block was built.
-    pub timestamp: SystemTime,
-
-    /// Latest random of the leader.
-    pub random: pbc::VRF,
-}
-
-impl BaseBlockHeader {
-    pub fn new(
-        version: u64,
-        previous: Hash,
-        height: u64,
-        view_change: u32,
-        timestamp: SystemTime,
-        random: pbc::VRF,
-    ) -> Self {
-        debug_assert!(pbc::validate_VRF_randomness(&random), "Cannot verify VRF.");
-
-        BaseBlockHeader {
-            version,
-            previous,
-            height,
-            view_change,
-            timestamp,
-            random,
-        }
-    }
-}
-
-impl Hashable for BaseBlockHeader {
-    fn hash(&self, state: &mut Hasher) {
-        self.version.hash(state);
-        self.previous.hash(state);
-        self.height.hash(state);
-        self.view_change.hash(state);
-        self.timestamp.hash(state);
-        self.random.hash(state);
-    }
-}
-
-//--------------------------------------------------------------------------------------------------
 // Micro Blocks.
 //--------------------------------------------------------------------------------------------------
 
-/// Monetary Block Header.
+/// Micro Block Header.
+#[derive(Debug, Clone)]
+pub struct MicroBlockHeader {
+    /// Version number.
+    pub version: u64,
+
+    /// The hash of the previous block header.
+    pub previous: Hash,
+
+    /// The epoch number.
+    pub epoch: u64,
+
+    /// The block number within the epoch.
+    pub offset: u32,
+
+    /// The number of changed leaders for this block.
+    pub view_change: u32,
+
+    /// The proof of performed view_change.
+    pub view_change_proof: Option<ViewChangeProof>,
+
+    /// The public PBC key of selected leader.
+    pub pkey: pbc::PublicKey,
+
+    /// Generated random value by leader.
+    pub random: pbc::VRF,
+
+    /// UNIX timestamp of block creation with millisecond precision.
+    pub timestamp: SystemTime,
+
+    /// Merklish root of all transactions.
+    pub transactions_range_hash: Hash,
+}
+
+/// Micro Block.
 #[derive(Debug, Clone)]
 pub struct MicroBlock {
-    /// Common header.
-    pub base: BaseBlockHeader,
+    /// Header.
+    pub header: MicroBlockHeader,
 
-    /// Proof of the happen view_change.
-    pub view_change_proof: Option<ViewChangeProof>,
+    /// BLS signature by leader.
+    pub sig: pbc::Signature,
 
     /// Transactions.
     pub transactions: Vec<Transaction>,
-
-    // TODO: slashing
-    /// PBC public key of slot owner.
-    pub pkey: pbc::PublicKey,
-
-    /// BLS signature by slot owner.
-    pub sig: pbc::Signature,
 }
 
-impl Hashable for MicroBlock {
+impl Hashable for MicroBlockHeader {
     fn hash(&self, state: &mut Hasher) {
         "Micro".hash(state);
-        self.base.hash(state);
+        self.version.hash(state);
+        self.previous.hash(state);
+        self.epoch.hash(state);
+        self.offset.hash(state);
+        self.view_change.hash(state);
         if let Some(proof) = &self.view_change_proof {
             proof.hash(state);
         }
-        let tx_count: u64 = self.transactions.len() as u64;
-        tx_count.hash(state);
-        for tx in &self.transactions {
-            tx.fullhash(state);
-        }
         self.pkey.hash(state);
+        self.random.hash(state);
+        self.timestamp.hash(state);
+        self.transactions_range_hash.hash(state);
     }
 }
 
@@ -149,37 +119,87 @@ impl Eq for MicroBlock {}
 
 impl MicroBlock {
     pub fn new(
-        base: BaseBlockHeader,
+        previous: Hash,
+        epoch: u64,
+        offset: u32,
+        view_change: u32,
         view_change_proof: Option<ViewChangeProof>,
-        transactions: Vec<Transaction>,
         pkey: pbc::PublicKey,
+        random: pbc::VRF,
+        timestamp: SystemTime,
+        transactions: Vec<Transaction>,
     ) -> MicroBlock {
-        let sig = pbc::Signature::zero();
-        let block = MicroBlock {
-            base,
+        let transactions_range_hash: Hash = Self::calculate_transactions_range_hash(&transactions);
+        let header = MicroBlockHeader {
+            version: VERSION,
+            previous,
+            epoch,
+            offset,
+            view_change,
             view_change_proof,
-            transactions,
             pkey,
-            sig,
+            random,
+            timestamp,
+            transactions_range_hash,
         };
-        block
+
+        let sig = pbc::Signature::zero();
+        MicroBlock {
+            header,
+            sig,
+            transactions,
+        }
     }
 
     pub fn empty(
-        base: BaseBlockHeader,
+        previous: Hash,
+        epoch: u64,
+        offset: u32,
+        view_change: u32,
         view_change_proof: Option<ViewChangeProof>,
         pkey: pbc::PublicKey,
+        random: pbc::VRF,
+        timestamp: SystemTime,
     ) -> MicroBlock {
         let transactions = Vec::new();
-        MicroBlock::new(base, view_change_proof, transactions, pkey)
+        MicroBlock::new(
+            previous,
+            epoch,
+            offset,
+            view_change,
+            view_change_proof,
+            pkey,
+            random,
+            timestamp,
+            transactions,
+        )
     }
 
     /// Sign block using leader's signature.
     pub fn sign(&mut self, skey: &pbc::SecretKey, pkey: &pbc::PublicKey) {
-        assert_eq!(&self.pkey, pkey);
-        let hash = Hash::digest(self);
+        assert_eq!(&self.header.pkey, pkey);
+        let hash = Hash::digest(&self.header);
         let sig = pbc::sign_hash(&hash, &skey);
         self.sig = sig;
+    }
+
+    pub fn calculate_transactions_range_hash(transactions: &[Transaction]) -> Hash {
+        let tx_hashes: Vec<Hash> = transactions
+            .iter()
+            .map(|tx| {
+                let mut hasher = Hasher::new();
+                tx.fullhash(&mut hasher);
+                hasher.result()
+            })
+            .collect();
+        let transactions_tree = Merkle::from_array(&tx_hashes);
+        transactions_tree.roothash().clone()
+    }
+}
+
+impl Hashable for MicroBlock {
+    fn hash(&self, state: &mut Hasher) {
+        self.header.hash(state)
     }
 }
 
@@ -187,45 +207,71 @@ impl MicroBlock {
 // Macro Blocks.
 //--------------------------------------------------------------------------------------------------
 
-/// Monetary Block Header.
+/// Macro Block Header.
 #[derive(Debug, Clone)]
 pub struct MacroBlockHeader {
-    /// Common header.
-    pub base: BaseBlockHeader,
+    /// Version number.
+    pub version: u64,
 
-    /// The sum of all gamma adjustments found in the block transactions (∑ γ_adj).
-    /// Includes the γ_adj from the leader's fee distribution transaction.
-    pub gamma: Fr,
+    /// The hash of the previous block header.
+    pub previous: Hash,
 
-    /// Block Reward.
+    /// The epoch number.
+    pub epoch: u64,
+
+    /// Number of rounds performed by consensus.
+    pub view_change: u32,
+
+    /// The public PBC key of selected leader.
+    pub pkey: pbc::PublicKey,
+
+    /// Latest random of the leader.
+    pub random: pbc::VRF,
+
+    /// UNIX timestamp of block creation with millisecond precision.
+    pub timestamp: SystemTime,
+
+    /// The block reward.
     pub block_reward: i64,
 
-    /// Merklish root of all range proofs for inputs.
+    /// Bitmap of active validators in epoch.
+    pub activity_map: BitVector,
+
+    /// The sum of all gamma adjustments.
+    pub gamma: Fr,
+
+    /// Merklish root of all input hashes.
     pub inputs_range_hash: Hash,
 
-    /// Merklish root of all range proofs for output.
+    /// Merklish root of all output hashes.
     pub outputs_range_hash: Hash,
 }
 
 impl Hashable for MacroBlockHeader {
     fn hash(&self, state: &mut Hasher) {
-        "Monetary".hash(state);
-        self.base.hash(state);
-        self.gamma.hash(state);
+        "Macro".hash(state);
+        self.version.hash(state);
+        self.previous.hash(state);
+        self.epoch.hash(state);
+        self.view_change.hash(state);
+        self.pkey.hash(state);
+        self.random.hash(state);
+        self.timestamp.hash(state);
         self.block_reward.hash(state);
+        for bit in self.activity_map.iter() {
+            (bit as u32).hash(state);
+        }
+        self.gamma.hash(state);
         self.inputs_range_hash.hash(state);
         self.outputs_range_hash.hash(state);
     }
 }
 
-/// Monetary Block.
+/// Macro Block.
 #[derive(Debug, Clone)]
-pub struct MacroBlockBody {
-    /// Public key of leader.
-    pub pkey: pbc::PublicKey,
-
-    /// Bitmap of active validators in epoch.
-    pub activity_map: BitVector,
+pub struct MacroBlock {
+    /// Header.
+    pub header: MacroBlockHeader,
 
     /// BLS (multi-)signature.
     pub multisig: pbc::Signature,
@@ -240,38 +286,48 @@ pub struct MacroBlockBody {
     pub outputs: Merkle<Box<Output>>,
 }
 
-impl PartialEq for MacroBlockBody {
-    fn eq(&self, _other: &MacroBlockBody) -> bool {
-        // Required by enum Block.
-        unreachable!();
-    }
-}
-
-impl Eq for MacroBlockBody {}
-
-/// Carries all cryptocurrency transactions.
-#[derive(Debug, Clone)]
-pub struct MacroBlock {
-    /// Header.
-    pub header: MacroBlockHeader,
-    /// Body
-    pub body: MacroBlockBody,
-}
-
 impl MacroBlock {
-    pub fn empty(base: BaseBlockHeader, pkey: pbc::PublicKey) -> MacroBlock {
-        Self::new(base, Fr::zero(), 0, BitVector::new(0), &[], &[], pkey)
+    pub fn empty(
+        previous: Hash,
+        epoch: u64,
+        view_change: u32,
+        pkey: pbc::PublicKey,
+        random: pbc::VRF,
+        timestamp: SystemTime,
+        block_reward: i64,
+        activity_map: BitVector,
+    ) -> MacroBlock {
+        let gamma = Fr::zero();
+        let inputs = [];
+        let outputs = [];
+        Self::new(
+            previous,
+            epoch,
+            view_change,
+            pkey,
+            random,
+            timestamp,
+            block_reward,
+            activity_map,
+            gamma,
+            &inputs,
+            &outputs,
+        )
     }
 
     ///
     /// Create a new macro block from the list of transactions.
     ///
     pub fn from_transactions(
-        base: BaseBlockHeader,
-        transactions: &[Transaction],
+        previous: Hash,
+        epoch: u64,
+        view_change: u32,
+        pkey: pbc::PublicKey,
+        random: pbc::VRF,
+        timestamp: SystemTime,
         block_reward: i64,
         activity_map: BitVector,
-        pkey: pbc::PublicKey,
+        transactions: &[Transaction],
     ) -> Result<MacroBlock, TransactionError> {
         //
         // Collect transactions.
@@ -312,26 +368,34 @@ impl MacroBlock {
         //
         let inputs: Vec<Hash> = inputs.into_iter().collect();
         let outputs: Vec<Output> = outputs.into_iter().map(|(_, o)| o).collect();
-        let block = MacroBlock::new(
-            base,
-            gamma,
+        let block = Self::new(
+            previous,
+            epoch,
+            view_change,
+            pkey,
+            random,
+            timestamp,
             block_reward,
             activity_map,
+            gamma,
             &inputs,
             &outputs,
-            pkey,
         );
         Ok(block)
     }
 
     pub fn new(
-        base: BaseBlockHeader,
-        gamma: Fr,
+        previous: Hash,
+        epoch: u64,
+        view_change: u32,
+        pkey: pbc::PublicKey,
+        random: pbc::VRF,
+        timestamp: SystemTime,
         block_reward: i64,
         activity_map: BitVector,
+        gamma: Fr,
         inputs: &[Hash],
         outputs: &[Output],
-        pkey: pbc::PublicKey,
     ) -> MacroBlock {
         // Re-order all inputs to blur transaction boundaries.
         // Current algorithm just sorts this list.
@@ -343,20 +407,12 @@ impl MacroBlock {
         assert_eq!(inputs.len(), inputs_len, "inputs must be unique");
 
         // Calculate input_range_hash.
-        let inputs_range_hash: Hash = {
-            let mut hasher = Hasher::new();
-            let inputs_count: u64 = inputs.len() as u64;
-            inputs_count.hash(&mut hasher);
-            for input in &inputs {
-                input.hash(&mut hasher);
-            }
-            hasher.result()
-        };
+        let inputs_range_hash = Self::calculate_inputs_range_hash(&inputs);
 
         // Re-order all outputs to blur transaction boundaries.
         let outputs_len = outputs.len();
         let mut outputs: Vec<(Hash, Box<Output>)> = outputs
-            .iter()
+            .into_iter()
             .map(|o| (Hash::digest(o), Box::<Output>::new(o.clone())))
             .collect();
         outputs.sort_by(|(h1, _o1), (h2, _o2)| h1.cmp(h2));
@@ -370,27 +426,35 @@ impl MacroBlock {
 
         // Create header
         let header = MacroBlockHeader {
-            base,
-            gamma,
+            version: VERSION,
+            previous,
+            epoch,
+            view_change,
+            pkey,
+            random,
+            timestamp,
             block_reward,
+            activity_map,
+            gamma,
             inputs_range_hash,
             outputs_range_hash,
         };
 
-        // Create body
+        // Create the block.
         let multisig = pbc::Signature::zero();
         let multisigmap = BitVector::new(VALIDATORS_MAX);
-        let body = MacroBlockBody {
-            activity_map,
-            pkey,
+        MacroBlock {
+            header,
             multisig,
             multisigmap,
             inputs,
             outputs,
-        };
+        }
+    }
 
-        // Create the block.
-        MacroBlock { header, body }
+    pub(crate) fn calculate_inputs_range_hash(inputs: &[Hash]) -> Hash {
+        let inputs_tree = Merkle::from_array(inputs);
+        inputs_tree.roothash().clone()
     }
 }
 
@@ -420,13 +484,6 @@ pub enum Block {
 }
 
 impl Block {
-    pub fn base_header(&self) -> &BaseBlockHeader {
-        match self {
-            Block::MacroBlock(MacroBlock { header, .. }) => &header.base,
-            Block::MicroBlock(MicroBlock { base, .. }) => &base,
-        }
-    }
-
     ///
     /// Unwrap a Micro Block.
     ///
@@ -439,8 +496,8 @@ impl Block {
             Block::MicroBlock(micro_block) => micro_block,
             Block::MacroBlock(macro_block) => {
                 panic!(
-                    "Expected a micro block: height={}, block={}",
-                    macro_block.header.base.height,
+                    "Expected a micro block: epoch={}, block={}",
+                    macro_block.header.epoch,
                     Hash::digest(&macro_block)
                 );
             }
@@ -459,8 +516,9 @@ impl Block {
             Block::MacroBlock(macro_block) => macro_block,
             Block::MicroBlock(micro_block) => {
                 panic!(
-                    "Expected a micro block: height={}, block={}",
-                    micro_block.base.height,
+                    "Expected a micro block: epoch={}, offset={}, block={}",
+                    micro_block.header.epoch,
+                    micro_block.header.offset,
                     Hash::digest(&micro_block)
                 );
             }

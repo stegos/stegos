@@ -54,7 +54,8 @@ pub type ValidatorId = u32;
 /// Information of current chain, that is used as proof of viewchange.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ChainInfo {
-    pub height: u64,
+    pub epoch: u64,
+    pub offset: u32,
     pub view_change: ViewCounter,
     pub last_block: Hash,
 }
@@ -64,18 +65,20 @@ impl ChainInfo {
     /// ## Panics
     /// if view_change is equal to 0
     pub fn from_micro_block(micro_block: &MicroBlock) -> Self {
-        assert_ne!(micro_block.base.view_change, 0);
+        assert_ne!(micro_block.header.view_change, 0);
         ChainInfo {
-            height: micro_block.base.height,
-            view_change: micro_block.base.view_change - 1,
-            last_block: micro_block.base.previous,
+            epoch: micro_block.header.epoch,
+            offset: micro_block.header.offset,
+            view_change: micro_block.header.view_change - 1,
+            last_block: micro_block.header.previous,
         }
     }
 
     /// Create ChainInfo from blockchain.
     pub fn from_blockchain(blockchain: &Blockchain) -> Self {
         ChainInfo {
-            height: blockchain.height(),
+            epoch: blockchain.epoch(),
+            offset: blockchain.offset(),
             view_change: blockchain.view_change(),
             last_block: blockchain.last_block_hash(),
         }
@@ -84,7 +87,8 @@ impl ChainInfo {
 
 impl Hashable for ChainInfo {
     fn hash(&self, hasher: &mut Hasher) {
-        self.height.hash(hasher);
+        self.epoch.hash(hasher);
+        self.offset.hash(hasher);
         self.view_change.hash(hasher);
         self.last_block.hash(hasher);
     }
@@ -94,14 +98,16 @@ impl Hashable for ChainInfo {
 #[derive(Debug, Clone)]
 enum OutputKey {
     MacroBlock {
-        /// Block Height.
-        height: u64,
+        /// Block Epoch.
+        epoch: u64,
         /// Merkle Tree path inside block.
         path: MerklePath,
     },
     MicroBlock {
+        /// Block Epoch.
+        epoch: u64,
         /// Block Height.
-        height: u64,
+        offset: u32,
         /// Transaction number.
         tx_id: u32,
         /// Output number.
@@ -122,18 +128,14 @@ pub(crate) struct Balance {
     pub block_reward: i64,
 }
 
+/// A special offset used to tore Macro Blocks on the disk.
+const MACRO_BLOCK_OFFSET: u32 = 4294967295u32;
+
 #[derive(Debug, Default, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
-pub(crate) struct LSN(u64); // use `struct` to disable explicit casts.
-const INITIAL_LSN: LSN = LSN(0);
+pub(crate) struct LSN(pub(crate) u64, pub(crate) u32); // use `struct` to disable explicit casts.
+const INITIAL_LSN: LSN = LSN(0, 0);
 
-/// Create LSN for MultiVersionedMap from height.
-fn lsn_for_height(height: u64) -> LSN {
-    // The first block has height=0.
-    // Shift LSN to reserve 0 value for a point before the first block.
-    LSN(height + 1)
-}
-
-type BlockByHashMap = MultiVersionedMap<Hash, u64, LSN>;
+type BlockByHashMap = MultiVersionedMap<Hash, LSN, LSN>;
 type OutputByHashMap = MultiVersionedMap<Hash, OutputKey, LSN>;
 type BalanceMap = MultiVersionedMap<(), Balance, LSN>;
 type ValidatorsActivity = MultiVersionedMap<pbc::PublicKey, ValidatorAwardState, LSN>;
@@ -166,31 +168,23 @@ pub struct Blockchain {
     /// Equals to the number of macro blocks in the blockchain.
     /// 1-based indexed - the genetic macro block starts epoch #1.
     epoch: u64,
-    /// Zero-indexed identifier of the last macro block.
-    last_macro_block_height: u64,
-    /// A timestamp from the last macro block.
-    last_macro_block_timestamp: SystemTime,
+    /// Current block number within the epoch.
+    offset: u32,
     /// Last election result.
     election_result: ElectionResult,
-    //
-    // Consensus information.
-    //
-    /// Last saved view change, if view change was happen at current height,
+    /// Last saved view change, if view change was happen at current offset,
     /// and we was not leader.
     view_change_proof: Option<ViewChangeProof>,
+    /// A timestamp from the last macro block.
+    last_macro_block_timestamp: SystemTime,
+    /// Copy of a block hash from the latest registered block.
+    last_block_hash: Hash,
+
     //
     // Service awards.
     //
     awards: Awards,
     epoch_activity: ValidatorsActivity,
-
-    //
-    // Height Information.
-    //
-    /// The number of blocks in this blockchain.
-    height: u64,
-    /// Copy of a block hash from the latest registered block.
-    last_block_hash: Hash,
 }
 
 impl Blockchain {
@@ -242,26 +236,17 @@ impl Blockchain {
         // Epoch Information.
         //
         let epoch: u64 = 0;
-        let last_macro_block_height: u64 = 0;
-        let last_macro_block_timestamp = UNIX_EPOCH;
-        let election_result = ElectionResult::default();
-
-        //
-        // Consensus information.
-        //
+        let offset: u32 = 0;
         let view_change_proof = None;
+        let election_result = ElectionResult::default();
+        let last_macro_block_timestamp = UNIX_EPOCH;
+        let last_block_hash = Hash::digest("genesis");
 
         //
         // Service awards.
         //
         let awards = Awards::new(cfg.awards_difficulty);
         let epoch_activity = MultiVersionedMap::new();
-
-        //
-        // Height Information.
-        //
-        let height: u64 = 0;
-        let last_block_hash = Hash::digest("genesis");
 
         let mut blockchain = Blockchain {
             cfg,
@@ -271,14 +256,13 @@ impl Blockchain {
             balance,
             escrow,
             epoch,
-            last_macro_block_height,
-            last_macro_block_timestamp,
+            offset,
             election_result,
             view_change_proof,
+            last_macro_block_timestamp,
+            last_block_hash,
             awards,
             epoch_activity,
-            height,
-            last_block_hash,
         };
 
         blockchain.recover(genesis, timestamp)?;
@@ -301,8 +285,8 @@ impl Blockchain {
             debug!("Creating a new blockchain...");
             self.push_macro_block(genesis, timestamp)?;
             info!(
-                "Initialized a new blockchain: height={}, last_block={}",
-                self.height, self.last_block_hash
+                "Initialized a new blockchain: epoch={}, offset={}, last_block={}",
+                self.epoch, self.offset, self.last_block_hash
             );
             return Ok(());
         };
@@ -325,32 +309,40 @@ impl Blockchain {
         }
 
         info!(
-            "Recovered blockchain from the disk: height={}, last_block={}",
-            self.height, self.last_block_hash
+            "Recovered blockchain from the disk: epoch={}, offset={}, last_block={}",
+            self.epoch, self.offset, self.last_block_hash
         );
 
         Ok(())
     }
 
     fn recover_block(&mut self, block: Block, timestamp: SystemTime) -> Result<(), Error> {
-        debug!(
-            "Recovering a block from the disk: height={}, block={}",
-            block.base_header().height,
-            Hash::digest(&block)
-        );
         // Skip validate_macro_block()/validate_micro_block().
         match block {
             Block::MicroBlock(block) => {
+                debug!(
+                    "Recovering a micro block from the disk: epoch={}, offset={}, block={}",
+                    block.header.epoch,
+                    block.header.offset,
+                    Hash::digest(&block)
+                );
                 if cfg!(debug_assertions) {
                     self.validate_micro_block(&block, timestamp)?
                 }
-                let _ = self.register_micro_block(block, timestamp);
+                let lsn = LSN(block.header.epoch, block.header.offset);
+                let _ = self.register_micro_block(lsn, block, timestamp);
             }
             Block::MacroBlock(block) => {
+                debug!(
+                    "Recovering a macro block from the disk: epoch={}, block={}",
+                    block.header.epoch,
+                    Hash::digest(&block)
+                );
                 if cfg!(debug_assertions) {
                     self.validate_macro_block(&block, timestamp)?
                 }
-                let _ = self.register_macro_block(block, timestamp);
+                let lsn = LSN(block.header.epoch, MACRO_BLOCK_OFFSET);
+                let _ = self.register_macro_block(lsn, block, timestamp);
             }
         }
         Ok(())
@@ -377,10 +369,10 @@ impl Blockchain {
     ) -> Result<Vec<(Output, u64)>, Error> {
         let mut wallet_state: Vec<(Output, u64)> = Vec::new();
         let mut epoch: u64 = 0;
-        for block in self.database.iter_starting(0) {
+        for block in self.database.iter_starting(LSN(epoch, 0)) {
             match block {
                 Block::MacroBlock(block) => {
-                    for (output, _) in block.body.outputs.leafs() {
+                    for (output, _) in block.outputs.leafs() {
                         if self.check_wallet_output(skey, pkey, &output) {
                             wallet_state.push((output.as_ref().clone(), epoch));
                         }
@@ -407,7 +399,8 @@ impl Blockchain {
     //
     pub fn election_info(&self) -> ElectionInfo {
         ElectionInfo {
-            height: self.height,
+            epoch: self.epoch,
+            offset: self.offset,
             view_change: self.view_change(),
             slots_count: self.cfg.max_slot_count as i64,
             current_leader: self.select_leader(self.view_change()),
@@ -418,10 +411,16 @@ impl Blockchain {
     // Database API.
     //----------------------------------------------------------------------------------------------
 
+    /// Return the current blockchain epoch.
+    #[inline(always)]
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
     /// Returns the number of blocks in the current epoch.
-    pub fn blocks_in_epoch(&self) -> u64 {
-        // Include the macro block itself.
-        self.height - self.last_macro_block_height
+    #[inline(always)]
+    pub fn offset(&self) -> u32 {
+        self.offset
     }
 
     /// Returns an iterator over UTXO hashes.
@@ -437,40 +436,30 @@ impl Blockchain {
     /// Resolve UTXO by hash.
     pub fn output_by_hash(&self, output_hash: &Hash) -> Result<Option<Output>, Error> {
         match self.output_by_hash.get(output_hash) {
-            Some(OutputKey::MacroBlock { height, path }) => {
-                let block = &self.block_by_height(*height)?;
-                match block {
-                    Block::MacroBlock(MacroBlock { ref body, .. }) => {
-                        if let Some(output) = body.outputs.lookup(path) {
-                            Ok(Some(output.as_ref().clone()))
-                        } else {
-                            Ok(None) // Pruned.
-                        }
-                    }
-                    Block::MicroBlock(_) => panic!("Corrupted outputs_by_hash (Macro-0)"),
+            Some(OutputKey::MacroBlock { epoch, path }) => {
+                let block = &self.macro_block(*epoch)?;
+                if let Some(output) = block.outputs.lookup(path) {
+                    Ok(Some(output.as_ref().clone()))
+                } else {
+                    Ok(None) // Pruned.
                 }
             }
             Some(OutputKey::MicroBlock {
-                height,
+                epoch,
+                offset,
                 tx_id,
                 txout_id,
             }) => {
-                let block = &self.block_by_height(*height)?;
-                match block {
-                    Block::MacroBlock(_) => panic!("Corrupted outputs_by_hash (Micro-0)"),
-                    Block::MicroBlock(MicroBlock {
-                        ref transactions, ..
-                    }) => {
-                        let tx = transactions
-                            .get(*tx_id as usize)
-                            .expect("Corrupted outputs_by_hash (Micro-2)");
-                        let output = tx
-                            .txouts()
-                            .get(*txout_id as usize)
-                            .expect("Corrupted outputs_by_hash (Micro-3)");
-                        Ok(Some(output.clone()))
-                    }
-                }
+                let block = self.micro_block(*epoch, *offset)?;
+                let tx = block
+                    .transactions
+                    .get(*tx_id as usize)
+                    .expect("Corrupted outputs_by_hash (Micro-2)");
+                let output = tx
+                    .txouts()
+                    .get(*txout_id as usize)
+                    .expect("Corrupted outputs_by_hash (Micro-3)");
+                Ok(Some(output.clone()))
             }
             None => Ok(None),
         }
@@ -478,16 +467,25 @@ impl Blockchain {
 
     /// Checks whether a block exists or not.
     pub fn contains_block(&self, block_hash: &Hash) -> bool {
-        if let Some(_height) = self.block_by_hash.get(block_hash) {
+        if let Some(_lsn) = self.block_by_hash.get(block_hash) {
             return true;
         }
         return false;
     }
 
-    /// Get a block by height.
-    pub fn block_by_height(&self, height: u64) -> Result<Block, Error> {
-        assert!(height < self.height);
-        Ok((self.database.get(height)?).expect("block exists"))
+    /// Get a block by position.
+    fn block(&self, lsn: LSN) -> Result<Block, Error> {
+        Ok((self.database.get(lsn)?).expect("block exists"))
+    }
+
+    /// Get a micro block by offset.
+    pub fn micro_block(&self, epoch: u64, offset: u32) -> Result<MicroBlock, Error> {
+        Ok(self.block(LSN(epoch, offset))?.unwrap_micro())
+    }
+
+    /// Get a block by offset.
+    pub fn macro_block(&self, epoch: u64) -> Result<MacroBlock, Error> {
+        Ok(self.block(LSN(epoch, MACRO_BLOCK_OFFSET))?.unwrap_macro())
     }
 
     /// Return iterator over saved blocks.
@@ -495,18 +493,12 @@ impl Blockchain {
         self.database.iter()
     }
 
-    /// Returns blocks history starting from block_hash + 1, limited by count.
-    pub fn blocks_range(&self, starting_height: u64, count: u64) -> Vec<Block> {
+    /// Returns blocks history starting for epoch.
+    pub fn blocks_range(&self, epoch: u64, offset: u32, count: u64) -> Vec<Block> {
         self.database
-            .iter_starting(starting_height)
+            .iter_starting(LSN(epoch, offset))
             .take(count as usize)
             .collect()
-    }
-
-    /// Return the last block.
-    pub fn last_block(&self) -> Result<Block, Error> {
-        assert!(self.height > 0);
-        Ok(self.database.get(self.height - 1)?.expect("block exists"))
     }
 
     /// Return leader public key for specific view_change number.
@@ -534,16 +526,7 @@ impl Blockchain {
     /// Returns true if peer is validator in current epoch.
     #[inline]
     pub fn is_validator(&self, peer: &pbc::PublicKey) -> bool {
-        self.validators()
-            .iter()
-            .find(|item| item.0 == *peer)
-            .is_some()
-    }
-
-    /// Returns the last block height.
-    #[inline]
-    pub fn last_macro_block_height(&self) -> u64 {
-        self.last_macro_block_height
+        self.election_result.is_validator(peer)
     }
 
     /// Return the timestamp from the last macro block.
@@ -561,20 +544,8 @@ impl Blockchain {
     /// Return the last block hash.
     #[inline(always)]
     pub fn last_block_hash(&self) -> Hash {
-        assert!(self.height > 0);
+        assert!(self.epoch > 0);
         self.last_block_hash
-    }
-
-    /// Return the current blockchain height.
-    #[inline(always)]
-    pub fn height(&self) -> u64 {
-        self.height
-    }
-
-    /// Return the current blockchain epoch.
-    #[inline(always)]
-    pub fn epoch(&self) -> u64 {
-        self.epoch
     }
 
     ///
@@ -614,7 +585,7 @@ impl Blockchain {
         self.election_result.view_change
     }
 
-    /// Returns proof of last view change, if it happen on current height.
+    /// Returns proof of last view change, if it happen on current offset.
     pub fn view_change_proof(&self) -> &Option<ViewChangeProof> {
         &self.view_change_proof
     }
@@ -678,7 +649,7 @@ impl Blockchain {
             let activity = if activity {
                 ValidatorAwardState::Active
             } else {
-                ValidatorAwardState::FailedAt(self.epoch, self.height())
+                ValidatorAwardState::FailedAt(self.epoch, self.offset())
             };
 
             // multiple validators can have single wallet.
@@ -738,18 +709,18 @@ impl Blockchain {
     }
 
     /// Return election result, for specific moment of history, in past.
-    pub fn election_result_by_height(
+    pub fn election_result_by_offset(
         &self,
-        height: u64,
+        offset: u32,
     ) -> Result<ElectionResult, BlockchainError> {
-        assert!(
-            height > self.last_macro_block_height(),
-            "Election info for past epoch."
-        );
-        assert!(height < self.height(), "Election info from future height.");
+        assert!(self.epoch > 0);
+        assert!(offset <= self.offset, "Election info from future offset.");
         let mut election = self.election_result();
-        let block = self.block_by_height(height - 1)?;
-        election.random = block.base_header().random;
+        election.random = if offset == 0 {
+            self.macro_block(self.epoch - 1)?.header.random
+        } else {
+            self.micro_block(self.epoch, offset - 1)?.header.random
+        };
         Ok(election)
     }
 
@@ -773,13 +744,15 @@ impl Blockchain {
         //
         // Write the macro block to the disk.
         //
+        assert_eq!(self.epoch, block.header.epoch);
+        let lsn = LSN(self.epoch, MACRO_BLOCK_OFFSET);
         self.database
-            .insert(self.height, Block::MacroBlock(block.clone()))?;
+            .insert(lsn, Block::MacroBlock(block.clone()))?;
 
         //
         // Update in-memory indexes and metadata.
         //
-        let (inputs, outputs) = self.register_macro_block(block, timestamp)?;
+        let (inputs, outputs) = self.register_macro_block(lsn, block, timestamp)?;
 
         Ok((inputs, outputs))
     }
@@ -789,18 +762,18 @@ impl Blockchain {
     ///
     fn register_macro_block(
         &mut self,
+        lsn: LSN,
         block: MacroBlock,
         timestamp: SystemTime,
     ) -> Result<(Vec<Output>, Vec<Output>), BlockchainError> {
         let block_hash = Hash::digest(&block);
-        assert_eq!(self.height, block.header.base.height);
-        let height = self.height;
-        let lsn = lsn_for_height(height);
+        assert_eq!(self.epoch, block.header.epoch);
+        let epoch = block.header.epoch;
 
         //
         // Prepare inputs.
         //
-        let input_hashes = block.body.inputs;
+        let input_hashes = block.inputs;
         let mut inputs: Vec<Output> = Vec::with_capacity(input_hashes.len());
         for input_hash in &input_hashes {
             let input = self.output_by_hash(input_hash)?.expect("Missing output");
@@ -812,24 +785,21 @@ impl Blockchain {
         //
         let mut outputs: Vec<Output> = Vec::new();
         let mut output_keys: Vec<OutputKey> = Vec::new();
-        for (output, path) in block.body.outputs.leafs() {
+        for (output, path) in block.outputs.leafs() {
             let output = output.as_ref().clone();
             outputs.push(output);
-            let output_key = OutputKey::MacroBlock {
-                height: self.height,
-                path,
-            };
+            let output_key = OutputKey::MacroBlock { epoch, path };
             output_keys.push(output_key);
         }
 
         // update award (skip genesis).
-        if height > 0 {
+        if epoch > 0 {
             let validators_activity = self
-                .epoch_activity_from_macro_block(&block.body.activity_map)
+                .epoch_activity_from_macro_block(&block.header.activity_map)
                 .unwrap();
             self.awards
                 .finalize_epoch(self.cfg.service_award_per_epoch, validators_activity);
-            let _ = self.awards.check_winners(block.header.base.random.rand);
+            let _ = self.awards.check_winners(block.header.random.rand);
         }
         //
         // Register block.
@@ -843,7 +813,7 @@ impl Blockchain {
             &outputs,
             block.header.gamma,
             block.header.block_reward,
-            block.header.base.random,
+            block.header.random,
             timestamp,
         );
 
@@ -851,19 +821,20 @@ impl Blockchain {
         // Update metadata.
         //
         self.epoch += 1;
-        self.last_macro_block_height = height;
-        self.last_macro_block_timestamp = block.header.base.timestamp;
+        self.offset = 0;
+        self.last_macro_block_timestamp = block.header.timestamp;
         self.election_result = election::select_validators_slots(
             self.escrow
                 .get_stakers_majority(self.epoch, self.cfg.min_stake_amount),
-            block.header.base.random,
+            block.header.random,
             self.cfg.max_slot_count,
         );
         metrics::EPOCH.inc();
+        metrics::OFFSET.set(0);
 
         info!(
-            "Registered a macro block: height={}, block={}",
-            height, block_hash
+            "Registered a macro block: epoch={}, block={}",
+            epoch, block_hash
         );
         debug!("Validators: {:?}", &self.validators());
         for (key, stake) in self.validators().iter() {
@@ -904,13 +875,16 @@ impl Blockchain {
         //
         // Write the micro block to the disk.
         //
+        assert_eq!(self.epoch, block.header.epoch);
+        assert_eq!(self.offset, block.header.offset);
+        let lsn = LSN(self.epoch, self.offset);
         self.database
-            .insert(self.height, Block::MicroBlock(block.clone()))?;
+            .insert(lsn, Block::MicroBlock(block.clone()))?;
 
         //
         // Update in-memory indexes and metadata.
         //
-        let (inputs, outputs) = self.register_micro_block(block, timestamp)?;
+        let (inputs, outputs) = self.register_micro_block(lsn, block, timestamp)?;
 
         Ok((inputs, outputs))
     }
@@ -931,15 +905,15 @@ impl Blockchain {
         random: pbc::VRF,
         _timestamp: SystemTime,
     ) {
-        let height = self.height;
+        let epoch = self.epoch;
 
         //
         // Update block_by_hash index.
         //
-        if let Some(_) = self.block_by_hash.insert(lsn, block_hash, height) {
+        if let Some(_) = self.block_by_hash.insert(lsn, block_hash, lsn) {
             panic!(
-                "Block hash collision: height={}, block={}",
-                height, block_hash
+                "Block hash collision: epoch={}, block={}",
+                epoch, block_hash
             );
         }
         assert_eq!(self.block_by_hash.current_lsn(), lsn);
@@ -954,8 +928,8 @@ impl Blockchain {
             debug_assert_eq!(input_hash, &Hash::digest(input));
             if self.output_by_hash.remove(lsn, input_hash).is_none() {
                 panic!(
-                    "Missing input UTXO: height={}, block={}, utxo={}",
-                    height, block_hash, &input_hash
+                    "Missing input UTXO: epoch={}, block={}, utxo={}",
+                    epoch, block_hash, &input_hash
                 );
             }
 
@@ -975,8 +949,8 @@ impl Blockchain {
             }
 
             debug!(
-                "Pruned UXTO: height={}, block={}, utxo={}",
-                height, block_hash, input_hash
+                "Pruned UXTO: epoch={}, block={}, utxo={}",
+                epoch, block_hash, input_hash
             );
         }
 
@@ -992,8 +966,8 @@ impl Blockchain {
                 .insert(lsn, output_hash.clone(), output_key)
             {
                 panic!(
-                    "UTXO hash collision: height={}, block={}, utxo={}",
-                    height, &block_hash, &output_hash
+                    "UTXO hash collision: epoch={}, block={}, utxo={}",
+                    epoch, &block_hash, &output_hash
                 );
             }
             assert_eq!(self.output_by_hash.current_lsn(), lsn);
@@ -1020,8 +994,8 @@ impl Blockchain {
             }
 
             debug!(
-                "Registered UXTO: height={}, block={}, utxo={}",
-                height, &block_hash, &output_hash
+                "Registered UXTO: epoch={}, block={}, utxo={}",
+                epoch, &block_hash, &output_hash
             );
         }
 
@@ -1032,8 +1006,8 @@ impl Blockchain {
         // Check the block monetary balance.
         if fee_a(block_reward) + burned - created != &gamma * (*G) {
             panic!(
-                "Invalid block monetary balance: height={}, block={}",
-                height, &block_hash
+                "Invalid block monetary balance: epoch={}, block={}",
+                epoch, &block_hash
             )
         }
 
@@ -1047,8 +1021,8 @@ impl Blockchain {
         };
         if fee_a(balance.block_reward) + balance.burned - balance.created != &balance.gamma * (*G) {
             panic!(
-                "Invalid global monetary balance: height={}, block={}",
-                height, &block_hash
+                "Invalid global monetary balance: epoch={}, block={}",
+                epoch, &block_hash
             );
         }
         self.balance.insert(lsn, (), balance);
@@ -1060,8 +1034,8 @@ impl Blockchain {
         self.last_block_hash = block_hash;
         self.reset_view_change();
         self.election_result.random = random;
-        self.height += 1;
-        metrics::HEIGHT.set(self.height as i64);
+        self.offset += 1;
+        metrics::OFFSET.set(self.offset as i64);
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
     }
 
@@ -1070,13 +1044,15 @@ impl Blockchain {
     ///
     fn register_micro_block(
         &mut self,
+        lsn: LSN,
         block: MicroBlock,
         timestamp: SystemTime,
     ) -> Result<(Vec<Output>, Vec<Output>), BlockchainError> {
-        assert_eq!(self.height, block.base.height);
-        let height = self.height;
+        assert_eq!(self.epoch, block.header.epoch);
+        assert_eq!(self.offset, block.header.offset);
+        let epoch = self.epoch;
+        let offset = self.offset;
         let block_hash = Hash::digest(&block);
-        let lsn = lsn_for_height(self.height());
 
         //
         // Prepare inputs && outputs.
@@ -1098,7 +1074,8 @@ impl Blockchain {
             for (txout_id, output) in tx.txouts().iter().enumerate() {
                 assert!(txout_id < std::u32::MAX as usize);
                 let output_key = OutputKey::MicroBlock {
-                    height,
+                    epoch,
+                    offset,
                     tx_id: tx_id as u32,
                     txout_id: txout_id as u32,
                 };
@@ -1135,17 +1112,17 @@ impl Blockchain {
         // Update service awards
         //
         // Set skipped validators to inactive.
-        for skiped_view_change in 0..block.base.view_change {
+        for skiped_view_change in 0..block.header.view_change {
             let leader = self.election_result.select_leader(skiped_view_change);
             self.epoch_activity.insert(
                 lsn,
                 leader,
-                ValidatorAwardState::FailedAt(self.epoch(), self.height()),
+                ValidatorAwardState::FailedAt(self.epoch(), self.offset()),
             );
         }
 
         // set current leader to active, if it was unknown.
-        let leader = self.election_result.select_leader(block.base.view_change);
+        let leader = self.election_result.select_leader(block.header.view_change);
         if self.epoch_activity.get(&leader).is_none() {
             self.epoch_activity
                 .insert(lsn, leader, ValidatorAwardState::Active);
@@ -1163,7 +1140,7 @@ impl Blockchain {
             &outputs,
             gamma,
             block_reward,
-            block.base.random,
+            block.header.random,
             timestamp,
         );
 
@@ -1171,11 +1148,12 @@ impl Blockchain {
         // Update metadata.
         //
         self.election_result.view_change = 0;
-        self.election_result.random = block.base.random;
+        self.election_result.random = block.header.random;
 
         info!(
-            "Registered a micro block: height={}, block={}, inputs={}, outputs={}",
-            height,
+            "Registered a micro block: epoch={}, offset={}, block={}, inputs={}, outputs={}",
+            epoch,
+            offset,
             block_hash,
             inputs.len(),
             outputs.len()
@@ -1185,25 +1163,25 @@ impl Blockchain {
     }
 
     pub fn pop_micro_block(&mut self) -> Result<(Vec<Output>, Vec<Output>), BlockchainError> {
-        assert!(self.height > 1);
-        let height = self.height - 1;
-        assert_ne!(
-            height, self.last_macro_block_height,
-            "attempt to revert the macro block"
-        );
-        let lsn = lsn_for_height(height - 1);
-
+        assert!(self.epoch > 0, "doesn't work for genesis");
+        assert!(self.offset > 0, "attempt to revert the macro block");
+        let offset = self.offset - 1;
         //
         // Remove from the disk.
         //
-        let block = self.block_by_height(height)?;
-        let block = if let Block::MicroBlock(block) = block {
-            block
+        let block = self.micro_block(self.epoch, offset)?;
+        let (previous, random, lsn) = if offset == 0 {
+            // Previous block is Macro Block.
+            let block = self.macro_block(self.epoch - 1)?;
+            let lsn = LSN(self.epoch - 1, MACRO_BLOCK_OFFSET);
+            (Hash::digest(&block), block.header.random, lsn)
         } else {
-            panic!("Expected micro block");
+            // Previous block is Micro Block.
+            let block = self.micro_block(self.epoch, offset - 1)?;
+            let lsn = LSN(self.epoch, offset - 1);
+            (Hash::digest(&block), block.header.random, lsn)
         };
-        let previous = self.block_by_height(height - 1)?;
-        self.database.remove(height)?;
+        self.database.remove(LSN(self.epoch, offset))?;
         let block_hash = Hash::digest(&block);
 
         //
@@ -1219,13 +1197,11 @@ impl Blockchain {
         assert!(self.output_by_hash.current_lsn() <= lsn);
         assert!(self.balance.current_lsn() <= lsn);
         assert!(self.escrow.current_lsn() <= lsn);
-        self.height = self.height - 1;
-        assert_eq!(self.height, height);
-        assert_eq!(lsn_for_height(self.height - 1), lsn);
-        self.last_block_hash = Hash::digest(&previous);
-        self.election_result.random = previous.base_header().random;
+        self.offset = offset;
+        self.last_block_hash = previous;
+        self.election_result.random = random;
         self.reset_view_change();
-        metrics::HEIGHT.set(self.height as i64);
+        metrics::OFFSET.set(self.offset as i64);
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
 
         let mut created: Vec<Output> = Vec::new();
@@ -1235,23 +1211,24 @@ impl Blockchain {
                 let input = self.output_by_hash(input_hash)?.expect("exists");
                 created.push(input);
                 debug!(
-                    "Restored UXTO: height={}, block={}, utxo={}",
-                    height, &block_hash, &input_hash
+                    "Restored UXTO: epoch={}, block={}, utxo={}",
+                    self.epoch, &block_hash, &input_hash
                 );
             }
             for output in tx.txouts() {
                 pruned.push(output.clone());
                 let output_hash = Hash::digest(output);
                 debug!(
-                    "Reverted UTXO: height={}, block={}, utxo={}",
-                    height, &block_hash, &output_hash
+                    "Reverted UTXO: epoch={}, block={}, utxo={}",
+                    self.epoch, &block_hash, &output_hash
                 );
             }
         }
 
         info!(
-            "Reverted a micro block: height={}, block={}, inputs={}, outputs={}",
-            self.height,
+            "Reverted a micro block: epoch={}, offset={}, block={}, inputs={}, outputs={}",
+            self.epoch,
+            offset,
             &block_hash,
             created.len(),
             pruned.len()
@@ -1270,8 +1247,8 @@ pub fn sign_fake_macro_block(block: &mut MacroBlock, chain: &Blockchain, keychai
         signatures.insert(keychain.network_pkey.clone(), sig);
     }
     let (multisig, multisigmap) = create_multi_signature(&validators, &signatures);
-    block.body.multisig = multisig;
-    block.body.multisigmap = multisigmap;
+    block.multisig = multisig;
+    block.multisigmap = multisigmap;
 }
 
 pub fn create_fake_macro_block(
@@ -1279,15 +1256,13 @@ pub fn create_fake_macro_block(
     keychains: &[KeyChain],
     timestamp: SystemTime,
 ) -> MacroBlock {
-    let version = VERSION;
     let previous = chain.last_block_hash().clone();
-    let height = chain.height();
+    let epoch = chain.epoch();
     let view_change = chain.view_change();
     let key = chain.select_leader(view_change);
     let keys = keychains.iter().find(|p| p.network_pkey == key).unwrap();
     let seed = mix(chain.last_random(), view_change);
     let random = pbc::make_VRF(&keys.network_skey, &seed);
-    let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
     let mut block_reward = chain.cfg().block_reward;
 
     let data = PaymentPayloadData::Comment(format!("Block reward"));
@@ -1301,13 +1276,17 @@ pub fn create_fake_macro_block(
     }
 
     let mut block = MacroBlock::new(
-        base,
-        -gamma,
+        previous,
+        epoch,
+        view_change,
+        keys.network_pkey,
+        random,
+        timestamp,
         block_reward,
         BitVector::ones(keychains.len()),
+        -gamma,
         &[],
         &txs,
-        keys.network_pkey,
     );
     sign_fake_macro_block(&mut block, chain, keychains);
     block
@@ -1328,8 +1307,8 @@ pub fn create_fake_micro_block(
     keychains: &[KeyChain],
     timestamp: SystemTime,
 ) -> (MicroBlock, Vec<Hash>, Vec<Hash>) {
-    let version: u64 = VERSION;
-    let height = chain.height();
+    let epoch = chain.epoch();
+    let offset = chain.offset();
     let view_change = chain.view_change();
     let key = chain.select_leader(view_change);
     let keys = keychains.iter().find(|p| p.network_pkey == key).unwrap();
@@ -1412,8 +1391,17 @@ pub fn create_fake_micro_block(
 
     let transactions: Vec<Transaction> = vec![coinbase_tx.into(), tx.into()];
 
-    let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-    let mut block = MicroBlock::new(base, None, transactions, keys.network_pkey);
+    let mut block = MicroBlock::new(
+        previous,
+        epoch,
+        offset,
+        view_change,
+        None,
+        keys.network_pkey,
+        random,
+        timestamp,
+        transactions,
+    );
     block.sign(&keys.network_skey, &keys.network_pkey);
     (block, input_hashes, output_hashes)
 }
@@ -1423,15 +1411,14 @@ pub fn create_micro_block_with_coinbase(
     keychains: &[KeyChain],
     timestamp: SystemTime,
 ) -> MicroBlock {
-    let version = VERSION;
     let previous = chain.last_block_hash().clone();
-    let height = chain.height();
+    let epoch = chain.epoch();
+    let offset = chain.offset();
     let view_change = chain.view_change();
     let key = chain.select_leader(view_change);
     let keys = keychains.iter().find(|p| p.network_pkey == key).unwrap();
     let seed = mix(chain.last_random(), view_change);
     let random = pbc::make_VRF(&keys.network_skey, &seed);
-    let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
     let mut txouts: Vec<Output> = Vec::new();
     let mut gamma = Fr::zero();
 
@@ -1466,7 +1453,17 @@ pub fn create_micro_block_with_coinbase(
         txouts,
     };
     let txs = vec![coinbase.into()];
-    let mut block = MicroBlock::new(base, None, txs, keys.network_pkey);
+    let mut block = MicroBlock::new(
+        previous,
+        epoch,
+        offset,
+        view_change,
+        None,
+        keys.network_pkey,
+        random,
+        timestamp,
+        txs,
+    );
     block.sign(&keys.network_skey, &keys.network_pkey);
     block
 }
@@ -1498,7 +1495,6 @@ pub mod tests {
         let blockchain = Blockchain::testing(cfg, block1.clone(), timestamp)
             .expect("Failed to create blockchain");
         let outputs: Vec<Output> = block1
-            .body
             .outputs
             .leafs()
             .iter()
@@ -1520,10 +1516,6 @@ pub mod tests {
             assert_eq!(*stake, blockchain.cfg.min_stake_amount);
         }
         assert_eq!(blockchain.last_block_hash(), Hash::digest(&block1));
-        assert_eq!(
-            Hash::digest(&blockchain.last_block().unwrap()),
-            Hash::digest(&block1)
-        );
 
         let blocks2: Vec<Block> = blockchain.blocks().collect();
         assert_eq!(blocks2.len(), 1);
@@ -1533,7 +1525,7 @@ pub mod tests {
         assert!(!blockchain.contains_block(&Hash::digest("test")));
 
         assert_eq!(
-            Hash::digest(&blockchain.block_by_height(0).unwrap()),
+            Hash::digest(&blockchain.block(LSN(0, MACRO_BLOCK_OFFSET)).unwrap()),
             Hash::digest(&block1)
         );
 
@@ -1542,7 +1534,7 @@ pub mod tests {
             .output_by_hash(&Hash::digest("test"))
             .expect("no disk errors")
             .is_none());
-        for (output, _path) in block1.body.outputs.leafs() {
+        for (output, _path) in block1.outputs.leafs() {
             let output_hash = Hash::digest(&output);
             let output2 = blockchain
                 .output_by_hash(&output_hash)
@@ -1581,12 +1573,12 @@ pub mod tests {
             let (block, input_hashes, output_hashes) =
                 create_fake_micro_block(&mut chain, &keychains, timestamp);
             let hash = Hash::digest(&block);
-            let height = chain.height();
+            let offset = chain.offset();
             chain
                 .push_micro_block(block, timestamp)
                 .expect("block is valid");
             assert_eq!(hash, chain.last_block_hash());
-            assert_eq!(height + 1, chain.height());
+            assert_eq!(offset + 1, chain.offset());
             for input_hash in input_hashes {
                 assert!(!chain.contains_output(&input_hash));
             }
@@ -1600,12 +1592,12 @@ pub mod tests {
             timestamp += Duration::from_millis(1);
             let block = create_micro_block_with_coinbase(&mut chain, &keychains, timestamp);
             let hash = Hash::digest(&block);
-            let height = chain.height();
+            let offset = chain.offset();
             chain
                 .push_micro_block(block, timestamp)
                 .expect("block is valid");
             assert_eq!(hash, chain.last_block_hash());
-            assert_eq!(height + 1, chain.height());
+            assert_eq!(offset + 1, chain.offset());
 
             //
             // Key block.
@@ -1613,27 +1605,31 @@ pub mod tests {
             timestamp += Duration::from_millis(1);
             let block = create_fake_macro_block(&chain, &keychains, timestamp);
             let hash = Hash::digest(&block);
-            let height = chain.height();
+            let epoch = chain.epoch();
             chain
                 .push_macro_block(block, timestamp)
                 .expect("Invalid block");
             assert_eq!(hash, chain.last_block_hash());
-            assert_eq!(height + 1, chain.height());
+            assert_eq!(epoch + 1, chain.epoch());
+            assert_eq!(0, chain.offset());
         }
 
         //
         // Recovery.
         //
-        let height = chain.height();
+        let epoch = chain.epoch();
+        let offset = chain.offset();
+        let block_count = chain.blocks().count();
         let block_hash = chain.last_block_hash();
         let balance = chain.balance().clone();
         drop(chain);
         let database = ListDb::new(&temp_dir.path());
         let chain = Blockchain::with_db(cfg, database, genesis, timestamp)
             .expect("Failed to create blockchain");
-        assert_eq!(height, chain.height());
+        assert_eq!(epoch, chain.epoch());
+        assert_eq!(offset, chain.offset());
         assert_eq!(block_hash, chain.last_block_hash());
-        assert_eq!(chain.blocks().count() as u64, chain.height());
+        assert_eq!(block_count, chain.blocks().count());
         assert_eq!(&balance, chain.balance());
     }
 
@@ -1656,8 +1652,9 @@ pub mod tests {
         let mut chain = Blockchain::with_db(cfg.clone(), database, genesis.clone(), timestamp)
             .expect("Failed to create blockchain");
 
-        let height0 = chain.height();
-        let view_change0 = 0;
+        let epoch0 = chain.epoch();
+        let offset0 = chain.offset();
+        let count0 = chain.blocks().count();
         let block_hash0 = chain.last_block_hash();
         let balance0 = chain.balance().clone();
         let escrow0 = chain.escrow_info().clone();
@@ -1669,10 +1666,10 @@ pub mod tests {
         chain
             .push_micro_block(block1, timestamp)
             .expect("block is valid");
-        assert_eq!(height0 + 1, chain.height());
-        assert_eq!(view_change0, chain.view_change());
+        assert_eq!(count0 + 1, chain.blocks().count());
+        assert_eq!(offset0 + 1, chain.offset());
+        assert_eq!(0, chain.view_change());
         assert_ne!(block_hash0, chain.last_block_hash());
-        assert_eq!(chain.blocks().count() as u64, chain.height());
         assert_ne!(&balance0, chain.balance());
         for input_hash in &input_hashes1 {
             assert!(!chain.contains_output(input_hash));
@@ -1680,7 +1677,8 @@ pub mod tests {
         for output_hash in &output_hashes1 {
             assert!(chain.contains_output(output_hash));
         }
-        let height1 = chain.height();
+        let count1 = chain.blocks().count();
+        let offset1 = chain.offset();
         let block_hash1 = chain.last_block_hash();
         let balance1 = chain.balance().clone();
         let escrow1 = chain.escrow_info().clone();
@@ -1692,10 +1690,11 @@ pub mod tests {
         chain
             .push_micro_block(block2, timestamp)
             .expect("block is valid");
-        assert_eq!(height1 + 1, chain.height());
-        assert_eq!(view_change0, chain.view_change());
+        assert_eq!(epoch0, chain.epoch());
+        assert_eq!(offset1 + 1, chain.offset());
+        assert_eq!(0, chain.view_change());
+        assert_eq!(count1 + 1, chain.blocks().count());
         assert_ne!(block_hash1, chain.last_block_hash());
-        assert_eq!(chain.blocks().count() as u64, chain.height());
         assert_ne!(&balance1, chain.balance());
         for input_hash in &input_hashes2 {
             assert!(!chain.contains_output(input_hash));
@@ -1706,10 +1705,11 @@ pub mod tests {
 
         // Pop the last micro block.
         chain.pop_micro_block().expect("no disk errors");
-        assert_eq!(height1, chain.height());
-        assert_eq!(view_change0, chain.view_change());
+        assert_eq!(epoch0, chain.epoch());
+        assert_eq!(offset1, chain.offset());
+        assert_eq!(0, chain.view_change());
+        assert_eq!(count1, chain.blocks().count());
         assert_eq!(block_hash1, chain.last_block_hash());
-        assert_eq!(chain.blocks().count() as u64, chain.height());
         assert_eq!(&balance1, chain.balance());
         assert_eq!(escrow1, chain.escrow_info());
         for input_hash in &input_hashes2 {
@@ -1721,10 +1721,11 @@ pub mod tests {
 
         // Pop the previous micro block.
         chain.pop_micro_block().expect("no disk errors");
-        assert_eq!(height0, chain.height());
-        assert_eq!(view_change0, chain.view_change());
+        assert_eq!(epoch0, chain.epoch());
+        assert_eq!(offset0, chain.offset());
+        assert_eq!(0, chain.view_change());
+        assert_eq!(count0, chain.blocks().count());
         assert_eq!(block_hash0, chain.last_block_hash());
-        assert_eq!(chain.blocks().count() as u64, chain.height());
         assert_eq!(&balance0, chain.balance());
         assert_eq!(escrow0, chain.escrow_info());
         for input_hash in &input_hashes1 {
@@ -1741,11 +1742,19 @@ pub mod tests {
         let database = ListDb::new(&temp_dir.path());
         let chain = Blockchain::with_db(cfg, database, genesis, timestamp)
             .expect("Failed to create blockchain");
-        assert_eq!(height0, chain.height());
-        assert_eq!(view_change0, chain.view_change());
+        assert_eq!(epoch0, chain.epoch());
+        assert_eq!(offset0, chain.offset());
+        assert_eq!(0, chain.view_change());
+        assert_eq!(count0, chain.blocks().count());
         assert_eq!(block_hash0, chain.last_block_hash());
-        assert_eq!(chain.blocks().count() as u64, chain.height());
         assert_eq!(&balance0, chain.balance());
+        assert_eq!(escrow0, chain.escrow_info());
+        for input_hash in &input_hashes1 {
+            assert!(chain.contains_output(&input_hash));
+        }
+        for output_hash in &output_hashes1 {
+            assert!(!chain.contains_output(&output_hash));
+        }
     }
 
     #[test]
@@ -1759,10 +1768,11 @@ pub mod tests {
         let blocks = genesis(&keychains, stake, 10 * cfg.min_stake_amount, timestamp);
         let mut blockchain =
             Blockchain::testing(cfg, blocks, timestamp).expect("Failed to create blockchain");
-        let starting_height = blockchain.height();
+        let epoch = blockchain.epoch();
+        let starting_offset = blockchain.offset();
         // len of genesis
-        assert!(blockchain.height() > 0);
-        for _height in 2..12 {
+        assert!(blockchain.epoch() > 0);
+        for _offset in 2..12 {
             timestamp += Duration::from_millis(1);
             let block = create_micro_block_with_coinbase(&blockchain, &keychains, timestamp);
             blockchain
@@ -1770,12 +1780,18 @@ pub mod tests {
                 .expect("Invalid block");
         }
 
-        assert_eq!(blockchain.blocks_range(starting_height, 1).len(), 1);
+        assert_eq!(blockchain.blocks_range(epoch, starting_offset, 1).len(), 1);
 
-        assert_eq!(blockchain.blocks_range(starting_height, 4).len(), 4);
+        assert_eq!(blockchain.blocks_range(epoch, starting_offset, 4).len(), 4);
         // limit
-        assert_eq!(blockchain.blocks_range(starting_height, 20).len(), 10);
+        assert_eq!(
+            blockchain.blocks_range(epoch, starting_offset, 20).len(),
+            10
+        );
         // empty
-        assert_eq!(blockchain.blocks_range(blockchain.height(), 1).len(), 0);
+        assert_eq!(
+            blockchain.blocks_range(epoch, blockchain.offset(), 1).len(),
+            0
+        );
     }
 }

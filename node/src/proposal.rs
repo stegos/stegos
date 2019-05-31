@@ -27,9 +27,8 @@ use failure::Error;
 use log::*;
 use std::time::SystemTime;
 use stegos_blockchain::{
-    mix, BaseBlockHeader, BlockError, Blockchain, CoinbaseTransaction, MacroBlock, Output,
-    PaymentOutput, PaymentPayloadData, PublicPaymentOutput, ServiceAwardTransaction, Transaction,
-    VERSION,
+    mix, BlockError, Blockchain, CoinbaseTransaction, MacroBlock, Output, PaymentOutput,
+    PaymentPayloadData, PublicPaymentOutput, ServiceAwardTransaction, Transaction,
 };
 use stegos_consensus::MacroBlockProposal;
 use stegos_crypto::curve1174;
@@ -49,17 +48,13 @@ pub fn create_macro_block_proposal(
     let random = pbc::make_VRF(&network_skey, &seed);
 
     let previous = chain.last_block_hash();
-    let height = chain.height();
-    let epoch = chain.epoch() + 1;
-    let base = BaseBlockHeader::new(VERSION, previous, height, view_change, timestamp, random);
+    let epoch = chain.epoch();
     debug!(
-        "Creating a new macro block proposal: height={}, view_change={}, epoch={}",
-        height,
-        view_change,
-        chain.epoch() + 1,
+        "Creating a new macro block proposal: epoch={}, view_change={}",
+        epoch, view_change,
     );
 
-    let (activity_map, winner) = chain.awards_from_active_epoch(&base.random);
+    let (activity_map, winner) = chain.awards_from_active_epoch(&random);
 
     // Coinbase.
     let coinbase_tx = {
@@ -96,11 +91,15 @@ pub fn create_macro_block_proposal(
     }
 
     let block = MacroBlock::from_transactions(
-        base,
-        &transactions,
+        previous,
+        epoch,
+        view_change,
+        network_pkey.clone(),
+        random,
+        timestamp,
         block_reward,
         activity_map,
-        network_pkey.clone(),
+        &transactions,
     )
     .expect("Invalid block");
     let block_hash = Hash::digest(&block);
@@ -112,8 +111,8 @@ pub fn create_macro_block_proposal(
     };
 
     info!(
-        "Created a new macro block proposal: height={}, view_change={}, epoch={}, hash={}",
-        height, view_change, epoch, block_hash
+        "Created a new macro block proposal: epoch={}, view_change={}, epoch={}, hash={}",
+        epoch, view_change, epoch, block_hash
     );
 
     (block, block_proposal)
@@ -129,14 +128,14 @@ pub fn validate_proposed_macro_block(
     block_hash: &Hash,
     block_proposal: &MacroBlockProposal,
 ) -> Result<MacroBlock, Error> {
-    let height = block_proposal.header.base.height;
+    let epoch = block_proposal.header.epoch;
 
     // Ensure that block was produced at round lower than current.
-    if block_proposal.header.base.view_change > view_change {
+    if block_proposal.header.view_change > view_change {
         return Err(NodeBlockError::OutOfSyncViewChange(
-            height,
+            epoch,
             block_hash.clone(),
-            block_proposal.header.base.view_change,
+            block_proposal.header.view_change,
             view_change,
         )
         .into());
@@ -145,12 +144,12 @@ pub fn validate_proposed_macro_block(
     //
     // Validate timestamp.
     //
-    let block_timestamp = block_proposal.header.base.timestamp;
+    let block_timestamp = block_proposal.header.timestamp;
     let last_block_timestamp = chain.last_macro_block_timestamp();
     let current_timestamp = SystemTime::now();
     if block_timestamp <= last_block_timestamp {
         return Err(NodeBlockError::OutdatedBlock(
-            height,
+            epoch,
             block_hash.clone(),
             block_timestamp,
             last_block_timestamp,
@@ -161,7 +160,7 @@ pub fn validate_proposed_macro_block(
         let duration = block_timestamp.duration_since(current_timestamp).unwrap();
         if duration > cfg.macro_block_timeout {
             return Err(NodeBlockError::OutOfSyncTimestamp(
-                height,
+                epoch,
                 block_hash.clone(),
                 block_timestamp,
                 current_timestamp,
@@ -176,7 +175,7 @@ pub fn validate_proposed_macro_block(
     chain.validate_macro_block_header(block_hash, &block_proposal.header)?;
 
     // validate award.
-    let (activity_map, winner) = chain.awards_from_active_epoch(&block_proposal.header.base.random);
+    let (activity_map, winner) = chain.awards_from_active_epoch(&block_proposal.header.random);
 
     //
     // Validate transactions.
@@ -187,8 +186,8 @@ pub fn validate_proposed_macro_block(
     if let Some(Transaction::CoinbaseTransaction(tx)) = block_proposal.transactions.get(0) {
         tx.validate()?;
         if tx.block_reward != cfg.block_reward {
-            return Err(BlockError::InvalidBlockReward(
-                height,
+            return Err(BlockError::InvalidMacroBlockReward(
+                epoch,
                 block_hash.clone(),
                 tx.block_reward,
                 cfg.block_reward,
@@ -197,8 +196,8 @@ pub fn validate_proposed_macro_block(
         }
 
         if tx.block_fee != 0 {
-            return Err(NodeBlockError::InvalidBlockFee(
-                height,
+            return Err(BlockError::InvalidMacroBlockFee(
+                epoch,
                 block_hash.clone(),
                 tx.block_fee,
                 0,
@@ -250,26 +249,29 @@ pub fn validate_proposed_macro_block(
         }
     }
 
-    // TODO: support slashing && service awards.
     if block_proposal.transactions.len() > tx_len {
-        return Err(BlockError::InvalidBlockBalance(height, block_hash.clone()).into());
+        return Err(BlockError::InvalidBlockBalance(epoch, block_hash.clone()).into());
     }
 
     // Re-create original block.
-    let leader = chain.select_leader(block_proposal.header.base.view_change);
+    let leader = chain.select_leader(block_proposal.header.view_change);
     let block = MacroBlock::from_transactions(
-        block_proposal.header.base.clone(),
-        &block_proposal.transactions,
+        block_proposal.header.previous.clone(),
+        epoch,
+        view_change,
+        leader,
+        block_proposal.header.random,
+        block_proposal.header.timestamp,
         block_reward,
         activity_map,
-        leader,
+        &block_proposal.transactions,
     )?;
 
     // Check that block has the same hash.
     let expected_block_hash = Hash::digest(&block);
     if block_hash != &expected_block_hash {
         return Err(NodeBlockError::InvalidBlockProposal(
-            block.header.base.height,
+            block.header.epoch,
             expected_block_hash,
             block_hash.clone(),
         )

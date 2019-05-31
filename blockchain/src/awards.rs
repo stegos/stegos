@@ -30,8 +30,8 @@ use stegos_crypto::utils::print_nbits;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ValidatorAwardState {
-    /// Validator have failed at: epoch, height.
-    FailedAt(u64, u64),
+    /// Validator have failed at: epoch, offset.
+    FailedAt(u64, u32),
     Active,
 }
 
@@ -75,11 +75,11 @@ impl Awards {
         self.add_reward(reward);
         for (validator, state) in epoch_activity {
             match self.validators_activity.get(&validator) {
-                Some(ValidatorAwardState::FailedAt(epoch, height)) => {
+                Some(ValidatorAwardState::FailedAt(epoch, offset)) => {
                     trace!(
-                        "Found validator, that already failed his slot: epoch={}, height={}",
+                        "Found validator, that already failed his slot: epoch={}, offset={}",
                         epoch,
-                        height
+                        offset
                     );
                 }
                 _ => {

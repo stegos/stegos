@@ -33,6 +33,7 @@ use rand::{thread_rng, Rng};
 use std::path::Path;
 
 use super::block::Block;
+use super::blockchain::LSN;
 
 /// Database for storing Blocks in List maner.
 pub struct ListDb {
@@ -65,19 +66,19 @@ impl ListDb {
         }
     }
 
-    pub fn insert(&self, height: u64, block: Block) -> Result<(), Error> {
+    pub(crate) fn insert(&self, lsn: LSN, block: Block) -> Result<(), Error> {
         let data = block.into_buffer().expect("couldn't serialize block.");
 
         let mut batch = WriteBatch::default();
         // writebatch put fails if size exceeded u32::max, which is not our case.
-        batch.put(&Self::key_u64_to_bytes(height), &data)?;
+        batch.put(&Self::key(lsn), &data)?;
         self.database.write(batch)?;
         Ok(())
     }
 
     /// Get record by id.
-    pub fn get(&self, height: u64) -> Result<Option<Block>, Error> {
-        let key = Self::key_u64_to_bytes(height);
+    pub(crate) fn get(&self, lsn: LSN) -> Result<Option<Block>, Error> {
+        let key = Self::key(lsn);
         match self.database.get(&key)? {
             Some(buffer) => Ok(Some(Block::from_buffer(&buffer)?)),
             None => Ok(None),
@@ -85,32 +86,33 @@ impl ListDb {
     }
 
     /// Remove record by id.
-    pub fn remove(&self, height: u64) -> Result<(), Error> {
-        let key = Self::key_u64_to_bytes(height);
+    pub(crate) fn remove(&self, lsn: LSN) -> Result<(), Error> {
+        let key = Self::key(lsn);
         self.database.delete(&key)?;
         Ok(())
     }
 
     /// Create iterator that traverse fully block collection.
-    pub fn iter(&self) -> impl Iterator<Item = Block> {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = Block> {
         let mode = IteratorMode::Start;
         self.database
             .full_iterator(mode)
             .map(|(_, v)| Block::from_buffer(&*v).expect("couldn't deserialize block."))
     }
 
-    /// Create iterator starting from height and going forward.
-    pub fn iter_starting(&self, height: u64) -> impl Iterator<Item = Block> {
-        let key = Self::key_u64_to_bytes(height);
+    /// Create iterator starting from lsn and going forward.
+    pub(crate) fn iter_starting(&self, lsn: LSN) -> impl Iterator<Item = Block> {
+        let key = Self::key(lsn);
         let mode = IteratorMode::From(&key, Direction::Forward);
         self.database
             .iterator(mode)
             .map(|(_, v)| Block::from_buffer(&*v).expect("couldn't deserialize block."))
     }
 
-    fn key_u64_to_bytes(len: u64) -> [u8; 8] {
-        let mut bytes = [0u8; 8];
-        BigEndian::write_u64(&mut bytes, len);
+    fn key(lsn: LSN) -> [u8; 12] {
+        let mut bytes = [0u8; 12];
+        BigEndian::write_u64(&mut bytes[0..8], lsn.0);
+        BigEndian::write_u32(&mut bytes[8..12], lsn.1);
         bytes
     }
 }
@@ -118,21 +120,30 @@ impl ListDb {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::block::{BaseBlockHeader, MacroBlock};
+    use crate::block::MacroBlock;
+    use bitvector::BitVector;
     use std::time::SystemTime;
     use stegos_crypto::hash::Hash;
     use stegos_crypto::pbc;
 
     fn create_block(previous: Hash) -> Block {
         let (skey0, pkey0) = pbc::make_random_keys();
-        let version: u64 = 1;
         let epoch: u64 = 1;
         let timestamp = SystemTime::now();
 
         let random = pbc::make_VRF(&skey0, &Hash::digest("random"));
-        let base = BaseBlockHeader::new(version, previous, epoch, 0, timestamp, random);
-
-        let block = MacroBlock::empty(base, pkey0);
+        let activity_map = BitVector::new(0);
+        let block_reward = 0;
+        let block = MacroBlock::empty(
+            previous,
+            epoch,
+            0,
+            pkey0,
+            random,
+            timestamp,
+            block_reward,
+            activity_map,
+        );
         Block::MacroBlock(block)
     }
 
@@ -145,8 +156,8 @@ mod test {
         let blocks = vec![block1, block2, block3];
 
         let db = ListDb::testing();
-        for (height, block) in blocks.iter().enumerate() {
-            db.insert(height as u64, block.clone()).unwrap();
+        for (epoch, block) in blocks.iter().enumerate() {
+            db.insert(LSN(epoch as u64, 0), block.clone()).unwrap();
         }
 
         for (block, saved) in blocks.iter().zip(db.iter()) {
@@ -168,10 +179,10 @@ mod test {
         let blocks = vec![block1, block2, block3];
 
         let db = ListDb::testing();
-        for (height, block) in blocks.iter().enumerate() {
-            db.insert(height as u64, block.clone()).unwrap();
+        for (epoch, block) in blocks.iter().enumerate() {
+            db.insert(LSN(epoch as u64, 0), block.clone()).unwrap();
         }
-        for (block, saved) in blocks.iter().skip(2).zip(db.iter_starting(2)) {
+        for (block, saved) in blocks.iter().skip(2).zip(db.iter_starting(LSN(2, 0))) {
             assert_eq!(Hash::digest(block), Hash::digest(&saved));
         }
     }
@@ -187,8 +198,8 @@ mod test {
         }
 
         let db = ListDb::testing();
-        for (height, block) in blocks.iter().enumerate() {
-            db.insert(height as u64, block.clone()).unwrap();
+        for (epoch, block) in blocks.iter().enumerate() {
+            db.insert(LSN(epoch as u64, 0), block.clone()).unwrap();
         }
 
         for (block, saved) in blocks.iter().zip(db.iter()) {

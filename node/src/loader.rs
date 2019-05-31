@@ -31,30 +31,28 @@ use tokio_timer::clock;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct RequestBlocks {
-    pub starting_height: u64,
+    pub epoch: u64,
 }
 
 impl Hashable for RequestBlocks {
     fn hash(&self, state: &mut Hasher) {
-        self.starting_height.hash(state);
+        self.epoch.hash(state);
     }
 }
 
 impl RequestBlocks {
-    pub fn new(starting_height: u64) -> RequestBlocks {
-        Self { starting_height }
+    pub fn new(epoch: u64) -> RequestBlocks {
+        Self { epoch }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct ResponseBlocks {
-    pub height: u64,
     pub blocks: Vec<Block>,
 }
 
 impl Hashable for ResponseBlocks {
     fn hash(&self, state: &mut Hasher) {
-        self.height.hash(state);
         for block in &self.blocks {
             block.hash(state);
         }
@@ -62,8 +60,8 @@ impl Hashable for ResponseBlocks {
 }
 
 impl ResponseBlocks {
-    pub fn new(height: u64, blocks: Vec<Block>) -> ResponseBlocks {
-        Self { height, blocks }
+    pub fn new(blocks: Vec<Block>) -> ResponseBlocks {
+        Self { blocks }
     }
 }
 
@@ -135,14 +133,9 @@ impl NodeService {
             return Ok(());
         }
 
-        let start_height = self.chain.last_macro_block_height();
-        info!(
-            "Downloading blocks: from={}, start_height={}, our_height={}",
-            &from,
-            start_height,
-            self.chain.height()
-        );
-        let msg = ChainLoaderMessage::Request(RequestBlocks::new(start_height));
+        let epoch = self.chain.epoch();
+        info!("Downloading blocks: from={}, epoch={}", &from, epoch);
+        let msg = ChainLoaderMessage::Request(RequestBlocks::new(epoch));
         self.last_sync_clock = clock::now();
         self.network
             .send(from, CHAIN_LOADER_TOPIC, msg.into_buffer()?)
@@ -153,26 +146,32 @@ impl NodeService {
         pkey: pbc::PublicKey,
         request: RequestBlocks,
     ) -> Result<(), Error> {
-        let starting_height = request.starting_height;
-        let height = self.chain.height();
-        if starting_height >= height {
-            warn!("Received a loader request with starting_height >= our_height: starting_height={}, our_height={}",
-                  starting_height, height);
+        if request.epoch > self.chain.epoch() {
+            warn!(
+                "Received a loader request with epoch >= our_epoch: remote_epoch={}, our_epoch={}",
+                request.epoch,
+                self.chain.epoch()
+            );
             return Ok(());
         }
 
-        self.send_blocks(pkey, starting_height)
+        self.send_blocks(pkey, request.epoch, 0)
     }
 
-    pub fn send_blocks(&mut self, pkey: pbc::PublicKey, starting_height: u64) -> Result<(), Error> {
-        assert!(starting_height < self.chain.height());
+    pub fn send_blocks(
+        &mut self,
+        pkey: pbc::PublicKey,
+        epoch: u64,
+        offset: u32,
+    ) -> Result<(), Error> {
         // Send one epoch.
         let blocks = self.chain.blocks_range(
-            starting_height,
-            self.cfg.blocks_in_epoch * self.cfg.chain_loader_speed_in_epoch,
+            epoch,
+            offset,
+            (self.cfg.micro_blocks_in_epoch as u64) * self.cfg.chain_loader_speed_in_epoch,
         );
         info!("Feeding blocks: to={}, num_blocks={}", pkey, blocks.len());
-        let msg = ChainLoaderMessage::Response(ResponseBlocks::new(self.chain.height(), blocks));
+        let msg = ChainLoaderMessage::Response(ResponseBlocks::new(blocks));
         self.network
             .send(pkey, CHAIN_LOADER_TOPIC, msg.into_buffer()?)?;
         Ok(())
@@ -184,13 +183,12 @@ impl NodeService {
         response: ResponseBlocks,
     ) -> Result<(), Error> {
         info!(
-            "Received blocks: from={}, num_blocks={}, remote_height={}",
+            "Received blocks: from={}, num_blocks={}",
             pkey,
             response.blocks.len(),
-            response.height,
         );
 
-        let initial_height = self.chain.height();
+        let initial_epoch = self.chain.epoch();
         for block in response.blocks {
             // Fail on the first error.
             self.handle_block(block)?;
@@ -201,7 +199,7 @@ impl NodeService {
         // a) The timestamp of the latest keyblock is oudated (see is_synchronized()).
         // b) At least two blocks have been applied.
         //
-        if !self.is_synchronized() || (self.chain.height() >= initial_height + 2) {
+        if !self.is_synchronized() || (self.chain.epoch() >= initial_epoch + 2) {
             //self.request_history()?;
         }
 

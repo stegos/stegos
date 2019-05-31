@@ -4,9 +4,10 @@ package stegos.blockchain;
 import "crypto.proto";
 
 message ChainInfo {
-    uint64 height = 1;
-    uint32 view_change = 2;
-    stegos.crypto.Hash last_block = 3;
+    uint64 epoch = 1;
+    uint32 offset = 2;
+    uint32 view_change = 3;
+    stegos.crypto.Hash last_block = 4;
 }
 
 message ViewChangeProof {

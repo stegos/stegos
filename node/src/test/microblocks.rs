@@ -23,6 +23,7 @@
 
 use super::*;
 use crate::*;
+use bitvector::BitVector;
 use std::collections::HashSet;
 use stegos_blockchain::Block;
 use stegos_consensus::MacroBlockProposal;
@@ -38,7 +39,7 @@ use stegos_consensus::{optimistic::SealedViewChangeProof, ConsensusMessage, Cons
 #[test]
 fn dead_leader() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 2000;
+    cfg.micro_blocks_in_epoch = 2000;
     let config = SandboxConfig {
         num_nodes: 4,
         chain: cfg,
@@ -110,12 +111,12 @@ fn dead_leader() {
 // 2.1. Node B become leader of view_change 2, and broadcast new block (B2).
 // 3. Nodes [C,D] Receive block (B2)
 //
-// Asserts that Nodes [B, D, E] has last block B2, and same height().
+// Asserts that Nodes [B, D, E] has last block B2, and same offset().
 
 #[test]
 fn silent_view_change() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 2000;
+    cfg.micro_blocks_in_epoch = 2000;
     let config = SandboxConfig {
         num_nodes: 4,
         chain: cfg,
@@ -127,6 +128,8 @@ fn silent_view_change() {
 
         precondition_2_different_leaderers(&mut s);
 
+        let epoch = s.nodes[0].node_service.chain.epoch();
+        let offset = s.nodes[0].node_service.chain.offset();
         let starting_view_changes = s.nodes[0].node_service.chain.view_change();
         let leader_pk = s.leader();
         let new_leader = s.next_view_change_leader();
@@ -167,7 +170,10 @@ fn silent_view_change() {
                 .network_service
                 .get_broadcast(crate::SEALED_BLOCK_TOPIC);
 
-            assert_eq!(block.base_header().view_change, starting_view_changes + 1);
+            let micro_block = block.clone().unwrap_micro();
+            assert_eq!(micro_block.header.epoch, epoch);
+            assert_eq!(micro_block.header.offset, offset);
+            assert_eq!(micro_block.header.view_change, starting_view_changes + 1);
             // broadcast block to other nodes.
             for node in &mut r.parts.1.nodes {
                 node.network_service
@@ -181,6 +187,8 @@ fn silent_view_change() {
             // and go to the next view_change.
             for node in &mut r.parts.1.nodes {
                 info!("processing validator = {:?}", node.validator_id());
+                assert_eq!(node.node_service.chain.epoch(), epoch);
+                assert_eq!(node.node_service.chain.offset(), offset + 1);
                 assert_eq!(node.node_service.chain.view_change(), 0);
                 assert_eq!(node.node_service.chain.last_block_hash(), last_block_hash);
             }
@@ -208,7 +216,7 @@ fn silent_view_change() {
 #[test]
 fn double_view_change() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 2000;
+    cfg.micro_blocks_in_epoch = 2000;
     let config = SandboxConfig {
         num_nodes: 4,
         chain: cfg,
@@ -220,7 +228,7 @@ fn double_view_change() {
 
         let mut blocks = 0;
 
-        for _ in 0..s.cfg().blocks_in_epoch {
+        for _ in 0..=s.cfg().micro_blocks_in_epoch {
             let view_change = s.first_mut().node_service.chain.view_change();
             let leader1 = s.first_mut().node_service.chain.leader();
             let leader2 = s
@@ -242,7 +250,7 @@ fn double_view_change() {
             s.skip_micro_block();
             blocks += 1;
         }
-        assert!(blocks < s.cfg().blocks_in_epoch as u32 - 2);
+        assert!(blocks < s.cfg().micro_blocks_in_epoch as u32 - 2);
         let starting_view_changes = 0;
         let leader_pk = s.nodes[0].node_service.chain.leader();
         s.for_each(|node| assert_eq!(starting_view_changes, node.chain.view_change()));
@@ -345,12 +353,12 @@ fn double_view_change() {
 // 2.1. Node B become leader of view_change 2, and broadcast new block (B2).
 // 3. Nodes [A] Receive block (B2)
 //
-// Asserts that Nodes [A] has last block B2, and same height().
+// Asserts that Nodes [A] has last block B2, and same offset().
 
 #[test]
 fn resolve_fork_for_view_change() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 2000;
+    cfg.micro_blocks_in_epoch = 2000;
     let config = SandboxConfig {
         num_nodes: 4,
         chain: cfg,
@@ -363,7 +371,7 @@ fn resolve_fork_for_view_change() {
         precondition_2_different_leaderers(&mut s);
 
         let starting_view_changes = s.nodes[0].node_service.chain.view_change();
-        let starting_height = s.nodes[0].node_service.chain.height();
+        let starting_offset = s.nodes[0].node_service.chain.offset();
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
 
@@ -412,7 +420,8 @@ fn resolve_fork_for_view_change() {
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
 
-        assert_eq!(block.base_header().view_change, starting_view_changes + 1);
+        let micro_block = block.clone().unwrap_micro();
+        assert_eq!(micro_block.header.view_change, starting_view_changes + 1);
 
         let last_block_hash = Hash::digest(&block);
 
@@ -438,8 +447,8 @@ fn resolve_fork_for_view_change() {
             last_block_hash
         );
         assert_eq!(
-            first_leader.node_service.chain.height(),
-            starting_height + 1
+            first_leader.node_service.chain.offset(),
+            starting_offset + 1
         );
     });
 }
@@ -458,7 +467,7 @@ fn resolve_fork_for_view_change() {
 #[test]
 fn resolve_fork_without_block() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 2000;
+    cfg.micro_blocks_in_epoch = 2000;
     let config = SandboxConfig {
         num_nodes: 4,
         chain: cfg,
@@ -467,14 +476,11 @@ fn resolve_fork_without_block() {
 
     Sandbox::start(config, |mut s| {
         s.poll();
-        for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height(), 1);
-        }
 
         precondition_2_different_leaderers(&mut s);
 
         let starting_view_changes = s.nodes[0].node_service.chain.view_change();
-        let starting_height = s.nodes[0].node_service.chain.height();
+        let starting_offset = s.nodes[0].node_service.chain.offset();
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
 
@@ -560,7 +566,7 @@ fn resolve_fork_without_block() {
 
         assert_eq!(first_leader.node_service.chain.view_change(), 0);
         // sometimes leader can produce more than one block.
-        assert!(first_leader.node_service.chain.height() > starting_height);
+        assert!(first_leader.node_service.chain.offset() > starting_offset);
 
         first_leader.poll();
         // assert leader state
@@ -569,7 +575,7 @@ fn resolve_fork_without_block() {
             first_leader.node_service.chain.view_change(),
             starting_view_changes + 1
         );
-        assert_eq!(first_leader.node_service.chain.height(), starting_height);
+        assert_eq!(first_leader.node_service.chain.offset(), starting_offset);
     });
 }
 
@@ -588,7 +594,7 @@ fn resolve_fork_without_block() {
 #[test]
 fn issue_896_resolve_fork() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 2000;
+    cfg.micro_blocks_in_epoch = 2000;
     let config = SandboxConfig {
         num_nodes: 4,
         chain: cfg,
@@ -597,14 +603,11 @@ fn issue_896_resolve_fork() {
 
     Sandbox::start(config, |mut s| {
         s.poll();
-        for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height(), 1);
-        }
 
         precondition_2_different_leaderers(&mut s);
 
         let starting_view_changes = s.nodes[0].node_service.chain.view_change();
-        let starting_height = s.nodes[0].node_service.chain.height();
+        let starting_offset = s.nodes[0].node_service.chain.offset();
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
 
@@ -688,7 +691,7 @@ fn issue_896_resolve_fork() {
 
         assert_eq!(first_leader.node_service.chain.view_change(), 0);
         // sometimes leader can produce more than one block.
-        assert!(first_leader.node_service.chain.height() > starting_height);
+        assert!(first_leader.node_service.chain.offset() > starting_offset);
 
         first_leader.poll();
         // assert leader state
@@ -697,7 +700,7 @@ fn issue_896_resolve_fork() {
             first_leader.node_service.chain.view_change(),
             starting_view_changes + 1
         );
-        assert_eq!(first_leader.node_service.chain.height(), starting_height);
+        assert_eq!(first_leader.node_service.chain.offset(), starting_offset);
 
         // wait for panic.
         r.wait(r.config.micro_block_timeout - r.config.micro_block_timeout / 2);
@@ -735,9 +738,8 @@ fn out_of_order_keyblock_proposal() {
         s.poll();
 
         s.wait(s.cfg().tx_wait_timeout);
-        // Process N micro blocks.
-        let height = s.nodes[0].node_service.chain.height();
 
+        let epoch = s.nodes[0].node_service.chain.epoch();
         let round = s.nodes[0].node_service.chain.view_change();
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
@@ -747,20 +749,29 @@ fn out_of_order_keyblock_proposal() {
             let last_random = s.nodes[0].node_service.chain.last_random();
             let leader_node = s.node(&leader_pk).unwrap();
 
-            let version = 1;
             let timestamp = SystemTime::now();
             let seed = mix(last_random, round);
             let random = pbc::make_VRF(&leader_node.node_service.keys.network_skey, &seed);
-            let base = BaseBlockHeader::new(version, previous, height, round, timestamp, random);
             let leader = leader_node.node_service.keys.network_pkey;
-            let block = MacroBlock::empty(base, leader);
+            let block_reward = 0;
+            let activity_map = BitVector::new(0);
+            let block = MacroBlock::empty(
+                previous,
+                epoch,
+                round,
+                leader,
+                random,
+                timestamp,
+                block_reward,
+                activity_map,
+            );
             let block_hash = Hash::digest(&block);
             let body = ConsensusMessageBody::Proposal(MacroBlockProposal {
                 header: block.header.clone(),
                 transactions: vec![],
             });
             ConsensusMessage::new(
-                height,
+                epoch,
                 round + 1,
                 block_hash,
                 &leader_node.node_service.keys.network_skey,
@@ -779,7 +790,7 @@ fn out_of_order_keyblock_proposal() {
         let mut p = s.split(&[leader_pk]);
 
         p.parts.1.for_each(|node| {
-            assert_eq!(node.chain.height(), height);
+            assert_eq!(node.chain.epoch(), epoch);
             assert_eq!(node.chain.view_change(), round);
         });
 
@@ -805,15 +816,15 @@ fn micro_block_without_signature() {
     Sandbox::start(config, |mut s| {
         s.poll();
 
-        let height = s.nodes[0].node_service.chain.height();
+        let offset = s.nodes[0].node_service.chain.offset();
 
-        s.for_each(|node| assert_eq!(node.chain.height(), height));
+        s.for_each(|node| assert_eq!(node.chain.offset(), offset));
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
         //create valid but out of order fake micro block.
-        let version: u64 = 1;
         let timestamp = SystemTime::now();
 
+        let epoch = s.nodes[0].node_service.chain.epoch();
         let round = s.nodes[0].node_service.chain.view_change();
         let last_block_hash = s.nodes[0].node_service.chain.last_block_hash();
 
@@ -823,16 +834,16 @@ fn micro_block_without_signature() {
             leader.node_service.chain.view_change(),
         );
         let random = pbc::make_VRF(&leader.node_service.keys.network_skey, &seed);
-        let base = BaseBlockHeader::new(
-            version,
+        let block = MicroBlock::empty(
             last_block_hash,
-            height,
+            epoch,
+            offset,
             round + 1,
-            timestamp,
+            None,
+            leader.node_service.keys.network_pkey,
             random,
+            timestamp,
         );
-        let block = MicroBlock::empty(base, None, leader.node_service.keys.network_pkey);
-
         let block: Block = Block::MicroBlock(block);
 
         let mut r = s.split(&[leader_pk]);
@@ -845,7 +856,7 @@ fn micro_block_without_signature() {
 
         r.parts
             .1
-            .for_each(|node| assert_eq!(node.chain.height(), height));
+            .for_each(|node| assert_eq!(node.chain.offset(), offset));
     });
 }
 
@@ -860,7 +871,7 @@ fn micro_block_without_signature() {
 #[test]
 fn slash_cheater() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 2000;
+    cfg.micro_blocks_in_epoch = 2000;
     let config = SandboxConfig {
         num_nodes: 4,
         chain: cfg,
@@ -869,12 +880,9 @@ fn slash_cheater() {
 
     Sandbox::start(config, |mut s| {
         s.poll();
-        for node in s.nodes.iter() {
-            assert_eq!(node.node_service.chain.height(), 1);
-        }
 
         // next leader should be from different partition.
-        for _ in 0..(s.cfg().blocks_in_epoch - 2) {
+        for _ in 0..(s.cfg().micro_blocks_in_epoch - 1) {
             let first_leader_pk = s.nodes[0].node_service.chain.leader();
             let new_leader_pk = s.next_leader().unwrap();
             info!(
@@ -905,7 +913,7 @@ fn slash_cheater() {
         // modify timestamp for block
         match &mut b2 {
             Block::MicroBlock(ref mut b) => {
-                b.base.timestamp += Duration::from_millis(1);
+                b.header.timestamp += Duration::from_millis(1);
                 let block_hash = Hash::digest(&*b);
                 b.sig = pbc::sign_hash(&block_hash, &leader.node_service.keys.network_skey);
             }
@@ -956,7 +964,7 @@ fn slash_cheater() {
 
 fn precondition_2_different_leaderers(s: &mut Sandbox) {
     let mut ready = false;
-    for _ in 0..(s.cfg().blocks_in_epoch - 2) {
+    for _ in 0..s.cfg().micro_blocks_in_epoch {
         let first_leader_pk = s.nodes[0].node_service.chain.leader();
         let new_leader_pk = s.next_view_change_leader();
         info!(

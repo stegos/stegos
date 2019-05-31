@@ -49,10 +49,15 @@ pub enum ConsensusError {
     #[fail(display = "Invalid BLS multisignature for request: request={}", _0)]
     InvalidRequestSignature(Hash),
     #[fail(
-        display = "Received ViewChangeMessage, with other height: msg_height={}, our_height={}",
+        display = "Received ViewChangeMessage, with other epoch: msg_epoch={}, our_epoch={}",
         _0, _1
     )]
-    InvalidViewChangeHeight(u64, u64),
+    InvalidViewChangeEpoch(u64, u64),
+    #[fail(
+        display = "Received ViewChangeMessage, with other offset: msg_offset={}, our_offset={}",
+        _0, _1
+    )]
+    InvalidViewChangeOffset(u32, u32),
     #[fail(
         display = "Received ViewChangeMessage, with other view_change: \
                    message_view_change={}, our_view_change={}",

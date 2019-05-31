@@ -51,37 +51,32 @@ pub enum NodeTransactionError {
 #[derive(Debug, Fail, PartialEq, Eq)]
 pub enum NodeBlockError {
     #[fail(
-        display = "Unexpected block fee: height={}, block={}, got={}, expected={}",
-        _0, _1, _2, _3
-    )]
-    InvalidBlockFee(u64, Hash, i64, i64),
-    #[fail(
-        display = "Invalid block proposal: height={}, expected={}, got={}",
+        display = "Invalid block proposal: epoch={}, expected={}, got={}",
         _0, _1, _2
     )]
     InvalidBlockProposal(u64, Hash, Hash),
     #[fail(
-        display = "Expected a macro block, got micro block: height={}, block={}",
-        _0, _1
+        display = "Expected a macro block, got micro block: epoch={}, offset={}, block={}",
+        _0, _1, _2
     )]
-    ExpectedMacroBlock(u64, Hash),
+    ExpectedMacroBlock(u64, u32, Hash),
     #[fail(
-        display = "Expected a micro block, got macro block: height={}, block={}",
-        _0, _1
+        display = "Expected a micro block, got macro block: epoch={}, offset={}, block={}",
+        _0, _1, _2
     )]
-    ExpectedMicroBlock(u64, Hash),
+    ExpectedMicroBlock(u64, u32, Hash),
     #[fail(
-        display = "Timestamp is out of sync: height={}, block={}, block_timestamp={:?}, our_timestamp={:?}",
+        display = "Timestamp is out of sync: epoch={}, block={}, block_timestamp={:?}, our_timestamp={:?}",
         _0, _1, _2, _3
     )]
     OutOfSyncTimestamp(u64, Hash, SystemTime, SystemTime),
     #[fail(
-        display = "Proposed view_change different from ours: height={}, block={}, block_viewchange={}, our_viewchange={}",
+        display = "Proposed view_change different from ours: epoch={}, block={}, block_viewchange={}, our_viewchange={}",
         _0, _1, _2, _3
     )]
     OutOfSyncViewChange(u64, Hash, u32, u32),
     #[fail(
-        display = "Found a outdated block proposal: height={}, block={}, block_time={:?} last_block_time={:?}.",
+        display = "Found a outdated block proposal: epoch={}, block={}, block_time={:?} last_block_time={:?}.",
         _0, _1, _2, _3
     )]
     OutdatedBlock(u64, Hash, SystemTime, SystemTime),

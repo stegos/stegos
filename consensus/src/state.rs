@@ -81,8 +81,6 @@ pub struct Consensus {
     //
     // Current blockchain state
     //
-    /// Identifier of current session.
-    height: u64,
     /// Current epoch number.
     epoch: u64,
     /// Result of election.
@@ -124,7 +122,6 @@ impl Consensus {
     ///
     /// # Arguments
     ///
-    /// * `height` - identifier of session.
     /// * `epoch` - current consensus epoch.
     /// * `skey` - BLS Secret Key of this node.
     /// * `pkey` - BLS Public Key of this node.
@@ -132,7 +129,6 @@ impl Consensus {
     /// * `election_result` - result of the previous election.
     /// * `validators` - voting members of consensus.
     pub fn new(
-        height: u64,
         epoch: u64,
         skey: pbc::SecretKey,
         pkey: pbc::PublicKey,
@@ -141,7 +137,7 @@ impl Consensus {
     ) -> Self {
         assert!(validators.contains_key(&pkey));
         let state = ConsensusState::Propose;
-        debug!("New => {}({}:{})", state.name(), height, 0);
+        debug!("New => {}({}:{})", state.name(), epoch, 0);
         let prevotes: BTreeMap<pbc::PublicKey, pbc::Signature> = BTreeMap::new();
         let precommits: BTreeMap<pbc::PublicKey, pbc::Signature> = BTreeMap::new();
         let total_slots = validators.iter().map(|v| v.1).sum();
@@ -159,9 +155,8 @@ impl Consensus {
             total_slots,
             state,
             election_result,
-            height,
-            round,
             epoch,
+            round,
             block,
             block_hash,
             block_proposal,
@@ -216,7 +211,7 @@ impl Consensus {
         info!(
             "{}({}:{}) Going to next round.",
             self.state.name(),
-            self.height,
+            self.epoch,
             self.round
         );
         self.round += 1;
@@ -229,7 +224,7 @@ impl Consensus {
         debug!(
             "New => {}({}:{})",
             self.state.name(),
-            self.height,
+            self.epoch,
             self.round
         );
     }
@@ -253,18 +248,13 @@ impl Consensus {
         debug!(
             "{}({}:{}): propose block={:?}",
             self.state.name(),
-            self.height,
+            self.epoch,
             self.round,
             &block_hash
         );
         let body = ConsensusMessageBody::Proposal(block_proposal);
         let msg = ConsensusMessage::new(
-            self.height,
-            self.round,
-            block_hash,
-            &self.skey,
-            &self.pkey,
-            body,
+            self.epoch, self.round, block_hash, &self.skey, &self.pkey, body,
         );
         self.outbox.push(msg.clone());
         self.feed_message(msg).expect("message is valid");
@@ -287,19 +277,14 @@ impl Consensus {
         debug!(
             "{}({}:{}): pre-vote block={:?}",
             self.state.name(),
-            self.height,
+            self.epoch,
             self.round,
             block_hash,
         );
         self.block = Some(block);
         let body = ConsensusMessageBody::Prevote;
         let msg = ConsensusMessage::new(
-            self.height,
-            self.round,
-            block_hash,
-            &self.skey,
-            &self.pkey,
-            body,
+            self.epoch, self.round, block_hash, &self.skey, &self.pkey, body,
         );
         self.outbox.push(msg.clone());
         self.feed_message(msg).expect("message is valid");
@@ -315,19 +300,14 @@ impl Consensus {
         debug!(
             "{}({}:{}): pre-commit block={:?}",
             self.state.name(),
-            self.height,
+            self.epoch,
             self.round,
             block_hash
         );
         let block_hash_sig = pbc::sign_hash(&block_hash, &self.skey);
         let body = ConsensusMessageBody::Precommit(block_hash_sig);
         let msg = ConsensusMessage::new(
-            self.height,
-            self.round,
-            block_hash,
-            &self.skey,
-            &self.pkey,
-            body,
+            self.epoch, self.round, block_hash, &self.skey, &self.pkey, body,
         );
         self.outbox.push(msg.clone());
         self.feed_message(msg).expect("message is valid");
@@ -344,7 +324,7 @@ impl Consensus {
         trace!(
             "{}({}:{}): process message: msg={:?}",
             self.state.name(),
-            self.height,
+            self.epoch,
             self.round,
             &msg
         );
@@ -356,18 +336,18 @@ impl Consensus {
             debug!(
                 "{}({}:{}): peer is not a validator: msg={:?}",
                 self.state.name(),
-                self.height,
+                self.epoch,
                 self.round,
                 &msg
             );
             return Err(ConsensusError::UnknownMessagePeer(msg.pkey));
         }
 
-        if msg.height != self.height {
+        if msg.epoch != self.epoch {
             debug!(
-                "{}({}:{}): message from different height: msg={:?}",
+                "{}({}:{}): message from different epoch: msg={:?}",
                 self.state.name(),
-                self.height,
+                self.epoch,
                 self.round,
                 &msg
             );
@@ -378,7 +358,7 @@ impl Consensus {
             debug!(
                 "{}({}:{}): message from the past: msg={:?}",
                 self.state.name(),
-                self.height,
+                self.epoch,
                 self.round,
                 &msg
             );
@@ -388,7 +368,7 @@ impl Consensus {
             debug!(
                 "{}({}:{}): message from the future: msg={:?}",
                 self.state.name(),
-                self.height,
+                self.epoch,
                 self.round,
                 &msg
             );
@@ -405,7 +385,7 @@ impl Consensus {
                 warn!(
                     "{}({}:{}): invalid block_hash: expected_block_hash={:?}, got_block_hash={:?}, msg={:?}",
                     self.state.name(),
-                    self.height, self.round,
+                    self.epoch, self.round,
                     &expected_block_hash,
                     &msg.block_hash,
                     &msg
@@ -422,7 +402,7 @@ impl Consensus {
             debug!(
                 "{}({}:{}): a late message: msg={:?}",
                 self.state.name(),
-                self.height,
+                self.epoch,
                 self.round,
                 &msg
             );
@@ -451,7 +431,7 @@ impl Consensus {
                 debug!(
                     "{}({}:{}): an early message: msg={:?}",
                     self.state.name(),
-                    self.height,
+                    self.epoch,
                     self.round,
                     &msg
                 );
@@ -464,7 +444,7 @@ impl Consensus {
                 error!(
                     "{}({}:{}): unexpected message: msg={:?}",
                     self.state.name(),
-                    self.height,
+                    self.epoch,
                     self.round,
                     &msg
                 );
@@ -485,7 +465,7 @@ impl Consensus {
                     error!(
                         "{}({}:{}): a proposal from a non-leader: leader={:?}, from={:?}",
                         self.state.name(),
-                        self.height,
+                        self.epoch,
                         self.round,
                         &self.leader(),
                         &msg.pkey
@@ -505,10 +485,10 @@ impl Consensus {
                 debug!(
                     "{}({}:{}) => {}({}:{}): received a new proposal hash={:?}, from={:?}",
                     self.state.name(),
-                    self.height,
+                    self.epoch,
                     self.round,
                     ConsensusState::Prevote.name(),
-                    self.height,
+                    self.epoch,
                     self.round,
                     &msg.block_hash,
                     &msg.pkey
@@ -539,7 +519,7 @@ impl Consensus {
                 debug!(
                     "{}({}:{}): collected a pre-vote: from={:?}",
                     self.state.name(),
-                    self.height,
+                    self.epoch,
                     self.round,
                     &msg.pkey
                 );
@@ -554,7 +534,7 @@ impl Consensus {
                     error!(
                         "{}({}:{}): a pre-commit signature is not valid: from={:?}",
                         self.state.name(),
-                        self.height,
+                        self.epoch,
                         self.round,
                         &msg.pkey
                     );
@@ -565,7 +545,7 @@ impl Consensus {
                 debug!(
                     "{}({}:{}): collected a pre-commit: from={:?}",
                     self.state.name(),
-                    self.height,
+                    self.epoch,
                     self.round,
                     &msg.pkey
                 );
@@ -583,10 +563,10 @@ impl Consensus {
             debug!(
                 "{}({}:{}) => {}({}:{})",
                 self.state.name(),
-                self.height,
+                self.epoch,
                 self.round,
                 ConsensusState::Precommit.name(),
-                self.height,
+                self.epoch,
                 self.round,
             );
             self.state = ConsensusState::Precommit;
@@ -599,7 +579,7 @@ impl Consensus {
                 warn!(
                     "{}({}:{}): request accepted by supermajority, but rejected this node",
                     self.state.name(),
-                    self.height,
+                    self.epoch,
                     self.round,
                 );
             }
@@ -609,10 +589,10 @@ impl Consensus {
                 debug!(
                     "{}({}:{}) => {}({}:{})",
                     self.state.name(),
-                    self.height,
+                    self.epoch,
                     self.round,
                     ConsensusState::Commit.name(),
-                    self.height,
+                    self.epoch,
                     self.round,
                 );
                 self.state = ConsensusState::Commit;
@@ -631,7 +611,7 @@ impl Consensus {
                 warn!(
                     "{}({}:{}): failed to process message: error={:?}",
                     self.state.name(),
-                    self.height,
+                    self.epoch,
                     self.round,
                     e
                 );
@@ -706,8 +686,8 @@ impl Consensus {
         let mut block = self.block.take().unwrap();
         // Create multi-signature.
         let (multisig, multisigmap) = create_multi_signature(&validators, &self.precommits);
-        block.body.multisig = multisig;
-        block.body.multisigmap = multisigmap;
+        block.multisig = multisig;
+        block.multisigmap = multisigmap;
         block
     }
 
@@ -718,7 +698,7 @@ impl Consensus {
         trace!(
             "{}({}:{}): check for supermajority: accepts={:?}, total={:?}",
             self.state.name(),
-            self.height,
+            self.epoch,
             self.round,
             accepts.len(),
             self.validators.len()

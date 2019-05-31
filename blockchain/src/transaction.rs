@@ -129,8 +129,8 @@ impl Hashable for CoinbaseTransaction {
 
 impl SlashingTransaction {
     pub fn cheater(&self) -> pbc::PublicKey {
-        assert_eq!(self.proof.block1.pkey, self.proof.block2.pkey);
-        self.proof.block1.pkey
+        assert_eq!(self.proof.block1.header.pkey, self.proof.block2.header.pkey);
+        self.proof.block1.header.pkey
     }
 }
 

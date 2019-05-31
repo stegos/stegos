@@ -122,11 +122,21 @@ pub(crate) struct Balance {
     pub block_reward: i64,
 }
 
-type BlockByHashMap = MultiVersionedMap<Hash, u64, u64>;
-type OutputByHashMap = MultiVersionedMap<Hash, OutputKey, u64>;
-type BalanceMap = MultiVersionedMap<(), Balance, u64>;
+#[derive(Debug, Default, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
+pub(crate) struct LSN(u64); // use `struct` to disable explicit casts.
+const INITIAL_LSN: LSN = LSN(0);
 
-type ValidatorsActivity = MultiVersionedMap<pbc::PublicKey, ValidatorAwardState, u64>;
+/// Create LSN for MultiVersionedMap from height.
+fn lsn_for_height(height: u64) -> LSN {
+    // The first block has height=0.
+    // Shift LSN to reserve 0 value for a point before the first block.
+    LSN(height + 1)
+}
+
+type BlockByHashMap = MultiVersionedMap<Hash, u64, LSN>;
+type OutputByHashMap = MultiVersionedMap<Hash, OutputKey, LSN>;
+type BalanceMap = MultiVersionedMap<(), Balance, LSN>;
+type ValidatorsActivity = MultiVersionedMap<pbc::PublicKey, ValidatorAwardState, LSN>;
 
 /// The blockchain database.
 pub struct Blockchain {
@@ -225,7 +235,7 @@ impl Blockchain {
             gamma: Fr::zero(),
             block_reward: 0,
         };
-        balance.insert(0, (), initial_balance);
+        balance.insert(INITIAL_LSN, (), initial_balance);
         let escrow = Escrow::new();
 
         //
@@ -785,6 +795,7 @@ impl Blockchain {
         let block_hash = Hash::digest(&block);
         assert_eq!(self.height, block.header.base.height);
         let height = self.height;
+        let lsn = lsn_for_height(height);
 
         //
         // Prepare inputs.
@@ -824,6 +835,7 @@ impl Blockchain {
         // Register block.
         //
         self.register_block(
+            lsn,
             block_hash,
             input_hashes,
             &inputs,
@@ -908,6 +920,7 @@ impl Blockchain {
     ///
     fn register_block(
         &mut self,
+        lsn: LSN,
         block_hash: Hash,
         input_hashes: Vec<Hash>,
         inputs: &[Output],
@@ -918,19 +931,18 @@ impl Blockchain {
         random: pbc::VRF,
         _timestamp: SystemTime,
     ) {
-        let version = self.height + 1;
         let height = self.height;
 
         //
         // Update block_by_hash index.
         //
-        if let Some(_) = self.block_by_hash.insert(version, block_hash, height) {
+        if let Some(_) = self.block_by_hash.insert(lsn, block_hash, height) {
             panic!(
                 "Block hash collision: height={}, block={}",
                 height, block_hash
             );
         }
-        assert_eq!(self.block_by_hash.current_version(), version);
+        assert_eq!(self.block_by_hash.current_lsn(), lsn);
 
         let mut burned = ECp::inf();
         let mut created = ECp::inf();
@@ -940,7 +952,7 @@ impl Blockchain {
         //
         for (input_hash, input) in input_hashes.iter().zip(inputs) {
             debug_assert_eq!(input_hash, &Hash::digest(input));
-            if self.output_by_hash.remove(version, input_hash).is_none() {
+            if self.output_by_hash.remove(lsn, input_hash).is_none() {
                 panic!(
                     "Missing input UTXO: height={}, block={}, utxo={}",
                     height, block_hash, &input_hash
@@ -957,8 +969,8 @@ impl Blockchain {
                 Output::PublicPaymentOutput(_o) => {}
                 Output::StakeOutput(o) => {
                     self.escrow
-                        .unstake(version, o.validator, input_hash.clone(), self.epoch);
-                    assert_eq!(self.escrow.current_version(), version);
+                        .unstake(lsn, o.validator, input_hash.clone(), self.epoch);
+                    assert_eq!(self.escrow.current_lsn(), lsn);
                 }
             }
 
@@ -977,14 +989,14 @@ impl Blockchain {
             // Update indexes.
             if let Some(_) = self
                 .output_by_hash
-                .insert(version, output_hash.clone(), output_key)
+                .insert(lsn, output_hash.clone(), output_key)
             {
                 panic!(
                     "UTXO hash collision: height={}, block={}, utxo={}",
                     height, &block_hash, &output_hash
                 );
             }
-            assert_eq!(self.output_by_hash.current_version(), version);
+            assert_eq!(self.output_by_hash.current_lsn(), lsn);
 
             output.validate().expect("valid UTXO");
             created += output
@@ -996,14 +1008,14 @@ impl Blockchain {
                 Output::PublicPaymentOutput(_o) => {}
                 Output::StakeOutput(o) => {
                     self.escrow.stake(
-                        version,
+                        lsn,
                         o.validator,
                         output_hash,
                         self.epoch,
                         self.cfg.stake_epochs,
                         o.amount,
                     );
-                    assert_eq!(self.escrow.current_version(), version);
+                    assert_eq!(self.escrow.current_lsn(), lsn);
                 }
             }
 
@@ -1039,8 +1051,8 @@ impl Blockchain {
                 height, &block_hash
             );
         }
-        self.balance.insert(version, (), balance);
-        assert_eq!(self.balance.current_version(), version);
+        self.balance.insert(lsn, (), balance);
+        assert_eq!(self.balance.current_lsn(), lsn);
 
         //
         // Update metadata.
@@ -1049,7 +1061,6 @@ impl Blockchain {
         self.reset_view_change();
         self.election_result.random = random;
         self.height += 1;
-        assert_eq!(self.height, version);
         metrics::HEIGHT.set(self.height as i64);
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
     }
@@ -1065,6 +1076,7 @@ impl Blockchain {
         assert_eq!(self.height, block.base.height);
         let height = self.height;
         let block_hash = Hash::digest(&block);
+        let lsn = lsn_for_height(self.height());
 
         //
         // Prepare inputs && outputs.
@@ -1122,12 +1134,11 @@ impl Blockchain {
         //
         // Update service awards
         //
-        let version = self.height() + 1;
         // Set skipped validators to inactive.
         for skiped_view_change in 0..block.base.view_change {
             let leader = self.election_result.select_leader(skiped_view_change);
             self.epoch_activity.insert(
-                version,
+                lsn,
                 leader,
                 ValidatorAwardState::FailedAt(self.epoch(), self.height()),
             );
@@ -1137,13 +1148,14 @@ impl Blockchain {
         let leader = self.election_result.select_leader(block.base.view_change);
         if self.epoch_activity.get(&leader).is_none() {
             self.epoch_activity
-                .insert(version, leader, ValidatorAwardState::Active);
+                .insert(lsn, leader, ValidatorAwardState::Active);
         }
 
         //
         // Register block.
         //
         self.register_block(
+            lsn,
             block_hash,
             input_hashes,
             &inputs,
@@ -1179,7 +1191,7 @@ impl Blockchain {
             height, self.last_macro_block_height,
             "attempt to revert the macro block"
         );
-        let version = height;
+        let lsn = lsn_for_height(height - 1);
 
         //
         // Remove from the disk.
@@ -1197,19 +1209,19 @@ impl Blockchain {
         //
         // Revert metadata.
         //
-        self.block_by_hash.rollback_to_version(version);
-        self.output_by_hash.rollback_to_version(version);
-        self.balance.rollback_to_version(version);
-        self.escrow.rollback_to_version(version);
-        self.epoch_activity.rollback_to_version(version);
-        assert_eq!(self.block_by_hash.current_version(), version);
-        assert!(self.epoch_activity.current_version() <= version);
-        assert!(self.output_by_hash.current_version() <= version);
-        assert!(self.balance.current_version() <= version);
-        assert!(self.escrow.current_version() <= version);
+        self.block_by_hash.rollback_to_lsn(lsn);
+        self.output_by_hash.rollback_to_lsn(lsn);
+        self.balance.rollback_to_lsn(lsn);
+        self.escrow.rollback_to_lsn(lsn);
+        self.epoch_activity.rollback_to_lsn(lsn);
+        assert_eq!(self.block_by_hash.current_lsn(), lsn);
+        assert!(self.epoch_activity.current_lsn() <= lsn);
+        assert!(self.output_by_hash.current_lsn() <= lsn);
+        assert!(self.balance.current_lsn() <= lsn);
+        assert!(self.escrow.current_lsn() <= lsn);
         self.height = self.height - 1;
         assert_eq!(self.height, height);
-        assert_eq!(self.height, version);
+        assert_eq!(lsn_for_height(self.height - 1), lsn);
         self.last_block_hash = Hash::digest(&previous);
         self.election_result.random = previous.base_header().random;
         self.reset_view_change();

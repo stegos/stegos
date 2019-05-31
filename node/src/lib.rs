@@ -734,7 +734,6 @@ impl NodeService {
         }
 
         assert_eq!(block_height, self.chain.height());
-
         let view_change = block.base_header().view_change;
         let r = match block {
             Block::MacroBlock(block) => self.apply_macro_block(block),
@@ -747,10 +746,41 @@ impl NodeService {
                 block_hash,
                 e
             );
-            if let Ok(BlockError::InvalidPreviousHash(_, _, _, _)) = e.downcast::<BlockError>() {
-                // A potential fork - request history from that node.
-                let from = self.chain.select_leader(view_change);
-                self.request_history_from(from)?;
+            match e.downcast::<BlockchainError>() {
+                Ok(BlockchainError::BlockError(BlockError::InvalidPreviousHash(..))) => {
+                    // A potential fork - request history from that node.
+                    let from = self.chain.select_leader(view_change);
+                    self.request_history_from(from)?;
+                }
+                Ok(BlockchainError::BlockError(BlockError::InvalidViewChange(..))) => {
+                    assert!(self.chain.view_change() > 0);
+                    assert!(view_change < self.chain.view_change());
+                    let leader = self.chain.select_leader(view_change);
+                    warn!("Discarded a block with lesser view_change: block_view_change={}, our_view_change={}",
+                          view_change, self.chain.view_change());
+                    let chain_info = ChainInfo {
+                        height: self.chain.height(),
+                        // correct information about proof, to refer previous on view_change;
+                        view_change: self.chain.view_change() - 1,
+                        last_block: self.chain.last_block_hash(),
+                    };
+                    let proof = self
+                        .chain
+                        .view_change_proof()
+                        .clone()
+                        .expect("last view_change proof.");
+                    debug!(
+                        "Sending view change proof to block sender: sender={}, proof={:?}",
+                        leader, proof
+                    );
+                    let proof = SealedViewChangeProof {
+                        chain: chain_info,
+                        proof: proof.clone(),
+                    };
+                    self.network
+                        .send(leader, VIEW_CHANGE_DIRECT, proof.into_buffer()?)?;
+                }
+                _ => {}
             }
         }
 
@@ -827,38 +857,7 @@ impl NodeService {
             }
         }
 
-        let leader = block.pkey;
-        let block_view_change = block.base.view_change;
-        let (inputs, outputs) = match self.chain.push_micro_block(block, timestamp) {
-            Err(e @ BlockchainError::BlockError(BlockError::InvalidViewChange(..))) => {
-                warn!("Discarded a block with lesser view_change: block_view_change={}, our_view_change={}",
-                      block_view_change, self.chain.view_change());
-
-                let mut chain = ChainInfo::from_blockchain(&self.chain);
-                let proof = self
-                    .chain
-                    .view_change_proof()
-                    .clone()
-                    .expect("last view_change proof.");
-                debug!(
-                    "Sending view change proof to block sender: sender={}, proof={:?}",
-                    leader, proof
-                );
-                // correct information about proof, to refer previous on view_change;
-                chain.view_change -= 1;
-                let proof = SealedViewChangeProof {
-                    chain,
-                    proof: proof.clone(),
-                };
-
-                self.network
-                    .send(leader, VIEW_CHANGE_DIRECT, proof.into_buffer()?)?;
-                return Err(e.into());
-            }
-            Err(e) => return Err(e.into()),
-            Ok(v) => v,
-        };
-
+        let (inputs, outputs) = self.chain.push_micro_block(block, timestamp)?;
         self.on_block_added(height, view_change, hash, timestamp, inputs, outputs);
         self.update_validation_status();
 

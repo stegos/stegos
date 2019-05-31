@@ -76,7 +76,7 @@ impl Default for ChainConfig {
             micro_block_timeout,
             macro_block_timeout,
             stake_epochs: blockchain_default.stake_epochs,
-            micro_blocks_in_epoch: 5,
+            micro_blocks_in_epoch: blockchain_default.micro_blocks_in_epoch,
             max_utxo_in_tx: 10,
             max_utxo_in_block: 1000,
             max_utxo_in_mempool: 10000,
@@ -101,6 +101,7 @@ impl Into<BlockchainConfig> for ChainConfig {
             max_slot_count: self.max_slot_count,
             min_stake_amount: self.min_stake_amount,
             stake_epochs: self.stake_epochs,
+            micro_blocks_in_epoch: self.micro_blocks_in_epoch,
             block_reward: self.block_reward,
             service_award_per_epoch,
         }

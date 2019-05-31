@@ -290,10 +290,10 @@ impl NodeService {
         let mempool = Mempool::new();
 
         let last_block_clock = clock::now();
-        let validation = if chain.offset() < cfg.micro_blocks_in_epoch {
-            MicroBlockAuditor
-        } else {
+        let validation = if chain.is_epoch_full() {
             MacroBlockAuditor
+        } else {
+            MicroBlockAuditor
         };
         let cheating_proofs = HashMap::new();
 
@@ -631,7 +631,7 @@ impl NodeService {
             );
             Ok(())
         } else if block.header.epoch == self.chain.epoch() {
-            if self.chain.offset() < self.cfg.micro_blocks_in_epoch {
+            if !self.chain.is_epoch_full() {
                 // TODO: rollback microblocks.
                 unimplemented!();
             }
@@ -824,7 +824,7 @@ impl NodeService {
                 }
             }
             _ => {
-                return Err(NodeBlockError::ExpectedMacroBlock(
+                return Err(BlockchainError::ExpectedMacroBlock(
                     self.chain.epoch(),
                     self.chain.offset(),
                     hash,
@@ -871,7 +871,7 @@ impl NodeService {
         match &self.validation {
             MicroBlockAuditor | MicroBlockValidator { .. } => {}
             _ => {
-                return Err(NodeBlockError::ExpectedMicroBlock(epoch, offset, hash).into());
+                return Err(BlockchainError::ExpectedMicroBlock(epoch, offset, hash).into());
             }
         }
 
@@ -1097,7 +1097,7 @@ impl NodeService {
     /// Change validation status after applying a new block or performing a view change.
     ///
     fn update_validation_status(&mut self) {
-        if self.chain.offset() < self.cfg.micro_blocks_in_epoch {
+        if !self.chain.is_epoch_full() {
             // Expected Micro Block.
             let _prev = std::mem::replace(&mut self.validation, MicroBlockAuditor);
             if !self.chain.is_validator(&self.keys.network_pkey) {
@@ -1241,7 +1241,7 @@ impl NodeService {
         let timestamp = SystemTime::now();
         let block_timestamp = self.chain.last_macro_block_timestamp();
         block_timestamp
-            + self.cfg.micro_block_timeout * self.cfg.micro_blocks_in_epoch
+            + self.cfg.micro_block_timeout * self.chain.cfg().micro_blocks_in_epoch
             + self.cfg.macro_block_timeout
             >= timestamp
     }
@@ -1256,7 +1256,7 @@ impl NodeService {
             } => (block_timer, consensus),
             _ => panic!("Expected MacroBlockValidator state"),
         };
-        assert_eq!(self.chain.offset(), self.cfg.micro_blocks_in_epoch);
+        assert!(self.chain.is_epoch_full());
         assert!(consensus.should_propose());
 
         // Set view_change timer.
@@ -1417,7 +1417,7 @@ impl NodeService {
             _ => panic!("Expected MicroBlockValidator State"),
         };
         assert_eq!(self.chain.leader(), self.keys.network_pkey);
-        assert!(self.chain.offset() < self.cfg.micro_blocks_in_epoch);
+        assert!(!self.chain.is_epoch_full());
 
         let epoch = self.chain.epoch();
         let offset = self.chain.offset();

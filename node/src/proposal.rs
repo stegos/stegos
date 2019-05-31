@@ -43,6 +43,7 @@ pub fn create_macro_block_proposal(
     network_skey: &pbc::SecretKey,
     network_pkey: &pbc::PublicKey,
 ) -> (MacroBlock, MacroBlockProposal) {
+    assert!(chain.is_epoch_full());
     let timestamp = SystemTime::now();
     let seed = mix(chain.last_random(), view_change);
     let random = pbc::make_VRF(&network_skey, &seed);
@@ -129,6 +130,7 @@ pub fn validate_proposed_macro_block(
     block_proposal: &MacroBlockProposal,
 ) -> Result<MacroBlock, Error> {
     let epoch = block_proposal.header.epoch;
+    assert!(chain.is_epoch_full());
 
     // Ensure that block was produced at round lower than current.
     if block_proposal.header.view_change > view_change {

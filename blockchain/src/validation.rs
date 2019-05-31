@@ -636,6 +636,15 @@ impl Blockchain {
             .into());
         }
 
+        // Check the block order.
+        if self.is_epoch_full() {
+            return Err(BlockchainError::ExpectedMacroBlock(
+                self.epoch(),
+                self.offset(),
+                block_hash,
+            ));
+        }
+
         // Check epoch and offset.
         if epoch != self.epoch() || offset != self.offset() {
             return Err(BlockError::OutOfOrderMicroBlock(
@@ -814,8 +823,16 @@ impl Blockchain {
         // Validate base header.
         self.validate_macro_block_header(&block_hash, &block.header)?;
 
-        // Validate multi-signature (skip for genesis).
         if epoch > 0 {
+            // Check the block order.
+            if !self.is_epoch_full() {
+                return Err(BlockchainError::ExpectedMicroBlock(
+                    self.epoch(),
+                    self.offset(),
+                    block_hash,
+                ));
+            }
+
             // Validate signature.
             check_multi_signature(
                 &block_hash,

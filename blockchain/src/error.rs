@@ -38,6 +38,16 @@ pub enum BlockchainError {
     )]
     IncompatibleGenesis(Hash, Hash),
     #[fail(
+        display = "Expected a macro block, got micro block: epoch={}, offset={}, block={}",
+        _0, _1, _2
+    )]
+    ExpectedMacroBlock(u64, u32, Hash),
+    #[fail(
+        display = "Expected a micro block, got macro block: epoch={}, offset={}, block={}",
+        _0, _1, _2
+    )]
+    ExpectedMicroBlock(u64, u32, Hash),
+    #[fail(
         display = "Stake is locked: validator={}, expected_balance={}, minimum_balance={}",
         _0, _1, _2
     )]

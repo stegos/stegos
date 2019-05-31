@@ -729,6 +729,13 @@ impl Blockchain {
     //----------------------------------------------------------------------------------------------
 
     ///
+    /// Return true if current epoch contains all micro blocks.
+    ///
+    pub fn is_epoch_full(&self) -> bool {
+        self.offset >= self.cfg.micro_blocks_in_epoch
+    }
+
+    ///
     /// Add a new block into blockchain.
     ///
     pub fn push_macro_block(
@@ -769,6 +776,7 @@ impl Blockchain {
         let block_hash = Hash::digest(&block);
         assert_eq!(self.epoch, block.header.epoch);
         let epoch = block.header.epoch;
+        assert!(epoch == 0 || self.is_epoch_full());
 
         //
         // Prepare inputs.
@@ -1050,6 +1058,7 @@ impl Blockchain {
     ) -> Result<(Vec<Output>, Vec<Output>), BlockchainError> {
         assert_eq!(self.epoch, block.header.epoch);
         assert_eq!(self.offset, block.header.offset);
+        assert!(!self.is_epoch_full());
         let epoch = self.epoch;
         let offset = self.offset;
         let block_hash = Hash::digest(&block);
@@ -1553,6 +1562,7 @@ pub mod tests {
         let mut timestamp = SystemTime::now();
         let mut cfg: BlockchainConfig = Default::default();
         cfg.stake_epochs = 1;
+        cfg.micro_blocks_in_epoch = 2;
         let genesis = genesis(
             &keychains,
             cfg.min_stake_amount,
@@ -1763,7 +1773,8 @@ pub mod tests {
         let keychains = [KeyChain::new_mem()];
 
         let mut timestamp = SystemTime::now();
-        let cfg: BlockchainConfig = Default::default();
+        let mut cfg: BlockchainConfig = Default::default();
+        cfg.micro_blocks_in_epoch = 100500;
         let stake = cfg.min_stake_amount;
         let blocks = genesis(&keychains, stake, 10 * cfg.min_stake_amount, timestamp);
         let mut blockchain =

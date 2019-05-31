@@ -56,16 +56,6 @@ pub enum NodeBlockError {
     )]
     InvalidBlockProposal(u64, Hash, Hash),
     #[fail(
-        display = "Expected a macro block, got micro block: epoch={}, offset={}, block={}",
-        _0, _1, _2
-    )]
-    ExpectedMacroBlock(u64, u32, Hash),
-    #[fail(
-        display = "Expected a micro block, got macro block: epoch={}, offset={}, block={}",
-        _0, _1, _2
-    )]
-    ExpectedMicroBlock(u64, u32, Hash),
-    #[fail(
         display = "Timestamp is out of sync: epoch={}, block={}, block_timestamp={:?}, our_timestamp={:?}",
         _0, _1, _2, _3
     )]

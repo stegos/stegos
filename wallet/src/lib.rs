@@ -35,6 +35,7 @@ mod tests;
 
 pub use crate::api::*;
 use crate::error::WalletError;
+pub use crate::transaction::TransactionType;
 use crate::transaction::*;
 use crate::valueshuffle::ValueShuffle;
 use failure::Error;
@@ -63,6 +64,11 @@ struct PaymentValue {
     data: PaymentPayloadData,
 }
 
+struct PublicPaymentValue {
+    output: PublicPaymentOutput,
+    amount: i64,
+}
+
 struct StakeValue {
     output: StakeOutput,
     active_until_epoch: u64,
@@ -74,6 +80,15 @@ impl PaymentValue {
             utxo: Hash::digest(&self.output),
             amount: self.amount,
             data: self.data.clone(),
+        }
+    }
+}
+
+impl PublicPaymentValue {
+    fn to_info(&self) -> PublicPaymentInfo {
+        PublicPaymentInfo {
+            utxo: Hash::digest(&self.output),
+            amount: self.amount,
         }
     }
 }
@@ -134,6 +149,9 @@ pub struct WalletService {
     epoch: u64,
     /// Unspent Payment UXTO.
     payments: HashMap<Hash, PaymentValue>,
+
+    /// Unspent Payment UXTO.
+    public_payments: HashMap<Hash, PublicPaymentValue>,
     /// Unspent Stake UTXO.
     stakes: HashMap<Hash, StakeValue>,
     /// ValueShuffle State.
@@ -181,6 +199,8 @@ impl WalletService {
         //
         let epoch = 0;
         let payments: HashMap<Hash, PaymentValue> = HashMap::new();
+
+        let public_payments = HashMap::new();
         let stakes: HashMap<Hash, StakeValue> = HashMap::new();
         let vs = ValueShuffle::new(
             keys.wallet_skey.clone(),
@@ -225,6 +245,7 @@ impl WalletService {
             epoch,
             keys,
             payments,
+            public_payments,
             stakes,
             vs,
             payment_fee,
@@ -266,7 +287,34 @@ impl WalletService {
             unspent_iter,
             amount,
             self.payment_fee,
-            data,
+            TransactionType::Regular(data),
+        )?;
+
+        // Transaction TXINs can generally have different keying for each one
+        let tx = PaymentTransaction::new(&self.keys.wallet_skey, &inputs, &outputs, &gamma, fee)?;
+        let tx_hash = Hash::digest(&tx);
+        let fee = tx.fee;
+        let tx: Transaction = tx.into();
+        self.node.send_transaction(tx.clone())?;
+        metrics::WALLET_CREATEAD_PAYMENTS
+            .with_label_values(&[&self.keys.wallet_pkey.to_hex()])
+            .inc();
+        //firstly check that no conflict input was found;
+        self.add_transaction_interest(tx.into());
+
+        Ok((tx_hash, fee))
+    }
+
+    /// Send money public.
+    fn public_payment(&mut self, recipient: &PublicKey, amount: i64) -> Result<(Hash, i64), Error> {
+        let unspent_iter = self.payments.values().map(|v| (&v.output, v.amount));
+        let (inputs, outputs, gamma, fee) = create_payment_transaction(
+            &self.keys.wallet_pkey,
+            recipient,
+            unspent_iter,
+            amount,
+            self.payment_fee,
+            TransactionType::Public,
         )?;
 
         // Transaction TXINs can generally have different keying for each one
@@ -431,6 +479,24 @@ impl WalletService {
         Ok(())
     }
 
+    /// Cloak all available public outputs.
+    fn cloak_all(&mut self) -> Result<(Hash, i64), Error> {
+        if self.public_payments.is_empty() {
+            return Err(WalletError::NotEnoughMoney.into());
+        }
+
+        let public_utxos = self.public_payments.values().map(|val| &val.output);
+        let tx = create_cloaking_transaction(
+            &self.keys.wallet_skey,
+            &self.keys.wallet_pkey,
+            public_utxos,
+            self.payment_fee,
+        )?;
+        let tx_hash = Hash::digest(&tx);
+        self.node.send_transaction(tx.into())?;
+        Ok((tx_hash, self.payment_fee))
+    }
+
     /// Get actual balance.
     fn balance(&self) -> i64 {
         let mut balance: i64 = 0;
@@ -490,8 +556,18 @@ impl WalletService {
                     self.notify(WalletNotification::Received(info));
                 }
             }
-            Output::PublicPaymentOutput(_o) => {
-                warn!("PublicPaymentUTXO is not supported yet");
+            Output::PublicPaymentOutput(o) => {
+                let PublicPaymentOutput { ref amount, .. } = &o;
+                assert!(*amount >= 0);
+                info!("Received public payment: utxo={}, amount={}", hash, amount);
+                let value = PublicPaymentValue {
+                    output: o.clone(),
+                    amount: *amount,
+                };
+                let info = value.to_info();
+                let missing = self.public_payments.insert(hash, value);
+                assert!(missing.is_none());
+                self.notify(WalletNotification::ReceivedPublic(info));
             }
             Output::StakeOutput(o) => {
                 let active_until_epoch = epoch + self.stake_epochs;
@@ -596,8 +672,15 @@ impl WalletService {
                     }
                 }
             }
-            Output::PublicPaymentOutput(_o) => {
-                unimplemented!();
+            Output::PublicPaymentOutput(PublicPaymentOutput { amount, .. }) => {
+                info!("Spent public payment: utxo={}, amount={}", hash, amount);
+                match self.public_payments.remove(&hash) {
+                    Some(value) => {
+                        let info = value.to_info();
+                        self.notify(WalletNotification::SpentPublic(info));
+                    }
+                    None => panic!("Inconsistent wallet state"),
+                }
             }
             Output::StakeOutput(o) => {
                 info!("Unstaked: utxo={}, amount={}", hash, o.amount);
@@ -659,6 +742,10 @@ impl Future for WalletService {
                                 amount,
                                 comment,
                             } => self.payment(&recipient, amount, comment).into(),
+                            WalletRequest::PublicPayment { recipient, amount } => {
+                                self.public_payment(&recipient, amount).into()
+                            }
+
                             WalletRequest::SecurePayment {
                                 recipient,
                                 amount,
@@ -679,6 +766,7 @@ impl Future for WalletService {
                             WalletRequest::Unstake { amount } => self.unstake(amount).into(),
                             WalletRequest::UnstakeAll {} => self.unstake_all().into(),
                             WalletRequest::RestakeAll {} => self.restake_all().into(),
+                            WalletRequest::CloakAll {} => self.cloak_all().into(),
                             WalletRequest::KeysInfo {} => WalletResponse::KeysInfo {
                                 wallet_pkey: self.keys.wallet_pkey,
                                 network_pkey: self.keys.network_pkey,
@@ -688,6 +776,11 @@ impl Future for WalletService {
                             },
                             WalletRequest::UnspentInfo {} => {
                                 let epoch = self.epoch;
+                                let public_payments: Vec<PublicPaymentInfo> = self
+                                    .public_payments
+                                    .values()
+                                    .map(|value| value.to_info())
+                                    .collect();
                                 let payments: Vec<PaymentInfo> = self
                                     .payments
                                     .values()
@@ -698,7 +791,11 @@ impl Future for WalletService {
                                     .values()
                                     .map(|value| value.to_info(epoch))
                                     .collect();
-                                WalletResponse::UnspentInfo { payments, stakes }
+                                WalletResponse::UnspentInfo {
+                                    public_payments,
+                                    payments,
+                                    stakes,
+                                }
                             }
                             WalletRequest::GetRecovery {} => match self.keys.show_recovery() {
                                 Ok(recovery) => WalletResponse::Recovery { recovery },

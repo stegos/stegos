@@ -182,12 +182,13 @@ impl ConsoleService {
 
     fn help() {
         println!("Usage:");
-        println!("pay WALLET_PUBKEY AMOUNT [COMMENT] - send money");
+        println!("pay WALLET_PUBKEY AMOUNT [/public] [COMMENT] - send money");
         println!("spay WALLET_PUBKEY AMOUNT [COMMENT] - send money using ValueShuffle");
         println!("msg WALLET_PUBKEY MESSAGE - send a message via blockchain");
         println!("stake AMOUNT - stake money");
         println!("unstake [AMOUNT] - unstake money");
         println!("restake - restake all available stakes");
+        println!("cloak - exchange all available public outputs");
         println!("show version - print version information");
         println!("show keys - print keys");
         println!("show balance - print balance");
@@ -221,6 +222,7 @@ impl ConsoleService {
         println!("Usage: pay WALLET_PUBKEY AMOUNT [COMMENT]");
         println!(" - WALLET_PUBKEY recipient's wallet public key in HEX format");
         println!(" - AMOUNT amount in tokens");
+        println!(" - /public if present, send money as PublicUTXO, with uncloaked recipient and amaount.");
         println!(" - COMMENT purpose of payment");
         println!();
     }
@@ -334,21 +336,32 @@ impl ConsoleService {
                     return true;
                 }
             };
-            let comment = if let Some(m) = caps.name("comment") {
-                m.as_str().to_string()
-            } else {
-                String::new()
+
+            // return none if /public transaciton
+            let comment_or_public = match caps.name("comment") {
+                Some(m) if m.as_str() == "/public" => None,
+                Some(m) => m.as_str().to_string().into(),
+                None => String::new().into(),
             };
 
-            info!(
-                "Sending {} STG to {}",
-                format_money(amount),
-                recipient.to_hex()
-            );
-            let request = WalletRequest::Payment {
-                recipient,
-                amount,
-                comment,
+            let request = if let Some(comment) = comment_or_public {
+                info!(
+                    "Sending {} STG to {}",
+                    format_money(amount),
+                    recipient.to_hex()
+                );
+                WalletRequest::Payment {
+                    recipient,
+                    amount,
+                    comment,
+                }
+            } else {
+                info!(
+                    "Sending {} STG to {}, with uncloaked recipient and amount.",
+                    format_money(amount),
+                    recipient.to_hex()
+                );
+                WalletRequest::PublicPayment { recipient, amount }
             };
             self.wallet_response = Some(self.wallet.request(request));
         } else if msg.starts_with("spay ") {
@@ -475,6 +488,9 @@ impl ConsoleService {
         } else if msg == "restake" {
             let request = WalletRequest::RestakeAll {};
             self.wallet_response = Some(self.wallet.request(request));
+        } else if msg == "cloak" {
+            let request = WalletRequest::CloakAll {};
+            self.wallet_response = Some(self.wallet.request(request));
         } else if msg.starts_with("generator ") {
             let subcommand = &msg[10..];
             if subcommand.starts_with("stop") {
@@ -564,18 +580,16 @@ impl ConsoleService {
 
     fn on_wallet_notification(&mut self, notification: WalletNotification) {
         match notification {
-            WalletNotification::Received(PaymentInfo {
-                utxo: _,
-                amount,
-                data,
-            }) => {
+            WalletNotification::Received(PaymentInfo { data, amount, .. }) => {
                 if let PaymentPayloadData::Comment(comment) = data {
                     if amount == 0 && !comment.is_empty() {
                         info!("Incoming message: {}", comment);
                     }
                 }
             }
+            WalletNotification::ReceivedPublic(_) => {}
             WalletNotification::Spent(_) => {}
+            WalletNotification::SpentPublic(_) => {}
             WalletNotification::Staked(_) => {}
             WalletNotification::Unstaked(_) => {}
             WalletNotification::BalanceChanged { balance } => {

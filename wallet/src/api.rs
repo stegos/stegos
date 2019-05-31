@@ -39,8 +39,13 @@ use stegos_node::OutputsChanged;
 pub struct PaymentInfo {
     pub utxo: Hash,
     pub amount: i64,
-    // PublicPaymentOutput has nothing else to share
     pub data: PaymentPayloadData,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct PublicPaymentInfo {
+    pub utxo: Hash,
+    pub amount: i64,
 }
 
 ///
@@ -52,7 +57,9 @@ pub struct PaymentInfo {
 pub enum WalletNotification {
     BalanceChanged { balance: i64 },
     Received(PaymentInfo),
+    ReceivedPublic(PublicPaymentInfo),
     Spent(PaymentInfo),
+    SpentPublic(PublicPaymentInfo),
     Staked(StakeInfo),
     Unstaked(StakeInfo),
 }
@@ -68,6 +75,10 @@ pub enum WalletRequest {
         recipient: PublicKey,
         amount: i64,
         comment: String,
+    },
+    PublicPayment {
+        recipient: PublicKey,
+        amount: i64,
     },
     SecurePayment {
         recipient: PublicKey,
@@ -85,6 +96,7 @@ pub enum WalletRequest {
     },
     UnstakeAll {},
     RestakeAll {},
+    CloakAll {},
     KeysInfo {},
     BalanceInfo {},
     UnspentInfo {},
@@ -114,6 +126,7 @@ pub enum WalletResponse {
         network_pkey: pbc::PublicKey,
     },
     UnspentInfo {
+        public_payments: Vec<PublicPaymentInfo>,
         payments: Vec<PaymentInfo>,
         stakes: Vec<StakeInfo>,
     },

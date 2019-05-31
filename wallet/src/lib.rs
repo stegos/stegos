@@ -491,7 +491,7 @@ impl WalletService {
                 }
             }
             Output::PublicPaymentOutput(_o) => {
-                unimplemented!();
+                warn!("PublicPaymentUTXO is not supported yet");
             }
             Output::StakeOutput(o) => {
                 let active_until_epoch = epoch + self.stake_epochs;

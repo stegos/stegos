@@ -26,10 +26,7 @@ use crate::error::*;
 use failure::Error;
 use log::*;
 use std::time::SystemTime;
-use stegos_blockchain::{
-    mix, BlockError, Blockchain, CoinbaseTransaction, MacroBlock, Output, PaymentOutput,
-    PaymentPayloadData, PublicPaymentOutput, ServiceAwardTransaction, Transaction,
-};
+use stegos_blockchain::{Block, BlockError, Blockchain, MacroBlock, Output, Transaction};
 use stegos_consensus::MacroBlockProposal;
 use stegos_crypto::curve1174;
 use stegos_crypto::hash::Hash;
@@ -38,72 +35,25 @@ use stegos_crypto::pbc;
 pub fn create_macro_block_proposal(
     chain: &Blockchain,
     view_change: u32,
-    mut block_reward: i64,
     recipient_pkey: &curve1174::PublicKey,
     network_skey: &pbc::SecretKey,
     network_pkey: &pbc::PublicKey,
 ) -> (MacroBlock, MacroBlockProposal) {
     assert!(chain.is_epoch_full());
     let timestamp = SystemTime::now();
-    let seed = mix(chain.last_random(), view_change);
-    let random = pbc::make_VRF(&network_skey, &seed);
-
-    let previous = chain.last_block_hash();
-    let epoch = chain.epoch();
     debug!(
         "Creating a new macro block proposal: epoch={}, view_change={}",
-        epoch, view_change,
+        chain.epoch(),
+        view_change,
     );
 
-    let (activity_map, winner) = chain.awards_from_active_epoch(&random);
-
-    // Coinbase.
-    let coinbase_tx = {
-        let data = PaymentPayloadData::Comment("Block reward".to_string());
-        let (output, gamma) =
-            PaymentOutput::with_payload(&recipient_pkey, block_reward, data.clone())
-                .expect("invalid keys");
-
-        info!(
-            "Created reward UTXO: hash={}, amount={}, data={:?}",
-            Hash::digest(&output),
-            block_reward,
-            data
-        );
-
-        CoinbaseTransaction {
-            block_reward,
-            block_fee: 0,
-            gamma: -gamma,
-            txouts: vec![output.into()],
-        }
-    };
-
-    let mut transactions = vec![coinbase_tx.into()];
-
-    // Add tx if winner found.
-    if let Some((k, reward)) = winner {
-        let output = PublicPaymentOutput::new(&k, reward);
-        let tx = ServiceAwardTransaction {
-            winner_reward: vec![output.into()],
-        };
-        block_reward += reward;
-        transactions.push(tx.into());
-    }
-
-    let block = MacroBlock::from_transactions(
-        previous,
-        epoch,
+    let (block, transactions) = chain.create_macro_block(
         view_change,
+        recipient_pkey,
+        network_skey,
         network_pkey.clone(),
-        random,
         timestamp,
-        block_reward,
-        activity_map,
-        &transactions,
-    )
-    .expect("Invalid block");
-    let block_hash = Hash::digest(&block);
+    );
 
     // Create block proposal.
     let block_proposal = MacroBlockProposal {
@@ -112,8 +62,10 @@ pub fn create_macro_block_proposal(
     };
 
     info!(
-        "Created a new macro block proposal: epoch={}, view_change={}, epoch={}, hash={}",
-        epoch, view_change, epoch, block_hash
+        "Created a new macro block proposal: epoch={}, view_change={}, hash={}",
+        chain.epoch(),
+        view_change,
+        Hash::digest(&block)
     );
 
     (block, block_proposal)
@@ -129,8 +81,9 @@ pub fn validate_proposed_macro_block(
     block_hash: &Hash,
     block_proposal: &MacroBlockProposal,
 ) -> Result<MacroBlock, Error> {
-    let epoch = block_proposal.header.epoch;
+    assert_eq!(block_proposal.header.epoch, chain.epoch());
     assert!(chain.is_epoch_full());
+    let epoch = block_proposal.header.epoch;
 
     // Ensure that block was produced at round lower than current.
     if block_proposal.header.view_change > view_change {
@@ -183,9 +136,11 @@ pub fn validate_proposed_macro_block(
     // Validate transactions.
     //
 
+    let mut transactions = block_proposal.transactions.clone();
+
     let mut tx_len = 1;
     // Coinbase.
-    if let Some(Transaction::CoinbaseTransaction(tx)) = block_proposal.transactions.get(0) {
+    if let Some(Transaction::CoinbaseTransaction(tx)) = transactions.get(0) {
         tx.validate()?;
         if tx.block_reward != cfg.block_reward {
             return Err(BlockError::InvalidMacroBlockReward(
@@ -210,13 +165,14 @@ pub fn validate_proposed_macro_block(
         // Force coinbase if reward is not zero.
         return Err(BlockError::CoinbaseMustBeFirst(block_hash.clone()).into());
     }
-    let mut block_reward = cfg.block_reward;
+    let mut full_reward =
+        chain.cfg().block_reward * (chain.cfg().micro_blocks_in_epoch as i64 + 1i64);
 
     // Add tx if winner found.
     if let Some((k, reward)) = winner {
         tx_len += 1;
-        block_reward += reward;
-        if let Some(Transaction::ServiceAwardTransaction(tx)) = block_proposal.transactions.get(1) {
+        full_reward += reward;
+        if let Some(Transaction::ServiceAwardTransaction(tx)) = transactions.get(1) {
             if tx.winner_reward.len() != 1 {
                 return Err(BlockError::AwardMoreThanOneWinner(
                     block_hash.clone(),
@@ -251,22 +207,34 @@ pub fn validate_proposed_macro_block(
         }
     }
 
-    if block_proposal.transactions.len() > tx_len {
+    if transactions.len() > tx_len {
         return Err(BlockError::InvalidBlockBalance(epoch, block_hash.clone()).into());
     }
 
+    // Collect transactions from epoch.
+    let count = chain.cfg().micro_blocks_in_epoch as u64;
+    let blocks = chain.blocks_range(epoch, 0, count);
+    for (offset, block) in blocks.into_iter().enumerate() {
+        let block = if let Block::MicroBlock(block) = block {
+            block
+        } else {
+            panic!("Expected micro block: epoch={}, offset={}", epoch, offset);
+        };
+
+        transactions.extend(block.transactions);
+    }
+
     // Re-create original block.
-    let leader = chain.select_leader(block_proposal.header.view_change);
     let block = MacroBlock::from_transactions(
-        block_proposal.header.previous.clone(),
+        block_proposal.header.previous,
         epoch,
-        view_change,
-        leader,
+        block_proposal.header.view_change,
+        block_proposal.header.pkey,
         block_proposal.header.random,
         block_proposal.header.timestamp,
-        block_reward,
+        full_reward,
         activity_map,
-        &block_proposal.transactions,
+        &transactions,
     )?;
 
     // Check that block has the same hash.

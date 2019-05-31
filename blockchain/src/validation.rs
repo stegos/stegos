@@ -520,7 +520,7 @@ impl Blockchain {
 
         // Check previous hash (skip for genesis).
         if epoch > 0 {
-            let previous_hash = self.last_block_hash();
+            let previous_hash = self.last_macro_block_hash();
             if previous_hash != header.previous {
                 return Err(BlockError::InvalidMacroBlockPreviousHash(
                     epoch,
@@ -531,9 +531,8 @@ impl Blockchain {
                 .into());
             }
 
-            let leader = self.select_leader(header.view_change);
-            let seed = mix(self.last_random(), header.view_change);
-            if !pbc::validate_VRF_source(&header.random, &leader, &seed) {
+            let seed = mix(self.last_macro_block_random(), header.view_change);
+            if !pbc::validate_VRF_source(&header.random, &header.pkey, &seed) {
                 return Err(BlockError::IncorrectRandom(epoch, *block_hash).into());
             }
         }
@@ -825,14 +824,15 @@ impl Blockchain {
 
         if epoch > 0 {
             // Check the block order.
-            if !self.is_epoch_full() {
-                return Err(BlockchainError::ExpectedMicroBlock(
+            if self.offset() > 0 {
+                return Err(BlockchainError::HaveMicroBlocks(
                     self.epoch(),
                     self.offset(),
                     block_hash,
                 ));
             }
 
+            // TODO: signature is already checked in Node.
             // Validate signature.
             check_multi_signature(
                 &block_hash,
@@ -851,7 +851,9 @@ impl Blockchain {
             let winner = service_awards.check_winners(block.header.random.rand);
 
             // calculate block reward + service award.
-            let full_reward = self.cfg().block_reward + winner.map(|(_, a)| a).unwrap_or(0);
+            let full_reward = self.cfg().block_reward
+                * (self.cfg().micro_blocks_in_epoch as i64 + 1i64)
+                + winner.map(|(_, a)| a).unwrap_or(0);
 
             if block.header.block_reward != full_reward {
                 return Err(BlockError::InvalidMacroBlockReward(

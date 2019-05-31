@@ -48,6 +48,11 @@ pub enum BlockchainError {
     )]
     ExpectedMicroBlock(u64, u32, Hash),
     #[fail(
+        display = "Have micro blocks on attempt to apply a macro block: epoch={}, offset={}, block={}",
+        _0, _1, _2
+    )]
+    HaveMicroBlocks(u64, u32, Hash),
+    #[fail(
         display = "Stake is locked: validator={}, expected_balance={}, minimum_balance={}",
         _0, _1, _2
     )]

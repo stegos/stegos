@@ -48,7 +48,7 @@ fn smoke_test() {
         let topic = crate::CONSENSUS_TOPIC;
         let epoch = s.nodes[0].node_service.chain.epoch();
         let round = s.nodes[0].node_service.chain.view_change();
-        let last_block_hash = s.nodes[0].node_service.chain.last_block_hash();
+        let last_macro_block_hash = s.nodes[0].node_service.chain.last_macro_block_hash();
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
         let leader_node = s.node(&leader_pk).unwrap();
@@ -131,7 +131,7 @@ fn smoke_test() {
         let block_hash = Hash::digest(&macro_block);
         assert_eq!(block_hash, proposal.block_hash);
         assert_eq!(macro_block.header.epoch, epoch);
-        assert_eq!(macro_block.header.previous, last_block_hash);
+        assert_eq!(macro_block.header.previous, last_macro_block_hash);
 
         // Send this sealed block to all other nodes expect the first not leader.
         for node in s.iter_except(&[leader_pk]) {
@@ -144,6 +144,7 @@ fn smoke_test() {
         for node in s.iter_except(&[leader_pk]) {
             assert_eq!(node.node_service.chain.epoch(), epoch + 1);
             assert_eq!(node.node_service.chain.offset(), 0);
+            assert_eq!(node.node_service.chain.last_macro_block_hash(), block_hash);
             assert_eq!(node.node_service.chain.last_block_hash(), block_hash);
         }
     });

@@ -34,7 +34,9 @@ use crate::multisignature::create_multi_signature;
 use crate::mvcc::MultiVersionedMap;
 use crate::output::*;
 use crate::storage::ListDb;
-use crate::transaction::{CoinbaseTransaction, PaymentTransaction, Transaction};
+use crate::transaction::{
+    CoinbaseTransaction, PaymentTransaction, ServiceAwardTransaction, Transaction,
+};
 use crate::view_changes::ViewChangeProof;
 use bitvector::BitVector;
 use failure::Error;
@@ -44,8 +46,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use stegos_crypto::bulletproofs::fee_a;
 use stegos_crypto::curve1174::{ECp, Fr, PublicKey, SecretKey, G};
 use stegos_crypto::hash::*;
-use stegos_crypto::pbc;
 use stegos_crypto::pbc::secure::VRF;
+use stegos_crypto::{curve1174, pbc};
 use stegos_keychain::KeyChain;
 
 pub type ViewCounter = u32;
@@ -177,7 +179,11 @@ pub struct Blockchain {
     view_change_proof: Option<ViewChangeProof>,
     /// A timestamp from the last macro block.
     last_macro_block_timestamp: SystemTime,
-    /// Copy of a block hash from the latest registered block.
+    /// Copy of the last macro block hash.
+    last_macro_block_hash: Hash,
+    /// Copy of the last macro block random.
+    last_macro_block_random: Hash,
+    /// Copy of the last block hash.
     last_block_hash: Hash,
 
     //
@@ -240,6 +246,8 @@ impl Blockchain {
         let view_change_proof = None;
         let election_result = ElectionResult::default();
         let last_macro_block_timestamp = UNIX_EPOCH;
+        let last_macro_block_random = Hash::digest("genesis");
+        let last_macro_block_hash = Hash::digest("genesis");
         let last_block_hash = Hash::digest("genesis");
 
         //
@@ -260,6 +268,8 @@ impl Blockchain {
             election_result,
             view_change_proof,
             last_macro_block_timestamp,
+            last_macro_block_random,
+            last_macro_block_hash,
             last_block_hash,
             awards,
             epoch_activity,
@@ -537,8 +547,15 @@ impl Blockchain {
 
     /// Return the last random value.
     #[inline]
-    pub fn last_random(&self) -> Hash {
-        self.election_result.random.rand
+    pub fn last_macro_block_random(&self) -> Hash {
+        self.last_macro_block_random
+    }
+
+    /// Return the last macro block hash.
+    #[inline(always)]
+    pub fn last_macro_block_hash(&self) -> Hash {
+        assert!(self.epoch > 0);
+        self.last_macro_block_hash
     }
 
     /// Return the last block hash.
@@ -546,6 +563,12 @@ impl Blockchain {
     pub fn last_block_hash(&self) -> Hash {
         assert!(self.epoch > 0);
         self.last_block_hash
+    }
+
+    /// Return the last random value.
+    #[inline]
+    pub fn last_random(&self) -> Hash {
+        self.election_result.random.rand
     }
 
     ///
@@ -735,6 +758,101 @@ impl Blockchain {
         self.offset >= self.cfg.micro_blocks_in_epoch
     }
 
+    /// Create a new macro block for current epoch.
+    ///
+    pub fn create_macro_block(
+        &self,
+        view_change: u32,
+        recipient_pkey: &curve1174::PublicKey,
+        network_skey: &pbc::SecretKey,
+        network_pkey: pbc::PublicKey,
+        timestamp: SystemTime,
+    ) -> (MacroBlock, Vec<Transaction>) {
+        assert!(self.is_epoch_full());
+        let epoch = self.epoch();
+        let previous = self.last_macro_block_hash();
+        let seed = mix(self.last_macro_block_random(), view_change);
+        let random = pbc::make_VRF(network_skey, &seed);
+
+        let mut transactions: Vec<Transaction> = Vec::new();
+
+        //
+        // Coinbase.
+        //
+        {
+            let block_reward = self.cfg.block_reward;
+            let data = PaymentPayloadData::Comment("Block reward".to_string());
+            let (output, gamma) =
+                PaymentOutput::with_payload(&recipient_pkey, block_reward, data.clone())
+                    .expect("invalid keys");
+
+            info!(
+                "Created reward UTXO: hash={}, amount={}, data={:?}",
+                Hash::digest(&output),
+                self.cfg.block_reward,
+                data
+            );
+
+            let coinbase_tx = CoinbaseTransaction {
+                block_reward,
+                block_fee: 0,
+                gamma: -gamma,
+                txouts: vec![output.into()],
+            };
+
+            transactions.push(coinbase_tx.into());
+        };
+
+        let mut full_reward: i64 =
+            self.cfg.block_reward * (self.cfg.micro_blocks_in_epoch as i64 + 1i64);
+
+        //
+        // Service Awards.
+        //
+        let (activity_map, winner) = self.awards_from_active_epoch(&random);
+        if let Some((k, reward)) = winner {
+            let output = PublicPaymentOutput::new(&k, reward);
+            let tx = ServiceAwardTransaction {
+                winner_reward: vec![output.into()],
+            };
+            full_reward += reward;
+            transactions.push(tx.into());
+        }
+
+        let extra_transactions = transactions.clone();
+
+        // Collect transactions from epoch.
+        let count = self.cfg.micro_blocks_in_epoch as u64;
+        let blocks = self.blocks_range(self.epoch, 0, count);
+        for (offset, block) in blocks.into_iter().enumerate() {
+            let block = if let Block::MicroBlock(block) = block {
+                block
+            } else {
+                panic!(
+                    "Expected micro block: epoch={}, offset={}",
+                    self.epoch, offset
+                );
+            };
+
+            transactions.extend(block.transactions);
+        }
+
+        let block = MacroBlock::from_transactions(
+            previous,
+            epoch,
+            view_change,
+            network_pkey,
+            random,
+            timestamp,
+            full_reward,
+            activity_map,
+            &transactions,
+        )
+        .expect("Transactions are valid");
+
+        (block, extra_transactions)
+    }
+
     ///
     /// Add a new block into blockchain.
     ///
@@ -776,7 +894,7 @@ impl Blockchain {
         let block_hash = Hash::digest(&block);
         assert_eq!(self.epoch, block.header.epoch);
         let epoch = block.header.epoch;
-        assert!(epoch == 0 || self.is_epoch_full());
+        assert_eq!(self.offset(), 0);
 
         //
         // Prepare inputs.
@@ -831,6 +949,9 @@ impl Blockchain {
         self.epoch += 1;
         self.offset = 0;
         self.last_macro_block_timestamp = block.header.timestamp;
+        self.last_macro_block_random = block.header.random.rand;
+        self.last_macro_block_hash = block_hash;
+        assert_eq!(self.last_block_hash, block_hash);
         self.election_result = election::select_validators_slots(
             self.escrow
                 .get_stakers_majority(self.epoch, self.cfg.min_stake_amount),
@@ -1264,51 +1385,19 @@ pub fn create_fake_macro_block(
     chain: &Blockchain,
     keychains: &[KeyChain],
     timestamp: SystemTime,
-) -> MacroBlock {
-    let previous = chain.last_block_hash().clone();
-    let epoch = chain.epoch();
+) -> (MacroBlock, Vec<Transaction>) {
     let view_change = chain.view_change();
     let key = chain.select_leader(view_change);
     let keys = keychains.iter().find(|p| p.network_pkey == key).unwrap();
-    let seed = mix(chain.last_random(), view_change);
-    let random = pbc::make_VRF(&keys.network_skey, &seed);
-    let mut block_reward = chain.cfg().block_reward;
-
-    let data = PaymentPayloadData::Comment(format!("Block reward"));
-    let (output, gamma) =
-        PaymentOutput::with_payload(&keys.wallet_pkey, block_reward, data).expect("invalid keys");
-    let mut txs = vec![output.into()];
-
-    if let Some((tx, reward)) = try_add_award(chain, &random) {
-        txs.push(tx);
-        block_reward += reward;
-    }
-
-    let mut block = MacroBlock::new(
-        previous,
-        epoch,
+    let (mut block, extra_transactions) = chain.create_macro_block(
         view_change,
+        &keys.wallet_pkey,
+        &keys.network_skey,
         keys.network_pkey,
-        random,
         timestamp,
-        block_reward,
-        BitVector::ones(keychains.len()),
-        -gamma,
-        &[],
-        &txs,
     );
     sign_fake_macro_block(&mut block, chain, keychains);
-    block
-}
-
-pub fn try_add_award(chain: &Blockchain, random: &VRF) -> Option<(Output, i64)> {
-    chain
-        .awards_from_active_epoch(&random)
-        .1
-        .map(|(k, reward)| {
-            let output = PublicPaymentOutput::new(&k, reward);
-            (output.into(), reward)
-        })
+    (block, extra_transactions)
 }
 
 pub fn create_fake_micro_block(
@@ -1576,6 +1665,8 @@ pub mod tests {
             .expect("Failed to create blockchain");
 
         for _epoch in 0..2 {
+            let epoch = chain.epoch();
+
             //
             // Non-empty block.
             //
@@ -1610,15 +1701,37 @@ pub mod tests {
             assert_eq!(offset + 1, chain.offset());
 
             //
-            // Key block.
+            // Macro block.
             //
+
+            // Create a macro block.
             timestamp += Duration::from_millis(1);
-            let block = create_fake_macro_block(&chain, &keychains, timestamp);
+            let (block, extra_transactions) =
+                create_fake_macro_block(&chain, &keychains, timestamp);
             let hash = Hash::digest(&block);
-            let epoch = chain.epoch();
+
+            // Collect unspent outputs.
+            let mut unspent: Vec<Hash> = chain.unspent().cloned().collect();
+            for tx in extra_transactions {
+                assert_eq!(tx.txins().len(), 0);
+                for output in tx.txouts() {
+                    let output_hash = Hash::digest(output);
+                    unspent.push(output_hash);
+                }
+            }
+            unspent.sort();
+
+            // Remove all micro blocks.
+            while chain.offset() > 0 {
+                chain.pop_micro_block().expect("Should be ok");
+            }
+            // Push the macro block.
             chain
                 .push_macro_block(block, timestamp)
                 .expect("Invalid block");
+            let mut unspent2: Vec<Hash> = chain.unspent().cloned().collect();
+            unspent2.sort();
+            assert_eq!(unspent, unspent2);
             assert_eq!(hash, chain.last_block_hash());
             assert_eq!(epoch + 1, chain.epoch());
             assert_eq!(0, chain.offset());

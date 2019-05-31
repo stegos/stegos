@@ -631,10 +631,6 @@ impl NodeService {
             );
             Ok(())
         } else if block.header.epoch == self.chain.epoch() {
-            if !self.chain.is_epoch_full() {
-                // TODO: rollback microblocks.
-                unimplemented!();
-            }
             self.apply_macro_block(block)
         } else {
             let block_hash = Hash::digest(&block);
@@ -807,31 +803,30 @@ impl NodeService {
         let view_change = block.header.view_change;
         let was_synchronized = self.is_synchronized();
 
-        // Check for the correct block order.
-        match &mut self.validation {
-            MacroBlockAuditor => {}
-            MacroBlockValidator { consensus, .. } => {
-                if consensus.should_commit() {
-                    // Check for forks.
-                    let (consensus_block_hash, _block_proposal, _view_cahange) =
-                        consensus.get_proposal();
-                    if consensus_block_hash != consensus_block_hash {
-                        panic!(
-                            "Network fork: received_block={:?}, consensus_block={:?}",
-                            &hash, &consensus_block_hash
-                        );
-                    }
-                }
-            }
-            _ => {
-                return Err(BlockchainError::ExpectedMacroBlock(
-                    self.chain.epoch(),
-                    self.chain.offset(),
-                    hash,
-                )
-                .into());
-            }
+        // Validate signature.
+        check_multi_signature(
+            &hash,
+            &block.multisig,
+            &block.multisigmap,
+            self.chain.validators(),
+            self.chain.total_slots(),
+        )
+        .map_err(|e| BlockError::InvalidBlockSignature(e, epoch, hash))?;
+
+        // Remove all micro blocks.
+        while self.chain.offset() > 0 {
+            let (inputs, outputs) = self.chain.pop_micro_block()?;
+            self.last_block_clock = clock::now();
+            let msg = OutputsChanged {
+                epoch: self.chain.epoch(),
+                inputs,
+                outputs,
+            };
+            // TODO: merge this event with OutputsChanged below.
+            self.on_outputs_changed
+                .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
         }
+        assert_eq!(0, self.chain.offset());
 
         let (inputs, outputs) = self.chain.push_macro_block(block, timestamp)?;
 
@@ -1269,7 +1264,6 @@ impl NodeService {
         let (block, block_proposal) = proposal::create_macro_block_proposal(
             &self.chain,
             consensus.round(),
-            self.cfg.block_reward,
             &self.keys.wallet_pkey,
             &self.keys.network_skey,
             &self.keys.network_pkey,

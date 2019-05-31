@@ -25,6 +25,7 @@ use crate::block::*;
 use crate::mix;
 use crate::multisignature::create_multi_signature;
 use crate::output::*;
+use bitvector::BitVector;
 use std::collections::BTreeMap;
 use std::time::SystemTime;
 use stegos_crypto::hash::Hash;
@@ -84,8 +85,15 @@ pub fn genesis(
         assert_eq!(coins, coins1);
 
         let gamma = -outputs_gamma;
-        let mut block =
-            MacroBlock::new(base, gamma, coins, &[], &outputs, keychains[0].network_pkey);
+        let mut block = MacroBlock::new(
+            base,
+            gamma,
+            coins,
+            BitVector::ones(keychains.len()),
+            &[],
+            &outputs,
+            keychains[0].network_pkey,
+        );
 
         let block_hash = Hash::digest(&block);
         let mut signatures: BTreeMap<pbc::PublicKey, pbc::Signature> = BTreeMap::new();

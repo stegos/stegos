@@ -435,13 +435,13 @@ impl PaymentOutput {
 }
 
 impl PublicPaymentOutput {
-    pub fn new(recipient_pkey: &PublicKey, amount: i64) -> Result<Self, BlockchainError> {
+    pub fn new(recipient_pkey: &PublicKey, amount: i64) -> Self {
         let serno = random::<i64>();
-        Ok(PublicPaymentOutput {
+        PublicPaymentOutput {
             recipient: recipient_pkey.clone(),
             serno,
             amount,
-        })
+        }
     }
 
     /// Validates UTXO structure and keying.

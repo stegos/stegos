@@ -25,6 +25,7 @@ use crate::CryptoError;
 
 use hex;
 use std::cmp::Ordering;
+use std::fmt::Write;
 // -------------------------------------------------------------------
 // general utility functions
 
@@ -86,6 +87,22 @@ pub fn u8v_to_hexstr(x: &[u8]) -> String {
         s.push_str(&format!("{:02x}", x[ix]));
     }
     s
+}
+
+/// Print first nbits of data.
+/// Format of output is "[{bits}]", where {bits} is digits sequence (0 or 1).
+pub fn print_nbits(data: &[u8], nbits: usize) -> Result<String, std::fmt::Error> {
+    let mut result = String::new();
+    write!(&mut result, "[")?;
+    for i in 0..nbits {
+        let byte = i / 8;
+        let bit = i % 8;
+        let num = if 0 != (data[byte] & (1 << bit)) { 1 } else { 0 };
+        write!(&mut result, "{}", num)?;
+    }
+
+    write!(&mut result, "]")?;
+    Ok(result)
 }
 
 pub fn is_zero_bits(v: &[u8]) -> bool {

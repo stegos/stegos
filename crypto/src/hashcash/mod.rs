@@ -49,7 +49,7 @@ fn trial(seed: &Vec<u8>, ctr: i64) -> Hash {
     state.result()
 }
 
-fn chkbits(h: &[u8], nbits: usize) -> bool {
+pub fn chkbits(h: &[u8], nbits: usize) -> bool {
     for i in 0..nbits {
         let byte = i / 8;
         let bit = i % 8;

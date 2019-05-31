@@ -55,6 +55,8 @@ pub struct ChainConfig {
     pub stake_fee: i64,
     /// Maximal number of slots for election.
     pub max_slot_count: i64,
+    /// Awards difficulty.
+    pub awards_difficulty: usize,
     /// Minimal stake amount.
     pub min_stake_amount: i64,
     /// Minimal interval between loader runs.
@@ -79,22 +81,27 @@ impl Default for ChainConfig {
             max_utxo_in_block: 1000,
             max_utxo_in_mempool: 10000,
             chain_loader_speed_in_epoch: 10,
-            block_reward: 60_000_000, // 60 STG
+            block_reward: 40_000_000, // 40 STG
             payment_fee: 1_000,       // 0.001 STG
             stake_fee: 0,             // free
             max_slot_count: blockchain_default.max_slot_count,
             min_stake_amount: blockchain_default.min_stake_amount,
             loader_timeout: Duration::from_millis(500),
+            awards_difficulty: 3,
         }
     }
 }
 
 impl Into<BlockchainConfig> for ChainConfig {
     fn into(self) -> BlockchainConfig {
+        let service_award_per_epoch = self.block_reward / 2 * self.blocks_in_epoch as i64;
         BlockchainConfig {
+            awards_difficulty: self.awards_difficulty,
             max_slot_count: self.max_slot_count,
             min_stake_amount: self.min_stake_amount,
             stake_epochs: self.stake_epochs,
+            block_reward: self.block_reward,
+            service_award_per_epoch,
         }
     }
 }

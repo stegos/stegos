@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::awards::{Awards, ValidatorAwardState};
 use crate::block::*;
 use crate::config::*;
 use crate::election::ElectionInfo;
@@ -35,6 +36,7 @@ use crate::output::*;
 use crate::storage::ListDb;
 use crate::transaction::{CoinbaseTransaction, PaymentTransaction, Transaction};
 use crate::view_changes::ViewChangeProof;
+use bitvector::BitVector;
 use failure::Error;
 use log::*;
 use std::collections::BTreeMap;
@@ -43,6 +45,7 @@ use stegos_crypto::bulletproofs::fee_a;
 use stegos_crypto::curve1174::{ECp, Fr, PublicKey, SecretKey, G};
 use stegos_crypto::hash::*;
 use stegos_crypto::pbc;
+use stegos_crypto::pbc::secure::VRF;
 use stegos_keychain::KeyChain;
 
 pub type ViewCounter = u32;
@@ -123,6 +126,8 @@ type BlockByHashMap = MultiVersionedMap<Hash, u64, u64>;
 type OutputByHashMap = MultiVersionedMap<Hash, OutputKey, u64>;
 type BalanceMap = MultiVersionedMap<(), Balance, u64>;
 
+type ValidatorsActivity = MultiVersionedMap<pbc::PublicKey, ValidatorAwardState, u64>;
+
 /// The blockchain database.
 pub struct Blockchain {
     //
@@ -163,6 +168,11 @@ pub struct Blockchain {
     /// Last saved view change, if view change was happen at current height,
     /// and we was not leader.
     view_change_proof: Option<ViewChangeProof>,
+    //
+    // Service awards.
+    //
+    awards: Awards,
+    epoch_activity: ValidatorsActivity,
 
     //
     // Height Information.
@@ -230,6 +240,13 @@ impl Blockchain {
         // Consensus information.
         //
         let view_change_proof = None;
+
+        //
+        // Service awards.
+        //
+        let awards = Awards::new(cfg.awards_difficulty);
+        let epoch_activity = MultiVersionedMap::new();
+
         //
         // Height Information.
         //
@@ -248,6 +265,8 @@ impl Blockchain {
             last_macro_block_timestamp,
             election_result,
             view_change_proof,
+            awards,
+            epoch_activity,
             height,
             last_block_hash,
         };
@@ -590,6 +609,86 @@ impl Blockchain {
         &self.view_change_proof
     }
 
+    /// Returns current service awards state.
+    pub(crate) fn service_awards(&self) -> &Awards {
+        &self.awards
+    }
+
+    /// Returns current service awards state.
+    pub fn epoch_activity(&self) -> &BTreeMap<pbc::PublicKey, ValidatorAwardState> {
+        self.epoch_activity.inner()
+    }
+
+    /// Try producing service awards.
+    /// Returns current activity map,
+    /// Also returns wallets PublicKey of the winner of service award,
+    /// and amount of winning, if winner was found.
+    pub fn awards_from_active_epoch(&self, random: &VRF) -> (BitVector, Option<(PublicKey, i64)>) {
+        let mut service_awards = self.service_awards().clone();
+
+        let mut epoch_activity = self.epoch_activity().clone();
+
+        let mut activity_map = BitVector::ones(self.validators().len());
+        for (id, (validator, _)) in self.validators().iter().enumerate() {
+            match epoch_activity.get(validator) {
+                // if validator failed, remove it from bitmap.
+                Some(ValidatorAwardState::FailedAt(..)) => {
+                    activity_map.remove(id);
+                }
+                // add info about missing validators
+                None => {
+                    epoch_activity.insert(*validator, ValidatorAwardState::Active);
+                }
+                _ => {}
+            }
+        }
+        let validators_activity = epoch_activity
+            .iter()
+            .map(|(k, v)| (self.validator_wallet(k).expect("validator has wallet"), *v));
+        service_awards.finalize_epoch(self.cfg().service_award_per_epoch, validators_activity);
+        (activity_map, service_awards.check_winners(random.rand))
+    }
+
+    /// Returns epoch_activity recovered from MacroBlock activity_map.
+    /// This activity_map should be validated by consensus.
+    pub(crate) fn epoch_activity_from_macro_block(
+        &self,
+        activity_map: &BitVector,
+    ) -> Result<BTreeMap<PublicKey, ValidatorAwardState>, BlockchainError> {
+        let mut validators_activity = BTreeMap::new();
+        let validators = self.validators();
+        if activity_map.len() > validators.len() {
+            return Err(BlockError::TooBigActivitymap(activity_map.len(), validators.len()).into());
+        };
+        for (validator_id, (validator, _)) in validators.iter().enumerate() {
+            let activity = activity_map.contains(validator_id);
+            let validator_wallet = self
+                .validator_wallet(validator)
+                .expect("Validator with wallet");
+            let activity = if activity {
+                ValidatorAwardState::Active
+            } else {
+                ValidatorAwardState::FailedAt(self.epoch, self.height())
+            };
+
+            // multiple validators can have single wallet.
+            // So try to override only Active state.
+            if let Some(ValidatorAwardState::FailedAt(..)) =
+                validators_activity.get(&validator_wallet)
+            {
+                continue;
+            }
+
+            validators_activity.insert(validator_wallet, activity);
+        }
+        Ok(validators_activity)
+    }
+
+    /// Returns current blockchain config.
+    pub fn cfg(&self) -> &BlockchainConfig {
+        &self.cfg
+    }
+
     /// Returns number of total slots in current epoch.
     /// Internally always return cfg.max_slot_count
     pub fn total_slots(&self) -> i64 {
@@ -712,6 +811,15 @@ impl Blockchain {
             output_keys.push(output_key);
         }
 
+        // update award (skip genesis).
+        if height > 0 {
+            let validators_activity = self
+                .epoch_activity_from_macro_block(&block.body.activity_map)
+                .unwrap();
+            self.awards
+                .finalize_epoch(self.cfg.service_award_per_epoch, validators_activity);
+            let _ = self.awards.check_winners(block.header.base.random.rand);
+        }
         //
         // Register block.
         //
@@ -1007,7 +1115,29 @@ impl Blockchain {
                         .filter(|(k, _)| k != &tx.cheater())
                         .collect();
                 }
+                Transaction::ServiceAwardTransaction(_tx) => unreachable!(),
             }
+        }
+
+        //
+        // Update service awards
+        //
+        let version = self.height() + 1;
+        // Set skipped validators to inactive.
+        for skiped_view_change in 0..block.base.view_change {
+            let leader = self.election_result.select_leader(skiped_view_change);
+            self.epoch_activity.insert(
+                version,
+                leader,
+                ValidatorAwardState::FailedAt(self.epoch(), self.height()),
+            );
+        }
+
+        // set current leader to active, if it was unknown.
+        let leader = self.election_result.select_leader(block.base.view_change);
+        if self.epoch_activity.get(&leader).is_none() {
+            self.epoch_activity
+                .insert(version, leader, ValidatorAwardState::Active);
         }
 
         //
@@ -1071,7 +1201,9 @@ impl Blockchain {
         self.output_by_hash.rollback_to_version(version);
         self.balance.rollback_to_version(version);
         self.escrow.rollback_to_version(version);
+        self.epoch_activity.rollback_to_version(version);
         assert_eq!(self.block_by_hash.current_version(), version);
+        assert!(self.epoch_activity.current_version() <= version);
         assert!(self.output_by_hash.current_version() <= version);
         assert!(self.balance.current_version() <= version);
         assert!(self.escrow.current_version() <= version);
@@ -1144,16 +1276,45 @@ pub fn create_fake_macro_block(
     let seed = mix(chain.last_random(), view_change);
     let random = pbc::make_VRF(&keys.network_skey, &seed);
     let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-    let mut block = MacroBlock::empty(base, keys.network_pkey);
+    let mut block_reward = chain.cfg().block_reward;
+
+    let data = PaymentPayloadData::Comment(format!("Block reward"));
+    let (output, gamma) =
+        PaymentOutput::with_payload(&keys.wallet_pkey, block_reward, data).expect("invalid keys");
+    let mut txs = vec![output.into()];
+
+    if let Some((tx, reward)) = try_add_award(chain, &random) {
+        txs.push(tx);
+        block_reward += reward;
+    }
+
+    let mut block = MacroBlock::new(
+        base,
+        -gamma,
+        block_reward,
+        BitVector::ones(keychains.len()),
+        &[],
+        &txs,
+        keys.network_pkey,
+    );
     sign_fake_macro_block(&mut block, chain, keychains);
     block
+}
+
+pub fn try_add_award(chain: &Blockchain, random: &VRF) -> Option<(Output, i64)> {
+    chain
+        .awards_from_active_epoch(&random)
+        .1
+        .map(|(k, reward)| {
+            let output = PublicPaymentOutput::new(&k, reward);
+            (output.into(), reward)
+        })
 }
 
 pub fn create_fake_micro_block(
     chain: &Blockchain,
     keychains: &[KeyChain],
     timestamp: SystemTime,
-    block_reward: i64,
 ) -> (MicroBlock, Vec<Hash>, Vec<Hash>) {
     let version: u64 = VERSION;
     let height = chain.height();
@@ -1163,7 +1324,7 @@ pub fn create_fake_micro_block(
     let previous = chain.last_block_hash().clone();
     let seed = mix(chain.last_random(), view_change);
     let random = pbc::make_VRF(&keys.network_skey, &seed);
-
+    let block_reward = chain.cfg().block_reward;
     let mut input_hashes: Vec<Hash> = Vec::new();
     let mut inputs: Vec<Output> = Vec::new();
     let mut monetary_balance: i64 = 0;
@@ -1245,7 +1406,7 @@ pub fn create_fake_micro_block(
     (block, input_hashes, output_hashes)
 }
 
-pub fn create_empty_micro_block(
+pub fn create_micro_block_with_coinbase(
     chain: &Blockchain,
     keychains: &[KeyChain],
     timestamp: SystemTime,
@@ -1259,7 +1420,41 @@ pub fn create_empty_micro_block(
     let seed = mix(chain.last_random(), view_change);
     let random = pbc::make_VRF(&keys.network_skey, &seed);
     let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-    let mut block = MicroBlock::empty(base, None, keys.network_pkey);
+    let mut txouts: Vec<Output> = Vec::new();
+    let mut gamma = Fr::zero();
+
+    let block_fee = 0;
+    let block_reward = chain.cfg().block_reward;
+    // Create outputs for fee and rewards.
+    for (amount, comment) in vec![(block_fee, "fee"), (block_reward, "reward")] {
+        if amount <= 0 {
+            continue;
+        }
+
+        let data = PaymentPayloadData::Comment(format!("Block {}", comment));
+        let (output_fee, gamma_fee) =
+            PaymentOutput::with_payload(&keys.wallet_pkey, amount, data.clone())
+                .expect("invalid keys");
+        gamma -= gamma_fee;
+
+        info!(
+            "Created {} UTXO: hash={}, amount={}, data={:?}",
+            comment,
+            Hash::digest(&output_fee),
+            amount,
+            data
+        );
+        txouts.push(Output::PaymentOutput(output_fee));
+    }
+
+    let coinbase = CoinbaseTransaction {
+        block_reward,
+        block_fee,
+        gamma,
+        txouts,
+    };
+    let txs = vec![coinbase.into()];
+    let mut block = MicroBlock::new(base, None, txs, keys.network_pkey);
     block.sign(&keys.network_skey, &keys.network_pkey);
     block
 }
@@ -1366,14 +1561,13 @@ pub mod tests {
         let mut chain = Blockchain::with_db(cfg.clone(), database, genesis.clone(), timestamp)
             .expect("Failed to create blockchain");
 
-        for epoch in 0..2 {
+        for _epoch in 0..2 {
             //
             // Non-empty block.
             //
             timestamp += Duration::from_millis(1);
-            let block_reward = if epoch % 2 == 0 { 60i64 } else { 0i64 };
             let (block, input_hashes, output_hashes) =
-                create_fake_micro_block(&mut chain, &keychains, timestamp, block_reward);
+                create_fake_micro_block(&mut chain, &keychains, timestamp);
             let hash = Hash::digest(&block);
             let height = chain.height();
             chain
@@ -1392,7 +1586,7 @@ pub mod tests {
             // Empty block.
             //
             timestamp += Duration::from_millis(1);
-            let block = create_empty_micro_block(&mut chain, &keychains, timestamp);
+            let block = create_micro_block_with_coinbase(&mut chain, &keychains, timestamp);
             let hash = Hash::digest(&block);
             let height = chain.height();
             chain
@@ -1459,7 +1653,7 @@ pub mod tests {
         // Register a micro block.
         timestamp += Duration::from_millis(1);
         let (block1, input_hashes1, output_hashes1) =
-            create_fake_micro_block(&mut chain, &keychains, timestamp, 60);
+            create_fake_micro_block(&mut chain, &keychains, timestamp);
         chain
             .push_micro_block(block1, timestamp)
             .expect("block is valid");
@@ -1482,7 +1676,7 @@ pub mod tests {
         // Register one more micro block.
         timestamp += Duration::from_millis(1);
         let (block2, input_hashes2, output_hashes2) =
-            create_fake_micro_block(&mut chain, &keychains, timestamp, 0);
+            create_fake_micro_block(&mut chain, &keychains, timestamp);
         chain
             .push_micro_block(block2, timestamp)
             .expect("block is valid");
@@ -1558,7 +1752,7 @@ pub mod tests {
         assert!(blockchain.height() > 0);
         for _height in 2..12 {
             timestamp += Duration::from_millis(1);
-            let block = create_empty_micro_block(&blockchain, &keychains, timestamp);
+            let block = create_micro_block_with_coinbase(&blockchain, &keychains, timestamp);
             blockchain
                 .push_micro_block(block, timestamp)
                 .expect("Invalid block");

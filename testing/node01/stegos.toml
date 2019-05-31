@@ -14,7 +14,7 @@ network_skey_file = "testing/node01/network.skey"
 network_pkey_file = "testing/node01/network.pkey"
 
 [network]
-bind_ip = "0.0.0.0"
+bind_ip = "127.0.0.1"
 bind_port = 10055
 advertise_local_ips = false
 hashcash_nbits = 4

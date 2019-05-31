@@ -22,6 +22,7 @@
 // SOFTWARE.
 
 use std::borrow::Borrow;
+use std::collections::btree_map::IntoIter;
 pub use std::collections::btree_map::Iter;
 pub use std::collections::btree_map::Keys;
 pub use std::collections::btree_map::Range;
@@ -276,6 +277,17 @@ where
     /// The iterator element type is `(&'a K, &'a V)`.
     pub fn iter(&self) -> Iter<K, V> {
         self.map.iter()
+    }
+
+    /// An iterator visiting all key-value pairs in arbitrary order.
+    /// The iterator element type is `(K, V)`
+    pub fn into_iter(self) -> IntoIter<K, V> {
+        self.map.into_iter()
+    }
+
+    /// Returns pointer to inner map.
+    pub fn inner(&self) -> &BTreeMap<K, V> {
+        &self.map
     }
 }
 

@@ -783,7 +783,7 @@ impl Blockchain {
             let block_reward = self.cfg.block_reward;
             let data = PaymentPayloadData::Comment("Block reward".to_string());
             let (output, gamma) =
-                PaymentOutput::with_payload(&recipient_pkey, block_reward, data.clone())
+                PaymentOutput::with_payload(&recipient_pkey, block_reward, data.clone(), None)
                     .expect("invalid keys");
 
             info!(
@@ -1476,8 +1476,9 @@ pub fn create_fake_micro_block(
 
     let coinbase_tx = {
         let data = PaymentPayloadData::Comment(format!("Block reward"));
-        let (output, gamma) = PaymentOutput::with_payload(&keys.wallet_pkey, block_reward, data)
-            .expect("invalid keys");
+        let (output, gamma) =
+            PaymentOutput::with_payload(&keys.wallet_pkey, block_reward, data, None)
+                .expect("invalid keys");
         CoinbaseTransaction {
             block_reward,
             block_fee,
@@ -1530,7 +1531,7 @@ pub fn create_micro_block_with_coinbase(
 
         let data = PaymentPayloadData::Comment(format!("Block {}", comment));
         let (output_fee, gamma_fee) =
-            PaymentOutput::with_payload(&keys.wallet_pkey, amount, data.clone())
+            PaymentOutput::with_payload(&keys.wallet_pkey, amount, data.clone(), None)
                 .expect("invalid keys");
         gamma -= gamma_fee;
 

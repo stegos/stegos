@@ -61,6 +61,8 @@ pub(crate) fn create_vs_payment_transaction<'a, UnspentIter>(
 where
     UnspentIter: Iterator<Item = (&'a PaymentOutput, i64)>,
 {
+    let locked_timestamp = None;
+
     if amount < 0 {
         return Err(WalletError::NegativeAmount(amount).into());
     }
@@ -122,6 +124,7 @@ where
         recip: recipient.clone(),
         amount,
         data,
+        locked_timestamp,
     };
     outputs.push(output1);
 
@@ -138,6 +141,7 @@ where
             recip: sender_pkey.clone(),
             amount: change,
             data: data.clone(),
+            locked_timestamp: None,
         };
         info!(
             "Created change UTXO: recipient={}, change={}, data={:?}",
@@ -170,6 +174,8 @@ pub(crate) fn create_payment_transaction<'a, UnspentIter>(
 where
     UnspentIter: Iterator<Item = (&'a PaymentOutput, i64)>,
 {
+    let locked_timestamp = None;
+
     if amount < 0 {
         return Err(WalletError::NegativeAmount(amount).into());
     }
@@ -212,13 +218,13 @@ where
     let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
 
     // Create an output for payment
-
     let (output1, gamma1) = match transaction {
         TransactionType::Regular(data) => {
             data.validate()?;
             trace!("Creating payment UTXO...");
 
-            let (output1, gamma1) = PaymentOutput::with_payload(recipient, amount, data.clone())?;
+            let (output1, gamma1) =
+                PaymentOutput::with_payload(recipient, amount, data.clone(), locked_timestamp)?;
             let output1_hash = Hash::digest(&output1);
             info!(
                 "Created payment UTXO: hash={}, recipient={}, amount={}, data={:?}",
@@ -229,7 +235,11 @@ where
         TransactionType::Public => {
             trace!("Creating public payment UTXO...");
             let gamma1 = Fr::zero();
-            let output1 = PublicPaymentOutput::new(recipient, amount);
+            let output1 = if let Some(locked_timestamp) = locked_timestamp {
+                PublicPaymentOutput::new_locked(recipient, amount, locked_timestamp)
+            } else {
+                PublicPaymentOutput::new(recipient, amount)
+            };
             let output1_hash = Hash::digest(&output1);
             info!(
                 "Created public payment UTXO: hash={}, recipient={}, amount={}",
@@ -245,7 +255,8 @@ where
         // Create an output for change
         trace!("Creating change UTXO...");
         let data = PaymentPayloadData::Comment("Change".to_string());
-        let (output2, gamma2) = PaymentOutput::with_payload(sender_pkey, change, data.clone())?;
+        let (output2, gamma2) =
+            PaymentOutput::with_payload(sender_pkey, change, data.clone(), None)?;
         info!(
             "Created change UTXO: hash={}, recipient={}, change={}, data={:?}",
             Hash::digest(&output2),
@@ -570,7 +581,7 @@ where
     data.validate()?;
     trace!("Creating payment UTXO...");
 
-    let (output, gamma) = PaymentOutput::with_payload(recipient, total_amount, data.clone())?;
+    let (output, gamma) = PaymentOutput::with_payload(recipient, total_amount, data.clone(), None)?;
     let output1_hash = Hash::digest(&output);
     info!(
         "Created payment UTXO: hash={}, recipient={}, amount={}, data={:?}",

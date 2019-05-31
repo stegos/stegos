@@ -226,7 +226,7 @@ impl Mempool {
 
                 let data = PaymentPayloadData::Comment(format!("Block {}", comment));
                 let (output_fee, gamma_fee) =
-                    PaymentOutput::with_payload(&keychain.wallet_pkey, amount, data.clone())
+                    PaymentOutput::with_payload(&keychain.wallet_pkey, amount, data.clone(), None)
                         .expect("invalid keys");
                 gamma -= gamma_fee;
 

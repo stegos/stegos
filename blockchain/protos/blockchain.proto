@@ -9,12 +9,14 @@ message PaymentOutput {
     stegos.crypto.Pt cloaking_hint = 2;
     stegos.crypto.BulletProof proof = 3;
     stegos.crypto.EncryptedPayload payload = 4;
+    uint64 locked_timestamp = 5;
 }
 
 message PublicPaymentOutput {
     stegos.crypto.PublicKey recipient = 1;
     int64 serno = 2;
     int64 amount = 3;
+    uint64 locked_timestamp = 4;
 }
 
 message StakeOutput {

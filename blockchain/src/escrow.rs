@@ -43,10 +43,11 @@ struct EscrowValue {
     amount: i64,
 }
 
-type EscrowMap = MultiVersionedMap<EscrowKey, EscrowValue, u64>;
+use crate::LSN;
+type EscrowMap = MultiVersionedMap<EscrowKey, EscrowValue, LSN>;
 
 #[derive(Debug, Clone)]
-pub struct Escrow {
+pub(crate) struct Escrow {
     /// Stakes.
     escrow: EscrowMap,
 }
@@ -75,7 +76,7 @@ pub struct StakeInfo {
 impl Escrow {
     ///
     /// Create a new escrow.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let set = EscrowMap::new();
         Escrow { escrow: set }
     }
@@ -83,9 +84,9 @@ impl Escrow {
     ///
     /// Stake money into escrow.
     ///
-    pub fn stake(
+    pub(crate) fn stake(
         &mut self,
-        version: u64,
+        lsn: LSN,
         validator_pkey: pbc::PublicKey,
         output_hash: Hash,
         epoch: u64,
@@ -102,7 +103,7 @@ impl Escrow {
             amount,
         };
 
-        if let Some(v) = self.escrow.insert(version, key, value) {
+        if let Some(v) = self.escrow.insert(lsn, key, value) {
             panic!(
                 "Stake already exists: validator={}, utxo={}, amount={}",
                 &validator_pkey, &output_hash, v.amount
@@ -119,9 +120,9 @@ impl Escrow {
     ///
     /// Unstake money from the escrow.
     ///
-    pub fn unstake(
+    pub(crate) fn unstake(
         &mut self,
-        version: u64,
+        lsn: LSN,
         validator_pkey: pbc::PublicKey,
         output_hash: Hash,
         epoch: u64,
@@ -130,7 +131,7 @@ impl Escrow {
             validator_pkey,
             output_hash,
         };
-        let val = self.escrow.remove(version, &key).expect("stake exists");
+        let val = self.escrow.remove(lsn, &key).expect("stake exists");
 
         let (active_balance, expired_balance) = self.get(&validator_pkey, epoch);
         info!(
@@ -144,7 +145,7 @@ impl Escrow {
     ///
     /// Returns (active_balance, expired_balance) stake.
     ///
-    pub fn get(&self, validator_pkey: &pbc::PublicKey, epoch: u64) -> (i64, i64) {
+    pub(crate) fn get(&self, validator_pkey: &pbc::PublicKey, epoch: u64) -> (i64, i64) {
         let (hash_min, hash_max) = Hash::bounds();
         let key_min = EscrowKey {
             validator_pkey: validator_pkey.clone(),
@@ -172,7 +173,11 @@ impl Escrow {
     ///
     /// Returns list of utxos for specific validator.
     ///
-    pub fn staker_outputs(&self, validator_pkey: &pbc::PublicKey, epoch: u64) -> (Vec<Hash>, i64) {
+    pub(crate) fn staker_outputs(
+        &self,
+        validator_pkey: &pbc::PublicKey,
+        epoch: u64,
+    ) -> (Vec<Hash>, i64) {
         let (hash_min, hash_max) = Hash::bounds();
         let key_min = EscrowKey {
             validator_pkey: validator_pkey.clone(),
@@ -198,7 +203,7 @@ impl Escrow {
 
     /// Returns Hash of the first output for validator.
     /// If no output was found, return None.
-    pub fn get_first_output(&self, validator_pkey: &pbc::PublicKey) -> Option<Hash> {
+    pub(crate) fn get_first_output(&self, validator_pkey: &pbc::PublicKey) -> Option<Hash> {
         let (hash_min, hash_max) = Hash::bounds();
         let key_min = EscrowKey {
             validator_pkey: validator_pkey.clone(),
@@ -272,8 +277,8 @@ impl Escrow {
     }
 
     #[inline]
-    pub fn current_version(&self) -> u64 {
-        self.escrow.current_version()
+    pub(crate) fn current_lsn(&self) -> LSN {
+        self.escrow.current_lsn()
     }
 
     #[inline]
@@ -282,7 +287,7 @@ impl Escrow {
     }
 
     #[inline]
-    pub fn rollback_to_version(&mut self, to_version: u64) {
-        self.escrow.rollback_to_version(to_version);
+    pub(crate) fn rollback_to_lsn(&mut self, to_lsn: LSN) {
+        self.escrow.rollback_to_lsn(to_lsn);
     }
 }

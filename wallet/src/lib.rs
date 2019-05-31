@@ -207,17 +207,17 @@ impl WalletService {
         let (outbox, inbox) = unbounded::<WalletEvent>();
         events.push(Box::new(inbox));
 
-        // Monetary blocks from node.
-        let node_outputs = node
-            .subscribe_outputs_changed()
-            .map(|outputs| WalletEvent::NodeOutputsChanged(outputs));
-        events.push(Box::new(node_outputs));
-
-        // Key blocks from node.
+        // Epoch changes.
         let node_epochs = node
             .subscribe_epoch_changed()
             .map(|epoch| WalletEvent::NodeEpochChanged(epoch));
         events.push(Box::new(node_epochs));
+
+        // UTXO changes.
+        let node_outputs = node
+            .subscribe_outputs_changed()
+            .map(|outputs| WalletEvent::NodeOutputsChanged(outputs));
+        events.push(Box::new(node_outputs));
 
         let events = select_all(events);
 
@@ -442,7 +442,6 @@ impl WalletService {
 
     /// Called when outputs registered and/or pruned.
     fn on_outputs_changed(&mut self, epoch: u64, inputs: Vec<Output>, outputs: Vec<Output>) {
-        assert_eq!(self.epoch, epoch);
         let saved_balance = self.balance();
 
         self.find_committed_txs(&inputs);

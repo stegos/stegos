@@ -144,17 +144,17 @@ pub enum NodeResponse {
     EscrowInfo(EscrowInfo),
 }
 
-/// Send when height is changed.
+/// Send when block is added.
 #[derive(Clone, Debug, Serialize)]
 pub struct BlockAdded {
-    pub height: u64,
+    pub epoch: u64,
+    pub offset: u32,
     pub hash: Hash,
     pub lag: i64,
     pub view_change: u32,
     pub local_timestamp: i64,
     pub remote_timestamp: i64,
     pub synchronized: bool,
-    pub epoch: u64,
 }
 
 /// Send when epoch is changed.
@@ -267,7 +267,7 @@ pub struct NodeService {
     //
     /// Network interface.
     network: Network,
-    /// Triggered when height is changed.
+    /// Triggered when epoch is changed.
     on_block_added: Vec<UnboundedSender<BlockAdded>>,
     /// Triggered when epoch is changed.
     on_epoch_changed: Vec<UnboundedSender<EpochChanged>>,
@@ -290,10 +290,10 @@ impl NodeService {
         let mempool = Mempool::new();
 
         let last_block_clock = clock::now();
-        let validation = if chain.blocks_in_epoch() < cfg.blocks_in_epoch {
-            MicroBlockAuditor
-        } else {
+        let validation = if chain.is_epoch_full() {
             MacroBlockAuditor
+        } else {
+            MicroBlockAuditor
         };
         let cheating_proofs = HashMap::new();
 
@@ -432,59 +432,42 @@ impl NodeService {
     ///
     /// Resolve a fork using a duplicate micro block from the current epoch.
     ///
-    fn resolve_fork(&mut self, remote: &Block) -> ForkResult {
-        let height = remote.base_header().height;
-        assert!(height < self.chain.height());
-        assert!(height > 0);
-        assert!(height > self.chain.last_macro_block_height());
-
+    fn resolve_fork(&mut self, remote: &MicroBlock) -> ForkResult {
+        assert_eq!(remote.header.epoch, self.chain.epoch());
+        assert!(remote.header.offset < self.chain.offset());
+        let epoch = self.chain.epoch();
+        let offset = remote.header.offset;
         let remote_hash = Hash::digest(&remote);
-        let remote = match remote {
-            Block::MicroBlock(remote) => remote,
-            _ => {
-                return Err(NodeBlockError::ExpectedMicroBlock(height, remote_hash).into());
-            }
-        };
-
-        let remote_view_change = remote.base.view_change;
-        let local = self.chain.block_by_height(height)?;
+        let remote_view_change = remote.header.view_change;
+        let local = self.chain.micro_block(epoch, offset)?;
         let local_hash = Hash::digest(&local);
-        let local = match local {
-            Block::MicroBlock(local) => local,
-            _ => {
-                let e = NodeBlockError::ExpectedMicroBlock(height, local_hash);
-                panic!("{}", e);
-            }
-        };
-
-        // check that validator is really leader for provided view_change.
-        let previous_block = self.chain.block_by_height(height - 1)?;
-        let mut election_result = self.chain.election_result();
-        election_result.random = previous_block.base_header().random;
-        let leader = election_result.select_leader(remote_view_change);
-        if leader != remote.pkey {
-            return Err(BlockError::DifferentPublicKey(leader, remote.pkey).into());
-        };
 
         // check multiple blocks with same view_change
-        if remote_view_change == local.base.view_change {
+        if remote.header.view_change == local.header.view_change {
+            assert_eq!(
+                remote.header.pkey, local.header.pkey,
+                "checked by upper levels"
+            );
+            let leader = remote.header.pkey;
+
             if remote_hash == local_hash {
                 debug!(
-                    "Skip a duplicate block with the same hash: height={}, block={}, current_height={}, last_block={}",
-                    height, remote_hash, self.chain.height(), self.chain.last_block_hash(),
+                    "Skip a duplicate block with the same hash: epoch={}, offset={}, block={}, our_offset={}",
+                    epoch, offset, remote_hash, self.chain.offset(),
                 );
                 return Err(ForkError::Canceled);
             }
 
-            warn!("Two micro-blocks from the same leader detected: height={}, local_block={}, remote_block={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, current_height={}, last_block={}",
-                  height,
+            warn!("Two micro-blocks from the same leader detected: epoch={}, offset={}, local_block={}, remote_block={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, our_offset={}, last_block={}",
+                  epoch,
+                  offset,
                   local_hash,
                   remote_hash,
-                  local.base.previous,
-                  remote.base.previous,
-                  local.base.view_change,
-                  remote.base.view_change,
-                  self.chain.height(),
+                  local.header.previous,
+                  remote.header.previous,
+                  local.header.view_change,
+                  remote.header.view_change,
+                  self.chain.offset(),
                   self.chain.last_block_hash());
 
             metrics::CHEATS.inc();
@@ -496,26 +479,26 @@ impl NodeService {
             }
 
             return Err(ForkError::Canceled);
-        } else if remote_view_change <= local.base.view_change {
+        } else if remote.header.view_change < local.header.view_change {
             debug!(
                 "Found a fork with lower view_change, sending blocks: pkey={}",
-                leader
+                remote.header.pkey
             );
-
-            self.send_blocks(leader, height)?;
+            self.send_blocks(remote.header.pkey, epoch, offset)?;
             return Err(ForkError::Canceled);
         }
 
         // Check the proof.
         let chain = ChainInfo::from_micro_block(&remote);
-        let sealed_proof = match remote.view_change_proof {
+        let sealed_proof = match remote.header.view_change_proof {
             Some(ref proof) => SealedViewChangeProof {
                 proof: proof.clone(),
                 chain,
             },
             None => {
                 return Err(BlockError::NoProofWasFound(
-                    height,
+                    epoch,
+                    offset,
                     remote_hash,
                     remote_view_change,
                     0,
@@ -524,79 +507,73 @@ impl NodeService {
             }
         };
         // seal proof, and try to resolve fork.
-        return self.try_rollback(remote.pkey, sealed_proof);
+        return self.try_rollback(remote.header.pkey, sealed_proof);
     }
 
     /// We receive info about view_change, rollback the blocks, and set view_change to new.
     fn try_rollback(&mut self, pkey: pbc::PublicKey, proof: SealedViewChangeProof) -> ForkResult {
-        let height = proof.chain.height;
-        // Check height.
-        if height <= self.chain.last_macro_block_height() {
+        // Check epoch.
+        if proof.chain.epoch < self.chain.epoch() {
             debug!(
-                "Skip an outdated proof: height={}, current_height={}",
-                height,
-                self.chain.height()
+                "Skip an outdated proof: epoch={}, our_epoch={}",
+                proof.chain.epoch,
+                self.chain.epoch()
             );
             return Err(ForkError::Canceled);
         }
+        let epoch = self.chain.epoch();
 
-        let local = if height < self.chain.height() {
+        let offset = proof.chain.offset;
+        let local = if offset < self.chain.offset() {
             // Get local block.
-            let local = self.chain.block_by_height(height)?;
-            let local_hash = Hash::digest(&local);
-            let local = match local {
-                Block::MicroBlock(local) => local,
-                _ => {
-                    let e = NodeBlockError::ExpectedMicroBlock(height, local_hash);
-                    panic!("{}", e);
-                }
-            };
+            let local = self.chain.micro_block(epoch, offset)?;
             ChainInfo {
-                height: local.base.height,
-                last_block: local.base.previous,
-                view_change: local.base.view_change,
+                epoch,
+                offset: local.header.offset,
+                last_block: local.header.previous,
+                view_change: local.header.view_change,
             }
-        } else if height == self.chain.height() {
+        } else if offset == self.chain.offset() {
             ChainInfo::from_blockchain(&self.chain)
         } else {
-            debug!("Received proof with future height, ignoring for now: proof_height={}, our_height={}",
-            height, self.chain.height());
+            debug!("Received ViewChangeProof from the future, ignoring for now: epoch={}, remote_offset={}, local_offset={}",
+            epoch, offset, self.chain.offset());
             return Err(ForkError::Canceled);
         };
 
         let local_view_change = local.view_change;
         let remote_view_change = proof.chain.view_change;
 
-        debug!("Started fork resolution: height={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, remote_proof={:?}, current_height={}",
-               height,
+        debug!("Started fork resolution: epoch={}, offset={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, remote_proof={:?}",
+               epoch,
+               offset,
                local.last_block,
                proof.chain.last_block,
                local_view_change,
                remote_view_change,
-               proof.proof,
-               self.chain.height(),
+               proof.proof
         );
 
         // Check view_change.
         if remote_view_change < local_view_change {
-            warn!("View change proof with lesser or equal view_change: height={}, local_view_change={}, remote_view_change={}, current_height={}",
-                  height,
+            warn!("View change proof with lesser or equal view_change: epoch={}, offset={}, local_view_change={}, remote_view_change={}",
+                  epoch,
+                  offset,
                   local_view_change,
                   remote_view_change,
-                  self.chain.height(),
             );
             return Err(ForkError::Canceled);
         }
+
         // Check previous hash.
         if proof.chain.last_block != local.last_block {
-            warn!("Found a proof with invalid previous hash: height={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, current_height={}, last_block={}",
-                  height,
+            warn!("Found a proof with invalid previous hash: epoch={}, offset={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}",
+                  epoch,
+                  offset,
                   local.last_block,
                   proof.chain.last_block,
                   local_view_change,
-                  remote_view_change,
-                  self.chain.height(),
-                  self.chain.last_block_hash());
+                  remote_view_change);
             // Request history from that node.
             self.request_history_from(pkey)?;
             return Err(ForkError::Canceled);
@@ -606,23 +583,23 @@ impl NodeService {
         assert_eq!(proof.chain.last_block, local.last_block);
 
         if let Err(e) = proof.proof.validate(&proof.chain, &self.chain) {
-            return Err(BlockError::InvalidViewChangeProof(height, proof.proof, e).into());
+            return Err(BlockError::InvalidViewChangeProof(epoch, proof.proof, e).into());
         }
 
         metrics::FORKS.inc();
 
         warn!(
-            "A fork detected: height={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, current_height={}, last_block={}",
-            height,
+            "A fork detected: epoch={}, offset={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, current_offset={}",
+            epoch,
+            offset,
             local.last_block,
             proof.chain.last_block,
             local_view_change,
             remote_view_change,
-            self.chain.height(),
-            self.chain.last_block_hash());
+            self.chain.offset());
 
         // Truncate the blockchain.
-        while self.chain.height() > height {
+        while self.chain.offset() > offset {
             let (inputs, outputs) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
             let msg = OutputsChanged {
@@ -633,7 +610,7 @@ impl NodeService {
             self.on_outputs_changed
                 .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
         }
-        assert_eq!(height, self.chain.height());
+        assert_eq!(offset, self.chain.offset());
 
         self.chain
             .set_view_change(proof.chain.view_change + 1, proof.proof);
@@ -641,113 +618,136 @@ impl NodeService {
         Ok(())
     }
 
-    /// Handle incoming blocks received from network.
-    fn handle_block(&mut self, block: Block) -> Result<(), Error> {
-        let block_hash = Hash::digest(&block);
-        let block_height = block.base_header().height;
-        debug!(
-            "Received a new block: height={}, block={}, view_change={}, current_height={}, last_block={}",
-            block_height,
-            block_hash,
-            block.base_header().view_change,
-            self.chain.height(),
-            self.chain.last_block_hash()
-        );
-
-        // Check height.
-        if block_height <= self.chain.last_macro_block_height() {
-            // A duplicate block from a finalized epoch - ignore.
+    /// Handle a macro block from the network.
+    fn handle_macro_block(&mut self, block: MacroBlock) -> Result<(), Error> {
+        if block.header.epoch < self.chain.epoch() {
+            // Ignore outdated block.
+            let block_hash = Hash::digest(&block);
             debug!(
-                "Skip an outdated block: height={}, block={}, current_height={}, last_block={}",
-                block_height,
+                "Skip an outdated macro block: block={}, epoch={}, our_epoch={}",
                 block_hash,
-                self.chain.height(),
+                block.header.epoch,
+                self.chain.epoch(),
+            );
+            Ok(())
+        } else if block.header.epoch == self.chain.epoch() {
+            self.apply_macro_block(block)
+        } else {
+            let block_hash = Hash::digest(&block);
+            debug!(
+                "Skip a macro block from future: block={}, epoch={}, our_epoch={}",
+                block_hash,
+                block.header.epoch,
+                self.chain.epoch(),
+            );
+            self.request_history()?;
+            Ok(())
+        }
+    }
+
+    /// Handle a micro block from the network.
+    fn handle_micro_block(&mut self, block: MicroBlock) -> Result<(), Error> {
+        let block_hash = Hash::digest(&block);
+        if block.header.epoch < self.chain.epoch() {
+            debug!(
+                "Ignore an outdated micro block: block={}, epoch={}, our_epoch={}, offset={}, our_offset={}, view_change={}, our_view_change={}, previous={}, our_previous={}",
+                block_hash,
+                block.header.epoch,
+                self.chain.epoch(),
+                block.header.offset,
+                self.chain.offset(),
+                block.header.view_change,
+                self.chain.view_change(),
+                block.header.previous,
                 self.chain.last_block_hash()
             );
             return Ok(());
-        } else if block_height > self.chain.height() {
-            // An orphan block from later epochs - ignore.
-            warn!("Skipped an orphan block from the future: height={}, block={}, current_height={}, last_block={}",
-                  block_height,
-                  block_hash,
-                  self.chain.height(),
-                  self.chain.last_block_hash()
+        } else if block.header.epoch > self.chain.epoch()
+            || block.header.offset > self.chain.offset()
+        {
+            debug!(
+                "Ignore a micro block from the future: block={}, epoch={}, our_epoch={}, offset={}, our_offset={}, view_change={}, our_view_change={}, previous={}, our_previous={}",
+                block_hash,
+                block.header.epoch,
+                self.chain.epoch(),
+                block.header.offset,
+                self.chain.offset(),
+                block.header.view_change,
+                self.chain.view_change(),
+                block.header.previous,
+                self.chain.last_block_hash()
             );
-            self.request_history()?;
             return Ok(());
         }
-        // A block from the current epoch.
-        assert!(block_height > self.chain.last_macro_block_height());
-        assert!(block_height <= self.chain.last_macro_block_height() + self.cfg.blocks_in_epoch);
 
-        // Check block consistency.
-        match block {
-            Block::MacroBlock(ref block) => {
-                check_multi_signature(
-                    &block_hash,
-                    &block.body.multisig,
-                    &block.body.multisigmap,
-                    self.chain.validators(),
-                    self.chain.total_slots(),
-                )
-                .map_err(|e| BlockError::InvalidBlockSignature(e, block_height, block_hash))?;
-            }
-            Block::MicroBlock(ref block) => {
-                let leader = block.pkey;
-                if let Err(_e) = pbc::check_hash(&block_hash, &block.sig, &leader) {
-                    return Err(BlockError::InvalidLeaderSignature(block_height, block_hash).into());
-                }
-                if !self.chain.is_validator(&leader) {
-                    return Err(BlockError::LeaderIsNotValidator(block_height, block_hash).into());
-                }
-            }
+        assert_eq!(block.header.epoch, self.chain.epoch());
+        assert!(block.header.offset <= self.chain.offset());
+        let epoch = self.chain.epoch();
+        let offset = block.header.offset;
+
+        debug!(
+            "Process a micro block: block={}, epoch={}, our_epoch={}, offset={}, our_offset={}, view_change={}, our_view_change={}, previous={}, our_previous={}",
+            block_hash,
+            block.header.epoch,
+            self.chain.epoch(),
+            block.header.offset,
+            self.chain.offset(),
+            block.header.view_change,
+            self.chain.view_change(),
+            block.header.previous,
+            self.chain.last_block_hash()
+        );
+
+        // Check that block is created by legitimate validator.
+        let election_result = self.chain.election_result_by_offset(offset)?;
+        let leader = block.header.pkey;
+        if !election_result.is_validator(&leader) {
+            return Err(BlockError::LeaderIsNotValidator(epoch, block_hash).into());
+        }
+        if let Err(_e) = pbc::check_hash(&block_hash, &block.sig, &leader) {
+            return Err(BlockError::InvalidLeaderSignature(epoch, block_hash).into());
         }
 
         // A duplicate block from the current epoch - try to resolve forks.
-        if block_height < self.chain.height() {
+        if offset < self.chain.offset() {
             match self.resolve_fork(&block) {
                 //TODO: Notify sender about our blocks?
                 Ok(()) => {
                     debug!(
-                        "Fork resolution decide that remote chain is better: fork_height={}",
-                        block_height
+                        "Fork resolution decide that remote chain is better: fork_offset={}",
+                        offset
                     );
                     assert_eq!(
-                        block_height,
-                        self.chain.height(),
+                        offset,
+                        self.chain.offset(),
                         "Fork resolution rollback our chain"
                     );
                 }
                 Err(ForkError::Canceled) => {
                     debug!(
-                        "Fork resolution decide that our chain is better: fork_height={}",
-                        block_height
+                        "Fork resolution decide that our chain is better: fork_offset={}",
+                        offset
                     );
-                    assert!(
-                        block_height < self.chain.height(),
-                        "Fork didn't remove any block"
-                    );
+                    assert!(offset < self.chain.offset(), "Fork didn't remove any block");
                     return Ok(());
                 }
                 Err(ForkError::Error(e)) => return Err(e),
             }
         }
 
-        assert_eq!(block_height, self.chain.height());
-        let view_change = block.base_header().view_change;
-        let r = match block {
-            Block::MacroBlock(block) => self.apply_macro_block(block),
-            Block::MicroBlock(block) => self.apply_micro_block(block),
-        };
-        if let Err(e) = r {
+        assert_eq!(block.header.epoch, epoch);
+        assert_eq!(block.header.offset, self.chain.offset());
+        let view_change = block.header.view_change;
+        if let Err(e) = self.apply_micro_block(block) {
             error!(
-                "Failed to apply block: height={}, block={}, error={}",
-                self.chain.height(),
+                "Failed to apply micro block: epoch={}, offset={}, block={}, error={}",
+                self.chain.epoch(),
+                self.chain.offset(),
                 block_hash,
                 e
             );
             match e.downcast::<BlockchainError>() {
-                Ok(BlockchainError::BlockError(BlockError::InvalidPreviousHash(..))) => {
+                Ok(BlockchainError::BlockError(BlockError::InvalidMicroBlockPreviousHash(..))) => {
                     // A potential fork - request history from that node.
                     let from = self.chain.select_leader(view_change);
                     self.request_history_from(from)?;
@@ -759,7 +759,8 @@ impl NodeService {
                     warn!("Discarded a block with lesser view_change: block_view_change={}, our_view_change={}",
                           view_change, self.chain.view_change());
                     let chain_info = ChainInfo {
-                        height: self.chain.height(),
+                        epoch: self.chain.epoch(),
+                        offset: self.chain.offset(),
                         // correct information about proof, to refer previous on view_change;
                         view_change: self.chain.view_change() - 1,
                         last_block: self.chain.last_block_hash(),
@@ -783,45 +784,56 @@ impl NodeService {
                 _ => {}
             }
         }
-
         Ok(())
+    }
+
+    /// Handle incoming blocks received from network.
+    fn handle_block(&mut self, block: Block) -> Result<(), Error> {
+        match block {
+            Block::MicroBlock(block) => self.handle_micro_block(block),
+            Block::MacroBlock(block) => self.handle_macro_block(block),
+        }
     }
 
     /// Try to apply a new micro block into the blockchain.
     fn apply_macro_block(&mut self, block: MacroBlock) -> Result<(), Error> {
         let hash = Hash::digest(&block);
-        let timestamp = block.header.base.timestamp;
-        let height = block.header.base.height;
-        let view_change = block.header.base.view_change;
+        let timestamp = block.header.timestamp;
+        let epoch = block.header.epoch;
+        let view_change = block.header.view_change;
         let was_synchronized = self.is_synchronized();
 
-        // Check for the correct block order.
-        match &mut self.validation {
-            MacroBlockAuditor => {}
-            MacroBlockValidator { consensus, .. } => {
-                if consensus.should_commit() {
-                    // Check for forks.
-                    let (consensus_block_hash, _block_proposal, _view_cahange) =
-                        consensus.get_proposal();
-                    if consensus_block_hash != consensus_block_hash {
-                        panic!(
-                            "Network fork: received_block={:?}, consensus_block={:?}",
-                            &hash, &consensus_block_hash
-                        );
-                    }
-                }
-            }
-            _ => {
-                return Err(NodeBlockError::ExpectedMacroBlock(self.chain.height(), hash).into());
-            }
+        // Validate signature.
+        check_multi_signature(
+            &hash,
+            &block.multisig,
+            &block.multisigmap,
+            self.chain.validators(),
+            self.chain.total_slots(),
+        )
+        .map_err(|e| BlockError::InvalidBlockSignature(e, epoch, hash))?;
+
+        // Remove all micro blocks.
+        while self.chain.offset() > 0 {
+            let (inputs, outputs) = self.chain.pop_micro_block()?;
+            self.last_block_clock = clock::now();
+            let msg = OutputsChanged {
+                epoch: self.chain.epoch(),
+                inputs,
+                outputs,
+            };
+            // TODO: merge this event with OutputsChanged below.
+            self.on_outputs_changed
+                .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
         }
+        assert_eq!(0, self.chain.offset());
 
         let (inputs, outputs) = self.chain.push_macro_block(block, timestamp)?;
 
         if !was_synchronized && self.is_synchronized() {
             info!(
-                "Synchronized with the network: height={}, last_block={}",
-                self.chain.height(),
+                "Synchronized with the network: epoch={}, last_block={}",
+                epoch,
                 self.chain.last_block_hash()
             );
             metrics::SYNCHRONIZED.set(1);
@@ -836,7 +848,7 @@ impl NodeService {
             .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
         self.cheating_proofs.clear();
 
-        self.on_block_added(height, view_change, hash, timestamp, inputs, outputs);
+        self.on_block_added(epoch, 0, view_change, hash, timestamp, inputs, outputs);
         self.update_validation_status();
 
         Ok(())
@@ -845,20 +857,21 @@ impl NodeService {
     /// Try to apply a new micro block into the blockchain.
     fn apply_micro_block(&mut self, block: MicroBlock) -> Result<(), Error> {
         let hash = Hash::digest(&block);
-        let timestamp = block.base.timestamp;
-        let height = block.base.height;
-        let view_change = block.base.view_change;
+        let timestamp = block.header.timestamp;
+        let epoch = block.header.epoch;
+        let offset = block.header.offset;
+        let view_change = block.header.view_change;
 
         // Check for the correct block order.
         match &self.validation {
             MicroBlockAuditor | MicroBlockValidator { .. } => {}
             _ => {
-                return Err(NodeBlockError::ExpectedMicroBlock(self.chain.height(), hash).into());
+                return Err(BlockchainError::ExpectedMicroBlock(epoch, offset, hash).into());
             }
         }
 
         let (inputs, outputs) = self.chain.push_micro_block(block, timestamp)?;
-        self.on_block_added(height, view_change, hash, timestamp, inputs, outputs);
+        self.on_block_added(epoch, offset, view_change, hash, timestamp, inputs, outputs);
         self.update_validation_status();
 
         Ok(())
@@ -866,7 +879,8 @@ impl NodeService {
 
     fn on_block_added(
         &mut self,
-        height: u64,
+        epoch: u64,
+        offset: u32,
         view_change: u32,
         hash: Hash,
         timestamp: SystemTime,
@@ -900,14 +914,14 @@ impl NodeService {
         metrics::BLOCK_LAG.set(lag); // can be negative.
 
         let msg = BlockAdded {
-            height,
+            epoch,
+            offset,
             view_change,
             hash,
             lag,
             local_timestamp,
             remote_timestamp,
             synchronized: self.is_synchronized(),
-            epoch: self.chain.epoch(),
         };
         self.on_block_added
             .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
@@ -943,7 +957,7 @@ impl NodeService {
     /// Handler for NodeMessage::PopBlock.
     fn handle_pop_block(&mut self) -> Result<(), Error> {
         warn!("Received a request to revert the latest block");
-        if self.chain.blocks_in_epoch() > 1 {
+        if self.chain.offset() > 1 {
             let (inputs, outputs) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
             let msg = OutputsChanged {
@@ -956,8 +970,8 @@ impl NodeService {
             self.update_validation_status()
         } else {
             error!(
-                "Attempt to revert a macro block: height={}",
-                self.chain.height()
+                "Attempt to revert a macro block: epoch={}",
+                self.chain.epoch()
             );
         }
         Ok(())
@@ -966,14 +980,22 @@ impl NodeService {
     /// Send block to network.
     fn send_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
-        let block_height = block.base_header().height;
         let data = block.into_buffer()?;
-        // Don't send block to myself.
         self.network.publish(&SEALED_BLOCK_TOPIC, data)?;
-        info!(
-            "Sent sealed block to the network: height={}, block={}",
-            block_height, block_hash
-        );
+        match block {
+            Block::MacroBlock(ref block) => {
+                info!(
+                    "Sent macro block to the network: epoch={}, block={}, previous={}",
+                    block.header.epoch, block_hash, block.header.previous
+                );
+            }
+            Block::MicroBlock(ref block) => {
+                info!(
+                    "Sent micro block to the network: epoch={}, offset={}, block={}, previous={}",
+                    block.header.epoch, block.header.offset, block_hash, block.header.previous
+                );
+            }
+        }
         Ok(())
     }
 
@@ -991,8 +1013,9 @@ impl NodeService {
         let leader = self.chain.leader();
         if leader == self.keys.network_pkey {
             info!(
-                "I'm leader, collecting transactions for the next micro block: height={}, view_change={}, last_block={}",
-                self.chain.height(),
+                "I'm leader, collecting transactions for the next micro block: epoch={}, offset={}, view_change={}, last_block={}",
+                self.chain.epoch(),
+                self.chain.offset(),
                 self.chain.view_change(),
                 self.chain.last_block_hash()
             );
@@ -1007,8 +1030,9 @@ impl NodeService {
             };
             std::mem::replace(block_timer, BlockTimer::Propose(Delay::new(deadline)));
         } else {
-            info!("I'm validator, waiting for the next micro block: height={}, view_change={}, last_block={}, leader={}",
-                  self.chain.height(),
+            info!("I'm validator, waiting for the next micro block: epoch={}, offset={}, view_change={}, last_block={}, leader={}",
+                  self.chain.epoch(),
+                  self.chain.offset(),
                   self.chain.view_change(),
                   self.chain.last_block_hash(),
                   leader);
@@ -1034,8 +1058,8 @@ impl NodeService {
 
         if consensus.is_leader() {
             info!(
-                "I'm leader, proposing the next macro block: height={}, view_change={}, last_block={}",
-                self.chain.height(),
+                "I'm leader, proposing the next macro block: epoch={}, view_change={}, last_block={}",
+                self.chain.epoch(),
                 consensus.round(),
                 self.chain.last_block_hash()
             );
@@ -1048,8 +1072,8 @@ impl NodeService {
             }
         } else {
             info!(
-                "I'm validator, waiting for the next macro block: height={}, view_change={}, last_block={}, leader={}",
-                self.chain.height(),
+                "I'm validator, waiting for the next macro block: epoch={}, view_change={}, last_block={}, leader={}",
+                self.chain.epoch(),
                 consensus.round(),
                 self.chain.last_block_hash(),
                 consensus.leader(),
@@ -1068,12 +1092,13 @@ impl NodeService {
     /// Change validation status after applying a new block or performing a view change.
     ///
     fn update_validation_status(&mut self) {
-        if self.chain.blocks_in_epoch() < self.cfg.blocks_in_epoch {
+        if !self.chain.is_epoch_full() {
             // Expected Micro Block.
             let _prev = std::mem::replace(&mut self.validation, MicroBlockAuditor);
             if !self.chain.is_validator(&self.keys.network_pkey) {
-                info!("I'm auditor, waiting for the next micro block: height={}, view_change={}, last_block={}",
-                      self.chain.height(),
+                info!("I'm auditor, waiting for the next micro block: epoch={}, offset={}, view_change={}, last_block={}",
+                      self.chain.epoch(),
+                      self.chain.offset(),
                       self.chain.view_change(),
                       self.chain.last_block_hash()
                 );
@@ -1099,8 +1124,8 @@ impl NodeService {
             let prev = std::mem::replace(&mut self.validation, MacroBlockAuditor);
             if !self.chain.is_validator(&self.keys.network_pkey) {
                 info!(
-                    "I'm auditor, waiting for the next macro block: height={}, last_block={}",
-                    self.chain.height(),
+                    "I'm auditor, waiting for the next macro block: epoch={}, last_block={}",
+                    self.chain.epoch(),
                     self.chain.last_block_hash()
                 );
                 consensus::metrics::CONSENSUS_ROLE
@@ -1109,8 +1134,7 @@ impl NodeService {
             }
 
             let mut consensus = Consensus::new(
-                self.chain.height() as u64,
-                self.chain.epoch() + 1,
+                self.chain.epoch(),
                 self.keys.network_skey.clone(),
                 self.keys.network_pkey.clone(),
                 self.chain.election_result(),
@@ -1212,7 +1236,7 @@ impl NodeService {
         let timestamp = SystemTime::now();
         let block_timestamp = self.chain.last_macro_block_timestamp();
         block_timestamp
-            + self.cfg.micro_block_timeout * (self.cfg.blocks_in_epoch as u32)
+            + self.cfg.micro_block_timeout * self.chain.cfg().micro_blocks_in_epoch
             + self.cfg.macro_block_timeout
             >= timestamp
     }
@@ -1227,7 +1251,7 @@ impl NodeService {
             } => (block_timer, consensus),
             _ => panic!("Expected MacroBlockValidator state"),
         };
-        assert_eq!(self.chain.blocks_in_epoch(), self.cfg.blocks_in_epoch);
+        assert!(self.chain.is_epoch_full());
         assert!(consensus.should_propose());
 
         // Set view_change timer.
@@ -1240,7 +1264,6 @@ impl NodeService {
         let (block, block_proposal) = proposal::create_macro_block_proposal(
             &self.chain,
             consensus.round(),
-            self.cfg.block_reward,
             &self.keys.wallet_pkey,
             &self.keys.network_skey,
             &self.keys.network_pkey,
@@ -1263,8 +1286,8 @@ impl NodeService {
         };
         if consensus.should_commit() {
             assert!(!consensus.is_leader(), "never happens on leader");
-            warn!("Timed out while waiting for the committed block from the leader, applying automatically: height={}",
-                  self.chain.height()
+            warn!("Timed out while waiting for the committed block from the leader, applying automatically: epoch={}",
+                  self.chain.epoch()
             );
             metrics::AUTOCOMMIT.inc();
             // Auto-commit proposed block and send it to the network.
@@ -1273,8 +1296,8 @@ impl NodeService {
         }
 
         warn!(
-            "Timed out while waiting for a macro block, going to the next round: height={}, view_change={}",
-            self.chain.height(), consensus.round() + 1
+            "Timed out while waiting for a macro block, going to the next round: epoch={}, view_change={}",
+            self.chain.epoch(), consensus.round() + 1
         );
 
         // Go to the next round.
@@ -1319,8 +1342,8 @@ impl NodeService {
 
         if let Some(proof) = view_change_collector.handle_message(&self.chain, msg)? {
             debug!(
-                "Received enough messages for change leader: height={}, view_change={}, last_block={}",
-                self.chain.height(), self.chain.view_change(), self.chain.last_block_hash(),
+                "Received enough messages for change leader: epoch={}, view_change={}, last_block={}",
+                self.chain.epoch(), self.chain.view_change(), self.chain.last_block_hash(),
             );
             // Perform view change.
             self.chain
@@ -1338,8 +1361,8 @@ impl NodeService {
         let elapsed = clock::now().duration_since(self.last_block_clock);
         assert!(elapsed >= self.cfg.micro_block_timeout);
         warn!(
-            "Timed out while waiting for a micro block: height={}, elapsed={:?}",
-            self.chain.height(),
+            "Timed out while waiting for a micro block: epoch={}, elapsed={:?}",
+            self.chain.epoch(),
             elapsed
         );
 
@@ -1365,8 +1388,8 @@ impl NodeService {
             .publish(VIEW_CHANGE_TOPIC, msg.into_buffer()?)?;
         metrics::MICRO_BLOCK_VIEW_CHANGES.inc();
         debug!(
-            "Sent a view change to the network: height={}, view_change={}, last_block={}",
-            self.chain.height(),
+            "Sent a view change to the network: epoch={}, view_change={}, last_block={}",
+            self.chain.epoch(),
             self.chain.view_change(),
             self.chain.last_block_hash(),
         );
@@ -1387,16 +1410,17 @@ impl NodeService {
             MicroBlockValidator { .. } => {}
             _ => panic!("Expected MicroBlockValidator State"),
         };
-        assert!(self.chain.leader() == self.keys.network_pkey);
-        assert!(self.chain.blocks_in_epoch() < self.cfg.blocks_in_epoch);
+        assert_eq!(self.chain.leader(), self.keys.network_pkey);
+        assert!(!self.chain.is_epoch_full());
 
-        let height = self.chain.height();
+        let epoch = self.chain.epoch();
+        let offset = self.chain.offset();
         let previous = self.chain.last_block_hash();
         let view_change = self.chain.view_change();
         let view_change_proof = self.chain.view_change_proof().clone();
         debug!(
-            "Creating a new micro block: height={}, view_change={}, last_block={}",
-            height, view_change, previous
+            "Creating a new micro block: epoch={}, offset={}, view_change={}, last_block={}",
+            epoch, offset, view_change, previous
         );
 
         for (cheater, proof) in &self.cheating_proofs {
@@ -1414,13 +1438,13 @@ impl NodeService {
         // Create a new micro block from the mempool.
         let mut block = self.mempool.create_block(
             previous,
-            VERSION,
-            self.chain.height(),
-            self.cfg.block_reward,
-            &self.keys,
-            self.chain.last_random(),
+            epoch,
+            offset,
             view_change,
             view_change_proof,
+            self.chain.last_random(),
+            self.cfg.block_reward,
+            &self.keys,
             self.cfg.max_utxo_in_block,
         );
 
@@ -1430,8 +1454,9 @@ impl NodeService {
         block.sign(&self.keys.network_skey, &self.keys.network_pkey);
 
         info!(
-            "Created a micro block: height={}, view_change={}, block={}, transactions={}",
-            height,
+            "Created a micro block: epoch={}, offset={}, view_change={}, block={}, transactions={}",
+            epoch,
+            offset,
             view_change,
             &block_hash,
             block.transactions.len(),

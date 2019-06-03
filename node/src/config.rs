@@ -38,7 +38,7 @@ pub struct ChainConfig {
     /// Time to lock stakes.
     pub stake_epochs: u64,
     /// The number of blocks per epoch.
-    pub blocks_in_epoch: u64,
+    pub micro_blocks_in_epoch: u32,
     /// The maximal number of inputs + outputs in a transaction.
     pub max_utxo_in_tx: usize,
     /// The maximal number of inputs + outputs in a micro block.
@@ -76,7 +76,7 @@ impl Default for ChainConfig {
             micro_block_timeout,
             macro_block_timeout,
             stake_epochs: blockchain_default.stake_epochs,
-            blocks_in_epoch: 5,
+            micro_blocks_in_epoch: blockchain_default.micro_blocks_in_epoch,
             max_utxo_in_tx: 10,
             max_utxo_in_block: 1000,
             max_utxo_in_mempool: 10000,
@@ -94,12 +94,14 @@ impl Default for ChainConfig {
 
 impl Into<BlockchainConfig> for ChainConfig {
     fn into(self) -> BlockchainConfig {
-        let service_award_per_epoch = self.block_reward / 2 * self.blocks_in_epoch as i64;
+        let service_award_per_epoch =
+            self.block_reward / 2 * (self.micro_blocks_in_epoch + 1) as i64;
         BlockchainConfig {
             awards_difficulty: self.awards_difficulty,
             max_slot_count: self.max_slot_count,
             min_stake_amount: self.min_stake_amount,
             stake_epochs: self.stake_epochs,
+            micro_blocks_in_epoch: self.micro_blocks_in_epoch,
             block_reward: self.block_reward,
             service_award_per_epoch,
         }

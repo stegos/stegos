@@ -94,7 +94,7 @@ impl ProtoConvert for ConsensusMessage {
     type Proto = consensus::ConsensusMessage;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = consensus::ConsensusMessage::new();
-        proto.set_height(self.height);
+        proto.set_epoch(self.epoch);
         proto.set_round(self.round);
         proto.set_block_hash(self.block_hash.into_proto());
         proto.set_body(self.body.into_proto());
@@ -103,14 +103,14 @@ impl ProtoConvert for ConsensusMessage {
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let height = proto.get_height();
+        let epoch = proto.get_epoch();
         let round = proto.get_round();
         let block_hash = Hash::from_proto(proto.get_block_hash())?;
         let body = ConsensusMessageBody::from_proto(proto.get_body())?;
         let sig = pbc::Signature::from_proto(proto.get_sig())?;
         let pkey = pbc::PublicKey::from_proto(proto.get_pkey())?;
         Ok(ConsensusMessage {
-            height,
+            epoch,
             round,
             block_hash,
             body,
@@ -160,8 +160,8 @@ impl ProtoConvert for SealedViewChangeProof {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bitvector::BitVector;
     use std::time::SystemTime;
-    use stegos_crypto::curve1174::Fr;
     use stegos_crypto::hash::{Hashable, Hasher};
     use stegos_crypto::{curve1174, pbc};
 
@@ -176,7 +176,7 @@ mod tests {
 
     impl Hashable for ConsensusMessage {
         fn hash(&self, state: &mut Hasher) {
-            self.height.hash(state);
+            self.epoch.hash(state);
             self.round.hash(state);
             self.block_hash.hash(state);
             self.body.hash(state);
@@ -217,22 +217,25 @@ mod tests {
     #[test]
     fn macro_blocks() {
         let (skey, pkey) = curve1174::make_random_keys();
-        let (nskey, _npkey) = pbc::make_random_keys();
+        let (nskey, npkey) = pbc::make_random_keys();
 
-        let version: u64 = 1;
-        let height: u64 = 0;
+        let epoch: u64 = 10;
+        let view_change = 0;
         let timestamp = SystemTime::now();
         let previous = Hash::digest(&"test".to_string());
-
         let random = pbc::make_VRF(&nskey, &Hash::digest("test"));
-        let base = BaseBlockHeader::new(version, previous, height, 0, timestamp, random);
-        let header = MacroBlockHeader {
-            base,
-            gamma: Fr::random(),
-            block_reward: 0,
-            inputs_range_hash: Hash::digest(&"hello"),
-            outputs_range_hash: Hash::digest(&"world"),
-        };
+        let block_reward = 0;
+        let activity_map = BitVector::new(0);
+        let block = MacroBlock::empty(
+            previous,
+            epoch,
+            view_change,
+            npkey,
+            random,
+            timestamp,
+            block_reward,
+            activity_map,
+        );
         // Transactions.
         let (tx, _inputs, _outputs) =
             PaymentTransaction::new_test(&skey, &pkey, 300, 2, 100, 1, 100)
@@ -243,7 +246,7 @@ mod tests {
         // MacroBlockProposal
         //
         let proposal = ConsensusMessageBody::Proposal(MacroBlockProposal {
-            header,
+            header: block.header,
             transactions,
         });
         roundtrip(&proposal);
@@ -254,7 +257,8 @@ mod tests {
         let (skey0, _pkey0) = pbc::make_random_keys();
 
         let chain = ChainInfo {
-            height: 41,
+            epoch: 41,
+            offset: 48,
             view_change: 12,
             last_block: Hash::digest("test"),
         };

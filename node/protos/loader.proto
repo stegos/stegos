@@ -5,12 +5,11 @@ import "crypto.proto";
 import "blockchain.proto";
 
 message RequestBlocks {
-    uint64 starting_height = 1;
+    uint64 epoch = 1;
 }
 
 message ResponseBlocks {
     repeated stegos.blockchain.Block blocks = 1;
-    uint64 height = 2;
 }
 
 message ChainLoaderMessage {

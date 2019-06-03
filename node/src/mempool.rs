@@ -157,13 +157,13 @@ impl Mempool {
     pub fn create_block(
         &mut self,
         previous: Hash,
-        version: u64,
-        height: u64,
-        block_reward: i64,
-        keychain: &KeyChain,
-        last_random: Hash,
+        epoch: u64,
+        offset: u32,
         view_change: u32,
         view_change_proof: Option<ViewChangeProof>,
+        last_random: Hash,
+        block_reward: i64,
+        keychain: &KeyChain,
         max_utxo_in_block: usize,
     ) -> MicroBlock {
         let timestamp = SystemTime::now();
@@ -254,8 +254,17 @@ impl Mempool {
         }
 
         // Create a new micro block.
-        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-        MicroBlock::new(base, view_change_proof, transactions, keychain.network_pkey)
+        MicroBlock::new(
+            previous,
+            epoch,
+            offset,
+            view_change,
+            view_change_proof,
+            keychain.network_pkey,
+            random,
+            timestamp,
+            transactions,
+        )
     }
 }
 
@@ -397,19 +406,19 @@ mod test {
         mempool.push_tx(tx_hash3.clone(), tx3.clone().into());
 
         let previous = Hash::digest(&1u64);
-        let version = 1;
-        let height = 0;
+        let epoch = 1;
+        let offset = 5;
         let view_change = 0;
         let reward = 10;
         let block = mempool.create_block(
             previous,
-            version,
-            height,
-            reward,
-            &keys,
-            Hash::digest("test"),
+            epoch,
+            offset,
             view_change,
             None,
+            Hash::digest("test"),
+            reward,
+            &keys,
             max_utxo_in_block,
         );
 

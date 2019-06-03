@@ -74,21 +74,19 @@ message Transaction {
     }
 }
 
-message BaseBlockHeader {
+message MacroBlockHeader {
     uint64 version = 1;
     stegos.crypto.Hash previous = 2;
-    uint64 height = 3;
+    uint64 epoch = 3;
     uint32 view_change = 4;
-    uint64 timestamp = 5;
+    stegos.crypto.SecurePublicKey pkey = 5;
     stegos.crypto.VRF random = 6;
-}
-
-message MacroBlockHeader {
-    BaseBlockHeader base = 1;
-    stegos.crypto.Fr gamma = 2;
-    int64 block_reward = 3;
-    stegos.crypto.Hash inputs_range_hash = 4;
-    stegos.crypto.Hash outputs_range_hash = 5;
+    uint64 timestamp = 7;
+    int64 block_reward = 8;
+    stegos.crypto.Fr gamma = 9;
+    stegos.crypto.Hash inputs_range_hash = 10;
+    stegos.crypto.Hash outputs_range_hash = 11;
+    repeated bool activity_map = 12;
 }
 
 message MerkleNode {
@@ -98,26 +96,31 @@ message MerkleNode {
     Output value = 4;
 }
 
-message MacroBlockBody {
-    repeated stegos.crypto.Hash inputs = 1;
-    repeated MerkleNode outputs = 2;
-    repeated bool activity_map = 3;
-    stegos.crypto.SecurePublicKey pkey = 4;
-    stegos.crypto.SecureSignature sig = 5;
-    repeated bool sigmap = 6;
-}
-
 message MacroBlock {
     MacroBlockHeader header = 1;
-    MacroBlockBody body = 2;
+    stegos.crypto.SecureSignature multisig = 2;
+    repeated bool multisigmap = 3;
+    repeated stegos.crypto.Hash inputs = 4;
+    repeated MerkleNode outputs = 5;
+}
+
+message MicroBlockHeader {
+    uint64 version = 1;
+    stegos.crypto.Hash previous = 2;
+    uint64 epoch = 3;
+    uint32 offset = 4;
+    uint32 view_change = 5;
+    ViewChangeProof view_change_proof = 6;
+    stegos.crypto.SecurePublicKey pkey = 7;
+    stegos.crypto.VRF random = 8;
+    uint64 timestamp = 9;
+    stegos.crypto.Hash transactions_range_hash = 10;
 }
 
 message MicroBlock {
-    BaseBlockHeader base = 1;
-    ViewChangeProof view_change_proof = 2;
-    repeated Transaction transactions = 4;
-    stegos.crypto.SecurePublicKey pkey = 5;
-    stegos.crypto.SecureSignature sig = 6;
+    MicroBlockHeader header = 1;
+    stegos.crypto.SecureSignature sig = 2;
+    repeated Transaction transactions = 3;
 }
 
 message Block {

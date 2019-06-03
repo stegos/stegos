@@ -32,7 +32,8 @@ pub type StakersGroup = Vec<(pbc::PublicKey, i64)>;
 /// User-friendly printable representation of state.
 #[derive(Serialize, Clone, Debug)]
 pub struct ElectionInfo {
-    pub height: u64,
+    pub epoch: u64,
+    pub offset: u32,
     pub view_change: u32,
     pub slots_count: i64,
     pub current_leader: pbc::PublicKey,
@@ -76,6 +77,15 @@ impl ElectionResult {
         let leader_id =
             select_winner(self.validators.iter().map(|(_k, slots)| slots), random).unwrap();
         self.validators[leader_id].0
+    }
+
+    /// Returns true if peer is validator in current epoch.
+    #[inline]
+    pub fn is_validator(&self, peer: &pbc::PublicKey) -> bool {
+        self.validators
+            .iter()
+            .find(|item| item.0 == *peer)
+            .is_some()
     }
 }
 

@@ -32,6 +32,8 @@ pub struct BlockchainConfig {
     pub min_stake_amount: i64,
     /// How many epochs stake is valid.
     pub stake_epochs: u64,
+    /// The number of blocks per epoch.
+    pub micro_blocks_in_epoch: u32,
     /// Difficulty in bits, of service awards.
     pub awards_difficulty: usize,
     /// Block reward for creating block.
@@ -45,6 +47,7 @@ impl Default for BlockchainConfig {
         BlockchainConfig {
             max_slot_count: 1000,
             min_stake_amount: 1_000_000_000, // 1000 STG
+            micro_blocks_in_epoch: 5,
             stake_epochs: 2,
             awards_difficulty: 3,
             block_reward: 40_000_000,                // 40 STG

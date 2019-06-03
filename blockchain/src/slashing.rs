@@ -40,39 +40,41 @@ impl SlashingProof {
     }
 
     pub fn validate(&self, blockchain: &Blockchain) -> Result<(), BlockchainError> {
-        let height = self.block1.base.height;
+        let epoch = self.block1.header.epoch;
+        let offset = self.block1.header.offset;
 
-        if self.block1.base.height != self.block2.base.height {
-            return Err(SlashingError::DifferentHeight(
-                self.block1.base.height,
-                self.block2.base.height,
+        if self.block1.header.epoch != self.block2.header.epoch {
+            return Err(SlashingError::DifferentEpoch(
+                self.block1.header.epoch,
+                self.block2.header.epoch,
             )
             .into());
         }
 
-        if height > blockchain.height() {
-            return Err(SlashingError::InvalidProofHeight(height, blockchain.height()).into());
-        }
-        if height <= blockchain.last_macro_block_height() {
-            return Err(SlashingError::InvalidProofEpoch(
-                height,
-                blockchain.last_macro_block_height(),
+        if self.block1.header.offset != self.block2.header.offset {
+            return Err(SlashingError::DifferentOffset(
+                self.block1.header.offset,
+                self.block2.header.offset,
             )
             .into());
         }
 
-        if self.block1.base.previous != self.block2.base.previous {
+        if epoch != blockchain.epoch() {
+            return Err(SlashingError::InvalidProofEpoch(epoch, blockchain.epoch()).into());
+        }
+
+        if self.block1.header.previous != self.block2.header.previous {
             return Err(SlashingError::DifferentHistory(
-                self.block1.base.previous,
-                self.block2.base.previous,
+                self.block1.header.previous,
+                self.block2.header.previous,
             )
             .into());
         }
 
-        if self.block1.base.view_change != self.block2.base.view_change {
+        if self.block1.header.view_change != self.block2.header.view_change {
             return Err(SlashingError::DifferentLeader(
-                self.block1.base.view_change,
-                self.block2.base.view_change,
+                self.block1.header.view_change,
+                self.block2.header.view_change,
             )
             .into());
         }
@@ -81,12 +83,12 @@ impl SlashingProof {
 
         let block2_hash = Hash::digest(&self.block2);
         if block1_hash == block2_hash {
-            return Err(SlashingError::BlockWithoutConflicts(height).into());
+            return Err(SlashingError::BlockWithoutConflicts(epoch, offset, block1_hash).into());
         }
 
-        let election_result = blockchain.election_result_by_height(height)?;
+        let election_result = blockchain.election_result_by_offset(offset)?;
 
-        let ref leader_pk = election_result.select_leader(self.block1.base.view_change);
+        let ref leader_pk = election_result.select_leader(self.block1.header.view_change);
 
         pbc::check_hash(&block1_hash, &self.block1.sig, leader_pk)?;
         pbc::check_hash(&block2_hash, &self.block2.sig, leader_pk)?;
@@ -99,8 +101,8 @@ pub fn confiscate_tx(
     our_key: &pbc::PublicKey, // our key, used to add change to payment utxo.
     proof: SlashingProof,
 ) -> Result<SlashingTransaction, BlockchainError> {
-    assert_eq!(proof.block1.pkey, proof.block2.pkey);
-    let ref cheater = proof.block1.pkey;
+    assert_eq!(proof.block1.header.pkey, proof.block2.header.pkey);
+    let ref cheater = proof.block1.header.pkey;
     let (inputs, stake) = chain.staker_outputs(cheater);
     let validators: Vec<_> = chain
         .validators()

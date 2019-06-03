@@ -374,14 +374,19 @@ impl ProtoConvert for Transaction {
     }
 }
 
-impl ProtoConvert for BaseBlockHeader {
-    type Proto = blockchain::BaseBlockHeader;
+impl ProtoConvert for MicroBlockHeader {
+    type Proto = blockchain::MicroBlockHeader;
     fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::BaseBlockHeader::new();
+        let mut proto = blockchain::MicroBlockHeader::new();
         proto.set_version(self.version);
         proto.set_previous(self.previous.into_proto());
-        proto.set_height(self.height);
+        proto.set_epoch(self.epoch);
+        proto.set_offset(self.offset);
         proto.set_view_change(self.view_change);
+        if let Some(view_change_proof) = &self.view_change_proof {
+            proto.set_view_change_proof(view_change_proof.into_proto())
+        }
+        proto.set_pkey(self.pkey.into_proto());
         proto.set_random(self.random.into_proto());
         let since_the_epoch = self
             .timestamp
@@ -389,24 +394,37 @@ impl ProtoConvert for BaseBlockHeader {
             .expect("time is valid");
         let timestamp = since_the_epoch.as_secs() * 1000 + since_the_epoch.subsec_millis() as u64;
         proto.set_timestamp(timestamp);
+        proto.set_transactions_range_hash(self.transactions_range_hash.into_proto());
         proto
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let version = proto.get_version();
         let previous = Hash::from_proto(proto.get_previous())?;
-        let height = proto.get_height();
+        let epoch = proto.get_epoch();
+        let offset = proto.get_offset();
         let view_change = proto.get_view_change();
+        let view_change_proof = if proto.has_view_change_proof() {
+            Some(ViewChangeProof::from_proto(proto.get_view_change_proof())?)
+        } else {
+            None
+        };
+        let pkey = pbc::PublicKey::from_proto(proto.get_pkey())?;
+        let random = pbc::VRF::from_proto(proto.get_random())?;
         let timestamp =
             std::time::UNIX_EPOCH + std::time::Duration::from_millis(proto.get_timestamp());
-        let random = pbc::VRF::from_proto(proto.get_random())?;
-        Ok(BaseBlockHeader {
+        let transactions_range_hash = Hash::from_proto(proto.get_transactions_range_hash())?;
+        Ok(MicroBlockHeader {
             version,
             previous,
-            height,
+            epoch,
+            offset,
             view_change,
-            timestamp,
+            view_change_proof,
+            pkey,
             random,
+            timestamp,
+            transactions_range_hash,
         })
     }
 }
@@ -415,41 +433,29 @@ impl ProtoConvert for MicroBlock {
     type Proto = blockchain::MicroBlock;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = blockchain::MicroBlock::new();
-        proto.set_base(self.base.into_proto());
-        if let Some(view_change_proof) = &self.view_change_proof {
-            proto.set_view_change_proof(view_change_proof.into_proto())
-        }
+        proto.set_header(self.header.into_proto());
+        proto.set_sig(self.sig.into_proto());
         for transaction in &self.transactions {
             proto.transactions.push(transaction.into_proto());
         }
-        proto.set_pkey(self.pkey.into_proto());
-        proto.set_sig(self.sig.into_proto());
         proto
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let base = BaseBlockHeader::from_proto(proto.get_base())?;
-        let view_change_proof = if proto.has_view_change_proof() {
-            Some(ViewChangeProof::from_proto(proto.get_view_change_proof())?)
-        } else {
-            None
-        };
-        let mut transactions = Vec::<Transaction>::with_capacity(proto.transactions.len());
-        for transaction in proto.transactions.iter() {
-            transactions.push(Transaction::from_proto(transaction)?);
-        }
-        let pkey = pbc::PublicKey::from_proto(proto.get_pkey())?;
+        let header = MicroBlockHeader::from_proto(proto.get_header())?;
         let sig = if proto.has_sig() {
             pbc::Signature::from_proto(proto.get_sig())?
         } else {
             pbc::Signature::zero()
         };
+        let mut transactions = Vec::<Transaction>::with_capacity(proto.transactions.len());
+        for transaction in proto.transactions.iter() {
+            transactions.push(Transaction::from_proto(transaction)?);
+        }
         Ok(MicroBlock {
-            base,
-            view_change_proof,
-            transactions,
-            pkey,
+            header,
             sig,
+            transactions,
         })
     }
 }
@@ -505,38 +511,20 @@ impl ProtoConvert for MacroBlockHeader {
     type Proto = blockchain::MacroBlockHeader;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = blockchain::MacroBlockHeader::new();
-        proto.set_base(self.base.into_proto());
-        proto.set_gamma(self.gamma.into_proto());
-        proto.set_block_reward(self.block_reward);
-        proto.set_inputs_range_hash(self.inputs_range_hash.into_proto());
-        proto.set_outputs_range_hash(self.outputs_range_hash.into_proto());
-        proto
-    }
-
-    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let base = BaseBlockHeader::from_proto(proto.get_base())?;
-        let gamma = Fr::from_proto(proto.get_gamma())?;
-        let block_reward = proto.get_block_reward();
-        let inputs_range_hash = Hash::from_proto(proto.get_inputs_range_hash())?;
-        let outputs_range_hash = Hash::from_proto(proto.get_outputs_range_hash())?;
-
-        Ok(MacroBlockHeader {
-            base,
-            gamma,
-            block_reward,
-            inputs_range_hash,
-            outputs_range_hash,
-        })
-    }
-}
-
-impl ProtoConvert for MacroBlockBody {
-    type Proto = blockchain::MacroBlockBody;
-    fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::MacroBlockBody::new();
-        proto.set_sig(self.multisig.into_proto());
+        proto.set_version(self.version);
+        proto.set_previous(self.previous.into_proto());
+        proto.set_epoch(self.epoch);
+        proto.set_view_change(self.view_change);
         proto.set_pkey(self.pkey.into_proto());
-
+        proto.set_random(self.random.into_proto());
+        let since_the_epoch = self
+            .timestamp
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time is valid");
+        let timestamp = since_the_epoch.as_secs() * 1000 + since_the_epoch.subsec_millis() as u64;
+        proto.set_timestamp(timestamp);
+        proto.set_block_reward(self.block_reward);
+        proto.set_gamma(self.gamma.into_proto());
         if !self.activity_map.is_empty() {
             assert!(self.activity_map.len() <= VALIDATORS_MAX);
             proto.activity_map.resize(VALIDATORS_MAX, false);
@@ -544,15 +532,65 @@ impl ProtoConvert for MacroBlockBody {
                 proto.activity_map[bit] = true;
             }
         }
+        proto.set_inputs_range_hash(self.inputs_range_hash.into_proto());
+        proto.set_outputs_range_hash(self.outputs_range_hash.into_proto());
+        proto
+    }
 
-        if !self.multisigmap.is_empty() {
-            assert!(self.multisigmap.len() <= VALIDATORS_MAX);
-            proto.sigmap.resize(VALIDATORS_MAX, false);
-            for bit in self.multisigmap.iter() {
-                proto.sigmap[bit] = true;
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let version = proto.get_version();
+        let previous = Hash::from_proto(proto.get_previous())?;
+        let epoch = proto.get_epoch();
+        let view_change = proto.get_view_change();
+        let pkey = pbc::PublicKey::from_proto(proto.get_pkey())?;
+        let random = pbc::VRF::from_proto(proto.get_random())?;
+        let timestamp =
+            std::time::UNIX_EPOCH + std::time::Duration::from_millis(proto.get_timestamp());
+        let block_reward = proto.get_block_reward();
+        let mut activity_map = BitVector::new(VALIDATORS_MAX);
+        for (bit, val) in proto.activity_map.iter().enumerate() {
+            if *val {
+                activity_map.insert(bit);
             }
         }
+        let gamma = Fr::from_proto(proto.get_gamma())?;
+        let inputs_range_hash = Hash::from_proto(proto.get_inputs_range_hash())?;
+        let outputs_range_hash = Hash::from_proto(proto.get_outputs_range_hash())?;
+        if proto.activity_map.len() > VALIDATORS_MAX {
+            return Err(
+                CryptoError::InvalidBinaryLength(VALIDATORS_MAX, proto.activity_map.len()).into(),
+            );
+        }
+        Ok(MacroBlockHeader {
+            version,
+            previous,
+            epoch,
+            view_change,
+            pkey,
+            random,
+            timestamp,
+            block_reward,
+            activity_map,
+            gamma,
+            inputs_range_hash,
+            outputs_range_hash,
+        })
+    }
+}
 
+impl ProtoConvert for MacroBlock {
+    type Proto = blockchain::MacroBlock;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = blockchain::MacroBlock::new();
+        proto.set_header(self.header.into_proto());
+        proto.set_multisig(self.multisig.into_proto());
+        if !self.multisigmap.is_empty() {
+            assert!(self.multisigmap.len() <= VALIDATORS_MAX);
+            proto.multisigmap.resize(VALIDATORS_MAX, false);
+            for bit in self.multisigmap.iter() {
+                proto.multisigmap[bit] = true;
+            }
+        }
         for input in &self.inputs {
             proto.inputs.push(input.into_proto());
         }
@@ -563,33 +601,22 @@ impl ProtoConvert for MacroBlockBody {
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let pkey = pbc::PublicKey::from_proto(proto.get_pkey())?;
-        let multisig = if proto.has_sig() {
-            pbc::Signature::from_proto(proto.get_sig())?
+        let header = MacroBlockHeader::from_proto(proto.get_header())?;
+        let multisig = if proto.has_multisig() {
+            pbc::Signature::from_proto(proto.get_multisig())?
         } else {
             pbc::Signature::zero()
         };
-        if proto.sigmap.len() > VALIDATORS_MAX {
+        if proto.multisigmap.len() > VALIDATORS_MAX {
             return Err(
-                CryptoError::InvalidBinaryLength(VALIDATORS_MAX, proto.sigmap.len()).into(),
+                CryptoError::InvalidBinaryLength(VALIDATORS_MAX, proto.multisigmap.len()).into(),
             );
         }
 
         let mut multisigmap = BitVector::new(VALIDATORS_MAX);
-        for (bit, val) in proto.sigmap.iter().enumerate() {
+        for (bit, val) in proto.multisigmap.iter().enumerate() {
             if *val {
                 multisigmap.insert(bit);
-            }
-        }
-        if proto.activity_map.len() > VALIDATORS_MAX {
-            return Err(
-                CryptoError::InvalidBinaryLength(VALIDATORS_MAX, proto.activity_map.len()).into(),
-            );
-        }
-        let mut activity_map = BitVector::new(VALIDATORS_MAX);
-        for (bit, val) in proto.activity_map.iter().enumerate() {
-            if *val {
-                activity_map.insert(bit);
             }
         }
 
@@ -604,30 +631,13 @@ impl ProtoConvert for MacroBlockBody {
         }
         let outputs = Merkle::deserialize(&outputs)?;
 
-        Ok(MacroBlockBody {
-            pkey,
+        Ok(MacroBlock {
+            header,
             multisig,
             multisigmap,
-            activity_map,
             inputs,
             outputs,
         })
-    }
-}
-
-impl ProtoConvert for MacroBlock {
-    type Proto = blockchain::MacroBlock;
-    fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::MacroBlock::new();
-        proto.set_header(self.header.into_proto());
-        proto.set_body(self.body.into_proto());
-        proto
-    }
-
-    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let header = MacroBlockHeader::from_proto(proto.get_header())?;
-        let body = MacroBlockBody::from_proto(proto.get_body())?;
-        Ok(MacroBlock { header, body })
     }
 }
 
@@ -666,17 +676,20 @@ impl ProtoConvert for ChainInfo {
     type Proto = view_changes::ChainInfo;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = view_changes::ChainInfo::new();
-        proto.set_height(self.height);
+        proto.set_epoch(self.epoch);
+        proto.set_offset(self.offset);
         proto.set_last_block(self.last_block.into_proto());
         proto.set_view_change(self.view_change);
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let height = proto.get_height();
+        let epoch = proto.get_epoch();
+        let offset = proto.get_offset();
         let view_change = proto.get_view_change();
         let last_block = Hash::from_proto(proto.get_last_block())?;
         Ok(ChainInfo {
-            height,
+            epoch,
+            offset,
             view_change,
             last_block,
         })
@@ -742,7 +755,7 @@ mod tests {
     use super::*;
     use std::time::SystemTime;
     use stegos_crypto::curve1174;
-    use stegos_crypto::hash::{Hash, Hashable, Hasher};
+    use stegos_crypto::hash::{Hash, Hashable};
     use stegos_crypto::pbc;
 
     fn roundtrip<T>(x: &T) -> T
@@ -832,15 +845,13 @@ mod tests {
         let (skey, pkey) = curve1174::make_random_keys();
         let (skeypbc, pkeypbc) = pbc::make_random_keys();
 
-        let version: u64 = 1;
-        let height: u64 = 0;
+        let epoch: u64 = 10;
         let timestamp = SystemTime::now();
-        let view_change = 0;
+        let view_change = 15;
         let previous = Hash::digest(&"test".to_string());
+        let offset = 20;
         let seed = mix(Hash::digest("random"), view_change);
         let random = pbc::make_VRF(&skeypbc, &seed);
-        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-        roundtrip(&base);
 
         // View Changes Proof.
         let sig = pbc::sign_hash(&previous, &skeypbc);
@@ -853,28 +864,24 @@ mod tests {
                 .expect("Invalid transaction");
         let transactions: Vec<Transaction> = vec![tx.into()];
 
-        let mut block = MicroBlock::new(base, view_change_proof, transactions, pkeypbc);
+        let mut block = MicroBlock::new(
+            previous,
+            epoch,
+            offset,
+            view_change,
+            view_change_proof,
+            pkeypbc,
+            random,
+            timestamp,
+            transactions,
+        );
+        roundtrip(&block.header);
         block.sign(&skeypbc, &pkeypbc);
         let block2 = roundtrip(&block);
-        assert_eq!(block2.pkey, block.pkey);
         assert_eq!(block2.sig, block.sig);
-    }
-
-    impl Hashable for MacroBlockBody {
-        fn hash(&self, state: &mut Hasher) {
-            "Monetary".hash(state);
-            self.multisig.hash(state);
-            // hash index of each ones.
-            for bit in self.activity_map.iter() {
-                (bit as u32).hash(state);
-            }
-            // TODO: check mulitisigmap?
-            let inputs_count: u64 = self.inputs.len() as u64;
-            inputs_count.hash(state);
-            for input in &self.inputs {
-                input.hash(state);
-            }
-            self.outputs.roothash().hash(state)
+        assert_eq!(block2.transactions.len(), block.transactions.len());
+        for (tx1, tx2) in block2.transactions.iter().zip(block.transactions.iter()) {
+            assert_eq!(Hash::digest(&tx1), Hash::digest(&tx2));
         }
     }
 
@@ -884,11 +891,11 @@ mod tests {
         let (_skey2, pkey2) = curve1174::make_random_keys();
         let (skeypbc, pkeypbc) = pbc::make_random_keys();
 
-        let version: u64 = 1;
-        let height: u64 = 0;
+        let epoch: u64 = 10;
         let timestamp = SystemTime::now();
-        let view_change = 0;
+        let view_change = 15;
         let amount: i64 = 1_000_000;
+        let block_reward = 1000;
         let previous = Hash::digest(&"test".to_string());
 
         // "genesis" output by 0
@@ -902,23 +909,35 @@ mod tests {
 
         let seed = mix(Hash::digest("random"), view_change);
         let random = pbc::make_VRF(&skeypbc, &seed);
-        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
-        roundtrip(&base);
 
         let block = MacroBlock::new(
-            base,
-            gamma,
-            0,
+            previous,
+            epoch,
+            view_change,
+            pkeypbc,
+            random,
+            timestamp,
+            block_reward,
             BitVector::new(0),
+            gamma,
             &inputs1,
             &outputs1,
-            pkeypbc,
         );
         roundtrip(&block.header);
-        roundtrip(&block.body);
         roundtrip(&block);
-
-        let block = Block::MacroBlock(block);
-        roundtrip(&block);
+        let block2 = roundtrip(&block);
+        assert_eq!(block2.multisig, block.multisig);
+        assert_eq!(block2.multisigmap, block.multisigmap);
+        assert_eq!(block2.inputs.len(), block.inputs.len());
+        for (input1, input2) in block.inputs.iter().zip(block2.inputs.iter()) {
+            assert_eq!(Hash::digest(&input1), Hash::digest(&input2));
+        }
+        let outputs1 = block.outputs.leafs();
+        let outputs2 = block2.outputs.leafs();
+        assert_eq!(outputs1.len(), outputs2.len());
+        for ((input1, path1), (input2, path2)) in outputs1.iter().zip(outputs2.iter()) {
+            assert_eq!(path1, path2);
+            assert_eq!(Hash::digest(&input1), Hash::digest(&input2));
+        }
     }
 }

@@ -38,6 +38,21 @@ pub enum BlockchainError {
     )]
     IncompatibleGenesis(Hash, Hash),
     #[fail(
+        display = "Expected a macro block, got micro block: epoch={}, offset={}, block={}",
+        _0, _1, _2
+    )]
+    ExpectedMacroBlock(u64, u32, Hash),
+    #[fail(
+        display = "Expected a micro block, got macro block: epoch={}, offset={}, block={}",
+        _0, _1, _2
+    )]
+    ExpectedMicroBlock(u64, u32, Hash),
+    #[fail(
+        display = "Have micro blocks on attempt to apply a macro block: epoch={}, offset={}, block={}",
+        _0, _1, _2
+    )]
+    HaveMicroBlocks(u64, u32, Hash),
+    #[fail(
         display = "Stake is locked: validator={}, expected_balance={}, minimum_balance={}",
         _0, _1, _2
     )]
@@ -145,22 +160,42 @@ pub enum MultisignatureError {
 #[derive(Debug, Fail)]
 pub enum BlockError {
     #[fail(
-        display = "Previous hash mismatch: height={}, block={}, block_previous={}, our_previous={}",
+        display = "Previous hash mismatch: epoch={}, offset={}, block={}, block_previous={}, our_previous={}",
+        _0, _1, _2, _3, _4
+    )]
+    InvalidMicroBlockPreviousHash(u64, u32, Hash, Hash, Hash),
+    #[fail(
+        display = "Previous hash mismatch: epoch={}, block={}, block_previous={}, our_previous={}",
         _0, _1, _2, _3
     )]
-    InvalidPreviousHash(u64, Hash, Hash, Hash),
-    #[fail(display = "Block hash collision: height={}, block={}", _0, _1)]
-    BlockHashCollision(u64, Hash),
+    InvalidMacroBlockPreviousHash(u64, Hash, Hash, Hash),
     #[fail(
-        display = "Out of order block: block={}, block_height={}, our_height={}",
+        display = "Micro block hash collision: epoch={}, offset={}, block={}",
         _0, _1, _2
     )]
-    OutOfOrderBlock(Hash, u64, u64),
+    MicroBlockHashCollision(u64, u32, Hash),
+    #[fail(display = "Macro block hash collision: epoch={}, block={}", _0, _1)]
+    MacroBlockHashCollision(u64, Hash),
     #[fail(
-        display = "Invalid block fee: block={}, expected={}, got={}",
+        display = "Out of order macro block: block={}, block_epoch={}, our_epoch={}",
         _0, _1, _2
     )]
-    InvalidFee(Hash, i64, i64),
+    OutOfOrderMacroBlock(Hash, u64, u64),
+    #[fail(
+        display = "Out of order micro block: block={}, block_epoch={}, block_offset={}, our_epoch={}, our_offset={}",
+        _0, _1, _2, _3, _4
+    )]
+    OutOfOrderMicroBlock(Hash, u64, u32, u64, u32),
+    #[fail(
+        display = "Invalid micro block fee: epoch={}, offset={}, block={}, expected={}, got={}",
+        _0, _1, _2, _3, _4
+    )]
+    InvalidMicroBlockFee(u64, u32, Hash, i64, i64),
+    #[fail(
+        display = "Unexpected macro block fee: epoch={}, block={}, got={}, expected={}",
+        _0, _1, _2, _3
+    )]
+    InvalidMacroBlockFee(u64, Hash, i64, i64),
     #[fail(
         display = "Coinbase transaction must be first in the block: block={}",
         _0
@@ -190,45 +225,47 @@ pub enum BlockError {
         _0, _1, _2
     )]
     AwardDifferentReward(Hash, i64, i64),
-    #[fail(
-        display = "Invalid block monetary balance: height={}, block={}",
-        _0, _1
-    )]
+    #[fail(display = "Invalid block monetary balance: epoch={}, block={}", _0, _1)]
     InvalidBlockBalance(u64, Hash),
     #[fail(
-        display = "Invalid block input hash: height={}, block={}, expected={}, got={}",
+        display = "Invalid block input hash: epoch={}, block={}, expected={}, got={}",
         _0, _1, _2, _3
     )]
     InvalidBlockInputsHash(u64, Hash, Hash, Hash),
     #[fail(
-        display = "Invalid block output hash: height={}, block={}, expected={}, got={}",
+        display = "Invalid block output hash: epoch={}, block={}, expected={}, got={}",
         _0, _1, _2, _3
     )]
     InvalidBlockOutputsHash(u64, Hash, Hash, Hash),
     #[fail(
-        display = "Missing block input: height={}, block={}, utxo={}",
+        display = "Invalid block output hash: epoch={}, offset={}, block={}, expected={}, got={}",
+        _0, _1, _2, _3, _4
+    )]
+    InvalidTransactionsRangeHash(u64, u32, Hash, Hash, Hash),
+    #[fail(
+        display = "Missing block input: epoch={}, block={}, utxo={}",
         _0, _1, _1
     )]
     MissingBlockInput(u64, Hash, Hash),
     #[fail(
-        display = "Duplicate block input: height={}, block={}, utxo={}",
+        display = "Duplicate block input: epoch={}, block={}, utxo={}",
         _0, _1, _1
     )]
     DuplicateBlockInput(u64, Hash, Hash),
     #[fail(
-        display = "Duplicate block output: height={}, block={}, utxo={}",
+        display = "Duplicate block output: epoch={}, block={}, utxo={}",
         _0, _1, _2
     )]
     DuplicateBlockOutput(u64, Hash, Hash),
     #[fail(
-        display = "Output hash collision: height={}, block={}, utxo={}",
+        display = "Output hash collision: epoch={}, block={}, utxo={}",
         _0, _1, _2
     )]
     OutputHashCollision(u64, Hash, Hash),
-    #[fail(display = "The leader must be validator: height={}, block={}", _0, _1)]
+    #[fail(display = "The leader must be validator: epoch={}, block={}", _0, _1)]
     LeaderIsNotValidator(u64, Hash),
     #[fail(
-        display = "Found propose with more than one signature: height={}, block={}",
+        display = "Found propose with more than one signature: epoch={}, block={}",
         _0, _1
     )]
     MoreThanOneSignatureAtPropose(u64, Hash),
@@ -237,58 +274,59 @@ pub enum BlockError {
         _0, _1
     )]
     DifferentPublicKey(pbc::PublicKey, pbc::PublicKey),
-    #[fail(
-        display = "Invalid leader signature found: height={}, block={}",
-        _0, _1
-    )]
+    #[fail(display = "Invalid leader signature found: epoch={}, block={}", _0, _1)]
     InvalidLeaderSignature(u64, Hash),
     #[fail(
-        display = "Invalid block BLS multisignature: height={}, block={}, error={}",
+        display = "Invalid block BLS multisignature: epoch={}, block={}, error={}",
         _1, _2, _0
     )]
     InvalidBlockSignature(MultisignatureError, u64, Hash),
     #[fail(
-        display = "Invalid block version: height={}, block={}, block_version={}, our_version={}",
+        display = "Invalid block version: epoch={}, block={}, block_version={}, our_version={}",
         _0, _1, _2, _3
     )]
     InvalidBlockVersion(u64, Hash, u64, u64),
     #[fail(
-        display = "Received block with invalid random: height={}, block={}",
+        display = "Received block with invalid random: epoch={}, block={}",
         _0, _1
     )]
     IncorrectRandom(u64, Hash),
     #[fail(
-        display = "Received block with wrong view_change: height={}, block={}, block_view_change={}, our_view_change={}",
+        display = "Received block with wrong view_change: epoch={}, block={}, block_view_change={}, our_view_change={}",
         _0, _1, _2, _3
     )]
     InvalidViewChange(u64, Hash, u32, u32),
     #[fail(
-        display = "Invalid view change proof: height={}, proof={:?}, error={}",
+        display = "Invalid view change proof: epoch={}, proof={:?}, error={}",
         _0, _1, _2
     )]
     InvalidViewChangeProof(u64, ViewChangeProof, MultisignatureError),
     #[fail(
-        display = "No proof of view change found for out of order block: height={}, block={}, block_view_change={}, our_view_change={}",
-        _0, _1, _2, _3
+        display = "No proof of view change found for out of order block: epoch={}, offset={}, block={}, block_view_change={}, our_view_change={}",
+        _0, _1, _2, _3, _4
     )]
-    NoProofWasFound(u64, Hash, u32, u32),
+    NoProofWasFound(u64, u32, Hash, u32, u32),
     #[fail(
         display = "Election result could be taken only current epoch: \
-                   election_height={}, last_key_block={}",
+                   election_epoch={}, last_key_block={}",
         _0, _1
     )]
     ElectionResultForPastEpoch(u64, u64),
     #[fail(
-        display = "No election result are known for future blocks: election_height={}, blockchain_height={}",
+        display = "No election result are known for future blocks: election_epoch={}, blockchain_epoch={}",
         _0, _1
     )]
     ElectionResultForFutureBlock(u64, u64),
     #[fail(
-        display = "Unexpected block reward: height={}, block={}, got={}, expected={}",
+        display = "Unexpected macro block reward: epoch={}, block={}, got={}, expected={}",
         _0, _1, _2, _3
     )]
-    InvalidBlockReward(u64, Hash, i64, i64),
-
+    InvalidMacroBlockReward(u64, Hash, i64, i64),
+    #[fail(
+        display = "Unexpected micro block reward: epoch={}, offset={}, block={}, got={}, expected={}",
+        _0, _1, _2, _3, _4
+    )]
+    InvalidMicroBlockReward(u64, u32, Hash, i64, i64),
     #[fail(
         display = "Activity bitmap too big: len={}, validators_len={} ",
         _0, _1
@@ -299,25 +337,25 @@ pub enum BlockError {
 #[derive(Debug, Fail)]
 pub enum SlashingError {
     #[fail(
-        display = "Found a block from future height : proof_height={}, blockchain_height={}",
+        display = "Found a block from future epoch : proof_epoch={}, blockchain_epoch={}",
         _0, _1
     )]
     InvalidProofHeight(u64, u64),
     #[fail(
-        display = "Found block with past epoch : proof_height={}, last_key_block_height={}",
+        display = "Found block with past epoch : proof_epoch={}, last_key_block_epoch={}",
         _0, _1
     )]
     InvalidProofEpoch(u64, u64),
     #[fail(
-        display = "Other leader found at same height: view_change={}, blockchain_view_change={}",
+        display = "Other leader found at same epoch: view_change={}, blockchain_view_change={}",
         _0, _1
     )]
     DifferentLeader(u32, u32),
     #[fail(
-        display = "Found same block that already was committed : height={}",
-        _0
+        display = "Found same block that already was committed : epoch={}, offset={}, block={}",
+        _0, _1, _2
     )]
-    BlockWithoutConflicts(u64),
+    BlockWithoutConflicts(u64, u32, Hash),
     #[fail(
         display = "Found incorrect leader: leader_in_proof={}, actual_leader={}",
         _0, _1
@@ -338,11 +376,17 @@ pub enum SlashingError {
     DifferentHistory(Hash, Hash),
 
     #[fail(
-        display = "Different height was found for blocks in proofs: \
-                   block1_height = {}, block2_height = {}",
+        display = "Different epoch was found for blocks in proofs: \
+                   block1_epoch = {}, block2_epoch = {}",
         _0, _1
     )]
-    DifferentHeight(u64, u64),
+    DifferentEpoch(u64, u64),
+    #[fail(
+        display = "Different offset was found for blocks in proofs: \
+                   block1_offset = {}, block2_offset= {}",
+        _0, _1
+    )]
+    DifferentOffset(u32, u32),
     #[fail(
         display = "Found slashing transaction, with incorrect inputs, tx_hash = {}",
         _0

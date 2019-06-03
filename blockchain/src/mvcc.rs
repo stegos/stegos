@@ -378,7 +378,6 @@ mod tests {
         map.insert(2, 103, 2003);
         assert_eq!(map.checkpoint_lsn(), 0);
         assert_eq!(map.current_lsn(), 2);
-
         map.checkpoint();
         assert_eq!(map.checkpoint_lsn(), 2);
         assert_eq!(map.current_lsn(), 2);

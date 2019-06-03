@@ -31,7 +31,7 @@ use stegos_crypto::pbc;
 #[test]
 fn smoke_test() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 2;
+    cfg.micro_blocks_in_epoch = 1;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
@@ -46,17 +46,16 @@ fn smoke_test() {
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
-        let height = s.nodes[0].node_service.chain.height();
-        let round = s.nodes[0].node_service.chain.view_change();
         let epoch = s.nodes[0].node_service.chain.epoch();
-        let last_block_hash = s.nodes[0].node_service.chain.last_block_hash();
+        let round = s.nodes[0].node_service.chain.view_change();
+        let last_macro_block_hash = s.nodes[0].node_service.chain.last_macro_block_hash();
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
         let leader_node = s.node(&leader_pk).unwrap();
         // Check for a proposal from the leader.
         let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
         debug!("Proposal: {:?}", proposal);
-        assert_eq!(proposal.height, height);
+        assert_eq!(proposal.epoch, epoch);
         assert_eq!(proposal.round, round);
         assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
 
@@ -71,7 +70,7 @@ fn smoke_test() {
         let mut prevotes: Vec<ConsensusMessage> = Vec::with_capacity(s.num_nodes());
         for node in s.nodes.iter_mut() {
             let prevote: ConsensusMessage = node.network_service.get_broadcast(topic);
-            assert_eq!(prevote.height, height);
+            assert_eq!(prevote.epoch, epoch);
             assert_eq!(prevote.round, round);
             assert_eq!(prevote.block_hash, proposal.block_hash);
             assert_matches!(prevote.body, ConsensusMessageBody::Prevote);
@@ -94,7 +93,7 @@ fn smoke_test() {
         let mut precommits: Vec<ConsensusMessage> = Vec::with_capacity(s.num_nodes());
         for node in s.nodes.iter_mut() {
             let precommit: ConsensusMessage = node.network_service.get_broadcast(topic);
-            assert_eq!(precommit.height, height);
+            assert_eq!(precommit.epoch, epoch);
             assert_eq!(precommit.round, round);
             assert_eq!(precommit.block_hash, proposal.block_hash);
             if let ConsensusMessageBody::Precommit(block_hash_sig) = precommit.body {
@@ -128,10 +127,11 @@ fn smoke_test() {
             .unwrap()
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
-        let block_hash = Hash::digest(&block);
+        let macro_block = block.clone().unwrap_macro();
+        let block_hash = Hash::digest(&macro_block);
         assert_eq!(block_hash, proposal.block_hash);
-        assert_eq!(block.base_header().height, height);
-        assert_eq!(block.base_header().previous, last_block_hash);
+        assert_eq!(macro_block.header.epoch, epoch);
+        assert_eq!(macro_block.header.previous, last_macro_block_hash);
 
         // Send this sealed block to all other nodes expect the first not leader.
         for node in s.iter_except(&[leader_pk]) {
@@ -142,8 +142,9 @@ fn smoke_test() {
 
         // Check state of (0..NUM_NODES - 1) nodes.
         for node in s.iter_except(&[leader_pk]) {
-            assert_eq!(node.node_service.chain.height(), height + 1);
             assert_eq!(node.node_service.chain.epoch(), epoch + 1);
+            assert_eq!(node.node_service.chain.offset(), 0);
+            assert_eq!(node.node_service.chain.last_macro_block_hash(), block_hash);
             assert_eq!(node.node_service.chain.last_block_hash(), block_hash);
         }
     });
@@ -152,7 +153,7 @@ fn smoke_test() {
 #[test]
 fn autocomit() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 2;
+    cfg.micro_blocks_in_epoch = 1;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
@@ -167,7 +168,6 @@ fn autocomit() {
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
-        let height = s.nodes[0].node_service.chain.height();
         let epoch = s.nodes[0].node_service.chain.epoch();
 
         let last_block_hash = s.nodes[0].node_service.chain.last_block_hash();
@@ -225,7 +225,6 @@ fn autocomit() {
 
         // Check state of (0..NUM_NODES - 1) nodes.
         for node in s.iter_except(&[leader_pk]).skip(1) {
-            assert_eq!(node.node_service.chain.height(), height + 1);
             assert_eq!(node.node_service.chain.epoch(), epoch + 1);
             assert_eq!(node.node_service.chain.last_block_hash(), block_hash);
         }
@@ -233,7 +232,6 @@ fn autocomit() {
         let skip_leader = [leader_pk];
         let last_node = s.iter_except(&skip_leader).next().unwrap();
         // The last node hasn't received sealed block.
-        assert_eq!(last_node.node_service.chain.height(), height);
         assert_eq!(last_node.node_service.chain.epoch(), epoch);
         assert_eq!(
             last_node.node_service.chain.last_block_hash(),
@@ -246,7 +244,6 @@ fn autocomit() {
         last_node.poll();
 
         // Check that the last node has auto-committed the block.
-        assert_eq!(last_node.node_service.chain.height(), height + 1);
         assert_eq!(last_node.node_service.chain.epoch(), epoch + 1);
         assert_eq!(last_node.node_service.chain.last_block_hash(), block_hash);
 
@@ -263,7 +260,7 @@ fn autocomit() {
 #[test]
 fn round() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 2;
+    cfg.micro_blocks_in_epoch = 1;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
@@ -278,7 +275,6 @@ fn round() {
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
-        let height = s.nodes[0].node_service.chain.height();
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
         let leader_node = s.node(&leader_pk).unwrap();
@@ -286,8 +282,8 @@ fn round() {
         let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
         let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
 
-        let round = s.nodes[0].node_service.chain.view_change() + 1;
         let epoch = s.nodes[0].node_service.chain.epoch();
+        let round = s.nodes[0].node_service.chain.view_change() + 1;
         s.wait(s.cfg().macro_block_timeout);
 
         info!("====== Waiting for keyblock timeout. =====");
@@ -312,7 +308,7 @@ fn round() {
         for i in 0..s.num_nodes() {
             let prevote: ConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
             assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
-            assert_eq!(prevote.height, height);
+            assert_eq!(prevote.epoch, epoch);
             assert_eq!(prevote.round, round);
             assert_eq!(prevote.block_hash, proposal.block_hash);
             for j in 0..s.num_nodes() {
@@ -326,7 +322,7 @@ fn round() {
         for i in 0..s.num_nodes() {
             let precommit: ConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
             assert_matches!(precommit.body, ConsensusMessageBody::Precommit { .. });
-            assert_eq!(precommit.height, height);
+            assert_eq!(precommit.epoch, epoch);
             assert_eq!(precommit.round, round);
             assert_eq!(precommit.block_hash, proposal.block_hash);
             for j in 0..s.num_nodes() {
@@ -345,7 +341,8 @@ fn round() {
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
         let block_hash = Hash::digest(&block);
 
-        assert_eq!(block.base_header().view_change, round);
+        let macro_block = block.clone().unwrap_macro();
+        assert_eq!(macro_block.header.view_change, round);
         for node in s.iter_except(&[leader_pk]) {
             node.network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
@@ -353,7 +350,6 @@ fn round() {
         s.poll();
 
         for node in s.iter_except(&[leader_pk]) {
-            assert_eq!(node.node_service.chain.height(), height + 1);
             assert_eq!(node.node_service.chain.epoch(), epoch + 1);
             assert_eq!(node.node_service.chain.last_block_hash(), block_hash);
         }
@@ -367,7 +363,7 @@ fn round() {
 #[test]
 fn multiple_rounds() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 2;
+    cfg.micro_blocks_in_epoch = 1;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
@@ -435,7 +431,7 @@ fn multiple_rounds() {
 #[test]
 fn lock() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 2;
+    cfg.micro_blocks_in_epoch = 1;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
@@ -449,7 +445,7 @@ fn lock() {
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
-        let height = s.nodes[0].node_service.chain.height();
+        let epoch = s.nodes[0].node_service.chain.epoch();
 
         let mut round = s.nodes[0].node_service.chain.view_change();
 
@@ -509,7 +505,7 @@ fn lock() {
         for i in 0..s.num_nodes() {
             let prevote: ConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
             assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
-            assert_eq!(prevote.height, height);
+            assert_eq!(prevote.epoch, epoch);
             assert_eq!(prevote.round, round);
             assert_eq!(prevote.block_hash, leader_proposal.block_hash);
             for j in 0..s.num_nodes() {
@@ -549,7 +545,7 @@ fn lock() {
 #[test]
 fn out_of_order_micro_block() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 1;
+    cfg.micro_blocks_in_epoch = 0;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
@@ -560,14 +556,14 @@ fn out_of_order_micro_block() {
         let topic = crate::CONSENSUS_TOPIC;
         s.poll();
 
-        let height = s.nodes[0].node_service.chain.height();
+        let epoch = s.nodes[0].node_service.chain.epoch();
+        let offset = s.nodes[0].node_service.chain.offset();
         let leader_pk = s.nodes[0].node_service.chain.leader();
 
         //create valid but out of order fake micro block.
-        let version: u64 = 1;
         let timestamp = SystemTime::now();
 
-        let round = s.nodes[0].node_service.chain.view_change();
+        let view_change = s.nodes[0].node_service.chain.view_change();
         let last_block_hash = s.nodes[0].node_service.chain.last_block_hash();
 
         let leader = s.node(&leader_pk).unwrap();
@@ -577,19 +573,21 @@ fn out_of_order_micro_block() {
         );
         let random = pbc::make_VRF(&leader.node_service.keys.network_skey, &seed);
 
-        let base = BaseBlockHeader::new(
-            version,
+        let mut block = MicroBlock::empty(
             last_block_hash,
-            height,
-            round + 1,
-            timestamp,
+            epoch,
+            offset,
+            view_change + 1,
+            None,
+            leader.node_service.keys.network_pkey,
             random,
+            timestamp,
         );
-        let mut block = MicroBlock::empty(base, None, leader.node_service.keys.network_pkey);
-
-        let block_hash = Hash::digest(&block);
         let leader_node = s.node(&leader_pk).unwrap();
-        block.sig = pbc::sign_hash(&block_hash, &leader_node.node_service.keys.network_skey);
+        block.sign(
+            &leader_node.node_service.keys.network_skey,
+            &leader_node.node_service.keys.network_pkey,
+        );
         let block: Block = Block::MicroBlock(block);
 
         // Discard proposal from leader for a proposal from the leader.
@@ -601,7 +599,10 @@ fn out_of_order_micro_block() {
         }
         s.poll();
 
-        s.for_each(|node| assert_eq!(node.chain.height(), height));
+        for node in &s.nodes {
+            assert_eq!(node.node_service.chain.epoch(), epoch);
+            assert_eq!(node.node_service.chain.offset(), offset);
+        }
 
         let leader_pk = s.first().node_service.chain.leader();
         let leader_node = s.node(&leader_pk).unwrap();

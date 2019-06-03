@@ -77,8 +77,8 @@ impl Hashable for ConsensusMessageBody {
 pub struct ConsensusMessage {
     /// Current round.
     pub round: u32,
-    /// Current height.
-    pub height: u64,
+    /// Current epoch.
+    pub epoch: u64,
     /// Hash of proposed request.
     pub block_hash: Hash,
     /// Message Body.
@@ -104,7 +104,7 @@ impl ConsensusMessage {
     /// Create and sign a new consensus message.
     ///
     pub fn new(
-        height: u64,
+        epoch: u64,
         round: u32,
         block_hash: Hash,
         skey: &pbc::SecretKey,
@@ -112,14 +112,14 @@ impl ConsensusMessage {
         body: ConsensusMessageBody,
     ) -> ConsensusMessage {
         let mut hasher = Hasher::new();
-        height.hash(&mut hasher);
+        epoch.hash(&mut hasher);
         round.hash(&mut hasher);
         block_hash.hash(&mut hasher);
         body.hash(&mut hasher);
         let hash = hasher.result();
         let sig = pbc::sign_hash(&hash, skey);
         ConsensusMessage {
-            height,
+            epoch,
             round,
             block_hash,
             body,
@@ -133,7 +133,7 @@ impl ConsensusMessage {
     ///
     pub fn validate(&self) -> Result<(), ConsensusError> {
         let mut hasher = Hasher::new();
-        self.height.hash(&mut hasher);
+        self.epoch.hash(&mut hasher);
         self.round.hash(&mut hasher);
         self.block_hash.hash(&mut hasher);
         self.body.hash(&mut hasher);

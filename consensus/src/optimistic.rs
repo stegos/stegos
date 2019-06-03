@@ -78,7 +78,6 @@ impl ViewChangeMessage {
     }
 }
 
-//Collect ViewChange for current height only.
 #[derive(Debug)]
 pub struct ViewChangeCollector {
     /// Keeps `ViewChangeMessage` for each validator,
@@ -121,10 +120,17 @@ impl ViewChangeCollector {
         blockchain: &Blockchain,
         message: ViewChangeMessage,
     ) -> Result<Option<ViewChangeProof>, ConsensusError> {
-        if message.chain.height != blockchain.height() {
-            return Err(ConsensusError::InvalidViewChangeHeight(
-                message.chain.height,
-                blockchain.height(),
+        if message.chain.epoch != blockchain.epoch() {
+            return Err(ConsensusError::InvalidViewChangeEpoch(
+                message.chain.epoch,
+                blockchain.epoch(),
+            ));
+        }
+
+        if message.chain.offset != blockchain.offset() {
+            return Err(ConsensusError::InvalidViewChangeOffset(
+                message.chain.offset,
+                blockchain.offset(),
             ));
         }
 

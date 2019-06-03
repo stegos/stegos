@@ -36,7 +36,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 use stegos_crypto::bulletproofs::{fee_a, simple_commit};
 use stegos_crypto::curve1174::{ECp, Fr, G};
-use stegos_crypto::hash::{Hash, Hashable, Hasher};
+use stegos_crypto::hash::Hash;
 use stegos_crypto::{curve1174, pbc};
 
 pub type StakingBalance = HashMap<pbc::PublicKey, i64>;
@@ -89,7 +89,7 @@ impl PaymentTransaction {
     ///
     /// # Arguments
     ///
-    /// * - `inputs` - UTXOs referred by self.body.txins, in the same order as in self.body.txins.
+    /// * - `inputs` - UTXOs referred by self.txins, in the same order as in self.txins.
     ///
     pub fn validate(&self, inputs: &[Output]) -> Result<(), BlockchainError> {
         //
@@ -189,7 +189,7 @@ impl RestakeTransaction {
     ///
     /// # Arguments
     ///
-    /// * - `inputs` - UTXOs referred by self.body.txins, in the same order as in self.body.txins.
+    /// * - `inputs` - UTXOs referred by self.txins, in the same order as in self.txins.
     ///
     pub fn validate(&self, inputs: &[Output]) -> Result<(), BlockchainError> {
         //
@@ -376,7 +376,7 @@ impl MacroBlock {
     ///
     /// # Arguments
     ///
-    /// * - `inputs` - UTXOs referred by self.body.inputs, in the same order as in self.body.inputs.
+    /// * - `inputs` - UTXOs referred by self.inputs, in the same order as in self.inputs.
     ///
     pub fn validate_balance(&self, inputs: &[Output]) -> Result<(), BlockchainError> {
         //
@@ -388,13 +388,13 @@ impl MacroBlock {
         let mut pedersen_commitment_diff: ECp = fee_a(self.header.block_reward);
 
         // +\sum{C_i} for i in txins
-        for (txin_hash, txin) in self.body.inputs.iter().zip(inputs) {
+        for (txin_hash, txin) in self.inputs.iter().zip(inputs) {
             assert_eq!(Hash::digest(txin), *txin_hash);
             pedersen_commitment_diff += txin.pedersen_commitment()?;
         }
 
         // -\sum{C_o} for o in txouts
-        for (txout, _) in self.body.outputs.leafs() {
+        for (txout, _) in self.outputs.leafs() {
             txout.validate()?;
             pedersen_commitment_diff -= txout.pedersen_commitment()?;
         }
@@ -402,9 +402,7 @@ impl MacroBlock {
         // Check the monetary balance
         if pedersen_commitment_diff != &self.header.gamma * (*G) {
             let block_hash = Hash::digest(&self);
-            return Err(
-                BlockError::InvalidBlockBalance(self.header.base.height, block_hash).into(),
-            );
+            return Err(BlockError::InvalidBlockBalance(self.header.epoch, block_hash).into());
         }
 
         Ok(())
@@ -416,7 +414,7 @@ impl Blockchain {
     /// Validate that staker has only one key.
     /// # Arguments
     ///
-    /// * - `inputs` - UTXOs referred by self.body.txins, in the same order as in self.body.txins.
+    /// * - `inputs` - UTXOs referred by self.txins, in the same order as in self.txins.
     ///
     pub fn validate_staker(
         &self,
@@ -497,46 +495,45 @@ impl Blockchain {
         block_hash: &Hash,
         header: &MacroBlockHeader,
     ) -> Result<(), BlockchainError> {
-        let height = header.base.height;
+        let epoch = header.epoch;
 
         // Check block version.
-        if header.base.version != VERSION {
+        if header.version != VERSION {
             return Err(BlockError::InvalidBlockVersion(
-                height,
+                epoch,
                 *block_hash,
-                header.base.version,
+                header.version,
                 VERSION,
             )
             .into());
         }
 
-        // Check height.
-        if height != self.height() {
-            return Err(BlockError::OutOfOrderBlock(*block_hash, height, self.height()).into());
+        // Check epoch.
+        if epoch != self.epoch() {
+            return Err(BlockError::OutOfOrderMacroBlock(*block_hash, epoch, self.epoch()).into());
         }
 
         // Check new hash.
         if self.contains_block(&block_hash) {
-            return Err(BlockError::BlockHashCollision(height, *block_hash).into());
+            return Err(BlockError::MacroBlockHashCollision(epoch, *block_hash).into());
         }
 
         // Check previous hash (skip for genesis).
-        if height > 0 {
-            let previous_hash = self.last_block_hash();
-            if previous_hash != header.base.previous {
-                return Err(BlockError::InvalidPreviousHash(
-                    height,
+        if epoch > 0 {
+            let previous_hash = self.last_macro_block_hash();
+            if previous_hash != header.previous {
+                return Err(BlockError::InvalidMacroBlockPreviousHash(
+                    epoch,
                     *block_hash,
-                    header.base.previous,
+                    header.previous,
                     previous_hash,
                 )
                 .into());
             }
 
-            let leader = self.select_leader(header.base.view_change);
-            let seed = mix(self.last_random(), header.base.view_change);
-            if !pbc::validate_VRF_source(&header.base.random, &leader, &seed) {
-                return Err(BlockError::IncorrectRandom(height, *block_hash).into());
+            let seed = mix(self.last_macro_block_random(), header.view_change);
+            if !pbc::validate_VRF_source(&header.random, &header.pkey, &seed) {
+                return Err(BlockError::IncorrectRandom(epoch, *block_hash).into());
             }
         }
 
@@ -619,70 +616,89 @@ impl Blockchain {
         block: &MicroBlock,
         timestamp: SystemTime,
     ) -> Result<(), BlockchainError> {
-        let height = block.base.height;
+        let epoch = block.header.epoch;
+        let offset = block.header.offset;
         let block_hash = Hash::digest(&block);
         debug!(
-            "Validating a micro block: height={}, block={}",
-            height, &block_hash
+            "Validating a micro block: epoch={}, offset={}, block={}",
+            epoch, offset, &block_hash
         );
 
         // Check block version.
-        if block.base.version != VERSION {
+        if block.header.version != VERSION {
             return Err(BlockError::InvalidBlockVersion(
-                height,
+                epoch,
                 block_hash,
-                block.base.version,
+                block.header.version,
                 VERSION,
             )
             .into());
         }
 
-        // Check height.
-        if height != self.height() {
-            return Err(BlockError::OutOfOrderBlock(block_hash, height, self.height()).into());
+        // Check the block order.
+        if self.is_epoch_full() {
+            return Err(BlockchainError::ExpectedMacroBlock(
+                self.epoch(),
+                self.offset(),
+                block_hash,
+            ));
+        }
+
+        // Check epoch and offset.
+        if epoch != self.epoch() || offset != self.offset() {
+            return Err(BlockError::OutOfOrderMicroBlock(
+                block_hash,
+                epoch,
+                offset,
+                self.epoch(),
+                self.offset(),
+            )
+            .into());
         }
 
         // Check new hash.
         if self.contains_block(&block_hash) {
-            return Err(BlockError::BlockHashCollision(height, block_hash).into());
+            return Err(BlockError::MicroBlockHashCollision(epoch, offset, block_hash).into());
         }
 
         // Check previous hash.
         let previous_hash = self.last_block_hash();
-        if previous_hash != block.base.previous {
-            return Err(BlockError::InvalidPreviousHash(
-                height,
+        if previous_hash != block.header.previous {
+            return Err(BlockError::InvalidMicroBlockPreviousHash(
+                epoch,
+                offset,
                 block_hash,
-                block.base.previous,
+                block.header.previous,
                 previous_hash,
             )
             .into());
         }
 
         // Check view change.
-        if block.base.view_change < self.view_change() {
+        if block.header.view_change < self.view_change() {
             return Err(BlockError::InvalidViewChange(
-                height,
+                epoch,
                 block_hash,
-                block.base.view_change,
+                block.header.view_change,
                 self.view_change(),
             )
             .into());
-        } else if block.base.view_change > 0 {
-            match block.view_change_proof {
+        } else if block.header.view_change > 0 {
+            match block.header.view_change_proof {
                 Some(ref proof) => {
                     let chain = ChainInfo::from_micro_block(&block);
                     if let Err(e) = proof.validate(&chain, &self) {
                         return Err(
-                            BlockError::InvalidViewChangeProof(height, proof.clone(), e).into()
+                            BlockError::InvalidViewChangeProof(epoch, proof.clone(), e).into()
                         );
                     }
                 }
                 None => {
                     return Err(BlockError::NoProofWasFound(
-                        height,
+                        epoch,
+                        offset,
                         block_hash,
-                        block.base.view_change,
+                        block.header.view_change,
                         self.view_change(),
                     )
                     .into());
@@ -690,21 +706,20 @@ impl Blockchain {
             }
         }
 
-        // Check leader.
-        let leader = self.select_leader(block.base.view_change);
-        if leader != block.pkey {
-            return Err(BlockError::DifferentPublicKey(leader, block.pkey).into());
-        }
-
         // Check signature.
+        let leader = self.select_leader(block.header.view_change);
+        if leader != block.header.pkey {
+            return Err(BlockError::DifferentPublicKey(leader, block.header.pkey).into());
+        }
         if let Err(_e) = pbc::check_hash(&block_hash, &block.sig, &leader) {
-            return Err(BlockError::InvalidLeaderSignature(height, block_hash).into());
+            return Err(BlockError::InvalidLeaderSignature(epoch, block_hash).into());
         }
         // Check block reward.
         if let Some(Transaction::CoinbaseTransaction(tx)) = block.transactions.get(0) {
             if tx.block_reward != self.cfg().block_reward {
-                return Err(BlockError::InvalidBlockReward(
-                    height,
+                return Err(BlockError::InvalidMicroBlockReward(
+                    epoch,
+                    offset,
                     block_hash,
                     tx.block_reward,
                     self.cfg().block_reward,
@@ -717,9 +732,24 @@ impl Blockchain {
         }
 
         // Check random.
-        let seed = mix(self.last_random(), block.base.view_change);
-        if !pbc::validate_VRF_source(&block.base.random, &leader, &seed) {
-            return Err(BlockError::IncorrectRandom(height, block_hash).into());
+        let seed = mix(self.last_random(), block.header.view_change);
+        if !pbc::validate_VRF_source(&block.header.random, &leader, &seed) {
+            return Err(BlockError::IncorrectRandom(epoch, block_hash).into());
+        }
+
+        //
+        // Validate transactions_hash.
+        let transactions_range_hash =
+            MicroBlock::calculate_transactions_range_hash(&block.transactions);
+        if block.header.transactions_range_hash != transactions_range_hash {
+            return Err(BlockError::InvalidTransactionsRangeHash(
+                epoch,
+                offset,
+                block_hash,
+                transactions_range_hash,
+                block.header.transactions_range_hash,
+            )
+            .into());
         }
 
         let mut inputs_set: HashSet<Hash> = HashSet::new();
@@ -741,19 +771,26 @@ impl Blockchain {
             self.validate_micro_block_tx(
                 tx,
                 timestamp,
-                block.pkey,
+                block.header.pkey,
                 &mut inputs_set,
                 &mut outputs_set,
             )?;
             fee += tx.fee();
         }
         if coinbase_fee != fee {
-            return Err(BlockError::InvalidFee(block_hash, fee, coinbase_fee).into());
+            return Err(BlockError::InvalidMicroBlockFee(
+                epoch,
+                offset,
+                block_hash,
+                fee,
+                coinbase_fee,
+            )
+            .into());
         }
 
         debug!(
-            "The micro block is valid: height={}, block={}",
-            height, &block_hash
+            "The micro block is valid: epoch={}, block={}",
+            epoch, &block_hash
         );
 
         Ok(())
@@ -775,41 +812,52 @@ impl Blockchain {
         block: &MacroBlock,
         _timestamp: SystemTime,
     ) -> Result<(), BlockchainError> {
-        let height = block.header.base.height;
+        let epoch = block.header.epoch;
         let block_hash = Hash::digest(&block);
         debug!(
-            "Validating a macro block: height={}, block={}",
-            height, &block_hash
+            "Validating a macro block: epoch={}, block={}",
+            epoch, &block_hash
         );
 
         // Validate base header.
         self.validate_macro_block_header(&block_hash, &block.header)?;
 
-        // Validate multi-signature (skip for genesis).
-        if height > 0 {
+        if epoch > 0 {
+            // Check the block order.
+            if self.offset() > 0 {
+                return Err(BlockchainError::HaveMicroBlocks(
+                    self.epoch(),
+                    self.offset(),
+                    block_hash,
+                ));
+            }
+
+            // TODO: signature is already checked in Node.
             // Validate signature.
             check_multi_signature(
                 &block_hash,
-                &block.body.multisig,
-                &block.body.multisigmap,
+                &block.multisig,
+                &block.multisigmap,
                 self.validators(),
                 self.total_slots(),
             )
-            .map_err(|e| BlockError::InvalidBlockSignature(e, height, block_hash))?;
+            .map_err(|e| BlockError::InvalidBlockSignature(e, epoch, block_hash))?;
 
             // Check block reward. (skip for genesis)
             let mut service_awards = self.service_awards().clone();
             let validators_activity =
-                self.epoch_activity_from_macro_block(&block.body.activity_map)?;
+                self.epoch_activity_from_macro_block(&block.header.activity_map)?;
             service_awards.finalize_epoch(self.cfg().service_award_per_epoch, validators_activity);
-            let winner = service_awards.check_winners(block.header.base.random.rand);
+            let winner = service_awards.check_winners(block.header.random.rand);
 
             // calculate block reward + service award.
-            let full_reward = self.cfg().block_reward + winner.map(|(_, a)| a).unwrap_or(0);
+            let full_reward = self.cfg().block_reward
+                * (self.cfg().micro_blocks_in_epoch as i64 + 1i64)
+                + winner.map(|(_, a)| a).unwrap_or(0);
 
             if block.header.block_reward != full_reward {
-                return Err(BlockError::InvalidBlockReward(
-                    height,
+                return Err(BlockError::InvalidMacroBlockReward(
+                    epoch,
                     block_hash,
                     block.header.block_reward,
                     full_reward,
@@ -825,24 +873,19 @@ impl Blockchain {
         //
         // Validate inputs.
         //
-        let mut hasher = Hasher::new();
-        let inputs_count: u64 = block.body.inputs.len() as u64;
-        inputs_count.hash(&mut hasher);
         let mut input_set: HashSet<Hash> = HashSet::new();
-        for input_hash in block.body.inputs.iter() {
+        for input_hash in block.inputs.iter() {
             let input = match self.output_by_hash(input_hash)? {
                 Some(input) => input,
                 None => {
                     return Err(
-                        BlockError::MissingBlockInput(height, block_hash, *input_hash).into(),
+                        BlockError::MissingBlockInput(epoch, block_hash, *input_hash).into(),
                     );
                 }
             };
             // Check for the duplicate input.
             if !input_set.insert(*input_hash) {
-                return Err(
-                    BlockError::DuplicateBlockInput(height, block_hash, *input_hash).into(),
-                );
+                return Err(BlockError::DuplicateBlockInput(epoch, block_hash, *input_hash).into());
             }
             input.validate()?;
             burned += input.pedersen_commitment()?;
@@ -856,15 +899,14 @@ impl Blockchain {
                     *entry -= o.amount;
                 }
             }
-            input_hash.hash(&mut hasher);
         }
         drop(input_set);
-        let inputs_range_hash = hasher.result();
+        let inputs_range_hash = MacroBlock::calculate_inputs_range_hash(&block.inputs);
         if block.header.inputs_range_hash != inputs_range_hash {
             let expected = block.header.inputs_range_hash.clone();
             let got = inputs_range_hash;
             return Err(
-                BlockError::InvalidBlockInputsHash(height, block_hash, expected, got).into(),
+                BlockError::InvalidBlockInputsHash(epoch, block_hash, expected, got).into(),
             );
         }
 
@@ -872,18 +914,16 @@ impl Blockchain {
         // Validate outputs.
         //
         let mut output_set: HashSet<Hash> = HashSet::new();
-        for (output, _path) in block.body.outputs.leafs() {
+        for (output, _path) in block.outputs.leafs() {
             // Check that hash is unique.
             let output_hash = Hash::digest(output.as_ref());
             if self.contains_output(&output_hash) {
-                return Err(
-                    BlockError::OutputHashCollision(height, block_hash, output_hash).into(),
-                );
+                return Err(BlockError::OutputHashCollision(epoch, block_hash, output_hash).into());
             }
             // Check for the duplicate output.
             if !output_set.insert(output_hash) {
                 return Err(
-                    BlockError::DuplicateBlockOutput(height, block_hash, output_hash).into(),
+                    BlockError::DuplicateBlockOutput(epoch, block_hash, output_hash).into(),
                 );
             }
 
@@ -904,11 +944,11 @@ impl Blockchain {
             }
         }
         drop(output_set);
-        if block.header.outputs_range_hash != *block.body.outputs.roothash() {
+        if block.header.outputs_range_hash != *block.outputs.roothash() {
             let expected = block.header.outputs_range_hash.clone();
-            let got = block.body.outputs.roothash().clone();
+            let got = block.outputs.roothash().clone();
             return Err(
-                BlockError::InvalidBlockOutputsHash(height, block_hash, expected, got).into(),
+                BlockError::InvalidBlockOutputsHash(epoch, block_hash, expected, got).into(),
             );
         }
 
@@ -916,7 +956,7 @@ impl Blockchain {
         // Validate block monetary balance.
         //
         if fee_a(block.header.block_reward) + burned - created != &block.header.gamma * (*G) {
-            return Err(BlockError::InvalidBlockBalance(height, block_hash).into());
+            return Err(BlockError::InvalidBlockBalance(epoch, block_hash).into());
         }
 
         //
@@ -931,8 +971,8 @@ impl Blockchain {
         };
         if fee_a(balance.block_reward) + balance.burned - balance.created != balance.gamma * (*G) {
             panic!(
-                "Invalid global monetary balance: height={}, block={}",
-                height, &block_hash
+                "Invalid global monetary balance: epoch={}, block={}",
+                epoch, &block_hash
             );
         }
 
@@ -940,8 +980,8 @@ impl Blockchain {
         self.validate_staking_balance(staking_balance.iter())?;
 
         debug!(
-            "The macro block is valid: height={}, block={}",
-            height, &block_hash
+            "The macro block is valid: epoch={}, block={}",
+            epoch, &block_hash
         );
         Ok(())
     }
@@ -950,7 +990,7 @@ impl Blockchain {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::block::{BaseBlockHeader, MacroBlock};
+    use crate::block::MacroBlock;
     use crate::output::OutputError;
     use crate::output::StakeOutput;
     use bitvector::BitVector;
@@ -1346,8 +1386,7 @@ pub mod tests {
         let (_skey2, pkey2) = curve1174::make_random_keys();
         let (nskey, npkey) = pbc::make_random_keys();
 
-        let version: u64 = 1;
-        let height: u64 = 0;
+        let epoch: u64 = 0;
         let timestamp = SystemTime::now();
         let view_change = 0;
         let amount: i64 = 1_000_000;
@@ -1360,20 +1399,22 @@ pub mod tests {
         //
         {
             let (output0, gamma0) = Output::new_payment(&pkey1, amount).unwrap();
-            let base =
-                BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
             let inputs1 = [Hash::digest(&output0)];
             let (output1, gamma1) = Output::new_payment(&pkey2, amount).unwrap();
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
             let block = MacroBlock::new(
-                base,
-                gamma,
+                previous,
+                epoch,
+                view_change,
+                npkey,
+                random,
+                timestamp,
                 0,
                 BitVector::new(0),
+                gamma,
                 &inputs1,
                 &outputs1,
-                npkey,
             );
             block.validate_balance(&[output0]).expect("block is valid");
         }
@@ -1383,23 +1424,25 @@ pub mod tests {
         //
         {
             let (output0, gamma0) = Output::new_payment(&pkey1, amount).unwrap();
-            let base =
-                BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
             let inputs1 = [Hash::digest(&output0)];
             let (output1, gamma1) = Output::new_payment(&pkey2, amount - 1).unwrap();
             let outputs1 = [output1];
             let gamma = gamma0 - gamma1;
             let block = MacroBlock::new(
-                base,
-                gamma,
+                previous,
+                epoch,
+                view_change,
+                npkey,
+                random,
+                timestamp,
                 0,
                 BitVector::new(0),
+                gamma,
                 &inputs1,
                 &outputs1,
-                npkey,
             );
             match block.validate_balance(&[output0]).unwrap_err() {
-                BlockchainError::BlockError(BlockError::InvalidBlockBalance(_height, _hash)) => {}
+                BlockchainError::BlockError(BlockError::InvalidBlockBalance(_epoch, _hash)) => {}
                 _ => panic!(),
             }
         }
@@ -1410,8 +1453,7 @@ pub mod tests {
         let (_skey, pkey) = curve1174::make_random_keys();
         let (nskey, npkey) = pbc::make_random_keys();
 
-        let version: u64 = 1;
-        let height: u64 = 0;
+        let epoch: u64 = 0;
         let timestamp = SystemTime::now();
         let view_change = 0;
         let amount: i64 = 1_000_000;
@@ -1421,30 +1463,33 @@ pub mod tests {
         let random = pbc::make_VRF(&nskey, &seed);
 
         let (input, gamma0) = Output::new_payment(&pkey, amount).unwrap();
-        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
         let input_hashes = [Hash::digest(&input)];
         let inputs = [input];
         let (output, gamma1) = Output::new_payment(&pkey, amount).unwrap();
         let outputs = [output];
         let gamma = gamma0 - gamma1;
         let block = MacroBlock::new(
-            base,
-            gamma,
+            previous,
+            epoch,
+            view_change,
+            npkey,
+            random,
+            timestamp,
             0,
             BitVector::new(0),
+            gamma,
             &input_hashes,
             &outputs,
-            npkey,
         );
         block.validate_balance(&inputs).expect("block is valid");
 
         {
             // Prune an output.
             let mut block2 = block.clone();
-            let (_output, path) = block2.body.outputs.leafs()[0];
-            block2.body.outputs.prune(&path).expect("output exists");
+            let (_output, path) = block2.outputs.leafs()[0];
+            block2.outputs.prune(&path).expect("output exists");
             match block2.validate_balance(&inputs).unwrap_err() {
-                BlockchainError::BlockError(BlockError::InvalidBlockBalance(_height, _hash)) => {}
+                BlockchainError::BlockError(BlockError::InvalidBlockBalance(_epoch, _hash)) => {}
                 _ => panic!(),
             }
         }
@@ -1455,8 +1500,7 @@ pub mod tests {
         let (_skey1, pkey1) = curve1174::make_random_keys();
         let (nskey, npkey) = pbc::make_random_keys();
 
-        let version: u64 = 1;
-        let height: u64 = 0;
+        let epoch: u64 = 0;
         let timestamp = SystemTime::now();
         let view_change = 0;
         let amount: i64 = 1_000_000;
@@ -1476,17 +1520,18 @@ pub mod tests {
                 Output::new_payment(&pkey1, amount).expect("keys are valid");
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;
-
-            let base =
-                BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
             let block = MacroBlock::new(
-                base,
-                gamma,
+                previous,
+                epoch,
+                view_change,
+                npkey,
+                random,
+                timestamp,
                 0,
                 BitVector::new(0),
+                gamma,
                 &input_hashes[..],
                 &outputs[..],
-                npkey,
             );
             block.validate_balance(&inputs).expect("block is valid");
         }
@@ -1503,17 +1548,18 @@ pub mod tests {
             let outputs_gamma = Fr::zero();
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;
-
-            let base =
-                BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
             let block = MacroBlock::new(
-                base,
-                gamma,
+                previous,
+                epoch,
+                view_change,
+                npkey,
+                random,
+                timestamp,
                 0,
                 BitVector::new(0),
+                gamma,
                 &input_hashes[..],
                 &outputs[..],
-                npkey,
             );
             block.validate_balance(&inputs).expect("block is valid");
         }
@@ -1532,20 +1578,21 @@ pub mod tests {
             let outputs_gamma = Fr::zero();
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;
-
-            let base =
-                BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
             let block = MacroBlock::new(
-                base,
-                gamma,
+                previous,
+                epoch,
+                view_change,
+                npkey,
+                random,
+                timestamp,
                 0,
                 BitVector::new(0),
+                gamma,
                 &input_hashes[..],
                 &outputs[..],
-                npkey,
             );
             match block.validate_balance(&inputs).unwrap_err() {
-                BlockchainError::BlockError(BlockError::InvalidBlockBalance(_height, _hash)) => {}
+                BlockchainError::BlockError(BlockError::InvalidBlockBalance(_epoch, _hash)) => {}
                 _ => panic!(),
             };
         }
@@ -1565,17 +1612,18 @@ pub mod tests {
             let outputs_gamma = Fr::zero();
             let outputs = [output];
             let gamma = inputs_gamma - outputs_gamma;
-
-            let base =
-                BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
             let block = MacroBlock::new(
-                base,
-                gamma,
+                previous,
+                epoch,
+                view_change,
+                npkey,
+                random,
+                timestamp,
                 0,
                 BitVector::new(0),
+                gamma,
                 &input_hashes[..],
                 &outputs[..],
-                npkey,
             );
             match block.validate_balance(&inputs).unwrap_err() {
                 BlockchainError::OutputError(OutputError::InvalidStake(_output_hash)) => {}
@@ -1588,8 +1636,7 @@ pub mod tests {
         let (_skey, pkey) = curve1174::make_random_keys();
         let (nskey, npkey) = pbc::make_random_keys();
 
-        let version: u64 = 1;
-        let height: u64 = 0;
+        let epoch: u64 = 0;
         let timestamp = SystemTime::now();
         let view_change = 0;
         let previous = Hash::digest(&"test".to_string());
@@ -1599,20 +1646,23 @@ pub mod tests {
         let block_reward: i64 = output_amount - input_amount;
 
         let (input, input_gamma) = Output::new_payment(&pkey, input_amount).unwrap();
-        let base = BaseBlockHeader::new(version, previous, height, view_change, timestamp, random);
         let input_hashes = [Hash::digest(&input)];
         let inputs = [input];
         let (output, output_gamma) = Output::new_payment(&pkey, output_amount).unwrap();
         let outputs = [output];
         let gamma = input_gamma - output_gamma;
         let block = MacroBlock::new(
-            base,
-            gamma,
+            previous,
+            epoch,
+            view_change,
+            npkey,
+            random,
+            timestamp,
             block_reward,
             BitVector::new(0),
-            &input_hashes,
-            &outputs,
-            npkey,
+            gamma,
+            &input_hashes[..],
+            &outputs[..],
         );
         block.validate_balance(&inputs).expect("block is valid");
     }

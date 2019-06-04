@@ -697,12 +697,11 @@ impl NodeService {
             block.header.previous,
             self.chain.last_block_hash()
         );
-
         // Check that block is created by legitimate validator.
         let election_result = self.chain.election_result_by_offset(offset)?;
-        let leader = block.header.pkey;
-        if !election_result.is_validator(&leader) {
-            return Err(BlockError::LeaderIsNotValidator(epoch, block_hash).into());
+        let leader = election_result.select_leader(block.header.view_change);
+        if leader != block.header.pkey {
+            return Err(BlockError::DifferentPublicKey(leader, block.header.pkey).into());
         }
         if let Err(_e) = pbc::check_hash(&block_hash, &block.sig, &leader) {
             return Err(BlockError::InvalidLeaderSignature(epoch, block_hash).into());

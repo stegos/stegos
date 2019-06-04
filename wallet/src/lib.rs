@@ -49,6 +49,8 @@ use futures::Stream;
 use futures_stream_select_all_send::select_all;
 use log::*;
 use std::collections::{HashMap, HashSet};
+use std::fmt;
+use std::time::{SystemTime, UNIX_EPOCH};
 use stegos_blockchain::*;
 use stegos_crypto::curve1174::PublicKey;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
@@ -58,6 +60,28 @@ use stegos_node::EpochChanged;
 use stegos_node::Node;
 use stegos_node::OutputsChanged;
 
+pub struct PrintableSystemTime(Option<SystemTime>);
+
+impl fmt::Display for PrintableSystemTime {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if let Some(time) = self.0 {
+            write!(
+                f,
+                "{}",
+                humantime::Duration::from(time.duration_since(SystemTime::now()).unwrap())
+            )
+        } else {
+            write!(f, "not locked")
+        }
+    }
+}
+
+impl From<Option<SystemTime>> for PrintableSystemTime {
+    fn from(time: Option<SystemTime>) -> Self {
+        PrintableSystemTime(time)
+    }
+}
+
 struct PaymentValue {
     output: PaymentOutput,
     amount: i64,
@@ -66,7 +90,6 @@ struct PaymentValue {
 
 struct PublicPaymentValue {
     output: PublicPaymentOutput,
-    amount: i64,
 }
 
 struct StakeValue {
@@ -76,19 +99,23 @@ struct StakeValue {
 
 impl PaymentValue {
     fn to_info(&self) -> PaymentInfo {
+        let locked: PrintableSystemTime = self.output.locked_timestamp.into();
         PaymentInfo {
             utxo: Hash::digest(&self.output),
             amount: self.amount,
             data: self.data.clone(),
+            locked: locked.to_string(),
         }
     }
 }
 
 impl PublicPaymentValue {
     fn to_info(&self) -> PublicPaymentInfo {
+        let locked: PrintableSystemTime = self.output.locked_timestamp.into();
         PublicPaymentInfo {
             utxo: Hash::digest(&self.output),
-            amount: self.amount,
+            amount: self.output.amount,
+            locked: locked.to_string(),
         }
     }
 }
@@ -164,6 +191,9 @@ pub struct WalletService {
     /// Lifetime of stake.
     stake_epochs: u64,
 
+    /// Time of last macro block.
+    last_macro_block_timestamp: SystemTime,
+
     /// Node API.
     node: Node,
 
@@ -213,6 +243,8 @@ impl WalletService {
         let transactions_interest = HashMap::new();
         let unprocessed_transactions = HashMap::new();
 
+        let last_macro_block_timestamp = UNIX_EPOCH;
+
         //
         // Subscriptions.
         //
@@ -251,6 +283,7 @@ impl WalletService {
             payment_fee,
             stake_fee,
             stake_epochs,
+            last_macro_block_timestamp,
             node,
             subscribers,
             events,
@@ -278,9 +311,13 @@ impl WalletService {
         recipient: &PublicKey,
         amount: i64,
         comment: String,
+        locked_timestamp: Option<SystemTime>,
     ) -> Result<(Hash, i64), Error> {
         let data = PaymentPayloadData::Comment(comment);
-        let unspent_iter = self.payments.values().map(|v| (&v.output, v.amount));
+        let unspent_iter = self
+            .payments
+            .values()
+            .map(|v| (&v.output, v.amount, v.output.locked_timestamp.clone()));
         let (inputs, outputs, gamma, fee) = create_payment_transaction(
             &self.keys.wallet_pkey,
             recipient,
@@ -288,6 +325,8 @@ impl WalletService {
             amount,
             self.payment_fee,
             TransactionType::Regular(data),
+            locked_timestamp,
+            self.last_macro_block_timestamp,
         )?;
 
         // Transaction TXINs can generally have different keying for each one
@@ -306,8 +345,16 @@ impl WalletService {
     }
 
     /// Send money public.
-    fn public_payment(&mut self, recipient: &PublicKey, amount: i64) -> Result<(Hash, i64), Error> {
-        let unspent_iter = self.payments.values().map(|v| (&v.output, v.amount));
+    fn public_payment(
+        &mut self,
+        recipient: &PublicKey,
+        amount: i64,
+        locked_timestamp: Option<SystemTime>,
+    ) -> Result<(Hash, i64), Error> {
+        let unspent_iter = self
+            .payments
+            .values()
+            .map(|v| (&v.output, v.amount, v.output.locked_timestamp.clone()));
         let (inputs, outputs, gamma, fee) = create_payment_transaction(
             &self.keys.wallet_pkey,
             recipient,
@@ -315,6 +362,8 @@ impl WalletService {
             amount,
             self.payment_fee,
             TransactionType::Public,
+            locked_timestamp,
+            self.last_macro_block_timestamp,
         )?;
 
         // Transaction TXINs can generally have different keying for each one
@@ -361,8 +410,12 @@ impl WalletService {
         recipient: &PublicKey,
         amount: i64,
         comment: String,
+        locked_timestamp: Option<SystemTime>,
     ) -> Result<Hash, Error> {
-        let unspent_iter = self.payments.values().map(|v| (&v.output, v.amount));
+        let unspent_iter = self
+            .payments
+            .values()
+            .map(|v| (&v.output, v.amount, v.output.locked_timestamp.clone()));
         let (inputs, outputs, fee) = create_vs_payment_transaction(
             &self.keys.wallet_pkey,
             recipient,
@@ -370,6 +423,8 @@ impl WalletService {
             amount,
             self.payment_fee,
             comment,
+            locked_timestamp,
+            self.last_macro_block_timestamp,
         )?;
         self.vs.queue_transaction(&inputs, &outputs, fee)?;
         let saved_tx = SavedTransaction::ValueShuffle(inputs.iter().map(|(h, _)| *h).collect());
@@ -393,6 +448,7 @@ impl WalletService {
             amount,
             self.payment_fee,
             self.stake_fee,
+            self.last_macro_block_timestamp,
         )?;
         let tx_hash = Hash::digest(&tx);
         let fee = tx.fee;
@@ -413,6 +469,7 @@ impl WalletService {
             amount,
             self.payment_fee,
             self.stake_fee,
+            self.last_macro_block_timestamp,
         )?;
         let tx_hash = Hash::digest(&tx);
         let fee = tx.fee;
@@ -505,6 +562,7 @@ impl WalletService {
             &self.keys.wallet_pkey,
             public_utxos,
             self.payment_fee,
+            self.last_macro_block_timestamp,
         )?;
         let tx_hash = Hash::digest(&tx);
         self.node.send_transaction(tx.into())?;
@@ -574,10 +632,7 @@ impl WalletService {
                 let PublicPaymentOutput { ref amount, .. } = &o;
                 assert!(*amount >= 0);
                 info!("Received public payment: utxo={}, amount={}", hash, amount);
-                let value = PublicPaymentValue {
-                    output: o.clone(),
-                    amount: *amount,
-                };
+                let value = PublicPaymentValue { output: o.clone() };
                 let info = value.to_info();
                 let missing = self.public_payments.insert(hash, value);
                 assert!(missing.is_none());
@@ -709,8 +764,9 @@ impl WalletService {
         }
     }
 
-    fn on_epoch_changed(&mut self, epoch: u64) {
+    fn on_epoch_changed(&mut self, epoch: u64, time: SystemTime) {
         self.epoch = epoch;
+        self.last_macro_block_timestamp = time;
 
         trace!("Updating node epoch = {}", epoch);
         if let Err(e) = self.restake_expiring() {
@@ -756,16 +812,29 @@ impl Future for WalletService {
                                 recipient,
                                 amount,
                                 comment,
-                            } => self.payment(&recipient, amount, comment).into(),
-                            WalletRequest::PublicPayment { recipient, amount } => {
-                                self.public_payment(&recipient, amount).into()
-                            }
+                                locked_timestamp,
+                            } => self
+                                .payment(&recipient, amount, comment, locked_timestamp)
+                                .into(),
+                            WalletRequest::PublicPayment {
+                                recipient,
+                                amount,
+                                locked_timestamp,
+                            } => self
+                                .public_payment(&recipient, amount, locked_timestamp)
+                                .into(),
 
                             WalletRequest::SecurePayment {
                                 recipient,
                                 amount,
                                 comment,
-                            } => match self.secure_payment(&recipient, amount, comment) {
+                                locked_timestamp,
+                            } => match self.secure_payment(
+                                &recipient,
+                                amount,
+                                comment,
+                                locked_timestamp,
+                            ) {
                                 Ok(session_id) => {
                                     WalletResponse::ValueShuffleStarted { session_id }
                                 }
@@ -831,8 +900,12 @@ impl Future for WalletService {
                     }) => {
                         self.on_outputs_changed(epoch, inputs, outputs);
                     }
-                    WalletEvent::NodeEpochChanged(EpochChanged { epoch, .. }) => {
-                        self.on_epoch_changed(epoch);
+                    WalletEvent::NodeEpochChanged(EpochChanged {
+                        epoch,
+                        last_macro_block_timestamp,
+                        ..
+                    }) => {
+                        self.on_epoch_changed(epoch, last_macro_block_timestamp);
                     }
                 },
                 Async::Ready(None) => unreachable!(), // never happens

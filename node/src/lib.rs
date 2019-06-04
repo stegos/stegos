@@ -161,6 +161,7 @@ pub struct BlockAdded {
 #[derive(Clone, Debug, Serialize)]
 pub struct EpochChanged {
     pub epoch: u64,
+    pub last_macro_block_timestamp: SystemTime,
     pub facilitator: pbc::PublicKey,
     pub validators: Vec<(pbc::PublicKey, i64)>,
 }
@@ -844,6 +845,7 @@ impl NodeService {
             epoch: self.chain.epoch(),
             validators: self.chain.validators().clone(),
             facilitator: self.chain.facilitator().clone(),
+            last_macro_block_timestamp: self.chain.last_macro_block_timestamp(),
         };
 
         self.on_epoch_changed
@@ -940,6 +942,7 @@ impl NodeService {
             epoch: self.chain.epoch(),
             validators: self.chain.validators().clone(),
             facilitator: self.chain.facilitator().clone(),
+            last_macro_block_timestamp: self.chain.last_macro_block_timestamp(),
         };
         tx.unbounded_send(msg).ok(); // ignore error.
         self.on_epoch_changed.push(tx);

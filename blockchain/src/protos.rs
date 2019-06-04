@@ -860,6 +860,22 @@ mod tests {
     }
 
     #[test]
+    fn public_payment_utxo() {
+        let (_skey, pkey) = curve1174::make_random_keys();
+        let output = PublicPaymentOutput::new(&pkey, 100);
+
+        roundtrip(&output);
+        let output: Output = output.into();
+        roundtrip(&output);
+
+        let output = PublicPaymentOutput::new_locked(&pkey, 100, SystemTime::now());
+
+        roundtrip(&output);
+        let output: Output = output.into();
+        roundtrip(&output);
+    }
+
+    #[test]
     fn payment_transaction() {
         let tx = mktransaction();
         roundtrip(&tx);

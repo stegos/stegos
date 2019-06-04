@@ -36,6 +36,7 @@ use rustyline as rl;
 use std::fmt;
 use std::path::PathBuf;
 use std::thread;
+use std::time::{Duration, SystemTime};
 use stegos_crypto::curve1174::PublicKey;
 use stegos_crypto::pbc;
 use stegos_network::Network;
@@ -57,7 +58,11 @@ use stegos_wallet::{
 
 lazy_static! {
     /// Regex to parse "pay" command.
-    static ref PAY_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<amount>[0-9\.]{1,19})(\s+(?P<comment>.+))?\s*$").unwrap();
+    static ref PAY_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<amount>[0-9\.]{1,19})(?P<arguments>.+)?\s*$").unwrap();
+    /// Regex to parse argument of "pay" command.
+    static ref PAY_ARGUMENTS_RE: Regex = Regex::new(r"^(\s+(?P<public>(/public)))?(\s+(?P<comment>[^/]+?))?(\s+(?P<lock>(/lock\s*.*)))?\s*$").unwrap();
+    /// Regex to parse argument of "pay" command.
+    static ref SPAY_ARGUMENTS_RE: Regex = Regex::new(r"^(\s+(?P<comment>[^/]+?))?(\s+(?P<lock>(/lock\s*.*)))?\s*$").unwrap();
     /// Regex to parse "msg" command.
     static ref MSG_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<msg>.+)$").unwrap();
     /// Regex to parse "stake/unstake" command.
@@ -182,8 +187,10 @@ impl ConsoleService {
 
     fn help() {
         println!("Usage:");
-        println!("pay WALLET_PUBKEY AMOUNT [/public] [COMMENT] - send money");
-        println!("spay WALLET_PUBKEY AMOUNT [COMMENT] - send money using ValueShuffle");
+        println!("pay WALLET_PUBKEY AMOUNT [COMMENT] [/public]  [/lock duration] - send money");
+        println!(
+            "spay WALLET_PUBKEY AMOUNT [COMMENT] [/lock duration] - send money using ValueShuffle"
+        );
         println!("msg WALLET_PUBKEY MESSAGE - send a message via blockchain");
         println!("stake AMOUNT - stake money");
         println!("unstake [AMOUNT] - unstake money");
@@ -219,19 +226,22 @@ impl ConsoleService {
     }
 
     fn help_pay() {
-        println!("Usage: pay WALLET_PUBKEY AMOUNT [COMMENT]");
+        println!("Usage: pay WALLET_PUBKEY AMOUNT [COMMENT] [/public] [/lock duration]");
         println!(" - WALLET_PUBKEY recipient's wallet public key in HEX format");
         println!(" - AMOUNT amount in tokens");
+        println!(" - COMMENT purpose of payment, no comments are allowed in public utxo.");
         println!(" - /public if present, send money as PublicUTXO, with uncloaked recipient and amaount.");
-        println!(" - COMMENT purpose of payment");
+        println!(" - /lock if present, set the duration from which the output can be spent.");
         println!();
     }
 
     fn help_spay() {
-        println!("Usage: spay WALLET_PUBKEY AMOUNT [COMMENT]");
+        println!("Usage: spay WALLET_PUBKEY AMOUNT [COMMENT] [/lock duration]");
         println!(" - WALLET_PUBKEY recipient's wallet public key in HEX format");
         println!(" - AMOUNT amount in tokens");
         println!(" - COMMENT purpose of payment");
+        println!(" - COMMENT purpose of payment, no comments are allowed in public utxo.");
+        println!(" - /lock if present, set the duration from which the output can be spent.");
         println!();
     }
 
@@ -337,14 +347,54 @@ impl ConsoleService {
                 }
             };
 
-            // return none if /public transaciton
-            let comment_or_public = match caps.name("comment") {
-                Some(m) if m.as_str() == "/public" => None,
-                Some(m) => m.as_str().to_string().into(),
-                None => String::new().into(),
+            let (public, comment, locked_timestamp) = match caps.name("arguments") {
+                None => (false, String::new(), None),
+
+                Some(m) => {
+                    let caps = match PAY_ARGUMENTS_RE.captures(m.as_str()) {
+                        Some(c) => c,
+                        None => {
+                            Self::help_pay();
+                            return true;
+                        }
+                    };
+
+                    let public = caps.name("public").is_some();
+                    let comment = caps
+                        .name("comment")
+                        .map(|s| String::from(s.as_str()))
+                        .unwrap_or(String::new());
+
+                    // if parse_lock_format return None, print help, and stop execute.
+                    let locked_timestamp = caps.name("lock").map(|s| parse_lock_format(s.as_str()));
+                    let locked_timestamp = match locked_timestamp {
+                        Some(Some(locked_timestamp)) => Some(SystemTime::now() + locked_timestamp),
+                        None => None,
+                        Some(None) => {
+                            Self::help_pay();
+                            return true;
+                        }
+                    };
+                    (public, comment, locked_timestamp)
+                }
             };
 
-            let request = if let Some(comment) = comment_or_public {
+            if public && !comment.is_empty() {
+                println!("Comment in public utxo will be omitted.");
+            }
+
+            let request = if public {
+                info!(
+                    "Sending {} STG to {}, with uncloaked recipient and amount.",
+                    format_money(amount),
+                    recipient.to_hex()
+                );
+                WalletRequest::PublicPayment {
+                    recipient,
+                    amount,
+                    locked_timestamp,
+                }
+            } else {
                 info!(
                     "Sending {} STG to {}",
                     format_money(amount),
@@ -354,14 +404,8 @@ impl ConsoleService {
                     recipient,
                     amount,
                     comment,
+                    locked_timestamp,
                 }
-            } else {
-                info!(
-                    "Sending {} STG to {}, with uncloaked recipient and amount.",
-                    format_money(amount),
-                    recipient.to_hex()
-                );
-                WalletRequest::PublicPayment { recipient, amount }
             };
             self.wallet_response = Some(self.wallet.request(request));
         } else if msg.starts_with("spay ") {
@@ -391,12 +435,35 @@ impl ConsoleService {
                     return true;
                 }
             };
-            let comment = if let Some(m) = caps.name("comment") {
-                m.as_str().to_string()
-            } else {
-                String::new()
-            };
+            let (comment, locked_timestamp) = match caps.name("arguments") {
+                None => (String::new(), None),
 
+                Some(m) => {
+                    let caps = match SPAY_ARGUMENTS_RE.captures(m.as_str()) {
+                        Some(c) => c,
+                        None => {
+                            Self::help_spay();
+                            return true;
+                        }
+                    };
+                    let comment = caps
+                        .name("comment")
+                        .map(|s| String::from(s.as_str()))
+                        .unwrap_or(String::new());
+
+                    // if parse_lock_format return None, print help, and stop execute.
+                    let locked_timestamp = caps.name("lock").map(|s| parse_lock_format(s.as_str()));
+                    let locked_timestamp = match locked_timestamp {
+                        Some(Some(locked_timestamp)) => Some(SystemTime::now() + locked_timestamp),
+                        None => None,
+                        Some(None) => {
+                            Self::help_spay();
+                            return true;
+                        }
+                    };
+                    (comment, locked_timestamp)
+                }
+            };
             info!(
                 "Sending {} to {} via ValueShuffle",
                 format_money(amount),
@@ -406,6 +473,7 @@ impl ConsoleService {
                 recipient,
                 amount,
                 comment,
+                locked_timestamp,
             };
             self.wallet_response = Some(self.wallet.request(request));
         } else if msg.starts_with("msg ") {
@@ -435,6 +503,7 @@ impl ConsoleService {
                 recipient,
                 amount,
                 comment,
+                locked_timestamp: None,
             };
             self.wallet_response = Some(self.wallet.request(request));
         } else if msg.starts_with("stake ") {
@@ -683,4 +752,17 @@ impl Future for ConsoleService {
 
         return Ok(Async::NotReady);
     }
+}
+
+fn parse_lock_format(lock_str: &str) -> Option<Duration> {
+    trace!("Trying to parse duration from argument={}", lock_str);
+    if !lock_str.starts_with("/lock ") {
+        println!("Can't find /lock command.");
+        return None;
+    };
+
+    let lock_argument = &lock_str[6..];
+    let duration = lock_argument.parse::<humantime::Duration>();
+    trace!("Parsed duration = {:?}", duration);
+    duration.map(Into::into).ok()
 }

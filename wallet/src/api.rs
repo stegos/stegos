@@ -27,6 +27,7 @@ use futures::sync::mpsc::UnboundedSender;
 use futures::sync::oneshot;
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
+use std::time::SystemTime;
 pub use stegos_blockchain::PaymentPayloadData;
 pub use stegos_blockchain::StakeInfo;
 use stegos_crypto::curve1174::PublicKey;
@@ -40,12 +41,14 @@ pub struct PaymentInfo {
     pub utxo: Hash,
     pub amount: i64,
     pub data: PaymentPayloadData,
+    pub locked: String,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct PublicPaymentInfo {
     pub utxo: Hash,
     pub amount: i64,
+    pub locked: String,
 }
 
 ///
@@ -75,15 +78,18 @@ pub enum WalletRequest {
         recipient: PublicKey,
         amount: i64,
         comment: String,
+        locked_timestamp: Option<SystemTime>,
     },
     PublicPayment {
         recipient: PublicKey,
         amount: i64,
+        locked_timestamp: Option<SystemTime>,
     },
     SecurePayment {
         recipient: PublicKey,
         amount: i64,
         comment: String,
+        locked_timestamp: Option<SystemTime>,
     },
     WaitForCommit {
         tx_hash: Hash,

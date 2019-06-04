@@ -182,11 +182,13 @@ impl Generator {
                 comment: "generator".into(),
                 amount: 1,
                 recipient,
+                locked_timestamp: None,
             },
             GeneratorMode::Regular => WalletRequest::Payment {
                 comment: "generator".into(),
                 amount: 1,
                 recipient,
+                locked_timestamp: None,
             },
         };
 

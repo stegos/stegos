@@ -839,16 +839,18 @@ impl NodeService {
             metrics::SYNCHRONIZED.set(1);
         }
 
+        self.on_block_added(epoch, 0, view_change, hash, timestamp, inputs, outputs);
+
         let msg = EpochChanged {
             epoch: self.chain.epoch(),
             validators: self.chain.validators().clone(),
             facilitator: self.chain.facilitator().clone(),
         };
+
         self.on_epoch_changed
             .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
-        self.cheating_proofs.clear();
 
-        self.on_block_added(epoch, 0, view_change, hash, timestamp, inputs, outputs);
+        self.cheating_proofs.clear();
         self.update_validation_status();
 
         Ok(())
@@ -897,7 +899,7 @@ impl NodeService {
 
         // Notify subscribers.
         let msg = OutputsChanged {
-            epoch: self.chain.epoch(),
+            epoch,
             inputs,
             outputs,
         };

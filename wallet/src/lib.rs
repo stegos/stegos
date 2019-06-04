@@ -453,16 +453,30 @@ impl WalletService {
     fn restake_expiring(&mut self) -> Result<(), Error> {
         assert_eq!(self.stake_fee, 0);
         let epoch = self.epoch;
-        let stakes: Vec<&StakeOutput> = self.stakes.iter().filter_map(|(hash, val)|
+        let stakes: Vec<&StakeOutput> = self
+            .stakes
+            .iter()
+            .filter_map(|(hash, val)| {
                 // Re-stake in the last epoch where stake is valid.
+
+                trace!(
+                    "Check expiring stake: utxo={}, amount={}, active_until_epoch={}, epoch={}",
+                    hash,
+                    val.output.amount,
+                    val.active_until_epoch,
+                    epoch
+                );
                 if val.active_until_epoch <= epoch {
-                    info!("Expiring stake: utxo={}, amount={}, active_until_epoch={}, epoch={}",
-                           hash, val.output.amount, val.active_until_epoch, epoch);
+                    info!(
+                        "Expiring stake: utxo={}, amount={}, active_until_epoch={}, epoch={}",
+                        hash, val.output.amount, val.active_until_epoch, epoch
+                    );
                     Some(&val.output)
                 } else {
                     None
                 }
-        ).collect();
+            })
+            .collect();
 
         if stakes.is_empty() {
             return Ok(()); // Nothing to re-stake.
@@ -698,6 +712,7 @@ impl WalletService {
     fn on_epoch_changed(&mut self, epoch: u64) {
         self.epoch = epoch;
 
+        trace!("Updating node epoch = {}", epoch);
         if let Err(e) = self.restake_expiring() {
             error!("Failed to re-stake: {}", e);
         }

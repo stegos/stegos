@@ -185,12 +185,11 @@ fn new_service(
     let mut bind_ip = Multiaddr::from(Protocol::Ip4(config.bind_ip.clone().parse()?));
     bind_ip.push(Protocol::Tcp(config.bind_port));
 
-    let addr = libp2p::Swarm::listen_on(&mut swarm, bind_ip).unwrap();
-    info!("Listening on {:?}", addr);
+    libp2p::Swarm::listen_on(&mut swarm, bind_ip).unwrap();
 
     let (control_tx, mut control_rx) = mpsc::unbounded::<ControlMessage>();
+    let mut listening = false;
     let service = futures::future::poll_fn(move || -> Result<_, ()> {
-        trace!("Swarm poll fn");
         loop {
             match control_rx.poll() {
                 Ok(Async::Ready(Some(msg))) => swarm.process_event(msg),
@@ -203,10 +202,17 @@ fn new_service(
         loop {
             match swarm.poll().expect("Error while polling swarm") {
                 Async::Ready(Some(_)) => {}
-                Async::Ready(None) | Async::NotReady => break,
+                Async::Ready(None) | Async::NotReady => {
+                    if !listening {
+                        if let Some(a) = Swarm::listeners(&swarm).next() {
+                            info!("Listening on {:?}", a);
+                            listening = true;
+                        }
+                    }
+                    break;
+                }
             }
         }
-        trace!("Finished Swarm poll!");
         Ok(Async::NotReady)
     });
 

@@ -60,6 +60,7 @@ tokio = "0.1"
 tokio-io = "0.1"
 tokio-timer = "0.2"
 toml = "0.4"
+humantime = "1.2.0"
 
 [build-dependencies]
 regex = "1.0"

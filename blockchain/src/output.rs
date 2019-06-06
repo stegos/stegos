@@ -26,6 +26,7 @@ use failure::{Error, Fail};
 use rand::random;
 use serde_derive::Serialize;
 use std::mem::transmute;
+use std::time::SystemTime;
 use stegos_crypto::bulletproofs::{fee_a, make_range_proof, validate_range_proof, BulletProof};
 use stegos_crypto::curve1174::zap_bytes;
 use stegos_crypto::curve1174::{
@@ -69,6 +70,11 @@ pub enum OutputError {
     NegativeAmount(Hash, i64),
     #[fail(display = "Invalid signature on validator pkey: utxo={}", _0)]
     InvalidStakeSignature(Hash),
+    #[fail(
+        display = "Input is locked: hash={}, tx_time={:?}, last_macro_block_time={:?}",
+        _0, _1, _2
+    )]
+    UtxoLocked(Hash, SystemTime, SystemTime),
 }
 
 /// Payment UTXO.
@@ -93,6 +99,9 @@ pub struct PaymentOutput {
     /// Size is approx 137 Bytes =
     ///     (R-val 65B, crypto-text 72B = (amount 8B, gamma 32B, delta 32B))
     pub payload: EncryptedPayload,
+
+    /// Timelock for output.
+    pub locked_timestamp: Option<SystemTime>,
 }
 
 /// PublicPayment UTXO.
@@ -106,6 +115,9 @@ pub struct PublicPaymentOutput {
 
     /// Uncloaked amount
     pub amount: i64,
+
+    /// Timelock for output.
+    pub locked_timestamp: Option<SystemTime>,
 }
 
 /// Stake UTXO.
@@ -351,6 +363,7 @@ impl PaymentOutput {
         recipient_pkey: &PublicKey,
         amount: i64,
         data: PaymentPayloadData,
+        locked_timestamp: Option<SystemTime>,
     ) -> Result<(Self, Fr), BlockchainError> {
         // Create range proofs.
         let (proof, gamma) = make_range_proof(amount);
@@ -374,6 +387,7 @@ impl PaymentOutput {
             recipient: cloaked_pkey,
             cloaking_hint: hint.compress(),
             proof,
+            locked_timestamp,
             payload,
         };
 
@@ -383,7 +397,17 @@ impl PaymentOutput {
     /// Create a new PaymentOutput.
     pub fn new(recipient_pkey: &PublicKey, amount: i64) -> Result<(Self, Fr), BlockchainError> {
         let data = PaymentPayloadData::Comment(String::new());
-        Self::with_payload(recipient_pkey, amount, data)
+        Self::with_payload(recipient_pkey, amount, data, None)
+    }
+
+    /// Create a new PaymentOutput with lock.
+    pub fn new_locked(
+        recipient_pkey: &PublicKey,
+        amount: i64,
+        locked_timestamp: SystemTime,
+    ) -> Result<(Self, Fr), BlockchainError> {
+        let data = PaymentPayloadData::Comment(String::new());
+        Self::with_payload(recipient_pkey, amount, data, locked_timestamp.into())
     }
 
     /// Decrypt payload.
@@ -441,6 +465,21 @@ impl PublicPaymentOutput {
             recipient: recipient_pkey.clone(),
             serno,
             amount,
+            locked_timestamp: None,
+        }
+    }
+
+    pub fn new_locked(
+        recipient_pkey: &PublicKey,
+        amount: i64,
+        locked_timestamp: SystemTime,
+    ) -> Self {
+        let serno = random::<i64>();
+        PublicPaymentOutput {
+            recipient: recipient_pkey.clone(),
+            serno,
+            amount,
+            locked_timestamp: locked_timestamp.into(),
         }
     }
 
@@ -572,6 +611,15 @@ impl Output {
             Output::StakeOutput(o) => o.is_my_utxo(&pkey),
         }
     }
+
+    /// Returns timestamp when tx could be spent.
+    pub fn locked_timestamp(&self) -> Option<SystemTime> {
+        match self {
+            Output::PaymentOutput(o) => o.locked_timestamp.clone(),
+            Output::PublicPaymentOutput(o) => o.locked_timestamp.clone(),
+            Output::StakeOutput(_) => None,
+        }
+    }
 }
 
 impl From<PaymentOutput> for Output {
@@ -599,6 +647,7 @@ impl Hashable for PaymentOutput {
         self.cloaking_hint.hash(state);
         self.proof.hash(state);
         self.payload.hash(state);
+        self.locked_timestamp.hash(state);
     }
 }
 

@@ -53,17 +53,33 @@ impl ProtoConvert for PaymentOutput {
         proto.set_cloaking_hint(self.cloaking_hint.into_proto());
         proto.set_proof(self.proof.into_proto());
         proto.set_payload(self.payload.into_proto());
+        let timestamp = if let Some(locked_timestamp) = self.locked_timestamp {
+            let since_the_epoch = locked_timestamp
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time is valid");
+            since_the_epoch.as_secs() * 1000 + since_the_epoch.subsec_millis() as u64
+        } else {
+            0
+        };
+
+        proto.set_locked_timestamp(timestamp);
         proto
     }
+
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let recipient = PublicKey::from_proto(proto.get_recipient())?;
         let cloaking_hint = Pt::from_proto(proto.get_cloaking_hint())?;
         let proof = BulletProof::from_proto(proto.get_proof())?;
         let payload = EncryptedPayload::from_proto(proto.get_payload())?;
+        let locked_timestamp = match proto.get_locked_timestamp() {
+            0 => None,
+            n => Some(std::time::UNIX_EPOCH + std::time::Duration::from_millis(n)),
+        };
         Ok(PaymentOutput {
             recipient,
             cloaking_hint,
             proof,
+            locked_timestamp,
             payload,
         })
     }
@@ -76,6 +92,16 @@ impl ProtoConvert for PublicPaymentOutput {
         proto.set_recipient(self.recipient.into_proto());
         proto.set_amount(self.amount);
         proto.set_serno(self.serno);
+        let timestamp = if let Some(locked_timestamp) = self.locked_timestamp {
+            let since_the_epoch = locked_timestamp
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time is valid");
+            since_the_epoch.as_secs() * 1000 + since_the_epoch.subsec_millis() as u64
+        } else {
+            0
+        };
+
+        proto.set_locked_timestamp(timestamp);
         proto
     }
 
@@ -83,10 +109,15 @@ impl ProtoConvert for PublicPaymentOutput {
         let recipient = PublicKey::from_proto(proto.get_recipient())?;
         let amount = proto.get_amount();
         let serno = proto.get_serno();
+        let locked_timestamp = match proto.get_locked_timestamp() {
+            0 => None,
+            n => Some(std::time::UNIX_EPOCH + std::time::Duration::from_millis(n)),
+        };
         Ok(PublicPaymentOutput {
             recipient,
             amount,
             serno,
+            locked_timestamp,
         })
     }
 }
@@ -826,6 +857,22 @@ mod tests {
             txouts: vec![output],
         };
         roundtrip(&coinbase);
+    }
+
+    #[test]
+    fn public_payment_utxo() {
+        let (_skey, pkey) = curve1174::make_random_keys();
+        let output = PublicPaymentOutput::new(&pkey, 100);
+
+        roundtrip(&output);
+        let output: Output = output.into();
+        roundtrip(&output);
+
+        let output = PublicPaymentOutput::new_locked(&pkey, 100, SystemTime::now());
+
+        roundtrip(&output);
+        let output: Output = output.into();
+        roundtrip(&output);
     }
 
     #[test]

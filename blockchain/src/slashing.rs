@@ -23,7 +23,6 @@ use crate::error::SlashingError;
 use crate::transaction::SlashingTransaction;
 use crate::{Blockchain, BlockchainError, MicroBlock, PublicPaymentOutput};
 use log::debug;
-use rand::{thread_rng, Rng};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
 
@@ -124,18 +123,12 @@ pub fn confiscate_tx(
     let piece = stake / validators.len() as i64;
     let change = stake % validators.len() as i64;
 
-    let mut rng = thread_rng();
-
     let mut outputs = Vec::new();
     for validator in &validators {
         let key = chain
             .validator_wallet(validator)
             .expect("validator has wallet key");
-        let mut output = PublicPaymentOutput {
-            recipient: key,
-            serno: rng.gen(),
-            amount: piece,
-        };
+        let mut output = PublicPaymentOutput::new(&key, piece);
         if validator == our_key {
             output.amount += change
         }

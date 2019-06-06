@@ -134,6 +134,7 @@ pub struct ProposedUTXO {
     pub recip: PublicKey, // payee key (uncloaked)
     pub amount: i64,
     pub data: String,
+    pub locked_timestamp: Option<SystemTime>,
 }
 
 #[derive(Clone)]
@@ -1700,8 +1701,13 @@ impl ValueShuffle {
         let mut outs = Vec::<(UTXO, Fr)>::new();
         for txout in txouts.clone() {
             let data = PaymentPayloadData::Comment(txout.data);
-            let pair = PaymentOutput::with_payload(&txout.recip, txout.amount, data)
-                .expect("Can't produce Payment UTXO");
+            let pair = PaymentOutput::with_payload(
+                &txout.recip,
+                txout.amount,
+                data,
+                txout.locked_timestamp,
+            )
+            .expect("Can't produce Payment UTXO");
             outs.push(pair);
         }
         outs

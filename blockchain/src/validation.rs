@@ -26,7 +26,7 @@ use crate::blockchain::{Balance, Blockchain, ChainInfo};
 use crate::election::mix;
 use crate::error::{BlockError, BlockchainError, SlashingError, TransactionError};
 use crate::multisignature::check_multi_signature;
-use crate::output::{Output, PublicPaymentOutput};
+use crate::output::{Output, OutputError, PublicPaymentOutput};
 use crate::slashing::confiscate_tx;
 use crate::transaction::{
     CoinbaseTransaction, PaymentTransaction, RestakeTransaction, SlashingTransaction, Transaction,
@@ -346,15 +346,20 @@ impl SlashingTransaction {
                     Output::PublicPaymentOutput(PublicPaymentOutput {
                         recipient: recipient1,
                         amount: amount1,
+                        locked_timestamp: locked_timestamp1,
                         serno: _,
                     }),
                     Output::PublicPaymentOutput(PublicPaymentOutput {
                         recipient: recipient2,
                         amount: amount2,
+                        locked_timestamp: locked_timestamp2,
                         serno: _,
                     }),
                 ) => {
-                    if recipient1 != recipient2 || amount1 != amount2 {
+                    if recipient1 != recipient2
+                        || amount1 != amount2
+                        || locked_timestamp1 != locked_timestamp2
+                    {
                         return Err(SlashingError::IncorrectTxins(tx_hash).into());
                     }
                 }
@@ -564,9 +569,19 @@ impl Blockchain {
                 }
             };
 
+            if let Some(timestamp) = input.locked_timestamp() {
+                if timestamp >= self.last_macro_block_timestamp() {
+                    return Err(OutputError::UtxoLocked(
+                        *input_hash,
+                        timestamp,
+                        self.last_macro_block_timestamp(),
+                    )
+                    .into());
+                }
+            }
             // Check that the input is not claimed by other transactions.
             if inputs_set.contains(input_hash) {
-                return Err(TransactionError::MissingInput(tx_hash, input_hash.clone()).into());
+                return Err(TransactionError::DuplicateInput(tx_hash, input_hash.clone()).into());
             }
 
             inputs_set.insert(input_hash.clone());
@@ -883,6 +898,17 @@ impl Blockchain {
                     );
                 }
             };
+
+            if let Some(timestamp) = input.locked_timestamp() {
+                if timestamp >= self.last_macro_block_timestamp() {
+                    return Err(OutputError::UtxoLocked(
+                        *input_hash,
+                        timestamp,
+                        self.last_macro_block_timestamp(),
+                    )
+                    .into());
+                }
+            }
             // Check for the duplicate input.
             if !input_set.insert(*input_hash) {
                 return Err(BlockError::DuplicateBlockInput(epoch, block_hash, *input_hash).into());

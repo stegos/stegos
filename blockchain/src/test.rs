@@ -146,7 +146,6 @@ pub fn create_fake_macro_block(
     let (mut block, extra_transactions) = chain.create_macro_block(
         view_change,
         &keys.wallet_pkey,
-        &keys.wallet_pkey,
         &keys.network_skey,
         keys.network_pkey,
         timestamp,
@@ -202,8 +201,7 @@ pub fn create_fake_micro_block(
     // Payments.
     if monetary_balance > 0 {
         let (output, output_gamma) =
-            PaymentOutput::new(&keys.wallet_pkey, &keys.wallet_pkey, monetary_balance)
-                .expect("keys are valid");
+            PaymentOutput::new(&keys.wallet_pkey, monetary_balance).expect("keys are valid");
         outputs.push(Output::PaymentOutput(output));
         outputs_gamma += output_gamma;
     }
@@ -234,14 +232,9 @@ pub fn create_fake_micro_block(
 
     let coinbase_tx = {
         let data = PaymentPayloadData::Comment(format!("Block reward"));
-        let (output, gamma) = PaymentOutput::with_payload(
-            &keys.wallet_pkey,
-            &keys.wallet_pkey,
-            block_reward,
-            data,
-            None,
-        )
-        .expect("invalid keys");
+        let (output, gamma, _rvalue) =
+            PaymentOutput::with_payload(None, &keys.wallet_pkey, block_reward, data, None)
+                .expect("invalid keys");
         CoinbaseTransaction {
             block_reward,
             block_fee,
@@ -293,14 +286,9 @@ pub fn create_micro_block_with_coinbase(
         }
 
         let data = PaymentPayloadData::Comment(format!("Block {}", comment));
-        let (output_fee, gamma_fee) = PaymentOutput::with_payload(
-            &keys.wallet_pkey,
-            &keys.wallet_pkey,
-            amount,
-            data.clone(),
-            None,
-        )
-        .expect("invalid keys");
+        let (output_fee, gamma_fee, _rvalue) =
+            PaymentOutput::with_payload(None, &keys.wallet_pkey, amount, data.clone(), None)
+                .expect("invalid keys");
         gamma -= gamma_fee;
 
         info!(

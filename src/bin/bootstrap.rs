@@ -180,8 +180,8 @@ fn main() {
     // Create an initial payment.
     let beneficiary_pkey = &keychains[0].1;
     let output_data = PaymentPayloadData::Comment("Genesis".to_string());
-    let (output, outputs_gamma) =
-        PaymentOutput::with_payload(beneficiary_pkey, payout, output_data, None)
+    let (output, outputs_gamma, _rvalue) =
+        PaymentOutput::with_payload(None, beneficiary_pkey, payout, output_data, None)
             .expect("invalid keys");
     outputs.push(output.into());
 

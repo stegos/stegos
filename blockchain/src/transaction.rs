@@ -327,7 +327,6 @@ impl PaymentTransaction {
     //#[cfg(test)]
     #[doc(hidden)]
     pub fn new_test(
-        spender_pkey: &PublicKey,
         skey: &SecretKey,
         pkey: &PublicKey,
         input_amount: i64,
@@ -340,15 +339,14 @@ impl PaymentTransaction {
         let mut outputs: Vec<Output> = Vec::with_capacity(output_count);
 
         for _ in 0..input_count {
-            let (input, _gamma, _rvalue) =
-                Output::new_payment(spender_pkey, &pkey, input_amount).expect("keys are valid");
+            let (input, _gamma) = Output::new_payment(&pkey, input_amount).expect("keys are valid");
             inputs.push(input);
         }
 
         let mut outputs_gamma: Fr = Fr::zero();
         for _ in 0..output_count {
-            let (output, gamma, _rvalue) =
-                Output::new_payment(spender_pkey, &pkey, output_amount).expect("keys are valid");
+            let (output, gamma) =
+                Output::new_payment(&pkey, output_amount).expect("keys are valid");
             outputs.push(output);
             outputs_gamma += gamma;
         }

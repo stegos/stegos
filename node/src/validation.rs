@@ -162,9 +162,8 @@ mod test {
         //
         {
             let fee = 2 * payment_fee;
-            let (output1, gamma1, _rvalue) = Output::new_payment(&wallet_pkey, 1).unwrap();
-            let (output2, gamma2, _rvalue) =
-                Output::new_payment(&wallet_pkey, amount - fee - 1).unwrap();
+            let (output1, gamma1) = Output::new_payment(&wallet_pkey, 1).unwrap();
+            let (output2, gamma2) = Output::new_payment(&wallet_pkey, amount - fee - 1).unwrap();
             let outputs: Vec<Output> = vec![output1, output2];
             let outputs_gamma = gamma1 + gamma2;
             let tx = PaymentTransaction::new(&wallet_skey, &inputs, &outputs, &outputs_gamma, fee)
@@ -185,7 +184,7 @@ mod test {
         //
         {
             let fee = payment_fee + 1;
-            let (output, gamma, _rvalue) = Output::new_payment(&wallet_pkey, amount - fee).unwrap();
+            let (output, gamma) = Output::new_payment(&wallet_pkey, amount - fee).unwrap();
             let tx = PaymentTransaction::new(&wallet_skey, &inputs, &[output], &gamma, fee)
                 .unwrap()
                 .into();
@@ -198,7 +197,7 @@ mod test {
         //
         {
             let fee = payment_fee - 1;
-            let (output, gamma, _rvalue) = Output::new_payment(&wallet_pkey, amount - fee).unwrap();
+            let (output, gamma) = Output::new_payment(&wallet_pkey, amount - fee).unwrap();
             let tx = PaymentTransaction::unchecked(&wallet_skey, &inputs, &[output], &gamma, fee)
                 .unwrap()
                 .into();
@@ -226,10 +225,8 @@ mod test {
         //
         {
             let fee = payment_fee;
-            let (input, _inputs_gamma, _rvalue) =
-                Output::new_payment(&wallet_pkey, amount).unwrap();
-            let (output, outputs_gamma, _rvalue) =
-                Output::new_payment(&wallet_pkey, amount - fee).unwrap();
+            let (input, _inputs_gamma) = Output::new_payment(&wallet_pkey, amount).unwrap();
+            let (output, outputs_gamma) = Output::new_payment(&wallet_pkey, amount - fee).unwrap();
             let missing = Hash::digest(&input);
             let tx =
                 PaymentTransaction::new(&wallet_skey, &[input], &[output], &outputs_gamma, fee)
@@ -258,8 +255,7 @@ mod test {
         //
         {
             let fee = payment_fee;
-            let (output, outputs_gamma, _rvalue) =
-                Output::new_payment(&wallet_pkey, amount - fee).unwrap();
+            let (output, outputs_gamma) = Output::new_payment(&wallet_pkey, amount - fee).unwrap();
             let outputs: Vec<Output> = vec![output];
             let input_hashes: Vec<Hash> = inputs.iter().map(|o| Hash::digest(o)).collect();
             let output_hashes: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
@@ -288,7 +284,7 @@ mod test {
 
             // Claimed input in mempool.
             let tx2 = {
-                let (output2, outputs2_gamma, _rvalue) =
+                let (output2, outputs2_gamma) =
                     Output::new_payment(&wallet_pkey, amount - fee).unwrap();
                 PaymentTransaction::new(&wallet_skey, &inputs, &[output2], &outputs2_gamma, fee)
                     .unwrap()
@@ -380,8 +376,7 @@ mod test {
         {
             timestamp += Duration::from_millis(1);
             let fee = payment_fee;
-            let (output, outputs_gamma, _rvalue) =
-                Output::new_payment(&wallet_pkey, stake - fee).unwrap();
+            let (output, outputs_gamma) = Output::new_payment(&wallet_pkey, stake - fee).unwrap();
             let tx = PaymentTransaction::unchecked(
                 &wallet_skey,
                 &stakes,
@@ -434,8 +429,7 @@ mod test {
         //
         {
             let fee = payment_fee;
-            let (output, outputs_gamma, _rvalue) =
-                Output::new_payment(&wallet_pkey, amount - fee).unwrap();
+            let (output, outputs_gamma) = Output::new_payment(&wallet_pkey, amount - fee).unwrap();
             let outputs: Vec<Output> = vec![output];
             let output_hashes: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
             // Claim output in mempool.

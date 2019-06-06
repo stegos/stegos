@@ -30,8 +30,8 @@ use std::time::SystemTime;
 use stegos_crypto::bulletproofs::{fee_a, make_range_proof, validate_range_proof, BulletProof};
 use stegos_crypto::curve1174::zap_bytes;
 use stegos_crypto::curve1174::{
-    aes_decrypt, aes_decrypt_with_rvalue, aes_encrypt, ECp, EncryptedPayload, Fq, Fr, Pt,
-    PublicKey, SecretKey, G, UNIQ,
+    aes_decrypt, aes_decrypt_with_rvalue, aes_encrypt, sign_hash, validate_sig, ECp,
+    EncryptedPayload, Fq, Fr, Pt, PublicKey, SchnorrSig, SecretKey, G, UNIQ,
 };
 use stegos_crypto::hash::{Hash, Hashable, Hasher, HASH_SIZE};
 use stegos_crypto::pbc;
@@ -44,8 +44,8 @@ const PAYMENT_PAYLOAD_MAGIC: [u8; 4] = [112, 97, 121, 109]; // "paym"
 pub const PAYMENT_PAYLOAD_LEN: usize = 1024;
 
 /// Maximum length of data field of encrypted payload of PaymentOutput.
-/// Equals to PAYMENT_PAYLOAD_LEN - magic - delta - gamma - spenderHash - amount.
-pub const PAYMENT_DATA_LEN: usize = PAYMENT_PAYLOAD_LEN - 4 - 32 - 32 - HASH_SIZE - 8;
+/// Equals to PAYMENT_PAYLOAD_LEN - magic - delta - gamma - amount - spenderSignature.
+pub const PAYMENT_DATA_LEN: usize = PAYMENT_PAYLOAD_LEN - 4 - 32 - 32 - 8 - 64; // size of SchnorrSig
 
 /// UTXO errors.
 #[derive(Debug, Fail)]
@@ -76,8 +76,6 @@ pub enum OutputError {
         _0, _1, _2
     )]
     UtxoLocked(Hash, SystemTime, SystemTime),
-    #[fail(display = "Mismatched Payer ID: utxo={}", _0)]
-    MismatchedPayerID(Hash),
     #[fail(display = "Crypto error ={}", _0)]
     CryptoError(CryptoError),
     #[fail(display = "Error in decoding utf string ={}", _0)]
@@ -202,6 +200,16 @@ pub enum PaymentPayloadData {
     ContentHash(Hash),
 }
 
+impl Hashable for PaymentPayloadData {
+    fn hash(&self, hasher: &mut Hasher) {
+        self.discriminant().hash(hasher);
+        match self {
+            PaymentPayloadData::Comment(s) => s.hash(hasher),
+            PaymentPayloadData::ContentHash(h) => h.hash(hasher),
+        }
+    }
+}
+
 impl PaymentPayloadData {
     fn discriminant(&self) -> u8 {
         match self {
@@ -232,11 +240,38 @@ pub struct PaymentPayload {
     pub delta: Fr,
     pub gamma: Fr,
     pub amount: i64,
-    pub spender: Hash,
     pub data: PaymentPayloadData,
+    /// Signature for rest of data, produced by sender.
+    /// This signature used on validating Payment certificate.
+    pub signature: SchnorrSig,
 }
 
 impl PaymentPayload {
+    pub fn new(delta: Fr, gamma: Fr, amount: i64, data: PaymentPayloadData) -> PaymentPayload {
+        let signature = SchnorrSig::new();
+        PaymentPayload {
+            delta,
+            gamma,
+            amount,
+            data,
+            signature,
+        }
+    }
+
+    pub fn new_with_signature(
+        sender_key: &SecretKey,
+        delta: Fr,
+        gamma: Fr,
+        amount: i64,
+        data: PaymentPayloadData,
+    ) -> PaymentPayload {
+        let mut payment_payload = PaymentPayload::new(delta, gamma, amount, data);
+        let hash = Hash::digest(&payment_payload);
+        let signature = sign_hash(&hash, &sender_key);
+        payment_payload.signature = signature;
+        payment_payload
+    }
+
     /// Serialize and encrypt payload.
     fn encrypt(&self, pkey: &PublicKey) -> Result<(EncryptedPayload, Fr), BlockchainError> {
         let mut payload: [u8; PAYMENT_PAYLOAD_LEN] = [0u8; PAYMENT_PAYLOAD_LEN];
@@ -261,9 +296,14 @@ impl PaymentPayload {
         payload[pos..pos + amount_bytes.len()].copy_from_slice(&amount_bytes);
         pos += amount_bytes.len();
 
-        let spender_bytes = self.spender.to_bytes();
-        payload[pos..pos + spender_bytes.len()].copy_from_slice(&spender_bytes);
-        pos += spender_bytes.len();
+        // Sender signature
+        let signature_u = self.signature.u.to_lev_u8();
+        payload[pos..pos + signature_u.len()].copy_from_slice(&signature_u);
+        pos += signature_u.len();
+
+        let signature_k = self.signature.K.to_bytes();
+        payload[pos..pos + signature_k.len()].copy_from_slice(&signature_k);
+        pos += signature_k.len();
 
         // Data.
         payload[pos] = self.data.discriminant();
@@ -282,7 +322,6 @@ impl PaymentPayload {
                 pos += data_bytes.len();
             }
         }
-
         // The rest is zeros.
         assert!(pos <= PAYMENT_PAYLOAD_LEN);
 
@@ -370,16 +409,30 @@ impl PaymentPayload {
             return Err(OutputError::NegativeAmount(output_hash, amount).into());
         }
 
-        let mut spender_bytes: [u8; HASH_SIZE] = [0u8; HASH_SIZE];
-        spender_bytes.copy_from_slice(&payload[pos..pos + HASH_SIZE]);
-        pos += spender_bytes.len();
-        let spender: Hash = Hash::try_from_bytes(&spender_bytes)?;
+        // Sender signature
+        let mut signature_u_bytes: [u8; 32] = [0u8; 32];
+        signature_u_bytes.copy_from_slice(&payload[pos..pos + 32]);
+        pos += signature_u_bytes.len();
+        let signature_u: Fr = Fr::from_lev_u8(signature_u_bytes, true);
+        zap_bytes(&mut signature_u_bytes);
+
+        let mut signature_k_bytes: [u8; 32] = [0u8; 32];
+        signature_k_bytes.copy_from_slice(&payload[pos..pos + 32]);
+        pos += signature_k_bytes.len();
+        let signature_k: Pt = Pt::try_from_bytes(&signature_k_bytes)?;
+        zap_bytes(&mut signature_k_bytes);
+
+        let signature = SchnorrSig {
+            u: signature_u,
+            K: signature_k,
+        };
 
         // Data.
         let code: u8 = payload[pos];
         pos += 1;
         let data = match code {
             0 => {
+                //TODO: Utf8 can contain \0 inside
                 let mut end: usize = payload.len();
                 while end > pos && payload[end - 1] == 0 {
                     end -= 1;
@@ -408,17 +461,26 @@ impl PaymentPayload {
             delta,
             gamma,
             amount,
-            spender,
+            signature,
             data,
         };
         Ok(payload)
     }
 }
 
+impl Hashable for PaymentPayload {
+    fn hash(&self, hasher: &mut Hasher) {
+        self.delta.hash(hasher);
+        self.gamma.hash(hasher);
+        self.amount.hash(hasher);
+        self.data.hash(hasher);
+    }
+}
+
 impl PaymentOutput {
     /// Create a new PaymentOutput with generic payload.
     pub fn with_payload(
-        spender_pkey: &PublicKey,
+        sender_key: Option<&SecretKey>,
         recipient_pkey: &PublicKey,
         amount: i64,
         data: PaymentPayloadData,
@@ -430,12 +492,16 @@ impl PaymentOutput {
         // Cloak recipient public key
         let (cloaked_pkey, delta) = cloak_key(recipient_pkey, &gamma)?;
 
-        let payload = PaymentPayload {
-            delta: delta.clone(),
-            gamma: gamma.clone(),
-            amount,
-            spender: Hash::digest(spender_pkey),
-            data,
+        let payload = if let Some(sender_key) = sender_key {
+            PaymentPayload::new_with_signature(
+                sender_key,
+                delta.clone(),
+                gamma.clone(),
+                amount,
+                data,
+            )
+        } else {
+            PaymentPayload::new(delta.clone(), gamma.clone(), amount, data)
         };
         // NOTE: real public key should be used to encrypt payload
         let (payload, rvalue) = payload.encrypt(recipient_pkey)?;
@@ -455,13 +521,10 @@ impl PaymentOutput {
     }
 
     /// Create a new PaymentOutput.
-    pub fn new(
-        spender_pkey: &PublicKey,
-        recipient_pkey: &PublicKey,
-        amount: i64,
-    ) -> Result<(Self, Fr, Fr), BlockchainError> {
+    pub fn new(recipient_pkey: &PublicKey, amount: i64) -> Result<(Self, Fr), BlockchainError> {
         let data = PaymentPayloadData::Comment(String::new());
-        Self::with_payload(spender_pkey, recipient_pkey, amount, data, None)
+        let (output, gamma, _) = Self::with_payload(None, recipient_pkey, amount, data, None)?;
+        Ok((output, gamma))
     }
 
     /// Create a new PaymentOutput with lock.
@@ -469,15 +532,11 @@ impl PaymentOutput {
         recipient_pkey: &PublicKey,
         amount: i64,
         locked_timestamp: SystemTime,
-    ) -> Result<(Self, Fr, Fr), BlockchainError> {
+    ) -> Result<(Self, Fr), BlockchainError> {
         let data = PaymentPayloadData::Comment(String::new());
-        Self::with_payload(
-            spender_pkey,
-            recipient_pkey,
-            amount,
-            data,
-            locked_timestamp.into(),
-        )
+        let (output, gamma, _) =
+            Self::with_payload(None, recipient_pkey, amount, data, locked_timestamp.into())?;
+        Ok((output, gamma))
     }
 
     /// Decrypt payload.
@@ -535,7 +594,6 @@ impl PaymentOutput {
         r_value: &Fr,
         recipient_pkey: &PublicKey,
     ) -> Result<i64, Error> {
-        let id = Hash::digest(spender_pkey);
         let output_hash = Hash::digest(self);
         let payload = PaymentPayload::decrypt_with_rvalue(
             output_hash,
@@ -543,11 +601,11 @@ impl PaymentOutput {
             r_value,
             recipient_pkey,
         )?;
-        if id != payload.spender {
-            Err(OutputError::MismatchedPayerID(output_hash).into())
-        } else {
-            Ok(payload.amount)
-        }
+
+        let hash = Hash::digest(&payload);
+
+        validate_sig(&hash, &payload.signature, spender_pkey)?;
+        Ok(payload.amount)
     }
 }
 
@@ -652,13 +710,9 @@ impl StakeOutput {
 
 impl Output {
     /// Create a new payment UTXO.
-    pub fn new_payment(
-        spender_pkey: &PublicKey,
-        recipient_pkey: &PublicKey,
-        amount: i64,
-    ) -> Result<(Self, Fr, Fr), Error> {
-        let (output, gamma, rvalue) = PaymentOutput::new(spender_pkey, recipient_pkey, amount)?;
-        Ok((Output::PaymentOutput(output), gamma, rvalue))
+    pub fn new_payment(recipient_pkey: &PublicKey, amount: i64) -> Result<(Self, Fr), Error> {
+        let (output, gamma) = PaymentOutput::new(recipient_pkey, amount)?;
+        Ok((Output::PaymentOutput(output), gamma))
     }
 
     /// Create a new escrow transaction.
@@ -814,9 +868,6 @@ pub mod tests {
             assert_eq!(payload, &payload2);
         }
 
-        let (_spender_skey, spender_pkey) = make_random_keys();
-        let spender = Hash::digest(&spender_pkey);
-
         let (skey, pkey) = make_random_keys();
 
         // With empty comment.
@@ -824,13 +875,7 @@ pub mod tests {
         let delta: Fr = Fr::random();
         let amount: i64 = 100500;
         let data = PaymentPayloadData::Comment(String::new());
-        let payload = PaymentPayload {
-            delta,
-            gamma,
-            amount,
-            spender,
-            data,
-        };
+        let payload = PaymentPayload::new(delta, gamma, amount, data);
         rt(&payload, &skey, &pkey);
 
         // With non-empty comment.
@@ -838,13 +883,7 @@ pub mod tests {
         let delta: Fr = Fr::random();
         let amount: i64 = 100500;
         let data = PaymentPayloadData::ContentHash(Hash::digest(&100500u64));
-        let payload = PaymentPayload {
-            delta,
-            gamma,
-            amount,
-            spender,
-            data,
-        };
+        let payload = PaymentPayload::new(delta, gamma, amount, data);
         rt(&payload, &skey, &pkey);
 
         // With long comment.
@@ -852,13 +891,7 @@ pub mod tests {
         let delta: Fr = Fr::random();
         let amount: i64 = 100500;
         let data = PaymentPayloadData::Comment(random_string(PAYMENT_DATA_LEN - 2));
-        let payload = PaymentPayload {
-            delta,
-            gamma,
-            amount,
-            spender,
-            data,
-        };
+        let payload = PaymentPayload::new(delta, gamma, amount, data);
         rt(&payload, &skey, &pkey);
 
         // Overflow.
@@ -877,13 +910,7 @@ pub mod tests {
         let delta: Fr = Fr::random();
         let amount: i64 = 100500;
         let data = PaymentPayloadData::ContentHash(Hash::digest(&100500u64));
-        let payload = PaymentPayload {
-            delta,
-            gamma,
-            amount,
-            spender,
-            data,
-        };
+        let payload = PaymentPayload::new(delta, gamma, amount, data);
         rt(&payload, &skey, &pkey);
 
         //
@@ -893,13 +920,7 @@ pub mod tests {
         let delta: Fr = Fr::random();
         let amount: i64 = 100500;
         let data = PaymentPayloadData::ContentHash(Hash::digest(&100500u64));
-        let payload = PaymentPayload {
-            delta,
-            gamma,
-            amount,
-            spender,
-            data,
-        };
+        let payload = PaymentPayload::new(delta, gamma, amount, data);
         let (encrypted, _rvalue) = payload.encrypt(&pkey).expect("keys are valid");
         let raw = aes_decrypt(&encrypted, &skey).expect("keys are valid");
 
@@ -947,7 +968,7 @@ pub mod tests {
         // Unsupported type code.
         let mut invalid = raw.clone();
         let code: u8 = 10;
-        invalid[76 + HASH_SIZE] = code;
+        invalid[PAYMENT_PAYLOAD_LEN - PAYMENT_DATA_LEN] = code;
         let (invalid, _rvalue) = aes_encrypt(&invalid, &pkey).expect("keys are valid");
         let e = PaymentPayload::decrypt(output_hash, &invalid, &skey).unwrap_err();
         match e {
@@ -959,7 +980,7 @@ pub mod tests {
 
         // Trailing garbage.
         let mut invalid = raw.clone();
-        invalid[77 + HASH_SIZE + HASH_SIZE] = 1;
+        invalid[PAYMENT_PAYLOAD_LEN - PAYMENT_DATA_LEN + HASH_SIZE + 1] = 1;
         let (invalid, _rvalue) = aes_encrypt(&invalid, &pkey).expect("keys are valid");
         let e = PaymentPayload::decrypt(output_hash, &invalid, &skey).unwrap_err();
         match e {
@@ -975,12 +996,10 @@ pub mod tests {
     pub fn payment_encrypt_decrypt() {
         let (skey1, _pkey1) = make_random_keys();
         let (skey2, pkey2) = make_random_keys();
-        let (_spender_skey, spender_pkey) = make_random_keys();
 
         let amount: i64 = 100500;
 
-        let (output, gamma, _rvalue) =
-            PaymentOutput::new(&spender_pkey, &pkey2, amount).expect("encryption successful");
+        let (output, gamma) = PaymentOutput::new(&pkey2, amount).expect("encryption successful");
         let payload = output
             .decrypt_payload(&skey2)
             .expect("decryption successful");

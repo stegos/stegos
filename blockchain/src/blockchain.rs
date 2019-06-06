@@ -767,7 +767,6 @@ impl Blockchain {
         &self,
         view_change: u32,
         beneficiary_pkey: &curve1174::PublicKey,
-        spender_key: &curve1174::PublicKey,
         network_skey: &pbc::SecretKey,
         network_pkey: pbc::PublicKey,
         timestamp: SystemTime,
@@ -786,8 +785,8 @@ impl Blockchain {
         {
             let block_reward = self.cfg.block_reward;
             let data = PaymentPayloadData::Comment("Block reward".to_string());
-            let (output, gamma) = PaymentOutput::with_payload(
-                spender_key,
+            let (output, gamma, _rvalue) = PaymentOutput::with_payload(
+                None,
                 &beneficiary_pkey,
                 block_reward,
                 data.clone(),

@@ -46,10 +46,10 @@ fn main() {
     // Determine number of DiceMix chunks needed to support our UTXO's
     let (_skey, pkey) = make_random_keys();
     let (sskey, spkey) = pbc::make_random_keys();
-    let (_spender_skey, spender_pkey) = make_random_keys();
     let tstamp = SystemTime::now();
     let data = PaymentPayloadData::Comment("Testing".to_string());
-    let (out, gamma, _rvalue) = PaymentOutput::with_payload(&spender_pkey, &pkey, 1500, data, None)
+
+    let (out, gamma, _rvalue) = PaymentOutput::with_payload(None, &pkey, 1500, data, None)
         .expect("Can't produce payment output");
     let msg = out.into_buffer().expect("can't serialize UTXO");
     println!("UTXO len = {}", msg.len());

@@ -399,7 +399,7 @@ pub fn make_random_keys() -> (SecretKey, PublicKey) {
 // generate K = k*G for k = random Fr
 // generate u = k + Fr(H(K, P, msg)) * s
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchnorrSig {
     pub u: Fr,
     pub K: Pt,

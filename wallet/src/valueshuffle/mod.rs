@@ -168,8 +168,6 @@ enum State {
 pub struct ValueShuffle {
     /// Wallet's Curve1174 Secret Key.
     skey: SecretKey,
-    /// Wallet's Curve1174 Uncloaked Public Key.
-    pkey: PublicKey,
 
     /// Faciliator's PBC public key
     facilitator_pkey: ParticipantID,
@@ -377,7 +375,6 @@ impl ValueShuffle {
 
         ValueShuffle {
             skey: skey.clone(),
-            pkey: pkey.clone(),
             facilitator_pkey,
             state,
             participant_pkey,
@@ -1121,7 +1118,7 @@ impl ValueShuffle {
         );
 
         // Construct fresh UTXOS and gamma_adj
-        let my_pairs = Self::generate_fresh_utxos(&self.pkey, &self.my_txouts);
+        let my_pairs = Self::generate_fresh_utxos(&self.skey, &self.my_txouts);
         let mut my_utxos = Vec::<UTXO>::new();
         let mut my_gamma_adj = self.txin_gamma_sum.clone();
         self.my_utxos = Vec::new();
@@ -1699,7 +1696,7 @@ impl ValueShuffle {
     }
 
     fn generate_fresh_utxos(
-        spender_pkey: &PublicKey,
+        spender_skey: &SecretKey,
         txouts: &Vec<ProposedUTXO>,
     ) -> Vec<(UTXO, Fr)> {
         // generate a fresh set of UTXOs based on the list of proposed UTXOs
@@ -1709,7 +1706,7 @@ impl ValueShuffle {
         for txout in txouts.clone() {
             let data = PaymentPayloadData::Comment(txout.data);
             let (output, gamma, _rvalue) = PaymentOutput::with_payload(
-                &spender_pkey,
+                Some(&spender_skey),
                 &txout.recip,
                 txout.amount,
                 data,

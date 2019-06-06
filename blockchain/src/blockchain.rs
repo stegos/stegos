@@ -30,7 +30,7 @@ use crate::error::*;
 use crate::escrow::*;
 use crate::merkle::*;
 use crate::metrics;
-use crate::multisignature::create_multi_signature;
+use crate::multisignature::{check_multi_signature, create_multi_signature};
 use crate::mvcc::MultiVersionedMap;
 use crate::output::*;
 use crate::storage::ListDb;
@@ -41,6 +41,7 @@ use crate::view_changes::ViewChangeProof;
 use bitvector::BitVector;
 use failure::Error;
 use log::*;
+use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use stegos_crypto::bulletproofs::fee_a;
@@ -336,9 +337,7 @@ impl Blockchain {
                     block.header.offset,
                     Hash::digest(&block)
                 );
-                if cfg!(debug_assertions) {
-                    self.validate_micro_block(&block, timestamp)?
-                }
+                self.validate_micro_block(&block, timestamp)?;
                 let lsn = LSN(block.header.epoch, block.header.offset);
                 let _ = self.register_micro_block(lsn, block, timestamp);
             }
@@ -348,11 +347,13 @@ impl Blockchain {
                     block.header.epoch,
                     Hash::digest(&block)
                 );
-                if cfg!(debug_assertions) {
-                    self.validate_macro_block(&block, timestamp)?
+                let mut inputs: Vec<Output> = Vec::with_capacity(block.inputs.len());
+                for input_hash in &block.inputs {
+                    let input = self.output_by_hash(input_hash)?.expect("Missing output");
+                    inputs.push(input);
                 }
                 let lsn = LSN(block.header.epoch, MACRO_BLOCK_OFFSET);
-                let _ = self.register_macro_block(lsn, block, timestamp);
+                let _ = self.register_macro_block(lsn, block, inputs, timestamp);
             }
         }
         Ok(())
@@ -860,11 +861,15 @@ impl Blockchain {
         &mut self,
         block: MacroBlock,
         timestamp: SystemTime,
-    ) -> Result<(Vec<Output>, Vec<Output>), BlockchainError> {
+    ) -> Result<(Vec<Output>, Vec<Output>), Error> {
         //
-        // Validate the macro block.
+        // Resolve inputs.
         //
-        self.validate_macro_block(&block, timestamp)?;
+        let mut inputs: Vec<Output> = Vec::with_capacity(block.inputs.len());
+        for input_hash in &block.inputs {
+            let input = self.output_by_hash(input_hash)?.expect("Missing output");
+            inputs.push(input);
+        }
 
         //
         // Write the macro block to the disk.
@@ -877,38 +882,69 @@ impl Blockchain {
         //
         // Update in-memory indexes and metadata.
         //
-        let (inputs, outputs) = self.register_macro_block(lsn, block, timestamp)?;
+        let (inputs, outputs) = self.register_macro_block(lsn, block, inputs, timestamp);
 
         Ok((inputs, outputs))
     }
 
     ///
     /// Update indexes and metadata.
+    /// Must never fail.
     ///
     fn register_macro_block(
         &mut self,
         lsn: LSN,
         block: MacroBlock,
+        inputs: Vec<Output>,
         timestamp: SystemTime,
-    ) -> Result<(Vec<Output>, Vec<Output>), BlockchainError> {
+    ) -> (Vec<Output>, Vec<Output>) {
         let block_hash = Hash::digest(&block);
         assert_eq!(self.epoch, block.header.epoch);
         let epoch = block.header.epoch;
         assert_eq!(self.offset(), 0);
 
+        debug!(
+            "Registering a macro block: epoch={}, block={}",
+            epoch, &block_hash
+        );
+
+        if epoch > 0 && cfg!(debug_assertions) {
+            // Validate signature (already checked by Node).
+            check_multi_signature(
+                &block_hash,
+                &block.multisig,
+                &block.multisigmap,
+                self.validators(),
+                self.total_slots(),
+            )
+            .expect("Invalid multisignature");
+        }
+
+        // Validate base header.
+        self.validate_macro_block_header(&block_hash, &block.header)
+            .expect("Invalid block header");
+
         //
         // Prepare inputs.
         //
+        let inputs_range_hash = MacroBlock::calculate_inputs_range_hash(&block.inputs);
+        assert_eq!(
+            block.header.inputs_range_hash, inputs_range_hash,
+            "Invalid input range hash"
+        );
         let input_hashes = block.inputs;
-        let mut inputs: Vec<Output> = Vec::with_capacity(input_hashes.len());
-        for input_hash in &input_hashes {
-            let input = self.output_by_hash(input_hash)?.expect("Missing output");
-            inputs.push(input);
+        for (input_hash, input) in input_hashes.iter().zip(inputs.iter()) {
+            debug_assert_eq!(input_hash, &Hash::digest(&input));
         }
 
         //
         // Prepare outputs.
         //
+        assert_eq!(
+            block.header.outputs_range_hash,
+            *block.outputs.roothash(),
+            "Invalid output range hash"
+        );
         let mut outputs: Vec<Output> = Vec::new();
         let mut output_keys: Vec<OutputKey> = Vec::new();
         for (output, path) in block.outputs.leafs() {
@@ -925,7 +961,17 @@ impl Blockchain {
                 .unwrap();
             self.awards
                 .finalize_epoch(self.cfg.service_award_per_epoch, validators_activity);
-            let _ = self.awards.check_winners(block.header.random.rand);
+            let winner = self.awards.check_winners(block.header.random.rand);
+
+            // calculate block reward + service award.
+            let full_reward = self.cfg().block_reward
+                * (self.cfg().micro_blocks_in_epoch as i64 + 1i64)
+                + winner.map(|(_, a)| a).unwrap_or(0);
+
+            assert_eq!(
+                block.header.block_reward, full_reward,
+                "Invalid macro block reward"
+            );
         }
         //
         // Register block.
@@ -981,7 +1027,7 @@ impl Blockchain {
         self.balance.checkpoint();
         self.escrow.checkpoint();
 
-        Ok((inputs, outputs))
+        (inputs, outputs)
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -1062,7 +1108,9 @@ impl Blockchain {
                 );
             }
 
-            input.validate().expect("valid UTXO");
+            if cfg!(debug_assertions) {
+                input.validate().expect("valid UTXO");
+            }
             burned += input
                 .pedersen_commitment()
                 .expect("valid Pedersen commitment");
@@ -1086,6 +1134,10 @@ impl Blockchain {
         //
         // Process outputs.
         //
+        outputs.par_iter().for_each(|output| {
+            output.validate().expect("valid UTXO");
+        });
+
         for (output_key, output) in output_keys.into_iter().zip(outputs) {
             let output_hash = Hash::digest(output);
 
@@ -1101,7 +1153,6 @@ impl Blockchain {
             }
             assert_eq!(self.output_by_hash.current_lsn(), lsn);
 
-            output.validate().expect("valid UTXO");
             created += output
                 .pedersen_commitment()
                 .expect("valid Pedersen commitment");
@@ -1423,7 +1474,9 @@ pub fn create_fake_micro_block(
             .output_by_hash(&input_hash)
             .expect("no disk errors")
             .expect("exists");
-        input.validate().expect("Valid input");
+        if cfg!(debug_assertions) {
+            input.validate().expect("Valid input");
+        }
         match input {
             Output::PaymentOutput(ref o) => {
                 let payload = o.decrypt_payload(&keys.wallet_skey).unwrap();

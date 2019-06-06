@@ -423,7 +423,6 @@ impl RestakeTransaction {
         let mut owner = None;
         let htx = Hash::digest("");
         for txin in inputs {
-            txin.validate()?;
             let h = Hash::digest(&txin);
             match txin {
                 Output::PaymentOutput(_) | Output::PublicPaymentOutput(_) => {

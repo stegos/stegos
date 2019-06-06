@@ -555,6 +555,7 @@ fn out_of_order_micro_block() {
     Sandbox::start(config, |mut s| {
         let topic = crate::CONSENSUS_TOPIC;
         s.poll();
+        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
 
         let epoch = s.nodes[0].node_service.chain.epoch();
         let offset = s.nodes[0].node_service.chain.offset();

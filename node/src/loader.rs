@@ -20,14 +20,13 @@
 // SOFTWARE.
 
 use crate::NodeService;
-use failure::{format_err, Error};
+use failure::Error;
 use log::*;
 use rand::seq::IteratorRandom;
 use stegos_blockchain::Block;
 use stegos_crypto::hash::{Hashable, Hasher};
 use stegos_crypto::pbc;
 use stegos_serialization::traits::ProtoConvert;
-use tokio_timer::clock;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct RequestBlocks {
@@ -90,8 +89,8 @@ impl Hashable for ChainLoaderMessage {
 pub const CHAIN_LOADER_TOPIC: &'static str = "chain-loader";
 
 impl NodeService {
-    /// Choose a master node to download blocks from.
-    fn choose_master(&self) -> Option<pbc::PublicKey> {
+    pub fn request_history(&mut self, epoch: u64) -> Result<(), Error> {
+        // Choose a master node to download blocks from.
         let mut rng = rand::thread_rng();
         // use latest known validators list.
         let validators = self
@@ -100,43 +99,16 @@ impl NodeService {
             .into_iter()
             .map(|(k, _)| k)
             .filter(|key| self.keys.network_pkey != **key);
-        let master = validators.choose(&mut rng)?.clone();
-        debug!(
-            "Selected a source node from the latest committed KeyBlock: hash={:?}, epoch={}, selected={:?}",
-            self.chain.last_block_hash(),
-            self.chain.epoch(),
-            &master
-        );
-        return Some(master);
-    }
-
-    pub fn request_history(&mut self) -> Result<(), Error> {
-        let from = if self.is_synchronized() {
-            // Try to download history from the leader.
-            self.chain.leader()
-        } else {
-            // Try to download history from a random validator.
-            self.choose_master()
-                .ok_or_else(|| format_err!("Failed to get validator list."))?
+        let from = match validators.choose(&mut rng) {
+            Some(pkey) => pkey.clone(),
+            None => return Ok(()), // for tests.
         };
-
-        self.request_history_from(from)
+        self.request_history_from(from, epoch)
     }
 
-    pub fn request_history_from(&mut self, from: pbc::PublicKey) -> Result<(), Error> {
-        let elapsed = clock::now().duration_since(self.last_sync_clock);
-        if elapsed < self.cfg.loader_timeout {
-            debug!(
-                "Throttling loader: elapsed={:?}, min_interval={:?}",
-                elapsed, self.cfg.loader_timeout
-            );
-            return Ok(());
-        }
-
-        let epoch = self.chain.epoch();
+    pub fn request_history_from(&mut self, from: pbc::PublicKey, epoch: u64) -> Result<(), Error> {
         info!("Downloading blocks: from={}, epoch={}", &from, epoch);
         let msg = ChainLoaderMessage::Request(RequestBlocks::new(epoch));
-        self.last_sync_clock = clock::now();
         self.network
             .send(from, CHAIN_LOADER_TOPIC, msg.into_buffer()?)
     }
@@ -182,25 +154,43 @@ impl NodeService {
         pkey: pbc::PublicKey,
         response: ResponseBlocks,
     ) -> Result<(), Error> {
-        info!(
-            "Received blocks: from={}, num_blocks={}",
+        let first_epoch = match response.blocks.first() {
+            Some(Block::MacroBlock(block)) => block.header.epoch,
+            Some(Block::MicroBlock(block)) => block.header.epoch,
+            None => return Ok(()), // Empty response
+        };
+        let last_epoch = match response.blocks.last() {
+            Some(Block::MacroBlock(block)) => block.header.epoch,
+            Some(Block::MicroBlock(block)) => block.header.epoch,
+            None => unreachable!("Checked above"),
+        };
+
+        if first_epoch > self.chain.epoch() {
+            warn!(
+                "Received blocks from future: from={}, first_epoch={}, our_epoch={}",
+                pkey,
+                first_epoch,
+                self.chain.epoch()
+            );
+            return Ok(());
+        }
+
+        debug!(
+            "Received blocks: from={}, first_epoch={}, last_epoch={}, num_blocks={}",
             pkey,
+            first_epoch,
+            last_epoch,
             response.blocks.len(),
         );
 
-        let initial_epoch = self.chain.epoch();
+        if !self.is_synchronized() {
+            // Optimistically prefetch the next chunk.
+            self.request_history(last_epoch + 1)?;
+        }
+
         for block in response.blocks {
             // Fail on the first error.
             self.handle_block(block)?;
-        }
-
-        //
-        // Request more blocks in the follwing cases:
-        // a) The timestamp of the latest keyblock is oudated (see is_synchronized()).
-        // b) At least two blocks have been applied.
-        //
-        if !self.is_synchronized() || (self.chain.epoch() >= initial_epoch + 2) {
-            //self.request_history()?;
         }
 
         Ok(())

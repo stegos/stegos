@@ -35,8 +35,10 @@ fn request_on_timeout() {
 
     Sandbox::start(config, |mut s| {
         s.poll();
+        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
+        warn!("Leader: {}", leader_pk);
 
         // let leader shot his block
         s.wait(s.cfg().tx_wait_timeout);

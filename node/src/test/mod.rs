@@ -340,6 +340,7 @@ trait Api<'p> {
         );
         let leader_pk = self.first().node_service.chain.leader();
         self.poll();
+        self.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
         let leader = self.node(&leader_pk).unwrap();
         let block: Block = leader
             .network_service
@@ -447,5 +448,6 @@ fn test_partition() {
         let r = s.split(&[leader_pk]);
         assert_eq!(r.parts.0.nodes.len(), 1);
         assert_eq!(r.parts.1.nodes.len(), 3);
+        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
     });
 }

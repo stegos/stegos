@@ -339,21 +339,21 @@ impl WalletService {
         amount: i64,
         comment: String,
         locked_timestamp: Option<SystemTime>,
-    ) -> Result<(Hash, i64), Error> {
+    ) -> Result<(Hash, PaymentTransactionInfo), Error> {
         let wallet_skey = self.unlock(password)?;
         let data = PaymentPayloadData::Comment(comment);
         let unspent_iter = self
             .payments
             .values()
             .map(|v| (&v.output, v.amount, v.output.locked_timestamp.clone()));
-        let (inputs, outputs, gamma, fee) = create_payment_transaction(
+        let (inputs, outputs, gamma, rvalue, fee) = create_payment_transaction(
             Some(&self.wallet_skey),
             &self.wallet_pkey,
             recipient,
             unspent_iter,
             amount,
             self.payment_fee,
-            TransactionType::Regular(data),
+            TransactionType::Regular(data.clone()),
             locked_timestamp,
             self.last_macro_block_timestamp,
         )?;
@@ -370,7 +370,75 @@ impl WalletService {
         //firstly check that no conflict input was found;
         self.add_transaction_interest(tx.into());
 
-        Ok((tx_hash, fee))
+        let payment_info = self.create_payment_transaction_info(
+            &wallet_skey,
+            data,
+            *recipient,
+            &inputs,
+            &outputs,
+            rvalue,
+            fee,
+            amount,
+        );
+
+        Ok((tx_hash, payment_info))
+    }
+
+    fn create_payment_transaction_info(
+        &self,
+        wallet_skey: &curve1174::SecretKey,
+        data: PaymentPayloadData,
+        recipient: curve1174::PublicKey,
+        inputs: &[Output],
+        outputs: &[Output],
+        rvalue: Option<curve1174::Fr>,
+        fee: i64,
+        amount: i64,
+    ) -> PaymentTransactionInfo {
+        assert_eq!(outputs.len(), 2);
+        let rvalue = rvalue.expect("Expecting rvalue in payment utxo");
+        let send_output = &outputs[0];
+        let change_output = &outputs[0];
+
+        let creted_output = CreatedPaymentOutputInfo {
+            recipient,
+            utxo: Hash::digest(send_output),
+            amount,
+            data,
+            rvalue,
+        };
+
+        let change = if let Output::PaymentOutput(change_output) = change_output.clone() {
+            if let Ok(PaymentPayload { amount, data, .. }) =
+                change_output.decrypt_payload(wallet_skey)
+            {
+                let value = PaymentValue {
+                    output: change_output,
+                    amount,
+                    data: data.clone(),
+                };
+                value.to_info()
+            } else {
+                panic!("Can't decrypt change payload.")
+            }
+        } else {
+            panic!("Expected payment utxo in change.")
+        };
+
+        let inputs: Option<Vec<_>> = inputs
+            .iter()
+            .map(Hash::digest)
+            .map(|h| self.payments.get(&h).map(PaymentValue::to_info))
+            .collect();
+
+        let inputs = inputs.expect("Cannot find payment");
+
+        PaymentTransactionInfo {
+            inputs,
+            output: creted_output,
+            change,
+            fee,
+        }
     }
 
     /// Send money public.
@@ -386,7 +454,8 @@ impl WalletService {
             .payments
             .values()
             .map(|v| (&v.output, v.amount, v.output.locked_timestamp.clone()));
-        let (inputs, outputs, gamma, fee) = create_payment_transaction(
+
+        let (inputs, outputs, gamma, _rvalue, fee) = create_payment_transaction(
             Some(&self.wallet_skey),
             &self.wallet_pkey,
             recipient,
@@ -822,6 +891,19 @@ impl WalletService {
     fn notify(&mut self, notification: WalletNotification) {
         self.subscribers
             .retain(move |tx| tx.unbounded_send(notification.clone()).is_ok());
+    }
+}
+
+impl From<Result<(Hash, PaymentTransactionInfo), Error>> for WalletResponse {
+    fn from(r: Result<(Hash, PaymentTransactionInfo), Error>) -> Self {
+        match r {
+            Ok((tx_hash, info)) => {
+                WalletResponse::TransactionCreatedWithCertificate { tx_hash, info }
+            }
+            Err(e) => WalletResponse::Error {
+                error: format!("{}", e),
+            },
+        }
     }
 }
 

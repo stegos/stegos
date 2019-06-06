@@ -29,11 +29,13 @@ use serde_derive::{Deserialize, Serialize};
 use std::time::SystemTime;
 pub use stegos_blockchain::PaymentPayloadData;
 pub use stegos_blockchain::StakeInfo;
-use stegos_crypto::curve1174::PublicKey;
+use stegos_crypto::curve1174::{Fr, PublicKey};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_node::EpochChanged;
 use stegos_node::OutputsChanged;
+
+use serde::Serializer;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct PaymentInfo {
@@ -48,6 +50,38 @@ pub struct PublicPaymentInfo {
     pub utxo: Hash,
     pub amount: i64,
     pub locked: String,
+}
+
+/// Currently we support only transaction that have 2 outputs,
+/// one for recipient, and one for change.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct PaymentTransactionInfo {
+    pub inputs: Vec<PaymentInfo>,
+    /// Output of sended money
+    pub output: CreatedPaymentOutputInfo,
+    pub change: PaymentInfo,
+    pub fee: i64,
+}
+
+/// Information about payment output created by wallet.
+/// Contain rvalue for payment certificate, and amount uncloaked.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct CreatedPaymentOutputInfo {
+    pub utxo: Hash,
+    pub amount: i64,
+    pub data: PaymentPayloadData,
+    pub recipient: PublicKey,
+    #[serde(serialize_with = "CreatedPaymentOutputInfo::serialize_rvalue")]
+    pub rvalue: Fr,
+}
+
+impl CreatedPaymentOutputInfo {
+    fn serialize_rvalue<S>(rvalue: &Fr, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&rvalue.to_hex())
+    }
 }
 
 ///
@@ -128,6 +162,10 @@ pub enum WalletRequest {
 #[serde(tag = "response")]
 #[serde(rename_all = "snake_case")]
 pub enum WalletResponse {
+    TransactionCreatedWithCertificate {
+        tx_hash: Hash,
+        info: PaymentTransactionInfo,
+    },
     TransactionCreated {
         tx_hash: Hash,
         fee: i64,

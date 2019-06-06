@@ -178,7 +178,7 @@ pub(crate) fn create_payment_transaction<'a, UnspentIter>(
     transaction: TransactionType,
     locked_timestamp: Option<SystemTime>,
     last_block_time: SystemTime,
-) -> Result<(Vec<Output>, Vec<Output>, Fr, i64), Error>
+) -> Result<(Vec<Output>, Vec<Output>, Fr, Option<Fr>, i64), Error>
 where
     UnspentIter: Iterator<Item = (&'a PaymentOutput, i64, Option<SystemTime>)>,
 {
@@ -226,24 +226,24 @@ where
     let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
 
     // Create an output for payment
-    let (output1, gamma1) = match transaction {
+    let (output1, gamma1, rvalue) = match transaction {
         TransactionType::Regular(data) => {
             data.validate()?;
             trace!("Creating payment UTXO...");
-
-            let (output1, gamma1, _rvalue) = PaymentOutput::with_payload(
+            let (output1, gamma1, rvalue) = PaymentOutput::with_payload(
                 certificate_skey,
                 recipient,
                 amount,
                 data.clone(),
                 locked_timestamp,
             )?;
+
             let output1_hash = Hash::digest(&output1);
             info!(
                 "Created payment UTXO: hash={}, recipient={}, amount={}, data={:?}, locked={}",
                 output1_hash, recipient, amount, data, locked_timestamp_str
             );
-            (Output::PaymentOutput(output1), gamma1)
+            (Output::PaymentOutput(output1), gamma1, Some(rvalue))
         }
         TransactionType::Public => {
             trace!("Creating public payment UTXO...");
@@ -258,7 +258,7 @@ where
                 "Created public payment UTXO: hash={}, recipient={}, amount={}, locked={}",
                 output1_hash, recipient, amount, locked_timestamp_str
             );
-            (Output::PublicPaymentOutput(output1), gamma1)
+            (Output::PublicPaymentOutput(output1), gamma1, None)
         }
     };
     outputs.push(output1);
@@ -290,7 +290,7 @@ where
         fee
     );
 
-    Ok((inputs, outputs, gamma, fee))
+    Ok((inputs, outputs, gamma, rvalue, fee))
 }
 
 /// Create a new staking transaction.

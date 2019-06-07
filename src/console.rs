@@ -19,9 +19,7 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-use crate::config::GeneralConfig;
 use crate::consts;
-use crate::generator::{Generator, GeneratorMode};
 use crate::money::{format_money, parse_money};
 use dirs;
 use failure::Error;
@@ -83,8 +81,6 @@ pub struct ConsoleService {
     wallet: Wallet,
     /// Node API.
     node: Node,
-    /// Generator.
-    generator: Option<Generator>,
     /// Wallet events.
     wallet_notifications: UnboundedReceiver<WalletNotification>,
     /// Wallet RPC responses.
@@ -101,12 +97,7 @@ pub struct ConsoleService {
 
 impl ConsoleService {
     /// Constructor.
-    pub fn new(
-        cfg: &GeneralConfig,
-        network: Network,
-        wallet: Wallet,
-        node: Node,
-    ) -> Result<ConsoleService, Error> {
+    pub fn new(network: Network, wallet: Wallet, node: Node) -> Result<ConsoleService, Error> {
         let (tx, rx) = channel::<String>(1);
         let wallet_notifications = wallet.subscribe();
         let wallet_response = None;
@@ -114,20 +105,9 @@ impl ConsoleService {
         let stdin_th = thread::spawn(move || Self::readline_thread_f(tx));
         let stdin = rx;
         let unicast_rx = network.subscribe_unicast(CONSOLE_PROTOCOL_ID)?;
-        let generator = if !cfg.generate_txs.is_empty() {
-            Some(Generator::new(
-                wallet.clone(),
-                cfg.generate_txs.clone(),
-                GeneratorMode::Regular,
-                true,
-            ))
-        } else {
-            None
-        };
         let service = ConsoleService {
             network,
             wallet,
-            generator,
             wallet_notifications,
             wallet_response,
             node_response,
@@ -206,8 +186,6 @@ impl ConsoleService {
         println!("net publish TOPIC MESSAGE - publish a network message via floodsub");
         println!("net send NETWORK_PUBKEY MESSAGE - send a network message via unicast");
         println!("db pop block - revert the latest block");
-        println!("generator start LIST_OF_WALLETS_ADDRESSES - start transaction generator");
-        println!("generator stop - stop transaction generator");
         println!();
     }
 
@@ -262,18 +240,6 @@ impl ConsoleService {
         println!("Usage: msg WALLET_PUBKEY MESSAGE");
         println!(" - WALLET_PUBKEY recipient's public key in HEX format");
         println!(" - MESSAGE some message");
-        println!();
-    }
-
-    fn help_generator() {
-        println!("Usage: generator SUBCOMMAND");
-        println!(" - start or stop transaction generator");
-        println!(" - SUBCOMMAND can be one of [start, stop]");
-        println!(
-            " - generator start LIST_OF_WALLETS_ADDRESSES - will start generator, \
-             or add new wallet keys to generator list."
-        );
-        println!(" - generator stop will stop generator");
         println!();
     }
 
@@ -560,40 +526,6 @@ impl ConsoleService {
         } else if msg == "cloak" {
             let request = WalletRequest::CloakAll {};
             self.wallet_response = Some(self.wallet.request(request));
-        } else if msg.starts_with("generator ") {
-            let subcommand = &msg[10..];
-            if subcommand.starts_with("stop") {
-                println!("Stoping generator.");
-                self.generator = None;
-            } else if subcommand.starts_with("start ") {
-                let mut keys = Vec::new();
-                let keys_str = &subcommand[6..];
-                for key in keys_str.split(',') {
-                    let recipient = match PublicKey::try_from_hex(key.trim()) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            println!("Invalid wallet public key '{}': {}", key, e);
-                            Self::help_generator();
-                            return true;
-                        }
-                    };
-
-                    keys.push(recipient)
-                }
-                if let Some(ref mut generator) = self.generator {
-                    generator.add_destinations(keys)
-                } else {
-                    self.generator = Some(Generator::new(
-                        self.wallet.clone(),
-                        keys.clone(),
-                        GeneratorMode::Regular,
-                        false,
-                    ));
-                }
-            } else {
-                Self::help_generator()
-            }
-            return true;
         } else if msg == "show version" {
             println!(
                 "Stegos {}.{}.{} ({} {})",
@@ -740,13 +672,6 @@ impl Future for ConsoleService {
                 Ok(Async::Ready(None)) => self.on_exit(),
                 Ok(Async::NotReady) => break, // fall through
                 Err(()) => panic!("Unicast failure"),
-            }
-        }
-
-        if let Some(ref mut generator) = self.generator {
-            match generator.poll() {
-                Ok(Async::NotReady) => {}
-                _ => panic!("Generator finished."),
             }
         }
 

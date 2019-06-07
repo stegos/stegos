@@ -80,7 +80,7 @@ impl Default for ChainConfig {
             max_utxo_in_tx: 10,
             max_utxo_in_block: 1000,
             max_utxo_in_mempool: 10000,
-            chain_loader_speed_in_epoch: 10,
+            chain_loader_speed_in_epoch: 100,
             block_reward: 40_000_000, // 40 STG
             payment_fee: 1_000,       // 0.001 STG
             stake_fee: 0,             // free

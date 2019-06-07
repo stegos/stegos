@@ -22,10 +22,9 @@
 // SOFTWARE.
 
 use crate::block::{MacroBlock, MacroBlockHeader, MicroBlock, VERSION};
-use crate::blockchain::{Balance, Blockchain, ChainInfo};
+use crate::blockchain::{Blockchain, ChainInfo};
 use crate::election::mix;
 use crate::error::{BlockError, BlockchainError, SlashingError, TransactionError};
-use crate::multisignature::check_multi_signature;
 use crate::output::{Output, OutputError, PublicPaymentOutput};
 use crate::slashing::confiscate_tx;
 use crate::transaction::{
@@ -141,7 +140,9 @@ impl PaymentTransaction {
             if !txins_set.insert(*txin_hash) {
                 return Err(TransactionError::DuplicateInput(tx_hash, *txin_hash).into());
             }
-            txin.validate()?;
+            if cfg!(debug_assertions) {
+                txin.validate()?;
+            }
             let cmt = txin.pedersen_commitment()?;
             txin_sum += cmt;
             eff_pkey += txin.recipient_pkey()? + cmt;
@@ -235,7 +236,9 @@ impl RestakeTransaction {
             if !txins_set.insert(*txin_hash) {
                 return Err(TransactionError::DuplicateInput(tx_hash, *txin_hash).into());
             }
-            txin.validate()?;
+            if cfg!(debug_assertions) {
+                txin.validate()?;
+            }
             match txin {
                 Output::PaymentOutput(_) | Output::PublicPaymentOutput(_) => {
                     return Err(TransactionError::InvalidRestakingInput(tx_hash, *txin_hash).into());
@@ -808,207 +811,6 @@ impl Blockchain {
             epoch, &block_hash
         );
 
-        Ok(())
-    }
-
-    ///
-    /// Validate signed macro block.
-    ///
-    /// # Arguments
-    ///
-    /// * `block` - block to validate.
-    /// * `is_proposal` - don't check for the supermajority of votes.
-    ///                          Used to validate block proposals.
-    /// * `timestamp` - current time.
-    ///                          Used to validate escrow.
-    ///
-    pub fn validate_macro_block(
-        &self,
-        block: &MacroBlock,
-        _timestamp: SystemTime,
-    ) -> Result<(), BlockchainError> {
-        let epoch = block.header.epoch;
-        let block_hash = Hash::digest(&block);
-        debug!(
-            "Validating a macro block: epoch={}, block={}",
-            epoch, &block_hash
-        );
-
-        // Validate base header.
-        self.validate_macro_block_header(&block_hash, &block.header)?;
-
-        if epoch > 0 {
-            // Check the block order.
-            if self.offset() > 0 {
-                return Err(BlockchainError::HaveMicroBlocks(
-                    self.epoch(),
-                    self.offset(),
-                    block_hash,
-                ));
-            }
-
-            // TODO: signature is already checked in Node.
-            // Validate signature.
-            check_multi_signature(
-                &block_hash,
-                &block.multisig,
-                &block.multisigmap,
-                self.validators(),
-                self.total_slots(),
-            )
-            .map_err(|e| BlockError::InvalidBlockSignature(e, epoch, block_hash))?;
-
-            // Check block reward. (skip for genesis)
-            let mut service_awards = self.service_awards().clone();
-            let validators_activity =
-                self.epoch_activity_from_macro_block(&block.header.activity_map)?;
-            service_awards.finalize_epoch(self.cfg().service_award_per_epoch, validators_activity);
-            let winner = service_awards.check_winners(block.header.random.rand);
-
-            // calculate block reward + service award.
-            let full_reward = self.cfg().block_reward
-                * (self.cfg().micro_blocks_in_epoch as i64 + 1i64)
-                + winner.map(|(_, a)| a).unwrap_or(0);
-
-            if block.header.block_reward != full_reward {
-                return Err(BlockError::InvalidMacroBlockReward(
-                    epoch,
-                    block_hash,
-                    block.header.block_reward,
-                    full_reward,
-                )
-                .into());
-            }
-        }
-
-        let mut burned = ECp::inf();
-        let mut created = ECp::inf();
-        let mut staking_balance: HashMap<pbc::PublicKey, i64> = HashMap::new();
-
-        //
-        // Validate inputs.
-        //
-        let mut input_set: HashSet<Hash> = HashSet::new();
-        for input_hash in block.inputs.iter() {
-            let input = match self.output_by_hash(input_hash)? {
-                Some(input) => input,
-                None => {
-                    return Err(
-                        BlockError::MissingBlockInput(epoch, block_hash, *input_hash).into(),
-                    );
-                }
-            };
-
-            if let Some(timestamp) = input.locked_timestamp() {
-                if timestamp >= self.last_macro_block_timestamp() {
-                    return Err(OutputError::UtxoLocked(
-                        *input_hash,
-                        timestamp,
-                        self.last_macro_block_timestamp(),
-                    )
-                    .into());
-                }
-            }
-            // Check for the duplicate input.
-            if !input_set.insert(*input_hash) {
-                return Err(BlockError::DuplicateBlockInput(epoch, block_hash, *input_hash).into());
-            }
-            input.validate()?;
-            burned += input.pedersen_commitment()?;
-
-            // Check UTXO.
-            match input {
-                Output::PaymentOutput(_o) => {}
-                Output::PublicPaymentOutput(_o) => {}
-                Output::StakeOutput(o) => {
-                    let entry = staking_balance.entry(o.validator).or_insert(0);
-                    *entry -= o.amount;
-                }
-            }
-        }
-        drop(input_set);
-        let inputs_range_hash = MacroBlock::calculate_inputs_range_hash(&block.inputs);
-        if block.header.inputs_range_hash != inputs_range_hash {
-            let expected = block.header.inputs_range_hash.clone();
-            let got = inputs_range_hash;
-            return Err(
-                BlockError::InvalidBlockInputsHash(epoch, block_hash, expected, got).into(),
-            );
-        }
-
-        //
-        // Validate outputs.
-        //
-        let mut output_set: HashSet<Hash> = HashSet::new();
-        for (output, _path) in block.outputs.leafs() {
-            // Check that hash is unique.
-            let output_hash = Hash::digest(output.as_ref());
-            if self.contains_output(&output_hash) {
-                return Err(BlockError::OutputHashCollision(epoch, block_hash, output_hash).into());
-            }
-            // Check for the duplicate output.
-            if !output_set.insert(output_hash) {
-                return Err(
-                    BlockError::DuplicateBlockOutput(epoch, block_hash, output_hash).into(),
-                );
-            }
-
-            output.validate()?;
-            // Update balance.
-            // Update balance.
-            created += output.pedersen_commitment()?;
-
-            // Check UTXO.
-            match output.as_ref() {
-                Output::PaymentOutput(_o) => {}
-                Output::PublicPaymentOutput(_o) => {}
-                Output::StakeOutput(o) => {
-                    // Validated staking balance.
-                    let entry = staking_balance.entry(o.validator).or_insert(0);
-                    *entry += o.amount;
-                }
-            }
-        }
-        drop(output_set);
-        if block.header.outputs_range_hash != *block.outputs.roothash() {
-            let expected = block.header.outputs_range_hash.clone();
-            let got = block.outputs.roothash().clone();
-            return Err(
-                BlockError::InvalidBlockOutputsHash(epoch, block_hash, expected, got).into(),
-            );
-        }
-
-        //
-        // Validate block monetary balance.
-        //
-        if fee_a(block.header.block_reward) + burned - created != &block.header.gamma * (*G) {
-            return Err(BlockError::InvalidBlockBalance(epoch, block_hash).into());
-        }
-
-        //
-        // Validate the global monetary balance.
-        //
-        let orig_balance = self.balance();
-        let balance = Balance {
-            created: orig_balance.created + created,
-            burned: orig_balance.burned + burned,
-            gamma: &orig_balance.gamma + &block.header.gamma,
-            block_reward: orig_balance.block_reward + block.header.block_reward,
-        };
-        if fee_a(balance.block_reward) + balance.burned - balance.created != balance.gamma * (*G) {
-            panic!(
-                "Invalid global monetary balance: epoch={}, block={}",
-                epoch, &block_hash
-            );
-        }
-
-        // Checks staking balance.
-        self.validate_staking_balance(staking_balance.iter())?;
-
-        debug!(
-            "The macro block is valid: epoch={}, block={}",
-            epoch, &block_hash
-        );
         Ok(())
     }
 }

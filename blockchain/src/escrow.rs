@@ -111,7 +111,7 @@ impl Escrow {
         }
 
         let (active_balance, expired_balance) = self.get(&validator_pkey, epoch);
-        info!(
+        debug!(
             "Staked: utxo={}, validator={}, amount={}, active_until_epoch={}, active_balance={}, expired_balance={}",
             output_hash, &validator_pkey, amount, active_until_epoch, active_balance, expired_balance
         );
@@ -134,7 +134,7 @@ impl Escrow {
         let val = self.escrow.remove(lsn, &key).expect("stake exists");
 
         let (active_balance, expired_balance) = self.get(&validator_pkey, epoch);
-        info!(
+        debug!(
             "Unstaked: utxo={}, validator={}, amount={}, active_balance={}, expired_balance={}",
             output_hash, validator_pkey, val.amount, active_balance, expired_balance
         );

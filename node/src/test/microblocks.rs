@@ -378,6 +378,7 @@ fn resolve_fork_for_view_change() {
         s.wait(s.cfg().tx_wait_timeout);
 
         s.poll();
+        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
 
         let leader = s.node(&leader_pk).unwrap();
         // forget block
@@ -487,6 +488,7 @@ fn resolve_fork_without_block() {
         s.wait(s.cfg().tx_wait_timeout);
 
         s.poll();
+        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
 
         let leader = s.node(&leader_pk).unwrap();
         // forget block
@@ -614,6 +616,7 @@ fn issue_896_resolve_fork() {
         s.wait(s.cfg().tx_wait_timeout);
 
         s.poll();
+        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
 
         let leader = s.node(&leader_pk).unwrap();
         // forget block
@@ -803,6 +806,7 @@ fn out_of_order_keyblock_proposal() {
         leader
             .network_service
             .filter_broadcast(&[crate::SEALED_BLOCK_TOPIC]);
+        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
     });
 }
 
@@ -857,6 +861,7 @@ fn micro_block_without_signature() {
         r.parts
             .1
             .for_each(|node| assert_eq!(node.chain.offset(), offset));
+        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
     });
 }
 
@@ -903,6 +908,7 @@ fn slash_cheater() {
         s.wait(s.cfg().tx_wait_timeout);
 
         s.poll();
+        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
 
         let mut r = s.split(&[leader_pk]);
         let leader = &mut r.parts.0.nodes[0];

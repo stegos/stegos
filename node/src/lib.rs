@@ -248,9 +248,6 @@ pub struct NodeService {
     /// Key Chain.
     keys: KeyChain,
 
-    /// A time when loader was started the last time
-    last_sync_clock: Instant,
-
     /// Memory pool of pending transactions.
     mempool: Mempool,
 
@@ -287,7 +284,6 @@ impl NodeService {
         network: Network,
     ) -> Result<(Self, Node), Error> {
         let (outbox, inbox) = unbounded();
-        let last_sync_clock = clock::now();
         let mempool = Mempool::new();
 
         let last_block_clock = clock::now();
@@ -345,7 +341,6 @@ impl NodeService {
 
         let service = NodeService {
             cfg,
-            last_sync_clock,
             chain,
             keys,
             mempool,
@@ -370,7 +365,7 @@ impl NodeService {
     /// Invoked when network is ready.
     pub fn init(&mut self) -> Result<(), Error> {
         self.update_validation_status();
-        self.request_history()?;
+        self.request_history(self.chain.epoch())?;
         Ok(())
     }
 
@@ -576,7 +571,7 @@ impl NodeService {
                   local_view_change,
                   remote_view_change);
             // Request history from that node.
-            self.request_history_from(pkey)?;
+            self.request_history_from(pkey, epoch)?;
             return Err(ForkError::Canceled);
         }
 
@@ -641,7 +636,7 @@ impl NodeService {
                 block.header.epoch,
                 self.chain.epoch(),
             );
-            self.request_history()?;
+            self.request_history_from(block.header.pkey, self.chain.epoch())?;
             Ok(())
         }
     }
@@ -750,7 +745,7 @@ impl NodeService {
                 Ok(BlockchainError::BlockError(BlockError::InvalidMicroBlockPreviousHash(..))) => {
                     // A potential fork - request history from that node.
                     let from = self.chain.select_leader(view_change);
-                    self.request_history_from(from)?;
+                    self.request_history_from(from, self.chain.epoch())?;
                 }
                 Ok(BlockchainError::BlockError(BlockError::InvalidViewChange(..))) => {
                     assert!(self.chain.view_change() > 0);
@@ -1310,10 +1305,6 @@ impl NodeService {
         self.on_macro_block_leader_changed();
         self.handle_consensus_events();
 
-        // Try to sync with the network.
-        metrics::SYNCHRONIZED.set(0);
-        self.request_history()?;
-
         Ok(())
     }
 
@@ -1364,9 +1355,11 @@ impl NodeService {
     fn handle_micro_block_viewchange_timer(&mut self) -> Result<(), Error> {
         let elapsed = clock::now().duration_since(self.last_block_clock);
         assert!(elapsed >= self.cfg.micro_block_timeout);
+        let leader = self.chain.leader();
         warn!(
-            "Timed out while waiting for a micro block: epoch={}, elapsed={:?}",
+            "Timed out while waiting for a micro block: epoch={}, leader={}, elapsed={:?}",
             self.chain.epoch(),
+            leader,
             elapsed
         );
 
@@ -1399,9 +1392,9 @@ impl NodeService {
         );
         self.handle_view_change_message(msg)?;
 
-        // Try to sync with the network.
+        // Try to request this block from the leader.
         metrics::SYNCHRONIZED.set(0);
-        self.request_history()?;
+        self.request_history_from(leader, self.chain.epoch())?;
 
         Ok(())
     }

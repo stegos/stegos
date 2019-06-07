@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::storage::PaymentCertificate;
 use futures::sync::mpsc::unbounded;
 use futures::sync::mpsc::UnboundedReceiver;
 use futures::sync::mpsc::UnboundedSender;
@@ -29,13 +30,30 @@ use serde_derive::{Deserialize, Serialize};
 use std::time::SystemTime;
 pub use stegos_blockchain::PaymentPayloadData;
 pub use stegos_blockchain::StakeInfo;
-use stegos_crypto::curve1174::{Fr, PublicKey};
+use stegos_crypto::curve1174::PublicKey;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_node::EpochChanged;
 use stegos_node::OutputsChanged;
 
-use serde::Serializer;
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum LogEntryInfo {
+    Incoming {
+        timestamp: SystemTime,
+        output: OutputInfo,
+    },
+    Outgoing {
+        timestamp: SystemTime,
+        tx: PaymentTransactionInfo,
+    },
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum OutputInfo {
+    Payment(PaymentInfo),
+    PublicPayment(PublicPaymentInfo),
+    Staked(StakeInfo),
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct PaymentInfo {
@@ -50,38 +68,6 @@ pub struct PublicPaymentInfo {
     pub utxo: Hash,
     pub amount: i64,
     pub locked: String,
-}
-
-/// Currently we support only transaction that have 2 outputs,
-/// one for recipient, and one for change.
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
-pub struct PaymentTransactionInfo {
-    pub inputs: Vec<PaymentInfo>,
-    /// Output of sended money
-    pub output: CreatedPaymentOutputInfo,
-    pub change: PaymentInfo,
-    pub fee: i64,
-}
-
-/// Information about payment output created by wallet.
-/// Contain rvalue for payment certificate, and amount uncloaked.
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
-pub struct CreatedPaymentOutputInfo {
-    pub utxo: Hash,
-    pub amount: i64,
-    pub data: PaymentPayloadData,
-    pub recipient: PublicKey,
-    #[serde(serialize_with = "CreatedPaymentOutputInfo::serialize_rvalue")]
-    pub rvalue: Fr,
-}
-
-impl CreatedPaymentOutputInfo {
-    fn serialize_rvalue<S>(rvalue: &Fr, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&rvalue.to_hex())
-    }
 }
 
 ///
@@ -150,9 +136,19 @@ pub enum WalletRequest {
     KeysInfo {},
     BalanceInfo {},
     UnspentInfo {},
+    HistoryInfo {
+        starting_from: SystemTime,
+        limit: u64,
+    },
     GetRecovery {
         password: String,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaymentTransactionInfo {
+    pub tx_hash: Hash,
+    pub certificates: Vec<PaymentCertificate>,
 }
 
 ///
@@ -185,6 +181,9 @@ pub enum WalletResponse {
         public_payments: Vec<PublicPaymentInfo>,
         payments: Vec<PaymentInfo>,
         stakes: Vec<StakeInfo>,
+    },
+    HistoryInfo {
+        log: Vec<LogEntryInfo>,
     },
     Recovery {
         recovery: String,
@@ -247,5 +246,23 @@ impl Wallet {
         let msg = WalletEvent::Request { request, tx };
         self.outbox.unbounded_send(msg).expect("connected");
         rx
+    }
+}
+
+impl From<PaymentInfo> for OutputInfo {
+    fn from(pi: PaymentInfo) -> OutputInfo {
+        OutputInfo::Payment(pi)
+    }
+}
+
+impl From<PublicPaymentInfo> for OutputInfo {
+    fn from(pi: PublicPaymentInfo) -> OutputInfo {
+        OutputInfo::PublicPayment(pi)
+    }
+}
+
+impl From<StakeInfo> for OutputInfo {
+    fn from(pi: StakeInfo) -> OutputInfo {
+        OutputInfo::Staked(pi)
     }
 }

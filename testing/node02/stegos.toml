@@ -3,8 +3,10 @@ chain = "dev"
 log4rs_config = "stegos-log4rs.toml"
 prometheus_endpoint = "127.0.0.1:9892"
 
-[storage]
+[blockchain_db]
 database_path = "testing/node02/database"
+[wallet_db]
+database_path = "testing/node02/wallet_db_path"
 
 [keychain]
 password_file = "testing/node02/password.txt"

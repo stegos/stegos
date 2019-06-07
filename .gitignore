@@ -16,6 +16,8 @@ logs/
 # Test data
 /testing/node*/database/
 /database/
+/testing/node*/wallet_db_path/
+/wallet_db_path/
 
 # IDE files
 /.vscode

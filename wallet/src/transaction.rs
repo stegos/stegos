@@ -178,7 +178,7 @@ pub(crate) fn create_payment_transaction<'a, UnspentIter>(
     transaction: TransactionType,
     locked_timestamp: Option<SystemTime>,
     last_block_time: SystemTime,
-) -> Result<(Vec<Output>, Vec<Output>, Fr, Option<Fr>, i64), Error>
+) -> Result<(Vec<Output>, Vec<Output>, Fr, Vec<Option<Fr>>, i64), Error>
 where
     UnspentIter: Iterator<Item = (&'a PaymentOutput, i64, Option<SystemTime>)>,
 {
@@ -224,6 +224,7 @@ where
     //
 
     let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
+    let mut rvalues = Vec::with_capacity(2);
 
     // Create an output for payment
     let (output1, gamma1, rvalue) = match transaction {
@@ -262,6 +263,7 @@ where
         }
     };
     outputs.push(output1);
+    rvalues.push(rvalue);
     let mut gamma = gamma1;
 
     if change > 0 {
@@ -278,6 +280,8 @@ where
             data
         );
         outputs.push(Output::PaymentOutput(output2));
+        // Save change without certificate.
+        rvalues.push(None);
         gamma += gamma2;
     }
 
@@ -290,7 +294,8 @@ where
         fee
     );
 
-    Ok((inputs, outputs, gamma, rvalue, fee))
+    assert_eq!(rvalues.len(), outputs.len());
+    Ok((inputs, outputs, gamma, rvalues, fee))
 }
 
 /// Create a new staking transaction.

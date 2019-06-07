@@ -1,0 +1,62 @@
+syntax = "proto3";
+package stegos.wallet_log;
+
+import "crypto.proto";
+import "blockchain.proto";
+
+message PaymentPayload {
+    oneof data {
+        string comment = 1;
+        bytes hash = 2;
+    }
+}
+
+message PaymentValue {
+    stegos.blockchain.PaymentOutput output = 1;
+    int64 amount = 2;
+    string comment = 3;
+}
+
+// Possible outputs
+// (Copy of stegos.blockchain.Output, but without stake,
+// and with additional info about PaymentPayload of PaymentOutput)
+message OutputValue {
+    oneof enum_value {
+        PaymentValue payment = 1;
+        stegos.blockchain.PublicPaymentOutput public_payment = 2;
+    }
+}
+
+// Certificate of creation for utxo.
+message PaymentCertificate {
+    // id of output in transaction
+    uint32 id = 1;
+    /// destination PublicKey.
+    stegos.crypto.PublicKey recipient = 2;
+    stegos.crypto.Fr rvalue = 3;
+    int64 amount = 4;
+}
+
+// Information about created transactions
+message PaymentTransactionValue {
+    stegos.blockchain.PaymentTransaction tx = 1;
+    repeated PaymentCertificate certificates = 2;
+}
+
+// Incoming event
+message Incoming {
+    OutputValue output = 1;
+}
+
+// Outgoing event
+message Outgoing {
+    PaymentTransactionValue value = 1;
+}
+
+// Log entry
+message LogEntry {
+    oneof enum_value {
+        Incoming incoming = 2;
+        Outgoing outgoing = 3;
+    }
+}

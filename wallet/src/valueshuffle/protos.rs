@@ -23,12 +23,10 @@
 
 use super::message::*;
 use failure::Error;
+use stegos_blockchain::protos::ProtoError;
 use stegos_serialization::traits::*;
 
-// link protobuf dependencies
-use stegos_blockchain::protos::*;
-use stegos_crypto::protos::*;
-include!(concat!(env!("OUT_DIR"), "/valueshuffle/mod.rs"));
+use crate::protos::valueshuffle;
 
 use std::collections::HashMap;
 use stegos_crypto::curve1174::{Fr, Pt, PublicKey, SchnorrSig, SecretKey};

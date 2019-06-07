@@ -300,7 +300,12 @@ fn run() -> Result<(), Error> {
     // Initialize blockchain
     let genesis = initialize_genesis(&cfg)?;
     let timestamp = SystemTime::now();
-    let chain = Blockchain::new(cfg.chain.clone().into(), cfg.storage, genesis, timestamp)?;
+    let chain = Blockchain::new(
+        cfg.chain.clone().into(),
+        cfg.blockchain_db,
+        genesis,
+        timestamp,
+    )?;
     let wallet_persistent_state = chain.recover_wallet(&wallet_skey, &wallet_pkey)?;
 
     // Initialize node
@@ -318,6 +323,7 @@ fn run() -> Result<(), Error> {
 
     // Initialize Wallet.
     let (wallet_service, wallet) = WalletService::new(
+        cfg.wallet_db.database_path.as_ref(),
         cfg.keychain.wallet_skey_file,
         wallet_skey,
         wallet_pkey,

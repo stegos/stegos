@@ -216,7 +216,7 @@ fn run() -> Result<(), Error> {
     let timestamp = SystemTime::now();
     let chain = Blockchain::new(
         base_config.chain.clone(),
-        base_config.storage,
+        base_config.blockchain_db,
         genesis,
         timestamp,
     )?;
@@ -258,6 +258,7 @@ fn run() -> Result<(), Error> {
         info!("Starting wallet with generator.");
         // Initialize Wallet.
         let (wallet_service, wallet) = WalletService::new(
+            cfg.wallet_db.database_path.as_ref(),
             cfg.keychain.wallet_skey_file,
             instance.wallet_skey,
             instance.wallet_pkey,

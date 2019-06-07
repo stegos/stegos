@@ -219,7 +219,7 @@ impl Mempool {
             let mut gamma = Fr::zero();
 
             // Create outputs for fee and rewards.
-            for (amount, comment) in vec![(block_fee, "fee"), (block_reward, "reward")] {
+            for (amount, comment) in vec![(block_reward + block_fee, "reward+fee")] {
                 if amount <= 0 {
                     continue;
                 }
@@ -424,22 +424,12 @@ mod test {
 
         assert_eq!(block.transactions.len(), 3);
         if let Transaction::CoinbaseTransaction(tx) = &block.transactions[0] {
-            // Fee.
+            // Reward + Fee.
             if let Some(Output::PaymentOutput(o)) = tx.txouts.get(0) {
                 let PaymentPayload { amount, .. } = o
                     .decrypt_payload(&keys.wallet_skey)
                     .expect("keys are valid");
-                assert_eq!(amount, 6);
-            } else {
-                unreachable!();
-            }
-
-            // Reward.
-            if let Some(Output::PaymentOutput(o)) = tx.txouts.get(1) {
-                let PaymentPayload { amount, .. } = o
-                    .decrypt_payload(&keys.wallet_skey)
-                    .expect("keys are valid");
-                assert_eq!(amount, reward);
+                assert_eq!(amount, reward + 6);
             } else {
                 unreachable!();
             }

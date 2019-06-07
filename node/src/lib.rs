@@ -91,10 +91,10 @@ impl Node {
         rx
     }
 
-    /// Subscribe to block changes.
-    pub fn subscribe_block_added(&self) -> UnboundedReceiver<BlockAdded> {
+    /// Subscribe to synchronization status changes.
+    pub fn subscribe_sync_changed(&self) -> UnboundedReceiver<SyncChanged> {
         let (tx, rx) = unbounded();
-        let msg = NodeMessage::SubscribeBlockAdded(tx);
+        let msg = NodeMessage::SubscribeSyncChanged(tx);
         self.outbox.unbounded_send(msg).expect("connected");
         rx
     }
@@ -144,17 +144,17 @@ pub enum NodeResponse {
     EscrowInfo(EscrowInfo),
 }
 
-/// Send when block is added.
+/// Send when synchronization status has been changed.
 #[derive(Clone, Debug, Serialize)]
-pub struct BlockAdded {
+pub struct SyncChanged {
+    pub is_synchronized: bool,
     pub epoch: u64,
     pub offset: u32,
-    pub hash: Hash,
-    pub lag: i64,
     pub view_change: u32,
-    pub local_timestamp: i64,
-    pub remote_timestamp: i64,
-    pub synchronized: bool,
+    pub last_block_hash: Hash,
+    pub last_macro_block_hash: Hash,
+    pub last_macro_block_timestamp: SystemTime,
+    pub local_timestamp: SystemTime,
 }
 
 /// Send when epoch is changed.
@@ -194,7 +194,7 @@ pub enum NodeMessage {
     //
     // Public API
     //
-    SubscribeBlockAdded(UnboundedSender<BlockAdded>),
+    SubscribeSyncChanged(UnboundedSender<SyncChanged>),
     SubscribeEpochChanged(UnboundedSender<EpochChanged>),
     SubscribeOutputsChanged(UnboundedSender<OutputsChanged>),
     PopBlock,
@@ -266,7 +266,7 @@ pub struct NodeService {
     /// Network interface.
     network: Network,
     /// Triggered when epoch is changed.
-    on_block_added: Vec<UnboundedSender<BlockAdded>>,
+    on_sync_changed: Vec<UnboundedSender<SyncChanged>>,
     /// Triggered when epoch is changed.
     on_epoch_changed: Vec<UnboundedSender<EpochChanged>>,
     /// Triggered when outputs created and/or pruned.
@@ -294,7 +294,7 @@ impl NodeService {
         };
         let cheating_proofs = HashMap::new();
 
-        let on_block_added = Vec::<UnboundedSender<BlockAdded>>::new();
+        let on_sync_changed = Vec::<UnboundedSender<SyncChanged>>::new();
         let on_epoch_changed = Vec::<UnboundedSender<EpochChanged>>::new();
         let on_outputs_changed = Vec::<UnboundedSender<OutputsChanged>>::new();
 
@@ -348,7 +348,7 @@ impl NodeService {
             last_block_clock,
             cheating_proofs,
             network: network.clone(),
-            on_block_added,
+            on_sync_changed,
             on_epoch_changed,
             on_outputs_changed,
             events,
@@ -365,6 +365,7 @@ impl NodeService {
     /// Invoked when network is ready.
     pub fn init(&mut self) -> Result<(), Error> {
         self.update_validation_status();
+        self.on_sync_changed();
         self.request_history(self.chain.epoch())?;
         Ok(())
     }
@@ -795,7 +796,6 @@ impl NodeService {
         let hash = Hash::digest(&block);
         let timestamp = block.header.timestamp;
         let epoch = block.header.epoch;
-        let view_change = block.header.view_change;
         let was_synchronized = self.is_synchronized();
 
         // Validate signature.
@@ -831,10 +831,9 @@ impl NodeService {
                 epoch,
                 self.chain.last_block_hash()
             );
-            metrics::SYNCHRONIZED.set(1);
         }
 
-        self.on_block_added(epoch, 0, view_change, hash, timestamp, inputs, outputs);
+        self.on_block_added(timestamp, inputs, outputs);
 
         let msg = EpochChanged {
             epoch: self.chain.epoch(),
@@ -858,7 +857,6 @@ impl NodeService {
         let timestamp = block.header.timestamp;
         let epoch = block.header.epoch;
         let offset = block.header.offset;
-        let view_change = block.header.view_change;
 
         // Check for the correct block order.
         match &self.validation {
@@ -869,22 +867,13 @@ impl NodeService {
         }
 
         let (inputs, outputs) = self.chain.push_micro_block(block, timestamp)?;
-        self.on_block_added(epoch, offset, view_change, hash, timestamp, inputs, outputs);
+        self.on_block_added(timestamp, inputs, outputs);
         self.update_validation_status();
 
         Ok(())
     }
 
-    fn on_block_added(
-        &mut self,
-        epoch: u64,
-        offset: u32,
-        view_change: u32,
-        hash: Hash,
-        timestamp: SystemTime,
-        inputs: Vec<Output>,
-        outputs: Vec<Output>,
-    ) {
+    fn on_block_added(&mut self, timestamp: SystemTime, inputs: Vec<Output>, outputs: Vec<Output>) {
         // Remove old transactions from the mempool.
         let input_hashes: Vec<Hash> = inputs.iter().map(|o| Hash::digest(o)).collect();
         let output_hashes: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
@@ -895,7 +884,7 @@ impl NodeService {
 
         // Notify subscribers.
         let msg = OutputsChanged {
-            epoch,
+            epoch: self.chain.epoch(),
             inputs,
             outputs,
         };
@@ -910,24 +899,29 @@ impl NodeService {
         metrics::BLOCK_REMOTE_TIMESTAMP.set(remote_timestamp);
         metrics::BLOCK_LOCAL_TIMESTAMP.set(local_timestamp);
         metrics::BLOCK_LAG.set(lag); // can be negative.
+        self.on_sync_changed();
+    }
 
-        let msg = BlockAdded {
-            epoch,
-            offset,
-            view_change,
-            hash,
-            lag,
-            local_timestamp,
-            remote_timestamp,
-            synchronized: self.is_synchronized(),
+    fn on_sync_changed(&mut self) {
+        let is_synchronized = self.is_synchronized();
+        metrics::SYNCHRONIZED.set(if is_synchronized { 1 } else { 0 });
+        let msg = SyncChanged {
+            is_synchronized,
+            epoch: self.chain.epoch(),
+            offset: self.chain.offset(),
+            view_change: self.chain.view_change(),
+            last_block_hash: self.chain.last_block_hash(),
+            last_macro_block_hash: self.chain.last_macro_block_hash(),
+            last_macro_block_timestamp: self.chain.last_macro_block_timestamp(),
+            local_timestamp: SystemTime::now(),
         };
-        self.on_block_added
+        self.on_sync_changed
             .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
     }
 
-    /// Handler for NodeMessage::SubscribeHeight.
-    fn handle_block_added(&mut self, tx: UnboundedSender<BlockAdded>) -> Result<(), Error> {
-        self.on_block_added.push(tx);
+    /// Handler for NodeMessage::SubscribeSyncChanged.
+    fn handle_sync_changed(&mut self, tx: UnboundedSender<SyncChanged>) -> Result<(), Error> {
+        self.on_sync_changed.push(tx);
         Ok(())
     }
 
@@ -1305,6 +1299,8 @@ impl NodeService {
         self.on_macro_block_leader_changed();
         self.handle_consensus_events();
 
+        self.on_sync_changed();
+
         Ok(())
     }
 
@@ -1393,7 +1389,7 @@ impl NodeService {
         self.handle_view_change_message(msg)?;
 
         // Try to request this block from the leader.
-        metrics::SYNCHRONIZED.set(0);
+        self.on_sync_changed();
         self.request_history_from(leader, self.chain.epoch())?;
 
         Ok(())
@@ -1544,7 +1540,7 @@ impl Future for NodeService {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => {
                     let result: Result<(), Error> = match event {
-                        NodeMessage::SubscribeBlockAdded(tx) => self.handle_block_added(tx),
+                        NodeMessage::SubscribeSyncChanged(tx) => self.handle_sync_changed(tx),
                         NodeMessage::SubscribeEpochChanged(tx) => self.handle_subscribe_epoch(tx),
                         NodeMessage::SubscribeOutputsChanged(tx) => {
                             self.handle_subscribe_outputs(tx)

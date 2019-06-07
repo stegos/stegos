@@ -140,7 +140,7 @@ impl NodeService {
         let blocks = self.chain.blocks_range(
             epoch,
             offset,
-            (self.chain.cfg().micro_blocks_in_epoch as u64) * self.cfg.chain_loader_speed_in_epoch,
+            (self.chain.cfg().micro_blocks_in_epoch as u64) * self.cfg.loader_speed_in_epoch,
         );
         info!("Feeding blocks: to={}, num_blocks={}", pkey, blocks.len());
         let msg = ChainLoaderMessage::Response(ResponseBlocks::new(blocks));

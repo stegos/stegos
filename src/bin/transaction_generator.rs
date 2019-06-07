@@ -211,7 +211,7 @@ fn run() -> Result<(), Error> {
     let genesis = initialize_genesis(&base_config)?;
     let timestamp = SystemTime::now();
     let chain = Blockchain::new(
-        base_config.chain.clone().into(),
+        base_config.chain.clone(),
         base_config.storage,
         genesis,
         timestamp,
@@ -222,7 +222,7 @@ fn run() -> Result<(), Error> {
     info!("Starting node service.");
     // Initialize node
     let (node_service, node) = NodeService::new(
-        base_config.chain.clone(),
+        base_config.node.clone(),
         chain,
         network_keychain.clone(),
         network.clone(),
@@ -239,8 +239,8 @@ fn run() -> Result<(), Error> {
             keychain.clone(),
             network.clone(),
             node.clone(),
-            cfg.chain.payment_fee,
-            cfg.chain.stake_fee,
+            cfg.node.payment_fee,
+            cfg.node.stake_fee,
             cfg.chain.stake_epochs,
             wallet_persistent_state,
         );

@@ -23,22 +23,17 @@
 
 use serde_derive::{Deserialize, Serialize};
 use std::time::Duration;
-use stegos_blockchain::BlockchainConfig;
 
-/// Chain configuration.
+/// Node configuration.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(default)]
-pub struct ChainConfig {
+pub struct NodeConfig {
     /// How long wait for transactions before starting to create a new block.
     pub tx_wait_timeout: Duration,
     /// How long wait for micro blocks.
     pub micro_block_timeout: Duration,
     /// How long wait for the keu blocks.
     pub macro_block_timeout: Duration,
-    /// Time to lock stakes.
-    pub stake_epochs: u64,
-    /// The number of blocks per epoch.
-    pub micro_blocks_in_epoch: u32,
     /// The maximal number of inputs + outputs in a transaction.
     pub max_utxo_in_tx: usize,
     /// The maximal number of inputs + outputs in a micro block.
@@ -46,64 +41,25 @@ pub struct ChainConfig {
     /// The maximal number of inputs + outputs in mempool.
     pub max_utxo_in_mempool: usize,
     /// Loader will send maximum N epoch at time.
-    pub chain_loader_speed_in_epoch: u64,
-    /// Fixed reward per block.
-    pub block_reward: i64,
+    pub loader_speed_in_epoch: u64,
     /// Fixed fee for payment transactions.
     pub payment_fee: i64,
     /// Fixed fee for the stake transactions.
     pub stake_fee: i64,
-    /// Maximal number of slots for election.
-    pub max_slot_count: i64,
-    /// Awards difficulty.
-    pub awards_difficulty: usize,
-    /// Minimal stake amount.
-    pub min_stake_amount: i64,
-    /// Minimal interval between loader runs.
-    pub loader_timeout: Duration,
 }
 
-impl Default for ChainConfig {
+impl Default for NodeConfig {
     fn default() -> Self {
-        let tx_wait_timeout = Duration::from_secs(10);
-        let micro_block_timeout = Duration::from_secs(30);
-        let macro_block_timeout = Duration::from_secs(30);
-
-        let blockchain_default: BlockchainConfig = Default::default();
-
-        ChainConfig {
-            tx_wait_timeout,
-            micro_block_timeout,
-            macro_block_timeout,
-            stake_epochs: blockchain_default.stake_epochs,
-            micro_blocks_in_epoch: blockchain_default.micro_blocks_in_epoch,
-            max_utxo_in_tx: 10,
-            max_utxo_in_block: 1000,
-            max_utxo_in_mempool: 10000,
-            chain_loader_speed_in_epoch: 100,
-            block_reward: 40_000_000, // 40 STG
-            payment_fee: 1_000,       // 0.001 STG
-            stake_fee: 0,             // free
-            max_slot_count: blockchain_default.max_slot_count,
-            min_stake_amount: blockchain_default.min_stake_amount,
-            loader_timeout: Duration::from_millis(500),
-            awards_difficulty: 3,
-        }
-    }
-}
-
-impl Into<BlockchainConfig> for ChainConfig {
-    fn into(self) -> BlockchainConfig {
-        let service_award_per_epoch =
-            self.block_reward / 2 * (self.micro_blocks_in_epoch + 1) as i64;
-        BlockchainConfig {
-            awards_difficulty: self.awards_difficulty,
-            max_slot_count: self.max_slot_count,
-            min_stake_amount: self.min_stake_amount,
-            stake_epochs: self.stake_epochs,
-            micro_blocks_in_epoch: self.micro_blocks_in_epoch,
-            block_reward: self.block_reward,
-            service_award_per_epoch,
+        NodeConfig {
+            tx_wait_timeout: Duration::from_secs(5),
+            micro_block_timeout: Duration::from_secs(30),
+            macro_block_timeout: Duration::from_secs(30),
+            max_utxo_in_tx: 500,
+            max_utxo_in_block: 2000,
+            max_utxo_in_mempool: 20000,
+            loader_speed_in_epoch: 100,
+            payment_fee: 1_000, // 0.001 STG
+            stake_fee: 0,       // free
         }
     }
 }

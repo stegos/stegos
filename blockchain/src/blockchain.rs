@@ -148,7 +148,7 @@ pub struct Blockchain {
     //
     // Configuration.
     //
-    cfg: BlockchainConfig,
+    cfg: ChainConfig,
 
     //
     // Storage.
@@ -200,7 +200,7 @@ impl Blockchain {
     //----------------------------------------------------------------------------------------------
 
     pub fn new(
-        cfg: BlockchainConfig,
+        cfg: ChainConfig,
         storage_cfg: StorageConfig,
         genesis: MacroBlock,
         timestamp: SystemTime,
@@ -210,7 +210,7 @@ impl Blockchain {
     }
 
     pub fn testing(
-        cfg: BlockchainConfig,
+        cfg: ChainConfig,
         genesis: MacroBlock,
         timestamp: SystemTime,
     ) -> Result<Blockchain, Error> {
@@ -219,7 +219,7 @@ impl Blockchain {
     }
 
     fn with_db(
-        cfg: BlockchainConfig,
+        cfg: ChainConfig,
         database: ListDb,
         genesis: MacroBlock,
         timestamp: SystemTime,
@@ -690,7 +690,7 @@ impl Blockchain {
     }
 
     /// Returns current blockchain config.
-    pub fn cfg(&self) -> &BlockchainConfig {
+    pub fn cfg(&self) -> &ChainConfig {
         &self.cfg
     }
 
@@ -1637,7 +1637,7 @@ pub mod tests {
 
         let keychains = [KeyChain::new_mem()];
         let timestamp = SystemTime::now();
-        let cfg: BlockchainConfig = Default::default();
+        let cfg: ChainConfig = Default::default();
         let block1 = genesis(
             &keychains,
             cfg.min_stake_amount,
@@ -1703,7 +1703,7 @@ pub mod tests {
 
         let keychains = [KeyChain::new_mem()];
         let mut timestamp = SystemTime::now();
-        let mut cfg: BlockchainConfig = Default::default();
+        let mut cfg: ChainConfig = Default::default();
         cfg.stake_epochs = 1;
         cfg.micro_blocks_in_epoch = 2;
         let genesis = genesis(
@@ -1816,7 +1816,7 @@ pub mod tests {
 
         let keychains = [KeyChain::new_mem()];
         let mut timestamp = SystemTime::now();
-        let cfg: BlockchainConfig = Default::default();
+        let cfg: ChainConfig = Default::default();
         let genesis = genesis(
             &keychains,
             cfg.min_stake_amount,
@@ -1940,7 +1940,7 @@ pub mod tests {
         let keychains = [KeyChain::new_mem()];
 
         let mut timestamp = SystemTime::now();
-        let mut cfg: BlockchainConfig = Default::default();
+        let mut cfg: ChainConfig = Default::default();
         cfg.micro_blocks_in_epoch = 100500;
         let stake = cfg.min_stake_amount;
         let blocks = genesis(&keychains, stake, 10 * cfg.min_stake_amount, timestamp);

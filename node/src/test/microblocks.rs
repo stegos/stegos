@@ -51,10 +51,10 @@ fn dead_leader() {
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
         // let leader shoot his block
-        s.wait(s.cfg().tx_wait_timeout);
+        s.wait(s.config.node.tx_wait_timeout);
         s.poll();
         // emulate timeout on other nodes, and wait for request
-        s.wait(s.cfg().micro_block_timeout);
+        s.wait(s.config.node.micro_block_timeout);
         info!("PARTITION BEGIN");
         s.poll();
         let mut r = s.split(&[leader_pk]);
@@ -126,7 +126,7 @@ fn silent_view_change() {
     Sandbox::start(config, |mut s| {
         s.poll();
 
-        precondition_2_different_leaderers(&mut s);
+        precondition_2_different_leaders(&mut s);
 
         let epoch = s.nodes[0].node_service.chain.epoch();
         let offset = s.nodes[0].node_service.chain.offset();
@@ -134,9 +134,9 @@ fn silent_view_change() {
         let leader_pk = s.leader();
         let new_leader = s.next_view_change_leader();
 
-        s.wait(s.cfg().tx_wait_timeout);
+        s.wait(s.config.node.tx_wait_timeout);
         s.poll();
-        s.wait(s.cfg().micro_block_timeout);
+        s.wait(s.config.node.micro_block_timeout);
         info!("======= PARTITION BEGIN =======");
         s.poll();
         // emulate dead leader for other nodes
@@ -228,7 +228,7 @@ fn double_view_change() {
 
         let mut blocks = 0;
 
-        for _ in 0..=s.cfg().micro_blocks_in_epoch {
+        for _ in 0..=s.config.chain.micro_blocks_in_epoch {
             let view_change = s.first_mut().node_service.chain.view_change();
             let leader1 = s.first_mut().node_service.chain.leader();
             let leader2 = s
@@ -246,18 +246,18 @@ fn double_view_change() {
                 break;
             }
 
-            s.wait(s.cfg().tx_wait_timeout);
+            s.wait(s.config.node.tx_wait_timeout);
             s.skip_micro_block();
             blocks += 1;
         }
-        assert!(blocks < s.cfg().micro_blocks_in_epoch as u32 - 2);
+        assert!(blocks < s.config.chain.micro_blocks_in_epoch as u32 - 2);
         let starting_view_changes = 0;
         let leader_pk = s.nodes[0].node_service.chain.leader();
         s.for_each(|node| assert_eq!(starting_view_changes, node.chain.view_change()));
 
-        s.wait(s.cfg().tx_wait_timeout);
+        s.wait(s.config.node.tx_wait_timeout);
         s.poll();
-        s.wait(s.cfg().micro_block_timeout);
+        s.wait(s.config.node.micro_block_timeout);
         info!("======= PARTITION BEGIN =======");
         s.poll();
         // emulate dead leader for other nodes
@@ -311,7 +311,7 @@ fn double_view_change() {
                 );
             }
 
-            s.wait(s.cfg().micro_block_timeout);
+            s.wait(s.config.node.micro_block_timeout);
             let mut r = s.split(&[leader_pk, new_leader]);
             r.parts.1.poll();
 
@@ -368,14 +368,14 @@ fn resolve_fork_for_view_change() {
     Sandbox::start(config, |mut s| {
         s.poll();
 
-        precondition_2_different_leaderers(&mut s);
+        precondition_2_different_leaders(&mut s);
 
         let starting_view_changes = s.nodes[0].node_service.chain.view_change();
         let starting_offset = s.nodes[0].node_service.chain.offset();
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
 
-        s.wait(s.cfg().tx_wait_timeout);
+        s.wait(s.config.node.tx_wait_timeout);
 
         s.poll();
         s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
@@ -386,7 +386,7 @@ fn resolve_fork_for_view_change() {
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
 
-        s.wait(s.cfg().micro_block_timeout);
+        s.wait(s.config.node.micro_block_timeout);
         s.poll();
         // emulate dead leader for other nodes
 
@@ -478,14 +478,14 @@ fn resolve_fork_without_block() {
     Sandbox::start(config, |mut s| {
         s.poll();
 
-        precondition_2_different_leaderers(&mut s);
+        precondition_2_different_leaders(&mut s);
 
         let starting_view_changes = s.nodes[0].node_service.chain.view_change();
         let starting_offset = s.nodes[0].node_service.chain.offset();
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
 
-        s.wait(s.cfg().tx_wait_timeout);
+        s.wait(s.config.node.tx_wait_timeout);
 
         s.poll();
         s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
@@ -496,7 +496,7 @@ fn resolve_fork_without_block() {
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
 
-        s.wait(s.cfg().micro_block_timeout);
+        s.wait(s.config.node.micro_block_timeout);
         s.poll();
         // emulate dead leader for other nodes
 
@@ -606,14 +606,14 @@ fn issue_896_resolve_fork() {
     Sandbox::start(config, |mut s| {
         s.poll();
 
-        precondition_2_different_leaderers(&mut s);
+        precondition_2_different_leaders(&mut s);
 
         let starting_view_changes = s.nodes[0].node_service.chain.view_change();
         let starting_offset = s.nodes[0].node_service.chain.offset();
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
 
-        s.wait(s.cfg().tx_wait_timeout);
+        s.wait(s.config.node.tx_wait_timeout);
 
         s.poll();
         s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
@@ -624,7 +624,7 @@ fn issue_896_resolve_fork() {
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
 
-        s.wait(s.cfg().micro_block_timeout);
+        s.wait(s.config.node.micro_block_timeout);
         s.poll();
         // emulate dead leader for other nodes
 
@@ -678,7 +678,7 @@ fn issue_896_resolve_fork() {
             .get_unicast(crate::VIEW_CHANGE_DIRECT, &leader_pk);
 
         // wait half of view_change timer
-        r.wait(r.config.micro_block_timeout / 2);
+        r.wait(r.config.node.micro_block_timeout / 2);
 
         let first_leader = r.parts.0.first_mut();
         assert_eq!(leader_pk, first_leader.node_service.keys.network_pkey);
@@ -706,11 +706,11 @@ fn issue_896_resolve_fork() {
         assert_eq!(first_leader.node_service.chain.offset(), starting_offset);
 
         // wait for panic.
-        r.wait(r.config.micro_block_timeout - r.config.micro_block_timeout / 2);
+        r.wait(r.config.node.micro_block_timeout - r.config.node.micro_block_timeout / 2);
         r.parts.0.poll();
 
         // if panic was fixed, check for message.
-        r.wait(r.config.micro_block_timeout / 2);
+        r.wait(r.config.node.micro_block_timeout / 2);
         r.parts.0.poll();
 
         let first_leader = r.parts.0.first_mut();
@@ -740,7 +740,7 @@ fn out_of_order_keyblock_proposal() {
     Sandbox::start(config, |mut s| {
         s.poll();
 
-        s.wait(s.cfg().tx_wait_timeout);
+        s.wait(s.config.node.tx_wait_timeout);
 
         let epoch = s.nodes[0].node_service.chain.epoch();
         let round = s.nodes[0].node_service.chain.view_change();
@@ -887,7 +887,7 @@ fn slash_cheater() {
         s.poll();
 
         // next leader should be from different partition.
-        for _ in 0..(s.cfg().micro_blocks_in_epoch - 1) {
+        for _ in 0..(s.config.chain.micro_blocks_in_epoch - 1) {
             let first_leader_pk = s.nodes[0].node_service.chain.leader();
             let new_leader_pk = s.next_leader().unwrap();
             info!(
@@ -899,13 +899,13 @@ fn slash_cheater() {
             }
 
             info!("Skipping microlock.");
-            s.wait(s.cfg().tx_wait_timeout);
+            s.wait(s.config.node.tx_wait_timeout);
             s.skip_micro_block();
         }
         let leader_pk = s.nodes[0].node_service.chain.leader();
 
         info!("CREATE BLOCK. LEADER = {}", leader_pk);
-        s.wait(s.cfg().tx_wait_timeout);
+        s.wait(s.config.node.tx_wait_timeout);
 
         s.poll();
         s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
@@ -951,7 +951,7 @@ fn slash_cheater() {
             .for_each(|node| assert_eq!(node.cheating_proofs.len(), 1));
 
         // wait for block;
-        r.wait(r.cfg().tx_wait_timeout);
+        r.wait(r.config.node.tx_wait_timeout);
         r.parts.1.skip_micro_block();
 
         // assert that nodes in partition 1 exclude node from partition 0.
@@ -968,9 +968,9 @@ fn slash_cheater() {
     });
 }
 
-fn precondition_2_different_leaderers(s: &mut Sandbox) {
+fn precondition_2_different_leaders(s: &mut Sandbox) {
     let mut ready = false;
-    for _ in 0..s.cfg().micro_blocks_in_epoch {
+    for _ in 0..s.config.chain.micro_blocks_in_epoch {
         let first_leader_pk = s.nodes[0].node_service.chain.leader();
         let new_leader_pk = s.next_view_change_leader();
         info!(
@@ -982,7 +982,7 @@ fn precondition_2_different_leaderers(s: &mut Sandbox) {
             break;
         }
         info!("Skipping microlock.");
-        s.wait(s.cfg().tx_wait_timeout);
+        s.wait(s.config.node.tx_wait_timeout);
         s.skip_micro_block()
     }
     assert!(ready, "Not enought micriblocks found");

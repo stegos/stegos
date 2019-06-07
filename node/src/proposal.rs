@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::config::ChainConfig;
+use crate::config::NodeConfig;
 use crate::error::*;
 use failure::Error;
 use log::*;
@@ -75,7 +75,7 @@ pub fn create_macro_block_proposal(
 /// Validate proposed macro block.
 ///
 pub fn validate_proposed_macro_block(
-    cfg: &ChainConfig,
+    cfg: &NodeConfig,
     chain: &Blockchain,
     view_change: u32,
     block_hash: &Hash,
@@ -142,12 +142,12 @@ pub fn validate_proposed_macro_block(
     // Coinbase.
     if let Some(Transaction::CoinbaseTransaction(tx)) = transactions.get(0) {
         tx.validate()?;
-        if tx.block_reward != cfg.block_reward {
+        if tx.block_reward != chain.cfg().block_reward {
             return Err(BlockError::InvalidMacroBlockReward(
                 epoch,
                 block_hash.clone(),
                 tx.block_reward,
-                cfg.block_reward,
+                chain.cfg().block_reward,
             )
             .into());
         }

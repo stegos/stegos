@@ -31,7 +31,7 @@ pub mod protos;
 #[cfg(test)]
 mod test;
 mod validation;
-pub use crate::config::ChainConfig;
+pub use crate::config::NodeConfig;
 use crate::error::*;
 use crate::loader::ChainLoaderMessage;
 use crate::mempool::Mempool;
@@ -242,7 +242,7 @@ use Validation::*;
 
 pub struct NodeService {
     /// Config.
-    cfg: ChainConfig,
+    cfg: NodeConfig,
     /// Blockchain.
     chain: Blockchain,
     /// Key Chain.
@@ -278,7 +278,7 @@ pub struct NodeService {
 impl NodeService {
     /// Constructor.
     pub fn new(
-        cfg: ChainConfig,
+        cfg: NodeConfig,
         chain: Blockchain,
         keys: KeyChain,
         network: Network,
@@ -1436,7 +1436,7 @@ impl NodeService {
             view_change,
             view_change_proof,
             self.chain.last_random(),
-            self.cfg.block_reward,
+            self.chain.cfg().block_reward,
             &self.keys,
             self.cfg.max_utxo_in_block,
         );

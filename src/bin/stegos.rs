@@ -204,7 +204,7 @@ fn run() -> Result<(), Error> {
 
     // Initialize node
     let (mut node_service, node) =
-        NodeService::new(cfg.chain.clone(), chain, keychain.clone(), network.clone())?;
+        NodeService::new(cfg.node.clone(), chain, keychain.clone(), network.clone())?;
 
     // Initialize TransactionPool.
     let txpool_service = TransactionPoolService::new(&keychain, network.clone(), node.clone());
@@ -214,8 +214,8 @@ fn run() -> Result<(), Error> {
         keychain.clone(),
         network.clone(),
         node.clone(),
-        cfg.chain.payment_fee,
-        cfg.chain.stake_fee,
+        cfg.node.payment_fee,
+        cfg.node.stake_fee,
         cfg.chain.stake_epochs,
         wallet_persistent_state,
     );

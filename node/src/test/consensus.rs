@@ -28,6 +28,15 @@ use stegos_blockchain::Block;
 use stegos_consensus::ConsensusMessageBody;
 use stegos_crypto::pbc;
 
+fn assert_epoch_in_notification(receiver: &mut UnboundedReceiver<OutputsChanged>, epoch: u64) {
+    match receiver.poll() {
+        Ok(Async::Ready(Some(msg))) => {
+            assert_eq!(msg.epoch, epoch, "epoch are different");
+        }
+        _ => panic!("No message received in time, or error when receiving message"),
+    }
+}
+
 #[test]
 fn smoke_test() {
     let mut cfg: ChainConfig = Default::default();
@@ -41,9 +50,17 @@ fn smoke_test() {
 
     Sandbox::start(config, |mut s| {
         // Create one micro block.
+
+        // this channel are especially for test bug with restaking.
+        // We assert that node send correct epoch in outputschanged notification notification.
+        let mut first_node_channel = s.first().node.subscribe_outputs_changed();
+
         s.poll();
         s.wait(s.config.node.tx_wait_timeout);
         s.skip_micro_block();
+
+        // we starting at 1st epoch, so first microblock should be created at 1st epoch
+        assert_epoch_in_notification(&mut first_node_channel, 1);
 
         let topic = crate::CONSENSUS_TOPIC;
         let epoch = s.nodes[0].node_service.chain.epoch();
@@ -139,6 +156,13 @@ fn smoke_test() {
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
         }
         s.poll();
+
+        // notification about rollback microblock
+        assert_epoch_in_notification(&mut first_node_channel, 1);
+
+        // notification about macroblock
+        // we starting at 1st epoch, so first macro block should be created at 1st epoch too.
+        assert_epoch_in_notification(&mut first_node_channel, 1);
 
         // Check state of (0..NUM_NODES - 1) nodes.
         for node in s.iter_except(&[leader_pk]) {

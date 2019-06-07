@@ -833,7 +833,7 @@ impl NodeService {
             );
         }
 
-        self.on_block_added(timestamp, inputs, outputs);
+        self.on_block_added(epoch, timestamp, inputs, outputs);
 
         let msg = EpochChanged {
             epoch: self.chain.epoch(),
@@ -867,13 +867,20 @@ impl NodeService {
         }
 
         let (inputs, outputs) = self.chain.push_micro_block(block, timestamp)?;
-        self.on_block_added(timestamp, inputs, outputs);
+        self.on_block_added(self.chain.epoch(), timestamp, inputs, outputs);
         self.update_validation_status();
 
         Ok(())
     }
 
-    fn on_block_added(&mut self, timestamp: SystemTime, inputs: Vec<Output>, outputs: Vec<Output>) {
+    // macroblock should be triggered as a block from past epoch.
+    fn on_block_added(
+        &mut self,
+        epoch: u64,
+        timestamp: SystemTime,
+        inputs: Vec<Output>,
+        outputs: Vec<Output>,
+    ) {
         // Remove old transactions from the mempool.
         let input_hashes: Vec<Hash> = inputs.iter().map(|o| Hash::digest(o)).collect();
         let output_hashes: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
@@ -884,7 +891,7 @@ impl NodeService {
 
         // Notify subscribers.
         let msg = OutputsChanged {
-            epoch: self.chain.epoch(),
+            epoch,
             inputs,
             outputs,
         };

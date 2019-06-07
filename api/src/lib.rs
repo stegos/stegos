@@ -36,7 +36,7 @@ use serde_derive::Deserialize;
 use serde_derive::Serialize;
 use serde_json;
 use std::net::SocketAddr;
-use stegos_node::{BlockAdded, EpochChanged, Node, NodeRequest, NodeResponse};
+use stegos_node::{EpochChanged, Node, NodeRequest, NodeResponse, SyncChanged};
 use stegos_wallet::{Wallet, WalletNotification, WalletRequest, WalletResponse};
 use tokio::net::TcpListener;
 use tokio::runtime::TaskExecutor;
@@ -94,7 +94,7 @@ struct Response {
 #[serde(tag = "notification")]
 #[serde(rename_all = "snake_case")]
 pub enum NodeNotification {
-    BlockAdded(BlockAdded),
+    SyncChanged(SyncChanged),
     EpochChanged(EpochChanged),
 }
 
@@ -118,8 +118,8 @@ struct WebSocketHandler {
     node: Node,
     /// Node RPC responses.
     node_responses: Vec<(RequestId, oneshot::Receiver<NodeResponse>)>,
-    /// Height Changed Notification.
-    node_block_added: UnboundedReceiver<BlockAdded>,
+    /// Synchronization Status Changed Notification.
+    node_sync_changed: UnboundedReceiver<SyncChanged>,
     /// Epoch Changed Notification.
     node_epoch_changed: UnboundedReceiver<EpochChanged>,
 }
@@ -130,7 +130,7 @@ impl WebSocketHandler {
         let wallet_notifications = wallet.subscribe();
         let wallet_responses = Vec::new();
         let node_responses = Vec::new();
-        let node_block_added = node.subscribe_block_added();
+        let node_sync_changed = node.subscribe_sync_changed();
         let node_epoch_changed = node.subscribe_epoch_changed();
         WebSocketHandler {
             peer,
@@ -142,7 +142,7 @@ impl WebSocketHandler {
             wallet_responses,
             node,
             node_responses,
-            node_block_added,
+            node_sync_changed,
             node_epoch_changed,
         }
     }
@@ -277,9 +277,9 @@ impl Future for WebSocketHandler {
 
         // Height changes.
         loop {
-            match self.node_block_added.poll().expect("connected") {
+            match self.node_sync_changed.poll().expect("connected") {
                 Async::Ready(Some(msg)) => {
-                    let msg = NodeNotification::BlockAdded(msg);
+                    let msg = NodeNotification::SyncChanged(msg);
                     self.send(msg);
                 }
                 Async::Ready(None) => return Ok(Async::Ready(())),

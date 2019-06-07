@@ -30,11 +30,11 @@ use std::io::Read;
 use std::path::Path;
 use std::result::Result;
 use stegos_api::WebSocketConfig;
-use stegos_blockchain::StorageConfig;
+use stegos_blockchain::{ChainConfig, StorageConfig};
 use stegos_crypto::curve1174::PublicKey;
 use stegos_keychain::KeyChainConfig;
 use stegos_network::NetworkConfig;
-use stegos_node::ChainConfig;
+use stegos_node::NodeConfig;
 use toml;
 
 /// Configuration root
@@ -51,6 +51,8 @@ pub struct Config {
     pub general: GeneralConfig,
     /// Chain configuration.
     pub chain: ChainConfig,
+    /// Node configuration.
+    pub node: NodeConfig,
     /// Network configuration.
     pub network: NetworkConfig,
     /// Key Chain configuration.
@@ -67,6 +69,7 @@ impl Default for Config {
         Config {
             general: Default::default(),
             chain: Default::default(),
+            node: Default::default(),
             network: Default::default(),
             keychain: Default::default(),
             storage: Default::default(),

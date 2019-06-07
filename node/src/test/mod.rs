@@ -36,6 +36,7 @@ use stegos_keychain::KeyChain;
 use tokio_timer::Timer;
 
 pub struct SandboxConfig {
+    pub node: NodeConfig,
     pub chain: ChainConfig,
     pub num_nodes: usize,
     pub log_level: Level,
@@ -44,6 +45,7 @@ pub struct SandboxConfig {
 impl Default for SandboxConfig {
     fn default() -> SandboxConfig {
         SandboxConfig {
+            node: Default::default(),
             chain: Default::default(),
             num_nodes: 4,
             log_level: Level::Trace,
@@ -56,35 +58,41 @@ pub struct Sandbox<'timer> {
     nodes: Vec<NodeSandbox>,
     nodes_keychains: Vec<KeyChain>,
     timer: &'timer mut Timer<TestTimer>,
-    config: ChainConfig,
+    config: SandboxConfig,
 }
 
 impl<'timer> Sandbox<'timer> {
-    pub fn start<F>(cfg: SandboxConfig, test_routine: F)
+    pub fn start<F>(config: SandboxConfig, test_routine: F)
     where
         F: FnOnce(Sandbox),
     {
         start_test(|timer| {
             let _ = simple_logger::init_with_level(Level::Trace);
-            let num_nodes = cfg.num_nodes;
-            let cfg = cfg.chain;
+            let num_nodes = config.num_nodes;
             let timestamp = SystemTime::now();
             let nodes_keychains: Vec<_> = (0..num_nodes).map(|_num| KeyChain::new_mem()).collect();
             let genesis = stegos_blockchain::genesis(
                 &nodes_keychains,
-                cfg.min_stake_amount,
-                1000 * cfg.min_stake_amount,
+                config.chain.min_stake_amount,
+                1000 * config.chain.min_stake_amount,
                 timestamp,
             );
 
             let nodes: Vec<NodeSandbox> = (0..num_nodes)
-                .map(|i| NodeSandbox::new(cfg.clone(), nodes_keychains[i].clone(), genesis.clone()))
+                .map(|i| {
+                    NodeSandbox::new(
+                        config.node.clone(),
+                        config.chain.clone(),
+                        nodes_keychains[i].clone(),
+                        genesis.clone(),
+                    )
+                })
                 .collect();
             let sandbox = Sandbox {
                 nodes,
                 nodes_keychains,
                 timer,
-                config: cfg,
+                config,
             };
             for node in sandbox.nodes.iter() {
                 assert_eq!(node.node_service.chain.epoch(), 1);
@@ -96,10 +104,6 @@ impl<'timer> Sandbox<'timer> {
 
     pub fn wait(&mut self, duration: Duration) {
         wait(&mut *self.timer, duration)
-    }
-
-    pub fn cfg(&self) -> &ChainConfig {
-        &self.config
     }
 
     fn split<'a>(&'a mut self, first_partitions_nodes: &[pbc::PublicKey]) -> PartitionGuard<'a> {
@@ -177,7 +181,7 @@ impl Drop for NodeSandbox {
 #[allow(unused)]
 struct PartitionGuard<'p> {
     timer: &'p mut Timer<TestTimer>,
-    config: &'p ChainConfig,
+    pub config: &'p SandboxConfig,
     parts: (Partition<'p>, Partition<'p>),
 }
 
@@ -185,10 +189,6 @@ struct PartitionGuard<'p> {
 impl<'p> PartitionGuard<'p> {
     pub fn wait(&mut self, duration: Duration) {
         wait(&mut *self.timer, duration)
-    }
-
-    pub fn cfg(&self) -> &ChainConfig {
-        &self.config
     }
 }
 
@@ -199,15 +199,21 @@ struct NodeSandbox {
 }
 
 impl NodeSandbox {
-    fn new(cfg: ChainConfig, keychain: KeyChain, genesis: MacroBlock) -> Self {
+    fn new(
+        node_cfg: NodeConfig,
+        chain_cfg: ChainConfig,
+        keychain: KeyChain,
+        genesis: MacroBlock,
+    ) -> Self {
         // init network
         let (network_service, network) = Loopback::new();
 
         // Create node, with first node keychain.
         let timestamp = SystemTime::now();
-        let chain = Blockchain::testing(cfg.clone().into(), genesis, timestamp)
+        let chain = Blockchain::testing(chain_cfg, genesis, timestamp)
             .expect("Failed to create blockchain");
-        let (mut node_service, node) = NodeService::new(cfg, chain, keychain, network).unwrap();
+        let (mut node_service, node) =
+            NodeService::new(node_cfg, chain, keychain, network).unwrap();
         node_service.init().unwrap();
         Self {
             network_service,
@@ -336,7 +342,7 @@ trait Api<'p> {
         self.assert_synchronized();
         assert!(
             self.first().node_service.chain.offset()
-                <= self.first().node_service.cfg.micro_blocks_in_epoch
+                <= self.first().node_service.chain.cfg().micro_blocks_in_epoch
         );
         let leader_pk = self.first().node_service.chain.leader();
         self.poll();

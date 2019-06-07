@@ -41,10 +41,10 @@ fn request_on_timeout() {
         warn!("Leader: {}", leader_pk);
 
         // let leader shot his block
-        s.wait(s.cfg().tx_wait_timeout);
+        s.wait(s.config.node.tx_wait_timeout);
         s.poll();
         // emulate timeout on other nodes, and wait for request
-        s.wait(s.cfg().micro_block_timeout);
+        s.wait(s.config.node.micro_block_timeout);
         info!("BEFORE POLL");
         s.poll();
         s.filter_broadcast(&[crate::VIEW_CHANGE_TOPIC]); // ignore message from other modules.

@@ -25,7 +25,7 @@ use simple_logger;
 use std::fs;
 use std::process;
 use std::time::SystemTime;
-use stegos_blockchain::{genesis, Block, BlockchainConfig};
+use stegos_blockchain::{genesis, Block, ChainConfig};
 use stegos_keychain::KeyChain;
 use stegos_keychain::KeyChainConfig;
 use stegos_serialization::traits::ProtoConvert;
@@ -33,7 +33,7 @@ use stegos_serialization::traits::ProtoConvert;
 fn main() {
     simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
-    let cfg: BlockchainConfig = Default::default();
+    let cfg: ChainConfig = Default::default();
     let args = App::new("Stegos Bootstrap Utility")
         .version(crate_version!())
         .author("Stegos AG <info@stegos.com>")

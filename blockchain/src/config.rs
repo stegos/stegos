@@ -24,8 +24,9 @@
 use serde_derive::{Deserialize, Serialize};
 
 /// Blockchain configuration.
-#[derive(Debug, Clone)]
-pub struct BlockchainConfig {
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(default)]
+pub struct ChainConfig {
     /// Maximal number of slots for election.
     pub max_slot_count: i64,
     /// Minimal stake amount.
@@ -42,16 +43,17 @@ pub struct BlockchainConfig {
     pub service_award_per_epoch: i64,
 }
 
-impl Default for BlockchainConfig {
+impl Default for ChainConfig {
     fn default() -> Self {
-        BlockchainConfig {
+        let micro_blocks_in_epoch: u32 = 5;
+        ChainConfig {
             max_slot_count: 1000,
             min_stake_amount: 1_000_000_000, // 1000 STG
-            micro_blocks_in_epoch: 5,
+            micro_blocks_in_epoch,
             stake_epochs: 2,
             awards_difficulty: 3,
-            block_reward: 40_000_000,                // 40 STG
-            service_award_per_epoch: 20_000_000 * 5, // 20 STG for 5 blocks
+            block_reward: 40_000_000, // 40 STG
+            service_award_per_epoch: 20_000_000i64 * (micro_blocks_in_epoch as i64 + 1), // 20 STG per block
         }
     }
 }

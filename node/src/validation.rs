@@ -134,7 +134,7 @@ mod test {
         let mut timestamp = SystemTime::now();
         let keychain = KeyChain::new_mem();
         let mut mempool = Mempool::new();
-        let mut cfg: BlockchainConfig = Default::default();
+        let mut cfg: ChainConfig = Default::default();
         let stake_epochs = 1;
         cfg.stake_epochs = stake_epochs;
         let stake: i64 = cfg.min_stake_amount;

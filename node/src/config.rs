@@ -51,12 +51,12 @@ pub struct NodeConfig {
 impl Default for NodeConfig {
     fn default() -> Self {
         NodeConfig {
-            tx_wait_timeout: Duration::from_secs(10),
+            tx_wait_timeout: Duration::from_secs(5),
             micro_block_timeout: Duration::from_secs(30),
             macro_block_timeout: Duration::from_secs(30),
-            max_utxo_in_tx: 10,
-            max_utxo_in_block: 1000,
-            max_utxo_in_mempool: 10000,
+            max_utxo_in_tx: 500,
+            max_utxo_in_block: 2000,
+            max_utxo_in_mempool: 20000,
             loader_speed_in_epoch: 100,
             payment_fee: 1_000, // 0.001 STG
             stake_fee: 0,       // free

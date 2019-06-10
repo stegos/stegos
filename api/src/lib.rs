@@ -24,8 +24,12 @@
 #![deny(warnings)]
 
 mod config;
+mod crypto;
+mod error;
 
+use self::crypto::{decrypt, encrypt};
 pub use crate::config::WebSocketConfig;
+pub use crate::error::KeyError;
 use failure::Error;
 use futures::sync::mpsc::UnboundedReceiver;
 use futures::sync::oneshot;
@@ -46,6 +50,8 @@ use websocket::server::upgrade::r#async::IntoWs;
 
 /// The number of values to fit in the output buffer.
 const OUTPUT_BUFFER_SIZE: usize = 10;
+/// Key size for API token
+const API_KEYSIZE: usize = 16;
 
 /// A type definition for sink.
 type WsSink = Box<Sink<SinkItem = OwnedMessage, SinkError = WebSocketError> + Send>;
@@ -102,6 +108,8 @@ pub enum NodeNotification {
 struct WebSocketHandler {
     /// Remote address.
     peer: SocketAddr,
+    /// API Key (32-bytes vector)
+    api_key: Vec<u8>,
     /// Outgoing stream.
     sink: WsSink,
     /// Incoming stream.
@@ -125,7 +133,14 @@ struct WebSocketHandler {
 }
 
 impl WebSocketHandler {
-    fn new(peer: SocketAddr, sink: WsSink, stream: WsStream, wallet: Wallet, node: Node) -> Self {
+    fn new(
+        peer: SocketAddr,
+        api_key: Vec<u8>,
+        sink: WsSink,
+        stream: WsStream,
+        wallet: Wallet,
+        node: Node,
+    ) -> Self {
         let need_flush = false;
         let wallet_notifications = wallet.subscribe();
         let wallet_responses = Vec::new();
@@ -134,6 +149,7 @@ impl WebSocketHandler {
         let node_epoch_changed = node.subscribe_epoch_changed();
         WebSocketHandler {
             peer,
+            api_key,
             sink,
             stream,
             need_flush,
@@ -147,11 +163,24 @@ impl WebSocketHandler {
         }
     }
 
-    fn on_message(&mut self, text: String) -> Result<(), WebSocketError> {
-        let request: Request = match serde_json::from_str(&text) {
+    fn on_message(&mut self, enc_text: String) -> Result<(), WebSocketError> {
+        trace!("processing message: {}", enc_text);
+        let bin_text = match base64::decode(&enc_text) {
             Ok(r) => r,
             Err(e) => {
-                error!("Invalid request: {}", e);
+                error!("Failed to base64::decode message: error={}", e);
+                return Err(WebSocketError::RequestError("Invalid request"));
+            }
+        };
+        let text = decrypt(&self.api_key, &bin_text);
+        let request: Request = match serde_json::from_slice(&text) {
+            Ok(r) => r,
+            Err(e) => {
+                error!(
+                    "Failed to deserialize: text={}, error={}",
+                    String::from_utf8_lossy(&text),
+                    e
+                );
                 return Err(WebSocketError::RequestError("Invalid request"));
             }
         };
@@ -169,13 +198,19 @@ impl WebSocketHandler {
     }
 
     fn send<T: Serialize>(&mut self, msg: T) {
-        let msg = serde_json::to_string(&msg).expect("serialized");
-        if let Err(e) = self.send_raw(OwnedMessage::Text(msg)) {
+        trace!(
+            "sending message: {}",
+            serde_json::to_string(&msg).expect("serialized")
+        );
+        let msg = serde_json::to_vec(&msg).expect("serialized");
+        let enc_msg = encrypt(&self.api_key, &msg);
+        if let Err(e) = self.send_raw(OwnedMessage::Text(base64::encode(&enc_msg))) {
             error!("Failed to send message: {}", e);
         }
     }
 
     fn send_raw(&mut self, msg: OwnedMessage) -> Result<(), WebSocketError> {
+        trace!("raw send: {:?}", msg);
         match self.sink.start_send(msg)? {
             AsyncSink::Ready => {
                 self.need_flush = true;
@@ -324,6 +359,7 @@ impl WebSocketAPI {
         let wallet2 = wallet.clone();
         let node2 = node.clone();
         let addr: SocketAddr = format!("{}:{}", cfg.bind_ip, cfg.bind_port).parse()?;
+        let key = config::load_key(&cfg)?;
         info!("Starting WebSocket API on {}", &addr);
         let server = TcpListener::bind(&addr)?
             .incoming()
@@ -334,6 +370,7 @@ impl WebSocketAPI {
                 let wallet3 = wallet2.clone();
                 let node3 = node2.clone();
                 let peer = s.peer_addr().expect("has peer address");
+                let key = key.clone();
                 debug!("[{}] accepted", peer);
                 let s = s
                     .into_ws()
@@ -352,6 +389,7 @@ impl WebSocketAPI {
                                 info!("[{}] Connected", peer);
                                 WebSocketHandler::new(
                                     peer,
+                                    key,
                                     sink,
                                     stream,
                                     wallet3.clone(),

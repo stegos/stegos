@@ -48,3 +48,5 @@ broadcast_topic = "stegos"
 bind_ip = "0.0.0.0"
 # Local IP port to bind to
 bind_port = 3145
+# Path to file to store API key
+token_file = "api_token.txt"

@@ -24,7 +24,7 @@ use stegos::*;
 use crate::report_metrics;
 use clap;
 use clap::{App, Arg};
-use failure::Error;
+use failure::{format_err, Error};
 use futures::Future;
 use hyper::server::Server;
 use hyper::service::service_fn_ok;
@@ -35,7 +35,9 @@ use std::time::SystemTime;
 use stegos::config::Config;
 use stegos::generator::{Generator, GeneratorMode};
 use stegos_blockchain::{Blockchain, Output};
-use stegos_keychain::*;
+use stegos_crypto::curve1174;
+use stegos_crypto::pbc;
+use stegos_keychain as keychain;
 use stegos_network::Libp2pNetwork;
 use stegos_node::NodeService;
 use stegos_wallet::WalletService;
@@ -60,60 +62,51 @@ pub fn load_configuration(folder: &str) -> Result<config::Config, Error> {
             format!("_stegos._tcp.{}.aws.stegos.com", cfg.general.chain).to_string();
     }
 
+    // Check password_file.
+    if keychain::input::is_input_interactive(&cfg.keychain.password_file) {
+        return Err(format_err!("Please set password_file"));
+    }
+
     Ok(cfg)
 }
 
 fn load_nodes_configs<'a>(
     folders: impl Iterator<Item = &'a str>,
-) -> Result<Vec<(Config, KeyChain)>, Error> {
-    let mut node_configs = Vec::new();
+) -> Result<Vec<GeneratorInstance>, Error> {
+    let mut instances = Vec::new();
     for folder in folders {
         // Parse configuration
         let cfg = load_configuration(&folder)?;
-        // Initialize keychain
-        let keychain = KeyChain::new(cfg.keychain.clone())?;
-        node_configs.push((cfg, keychain));
-    }
-    Ok(node_configs)
-}
-// TODO: as network config, we using first node config, replace with more straight way.
-fn base_config(nodes: &[(Config, KeyChain)]) -> (Config, KeyChain) {
-    nodes.first().expect("Expected atleast one node").clone()
-}
-
-fn recover_generator(
-    chain: &Blockchain,
-    node_configs: Vec<(Config, KeyChain)>,
-) -> Result<Vec<GeneratorInstance>, Error> {
-    let first_keys = node_configs
-        .first()
-        .expect("Expected atleast one generator.")
-        .1
-        .clone();
-
-    // get list of keys, for all validators.
-    let keys: Vec<_> = node_configs.iter().map(|(_, k)| k.wallet_pkey).collect();
-    info!("Recovering blockchain states.");
-
-    let mut instances = Vec::new();
-    for (mut config, mut keychain) in node_configs {
-        let wallet_recover = chain.recover_wallet(&keychain.wallet_skey, &keychain.wallet_pkey)?;
-        // use single node keys.
-        keychain.network_skey = first_keys.network_skey.clone();
-        keychain.network_pkey = first_keys.network_pkey;
-        config.general.generate_txs.extend_from_slice(&keys);
-        instances.push(GeneratorInstance {
-            config,
-            keychain,
-            wallet_recover,
-        })
+        let password = keychain::input::read_password_from_file(&cfg.keychain.password_file)?;
+        let (wallet_skey, wallet_pkey) = keychain::keyfile::load_wallet_keypair(
+            &cfg.keychain.wallet_skey_file,
+            &cfg.keychain.wallet_pkey_file,
+            &password,
+        )?;
+        let (network_skey, network_pkey) = keychain::keyfile::load_network_keypair(
+            &cfg.keychain.network_skey_file,
+            &cfg.keychain.network_pkey_file,
+            &password,
+        )?;
+        let instance = GeneratorInstance {
+            cfg,
+            wallet_skey,
+            wallet_pkey,
+            network_skey,
+            network_pkey,
+            wallet_recover: Vec::new(),
+        };
+        instances.push(instance);
     }
     Ok(instances)
 }
 
 struct GeneratorInstance {
-    config: Config,
-    keychain: KeyChain,
+    cfg: Config,
+    wallet_skey: curve1174::SecretKey,
+    wallet_pkey: curve1174::PublicKey,
+    network_skey: pbc::SecretKey,
+    network_pkey: pbc::PublicKey,
     wallet_recover: Vec<(Output, u64)>,
 }
 
@@ -176,8 +169,14 @@ fn run() -> Result<(), Error> {
     // Print welcome message
     info!("{} {}", name, version);
 
-    let node_configs = load_nodes_configs(folders)?;
-    let (mut base_config, network_keychain) = base_config(&node_configs);
+    let mut instances = load_nodes_configs(folders)?;
+    let base_instance = instances.first().expect("Expected atleast one generator.");
+    let (mut base_config, network_skey, network_pkey, recipient_pkey) = (
+        base_instance.cfg.clone(),
+        base_instance.network_skey.clone(),
+        base_instance.network_pkey.clone(),
+        base_instance.wallet_pkey.clone(),
+    );
 
     base_config.general.log4rs_config = path.to_string();
 
@@ -191,8 +190,8 @@ fn run() -> Result<(), Error> {
     // Initialize network
     let (network, network_service) = Libp2pNetwork::new(
         &base_config.network,
-        network_keychain.network_skey.clone(),
-        network_keychain.network_pkey.clone(),
+        network_skey.clone(),
+        network_pkey.clone(),
     )?;
     rt.spawn(network_service);
 
@@ -221,28 +220,43 @@ fn run() -> Result<(), Error> {
         timestamp,
     )?;
 
-    let generator_configs = recover_generator(&chain, node_configs)?;
+    info!("Recover wallets.");
+    let keys: Vec<curve1174::PublicKey> = instances
+        .iter()
+        .map(|instance| instance.wallet_pkey)
+        .collect();
+    for instance in instances.iter_mut() {
+        instance.wallet_recover =
+            chain.recover_wallet(&instance.wallet_skey, &instance.wallet_pkey)?;
+        // use single node keys.
+        instance.network_skey = network_skey.clone();
+        instance.network_pkey = network_pkey.clone();
+        instance.cfg.general.generate_txs.extend_from_slice(&keys);
+    }
 
     info!("Starting node service.");
     // Initialize node
     let (node_service, node) = NodeService::new(
         base_config.node.clone(),
         chain,
-        network_keychain.wallet_pkey.clone(),
-        network_keychain.network_skey.clone(),
-        network_keychain.network_pkey.clone(),
+        recipient_pkey.clone(),
+        network_skey.clone(),
+        network_pkey.clone(),
         network.clone(),
     )?;
 
-    for generator in generator_configs {
-        let cfg = generator.config;
-        let keychain = generator.keychain;
-        let wallet_persistent_state = generator.wallet_recover;
+    for instance in instances {
+        let cfg = instance.cfg;
+        let wallet_persistent_state = instance.wallet_recover;
 
         info!("Starting wallet with generator.");
         // Initialize Wallet.
         let (wallet_service, wallet) = WalletService::new(
-            keychain.clone(),
+            cfg.keychain.password_file.clone(),
+            instance.wallet_skey,
+            instance.wallet_pkey,
+            instance.network_skey,
+            instance.network_pkey,
             network.clone(),
             node.clone(),
             cfg.node.payment_fee,
@@ -252,7 +266,13 @@ fn run() -> Result<(), Error> {
         );
         rt.spawn(wallet_service);
 
-        let bot = Generator::new(wallet, cfg.general.generate_txs, mode, true);
+        let bot = Generator::new(
+            wallet,
+            cfg.keychain.password_file.clone(),
+            cfg.general.generate_txs,
+            mode,
+            true,
+        );
         rt.spawn(bot);
     }
     // Start main event loop

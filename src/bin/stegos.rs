@@ -25,18 +25,23 @@ use atty;
 use clap;
 use clap::{App, Arg, ArgMatches};
 use dirs;
+use failure::format_err;
 use failure::Error;
 use futures::stream::Stream;
 use futures::Future;
 use hyper::server::Server;
 use hyper::service::service_fn_ok;
 use log::*;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process;
 use std::time::SystemTime;
 use stegos_api::WebSocketAPI;
 use stegos_blockchain::Blockchain;
-use stegos_keychain::KeyChain;
+use stegos_crypto::curve1174;
+use stegos_crypto::pbc;
+use stegos_keychain as keychain;
+use stegos_keychain::{KeyChainConfig, KeyError};
 use stegos_network::{Libp2pNetwork, NETWORK_STATUS_TOPIC};
 use stegos_node::NodeService;
 use stegos_txpool::TransactionPoolService;
@@ -94,13 +99,106 @@ pub fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error
     if let Some(password_file) = args.value_of("password-file") {
         cfg.keychain.password_file = password_file.to_string();
     }
+    if keychain::input::is_input_interactive(&cfg.keychain.password_file)
+        && !atty::is(atty::Stream::Stdin)
+    {
+        return Err(format_err!("No TTY found to read password from"));
+    }
 
     // Recovery options.
     if let Some(recovery_file) = args.value_of("recovery-file") {
         cfg.keychain.recovery_file = recovery_file.to_string();
     }
+    if keychain::input::is_input_interactive(&cfg.keychain.recovery_file)
+        && !atty::is(atty::Stream::Stdin)
+    {
+        return Err(format_err!("No TTY found to read recovery from"));
+    }
 
     Ok(cfg)
+}
+
+fn load_keys(
+    cfg: &KeyChainConfig,
+) -> Result<
+    (
+        curve1174::SecretKey,
+        curve1174::PublicKey,
+        pbc::SecretKey,
+        pbc::PublicKey,
+    ),
+    KeyError,
+> {
+    let wallet_skey_path = Path::new(&cfg.wallet_skey_file);
+    let wallet_pkey_path = Path::new(&cfg.wallet_pkey_file);
+    let network_skey_path = Path::new(&cfg.network_skey_file);
+    let network_pkey_path = Path::new(&cfg.network_pkey_file);
+
+    let (wallet_skey, wallet_pkey, network_skey, network_pkey) = if !wallet_skey_path.exists()
+        && !wallet_pkey_path.exists()
+        && !network_skey_path.exists()
+        && !network_pkey_path.exists()
+    {
+        debug!("Can't find keys on the disk: wallet_skey_file={}, wallet_pkey_file={}, network_skey_file={}, network_pkey_file={}",
+               cfg.wallet_skey_file, cfg.wallet_pkey_file, cfg.network_skey_file, cfg.network_pkey_file);
+
+        let (wallet_skey, wallet_pkey) = if !cfg.recovery_file.is_empty() {
+            info!("Recovering keys...");
+            let wallet_skey = keychain::input::read_recovery(&cfg.recovery_file)?;
+            let wallet_pkey: curve1174::PublicKey = wallet_skey.clone().into();
+            info!("Recovered a wallet key: pkey={}", wallet_pkey.to_hex());
+            (wallet_skey, wallet_pkey)
+        } else {
+            debug!("Generating a new wallet key pair...");
+            let (wallet_skey, wallet_pkey) = curve1174::make_random_keys();
+            info!(
+                "Generated a new wallet key pair: pkey={}",
+                wallet_pkey.to_hex()
+            );
+            (wallet_skey, wallet_pkey)
+        };
+
+        debug!("Generating a new network key pair...");
+        let (network_skey, network_pkey) = pbc::make_random_keys();
+        info!(
+            "Generated a new network key pair: pkey={}",
+            network_pkey.to_hex()
+        );
+
+        let password = keychain::input::read_password(&cfg.password_file, true)?;
+        keychain::keyfile::write_wallet_pkey(wallet_pkey_path, &wallet_pkey)?;
+        keychain::keyfile::write_wallet_skey(wallet_skey_path, &wallet_skey, &password)?;
+        keychain::keyfile::write_network_pkey(network_pkey_path, &network_pkey)?;
+        keychain::keyfile::write_network_skey(network_skey_path, &network_skey, &password)?;
+        info!(
+            "Wrote wallet key pair: wallet_skey_file={}, wallet_pkey_file={}",
+            cfg.wallet_skey_file, cfg.wallet_pkey_file
+        );
+        info!(
+            "Wrote network key pair: network_skey_file={}, network_pkey_file={}",
+            cfg.network_skey_file, cfg.network_pkey_file,
+        );
+
+        (wallet_skey, wallet_pkey, network_skey, network_pkey)
+    } else {
+        debug!("Loading keys from the disk...");
+        let password = keychain::input::read_password(&cfg.password_file, false)?;
+
+        let (wallet_skey, wallet_pkey) = keychain::keyfile::load_wallet_keypair(
+            &cfg.wallet_skey_file,
+            &cfg.wallet_pkey_file,
+            &password,
+        )?;
+        let (network_skey, network_pkey) = keychain::keyfile::load_network_keypair(
+            &cfg.network_skey_file,
+            &cfg.network_pkey_file,
+            &password,
+        )?;
+
+        (wallet_skey, wallet_pkey, network_skey, network_pkey)
+    };
+
+    Ok((wallet_skey, wallet_pkey, network_skey, network_pkey))
 }
 
 fn run() -> Result<(), Error> {
@@ -172,13 +270,7 @@ fn run() -> Result<(), Error> {
     info!("{} {}", name, version);
 
     // Initialize keychain
-    let keychain = KeyChain::new(cfg.keychain.clone())?;
-    let (wallet_skey, wallet_pkey, network_skey, network_pkey) = (
-        keychain.wallet_skey.clone(),
-        keychain.wallet_pkey.clone(),
-        keychain.network_skey.clone(),
-        keychain.network_pkey.clone(),
-    );
+    let (wallet_skey, wallet_pkey, network_skey, network_pkey) = load_keys(&cfg.keychain)?;
     let recipient_pkey = wallet_pkey.clone();
 
     // Resolve seed pool (works, if chain=='testent', does nothing otherwise)
@@ -211,7 +303,7 @@ fn run() -> Result<(), Error> {
 
     // Initialize node
     let (mut node_service, node) = NodeService::new(
-        cfg.node.clone()
+        cfg.node.clone(),
         chain,
         recipient_pkey.clone(),
         network_skey.clone(),
@@ -224,7 +316,11 @@ fn run() -> Result<(), Error> {
 
     // Initialize Wallet.
     let (wallet_service, wallet) = WalletService::new(
-        keychain.clone(),
+        cfg.keychain.wallet_skey_file,
+        wallet_skey,
+        wallet_pkey,
+        network_skey,
+        network_pkey,
         network.clone(),
         node.clone(),
         cfg.node.payment_fee,

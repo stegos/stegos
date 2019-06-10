@@ -26,6 +26,7 @@ use log::*;
 use rand::seq::SliceRandom;
 use std::time::Duration;
 use stegos_crypto::curve1174::PublicKey;
+use stegos_keychain::input;
 use stegos_wallet::{Wallet, WalletNotification, WalletRequest, WalletResponse};
 use tokio_timer::Delay;
 
@@ -36,6 +37,7 @@ pub struct Generator {
     // start generator with specific delay, because our network could be not ready.
     timeout: Option<Delay>,
     wallet: Wallet,
+    password_file: String,
     destinations: Vec<PublicKey>,
     state: GeneratorState,
     mode: GeneratorMode,
@@ -60,6 +62,7 @@ impl Generator {
     /// Crates new TransactionPool.
     pub fn new(
         wallet: Wallet,
+        password_file: String,
         destinations: Vec<PublicKey>,
         mode: GeneratorMode,
         with_delay: bool,
@@ -78,6 +81,7 @@ impl Generator {
         Generator {
             timeout,
             wallet,
+            password_file,
             destinations,
             state,
             mode,
@@ -177,14 +181,18 @@ impl Generator {
         let mut rng = rand::thread_rng();
 
         let recipient = self.destinations.choose(&mut rng).unwrap().clone();
+        let password =
+            input::read_password(&self.password_file, false).expect("Failed to read password");
         let request = match self.mode {
             GeneratorMode::ValueShuffle => WalletRequest::SecurePayment {
+                password,
                 comment: "generator".into(),
                 amount: 1,
                 recipient,
                 locked_timestamp: None,
             },
             GeneratorMode::Regular => WalletRequest::Payment {
+                password,
                 comment: "generator".into(),
                 amount: 1,
                 recipient,

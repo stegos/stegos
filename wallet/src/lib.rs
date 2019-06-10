@@ -50,11 +50,13 @@ use futures_stream_select_all_send::select_all;
 use log::*;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 use stegos_blockchain::*;
-use stegos_crypto::curve1174::PublicKey;
+use stegos_crypto::curve1174;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_keychain::KeyChain;
+use stegos_crypto::pbc;
+use stegos_keychain as keychain;
 use stegos_network::Network;
 use stegos_node::EpochChanged;
 use stegos_node::Node;
@@ -170,8 +172,16 @@ impl From<Transaction> for SavedTransaction {
 }
 
 pub struct WalletService {
-    /// Keys.
-    keys: KeyChain,
+    /// Path to wallet secret key.
+    wallet_skey_file: String,
+    /// Wallet Secret Key.
+    wallet_skey: curve1174::SecretKey,
+    /// Wallet Public Key.
+    wallet_pkey: curve1174::PublicKey,
+    /// Network Secret Key.
+    network_skey: pbc::SecretKey,
+    /// Network Public Key.
+    network_pkey: pbc::PublicKey,
     /// Current Epoch.
     epoch: u64,
     /// Unspent Payment UXTO.
@@ -214,7 +224,11 @@ pub struct WalletService {
 impl WalletService {
     /// Create a new wallet.
     pub fn new(
-        keys: KeyChain,
+        wallet_skey_file: String,
+        wallet_skey: curve1174::SecretKey,
+        wallet_pkey: curve1174::PublicKey,
+        network_skey: pbc::SecretKey,
+        network_pkey: pbc::PublicKey,
         network: Network,
         node: Node,
         payment_fee: i64,
@@ -222,8 +236,8 @@ impl WalletService {
         stake_epochs: u64,
         persistent_state: Vec<(Output, u64)>,
     ) -> (Self, Wallet) {
-        info!("My wallet key: {}", keys.wallet_pkey.to_hex());
-        debug!("My network key: {}", keys.network_pkey.to_hex());
+        info!("My wallet key: {}", wallet_pkey.to_hex());
+        debug!("My network key: {}", network_pkey.to_hex());
         //
         // State.
         //
@@ -233,9 +247,9 @@ impl WalletService {
         let public_payments = HashMap::new();
         let stakes: HashMap<Hash, StakeValue> = HashMap::new();
         let vs = ValueShuffle::new(
-            keys.wallet_skey.clone(),
-            keys.wallet_pkey.clone(),
-            keys.network_pkey.clone(),
+            wallet_skey.clone(),
+            wallet_pkey.clone(),
+            network_pkey.clone(),
             network.clone(),
             node.clone(),
         );
@@ -274,8 +288,12 @@ impl WalletService {
         let events = select_all(events);
 
         let mut service = WalletService {
+            wallet_skey_file,
+            wallet_skey,
+            wallet_pkey,
+            network_skey,
+            network_pkey,
             epoch,
-            keys,
             payments,
             public_payments,
             stakes,
@@ -297,7 +315,7 @@ impl WalletService {
         }
 
         metrics::WALLET_BALANCES
-            .with_label_values(&[&service.keys.wallet_pkey.to_hex()])
+            .with_label_values(&[&service.wallet_pkey.to_hex()])
             .set(service.balance());
 
         let api = Wallet { outbox };
@@ -305,21 +323,30 @@ impl WalletService {
         (service, api)
     }
 
+    /// Unlock secret key.
+    fn unlock(&self, password: String) -> Result<curve1174::SecretKey, Error> {
+        let wallet_skey_path = Path::new(&self.wallet_skey_file);
+        let wallet_skey = keychain::keyfile::load_wallet_skey(wallet_skey_path, &password)?;
+        Ok(wallet_skey)
+    }
+
     /// Send money.
     fn payment(
         &mut self,
-        recipient: &PublicKey,
+        password: String,
+        recipient: &curve1174::PublicKey,
         amount: i64,
         comment: String,
         locked_timestamp: Option<SystemTime>,
     ) -> Result<(Hash, i64), Error> {
+        let wallet_skey = self.unlock(password)?;
         let data = PaymentPayloadData::Comment(comment);
         let unspent_iter = self
             .payments
             .values()
             .map(|v| (&v.output, v.amount, v.output.locked_timestamp.clone()));
         let (inputs, outputs, gamma, fee) = create_payment_transaction(
-            &self.keys.wallet_pkey,
+            &self.wallet_pkey,
             recipient,
             unspent_iter,
             amount,
@@ -330,13 +357,13 @@ impl WalletService {
         )?;
 
         // Transaction TXINs can generally have different keying for each one
-        let tx = PaymentTransaction::new(&self.keys.wallet_skey, &inputs, &outputs, &gamma, fee)?;
+        let tx = PaymentTransaction::new(&wallet_skey, &inputs, &outputs, &gamma, fee)?;
         let tx_hash = Hash::digest(&tx);
         let fee = tx.fee;
         let tx: Transaction = tx.into();
         self.node.send_transaction(tx.clone())?;
         metrics::WALLET_CREATEAD_PAYMENTS
-            .with_label_values(&[&self.keys.wallet_pkey.to_hex()])
+            .with_label_values(&[&self.wallet_pkey.to_hex()])
             .inc();
         //firstly check that no conflict input was found;
         self.add_transaction_interest(tx.into());
@@ -347,16 +374,18 @@ impl WalletService {
     /// Send money public.
     fn public_payment(
         &mut self,
-        recipient: &PublicKey,
+        password: String,
+        recipient: &curve1174::PublicKey,
         amount: i64,
         locked_timestamp: Option<SystemTime>,
     ) -> Result<(Hash, i64), Error> {
+        let wallet_skey = self.unlock(password)?;
         let unspent_iter = self
             .payments
             .values()
             .map(|v| (&v.output, v.amount, v.output.locked_timestamp.clone()));
         let (inputs, outputs, gamma, fee) = create_payment_transaction(
-            &self.keys.wallet_pkey,
+            &self.wallet_pkey,
             recipient,
             unspent_iter,
             amount,
@@ -367,13 +396,13 @@ impl WalletService {
         )?;
 
         // Transaction TXINs can generally have different keying for each one
-        let tx = PaymentTransaction::new(&self.keys.wallet_skey, &inputs, &outputs, &gamma, fee)?;
+        let tx = PaymentTransaction::new(&wallet_skey, &inputs, &outputs, &gamma, fee)?;
         let tx_hash = Hash::digest(&tx);
         let fee = tx.fee;
         let tx: Transaction = tx.into();
         self.node.send_transaction(tx.clone())?;
         metrics::WALLET_CREATEAD_PAYMENTS
-            .with_label_values(&[&self.keys.wallet_pkey.to_hex()])
+            .with_label_values(&[&self.wallet_pkey.to_hex()])
             .inc();
         //firstly check that no conflict input was found;
         self.add_transaction_interest(tx.into());
@@ -407,17 +436,20 @@ impl WalletService {
     /// Send money using value shuffle.
     fn secure_payment(
         &mut self,
-        recipient: &PublicKey,
+        password: String,
+        recipient: &curve1174::PublicKey,
         amount: i64,
         comment: String,
         locked_timestamp: Option<SystemTime>,
     ) -> Result<Hash, Error> {
+        let _wallet_skey = self.unlock(password)?;
+        // TODO: refactor ValueShuffle to request secret key explicitly.
         let unspent_iter = self
             .payments
             .values()
             .map(|v| (&v.output, v.amount, v.output.locked_timestamp.clone()));
         let (inputs, outputs, fee) = create_vs_payment_transaction(
-            &self.keys.wallet_pkey,
+            &self.wallet_pkey,
             recipient,
             unspent_iter,
             amount,
@@ -430,20 +462,21 @@ impl WalletService {
         let saved_tx = SavedTransaction::ValueShuffle(inputs.iter().map(|(h, _)| *h).collect());
         let hash = Hash::digest(&saved_tx);
         metrics::WALLET_CREATEAD_SECURE_PAYMENTS
-            .with_label_values(&[&self.keys.wallet_pkey.to_hex()])
+            .with_label_values(&[&self.wallet_pkey.to_hex()])
             .inc();
         self.add_transaction_interest(saved_tx);
         Ok(hash)
     }
 
     /// Stake money into the escrow.
-    fn stake(&self, amount: i64) -> Result<(Hash, i64), Error> {
+    fn stake(&self, password: String, amount: i64) -> Result<(Hash, i64), Error> {
+        let wallet_skey = self.unlock(password)?;
         let unspent_iter = self.payments.values().map(|v| (&v.output, v.amount));
         let tx = create_staking_transaction(
-            &self.keys.wallet_skey,
-            &self.keys.wallet_pkey,
-            &self.keys.network_pkey,
-            &self.keys.network_skey,
+            &wallet_skey,
+            &self.wallet_pkey,
+            &self.network_pkey,
+            &self.network_skey,
             unspent_iter,
             amount,
             self.payment_fee,
@@ -458,13 +491,14 @@ impl WalletService {
 
     /// Unstake money from the escrow.
     /// NOTE: amount must include PAYMENT_FEE.
-    fn unstake(&self, amount: i64) -> Result<(Hash, i64), Error> {
+    fn unstake(&self, password: String, amount: i64) -> Result<(Hash, i64), Error> {
+        let wallet_skey = self.unlock(password)?;
         let unspent_iter = self.stakes.values().map(|v| &v.output);
         let tx = create_unstaking_transaction(
-            &self.keys.wallet_skey,
-            &self.keys.wallet_pkey,
-            &self.keys.network_pkey,
-            &self.keys.network_skey,
+            &wallet_skey,
+            &self.wallet_pkey,
+            &self.network_pkey,
+            &self.network_skey,
             unspent_iter,
             amount,
             self.payment_fee,
@@ -478,16 +512,17 @@ impl WalletService {
     }
 
     /// Unstake all of the money from the escrow.
-    fn unstake_all(&self) -> Result<(Hash, i64), Error> {
+    fn unstake_all(&self, password: String) -> Result<(Hash, i64), Error> {
         let mut amount: i64 = 0;
         for val in self.stakes.values() {
             amount += val.output.amount;
         }
-        self.unstake(amount)
+        self.unstake(password, amount)
     }
 
     /// Restake all available stakes (even if not expired).
-    fn restake_all(&mut self) -> Result<(Hash, i64), Error> {
+    fn restake_all(&mut self, password: String) -> Result<(Hash, i64), Error> {
+        let wallet_skey = self.unlock(password)?;
         assert_eq!(self.stake_fee, 0);
         if self.stakes.is_empty() {
             return Err(WalletError::NothingToRestake.into());
@@ -495,10 +530,10 @@ impl WalletService {
 
         let stakes = self.stakes.values().map(|val| &val.output);
         let tx = create_restaking_transaction(
-            &self.keys.wallet_skey,
-            &self.keys.wallet_pkey,
-            &self.keys.network_pkey,
-            &self.keys.network_skey,
+            &wallet_skey,
+            &self.wallet_pkey,
+            &self.network_pkey,
+            &self.network_skey,
             stakes,
         )?;
         let tx_hash = Hash::digest(&tx);
@@ -540,10 +575,10 @@ impl WalletService {
         }
 
         let tx = create_restaking_transaction(
-            &self.keys.wallet_skey,
-            &self.keys.wallet_pkey,
-            &self.keys.network_pkey,
-            &self.keys.network_skey,
+            &self.wallet_skey,
+            &self.wallet_pkey,
+            &self.network_pkey,
+            &self.network_skey,
             stakes.into_iter(),
         )?;
         self.node.send_transaction(tx.into())?;
@@ -551,15 +586,16 @@ impl WalletService {
     }
 
     /// Cloak all available public outputs.
-    fn cloak_all(&mut self) -> Result<(Hash, i64), Error> {
+    fn cloak_all(&mut self, password: String) -> Result<(Hash, i64), Error> {
+        let wallet_skey = self.unlock(password)?;
         if self.public_payments.is_empty() {
             return Err(WalletError::NotEnoughMoney.into());
         }
 
         let public_utxos = self.public_payments.values().map(|val| &val.output);
         let tx = create_cloaking_transaction(
-            &self.keys.wallet_skey,
-            &self.keys.wallet_pkey,
+            &wallet_skey,
+            &self.wallet_pkey,
             public_utxos,
             self.payment_fee,
             self.last_macro_block_timestamp,
@@ -567,6 +603,12 @@ impl WalletService {
         let tx_hash = Hash::digest(&tx);
         self.node.send_transaction(tx.into())?;
         Ok((tx_hash, self.payment_fee))
+    }
+
+    /// Return recovery codes.
+    fn get_recovery(&mut self, password: String) -> Result<String, Error> {
+        let wallet_skey = self.unlock(password)?;
+        Ok(keychain::recovery::wallet_skey_to_recovery(&wallet_skey))
     }
 
     /// Get actual balance.
@@ -595,7 +637,7 @@ impl WalletService {
         if saved_balance != balance {
             debug!("Balance changed");
             metrics::WALLET_BALANCES
-                .with_label_values(&[&self.keys.wallet_pkey.to_hex()])
+                .with_label_values(&[&self.wallet_pkey.to_hex()])
                 .set(balance);
             self.notify(WalletNotification::BalanceChanged { balance });
         }
@@ -603,14 +645,14 @@ impl WalletService {
 
     /// Called when UTXO is created.
     fn on_output_created(&mut self, epoch: u64, output: Output) {
-        if !output.is_my_utxo(&self.keys.wallet_skey, &self.keys.wallet_pkey) {
+        if !output.is_my_utxo(&self.wallet_skey, &self.wallet_pkey) {
             return;
         }
         let hash = Hash::digest(&output);
         match output {
             Output::PaymentOutput(o) => {
                 if let Ok(PaymentPayload { amount, data, .. }) =
-                    o.decrypt_payload(&self.keys.wallet_skey)
+                    o.decrypt_payload(&self.wallet_skey)
                 {
                     assert!(amount >= 0);
                     info!(
@@ -701,12 +743,12 @@ impl WalletService {
                 match tx {
                     SavedTransaction::Regular(_) => {
                         metrics::WALLET_COMMITTED_PAYMENTS
-                            .with_label_values(&[&self.keys.wallet_pkey.to_hex()])
+                            .with_label_values(&[&self.wallet_pkey.to_hex()])
                             .inc();
                     }
                     SavedTransaction::ValueShuffle(_) => {
                         metrics::WALLET_COMMITTED_SECURE_PAYMENTS
-                            .with_label_values(&[&self.keys.wallet_pkey.to_hex()])
+                            .with_label_values(&[&self.wallet_pkey.to_hex()])
                             .inc();
                     }
                 };
@@ -721,7 +763,7 @@ impl WalletService {
 
     /// Called when UTXO is spent.
     fn on_output_pruned(&mut self, _epoch: u64, output: Output) {
-        if !output.is_my_utxo(&self.keys.wallet_skey, &self.keys.wallet_pkey) {
+        if !output.is_my_utxo(&self.wallet_skey, &self.wallet_pkey) {
             return;
         }
         let hash = Hash::digest(&output);
@@ -729,7 +771,7 @@ impl WalletService {
         match output {
             Output::PaymentOutput(o) => {
                 if let Ok(PaymentPayload { amount, data, .. }) =
-                    o.decrypt_payload(&self.keys.wallet_skey)
+                    o.decrypt_payload(&self.wallet_skey)
                 {
                     info!("Spent: utxo={}, amount={}, data={:?}", hash, amount, data);
                     match self.payments.remove(&hash) {
@@ -809,27 +851,30 @@ impl Future for WalletService {
                     WalletEvent::Request { request, tx } => {
                         let response = match request {
                             WalletRequest::Payment {
+                                password,
                                 recipient,
                                 amount,
                                 comment,
                                 locked_timestamp,
                             } => self
-                                .payment(&recipient, amount, comment, locked_timestamp)
+                                .payment(password, &recipient, amount, comment, locked_timestamp)
                                 .into(),
                             WalletRequest::PublicPayment {
+                                password,
                                 recipient,
                                 amount,
                                 locked_timestamp,
                             } => self
-                                .public_payment(&recipient, amount, locked_timestamp)
+                                .public_payment(password, &recipient, amount, locked_timestamp)
                                 .into(),
-
                             WalletRequest::SecurePayment {
+                                password,
                                 recipient,
                                 amount,
                                 comment,
                                 locked_timestamp,
                             } => match self.secure_payment(
+                                password,
                                 &recipient,
                                 amount,
                                 comment,
@@ -846,14 +891,22 @@ impl Future for WalletService {
                                 self.wait_for_commit(tx_hash, tx);
                                 continue;
                             }
-                            WalletRequest::Stake { amount } => self.stake(amount).into(),
-                            WalletRequest::Unstake { amount } => self.unstake(amount).into(),
-                            WalletRequest::UnstakeAll {} => self.unstake_all().into(),
-                            WalletRequest::RestakeAll {} => self.restake_all().into(),
-                            WalletRequest::CloakAll {} => self.cloak_all().into(),
+                            WalletRequest::Stake { password, amount } => {
+                                self.stake(password, amount).into()
+                            }
+                            WalletRequest::Unstake { password, amount } => {
+                                self.unstake(password, amount).into()
+                            }
+                            WalletRequest::UnstakeAll { password } => {
+                                self.unstake_all(password).into()
+                            }
+                            WalletRequest::RestakeAll { password } => {
+                                self.restake_all(password).into()
+                            }
+                            WalletRequest::CloakAll { password } => self.cloak_all(password).into(),
                             WalletRequest::KeysInfo {} => WalletResponse::KeysInfo {
-                                wallet_pkey: self.keys.wallet_pkey,
-                                network_pkey: self.keys.network_pkey,
+                                wallet_pkey: self.wallet_pkey,
+                                network_pkey: self.network_pkey,
                             },
                             WalletRequest::BalanceInfo {} => WalletResponse::BalanceInfo {
                                 balance: self.balance(),
@@ -881,12 +934,14 @@ impl Future for WalletService {
                                     stakes,
                                 }
                             }
-                            WalletRequest::GetRecovery {} => match self.keys.show_recovery() {
-                                Ok(recovery) => WalletResponse::Recovery { recovery },
-                                Err(e) => WalletResponse::Error {
-                                    error: format!("{}", e),
-                                },
-                            },
+                            WalletRequest::GetRecovery { password } => {
+                                match self.get_recovery(password) {
+                                    Ok(recovery) => WalletResponse::Recovery { recovery },
+                                    Err(e) => WalletResponse::Error {
+                                        error: format!("{}", e),
+                                    },
+                                }
+                            }
                         };
                         tx.send(response).ok(); // ignore errors.
                     }

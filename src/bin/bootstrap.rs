@@ -23,11 +23,12 @@ use clap::{crate_version, App, Arg};
 use log::*;
 use simple_logger;
 use std::fs;
+use std::path::Path;
 use std::process;
 use std::time::SystemTime;
 use stegos_blockchain::{genesis, Block, ChainConfig, StakeDef};
-use stegos_keychain::KeyChain;
-use stegos_keychain::KeyChainConfig;
+use stegos_crypto::{curve1174, pbc};
+use stegos_keychain as keychain;
 use stegos_serialization::traits::ProtoConvert;
 
 fn main() {
@@ -123,26 +124,39 @@ fn main() {
     };
 
     info!("Generating genesis keys...");
-    let mut keychains = Vec::<KeyChain>::new();
+    let mut keychains = Vec::<(
+        curve1174::SecretKey,
+        curve1174::PublicKey,
+        pbc::SecretKey,
+        pbc::PublicKey,
+    )>::new();
     for i in 0..keys {
-        let cfg = KeyChainConfig {
-            recovery_file: "".to_string(),
-            password_file: format!("password{:02}.txt", i + 1),
-            wallet_skey_file: format!("wallet{:02}.skey", i + 1),
-            wallet_pkey_file: format!("wallet{:02}.pkey", i + 1),
-            network_skey_file: format!("network{:02}.skey", i + 1),
-            network_pkey_file: format!("network{:02}.pkey", i + 1),
-        };
+        let password_file = format!("password{:02}.txt", i + 1);
+        let wallet_skey_file = format!("wallet{:02}.skey", i + 1);
+        let wallet_pkey_file = format!("wallet{:02}.pkey", i + 1);
+        let network_skey_file = format!("network{:02}.skey", i + 1);
+        let network_pkey_file = format!("network{:02}.pkey", i + 1);
 
-        let keychain = match KeyChain::new(cfg) {
-            Ok(k) => k,
-            Err(e) => {
-                eprintln!("Failed to generate keys: {}", e);
-                process::exit(2);
-            }
-        };
+        let password = keychain::input::read_password_from_file(&password_file)
+            .expect("failed to read password");
 
-        keychains.push(keychain);
+        let (wallet_skey, wallet_pkey) = curve1174::make_random_keys();
+        let (network_skey, network_pkey) = pbc::make_random_keys();
+
+        keychain::keyfile::write_wallet_pkey(Path::new(&wallet_pkey_file), &wallet_pkey)
+            .expect("failed to write wallet pkey");
+        keychain::keyfile::write_wallet_skey(Path::new(&wallet_skey_file), &wallet_skey, &password)
+            .expect("failed to write wallet skey");
+        keychain::keyfile::write_network_pkey(Path::new(&network_pkey_file), &network_pkey)
+            .expect("failed to write network pkey");
+        keychain::keyfile::write_network_skey(
+            Path::new(&network_skey_file),
+            &network_skey,
+            &password,
+        )
+        .expect("failed to write wallet skey");
+
+        keychains.push((wallet_skey, wallet_pkey, network_skey, network_pkey));
     }
 
     info!("Generating genesis blocks...");
@@ -150,9 +164,9 @@ fn main() {
     let mut stakes = Vec::with_capacity(keychains.len());
     for i in 0..keychains.len() {
         let stake_def = StakeDef {
-            beneficiary_pkey: &keychains[i].wallet_pkey,
-            network_skey: &keychains[i].network_skey,
-            network_pkey: &keychains[i].network_pkey,
+            beneficiary_pkey: &keychains[i].1,
+            network_skey: &keychains[i].2,
+            network_pkey: &keychains[i].3,
             amount: stake,
         };
         stakes.push(stake_def);

@@ -19,14 +19,20 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use bitvector::BitVector;
 use clap::{crate_version, App, Arg};
 use log::*;
 use simple_logger;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::process;
 use std::time::SystemTime;
-use stegos_blockchain::{genesis, Block, ChainConfig, StakeDef};
+use stegos_blockchain::{
+    create_multi_signature, Block, ChainConfig, MacroBlock, Output, PaymentOutput,
+    PaymentPayloadData, StakeOutput,
+};
+use stegos_crypto::hash::Hash;
 use stegos_crypto::{curve1174, pbc};
 use stegos_keychain as keychain;
 use stegos_serialization::traits::ProtoConvert;
@@ -123,13 +129,16 @@ fn main() {
         cfg.min_stake_amount
     };
 
-    info!("Generating genesis keys...");
+    info!("Generating genesis ...");
+
+    let mut outputs: Vec<Output> = Vec::with_capacity(1 + keys as usize);
     let mut keychains = Vec::<(
         curve1174::SecretKey,
         curve1174::PublicKey,
         pbc::SecretKey,
         pbc::PublicKey,
     )>::new();
+    let mut payout: i64 = coins;
     for i in 0..keys {
         let password_file = format!("password{:02}.txt", i + 1);
         let wallet_skey_file = format!("wallet{:02}.skey", i + 1);
@@ -140,9 +149,11 @@ fn main() {
         let password = keychain::input::read_password_from_file(&password_file)
             .expect("failed to read password");
 
+        // Generate keys.
         let (wallet_skey, wallet_pkey) = curve1174::make_random_keys();
         let (network_skey, network_pkey) = pbc::make_random_keys();
 
+        // Write keys.
         keychain::keyfile::write_wallet_pkey(Path::new(&wallet_pkey_file), &wallet_pkey)
             .expect("failed to write wallet pkey");
         keychain::keyfile::write_wallet_skey(Path::new(&wallet_skey_file), &wallet_skey, &password)
@@ -156,23 +167,70 @@ fn main() {
         )
         .expect("failed to write wallet skey");
 
+        // Create a stake.
+        let output = StakeOutput::new(&wallet_pkey, &network_skey, &network_pkey, stake)
+            .expect("invalid keys");
+        assert!(payout >= stake);
+        payout -= stake;
+        outputs.push(output.into());
+
         keychains.push((wallet_skey, wallet_pkey, network_skey, network_pkey));
     }
 
-    info!("Generating genesis blocks...");
+    // Create an initial payment.
+    let beneficiary_pkey = &keychains[0].1;
+    let output_data = PaymentPayloadData::Comment("Genesis".to_string());
+    let (output, outputs_gamma) =
+        PaymentOutput::with_payload(beneficiary_pkey, payout, output_data, None)
+            .expect("invalid keys");
+    outputs.push(output.into());
+
+    // Calculate initial values.
+    let epoch: u64 = 0;
+    let view_change: u32 = 0;
+    let previous = Hash::digest("genesis");
+    let seed = Hash::digest("genesis");
+    let random = pbc::make_VRF(&keychains[0].2, &seed);
+    let activity_map = BitVector::ones(keychains.len());
     let timestamp = SystemTime::now();
-    let mut stakes = Vec::with_capacity(keychains.len());
-    for i in 0..keychains.len() {
-        let stake_def = StakeDef {
-            beneficiary_pkey: &keychains[i].1,
-            network_skey: &keychains[i].2,
-            network_pkey: &keychains[i].3,
-            amount: stake,
-        };
-        stakes.push(stake_def);
-    }
-    let genesis_block = genesis(&stakes, coins, timestamp);
-    let block_data = Block::MacroBlock(genesis_block).into_buffer().unwrap();
+
+    // Create a block.
+    let mut block = MacroBlock::new(
+        previous,
+        epoch,
+        view_change,
+        keychains[0].3.clone(),
+        random,
+        timestamp,
+        coins,
+        activity_map,
+        -outputs_gamma,
+        &[],
+        &outputs,
+    );
+
+    //
+    // Sign the block.
+    // NOTE: this signature is not really used.
+    // Sign the genesis block just to prove ownership of secret keys.
+    //
+    let block_hash = Hash::digest(&block);
+    let (multisig, multisigmap) = {
+        let mut signatures: BTreeMap<pbc::PublicKey, pbc::Signature> = BTreeMap::new();
+        let mut validators: BTreeMap<pbc::PublicKey, i64> = BTreeMap::new();
+        for (_, _, network_skey, network_pkey) in keychains {
+            let sig = pbc::sign_hash(&block_hash, &network_skey);
+            signatures.insert(network_pkey.clone(), sig);
+            validators.insert(network_pkey.clone(), stake);
+        }
+        let validators = validators.into_iter().collect();
+        create_multi_signature(&validators, &signatures)
+    };
+    block.multisig = multisig;
+    block.multisigmap = multisigmap;
+
+    // Write the block to the disk.
+    let block_data = Block::MacroBlock(block).into_buffer().unwrap();
     fs::write("genesis.bin", &block_data).expect("failed to write genesis block");
 
     info!("Done");

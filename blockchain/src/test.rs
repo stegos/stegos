@@ -21,13 +21,15 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#![allow(dead_code)]
+
 use crate::block::{MacroBlock, MicroBlock};
 use crate::blockchain::Blockchain;
 use crate::election::mix;
-use crate::genesis::genesis;
 use crate::multisignature::create_multi_signature;
-use crate::output::{Output, PaymentOutput, PaymentPayloadData, StakeDef, StakeOutput};
+use crate::output::{Output, PaymentOutput, PaymentPayloadData, StakeOutput};
 use crate::transaction::{CoinbaseTransaction, PaymentTransaction, Transaction};
+use bitvector::BitVector;
 use log::*;
 use std::collections::btree_map::BTreeMap;
 use std::time::SystemTime;
@@ -67,21 +69,56 @@ pub fn fake_genesis(
     timestamp: SystemTime,
 ) -> (Vec<KeyChain>, MacroBlock) {
     let mut keychains = Vec::with_capacity(num_nodes);
+    let mut outputs: Vec<Output> = Vec::with_capacity(1 + keychains.len());
+    let mut payout = coins;
     for _i in 0..num_nodes {
+        // Generate keys.
         let keychain = KeyChain::new();
+
+        // Create a stake.
+        let output = StakeOutput::new(
+            &keychain.wallet_pkey,
+            &keychain.network_skey,
+            &keychain.network_pkey,
+            stake,
+        )
+        .expect("invalid keys");
+        assert!(payout >= stake);
+        payout -= stake;
+        outputs.push(output.into());
+
         keychains.push(keychain);
     }
-    let mut stakes = Vec::with_capacity(num_nodes);
-    for i in 0..num_nodes {
-        let stake_def = StakeDef {
-            beneficiary_pkey: &keychains[i].wallet_pkey,
-            network_skey: &keychains[i].network_skey,
-            network_pkey: &keychains[i].network_pkey,
-            amount: stake,
-        };
-        stakes.push(stake_def);
-    }
-    let genesis = genesis(&stakes, coins, timestamp);
+
+    // Create an initial payment.
+    assert!(payout > 0);
+    let (output, outputs_gamma) =
+        PaymentOutput::new(&keychains[0].wallet_pkey, payout).expect("invalid keys");
+    outputs.push(output.into());
+
+    // Calculate initial values.
+    let epoch: u64 = 0;
+    let view_change: u32 = 0;
+    let previous = Hash::digest("genesis");
+    let seed = Hash::digest("genesis");
+    let random = pbc::make_VRF(&keychains[0].network_skey, &seed);
+    let activity_map = BitVector::ones(keychains.len());
+
+    // Create a block.
+    let genesis = MacroBlock::new(
+        previous,
+        epoch,
+        view_change,
+        keychains[0].network_pkey.clone(),
+        random,
+        timestamp,
+        coins,
+        activity_map,
+        -outputs_gamma,
+        &[],
+        &outputs,
+    );
+
     (keychains, genesis)
 }
 

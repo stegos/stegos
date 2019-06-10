@@ -121,31 +121,26 @@ pub(crate) fn validate_external_transaction(
 mod test {
     use super::*;
     use std::time::{Duration, SystemTime};
+    use stegos_blockchain::test::*;
     use stegos_blockchain::*;
-    use stegos_crypto::curve1174::{self, Fr};
-    use stegos_crypto::pbc;
+    use stegos_crypto::curve1174::Fr;
 
     #[test]
     fn test_validate_transaction() {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+        let mut cfg: ChainConfig = Default::default();
         let payment_fee: i64 = 1;
         let stake_fee: i64 = 0;
         let amount: i64 = 10000;
-        let mut timestamp = SystemTime::now();
-        let (wallet_skey, wallet_pkey) = curve1174::make_random_keys();
-        let (network_skey, network_pkey) = pbc::make_random_keys();
-        let mut mempool = Mempool::new();
-        let mut cfg: ChainConfig = Default::default();
+        let stake: i64 = cfg.min_stake_amount;
         let stake_epochs = 1;
         cfg.stake_epochs = stake_epochs;
-        let stake: i64 = cfg.min_stake_amount;
-        let stake_def = StakeDef {
-            beneficiary_pkey: &wallet_pkey,
-            network_skey: &network_skey,
-            network_pkey: &network_pkey,
-            amount: stake,
-        };
-        let genesis = genesis(&[stake_def], amount + stake, timestamp);
+        let mut timestamp = SystemTime::now();
+        let (mut keychains, genesis) = fake_genesis(stake, amount + stake, 1, timestamp);
+        let keychain = keychains.pop().unwrap();
+        let (wallet_skey, wallet_pkey) = (keychain.wallet_skey, keychain.wallet_pkey);
+        let (network_skey, network_pkey) = (keychain.network_skey, keychain.network_pkey);
+        let mut mempool = Mempool::new();
         let chain =
             Blockchain::testing(cfg, genesis, timestamp).expect("Failed to create blockchain");
         let mut inputs: Vec<Output> = Vec::new();

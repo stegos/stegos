@@ -30,6 +30,7 @@ use crate::*;
 use assert_matches::assert_matches;
 use log::Level;
 use std::time::Duration;
+pub use stegos_blockchain::test::*;
 use stegos_crypto::pbc;
 use stegos_crypto::pbc::VRF;
 use tokio_timer::Timer;
@@ -68,31 +69,21 @@ impl<'timer> Sandbox<'timer> {
             let _ = simple_logger::init_with_level(Level::Trace);
             let num_nodes = config.num_nodes;
             let timestamp = SystemTime::now();
-            let mut keychains = Vec::new();
-            for _i in 0..num_nodes {
-                let (wallet_skey, wallet_pkey) = curve1174::make_random_keys();
-                let (network_skey, network_pkey) = pbc::make_random_keys();
-                keychains.push((wallet_skey, wallet_pkey, network_skey, network_pkey));
-            }
-            let mut stakes = Vec::with_capacity(num_nodes);
-            for i in 0..num_nodes {
-                let stake_def = StakeDef {
-                    beneficiary_pkey: &keychains[i].1,
-                    network_skey: &keychains[i].2,
-                    network_pkey: &keychains[i].3,
-                    amount: config.chain.min_stake_amount,
-                };
-                stakes.push(stake_def);
-            }
-            let genesis = genesis(&stakes, 1000 * config.chain.min_stake_amount, timestamp);
+
+            let (keychains, genesis) = fake_genesis(
+                config.chain.min_stake_amount,
+                1000 * config.chain.min_stake_amount,
+                num_nodes,
+                timestamp,
+            );
             let mut nodes = Vec::new();
             for keys in keychains {
                 let node = NodeSandbox::new(
                     config.node.clone(),
                     config.chain.clone(),
-                    keys.1,
-                    keys.2,
-                    keys.3,
+                    keys.wallet_pkey,
+                    keys.network_skey,
+                    keys.network_pkey,
                     genesis.clone(),
                 );
                 nodes.push(node)

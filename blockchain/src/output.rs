@@ -504,24 +504,7 @@ impl PublicPaymentOutput {
     }
 }
 
-pub struct StakeDef<'a> {
-    pub beneficiary_pkey: &'a PublicKey,
-    pub network_skey: &'a pbc::SecretKey,
-    pub network_pkey: &'a pbc::PublicKey,
-    pub amount: i64,
-}
-
 impl StakeOutput {
-    /// Create a new StakeOutput.
-    pub fn from_def(def: &StakeDef) -> Result<Self, Error> {
-        Self::new(
-            def.beneficiary_pkey,
-            def.network_skey,
-            def.network_pkey,
-            def.amount,
-        )
-    }
-
     /// Create a new StakeOutput.
     pub fn new(
         recipient_pkey: &PublicKey,

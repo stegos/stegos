@@ -224,7 +224,6 @@ fn run() -> Result<(), Error> {
     let console_service = if atty::is(atty::Stream::Stdin) {
         // Initialize console
         Some(ConsoleService::new(
-            &cfg.general,
             network.clone(),
             wallet.clone(),
             node.clone(),

@@ -21,6 +21,7 @@
 
 use crate::error::KeyError;
 use crate::pem;
+use log::*;
 use std::fs;
 use std::path::Path;
 use stegos_crypto::curve1174;
@@ -60,28 +61,25 @@ fn load_encrypted_key(path: &Path, tag: &str, password: &str) -> Result<Vec<u8>,
     Ok(skey)
 }
 
-pub(crate) fn load_wallet_pkey(path: &Path) -> Result<curve1174::PublicKey, KeyError> {
+pub fn load_wallet_pkey(path: &Path) -> Result<curve1174::PublicKey, KeyError> {
     let pkey = load_key(path, WALLET_PKEY_TAG)?;
     curve1174::PublicKey::try_from_bytes(&pkey)
         .map_err(|e| KeyError::InvalidKey(path.to_string_lossy().to_string(), e))
 }
 
-pub(crate) fn load_network_pkey(path: &Path) -> Result<pbc::PublicKey, KeyError> {
+pub fn load_network_pkey(path: &Path) -> Result<pbc::PublicKey, KeyError> {
     let pkey = load_key(path, NETWORK_PKEY_TAG)?;
     pbc::PublicKey::try_from_bytes(&pkey)
         .map_err(|e| KeyError::InvalidKey(path.to_string_lossy().to_string(), e))
 }
 
-pub(crate) fn load_wallet_skey(
-    path: &Path,
-    password: &str,
-) -> Result<curve1174::SecretKey, KeyError> {
+pub fn load_wallet_skey(path: &Path, password: &str) -> Result<curve1174::SecretKey, KeyError> {
     let bytes = load_encrypted_key(path, WALLET_ENCRYPTED_SKEY_TAG, password)?;
     curve1174::SecretKey::try_from_bytes(&bytes)
         .map_err(|e| KeyError::InvalidKey(path.to_string_lossy().to_string(), e))
 }
 
-pub(crate) fn load_network_skey(path: &Path, password: &str) -> Result<pbc::SecretKey, KeyError> {
+pub fn load_network_skey(path: &Path, password: &str) -> Result<pbc::SecretKey, KeyError> {
     let bytes = load_encrypted_key(path, NETWORK_ENCRYPTED_SKEY_TAG, password)?;
     pbc::SecretKey::try_from_bytes(&bytes)
         .map_err(|e| KeyError::InvalidKey(path.to_string_lossy().to_string(), e))
@@ -108,15 +106,15 @@ fn write_encrypted_key(
     write_key(path, tag, contents)
 }
 
-pub(crate) fn write_wallet_pkey(path: &Path, pkey: &curve1174::PublicKey) -> Result<(), KeyError> {
+pub fn write_wallet_pkey(path: &Path, pkey: &curve1174::PublicKey) -> Result<(), KeyError> {
     write_key(path, WALLET_PKEY_TAG, pkey.to_bytes().to_vec())
 }
 
-pub(crate) fn write_network_pkey(path: &Path, pkey: &pbc::PublicKey) -> Result<(), KeyError> {
+pub fn write_network_pkey(path: &Path, pkey: &pbc::PublicKey) -> Result<(), KeyError> {
     write_key(path, NETWORK_PKEY_TAG, pkey.to_bytes().to_vec())
 }
 
-pub(crate) fn write_wallet_skey(
+pub fn write_wallet_skey(
     path: &Path,
     skey: &curve1174::SecretKey,
     password: &str,
@@ -125,11 +123,54 @@ pub(crate) fn write_wallet_skey(
     write_encrypted_key(path, WALLET_ENCRYPTED_SKEY_TAG, contents, password)
 }
 
-pub(crate) fn write_network_skey(
+pub fn write_network_skey(
     path: &Path,
     skey: &pbc::SecretKey,
     password: &str,
 ) -> Result<(), KeyError> {
     let contents = skey.to_bytes().to_vec();
     write_encrypted_key(path, NETWORK_ENCRYPTED_SKEY_TAG, contents, password)
+}
+
+pub fn load_wallet_keypair(
+    wallet_skey_file: &str,
+    wallet_pkey_file: &str,
+    password: &str,
+) -> Result<(curve1174::SecretKey, curve1174::PublicKey), KeyError> {
+    debug!(
+        "Loading wallet key pair: wallet_skey_file={}, wallet_pkey_file={}...",
+        wallet_skey_file, wallet_pkey_file
+    );
+    let wallet_pkey = load_wallet_pkey(Path::new(wallet_pkey_file))?;
+    let wallet_skey = load_wallet_skey(Path::new(wallet_skey_file), password)?;
+    if let Err(_e) = curve1174::check_keying(&wallet_skey, &wallet_pkey) {
+        return Err(KeyError::InvalidKeying(
+            wallet_skey_file.to_string(),
+            wallet_pkey_file.to_string(),
+        ));
+    }
+    info!("Loaded wallet key pair: pkey={}", wallet_pkey);
+    Ok((wallet_skey, wallet_pkey))
+}
+
+pub fn load_network_keypair(
+    network_skey_file: &str,
+    network_pkey_file: &str,
+    password: &str,
+) -> Result<(pbc::SecretKey, pbc::PublicKey), KeyError> {
+    debug!(
+        "Loading network key pair: network_skey_file={}, network_pkey_file={}...",
+        network_skey_file, network_pkey_file
+    );
+    let network_pkey = load_network_pkey(Path::new(network_pkey_file))?;
+    let network_skey = load_network_skey(Path::new(network_skey_file), password)?;
+
+    if let Err(_e) = pbc::check_keying(&network_skey, &network_pkey) {
+        return Err(KeyError::InvalidKeying(
+            network_skey_file.to_string(),
+            network_pkey_file.to_string(),
+        ));
+    }
+    info!("Loaded network key pair: pkey={}", network_pkey);
+    Ok((network_skey, network_pkey))
 }

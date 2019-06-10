@@ -75,17 +75,20 @@ pub enum WalletNotification {
 #[serde(rename_all = "snake_case")]
 pub enum WalletRequest {
     Payment {
+        password: String,
         recipient: PublicKey,
         amount: i64,
         comment: String,
         locked_timestamp: Option<SystemTime>,
     },
     PublicPayment {
+        password: String,
         recipient: PublicKey,
         amount: i64,
         locked_timestamp: Option<SystemTime>,
     },
     SecurePayment {
+        password: String,
         recipient: PublicKey,
         amount: i64,
         comment: String,
@@ -95,18 +98,28 @@ pub enum WalletRequest {
         tx_hash: Hash,
     },
     Stake {
+        password: String,
         amount: i64,
     },
     Unstake {
+        password: String,
         amount: i64,
     },
-    UnstakeAll {},
-    RestakeAll {},
-    CloakAll {},
+    UnstakeAll {
+        password: String,
+    },
+    RestakeAll {
+        password: String,
+    },
+    CloakAll {
+        password: String,
+    },
     KeysInfo {},
     BalanceInfo {},
     UnspentInfo {},
-    GetRecovery {},
+    GetRecovery {
+        password: String,
+    },
 }
 
 ///

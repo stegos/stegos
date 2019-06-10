@@ -14,7 +14,6 @@ description = "Stegos - Transaction Pool Facilitator"
 [dependencies]
 stegos_blockchain = { version = "0.2.0", path = "../blockchain" }
 stegos_crypto = { version = "0.2.0", path = "../crypto" }
-stegos_keychain = { version = "0.2.0", path = "../keychain" }
 stegos_network = { version = "0.4.0", path = "../network" }
 stegos_node = { version = "0.2.0", path = "../node" }
 stegos_serialization = { version = "0.2.0", path = "../serialization" }

@@ -37,6 +37,7 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 use stegos_crypto::curve1174::PublicKey;
 use stegos_crypto::pbc;
+use stegos_keychain::input;
 use stegos_network::Network;
 use stegos_network::UnicastMessage;
 use stegos_node::{Node, NodeRequest, NodeResponse};
@@ -244,29 +245,27 @@ impl ConsoleService {
     }
 
     /// Called when line is typed on standard input.
-    fn on_input(&mut self, msg: &str) -> bool {
+    fn on_input(&mut self, msg: &str) -> Result<bool, Error> {
         if msg.starts_with("net publish ") {
             let caps = match PUBLISH_COMMAND_RE.captures(&msg[12..]) {
                 Some(c) => c,
                 None => {
                     Self::help_publish();
-                    return true;
+                    return Ok(true);
                 }
             };
 
             let topic = caps.name("topic").unwrap().as_str();
             let msg = caps.name("msg").unwrap().as_str();
             info!("Publish: topic='{}', msg='{}'", topic, msg);
-            self.network
-                .publish(&topic, msg.as_bytes().to_vec())
-                .unwrap();
-            return true;
+            self.network.publish(&topic, msg.as_bytes().to_vec())?;
+            return Ok(true);
         } else if msg.starts_with("net send ") {
             let caps = match SEND_COMMAND_RE.captures(&msg[9..]) {
                 Some(c) => c,
                 None => {
                     Self::help_publish();
-                    return true;
+                    return Ok(true);
                 }
             };
 
@@ -276,21 +275,20 @@ impl ConsoleService {
                 Err(e) => {
                     println!("Invalid network public key '{}': {}", recipient, e);
                     Self::help_send();
-                    return true;
+                    return Ok(true);
                 }
             };
             let msg = caps.name("msg").unwrap().as_str();
             info!("Send: to='{}', msg='{}'", recipient.to_hex(), msg);
             self.network
-                .send(recipient, "console", msg.as_bytes().to_vec())
-                .unwrap();
-            return true;
+                .send(recipient, "console", msg.as_bytes().to_vec())?;
+            return Ok(true);
         } else if msg.starts_with("pay ") {
             let caps = match PAY_COMMAND_RE.captures(&msg[4..]) {
                 Some(c) => c,
                 None => {
                     Self::help_pay();
-                    return true;
+                    return Ok(true);
                 }
             };
 
@@ -300,7 +298,7 @@ impl ConsoleService {
                 Err(e) => {
                     println!("Invalid wallet public key '{}': {}", recipient, e);
                     Self::help_pay();
-                    return true;
+                    return Ok(true);
                 }
             };
             let amount = caps.name("amount").unwrap().as_str();
@@ -309,7 +307,7 @@ impl ConsoleService {
                 Err(e) => {
                     println!("{}", e);
                     Self::help_pay();
-                    return true;
+                    return Ok(true);
                 }
             };
 
@@ -321,7 +319,7 @@ impl ConsoleService {
                         Some(c) => c,
                         None => {
                             Self::help_pay();
-                            return true;
+                            return Ok(true);
                         }
                     };
 
@@ -338,7 +336,7 @@ impl ConsoleService {
                         None => None,
                         Some(None) => {
                             Self::help_pay();
-                            return true;
+                            return Ok(true);
                         }
                     };
                     (public, comment, locked_timestamp)
@@ -355,7 +353,9 @@ impl ConsoleService {
                     format_money(amount),
                     recipient.to_hex()
                 );
+                let password = input::read_password_from_stdin(false)?;
                 WalletRequest::PublicPayment {
+                    password,
                     recipient,
                     amount,
                     locked_timestamp,
@@ -366,7 +366,9 @@ impl ConsoleService {
                     format_money(amount),
                     recipient.to_hex()
                 );
+                let password = input::read_password_from_stdin(false)?;
                 WalletRequest::Payment {
+                    password,
                     recipient,
                     amount,
                     comment,
@@ -379,7 +381,7 @@ impl ConsoleService {
                 Some(c) => c,
                 None => {
                     Self::help_spay();
-                    return true;
+                    return Ok(true);
                 }
             };
 
@@ -389,7 +391,7 @@ impl ConsoleService {
                 Err(e) => {
                     println!("Invalid wallet public key '{}': {}", recipient, e);
                     Self::help_spay();
-                    return true;
+                    return Ok(true);
                 }
             };
             let amount = caps.name("amount").unwrap().as_str();
@@ -398,7 +400,7 @@ impl ConsoleService {
                 Err(e) => {
                     println!("{}", e);
                     Self::help_spay();
-                    return true;
+                    return Ok(true);
                 }
             };
             let (comment, locked_timestamp) = match caps.name("arguments") {
@@ -409,7 +411,7 @@ impl ConsoleService {
                         Some(c) => c,
                         None => {
                             Self::help_spay();
-                            return true;
+                            return Ok(true);
                         }
                     };
                     let comment = caps
@@ -424,7 +426,7 @@ impl ConsoleService {
                         None => None,
                         Some(None) => {
                             Self::help_spay();
-                            return true;
+                            return Ok(true);
                         }
                     };
                     (comment, locked_timestamp)
@@ -435,7 +437,9 @@ impl ConsoleService {
                 format_money(amount),
                 recipient.to_hex()
             );
+            let password = input::read_password_from_stdin(false)?;
             let request = WalletRequest::SecurePayment {
+                password,
                 recipient,
                 amount,
                 comment,
@@ -447,7 +451,7 @@ impl ConsoleService {
                 Some(c) => c,
                 None => {
                     Self::help_msg();
-                    return true;
+                    return Ok(true);
                 }
             };
 
@@ -457,7 +461,7 @@ impl ConsoleService {
                 Err(e) => {
                     println!("Invalid wallet public key '{}': {}", recipient, e);
                     Self::help_msg();
-                    return true;
+                    return Ok(true);
                 }
             };
             let amount: i64 = 0;
@@ -465,7 +469,9 @@ impl ConsoleService {
             assert!(comment.len() > 0);
 
             info!("Sending message to {}", recipient.to_hex());
+            let password = input::read_password_from_stdin(false)?;
             let request = WalletRequest::Payment {
+                password,
                 recipient,
                 amount,
                 comment,
@@ -477,7 +483,7 @@ impl ConsoleService {
                 Some(c) => c,
                 None => {
                     Self::help_stake();
-                    return true;
+                    return Ok(true);
                 }
             };
 
@@ -487,23 +493,25 @@ impl ConsoleService {
                 Err(e) => {
                     println!("{}", e);
                     Self::help_stake();
-                    return true;
+                    return Ok(true);
                 }
             };
 
             info!("Staking {} STG into escrow", format_money(amount));
-            let request = WalletRequest::Stake { amount };
+            let password = input::read_password_from_stdin(false)?;
+            let request = WalletRequest::Stake { password, amount };
             self.wallet_response = Some(self.wallet.request(request));
         } else if msg == "unstake" {
             info!("Unstaking all of the money from escrow");
-            let request = WalletRequest::UnstakeAll {};
+            let password = input::read_password_from_stdin(false)?;
+            let request = WalletRequest::UnstakeAll { password };
             self.wallet_response = Some(self.wallet.request(request));
         } else if msg.starts_with("unstake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[8..]) {
                 Some(c) => c,
                 None => {
                     Self::help_unstake();
-                    return true;
+                    return Ok(true);
                 }
             };
 
@@ -513,18 +521,23 @@ impl ConsoleService {
                 Err(e) => {
                     println!("{}", e);
                     Self::help_unstake();
-                    return true;
+                    return Ok(true);
                 }
             };
 
             info!("Unstaking {} STG from escrow", format_money(amount));
-            let request = WalletRequest::Unstake { amount };
+            let password = input::read_password_from_stdin(false)?;
+            let request = WalletRequest::Unstake { password, amount };
             self.wallet_response = Some(self.wallet.request(request));
         } else if msg == "restake" {
-            let request = WalletRequest::RestakeAll {};
+            info!("Restaking all stakes");
+            let password = input::read_password_from_stdin(false)?;
+            let request = WalletRequest::RestakeAll { password };
             self.wallet_response = Some(self.wallet.request(request));
         } else if msg == "cloak" {
-            let request = WalletRequest::CloakAll {};
+            info!("Cloaking all public inputs");
+            let password = input::read_password_from_stdin(false)?;
+            let request = WalletRequest::CloakAll { password };
             self.wallet_response = Some(self.wallet.request(request));
         } else if msg == "show version" {
             println!(
@@ -535,7 +548,7 @@ impl ConsoleService {
                 env!("VERSION_COMMIT"),
                 env!("VERSION_DATE")
             );
-            return true;
+            return Ok(true);
         } else if msg == "show keys" {
             let request = WalletRequest::KeysInfo {};
             self.wallet_response = Some(self.wallet.request(request));
@@ -552,16 +565,17 @@ impl ConsoleService {
             let request = WalletRequest::UnspentInfo {};
             self.wallet_response = Some(self.wallet.request(request));
         } else if msg == "show recovery" {
-            let request = WalletRequest::GetRecovery {};
+            let password = input::read_password_from_stdin(false)?;
+            let request = WalletRequest::GetRecovery { password };
             self.wallet_response = Some(self.wallet.request(request));
         } else if msg == "db pop block" {
             self.node.pop_block();
-            return true;
+            return Ok(true);
         } else {
             Self::help();
-            return true;
+            return Ok(true);
         }
-        return false; // keep stdin parked until result is received.
+        return Ok(false); // keep stdin parked until result is received.
     }
 
     fn on_exit(&self) {
@@ -616,11 +630,15 @@ impl Future for ConsoleService {
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
             match self.stdin.poll() {
-                Ok(Async::Ready(Some(line))) => {
-                    if self.on_input(&line) {
+                Ok(Async::Ready(Some(line))) => match self.on_input(&line) {
+                    Ok(true) => {
                         self.stdin_th.thread().unpark();
                     }
-                }
+                    Ok(false) => {}
+                    Err(e) => {
+                        error!("{}", e);
+                    }
+                },
                 Ok(Async::Ready(None)) => self.on_exit(),
                 Ok(Async::NotReady) => break, // fall through
                 Err(()) => panic!(),

@@ -37,7 +37,6 @@ use std::{
     time::{Duration, Instant},
 };
 use stegos_crypto::pbc;
-use stegos_keychain::KeyChain;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::timer::Delay;
 
@@ -81,7 +80,7 @@ pub struct Ncp<TSubstream> {
 
 impl<TSubstream> Ncp<TSubstream> {
     /// Creates a NetworkBehaviour for NCP.
-    pub fn new(config: &NetworkConfig, keychain: &KeyChain) -> Self {
+    pub fn new(config: &NetworkConfig, network_pkey: pbc::PublicKey) -> Self {
         let seed_nodes: Vec<Multiaddr> = config
             .seed_nodes
             .iter()
@@ -91,7 +90,7 @@ impl<TSubstream> Ncp<TSubstream> {
             })
             .collect();
         Ncp {
-            node_id: keychain.network_pkey.clone(),
+            node_id: network_pkey,
             events: VecDeque::new(),
             out_events: VecDeque::new(),
             connected_peers: ExpiringQueue::new(IDLE_TIMEOUT),

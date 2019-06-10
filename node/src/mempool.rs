@@ -28,10 +28,9 @@ use std::collections::HashSet;
 use std::time::SystemTime;
 use stegos_blockchain::view_changes::ViewChangeProof;
 use stegos_blockchain::*;
-use stegos_crypto::curve1174::Fr;
+use stegos_crypto::curve1174::{self, Fr};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
-use stegos_keychain::KeyChain;
 
 /// Memory Pool of Transactions.
 pub struct Mempool {
@@ -163,12 +162,14 @@ impl Mempool {
         view_change_proof: Option<ViewChangeProof>,
         last_random: Hash,
         block_reward: i64,
-        keychain: &KeyChain,
+        recipient_pkey: &curve1174::PublicKey,
+        network_skey: &pbc::SecretKey,
+        network_pkey: &pbc::PublicKey,
         max_utxo_in_block: usize,
     ) -> MicroBlock {
         let timestamp = SystemTime::now();
         let seed = mix(last_random, view_change);
-        let random = pbc::make_VRF(&keychain.network_skey, &seed);
+        let random = pbc::make_VRF(network_skey, &seed);
 
         //
         // Mempool Transactions.
@@ -226,7 +227,7 @@ impl Mempool {
 
                 let data = PaymentPayloadData::Comment(format!("Block {}", comment));
                 let (output_fee, gamma_fee) =
-                    PaymentOutput::with_payload(&keychain.wallet_pkey, amount, data.clone(), None)
+                    PaymentOutput::with_payload(recipient_pkey, amount, data.clone(), None)
                         .expect("invalid keys");
                 gamma -= gamma_fee;
 
@@ -260,7 +261,7 @@ impl Mempool {
             offset,
             view_change,
             view_change_proof,
-            keychain.network_pkey,
+            network_pkey.clone(),
             random,
             timestamp,
             transactions,
@@ -271,11 +272,10 @@ impl Mempool {
 #[cfg(test)]
 mod test {
     use super::*;
-    use stegos_crypto::curve1174::make_random_keys;
 
     #[test]
     fn basic() {
-        let (skey, pkey) = make_random_keys();
+        let (skey, pkey) = curve1174::make_random_keys();
         let mut mempool = Mempool::new();
 
         let (tx1, inputs1, outputs1) =
@@ -342,7 +342,7 @@ mod test {
 
     #[test]
     pub fn partial_pruning1() {
-        let (skey, pkey) = make_random_keys();
+        let (skey, pkey) = curve1174::make_random_keys();
         let mut mempool = Mempool::new();
 
         let (tx, inputs, outputs) = PaymentTransaction::new_test(&skey, &pkey, 100, 2, 100, 2, 0)
@@ -363,7 +363,7 @@ mod test {
 
     #[test]
     pub fn partial_pruning2() {
-        let (skey, pkey) = make_random_keys();
+        let (skey, pkey) = curve1174::make_random_keys();
         let mut mempool = Mempool::new();
 
         let (tx, inputs, outputs) = PaymentTransaction::new_test(&skey, &pkey, 100, 2, 100, 2, 0)
@@ -384,18 +384,20 @@ mod test {
 
     #[test]
     fn create_block() {
-        let keys = KeyChain::new_mem();
+        let (recipient_skey, recipient_pkey) = curve1174::make_random_keys();
+        let (network_skey, network_pkey) = pbc::make_random_keys();
+
         let max_utxo_in_block: usize = 9;
         let mut mempool = Mempool::new();
 
         let (tx1, _inputs1, _outputs1) =
-            PaymentTransaction::new_test(&keys.wallet_skey, &keys.wallet_pkey, 3, 2, 2, 1, 4)
+            PaymentTransaction::new_test(&recipient_skey, &recipient_pkey, 3, 2, 2, 1, 4)
                 .expect("transaction valid");
         let (tx2, _inputs2, _outputs2) =
-            PaymentTransaction::new_test(&keys.wallet_skey, &keys.wallet_pkey, 6, 1, 2, 2, 2)
+            PaymentTransaction::new_test(&recipient_skey, &recipient_pkey, 6, 1, 2, 2, 2)
                 .expect("transaction valid");
         let (tx3, _inputs3, _outputs3) =
-            PaymentTransaction::new_test(&keys.wallet_skey, &keys.wallet_pkey, 6, 1, 2, 2, 2)
+            PaymentTransaction::new_test(&recipient_skey, &recipient_pkey, 6, 1, 2, 2, 2)
                 .expect("transaction valid");
 
         let tx_hash1 = Hash::digest(&tx1);
@@ -418,7 +420,9 @@ mod test {
             None,
             Hash::digest("test"),
             reward,
-            &keys,
+            &recipient_pkey,
+            &network_skey,
+            &network_pkey,
             max_utxo_in_block,
         );
 
@@ -426,9 +430,8 @@ mod test {
         if let Transaction::CoinbaseTransaction(tx) = &block.transactions[0] {
             // Reward + Fee.
             if let Some(Output::PaymentOutput(o)) = tx.txouts.get(0) {
-                let PaymentPayload { amount, .. } = o
-                    .decrypt_payload(&keys.wallet_skey)
-                    .expect("keys are valid");
+                let PaymentPayload { amount, .. } =
+                    o.decrypt_payload(&recipient_skey).expect("keys are valid");
                 assert_eq!(amount, reward + 6);
             } else {
                 unreachable!();

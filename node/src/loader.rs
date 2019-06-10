@@ -98,7 +98,7 @@ impl NodeService {
             .validators()
             .into_iter()
             .map(|(k, _)| k)
-            .filter(|key| self.keys.network_pkey != **key);
+            .filter(|key| self.network_pkey != **key);
         let from = match validators.choose(&mut rng) {
             Some(pkey) => pkey.clone(),
             None => return Ok(()), // for tests.

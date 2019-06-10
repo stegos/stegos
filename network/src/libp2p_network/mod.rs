@@ -41,7 +41,6 @@ use std::time::Duration;
 use stegos_crypto::hash::{Hashable, Hasher};
 use stegos_crypto::pbc;
 use stegos_crypto::utils::u8v_to_hexstr;
-use stegos_keychain::KeyChain;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::config::NetworkConfig;
@@ -72,9 +71,10 @@ const IBE_ID: &'static [u8] = &[105u8, 13, 185, 148, 68, 76, 69, 155];
 impl Libp2pNetwork {
     pub fn new(
         config: &NetworkConfig,
-        keychain: &KeyChain,
+        network_skey: pbc::SecretKey,
+        network_pkey: pbc::PublicKey,
     ) -> Result<(Network, impl Future<Item = (), Error = ()>), Error> {
-        let (service, control_tx) = new_service(config, keychain)?;
+        let (service, control_tx) = new_service(config, network_skey, network_pkey)?;
         let network = Libp2pNetwork { control_tx };
         Ok((Box::new(network), service))
     }
@@ -147,7 +147,8 @@ impl NetworkProvider for Libp2pNetwork {
 
 fn new_service(
     config: &NetworkConfig,
-    keychain: &KeyChain,
+    network_skey: pbc::SecretKey,
+    network_pkey: pbc::PublicKey,
 ) -> Result<
     (
         impl Future<Item = (), Error = ()>,
@@ -155,14 +156,8 @@ fn new_service(
     ),
     Error,
 > {
-    let (secp256k1_key, _) = keychain
-        .generate_secp256k1_keypair()
-        .expect("Couldn't generate secp256k1 keypair for network communications");
-    let local_key = identity::Keypair::Secp256k1(secp256k1::Keypair::from(
-        secp256k1::SecretKey::from_bytes(secp256k1_key[..].to_vec())
-            .expect("converting from raw key should never fail"),
-    ));
-
+    let keypair = secp256k1::Keypair::generate();
+    let local_key = identity::Keypair::Secp256k1(keypair);
     let local_pub_key = local_key.public();
     let peer_id = local_pub_key.clone().into_peer_id();
 
@@ -171,8 +166,12 @@ fn new_service(
 
     // Create a Swarm to manage peers and events
     let mut swarm = {
-        let behaviour =
-            Libp2pBehaviour::new(config, keychain, local_pub_key.clone().into_peer_id());
+        let behaviour = Libp2pBehaviour::new(
+            config,
+            network_skey,
+            network_pkey,
+            local_pub_key.clone().into_peer_id(),
+        );
 
         libp2p::Swarm::new(transport, behaviour, peer_id)
     };
@@ -244,23 +243,28 @@ impl<TSubstream> Libp2pBehaviour<TSubstream>
 where
     TSubstream: AsyncRead + AsyncWrite,
 {
-    pub fn new(config: &NetworkConfig, keychain: &KeyChain, peer_id: PeerId) -> Self {
+    pub fn new(
+        config: &NetworkConfig,
+        network_skey: pbc::SecretKey,
+        network_pkey: pbc::PublicKey,
+        peer_id: PeerId,
+    ) -> Self {
         let mut behaviour = Libp2pBehaviour {
             floodsub: Floodsub::new(peer_id.clone()),
-            ncp: Ncp::new(config, keychain),
+            ncp: Ncp::new(config, network_pkey.clone()),
             gatekeeper: Gatekeeper::new(config),
             delivery: Delivery::new(),
-            discovery: Discovery::new(keychain.network_pkey.clone()),
+            discovery: Discovery::new(network_pkey.clone()),
             consumers: HashMap::new(),
             unicast_consumers: HashMap::new(),
-            my_pkey: keychain.network_pkey.clone(),
-            my_skey: keychain.network_skey.clone(),
+            my_pkey: network_pkey.clone(),
+            my_skey: network_skey.clone(),
             topics_map: HashMap::new(),
             connected_peers: HashSet::new(),
         };
         let unicast_topic = TopicBuilder::new(UNICAST_TOPIC).build();
         behaviour.floodsub.subscribe(unicast_topic);
-        info!(target: "stegos_network::delivery", "Network endpoints: node_id={}, peer_id={}", keychain.network_pkey, peer_id);
+        info!(target: "stegos_network::delivery", "Network endpoints: node_id={}, peer_id={}", network_pkey, peer_id);
         behaviour
     }
 

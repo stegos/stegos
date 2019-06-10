@@ -57,7 +57,7 @@ fn request_on_timeout() {
 
         let leader = p.parts.0.first_mut();
 
-        assert_eq!(leader_pk, leader.node_service.keys.network_pkey);
+        assert_eq!(leader_pk, leader.node_service.network_pkey);
         leader
             .network_service
             .filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);

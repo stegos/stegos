@@ -41,6 +41,10 @@ fn fix_newline(password: &mut String) {
     }
 }
 
+pub fn is_input_interactive(file: &str) -> bool {
+    file == "" || file == "-"
+}
+
 fn read_recovery_from_stdin() -> Result<curve1174::SecretKey, KeyError> {
     loop {
         let recovery = prompt_password_stdout(RECOVERY_PROMPT)
@@ -64,15 +68,15 @@ fn read_recovery_from_file(recovery_file: &str) -> Result<curve1174::SecretKey, 
     Ok(recovery_to_wallet_skey(&recovery)?)
 }
 
-pub(crate) fn read_recovery(recovery_file: &str) -> Result<curve1174::SecretKey, KeyError> {
-    if recovery_file == "-" && atty::is(atty::Stream::Stdin) {
+pub fn read_recovery(recovery_file: &str) -> Result<curve1174::SecretKey, KeyError> {
+    if is_input_interactive(recovery_file) {
         read_recovery_from_stdin()
     } else {
         read_recovery_from_file(recovery_file)
     }
 }
 
-pub(crate) fn read_password_from_stdin(confirm: bool) -> Result<String, KeyError> {
+pub fn read_password_from_stdin(confirm: bool) -> Result<String, KeyError> {
     loop {
         let password = prompt_password_stdout(PASSWORD_PROMPT1)
             .map_err(|e| KeyError::InputOutputError("stdin".to_string(), e))?;
@@ -94,7 +98,7 @@ pub(crate) fn read_password_from_stdin(confirm: bool) -> Result<String, KeyError
     }
 }
 
-fn read_password_from_file(password_file: &str) -> Result<String, KeyError> {
+pub fn read_password_from_file(password_file: &str) -> Result<String, KeyError> {
     info!("Reading password from file {}...", password_file);
     let password_file_path = Path::new(password_file);
     let mut password = fs::read_to_string(password_file_path)
@@ -103,8 +107,8 @@ fn read_password_from_file(password_file: &str) -> Result<String, KeyError> {
     Ok(password)
 }
 
-pub(crate) fn read_password(password_file: &str, confirm: bool) -> Result<String, KeyError> {
-    if password_file == "-" && atty::is(atty::Stream::Stdin) {
+pub fn read_password(password_file: &str, confirm: bool) -> Result<String, KeyError> {
+    if is_input_interactive(password_file) {
         read_password_from_stdin(confirm)
     } else {
         read_password_from_file(password_file)

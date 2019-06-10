@@ -14,7 +14,6 @@ description = "Stegos - Blockchain Library"
 
 [dependencies]
 stegos_crypto = { version = "0.2.0", path = "../crypto" }
-stegos_keychain = { version = "0.2.0", path = "../keychain" }
 stegos_serialization = { version = "0.2.0", path = "../serialization" }
 bitvector = "0.1"
 byteorder = "1.3"

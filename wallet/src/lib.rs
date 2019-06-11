@@ -236,7 +236,7 @@ impl WalletService {
         stake_epochs: u64,
         persistent_state: Vec<(Output, u64)>,
     ) -> (Self, Wallet) {
-        info!("My wallet key: {}", wallet_pkey.to_hex());
+        info!("My wallet key: {}", String::from(&wallet_pkey));
         debug!("My network key: {}", network_pkey.to_hex());
         //
         // State.
@@ -315,7 +315,7 @@ impl WalletService {
         }
 
         metrics::WALLET_BALANCES
-            .with_label_values(&[&service.wallet_pkey.to_hex()])
+            .with_label_values(&[&String::from(&service.wallet_pkey)])
             .set(service.balance());
 
         let api = Wallet { outbox };
@@ -363,7 +363,7 @@ impl WalletService {
         let tx: Transaction = tx.into();
         self.node.send_transaction(tx.clone())?;
         metrics::WALLET_CREATEAD_PAYMENTS
-            .with_label_values(&[&self.wallet_pkey.to_hex()])
+            .with_label_values(&[&String::from(&self.wallet_pkey)])
             .inc();
         //firstly check that no conflict input was found;
         self.add_transaction_interest(tx.into());
@@ -402,7 +402,7 @@ impl WalletService {
         let tx: Transaction = tx.into();
         self.node.send_transaction(tx.clone())?;
         metrics::WALLET_CREATEAD_PAYMENTS
-            .with_label_values(&[&self.wallet_pkey.to_hex()])
+            .with_label_values(&[&String::from(&self.wallet_pkey)])
             .inc();
         //firstly check that no conflict input was found;
         self.add_transaction_interest(tx.into());
@@ -462,7 +462,7 @@ impl WalletService {
         let saved_tx = SavedTransaction::ValueShuffle(inputs.iter().map(|(h, _)| *h).collect());
         let hash = Hash::digest(&saved_tx);
         metrics::WALLET_CREATEAD_SECURE_PAYMENTS
-            .with_label_values(&[&self.wallet_pkey.to_hex()])
+            .with_label_values(&[&String::from(&self.wallet_pkey)])
             .inc();
         self.add_transaction_interest(saved_tx);
         Ok(hash)
@@ -637,7 +637,7 @@ impl WalletService {
         if saved_balance != balance {
             debug!("Balance changed");
             metrics::WALLET_BALANCES
-                .with_label_values(&[&self.wallet_pkey.to_hex()])
+                .with_label_values(&[&String::from(&self.wallet_pkey)])
                 .set(balance);
             self.notify(WalletNotification::BalanceChanged { balance });
         }
@@ -743,12 +743,12 @@ impl WalletService {
                 match tx {
                     SavedTransaction::Regular(_) => {
                         metrics::WALLET_COMMITTED_PAYMENTS
-                            .with_label_values(&[&self.wallet_pkey.to_hex()])
+                            .with_label_values(&[&String::from(&self.wallet_pkey)])
                             .inc();
                     }
                     SavedTransaction::ValueShuffle(_) => {
                         metrics::WALLET_COMMITTED_SECURE_PAYMENTS
-                            .with_label_values(&[&self.wallet_pkey.to_hex()])
+                            .with_label_values(&[&String::from(&self.wallet_pkey)])
                             .inc();
                     }
                 };

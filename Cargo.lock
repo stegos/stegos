@@ -161,6 +161,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "base58"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "base58check"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "base58 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rust-crypto 0.2.36 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "base64"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2575,6 +2589,7 @@ dependencies = [
 name = "stegos_crypto"
 version = "0.2.0"
 dependencies = [
+ "base58check 0.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "bitvector 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "cc 1.0.26 (registry+https://github.com/rust-lang/crates.io-index)",
  "clear_on_drop 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2590,6 +2605,7 @@ dependencies = [
  "rust-gmp 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rust-libpbc 0.1.0 (git+https://github.com/stegos/rust-pbcintf.git)",
  "serde 1.0.91 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde_json 1.0.39 (registry+https://github.com/rust-lang/crates.io-index)",
  "sha3 0.8.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "stegos_serialization 0.2.0",
 ]
@@ -3562,6 +3578,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum autocfg 0.1.4 (registry+https://github.com/rust-lang/crates.io-index)" = "0e49efa51329a5fd37e7c79db4621af617cd4e3e5bc224939808d076077077bf"
 "checksum backtrace 0.3.26 (registry+https://github.com/rust-lang/crates.io-index)" = "1a13fc43f04daf08ab4f71e3d27e1fc27fc437d3e95ac0063a796d92fb40f39b"
 "checksum backtrace-sys 0.1.28 (registry+https://github.com/rust-lang/crates.io-index)" = "797c830ac25ccc92a7f8a7b9862bde440715531514594a6154e3d4a54dd769b6"
+"checksum base58 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "5024ee8015f02155eee35c711107ddd9a9bf3cb689cf2a9089c97e79b6e1ae83"
+"checksum base58check 0.0.1 (registry+https://github.com/rust-lang/crates.io-index)" = "821c80f71fdcd7e7a24fa9d16c8b23a9c8236ab4a0b03f67618fc3c76431998b"
 "checksum base64 0.10.1 (registry+https://github.com/rust-lang/crates.io-index)" = "0b25d992356d2eb0ed82172f5248873db5560c4721f564b13cb5193bda5e668e"
 "checksum base64 0.9.3 (registry+https://github.com/rust-lang/crates.io-index)" = "489d6c0ed21b11d038c31b6ceccca973e65d73ba3bd8ecb9a2babf5546164643"
 "checksum bigint 4.4.1 (registry+https://github.com/rust-lang/crates.io-index)" = "ebecac13b3c745150d7b6c3ea7572d372f09d627c2077e893bf26c5c7f70d282"

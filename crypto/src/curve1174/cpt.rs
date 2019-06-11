@@ -25,6 +25,7 @@
 use super::*;
 use crate::CryptoError;
 
+use base58check::{FromBase58Check, ToBase58Check};
 use clear_on_drop::clear::Clear;
 use crypto::aes;
 use crypto::aes::KeySize::KeySize128;
@@ -36,6 +37,8 @@ use serde::ser::{Serialize, Serializer};
 use std::cmp::Ordering;
 use std::hash as stdhash;
 
+use std::str::FromStr;
+use std::string::ToString;
 // ------------------------------------------------------------------------------------------
 // Client API - compressed points and simple fields
 
@@ -245,30 +248,18 @@ impl PublicKey {
     pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
         Ok(PublicKey(Pt::try_from_bytes(bytes)?))
     }
-
-    /// Convert into hex string.
-    #[inline]
-    pub fn to_hex(&self) -> String {
-        self.0.to_hex()
-    }
-
-    /// Try to convert from hex string.
-    #[inline]
-    pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
-        Ok(PublicKey(Pt::try_from_hex(s)?))
-    }
 }
 
 impl fmt::Display for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // display only first 6 bytes.
-        write!(f, "{}", &self.to_hex()[0..12])
+        write!(f, "{}", &(String::from(self))[0..12])
     }
 }
 
 impl fmt::Debug for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "PKey({})", self.to_hex())
+        write!(f, "PKey({})", String::from(self))
     }
 }
 
@@ -348,12 +339,30 @@ impl PartialOrd for PublicKey {
     }
 }
 
+impl<'a> From<&'a PublicKey> for String {
+    fn from(pkey: &'a PublicKey) -> String {
+        (pkey.0).0.to_base58check(crate::BASE58_VERSIONID)
+    }
+}
+
+impl FromStr for PublicKey {
+    type Err = CryptoError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (version, raw_bytes) = s.from_base58check()?;
+        if version != crate::BASE58_VERSIONID {
+            return Err(CryptoError::WrongBase58VerisonId(version));
+        }
+        Ok(PublicKey(Pt::try_from_bytes(&raw_bytes[..])?))
+    }
+}
+
 impl Serialize for PublicKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        serializer.serialize_str(&self.to_hex())
+        serializer.serialize_str(&String::from(self))
     }
 }
 
@@ -363,7 +372,7 @@ impl<'de> Deserialize<'de> for PublicKey {
         D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        PublicKey::try_from_hex(&s).map_err(serde::de::Error::custom)
+        PublicKey::from_str(&s).map_err(serde::de::Error::custom)
     }
 }
 
@@ -685,6 +694,7 @@ pub fn decrypt_key(seed: &str, encr_key: &EncryptedKey) -> Result<Vec<u8>, Crypt
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use serde_json;
 
     #[test]
     fn encr_keying() {
@@ -695,5 +705,21 @@ pub mod tests {
         let recovered_skey =
             decrypt_key(my_cloaking_seed, &encr_key).expect("Key couldn't be decrypted");
         assert!(recovered_skey == skey.to_bytes());
+    }
+
+    #[test]
+    fn check_base58check() {
+        let pkey = make_random_keys().1;
+        let encoded = String::from(&pkey);
+        let decoded = PublicKey::from_str(&encoded).unwrap();
+        assert_eq!(pkey, decoded);
+    }
+
+    #[test]
+    fn check_serde() {
+        let pkey = make_random_keys().1;
+        let serialized = serde_json::to_string(&pkey).unwrap();
+        let deserialized: PublicKey = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(pkey, deserialized);
     }
 }

@@ -30,8 +30,12 @@ pub mod pbc;
 pub mod protos;
 pub mod utils;
 
+use base58check::{FromBase58CheckError, FromBase58Error};
 use failure::Fail;
 use hex;
+
+// Version byte for Base58Check encoding (TBD)
+const BASE58_VERSIONID: u8 = 198u8;
 
 #[derive(Debug, Fail)]
 pub enum CryptoError {
@@ -76,6 +80,14 @@ pub enum CryptoError {
 
     #[fail(display = "Not an AONT ciphertext")]
     InvalidAontDecryption,
+    #[fail(display = "Invalid Base58Check checksum")]
+    InvalidBase58Checksum,
+    #[fail(display = "Invalid Base58 Character")]
+    InvalidBase58Character,
+    #[fail(display = "Invalid Base58 Length")]
+    InvalibBase58Length,
+    #[fail(display = "Invalid Base58Check Version byte: {}", _0)]
+    WrongBase58VerisonId(u8),
 }
 
 impl From<hex::FromHexError> for CryptoError {
@@ -84,6 +96,20 @@ impl From<hex::FromHexError> for CryptoError {
             hex::FromHexError::InvalidHexCharacter { .. } => CryptoError::InvalidHexCharacter,
             hex::FromHexError::InvalidStringLength => CryptoError::InvalidHexLength,
             hex::FromHexError::OddLength => CryptoError::OddHexLength,
+        }
+    }
+}
+
+impl From<FromBase58CheckError> for CryptoError {
+    fn from(error: FromBase58CheckError) -> Self {
+        match error {
+            FromBase58CheckError::InvalidChecksum => CryptoError::InvalidBase58Checksum,
+            FromBase58CheckError::InvalidBase58(base58error) => match base58error {
+                FromBase58Error::InvalidBase58Character(_, _) => {
+                    CryptoError::InvalidBase58Character
+                }
+                FromBase58Error::InvalidBase58Length => CryptoError::InvalibBase58Length,
+            },
         }
     }
 }

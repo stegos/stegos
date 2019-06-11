@@ -35,7 +35,7 @@ use stegos_crypto::pbc;
 pub fn create_macro_block_proposal(
     chain: &Blockchain,
     view_change: u32,
-    recipient_pkey: &curve1174::PublicKey,
+    wallet_pkey: &curve1174::PublicKey,
     network_skey: &pbc::SecretKey,
     network_pkey: &pbc::PublicKey,
 ) -> (MacroBlock, MacroBlockProposal) {
@@ -49,7 +49,7 @@ pub fn create_macro_block_proposal(
 
     let (block, transactions) = chain.create_macro_block(
         view_change,
-        recipient_pkey,
+        wallet_pkey,
         network_skey,
         network_pkey.clone(),
         timestamp,

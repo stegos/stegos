@@ -825,7 +825,7 @@ mod tests {
         let fee: i64 = 0;
 
         // "genesis" output by 0
-        let (output0, _delta0) = Output::new_payment(&pkey1, amount).expect("keys are valid");
+        let (output0, _gamma0) = Output::new_payment(&pkey1, amount).expect("keys are valid");
 
         // Transaction from 1 to 2
         let inputs1 = [output0];
@@ -849,6 +849,7 @@ mod tests {
     #[test]
     fn coinbase_transaction() {
         let (_skey, pkey) = curve1174::make_random_keys();
+
         let (output, gamma) = Output::new_payment(&pkey, 100).expect("Invalid keys");
         let coinbase = CoinbaseTransaction {
             block_reward: 15,

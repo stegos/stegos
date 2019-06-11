@@ -1138,7 +1138,7 @@ pub mod tests {
                 let payload = o.decrypt_payload(&skey1).expect(decr_err);
                 assert!(payload.gamma == gamma_i1);
                 let skeff: curve1174::SecretKey =
-                    (Fr::from(skey1) + payload.gamma * payload.delta).into();
+                    (Fr::from(skey1.clone()) + payload.gamma * payload.delta).into();
                 skeff
             }
             _ => panic!("Invalid UTXO"),
@@ -1149,7 +1149,7 @@ pub mod tests {
                 let payload = o.decrypt_payload(&skey2).expect(decr_err);
                 assert!(payload.gamma == gamma_i2);
                 let skeff: curve1174::SecretKey =
-                    (Fr::from(skey2) + payload.gamma * payload.delta).into();
+                    (Fr::from(skey2.clone()) + payload.gamma * payload.delta).into();
                 skeff
             }
             _ => panic!("Invalid UTXO"),
@@ -1160,7 +1160,7 @@ pub mod tests {
                 let payload = o.decrypt_payload(&skey3).expect(decr_err);
                 assert!(payload.gamma == gamma_i3);
                 let skeff: curve1174::SecretKey =
-                    (Fr::from(skey3) + payload.gamma * payload.delta).into();
+                    (Fr::from(skey3.clone()) + payload.gamma * payload.delta).into();
                 skeff
             }
             _ => panic!("Invalid UTXO"),

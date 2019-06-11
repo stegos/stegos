@@ -346,6 +346,7 @@ impl WalletService {
             .values()
             .map(|v| (&v.output, v.amount, v.output.locked_timestamp.clone()));
         let (inputs, outputs, gamma, fee) = create_payment_transaction(
+            Some(&self.wallet_skey),
             &self.wallet_pkey,
             recipient,
             unspent_iter,
@@ -385,6 +386,7 @@ impl WalletService {
             .values()
             .map(|v| (&v.output, v.amount, v.output.locked_timestamp.clone()));
         let (inputs, outputs, gamma, fee) = create_payment_transaction(
+            Some(&self.wallet_skey),
             &self.wallet_pkey,
             recipient,
             unspent_iter,

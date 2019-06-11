@@ -282,7 +282,11 @@ impl Blockchain {
     // Recovery.
     //----------------------------------------------------------------------------------------------
 
-    fn recover(&mut self, genesis: MacroBlock, timestamp: SystemTime) -> Result<(), Error> {
+    fn recover(
+        &mut self,
+        genesis: MacroBlock,
+        timestamp: SystemTime,
+    ) -> Result<(), BlockchainError> {
         let mut blocks = self.database.iter();
 
         let genesis_hash = Hash::digest(&genesis);
@@ -781,9 +785,14 @@ impl Blockchain {
         {
             let block_reward = self.cfg.block_reward;
             let data = PaymentPayloadData::Comment("Block reward".to_string());
-            let (output, gamma) =
-                PaymentOutput::with_payload(&beneficiary_pkey, block_reward, data.clone(), None)
-                    .expect("invalid keys");
+            let (output, gamma, _rvalue) = PaymentOutput::with_payload(
+                None,
+                &beneficiary_pkey,
+                block_reward,
+                data.clone(),
+                None,
+            )
+            .expect("invalid keys");
 
             info!(
                 "Created reward UTXO: hash={}, amount={}, data={:?}",

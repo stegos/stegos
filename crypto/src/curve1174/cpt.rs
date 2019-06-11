@@ -399,7 +399,7 @@ pub fn make_random_keys() -> (SecretKey, PublicKey) {
 // generate K = k*G for k = random Fr
 // generate u = k + Fr(H(K, P, msg)) * s
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchnorrSig {
     pub u: Fr,
     pub K: Pt,
@@ -585,13 +585,16 @@ fn aes_encrypt_with_key(msg: &[u8], key: &[u8; 32]) -> Vec<u8> {
     ctxt
 }
 
-pub fn aes_encrypt(msg: &[u8], pkey: &PublicKey) -> Result<EncryptedPayload, CryptoError> {
+pub fn aes_encrypt(msg: &[u8], pkey: &PublicKey) -> Result<(EncryptedPayload, Fr), CryptoError> {
     if *pkey == PublicKey::zero() {
         // construct an unencrypted payload that anyone can read.
-        Ok(EncryptedPayload {
-            ag: Pt::zero(),
-            ctxt: msg.to_vec(),
-        })
+        Ok((
+            EncryptedPayload {
+                ag: Pt::zero(),
+                ctxt: msg.to_vec(),
+            },
+            Fr::zero(),
+        ))
     } else {
         // normal encrytion with keying hint
         let h = Hash::from_vector(msg);
@@ -603,10 +606,13 @@ pub fn aes_encrypt(msg: &[u8], pkey: &PublicKey) -> Result<EncryptedPayload, Cry
         let mut key = Hash::digest(&ap).bits();
         let ctxt = aes_encrypt_with_key(msg, &key);
         zap_bytes(&mut key);
-        Ok(EncryptedPayload {
-            ag: Pt::from(ag),
-            ctxt,
-        })
+        Ok((
+            EncryptedPayload {
+                ag: Pt::from(ag),
+                ctxt,
+            },
+            alpha,
+        ))
     }
 }
 
@@ -619,6 +625,24 @@ pub fn aes_decrypt(payload: &EncryptedPayload, skey: &SecretKey) -> Result<Vec<u
         let zr = Fr::from(skey);
         let ag = payload.ag.decompress()?; // could give CryptoError if corrupted payload
         let asg = zr * ag; // compute the actual key seed = s*alpha*G
+        let mut key = Hash::digest(&asg).bits();
+        let ans = aes_encrypt_with_key(&payload.ctxt, &key);
+        zap_bytes(&mut key);
+        Ok(ans)
+    }
+}
+
+pub fn aes_decrypt_with_rvalue(
+    payload: &EncryptedPayload,
+    rvalue: &Fr,
+    pkey: &PublicKey,
+) -> Result<Vec<u8>, CryptoError> {
+    if payload.ag == Pt::zero() {
+        // universal unencrypted payload
+        Ok(payload.ctxt.clone())
+    } else {
+        // normal encryption, key = r * P
+        let asg = rvalue * Pt::from(pkey).decompress()?;
         let mut key = Hash::digest(&asg).bits();
         let ans = aes_encrypt_with_key(&payload.ctxt, &key);
         zap_bytes(&mut key);
@@ -659,7 +683,7 @@ pub fn encrypt_key(seed: &str, key_to_encrypt: &[u8]) -> EncryptedKey {
     // Returns an AES encrypted key, along with a SchnorrSig on
     // the encrytped key.
     let (skey, pkey) = make_securing_keys(seed);
-    let payload = aes_encrypt(key_to_encrypt, &pkey).expect("Valid Pubkey");
+    let (payload, _r_value) = aes_encrypt(key_to_encrypt, &pkey).expect("Valid Pubkey");
     let mut state = Hasher::new();
     payload.hash(&mut state);
     let h = state.result();

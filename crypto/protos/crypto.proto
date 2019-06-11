@@ -78,6 +78,11 @@ message BulletProof {
     DotProof dot_proof = 9;
 }
 
+message DiceMixParticipantID {
+    stegos.crypto.SecurePublicKey pkey = 1;
+    bytes seed = 2;
+}
+
 message VRF {
     stegos.crypto.Hash rand = 1;
     stegos.crypto.G1 proof = 2;

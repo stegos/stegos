@@ -7,17 +7,30 @@ import "blockchain.proto";
 message PoolJoin {
     repeated stegos.crypto.Hash txins = 1;
     repeated stegos.blockchain.PaymentOutput utxos = 2;
-    stegos.crypto.SchnorrSig ownsig = 3;
+    bytes seed = 3;
+    stegos.crypto.SchnorrSig ownsig = 4;
 }
 
 message ParticipantTXINMap {
-    stegos.crypto.SecurePublicKey participant = 1;
+    stegos.crypto.DiceMixParticipantID participant = 1;
     repeated stegos.crypto.Hash txins = 2;
     repeated stegos.blockchain.PaymentOutput utxos = 3;
     stegos.crypto.SchnorrSig ownsig = 4;
 }
 
+
 message PoolInfo {
     repeated ParticipantTXINMap participants = 1;
     stegos.crypto.Hash session_id = 2;
 }
+
+message PoolCanceled {
+}
+
+message PoolNotification {
+    oneof body {
+        PoolInfo started = 1;
+        PoolCanceled canceled = 2;
+    }
+}
+

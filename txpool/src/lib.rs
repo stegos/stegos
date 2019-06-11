@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use stegos_blockchain::PaymentOutput;
 use stegos_crypto::curve1174;
+use stegos_crypto::dicemix;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_network::Network;
@@ -20,11 +21,13 @@ use stegos_serialization::traits::*;
 use tokio_timer::Interval;
 
 const MESSAGE_TIMEOUT: Duration = Duration::from_secs(30);
+const MIN_PARTICIPANTS: usize = 3;
+//const MAX_PARTICIPANTS: usize = 10;
 
 type TXIN = Hash;
 type UTXO = PaymentOutput;
 type SchnorrSig = curve1174::SchnorrSig;
-type ParticipantID = pbc::PublicKey;
+type ParticipantID = dicemix::ParticipantID;
 
 struct FacilitatorState {
     participants: HashMap<ParticipantID, (Vec<TXIN>, Vec<UTXO>, SchnorrSig)>,
@@ -42,11 +45,11 @@ impl FacilitatorState {
         }
     }
 
-    fn add_participant(&mut self, pkey: ParticipantID, data: PoolJoin) -> bool {
-        match self
-            .participants
-            .insert(pkey, (data.txins, data.utxos, data.ownsig))
-        {
+    fn add_participant(&mut self, pkey: pbc::PublicKey, data: PoolJoin) -> bool {
+        match self.participants.insert(
+            ParticipantID::new(pkey, data.seed),
+            (data.txins, data.utxos, data.ownsig),
+        ) {
             None => true,
             _ => false,
         }
@@ -71,7 +74,7 @@ pub(crate) enum PoolEvent {
     //
     // Public API.
     //
-    Join(ParticipantID, Vec<u8>),
+    Join(pbc::PublicKey, Vec<u8>),
 
     //
     // Internal events.
@@ -80,8 +83,8 @@ pub(crate) enum PoolEvent {
 }
 
 pub struct TransactionPoolService {
-    facilitator_pkey: ParticipantID,
-    pkey: ParticipantID,
+    facilitator_pkey: pbc::PublicKey,
+    pkey: pbc::PublicKey,
     network: Network,
     role: NodeRole,
 
@@ -95,8 +98,7 @@ impl TransactionPoolService {
         network: Network,
         node: Node,
     ) -> TransactionPoolService {
-        let facilitator_pkey: ParticipantID = ParticipantID::dum();
-
+        let facilitator_pkey: pbc::PublicKey = pbc::PublicKey::dum();
         let events = || -> Result<_, Error> {
             let mut streams = Vec::<Box<Stream<Item = PoolEvent, Error = ()> + Send>>::new();
 
@@ -131,22 +133,54 @@ impl TransactionPoolService {
             info!("I am facilitator.");
             NodeRole::Facilitator(FacilitatorState::new())
         } else {
+            // we was facilitator, send notify to everybody, that pool was not formed, or form pool.
+            if let NodeRole::Facilitator(_) = self.role {
+                if let Err(e) = self.notify_cancel() {
+                    error!("Error during notify participants: error={}", e)
+                }
+            }
             NodeRole::Regular
         };
+
         self.role = role;
         self.facilitator_pkey = epoch.facilitator;
         Ok(())
     }
 
-    pub fn handle_timer(&mut self) -> Result<(), Error> {
+    fn notify_cancel(&mut self) -> Result<(), Error> {
+        match &mut self.role {
+            NodeRole::Facilitator(ref mut state) => {
+                if state.participants.len() < MIN_PARTICIPANTS {
+                    let info = PoolNotification::Canceled;
+                    let data = info.into_buffer()?;
+                    for part in &state.take_pool() {
+                        self.network
+                            .send(part.0.pkey, POOL_ANNOUNCE_TOPIC, data.clone())?;
+                    }
+                } else {
+                    self.try_notify_participants()?
+                }
+            }
+            NodeRole::Regular => unreachable!(),
+        }
+        Ok(())
+    }
+
+    pub fn try_notify_participants(&mut self) -> Result<(), Error> {
         match &mut self.role {
             NodeRole::Facilitator(state) => {
-                // after timeout facilitator should broadcast message to each node.
-                let parts = state.take_pool();
-                if parts.is_empty() {
-                    debug!("No requests received, skipping pool formation");
+                if state.participants.len() < MIN_PARTICIPANTS {
+                    debug!(
+                        "Found no enough participants, skipping pool formation: \
+                         pool_len={}, min_len={}",
+                        state.participants.len(),
+                        MIN_PARTICIPANTS
+                    );
                     return Ok(());
                 }
+                // after timeout facilitator should broadcast message to each node.
+                let parts = state.take_pool();
+
                 let mut participants = Vec::<ParticipantTXINMap>::new();
                 for (participant, (txins, utxos, ownsig)) in &parts {
                     /*
@@ -167,11 +201,12 @@ impl TransactionPoolService {
                     participants: participants.clone(),
                     session_id,
                 };
-                info!("Formed a new pool: participants={:?}", &info.participants);
-                let data = info.into_buffer()?;
-                for part in info.participants {
+                info!("Formed a new pool: participants={:?}", &participants);
+                let msg: PoolNotification = info.into();
+                let data = msg.into_buffer()?;
+                for part in participants {
                     self.network
-                        .send(part.participant, POOL_ANNOUNCE_TOPIC, data.clone())?;
+                        .send(part.participant.pkey, POOL_ANNOUNCE_TOPIC, data.clone())?;
                 }
             }
             NodeRole::Regular => {
@@ -185,7 +220,7 @@ impl TransactionPoolService {
     pub fn handle_join_message(
         &mut self,
         data: PoolJoin,
-        from: ParticipantID,
+        from: pbc::PublicKey,
     ) -> Result<(), Error> {
         match self.role {
             NodeRole::Regular => {
@@ -251,7 +286,7 @@ impl TransactionPoolService {
         };
         match timer.poll().expect("timer fails") {
             Async::Ready(Some(_)) => {
-                if let Err(e) = self.handle_timer() {
+                if let Err(e) = self.try_notify_participants() {
                     error!("Error: {}", e);
                 }
             }

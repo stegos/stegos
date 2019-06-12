@@ -216,7 +216,7 @@ impl Blockchain {
         Self::with_db(cfg, database, genesis, timestamp)
     }
 
-    fn with_db(
+    pub fn with_db(
         cfg: ChainConfig,
         database: ListDb,
         genesis: MacroBlock,

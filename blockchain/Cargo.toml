@@ -11,6 +11,7 @@ license = "MIT"
 links = "stegos_blockchain"
 repository = "https://github.com/stegos/stegos"
 description = "Stegos - Blockchain Library"
+autobenches = true
 
 [dependencies]
 stegos_crypto = { version = "0.2.0", path = "../crypto" }
@@ -32,6 +33,12 @@ tempdir = "0.3"
 [dev-dependencies]
 simple_logger = "1.2"
 rand_isaac = "0.1.1"
+criterion = "0.2"
 
 [build-dependencies]
 stegos_serialization = { version = "0.2.0", path = "../serialization" }
+
+
+[[bench]]
+name = "block"
+harness = false

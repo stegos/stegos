@@ -146,14 +146,17 @@ fn load_keys(
             info!("Recovering keys...");
             let wallet_skey = keychain::input::read_recovery(&cfg.recovery_file)?;
             let wallet_pkey: curve1174::PublicKey = wallet_skey.clone().into();
-            info!("Recovered a wallet key: pkey={}", wallet_pkey.to_hex());
+            info!(
+                "Recovered a wallet key: pkey={}",
+                String::from(&wallet_pkey)
+            );
             (wallet_skey, wallet_pkey)
         } else {
             debug!("Generating a new wallet key pair...");
             let (wallet_skey, wallet_pkey) = curve1174::make_random_keys();
             info!(
                 "Generated a new wallet key pair: pkey={}",
-                wallet_pkey.to_hex()
+                String::from(&wallet_pkey)
             );
             (wallet_skey, wallet_pkey)
         };

@@ -33,6 +33,7 @@ use regex::Regex;
 use rustyline as rl;
 use std::fmt;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::thread;
 use std::time::{Duration, SystemTime};
 use stegos_crypto::curve1174::PublicKey;
@@ -57,7 +58,7 @@ use stegos_wallet::{
 
 lazy_static! {
     /// Regex to parse "pay" command.
-    static ref PAY_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<amount>[0-9\.]{1,19})(?P<arguments>.+)?\s*$").unwrap();
+    static ref PAY_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9A-Za-z]+)\s+(?P<amount>[0-9\.]{1,19})(?P<arguments>.+)?\s*$").unwrap();
     /// Regex to parse argument of "pay" command.
     static ref PAY_ARGUMENTS_RE: Regex = Regex::new(r"^(\s+(?P<public>(/public)))?(\s+(?P<comment>[^/]+?))?(\s+(?P<lock>(/lock\s*.*)))?\s*$").unwrap();
     /// Regex to parse argument of "pay" command.
@@ -293,7 +294,7 @@ impl ConsoleService {
             };
 
             let recipient = caps.name("recipient").unwrap().as_str();
-            let recipient = match PublicKey::try_from_hex(recipient) {
+            let recipient = match PublicKey::from_str(recipient) {
                 Ok(r) => r,
                 Err(e) => {
                     println!("Invalid wallet public key '{}': {}", recipient, e);
@@ -351,7 +352,7 @@ impl ConsoleService {
                 info!(
                     "Sending {} STG to {}, with uncloaked recipient and amount.",
                     format_money(amount),
-                    recipient.to_hex()
+                    String::from(&recipient)
                 );
                 let password = input::read_password_from_stdin(false)?;
                 WalletRequest::PublicPayment {
@@ -364,7 +365,7 @@ impl ConsoleService {
                 info!(
                     "Sending {} STG to {}",
                     format_money(amount),
-                    recipient.to_hex()
+                    String::from(&recipient)
                 );
                 let password = input::read_password_from_stdin(false)?;
                 WalletRequest::Payment {
@@ -386,7 +387,7 @@ impl ConsoleService {
             };
 
             let recipient = caps.name("recipient").unwrap().as_str();
-            let recipient = match PublicKey::try_from_hex(recipient) {
+            let recipient = match PublicKey::from_str(recipient) {
                 Ok(r) => r,
                 Err(e) => {
                     println!("Invalid wallet public key '{}': {}", recipient, e);
@@ -435,7 +436,7 @@ impl ConsoleService {
             info!(
                 "Sending {} to {} via ValueShuffle",
                 format_money(amount),
-                recipient.to_hex()
+                String::from(&recipient)
             );
             let password = input::read_password_from_stdin(false)?;
             let request = WalletRequest::SecurePayment {
@@ -456,7 +457,7 @@ impl ConsoleService {
             };
 
             let recipient = caps.name("recipient").unwrap().as_str();
-            let recipient = match PublicKey::try_from_hex(recipient) {
+            let recipient = match PublicKey::from_str(recipient) {
                 Ok(r) => r,
                 Err(e) => {
                     println!("Invalid wallet public key '{}': {}", recipient, e);
@@ -468,7 +469,7 @@ impl ConsoleService {
             let comment = caps.name("msg").unwrap().as_str().to_string();
             assert!(comment.len() > 0);
 
-            info!("Sending message to {}", recipient.to_hex());
+            info!("Sending message to {}", String::from(&recipient));
             let password = input::read_password_from_stdin(false)?;
             let request = WalletRequest::Payment {
                 password,

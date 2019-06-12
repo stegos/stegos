@@ -11,6 +11,7 @@ logs/
 /*.skey
 /genesis*.bin
 /password*.txt
+/api_token.txt
 
 # Test data
 /testing/node*/database/

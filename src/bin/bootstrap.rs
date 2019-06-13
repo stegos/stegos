@@ -154,6 +154,7 @@ fn main() {
         let (network_skey, network_pkey) = pbc::make_random_keys();
 
         // Write keys.
+        info!("New wallet key: {}", String::from(&wallet_pkey));
         keychain::keyfile::write_wallet_pkey(Path::new(&wallet_pkey_file), &wallet_pkey)
             .expect("failed to write wallet pkey");
         keychain::keyfile::write_wallet_skey(Path::new(&wallet_skey_file), &wallet_skey, &password)

@@ -28,6 +28,7 @@ use std::collections::HashSet;
 use stegos_blockchain::Block;
 use stegos_consensus::MacroBlockProposal;
 use stegos_consensus::{optimistic::SealedViewChangeProof, ConsensusMessage, ConsensusMessageBody};
+use stegos_crypto::pbc::PublicKey;
 
 // CASE partition:
 // Nodes [A, B, C, D]
@@ -78,7 +79,7 @@ fn dead_leader() {
             }
         }
 
-        let next_leader = r.parts.1.next_view_change_leader();
+        let next_leader = r.parts.1.future_view_change_leader(1);
         r.parts.1.poll();
         for node in r.parts.1.iter_mut() {
             info!("processing validator = {:?}", node.validator_id());
@@ -126,13 +127,13 @@ fn silent_view_change() {
     Sandbox::start(config, |mut s| {
         s.poll();
 
-        precondition_2_different_leaders(&mut s);
+        precondition_n_different_viewchange_leaders(&mut s, 2);
 
         let epoch = s.nodes[0].node_service.chain.epoch();
         let offset = s.nodes[0].node_service.chain.offset();
         let starting_view_changes = s.nodes[0].node_service.chain.view_change();
         let leader_pk = s.leader();
-        let new_leader = s.next_view_change_leader();
+        let new_leader = s.future_view_change_leader(1);
 
         s.wait(s.config.node.tx_wait_timeout);
         s.poll();
@@ -368,7 +369,7 @@ fn resolve_fork_for_view_change() {
     Sandbox::start(config, |mut s| {
         s.poll();
 
-        precondition_2_different_leaders(&mut s);
+        precondition_n_different_viewchange_leaders(&mut s, 2);
 
         let starting_view_changes = s.nodes[0].node_service.chain.view_change();
         let starting_offset = s.nodes[0].node_service.chain.offset();
@@ -403,7 +404,7 @@ fn resolve_fork_for_view_change() {
         }
         assert_eq!(msgs.len(), 3);
 
-        let new_leader = r.parts.1.next_view_change_leader();
+        let new_leader = r.parts.1.future_view_change_leader(1);
         let new_leader_node = r.parts.1.node(&new_leader).unwrap();
         // new leader receive all view change messages and produce new block.
         // each node should accept new block.
@@ -478,7 +479,7 @@ fn resolve_fork_without_block() {
     Sandbox::start(config, |mut s| {
         s.poll();
 
-        precondition_2_different_leaders(&mut s);
+        precondition_n_different_viewchange_leaders(&mut s, 2);
 
         let starting_view_changes = s.nodes[0].node_service.chain.view_change();
         let starting_offset = s.nodes[0].node_service.chain.offset();
@@ -513,7 +514,7 @@ fn resolve_fork_without_block() {
         }
         assert_eq!(msgs.len(), 3);
 
-        let new_leader = r.parts.1.next_view_change_leader();
+        let new_leader = r.parts.1.future_view_change_leader(1);
 
         info!("======= BROADCAST VIEW_CHANGES =======");
         for node in r.parts.1.iter_mut() {
@@ -582,15 +583,8 @@ fn resolve_fork_without_block() {
 }
 
 // CASE partition:
-// Nodes [A, B, C, D]
+// Precondintion: resolve_fork_without_block
 //
-// 1. Node A leader of view_change 1, didn't broadcast micro block (B1) to [B,C,D]
-// 2. Nodes [B, C, D] go to the next view_change 2
-// 2.1. Node B become leader of view_change 2, and broadcast new block (B2).
-// 3. Node [B] receive B1, and broadcasts view_change proof.
-// 3. Node [A] Receive view_change_proof, and apply it.
-//
-// Asserts that Nodes [A] rollback his block, and has view_change 2;
 // Asserts that after view_change time node will rebroadcast message rather then panic.
 
 #[test]
@@ -606,7 +600,7 @@ fn issue_896_resolve_fork() {
     Sandbox::start(config, |mut s| {
         s.poll();
 
-        precondition_2_different_leaders(&mut s);
+        precondition_n_different_viewchange_leaders(&mut s, 2);
 
         let starting_view_changes = s.nodes[0].node_service.chain.view_change();
         let starting_offset = s.nodes[0].node_service.chain.offset();
@@ -641,7 +635,7 @@ fn issue_896_resolve_fork() {
         }
         assert_eq!(msgs.len(), 3);
 
-        let new_leader = r.parts.1.next_view_change_leader();
+        let new_leader = r.parts.1.future_view_change_leader(1);
 
         info!("======= BROADCAST VIEW_CHANGES =======");
         for node in r.parts.1.iter_mut() {
@@ -885,61 +879,9 @@ fn slash_cheater() {
     Sandbox::start(config, |mut s| {
         s.poll();
 
-        // next leader should be from different partition.
-        for _ in 0..(s.config.chain.micro_blocks_in_epoch - 1) {
-            let first_leader_pk = s.nodes[0].node_service.chain.leader();
-            let new_leader_pk = s.next_leader().unwrap();
-            info!(
-                "Checking that leader {} and {} are different.",
-                first_leader_pk, new_leader_pk
-            );
-            if first_leader_pk != new_leader_pk {
-                break;
-            }
+        precondition_n_different_block_leaders(&mut s, 2);
+        let (mut r, cheater) = slash_cheater_inner(&mut s);
 
-            info!("Skipping microlock.");
-            s.wait(s.config.node.tx_wait_timeout);
-            s.skip_micro_block();
-        }
-        let leader_pk = s.nodes[0].node_service.chain.leader();
-
-        info!("CREATE BLOCK. LEADER = {}", leader_pk);
-        s.wait(s.config.node.tx_wait_timeout);
-
-        s.poll();
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
-
-        let mut r = s.split(&[leader_pk]);
-        let leader = &mut r.parts.0.nodes[0];
-        let b1: Block = leader
-            .network_service
-            .get_broadcast(crate::SEALED_BLOCK_TOPIC);
-        let mut b2 = b1.clone();
-        // modify timestamp for block
-        match &mut b2 {
-            Block::MicroBlock(ref mut b) => {
-                b.header.timestamp += Duration::from_millis(1);
-                let block_hash = Hash::digest(&*b);
-                b.sig = pbc::sign_hash(&block_hash, &leader.node_service.network_skey);
-            }
-            Block::MacroBlock(_) => unreachable!(),
-        }
-
-        info!("BROADCAST BLOCK, WITH COPY.");
-        for node in r.parts.1.iter_mut() {
-            node.network_service
-                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, b1.clone());
-        }
-        r.parts
-            .1
-            .for_each(|node| assert_eq!(node.cheating_proofs.len(), 0));
-
-        for node in r.parts.1.iter_mut() {
-            node.network_service
-                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, b2.clone());
-        }
-
-        r.parts.1.poll();
         info!(
             "CHECK IF CHEATER WAS DETECTED. LEADER={}",
             r.parts.1.first().node_service.chain.leader()
@@ -962,21 +904,90 @@ fn slash_cheater() {
                 .iter()
                 .map(|(p, _)| *p)
                 .collect();
-            assert!(!validators.contains(&leader_pk))
+            assert!(!validators.contains(&cheater))
         }
     });
 }
 
-fn precondition_2_different_leaders(s: &mut Sandbox) {
-    let mut ready = false;
-    for _ in 0..s.config.chain.micro_blocks_in_epoch {
-        let first_leader_pk = s.nodes[0].node_service.chain.leader();
-        let new_leader_pk = s.next_view_change_leader();
+/// Inner logic specific for cheater slashing.
+fn slash_cheater_inner<'a>(s: &'a mut Sandbox) -> (PartitionGuard<'a>, PublicKey) {
+    // next leader should be from different partition.
+
+    let leader_pk = s.nodes[0].node_service.chain.leader();
+    info!("CREATE BLOCK. LEADER = {}", leader_pk);
+    s.wait(s.config.node.tx_wait_timeout);
+    s.poll();
+    s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+
+    let mut r = s.split(&[leader_pk]);
+    let leader = &mut r.parts.0.nodes[0];
+    let b1: Block = leader
+        .network_service
+        .get_broadcast(crate::SEALED_BLOCK_TOPIC);
+    let mut b2 = b1.clone();
+    // modify timestamp for block
+    match &mut b2 {
+        Block::MicroBlock(ref mut b) => {
+            b.header.timestamp += Duration::from_millis(1);
+            let block_hash = Hash::digest(&*b);
+            b.sig = pbc::sign_hash(&block_hash, &leader.node_service.network_skey);
+        }
+        Block::MacroBlock(_) => unreachable!(),
+    }
+
+    info!("BROADCAST BLOCK, WITH COPY.");
+    for node in r.parts.1.iter_mut() {
+        node.network_service
+            .receive_broadcast(crate::SEALED_BLOCK_TOPIC, b1.clone());
+    }
+    r.parts
+        .1
+        .for_each(|node| assert_eq!(node.cheating_proofs.len(), 0));
+
+    for node in r.parts.1.iter_mut() {
+        node.network_service
+            .receive_broadcast(crate::SEALED_BLOCK_TOPIC, b2.clone());
+    }
+
+    r.parts.1.poll();
+    (r, leader_pk)
+}
+
+fn precondition_n_different_block_leaders(s: &mut Sandbox, different_leaders: u32) {
+    skip_blocks_until(s, |s| {
+        let leaders: Vec<_> = (0..different_leaders)
+            .map(|id| s.future_block_leader(id).unwrap())
+            .collect();
+
         info!(
-            "Checking that leader {} and {} are different.",
-            first_leader_pk, new_leader_pk
+            "Checking that all leader are different: leaders={:?}.",
+            leaders
         );
-        if first_leader_pk != new_leader_pk {
+        check_unique(leaders)
+    })
+}
+
+fn precondition_n_different_viewchange_leaders(s: &mut Sandbox, different_leaders: u32) {
+    skip_blocks_until(s, |s| {
+        let leaders: Vec<_> = (0..different_leaders)
+            .map(|id| s.future_view_change_leader(id))
+            .collect();
+
+        info!(
+            "Checking that all leader are different: leaders={:?}.",
+            leaders
+        );
+        check_unique(leaders)
+    })
+}
+
+/// Skip blocks until condition not true
+fn skip_blocks_until<F>(s: &mut Sandbox, mut condition: F)
+    where F: FnMut(&mut Sandbox) -> bool
+{
+    let mut ready = false;
+    for _id in 0..s.config.chain.micro_blocks_in_epoch {
+        if condition(s) {
             ready = true;
             break;
         }
@@ -985,4 +996,12 @@ fn precondition_2_different_leaders(s: &mut Sandbox) {
         s.skip_micro_block()
     }
     assert!(ready, "Not enought micriblocks found");
+}
+
+pub fn check_unique<T: Ord + Clone + PartialEq>(original: Vec<T>) -> bool {
+    let original_len = original.len();
+    let mut array = original;
+    array.sort_unstable();
+    array.dedup();
+    original_len == array.len()
 }

@@ -231,14 +231,6 @@ impl NodeSandbox {
     }
 
     #[allow(dead_code)]
-    fn create_vrf(&self) -> VRF {
-        self.create_vrf_from_seed(
-            self.node_service.chain.last_random(),
-            self.node_service.chain.view_change(),
-        )
-    }
-
-    #[allow(dead_code)]
     fn create_vrf_from_seed(&self, random: Hash, view_change: u32) -> VRF {
         let seed = mix(random, view_change);
         pbc::make_VRF(&self.node_service.network_skey, &seed)
@@ -371,24 +363,35 @@ trait Api<'p> {
     }
 
     /// Returns next leader publicKey.
-    /// Returns None if current leader was not found in current partition.
-    fn next_leader(&mut self) -> Option<pbc::PublicKey> {
-        let first_leader_pk = self.first_mut().node_service.chain.leader();
-        let view_change = self.first_mut().node_service.chain.view_change();
+    /// Returns None if some of leader in chain of election was not found in current partition.
+    fn future_block_leader(&mut self, idx: u32) -> Option<pbc::PublicKey> {
+        let mut leader_pk = self.first_mut().node_service.chain.leader();
+        let mut view_change = self.first_mut().node_service.chain.view_change();
+        let mut random = self.first_mut().node_service.chain.last_random();
 
-        let vrf = self.node(&first_leader_pk)?.create_vrf();
-        let mut election = self.first_mut().node_service.chain.election_result();
-        election.random = vrf;
-        Some(election.select_leader(view_change))
+        trace!("First leader pk = {}", leader_pk);
+
+        for i in 0..idx {
+            let node = self.node(&leader_pk)?;
+            let vrf = node.create_vrf_from_seed(random, view_change);
+            random = vrf.rand;
+            view_change = 0;
+
+            let mut election = self.first_mut().node_service.chain.election_result();
+            election.random = vrf;
+            leader_pk = election.select_leader(view_change);
+            trace!("Leader {} pk = {}", i, leader_pk);
+        }
+        Some(leader_pk)
     }
 
     /// Same as next_leader, but for view_changes.
-    fn next_view_change_leader(&mut self) -> pbc::PublicKey {
+    fn future_view_change_leader(&mut self, idx: u32) -> pbc::PublicKey {
         let view_change = self.first_mut().node_service.chain.view_change();
         self.first_mut()
             .node_service
             .chain
-            .select_leader(view_change + 1)
+            .select_leader(view_change + idx)
     }
 
     /// Execute some function for each node_service.

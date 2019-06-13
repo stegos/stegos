@@ -31,6 +31,7 @@ use lazy_static::*;
 use log::*;
 use regex::Regex;
 use rustyline as rl;
+use serde::ser::Serialize;
 use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -570,8 +571,8 @@ impl ConsoleService {
             let request = WalletRequest::GetRecovery { password };
             self.wallet_response = Some(self.wallet.request(request));
         } else if msg == "db pop block" {
-            self.node.pop_block();
-            return Ok(true);
+            let request = NodeRequest::PopBlock {};
+            self.node_response = Some(self.node.request(request));
         } else {
             Self::help();
             return Ok(true);
@@ -581,17 +582,6 @@ impl ConsoleService {
 
     fn on_exit(&self) {
         std::process::exit(0);
-    }
-
-    fn on_node_response(&mut self, info: NodeResponse) {
-        let output = match info {
-            NodeResponse::EscrowInfo(info) => serde_yaml::to_string(&[info]),
-            NodeResponse::ElectionInfo(info) => serde_yaml::to_string(&[info]),
-        }
-        .map_err(|_| fmt::Error)
-        .unwrap();
-        println!("{}\n...\n", output);
-        self.stdin_th.thread().unpark();
     }
 
     fn on_wallet_notification(&mut self, notification: WalletNotification) {
@@ -614,7 +604,7 @@ impl ConsoleService {
         }
     }
 
-    fn on_wallet_response(&mut self, response: WalletResponse) {
+    fn on_response<T: Serialize>(&mut self, response: T) {
         let output = serde_yaml::to_string(&[response])
             .map_err(|_| fmt::Error)
             .unwrap();
@@ -661,7 +651,7 @@ impl Future for ConsoleService {
             let mut rx = self.wallet_response.take().unwrap();
             match rx.poll() {
                 Ok(Async::Ready(response)) => {
-                    self.on_wallet_response(response);
+                    self.on_response(response);
                 }
                 Ok(Async::NotReady) => self.wallet_response = Some(rx),
                 Err(_) => panic!("Wallet failure"),
@@ -671,7 +661,7 @@ impl Future for ConsoleService {
         if let Some(mut rx) = self.node_response.take() {
             match rx.poll() {
                 Ok(Async::Ready(response)) => {
-                    self.on_node_response(response);
+                    self.on_response(response);
                 }
                 Ok(Async::NotReady) => self.node_response = Some(rx),
                 Err(_) => panic!("Wallet failure"),

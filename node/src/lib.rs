@@ -113,12 +113,6 @@ impl Node {
         self.outbox.unbounded_send(msg).expect("connected");
         rx
     }
-
-    /// Revert the latest block.
-    pub fn pop_block(&self) {
-        let msg = NodeMessage::PopBlock;
-        self.outbox.unbounded_send(msg).expect("connected");
-    }
 }
 
 ///
@@ -130,6 +124,7 @@ impl Node {
 pub enum NodeRequest {
     ElectionInfo {},
     EscrowInfo {},
+    PopBlock {},
 }
 
 ///
@@ -141,6 +136,8 @@ pub enum NodeRequest {
 pub enum NodeResponse {
     ElectionInfo(ElectionInfo),
     EscrowInfo(EscrowInfo),
+    BlockPopped,
+    Error { error: String },
 }
 
 /// Send when synchronization status has been changed.
@@ -196,7 +193,6 @@ pub enum NodeMessage {
     SubscribeSyncChanged(UnboundedSender<SyncChanged>),
     SubscribeEpochChanged(UnboundedSender<EpochChanged>),
     SubscribeOutputsChanged(UnboundedSender<OutputsChanged>),
-    PopBlock,
     Request {
         request: NodeRequest,
         tx: oneshot::Sender<NodeResponse>,
@@ -1558,7 +1554,6 @@ impl Future for NodeService {
                         NodeMessage::SubscribeOutputsChanged(tx) => {
                             self.handle_subscribe_outputs(tx)
                         }
-                        NodeMessage::PopBlock => self.handle_pop_block(),
                         NodeMessage::Request { request, tx } => {
                             let response = match request {
                                 NodeRequest::ElectionInfo {} => {
@@ -1567,6 +1562,12 @@ impl Future for NodeService {
                                 NodeRequest::EscrowInfo {} => {
                                     NodeResponse::EscrowInfo(self.chain.escrow_info())
                                 }
+                                NodeRequest::PopBlock {} => match self.handle_pop_block() {
+                                    Ok(()) => NodeResponse::BlockPopped,
+                                    Err(e) => NodeResponse::Error {
+                                        error: format!("{}", e),
+                                    },
+                                },
                             };
                             tx.send(response).ok(); // ignore errors.
                             Ok(())

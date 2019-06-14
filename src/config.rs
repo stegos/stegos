@@ -29,7 +29,7 @@ use std::io::ErrorKind;
 use std::io::Read;
 use std::path::Path;
 use std::result::Result;
-use stegos_api::WebSocketConfig;
+use stegos_api::ApiConfig;
 use stegos_blockchain::{ChainConfig, StorageConfig};
 use stegos_crypto::curve1174::PublicKey;
 use stegos_keychain::KeyChainConfig;
@@ -60,7 +60,7 @@ pub struct Config {
     /// Storage configuration.
     pub storage: StorageConfig,
     /// WebSocket API configuration.
-    pub api: WebSocketConfig,
+    pub api: ApiConfig,
 }
 
 /// Default values for global configuration.

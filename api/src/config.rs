@@ -23,19 +23,17 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::KeyError;
-use failure::Error;
+use crate::crypto::{ApiToken, API_TOKENSIZE};
+use crate::error::KeyError;
 use log::info;
-use rand::{thread_rng, RngCore};
 use serde_derive::{Deserialize, Serialize};
 use std::fs;
-use std::iter::repeat;
 use std::path::Path;
 
 /// WebSocket Configuration.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(default)]
-pub struct WebSocketConfig {
+pub struct ApiConfig {
     /// Local IP address to bind to.
     pub bind_ip: String,
     /// Local IP port to bind to.
@@ -45,9 +43,9 @@ pub struct WebSocketConfig {
 }
 
 /// Default values for websocket configuration.
-impl Default for WebSocketConfig {
-    fn default() -> WebSocketConfig {
-        WebSocketConfig {
+impl Default for ApiConfig {
+    fn default() -> ApiConfig {
+        ApiConfig {
             bind_ip: "0.0.0.0".to_string(),
             bind_port: 3145,
             token_file: "api_token.txt".to_string(),
@@ -56,22 +54,28 @@ impl Default for WebSocketConfig {
 }
 
 // Load API Key from file, generate new key, if file is missing
-pub fn load_key(cfg: &WebSocketConfig) -> Result<Vec<u8>, Error> {
-    if !Path::new(&cfg.token_file).exists() {
+pub fn load_or_create_api_token(token_file: &str) -> Result<ApiToken, KeyError> {
+    if !Path::new(token_file).exists() {
         info!("API Key file is missing, generating new one");
-        let mut gen = thread_rng();
-        let mut key: Vec<u8> = repeat(0u8).take(crate::API_KEYSIZE).collect();
-        gen.fill_bytes(&mut key[..]);
-        fs::write(cfg.token_file.clone(), base64::encode(&key))
-            .map_err(|e| KeyError::InputOutputError(cfg.token_file.clone(), e))?;
-        return Ok(key);
+        let token = ApiToken::new();
+        fs::write(token_file.clone(), base64::encode(&token.0))
+            .map_err(|e| KeyError::InputOutputError(token_file.to_string(), e))?;
+        return Ok(token);
+    } else {
+        return load_api_token(token_file);
     }
-    let key_encoded = fs::read_to_string(cfg.token_file.clone())
-        .map_err(|e| KeyError::InputOutputError(cfg.token_file.clone(), e))?;
-    let key = base64::decode(&key_encoded)
-        .map_err(|e| KeyError::ParseError(cfg.token_file.clone(), e))?;
-    if key.len() != crate::API_KEYSIZE {
-        return Err(KeyError::InvalidKeySize(crate::API_KEYSIZE, key.len()).into());
+}
+
+/// Load API token from a file.
+pub fn load_api_token(token_file: &str) -> Result<ApiToken, KeyError> {
+    let token = fs::read_to_string(token_file)
+        .map_err(|e| KeyError::InputOutputError(token_file.to_string(), e))?;
+    let token =
+        base64::decode(&token).map_err(|e| KeyError::ParseError(token_file.to_string(), e))?;
+    if token.len() != API_TOKENSIZE {
+        return Err(KeyError::InvalidKeySize(API_TOKENSIZE, token.len()).into());
     }
-    Ok(key)
+    let mut token2 = [0u8; API_TOKENSIZE];
+    token2.copy_from_slice(&token);
+    Ok(ApiToken(token2))
 }

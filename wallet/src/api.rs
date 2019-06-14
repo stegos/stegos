@@ -25,8 +25,7 @@ use futures::sync::mpsc::unbounded;
 use futures::sync::mpsc::UnboundedReceiver;
 use futures::sync::mpsc::UnboundedSender;
 use futures::sync::oneshot;
-use serde_derive::Deserialize;
-use serde_derive::Serialize;
+use serde_derive::{Deserialize, Serialize};
 use std::time::SystemTime;
 pub use stegos_blockchain::PaymentPayloadData;
 pub use stegos_blockchain::StakeInfo;
@@ -36,7 +35,7 @@ use stegos_crypto::pbc;
 use stegos_node::EpochChanged;
 use stegos_node::OutputsChanged;
 
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct PaymentInfo {
     pub utxo: Hash,
     pub amount: i64,
@@ -44,7 +43,7 @@ pub struct PaymentInfo {
     pub locked: String,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct PublicPaymentInfo {
     pub utxo: Hash,
     pub amount: i64,
@@ -54,7 +53,7 @@ pub struct PublicPaymentInfo {
 ///
 /// Out-of-band notifications.
 ///
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "notification")]
 #[serde(rename_all = "snake_case")]
 pub enum WalletNotification {
@@ -70,7 +69,7 @@ pub enum WalletNotification {
 ///
 /// RPC requests.
 ///
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "request")]
 #[serde(rename_all = "snake_case")]
 pub enum WalletRequest {
@@ -125,7 +124,7 @@ pub enum WalletRequest {
 ///
 /// RPC responses.
 ///
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "response")]
 #[serde(rename_all = "snake_case")]
 pub enum WalletResponse {
@@ -157,7 +156,7 @@ pub enum WalletResponse {
     },
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "result")]
 #[serde(rename_all = "snake_case")]
 pub enum TransactionCommitted {

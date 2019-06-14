@@ -126,6 +126,7 @@ impl StakeValue {
     fn to_info(&self, epoch: u64) -> StakeInfo {
         let is_active = self.active_until_epoch >= epoch;
         StakeInfo {
+            wallet_pkey: self.output.recipient,
             utxo: Hash::digest(&self.output),
             amount: self.output.amount,
             active_until_epoch: self.active_until_epoch,

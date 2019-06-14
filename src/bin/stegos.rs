@@ -36,7 +36,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process;
 use std::time::SystemTime;
-use stegos_api::WebSocketAPI;
+use stegos_api::WebSocketServer;
 use stegos_blockchain::Blockchain;
 use stegos_crypto::curve1174;
 use stegos_crypto::pbc;
@@ -345,7 +345,7 @@ fn run() -> Result<(), Error> {
     };
 
     // Start WebSocket API server.
-    WebSocketAPI::spawn(cfg.api, rt.executor(), wallet.clone(), node.clone())?;
+    WebSocketServer::spawn(cfg.api, rt.executor(), wallet.clone(), node.clone())?;
 
     // Start all services when network is ready.
     let executor = rt.executor();

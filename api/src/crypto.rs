@@ -23,31 +23,43 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::API_KEYSIZE;
 use crypto::aes::{self, KeySize};
 use crypto::symmetriccipher::SynchronousStreamCipher;
 use rand::{thread_rng, RngCore};
 use std::iter::repeat;
 
+/// Key size for API token
+pub const API_TOKENSIZE: usize = 16;
+
+#[derive(Debug, Clone, Copy)]
+pub struct ApiToken(pub(crate) [u8; API_TOKENSIZE]);
+
+impl ApiToken {
+    pub fn new() -> Self {
+        let mut gen = thread_rng();
+        let mut key = ApiToken([0u8; API_TOKENSIZE]);
+        gen.fill_bytes(&mut key.0[..]);
+        key
+    }
+}
+
 // Encrypts the plaintext with given 32-byte key
 // returns encrypted payload with 16-byte IV prepended
-pub fn encrypt(key: &[u8], plaintext: &[u8]) -> Vec<u8> {
-    assert_eq!(key.len(), API_KEYSIZE, "AES128 needs 16-byte keys");
+pub fn encrypt(key: &ApiToken, plaintext: &[u8]) -> Vec<u8> {
     let mut gen = thread_rng();
     let mut nonce: Vec<u8> = repeat(0u8).take(16).collect();
     gen.fill_bytes(&mut nonce[..]);
-    let mut cipher = aes::ctr(KeySize::KeySize128, key, &nonce);
+    let mut cipher = aes::ctr(KeySize::KeySize128, &key.0[..], &nonce);
     let mut output: Vec<u8> = repeat(0u8).take(16 + plaintext.len()).collect();
     output[..16].copy_from_slice(&nonce[..]);
     cipher.process(&plaintext, &mut output[16..]);
     output
 }
 
-pub fn decrypt(key: &[u8], ciphertext: &[u8]) -> Vec<u8> {
-    assert_eq!(key.len(), API_KEYSIZE, "AES128 needs 16-byte keys");
+pub fn decrypt(key: &ApiToken, ciphertext: &[u8]) -> Vec<u8> {
     let mut iv: Vec<u8> = repeat(0u8).take(16).collect();
     iv[..].copy_from_slice(&ciphertext[..16]);
-    let mut cipher = aes::ctr(KeySize::KeySize128, key, &iv);
+    let mut cipher = aes::ctr(KeySize::KeySize128, &key.0[..], &iv);
     let mut output: Vec<u8> = repeat(0u8).take(ciphertext.len() - 16).collect();
     cipher.process(&ciphertext[16..], &mut output);
     output
@@ -55,19 +67,15 @@ pub fn decrypt(key: &[u8], ciphertext: &[u8]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decrypt, encrypt, API_KEYSIZE};
+    use super::{decrypt, encrypt, ApiToken};
     use lipsum::lipsum_words;
-    use rand::{thread_rng, RngCore};
-    use std::iter::repeat;
 
     #[test]
     fn check_aes_crypto() {
         let text = lipsum_words(256);
-        let mut gen = thread_rng();
-        let mut key: Vec<u8> = repeat(0u8).take(API_KEYSIZE).collect();
-        gen.fill_bytes(&mut key);
-        let encrypted_text = encrypt(&key, &text.as_bytes());
-        let text2 = decrypt(&key, &encrypted_text);
+        let token = ApiToken::new();
+        let encrypted_text = encrypt(&token, &text.as_bytes());
+        let text2 = decrypt(&token, &encrypted_text);
 
         assert_eq!(text.as_bytes(), &text2[..]);
     }

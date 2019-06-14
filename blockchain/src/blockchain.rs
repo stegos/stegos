@@ -139,6 +139,8 @@ const INITIAL_LSN: LSN = LSN(0, 0);
 type BlockByHashMap = MultiVersionedMap<Hash, LSN, LSN>;
 type OutputByHashMap = MultiVersionedMap<Hash, OutputKey, LSN>;
 type BalanceMap = MultiVersionedMap<(), Balance, LSN>;
+
+type ElectionResultList = MultiVersionedMap<(), ElectionResult, LSN>;
 type ValidatorsActivity = MultiVersionedMap<pbc::PublicKey, ValidatorAwardState, LSN>;
 
 /// The blockchain database.
@@ -172,7 +174,7 @@ pub struct Blockchain {
     /// Current block number within the epoch.
     offset: u32,
     /// Last election result.
-    election_result: ElectionResult,
+    election_result: ElectionResultList,
     /// Last saved view change, if view change was happen at current offset,
     /// and we was not leader.
     view_change_proof: Option<ViewChangeProof>,
@@ -243,7 +245,7 @@ impl Blockchain {
         let epoch: u64 = 0;
         let offset: u32 = 0;
         let view_change_proof = None;
-        let election_result = ElectionResult::default();
+        let election_result = ElectionResultList::new();
         let last_macro_block_timestamp = Timestamp::UNIX_EPOCH;
         let last_macro_block_random = Hash::digest("genesis");
         let last_macro_block_hash = Hash::digest("genesis");
@@ -514,9 +516,13 @@ impl Blockchain {
             .collect()
     }
 
+    pub fn election_result(&self) -> &ElectionResult {
+        self.election_result.get(&()).unwrap()
+    }
+
     /// Return leader public key for specific view_change number.
     pub fn select_leader(&self, view_change: ViewCounter) -> pbc::PublicKey {
-        self.election_result.select_leader(view_change)
+        self.election_result().select_leader(view_change)
     }
 
     /// Returns public key of the active leader.
@@ -527,19 +533,19 @@ impl Blockchain {
     /// Return the current epoch facilitator.
     #[inline]
     pub fn facilitator(&self) -> &pbc::PublicKey {
-        &self.election_result.facilitator
+        &self.election_result().facilitator
     }
 
     /// Return the current epoch validators with their stakes.
     #[inline]
     pub fn validators(&self) -> &Vec<(pbc::PublicKey, i64)> {
-        &self.election_result.validators
+        &self.election_result().validators
     }
 
     /// Returns true if peer is validator in current epoch.
     #[inline]
     pub fn is_validator(&self, peer: &pbc::PublicKey) -> bool {
-        self.election_result.is_validator(peer)
+        self.election_result().is_validator(peer)
     }
 
     /// Return the timestamp from the last macro block.
@@ -571,7 +577,7 @@ impl Blockchain {
     /// Return the last random value.
     #[inline]
     pub fn last_random(&self) -> Hash {
-        self.election_result.random.rand
+        self.election_result().random.rand
     }
 
     /// A shortcut for self.escrow.validate_stakes().
@@ -623,7 +629,7 @@ impl Blockchain {
     /// Returns number of leader changes since last epoch creation.
     #[inline]
     pub fn view_change(&self) -> u32 {
-        self.election_result.view_change
+        self.election_result().view_change
     }
 
     /// Returns proof of last view change, if it happen on current offset.
@@ -728,18 +734,20 @@ impl Blockchain {
     #[inline]
     pub fn set_view_change(&mut self, new_view_change: u32, proof: ViewChangeProof) {
         assert!(self.view_change() < new_view_change);
-        self.election_result.view_change = new_view_change;
+        let lsn = LSN(self.epoch, self.offset);
+        let mut election_result = self.election_result().clone();
+        election_result.view_change = new_view_change;
+        self.election_result.insert(lsn, (), election_result);
         self.view_change_proof = Some(proof);
     }
 
     /// Resets current view change counter.
     pub fn reset_view_change(&mut self) {
-        self.election_result.view_change = 0;
+        let lsn = LSN(self.epoch, self.offset);
+        let mut election_result = self.election_result().clone();
+        election_result.view_change = 0;
+        self.election_result.insert(lsn, (), election_result);
         self.view_change_proof = None;
-    }
-
-    pub fn election_result(&self) -> ElectionResult {
-        self.election_result.clone()
     }
 
     /// Return election result, for specific moment of history, in past.
@@ -749,12 +757,33 @@ impl Blockchain {
     ) -> Result<ElectionResult, BlockchainError> {
         assert!(self.epoch > 0);
         assert!(offset <= self.offset, "Election info from future offset.");
-        let mut election = self.election_result();
-        election.random = if offset == 0 {
-            self.macro_block(self.epoch - 1)?.header.random
+        trace!(
+            "election_result_by_offset offset = {}, our_offset = {}",
+            offset,
+            self.offset
+        );
+
+        //TODO: Avoid unnecessary clones
+        let mut election = self.election_result.clone();
+        let lsn = if offset == 0 {
+            LSN(self.epoch - 1, MACRO_BLOCK_OFFSET)
         } else {
-            self.micro_block(self.epoch, offset - 1)?.header.random
+            LSN(self.epoch, offset - 1)
         };
+
+        election.rollback_to_lsn(lsn);
+        assert!(election.current_lsn() <= lsn);
+        let election = election.get(&()).unwrap().clone();
+        trace!(
+            "by_offset Validators_len = {}, rand = {}",
+            election.validators.len(),
+            election.random.rand
+        );
+        trace!(
+            "current Validators_len = {}, rand = {}",
+            self.election_result().validators.len(),
+            self.election_result().random.rand
+        );
         Ok(election)
     }
 
@@ -988,6 +1017,7 @@ impl Blockchain {
                 "Invalid macro block reward"
             );
         }
+
         //
         // Register block.
         //
@@ -1000,7 +1030,6 @@ impl Blockchain {
             &outputs,
             block.header.gamma,
             block.header.block_reward,
-            block.header.random,
             timestamp,
         );
 
@@ -1013,11 +1042,15 @@ impl Blockchain {
         self.last_macro_block_random = block.header.random.rand;
         self.last_macro_block_hash = block_hash;
         assert_eq!(self.last_block_hash, block_hash);
-        self.election_result = election::select_validators_slots(
-            self.escrow
-                .get_stakers_majority(self.epoch, self.cfg.min_stake_amount),
-            block.header.random,
-            self.cfg.max_slot_count,
+        self.election_result.insert(
+            lsn,
+            (),
+            election::select_validators_slots(
+                self.escrow
+                    .get_stakers_majority(self.epoch, self.cfg.min_stake_amount),
+                block.header.random,
+                self.cfg.max_slot_count,
+            ),
         );
         metrics::EPOCH.inc();
         metrics::OFFSET.set(0);
@@ -1092,7 +1125,6 @@ impl Blockchain {
         outputs: &[Output],
         gamma: Fr,
         block_reward: i64,
-        random: pbc::VRF,
         _timestamp: Timestamp,
     ) {
         let epoch = self.epoch;
@@ -1228,8 +1260,6 @@ impl Blockchain {
         // Update metadata.
         //
         self.last_block_hash = block_hash;
-        self.reset_view_change();
-        self.election_result.random = random;
         self.offset += 1;
         metrics::OFFSET.set(self.offset as i64);
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
@@ -1293,13 +1323,21 @@ impl Blockchain {
                         "Found slashing transaction, removing validator, from list: cheater={}",
                         tx.cheater()
                     );
-                    let validators =
-                        std::mem::replace(&mut self.election_result.validators, Vec::new());
+                    let validators = &self.election_result().validators;
                     // remove cheater for current epoch.
-                    self.election_result.validators = validators
+                    let new_validators = validators
                         .into_iter()
-                        .filter(|(k, _)| k != &tx.cheater())
+                        .filter_map(|(k, v)| {
+                            if k != &tx.cheater() {
+                                Some((*k, *v))
+                            } else {
+                                None
+                            }
+                        })
                         .collect();
+                    let mut election_result = self.election_result().clone();
+                    election_result.validators = new_validators;
+                    self.election_result.insert(lsn, (), election_result);
                 }
                 Transaction::ServiceAwardTransaction(_tx) => unreachable!(),
             }
@@ -1310,7 +1348,7 @@ impl Blockchain {
         //
         // Set skipped validators to inactive.
         for skiped_view_change in 0..block.header.view_change {
-            let leader = self.election_result.select_leader(skiped_view_change);
+            let leader = self.election_result().select_leader(skiped_view_change);
             self.epoch_activity.insert(
                 lsn,
                 leader,
@@ -1319,7 +1357,9 @@ impl Blockchain {
         }
 
         // set current leader to active, if it was unknown.
-        let leader = self.election_result.select_leader(block.header.view_change);
+        let leader = self
+            .election_result()
+            .select_leader(block.header.view_change);
         if self.epoch_activity.get(&leader).is_none() {
             self.epoch_activity
                 .insert(lsn, leader, ValidatorAwardState::Active);
@@ -1337,15 +1377,16 @@ impl Blockchain {
             &outputs,
             gamma,
             block_reward,
-            block.header.random,
             timestamp,
         );
 
         //
         // Update metadata.
         //
-        self.election_result.view_change = 0;
-        self.election_result.random = block.header.random;
+        let mut election_result = self.election_result().clone();
+        election_result.view_change = 0;
+        election_result.random = block.header.random;
+        self.election_result.insert(lsn, (), election_result);
 
         info!(
             "Registered a micro block: epoch={}, offset={}, block={}, inputs={}, outputs={}",
@@ -1367,16 +1408,16 @@ impl Blockchain {
         // Remove from the disk.
         //
         let block = self.micro_block(self.epoch, offset)?;
-        let (previous, random, lsn) = if offset == 0 {
+        let (previous, lsn) = if offset == 0 {
             // Previous block is Macro Block.
             let block = self.macro_block(self.epoch - 1)?;
             let lsn = LSN(self.epoch - 1, MACRO_BLOCK_OFFSET);
-            (Hash::digest(&block), block.header.random, lsn)
+            (Hash::digest(&block), lsn)
         } else {
             // Previous block is Micro Block.
             let block = self.micro_block(self.epoch, offset - 1)?;
             let lsn = LSN(self.epoch, offset - 1);
-            (Hash::digest(&block), block.header.random, lsn)
+            (Hash::digest(&block), lsn)
         };
         self.database.remove(LSN(self.epoch, offset))?;
         let block_hash = Hash::digest(&block);
@@ -1389,14 +1430,16 @@ impl Blockchain {
         self.balance.rollback_to_lsn(lsn);
         self.escrow.rollback_to_lsn(lsn);
         self.epoch_activity.rollback_to_lsn(lsn);
+
+        self.election_result.rollback_to_lsn(lsn);
         assert_eq!(self.block_by_hash.current_lsn(), lsn);
+        assert_eq!(self.election_result.current_lsn(), lsn);
         assert!(self.epoch_activity.current_lsn() <= lsn);
         assert!(self.output_by_hash.current_lsn() <= lsn);
         assert!(self.balance.current_lsn() <= lsn);
         assert!(self.escrow.current_lsn() <= lsn);
         self.offset = offset;
         self.last_block_hash = previous;
-        self.election_result.random = random;
         self.reset_view_change();
         metrics::OFFSET.set(self.offset as i64);
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);

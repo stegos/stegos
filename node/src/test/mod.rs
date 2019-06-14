@@ -24,6 +24,7 @@ pub mod futures_testing;
 use self::futures_testing::{start_test, wait, TestTimer};
 pub use stegos_network::loopback::Loopback;
 mod consensus;
+mod integration;
 mod microblocks;
 mod requests;
 use crate::*;
@@ -32,7 +33,7 @@ use log::Level;
 use std::time::Duration;
 pub use stegos_blockchain::test::*;
 use stegos_crypto::pbc;
-use stegos_crypto::pbc::VRF;
+use stegos_crypto::pbc::{PublicKey, VRF};
 use tokio_timer::Timer;
 
 pub struct SandboxConfig {
@@ -345,6 +346,7 @@ trait Api<'p> {
                 <= self.first().node_service.chain.cfg().micro_blocks_in_epoch
         );
         let leader_pk = self.first().node_service.chain.leader();
+        trace!("Acording to partition info, next leader = {}", leader_pk);
         self.poll();
         self.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
         let leader = self.node(&leader_pk).unwrap();
@@ -377,10 +379,15 @@ trait Api<'p> {
             random = vrf.rand;
             view_change = 0;
 
-            let mut election = self.first_mut().node_service.chain.election_result();
+            let mut election = self
+                .first_mut()
+                .node_service
+                .chain
+                .election_result()
+                .clone();
             election.random = vrf;
             leader_pk = election.select_leader(view_change);
-            trace!("Leader {} pk = {}", i, leader_pk);
+            trace!("Leader {} pk = {}", i + 1, leader_pk);
         }
         Some(leader_pk)
     }
@@ -451,6 +458,103 @@ impl<'p> Api<'p> for Sandbox<'p> {
     {
         Box::new(self.nodes.iter_mut())
     }
+}
+
+/// Inner logic specific for cheater slashing.
+fn slash_cheater_inner<'a>(
+    s: &'a mut Sandbox,
+    leader_pk: PublicKey,
+    mut filter_nodes: Vec<PublicKey>,
+) -> PartitionGuard<'a> {
+    s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+
+    filter_nodes.push(leader_pk);
+    let mut r = s.split(&filter_nodes);
+    let leader = &mut r.parts.0.node(&leader_pk).unwrap();
+    let b1: Block = leader
+        .network_service
+        .get_broadcast(crate::SEALED_BLOCK_TOPIC);
+    let mut b2 = b1.clone();
+    // modify timestamp for block
+    match &mut b2 {
+        Block::MicroBlock(ref mut b) => {
+            b.header.timestamp += Duration::from_millis(1);
+            let block_hash = Hash::digest(&*b);
+            b.sig = pbc::sign_hash(&block_hash, &leader.node_service.network_skey);
+        }
+        Block::MacroBlock(_) => unreachable!(),
+    }
+
+    info!("BROADCAST BLOCK, WITH COPY.");
+    for node in r.parts.1.iter_mut() {
+        node.network_service
+            .receive_broadcast(crate::SEALED_BLOCK_TOPIC, b1.clone());
+    }
+    r.parts
+        .1
+        .for_each(|node| assert_eq!(node.cheating_proofs.len(), 0));
+
+    for node in r.parts.1.iter_mut() {
+        node.network_service
+            .receive_broadcast(crate::SEALED_BLOCK_TOPIC, b2.clone());
+    }
+
+    r.parts.1.poll();
+    r
+}
+
+fn precondition_n_different_block_leaders(s: &mut Sandbox, different_leaders: u32) {
+    skip_blocks_until(s, |s| {
+        let leaders: Vec<_> = (0..different_leaders)
+            .map(|id| s.future_block_leader(id).unwrap())
+            .collect();
+
+        info!(
+            "Checking that all leader are different: leaders={:?}.",
+            leaders
+        );
+        check_unique(leaders)
+    })
+}
+
+fn precondition_n_different_viewchange_leaders(s: &mut Sandbox, different_leaders: u32) {
+    skip_blocks_until(s, |s| {
+        let leaders: Vec<_> = (0..different_leaders)
+            .map(|id| s.future_view_change_leader(id))
+            .collect();
+
+        info!(
+            "Checking that all leader are different: leaders={:?}.",
+            leaders
+        );
+        check_unique(leaders)
+    })
+}
+
+/// Skip blocks until condition not true
+fn skip_blocks_until<F>(s: &mut Sandbox, mut condition: F)
+where
+    F: FnMut(&mut Sandbox) -> bool,
+{
+    let mut ready = false;
+    for _id in 0..s.config.chain.micro_blocks_in_epoch {
+        if condition(s) {
+            ready = true;
+            break;
+        }
+        info!("Skipping microlock.");
+        s.wait(s.config.node.tx_wait_timeout);
+        s.skip_micro_block()
+    }
+    assert!(ready, "Not enought micriblocks found");
+}
+
+pub fn check_unique<T: Ord + Clone + PartialEq>(original: Vec<T>) -> bool {
+    let original_len = original.len();
+    let mut array = original;
+    array.sort_unstable();
+    array.dedup();
+    original_len == array.len()
 }
 
 // tests

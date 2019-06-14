@@ -44,6 +44,8 @@ use websocket::server::upgrade::r#async::IntoWs;
 
 /// The number of values to fit in the output buffer.
 const OUTPUT_BUFFER_SIZE: usize = 10;
+/// Topic used for debugging.
+const CONSOLE_TOPIC: &'static str = "console";
 
 /// A type definition for sink.
 type WsSink = Box<Sink<SinkItem = OwnedMessage, SinkError = WebSocketError> + Send>;
@@ -95,8 +97,12 @@ impl WebSocketHandler {
         node: Node,
     ) -> Self {
         let need_flush = false;
-        let network_unicast = HashMap::new();
-        let network_broadcast = HashMap::new();
+        let mut network_unicast = HashMap::new();
+        let rx = network.subscribe_unicast(CONSOLE_TOPIC).unwrap();
+        network_unicast.insert(CONSOLE_TOPIC.to_string(), rx);
+        let mut network_broadcast = HashMap::new();
+        let rx = network.subscribe(CONSOLE_TOPIC).unwrap();
+        network_broadcast.insert(CONSOLE_TOPIC.to_string(), rx);
         let wallet_notifications = wallet.subscribe();
         let wallet_responses = Vec::new();
         let node_responses = Vec::new();

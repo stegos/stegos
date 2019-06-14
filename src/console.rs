@@ -71,7 +71,7 @@ lazy_static! {
     /// Regex to parse "publish" command.
     static ref PUBLISH_COMMAND_RE: Regex = Regex::new(r"\s*(?P<topic>[0-9A-Za-z]+)\s+(?P<msg>.*)$").unwrap();
     /// Regex to parse "send" command.
-    static ref SEND_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<msg>.+)$").unwrap();
+    static ref SEND_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<topic>[0-9A-Za-z]+)\s+(?P<msg>.+)$").unwrap();
 }
 
 const CONSOLE_PROTOCOL_ID: &'static str = "console";
@@ -187,21 +187,22 @@ impl ConsoleService {
         println!("show escrow - print escrow");
         println!("show recovery - print recovery information");
         println!("net publish TOPIC MESSAGE - publish a network message via floodsub");
-        println!("net send NETWORK_PUBKEY MESSAGE - send a network message via unicast");
+        println!("net send NETWORK_PUBKEY TOPIC MESSAGE - send a network message via unicast");
         println!("db pop block - revert the latest block");
         println!();
     }
 
     fn help_publish() {
         println!("Usage: net publish TOPIC MESSAGE");
-        println!(" - TOPIC - floodsub topic");
-        println!(" - MESSAGE - arbitrary message");
+        println!(" - TOPIC topic");
+        println!(" - MESSAGE some message");
         println!();
     }
 
     fn help_send() {
-        println!("Usage: net send NETWORK_PUBKEY MESSAGE");
+        println!("Usage: net send NETWORK_PUBKEY TOPIC MESSAGE");
         println!(" - NETWORK_PUBKEY recipient's network public key in HEX format");
+        println!(" - TOPIC topic");
         println!(" - MESSAGE some message");
         println!();
     }
@@ -280,10 +281,16 @@ impl ConsoleService {
                     return Ok(true);
                 }
             };
+            let topic = caps.name("topic").unwrap().as_str().to_string();
             let msg = caps.name("msg").unwrap().as_str();
-            info!("Send: to='{}', msg='{}'", recipient.to_hex(), msg);
+            info!(
+                "Send: to='{}', topic='{}', msg='{}'",
+                recipient.to_hex(),
+                topic,
+                msg
+            );
             self.network
-                .send(recipient, "console", msg.as_bytes().to_vec())?;
+                .send(recipient, &topic, msg.as_bytes().to_vec())?;
             return Ok(true);
         } else if msg.starts_with("pay ") {
             let caps = match PAY_COMMAND_RE.captures(&msg[4..]) {
@@ -673,8 +680,9 @@ impl Future for ConsoleService {
             match self.unicast_rx.poll() {
                 Ok(Async::Ready(Some(msg))) => {
                     info!(
-                        "Received unicast message: from: {}, data: {}",
+                        "Received unicast message: from={}, topic={}, data={}",
                         msg.from,
+                        CONSOLE_PROTOCOL_ID,
                         String::from_utf8_lossy(&msg.data)
                     );
                 }

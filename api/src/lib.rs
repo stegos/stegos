@@ -39,15 +39,72 @@ use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
+use stegos_crypto::pbc;
 use stegos_node::{EpochChanged, NodeRequest, NodeResponse, SyncChanged};
 use stegos_wallet::{WalletNotification, WalletRequest, WalletResponse};
 use websocket::WebSocketError;
 
 pub type RequestId = u64;
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "request")]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkRequest {
+    SubscribeUnicast {
+        topic: String,
+    },
+    SubscribeBroadcast {
+        topic: String,
+    },
+    UnsubscribeUnicast {
+        topic: String,
+    },
+    UnsubscribeBroadcast {
+        topic: String,
+    },
+    SendUnicast {
+        topic: String,
+        to: pbc::PublicKey,
+        data: Vec<u8>,
+    },
+    PublishBroadcast {
+        topic: String,
+        data: Vec<u8>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "notification")]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkResponse {
+    SubscribedUnicast,
+    SubscribedBroadcast,
+    UnsubscribedUnicast,
+    UnsubscribedBroadcast,
+    SentUnicast,
+    PublishedBroadcast,
+    Error { error: String },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "notification")]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkNotification {
+    UnicastMessage {
+        topic: String,
+        from: pbc::PublicKey,
+        data: Vec<u8>,
+    },
+    BroadcastMessage {
+        topic: String,
+        data: Vec<u8>,
+    },
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum RequestKind {
+    NetworkRequest(NetworkRequest),
     WalletRequest(WalletRequest),
     NodeRequest(NodeRequest),
 }
@@ -72,10 +129,12 @@ pub enum NodeNotification {
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 enum ResponseKind {
+    NetworkResponse(NetworkResponse),
+    NetworkNotification(NetworkNotification),
     WalletResponse(WalletResponse),
+    WalletNotification(WalletNotification),
     NodeResponse(NodeResponse),
     NodeNotification(NodeNotification),
-    WalletNotification(WalletNotification),
 }
 
 fn is_default(id: &RequestId) -> bool {

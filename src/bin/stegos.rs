@@ -345,7 +345,13 @@ fn run() -> Result<(), Error> {
     };
 
     // Start WebSocket API server.
-    WebSocketServer::spawn(cfg.api, rt.executor(), wallet.clone(), node.clone())?;
+    WebSocketServer::spawn(
+        cfg.api,
+        rt.executor(),
+        network.clone(),
+        wallet.clone(),
+        node.clone(),
+    )?;
 
     // Start all services when network is ready.
     let executor = rt.executor();

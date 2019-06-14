@@ -24,14 +24,16 @@
 use crate::config::ApiConfig;
 use crate::crypto::ApiToken;
 use crate::{
-    decode, encode, NodeNotification, Request, RequestId, RequestKind, Response, ResponseKind,
+    decode, encode, NetworkNotification, NetworkRequest, NetworkResponse, NodeNotification,
+    Request, RequestId, RequestKind, Response, ResponseKind,
 };
 use failure::Error;
-use futures::sync::mpsc::UnboundedReceiver;
-use futures::sync::oneshot;
-use futures::{Async, AsyncSink, Future, Poll, Sink, Stream};
+use futures::sync::{mpsc, oneshot};
+use futures::{task, Async, AsyncSink, Future, Poll, Sink, Stream};
 use log::*;
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use stegos_network::{Network, UnicastMessage};
 use stegos_node::{EpochChanged, Node, NodeResponse, SyncChanged};
 use stegos_wallet::{Wallet, WalletNotification, WalletResponse};
 use tokio::net::TcpListener;
@@ -60,10 +62,16 @@ struct WebSocketHandler {
     stream: WsStream,
     /// True if outgoing buffer should be flushed on the next poll().
     need_flush: bool,
+    /// Network API.
+    network: Network,
+    /// Network unicast subscribtions.
+    network_unicast: HashMap<String, mpsc::UnboundedReceiver<UnicastMessage>>,
+    /// Network broadcast subscribtions.
+    network_broadcast: HashMap<String, mpsc::UnboundedReceiver<Vec<u8>>>,
     /// Wallet API.
     wallet: Wallet,
     /// Wallet events.
-    wallet_notifications: UnboundedReceiver<WalletNotification>,
+    wallet_notifications: mpsc::UnboundedReceiver<WalletNotification>,
     /// Wallet RPC responses.
     wallet_responses: Vec<(RequestId, oneshot::Receiver<WalletResponse>)>,
     /// Node API.
@@ -71,9 +79,9 @@ struct WebSocketHandler {
     /// Node RPC responses.
     node_responses: Vec<(RequestId, oneshot::Receiver<NodeResponse>)>,
     /// Synchronization Status Changed Notification.
-    node_sync_changed: UnboundedReceiver<SyncChanged>,
+    node_sync_changed: mpsc::UnboundedReceiver<SyncChanged>,
     /// Epoch Changed Notification.
-    node_epoch_changed: UnboundedReceiver<EpochChanged>,
+    node_epoch_changed: mpsc::UnboundedReceiver<EpochChanged>,
 }
 
 impl WebSocketHandler {
@@ -82,10 +90,13 @@ impl WebSocketHandler {
         api_token: ApiToken,
         sink: WsSink,
         stream: WsStream,
+        network: Network,
         wallet: Wallet,
         node: Node,
     ) -> Self {
         let need_flush = false;
+        let network_unicast = HashMap::new();
+        let network_broadcast = HashMap::new();
         let wallet_notifications = wallet.subscribe();
         let wallet_responses = Vec::new();
         let node_responses = Vec::new();
@@ -97,6 +108,9 @@ impl WebSocketHandler {
             sink,
             stream,
             need_flush,
+            network,
+            network_unicast,
+            network_broadcast,
             wallet,
             wallet_notifications,
             wallet_responses,
@@ -107,9 +121,62 @@ impl WebSocketHandler {
         }
     }
 
+    fn handle_network_request(
+        &mut self,
+        network_request: NetworkRequest,
+    ) -> Result<NetworkResponse, Error> {
+        match network_request {
+            NetworkRequest::SubscribeUnicast { topic } => {
+                if !self.network_unicast.contains_key(&topic) {
+                    let rx = self.network.subscribe_unicast(&topic)?;
+                    self.network_unicast.insert(topic, rx);
+                    task::current().notify();
+                }
+                Ok(NetworkResponse::SubscribedUnicast)
+            }
+            NetworkRequest::SubscribeBroadcast { topic } => {
+                if !self.network_broadcast.contains_key(&topic) {
+                    let rx = self.network.subscribe(&topic)?;
+                    self.network_broadcast.insert(topic, rx);
+                    task::current().notify();
+                }
+                Ok(NetworkResponse::SubscribedBroadcast)
+            }
+            NetworkRequest::UnsubscribeUnicast { topic } => {
+                self.network_unicast.remove(&topic);
+                Ok(NetworkResponse::UnsubscribedUnicast)
+            }
+            NetworkRequest::UnsubscribeBroadcast { topic } => {
+                self.network_broadcast.remove(&topic);
+                Ok(NetworkResponse::UnsubscribedBroadcast)
+            }
+            NetworkRequest::SendUnicast { topic, to, data } => {
+                self.network.send(to, &topic, data)?;
+                Ok(NetworkResponse::SentUnicast)
+            }
+            NetworkRequest::PublishBroadcast { topic, data } => {
+                self.network.publish(&topic, data)?;
+                Ok(NetworkResponse::PublishedBroadcast)
+            }
+        }
+    }
+
     fn on_message(&mut self, msg: String) -> Result<(), WebSocketError> {
         let request: Request = decode(&self.api_token, &msg)?;
         match request.kind {
+            RequestKind::NetworkRequest(network_request) => {
+                let resp = match self.handle_network_request(network_request) {
+                    Ok(r) => r,
+                    Err(e) => NetworkResponse::Error {
+                        error: format!("{}", e),
+                    },
+                };
+                let response = Response {
+                    kind: ResponseKind::NetworkResponse(resp),
+                    id: request.id,
+                };
+                self.send(response);
+            }
             RequestKind::WalletRequest(wallet_request) => {
                 self.wallet_responses
                     .push((request.id, self.wallet.request(wallet_request)));
@@ -189,6 +256,52 @@ impl Future for WebSocketHandler {
             }
         }
 
+        // Network unicast messages.
+        let mut network_notifications: Vec<NetworkNotification> = Vec::new();
+        for (topic, rx) in self.network_unicast.iter_mut() {
+            loop {
+                match rx.poll() {
+                    Ok(Async::Ready(Some(msg))) => {
+                        network_notifications.push(NetworkNotification::UnicastMessage {
+                            topic: topic.clone(),
+                            from: msg.from,
+                            data: msg.data,
+                        });
+                    }
+                    Ok(Async::Ready(None)) => break,
+                    Ok(Async::NotReady) => break,
+                    Err(()) => unreachable!(),
+                }
+            }
+        }
+
+        // Network broadcast messages.
+        for (topic, rx) in self.network_broadcast.iter_mut() {
+            loop {
+                match rx.poll() {
+                    Ok(Async::Ready(Some(data))) => {
+                        network_notifications.push(NetworkNotification::BroadcastMessage {
+                            topic: topic.clone(),
+                            data,
+                        });
+                    }
+                    Ok(Async::Ready(None)) => break,
+                    Ok(Async::NotReady) => break,
+                    Err(()) => unreachable!(),
+                }
+            }
+        }
+
+        // Flush all network notifications (a workaround for borrow-checker).
+        for notification in network_notifications {
+            let notification = Response {
+                kind: ResponseKind::NetworkNotification(notification),
+                id: 0,
+            };
+            self.send(notification);
+        }
+
+        // Wallet notifications.
         loop {
             match self.wallet_notifications.poll() {
                 Ok(Async::Ready(Some(notification))) => {
@@ -284,10 +397,12 @@ impl WebSocketServer {
     pub fn spawn(
         cfg: ApiConfig,
         executor: TaskExecutor,
+        network: Network,
         wallet: Wallet,
         node: Node,
     ) -> Result<(), Error> {
         let executor2 = executor.clone();
+        let network2 = network.clone();
         let wallet2 = wallet.clone();
         let node2 = node.clone();
         let addr: SocketAddr = format!("{}:{}", cfg.bind_ip, cfg.bind_port).parse()?;
@@ -299,6 +414,7 @@ impl WebSocketServer {
                 error!("Failed to accept: {:?}", e);
             })
             .for_each(move |s| {
+                let network3 = network2.clone();
                 let wallet3 = wallet2.clone();
                 let node3 = node2.clone();
                 let peer = s.peer_addr().expect("has peer address");
@@ -324,6 +440,7 @@ impl WebSocketServer {
                                     key,
                                     sink,
                                     stream,
+                                    network3.clone(),
                                     wallet3.clone(),
                                     node3.clone(),
                                 )

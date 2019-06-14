@@ -2630,6 +2630,7 @@ dependencies = [
  "serde_derive 1.0.92 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_json 1.0.39 (registry+https://github.com/rust-lang/crates.io-index)",
  "stegos_crypto 0.2.0",
+ "stegos_network 0.4.0",
  "stegos_node 0.2.0",
  "stegos_wallet 0.2.0",
  "tokio 0.1.21 (registry+https://github.com/rust-lang/crates.io-index)",

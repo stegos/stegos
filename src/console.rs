@@ -23,29 +23,21 @@ use crate::consts;
 use crate::money::{format_money, parse_money};
 use dirs;
 use failure::Error;
-use futures::sync::mpsc::UnboundedReceiver;
 use futures::sync::mpsc::{channel, Receiver, Sender};
-use futures::sync::oneshot;
 use futures::{Async, Future, Poll, Sink, Stream};
 use lazy_static::*;
 use log::*;
 use regex::Regex;
 use rustyline as rl;
-use serde::ser::Serialize;
 use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::thread;
 use std::time::{Duration, SystemTime};
+use stegos_api::*;
 use stegos_crypto::curve1174::PublicKey;
 use stegos_crypto::pbc;
 use stegos_keychain::input;
-use stegos_network::Network;
-use stegos_network::UnicastMessage;
-use stegos_node::{Node, NodeRequest, NodeResponse};
-use stegos_wallet::{
-    PaymentInfo, PaymentPayloadData, Wallet, WalletNotification, WalletRequest, WalletResponse,
-};
 
 // ----------------------------------------------------------------
 // Public API.
@@ -74,50 +66,29 @@ lazy_static! {
     static ref SEND_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<topic>[0-9A-Za-z]+)\s+(?P<msg>.+)$").unwrap();
 }
 
-const CONSOLE_PROTOCOL_ID: &'static str = "console";
+// const CONSOLE_PROTOCOL_ID: &'static str = "console";
 
 /// Console (stdin) service.
 pub struct ConsoleService {
-    /// Network API.
-    network: Network,
-    /// Wallet API.
-    wallet: Wallet,
-    /// Node API.
-    node: Node,
-    /// Wallet events.
-    wallet_notifications: UnboundedReceiver<WalletNotification>,
-    /// Wallet RPC responses.
-    wallet_response: Option<oneshot::Receiver<WalletResponse>>,
-    /// Node RPC responses.
-    node_response: Option<oneshot::Receiver<NodeResponse>>,
+    /// API client.
+    client: WebSocketClient,
     /// A channel to receive message from stdin thread.
     stdin: Receiver<String>,
     /// A thread used for readline.
     stdin_th: thread::JoinHandle<()>,
-    /// A channel to receive unicast messages
-    unicast_rx: UnboundedReceiver<UnicastMessage>,
 }
 
 impl ConsoleService {
     /// Constructor.
-    pub fn new(network: Network, wallet: Wallet, node: Node) -> Result<ConsoleService, Error> {
+    pub fn new(uri: String, api_token: ApiToken) -> Result<ConsoleService, Error> {
         let (tx, rx) = channel::<String>(1);
-        let wallet_notifications = wallet.subscribe();
-        let wallet_response = None;
-        let node_response = None;
+        let client = WebSocketClient::new(uri, api_token);
         let stdin_th = thread::spawn(move || Self::readline_thread_f(tx));
         let stdin = rx;
-        let unicast_rx = network.subscribe_unicast(CONSOLE_PROTOCOL_ID)?;
         let service = ConsoleService {
-            network,
-            wallet,
-            wallet_notifications,
-            wallet_response,
-            node_response,
+            client,
             stdin,
             stdin_th,
-            unicast_rx,
-            node,
         };
         Ok(service)
     }
@@ -247,6 +218,33 @@ impl ConsoleService {
         println!();
     }
 
+    fn send_network_request(&mut self, request: NetworkRequest) -> Result<(), WebSocketError> {
+        let request = Request {
+            kind: RequestKind::NetworkRequest(request),
+            id: 0,
+        };
+        self.client.send(request)?;
+        Ok(())
+    }
+
+    fn send_wallet_request(&mut self, request: WalletRequest) -> Result<(), WebSocketError> {
+        let request = Request {
+            kind: RequestKind::WalletRequest(request),
+            id: 0,
+        };
+        self.client.send(request)?;
+        Ok(())
+    }
+
+    fn send_node_request(&mut self, request: NodeRequest) -> Result<(), WebSocketError> {
+        let request = Request {
+            kind: RequestKind::NodeRequest(request),
+            id: 0,
+        };
+        self.client.send(request)?;
+        Ok(())
+    }
+
     /// Called when line is typed on standard input.
     fn on_input(&mut self, msg: &str) -> Result<bool, Error> {
         if msg.starts_with("net publish ") {
@@ -258,10 +256,11 @@ impl ConsoleService {
                 }
             };
 
-            let topic = caps.name("topic").unwrap().as_str();
+            let topic = caps.name("topic").unwrap().as_str().to_string();
             let msg = caps.name("msg").unwrap().as_str();
             info!("Publish: topic='{}', msg='{}'", topic, msg);
-            self.network.publish(&topic, msg.as_bytes().to_vec())?;
+            let data = msg.as_bytes().to_vec();
+            self.send_network_request(NetworkRequest::PublishBroadcast { topic, data })?;
             return Ok(true);
         } else if msg.starts_with("net send ") {
             let caps = match SEND_COMMAND_RE.captures(&msg[9..]) {
@@ -289,8 +288,12 @@ impl ConsoleService {
                 topic,
                 msg
             );
-            self.network
-                .send(recipient, &topic, msg.as_bytes().to_vec())?;
+            let data = msg.as_bytes().to_vec();
+            self.send_network_request(NetworkRequest::SendUnicast {
+                topic,
+                to: recipient,
+                data,
+            })?;
             return Ok(true);
         } else if msg.starts_with("pay ") {
             let caps = match PAY_COMMAND_RE.captures(&msg[4..]) {
@@ -384,7 +387,7 @@ impl ConsoleService {
                     locked_timestamp,
                 }
             };
-            self.wallet_response = Some(self.wallet.request(request));
+            self.send_wallet_request(request)?
         } else if msg.starts_with("spay ") {
             let caps = match PAY_COMMAND_RE.captures(&msg[5..]) {
                 Some(c) => c,
@@ -454,7 +457,7 @@ impl ConsoleService {
                 comment,
                 locked_timestamp,
             };
-            self.wallet_response = Some(self.wallet.request(request));
+            self.send_wallet_request(request)?
         } else if msg.starts_with("msg ") {
             let caps = match MSG_COMMAND_RE.captures(&msg[4..]) {
                 Some(c) => c,
@@ -486,7 +489,7 @@ impl ConsoleService {
                 comment,
                 locked_timestamp: None,
             };
-            self.wallet_response = Some(self.wallet.request(request));
+            self.send_wallet_request(request)?
         } else if msg.starts_with("stake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[6..]) {
                 Some(c) => c,
@@ -509,12 +512,12 @@ impl ConsoleService {
             info!("Staking {} STG into escrow", format_money(amount));
             let password = input::read_password_from_stdin(false)?;
             let request = WalletRequest::Stake { password, amount };
-            self.wallet_response = Some(self.wallet.request(request));
+            self.send_wallet_request(request)?
         } else if msg == "unstake" {
             info!("Unstaking all of the money from escrow");
             let password = input::read_password_from_stdin(false)?;
             let request = WalletRequest::UnstakeAll { password };
-            self.wallet_response = Some(self.wallet.request(request));
+            self.send_wallet_request(request)?
         } else if msg.starts_with("unstake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[8..]) {
                 Some(c) => c,
@@ -537,17 +540,17 @@ impl ConsoleService {
             info!("Unstaking {} STG from escrow", format_money(amount));
             let password = input::read_password_from_stdin(false)?;
             let request = WalletRequest::Unstake { password, amount };
-            self.wallet_response = Some(self.wallet.request(request));
+            self.send_wallet_request(request)?
         } else if msg == "restake" {
             info!("Restaking all stakes");
             let password = input::read_password_from_stdin(false)?;
             let request = WalletRequest::RestakeAll { password };
-            self.wallet_response = Some(self.wallet.request(request));
+            self.send_wallet_request(request)?
         } else if msg == "cloak" {
             info!("Cloaking all public inputs");
             let password = input::read_password_from_stdin(false)?;
             let request = WalletRequest::CloakAll { password };
-            self.wallet_response = Some(self.wallet.request(request));
+            self.send_wallet_request(request)?
         } else if msg == "show version" {
             println!(
                 "Stegos {}.{}.{} ({} {})",
@@ -560,26 +563,26 @@ impl ConsoleService {
             return Ok(true);
         } else if msg == "show keys" {
             let request = WalletRequest::KeysInfo {};
-            self.wallet_response = Some(self.wallet.request(request));
+            self.send_wallet_request(request)?
         } else if msg == "show balance" {
             let request = WalletRequest::BalanceInfo {};
-            self.wallet_response = Some(self.wallet.request(request));
+            self.send_wallet_request(request)?
         } else if msg == "show election" {
             let request = NodeRequest::ElectionInfo {};
-            self.node_response = Some(self.node.request(request));
+            self.send_node_request(request)?
         } else if msg == "show escrow" {
             let request = NodeRequest::EscrowInfo {};
-            self.node_response = Some(self.node.request(request));
+            self.send_node_request(request)?
         } else if msg == "show utxo" {
             let request = WalletRequest::UnspentInfo {};
-            self.wallet_response = Some(self.wallet.request(request));
+            self.send_wallet_request(request)?
         } else if msg == "show recovery" {
             let password = input::read_password_from_stdin(false)?;
             let request = WalletRequest::GetRecovery { password };
-            self.wallet_response = Some(self.wallet.request(request));
+            self.send_wallet_request(request)?
         } else if msg == "db pop block" {
             let request = NodeRequest::PopBlock {};
-            self.node_response = Some(self.node.request(request));
+            self.send_node_request(request)?
         } else {
             Self::help();
             return Ok(true);
@@ -591,32 +594,17 @@ impl ConsoleService {
         std::process::exit(0);
     }
 
-    fn on_wallet_notification(&mut self, notification: WalletNotification) {
-        match notification {
-            WalletNotification::Received(PaymentInfo { data, amount, .. }) => {
-                if let PaymentPayloadData::Comment(comment) = data {
-                    if amount == 0 && !comment.is_empty() {
-                        info!("Incoming message: {}", comment);
-                    }
-                }
-            }
-            WalletNotification::ReceivedPublic(_) => {}
-            WalletNotification::Spent(_) => {}
-            WalletNotification::SpentPublic(_) => {}
-            WalletNotification::Staked(_) => {}
-            WalletNotification::Unstaked(_) => {}
-            WalletNotification::BalanceChanged { balance } => {
-                info!("Balance is {} STG", format_money(balance));
-            }
-        }
-    }
-
-    fn on_response<T: Serialize>(&mut self, response: T) {
-        let output = serde_yaml::to_string(&[response])
+    fn on_response(&mut self, response: Response) {
+        let output = serde_yaml::to_string(&[&response])
             .map_err(|_| fmt::Error)
             .unwrap();
         println!("{}\n...\n", output);
-        self.stdin_th.thread().unpark();
+        match &response.kind {
+            ResponseKind::NodeResponse(_) | ResponseKind::WalletResponse(_) => {
+                self.stdin_th.thread().unpark();
+            }
+            _ => {}
+        }
     }
 }
 
@@ -626,6 +614,18 @@ impl Future for ConsoleService {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        loop {
+            match self.client.poll() {
+                Ok(Async::Ready(response)) => {
+                    self.on_response(response);
+                }
+                Ok(Async::NotReady) => {
+                    break;
+                }
+                Err(()) => unreachable!(),
+            }
+        }
+
         loop {
             match self.stdin.poll() {
                 Ok(Async::Ready(Some(line))) => match self.on_input(&line) {
@@ -639,56 +639,7 @@ impl Future for ConsoleService {
                 },
                 Ok(Async::Ready(None)) => self.on_exit(),
                 Ok(Async::NotReady) => break, // fall through
-                Err(()) => panic!(),
-            }
-        }
-
-        loop {
-            match self.wallet_notifications.poll() {
-                Ok(Async::Ready(Some(notification))) => {
-                    self.on_wallet_notification(notification);
-                }
-                Ok(Async::Ready(None)) => self.on_exit(),
-                Ok(Async::NotReady) => break, // fall through
-                Err(()) => panic!("Wallet failure"),
-            }
-        }
-
-        if self.wallet_response.is_some() {
-            let mut rx = self.wallet_response.take().unwrap();
-            match rx.poll() {
-                Ok(Async::Ready(response)) => {
-                    self.on_response(response);
-                }
-                Ok(Async::NotReady) => self.wallet_response = Some(rx),
-                Err(_) => panic!("Wallet failure"),
-            }
-        }
-
-        if let Some(mut rx) = self.node_response.take() {
-            match rx.poll() {
-                Ok(Async::Ready(response)) => {
-                    self.on_response(response);
-                }
-                Ok(Async::NotReady) => self.node_response = Some(rx),
-                Err(_) => panic!("Wallet failure"),
-            }
-        }
-
-        loop {
-            // Process unicast messages
-            match self.unicast_rx.poll() {
-                Ok(Async::Ready(Some(msg))) => {
-                    info!(
-                        "Received unicast message: from={}, topic={}, data={}",
-                        msg.from,
-                        CONSOLE_PROTOCOL_ID,
-                        String::from_utf8_lossy(&msg.data)
-                    );
-                }
-                Ok(Async::Ready(None)) => self.on_exit(),
-                Ok(Async::NotReady) => break, // fall through
-                Err(()) => panic!("Unicast failure"),
+                Err(()) => unreachable!(),
             }
         }
 

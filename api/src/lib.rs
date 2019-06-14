@@ -23,11 +23,13 @@
 
 #![deny(warnings)]
 
+mod client;
 mod config;
 mod crypto;
 mod error;
 mod server;
 
+pub use crate::client::WebSocketClient;
 pub use crate::config::load_api_token;
 pub use crate::config::ApiConfig;
 pub use crate::crypto::ApiToken;

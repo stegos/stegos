@@ -331,17 +331,15 @@ fn run() -> Result<(), Error> {
         cfg.chain.stake_epochs,
         wallet_persistent_state,
     );
+    rt.spawn(wallet_service);
 
     // Don't initialize REPL if stdin is not a TTY device
-    let console_service = if atty::is(atty::Stream::Stdin) {
+    if atty::is(atty::Stream::Stdin) {
+        let uri = format!("ws://{}:{}", cfg.api.bind_ip, cfg.api.bind_port);
+        let api_token = stegos_api::load_api_token(&cfg.api.token_file)?;
         // Initialize console
-        Some(ConsoleService::new(
-            network.clone(),
-            wallet.clone(),
-            node.clone(),
-        )?)
-    } else {
-        None
+        let console_service = ConsoleService::new(uri, api_token)?;
+        rt.spawn(console_service);
     };
 
     // Start WebSocket API server.
@@ -365,11 +363,6 @@ fn run() -> Result<(), Error> {
             node_service.init().expect("shit happens");
             executor.spawn(node_service);
             executor.spawn(txpool_service);
-            executor.spawn(wallet_service);
-            if let Some(console_service) = console_service {
-                executor.spawn(console_service);
-            }
-
             Ok(())
         });
     rt.spawn(network_ready_future);

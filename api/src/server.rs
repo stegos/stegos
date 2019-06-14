@@ -167,8 +167,7 @@ impl WebSocketHandler {
         }
     }
 
-    fn on_message(&mut self, msg: String) -> Result<(), WebSocketError> {
-        let request: Request = decode(&self.api_token, &msg)?;
+    fn on_request(&mut self, request: Request) -> Result<(), WebSocketError> {
         match request.kind {
             RequestKind::NetworkRequest(network_request) => {
                 let resp = match self.handle_network_request(network_request) {
@@ -196,6 +195,7 @@ impl WebSocketHandler {
     }
 
     fn send(&mut self, msg: Response) {
+        trace!("[{}] <= {:?}", self.peer, msg);
         let msg = encode(&self.api_token, &msg);
         if let Err(e) = self.send_raw(OwnedMessage::Text(msg)) {
             error!("Failed to send message: {}", e);
@@ -203,7 +203,6 @@ impl WebSocketHandler {
     }
 
     fn send_raw(&mut self, msg: OwnedMessage) -> Result<(), WebSocketError> {
-        trace!("raw send: {:?}", msg);
         match self.sink.start_send(msg)? {
             AsyncSink::Ready => {
                 self.need_flush = true;
@@ -232,30 +231,28 @@ impl Future for WebSocketHandler {
         loop {
             match self.stream.poll()? {
                 Async::Ready(Some(OwnedMessage::Text(msg))) => {
-                    trace!("[{}] Received text: {}", self.peer, &msg);
-                    self.on_message(msg)?
+                    trace!("[{}] => Text({})", self.peer, &msg);
+                    let request: Request = decode(&self.api_token, &msg)?;
+                    trace!("[{}] => {:?}", self.peer, request);
+                    self.on_request(request)?
                 }
                 Async::Ready(Some(OwnedMessage::Binary(msg))) => {
-                    trace!("[{}] Received binary: len={}", self.peer, msg.len());
+                    trace!("[{}] => Binary(len={})", self.peer, msg.len());
                     return Err(WebSocketError::RequestError("BinaryIsNotSupported"));
                 }
                 Async::Ready(Some(OwnedMessage::Ping(msg))) => {
-                    trace!("[{}] Received ping: len={}", self.peer, msg.len());
+                    trace!("[{}] => Ping(len={})", self.peer, msg.len());
                     self.send_raw(OwnedMessage::Pong(msg))?
                 }
                 Async::Ready(Some(OwnedMessage::Pong(msg))) => {
-                    trace!("[{}] Received pong: len={}", self.peer, msg.len());
+                    trace!("[{}] => Pong(len={})", self.peer, msg.len());
                 }
                 Async::Ready(Some(OwnedMessage::Close(data))) => {
-                    trace!(
-                        "[{}] Received close: has_data={}",
-                        self.peer,
-                        data.is_some()
-                    );
+                    trace!("[{}] => Close(has_data={})", self.peer, data.is_some());
                     return Ok(Async::Ready(()));
                 }
                 Async::Ready(None) => {
-                    trace!("[{}] Received eof", self.peer);
+                    trace!("[{}] => EOF", self.peer);
                     return Ok(Async::Ready(()));
                 }
                 Async::NotReady => break,

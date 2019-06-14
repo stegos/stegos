@@ -2634,6 +2634,7 @@ dependencies = [
  "stegos_node 0.2.0",
  "stegos_wallet 0.2.0",
  "tokio 0.1.21 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tokio-timer 0.2.11 (registry+https://github.com/rust-lang/crates.io-index)",
  "websocket 0.22.4 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 

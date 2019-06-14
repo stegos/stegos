@@ -25,6 +25,7 @@ stegos_network = { version = "0.4.0", path = "../network" }
 stegos_node = { version = "0.2.0", path = "../node" }
 stegos_wallet = { version = "0.2.0", path = "../wallet" }
 tokio = "0.1"
+tokio-timer = "0.2"
 websocket = { version = "0.22", default-features = false, features = ["async"] }
 
 [dev-dependencies]

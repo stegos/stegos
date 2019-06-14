@@ -258,7 +258,7 @@ fn run() -> Result<(), Error> {
         info!("Starting wallet with generator.");
         // Initialize Wallet.
         let (wallet_service, wallet) = WalletService::new(
-            cfg.keychain.password_file.clone(),
+            cfg.keychain.wallet_skey_file,
             instance.wallet_skey,
             instance.wallet_pkey,
             instance.network_skey,

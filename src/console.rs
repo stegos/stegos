@@ -266,7 +266,7 @@ impl ConsoleService {
             let caps = match SEND_COMMAND_RE.captures(&msg[9..]) {
                 Some(c) => c,
                 None => {
-                    Self::help_publish();
+                    Self::help_send();
                     return Ok(true);
                 }
             };

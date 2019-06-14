@@ -22,7 +22,7 @@
 //! Leader election and group formation algorithms and tests.
 
 use log::error;
-use serde_derive::Serialize;
+use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
@@ -30,7 +30,7 @@ use stegos_crypto::pbc;
 pub type StakersGroup = Vec<(pbc::PublicKey, i64)>;
 
 /// User-friendly printable representation of state.
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ElectionInfo {
     pub epoch: u64,
     pub offset: u32,

@@ -118,7 +118,7 @@ impl Node {
 ///
 /// RPC requests.
 ///
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "request")]
 #[serde(rename_all = "snake_case")]
 pub enum NodeRequest {
@@ -130,7 +130,7 @@ pub enum NodeRequest {
 ///
 /// RPC responses.
 ///
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "response")]
 #[serde(rename_all = "snake_case")]
 pub enum NodeResponse {
@@ -141,7 +141,7 @@ pub enum NodeResponse {
 }
 
 /// Send when synchronization status has been changed.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SyncChanged {
     pub is_synchronized: bool,
     pub epoch: u64,
@@ -154,7 +154,7 @@ pub struct SyncChanged {
 }
 
 /// Send when epoch is changed.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EpochChanged {
     pub epoch: u64,
     pub last_macro_block_timestamp: SystemTime,

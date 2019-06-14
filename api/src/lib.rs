@@ -28,25 +28,29 @@ mod crypto;
 mod error;
 mod server;
 
+pub use crate::config::load_api_token;
 pub use crate::config::ApiConfig;
 pub use crate::crypto::ApiToken;
 pub use crate::error::KeyError;
 pub use crate::server::WebSocketServer;
+pub use stegos_node::{EpochChanged, NodeRequest, NodeResponse, SyncChanged};
+pub use stegos_wallet::{WalletNotification, WalletRequest, WalletResponse};
+pub use websocket::WebSocketError;
 
 use crate::crypto::{decrypt, encrypt};
 use log::*;
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
-use serde_derive::Deserialize;
-use serde_derive::Serialize;
+use serde_derive::{Deserialize, Serialize};
 use stegos_crypto::pbc;
-use stegos_node::{EpochChanged, NodeRequest, NodeResponse, SyncChanged};
-use stegos_wallet::{WalletNotification, WalletRequest, WalletResponse};
-use websocket::WebSocketError;
 
 pub type RequestId = u64;
 
-#[derive(Debug, Clone, Deserialize)]
+fn is_request_id_default(id: &RequestId) -> bool {
+    *id == 0
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "request")]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkRequest {
@@ -73,7 +77,7 @@ pub enum NetworkRequest {
     },
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "notification")]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkResponse {
@@ -86,7 +90,7 @@ pub enum NetworkResponse {
     Error { error: String },
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "notification")]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkNotification {
@@ -101,24 +105,25 @@ pub enum NetworkNotification {
     },
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
-enum RequestKind {
+pub enum RequestKind {
     NetworkRequest(NetworkRequest),
     WalletRequest(WalletRequest),
     NodeRequest(NodeRequest),
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-struct Request {
+pub struct Request {
     #[serde(flatten)]
-    kind: RequestKind,
+    pub kind: RequestKind,
     #[serde(default)]
-    id: u64,
+    #[serde(skip_serializing_if = "is_request_id_default")]
+    pub id: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "notification")]
 #[serde(rename_all = "snake_case")]
 pub enum NodeNotification {
@@ -126,9 +131,9 @@ pub enum NodeNotification {
     EpochChanged(EpochChanged),
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
-enum ResponseKind {
+pub enum ResponseKind {
     NetworkResponse(NetworkResponse),
     NetworkNotification(NetworkNotification),
     WalletResponse(WalletResponse),
@@ -137,27 +142,24 @@ enum ResponseKind {
     NodeNotification(NodeNotification),
 }
 
-fn is_default(id: &RequestId) -> bool {
-    *id == 0
-}
-
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-struct Response {
+pub struct Response {
     #[serde(flatten)]
-    kind: ResponseKind,
-    #[serde(skip_serializing_if = "is_default")]
-    id: RequestId,
+    pub kind: ResponseKind,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "is_request_id_default")]
+    pub id: RequestId,
 }
 
-fn encode<T: Serialize>(api_token: &ApiToken, msg: &T) -> String {
+pub fn encode<T: Serialize>(api_token: &ApiToken, msg: &T) -> String {
     let msg = serde_json::to_vec(&msg).expect("serialized");
     let msg = encrypt(api_token, &msg);
     let msg = base64::encode(&msg);
     msg
 }
 
-fn decode<T: DeserializeOwned>(api_token: &ApiToken, msg: &str) -> Result<T, WebSocketError> {
+pub fn decode<T: DeserializeOwned>(api_token: &ApiToken, msg: &str) -> Result<T, WebSocketError> {
     let msg = match base64::decode(&msg) {
         Ok(r) => r,
         Err(e) => {

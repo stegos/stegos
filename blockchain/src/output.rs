@@ -24,7 +24,7 @@
 use crate::BlockchainError;
 use failure::{Error, Fail};
 use rand::random;
-use serde_derive::Serialize;
+use serde_derive::{Deserialize, Serialize};
 use std::mem::transmute;
 use std::time::SystemTime;
 use stegos_crypto::bulletproofs::{fee_a, make_range_proof, validate_range_proof, BulletProof};
@@ -192,7 +192,7 @@ fn cloak_key(recipient_pkey: &PublicKey, gamma: &Fr) -> Result<(PublicKey, Fr), 
 }
 
 /// Unpacked data field of PaymentPayload.
-#[derive(Serialize, Debug, Eq, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 pub enum PaymentPayloadData {
     /// A string up to PAYLOAD_DATA_LEN - 2 bytes inclusive.
     Comment(String),

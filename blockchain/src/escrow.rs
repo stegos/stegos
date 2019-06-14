@@ -25,7 +25,7 @@
 
 use crate::mvcc::MultiVersionedMap;
 use log::*;
-use serde_derive::Serialize;
+use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use stegos_crypto::hash::Hash;
@@ -52,12 +52,12 @@ pub(crate) struct Escrow {
     escrow: EscrowMap,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct EscrowInfo {
     pub validators: Vec<ValidatorInfo>,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ValidatorInfo {
     pub network_pkey: pbc::PublicKey,
     pub active_stake: i64,
@@ -65,7 +65,7 @@ pub struct ValidatorInfo {
     pub stakes: Vec<StakeInfo>,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct StakeInfo {
     pub utxo: Hash,
     pub active_until_epoch: u64,

@@ -48,7 +48,6 @@ use stegos_txpool::TransactionPoolService;
 use stegos_wallet::WalletService;
 use tokio::runtime::Runtime;
 
-use crate::console::*;
 use crate::report_metrics;
 
 fn load_configuration_file(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
@@ -205,7 +204,7 @@ fn load_keys(
 }
 
 fn run() -> Result<(), Error> {
-    let name = "Stegos";
+    let name = "Stegos Node";
     let version = format!(
         "{}.{}.{} ({} {})",
         env!("VERSION_MAJOR"),
@@ -332,15 +331,6 @@ fn run() -> Result<(), Error> {
         wallet_persistent_state,
     );
     rt.spawn(wallet_service);
-
-    // Don't initialize REPL if stdin is not a TTY device
-    if atty::is(atty::Stream::Stdin) {
-        let uri = format!("ws://{}:{}", cfg.api.bind_ip, cfg.api.bind_port);
-        let api_token = stegos_api::load_api_token(&cfg.api.token_file)?;
-        // Initialize console
-        let console_service = ConsoleService::new(uri, api_token)?;
-        rt.spawn(console_service);
-    };
 
     // Start WebSocket API server.
     WebSocketServer::spawn(

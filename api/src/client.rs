@@ -36,6 +36,7 @@ use tokio_timer::{clock, Delay};
 use websocket::header::Headers;
 use websocket::r#async::MessageCodec;
 use websocket::result::WebSocketError;
+pub use websocket::url;
 use websocket::{ClientBuilder, OwnedMessage};
 
 const RECONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -193,7 +194,7 @@ impl Future for WebSocketClient {
         match self.poll_impl() {
             Ok(r) => Ok(r),
             Err(e) => {
-                debug!("[{}] Disconnected: error={:?}", self.uri, e);
+                error!("[{}] {:?}", self.uri, e);
                 let deadline = clock::now() + RECONNECT_TIMEOUT;
                 let state2 = State::WaitReconnect(Delay::new(deadline));
                 std::mem::replace(&mut self.state, state2);

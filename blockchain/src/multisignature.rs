@@ -108,6 +108,10 @@ pub fn check_multi_signature(
     let mut group_total_slots = 0;
 
     for bit in multisigmap.iter() {
+        if bit >= validators.len() {
+            return Err(MultisignatureError::TooBigBitmap(bit, validators.len()));
+        }
+
         let validator = &validators[bit];
         let pkey: pbc::G2 = validator.0.into();
         let slots = validator.1;

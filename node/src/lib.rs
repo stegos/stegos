@@ -1153,7 +1153,7 @@ impl NodeService {
                 self.chain.epoch(),
                 self.network_skey.clone(),
                 self.network_pkey.clone(),
-                self.chain.election_result(),
+                self.chain.election_result().clone(),
                 self.chain.validators().iter().cloned().collect(),
             );
 

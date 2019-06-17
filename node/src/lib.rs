@@ -168,6 +168,7 @@ pub struct OutputsChanged {
     pub epoch: u64,
     pub inputs: Vec<Output>,
     pub outputs: Vec<Output>,
+    pub final_block: bool,
 }
 
 // ----------------------------------------------------------------
@@ -606,6 +607,7 @@ impl NodeService {
                 epoch: self.chain.epoch(),
                 inputs,
                 outputs,
+                final_block: false,
             };
             self.on_outputs_changed
                 .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
@@ -819,6 +821,7 @@ impl NodeService {
                 epoch: self.chain.epoch(),
                 inputs,
                 outputs,
+                final_block: false,
             };
             // TODO: merge this event with OutputsChanged below.
             self.on_outputs_changed
@@ -836,7 +839,7 @@ impl NodeService {
             );
         }
 
-        self.on_block_added(epoch, timestamp, inputs, outputs);
+        self.on_block_added(epoch, timestamp, inputs, outputs, true);
 
         let msg = EpochChanged {
             epoch: self.chain.epoch(),
@@ -870,7 +873,7 @@ impl NodeService {
         }
 
         let (inputs, outputs) = self.chain.push_micro_block(block, timestamp)?;
-        self.on_block_added(self.chain.epoch(), timestamp, inputs, outputs);
+        self.on_block_added(self.chain.epoch(), timestamp, inputs, outputs, false);
         self.update_validation_status();
 
         Ok(())
@@ -883,6 +886,7 @@ impl NodeService {
         timestamp: SystemTime,
         inputs: Vec<Output>,
         outputs: Vec<Output>,
+        final_block: bool,
     ) {
         // Remove old transactions from the mempool.
         let input_hashes: Vec<Hash> = inputs.iter().map(|o| Hash::digest(o)).collect();
@@ -897,6 +901,7 @@ impl NodeService {
             epoch,
             inputs,
             outputs,
+            final_block,
         };
         self.on_outputs_changed
             .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
@@ -967,6 +972,7 @@ impl NodeService {
                 epoch: self.chain.epoch(),
                 inputs,
                 outputs,
+                final_block: false,
             };
             self.on_outputs_changed
                 .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());

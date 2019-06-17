@@ -229,7 +229,7 @@ impl WalletService {
 
         // Recover state.
         for (output, epoch) in persistent_state {
-            service.on_output_created(epoch, output);
+            service.on_output_created(epoch, output, false);
         }
 
         metrics::WALLET_BALANCES
@@ -580,7 +580,13 @@ impl WalletService {
     }
 
     /// Called when outputs registered and/or pruned.
-    fn on_outputs_changed(&mut self, epoch: u64, inputs: Vec<Output>, outputs: Vec<Output>) {
+    fn on_outputs_changed(
+        &mut self,
+        epoch: u64,
+        inputs: Vec<Output>,
+        outputs: Vec<Output>,
+        persist: bool,
+    ) {
         let saved_balance = self.balance();
 
         self.find_committed_txs(&inputs);
@@ -589,7 +595,7 @@ impl WalletService {
         }
 
         for output in outputs {
-            self.on_output_created(epoch, output);
+            self.on_output_created(epoch, output, persist);
         }
 
         let balance = self.balance();
@@ -603,7 +609,7 @@ impl WalletService {
     }
 
     /// Called when UTXO is created.
-    fn on_output_created(&mut self, epoch: u64, output: Output) {
+    fn on_output_created(&mut self, epoch: u64, output: Output, persist: bool) {
         if !output.is_my_utxo(&self.wallet_skey, &self.wallet_pkey) {
             return;
         }
@@ -624,11 +630,13 @@ impl WalletService {
                         data: data.clone(),
                     };
 
-                    if let Err(e) = self
-                        .wallet_log
-                        .push_incomming(SystemTime::now(), value.clone().into())
-                    {
-                        error!("Error when adding incomming tx = {}", e)
+                    if persist {
+                        if let Err(e) = self
+                            .wallet_log
+                            .push_incomming(SystemTime::now(), value.clone().into())
+                        {
+                            error!("Error when adding incomming tx = {}", e)
+                        }
                     }
                     let info = value.to_info();
                     let missing = self.payments.insert(hash, value);
@@ -642,11 +650,13 @@ impl WalletService {
                 info!("Received public payment: utxo={}, amount={}", hash, amount);
                 let value = o.clone();
 
-                if let Err(e) = self
-                    .wallet_log
-                    .push_incomming(SystemTime::now(), value.clone().into())
-                {
-                    error!("Error when adding incomming tx = {}", e)
+                if persist {
+                    if let Err(e) = self
+                        .wallet_log
+                        .push_incomming(SystemTime::now(), value.clone().into())
+                    {
+                        error!("Error when adding incomming tx = {}", e)
+                    }
                 }
 
                 let info = public_payment_info(&value);
@@ -948,8 +958,9 @@ impl Future for WalletService {
                         epoch,
                         inputs,
                         outputs,
+                        final_block,
                     }) => {
-                        self.on_outputs_changed(epoch, inputs, outputs);
+                        self.on_outputs_changed(epoch, inputs, outputs, final_block);
                     }
                     WalletEvent::NodeEpochChanged(EpochChanged {
                         epoch,

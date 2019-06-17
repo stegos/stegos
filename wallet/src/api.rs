@@ -147,6 +147,10 @@ pub enum WalletRequest {
         starting_from: SystemTime,
         limit: u64,
     },
+    ChangePassword {
+        old_password: String,
+        new_password: String,
+    },
     GetRecovery {
         password: String,
     },
@@ -192,6 +196,7 @@ pub enum WalletResponse {
     HistoryInfo {
         log: Vec<LogEntryInfo>,
     },
+    PasswordChanged,
     Recovery {
         recovery: String,
     },

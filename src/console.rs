@@ -162,6 +162,7 @@ impl ConsoleService {
         println!("show election - print leader election state");
         println!("show escrow - print escrow");
         println!("show recovery - print recovery information");
+        println!("passwd - change wallet's password");
         println!("net publish TOPIC MESSAGE - publish a network message via floodsub");
         println!("net send NETWORK_PUBKEY TOPIC MESSAGE - send a network message via unicast");
         println!("db pop block - revert the latest block");
@@ -634,6 +635,14 @@ impl ConsoleService {
         } else if msg == "show recovery" {
             let password = input::read_password_from_stdin(false)?;
             let request = WalletRequest::GetRecovery { password };
+            self.send_wallet_request(request)?
+        } else if msg == "passwd" {
+            let old_password = input::read_password_from_stdin(false)?;
+            let new_password = input::read_password_from_stdin(true)?;
+            let request = WalletRequest::ChangePassword {
+                old_password,
+                new_password,
+            };
             self.send_wallet_request(request)?
         } else if msg == "db pop block" {
             let request = NodeRequest::PopBlock {};

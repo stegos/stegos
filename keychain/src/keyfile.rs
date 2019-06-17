@@ -32,14 +32,47 @@ use stegos_serialization::traits::ProtoConvert;
 const WALLET_ENCRYPTED_SKEY_TAG: &'static str = "STEGOS-CURVE1174 ENCRYPTED SECRET KEY";
 /// PEM tag for wallet public key.
 const WALLET_PKEY_TAG: &'static str = "STEGOS-CURVE1174 PUBLIC KEY";
-/// PEM tag for encrypted network secret key.
-const NETWORK_ENCRYPTED_SKEY_TAG: &'static str = "STEGOS-PBC ENCRYPTED SECRET KEY";
+/// PEM tag for network secret key.
+const NETWORK_SKEY_TAG: &'static str = "STEGOS-PBC SECRET KEY";
 /// PEM tag for network public key.
 const NETWORK_PKEY_TAG: &'static str = "STEGOS-PBC PUBLIC KEY";
 
+fn read(path: &Path) -> Result<Vec<u8>, KeyError> {
+    match fs::read(path) {
+        Ok(r) => Ok(r),
+        Err(e) => {
+            let path = path.to_string_lossy().to_string();
+            error!("Failed to read file: path={}, error={}", path, e);
+            Err(KeyError::InputOutputError(path, e))
+        }
+    }
+}
+
+fn write(path: &Path, contents: Vec<u8>) -> Result<(), KeyError> {
+    let tmp_path = path.with_extension(".tmp");
+    if let Err(e) = fs::write(&tmp_path, contents) {
+        let path_str = path.to_string_lossy().to_string();
+        error!("Failed to write to file: path={}, error={}", path_str, e);
+        if let Err(e) = fs::remove_file(&tmp_path) {
+            error!("Failed to remove file: path={}, error={}", path_str, e);
+        }
+        return Err(KeyError::InputOutputError(path_str, e));
+    }
+    if let Err(e) = fs::rename(&tmp_path, path) {
+        let path_str = path.to_string_lossy().to_string();
+        error!(
+            "Failed to rename file: from={}, to={}, error={}",
+            tmp_path.to_string_lossy(),
+            path_str,
+            e
+        );
+        return Err(KeyError::InputOutputError(path_str, e));
+    }
+    Ok(())
+}
+
 fn load_key(path: &Path, tag: &str) -> Result<Vec<u8>, KeyError> {
-    let pem = fs::read_to_string(path)
-        .map_err(|e| KeyError::InputOutputError(path.to_string_lossy().to_string(), e))?;
+    let pem = read(path)?;
     let pem =
         pem::parse(pem).map_err(|e| KeyError::ParseError(path.to_string_lossy().to_string(), e))?;
     if pem.tag != tag {
@@ -79,8 +112,8 @@ pub fn load_wallet_skey(path: &Path, password: &str) -> Result<curve1174::Secret
         .map_err(|e| KeyError::InvalidKey(path.to_string_lossy().to_string(), e))
 }
 
-pub fn load_network_skey(path: &Path, password: &str) -> Result<pbc::SecretKey, KeyError> {
-    let bytes = load_encrypted_key(path, NETWORK_ENCRYPTED_SKEY_TAG, password)?;
+pub fn load_network_skey(path: &Path) -> Result<pbc::SecretKey, KeyError> {
+    let bytes = load_key(path, NETWORK_SKEY_TAG)?;
     pbc::SecretKey::try_from_bytes(&bytes)
         .map_err(|e| KeyError::InvalidKey(path.to_string_lossy().to_string(), e))
 }
@@ -90,8 +123,7 @@ fn write_key(path: &Path, tag: &str, contents: Vec<u8>) -> Result<(), KeyError> 
         tag: tag.to_string(),
         contents,
     };
-    fs::write(path, pem::encode(&pem))
-        .map_err(|e| KeyError::InputOutputError(path.to_string_lossy().to_string(), e))
+    write(path, pem::encode(&pem).into_bytes())
 }
 
 fn write_encrypted_key(
@@ -123,13 +155,9 @@ pub fn write_wallet_skey(
     write_encrypted_key(path, WALLET_ENCRYPTED_SKEY_TAG, contents, password)
 }
 
-pub fn write_network_skey(
-    path: &Path,
-    skey: &pbc::SecretKey,
-    password: &str,
-) -> Result<(), KeyError> {
+pub fn write_network_skey(path: &Path, skey: &pbc::SecretKey) -> Result<(), KeyError> {
     let contents = skey.to_bytes().to_vec();
-    write_encrypted_key(path, NETWORK_ENCRYPTED_SKEY_TAG, contents, password)
+    write_key(path, NETWORK_SKEY_TAG, contents)
 }
 
 pub fn load_wallet_keypair(
@@ -156,14 +184,13 @@ pub fn load_wallet_keypair(
 pub fn load_network_keypair(
     network_skey_file: &str,
     network_pkey_file: &str,
-    password: &str,
 ) -> Result<(pbc::SecretKey, pbc::PublicKey), KeyError> {
     debug!(
         "Loading network key pair: network_skey_file={}, network_pkey_file={}...",
         network_skey_file, network_pkey_file
     );
     let network_pkey = load_network_pkey(Path::new(network_pkey_file))?;
-    let network_skey = load_network_skey(Path::new(network_skey_file), password)?;
+    let network_skey = load_network_skey(Path::new(network_skey_file))?;
 
     if let Err(_e) = pbc::check_keying(&network_skey, &network_pkey) {
         return Err(KeyError::InvalidKeying(

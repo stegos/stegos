@@ -161,12 +161,8 @@ fn main() {
             .expect("failed to write wallet skey");
         keychain::keyfile::write_network_pkey(Path::new(&network_pkey_file), &network_pkey)
             .expect("failed to write network pkey");
-        keychain::keyfile::write_network_skey(
-            Path::new(&network_skey_file),
-            &network_skey,
-            &password,
-        )
-        .expect("failed to write wallet skey");
+        keychain::keyfile::write_network_skey(Path::new(&network_skey_file), &network_skey)
+            .expect("failed to write wallet skey");
 
         // Create a stake.
         let output = StakeOutput::new(&wallet_pkey, &network_skey, &network_pkey, stake)

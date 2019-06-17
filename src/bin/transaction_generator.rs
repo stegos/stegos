@@ -87,7 +87,6 @@ fn load_nodes_configs<'a>(
         let (network_skey, network_pkey) = keychain::keyfile::load_network_keypair(
             &cfg.keychain.network_skey_file,
             &cfg.keychain.network_pkey_file,
-            &password,
         )?;
         let instance = GeneratorInstance {
             cfg,

@@ -566,6 +566,14 @@ impl WalletService {
         Ok((tx_hash, payment_fee))
     }
 
+    /// Change the password.
+    fn change_password(&mut self, old_password: String, new_password: String) -> Result<(), Error> {
+        let wallet_skey_path = Path::new(&self.wallet_skey_file);
+        let wallet_skey = keychain::keyfile::load_wallet_skey(wallet_skey_path, &old_password)?;
+        keychain::keyfile::write_wallet_skey(wallet_skey_path, &wallet_skey, &new_password)?;
+        Ok(())
+    }
+
     /// Return recovery codes.
     fn get_recovery(&mut self, password: String) -> Result<String, Error> {
         let wallet_skey = self.unlock(password)?;
@@ -967,6 +975,15 @@ impl Future for WalletService {
                                 starting_from,
                                 limit,
                             } => self.get_tx_history(starting_from, limit).into(),
+                            WalletRequest::ChangePassword {
+                                old_password,
+                                new_password,
+                            } => match self.change_password(old_password, new_password) {
+                                Ok(()) => WalletResponse::PasswordChanged,
+                                Err(e) => WalletResponse::Error {
+                                    error: format!("{}", e),
+                                },
+                            },
                             WalletRequest::GetRecovery { password } => {
                                 match self.get_recovery(password) {
                                     Ok(recovery) => WalletResponse::Recovery { recovery },

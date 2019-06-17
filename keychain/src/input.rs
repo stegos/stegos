@@ -29,7 +29,8 @@ use stegos_crypto::curve1174;
 
 /// PEM tag for encrypted wallet secret key.
 const RECOVERY_PROMPT: &'static str = "Enter 24-word recovery phrase: ";
-const PASSWORD_PROMPT1: &'static str = "Enter password: ";
+const PASSWORD_PROMPT: &'static str = "Enter password: ";
+const PASSWORD_PROMPT1: &'static str = "Enter new password: ";
 const PASSWORD_PROMPT2: &'static str = "Enter same password again: ";
 
 fn fix_newline(password: &mut String) {
@@ -78,7 +79,12 @@ pub fn read_recovery(recovery_file: &str) -> Result<curve1174::SecretKey, KeyErr
 
 pub fn read_password_from_stdin(confirm: bool) -> Result<String, KeyError> {
     loop {
-        let password = prompt_password_stdout(PASSWORD_PROMPT1)
+        let prompt = if confirm {
+            PASSWORD_PROMPT1
+        } else {
+            PASSWORD_PROMPT
+        };
+        let password = prompt_password_stdout(prompt)
             .map_err(|e| KeyError::InputOutputError("stdin".to_string(), e))?;
         if password.is_empty() {
             eprintln!("Password is empty. Try again.");

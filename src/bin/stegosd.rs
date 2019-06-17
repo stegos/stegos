@@ -40,8 +40,7 @@ use stegos_api::WebSocketServer;
 use stegos_blockchain::Blockchain;
 use stegos_crypto::curve1174;
 use stegos_crypto::pbc;
-use stegos_keychain as keychain;
-use stegos_keychain::{KeyChainConfig, KeyError};
+use stegos_keychain::{self as keychain, KeyError};
 use stegos_network::{Libp2pNetwork, NETWORK_STATUS_TOPIC};
 use stegos_node::NodeService;
 use stegos_txpool::TransactionPoolService;
@@ -117,33 +116,25 @@ pub fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error
     Ok(cfg)
 }
 
-fn load_keys(
-    cfg: &KeyChainConfig,
-) -> Result<
-    (
-        curve1174::SecretKey,
-        curve1174::PublicKey,
-        pbc::SecretKey,
-        pbc::PublicKey,
-    ),
-    KeyError,
-> {
-    let wallet_skey_path = Path::new(&cfg.wallet_skey_file);
-    let wallet_pkey_path = Path::new(&cfg.wallet_pkey_file);
-    let network_skey_path = Path::new(&cfg.network_skey_file);
-    let network_pkey_path = Path::new(&cfg.network_pkey_file);
+/// Load or create wallet keys.
+fn load_wallet_keys(
+    wallet_skey_file: &str,
+    wallet_pkey_file: &str,
+    password_file: &str,
+    recovery_file: &str,
+) -> Result<(curve1174::SecretKey, curve1174::PublicKey), KeyError> {
+    let wallet_skey_path = Path::new(wallet_skey_file);
+    let wallet_pkey_path = Path::new(wallet_pkey_file);
 
-    let (wallet_skey, wallet_pkey, network_skey, network_pkey) = if !wallet_skey_path.exists()
-        && !wallet_pkey_path.exists()
-        && !network_skey_path.exists()
-        && !network_pkey_path.exists()
-    {
-        debug!("Can't find keys on the disk: wallet_skey_file={}, wallet_pkey_file={}, network_skey_file={}, network_pkey_file={}",
-               cfg.wallet_skey_file, cfg.wallet_pkey_file, cfg.network_skey_file, cfg.network_pkey_file);
+    if !wallet_skey_path.exists() && !wallet_pkey_path.exists() {
+        debug!(
+            "Can't find keys on the disk: skey_file={}, pkey_file={}",
+            wallet_skey_file, wallet_pkey_file
+        );
 
-        let (wallet_skey, wallet_pkey) = if !cfg.recovery_file.is_empty() {
+        let (wallet_skey, wallet_pkey) = if !recovery_file.is_empty() {
             info!("Recovering keys...");
-            let wallet_skey = keychain::input::read_recovery(&cfg.recovery_file)?;
+            let wallet_skey = keychain::input::read_recovery(recovery_file)?;
             let wallet_pkey: curve1174::PublicKey = wallet_skey.clone().into();
             info!(
                 "Recovered a wallet key: pkey={}",
@@ -160,6 +151,43 @@ fn load_keys(
             (wallet_skey, wallet_pkey)
         };
 
+        let password = keychain::input::read_password(password_file, true)?;
+        keychain::keyfile::write_wallet_pkey(wallet_pkey_path, &wallet_pkey)?;
+        keychain::keyfile::write_wallet_skey(wallet_skey_path, &wallet_skey, &password)?;
+        info!(
+            "Wrote wallet key pair: skey_file={}, pkey_file={}",
+            wallet_skey_file, wallet_pkey_file
+        );
+
+        Ok((wallet_skey, wallet_pkey))
+    } else {
+        debug!("Loading wallet keys from the disk...");
+        let password = keychain::input::read_password(password_file, false)?;
+
+        let (wallet_skey, wallet_pkey) = keychain::keyfile::load_wallet_keypair(
+            &wallet_skey_file,
+            &wallet_pkey_file,
+            &password,
+        )?;
+
+        Ok((wallet_skey, wallet_pkey))
+    }
+}
+
+/// Load or create network keys.
+fn load_network_keys(
+    network_skey_file: &str,
+    network_pkey_file: &str,
+) -> Result<(pbc::SecretKey, pbc::PublicKey), KeyError> {
+    let network_skey_path = Path::new(network_skey_file);
+    let network_pkey_path = Path::new(network_pkey_file);
+
+    if !network_skey_path.exists() && !network_pkey_path.exists() {
+        debug!(
+            "Can't find network keys on the disk: skey_file={}, pkey_file={}",
+            network_skey_file, network_pkey_file
+        );
+
         debug!("Generating a new network key pair...");
         let (network_skey, network_pkey) = pbc::make_random_keys();
         info!(
@@ -167,40 +195,21 @@ fn load_keys(
             network_pkey.to_hex()
         );
 
-        let password = keychain::input::read_password(&cfg.password_file, true)?;
-        keychain::keyfile::write_wallet_pkey(wallet_pkey_path, &wallet_pkey)?;
-        keychain::keyfile::write_wallet_skey(wallet_skey_path, &wallet_skey, &password)?;
         keychain::keyfile::write_network_pkey(network_pkey_path, &network_pkey)?;
-        keychain::keyfile::write_network_skey(network_skey_path, &network_skey, &password)?;
+        keychain::keyfile::write_network_skey(network_skey_path, &network_skey)?;
         info!(
-            "Wrote wallet key pair: wallet_skey_file={}, wallet_pkey_file={}",
-            cfg.wallet_skey_file, cfg.wallet_pkey_file
-        );
-        info!(
-            "Wrote network key pair: network_skey_file={}, network_pkey_file={}",
-            cfg.network_skey_file, cfg.network_pkey_file,
+            "Wrote network key pair to the disk: skey_file={}, pkey_file={}",
+            network_skey_file, network_pkey_file,
         );
 
-        (wallet_skey, wallet_pkey, network_skey, network_pkey)
+        Ok((network_skey, network_pkey))
     } else {
-        debug!("Loading keys from the disk...");
-        let password = keychain::input::read_password(&cfg.password_file, false)?;
+        debug!("Loading network keys from the disk...");
+        let (network_skey, network_pkey) =
+            keychain::keyfile::load_network_keypair(&network_skey_file, &network_pkey_file)?;
 
-        let (wallet_skey, wallet_pkey) = keychain::keyfile::load_wallet_keypair(
-            &cfg.wallet_skey_file,
-            &cfg.wallet_pkey_file,
-            &password,
-        )?;
-        let (network_skey, network_pkey) = keychain::keyfile::load_network_keypair(
-            &cfg.network_skey_file,
-            &cfg.network_pkey_file,
-            &password,
-        )?;
-
-        (wallet_skey, wallet_pkey, network_skey, network_pkey)
-    };
-
-    Ok((wallet_skey, wallet_pkey, network_skey, network_pkey))
+        Ok((network_skey, network_pkey))
+    }
 }
 
 fn run() -> Result<(), Error> {
@@ -272,7 +281,16 @@ fn run() -> Result<(), Error> {
     info!("{} {}", name, version);
 
     // Initialize keychain
-    let (wallet_skey, wallet_pkey, network_skey, network_pkey) = load_keys(&cfg.keychain)?;
+    let (network_skey, network_pkey) = load_network_keys(
+        &cfg.keychain.network_skey_file,
+        &cfg.keychain.network_pkey_file,
+    )?;
+    let (wallet_skey, wallet_pkey) = load_wallet_keys(
+        &cfg.keychain.wallet_skey_file,
+        &cfg.keychain.wallet_pkey_file,
+        &cfg.keychain.password_file,
+        &cfg.keychain.recovery_file,
+    )?;
     let recipient_pkey = wallet_pkey.clone();
 
     // Resolve seed pool (works, if chain=='testent', does nothing otherwise)

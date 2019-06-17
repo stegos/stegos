@@ -34,6 +34,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::thread;
 use std::time::{Duration, SystemTime};
+pub use stegos_api::url;
 use stegos_api::*;
 use stegos_crypto::curve1174::PublicKey;
 use stegos_crypto::pbc;
@@ -80,17 +81,16 @@ pub struct ConsoleService {
 
 impl ConsoleService {
     /// Constructor.
-    pub fn new(uri: String, api_token: ApiToken) -> Result<ConsoleService, Error> {
+    pub fn new(uri: String, api_token: ApiToken) -> ConsoleService {
         let (tx, rx) = channel::<String>(1);
         let client = WebSocketClient::new(uri, api_token);
         let stdin_th = thread::spawn(move || Self::readline_thread_f(tx));
         let stdin = rx;
-        let service = ConsoleService {
+        ConsoleService {
             client,
             stdin,
             stdin_th,
-        };
-        Ok(service)
+        }
     }
 
     /// Background thread to read stdin.
@@ -635,6 +635,7 @@ impl Future for ConsoleService {
                     Ok(false) => {}
                     Err(e) => {
                         error!("{}", e);
+                        self.stdin_th.thread().unpark();
                     }
                 },
                 Ok(Async::Ready(None)) => self.on_exit(),

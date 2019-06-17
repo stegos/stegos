@@ -64,6 +64,8 @@ use stegos_node::Node;
 use stegos_node::OutputsChanged;
 use storage::*;
 
+const STAKE_FEE: i64 = 0;
+
 pub struct WalletService {
     //
     // Config
@@ -78,10 +80,6 @@ pub struct WalletService {
     network_skey: pbc::SecretKey,
     /// Network Public Key.
     network_pkey: pbc::PublicKey,
-    /// Payment fee.
-    payment_fee: i64,
-    /// Staking fee.
-    stake_fee: i64,
     /// Lifetime of stake.
     stake_epochs: u64,
 
@@ -147,8 +145,6 @@ impl WalletService {
         network_pkey: pbc::PublicKey,
         network: Network,
         node: Node,
-        payment_fee: i64,
-        stake_fee: i64,
         stake_epochs: u64,
         persistent_state: Vec<(Output, u64)>,
     ) -> (Self, Wallet) {
@@ -216,8 +212,6 @@ impl WalletService {
             public_payments,
             stakes,
             vs,
-            payment_fee,
-            stake_fee,
             stake_epochs,
             last_macro_block_timestamp,
             node,
@@ -254,6 +248,7 @@ impl WalletService {
         password: String,
         recipient: &curve1174::PublicKey,
         amount: i64,
+        payment_fee: i64,
         comment: String,
         locked_timestamp: Option<SystemTime>,
     ) -> Result<(Hash, PaymentTransactionValue), Error> {
@@ -269,7 +264,7 @@ impl WalletService {
             recipient,
             unspent_iter,
             amount,
-            self.payment_fee,
+            payment_fee,
             TransactionType::Regular(data.clone()),
             locked_timestamp,
             self.last_macro_block_timestamp,
@@ -327,6 +322,7 @@ impl WalletService {
         password: String,
         recipient: &curve1174::PublicKey,
         amount: i64,
+        payment_fee: i64,
         locked_timestamp: Option<SystemTime>,
     ) -> Result<(Hash, i64), Error> {
         let wallet_skey = self.unlock(password)?;
@@ -341,7 +337,7 @@ impl WalletService {
             recipient,
             unspent_iter,
             amount,
-            self.payment_fee,
+            payment_fee,
             TransactionType::Public,
             locked_timestamp,
             self.last_macro_block_timestamp,
@@ -398,6 +394,7 @@ impl WalletService {
         password: String,
         recipient: &curve1174::PublicKey,
         amount: i64,
+        payment_fee: i64,
         comment: String,
         locked_timestamp: Option<SystemTime>,
     ) -> Result<Hash, Error> {
@@ -412,7 +409,7 @@ impl WalletService {
             recipient,
             unspent_iter,
             amount,
-            self.payment_fee,
+            payment_fee,
             comment,
             locked_timestamp,
             self.last_macro_block_timestamp,
@@ -428,7 +425,7 @@ impl WalletService {
     }
 
     /// Stake money into the escrow.
-    fn stake(&self, password: String, amount: i64) -> Result<(Hash, i64), Error> {
+    fn stake(&self, password: String, amount: i64, payment_fee: i64) -> Result<(Hash, i64), Error> {
         let wallet_skey = self.unlock(password)?;
         let unspent_iter = self.payments.values().map(|v| (&v.output, v.amount));
         let tx = create_staking_transaction(
@@ -438,8 +435,8 @@ impl WalletService {
             &self.network_skey,
             unspent_iter,
             amount,
-            self.payment_fee,
-            self.stake_fee,
+            payment_fee,
+            STAKE_FEE,
             self.last_macro_block_timestamp,
         )?;
         let tx_hash = Hash::digest(&tx);
@@ -450,7 +447,12 @@ impl WalletService {
 
     /// Unstake money from the escrow.
     /// NOTE: amount must include PAYMENT_FEE.
-    fn unstake(&self, password: String, amount: i64) -> Result<(Hash, i64), Error> {
+    fn unstake(
+        &self,
+        password: String,
+        amount: i64,
+        payment_fee: i64,
+    ) -> Result<(Hash, i64), Error> {
         let wallet_skey = self.unlock(password)?;
         let unspent_iter = self.stakes.values().map(|v| &v.output);
         let tx = create_unstaking_transaction(
@@ -460,8 +462,8 @@ impl WalletService {
             &self.network_skey,
             unspent_iter,
             amount,
-            self.payment_fee,
-            self.stake_fee,
+            payment_fee,
+            STAKE_FEE,
             self.last_macro_block_timestamp,
         )?;
         let tx_hash = Hash::digest(&tx);
@@ -471,18 +473,18 @@ impl WalletService {
     }
 
     /// Unstake all of the money from the escrow.
-    fn unstake_all(&self, password: String) -> Result<(Hash, i64), Error> {
+    fn unstake_all(&self, password: String, payment_fee: i64) -> Result<(Hash, i64), Error> {
         let mut amount: i64 = 0;
         for val in self.stakes.values() {
             amount += val.output.amount;
         }
-        self.unstake(password, amount)
+        self.unstake(password, amount, payment_fee)
     }
 
     /// Restake all available stakes (even if not expired).
     fn restake_all(&mut self, password: String) -> Result<(Hash, i64), Error> {
         let wallet_skey = self.unlock(password)?;
-        assert_eq!(self.stake_fee, 0);
+        assert_eq!(STAKE_FEE, 0);
         if self.stakes.is_empty() {
             return Err(WalletError::NothingToRestake.into());
         }
@@ -502,7 +504,7 @@ impl WalletService {
 
     /// Re-stake expiring stakes.
     fn restake_expiring(&mut self) -> Result<(), Error> {
-        assert_eq!(self.stake_fee, 0);
+        assert_eq!(STAKE_FEE, 0);
         let epoch = self.epoch;
         let stakes: Vec<&StakeOutput> = self
             .stakes
@@ -545,7 +547,7 @@ impl WalletService {
     }
 
     /// Cloak all available public outputs.
-    fn cloak_all(&mut self, password: String) -> Result<(Hash, i64), Error> {
+    fn cloak_all(&mut self, password: String, payment_fee: i64) -> Result<(Hash, i64), Error> {
         let wallet_skey = self.unlock(password)?;
         if self.public_payments.is_empty() {
             return Err(WalletError::NotEnoughMoney.into());
@@ -556,12 +558,12 @@ impl WalletService {
             &wallet_skey,
             &self.wallet_pkey,
             public_utxos,
-            self.payment_fee,
+            payment_fee,
             self.last_macro_block_timestamp,
         )?;
         let tx_hash = Hash::digest(&tx);
         self.node.send_transaction(tx.into())?;
-        Ok((tx_hash, self.payment_fee))
+        Ok((tx_hash, payment_fee))
     }
 
     /// Return recovery codes.
@@ -859,29 +861,46 @@ impl Future for WalletService {
                                 password,
                                 recipient,
                                 amount,
+                                payment_fee,
                                 comment,
                                 locked_timestamp,
                             } => self
-                                .payment(password, &recipient, amount, comment, locked_timestamp)
+                                .payment(
+                                    password,
+                                    &recipient,
+                                    amount,
+                                    payment_fee,
+                                    comment,
+                                    locked_timestamp,
+                                )
                                 .into(),
                             WalletRequest::PublicPayment {
                                 password,
                                 recipient,
                                 amount,
+                                payment_fee,
                                 locked_timestamp,
                             } => self
-                                .public_payment(password, &recipient, amount, locked_timestamp)
+                                .public_payment(
+                                    password,
+                                    &recipient,
+                                    amount,
+                                    payment_fee,
+                                    locked_timestamp,
+                                )
                                 .into(),
                             WalletRequest::SecurePayment {
                                 password,
                                 recipient,
                                 amount,
+                                payment_fee,
                                 comment,
                                 locked_timestamp,
                             } => match self.secure_payment(
                                 password,
                                 &recipient,
                                 amount,
+                                payment_fee,
                                 comment,
                                 locked_timestamp,
                             ) {
@@ -896,19 +915,27 @@ impl Future for WalletService {
                                 self.wait_for_commit(tx_hash, tx);
                                 continue;
                             }
-                            WalletRequest::Stake { password, amount } => {
-                                self.stake(password, amount).into()
-                            }
-                            WalletRequest::Unstake { password, amount } => {
-                                self.unstake(password, amount).into()
-                            }
-                            WalletRequest::UnstakeAll { password } => {
-                                self.unstake_all(password).into()
-                            }
+                            WalletRequest::Stake {
+                                password,
+                                amount,
+                                payment_fee,
+                            } => self.stake(password, amount, payment_fee).into(),
+                            WalletRequest::Unstake {
+                                password,
+                                amount,
+                                payment_fee,
+                            } => self.unstake(password, amount, payment_fee).into(),
+                            WalletRequest::UnstakeAll {
+                                password,
+                                payment_fee,
+                            } => self.unstake_all(password, payment_fee).into(),
                             WalletRequest::RestakeAll { password } => {
                                 self.restake_all(password).into()
                             }
-                            WalletRequest::CloakAll { password } => self.cloak_all(password).into(),
+                            WalletRequest::CloakAll {
+                                password,
+                                payment_fee,
+                            } => self.cloak_all(password, payment_fee).into(),
                             WalletRequest::KeysInfo {} => WalletResponse::KeysInfo {
                                 wallet_pkey: self.wallet_pkey,
                                 network_pkey: self.network_pkey,

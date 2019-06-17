@@ -416,8 +416,8 @@ impl NodeService {
             &self.mempool,
             &self.chain,
             timestamp,
-            self.cfg.payment_fee,
-            self.cfg.stake_fee,
+            self.cfg.min_payment_fee,
+            self.cfg.min_stake_fee,
         )?;
 
         // Queue to mempool.

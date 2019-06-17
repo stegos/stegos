@@ -42,10 +42,10 @@ pub struct NodeConfig {
     pub max_utxo_in_mempool: usize,
     /// Loader will send maximum N epoch at time.
     pub loader_speed_in_epoch: u64,
-    /// Fixed fee for payment transactions.
-    pub payment_fee: i64,
-    /// Fixed fee for the stake transactions.
-    pub stake_fee: i64,
+    /// Minimal fee for payment transactions.
+    pub min_payment_fee: i64,
+    /// Minimal fee for the stake transactions.
+    pub min_stake_fee: i64,
 }
 
 impl Default for NodeConfig {
@@ -58,8 +58,8 @@ impl Default for NodeConfig {
             max_utxo_in_block: 2000,
             max_utxo_in_mempool: 20000,
             loader_speed_in_epoch: 100,
-            payment_fee: 1_000, // 0.001 STG
-            stake_fee: 0,       // free
+            min_payment_fee: 1_000, // 0.001 STG
+            min_stake_fee: 0,       // free
         }
     }
 }

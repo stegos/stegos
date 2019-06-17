@@ -574,14 +574,17 @@ impl Blockchain {
         self.election_result.random.rand
     }
 
-    ///
-    /// Get staked value for validator.
-    ///
-    /// Returns (active_balance, expired_balance) stake.
-    ///
+    /// A shortcut for self.escrow.validate_stakes().
     #[inline]
-    pub(crate) fn get_stake(&self, validator_pkey: &pbc::PublicKey) -> (i64, i64) {
-        self.escrow.get(validator_pkey, self.epoch)
+    pub fn validate_stakes<'a, OutputIter>(
+        &self,
+        inputs: OutputIter,
+        outputs: OutputIter,
+    ) -> Result<(), BlockchainError>
+    where
+        OutputIter: Iterator<Item = (&'a Output)>,
+    {
+        self.escrow.validate_stakes(inputs, outputs, self.epoch)
     }
 
     ///
@@ -593,6 +596,18 @@ impl Blockchain {
     pub(crate) fn staker_outputs(&self, validator_pkey: &pbc::PublicKey) -> (Vec<Hash>, i64) {
         self.escrow.staker_outputs(validator_pkey, self.epoch)
     }
+
+    ///
+    /// Return a wallet key by network key.
+    ///
+    #[inline]
+    pub(crate) fn wallet_by_network_key(
+        &self,
+        validator_pkey: &pbc::PublicKey,
+    ) -> Option<curve1174::PublicKey> {
+        self.escrow.wallet_by_network_key(validator_pkey)
+    }
+
     /// Return information about escrow.
     #[inline]
     pub fn escrow_info(&self) -> EscrowInfo {
@@ -649,9 +664,14 @@ impl Blockchain {
                 _ => {}
             }
         }
-        let validators_activity = epoch_activity
-            .iter()
-            .map(|(k, v)| (self.validator_wallet(k).expect("validator has wallet"), *v));
+        let validators_activity = epoch_activity.iter().map(|(k, v)| {
+            (
+                self.escrow
+                    .wallet_by_network_key(k)
+                    .expect("validator has wallet"),
+                *v,
+            )
+        });
         service_awards.finalize_epoch(self.cfg().service_award_per_epoch, validators_activity);
         (activity_map, service_awards.check_winners(random.rand))
     }
@@ -670,7 +690,8 @@ impl Blockchain {
         for (validator_id, (validator, _)) in validators.iter().enumerate() {
             let activity = activity_map.contains(validator_id);
             let validator_wallet = self
-                .validator_wallet(validator)
+                .escrow
+                .wallet_by_network_key(validator)
                 .expect("Validator with wallet");
             let activity = if activity {
                 ValidatorAwardState::Active
@@ -715,19 +736,6 @@ impl Blockchain {
     pub fn reset_view_change(&mut self) {
         self.election_result.view_change = 0;
         self.view_change_proof = None;
-    }
-
-    ///
-    /// Check if some of validator was caught on cheating in current epoch.
-    /// Returns proof of cheating.
-    ///
-    pub fn validator_wallet(&self, peer: &pbc::PublicKey) -> Option<PublicKey> {
-        self.escrow
-            .get_first_output(peer)
-            .map(|hash| match self.output_by_hash(&hash) {
-                Ok(Some(Output::StakeOutput(s))) => s.recipient,
-                e => panic!("Expected stake output, found = {:?}", e),
-            })
     }
 
     pub fn election_result(&self) -> ElectionResult {
@@ -1171,6 +1179,7 @@ impl Blockchain {
                     self.escrow.stake(
                         lsn,
                         o.validator,
+                        o.recipient,
                         output_hash,
                         self.epoch,
                         self.cfg.stake_epochs,

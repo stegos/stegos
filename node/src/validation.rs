@@ -102,7 +102,12 @@ pub(crate) fn validate_external_transaction(
         }
     }
 
-    chain.validate_staker(tx, &inputs)?;
+    match tx {
+        // Staking balance of cheater was already validated in tx.validate()
+        Transaction::SlashingTransaction(_) => {}
+        _ => chain.validate_stakes(inputs.iter(), tx.txouts().iter())?,
+    }
+
     // Check the monetary balance, Bulletpoofs/amounts and signature.
     match tx {
         Transaction::RestakeTransaction(tx) => tx.validate(&inputs)?,

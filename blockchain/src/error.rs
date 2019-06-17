@@ -53,6 +53,12 @@ pub enum BlockchainError {
     )]
     HaveMicroBlocks(u64, u32, Hash),
     #[fail(
+        display = "TXOUTs with different wallet key: wallet_key_before:{},\
+                   wallet_key_after={},  utxo={}",
+        _0, _1, _2
+    )]
+    StakeOutputWithDifferentWalletKey(PublicKey, PublicKey, Hash),
+    #[fail(
         display = "Stake is locked: validator={}, expected_balance={}, minimum_balance={}",
         _0, _1, _2
     )]
@@ -125,12 +131,6 @@ pub enum TransactionError {
     #[fail(display = "TXOUTs with mixed validator keys: tx={}, utxo={}", _0, _1)]
     MixedTxoutValidators(Hash, Hash),
 
-    #[fail(
-        display = "TXOUTs with different wallet key: wallet_key_before:{},\
-                   wallet_key_after={}, tx={}, utxo={}",
-        _0, _1, _2, _3
-    )]
-    StakeOutputWithDifferentWalletKey(PublicKey, PublicKey, Hash, Hash),
     #[fail(display = "Unexpected transaction type in MicroBlock.")]
     UnexpectedTxType,
 

@@ -31,14 +31,12 @@ use crate::transaction::{
     CoinbaseTransaction, PaymentTransaction, RestakeTransaction, SlashingTransaction, Transaction,
 };
 use log::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::time::SystemTime;
 use stegos_crypto::bulletproofs::{fee_a, simple_commit};
 use stegos_crypto::curve1174::{ECp, Fr, G};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{curve1174, pbc};
-
-pub type StakingBalance = HashMap<pbc::PublicKey, i64>;
 
 impl CoinbaseTransaction {
     pub fn validate(&self) -> Result<(), BlockchainError> {
@@ -418,83 +416,6 @@ impl MacroBlock {
 }
 
 impl Blockchain {
-    /// Validate that staker didn't try to spent locked stake.
-    /// Validate that staker has only one key.
-    /// # Arguments
-    ///
-    /// * - `inputs` - UTXOs referred by self.txins, in the same order as in self.txins.
-    ///
-    pub fn validate_staker(
-        &self,
-        tx: &Transaction,
-        inputs: &[Output],
-    ) -> Result<(), BlockchainError> {
-        let mut staking_balance = StakingBalance::new();
-        for txin in inputs {
-            match txin {
-                Output::PaymentOutput(_o) => {}
-                Output::PublicPaymentOutput(_o) => {}
-                Output::StakeOutput(o) => {
-                    // Update staking balance.
-                    let stake = staking_balance.entry(o.validator).or_insert(0);
-                    *stake -= o.amount;
-                }
-            }
-        }
-        for txout in tx.txouts() {
-            match txout {
-                Output::PaymentOutput(_o) => {}
-                Output::PublicPaymentOutput(_o) => {}
-                Output::StakeOutput(o) => {
-                    if let Some(wallet) = self.validator_wallet(&o.validator) {
-                        if wallet != o.recipient {
-                            let tx_hash = Hash::digest(tx);
-                            let utxo_hash = Hash::digest(txout);
-                            return Err(TransactionError::StakeOutputWithDifferentWalletKey(
-                                wallet,
-                                o.recipient,
-                                tx_hash,
-                                utxo_hash,
-                            )
-                            .into());
-                        }
-                    }
-                    // Update staking balance.
-                    let stake = staking_balance.entry(o.validator).or_insert(0);
-                    *stake += o.amount;
-                }
-            };
-        }
-        match tx {
-            // Staking balance of cheater was already validated in tx.validate()
-            Transaction::SlashingTransaction(_) => {}
-            _ => self.validate_staking_balance(staking_balance.iter())?,
-        }
-        Ok(())
-    }
-    /// Check that the stake can be unstaked.
-    fn validate_staking_balance<'a, StakeIter>(
-        &self,
-        staking_balance: StakeIter,
-    ) -> Result<(), BlockchainError>
-    where
-        StakeIter: Iterator<Item = (&'a pbc::PublicKey, &'a i64)>,
-    {
-        for (validator_pkey, balance) in staking_balance {
-            let (active_balance, expired_balance) = self.get_stake(validator_pkey);
-            let expected_balance = active_balance + expired_balance + balance;
-            if expected_balance < active_balance {
-                return Err(BlockchainError::StakeIsLocked(
-                    *validator_pkey,
-                    expected_balance,
-                    active_balance,
-                ));
-            }
-        }
-
-        Ok(())
-    }
-
     ///
     /// Validate base block header.
     ///
@@ -600,7 +521,12 @@ impl Blockchain {
             }
             outputs_set.insert(output_hash.clone());
         }
-        self.validate_staker(tx, &inputs)?;
+
+        match tx {
+            // Staking balance of cheater was already validated in tx.validate()
+            Transaction::SlashingTransaction(_) => {}
+            _ => self.validate_stakes(inputs.iter(), tx.txouts().iter())?,
+        }
 
         match tx {
             Transaction::CoinbaseTransaction(tx) => {

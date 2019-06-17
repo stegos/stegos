@@ -23,11 +23,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::error::BlockchainError;
 use crate::mvcc::MultiVersionedMap;
+use crate::output::Output;
 use log::*;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use stegos_crypto::curve1174;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 
@@ -39,6 +42,7 @@ struct EscrowKey {
 
 #[derive(Debug, Clone)]
 struct EscrowValue {
+    wallet_pkey: curve1174::PublicKey,
     active_until_epoch: u64,
     amount: i64,
 }
@@ -47,7 +51,7 @@ use crate::LSN;
 type EscrowMap = MultiVersionedMap<EscrowKey, EscrowValue, LSN>;
 
 #[derive(Debug, Clone)]
-pub(crate) struct Escrow {
+pub struct Escrow {
     /// Stakes.
     escrow: EscrowMap,
 }
@@ -68,6 +72,7 @@ pub struct ValidatorInfo {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct StakeInfo {
     pub utxo: Hash,
+    pub wallet_pkey: curve1174::PublicKey,
     pub active_until_epoch: u64,
     pub is_active: bool,
     pub amount: i64,
@@ -88,6 +93,7 @@ impl Escrow {
         &mut self,
         lsn: LSN,
         validator_pkey: pbc::PublicKey,
+        wallet_pkey: curve1174::PublicKey,
         output_hash: Hash,
         epoch: u64,
         stakes_epoch: u64,
@@ -99,6 +105,7 @@ impl Escrow {
             output_hash,
         };
         let value = EscrowValue {
+            wallet_pkey,
             active_until_epoch,
             amount,
         };
@@ -145,7 +152,7 @@ impl Escrow {
     ///
     /// Returns (active_balance, expired_balance) stake.
     ///
-    pub(crate) fn get(&self, validator_pkey: &pbc::PublicKey, epoch: u64) -> (i64, i64) {
+    pub fn get(&self, validator_pkey: &pbc::PublicKey, epoch: u64) -> (i64, i64) {
         let (hash_min, hash_max) = Hash::bounds();
         let key_min = EscrowKey {
             validator_pkey: validator_pkey.clone(),
@@ -173,11 +180,7 @@ impl Escrow {
     ///
     /// Returns list of utxos for specific validator.
     ///
-    pub(crate) fn staker_outputs(
-        &self,
-        validator_pkey: &pbc::PublicKey,
-        epoch: u64,
-    ) -> (Vec<Hash>, i64) {
+    pub fn staker_outputs(&self, validator_pkey: &pbc::PublicKey, epoch: u64) -> (Vec<Hash>, i64) {
         let (hash_min, hash_max) = Hash::bounds();
         let key_min = EscrowKey {
             validator_pkey: validator_pkey.clone(),
@@ -201,9 +204,13 @@ impl Escrow {
         (result, stake)
     }
 
-    /// Returns Hash of the first output for validator.
-    /// If no output was found, return None.
-    pub(crate) fn get_first_output(&self, validator_pkey: &pbc::PublicKey) -> Option<Hash> {
+    ///
+    /// Return a wallet key by network key.
+    ///
+    pub fn wallet_by_network_key(
+        &self,
+        validator_pkey: &pbc::PublicKey,
+    ) -> Option<curve1174::PublicKey> {
         let (hash_min, hash_max) = Hash::bounds();
         let key_min = EscrowKey {
             validator_pkey: validator_pkey.clone(),
@@ -216,7 +223,7 @@ impl Escrow {
         self.escrow
             .range(&key_min..=&key_max)
             .next()
-            .map(|(k, _)| k.output_hash)
+            .map(|(_k, v)| v.wallet_pkey)
     }
 
     ///
@@ -245,6 +252,71 @@ impl Escrow {
             .collect()
     }
 
+    /// Validate that staker didn't try to spent locked stake.
+    /// Validate that staker has only one key.
+    /// # Arguments
+    ///
+    /// * - `inputs` - UTXOs referred by self.txins, in the same order as in self.txins.
+    ///
+    pub fn validate_stakes<'a, OutputIter>(
+        &self,
+        inputs: OutputIter,
+        outputs: OutputIter,
+        epoch: u64,
+    ) -> Result<(), BlockchainError>
+    where
+        OutputIter: Iterator<Item = (&'a Output)>,
+    {
+        let mut staking_balance: HashMap<pbc::PublicKey, i64> = HashMap::new();
+        for input in inputs {
+            match input {
+                Output::PaymentOutput(_o) => {}
+                Output::PublicPaymentOutput(_o) => {}
+                Output::StakeOutput(o) => {
+                    // Update staking balance.
+                    let stake = staking_balance.entry(o.validator).or_insert(0);
+                    *stake -= o.amount;
+                }
+            }
+        }
+        for output in outputs {
+            match output {
+                Output::PaymentOutput(_o) => {}
+                Output::PublicPaymentOutput(_o) => {}
+                Output::StakeOutput(o) => {
+                    if let Some(wallet) = self.wallet_by_network_key(&o.validator) {
+                        if wallet != o.recipient {
+                            let utxo_hash = Hash::digest(output);
+                            return Err(BlockchainError::StakeOutputWithDifferentWalletKey(
+                                wallet,
+                                o.recipient,
+                                utxo_hash,
+                            )
+                            .into());
+                        }
+                    }
+                    // Update staking balance.
+                    let stake = staking_balance.entry(o.validator).or_insert(0);
+                    *stake += o.amount;
+                }
+            };
+        }
+
+        for (validator_pkey, balance) in &staking_balance {
+            let (active_balance, expired_balance) = self.get(validator_pkey, epoch);
+            let expected_balance = active_balance + expired_balance + balance;
+            if expected_balance < active_balance {
+                return Err(BlockchainError::StakeIsLocked(
+                    *validator_pkey,
+                    expected_balance,
+                    active_balance,
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Returns an object that represent printable part of the state.
     pub fn info(&self, epoch: u64) -> EscrowInfo {
         let mut validators: HashMap<pbc::PublicKey, ValidatorInfo> = HashMap::new();
@@ -260,6 +332,7 @@ impl Escrow {
             let is_active = v.active_until_epoch >= epoch;
             let stake = StakeInfo {
                 utxo: k.output_hash,
+                wallet_pkey: v.wallet_pkey,
                 active_until_epoch: v.active_until_epoch,
                 is_active,
                 amount: v.amount,

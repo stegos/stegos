@@ -97,6 +97,7 @@ pub enum WalletRequest {
         password: String,
         recipient: PublicKey,
         amount: i64,
+        payment_fee: i64,
         comment: String,
         locked_timestamp: Option<SystemTime>,
     },
@@ -104,12 +105,14 @@ pub enum WalletRequest {
         password: String,
         recipient: PublicKey,
         amount: i64,
+        payment_fee: i64,
         locked_timestamp: Option<SystemTime>,
     },
     SecurePayment {
         password: String,
         recipient: PublicKey,
         amount: i64,
+        payment_fee: i64,
         comment: String,
         locked_timestamp: Option<SystemTime>,
     },
@@ -119,19 +122,23 @@ pub enum WalletRequest {
     Stake {
         password: String,
         amount: i64,
+        payment_fee: i64,
     },
     Unstake {
         password: String,
         amount: i64,
+        payment_fee: i64,
     },
     UnstakeAll {
         password: String,
+        payment_fee: i64,
     },
     RestakeAll {
         password: String,
     },
     CloakAll {
         password: String,
+        payment_fee: i64,
     },
     KeysInfo {},
     BalanceInfo {},

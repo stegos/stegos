@@ -56,7 +56,7 @@ lazy_static! {
     /// Regex to parse "pay" command.
     static ref PAY_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9A-Za-z]+)\s+(?P<amount>[0-9\.]{1,19})(?P<arguments>.+)?\s*$").unwrap();
     /// Regex to parse argument of "pay" command.
-    static ref PAY_ARGUMENTS_RE: Regex = Regex::new(r"^(\s+(?P<public>(/public)))?(\s+(?P<comment>[^/]+?))?(\s+(?P<lock>(/lock\s*.*)))?\s*$").unwrap();
+    static ref PAY_ARGUMENTS_RE: Regex = Regex::new(r"^(\s+(?P<public>(/public)))?(\s+(?P<comment>[^/]+?))?(\s+(?P<lock>(/lock\s*.*)))?(\s+(?P<fee>(/fee\s[0-9\.]{1,19})))?\s*$").unwrap();
     /// Regex to parse argument of "pay" command.
     static ref SPAY_ARGUMENTS_RE: Regex = Regex::new(r"^(\s+(?P<comment>[^/]+?))?(\s+(?P<lock>(/lock\s*.*)))?\s*$").unwrap();
     /// Regex to parse "msg" command.
@@ -70,6 +70,8 @@ lazy_static! {
 }
 
 // const CONSOLE_PROTOCOL_ID: &'static str = "console";
+
+const PAYMENT_FEE: i64 = 1_000; // 0.001 STG
 
 /// Console (stdin) service.
 pub struct ConsoleService {
@@ -143,7 +145,7 @@ impl ConsoleService {
 
     fn help() {
         println!("Usage:");
-        println!("pay WALLET_PUBKEY AMOUNT [COMMENT] [/public]  [/lock duration] - send money");
+        println!("pay WALLET_PUBKEY AMOUNT [COMMENT] [/public]  [/lock duration] [/fee fee] - send money");
         println!(
             "spay WALLET_PUBKEY AMOUNT [COMMENT] [/lock duration] - send money using ValueShuffle"
         );
@@ -188,6 +190,7 @@ impl ConsoleService {
         println!(" - COMMENT purpose of payment, no comments are allowed in public utxo.");
         println!(" - /public if present, send money as PublicUTXO, with uncloaked recipient and amaount.");
         println!(" - /lock if present, set the duration from which the output can be spent.");
+        println!(" - /fee FEE set desired fee per each created UTXO.");
         println!();
     }
 
@@ -326,8 +329,8 @@ impl ConsoleService {
                 }
             };
 
-            let (public, comment, locked_timestamp) = match caps.name("arguments") {
-                None => (false, String::new(), None),
+            let (public, comment, locked_timestamp, payment_fee) = match caps.name("arguments") {
+                None => (false, String::new(), None, PAYMENT_FEE),
 
                 Some(m) => {
                     let caps = match PAY_ARGUMENTS_RE.captures(m.as_str()) {
@@ -354,7 +357,22 @@ impl ConsoleService {
                             return Ok(true);
                         }
                     };
-                    (public, comment, locked_timestamp)
+
+                    // Parse /fee.
+                    let fee_arg = caps.name("fee").map(|s| {
+                        assert!(s.as_str().starts_with("/fee "));
+                        parse_money(&s.as_str()[5..])
+                    });
+                    let payment_fee = match fee_arg {
+                        Some(Ok(fee)) => fee,
+                        Some(Err(e)) => {
+                            println!("{}", e);
+                            Self::help_pay();
+                            return Ok(true);
+                        }
+                        None => PAYMENT_FEE, // use the default value.
+                    };
+                    (public, comment, locked_timestamp, payment_fee)
                 }
             };
 
@@ -373,6 +391,7 @@ impl ConsoleService {
                     password,
                     recipient,
                     amount,
+                    payment_fee,
                     locked_timestamp,
                 }
             } else {
@@ -386,6 +405,7 @@ impl ConsoleService {
                     password,
                     recipient,
                     amount,
+                    payment_fee,
                     comment,
                     locked_timestamp,
                 }
@@ -444,9 +464,11 @@ impl ConsoleService {
                             return Ok(true);
                         }
                     };
+
                     (comment, locked_timestamp)
                 }
             };
+            let payment_fee = PAYMENT_FEE;
             info!(
                 "Sending {} to {} via ValueShuffle",
                 format_money(amount),
@@ -457,6 +479,7 @@ impl ConsoleService {
                 password,
                 recipient,
                 amount,
+                payment_fee,
                 comment,
                 locked_timestamp,
             };
@@ -480,6 +503,7 @@ impl ConsoleService {
                 }
             };
             let amount: i64 = 0;
+            let payment_fee = PAYMENT_FEE;
             let comment = caps.name("msg").unwrap().as_str().to_string();
             assert!(comment.len() > 0);
 
@@ -489,6 +513,7 @@ impl ConsoleService {
                 password,
                 recipient,
                 amount,
+                payment_fee,
                 comment,
                 locked_timestamp: None,
             };
@@ -511,15 +536,24 @@ impl ConsoleService {
                     return Ok(true);
                 }
             };
+            let payment_fee = PAYMENT_FEE;
 
             info!("Staking {} STG into escrow", format_money(amount));
             let password = input::read_password_from_stdin(false)?;
-            let request = WalletRequest::Stake { password, amount };
+            let request = WalletRequest::Stake {
+                password,
+                amount,
+                payment_fee,
+            };
             self.send_wallet_request(request)?
         } else if msg == "unstake" {
             info!("Unstaking all of the money from escrow");
+            let payment_fee = PAYMENT_FEE;
             let password = input::read_password_from_stdin(false)?;
-            let request = WalletRequest::UnstakeAll { password };
+            let request = WalletRequest::UnstakeAll {
+                password,
+                payment_fee,
+            };
             self.send_wallet_request(request)?
         } else if msg.starts_with("unstake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[8..]) {
@@ -539,10 +573,15 @@ impl ConsoleService {
                     return Ok(true);
                 }
             };
+            let payment_fee = PAYMENT_FEE;
 
             info!("Unstaking {} STG from escrow", format_money(amount));
             let password = input::read_password_from_stdin(false)?;
-            let request = WalletRequest::Unstake { password, amount };
+            let request = WalletRequest::Unstake {
+                password,
+                amount,
+                payment_fee,
+            };
             self.send_wallet_request(request)?
         } else if msg == "restake" {
             info!("Restaking all stakes");
@@ -552,7 +591,11 @@ impl ConsoleService {
         } else if msg == "cloak" {
             info!("Cloaking all public inputs");
             let password = input::read_password_from_stdin(false)?;
-            let request = WalletRequest::CloakAll { password };
+            let payment_fee = PAYMENT_FEE;
+            let request = WalletRequest::CloakAll {
+                password,
+                payment_fee,
+            };
             self.send_wallet_request(request)?
         } else if msg == "show version" {
             println!(

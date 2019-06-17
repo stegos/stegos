@@ -21,7 +21,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use linked_hash_map::LinkedHashMap;
 use log::*;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -34,7 +33,7 @@ use stegos_crypto::pbc;
 
 /// Memory Pool of Transactions.
 pub struct Mempool {
-    pool: LinkedHashMap<Hash, Transaction>,
+    pool: HashMap<Hash, Transaction>,
     inputs: HashMap<Hash, Hash>,
     outputs: HashMap<Hash, Hash>,
 }
@@ -44,7 +43,7 @@ impl Mempool {
     /// Creates a new mempool instance.
     ///
     pub fn new() -> Self {
-        let pool: LinkedHashMap<Hash, Transaction> = LinkedHashMap::new();
+        let pool: HashMap<Hash, Transaction> = HashMap::new();
         let inputs: HashMap<Hash, Hash> = HashMap::new();
         let outputs: HashMap<Hash, Hash> = HashMap::new();
         return Self {
@@ -171,19 +170,30 @@ impl Mempool {
         let seed = mix(last_random, view_change);
         let random = pbc::make_VRF(network_skey, &seed);
 
+        // Sort transactions by fee.
+        // RestakeTransactions have high priority.
+        let mut pool: Vec<(&Hash, &Transaction, i64)> = self
+            .pool
+            .iter()
+            .map(|(hash, tx)| {
+                let prio = match tx {
+                    Transaction::RestakeTransaction(_) => i64::max_value(),
+                    _ => tx.fee(),
+                };
+                (hash, tx, prio)
+            })
+            .collect();
+        pool.sort_by_key(|(_h, _tx, prio)| -*prio);
+
         //
         // Mempool Transactions.
         //
-        let mut utxo_in_block: usize = 2;
+        let mut utxo_in_block: usize = 1; // Coinbase has one output
         let mut block_fee: i64 = 0;
         let mut transactions: Vec<Transaction> = Vec::new();
         // Reserve a place for coinbase.
         transactions.push(Transaction::CoinbaseTransaction(Default::default()));
-        for entry in self.pool.entries() {
-            let tx_hash = entry.key();
-            let tx = entry.get();
-            debug_assert_eq!(tx_hash, &Hash::digest(&tx));
-
+        for (tx_hash, tx, _prio) in pool {
             // Ensure that transaction has proper type.
             match tx {
                 Transaction::PaymentTransaction(_tx) => {}
@@ -208,7 +218,7 @@ impl Mempool {
 
         debug!(
             "Processed {}/{} transactions from mempool",
-            transactions.len(),
+            transactions.len() - 1, // exclude coinbase
             self.pool.len()
         );
 
@@ -391,13 +401,13 @@ mod test {
         let mut mempool = Mempool::new();
 
         let (tx1, _inputs1, _outputs1) =
-            PaymentTransaction::new_test(&recipient_skey, &recipient_pkey, 3, 2, 2, 1, 4)
+            PaymentTransaction::new_test(&recipient_skey, &recipient_pkey, 6, 1, 2, 3, 2)
                 .expect("transaction valid");
         let (tx2, _inputs2, _outputs2) =
-            PaymentTransaction::new_test(&recipient_skey, &recipient_pkey, 6, 1, 2, 2, 2)
+            PaymentTransaction::new_test(&recipient_skey, &recipient_pkey, 6, 1, 2, 3, 0)
                 .expect("transaction valid");
         let (tx3, _inputs3, _outputs3) =
-            PaymentTransaction::new_test(&recipient_skey, &recipient_pkey, 6, 1, 2, 2, 2)
+            PaymentTransaction::new_test(&recipient_skey, &recipient_pkey, 3, 2, 2, 1, 4)
                 .expect("transaction valid");
 
         let tx_hash1 = Hash::digest(&tx1);
@@ -439,8 +449,13 @@ mod test {
         } else {
             unreachable!();
         }
-        // Used transactions - tx3 is not used because of max_utxo_in_block.
-        assert_eq!(Hash::digest(&block.transactions[1]), tx_hash1);
-        assert_eq!(Hash::digest(&block.transactions[2]), tx_hash2);
+        //
+        // Used transactions. Order is important:
+        //   - tx_hash3 has fee = 4
+        //   - tx_hash1 has fee = 2
+        //   - tx_hash2 is not included because of max_utxo_in_block.
+        //
+        assert_eq!(Hash::digest(&block.transactions[1]), tx_hash3);
+        assert_eq!(Hash::digest(&block.transactions[2]), tx_hash1);
     }
 }

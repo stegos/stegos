@@ -266,8 +266,6 @@ fn run() -> Result<(), Error> {
             instance.network_pkey,
             network.clone(),
             node.clone(),
-            cfg.node.payment_fee,
-            cfg.node.stake_fee,
             cfg.chain.stake_epochs,
             wallet_persistent_state,
         );

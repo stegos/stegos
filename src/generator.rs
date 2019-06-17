@@ -32,6 +32,7 @@ use tokio_timer::Delay;
 
 static WAIT_TIMEOUT: Duration = Duration::from_secs(15);
 const MIN_BALANCE: i64 = 10_000; // just some small number
+const PAYMENT_FEE: i64 = 1_000; // 0.001 STG
 
 pub struct Generator {
     // start generator with specific delay, because our network could be not ready.
@@ -188,6 +189,7 @@ impl Generator {
                 password,
                 comment: "generator".into(),
                 amount: 1,
+                payment_fee: PAYMENT_FEE,
                 recipient,
                 locked_timestamp: None,
             },
@@ -195,6 +197,7 @@ impl Generator {
                 password,
                 comment: "generator".into(),
                 amount: 1,
+                payment_fee: PAYMENT_FEE,
                 recipient,
                 locked_timestamp: None,
             },

@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::storage::PaymentCertificate;
 use futures::sync::mpsc::unbounded;
 use futures::sync::mpsc::UnboundedReceiver;
 use futures::sync::mpsc::UnboundedSender;
@@ -34,6 +35,25 @@ use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_node::EpochChanged;
 use stegos_node::OutputsChanged;
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum LogEntryInfo {
+    Incoming {
+        timestamp: SystemTime,
+        output: OutputInfo,
+    },
+    Outgoing {
+        timestamp: SystemTime,
+        tx: PaymentTransactionInfo,
+    },
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum OutputInfo {
+    Payment(PaymentInfo),
+    PublicPayment(PublicPaymentInfo),
+    Staked(StakeInfo),
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct PaymentInfo {
@@ -116,9 +136,19 @@ pub enum WalletRequest {
     KeysInfo {},
     BalanceInfo {},
     UnspentInfo {},
+    HistoryInfo {
+        starting_from: SystemTime,
+        limit: u64,
+    },
     GetRecovery {
         password: String,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaymentTransactionInfo {
+    pub tx_hash: Hash,
+    pub certificates: Vec<PaymentCertificate>,
 }
 
 ///
@@ -128,6 +158,10 @@ pub enum WalletRequest {
 #[serde(tag = "response")]
 #[serde(rename_all = "snake_case")]
 pub enum WalletResponse {
+    TransactionCreatedWithCertificate {
+        tx_hash: Hash,
+        info: PaymentTransactionInfo,
+    },
     TransactionCreated {
         tx_hash: Hash,
         fee: i64,
@@ -147,6 +181,9 @@ pub enum WalletResponse {
         public_payments: Vec<PublicPaymentInfo>,
         payments: Vec<PaymentInfo>,
         stakes: Vec<StakeInfo>,
+    },
+    HistoryInfo {
+        log: Vec<LogEntryInfo>,
     },
     Recovery {
         recovery: String,
@@ -209,5 +246,23 @@ impl Wallet {
         let msg = WalletEvent::Request { request, tx };
         self.outbox.unbounded_send(msg).expect("connected");
         rx
+    }
+}
+
+impl From<PaymentInfo> for OutputInfo {
+    fn from(pi: PaymentInfo) -> OutputInfo {
+        OutputInfo::Payment(pi)
+    }
+}
+
+impl From<PublicPaymentInfo> for OutputInfo {
+    fn from(pi: PublicPaymentInfo) -> OutputInfo {
+        OutputInfo::PublicPayment(pi)
+    }
+}
+
+impl From<StakeInfo> for OutputInfo {
+    fn from(pi: StakeInfo) -> OutputInfo {
+        OutputInfo::Staked(pi)
     }
 }

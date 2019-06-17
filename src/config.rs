@@ -58,7 +58,9 @@ pub struct Config {
     /// Key Chain configuration.
     pub keychain: KeyChainConfig,
     /// Storage configuration.
-    pub storage: StorageConfig,
+    pub blockchain_db: StorageConfig,
+    /// Storage configuration.
+    pub wallet_db: StorageConfig,
     /// WebSocket API configuration.
     pub api: ApiConfig,
 }
@@ -72,7 +74,8 @@ impl Default for Config {
             node: Default::default(),
             network: Default::default(),
             keychain: Default::default(),
-            storage: Default::default(),
+            blockchain_db: StorageConfig::new("database"),
+            wallet_db: StorageConfig::new("wallet_db_path"),
             api: Default::default(),
         }
     }

@@ -33,12 +33,14 @@ use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::thread;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 pub use stegos_api::url;
 use stegos_api::*;
 use stegos_crypto::curve1174::PublicKey;
 use stegos_crypto::pbc;
 use stegos_keychain::input;
+
+const CONSOLE_HISTORY_LIMIT: u64 = 50;
 
 // ----------------------------------------------------------------
 // Public API.
@@ -154,6 +156,7 @@ impl ConsoleService {
         println!("show keys - print keys");
         println!("show balance - print balance");
         println!("show utxo - print unspent outputs");
+        println!("show history [STARTING DATE] - print history since date");
         println!("show election - print leader election state");
         println!("show escrow - print escrow");
         println!("show recovery - print recovery information");
@@ -575,6 +578,15 @@ impl ConsoleService {
             self.send_node_request(request)?
         } else if msg == "show utxo" {
             let request = WalletRequest::UnspentInfo {};
+            self.send_wallet_request(request)?
+        } else if msg.starts_with("show history") {
+            let arg = &msg[12..];
+
+            let starting_from = humantime::parse_rfc3339(arg).unwrap_or(UNIX_EPOCH);
+            let request = WalletRequest::HistoryInfo {
+                starting_from,
+                limit: CONSOLE_HISTORY_LIMIT,
+            };
             self.send_wallet_request(request)?
         } else if msg == "show recovery" {
             let password = input::read_password_from_stdin(false)?;

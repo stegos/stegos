@@ -66,10 +66,18 @@ pub struct StorageConfig {
     pub database_path: String,
 }
 
+impl StorageConfig {
+    pub fn new(path: &str) -> Self {
+        StorageConfig {
+            database_path: String::from(path),
+        }
+    }
+}
+
 impl Default for StorageConfig {
     fn default() -> Self {
         StorageConfig {
-            database_path: "database".to_string(),
+            database_path: String::from("database"),
         }
     }
 }

@@ -99,8 +99,8 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::time::{Duration, SystemTime};
-use stegos_blockchain::Output;
 use stegos_blockchain::PaymentTransaction;
+use stegos_blockchain::{Output, Timestamp};
 use stegos_blockchain::{PaymentOutput, PaymentPayloadData};
 use stegos_crypto::bulletproofs::{simple_commit, validate_range_proof};
 use stegos_crypto::curve1174::{
@@ -138,7 +138,7 @@ pub struct ProposedUTXO {
     pub recip: PublicKey, // payee key (uncloaked)
     pub amount: i64,
     pub data: String,
-    pub locked_timestamp: Option<SystemTime>,
+    pub locked_timestamp: Option<Timestamp>,
 }
 
 #[derive(Clone)]

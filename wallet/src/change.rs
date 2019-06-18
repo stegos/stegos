@@ -23,7 +23,7 @@
 
 use crate::error::*;
 use log::trace;
-use std::time::SystemTime;
+use stegos_blockchain::Timestamp;
 
 /// Find appropriate inputs.
 pub(crate) fn find_utxo<'a, I, T>(
@@ -31,10 +31,10 @@ pub(crate) fn find_utxo<'a, I, T>(
     sum: i64,
     fee: i64,
     fee_change: i64,
-    last_macro_block_timestamp: SystemTime,
+    last_macro_block_timestamp: Timestamp,
 ) -> Result<(Vec<&'a T>, i64, i64), WalletError>
 where
-    I: IntoIterator<Item = (&'a T, i64, Option<SystemTime>)>,
+    I: IntoIterator<Item = (&'a T, i64, Option<Timestamp>)>,
 {
     assert!(sum >= 0);
     assert!(fee >= 0);
@@ -120,7 +120,7 @@ pub mod tests {
         // Without change.
         let unspent_iter = unspent.iter().map(|(h, a, t)| (h, *a, t.clone()));
         let (spent, fee, change) =
-            find_utxo(unspent_iter, 49, FEE, FEE_CHANGE, SystemTime::now()).unwrap();
+            find_utxo(unspent_iter, 49, FEE, FEE_CHANGE, Timestamp::now()).unwrap();
         assert_eq!(spent, vec![&Hash::digest(&50i64)]);
         assert_eq!(fee, FEE);
         assert_eq!(change, 0);
@@ -128,7 +128,7 @@ pub mod tests {
         // Without change.
         let unspent_iter = unspent.iter().map(|(h, a, t)| (h, *a, t.clone()));
         let (spent, fee, change) =
-            find_utxo(unspent_iter, 13 - FEE, FEE, FEE_CHANGE, SystemTime::now()).unwrap();
+            find_utxo(unspent_iter, 13 - FEE, FEE, FEE_CHANGE, Timestamp::now()).unwrap();
         assert_eq!(
             spent,
             vec![
@@ -143,7 +143,7 @@ pub mod tests {
         // Without change.
         let unspent_iter = unspent.iter().map(|(h, a, t)| (h, *a, t.clone()));
         let (spent, fee, change) =
-            find_utxo(unspent_iter, 163 - FEE, FEE, FEE_CHANGE, SystemTime::now()).unwrap();
+            find_utxo(unspent_iter, 163 - FEE, FEE, FEE_CHANGE, Timestamp::now()).unwrap();
         assert_eq!(
             spent,
             vec![
@@ -160,7 +160,7 @@ pub mod tests {
         // With change.
         let unspent_iter = unspent.iter().map(|(h, a, t)| (h, *a, t.clone()));
         let (spent, fee, change) =
-            find_utxo(unspent_iter, 5, FEE, FEE_CHANGE, SystemTime::now()).unwrap();
+            find_utxo(unspent_iter, 5, FEE, FEE_CHANGE, Timestamp::now()).unwrap();
         assert_eq!(
             spent,
             vec![
@@ -175,7 +175,7 @@ pub mod tests {
         // With zero change.
         let unspent_iter = unspent.iter().map(|(h, a, t)| (h, *a, t.clone()));
         let (spent, fee, change) =
-            find_utxo(unspent_iter, 161, FEE, FEE_CHANGE, SystemTime::now()).unwrap();
+            find_utxo(unspent_iter, 161, FEE, FEE_CHANGE, Timestamp::now()).unwrap();
         assert_eq!(
             spent,
             vec![
@@ -191,7 +191,7 @@ pub mod tests {
 
         // NotEnoughMoney
         let unspent_iter = unspent.iter().map(|(h, a, t)| (h, *a, t.clone()));
-        match find_utxo(unspent_iter, 164, FEE, FEE_CHANGE, SystemTime::now()) {
+        match find_utxo(unspent_iter, 164, FEE, FEE_CHANGE, Timestamp::now()) {
             Err(WalletError::NotEnoughMoney) => {}
             _ => panic!(),
         };

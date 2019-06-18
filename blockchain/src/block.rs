@@ -24,12 +24,12 @@
 use crate::error::TransactionError;
 use crate::merkle::*;
 use crate::output::*;
+use crate::timestamp::Timestamp;
 use crate::transaction::Transaction;
 use crate::view_changes::ViewChangeProof;
 use bitvector::BitVector;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::time::SystemTime;
 use stegos_crypto::curve1174::Fr;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
@@ -70,8 +70,8 @@ pub struct MicroBlockHeader {
     /// Generated random value by leader.
     pub random: pbc::VRF,
 
-    /// UNIX timestamp of block creation with millisecond precision.
-    pub timestamp: SystemTime,
+    /// UNIX timestamp of block creation.
+    pub timestamp: Timestamp,
 
     /// Merklish root of all transactions.
     pub transactions_range_hash: Hash,
@@ -126,7 +126,7 @@ impl MicroBlock {
         view_change_proof: Option<ViewChangeProof>,
         pkey: pbc::PublicKey,
         random: pbc::VRF,
-        timestamp: SystemTime,
+        timestamp: Timestamp,
         transactions: Vec<Transaction>,
     ) -> MicroBlock {
         let transactions_range_hash: Hash = Self::calculate_transactions_range_hash(&transactions);
@@ -159,7 +159,7 @@ impl MicroBlock {
         view_change_proof: Option<ViewChangeProof>,
         pkey: pbc::PublicKey,
         random: pbc::VRF,
-        timestamp: SystemTime,
+        timestamp: Timestamp,
     ) -> MicroBlock {
         let transactions = Vec::new();
         MicroBlock::new(
@@ -228,8 +228,8 @@ pub struct MacroBlockHeader {
     /// Latest random of the leader.
     pub random: pbc::VRF,
 
-    /// UNIX timestamp of block creation with millisecond precision.
-    pub timestamp: SystemTime,
+    /// UNIX timestamp of block creation.
+    pub timestamp: Timestamp,
 
     /// The block reward.
     pub block_reward: i64,
@@ -293,7 +293,7 @@ impl MacroBlock {
         view_change: u32,
         pkey: pbc::PublicKey,
         random: pbc::VRF,
-        timestamp: SystemTime,
+        timestamp: Timestamp,
         block_reward: i64,
         activity_map: BitVector,
     ) -> MacroBlock {
@@ -324,7 +324,7 @@ impl MacroBlock {
         view_change: u32,
         pkey: pbc::PublicKey,
         random: pbc::VRF,
-        timestamp: SystemTime,
+        timestamp: Timestamp,
         block_reward: i64,
         activity_map: BitVector,
         transactions: &[Transaction],
@@ -390,7 +390,7 @@ impl MacroBlock {
         view_change: u32,
         pkey: pbc::PublicKey,
         random: pbc::VRF,
-        timestamp: SystemTime,
+        timestamp: Timestamp,
         block_reward: i64,
         activity_map: BitVector,
         gamma: Fr,

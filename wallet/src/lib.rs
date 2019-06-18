@@ -52,7 +52,7 @@ use futures_stream_select_all_send::select_all;
 use log::*;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use stegos_blockchain::Timestamp;
 use stegos_blockchain::*;
 use stegos_crypto::curve1174;
 use stegos_crypto::hash::Hash;
@@ -89,7 +89,7 @@ pub struct WalletService {
     /// Current Epoch.
     epoch: u64,
     /// Time of last macro block.
-    last_macro_block_timestamp: SystemTime,
+    last_macro_block_timestamp: Timestamp,
 
     /// Unspent Payment UXTO.
     payments: HashMap<Hash, PaymentValue>,
@@ -169,7 +169,7 @@ impl WalletService {
         let transactions_interest = HashMap::new();
         let unprocessed_transactions = HashMap::new();
 
-        let last_macro_block_timestamp = UNIX_EPOCH;
+        let last_macro_block_timestamp = Timestamp::UNIX_EPOCH;
 
         let wallet_log = WalletLog::open(database_path);
         //
@@ -250,7 +250,7 @@ impl WalletService {
         amount: i64,
         payment_fee: i64,
         comment: String,
-        locked_timestamp: Option<SystemTime>,
+        locked_timestamp: Option<Timestamp>,
     ) -> Result<(Hash, PaymentTransactionValue), Error> {
         let wallet_skey = self.unlock(password)?;
         let data = PaymentPayloadData::Comment(comment);
@@ -277,7 +277,7 @@ impl WalletService {
             self.create_payment_transaction_info(data, *recipient, tx.clone(), &rvalues, amount);
 
         self.wallet_log
-            .push_outgoing(SystemTime::now(), payment_info.clone())?;
+            .push_outgoing(Timestamp::now(), payment_info.clone())?;
 
         let tx: Transaction = tx.into();
         self.node.send_transaction(tx.clone())?;
@@ -323,7 +323,7 @@ impl WalletService {
         recipient: &curve1174::PublicKey,
         amount: i64,
         payment_fee: i64,
-        locked_timestamp: Option<SystemTime>,
+        locked_timestamp: Option<Timestamp>,
     ) -> Result<(Hash, i64), Error> {
         let wallet_skey = self.unlock(password)?;
         let unspent_iter = self
@@ -381,7 +381,7 @@ impl WalletService {
         }
     }
 
-    fn get_tx_history(&self, starting_from: SystemTime, limit: u64) -> Vec<LogEntryInfo> {
+    fn get_tx_history(&self, starting_from: Timestamp, limit: u64) -> Vec<LogEntryInfo> {
         self.wallet_log
             .iter_range(starting_from, limit)
             .map(|(t, e)| e.to_info(t))
@@ -396,7 +396,7 @@ impl WalletService {
         amount: i64,
         payment_fee: i64,
         comment: String,
-        locked_timestamp: Option<SystemTime>,
+        locked_timestamp: Option<Timestamp>,
     ) -> Result<Hash, Error> {
         let _wallet_skey = self.unlock(password)?;
         // TODO: refactor ValueShuffle to request secret key explicitly.
@@ -643,7 +643,7 @@ impl WalletService {
                     if persist {
                         if let Err(e) = self
                             .wallet_log
-                            .push_incomming(SystemTime::now(), value.clone().into())
+                            .push_incomming(Timestamp::now(), value.clone().into())
                         {
                             error!("Error when adding incomming tx = {}", e)
                         }
@@ -663,7 +663,7 @@ impl WalletService {
                 if persist {
                     if let Err(e) = self
                         .wallet_log
-                        .push_incomming(SystemTime::now(), value.clone().into())
+                        .push_incomming(Timestamp::now(), value.clone().into())
                     {
                         error!("Error when adding incomming tx = {}", e)
                     }
@@ -801,7 +801,7 @@ impl WalletService {
         }
     }
 
-    fn on_epoch_changed(&mut self, epoch: u64, time: SystemTime) {
+    fn on_epoch_changed(&mut self, epoch: u64, time: Timestamp) {
         self.epoch = epoch;
         self.last_macro_block_timestamp = time;
 

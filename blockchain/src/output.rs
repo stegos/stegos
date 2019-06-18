@@ -21,12 +21,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::timestamp::Timestamp;
 use crate::BlockchainError;
 use failure::{Error, Fail};
 use rand::random;
 use serde_derive::{Deserialize, Serialize};
 use std::mem::transmute;
-use std::time::SystemTime;
 use stegos_crypto::bulletproofs::{fee_a, make_range_proof, validate_range_proof, BulletProof};
 use stegos_crypto::curve1174::zap_bytes;
 use stegos_crypto::curve1174::{
@@ -72,10 +72,10 @@ pub enum OutputError {
     #[fail(display = "Invalid signature on validator pkey: utxo={}", _0)]
     InvalidStakeSignature(Hash),
     #[fail(
-        display = "Input is locked: hash={}, tx_time={:?}, last_macro_block_time={:?}",
+        display = "Input is locked: hash={}, tx_time={}, last_macro_block_time={}",
         _0, _1, _2
     )]
-    UtxoLocked(Hash, SystemTime, SystemTime),
+    UtxoLocked(Hash, Timestamp, Timestamp),
     #[fail(display = "Crypto error ={}", _0)]
     CryptoError(CryptoError),
     #[fail(display = "Error in decoding utf string ={}", _0)]
@@ -117,7 +117,7 @@ pub struct PaymentOutput {
     pub payload: EncryptedPayload,
 
     /// Timelock for output.
-    pub locked_timestamp: Option<SystemTime>,
+    pub locked_timestamp: Option<Timestamp>,
 }
 
 /// PublicPayment UTXO.
@@ -133,7 +133,7 @@ pub struct PublicPaymentOutput {
     pub amount: i64,
 
     /// Timelock for output.
-    pub locked_timestamp: Option<SystemTime>,
+    pub locked_timestamp: Option<Timestamp>,
 }
 
 /// Stake UTXO.
@@ -484,7 +484,7 @@ impl PaymentOutput {
         recipient_pkey: &PublicKey,
         amount: i64,
         data: PaymentPayloadData,
-        locked_timestamp: Option<SystemTime>,
+        locked_timestamp: Option<Timestamp>,
     ) -> Result<(Self, Fr, Fr), BlockchainError> {
         // Create range proofs.
         let (proof, gamma) = make_range_proof(amount);
@@ -531,7 +531,7 @@ impl PaymentOutput {
     pub fn new_locked(
         recipient_pkey: &PublicKey,
         amount: i64,
-        locked_timestamp: SystemTime,
+        locked_timestamp: Timestamp,
     ) -> Result<(Self, Fr), BlockchainError> {
         let data = PaymentPayloadData::Comment(String::new());
         let (output, gamma, _) =
@@ -623,7 +623,7 @@ impl PublicPaymentOutput {
     pub fn new_locked(
         recipient_pkey: &PublicKey,
         amount: i64,
-        locked_timestamp: SystemTime,
+        locked_timestamp: Timestamp,
     ) -> Self {
         let serno = random::<i64>();
         PublicPaymentOutput {
@@ -764,7 +764,7 @@ impl Output {
     }
 
     /// Returns timestamp when tx could be spent.
-    pub fn locked_timestamp(&self) -> Option<SystemTime> {
+    pub fn locked_timestamp(&self) -> Option<Timestamp> {
         match self {
             Output::PaymentOutput(o) => o.locked_timestamp.clone(),
             Output::PublicPaymentOutput(o) => o.locked_timestamp.clone(),

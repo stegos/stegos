@@ -24,8 +24,8 @@
 use log::*;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::time::SystemTime;
 use stegos_blockchain::view_changes::ViewChangeProof;
+use stegos_blockchain::Timestamp;
 use stegos_blockchain::*;
 use stegos_crypto::curve1174::{self, Fr};
 use stegos_crypto::hash::Hash;
@@ -166,7 +166,7 @@ impl Mempool {
         network_pkey: &pbc::PublicKey,
         max_utxo_in_block: usize,
     ) -> MicroBlock {
-        let timestamp = SystemTime::now();
+        let timestamp = Timestamp::now();
         let seed = mix(last_random, view_change);
         let random = pbc::make_VRF(network_skey, &seed);
 

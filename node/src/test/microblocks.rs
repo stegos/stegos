@@ -751,7 +751,7 @@ fn out_of_order_keyblock_proposal() {
             let last_random = s.nodes[0].node_service.chain.last_random();
             let leader_node = s.node(&leader_pk).unwrap();
 
-            let timestamp = SystemTime::now();
+            let timestamp = Timestamp::now();
             let seed = mix(last_random, round);
             let random = pbc::make_VRF(&leader_node.node_service.network_skey, &seed);
             let leader = leader_node.node_service.network_pkey;
@@ -825,7 +825,7 @@ fn micro_block_without_signature() {
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
         //create valid but out of order fake micro block.
-        let timestamp = SystemTime::now();
+        let timestamp = Timestamp::now();
 
         let epoch = s.nodes[0].node_service.chain.epoch();
         let round = s.nodes[0].node_service.chain.view_change();

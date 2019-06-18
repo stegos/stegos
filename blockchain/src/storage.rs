@@ -121,15 +121,15 @@ impl ListDb {
 mod test {
     use super::*;
     use crate::block::MacroBlock;
+    use crate::timestamp::Timestamp;
     use bitvector::BitVector;
-    use std::time::SystemTime;
     use stegos_crypto::hash::Hash;
     use stegos_crypto::pbc;
 
     fn create_block(previous: Hash) -> Block {
         let (skey0, pkey0) = pbc::make_random_keys();
         let epoch: u64 = 1;
-        let timestamp = SystemTime::now();
+        let timestamp = Timestamp::now();
 
         let random = pbc::make_VRF(&skey0, &Hash::digest("random"));
         let activity_map = BitVector::new(0);

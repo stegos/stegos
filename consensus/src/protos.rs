@@ -161,7 +161,7 @@ impl ProtoConvert for SealedViewChangeProof {
 mod tests {
     use super::*;
     use bitvector::BitVector;
-    use std::time::SystemTime;
+    use stegos_blockchain::Timestamp;
     use stegos_crypto::hash::{Hashable, Hasher};
     use stegos_crypto::{curve1174, pbc};
 
@@ -221,7 +221,7 @@ mod tests {
 
         let epoch: u64 = 10;
         let view_change = 0;
-        let timestamp = SystemTime::now();
+        let timestamp = Timestamp::now();
         let previous = Hash::digest(&"test".to_string());
         let random = pbc::make_VRF(&nskey, &Hash::digest("test"));
         let block_reward = 0;

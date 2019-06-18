@@ -53,15 +53,11 @@ impl ProtoConvert for PaymentOutput {
         proto.set_cloaking_hint(self.cloaking_hint.into_proto());
         proto.set_proof(self.proof.into_proto());
         proto.set_payload(self.payload.into_proto());
-        let timestamp = if let Some(locked_timestamp) = self.locked_timestamp {
-            let since_the_epoch = locked_timestamp
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time is valid");
-            since_the_epoch.as_secs() * 1000 + since_the_epoch.subsec_millis() as u64
+        let timestamp: u64 = if let Some(locked_timestamp) = self.locked_timestamp {
+            locked_timestamp.into()
         } else {
-            0
+            0u64
         };
-
         proto.set_locked_timestamp(timestamp);
         proto
     }
@@ -71,9 +67,9 @@ impl ProtoConvert for PaymentOutput {
         let cloaking_hint = Pt::from_proto(proto.get_cloaking_hint())?;
         let proof = BulletProof::from_proto(proto.get_proof())?;
         let payload = EncryptedPayload::from_proto(proto.get_payload())?;
-        let locked_timestamp = match proto.get_locked_timestamp() {
+        let locked_timestamp: Option<Timestamp> = match proto.get_locked_timestamp() {
             0 => None,
-            n => Some(std::time::UNIX_EPOCH + std::time::Duration::from_millis(n)),
+            n => Some(n.into()),
         };
         Ok(PaymentOutput {
             recipient,
@@ -92,13 +88,10 @@ impl ProtoConvert for PublicPaymentOutput {
         proto.set_recipient(self.recipient.into_proto());
         proto.set_amount(self.amount);
         proto.set_serno(self.serno);
-        let timestamp = if let Some(locked_timestamp) = self.locked_timestamp {
-            let since_the_epoch = locked_timestamp
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time is valid");
-            since_the_epoch.as_secs() * 1000 + since_the_epoch.subsec_millis() as u64
+        let timestamp: u64 = if let Some(locked_timestamp) = self.locked_timestamp {
+            locked_timestamp.into()
         } else {
-            0
+            0u64
         };
 
         proto.set_locked_timestamp(timestamp);
@@ -109,9 +102,9 @@ impl ProtoConvert for PublicPaymentOutput {
         let recipient = PublicKey::from_proto(proto.get_recipient())?;
         let amount = proto.get_amount();
         let serno = proto.get_serno();
-        let locked_timestamp = match proto.get_locked_timestamp() {
+        let locked_timestamp: Option<Timestamp> = match proto.get_locked_timestamp() {
             0 => None,
-            n => Some(std::time::UNIX_EPOCH + std::time::Duration::from_millis(n)),
+            n => Some(n.into()),
         };
         Ok(PublicPaymentOutput {
             recipient,
@@ -419,11 +412,7 @@ impl ProtoConvert for MicroBlockHeader {
         }
         proto.set_pkey(self.pkey.into_proto());
         proto.set_random(self.random.into_proto());
-        let since_the_epoch = self
-            .timestamp
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time is valid");
-        let timestamp = since_the_epoch.as_secs() * 1000 + since_the_epoch.subsec_millis() as u64;
+        let timestamp: u64 = self.timestamp.into();
         proto.set_timestamp(timestamp);
         proto.set_transactions_range_hash(self.transactions_range_hash.into_proto());
         proto
@@ -442,8 +431,7 @@ impl ProtoConvert for MicroBlockHeader {
         };
         let pkey = pbc::PublicKey::from_proto(proto.get_pkey())?;
         let random = pbc::VRF::from_proto(proto.get_random())?;
-        let timestamp =
-            std::time::UNIX_EPOCH + std::time::Duration::from_millis(proto.get_timestamp());
+        let timestamp: Timestamp = proto.get_timestamp().into();
         let transactions_range_hash = Hash::from_proto(proto.get_transactions_range_hash())?;
         Ok(MicroBlockHeader {
             version,
@@ -548,12 +536,7 @@ impl ProtoConvert for MacroBlockHeader {
         proto.set_view_change(self.view_change);
         proto.set_pkey(self.pkey.into_proto());
         proto.set_random(self.random.into_proto());
-        let since_the_epoch = self
-            .timestamp
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time is valid");
-        let timestamp = since_the_epoch.as_secs() * 1000 + since_the_epoch.subsec_millis() as u64;
-        proto.set_timestamp(timestamp);
+        proto.set_timestamp(self.timestamp.into());
         proto.set_block_reward(self.block_reward);
         proto.set_gamma(self.gamma.into_proto());
         if !self.activity_map.is_empty() {
@@ -575,8 +558,7 @@ impl ProtoConvert for MacroBlockHeader {
         let view_change = proto.get_view_change();
         let pkey = pbc::PublicKey::from_proto(proto.get_pkey())?;
         let random = pbc::VRF::from_proto(proto.get_random())?;
-        let timestamp =
-            std::time::UNIX_EPOCH + std::time::Duration::from_millis(proto.get_timestamp());
+        let timestamp = proto.get_timestamp().into();
         let block_reward = proto.get_block_reward();
         let mut activity_map = BitVector::new(VALIDATORS_MAX);
         for (bit, val) in proto.activity_map.iter().enumerate() {
@@ -784,7 +766,7 @@ impl ProtoConvert for SlashingProof {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::SystemTime;
+    use crate::timestamp::Timestamp;
     use stegos_crypto::curve1174;
     use stegos_crypto::hash::{Hash, Hashable};
     use stegos_crypto::pbc;
@@ -869,7 +851,7 @@ mod tests {
         let output: Output = output.into();
         roundtrip(&output);
 
-        let output = PublicPaymentOutput::new_locked(&pkey, 100, SystemTime::now());
+        let output = PublicPaymentOutput::new_locked(&pkey, 100, Timestamp::now());
 
         roundtrip(&output);
         let output: Output = output.into();
@@ -894,7 +876,7 @@ mod tests {
         let (skeypbc, pkeypbc) = pbc::make_random_keys();
 
         let epoch: u64 = 10;
-        let timestamp = SystemTime::now();
+        let timestamp = Timestamp::now();
         let view_change = 15;
         let previous = Hash::digest(&"test".to_string());
         let offset = 20;
@@ -940,7 +922,7 @@ mod tests {
         let (skeypbc, pkeypbc) = pbc::make_random_keys();
 
         let epoch: u64 = 10;
-        let timestamp = SystemTime::now();
+        let timestamp = Timestamp::now();
         let view_change = 15;
         let amount: i64 = 1_000_000;
         let block_reward = 1000;

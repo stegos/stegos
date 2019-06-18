@@ -24,12 +24,10 @@
 use crate::change::*;
 use crate::error::*;
 use crate::valueshuffle::ProposedUTXO;
-use crate::PrintableSystemTime;
 use failure::Error;
 use log::*;
 use serde_derive::Serialize;
 use std::convert::From;
-use std::time::SystemTime;
 use stegos_blockchain::*;
 use stegos_crypto::curve1174::Fr;
 use stegos_crypto::curve1174::PublicKey;
@@ -60,11 +58,11 @@ pub(crate) fn create_vs_payment_transaction<'a, UnspentIter>(
     amount: i64,
     payment_fee: i64,
     data: String,
-    locked_timestamp: Option<SystemTime>,
-    last_block_time: SystemTime,
+    locked_timestamp: Option<Timestamp>,
+    last_block_time: Timestamp,
 ) -> Result<(Vec<(Hash, PaymentOutput)>, Vec<ProposedUTXO>, i64), Error>
 where
-    UnspentIter: Iterator<Item = (&'a PaymentOutput, i64, Option<SystemTime>)>,
+    UnspentIter: Iterator<Item = (&'a PaymentOutput, i64, Option<Timestamp>)>,
 {
     if amount < 0 {
         return Err(WalletError::NegativeAmount(amount).into());
@@ -121,8 +119,6 @@ where
 
     let mut outputs: Vec<ProposedUTXO> = Vec::<ProposedUTXO>::with_capacity(2);
 
-    let locked_timestamp_str: PrintableSystemTime = locked_timestamp.into();
-
     // Create an output for payment
     trace!("Creating payment UTXO...");
     let output1 = ProposedUTXO {
@@ -134,8 +130,8 @@ where
     outputs.push(output1);
 
     info!(
-        "Created payment UTXO: recipient={}, amount={}, locked={}",
-        recipient, amount, locked_timestamp_str
+        "Created payment UTXO: recipient={}, amount={}, locked={:?}",
+        recipient, amount, locked_timestamp
     );
 
     if change > 0 {
@@ -176,11 +172,11 @@ pub(crate) fn create_payment_transaction<'a, UnspentIter>(
     amount: i64,
     payment_fee: i64,
     transaction: TransactionType,
-    locked_timestamp: Option<SystemTime>,
-    last_block_time: SystemTime,
+    locked_timestamp: Option<Timestamp>,
+    last_block_time: Timestamp,
 ) -> Result<(Vec<Output>, Vec<Output>, Fr, Vec<Option<Fr>>, i64), Error>
 where
-    UnspentIter: Iterator<Item = (&'a PaymentOutput, i64, Option<SystemTime>)>,
+    UnspentIter: Iterator<Item = (&'a PaymentOutput, i64, Option<Timestamp>)>,
 {
     if amount < 0 {
         return Err(WalletError::NegativeAmount(amount).into());
@@ -217,8 +213,6 @@ where
         debug!("Use UTXO: hash={}", Hash::digest(input));
     }
 
-    let locked_timestamp_str: PrintableSystemTime = locked_timestamp.into();
-
     //
     // Create outputs
     //
@@ -241,8 +235,8 @@ where
 
             let output1_hash = Hash::digest(&output1);
             info!(
-                "Created payment UTXO: hash={}, recipient={}, amount={}, data={:?}, locked={}",
-                output1_hash, recipient, amount, data, locked_timestamp_str
+                "Created payment UTXO: hash={}, recipient={}, amount={}, data={:?}, locked={:?}",
+                output1_hash, recipient, amount, data, locked_timestamp
             );
             (Output::PaymentOutput(output1), gamma1, Some(rvalue))
         }
@@ -256,8 +250,8 @@ where
             };
             let output1_hash = Hash::digest(&output1);
             info!(
-                "Created public payment UTXO: hash={}, recipient={}, amount={}, locked={}",
-                output1_hash, recipient, amount, locked_timestamp_str
+                "Created public payment UTXO: hash={}, recipient={}, amount={}, locked={:?}",
+                output1_hash, recipient, amount, locked_timestamp
             );
             (Output::PublicPaymentOutput(output1), gamma1, None)
         }
@@ -308,7 +302,7 @@ pub(crate) fn create_staking_transaction<'a, UnspentIter>(
     amount: i64,
     payment_fee: i64,
     stake_fee: i64,
-    last_block_time: SystemTime,
+    last_block_time: Timestamp,
 ) -> Result<PaymentTransaction, Error>
 where
     UnspentIter: Iterator<Item = (&'a PaymentOutput, i64)>,
@@ -413,7 +407,7 @@ pub(crate) fn create_unstaking_transaction<'a, UnspentIter>(
     amount: i64,
     payment_fee: i64,
     stake_fee: i64,
-    last_block_time: SystemTime,
+    last_block_time: Timestamp,
 ) -> Result<PaymentTransaction, Error>
 where
     UnspentIter: Iterator<Item = &'a StakeOutput>,
@@ -558,7 +552,7 @@ pub(crate) fn create_cloaking_transaction<'a, UnspentIter>(
     recipient: &PublicKey,
     unspent_iter: UnspentIter,
     payment_fee: i64,
-    last_block_time: SystemTime,
+    last_block_time: Timestamp,
 ) -> Result<PaymentTransaction, Error>
 where
     UnspentIter: Iterator<Item = &'a PublicPaymentOutput>,
@@ -679,7 +673,7 @@ pub mod tests {
             stake,
             payment_fee,
             stake_fee,
-            SystemTime::now(),
+            Timestamp::now(),
         )
         .expect("tx is created");
         tx.validate(&inputs).expect("tx is valid");
@@ -704,7 +698,7 @@ pub mod tests {
             unstake,
             payment_fee,
             stake_fee,
-            SystemTime::now(),
+            Timestamp::now(),
         )
         .expect("tx is created");
         tx.validate(&inputs).expect("tx is valid");
@@ -734,7 +728,7 @@ pub mod tests {
             payment_fee - 1,
             payment_fee,
             stake_fee,
-            SystemTime::now(),
+            Timestamp::now(),
         )
         .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {
@@ -752,7 +746,7 @@ pub mod tests {
             payment_fee,
             payment_fee,
             stake_fee,
-            SystemTime::now(),
+            Timestamp::now(),
         )
         .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {
@@ -771,7 +765,7 @@ pub mod tests {
             unstake,
             payment_fee,
             stake_fee,
-            SystemTime::now(),
+            Timestamp::now(),
         )
         .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {
@@ -793,7 +787,7 @@ pub mod tests {
             unstake,
             payment_fee,
             stake_fee,
-            SystemTime::now(),
+            Timestamp::now(),
         )
         .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {

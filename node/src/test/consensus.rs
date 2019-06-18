@@ -588,7 +588,7 @@ fn out_of_order_micro_block() {
         let leader_pk = s.nodes[0].node_service.chain.leader();
 
         //create valid but out of order fake micro block.
-        let timestamp = SystemTime::now();
+        let timestamp = Timestamp::now();
 
         let view_change = s.nodes[0].node_service.chain.view_change();
         let last_block_hash = s.nodes[0].node_service.chain.last_block_hash();

@@ -945,8 +945,8 @@ impl Future for WalletService {
                                 payment_fee,
                             } => self.cloak_all(password, payment_fee).into(),
                             WalletRequest::KeysInfo {} => WalletResponse::KeysInfo {
-                                wallet_pkey: self.wallet_pkey,
-                                network_pkey: self.network_pkey,
+                                wallet_address: self.wallet_pkey,
+                                network_address: self.network_pkey,
                             },
                             WalletRequest::BalanceInfo {} => WalletResponse::BalanceInfo {
                                 balance: self.balance(),

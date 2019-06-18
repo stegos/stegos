@@ -94,6 +94,7 @@ pub enum WalletNotification {
 #[serde(rename_all = "snake_case")]
 pub enum WalletRequest {
     Payment {
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         password: String,
         recipient: PublicKey,
         amount: i64,
@@ -102,6 +103,7 @@ pub enum WalletRequest {
         locked_timestamp: Option<Timestamp>,
     },
     PublicPayment {
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         password: String,
         recipient: PublicKey,
         amount: i64,
@@ -109,6 +111,7 @@ pub enum WalletRequest {
         locked_timestamp: Option<Timestamp>,
     },
     SecurePayment {
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         password: String,
         recipient: PublicKey,
         amount: i64,
@@ -120,23 +123,28 @@ pub enum WalletRequest {
         tx_hash: Hash,
     },
     Stake {
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         password: String,
         amount: i64,
         payment_fee: i64,
     },
     Unstake {
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         password: String,
         amount: i64,
         payment_fee: i64,
     },
     UnstakeAll {
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         password: String,
         payment_fee: i64,
     },
     RestakeAll {
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         password: String,
     },
     CloakAll {
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         password: String,
         payment_fee: i64,
     },
@@ -152,6 +160,7 @@ pub enum WalletRequest {
         new_password: String,
     },
     GetRecovery {
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         password: String,
     },
 }
@@ -185,8 +194,8 @@ pub enum WalletResponse {
         balance: i64,
     },
     KeysInfo {
-        wallet_pkey: PublicKey,
-        network_pkey: pbc::PublicKey,
+        wallet_address: PublicKey,
+        network_address: pbc::PublicKey,
     },
     UnspentInfo {
         public_payments: Vec<PublicPaymentInfo>,

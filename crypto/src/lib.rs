@@ -35,7 +35,7 @@ use failure::Fail;
 use hex;
 
 // Version byte for Base58Check encoding (TBD)
-const BASE58_VERSIONID: u8 = 198u8;
+pub const BASE58_VERSIONID: u8 = 198u8;
 
 #[derive(Debug, Fail)]
 pub enum CryptoError {

@@ -24,18 +24,16 @@ use crate::pem;
 use log::*;
 use std::fs;
 use std::path::Path;
+use std::str::FromStr;
+
 use stegos_crypto::curve1174;
 use stegos_crypto::pbc;
 use stegos_serialization::traits::ProtoConvert;
 
 /// PEM tag for encrypted wallet secret key.
 const WALLET_ENCRYPTED_SKEY_TAG: &'static str = "STEGOS-CURVE1174 ENCRYPTED SECRET KEY";
-/// PEM tag for wallet public key.
-const WALLET_PKEY_TAG: &'static str = "STEGOS-CURVE1174 PUBLIC KEY";
 /// PEM tag for network secret key.
 const NETWORK_SKEY_TAG: &'static str = "STEGOS-PBC SECRET KEY";
-/// PEM tag for network public key.
-const NETWORK_PKEY_TAG: &'static str = "STEGOS-PBC PUBLIC KEY";
 
 fn read(path: &Path) -> Result<Vec<u8>, KeyError> {
     match fs::read(path) {
@@ -95,14 +93,14 @@ fn load_encrypted_key(path: &Path, tag: &str, password: &str) -> Result<Vec<u8>,
 }
 
 pub fn load_wallet_pkey(path: &Path) -> Result<curve1174::PublicKey, KeyError> {
-    let pkey = load_key(path, WALLET_PKEY_TAG)?;
-    curve1174::PublicKey::try_from_bytes(&pkey)
+    let pkey_encoded = read(path)?;
+    curve1174::PublicKey::from_str(&String::from_utf8_lossy(&pkey_encoded))
         .map_err(|e| KeyError::InvalidKey(path.to_string_lossy().to_string(), e))
 }
 
 pub fn load_network_pkey(path: &Path) -> Result<pbc::PublicKey, KeyError> {
-    let pkey = load_key(path, NETWORK_PKEY_TAG)?;
-    pbc::PublicKey::try_from_bytes(&pkey)
+    let pkey = read(path)?;
+    pbc::PublicKey::try_from_hex(&String::from_utf8_lossy(&pkey))
         .map_err(|e| KeyError::InvalidKey(path.to_string_lossy().to_string(), e))
 }
 
@@ -139,11 +137,11 @@ fn write_encrypted_key(
 }
 
 pub fn write_wallet_pkey(path: &Path, pkey: &curve1174::PublicKey) -> Result<(), KeyError> {
-    write_key(path, WALLET_PKEY_TAG, pkey.to_bytes().to_vec())
+    write(path, String::from(pkey).as_bytes().to_vec())
 }
 
 pub fn write_network_pkey(path: &Path, pkey: &pbc::PublicKey) -> Result<(), KeyError> {
-    write_key(path, NETWORK_PKEY_TAG, pkey.to_bytes().to_vec())
+    write(path, pkey.to_hex().as_bytes().to_vec())
 }
 
 pub fn write_wallet_skey(

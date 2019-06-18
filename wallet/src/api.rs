@@ -169,10 +169,6 @@ pub struct PaymentTransactionInfo {
 #[serde(tag = "response")]
 #[serde(rename_all = "snake_case")]
 pub enum WalletResponse {
-    TransactionCreatedWithCertificate {
-        tx_hash: Hash,
-        info: PaymentTransactionInfo,
-    },
     TransactionCreated {
         tx_hash: Hash,
         fee: i64,

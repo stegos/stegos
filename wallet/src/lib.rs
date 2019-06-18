@@ -251,7 +251,7 @@ impl WalletService {
         payment_fee: i64,
         comment: String,
         locked_timestamp: Option<SystemTime>,
-    ) -> Result<(Hash, PaymentTransactionValue), Error> {
+    ) -> Result<(Hash, i64), Error> {
         let wallet_skey = self.unlock(password)?;
         let data = PaymentPayloadData::Comment(comment);
         let unspent_iter = self
@@ -287,7 +287,7 @@ impl WalletService {
         //firstly check that no conflict input was found;
         self.add_transaction_interest(tx.into());
 
-        Ok((tx_hash, payment_info))
+        Ok((tx_hash, fee))
     }
 
     fn create_payment_transaction_info(
@@ -814,20 +814,6 @@ impl WalletService {
     fn notify(&mut self, notification: WalletNotification) {
         self.subscribers
             .retain(move |tx| tx.unbounded_send(notification.clone()).is_ok());
-    }
-}
-
-impl From<Result<(Hash, PaymentTransactionValue), Error>> for WalletResponse {
-    fn from(r: Result<(Hash, PaymentTransactionValue), Error>) -> Self {
-        match r {
-            Ok((tx_hash, info)) => WalletResponse::TransactionCreatedWithCertificate {
-                tx_hash,
-                info: info.to_info(),
-            },
-            Err(e) => WalletResponse::Error {
-                error: format!("{}", e),
-            },
-        }
     }
 }
 

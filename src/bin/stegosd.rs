@@ -35,9 +35,8 @@ use log::*;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process;
-use std::time::SystemTime;
 use stegos_api::WebSocketServer;
-use stegos_blockchain::Blockchain;
+use stegos_blockchain::{Blockchain, Timestamp};
 use stegos_crypto::curve1174;
 use stegos_crypto::pbc;
 use stegos_keychain::{self as keychain, KeyError};
@@ -317,7 +316,7 @@ fn run() -> Result<(), Error> {
 
     // Initialize blockchain
     let genesis = initialize_genesis(&cfg)?;
-    let timestamp = SystemTime::now();
+    let timestamp = Timestamp::now();
     let chain = Blockchain::new(
         cfg.chain.clone().into(),
         cfg.blockchain_db,
@@ -408,7 +407,7 @@ mod tests {
         let chain = "testnet";
         config.general.chain = chain.to_string();
         let genesis = initialize_genesis(&config).expect("testnet looks like unloadable.");
-        let timestamp = SystemTime::now();
+        let timestamp = Timestamp::now();
         Blockchain::testing(Default::default(), genesis, timestamp)
             .expect("testnet looks like unloadable.");
     }
@@ -421,7 +420,7 @@ mod tests {
         let chain = "devnet";
         config.general.chain = chain.to_string();
         let genesis = initialize_genesis(&config).expect("devnet looks like unloadable.");
-        let timestamp = SystemTime::now();
+        let timestamp = Timestamp::now();
         Blockchain::testing(Default::default(), genesis, timestamp)
             .expect("devnet looks like unloadable.");
     }
@@ -433,7 +432,7 @@ mod tests {
         let chain = "dev";
         config.general.chain = chain.to_string();
         let genesis = initialize_genesis(&config).expect("dev looks like unloadable.");
-        let timestamp = SystemTime::now();
+        let timestamp = Timestamp::now();
         Blockchain::testing(Default::default(), genesis, timestamp)
             .expect("dev looks like unloadable.");
     }

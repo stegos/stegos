@@ -24,7 +24,7 @@
 use crate::error::*;
 use crate::mempool::Mempool;
 use failure::Error;
-use std::time::SystemTime;
+use stegos_blockchain::Timestamp;
 use stegos_blockchain::{Blockchain, Output, OutputError, Transaction, TransactionError};
 use stegos_crypto::hash::Hash;
 
@@ -35,7 +35,7 @@ pub(crate) fn validate_external_transaction(
     tx: &Transaction,
     mempool: &Mempool,
     chain: &Blockchain,
-    _timestamp: SystemTime,
+    _timestamp: Timestamp,
     payment_fee: i64,
     stake_fee: i64,
 ) -> Result<(), Error> {
@@ -125,8 +125,9 @@ pub(crate) fn validate_external_transaction(
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::time::{Duration, SystemTime};
+    use std::time::Duration;
     use stegos_blockchain::test::*;
+    use stegos_blockchain::Timestamp;
     use stegos_blockchain::*;
     use stegos_crypto::curve1174::Fr;
 
@@ -140,7 +141,7 @@ mod test {
         let stake: i64 = cfg.min_stake_amount;
         let stake_epochs = 1;
         cfg.stake_epochs = stake_epochs;
-        let mut timestamp = SystemTime::now();
+        let mut timestamp = Timestamp::now();
         let (mut keychains, genesis) = fake_genesis(stake, amount + stake, 1, timestamp);
         let keychain = keychains.pop().unwrap();
         let (wallet_skey, wallet_pkey) = (keychain.wallet_skey, keychain.wallet_pkey);

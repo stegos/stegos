@@ -27,10 +27,9 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::process;
-use std::time::SystemTime;
 use stegos_blockchain::{
     create_multi_signature, Block, ChainConfig, MacroBlock, Output, PaymentOutput,
-    PaymentPayloadData, StakeOutput,
+    PaymentPayloadData, StakeOutput, Timestamp,
 };
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{curve1174, pbc};
@@ -189,7 +188,7 @@ fn main() {
     let seed = Hash::digest("genesis");
     let random = pbc::make_VRF(&keychains[0].2, &seed);
     let activity_map = BitVector::ones(keychains.len());
-    let timestamp = SystemTime::now();
+    let timestamp = Timestamp::now();
 
     // Create a block.
     let mut block = MacroBlock::new(

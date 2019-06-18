@@ -31,10 +31,9 @@ use hyper::service::service_fn_ok;
 use log::*;
 use std::path::PathBuf;
 use std::process;
-use std::time::SystemTime;
 use stegos::config::Config;
 use stegos::generator::{Generator, GeneratorMode};
-use stegos_blockchain::{Blockchain, Output};
+use stegos_blockchain::{Blockchain, Output, Timestamp};
 use stegos_crypto::curve1174;
 use stegos_crypto::pbc;
 use stegos_keychain as keychain;
@@ -212,7 +211,7 @@ fn run() -> Result<(), Error> {
     // Initialize blockchain
     info!("Loading blockchain.");
     let genesis = initialize_genesis(&base_config)?;
-    let timestamp = SystemTime::now();
+    let timestamp = Timestamp::now();
     let chain = Blockchain::new(
         base_config.chain.clone(),
         base_config.blockchain_db,

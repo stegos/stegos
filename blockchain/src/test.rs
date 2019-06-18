@@ -28,11 +28,11 @@ use crate::blockchain::Blockchain;
 use crate::election::mix;
 use crate::multisignature::create_multi_signature;
 use crate::output::{Output, PaymentOutput, PaymentPayloadData, StakeOutput};
+use crate::timestamp::Timestamp;
 use crate::transaction::{CoinbaseTransaction, PaymentTransaction, Transaction};
 use bitvector::BitVector;
 use log::*;
 use std::collections::btree_map::BTreeMap;
-use std::time::SystemTime;
 use stegos_crypto::curve1174::{self, Fr};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
@@ -66,7 +66,7 @@ pub fn fake_genesis(
     stake: i64,
     coins: i64,
     num_nodes: usize,
-    timestamp: SystemTime,
+    timestamp: Timestamp,
 ) -> (Vec<KeyChain>, MacroBlock) {
     let mut keychains = Vec::with_capacity(num_nodes);
     let mut outputs: Vec<Output> = Vec::with_capacity(1 + keychains.len());
@@ -138,7 +138,7 @@ pub fn sign_fake_macro_block(block: &mut MacroBlock, chain: &Blockchain, keychai
 pub fn create_fake_macro_block(
     chain: &Blockchain,
     keychains: &[KeyChain],
-    timestamp: SystemTime,
+    timestamp: Timestamp,
 ) -> (MacroBlock, Vec<Transaction>) {
     let view_change = chain.view_change();
     let key = chain.select_leader(view_change);
@@ -157,7 +157,7 @@ pub fn create_fake_macro_block(
 pub fn create_fake_micro_block(
     chain: &Blockchain,
     keychains: &[KeyChain],
-    timestamp: SystemTime,
+    timestamp: Timestamp,
 ) -> (MicroBlock, Vec<Hash>, Vec<Hash>) {
     let epoch = chain.epoch();
     let offset = chain.offset();
@@ -264,7 +264,7 @@ pub fn create_fake_micro_block(
 pub fn create_micro_block_with_coinbase(
     chain: &Blockchain,
     keychains: &[KeyChain],
-    timestamp: SystemTime,
+    timestamp: Timestamp,
 ) -> MicroBlock {
     let previous = chain.last_block_hash().clone();
     let epoch = chain.epoch();

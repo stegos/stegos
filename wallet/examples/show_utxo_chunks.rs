@@ -25,10 +25,7 @@
 #![deny(warnings)]
 #![allow(non_snake_case)]
 
-use std::time::SystemTime;
-use stegos_blockchain::Output;
-use stegos_blockchain::PaymentTransaction;
-use stegos_blockchain::{PaymentOutput, PaymentPayloadData};
+use stegos_blockchain::{Output, PaymentOutput, PaymentPayloadData, PaymentTransaction, Timestamp};
 use stegos_crypto::curve1174::make_random_keys;
 use stegos_crypto::curve1174::ECp;
 use stegos_crypto::curve1174::Fr;
@@ -46,7 +43,7 @@ fn main() {
     // Determine number of DiceMix chunks needed to support our UTXO's
     let (_skey, pkey) = make_random_keys();
     let (sskey, spkey) = pbc::make_random_keys();
-    let tstamp = SystemTime::now();
+    let tstamp = Timestamp::now();
     let data = PaymentPayloadData::Comment("Testing".to_string());
 
     let (out, gamma, _rvalue) = PaymentOutput::with_payload(None, &pkey, 1500, data, None)

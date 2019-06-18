@@ -24,7 +24,7 @@
 // SOFTWARE.
 
 use failure::Fail;
-use std::time::SystemTime;
+use stegos_blockchain::Timestamp;
 use stegos_blockchain::{BlockError, BlockchainError};
 use stegos_crypto::hash::Hash;
 
@@ -56,20 +56,20 @@ pub enum NodeBlockError {
     )]
     InvalidBlockProposal(u64, Hash, Hash),
     #[fail(
-        display = "Timestamp is out of sync: epoch={}, block={}, block_timestamp={:?}, our_timestamp={:?}",
+        display = "Timestamp is out of sync: epoch={}, block={}, block_time={}, our_time={}",
         _0, _1, _2, _3
     )]
-    OutOfSyncTimestamp(u64, Hash, SystemTime, SystemTime),
+    OutOfSyncTimestamp(u64, Hash, Timestamp, Timestamp),
     #[fail(
         display = "Proposed view_change different from ours: epoch={}, block={}, block_viewchange={}, our_viewchange={}",
         _0, _1, _2, _3
     )]
     OutOfSyncViewChange(u64, Hash, u32, u32),
     #[fail(
-        display = "Found a outdated block proposal: epoch={}, block={}, block_time={:?} last_block_time={:?}.",
+        display = "Found a outdated block proposal: epoch={}, block={}, block_time={} last_block_time={}.",
         _0, _1, _2, _3
     )]
-    OutdatedBlock(u64, Hash, SystemTime, SystemTime),
+    OutdatedBlock(u64, Hash, Timestamp, Timestamp),
 }
 
 #[derive(Debug, Fail)]

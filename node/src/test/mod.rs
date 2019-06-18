@@ -68,7 +68,7 @@ impl<'timer> Sandbox<'timer> {
         start_test(|timer| {
             let _ = simple_logger::init_with_level(Level::Trace);
             let num_nodes = config.num_nodes;
-            let timestamp = SystemTime::now();
+            let timestamp = Timestamp::now();
 
             let (keychains, genesis) = fake_genesis(
                 config.chain.min_stake_amount,
@@ -210,7 +210,7 @@ impl NodeSandbox {
         let (network_service, network) = Loopback::new();
 
         // Create node, with first node keychain.
-        let timestamp = SystemTime::now();
+        let timestamp = Timestamp::now();
         let chain = Blockchain::testing(chain_cfg, genesis, timestamp)
             .expect("Failed to create blockchain");
         let (mut node_service, node) = NodeService::new(

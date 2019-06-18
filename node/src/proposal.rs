@@ -25,7 +25,7 @@ use crate::config::NodeConfig;
 use crate::error::*;
 use failure::Error;
 use log::*;
-use std::time::SystemTime;
+use stegos_blockchain::Timestamp;
 use stegos_blockchain::{Block, BlockError, Blockchain, MacroBlock, Output, Transaction};
 use stegos_consensus::MacroBlockProposal;
 use stegos_crypto::curve1174;
@@ -40,7 +40,7 @@ pub fn create_macro_block_proposal(
     network_pkey: &pbc::PublicKey,
 ) -> (MacroBlock, MacroBlockProposal) {
     assert!(chain.is_epoch_full());
-    let timestamp = SystemTime::now();
+    let timestamp = Timestamp::now();
     debug!(
         "Creating a new macro block proposal: epoch={}, view_change={}",
         chain.epoch(),
@@ -101,7 +101,7 @@ pub fn validate_proposed_macro_block(
     //
     let block_timestamp = block_proposal.header.timestamp;
     let last_block_timestamp = chain.last_macro_block_timestamp();
-    let current_timestamp = SystemTime::now();
+    let current_timestamp = Timestamp::now();
     if block_timestamp <= last_block_timestamp {
         return Err(NodeBlockError::OutdatedBlock(
             epoch,
@@ -112,7 +112,7 @@ pub fn validate_proposed_macro_block(
         .into());
     }
     if block_timestamp >= current_timestamp {
-        let duration = block_timestamp.duration_since(current_timestamp).unwrap();
+        let duration = block_timestamp.duration_since(current_timestamp);
         if duration > cfg.macro_block_timeout {
             return Err(NodeBlockError::OutOfSyncTimestamp(
                 epoch,

@@ -1,9 +1,8 @@
 #![feature(test)]
 use simple_logger;
 use std::time::Duration;
-use std::time::SystemTime;
 use stegos_blockchain::test::fake_genesis;
-use stegos_blockchain::{Blockchain, ChainConfig};
+use stegos_blockchain::{Blockchain, ChainConfig, Timestamp};
 use stegos_crypto::hash::Hash;
 
 #[macro_use]
@@ -18,7 +17,7 @@ fn create_blocks(b: &mut Bencher) {
 
     simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
-    let timestamp_at_start = SystemTime::now();
+    let timestamp_at_start = Timestamp::now();
     let mut timestamp = timestamp_at_start;
     let cfg: ChainConfig = ChainConfig {
         micro_blocks_in_epoch: 100,

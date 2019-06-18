@@ -27,12 +27,12 @@ use crate::election::mix;
 use crate::error::{BlockError, BlockchainError, SlashingError, TransactionError};
 use crate::output::{Output, OutputError, PublicPaymentOutput};
 use crate::slashing::confiscate_tx;
+use crate::timestamp::Timestamp;
 use crate::transaction::{
     CoinbaseTransaction, PaymentTransaction, RestakeTransaction, SlashingTransaction, Transaction,
 };
 use log::*;
 use std::collections::HashSet;
-use std::time::SystemTime;
 use stegos_crypto::bulletproofs::{fee_a, simple_commit};
 use stegos_crypto::curve1174::{ECp, Fr, G};
 use stegos_crypto::hash::Hash;
@@ -475,7 +475,7 @@ impl Blockchain {
     fn validate_micro_block_tx(
         &self,
         tx: &Transaction,
-        _timestamp: SystemTime,
+        _timestamp: Timestamp,
         leader: pbc::PublicKey,
         inputs_set: &mut HashSet<Hash>,
         outputs_set: &mut HashSet<Hash>,
@@ -558,7 +558,7 @@ impl Blockchain {
     pub fn validate_micro_block(
         &self,
         block: &MicroBlock,
-        timestamp: SystemTime,
+        timestamp: Timestamp,
     ) -> Result<(), BlockchainError> {
         let epoch = block.header.epoch;
         let offset = block.header.offset;
@@ -747,8 +747,8 @@ pub mod tests {
     use crate::block::MacroBlock;
     use crate::output::OutputError;
     use crate::output::StakeOutput;
+    use crate::timestamp::Timestamp;
     use bitvector::BitVector;
-    use std::time::SystemTime;
     use stegos_crypto::pbc;
 
     ///
@@ -1141,7 +1141,7 @@ pub mod tests {
         let (nskey, npkey) = pbc::make_random_keys();
 
         let epoch: u64 = 0;
-        let timestamp = SystemTime::now();
+        let timestamp = Timestamp::now();
         let view_change = 0;
         let amount: i64 = 1_000_000;
         let previous = Hash::digest("test");
@@ -1208,7 +1208,7 @@ pub mod tests {
         let (nskey, npkey) = pbc::make_random_keys();
 
         let epoch: u64 = 0;
-        let timestamp = SystemTime::now();
+        let timestamp = Timestamp::now();
         let view_change = 0;
         let amount: i64 = 1_000_000;
         let previous = Hash::digest(&"test".to_string());
@@ -1255,7 +1255,7 @@ pub mod tests {
         let (nskey, npkey) = pbc::make_random_keys();
 
         let epoch: u64 = 0;
-        let timestamp = SystemTime::now();
+        let timestamp = Timestamp::now();
         let view_change = 0;
         let amount: i64 = 1_000_000;
         let previous = Hash::digest(&"test".to_string());
@@ -1391,7 +1391,7 @@ pub mod tests {
         let (nskey, npkey) = pbc::make_random_keys();
 
         let epoch: u64 = 0;
-        let timestamp = SystemTime::now();
+        let timestamp = Timestamp::now();
         let view_change = 0;
         let previous = Hash::digest(&"test".to_string());
 

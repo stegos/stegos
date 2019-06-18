@@ -48,7 +48,7 @@ use serde_derive::Deserialize;
 use serde_derive::Serialize;
 use std::collections::HashMap;
 use std::time::Instant;
-use std::time::SystemTime;
+use stegos_blockchain::Timestamp;
 use stegos_blockchain::*;
 use stegos_consensus::optimistic::{SealedViewChangeProof, ViewChangeCollector, ViewChangeMessage};
 use stegos_consensus::{self as consensus, Consensus, ConsensusMessage};
@@ -149,15 +149,15 @@ pub struct SyncChanged {
     pub view_change: u32,
     pub last_block_hash: Hash,
     pub last_macro_block_hash: Hash,
-    pub last_macro_block_timestamp: SystemTime,
-    pub local_timestamp: SystemTime,
+    pub last_macro_block_timestamp: Timestamp,
+    pub local_timestamp: Timestamp,
 }
 
-/// Send when epoch is changed.
+/// Send when epoch is changed.3
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EpochChanged {
     pub epoch: u64,
-    pub last_macro_block_timestamp: SystemTime,
+    pub last_macro_block_timestamp: Timestamp,
     pub facilitator: pbc::PublicKey,
     pub validators: Vec<(pbc::PublicKey, i64)>,
 }
@@ -410,7 +410,7 @@ impl NodeService {
         }
 
         // Validate transaction.
-        let timestamp = SystemTime::now();
+        let timestamp = Timestamp::now();
         validate_external_transaction(
             &tx,
             &self.mempool,
@@ -883,7 +883,7 @@ impl NodeService {
     fn on_block_added(
         &mut self,
         epoch: u64,
-        timestamp: SystemTime,
+        timestamp: Timestamp,
         inputs: Vec<Output>,
         outputs: Vec<Output>,
         final_block: bool,
@@ -908,8 +908,8 @@ impl NodeService {
 
         self.last_block_clock = clock::now();
 
-        let local_timestamp = metrics::time_to_timestamp_ms(SystemTime::now());
-        let remote_timestamp = metrics::time_to_timestamp_ms(timestamp);
+        let local_timestamp: i64 = Timestamp::now().into();
+        let remote_timestamp: i64 = timestamp.into();
         let lag = local_timestamp - remote_timestamp;
         metrics::BLOCK_REMOTE_TIMESTAMP.set(remote_timestamp);
         metrics::BLOCK_LOCAL_TIMESTAMP.set(local_timestamp);
@@ -928,7 +928,7 @@ impl NodeService {
             last_block_hash: self.chain.last_block_hash(),
             last_macro_block_hash: self.chain.last_macro_block_hash(),
             last_macro_block_timestamp: self.chain.last_macro_block_timestamp(),
-            local_timestamp: SystemTime::now(),
+            local_timestamp: Timestamp::now(),
         };
         self.on_sync_changed
             .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
@@ -1239,7 +1239,7 @@ impl NodeService {
 
     /// True if the node is synchronized with the network.
     fn is_synchronized(&self) -> bool {
-        let timestamp = SystemTime::now();
+        let timestamp = Timestamp::now();
         let block_timestamp = self.chain.last_macro_block_timestamp();
         block_timestamp
             + self.cfg.micro_block_timeout * self.chain.cfg().micro_blocks_in_epoch

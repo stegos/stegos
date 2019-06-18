@@ -27,9 +27,9 @@ use futures::sync::mpsc::UnboundedReceiver;
 use futures::sync::mpsc::UnboundedSender;
 use futures::sync::oneshot;
 use serde_derive::{Deserialize, Serialize};
-use std::time::SystemTime;
 pub use stegos_blockchain::PaymentPayloadData;
 pub use stegos_blockchain::StakeInfo;
+use stegos_blockchain::Timestamp;
 use stegos_crypto::curve1174::PublicKey;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
@@ -39,11 +39,11 @@ use stegos_node::OutputsChanged;
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum LogEntryInfo {
     Incoming {
-        timestamp: SystemTime,
+        timestamp: Timestamp,
         output: OutputInfo,
     },
     Outgoing {
-        timestamp: SystemTime,
+        timestamp: Timestamp,
         tx: PaymentTransactionInfo,
     },
 }
@@ -60,14 +60,14 @@ pub struct PaymentInfo {
     pub utxo: Hash,
     pub amount: i64,
     pub data: PaymentPayloadData,
-    pub locked: String,
+    pub locked_timestamp: Option<Timestamp>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct PublicPaymentInfo {
     pub utxo: Hash,
     pub amount: i64,
-    pub locked: String,
+    pub locked_timestamp: Option<Timestamp>,
 }
 
 ///
@@ -99,14 +99,14 @@ pub enum WalletRequest {
         amount: i64,
         payment_fee: i64,
         comment: String,
-        locked_timestamp: Option<SystemTime>,
+        locked_timestamp: Option<Timestamp>,
     },
     PublicPayment {
         password: String,
         recipient: PublicKey,
         amount: i64,
         payment_fee: i64,
-        locked_timestamp: Option<SystemTime>,
+        locked_timestamp: Option<Timestamp>,
     },
     SecurePayment {
         password: String,
@@ -114,7 +114,7 @@ pub enum WalletRequest {
         amount: i64,
         payment_fee: i64,
         comment: String,
-        locked_timestamp: Option<SystemTime>,
+        locked_timestamp: Option<Timestamp>,
     },
     WaitForCommit {
         tx_hash: Hash,
@@ -144,7 +144,7 @@ pub enum WalletRequest {
     BalanceInfo {},
     UnspentInfo {},
     HistoryInfo {
-        starting_from: SystemTime,
+        starting_from: Timestamp,
         limit: u64,
     },
     ChangePassword {

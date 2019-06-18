@@ -35,6 +35,7 @@ use crate::multisignature::check_multi_signature;
 use crate::mvcc::MultiVersionedMap;
 use crate::output::*;
 use crate::storage::ListDb;
+use crate::timestamp::Timestamp;
 use crate::transaction::{CoinbaseTransaction, ServiceAwardTransaction, Transaction};
 use crate::view_changes::ViewChangeProof;
 use bitvector::BitVector;
@@ -42,7 +43,6 @@ use failure::Error;
 use log::*;
 use rayon::prelude::*;
 use std::collections::BTreeMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 use stegos_crypto::bulletproofs::fee_a;
 use stegos_crypto::curve1174::{ECp, Fr, PublicKey, SecretKey, G};
 use stegos_crypto::hash::*;
@@ -177,7 +177,7 @@ pub struct Blockchain {
     /// and we was not leader.
     view_change_proof: Option<ViewChangeProof>,
     /// A timestamp from the last macro block.
-    last_macro_block_timestamp: SystemTime,
+    last_macro_block_timestamp: Timestamp,
     /// Copy of the last macro block hash.
     last_macro_block_hash: Hash,
     /// Copy of the last macro block random.
@@ -201,7 +201,7 @@ impl Blockchain {
         cfg: ChainConfig,
         storage_cfg: StorageConfig,
         genesis: MacroBlock,
-        timestamp: SystemTime,
+        timestamp: Timestamp,
     ) -> Result<Blockchain, Error> {
         let database = ListDb::new(&storage_cfg.database_path);
         Self::with_db(cfg, database, genesis, timestamp)
@@ -210,7 +210,7 @@ impl Blockchain {
     pub fn testing(
         cfg: ChainConfig,
         genesis: MacroBlock,
-        timestamp: SystemTime,
+        timestamp: Timestamp,
     ) -> Result<Blockchain, Error> {
         let database = ListDb::testing();
         Self::with_db(cfg, database, genesis, timestamp)
@@ -220,7 +220,7 @@ impl Blockchain {
         cfg: ChainConfig,
         database: ListDb,
         genesis: MacroBlock,
-        timestamp: SystemTime,
+        timestamp: Timestamp,
     ) -> Result<Blockchain, Error> {
         //
         // Storage.
@@ -244,7 +244,7 @@ impl Blockchain {
         let offset: u32 = 0;
         let view_change_proof = None;
         let election_result = ElectionResult::default();
-        let last_macro_block_timestamp = UNIX_EPOCH;
+        let last_macro_block_timestamp = Timestamp::UNIX_EPOCH;
         let last_macro_block_random = Hash::digest("genesis");
         let last_macro_block_hash = Hash::digest("genesis");
         let last_block_hash = Hash::digest("genesis");
@@ -285,7 +285,7 @@ impl Blockchain {
     fn recover(
         &mut self,
         genesis: MacroBlock,
-        timestamp: SystemTime,
+        timestamp: Timestamp,
     ) -> Result<(), BlockchainError> {
         let mut blocks = self.database.iter();
 
@@ -329,7 +329,7 @@ impl Blockchain {
         Ok(())
     }
 
-    fn recover_block(&mut self, block: Block, timestamp: SystemTime) -> Result<(), Error> {
+    fn recover_block(&mut self, block: Block, timestamp: Timestamp) -> Result<(), Error> {
         // Skip validate_macro_block()/validate_micro_block().
         match block {
             Block::MicroBlock(block) => {
@@ -544,7 +544,7 @@ impl Blockchain {
 
     /// Return the timestamp from the last macro block.
     #[inline]
-    pub fn last_macro_block_timestamp(&self) -> SystemTime {
+    pub fn last_macro_block_timestamp(&self) -> Timestamp {
         self.last_macro_block_timestamp
     }
 
@@ -777,7 +777,7 @@ impl Blockchain {
         beneficiary_pkey: &curve1174::PublicKey,
         network_skey: &pbc::SecretKey,
         network_pkey: pbc::PublicKey,
-        timestamp: SystemTime,
+        timestamp: Timestamp,
     ) -> (MacroBlock, Vec<Transaction>) {
         assert!(self.is_epoch_full());
         let epoch = self.epoch();
@@ -875,7 +875,7 @@ impl Blockchain {
     pub fn push_macro_block(
         &mut self,
         block: MacroBlock,
-        timestamp: SystemTime,
+        timestamp: Timestamp,
     ) -> Result<(Vec<Output>, Vec<Output>), Error> {
         //
         // Resolve inputs.
@@ -911,7 +911,7 @@ impl Blockchain {
         lsn: LSN,
         block: MacroBlock,
         inputs: Vec<Output>,
-        timestamp: SystemTime,
+        timestamp: Timestamp,
     ) -> (Vec<Output>, Vec<Output>) {
         let block_hash = Hash::digest(&block);
         assert_eq!(self.epoch, block.header.epoch);
@@ -1055,7 +1055,7 @@ impl Blockchain {
     pub fn push_micro_block(
         &mut self,
         block: MicroBlock,
-        timestamp: SystemTime,
+        timestamp: Timestamp,
     ) -> Result<(Vec<Output>, Vec<Output>), BlockchainError> {
         //
         // Validate the micro block.
@@ -1093,7 +1093,7 @@ impl Blockchain {
         gamma: Fr,
         block_reward: i64,
         random: pbc::VRF,
-        _timestamp: SystemTime,
+        _timestamp: Timestamp,
     ) {
         let epoch = self.epoch;
 
@@ -1242,7 +1242,7 @@ impl Blockchain {
         &mut self,
         lsn: LSN,
         block: MicroBlock,
-        timestamp: SystemTime,
+        timestamp: Timestamp,
     ) -> Result<(Vec<Output>, Vec<Output>), BlockchainError> {
         assert_eq!(self.epoch, block.header.epoch);
         assert_eq!(self.offset, block.header.offset);
@@ -1440,18 +1440,19 @@ pub mod tests {
     use super::*;
 
     use crate::test;
+    use crate::timestamp::Timestamp;
     use rand::distributions::Alphanumeric;
     use rand::{thread_rng, Rng};
     use simple_logger;
     use std::collections::BTreeMap;
-    use std::time::{Duration, SystemTime};
+    use std::time::Duration;
     use tempdir::TempDir;
 
     #[test]
     fn basic() {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
-        let timestamp = SystemTime::now();
+        let timestamp = Timestamp::now();
         let cfg: ChainConfig = Default::default();
         let (keychains, block1) = test::fake_genesis(
             cfg.min_stake_amount,
@@ -1519,7 +1520,7 @@ pub mod tests {
         let mut cfg: ChainConfig = Default::default();
         cfg.stake_epochs = 1;
         cfg.micro_blocks_in_epoch = 2;
-        let mut timestamp = SystemTime::now();
+        let mut timestamp = Timestamp::now();
         let (keychains, genesis) = test::fake_genesis(
             cfg.min_stake_amount,
             10 * cfg.min_stake_amount,
@@ -1628,7 +1629,7 @@ pub mod tests {
     fn rollback() {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
-        let mut timestamp = SystemTime::now();
+        let mut timestamp = Timestamp::now();
         let cfg: ChainConfig = Default::default();
         let (keychains, genesis) = test::fake_genesis(
             cfg.min_stake_amount,
@@ -1750,7 +1751,7 @@ pub mod tests {
     #[test]
     fn block_range_limit() {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
-        let mut timestamp = SystemTime::now();
+        let mut timestamp = Timestamp::now();
         let mut cfg: ChainConfig = Default::default();
         cfg.micro_blocks_in_epoch = 100500;
         let stake = cfg.min_stake_amount;

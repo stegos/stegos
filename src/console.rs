@@ -33,9 +33,10 @@ use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 pub use stegos_api::url;
 use stegos_api::*;
+use stegos_blockchain::Timestamp;
 use stegos_crypto::curve1174::PublicKey;
 use stegos_crypto::pbc;
 use stegos_keychain::input;
@@ -351,7 +352,7 @@ impl ConsoleService {
                     // if parse_lock_format return None, print help, and stop execute.
                     let locked_timestamp = caps.name("lock").map(|s| parse_lock_format(s.as_str()));
                     let locked_timestamp = match locked_timestamp {
-                        Some(Some(locked_timestamp)) => Some(SystemTime::now() + locked_timestamp),
+                        Some(Some(locked_timestamp)) => Some(Timestamp::now() + locked_timestamp),
                         None => None,
                         Some(None) => {
                             Self::help_pay();
@@ -458,7 +459,7 @@ impl ConsoleService {
                     // if parse_lock_format return None, print help, and stop execute.
                     let locked_timestamp = caps.name("lock").map(|s| parse_lock_format(s.as_str()));
                     let locked_timestamp = match locked_timestamp {
-                        Some(Some(locked_timestamp)) => Some(SystemTime::now() + locked_timestamp),
+                        Some(Some(locked_timestamp)) => Some(Timestamp::now() + locked_timestamp),
                         None => None,
                         Some(None) => {
                             Self::help_spay();
@@ -626,7 +627,7 @@ impl ConsoleService {
         } else if msg.starts_with("show history") {
             let arg = &msg[12..];
 
-            let starting_from = humantime::parse_rfc3339(arg).unwrap_or(UNIX_EPOCH);
+            let starting_from = humantime::parse_rfc3339(arg)?.into();
             let request = WalletRequest::HistoryInfo {
                 starting_from,
                 limit: CONSOLE_HISTORY_LIMIT,

@@ -26,7 +26,7 @@ use failure::Error;
 use futures::sync::mpsc::{channel, Receiver, Sender};
 use futures::{Async, Future, Poll, Sink, Stream};
 use lazy_static::*;
-use log::*;
+use log::trace;
 use regex::Regex;
 use rustyline as rl;
 use std::fmt;
@@ -69,8 +69,6 @@ lazy_static! {
     /// Regex to parse "send" command.
     static ref SEND_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<topic>[0-9A-Za-z]+)\s+(?P<msg>.+)$").unwrap();
 }
-
-// const CONSOLE_PROTOCOL_ID: &'static str = "console";
 
 const PAYMENT_FEE: i64 = 1_000; // 0.001 STG
 
@@ -133,97 +131,97 @@ impl ConsoleService {
                     break;
                 }
                 Err(e) => {
-                    error!("CLI I/O Error: {}", e);
+                    eprintln!("CLI I/O Error: {}", e);
                     break;
                 }
             }
         }
         tx.close().ok(); // ignore errors
         if let Err(e) = rl.save_history(&history_path) {
-            error!("Failed to save CLI history: {}", e);
+            eprintln!("Failed to save CLI history: {}", e);
         };
     }
 
     fn help() {
-        println!("Usage:");
-        println!("pay WALLET_PUBKEY AMOUNT [COMMENT] [/public]  [/lock duration] [/fee fee] - send money");
-        println!(
+        eprintln!("Usage:");
+        eprintln!("pay WALLET_PUBKEY AMOUNT [COMMENT] [/public]  [/lock duration] [/fee fee] - send money");
+        eprintln!(
             "spay WALLET_PUBKEY AMOUNT [COMMENT] [/lock duration] - send money using ValueShuffle"
         );
-        println!("msg WALLET_PUBKEY MESSAGE - send a message via blockchain");
-        println!("stake AMOUNT - stake money");
-        println!("unstake [AMOUNT] - unstake money");
-        println!("restake - restake all available stakes");
-        println!("cloak - exchange all available public outputs");
-        println!("show version - print version information");
-        println!("show keys - print keys");
-        println!("show balance - print balance");
-        println!("show utxo - print unspent outputs");
-        println!("show history [STARTING DATE] - print history since date");
-        println!("show election - print leader election state");
-        println!("show escrow - print escrow");
-        println!("show recovery - print recovery information");
-        println!("passwd - change wallet's password");
-        println!("net publish TOPIC MESSAGE - publish a network message via floodsub");
-        println!("net send NETWORK_PUBKEY TOPIC MESSAGE - send a network message via unicast");
-        println!("db pop block - revert the latest block");
-        println!();
+        eprintln!("msg WALLET_PUBKEY MESSAGE - send a message via blockchain");
+        eprintln!("stake AMOUNT - stake money");
+        eprintln!("unstake [AMOUNT] - unstake money");
+        eprintln!("restake - restake all available stakes");
+        eprintln!("cloak - exchange all available public outputs");
+        eprintln!("show version - print version information");
+        eprintln!("show keys - print keys");
+        eprintln!("show balance - print balance");
+        eprintln!("show utxo - print unspent outputs");
+        eprintln!("show history [STARTING DATE] - print history since date");
+        eprintln!("show election - print leader election state");
+        eprintln!("show escrow - print escrow");
+        eprintln!("show recovery - print recovery information");
+        eprintln!("passwd - change wallet's password");
+        eprintln!("net publish TOPIC MESSAGE - publish a network message via floodsub");
+        eprintln!("net send NETWORK_PUBKEY TOPIC MESSAGE - send a network message via unicast");
+        eprintln!("db pop block - revert the latest block");
+        eprintln!();
     }
 
     fn help_publish() {
-        println!("Usage: net publish TOPIC MESSAGE");
-        println!(" - TOPIC topic");
-        println!(" - MESSAGE some message");
-        println!();
+        eprintln!("Usage: net publish TOPIC MESSAGE");
+        eprintln!(" - TOPIC topic");
+        eprintln!(" - MESSAGE some message");
+        eprintln!();
     }
 
     fn help_send() {
-        println!("Usage: net send NETWORK_PUBKEY TOPIC MESSAGE");
-        println!(" - NETWORK_PUBKEY recipient's network public key in HEX format");
-        println!(" - TOPIC topic");
-        println!(" - MESSAGE some message");
-        println!();
+        eprintln!("Usage: net send NETWORK_PUBKEY TOPIC MESSAGE");
+        eprintln!(" - NETWORK_PUBKEY recipient's network public key in HEX format");
+        eprintln!(" - TOPIC topic");
+        eprintln!(" - MESSAGE some message");
+        eprintln!();
     }
 
     fn help_pay() {
-        println!("Usage: pay WALLET_PUBKEY AMOUNT [COMMENT] [/public] [/lock duration]");
-        println!(" - WALLET_PUBKEY recipient's wallet public key in HEX format");
-        println!(" - AMOUNT amount in tokens");
-        println!(" - COMMENT purpose of payment, no comments are allowed in public utxo.");
-        println!(" - /public if present, send money as PublicUTXO, with uncloaked recipient and amaount.");
-        println!(" - /lock if present, set the duration from which the output can be spent.");
-        println!(" - /fee FEE set desired fee per each created UTXO.");
-        println!();
+        eprintln!("Usage: pay WALLET_PUBKEY AMOUNT [COMMENT] [/public] [/lock duration]");
+        eprintln!(" - WALLET_PUBKEY recipient's wallet public key in HEX format");
+        eprintln!(" - AMOUNT amount in tokens");
+        eprintln!(" - COMMENT purpose of payment, no comments are allowed in public utxo.");
+        eprintln!(" - /public if present, send money as PublicUTXO, with uncloaked recipient and amaount.");
+        eprintln!(" - /lock if present, set the duration from which the output can be spent.");
+        eprintln!(" - /fee FEE set desired fee per each created UTXO.");
+        eprintln!();
     }
 
     fn help_spay() {
-        println!("Usage: spay WALLET_PUBKEY AMOUNT [COMMENT] [/lock duration]");
-        println!(" - WALLET_PUBKEY recipient's wallet public key in HEX format");
-        println!(" - AMOUNT amount in tokens");
-        println!(" - COMMENT purpose of payment");
-        println!(" - COMMENT purpose of payment, no comments are allowed in public utxo.");
-        println!(" - /lock if present, set the duration from which the output can be spent.");
-        println!();
+        eprintln!("Usage: spay WALLET_PUBKEY AMOUNT [COMMENT] [/lock duration]");
+        eprintln!(" - WALLET_PUBKEY recipient's wallet public key in HEX format");
+        eprintln!(" - AMOUNT amount in tokens");
+        eprintln!(" - COMMENT purpose of payment");
+        eprintln!(" - COMMENT purpose of payment, no comments are allowed in public utxo.");
+        eprintln!(" - /lock if present, set the duration from which the output can be spent.");
+        eprintln!();
     }
 
     fn help_stake() {
-        println!("Usage: stake AMOUNT");
-        println!(" - AMOUNT amount to stake into escrow, in tokens");
-        println!();
+        eprintln!("Usage: stake AMOUNT");
+        eprintln!(" - AMOUNT amount to stake into escrow, in tokens");
+        eprintln!();
     }
 
     fn help_unstake() {
-        println!("Usage: unstake [AMOUNT]");
-        println!(" - AMOUNT amount to unstake from escrow, in tokens");
-        println!("   if not specified, unstakes all of the money.");
-        println!();
+        eprintln!("Usage: unstake [AMOUNT]");
+        eprintln!(" - AMOUNT amount to unstake from escrow, in tokens");
+        eprintln!("   if not specified, unstakes all of the money.");
+        eprintln!();
     }
 
     fn help_msg() {
-        println!("Usage: msg WALLET_PUBKEY MESSAGE");
-        println!(" - WALLET_PUBKEY recipient's public key in HEX format");
-        println!(" - MESSAGE some message");
-        println!();
+        eprintln!("Usage: msg WALLET_PUBKEY MESSAGE");
+        eprintln!(" - WALLET_PUBKEY recipient's public key in HEX format");
+        eprintln!(" - MESSAGE some message");
+        eprintln!();
     }
 
     fn send_network_request(&mut self, request: NetworkRequest) -> Result<(), WebSocketError> {
@@ -266,7 +264,7 @@ impl ConsoleService {
 
             let topic = caps.name("topic").unwrap().as_str().to_string();
             let msg = caps.name("msg").unwrap().as_str();
-            info!("Publish: topic='{}', msg='{}'", topic, msg);
+            println!("Publish: topic='{}', msg='{}'", topic, msg);
             let data = msg.as_bytes().to_vec();
             self.send_network_request(NetworkRequest::PublishBroadcast { topic, data })?;
             return Ok(true);
@@ -283,14 +281,14 @@ impl ConsoleService {
             let recipient = match pbc::PublicKey::try_from_hex(recipient) {
                 Ok(r) => r,
                 Err(e) => {
-                    println!("Invalid network public key '{}': {}", recipient, e);
+                    eprintln!("Invalid network public key '{}': {}", recipient, e);
                     Self::help_send();
                     return Ok(true);
                 }
             };
             let topic = caps.name("topic").unwrap().as_str().to_string();
             let msg = caps.name("msg").unwrap().as_str();
-            info!(
+            println!(
                 "Send: to='{}', topic='{}', msg='{}'",
                 recipient.to_hex(),
                 topic,
@@ -316,7 +314,7 @@ impl ConsoleService {
             let recipient = match PublicKey::from_str(recipient) {
                 Ok(r) => r,
                 Err(e) => {
-                    println!("Invalid wallet public key '{}': {}", recipient, e);
+                    eprintln!("Invalid wallet public key '{}': {}", recipient, e);
                     Self::help_pay();
                     return Ok(true);
                 }
@@ -325,7 +323,7 @@ impl ConsoleService {
             let amount = match parse_money(amount) {
                 Ok(amount) => amount,
                 Err(e) => {
-                    println!("{}", e);
+                    eprintln!("{}", e);
                     Self::help_pay();
                     return Ok(true);
                 }
@@ -368,7 +366,7 @@ impl ConsoleService {
                     let payment_fee = match fee_arg {
                         Some(Ok(fee)) => fee,
                         Some(Err(e)) => {
-                            println!("{}", e);
+                            eprintln!("{}", e);
                             Self::help_pay();
                             return Ok(true);
                         }
@@ -379,11 +377,11 @@ impl ConsoleService {
             };
 
             if public && !comment.is_empty() {
-                println!("Comment in public utxo will be omitted.");
+                eprintln!("Comment in public utxo will be omitted.");
             }
 
             let request = if public {
-                info!(
+                println!(
                     "Sending {} STG to {}, with uncloaked recipient and amount.",
                     format_money(amount),
                     String::from(&recipient)
@@ -397,7 +395,7 @@ impl ConsoleService {
                     locked_timestamp,
                 }
             } else {
-                info!(
+                println!(
                     "Sending {} STG to {}",
                     format_money(amount),
                     String::from(&recipient)
@@ -426,7 +424,7 @@ impl ConsoleService {
             let recipient = match PublicKey::from_str(recipient) {
                 Ok(r) => r,
                 Err(e) => {
-                    println!("Invalid wallet public key '{}': {}", recipient, e);
+                    eprintln!("Invalid wallet public key '{}': {}", recipient, e);
                     Self::help_spay();
                     return Ok(true);
                 }
@@ -435,7 +433,7 @@ impl ConsoleService {
             let amount = match parse_money(amount) {
                 Ok(amount) => amount,
                 Err(e) => {
-                    println!("{}", e);
+                    eprintln!("{}", e);
                     Self::help_spay();
                     return Ok(true);
                 }
@@ -471,7 +469,7 @@ impl ConsoleService {
                 }
             };
             let payment_fee = PAYMENT_FEE;
-            info!(
+            println!(
                 "Sending {} to {} via ValueShuffle",
                 format_money(amount),
                 String::from(&recipient)
@@ -499,7 +497,7 @@ impl ConsoleService {
             let recipient = match PublicKey::from_str(recipient) {
                 Ok(r) => r,
                 Err(e) => {
-                    println!("Invalid wallet public key '{}': {}", recipient, e);
+                    eprintln!("Invalid wallet public key '{}': {}", recipient, e);
                     Self::help_msg();
                     return Ok(true);
                 }
@@ -509,7 +507,7 @@ impl ConsoleService {
             let comment = caps.name("msg").unwrap().as_str().to_string();
             assert!(comment.len() > 0);
 
-            info!("Sending message to {}", String::from(&recipient));
+            println!("Sending message to {}", String::from(&recipient));
             let password = input::read_password_from_stdin(false)?;
             let request = WalletRequest::Payment {
                 password,
@@ -533,14 +531,14 @@ impl ConsoleService {
             let amount = match parse_money(amount) {
                 Ok(amount) => amount,
                 Err(e) => {
-                    println!("{}", e);
+                    eprintln!("{}", e);
                     Self::help_stake();
                     return Ok(true);
                 }
             };
             let payment_fee = PAYMENT_FEE;
 
-            info!("Staking {} STG into escrow", format_money(amount));
+            println!("Staking {} STG into escrow", format_money(amount));
             let password = input::read_password_from_stdin(false)?;
             let request = WalletRequest::Stake {
                 password,
@@ -549,7 +547,7 @@ impl ConsoleService {
             };
             self.send_wallet_request(request)?
         } else if msg == "unstake" {
-            info!("Unstaking all of the money from escrow");
+            println!("Unstaking all of the money from escrow");
             let payment_fee = PAYMENT_FEE;
             let password = input::read_password_from_stdin(false)?;
             let request = WalletRequest::UnstakeAll {
@@ -570,14 +568,14 @@ impl ConsoleService {
             let amount = match parse_money(amount) {
                 Ok(amount) => amount,
                 Err(e) => {
-                    println!("{}", e);
+                    eprintln!("{}", e);
                     Self::help_unstake();
                     return Ok(true);
                 }
             };
             let payment_fee = PAYMENT_FEE;
 
-            info!("Unstaking {} STG from escrow", format_money(amount));
+            println!("Unstaking {} STG from escrow", format_money(amount));
             let password = input::read_password_from_stdin(false)?;
             let request = WalletRequest::Unstake {
                 password,
@@ -586,12 +584,12 @@ impl ConsoleService {
             };
             self.send_wallet_request(request)?
         } else if msg == "restake" {
-            info!("Restaking all stakes");
+            println!("Restaking all stakes");
             let password = input::read_password_from_stdin(false)?;
             let request = WalletRequest::RestakeAll { password };
             self.send_wallet_request(request)?
         } else if msg == "cloak" {
-            info!("Cloaking all public inputs");
+            println!("Cloaking all public inputs");
             let password = input::read_password_from_stdin(false)?;
             let payment_fee = PAYMENT_FEE;
             let request = WalletRequest::CloakAll {
@@ -600,7 +598,7 @@ impl ConsoleService {
             };
             self.send_wallet_request(request)?
         } else if msg == "show version" {
-            println!(
+            eprintln!(
                 "Stegos {}.{}.{} ({} {})",
                 env!("VERSION_MAJOR"),
                 env!("VERSION_MINOR"),
@@ -663,7 +661,7 @@ impl ConsoleService {
         let output = serde_yaml::to_string(&[&response])
             .map_err(|_| fmt::Error)
             .unwrap();
-        println!("{}\n...\n", output);
+        eprintln!("{}\n...\n", output);
         match &response.kind {
             ResponseKind::NodeResponse(_) | ResponseKind::WalletResponse(_) => {
                 self.stdin_th.thread().unpark();
@@ -699,7 +697,7 @@ impl Future for ConsoleService {
                     }
                     Ok(false) => {}
                     Err(e) => {
-                        error!("{}", e);
+                        eprintln!("{}", e);
                         self.stdin_th.thread().unpark();
                     }
                 },
@@ -716,7 +714,7 @@ impl Future for ConsoleService {
 fn parse_lock_format(lock_str: &str) -> Option<Duration> {
     trace!("Trying to parse duration from argument={}", lock_str);
     if !lock_str.starts_with("/lock ") {
-        println!("Can't find /lock command.");
+        eprintln!("Can't find /lock command.");
         return None;
     };
 

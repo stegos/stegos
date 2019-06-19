@@ -27,4 +27,4 @@ COPY --from=source --chown=1111:1111 /node /node
 USER 1111:1111
 WORKDIR /node
 
-ENTRYPOINT [ "/usr/local/bin/stegos" ]
+ENTRYPOINT [ "/usr/local/bin/stegosd" ]

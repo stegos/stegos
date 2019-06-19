@@ -74,8 +74,8 @@ impl Default for Config {
             node: Default::default(),
             network: Default::default(),
             keychain: Default::default(),
-            blockchain_db: StorageConfig::new("database"),
-            wallet_db: StorageConfig::new("wallet"),
+            blockchain_db: StorageConfig::new("data/chain"),
+            wallet_db: StorageConfig::new("data/wallet"),
             api: Default::default(),
         }
     }

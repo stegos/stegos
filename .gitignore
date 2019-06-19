@@ -14,10 +14,8 @@ logs/
 /api_token.txt
 
 # Test data
-/testing/node*/database/
-/database/
-/testing/node*/wallet/
-/wallet/
+/testing/node*/data/
+/data/
 
 # IDE files
 /.vscode

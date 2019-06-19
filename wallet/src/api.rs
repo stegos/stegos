@@ -101,6 +101,7 @@ pub enum WalletRequest {
         payment_fee: i64,
         comment: String,
         locked_timestamp: Option<Timestamp>,
+        with_certificate: bool,
     },
     PublicPayment {
         #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -168,6 +169,7 @@ pub enum WalletRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentTransactionInfo {
     pub tx_hash: Hash,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub certificates: Vec<PaymentCertificate>,
 }
 
@@ -178,14 +180,7 @@ pub struct PaymentTransactionInfo {
 #[serde(tag = "response")]
 #[serde(rename_all = "snake_case")]
 pub enum WalletResponse {
-    TransactionCreatedWithCertificate {
-        tx_hash: Hash,
-        info: PaymentTransactionInfo,
-    },
-    TransactionCreated {
-        tx_hash: Hash,
-        fee: i64,
-    },
+    TransactionCreated(PaymentTransactionInfo),
     ValueShuffleStarted {
         session_id: Hash,
     },

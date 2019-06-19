@@ -32,9 +32,6 @@ mod storage;
 mod transaction;
 mod valueshuffle;
 
-#[cfg(test)]
-mod tests;
-
 pub use crate::api::*;
 use crate::error::WalletError;
 pub use crate::transaction::TransactionType;
@@ -251,15 +248,22 @@ impl WalletService {
         payment_fee: i64,
         comment: String,
         locked_timestamp: Option<Timestamp>,
-    ) -> Result<(Hash, PaymentTransactionValue), Error> {
+        with_certificate: bool,
+    ) -> Result<PaymentTransactionValue, Error> {
         let wallet_skey = self.unlock(password)?;
         let data = PaymentPayloadData::Comment(comment);
         let unspent_iter = self
             .payments
             .values()
             .map(|v| (&v.output, v.amount, v.output.locked_timestamp.clone()));
+        let sender = if with_certificate {
+            Some(&self.wallet_skey)
+        } else {
+            None
+        };
+
         let (inputs, outputs, gamma, rvalues, fee) = create_payment_transaction(
-            Some(&self.wallet_skey),
+            sender,
             &self.wallet_pkey,
             recipient,
             unspent_iter,
@@ -272,9 +276,13 @@ impl WalletService {
 
         // Transaction TXINs can generally have different keying for each one
         let tx = PaymentTransaction::new(&wallet_skey, &inputs, &outputs, &gamma, fee)?;
-        let tx_hash = Hash::digest(&tx);
-        let payment_info =
-            self.create_payment_transaction_info(data, *recipient, tx.clone(), &rvalues, amount);
+        let payment_info = PaymentTransactionValue::new_payment(
+            data.into(),
+            *recipient,
+            tx.clone(),
+            &rvalues,
+            amount,
+        );
 
         self.wallet_log
             .push_outgoing(Timestamp::now(), payment_info.clone())?;
@@ -287,33 +295,7 @@ impl WalletService {
         //firstly check that no conflict input was found;
         self.add_transaction_interest(tx.into());
 
-        Ok((tx_hash, payment_info))
-    }
-
-    fn create_payment_transaction_info(
-        &self,
-        _data: PaymentPayloadData,
-        recipient: curve1174::PublicKey,
-        tx: PaymentTransaction,
-        rvalues: &[Option<curve1174::Fr>],
-        amount: i64,
-    ) -> PaymentTransactionValue {
-        let certificates: Vec<_> = rvalues
-            .iter()
-            .enumerate()
-            .filter_map(|(id, r)| r.clone().map(|r| (id, r)))
-            .map(|(id, rvalue)| PaymentCertificate {
-                id: id as u32,
-                rvalue,
-                recipient,
-                amount,
-            })
-            .collect();
-
-        assert_eq!(tx.txouts.len(), 2);
-        assert_eq!(certificates.len(), 1);
-
-        PaymentTransactionValue { certificates, tx }
+        Ok(payment_info)
     }
 
     /// Send money public.
@@ -324,14 +306,14 @@ impl WalletService {
         amount: i64,
         payment_fee: i64,
         locked_timestamp: Option<Timestamp>,
-    ) -> Result<(Hash, i64), Error> {
+    ) -> Result<PaymentTransactionValue, Error> {
         let wallet_skey = self.unlock(password)?;
         let unspent_iter = self
             .payments
             .values()
             .map(|v| (&v.output, v.amount, v.output.locked_timestamp.clone()));
 
-        let (inputs, outputs, gamma, _rvalue, fee) = create_payment_transaction(
+        let (inputs, outputs, gamma, rvalues, fee) = create_payment_transaction(
             Some(&self.wallet_skey),
             &self.wallet_pkey,
             recipient,
@@ -345,8 +327,12 @@ impl WalletService {
 
         // Transaction TXINs can generally have different keying for each one
         let tx = PaymentTransaction::new(&wallet_skey, &inputs, &outputs, &gamma, fee)?;
-        let tx_hash = Hash::digest(&tx);
-        let fee = tx.fee;
+        let payment_info =
+            PaymentTransactionValue::new_payment(None, *recipient, tx.clone(), &rvalues, amount);
+
+        self.wallet_log
+            .push_outgoing(Timestamp::now(), payment_info.clone())?;
+
         let tx: Transaction = tx.into();
         self.node.send_transaction(tx.clone())?;
         metrics::WALLET_CREATEAD_PAYMENTS
@@ -355,7 +341,7 @@ impl WalletService {
         //firstly check that no conflict input was found;
         self.add_transaction_interest(tx.into());
 
-        Ok((tx_hash, fee))
+        Ok(payment_info)
     }
 
     fn add_transaction_interest(&mut self, tx: SavedTransaction) {
@@ -425,7 +411,12 @@ impl WalletService {
     }
 
     /// Stake money into the escrow.
-    fn stake(&self, password: String, amount: i64, payment_fee: i64) -> Result<(Hash, i64), Error> {
+    fn stake(
+        &mut self,
+        password: String,
+        amount: i64,
+        payment_fee: i64,
+    ) -> Result<PaymentTransactionValue, Error> {
         let wallet_skey = self.unlock(password)?;
         let unspent_iter = self.payments.values().map(|v| (&v.output, v.amount));
         let tx = create_staking_transaction(
@@ -439,10 +430,13 @@ impl WalletService {
             STAKE_FEE,
             self.last_macro_block_timestamp,
         )?;
-        let tx_hash = Hash::digest(&tx);
-        let fee = tx.fee;
+        let payment_info = PaymentTransactionValue::new_stake(tx.clone());
+
+        self.wallet_log
+            .push_outgoing(Timestamp::now(), payment_info.clone())?;
+
         self.node.send_transaction(tx.into())?;
-        Ok((tx_hash, fee))
+        Ok(payment_info)
     }
 
     /// Unstake money from the escrow.
@@ -452,7 +446,7 @@ impl WalletService {
         password: String,
         amount: i64,
         payment_fee: i64,
-    ) -> Result<(Hash, i64), Error> {
+    ) -> Result<PaymentTransactionValue, Error> {
         let wallet_skey = self.unlock(password)?;
         let unspent_iter = self.stakes.values().map(|v| &v.output);
         let tx = create_unstaking_transaction(
@@ -466,14 +460,17 @@ impl WalletService {
             STAKE_FEE,
             self.last_macro_block_timestamp,
         )?;
-        let tx_hash = Hash::digest(&tx);
-        let fee = tx.fee;
+        let payment_info = PaymentTransactionValue::new_stake(tx.clone());
         self.node.send_transaction(tx.into())?;
-        Ok((tx_hash, fee))
+        Ok(payment_info)
     }
 
     /// Unstake all of the money from the escrow.
-    fn unstake_all(&self, password: String, payment_fee: i64) -> Result<(Hash, i64), Error> {
+    fn unstake_all(
+        &self,
+        password: String,
+        payment_fee: i64,
+    ) -> Result<PaymentTransactionValue, Error> {
         let mut amount: i64 = 0;
         for val in self.stakes.values() {
             amount += val.output.amount;
@@ -546,7 +543,11 @@ impl WalletService {
     }
 
     /// Cloak all available public outputs.
-    fn cloak_all(&mut self, password: String, payment_fee: i64) -> Result<(Hash, i64), Error> {
+    fn cloak_all(
+        &mut self,
+        password: String,
+        payment_fee: i64,
+    ) -> Result<PaymentTransactionValue, Error> {
         let wallet_skey = self.unlock(password)?;
         if self.public_payments.is_empty() {
             return Err(WalletError::NotEnoughMoney.into());
@@ -560,9 +561,10 @@ impl WalletService {
             payment_fee,
             self.last_macro_block_timestamp,
         )?;
-        let tx_hash = Hash::digest(&tx);
+
+        let info = PaymentTransactionValue::new_cloak(tx.clone());
         self.node.send_transaction(tx.into())?;
-        Ok((tx_hash, payment_fee))
+        Ok(info)
     }
 
     /// Change the password.
@@ -816,13 +818,27 @@ impl WalletService {
     }
 }
 
-impl From<Result<(Hash, PaymentTransactionValue), Error>> for WalletResponse {
-    fn from(r: Result<(Hash, PaymentTransactionValue), Error>) -> Self {
+impl From<Result<PaymentTransactionValue, Error>> for WalletResponse {
+    fn from(r: Result<PaymentTransactionValue, Error>) -> Self {
         match r {
-            Ok((tx_hash, info)) => WalletResponse::TransactionCreatedWithCertificate {
-                tx_hash,
-                info: info.to_info(),
+            Ok(info) => WalletResponse::TransactionCreated(info.to_info()),
+            Err(e) => WalletResponse::Error {
+                error: format!("{}", e),
             },
+        }
+    }
+}
+
+impl From<Result<(Hash, i64), Error>> for WalletResponse {
+    fn from(r: Result<(Hash, i64), Error>) -> Self {
+        match r {
+            Ok((hash, _fee)) => {
+                let info = PaymentTransactionInfo {
+                    tx_hash: hash,
+                    certificates: vec![],
+                };
+                WalletResponse::TransactionCreated(info)
+            }
             Err(e) => WalletResponse::Error {
                 error: format!("{}", e),
             },
@@ -833,17 +849,6 @@ impl From<Result<(Hash, PaymentTransactionValue), Error>> for WalletResponse {
 impl From<Vec<LogEntryInfo>> for WalletResponse {
     fn from(log: Vec<LogEntryInfo>) -> Self {
         WalletResponse::HistoryInfo { log }
-    }
-}
-
-impl From<Result<(Hash, i64), Error>> for WalletResponse {
-    fn from(r: Result<(Hash, i64), Error>) -> Self {
-        match r {
-            Ok((tx_hash, fee)) => WalletResponse::TransactionCreated { tx_hash, fee },
-            Err(e) => WalletResponse::Error {
-                error: format!("{}", e),
-            },
-        }
     }
 }
 
@@ -871,6 +876,7 @@ impl Future for WalletService {
                                 payment_fee,
                                 comment,
                                 locked_timestamp,
+                                with_certificate,
                             } => self
                                 .payment(
                                     password,
@@ -879,6 +885,7 @@ impl Future for WalletService {
                                     payment_fee,
                                     comment,
                                     locked_timestamp,
+                                    with_certificate,
                                 )
                                 .into(),
                             WalletRequest::PublicPayment {

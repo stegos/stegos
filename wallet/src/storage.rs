@@ -414,6 +414,47 @@ impl PaymentCertificate {
 }
 
 impl PaymentTransactionValue {
+    pub fn new_payment(
+        _data: Option<PaymentPayloadData>,
+        recipient: PublicKey,
+        tx: PaymentTransaction,
+        rvalues: &[Option<Fr>],
+        amount: i64,
+    ) -> PaymentTransactionValue {
+        let certificates: Vec<_> = rvalues
+            .iter()
+            .enumerate()
+            .filter_map(|(id, r)| r.clone().map(|r| (id, r)))
+            .map(|(id, rvalue)| PaymentCertificate {
+                id: id as u32,
+                rvalue,
+                recipient,
+                amount,
+            })
+            .collect();
+
+        assert_eq!(tx.txouts.len(), 2);
+        assert!(certificates.len() <= 1);
+
+        PaymentTransactionValue { certificates, tx }
+    }
+
+    pub fn new_cloak(tx: PaymentTransaction) -> PaymentTransactionValue {
+        assert_eq!(tx.txouts.len(), 1);
+
+        PaymentTransactionValue {
+            certificates: Vec::new(),
+            tx,
+        }
+    }
+
+    pub fn new_stake(tx: PaymentTransaction) -> PaymentTransactionValue {
+        PaymentTransactionValue {
+            certificates: Vec::new(),
+            tx,
+        }
+    }
+
     pub fn to_info(&self) -> PaymentTransactionInfo {
         let tx_hash = Hash::digest(&self.tx);
         PaymentTransactionInfo {

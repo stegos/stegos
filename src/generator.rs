@@ -95,10 +95,8 @@ impl Generator {
 
     fn handle_wait_creation(&mut self, response: WalletResponse) {
         let tx_hash = match response {
-            WalletResponse::TransactionCreated { tx_hash, .. }
-                if self.mode == GeneratorMode::Regular =>
-            {
-                tx_hash
+            WalletResponse::TransactionCreated(ref info) if self.mode == GeneratorMode::Regular => {
+                info.tx_hash
             }
             WalletResponse::ValueShuffleStarted { session_id }
                 if self.mode == GeneratorMode::ValueShuffle =>
@@ -200,6 +198,7 @@ impl Generator {
                 payment_fee: PAYMENT_FEE,
                 recipient,
                 locked_timestamp: None,
+                with_certificate: false,
             },
         };
 

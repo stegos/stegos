@@ -57,7 +57,7 @@ lazy_static! {
     /// Regex to parse "pay" command.
     static ref PAY_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9A-Za-z]+)\s+(?P<amount>[0-9\.]{1,19})(?P<arguments>.+)?\s*$").unwrap();
     /// Regex to parse argument of "pay" command.
-    static ref PAY_ARGUMENTS_RE: Regex = Regex::new(r"^(\s+(?P<public>(/public)))?(\s+(?P<vs>(/vs)))?(\s+(?P<comment>[^/]+?))?(\s+(?P<lock>(/lock\s*.*)))?(\s+(?P<fee>(/fee\s[0-9\.]{1,19})))?\s*$").unwrap();
+    static ref PAY_ARGUMENTS_RE: Regex = Regex::new(r"^(\s+(?P<public>(/public)))?(\s+(?P<vs>(/vs)))?(\s+(?P<comment>[^/]+?))?(\s+(?P<lock>(/lock\s*[^/]*)))?(\s+(?P<fee>(/fee\s[0-9\.]{1,19})))?(\s+(?P<certificate>(/certificate)))?\s*$").unwrap();
     /// Regex to parse "msg" command.
     static ref MSG_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<msg>.+)$").unwrap();
     /// Regex to parse "stake/unstake" command.
@@ -338,9 +338,9 @@ impl ConsoleService {
                 }
             };
 
-            let (public, snowball, comment, locked_timestamp, payment_fee) =
+            let (public, snowball, comment, locked_timestamp, payment_fee, with_certificate) =
                 match caps.name("arguments") {
-                    None => (false, false, String::new(), None, PAYMENT_FEE),
+                    None => (false, false, String::new(), None, PAYMENT_FEE, false),
 
                     Some(m) => {
                         let caps = match PAY_ARGUMENTS_RE.captures(m.as_str()) {
@@ -352,6 +352,7 @@ impl ConsoleService {
                         };
 
                         let public = caps.name("public").is_some();
+                        let certificate = caps.name("certificate").is_some();
                         let snowball = caps.name("snowball").is_some();
                         let comment = caps
                             .name("comment")
@@ -376,12 +377,31 @@ impl ConsoleService {
                             }
                             None => PAYMENT_FEE, // use the default value.
                         };
-                        (public, snowball, comment, locked_timestamp, payment_fee)
+                        (
+                            public,
+                            snowball,
+                            comment,
+                            locked_timestamp,
+                            payment_fee,
+                            certificate,
+                        )
                     }
                 };
 
             if public && snowball {
                 return Err(format_err!("Snowball is not supported for public payments"));
+            }
+
+            if public && with_certificate {
+                return Err(format_err!(
+                    "Certificate is not supported for public payments"
+                ));
+            }
+
+            if snowball && with_certificate {
+                return Err(format_err!(
+                    "Currently snowball with certificate is not supported"
+                ));
             }
 
             if public && !comment.is_empty() {
@@ -413,6 +433,7 @@ impl ConsoleService {
                     payment_fee,
                     comment,
                     locked_timestamp,
+                    with_certificate,
                 }
             };
             self.send_wallet_request(request)?
@@ -446,6 +467,7 @@ impl ConsoleService {
                 payment_fee,
                 comment,
                 locked_timestamp: None,
+                with_certificate: false,
             };
             self.send_wallet_request(request)?
         } else if msg.starts_with("stake ") {

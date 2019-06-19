@@ -510,8 +510,6 @@ impl WalletService {
             .stakes
             .iter()
             .filter_map(|(hash, val)| {
-                // Re-stake in the last epoch where stake is valid.
-
                 trace!(
                     "Check expiring stake: utxo={}, amount={}, active_until_epoch={}, epoch={}",
                     hash,
@@ -519,7 +517,8 @@ impl WalletService {
                     val.active_until_epoch,
                     epoch
                 );
-                if val.active_until_epoch <= epoch {
+                // Re-stake in one epoch before expiration.
+                if val.active_until_epoch <= epoch + 1 {
                     info!(
                         "Expiring stake: utxo={}, amount={}, active_until_epoch={}, epoch={}",
                         hash, val.output.amount, val.active_until_epoch, epoch

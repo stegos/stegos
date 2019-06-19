@@ -6,7 +6,7 @@ prometheus_endpoint = "127.0.0.1:{{ NODE_ID|int + 9890 }}"
 [blockchain_db]
 database_path = "testing/node{{NODE_ID}}/database"
 [wallet_db]
-database_path = "testing/node{{NODE_ID}}/wallet_db_path"
+database_path = "testing/node{{NODE_ID}}/wallet"
 
 [keychain]
 password_file = "testing/node{{NODE_ID}}/password.txt"

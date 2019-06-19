@@ -80,7 +80,7 @@ pub enum NetworkRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "notification")]
+#[serde(tag = "response")]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkResponse {
     SubscribedUnicast,

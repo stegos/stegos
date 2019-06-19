@@ -24,6 +24,7 @@
 
 use super::*;
 use crate::CryptoError;
+use rayon::prelude::*;
 
 // -----------------------------------------------------------------------------------
 
@@ -470,6 +471,7 @@ impl DivAssign<i64> for ECp {
 
 // P+=P
 
+/*
 fn double_1(pt: &mut ECp) {
     let a = pt.x.sqr();
     let b = pt.y.sqr();
@@ -483,7 +485,37 @@ fn double_1(pt: &mut ECp) {
     pt.t = e * h;
     scr(&mut pt.z);
 }
+*/
 
+fn double_1(pt: &mut ECp) {
+    let mut a = Fq51::zero();
+    let mut b = Fq51::zero();
+    gsqr(&pt.x, &mut a);
+    gsqr(&pt.y, &mut b);
+
+    let mut e = pt.t;
+    gmul2(&mut e);
+
+    let mut g = Fq51::zero();
+    gadd(&a, &b, &mut g);
+
+    let mut f = g;
+    f.0[0] -= 2;
+
+    let mut h = Fq51::zero();
+    gsub(&a, &b, &mut h);
+
+    gmul(&e, &f, &mut pt.x);
+    gmul(&g, &h, &mut pt.y);
+
+    let mut tmp = Fq51::zero();
+    gsqr(&g, &mut tmp);
+    gmul2(&mut g);
+    gsub(&tmp, &g, &mut pt.z);
+    gmul(&e, &h, &mut pt.t);
+}
+
+/*
 fn double_2(pt: &mut ECp) {
     let a = pt.x.sqr();
     let b = pt.y.sqr();
@@ -497,7 +529,37 @@ fn double_2(pt: &mut ECp) {
     pt.y = g * h;
     pt.z = f * g;
 }
+*/
 
+fn double_2(pt: &mut ECp) {
+    let mut a = Fq51::zero();
+    let mut b = Fq51::zero();
+    let mut c = Fq51::zero();
+    gsqr(&pt.x, &mut a);
+    gsqr(&pt.y, &mut b);
+    gsqr(&pt.z, &mut c);
+    gmul2(&mut c);
+
+    let mut g = Fq51::zero();
+    let mut e = Fq51::zero();
+    let mut tmp = Fq51::zero();
+    gadd(&pt.x, &pt.y, &mut tmp);
+    gadd(&a, &b, &mut g);
+    let mut tmp2 = Fq51::zero();
+    gsqr(&tmp, &mut tmp2);
+    gsub(&tmp2, &g, &mut e);
+
+    let mut f = Fq51::zero();
+    gsub(&g, &c, &mut f);
+    let mut h = Fq51::zero();
+    gsub(&a, &b, &mut h);
+
+    gmul(&e, &f, &mut pt.x);
+    gmul(&g, &h, &mut pt.y);
+    gmul(&f, &g, &mut pt.z);
+}
+
+/*
 fn double_3(pt: &mut ECp) {
     let a = pt.x.sqr();
     let b = pt.y.sqr();
@@ -512,9 +574,39 @@ fn double_3(pt: &mut ECp) {
     pt.z = f * g;
     pt.t = e * h;
 }
+*/
+
+fn double_3(pt: &mut ECp) {
+    let mut a = Fq51::zero();
+    let mut b = Fq51::zero();
+    let mut c = Fq51::zero();
+    gsqr(&pt.x, &mut a);
+    gsqr(&pt.y, &mut b);
+
+    gsqr(&pt.z, &mut c);
+    gmul2(&mut c);
+    let mut g = Fq51::zero();
+    let mut e = Fq51::zero();
+    let mut tmp = Fq51::zero();
+    gadd(&pt.x, &pt.y, &mut tmp);
+    gadd(&a, &b, &mut g);
+    let mut tmp2 = Fq51::zero();
+    gsqr(&tmp, &mut tmp2);
+    gsub(&tmp2, &g, &mut e);
+
+    let mut f = Fq51::zero();
+    gsub(&g, &c, &mut f);
+    let mut h = Fq51::zero();
+    gsub(&a, &b, &mut h);
+    gmul(&e, &f, &mut pt.x);
+    gmul(&g, &h, &mut pt.y);
+
+    gmul(&f, &g, &mut pt.z);
+    gmul(&e, &h, &mut pt.t);
+}
 
 //P+=Q;
-
+/*
 fn add_1(qpt: &ECp, ppt: &mut ECp) {
     let a = ppt.x * qpt.x;
     let b = ppt.y * qpt.y;
@@ -530,7 +622,46 @@ fn add_1(qpt: &ECp, ppt: &mut ECp) {
     ppt.z = f * g;
     ppt.t = e * h;
 }
+*/
 
+fn add_1(qpt: &ECp, ppt: &mut ECp) {
+    let mut a = Fq51::zero();
+    gmul(&ppt.x, &qpt.x, &mut a);
+
+    let mut b = Fq51::zero();
+    gmul(&ppt.y, &qpt.y, &mut b);
+
+    let mut c = Fq51::zero();
+    gmul(&ppt.t, &qpt.t, &mut c);
+
+    let mut f = Fq51::zero();
+    gsub(&ppt.z, &c, &mut f);
+
+    let mut g = Fq51::zero();
+    gadd(&ppt.z, &c, &mut g);
+
+    let mut h = Fq51::zero();
+    gsub(&b, &a, &mut h);
+
+    gadd(&ppt.x, &ppt.y, &mut c);
+    let mut d = Fq51::zero();
+    gadd(&qpt.x, &qpt.y, &mut d);
+
+    let mut tmp = Fq51::zero();
+    gadd(&a, &b, &mut tmp);
+    let mut tmp2 = Fq51::zero();
+    gmul(&c, &d, &mut tmp2);
+
+    let mut e = Fq51::zero();
+    gsub(&tmp2, &tmp, &mut e);
+
+    gmul(&e, &f, &mut ppt.x);
+    gmul(&g, &h, &mut ppt.y);
+    gmul(&f, &g, &mut ppt.z);
+    gmul(&e, &h, &mut ppt.t);
+}
+
+/*
 fn add_2(qpt: &ECp, ppt: &mut ECp) {
     let a = ppt.x * qpt.x;
     let b = ppt.y * qpt.y;
@@ -545,6 +676,41 @@ fn add_2(qpt: &ECp, ppt: &mut ECp) {
     ppt.x = e * f;
     ppt.y = g * h;
     ppt.z = f * g;
+}
+*/
+
+fn add_2(qpt: &ECp, ppt: &mut ECp) {
+    let mut a = Fq51::zero();
+    gmul(&ppt.x, &qpt.x, &mut a);
+    let mut b = Fq51::zero();
+    gmul(&ppt.y, &qpt.y, &mut b);
+    let mut c = Fq51::zero();
+    gmul(&ppt.t, &qpt.t, &mut c);
+    let mut d = Fq51::zero();
+    gmul(&ppt.z, &qpt.z, &mut d);
+
+    let mut f = Fq51::zero();
+    gsub(&d, &c, &mut f);
+
+    let mut g = Fq51::zero();
+    gadd(&d, &c, &mut g);
+
+    let mut h = Fq51::zero();
+    gsub(&b, &a, &mut h);
+
+    gadd(&ppt.x, &ppt.y, &mut c);
+    gadd(&qpt.x, &qpt.y, &mut d);
+
+    let mut tmp = Fq51::zero();
+    gadd(&a, &b, &mut tmp);
+    let mut tmp2 = Fq51::zero();
+    gmul(&c, &d, &mut tmp2);
+    let mut e = Fq51::zero();
+    gsub(&tmp2, &tmp, &mut e);
+
+    gmul(&e, &f, &mut ppt.x);
+    gmul(&g, &h, &mut ppt.y);
+    gmul(&f, &g, &mut ppt.z);
 }
 
 //P=0
@@ -708,6 +874,7 @@ fn mul_to_proj(w: &WinVec, ppt: &mut ECp) {
 }
 
 // point additon of two projective points
+/*
 pub fn add_proj(qpt: &ECp, ppt: &ECp, zpt: &mut ECp) {
     // Add Q to P, both in projective (X,Y,Z) coordinates. We don't use T here.
     let a = qpt.z * ppt.z;
@@ -731,6 +898,49 @@ pub fn add_proj(qpt: &ECp, ppt: &ECp, zpt: &mut ECp) {
     zpt.x = x3;
     zpt.y = y3;
     zpt.z = z3;
+}
+*/
+pub fn add_proj(qpt: &ECp, ppt: &ECp, zpt: &mut ECp) {
+    // Add Q to P, both in projective (X,Y,Z) coordinates. We don't use T here.
+    let mut a = Fq51::zero();
+    gmul(&qpt.z, &ppt.z, &mut a);
+
+    let mut b = Fq51::zero();
+    gsqr(&a, &mut b);
+
+    let mut c = Fq51::zero();
+    gmul(&qpt.x, &ppt.x, &mut c);
+
+    let mut d = Fq51::zero();
+    gmul(&qpt.y, &ppt.y, &mut d);
+
+    let mut e = Fq51::zero();
+    gmul(&c, &d, &mut e);
+    gmuli(&mut e, CURVE_D);
+
+    let mut f = Fq51::zero();
+    gsub(&b, &e, &mut f);
+
+    let mut g = Fq51::zero();
+    gadd(&b, &e, &mut g);
+
+    let mut x3 = Fq51::zero();
+    gadd(&qpt.x, &qpt.y, &mut x3);
+
+    let mut y3 = Fq51::zero();
+    gadd(&ppt.x, &ppt.y, &mut y3);
+
+    let mut z3 = Fq51::zero();
+    gmul(&x3, &y3, &mut z3);
+
+    gsub(&z3, &c, &mut y3);
+    gsub(&y3, &d, &mut x3);
+    gmul(&f, &x3, &mut y3);
+    gmul(&a, &y3, &mut zpt.x);
+    gsub(&d, &c, &mut y3);
+    gmul(&g, &y3, &mut z3);
+    gmul(&a, &z3, &mut zpt.y);
+    gmul(&f, &g, &mut zpt.z);
 }
 
 // -------------------------------------------------------------

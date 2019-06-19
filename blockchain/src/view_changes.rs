@@ -20,7 +20,6 @@
 // SOFTWARE.
 
 use crate::blockchain::{Blockchain, ChainInfo};
-use crate::error::MultisignatureError;
 use crate::multisignature::{check_multi_signature, create_multi_signature_index};
 use bitvector::BitVector;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
@@ -44,14 +43,16 @@ impl ViewChangeProof {
         &self,
         chain_info: &ChainInfo,
         blockchain: &Blockchain,
-    ) -> Result<(), MultisignatureError> {
+    ) -> Result<(), failure::Error> {
         let hash = Hash::digest(chain_info);
+
+        let validators = blockchain.election_result_by_offset(chain_info.offset)?;
 
         check_multi_signature(
             &hash,
             &self.multisig,
             &self.multimap,
-            blockchain.validators(),
+            &validators.validators,
             blockchain.total_slots(),
         )?;
         Ok(())

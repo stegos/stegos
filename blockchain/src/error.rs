@@ -300,7 +300,7 @@ pub enum BlockError {
         display = "Invalid view change proof: epoch={}, proof={:?}, error={}",
         _0, _1, _2
     )]
-    InvalidViewChangeProof(u64, ViewChangeProof, MultisignatureError),
+    InvalidViewChangeProof(u64, ViewChangeProof, failure::Error),
     #[fail(
         display = "No proof of view change found for out of order block: epoch={}, offset={}, block={}, block_view_change={}, our_view_change={}",
         _0, _1, _2, _3, _4

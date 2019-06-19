@@ -260,7 +260,7 @@ impl<TSubstream> Kademlia<TSubstream> {
         if initialize {
             // As part of the initialization process, we start one `FIND_NODE` for each bit of the
             // possible range of node IDs.
-            let my_hash = behaviour.kbuckets.my_id().into_multihash();
+            let my_hash = behaviour.kbuckets.my_id().clone().into_multihash();
             for n in 0..512 {
                 let random_hash = match gen_random_hash(&my_hash, n) {
                     Ok(p) => p,
@@ -385,7 +385,7 @@ impl<TSubstream> Kademlia<TSubstream> {
         };
 
         // remove outselves from list of peers providing the key
-        let my_id = self.my_id;
+        let my_id = self.my_id.clone();
         if let Some(position) = providers.iter().position(|k| *k == my_id) {
             providers.remove(position);
             providers.shrink_to_fit();
@@ -577,7 +577,7 @@ where
                 }
                 if let Some((query, _, _)) = self.active_queries.get_mut(&user_data) {
                     let peer_key = source.into_bytes();
-                    let my_id = self.my_id;
+                    let my_id = self.my_id.clone();
                     if let Some(node_id) = self.known_peers.get(&peer_key) {
                         query.inject_rpc_result(
                             &node_id,

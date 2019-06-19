@@ -46,7 +46,7 @@ use std::collections::BTreeMap;
 use stegos_crypto::bulletproofs::fee_a;
 use stegos_crypto::curve1174::{ECp, Fr, PublicKey, SecretKey, G};
 use stegos_crypto::hash::*;
-use stegos_crypto::pbc::secure::VRF;
+use stegos_crypto::pbc::VRF;
 use stegos_crypto::{curve1174, pbc};
 
 pub type ViewCounter = u32;

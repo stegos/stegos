@@ -10,7 +10,7 @@ extern crate criterion;
 
 use criterion::{Bencher, Criterion};
 use stegos_blockchain::test::create_fake_micro_block;
-use stegos_crypto::pbc::secure::{check_hash, make_random_keys, sign_hash};
+use stegos_crypto::pbc::{check_hash, make_random_keys, sign_hash};
 
 fn create_blocks(b: &mut Bencher) {
     const NUM_NODES: usize = 1;

@@ -272,7 +272,7 @@ impl ProtoConvert for RestakeTransaction {
         for txout in proto.txouts.iter() {
             txouts.push(Output::from_proto(txout)?);
         }
-        let sig = pbc::secure::Signature::from_proto(proto.get_signature())?;
+        let sig = pbc::Signature::from_proto(proto.get_signature())?;
 
         Ok(RestakeTransaction { txins, txouts, sig })
     }

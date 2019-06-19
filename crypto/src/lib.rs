@@ -71,6 +71,8 @@ pub enum CryptoError {
 
     #[fail(display = "Encrypted Key has incorrect Signature")]
     BadKeyingSignature,
+    #[fail(display = "Invalid ECC Point")]
+    InvalidPoint,
 
     #[fail(display = "Point in small subgroup")]
     InSmallSubgroup,

@@ -28,10 +28,10 @@ use crate::curve1174::zap_bytes;
 use crate::curve1174::{EncryptedKey, EncryptedPayload, Fr, Pt, PublicKey, SchnorrSig, SecretKey};
 use crate::hash::Hash;
 use crate::hashcash::HashCashProof;
-use crate::pbc::secure;
-use crate::pbc::secure::G1;
-use crate::pbc::secure::G2;
-use crate::pbc::secure::VRF;
+use crate::pbc;
+use crate::pbc::G1;
+use crate::pbc::G2;
+use crate::pbc::VRF;
 use crate::CryptoError;
 
 include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
@@ -177,31 +177,31 @@ impl ProtoConvert for HashCashProof {
     }
 }
 
-impl ProtoConvert for secure::PublicKey {
+impl ProtoConvert for pbc::PublicKey {
     type Proto = crypto::SecurePublicKey;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = crypto::SecurePublicKey::new();
-        let g: G2 = (*self).into();
+        let g: G2 = G2::from(*self);
         proto.set_point(g.into_proto());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let g: G2 = G2::from_proto(proto.get_point())?;
-        Ok(secure::PublicKey::from(g))
+        Ok(pbc::PublicKey::from(g))
     }
 }
 
-impl ProtoConvert for secure::Signature {
+impl ProtoConvert for pbc::Signature {
     type Proto = crypto::SecureSignature;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = crypto::SecureSignature::new();
-        let g: G1 = (*self).into();
+        let g: G1 = G1::from(*self);
         proto.set_point(g.into_proto());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let g: G1 = G1::from_proto(proto.get_point())?;
-        Ok(secure::Signature::from(g))
+        Ok(pbc::Signature::from(g))
     }
 }
 
@@ -352,7 +352,7 @@ impl ProtoConvert for crate::dicemix::ParticipantID {
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let pkey = secure::PublicKey::from_proto(proto.get_pkey())?;
+        let pkey = pbc::PublicKey::from_proto(proto.get_pkey())?;
         let seed_slice = proto.get_seed();
         if seed_slice.len() != 32 {
             return Err(CryptoError::InvalidBinaryLength(32, seed_slice.len()).into());

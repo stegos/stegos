@@ -1,7 +1,7 @@
-//! PBC Crypto for Rust, atop Ben Lynn's PBCliib
+//! pbc -- BLS12-381 PBC for faster BLS Signatures
 
 //
-// Copyright (c) 2018 Stegos AG
+// Copyright (c) 2019 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,253 +24,1036 @@
 #![allow(non_snake_case)]
 #![allow(dead_code)]
 
-pub mod fast;
-pub mod secure;
+mod internal;
+
+use crate::dicemix::ffi;
 use crate::hash::*;
+use crate::pbc::internal::*;
 use crate::utils::*;
-pub use secure::*;
-
-use lazy_static::lazy_static;
-use rust_libpbc;
+use crate::CryptoError;
+use ff::*;
+use paired::*;
+use rand::prelude::*;
+use serde::de::{Deserialize, Deserializer};
+use serde::ser::{Serialize, Serializer};
+use std::cmp::Ordering;
 use std::fmt;
-use std::vec::*;
+use std::hash as stdhash;
+use std::mem;
+use std::ops::AddAssign;
 
-// -------------------------------------------------------------------
-// Signature Public Key - for checking curve constants validity
-//
-// Unit test: check_pbc_init() - validates the curve constants shown
-// here for AR160 and FR256.
-//
-// The PBC init won't succeed unless they checksum to the values
-// shown below for HASH_AR160 and HASH_FR256. That serves as a first
-// line of defense against accidental corruption.
-//
-// For defense against intentional corruption with crafted curves,
-// the unit test, check_pbc_init(), verifies the hash of these string
-// constants against known BLS signatures, SIG_AR160 and SIG_FR256,
-// using the public key, SIG_PKEY, shown here.
+type Engine = bls12_381::Bls12;
+pub type Fr = bls12_381::Fr;
+type FrRepr = bls12_381::FrRepr;
+type Fq2 = bls12_381::Fq2;
+type Fq6 = bls12_381::Fq6;
+type Fq12 = bls12_381::Fq12;
 
-const SIG_PKEY : &str = "21aa87b48c3fce1699ffd0b4be79fb6ad2eb0b941ffd2b45a08ef12939885bcad095484e8a3fbf0ebee88f3874a07cc4570bc439fa5c5457d73c10ef131d42d601";
-const SIG_AR160: &str = "92c30db345bf5c867ca22a439a2a3d9373147a87f18dfc5d9ba727f8363bbd8500";
-const SIG_FR256: &str = "f33bed0d86a668fb1768aa9b5f55020f92fa2a533e5a009316f1a35b0a78a9b800";
+#[derive(Copy, Clone)]
+pub struct G1(IG1<Engine>);
 
-// -------------------------------------------------------------------
-// Fast AR160 curves, but low security 2^80
+#[derive(Copy, Clone)]
+pub struct G2(IG2<Engine>);
 
-const PBC_CONTEXT_AR160: u64 = 0;
-const NAME_AR160: &str = "AR160";
-const INIT_TEXT_AR160 : &str = "type a
-q 8780710799663312522437781984754049815806883199414208211028653399266475630880222957078625179422662221423155858769582317459277713367317481324925129998224791
-h 12016012264891146079388821366740534204802954401251311822919615131047207289359704531102844802183906537786776
-r 730750818665451621361119245571504901405976559617
-exp2 159
-exp1 107
-sign1 1
-sign0 1";
-const ORDER_AR160: &str = "8000000000000800000000000000000000000001";
-const G1_AR160 : &str = "797EF95B4B2DED79B0F5E3320D4C38AE2617EB9CD8C0C390B9CCC6ED8CFF4CEA4025609A9093D4C3F58F37CE43C163EADED39E8200C939912B7F4B047CC9B69300";
-const G2_AR160 : &str = "A4913CAB767684B308E6F71D3994D65C2F1EB1BE4C9E96E276CD92E4D2B16A2877AA48A8A34CE5F1892CD548DE9106F3C5B0EBE7E13ACCB8C41CC0AE8D110A7F01";
-const ZR_SIZE_AR160: usize = 20;
-const G1_SIZE_AR160: usize = 65;
-const G2_SIZE_AR160: usize = 65;
-const GT_SIZE_AR160: usize = 128;
-const HASH_AR160: &str = "970faebc98c5ddf8798e4223ba517177547b0a31c0b4fec7d83ff5916b4891dc";
+#[derive(Clone)]
+pub struct SecretKey(ISecretKey<Engine>);
 
-// -------------------------------------------------------------------
-// Secure BN curves, security approx 2^128
+#[derive(Copy, Clone)]
+pub struct PublicKey(IPublicKey<Engine>);
 
-const PBC_CONTEXT_FR256: u64 = 1;
-const NAME_FR256: &str = "FR256";
-const INIT_TEXT_FR256: &str = "type f
-q 115792089237314936872688561244471742058375878355761205198700409522629664518163
-r 115792089237314936872688561244471742058035595988840268584488757999429535617037
-b 3
-beta 76600213043964638334639432839350561620586998450651561245322304548751832163977
-alpha0 82889197335545133675228720470117632986673257748779594473736828145653330099944
-alpha1 66367173116409392252217737940259038242793962715127129791931788032832987594232";
-const ORDER_FR256: &str = "FFFFFFFFFFFCF0CD46E5F25EEE71A49E0CDC65FB1299921AF62D536CD10B500D";
-const G1_FR256: &str = "ff8f256bbd48990e94d834fba52da377b4cab2d3e2a08b6828ba6631ad4d668500";
-const G2_FR256 : &str = "e20543135c81c67051dc263a2bc882b838da80b05f3e1d7efa420a51f5688995e0040a12a1737c80def47c1a16a2ecc811c226c17fb61f446f3da56c420f38cc01";
-const ZR_SIZE_FR256: usize = 32;
-const G1_SIZE_FR256: usize = 33;
-const G2_SIZE_FR256: usize = 65;
-const GT_SIZE_FR256: usize = 384;
-const HASH_FR256: &str = "89e9ab4061400136bcf7bf15dac687966837b8b8ffad433768acc0351ecfe699";
+#[derive(Copy, Clone)]
+pub struct Signature(ISignature<Engine>);
 
-// -------------------------------------------------------------------
+#[derive(Copy, Clone)]
+pub struct SecretSubKey(ISecretSubKey<Engine>);
 
-lazy_static! {
-    pub static ref INIT: bool = {
-        private_init_pairings(
-            PBC_CONTEXT_AR160,
-            INIT_TEXT_AR160,
-            G1_SIZE_AR160,
-            G2_SIZE_AR160,
-            GT_SIZE_AR160,
-            ZR_SIZE_AR160,
-            G1_AR160,
-            G2_AR160,
-            ORDER_AR160,
-            HASH_AR160,
-        );
-        private_init_pairings(
-            PBC_CONTEXT_FR256,
-            INIT_TEXT_FR256,
-            G1_SIZE_FR256,
-            G2_SIZE_FR256,
-            GT_SIZE_FR256,
-            ZR_SIZE_FR256,
-            G1_FR256,
-            G2_FR256,
-            ORDER_FR256,
-            HASH_FR256,
-        );
-        true
-    };
-    pub static ref CONTEXT_FR256: u64 = {
-        assert!(*INIT, "Can't happen");
-        PBC_CONTEXT_FR256
-    };
-    pub static ref CONTEXT_AR160: u64 = {
-        assert!(*INIT, "Can't happen");
-        PBC_CONTEXT_AR160
-    };
-    pub static ref ORD_FR256: [u8; ZR_SIZE_FR256] = {
-        assert!(*INIT, "Can't happen");
-        let mut ord = [0u8; ZR_SIZE_FR256];
-        hexstr_to_bev_u8(&ORDER_FR256, &mut ord).expect("Invalid HexString");
-        ord
-    };
-    pub static ref MIN_FR256: secure::Zr = secure::Zr::acceptable_minval();
-    pub static ref MAX_FR256: secure::Zr = secure::Zr::acceptable_maxval();
-    pub static ref ORD_AR160: [u8; ZR_SIZE_AR160] = {
-        assert!(*INIT, "Can't happen");
-        let mut ord = [0u8; ZR_SIZE_AR160];
-        hexstr_to_bev_u8(&ORDER_AR160, &mut ord).expect("Invalid HexString");
-        ord
-    };
-    pub static ref MIN_AR160: fast::Zr = fast::Zr::acceptable_minval();
-    pub static ref MAX_AR160: fast::Zr = fast::Zr::acceptable_maxval();
-}
+#[derive(Copy, Clone)]
+pub struct PublicSubKey(IPublicSubKey<Engine>);
 
-// -------------------------------------------------------------------
+// -------------------------------------------------------------------------------
 
-fn private_init_pairings(
-    context: u64,
-    text: &str,
-    g1_size: usize,
-    g2_size: usize,
-    pairing_size: usize,
-    field_size: usize,
-    g1: &str,
-    g2: &str,
-    order: &str,
-    hchk: &str,
-) {
-    // First, check that the text constants haven't changed
-    let mut state = Hasher::new();
-    text.hash(&mut state);
-    order.hash(&mut state);
-    g1.hash(&mut state);
-    g2.hash(&mut state);
-    let h = state.result();
-    let chk = Hash::try_from_hex(hchk).expect("Invalid check hash");
-    assert!(h == chk, "Init constants have changed");
-
-    // yes - all the assert!() should panic fail. We are useless without PBC.
-    let psize = [0u64; 4];
-    unsafe {
-        let ans = rust_libpbc::init_pairing(
-            context,
-            text.as_ptr() as *mut _,
-            text.len() as u64,
-            psize.as_ptr() as *mut _,
-        );
-        assert_eq!(ans, 0, "PBC Init Failure");
+impl Drop for SecretKey {
+    fn drop(&mut self) {
+        let mut rep = self.0.x.into_repr();
+        rep.0[0] = 0;
+        rep.0[1] = 0;
+        rep.0[2] = 0;
+        rep.0[3] = 0;
+        unsafe {
+            ffi::dum_wau(rep.0.as_ptr() as *mut _, 32);
+        }
     }
-    assert_eq!(psize[0], g1_size as u64, "Invalid G1 size");
-    assert_eq!(psize[1], g2_size as u64, "Invalid G2 size");
-    assert_eq!(psize[2], pairing_size as u64, "Invalid GT size");
-    assert_eq!(psize[3], field_size as u64, "Invalid Zr size");
-
-    let mut v1 = vec![0u8; g1_size];
-    hexstr_to_bev_u8(g1, &mut v1).expect("Invalid G1 hexstring");
-    let len = unsafe { rust_libpbc::set_g1(context, v1.as_ptr() as *mut _) };
-    // returns nbr bytes read, should equal length of G1
-    assert_eq!(len, g1_size as i64, "Set G1 failure");
-
-    let v1 = vec![0u8; g1_size];
-    let len = unsafe { rust_libpbc::get_g1(context, v1.as_ptr() as *mut _, g1_size as u64) };
-    assert_eq!(len, g1_size as u64, "Get G1 failure");
-
-    let mut v2 = vec![0u8; g2_size];
-    hexstr_to_bev_u8(g2, &mut v2).expect("Invalid G2 hexstring");
-    let len = unsafe { rust_libpbc::set_g2(context, v2.as_ptr() as *mut _) };
-    // returns nbr bytes read, should equal length of G2
-    assert_eq!(len, g2_size as i64, "Set G2 failure");
-
-    let v2 = vec![0u8; g2_size];
-    let len = unsafe { rust_libpbc::get_g2(context, v2.as_ptr() as *mut _, g2_size as u64) };
-    assert_eq!(len, g2_size as u64, "Get G2 failure");
 }
 
-// --------------------------------------------------------
+// -------------------------------------------------------------------------------
+
+impl G1 {
+    pub fn zero() -> Self {
+        G1(IG1::zero())
+    }
+
+    pub fn generator() -> Self {
+        G1(IG1::<Engine>::generator())
+    }
+
+    pub fn to_bytes(&self) -> [u8; 48] {
+        let mut tmp = [0u8; 48];
+        let cpt = self.0.pt.into_compressed();
+        let me_ref = cpt.as_ref();
+        tmp.copy_from_slice(&me_ref[0..48]);
+        tmp
+    }
+
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        if bytes.len() != 48 {
+            return Err(CryptoError::InvalidBinaryLength(48, bytes.len()).into());
+        }
+        let mut cpt = bls12_381::G1Compressed::empty();
+        cpt.as_mut().copy_from_slice(bytes);
+        let pt = match cpt.into_affine() {
+            Ok(pt) => pt,
+            _ => {
+                return Err(CryptoError::InvalidPoint);
+            }
+        };
+        Ok(G1(IG1 { pt }))
+    }
+
+    pub fn to_hex(&self) -> String {
+        let bytes = self.to_bytes();
+        u8v_to_hexstr(&bytes)
+    }
+
+    pub fn try_from_hex(s: &str) -> Result<G1, CryptoError> {
+        let mut tmp = [0u8; 48];
+        hexstr_to_bev_u8(&s, &mut tmp)?;
+        G1::try_from_bytes(&tmp)
+    }
+}
+
+impl fmt::Debug for G1 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let cpt = self.0.pt.into_compressed();
+        let tmp = cpt.as_ref();
+        write!(f, "SecureG1({})", u8v_to_hexstr(&tmp[0..48]))
+    }
+}
+
+impl Eq for G1 {}
+
+impl PartialEq for G1 {
+    fn eq(&self, b: &Self) -> bool {
+        self.0.pt == b.0.pt
+    }
+}
+
+impl AddAssign<G1> for G1 {
+    fn add_assign(&mut self, other: Self) {
+        self.0.add_assign(other.0)
+    }
+}
+
+// -------------------------------------------------------------------------------
+
+impl G2 {
+    pub fn zero() -> Self {
+        G2(IG2::zero())
+    }
+
+    pub fn generator() -> Self {
+        G2(IG2::<Engine>::generator())
+    }
+
+    pub fn to_bytes(&self) -> [u8; 96] {
+        let mut tmp = [0u8; 96];
+        let cpt = self.0.pt.into_compressed();
+        let me_ref = cpt.as_ref();
+        tmp.copy_from_slice(&me_ref[0..96]);
+        tmp
+    }
+
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        if bytes.len() != 96 {
+            return Err(CryptoError::InvalidBinaryLength(96, bytes.len()).into());
+        }
+        let mut cpt = bls12_381::G2Compressed::empty();
+        cpt.as_mut().copy_from_slice(bytes);
+        let pt = match cpt.into_affine() {
+            Ok(pt) => pt,
+            _ => {
+                return Err(CryptoError::InvalidPoint);
+            }
+        };
+        Ok(G2(IG2 { pt }))
+    }
+
+    pub fn to_hex(&self) -> String {
+        let bytes = self.to_bytes();
+        u8v_to_hexstr(&bytes)
+    }
+
+    pub fn try_from_hex(s: &str) -> Result<G2, CryptoError> {
+        let mut tmp = [0u8; 96];
+        hexstr_to_bev_u8(&s, &mut tmp)?;
+        G2::try_from_bytes(&tmp)
+    }
+}
+
+impl fmt::Debug for G2 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let cpt = self.0.pt.into_compressed();
+        let tmp = cpt.as_ref();
+        write!(f, "SecureG2({})", u8v_to_hexstr(&tmp[0..96]))
+    }
+}
+
+impl Eq for G2 {}
+
+impl PartialEq for G2 {
+    fn eq(&self, b: &Self) -> bool {
+        self.0.pt == b.0.pt
+    }
+}
+
+impl AddAssign<G2> for G2 {
+    fn add_assign(&mut self, other: Self) {
+        self.0.add_assign(other.0)
+    }
+}
+
+// -------------------------------------------------------------------------------
+
+impl Hashable for Signature {
+    // Signature is G1 compressed = 48 bytes
+    fn hash(&self, state: &mut Hasher) {
+        "Signature".hash(state);
+        let bytes = self.to_bytes();
+        bytes[0..48].hash(state);
+    }
+}
+
+impl Hashable for SecretKey {
+    // SecretKey is [u64; 4]
+    fn hash(&self, state: &mut Hasher) {
+        "SecretKey".hash(state);
+        let bytes = self.to_bytes();
+        bytes[0..32].hash(state);
+    }
+}
+
+impl Hashable for PublicKey {
+    // Pubkey is compressed G2 = 96 bytes
+    fn hash(&self, state: &mut Hasher) {
+        "PublicKey".hash(state);
+        let bytes = self.to_bytes();
+        bytes[0..96].hash(state);
+    }
+}
+
+impl Hashable for G1 {
+    // G1 in compressed form is 48 bytes
+    fn hash(&self, state: &mut Hasher) {
+        "G1".hash(state);
+        let bytes = self.to_bytes();
+        bytes[0..48].hash(state);
+    }
+}
+
+impl Hashable for G2 {
+    // G2 in compressed form is 96 bytes
+    fn hash(&self, state: &mut Hasher) {
+        "G2".hash(state);
+        let bytes = self.to_bytes();
+        bytes[0..96].hash(state);
+    }
+}
+
+impl Hashable for Fq2 {
+    // no stated representation available for Fq,
+    // but it is [u64;6] in compressed form
+    fn hash(&self, state: &mut Hasher) {
+        "Fq2".hash(state);
+        let tmp = self.c0.into_repr(); // Fq
+        for ix in 0..6 {
+            tmp.0[ix].hash(state);
+        }
+        let tmp = self.c1.into_repr(); // Fq
+        for ix in 0..6 {
+            tmp.0[ix].hash(state);
+        }
+    }
+}
+
+impl Hashable for Fq6 {
+    fn hash(&self, state: &mut Hasher) {
+        "Fq6".hash(state);
+        self.c0.hash(state); // Fq2
+        self.c1.hash(state); // Fq2
+        self.c2.hash(state); // Fq2
+    }
+}
+
+impl Hashable for Fq12 {
+    fn hash(&self, state: &mut Hasher) {
+        "Fq12".hash(state);
+        self.c0.hash(state); // Fq6
+        self.c1.hash(state); // Fq6
+    }
+}
+
+// -------------------------------------------------------------------------------
+
+impl SecretKey {
+    pub fn to_bytes(&self) -> [u8; 32] {
+        let tmp = self.0.x.into_repr();
+        let h8 = &unsafe { mem::transmute::<_, [u8; 32]>(tmp.0) };
+        let mut ans = [0u8; 32];
+        ans.copy_from_slice(h8);
+        ans
+    }
+
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        if bytes.len() != 32 {
+            return Err(CryptoError::InvalidBinaryLength(32, bytes.len()));
+        }
+        let mut tbytes = [0u8; 32];
+        tbytes.copy_from_slice(bytes);
+        let h64 = &unsafe { mem::transmute::<[u8; 32], [u64; 4]>(tbytes) };
+        let mut tmp = Fr::zero().into_repr();
+        tmp.0.copy_from_slice(h64);
+        match Fr::from_repr(tmp) {
+            Err(_) => Err(CryptoError::NotInPrincipalSubgroup),
+            Ok(fr) => Ok(SecretKey(ISecretKey { x: fr })),
+        }
+    }
+
+    pub fn to_hex(&self) -> String {
+        u8v_to_hexstr(&self.to_bytes())
+    }
+
+    pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
+        let mut tmp = [0u8; 32];
+        hexstr_to_bev_u8(s, &mut tmp)?;
+        Self::try_from_bytes(&tmp)
+    }
+}
+
+impl fmt::Debug for SecretKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let hex = self.to_hex();
+        write!(f, "PublicKey({})", hex)
+    }
+}
+
+impl fmt::Display for SecretKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // display only first 6 bytes.
+        let hex = self.to_hex();
+        write!(f, "{}", &hex[0..12])
+    }
+}
+
+impl Eq for SecretKey {}
+
+impl PartialEq for SecretKey {
+    fn eq(&self, b: &Self) -> bool {
+        self.0.x == b.0.x
+    }
+}
+
+// -------------------------------------------------------------------
+
+impl PublicKey {
+    pub fn dum() -> Self {
+        G2::zero().into()
+    }
+
+    pub fn to_bytes(&self) -> [u8; 96] {
+        let pt = G2::from(self.clone());
+        pt.to_bytes()
+    }
+
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        Ok(PublicKey::from(G2::try_from_bytes(bytes)?))
+    }
+
+    pub fn to_hex(&self) -> String {
+        G2::from(self.clone()).to_hex()
+    }
+
+    pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
+        let g = G2::try_from_hex(s)?;
+        Ok(PublicKey::from(g))
+    }
+}
+
+impl Serialize for PublicKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'de> Deserialize<'de> for PublicKey {
+    fn deserialize<D>(deserializer: D) -> Result<PublicKey, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        PublicKey::try_from_hex(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+impl Eq for PublicKey {}
+
+impl PartialEq for PublicKey {
+    fn eq(&self, b: &Self) -> bool {
+        self.0.p_pub == b.0.p_pub
+    }
+}
+
+impl fmt::Debug for PublicKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let hex = self.to_hex();
+        write!(f, "PublicKey({})", hex)
+    }
+}
+
+impl fmt::Display for PublicKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // display only first 6 bytes.
+        let hex = self.to_hex();
+        write!(f, "{}", &hex[0..12])
+    }
+}
+
+// Needed to sort the list of validators
+impl Ord for PublicKey {
+    fn cmp(&self, other: &PublicKey) -> Ordering {
+        let self_bytes = self.to_bytes();
+        let other_bytes = other.to_bytes();
+        self_bytes[0..96].cmp(&other_bytes[0..96])
+    }
+}
+
+impl PartialOrd for PublicKey {
+    fn partial_cmp(&self, other: &PublicKey) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl stdhash::Hash for PublicKey {
+    // we often want to look things up by public key
+    // std::HashMap needs this
+    fn hash<H: stdhash::Hasher>(&self, state: &mut H) {
+        stdhash::Hash::hash("PKey", state);
+        let bytes = self.to_bytes();
+        stdhash::Hash::hash(&bytes[0..96], state);
+    }
+}
+
+impl From<PublicKey> for G2 {
+    fn from(pkey: PublicKey) -> Self {
+        G2(IG2 {
+            pt: pkey.0.p_pub.into_affine(),
+        })
+    }
+}
+
+impl From<G2> for PublicKey {
+    fn from(g: G2) -> Self {
+        PublicKey(IPublicKey {
+            p_pub: g.0.pt.into_projective(),
+        })
+    }
+}
+
+// -------------------------------------------------------------------
+
+impl Signature {
+    /// Create a new point which binary representation consists of all zeros.
+    pub fn new() -> Signature {
+        Signature::from(G1::zero())
+    }
+
+    /// Create a new point which binary representation consists of all zeros.
+    pub fn zero() -> Signature {
+        Signature::from(G1::zero())
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.0.is_zero()
+    }
+
+    pub fn to_bytes(&self) -> [u8; 48] {
+        let pt = G1::from(self.clone());
+        pt.to_bytes()
+    }
+
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        let pt = G1::try_from_bytes(bytes)?;
+        Ok(Signature::from(pt))
+    }
+
+    pub fn to_hex(&self) -> String {
+        let pt = G1::from(self.clone());
+        pt.to_hex()
+    }
+
+    pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
+        let pt = G1::try_from_hex(s)?;
+        Ok(Signature::from(pt))
+    }
+}
+
+impl From<Signature> for G1 {
+    fn from(sig: Signature) -> Self {
+        G1(IG1 {
+            pt: sig.0.s.into_affine(),
+        })
+    }
+}
+
+impl From<G1> for Signature {
+    fn from(g: G1) -> Self {
+        Signature(ISignature {
+            s: g.0.pt.into_projective(),
+        })
+    }
+}
+
+impl fmt::Debug for Signature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let hex = self.to_hex();
+        write!(f, "SecureSig({})", hex)
+    }
+}
+
+impl Eq for Signature {}
+
+impl PartialEq for Signature {
+    fn eq(&self, b: &Self) -> bool {
+        self.0.s == b.0.s
+    }
+}
+
+impl AddAssign<Signature> for Signature {
+    fn add_assign(&mut self, other: Self) {
+        self.0.add_assign(other.0)
+    }
+}
+
+// -------------------------------------------------------------------
+
+pub fn sign_hash(h: &Hash, skey: &SecretKey) -> Signature {
+    Signature(skey.0.sign(h.base_vector()))
+}
+
+pub fn check_hash(h: &Hash, sig: &Signature, pkey: &PublicKey) -> Result<(), CryptoError> {
+    if pkey.0.verify(h.base_vector(), &sig.0) {
+        Ok(())
+    } else {
+        Err(CryptoError::BadKeyingSignature)
+    }
+}
+
+// -------------------------------------------------------------------------------
+
+impl From<Hash> for Fr {
+    fn from(h: Hash) -> Self {
+        let mut rep = Fr::zero().into_repr();
+        let mut hm = h.clone();
+        loop {
+            let h8 = &unsafe { mem::transmute::<_, [u64; 4]>(hm.bits()) };
+            rep.0[0] = h8[0];
+            rep.0[1] = h8[1];
+            rep.0[2] = h8[2];
+            rep.0[3] = h8[3];
+            if rep.is_zero() {
+                hm = Hash::from_vector(hm.base_vector());
+            } else {
+                break;
+            }
+        }
+        while rep >= Fr::char() {
+            rep.div2();
+        }
+        Fr::from_repr(rep).expect("ok")
+    }
+}
+
+pub fn make_deterministic_keys(seed: &[u8]) -> (SecretKey, PublicKey) {
+    let iskey = ISecretKey {
+        x: Fr::from(Hash::from_vector(seed)),
+    };
+    let ipkey = IPublicKey::<Engine>::from_secret(&iskey);
+    let skey = SecretKey(iskey);
+    let pkey = PublicKey(ipkey);
+    (skey, pkey)
+}
+
+pub fn make_random_keys() -> (SecretKey, PublicKey) {
+    let mut rng = thread_rng();
+    make_deterministic_keys(&rng.gen::<[u8; 32]>())
+}
+
+pub fn check_keying(skey: &SecretKey, pkey: &PublicKey) -> Result<(), CryptoError> {
+    let hpk = Hash::digest(&pkey);
+    let sig = sign_hash(&hpk, &skey);
+    check_hash(&hpk, &sig, &pkey)
+}
+
+// ------------------------------------------------------------------------
+// Subkey generation and Sakai-Kasahara Encryption
+
+pub fn make_secret_subkey(skey: &SecretKey, seed: &[u8]) -> SecretSubKey {
+    let id = Fr::from(Hash::from_vector(seed));
+    let iskey: ISecretSubKey<Engine> = skey.0.into_subkey(id);
+    SecretSubKey(iskey)
+}
+
+pub fn make_public_subkey(pkey: &PublicKey, seed: &[u8]) -> PublicSubKey {
+    let id = Fr::from(Hash::from_vector(seed));
+    let ipkey: IPublicSubKey<Engine> = pkey.0.into_subkey(id);
+    PublicSubKey(ipkey)
+}
+
+pub fn validate_subkeying(skey: &SecretSubKey, pkey: &PublicSubKey) -> bool {
+    skey.0.check_vrf(&pkey.0)
+}
+
+// -----------------------------------------------------
+// Sakai-Hasakara Encryption
+
+#[derive(Copy, Clone)]
+pub struct RVal(IG2<Engine>);
+
+impl RVal {
+    pub fn to_hex(&self) -> String {
+        G2::from(self.clone()).to_hex()
+    }
+
+    /// Try to convert from hex string
+    pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
+        let g = G2::try_from_hex(s)?;
+        Ok(RVal::from(g))
+    }
+
+    /// Convert into bytes slice
+    pub fn to_bytes(&self) -> [u8; 96] {
+        G2::from(self.clone()).to_bytes()
+    }
+
+    /// Try to convert from raw bytes.
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        Ok(RVal::from(G2::try_from_bytes(bytes)?))
+    }
+}
+
+impl Hashable for RVal {
+    fn hash(&self, state: &mut Hasher) {
+        "SecureRVal".hash(state);
+        let cpt = self.0.pt.into_compressed();
+        let tmp = cpt.as_ref();
+        tmp[0..96].hash(state);
+    }
+}
+
+impl Eq for RVal {}
+
+impl PartialEq for RVal {
+    fn eq(&self, b: &Self) -> bool {
+        self.0.pt == b.0.pt
+    }
+}
+
+impl From<G2> for RVal {
+    fn from(pt: G2) -> Self {
+        RVal(pt.0)
+    }
+}
+
+impl From<RVal> for G2 {
+    fn from(rv: RVal) -> Self {
+        G2(rv.0)
+    }
+}
+
+// structure of a SAKKI encryption.
+// ---------------------------------
+// For use in UTXO's you will only want to store the
+// ciphertext, cmsg, and the rval. Proper recipients
+// already know their own public keys, and the IBE ID
+// that was used to encrypt their payload.
+// ----------------------------------
+pub struct EncryptedPacket {
+    pkey: PublicKey,
+    // public key of recipient
+    id: Vec<u8>,
+    // IBE ID
+    rval: RVal,
+    // R_val used for SAKE encryption
+    cmsg: Vec<u8>, // encrypted payload
+}
+
+impl EncryptedPacket {
+    pub fn new(pkey: &PublicKey, id: &[u8], rval: &RVal, cmsg: &[u8]) -> Self {
+        EncryptedPacket {
+            pkey: pkey.clone(),
+            id: id.to_vec(),
+            rval: rval.clone(),
+            cmsg: cmsg.to_vec(),
+        }
+    }
+
+    pub fn rval(&self) -> &RVal {
+        &self.rval
+    }
+
+    pub fn cmsg(&self) -> &Vec<u8> {
+        &self.cmsg
+    }
+}
+
+pub fn ibe_encrypt(msg: &[u8], pkey: &PublicKey, id: &[u8]) -> EncryptedPacket {
+    let nmsg = msg.len();
+
+    // compute IBE public key
+    let pkid = make_public_subkey(&pkey, &id);
+
+    // compute hash of concatenated id:msg
+    let mut concv = Vec::from(id);
+    for b in msg.to_vec() {
+        concv.push(b);
+    }
+    let rhash = Hash::from_vector(&concv);
+    let fr = Fr::from(rhash);
+    let ipt = pkid.0.pt.into_affine();
+    let irval = ipt.mul(fr);
+    let rval = RVal(IG2 {
+        pt: irval.into_affine(),
+    });
+    let pval: Fq12 = IG1::<Engine>::sakke_fqk(fr);
+    let pvbytes = Hash::digest(&pval);
+    let mut cmsg = hash_nbytes(nmsg, pvbytes.base_vector());
+    // encrypt with (msg XOR H(pairing-val))
+    for ix in 0..nmsg {
+        cmsg[ix] ^= msg[ix];
+    }
+    EncryptedPacket {
+        pkey: pkey.clone(),
+        id: id.to_vec(),
+        rval,
+        cmsg,
+    }
+}
+
+pub fn ibe_decrypt(pack: &EncryptedPacket, skey: &SecretKey) -> Option<Vec<u8>> {
+    let skid = make_secret_subkey(&skey, &pack.id);
+    let pkid = make_public_subkey(&pack.pkey, &pack.id);
+    let nmsg = pack.cmsg.len();
+
+    let irval = pack.rval.0.pt;
+    let isval = IG1::<Engine> {
+        pt: skid.0.pt.into_affine(),
+    };
+    let pval: Fq12 = IG1::pair_with(&isval, irval);
+    let pvbytes = Hash::digest(&pval);
+
+    // decrypt using (ctxt XOR H(pairing_val))
+    let mut msg = hash_nbytes(nmsg, &pvbytes.base_vector());
+    for ix in 0..nmsg {
+        msg[ix] ^= pack.cmsg[ix];
+    }
+    // Now check that message was correctly decrypted
+    // compute hash of concatenated id:msg
+    let mut concv = pack.id.clone();
+    for b in msg.clone() {
+        concv.push(b);
+    }
+    let rhash = Hash::from_vector(&concv);
+    let fr = Fr::from(rhash);
+    let ipt = pkid.0.pt.into_affine();
+    if ipt.mul(fr).into_affine() == irval {
+        Some(msg)
+    } else {
+        None
+    }
+}
+
+// -------------------------------------------------------
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct VRF {
+    pub rand: Hash,
+    // hash digest of generated randomness in pairing field
+    pub proof: G1, // proof on randomness
+}
+
+impl Hashable for VRF {
+    fn hash(&self, state: &mut Hasher) {
+        self.rand.hash(state);
+        self.proof.hash(state);
+    }
+}
+
+impl fmt::Display for VRF {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "VRF({})", self.rand.to_hex())
+    }
+}
+
+pub fn make_VRF(skey: &SecretKey, seed: &Hash) -> VRF {
+    // whatever the source of the seed, it should all be
+    // pre-hashed before calling this function
+    let id = Fr::from(*seed);
+    let (key, fq12) = skey.0.into_vrf(id);
+    let proof = G1(IG1 {
+        pt: key.pt.into_affine(),
+    });
+    let rand = Hash::digest(&fq12);
+    VRF { rand, proof }
+}
+
+pub fn validate_VRF_randomness(vrf: &VRF) -> bool {
+    // Public validation - anyone can validate the randomness
+    // knowing only its value and the accompanying proof.
+    let key = ISecretSubKey::<Engine> {
+        pt: vrf.proof.0.pt.into_projective(),
+    };
+    let rand = key.into_fq12();
+    vrf.rand == Hash::digest(&rand)
+}
+
+pub fn validate_VRF_source(vrf: &VRF, pkey: &PublicKey, seed: &Hash) -> bool {
+    // whatever the source of the seed, it should all be
+    // pre-hashed before calling this function.
+    //
+    // Anyone knowing the pkey of the originator, and the seed that
+    // was used, can verify that the randomness originated from the
+    // holder of the corresponding secret key and that seed.
+    //
+    let id = Fr::from(*seed);
+    let ipsubkey = pkey.0.into_subkey(id);
+    let skey = ISecretSubKey {
+        pt: vrf.proof.0.pt.into_projective(),
+    };
+    skey.check_vrf(&ipsubkey)
+}
+
+// -----------------------------------------------------------
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use super::*;
 
+    use paired::bls12_381::Bls12;
+
     #[test]
-    fn check_pbc_connection() {
-        // show that we correctly connect to LispPBCIntf lib
-        let input = "hello!".as_bytes();
-        let output = vec![0u8; input.len()];
-        unsafe {
-            let echo_out = rust_libpbc::echo(
-                input.len() as u64,
-                input.as_ptr() as *mut _,
-                output.as_ptr() as *mut _,
-            );
-            assert_eq!(echo_out, input.len() as u64);
+    fn sign_verify() {
+        use crate::pbc::internal::*;
+        use old_rand::*;
+        let mut rng = XorShiftRng::from_seed([0xbc4f6d44, 0xd62f276c, 0xb963afd0, 0x5455863d]);
+
+        for i in 0..500 {
+            let keypair = IKeypair::<Bls12>::generate(&mut rng);
+            let message = format!("Message {}", i);
+            let sig = keypair.sign(&message.as_bytes());
+            assert_eq!(keypair.verify(&message.as_bytes(), &sig), true);
         }
-        assert_eq!(input.to_vec(), output);
     }
 
     #[test]
-    fn check_pbc_init() {
-        use rand::rngs::ThreadRng;
-        use rand::thread_rng;
-        use rand::Rng;
+    fn aggregate_signatures() {
+        use crate::pbc::internal::*;
+        use old_rand::*;
+        let mut rng = XorShiftRng::from_seed([0xbc4f6d44, 0xd62f276c, 0xb963afd0, 0x5455863d]);
 
-        let sig_pkey =
-            secure::PublicKey::try_from_hex(&SIG_PKEY).expect("Invalid hexstring: SIG_PKEY");
+        let mut inputs = Vec::with_capacity(1000);
+        let mut signatures = Vec::with_capacity(1000);
+        for i in 0..500 {
+            let keypair = IKeypair::<Bls12>::generate(&mut rng);
+            let message = format!("Message {}", i);
+            let signature = keypair.sign(&message.as_bytes());
+            inputs.push((keypair.public, message));
+            signatures.push(signature);
 
-        let h = Hash::try_from_hex(&HASH_AR160).expect("Invalid hexstring: HASH_AR160");
-        let sig =
-            secure::Signature::try_from_hex(&SIG_AR160).expect("Invalid hexstring: SIG_AR160");
-        secure::check_hash(&h, &sig, &sig_pkey).expect("valid curve constants for AR160");
-
-        let h = Hash::try_from_hex(&HASH_FR256).expect("Invalid hexstring: HASH_FR256");
-        let sig = secure::Signature::try_from_hex(SIG_FR256).expect("Invalid hexstring: SIG_FR256");
-        secure::check_hash(&h, &sig, &sig_pkey).expect("Invalid curve constants for FR256");
-
-        // check to be sure make_deterministic_keys() stil works properly
-        let mut rng: ThreadRng = thread_rng();
-        let seed = rng.gen::<[u8; 32]>();
-        let (skey, pkey) = secure::make_deterministic_keys(&seed);
-        secure::check_keying(&skey, &pkey).expect("Invalid keying");
-        fast::G2::generator();
+            // Only test near the beginning and the end, to reduce test runtime
+            if i < 10 || i > 495 {
+                let asig = IAggregateSignature::from_signatures(&signatures);
+                assert_eq!(
+                    asig.verify(
+                        &inputs
+                            .iter()
+                            .map(|&(ref pk, ref m)| (pk, m.as_bytes()))
+                            .collect()
+                    ),
+                    true
+                );
+            }
+        }
     }
 
     #[test]
-    fn check_vrf() {
-        let (skey, pkey) = secure::make_deterministic_keys(b"Testing");
-        secure::check_keying(&skey, &pkey).unwrap();
-        let hseed = Hash::from_str("VRF_Seed");
-        let vrf = secure::make_VRF(&skey, &hseed);
-        assert!(secure::validate_VRF_randomness(&vrf));
-        assert!(secure::validate_VRF_source(&vrf, &pkey, &hseed));
+    fn aggregate_signatures_duplicated_messages() {
+        use crate::pbc::internal::*;
+        use old_rand::*;
+        let mut rng = XorShiftRng::from_seed([0xbc4f6d44, 0xd62f276c, 0xb963afd0, 0x5455863d]);
+
+        let mut inputs = Vec::new();
+        let mut asig = IAggregateSignature::new();
+
+        // Create the first signature
+        let keypair = IKeypair::<Bls12>::generate(&mut rng);
+        let message = "First message";
+        let signature = keypair.sign(&message.as_bytes());
+        inputs.push((keypair.public, message));
+        asig.aggregate(&signature);
+
+        // The first "aggregate" signature should pass
+        assert_eq!(
+            asig.verify(
+                &inputs
+                    .iter()
+                    .map(|&(ref pk, ref m)| (pk, m.as_bytes()))
+                    .collect()
+            ),
+            true
+        );
+
+        // Create the second signature
+        let keypair = IKeypair::<Bls12>::generate(&mut rng);
+        let message = "Second message";
+        let signature = keypair.sign(&message.as_bytes());
+        inputs.push((keypair.public, message));
+        asig.aggregate(&signature);
+
+        // The second (now-)aggregate signature should pass
+        assert_eq!(
+            asig.verify(
+                &inputs
+                    .iter()
+                    .map(|&(ref pk, ref m)| (pk, m.as_bytes()))
+                    .collect()
+            ),
+            true
+        );
+
+        // Create the third signature, reusing the second message
+        let keypair = IKeypair::<Bls12>::generate(&mut rng);
+        let signature = keypair.sign(&message.as_bytes());
+        inputs.push((keypair.public, message));
+        asig.aggregate(&signature);
+
+        // The third aggregate signature should fail
+        assert_eq!(
+            asig.verify(
+                &inputs
+                    .iter()
+                    .map(|&(ref pk, ref m)| (pk, m.as_bytes()))
+                    .collect()
+            ),
+            false
+        );
+    }
+
+    #[test]
+    fn chk_bls() {
+        use crate::pbc::internal::*;
+        use old_rand::*;
+        let mut rng = XorShiftRng::from_seed([0xbc4f6d44, 0xd62f276c, 0xb963afd0, 0x5455863d]);
+        let keypair = IKeypair::<Bls12>::generate(&mut rng);
+        let message = "Some message";
+        let sig = keypair.sign(&message.as_bytes());
+        if true {
+            let csig = sig.s.into_affine().into_compressed();
+            let cpkey = keypair.public.p_pub.into_affine().into_compressed();
+            use std::time::SystemTime;
+            let start = SystemTime::now();
+            let niter = 1000;
+            for _ in 0..niter {
+                let mut sig = sig.clone();
+                sig.s = csig.into_affine().expect("ok").into_projective();
+                let mut kp = keypair.clone();
+                kp.public.p_pub = cpkey.into_affine().expect("ok").into_projective();
+                kp.verify(&message.as_bytes(), &sig);
+            }
+            let timing = start.elapsed().expect("ok");
+            println!("BLS Verify = {:?}", timing / niter);
+        }
+        assert_eq!(keypair.verify(&message.as_bytes(), &sig), true);
+    }
+
+    #[test]
+    fn chk_bls2() {
+        use crate::pbc::*;
+
+        // check key generation
+        let (skey, pkey) = make_deterministic_keys(b"Test Keys");
+        check_keying(&skey, &pkey).expect("ok");
+
+        // check key serialization
+        let bytes = skey.to_bytes();
+        let skey2 = SecretKey::try_from_bytes(&bytes).expect("ok");
+        assert!(skey == skey2);
+        let hex = skey.to_hex();
+        let skey2 = SecretKey::try_from_hex(&hex).expect("ok");
+        assert!(skey == skey2);
+
+        let bytes = pkey.to_bytes();
+        let pkey2 = PublicKey::try_from_bytes(&bytes).expect("ok");
+        assert!(pkey == pkey2);
+        let hex = pkey.to_hex();
+        let pkey2 = PublicKey::try_from_hex(&hex).expect("ok");
+        assert!(pkey == pkey2);
+
+        // Check BLS Signature
+        let message = "Some message";
+        let sig = sign_hash(&Hash::digest(message), &skey);
+        check_hash(&Hash::digest(message), &sig, &pkey).expect("ok");
+        // BLS Signature serialization
+        let bytes = sig.to_bytes();
+        let sig2 = Signature::try_from_bytes(&bytes).expect("ok");
+        assert!(sig == sig2);
+        let hex = sig.to_hex();
+        let sig2 = Signature::try_from_hex(&hex).expect("ok");
+        assert!(sig == sig2);
+
+        // check subkeying generation
+        let id = b"Testing";
+        let sskey = make_secret_subkey(&skey, id);
+        let pskey = make_public_subkey(&pkey, id);
+        assert!(validate_subkeying(&sskey, &pskey));
+
+        // check VRF
+        let h = Hash::from_str("Testing");
+        let vrf = make_VRF(&skey, &h);
+        assert!(validate_VRF_randomness(&vrf));
+        assert!(validate_VRF_source(&vrf, &pkey, &h));
+
+        // check IBE Encryption
+        let payload = b"This is a test payload";
+        let enc = ibe_encrypt(payload, &pkey, b"testing-identity");
+        let dec = match ibe_decrypt(&enc, &skey) {
+            Some(msg) => msg,
+            None => panic!("could not decrypt payload"),
+        };
+        assert!(dec == payload);
+
+        // get BLS Signature validation timing
+        if true {
+            use std::time::SystemTime;
+            let start = SystemTime::now();
+            let niter = 1000;
+            for _ in 0..niter {
+                check_hash(&Hash::digest(message), &sig, &pkey).expect("ok");
+            }
+            let timing = start.elapsed().expect("ok");
+            println!("BLS Verify = {:?}", timing / niter);
+        }
     }
 }
 
-// ---------------------------------------------------------------------
+// ---------------------------------------------------------

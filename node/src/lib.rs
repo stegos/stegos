@@ -377,6 +377,16 @@ impl NodeService {
     /// Handle incoming transactions received from network.
     fn handle_transaction(&mut self, tx: Transaction) -> Result<(), Error> {
         let tx_hash = Hash::digest(&tx);
+        if !self.is_synchronized() {
+            debug!(
+                "Node is not synchronized - ignore transaction from the network: tx={}, inputs={}, outputs={}, fee={}",
+                &tx_hash,
+                tx.txins().len(),
+                tx.txouts().len(),
+                tx.fee()
+            );
+            return Ok(());
+        }
         info!(
             "Received transaction from the network: tx={}, inputs={}, outputs={}, fee={}",
             &tx_hash,

@@ -23,6 +23,7 @@ log = "0.4"
 parking_lot = "0.6"
 protobuf = "2.6"
 rand = "0.6"
+old_rand = { package = "rand", version = "0.4" }
 rayon = "1.0"
 rust-crypto = "0.2"
 rust-gmp = "0.5"
@@ -30,6 +31,8 @@ rust-libpbc = { version = "0.1.0", git = "https://github.com/stegos/rust-pbcintf
 sha3 = "0.8"
 clear_on_drop = "0.2"
 serde = "1.0"
+paired = "0.15"
+ff = "0.4"
 
 [dev-dependencies]
 serde_json = "1.0"

@@ -249,6 +249,7 @@ mod tests {
         let ept = pt.decompress().unwrap();
     }
 
+    /*
     #[test]
     fn chk_init() {
         use crate::pbc::secure;
@@ -258,6 +259,7 @@ mod tests {
         let h = Hash::try_from_hex(&HASH_CONSTS).expect("Invalid hexstr: HASH_CONSTS");
         secure::check_hash(&h, &sig, &sig_pkey).expect("Invalid Curve1174 init contants");
     }
+    */
 
     #[test]
     fn chk_encryption() {

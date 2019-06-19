@@ -95,18 +95,18 @@ use curve1174::Pt;
 use curve1174::PublicKey;
 use curve1174::SchnorrSig;
 use curve1174::SecretKey;
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct ParticipantID {
-    pub pkey: pbc::secure::PublicKey,
+    pub pkey: pbc::PublicKey,
     pub seed: [u8; 32],
 }
 
 impl ParticipantID {
-    pub fn new(pkey: pbc::secure::PublicKey, seed: [u8; 32]) -> Self {
+    pub fn new(pkey: pbc::PublicKey, seed: [u8; 32]) -> Self {
         ParticipantID { pkey, seed }
     }
 
-    pub fn from_pk(pkey: pbc::secure::PublicKey) -> Self {
+    pub fn from_pk(pkey: pbc::PublicKey) -> Self {
         let seed = [0u8; 32];
         ParticipantID { pkey, seed }
     }
@@ -579,7 +579,7 @@ pub fn dc_keys(
         ccpt.hash(&mut state);
         let comm = state.result();
 
-        out.insert(*pkey, comm);
+        out.insert(pkey.clone(), comm);
     }
     out
 }
@@ -618,7 +618,7 @@ where
             let mut p_ex = p_excl.clone();
             p_all.append(&mut p_ex);
             p_all.retain(|p| *p != *my_id);
-            p_all.push(*my_id);
+            p_all.push(my_id.clone());
             p_all.retain(|p| *p != *pkey);
 
             let sk = sess_skeys.get(pkey).unwrap();
@@ -690,7 +690,7 @@ where
             }
 
             if pkey_fail {
-                Some(*pkey)
+                Some(pkey.clone())
             } else {
                 None
             }
@@ -820,19 +820,28 @@ mod tests {
 
     #[test]
     fn tst_sheet_gen() {
-        let (sk1, pk1) = pbc::secure::make_deterministic_keys(b"User1");
-        let (sk2, pk2) = pbc::secure::make_deterministic_keys(b"User2");
-        let (sk3, pk3) = pbc::secure::make_deterministic_keys(b"User3");
+        let (sk1, pk1) = pbc::make_deterministic_keys(b"User1");
+        let (sk2, pk2) = pbc::make_deterministic_keys(b"User2");
+        let (sk3, pk3) = pbc::make_deterministic_keys(b"User3");
         let all_participants = vec![
-            ParticipantID::from_pk(pk1),
-            ParticipantID::from_pk(pk2),
-            ParticipantID::from_pk(pk3),
+            ParticipantID::from_pk(pk1.clone()),
+            ParticipantID::from_pk(pk2.clone()),
+            ParticipantID::from_pk(pk3.clone()),
         ];
         dbg!(&all_participants);
 
-        let participants_1 = vec![ParticipantID::from_pk(pk2), ParticipantID::from_pk(pk3)];
-        let participants_2 = vec![ParticipantID::from_pk(pk1), ParticipantID::from_pk(pk3)];
-        let participants_3 = vec![ParticipantID::from_pk(pk1), ParticipantID::from_pk(pk2)];
+        let participants_1 = vec![
+            ParticipantID::from_pk(pk2.clone()),
+            ParticipantID::from_pk(pk3.clone()),
+        ];
+        let participants_2 = vec![
+            ParticipantID::from_pk(pk1.clone()),
+            ParticipantID::from_pk(pk3.clone()),
+        ];
+        let participants_3 = vec![
+            ParticipantID::from_pk(pk1.clone()),
+            ParticipantID::from_pk(pk2.clone()),
+        ];
 
         let sess = Hash::from_str("session1");
         let (sess_sk1, sess_pk1) = curve1174::make_deterministic_keys(b"User1-session1");
@@ -840,35 +849,35 @@ mod tests {
         let (sess_sk3, sess_pk3) = curve1174::make_deterministic_keys(b"User3-session1");
 
         let mut npk1 = HashMap::new();
-        npk1.insert(ParticipantID::from_pk(pk2), sess_pk2);
-        npk1.insert(ParticipantID::from_pk(pk3), sess_pk3);
+        npk1.insert(ParticipantID::from_pk(pk2.clone()), sess_pk2);
+        npk1.insert(ParticipantID::from_pk(pk3.clone()), sess_pk3);
 
         let mut npk2 = HashMap::new();
-        npk2.insert(ParticipantID::from_pk(pk1), sess_pk1);
-        npk2.insert(ParticipantID::from_pk(pk3), sess_pk3);
+        npk2.insert(ParticipantID::from_pk(pk1.clone()), sess_pk1);
+        npk2.insert(ParticipantID::from_pk(pk3.clone()), sess_pk3);
 
         let mut npk3 = HashMap::new();
-        npk3.insert(ParticipantID::from_pk(pk1), sess_pk1);
-        npk3.insert(ParticipantID::from_pk(pk2), sess_pk2);
+        npk3.insert(ParticipantID::from_pk(pk1.clone()), sess_pk1);
+        npk3.insert(ParticipantID::from_pk(pk2.clone()), sess_pk2);
 
         let shared_cloaking_1 = dc_keys(
             &all_participants,
             &npk1,
-            &ParticipantID::from_pk(pk1),
+            &ParticipantID::from_pk(pk1.clone()),
             &sess_sk1,
             &sess,
         );
         let shared_cloaking_2 = dc_keys(
             &participants_2,
             &npk2,
-            &ParticipantID::from_pk(pk2),
+            &ParticipantID::from_pk(pk2.clone()),
             &sess_sk2,
             &sess,
         );
         let shared_cloaking_3 = dc_keys(
             &participants_3,
             &npk3,
-            &ParticipantID::from_pk(pk3),
+            &ParticipantID::from_pk(pk3.clone()),
             &sess_sk3,
             &sess,
         );
@@ -881,21 +890,21 @@ mod tests {
 
         let pad_1 = dc_slot_pad(
             &all_participants,
-            &ParticipantID::from_pk(pk1),
+            &ParticipantID::from_pk(pk1.clone()),
             &shared_cloaking_1,
             &seed,
         )
         .clone();
         let pad_2 = dc_slot_pad(
             &participants_2,
-            &ParticipantID::from_pk(pk2),
+            &ParticipantID::from_pk(pk2.clone()),
             &shared_cloaking_2,
             &seed,
         )
         .clone();
         let pad_3 = dc_slot_pad(
             &participants_3,
-            &ParticipantID::from_pk(pk3),
+            &ParticipantID::from_pk(pk3.clone()),
             &shared_cloaking_3,
             &seed,
         )
@@ -918,7 +927,7 @@ mod tests {
             max_cells,
             &msg_1[..],
             &all_participants,
-            &ParticipantID::from_pk(pk1),
+            &ParticipantID::from_pk(pk1.clone()),
             &shared_cloaking_1,
         );
 
@@ -934,7 +943,7 @@ mod tests {
             max_cells,
             &msg_2[..],
             &all_participants,
-            &ParticipantID::from_pk(pk2),
+            &ParticipantID::from_pk(pk2.clone()),
             &shared_cloaking_2,
         );
         println!("Sheet_2");
@@ -948,7 +957,7 @@ mod tests {
             max_cells,
             &msg_3[..],
             &all_participants,
-            &ParticipantID::from_pk(pk3),
+            &ParticipantID::from_pk(pk3.clone()),
             &shared_cloaking_3,
         );
         println!("Sheet_3");
@@ -1004,9 +1013,9 @@ mod tests {
         // -------------------------------------------------
         // Try a real decode on the shared messages
         let mut mats = HashMap::new();
-        mats.insert(ParticipantID::from_pk(pk1), vec![sheet_1.clone()]);
-        mats.insert(ParticipantID::from_pk(pk2), vec![sheet_2.clone()]);
-        mats.insert(ParticipantID::from_pk(pk3), vec![sheet_3.clone()]);
+        mats.insert(ParticipantID::from_pk(pk1.clone()), vec![sheet_1.clone()]);
+        mats.insert(ParticipantID::from_pk(pk2.clone()), vec![sheet_2.clone()]);
+        mats.insert(ParticipantID::from_pk(pk3.clone()), vec![sheet_3.clone()]);
 
         let p_excl = Vec::<ParticipantID>::new();
         let k_excl: HashMap<ParticipantID, HashMap<ParticipantID, Hash>> = HashMap::new();
@@ -1030,7 +1039,7 @@ mod tests {
         let msgs = dc_decode(
             &all_participants,
             &mats,
-            &ParticipantID::from_pk(pk1),
+            &ParticipantID::from_pk(pk1.clone()),
             1,
             max_cells,
             &p_excl,
@@ -1116,11 +1125,11 @@ mod tests {
         let mut participants = Vec::<ParticipantID>::new();
         for ix in 0..nparts {
             let seed = format!("User_{}", ix).into_bytes();
-            let (sk, pk) = pbc::secure::make_deterministic_keys(&seed);
+            let (sk, pk) = pbc::make_deterministic_keys(&seed);
             // skeys.push(sk);
             participants.push(ParticipantID::from_pk(pk));
         }
-        let my_id = participants[0];
+        let my_id = participants[0].clone();
 
         // ------------------------------------------------------------
         // simulated start of VS session at one node
@@ -1134,9 +1143,9 @@ mod tests {
         for ix in 0..nparts {
             let seed = format!("User_{}_Session_Key", ix).into_bytes();
             let (sk, pk) = curve1174::make_deterministic_keys(&seed);
-            let p = participants[ix];
-            sess_pkeys.insert(p, pk);
-            sess_skeys.insert(p, sk);
+            let p = participants[ix].clone();
+            sess_pkeys.insert(p.clone(), pk.clone());
+            sess_skeys.insert(p.clone(), sk);
         }
         let my_sess_pkey = sess_pkeys.get(&my_id).unwrap();
         let my_sess_skey = sess_skeys.get(&my_id).unwrap();
@@ -1206,7 +1215,7 @@ mod tests {
             sess: &Hash,
         ) -> (ParticipantID, DcMatrix) {
             let mut matrix = Vec::<DcSheet>::new();
-            let p = participants[ix_p];
+            let p = participants[ix_p].clone();
             let s = sess_skeys.get(&p).unwrap();
             let shared_cloaking = dc_keys(&participants, &sess_pkeys, &p, &s, &sess);
             for ix_u in 0..nutxo {
@@ -1248,7 +1257,7 @@ mod tests {
             })
             .collect();
 
-        matrices.insert(my_id, matrix);
+        matrices.insert(my_id.clone(), matrix);
         for (p, m) in mats {
             matrices.insert(p, m);
         }
@@ -1263,7 +1272,7 @@ mod tests {
         let p_excl = Vec::<ParticipantID>::new();
         let mut k_excl: HashMap<ParticipantID, HashMap<ParticipantID, Hash>> = HashMap::new();
         for ix in 0..nparts {
-            let p = participants[ix];
+            let p = participants[ix].clone();
             k_excl.insert(p, HashMap::new());
         }
         let msgs = dc_decode(
@@ -1339,7 +1348,7 @@ mod tests {
         // get the blame discovery timing estimate
         let mut gamma_adjs = HashMap::new();
         for ix in 0..nparts {
-            let p = participants[ix];
+            let p = participants[ix].clone();
             gamma_adjs.insert(p, Fr::zero());
         }
 

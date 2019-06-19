@@ -22,48 +22,28 @@
 // SOFTWARE.
 
 use stegos_crypto::hash::*;
-use stegos_crypto::pbc::*;
+use stegos_crypto::pbc;
 
 // ------------------------------------------------------------------------
 
 fn main() {
-    let pt = fast::G1::generator() * fast::Zr::zero();
-    println!("pt = {:?}", pt);
     // ------------------------------------------------------------
     // on Secure pairings
     // test PRNG
-    println!("rand Zr = {}", secure::Zr::random().to_hex());
+    // println!("rand Zr = {}", pbc::Zr::random().to_hex());
 
     // test keying...
-    let (skey, pkey) = secure::make_deterministic_keys(b"Testing");
-    secure::check_keying(&skey, &pkey).unwrap();
+    let (skey, pkey) = pbc::make_deterministic_keys(b"Testing");
+    pbc::check_keying(&skey, &pkey).unwrap();
     println!();
 
-    // -------------------------------------
-    // on Fast pairings
-    // test PRNG
-    println!("rand Zr = {:?}", fast::Zr::random());
-
-    // test keying...
-    let (_skey, pkey, sig) = fast::make_deterministic_keys(b"Testing");
-    println!("pkey = {:?}", pkey);
-    println!("sig  = {:?}", sig);
-    assert!(fast::check_keying(&pkey, &sig));
-
-    // -------------------------------------
-    // check some arithmetic on the Fast curves
-    let a = 0x123456789i64;
-    println!("chk Zr: 0x{:x} -> {:?}", a, fast::Zr::from(a));
-    println!("chk Zr: -1 -> {:?}", fast::Zr::from(-1));
-    println!("chk Zr: -1 + 1 -> {:?}", fast::Zr::from(-1) + 1);
-
     // -----------------------------------------
-    let (skey, pkey) = secure::make_deterministic_keys(b"Testing");
-    secure::check_keying(&skey, &pkey).unwrap();
+    let (skey, pkey) = pbc::make_deterministic_keys(b"Testing");
+    pbc::check_keying(&skey, &pkey).unwrap();
     let hseed = Hash::from_str("VRF_Seed");
-    let vrf = secure::make_VRF(&skey, &hseed);
+    let vrf = pbc::make_VRF(&skey, &hseed);
     println!("VRF Rand: {:?}", vrf.rand);
     println!("VRF Proof: {:?}", vrf.proof);
-    assert!(secure::validate_VRF_randomness(&vrf));
-    assert!(secure::validate_VRF_source(&vrf, &pkey, &hseed));
+    assert!(pbc::validate_VRF_randomness(&vrf));
+    assert!(pbc::validate_VRF_source(&vrf, &pkey, &hseed));
 }

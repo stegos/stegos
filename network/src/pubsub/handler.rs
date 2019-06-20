@@ -22,7 +22,7 @@ use super::behavior::{FloodsubRecvEvent, FloodsubSendEvent};
 use super::protocol::{FloodsubCodec, FloodsubConfig, FloodsubRpc};
 
 use futures::prelude::*;
-use libp2p::core::{
+use libp2p_core::{
     protocols_handler::{KeepAlive, ProtocolsHandlerUpgrErr, SubstreamProtocol},
     upgrade::{InboundUpgrade, Negotiated, OutboundUpgrade},
     ProtocolsHandler, ProtocolsHandlerEvent,

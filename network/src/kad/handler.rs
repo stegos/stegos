@@ -24,13 +24,13 @@ use super::protocol::{
     KademliaProtocolConfig,
 };
 use futures::prelude::*;
-use libp2p::core::protocols_handler::{
+use libp2p_core::protocols_handler::{
     KeepAlive, ProtocolsHandler, ProtocolsHandlerEvent, ProtocolsHandlerUpgrErr, SubstreamProtocol,
 };
-use libp2p::core::{
+use libp2p_core::{
     either::EitherOutput, upgrade, upgrade::Negotiated, InboundUpgrade, OutboundUpgrade,
 };
-use libp2p::multihash::Multihash;
+use parity_multihash::Multihash;
 use std::{error, fmt, io, time::Instant};
 use tokio::io::{AsyncRead, AsyncWrite};
 

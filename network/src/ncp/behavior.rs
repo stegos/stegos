@@ -22,7 +22,7 @@
 // SOFTWARE.
 
 use futures::prelude::*;
-use libp2p::core::{
+use libp2p_core::{
     protocols_handler::ProtocolsHandler,
     swarm::{ConnectedPoint, NetworkBehaviour, NetworkBehaviourAction, PollParameters},
     Multiaddr, PeerId,
@@ -38,7 +38,7 @@ use std::{
 };
 use stegos_crypto::pbc;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::timer::Delay;
+use tokio_timer::Delay;
 
 use crate::config::NetworkConfig;
 use crate::ncp::handler::NcpHandler;

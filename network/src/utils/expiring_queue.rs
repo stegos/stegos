@@ -26,7 +26,7 @@ use futures::prelude::*;
 use std::collections::{hash_map::Keys as HashMapKeys, HashMap};
 use std::hash::Hash;
 use std::time::Duration;
-use tokio::timer::{delay_queue, DelayQueue};
+use tokio_timer::{delay_queue, DelayQueue};
 
 /// HashMap (used as HashSet) with TTL of peers
 pub struct ExpiringQueue<K, V>

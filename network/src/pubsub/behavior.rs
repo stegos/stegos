@@ -26,10 +26,10 @@ use super::protocol::{
 use super::topic::{Topic, TopicHash};
 
 use futures::prelude::*;
-use libp2p::core::swarm::{
+use libp2p_core::swarm::{
     ConnectedPoint, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
 };
-use libp2p::core::{protocols_handler::ProtocolsHandler, Multiaddr, PeerId};
+use libp2p_core::{protocols_handler::ProtocolsHandler, Multiaddr, PeerId};
 use log::{debug, trace};
 use lru_time_cache::LruCache;
 use rand;
@@ -42,7 +42,7 @@ use std::{
 };
 use stegos_crypto::utils::u8v_to_hexstr;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::timer::Delay;
+use tokio_timer::Delay;
 use update_rate::{RateCounter, RollingRateCounter};
 
 // How many samples to use for rate calculation

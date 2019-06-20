@@ -21,8 +21,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use libp2p::core::PeerId;
-use libp2p::multihash::{encode, Hash::SHA3512, Multihash};
+use libp2p_core::PeerId;
+use parity_multihash::{encode, Hash::SHA3512, Multihash};
 use stegos_crypto::pbc;
 
 pub trait IntoMultihash {

@@ -30,10 +30,10 @@
 use super::dht_proto;
 use bytes::BytesMut;
 use futures::{future, sink, stream, Sink, Stream};
-use libp2p::core::{
+use libp2p_core::{
     upgrade::Negotiated, InboundUpgrade, Multiaddr, OutboundUpgrade, PeerId, UpgradeInfo,
 };
-use libp2p::multihash::Multihash;
+use parity_multihash::Multihash;
 use protobuf::{self, Message};
 use std::convert::TryFrom;
 use std::io::{Error as IoError, ErrorKind as IoErrorKind};
@@ -483,8 +483,8 @@ mod tests {
     use crate::kad::protocol::{KadConnectionType, KadPeer, KadRequestMsg, KadResponseMsg};
     use bytes::BytesMut;
     use futures::{future, Future, Sink, Stream};
-    use libp2p::core::PeerId;
-    use libp2p::multihash::{encode, Hash, Multihash};
+    use libp2p_core::PeerId;
+    use parity_multihash::{encode, Hash, Multihash};
     use protobuf::Message;
     use std::io::{Error as IoError, ErrorKind as IoErrorKind};
     use stegos_crypto::pbc;

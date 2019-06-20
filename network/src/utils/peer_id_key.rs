@@ -24,7 +24,7 @@
 //! Helper data type to add Ord to libp2p::PeerId
 //!
 
-use libp2p::core::PeerId;
+use libp2p_core::PeerId;
 use std::cmp::Ordering;
 
 #[derive(Clone, Debug)]

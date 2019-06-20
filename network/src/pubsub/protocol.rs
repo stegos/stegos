@@ -23,7 +23,7 @@ use crate::pubsub::topic::TopicHash;
 
 use bytes::{BufMut, BytesMut};
 use futures::future;
-use libp2p::core::{upgrade::Negotiated, InboundUpgrade, OutboundUpgrade, PeerId, UpgradeInfo};
+use libp2p_core::{upgrade::Negotiated, InboundUpgrade, OutboundUpgrade, PeerId, UpgradeInfo};
 use protobuf::Message as ProtobufMessage;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};

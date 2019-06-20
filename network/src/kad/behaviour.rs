@@ -27,13 +27,13 @@ use super::protocol::{KadConnectionType, KadPeer};
 use super::query::{QueryConfig, QueryState, QueryStatePollOut, QueryTarget};
 use fnv::{FnvHashMap, FnvHashSet};
 use futures::{prelude::*, stream};
-use libp2p::core::swarm::{
+use libp2p_core::swarm::{
     ConnectedPoint, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
 };
-use libp2p::core::{protocols_handler::ProtocolsHandler, Multiaddr, PeerId};
-use libp2p::multihash::Multihash;
+use libp2p_core::{protocols_handler::ProtocolsHandler, Multiaddr, PeerId};
 use log::{debug, trace};
 use lru_time_cache::LruCache;
+use parity_multihash::Multihash;
 use rand;
 use smallvec::SmallVec;
 use std::vec::IntoIter as VecIntoIter;
@@ -41,7 +41,7 @@ use std::{cmp::Ordering, error, marker::PhantomData, time::Duration, time::Insta
 use stegos_crypto::pbc;
 use stegos_crypto::utils::u8v_to_hexstr;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::timer::Interval;
+use tokio_timer::Interval;
 
 use crate::utils::IntoMultihash;
 

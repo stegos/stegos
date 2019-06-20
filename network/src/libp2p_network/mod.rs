@@ -25,18 +25,24 @@ use failure::{format_err, Error};
 use futures::prelude::*;
 use futures::sync::mpsc;
 use ipnetwork::IpNetwork;
-use libp2p::{
-    core::swarm::NetworkBehaviourEventProcess,
-    core::{identity, identity::secp256k1},
-    multiaddr::Multiaddr,
-    multiaddr::Protocol,
-    NetworkBehaviour, PeerId, Swarm,
+use libp2p_core::multiaddr::{Multiaddr, Protocol};
+use libp2p_core::upgrade::{InboundUpgradeExt, OutboundUpgradeExt};
+use libp2p_core::{
+    identity, identity::ed25519, swarm::NetworkBehaviourEventProcess, transport::TransportError,
+    PeerId, Swarm, Transport,
 };
+use libp2p_core_derive::NetworkBehaviour;
+use libp2p_dns as dns;
+use libp2p_secio as secio;
+use libp2p_tcp as tcp;
+use libp2p_yamux as yamux;
 use log::*;
 use pnet::datalink;
 use protobuf::Message as ProtoMessage;
 use smallvec::SmallVec;
 use std::collections::{HashMap, HashSet};
+use std::error;
+use std::io;
 use std::time::Duration;
 use stegos_crypto::hash::{Hashable, Hasher};
 use stegos_crypto::pbc;
@@ -156,13 +162,13 @@ fn new_service(
     ),
     Error,
 > {
-    let keypair = secp256k1::Keypair::generate();
-    let local_key = identity::Keypair::Secp256k1(keypair);
+    let keypair = ed25519::Keypair::generate();
+    let local_key = identity::Keypair::Ed25519(keypair);
     let local_pub_key = local_key.public();
     let peer_id = local_pub_key.clone().into_peer_id();
 
     // Set up a an encrypted DNS-enabled TCP Transport over the Mplex and Yamux protocols
-    let transport = libp2p::build_development_transport(local_key);
+    let transport = build_tcp_ws_secio_yamux(local_key);
 
     // Create a Swarm to manage peers and events
     let mut swarm = {
@@ -173,7 +179,7 @@ fn new_service(
             local_pub_key.clone().into_peer_id(),
         );
 
-        libp2p::Swarm::new(transport, behaviour, peer_id)
+        Swarm::new(transport, behaviour, peer_id)
     };
 
     let mut my_addresses = my_external_address(config);
@@ -184,7 +190,7 @@ fn new_service(
     let mut bind_ip = Multiaddr::from(Protocol::Ip4(config.bind_ip.clone().parse()?));
     bind_ip.push(Protocol::Tcp(config.bind_port));
 
-    libp2p::Swarm::listen_on(&mut swarm, bind_ip).unwrap();
+    Swarm::listen_on(&mut swarm, bind_ip).unwrap();
 
     let (control_tx, mut control_rx) = mpsc::unbounded::<ControlMessage>();
     let mut listening = false;
@@ -793,6 +799,89 @@ fn decrypt_message(
         Ok(payload)
     } else {
         Err(format_err!("Packet failed to decrypt."))
+    }
+}
+
+/// Builds an implementation of `Transport` that is suitable for usage with the `Swarm`.
+///
+/// The implementation supports TCP/IP, WebSockets over TCP/IP, secio as the encryption layer,
+/// and mplex or yamux as the multiplexing layer.
+///
+/// > **Note**: If you ever need to express the type of this `Transport`.
+pub fn build_tcp_ws_secio_yamux(
+    keypair: identity::Keypair,
+) -> impl Transport<
+    Output = (
+        PeerId,
+        impl libp2p_core::muxing::StreamMuxer<
+                OutboundSubstream = impl Send,
+                Substream = impl Send,
+                Error = impl Into<io::Error>,
+            > + Send
+            + Sync,
+    ),
+    Error = impl error::Error + Send,
+    Listener = impl Send,
+    Dial = impl Send,
+    ListenerUpgrade = impl Send,
+> + Clone {
+    CommonTransport::new()
+        .with_upgrade(secio::SecioConfig::new(keypair))
+        .and_then(move |output, endpoint| {
+            let peer_id = output.remote_key.into_peer_id();
+            let peer_id2 = peer_id.clone();
+            let upgrade = yamux::Config::default()
+                // TODO: use a single `.map` instead of two maps
+                .map_inbound(move |muxer| (peer_id, muxer))
+                .map_outbound(move |muxer| (peer_id2, muxer));
+            libp2p_core::upgrade::apply(output.stream, upgrade, endpoint)
+                .map(|(id, muxer)| (id, libp2p_core::muxing::StreamMuxerBox::new(muxer)))
+        })
+        .with_timeout(Duration::from_secs(20))
+}
+
+/// Implementation of `Transport` that supports the most common protocols.
+///
+/// The list currently is TCP/IP, DNS, and WebSockets. However this list could change in the
+/// future to get new transports.
+#[derive(Debug, Clone)]
+struct CommonTransport {
+    // The actual implementation of everything.
+    inner: CommonTransportInner,
+}
+
+type InnerImplementation = dns::DnsConfig<tcp::TcpConfig>;
+
+#[derive(Debug, Clone)]
+struct CommonTransportInner {
+    inner: InnerImplementation,
+}
+
+impl CommonTransport {
+    /// Initializes the `CommonTransport`.
+    pub fn new() -> CommonTransport {
+        let tcp = tcp::TcpConfig::new().nodelay(true);
+        let transport = dns::DnsConfig::new(tcp);
+
+        CommonTransport {
+            inner: CommonTransportInner { inner: transport },
+        }
+    }
+}
+
+impl Transport for CommonTransport {
+    type Output = <InnerImplementation as Transport>::Output;
+    type Error = <InnerImplementation as Transport>::Error;
+    type Listener = <InnerImplementation as Transport>::Listener;
+    type ListenerUpgrade = <InnerImplementation as Transport>::ListenerUpgrade;
+    type Dial = <InnerImplementation as Transport>::Dial;
+
+    fn listen_on(self, addr: Multiaddr) -> Result<Self::Listener, TransportError<Self::Error>> {
+        self.inner.inner.listen_on(addr)
+    }
+
+    fn dial(self, addr: Multiaddr) -> Result<Self::Dial, TransportError<Self::Error>> {
+        self.inner.inner.dial(addr)
     }
 }
 

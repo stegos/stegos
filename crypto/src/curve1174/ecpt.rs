@@ -175,9 +175,22 @@ impl ECp {
     }
 
     /// Convert into compressed point.
+    /*
     #[inline]
     pub fn compress(&self) -> Pt {
         Pt::compress(self)
+    }
+    */
+
+    pub fn compress(&self) -> Pt {
+        /*
+        if *self == ECp::inf() {
+            panic!("can't compress Inf")
+        }
+        */
+        let pt_4 = prescale_for_compression(self);
+        let bytes = pt_4.to_bytes();
+        Pt::cheat_from(self, bytes)
     }
 }
 

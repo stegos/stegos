@@ -43,18 +43,28 @@ use std::string::ToString;
 // Client API - compressed points and simple fields
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct Pt([u8; 32]);
+pub struct Pt(ECp, [u8; 32]);
 
 impl Pt {
     // return a totally invalid point of all zeros
     pub fn zero() -> Self {
-        Pt([0u8; 32])
+        let pt = ECp::inf();
+        Pt(pt, pt.to_bytes())
+    }
+
+    pub fn cheat_from(pt: &ECp, bits: [u8; 32]) -> Self {
+        // caution!: Internal use only by ECp
+        Pt(pt.clone(), bits)
     }
 
     pub fn flip_sign(cmt: &mut Pt) {
         // flip sign bit in compressed Pt
         // used for test purposes in BulletProofs
-        cmt.0[31] ^= 0x80;
+        let mut bits = cmt.to_bytes();
+        bits[31] ^= 0x80;
+        let point = ECp::try_from_bytes(bits).expect("ok");
+        cmt.0 = point;
+        cmt.1 = bits;
     }
 
     /// Return random point on a curve.
@@ -64,7 +74,7 @@ impl Pt {
 
     /// Convert into raw bytes.
     pub fn to_bytes(&self) -> [u8; 32] {
-        return self.0;
+        return self.1;
     }
 
     /// Try to convert from raw bytes.
@@ -74,12 +84,13 @@ impl Pt {
         }
         let mut bytes: [u8; 32] = [0u8; 32];
         bytes.copy_from_slice(bytes_slice);
-        ECp::try_from_bytes(bytes)?; // validate point
-        let pt = Pt(bytes);
+        let point = ECp::try_from_bytes(bytes)?; // validate point
+        let pt = Pt(point, bytes);
         Ok(pt)
     }
 
     /// Create from an uncompressed point.
+    /*
     #[inline]
     pub(crate) fn compress(ept: &ECp) -> Pt {
         let pt_4 = ecpt::prescale_for_compression(ept);
@@ -92,10 +103,19 @@ impl Pt {
     pub fn decompress(&self) -> Result<ECp, CryptoError> {
         ECp::try_from_bytes(self.0)
     }
+    */
+
+    pub fn compress(&self) -> Self {
+        *self
+    }
+
+    pub fn decompress(&self) -> Result<ECp, CryptoError> {
+        Ok(self.0)
+    }
 
     /// Convert into hex string.
     pub fn to_hex(&self) -> String {
-        let v = Lev32(self.0, false);
+        let v = Lev32(self.to_bytes(), false);
         basic_nbr_str(&v.to_lev_u64())
     }
 
@@ -103,8 +123,7 @@ impl Pt {
     pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
         let mut v = [0u8; 32];
         hexstr_to_lev_u8(&s, &mut v)?;
-        ECp::try_from_bytes(v)?; // validate point
-        Ok(Pt(v))
+        Self::try_from_bytes(&v)
     }
 }
 
@@ -117,7 +136,7 @@ impl fmt::Debug for Pt {
 impl Hashable for Pt {
     fn hash(&self, state: &mut Hasher) {
         "Pt".hash(state);
-        (*self).0.hash(state);
+        self.to_bytes().hash(state);
     }
 }
 
@@ -136,9 +155,7 @@ impl From<ECp> for Pt {
 impl Ord for Pt {
     // ValueShuffle needs a pseudo ordering of Pt values...
     fn cmp(&self, other: &Pt) -> Ordering {
-        let me = self.decompress().unwrap().compress();
-        let pt = other.decompress().unwrap().compress();
-        Lev32(me.to_bytes(), false).cmp(&Lev32(pt.to_bytes(), false))
+        self.to_bytes().cmp(&other.to_bytes())
     }
 }
 
@@ -341,7 +358,8 @@ impl PartialOrd for PublicKey {
 
 impl<'a> From<&'a PublicKey> for String {
     fn from(pkey: &'a PublicKey) -> String {
-        (pkey.0).0.to_base58check(crate::BASE58_VERSIONID)
+        let bytes = pkey.to_bytes();
+        bytes.to_base58check(crate::BASE58_VERSIONID)
     }
 }
 

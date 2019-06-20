@@ -28,6 +28,7 @@ pub mod hashcash;
 pub mod keying;
 pub mod pbc;
 pub mod protos;
+pub mod scc;
 pub mod utils;
 
 use base58check::{FromBase58CheckError, FromBase58Error};

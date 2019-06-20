@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use arrayvec::ArrayVec;
-use libp2p::core::Multiaddr;
+use libp2p_core::Multiaddr;
 use std::{fmt, time::Duration, time::Instant};
 
 /// List of addresses of a peer.
@@ -160,7 +160,7 @@ impl fmt::Debug for Addresses {
 #[cfg(test)]
 mod tests {
     use super::Addresses;
-    use libp2p::core::multiaddr;
+    use libp2p_core::multiaddr;
     use std::{iter, thread, time::Duration};
 
     #[test]

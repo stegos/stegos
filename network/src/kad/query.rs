@@ -27,8 +27,8 @@
 use super::handler::KademliaHandlerIn;
 use super::kbucket::KBucketsPeerId;
 use futures::prelude::*;
-use libp2p::multihash::Multihash;
 use log::debug;
+use parity_multihash::Multihash;
 use smallvec::SmallVec;
 use std::time::{Duration, Instant};
 use stegos_crypto::pbc;
@@ -493,7 +493,7 @@ enum QueryPeerState {
 mod tests {
     use super::{QueryConfig, QueryState, QueryStatePollOut, QueryTarget};
     use futures::{self, prelude::*, try_ready};
-    use libp2p::multihash::{Hash, Multihash};
+    use parity_multihash::{Hash, Multihash};
     use std::{iter, sync::Arc, sync::Mutex, thread, time::Duration};
     use stegos_crypto::pbc;
     use tokio;

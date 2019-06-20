@@ -23,8 +23,9 @@
 
 use bytes::{BufMut, BytesMut};
 use futures::future;
-use libp2p::core::{upgrade::Negotiated, InboundUpgrade, OutboundUpgrade, PeerId, UpgradeInfo};
-use libp2p::Multiaddr;
+use libp2p_core::{
+    upgrade::Negotiated, InboundUpgrade, Multiaddr, OutboundUpgrade, PeerId, UpgradeInfo,
+};
 use protobuf::Message;
 use std::convert::TryFrom;
 use std::{io, iter};
@@ -242,7 +243,7 @@ impl PeerInfo {
 mod tests {
     use super::{GetPeersResponse, NcpCodec, NcpMessage, PeerInfo};
     use futures::{future, Future, Sink, Stream};
-    use libp2p::core::PeerId;
+    use libp2p_core::PeerId;
     use stegos_crypto::pbc;
     use tokio::codec::Framed;
     use tokio::net::{TcpListener, TcpStream};

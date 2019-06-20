@@ -25,10 +25,10 @@ use crate::delivery::Unicast;
 use crate::kad::{kbucket::KBucketsPeerId, Kademlia, KademliaOut, NodeInfo};
 use crate::utils::LruBimap;
 use futures::prelude::*;
-use libp2p::core::swarm::{
+use libp2p_core::swarm::{
     ConnectedPoint, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
 };
-use libp2p::{core::ProtocolsHandler, Multiaddr, PeerId};
+use libp2p_core::{Multiaddr, PeerId, ProtocolsHandler};
 use log::*;
 use lru_time_cache::LruCache;
 use std::cmp;
@@ -37,7 +37,7 @@ use std::time::{Duration, Instant};
 use stegos_crypto::pbc;
 use stegos_crypto::utils::u8v_to_hexstr;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::timer::Delay;
+use tokio_timer::Delay;
 
 // How often check connections to the known closest peers
 const MONITORING_INTERVAL: u64 = 30;

@@ -31,8 +31,8 @@
 use crate::utils::IntoMultihash;
 use arrayvec::ArrayVec;
 use bigint::U512;
-use libp2p::core::PeerId;
-use libp2p::multihash::Multihash;
+use libp2p_core::PeerId;
+use parity_multihash::Multihash;
 use std::slice::IterMut as SliceIterMut;
 use std::time::{Duration, Instant};
 use std::vec::IntoIter as VecIntoIter;
@@ -535,7 +535,7 @@ impl<'a, TPeerId, TVal> Bucket<'a, TPeerId, TVal> {
 #[cfg(test)]
 mod tests {
     use crate::kad::kbucket::{KBucketsPeerId, KBucketsTable, Update, MAX_NODES_PER_BUCKET};
-    use libp2p::multihash::{Hash, Multihash};
+    use parity_multihash::{Hash, Multihash};
     use rand::random;
     use std::thread;
     use std::time::Duration;

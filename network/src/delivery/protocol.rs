@@ -23,7 +23,7 @@
 
 use bytes::{BufMut, BytesMut};
 use futures::future;
-use libp2p::core::{upgrade::Negotiated, InboundUpgrade, OutboundUpgrade, UpgradeInfo};
+use libp2p_core::{upgrade::Negotiated, InboundUpgrade, OutboundUpgrade, UpgradeInfo};
 use protobuf::Message;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};

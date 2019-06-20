@@ -25,8 +25,9 @@ use super::*;
 use crate::*;
 use std::time::Duration;
 use stegos_blockchain::Block;
-use stegos_consensus::ConsensusMessageBody;
+use stegos_consensus::{ConsensusInfo, ConsensusMessageBody, ConsensusState};
 use stegos_crypto::pbc;
+use stegos_crypto::pbc::{make_random_keys, SecretKey, Signature};
 
 fn assert_epoch_in_notification(receiver: &mut UnboundedReceiver<OutputsChanged>, epoch: u64) {
     match receiver.poll() {
@@ -638,3 +639,523 @@ fn out_of_order_micro_block() {
             .filter_broadcast(&[crate::CONSENSUS_TOPIC]);
     });
 }
+
+fn resign_msg(msg: ConsensusMessage, key: &SecretKey) -> ConsensusMessage {
+    ConsensusMessage::new(
+        msg.epoch,
+        msg.round,
+        msg.block_hash,
+        key,
+        &msg.pkey,
+        msg.body,
+    )
+}
+
+fn create_invalid_consensus_messages(
+    msg: &ConsensusMessage,
+    key: &SecretKey,
+) -> Vec<ConsensusMessage> {
+    let mut msgs = Vec::new();
+
+    // 1. Change round
+    let mut new_msg = msg.clone();
+    new_msg.round += 1;
+    msgs.push(resign_msg(new_msg, key));
+
+    let mut new_msg = msg.clone();
+    new_msg.round -= 1;
+    msgs.push(resign_msg(new_msg, key));
+
+    // 2. Change epoch
+    let mut new_msg = msg.clone();
+    new_msg.epoch += 1;
+    msgs.push(resign_msg(new_msg, key));
+
+    let mut new_msg = msg.clone();
+    new_msg.epoch -= 1;
+    msgs.push(resign_msg(new_msg, key));
+
+    // 3. Change block_hash
+    let mut new_msg = msg.clone();
+    new_msg.block_hash = Hash::digest("test");
+    msgs.push(resign_msg(new_msg, key));
+
+    // 4. Change signature
+    let mut new_msg = msg.clone();
+    new_msg.sig = Signature::zero();
+    msgs.push(new_msg);
+
+    // 4. Change pkey (to invalid peer)
+    let (skey_new, pkey_new) = make_random_keys();
+    let mut new_msg = msg.clone();
+    new_msg.pkey = pkey_new;
+    msgs.push(resign_msg(new_msg, &skey_new));
+
+    msgs
+}
+
+fn create_invalid_header(header: &MacroBlockHeader) -> Vec<MacroBlockHeader> {
+    let mut headers = Vec::new();
+
+    // Change version
+    let mut new_header = header.clone();
+    new_header.version += 1;
+    headers.push(new_header);
+
+    let mut new_header = header.clone();
+    new_header.version -= 1;
+    headers.push(new_header);
+
+    // Wrong epoch
+    let mut new_header = header.clone();
+    new_header.epoch += 1;
+    headers.push(new_header);
+
+    let mut new_header = header.clone();
+    new_header.epoch -= 1;
+    headers.push(new_header);
+
+    // last block hash
+    let mut new_header = header.clone();
+    new_header.previous = Hash::digest("1");
+    headers.push(new_header);
+
+    // change view_change
+    let mut new_header = header.clone();
+    new_header.view_change += 1;
+    headers.push(new_header);
+
+    let mut new_header = header.clone();
+    new_header.view_change -= 1;
+    headers.push(new_header);
+
+    //TODO: Change block_reward
+    //TODO: Change random
+    //TODO: Change pkey
+    //TODO: Change activity_map
+    //TODO: Change gamma
+    //TODO: Change previous
+    //TODO: Change timestamp
+    //TODO: Chainge inputs_range_hash
+
+    headers
+}
+
+fn create_invalid_proposes(msg: &ConsensusMessage, key: &SecretKey) -> Vec<ConsensusMessage> {
+    let mut msgs = create_invalid_consensus_messages(&msg, key);
+
+    let bodys: Vec<_> = match msg.body {
+        ConsensusMessageBody::Proposal(ref proposal) => {
+            create_invalid_header(&proposal.header)
+                .into_iter()
+                .map(|h| {
+                    let mut proposal_new = proposal.clone();
+                    proposal_new.header = h;
+                    ConsensusMessageBody::Proposal(proposal_new)
+                })
+                .collect()
+            //TODO: Change txs
+        }
+        _ => panic!("Wrong message, expected propose"),
+    };
+
+    msgs.extend(bodys.into_iter().map(|b| {
+        let mut new_msg = msg.clone();
+        new_msg.body = b;
+        resign_msg(new_msg, key)
+    }));
+    msgs
+}
+
+fn create_invalid_prevotes(msg: &ConsensusMessage, key: &SecretKey) -> Vec<ConsensusMessage> {
+    create_invalid_consensus_messages(&msg, key)
+}
+
+fn save_consensus_state(node: &NodeService) -> ConsensusInfo {
+    let consensus = match node.validation {
+        Validation::MacroBlockValidator { ref consensus, .. } => consensus,
+        _ => panic!("Wrong state."),
+    };
+    consensus.to_info()
+}
+
+fn assert_consensus_state(info: &ConsensusInfo, node: &NodeService) {
+    let consensus = match node.validation {
+        Validation::MacroBlockValidator { ref consensus, .. } => consensus,
+        _ => panic!("Wrong state."),
+    };
+    let new_info = consensus.to_info();
+    assert_eq!(*info, new_info)
+}
+
+fn invalid_proposes_inner(s: &mut Sandbox, round: u32) {
+    let topic = crate::CONSENSUS_TOPIC;
+    let epoch = s.nodes[0].node_service.chain.epoch();
+
+    let leader_pk = s.nodes[0].node_service.chain.select_leader(round);
+    trace!("SELECTING LEADER of round {} = {}", round, leader_pk);
+    let leader_node = s.node(&leader_pk).unwrap();
+
+    let skey = leader_node.node_service.network_skey.clone();
+
+    // Check for a proposal from the leader.
+    let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+    debug!("Proposal: {:?}", proposal);
+    assert_eq!(proposal.epoch, epoch);
+    assert_eq!(proposal.round, round);
+    assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
+    let mut r = s.split(&[leader_pk]);
+    let mut info = save_consensus_state(&r.parts.1.first().node_service);
+
+    r.parts.1.for_each(|node| {
+        assert_consensus_state(&info, node);
+    });
+
+    let invalid_messages = create_invalid_proposes(&proposal, &skey);
+    for (id, msg) in invalid_messages.iter().enumerate() {
+        for node in r.parts.1.iter_mut() {
+            node.network_service.receive_broadcast(topic, msg.clone());
+        }
+
+        r.parts.1.poll();
+        debug!("Checking state after {} message", id);
+        r.parts.1.for_each(|node| {
+            assert_consensus_state(&info, node);
+        });
+    }
+
+    // Send the original proposal to other nodes.
+    for node in r.parts.1.iter_mut() {
+        node.network_service
+            .receive_broadcast(topic, proposal.clone());
+    }
+    r.parts.1.poll();
+    // node should produce prevote.
+    info.prevotes_len += 1;
+    info.state = ConsensusState::Prevote;
+    r.parts.1.for_each(|node| {
+        assert_consensus_state(&info, node);
+    });
+}
+
+// Test [multiple Invalid messages on proposes]
+// Test [Proposes from invalid peer]
+// Test [ Invalid header in propose]
+//
+// assert: that all this messages should not be accepted
+
+#[test]
+fn invalid_proposes() {
+    let mut cfg: ChainConfig = Default::default();
+    cfg.micro_blocks_in_epoch = 1;
+    let config = SandboxConfig {
+        chain: cfg,
+        num_nodes: 3,
+        ..Default::default()
+    };
+    assert!(config.chain.stake_epochs > 1);
+
+    Sandbox::start(config, |mut s| {
+        // Create one micro block.
+
+        s.poll();
+        s.wait(s.config.node.tx_wait_timeout);
+        s.skip_micro_block();
+
+        let round = s.nodes[0].node_service.chain.view_change();
+        invalid_proposes_inner(&mut s, round);
+        s.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
+    });
+}
+
+#[test]
+fn invalid_proposes_on_2nd_round() {
+    let mut cfg: ChainConfig = Default::default();
+    cfg.micro_blocks_in_epoch = 1;
+    let config = SandboxConfig {
+        chain: cfg,
+        num_nodes: 3,
+        ..Default::default()
+    };
+    assert!(config.chain.stake_epochs > 1);
+
+    Sandbox::start(config, |mut s| {
+        // Create one micro block.
+
+        s.poll();
+        s.wait(s.config.node.tx_wait_timeout);
+        s.skip_micro_block();
+
+        let topic = crate::CONSENSUS_TOPIC;
+
+        let leader_pk = s.nodes[0].node_service.chain.leader();
+        let leader_node = s.node(&leader_pk).unwrap();
+        // skip proposal and prevote of last leader.
+        let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        s.wait(s.config.node.macro_block_timeout);
+
+        info!("====== Waiting for keyblock timeout. =====");
+        s.poll();
+
+        let round = s.nodes[0].node_service.chain.view_change() + 1;;
+        invalid_proposes_inner(&mut s, round);
+        s.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
+    });
+}
+
+// Test [multiple leaders on proposes]
+// Test [multiple proposes from single leader]
+//
+// assert: that all this messages should not change state after first propose.
+
+#[test]
+fn multiple_proposes() {
+    let mut cfg: ChainConfig = Default::default();
+    cfg.micro_blocks_in_epoch = 1;
+    let config = SandboxConfig {
+        chain: cfg,
+        num_nodes: 3,
+        ..Default::default()
+    };
+    assert!(config.chain.stake_epochs > 1);
+
+    Sandbox::start(config, |mut s| {
+        // Create one micro block.
+
+        s.poll();
+        s.wait(s.config.node.tx_wait_timeout);
+        s.skip_micro_block();
+
+        let topic = crate::CONSENSUS_TOPIC;
+        let epoch = s.nodes[0].node_service.chain.epoch();
+        let round = s.nodes[0].node_service.chain.view_change();
+
+        let leader_pk = s.nodes[0].node_service.chain.leader();
+        let leader_node = s.node(&leader_pk).unwrap();
+
+        let skey = leader_node.node_service.network_skey.clone();
+
+        // Check for a proposal from the leader.
+        let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        debug!("Proposal: {:?}", proposal);
+        assert_eq!(proposal.epoch, epoch);
+        assert_eq!(proposal.round, round);
+        assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
+        let mut r = s.split(&[leader_pk]);
+        let mut info = save_consensus_state(&r.parts.1.first().node_service);
+
+        r.parts.1.for_each(|node| {
+            assert_consensus_state(&info, node);
+        });
+
+        r.parts.1.poll();
+        r.parts.1.for_each(|node| {
+            assert_consensus_state(&info, node);
+        });
+
+        // Send the original proposal to other nodes.
+        for node in r.parts.1.iter_mut() {
+            node.network_service
+                .receive_broadcast(topic, proposal.clone());
+        }
+        r.parts.1.poll();
+        // node should produce prevote.
+        info.prevotes_len += 1;
+        info.state = ConsensusState::Prevote;
+
+        let mut invalid_messages = Vec::new();
+
+        // change author
+        let node = r.parts.1.first();
+        let mut new_msg = proposal.clone();
+        new_msg.pkey = node.node_service.network_pkey;
+        invalid_messages.push(resign_msg(new_msg, &node.node_service.network_skey));
+
+        // Send other valid propose
+        let mut new_msg = proposal.clone();
+
+        match new_msg.body {
+            ConsensusMessageBody::Proposal(ref mut p) => {
+                p.header.timestamp += Duration::from_millis(1);
+            }
+            _ => unreachable!(),
+        }
+        invalid_messages.push(resign_msg(new_msg, &skey));
+
+        for node in r.parts.1.iter_mut() {
+            for msg in invalid_messages.iter() {
+                node.network_service.receive_broadcast(topic, msg.clone());
+            }
+        }
+        r.parts.1.poll();
+
+        r.parts.1.for_each(|node| {
+            assert_consensus_state(&info, node);
+        });
+
+        s.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
+    });
+}
+
+// Test [multiple message on prevote]
+#[test]
+fn invalid_prevotes() {
+    let mut cfg: ChainConfig = Default::default();
+    cfg.micro_blocks_in_epoch = 1;
+    let config = SandboxConfig {
+        chain: cfg,
+        num_nodes: 4,
+        ..Default::default()
+    };
+    assert!(config.chain.stake_epochs > 1);
+
+    Sandbox::start(config, |mut s| {
+        // Create one micro block.
+        s.poll();
+        s.wait(s.config.node.tx_wait_timeout);
+        s.skip_micro_block();
+
+        let topic = crate::CONSENSUS_TOPIC;
+        let epoch = s.nodes[0].node_service.chain.epoch();
+        let round = s.nodes[0].node_service.chain.view_change();
+
+        let leader_pk = s.nodes[0].node_service.chain.leader();
+        let leader_node = s.node(&leader_pk).unwrap();
+        // Check for a proposal from the leader.
+        let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        debug!("Proposal: {:?}", proposal);
+        assert_eq!(proposal.epoch, epoch);
+        assert_eq!(proposal.round, round);
+        assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
+
+        // Send this proposal to other nodes.
+        for node in s.iter_except(&[leader_pk]) {
+            node.network_service
+                .receive_broadcast(topic, proposal.clone());
+        }
+        s.poll();
+
+        let mut r = s.split(&[leader_pk]);
+        let node_skey = r.parts.1.first().node_service.network_skey.clone();
+        let node_prevote: ConsensusMessage =
+            r.parts.1.first_mut().network_service.get_broadcast(topic);
+        assert_matches!(node_prevote.body, ConsensusMessageBody::Prevote);
+
+        let mut info = save_consensus_state(&r.parts.1.first().node_service);
+
+        // Send these pre-votes to nodes.
+        for node in r.parts.1.iter_mut() {
+            node.network_service
+                .receive_broadcast(topic, node_prevote.clone());
+        }
+        info.prevotes_len += 1;
+
+        r.parts.1.poll();
+        // skip first node, because it work as byzantine
+        for node in r.parts.1.iter_mut().skip(1) {
+            assert_consensus_state(&info, &mut node.node_service);
+        }
+
+        let invalid_messages = create_invalid_prevotes(&node_prevote, &node_skey);
+
+        for node in r.parts.1.iter_mut() {
+            for msg in &invalid_messages {
+                node.network_service.receive_broadcast(topic, msg.clone());
+            }
+        }
+        r.parts.1.poll();
+
+        // skip first node, because it work as byzantine
+        for node in r.parts.1.iter_mut().skip(1) {
+            assert_consensus_state(&info, &mut node.node_service);
+        }
+
+        s.poll();
+        s.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
+    });
+}
+// Test [multiple message on prevote (from leader)]
+#[test]
+fn invalid_prevotes_leader() {
+    let mut cfg: ChainConfig = Default::default();
+    cfg.micro_blocks_in_epoch = 1;
+    let config = SandboxConfig {
+        chain: cfg,
+        num_nodes: 4,
+        ..Default::default()
+    };
+    assert!(config.chain.stake_epochs > 1);
+
+    Sandbox::start(config, |mut s| {
+        // Create one micro block.
+        s.poll();
+        s.wait(s.config.node.tx_wait_timeout);
+        s.skip_micro_block();
+
+        let topic = crate::CONSENSUS_TOPIC;
+        let epoch = s.nodes[0].node_service.chain.epoch();
+        let round = s.nodes[0].node_service.chain.view_change();
+
+        let leader_pk = s.nodes[0].node_service.chain.leader();
+        let leader_node = s.node(&leader_pk).unwrap();
+        // Check for a proposal from the leader.
+        let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        debug!("Proposal: {:?}", proposal);
+        assert_eq!(proposal.epoch, epoch);
+        assert_eq!(proposal.round, round);
+        assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
+
+        // Send this proposal to other nodes.
+        for node in s.iter_except(&[leader_pk]) {
+            node.network_service
+                .receive_broadcast(topic, proposal.clone());
+        }
+        s.poll();
+
+        let mut r = s.split(&[leader_pk]);
+        let leader_skey = r.parts.0.first().node_service.network_skey.clone();
+        let leader_prevote: ConsensusMessage =
+            r.parts.0.first_mut().network_service.get_broadcast(topic);
+        assert_matches!(leader_prevote.body, ConsensusMessageBody::Prevote);
+
+        let mut info = save_consensus_state(&r.parts.1.first().node_service);
+
+        // Send these pre-votes to nodes.
+        for node in r.parts.1.iter_mut() {
+            node.network_service
+                .receive_broadcast(topic, leader_prevote.clone());
+        }
+        info.prevotes_len += 1;
+
+        r.parts.1.poll();
+        // skip first node, because it work as byzantine
+        for node in r.parts.1.iter_mut().skip(1) {
+            assert_consensus_state(&info, &mut node.node_service);
+        }
+
+        let invalid_messages = create_invalid_prevotes(&leader_prevote, &leader_skey);
+
+        for node in r.parts.1.iter_mut() {
+            for msg in &invalid_messages {
+                node.network_service.receive_broadcast(topic, msg.clone());
+            }
+        }
+        r.parts.1.poll();
+
+        // skip first node, because it work as byzantine
+        for node in r.parts.1.iter_mut() {
+            assert_consensus_state(&info, &mut node.node_service);
+        }
+
+        s.poll();
+        s.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
+    });
+}
+
+// Test [multiple message on precomit]
+// Test [multiple message on precomit (from leader)]
+
+// TODO:
+// Test Keep some validator locked on round
+// Test multiple count of precommits for locked round (should save precommit from previuous round?).

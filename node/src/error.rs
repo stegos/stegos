@@ -56,6 +56,11 @@ pub enum NodeBlockError {
     )]
     InvalidBlockProposal(u64, Hash, Hash),
     #[fail(
+        display = "Invalid block epoch found: block_epoch={}, chain_epoch={}",
+        _0, _1
+    )]
+    InvalidBlockEpoch(u64, u64),
+    #[fail(
         display = "Timestamp is out of sync: epoch={}, block={}, block_time={}, our_time={}",
         _0, _1, _2, _3
     )]

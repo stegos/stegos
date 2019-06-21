@@ -233,12 +233,15 @@ where
                 locked_timestamp,
             )?;
 
+            // return rvalue only if signature was created.
+            let rvalue = certificate_skey.map(|_| rvalue);
+
             let output1_hash = Hash::digest(&output1);
             info!(
                 "Created payment UTXO: hash={}, recipient={}, amount={}, data={:?}, locked={:?}",
                 output1_hash, recipient, amount, data, locked_timestamp
             );
-            (Output::PaymentOutput(output1), gamma1, Some(rvalue))
+            (Output::PaymentOutput(output1), gamma1, rvalue)
         }
         TransactionType::Public => {
             trace!("Creating public payment UTXO...");

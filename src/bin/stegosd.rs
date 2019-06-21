@@ -323,7 +323,11 @@ fn run() -> Result<(), Error> {
         genesis,
         timestamp,
     )?;
-    let wallet_persistent_state = chain.recover_wallet(&wallet_skey, &wallet_pkey)?;
+    let wallet_persistent_state = chain
+        .recover_wallets(&[(&wallet_skey, &wallet_pkey)])?
+        .into_iter()
+        .next()
+        .unwrap();
 
     // Initialize node
     let (mut node_service, node) = NodeService::new(

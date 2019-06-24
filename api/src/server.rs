@@ -420,7 +420,13 @@ impl WebSocketServer {
                 let network3 = network2.clone();
                 let wallet3 = wallet2.clone();
                 let node3 = node2.clone();
-                let peer = s.peer_addr().expect("has peer address");
+                let peer = match s.peer_addr() {
+                    Ok(p) => p,
+                    Err(e) => {
+                        error!("Failed to get remote peer info: errpr={}", e);
+                        return Ok(());
+                    }
+                };
                 let key = key.clone();
                 debug!("[{}] accepted", peer);
                 let s = s

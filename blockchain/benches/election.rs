@@ -20,26 +20,11 @@
 // SOFTWARE.
 
 #![cfg_attr(test, feature(test))]
-use rand::{Rng, SeedableRng};
-use rand_isaac::IsaacRng;
 use stegos_blockchain::election;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
 extern crate test;
 use test::Bencher;
-
-#[bench]
-fn isaac_prng_1000(b: &mut Bencher) {
-    let random = Hash::digest("bla");
-    let mut seed = [0u8; 32];
-    seed.copy_from_slice(random.base_vector());
-    let mut rng = IsaacRng::from_seed(seed);
-    b.iter(|| {
-        for _ in 0..1000 {
-            test::black_box(rng.gen::<i64>());
-        }
-    });
-}
 
 #[bench]
 fn hash_prng_1000(b: &mut Bencher) {

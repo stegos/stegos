@@ -907,6 +907,8 @@ impl Blockchain {
         block: MacroBlock,
         timestamp: Timestamp,
     ) -> Result<(Vec<Output>, Vec<Output>), Error> {
+        assert_eq!(self.offset(), 0);
+
         //
         // Resolve inputs.
         //
@@ -1559,16 +1561,20 @@ pub mod tests {
 
     #[test]
     fn iterate() {
+        const NUM_NODES: usize = 32;
+        const STAKE_EPOCHS: u64 = 2;
+        const EPOCHS: u64 = 10;
+
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
         let mut cfg: ChainConfig = Default::default();
-        cfg.stake_epochs = 1;
+        cfg.stake_epochs = STAKE_EPOCHS;
         cfg.micro_blocks_in_epoch = 2;
         let mut timestamp = Timestamp::now();
         let (keychains, genesis) = test::fake_genesis(
             cfg.min_stake_amount,
-            10 * cfg.min_stake_amount,
-            1,
+            (NUM_NODES as i64) * cfg.min_stake_amount + 100,
+            NUM_NODES,
             timestamp,
         );
         let temp_prefix: String = thread_rng().sample_iter(&Alphanumeric).take(30).collect();
@@ -1577,7 +1583,7 @@ pub mod tests {
         let mut chain = Blockchain::with_db(cfg.clone(), database, genesis.clone(), timestamp)
             .expect("Failed to create blockchain");
 
-        for _epoch in 0..2 {
+        for _epoch in 0..EPOCHS {
             let epoch = chain.epoch();
 
             //

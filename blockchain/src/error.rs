@@ -24,6 +24,7 @@
 use crate::view_changes::ViewChangeProof;
 use crate::OutputError;
 use failure::Fail;
+use rocksdb;
 use std::str::Utf8Error;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
@@ -64,7 +65,7 @@ pub enum BlockchainError {
     )]
     StakeIsLocked(pbc::PublicKey, i64, i64),
     #[fail(display = "Internal storage error={}", _0)]
-    StorageError(failure::Error),
+    StorageError(rocksdb::Error),
     #[fail(display = "Transaction error={}", _0)]
     TransactionError(TransactionError),
     #[fail(display = "Block error={}", _0)]
@@ -399,8 +400,8 @@ pub enum SlashingError {
     IncorrectTxouts(Hash),
 }
 
-impl From<failure::Error> for BlockchainError {
-    fn from(error: failure::Error) -> BlockchainError {
+impl From<rocksdb::Error> for BlockchainError {
+    fn from(error: rocksdb::Error) -> BlockchainError {
         BlockchainError::StorageError(error)
     }
 }

@@ -33,20 +33,21 @@ use crate::metrics;
 use crate::multisignature::check_multi_signature;
 use crate::mvcc::MultiVersionedMap;
 use crate::output::*;
-use crate::storage::ListDb;
 use crate::timestamp::Timestamp;
 use crate::transaction::{CoinbaseTransaction, ServiceAwardTransaction, Transaction};
 use crate::view_changes::ViewChangeProof;
 use bitvector::BitVector;
-use failure::Error;
+use byteorder::{BigEndian, ByteOrder};
 use log::*;
 use rayon::prelude::*;
+use rocksdb;
 use std::collections::BTreeMap;
 use stegos_crypto::bulletproofs::fee_a;
 use stegos_crypto::hash::*;
 use stegos_crypto::pbc::VRF;
 use stegos_crypto::scc::{Fr, Pt, PublicKey, SecretKey};
 use stegos_crypto::{pbc, scc};
+use stegos_serialization::traits::ProtoConvert;
 
 pub type ViewCounter = u32;
 pub type ValidatorId = u32;
@@ -155,7 +156,7 @@ pub struct Blockchain {
     // Storage.
     //
     /// Persistent storage for blocks.
-    database: ListDb,
+    database: rocksdb::DB,
     /// In-memory index to lookup blocks by its hash.
     block_by_hash: BlockByHashMap,
     /// In-memory index to lookup UTXO by its hash.
@@ -205,11 +206,11 @@ impl Blockchain {
         storage_cfg: StorageConfig,
         genesis: MacroBlock,
         timestamp: Timestamp,
-    ) -> Result<Blockchain, Error> {
+    ) -> Result<Blockchain, BlockchainError> {
         //
         // Storage.
         //
-        let database = ListDb::new(&storage_cfg.database_path);
+        let database = rocksdb::DB::open_default(&storage_cfg.database_path)?;
         let block_by_hash: BlockByHashMap = BlockByHashMap::new();
         let output_by_hash: OutputByHashMap = OutputByHashMap::new();
         let mut balance: BalanceMap = BalanceMap::new();
@@ -272,10 +273,9 @@ impl Blockchain {
         genesis: MacroBlock,
         timestamp: Timestamp,
     ) -> Result<(), BlockchainError> {
-        let mut blocks = self.database.iter();
-
         let genesis_hash = Hash::digest(&genesis);
 
+        let mut blocks = self.blocks();
         let block = blocks.next();
         let block = if let Some(block) = block {
             block
@@ -314,7 +314,7 @@ impl Blockchain {
         Ok(())
     }
 
-    fn recover_block(&mut self, block: Block, timestamp: Timestamp) -> Result<(), Error> {
+    fn recover_block(&mut self, block: Block, timestamp: Timestamp) -> Result<(), BlockchainError> {
         // Skip validate_macro_block()/validate_micro_block().
         match block {
             Block::MicroBlock(block) => {
@@ -354,7 +354,7 @@ impl Blockchain {
     pub fn recover_wallets(
         &self,
         wallets: &[(&SecretKey, &PublicKey)],
-    ) -> Result<Vec<WalletRecoveryState>, Error> {
+    ) -> Result<Vec<WalletRecoveryState>, BlockchainError> {
         let mut wallets_state: Vec<WalletRecoveryState> = vec![Default::default(); wallets.len()];
         let mut epoch: u64 = 0;
 
@@ -370,7 +370,7 @@ impl Blockchain {
             }
         };
 
-        for block in self.database.iter_starting(LSN(epoch, 0)) {
+        for block in self.blocks_starting(epoch, 0) {
             match block {
                 Block::MacroBlock(block) => {
                     for output in &block.outputs {
@@ -431,7 +431,7 @@ impl Blockchain {
     }
 
     /// Resolve UTXO by hash.
-    pub fn output_by_hash(&self, output_hash: &Hash) -> Result<Option<Output>, Error> {
+    pub fn output_by_hash(&self, output_hash: &Hash) -> Result<Option<Output>, BlockchainError> {
         match self.output_by_hash.get(output_hash) {
             Some(OutputKey::MacroBlock { epoch, output_id }) => {
                 let block = &self.macro_block(*epoch)?;
@@ -471,31 +471,37 @@ impl Blockchain {
     }
 
     /// Get a block by position.
-    fn block(&self, lsn: LSN) -> Result<Block, Error> {
-        Ok((self.database.get(lsn)?).expect("block exists"))
+    fn block(&self, lsn: LSN) -> Result<Block, BlockchainError> {
+        match self.database.get(&Self::block_key(lsn))? {
+            Some(buffer) => Ok(Block::from_buffer(&buffer).expect("couldn't deserialize block.")),
+            None => panic!("Block must exists"),
+        }
     }
 
     /// Get a micro block by offset.
-    pub fn micro_block(&self, epoch: u64, offset: u32) -> Result<MicroBlock, Error> {
+    pub fn micro_block(&self, epoch: u64, offset: u32) -> Result<MicroBlock, BlockchainError> {
         Ok(self.block(LSN(epoch, offset))?.unwrap_micro())
     }
 
     /// Get a block by offset.
-    pub fn macro_block(&self, epoch: u64) -> Result<MacroBlock, Error> {
+    pub fn macro_block(&self, epoch: u64) -> Result<MacroBlock, BlockchainError> {
         Ok(self.block(LSN(epoch, MACRO_BLOCK_OFFSET))?.unwrap_macro())
     }
 
     /// Return iterator over saved blocks.
     pub fn blocks(&self) -> impl Iterator<Item = Block> {
-        self.database.iter()
+        self.database
+            .full_iterator(rocksdb::IteratorMode::Start)
+            .map(|(_, v)| Block::from_buffer(&*v).expect("couldn't deserialize block."))
     }
 
-    /// Returns blocks history starting for epoch.
-    pub fn blocks_range(&self, epoch: u64, offset: u32, count: u64) -> Vec<Block> {
+    /// Return iterator over saved blocks.
+    pub fn blocks_starting(&self, epoch: u64, offset: u32) -> impl Iterator<Item = Block> {
+        let key = Self::block_key(LSN(epoch, offset));
+        let mode = rocksdb::IteratorMode::From(&key, rocksdb::Direction::Forward);
         self.database
-            .iter_starting(LSN(epoch, offset))
-            .take(count as usize)
-            .collect()
+            .full_iterator(mode)
+            .map(|(_, v)| Block::from_buffer(&*v).expect("couldn't deserialize block."))
     }
 
     pub fn election_result(&self) -> &ElectionResult {
@@ -773,6 +779,24 @@ impl Blockchain {
     // Macro Blocks
     //----------------------------------------------------------------------------------------------
 
+    /// Create a key for block.
+    fn block_key(lsn: LSN) -> [u8; 12] {
+        let mut bytes = [0u8; 12];
+        BigEndian::write_u64(&mut bytes[0..8], lsn.0);
+        BigEndian::write_u32(&mut bytes[8..12], lsn.1);
+        bytes
+    }
+
+    /// Write block to the disk.
+    fn write_block(&self, lsn: LSN, block: Block) -> Result<(), BlockchainError> {
+        let data = block.into_buffer().expect("couldn't serialize block.");
+        let mut batch = rocksdb::WriteBatch::default();
+        // writebatch put fails if size exceeded u32::max, which is not our case.
+        batch.put(&Self::block_key(lsn), &data)?;
+        self.database.write(batch)?;
+        Ok(())
+    }
+
     ///
     /// Return true if current epoch contains all micro blocks.
     ///
@@ -849,8 +873,8 @@ impl Blockchain {
         let extra_transactions = transactions.clone();
 
         // Collect transactions from epoch.
-        let count = self.cfg.micro_blocks_in_epoch as u64;
-        let blocks = self.blocks_range(self.epoch, 0, count);
+        let count = self.cfg.micro_blocks_in_epoch as usize;
+        let blocks: Vec<Block> = self.blocks_starting(self.epoch, 0).take(count).collect();
         for (offset, block) in blocks.into_iter().enumerate() {
             let block = if let Block::MicroBlock(block) = block {
                 block
@@ -887,7 +911,7 @@ impl Blockchain {
         &mut self,
         block: MacroBlock,
         timestamp: Timestamp,
-    ) -> Result<(Vec<Output>, Vec<Output>), Error> {
+    ) -> Result<(Vec<Output>, Vec<Output>), BlockchainError> {
         assert_eq!(self.offset(), 0);
 
         //
@@ -904,8 +928,7 @@ impl Blockchain {
         //
         assert_eq!(self.epoch, block.header.epoch);
         let lsn = LSN(self.epoch, MACRO_BLOCK_OFFSET);
-        self.database
-            .insert(lsn, Block::MacroBlock(block.clone()))?;
+        self.write_block(lsn, Block::MacroBlock(block.clone()))?;
 
         //
         // Update in-memory indexes and metadata.
@@ -1091,8 +1114,7 @@ impl Blockchain {
         assert_eq!(self.epoch, block.header.epoch);
         assert_eq!(self.offset, block.header.offset);
         let lsn = LSN(self.epoch, self.offset);
-        self.database
-            .insert(lsn, Block::MicroBlock(block.clone()))?;
+        self.write_block(lsn, Block::MicroBlock(block.clone()))?;
 
         //
         // Update in-memory indexes and metadata.
@@ -1411,7 +1433,8 @@ impl Blockchain {
             let lsn = LSN(self.epoch, offset - 1);
             (Hash::digest(&block), lsn)
         };
-        self.database.remove(LSN(self.epoch, offset))?;
+        self.database
+            .delete(&Self::block_key(LSN(self.epoch, offset)))?;
         let block_hash = Hash::digest(&block);
 
         //
@@ -1777,7 +1800,7 @@ pub mod tests {
     }
 
     #[test]
-    fn block_range_limit() {
+    fn block_iter_limit() {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
         let mut timestamp = Timestamp::now();
         let mut cfg: ChainConfig = Default::default();
@@ -1800,17 +1823,35 @@ pub mod tests {
                 .expect("Invalid block");
         }
 
-        assert_eq!(blockchain.blocks_range(epoch, starting_offset, 1).len(), 1);
+        assert_eq!(
+            blockchain
+                .blocks_starting(epoch, starting_offset)
+                .take(1)
+                .count(),
+            1
+        );
 
-        assert_eq!(blockchain.blocks_range(epoch, starting_offset, 4).len(), 4);
+        assert_eq!(
+            blockchain
+                .blocks_starting(epoch, starting_offset)
+                .take(4)
+                .count(),
+            4
+        );
         // limit
         assert_eq!(
-            blockchain.blocks_range(epoch, starting_offset, 20).len(),
+            blockchain
+                .blocks_starting(epoch, starting_offset)
+                .take(20)
+                .count(),
             10
         );
         // empty
         assert_eq!(
-            blockchain.blocks_range(epoch, blockchain.offset(), 1).len(),
+            blockchain
+                .blocks_starting(epoch, blockchain.offset())
+                .take(1)
+                .count(),
             0
         );
     }

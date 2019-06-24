@@ -397,6 +397,7 @@ fn main() {
 mod tests {
     use super::*;
     use simple_logger;
+    use stegos_blockchain::StorageConfig;
 
     #[test]
     #[ignore]
@@ -407,7 +408,8 @@ mod tests {
         config.general.chain = chain.to_string();
         let genesis = initialize_genesis(&config).expect("testnet looks like unloadable.");
         let timestamp = Timestamp::now();
-        Blockchain::testing(Default::default(), genesis, timestamp)
+        let (storage_cfg, _temp_dir) = StorageConfig::testing();
+        Blockchain::new(Default::default(), storage_cfg, genesis, timestamp)
             .expect("testnet looks like unloadable.");
     }
 
@@ -420,7 +422,8 @@ mod tests {
         config.general.chain = chain.to_string();
         let genesis = initialize_genesis(&config).expect("devnet looks like unloadable.");
         let timestamp = Timestamp::now();
-        Blockchain::testing(Default::default(), genesis, timestamp)
+        let (storage_cfg, _temp_dir) = StorageConfig::testing();
+        Blockchain::new(Default::default(), storage_cfg, genesis, timestamp)
             .expect("devnet looks like unloadable.");
     }
 
@@ -432,7 +435,8 @@ mod tests {
         config.general.chain = chain.to_string();
         let genesis = initialize_genesis(&config).expect("dev looks like unloadable.");
         let timestamp = Timestamp::now();
-        Blockchain::testing(Default::default(), genesis, timestamp)
+        let (storage_cfg, _temp_dir) = StorageConfig::testing();
+        Blockchain::new(Default::default(), storage_cfg, genesis, timestamp)
             .expect("dev looks like unloadable.");
     }
 

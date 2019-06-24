@@ -147,8 +147,9 @@ mod test {
         let (wallet_skey, wallet_pkey) = (keychain.wallet_skey, keychain.wallet_pkey);
         let (network_skey, network_pkey) = (keychain.network_skey, keychain.network_pkey);
         let mut mempool = Mempool::new();
-        let chain =
-            Blockchain::testing(cfg, genesis, timestamp).expect("Failed to create blockchain");
+        let (storage_cfg, _temp_dir) = StorageConfig::testing();
+        let chain = Blockchain::new(cfg, storage_cfg, genesis, timestamp)
+            .expect("Failed to create blockchain");
         let mut inputs: Vec<Output> = Vec::new();
         let mut stakes: Vec<Output> = Vec::new();
         for output_hash in chain.unspent() {

@@ -22,6 +22,7 @@
 // SOFTWARE.
 
 use serde_derive::{Deserialize, Serialize};
+use tempdir::TempDir;
 
 /// Blockchain configuration.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -67,10 +68,11 @@ pub struct StorageConfig {
 }
 
 impl StorageConfig {
-    pub fn new(path: &str) -> Self {
-        StorageConfig {
-            database_path: String::from(path),
-        }
+    pub fn testing() -> (Self, TempDir) {
+        let temp_dir = TempDir::new("stegostest").unwrap();
+        let database_path = temp_dir.path().to_str().unwrap().to_string();
+        let cfg = StorageConfig { database_path };
+        (cfg, temp_dir)
     }
 }
 

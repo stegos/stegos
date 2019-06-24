@@ -21,24 +21,16 @@
 
 //! Implementation of block list on rocksdb.
 
+use super::block::Block;
+use super::blockchain::LSN;
 use byteorder::{BigEndian, ByteOrder};
 use failure::Error;
 use rocksdb::{Direction, IteratorMode, WriteBatch, DB};
-use stegos_serialization::traits::ProtoConvert;
-use tempdir::TempDir;
-
-use rand::distributions::Alphanumeric;
-use rand::{thread_rng, Rng};
-
 use std::path::Path;
-
-use super::block::Block;
-use super::blockchain::LSN;
+use stegos_serialization::traits::ProtoConvert;
 
 /// Database for storing Blocks in List maner.
 pub struct ListDb {
-    /// Guard object for temporary directory.
-    _temp_dir: Option<TempDir>,
     /// RocksDB database object.
     database: DB,
 }
@@ -47,23 +39,7 @@ impl ListDb {
     /// Creates new ListDB instance.
     pub fn new<P: AsRef<Path>>(path: P) -> Self {
         let database = DB::open_default(path).expect("couldn't open database");
-        Self {
-            database,
-            _temp_dir: None,
-        }
-    }
-
-    /// Creates new testing ListDB instance.
-    pub fn testing() -> Self {
-        // we need to generate random string, to avoid conflicts in tests.
-        let rand_string: String = thread_rng().sample_iter(&Alphanumeric).take(30).collect();
-        let temp_dir = TempDir::new(&rand_string).expect("couldn't create temp dir");
-        let database = DB::open_default(temp_dir.path()).expect("couldn't open temp database");;
-
-        Self {
-            _temp_dir: Some(temp_dir),
-            database,
-        }
+        Self { database }
     }
 
     pub(crate) fn insert(&self, lsn: LSN, block: Block) -> Result<(), Error> {
@@ -121,6 +97,7 @@ impl ListDb {
 mod test {
     use super::*;
     use crate::block::MacroBlock;
+    use crate::config::StorageConfig;
     use crate::timestamp::Timestamp;
     use bitvector::BitVector;
     use stegos_crypto::hash::Hash;
@@ -155,7 +132,8 @@ mod test {
         let block3 = create_block(Hash::digest(&block2));
         let blocks = vec![block1, block2, block3];
 
-        let db = ListDb::testing();
+        let (storage_cfg, _temp_dir) = StorageConfig::testing();
+        let db = ListDb::new(&storage_cfg.database_path);
         for (epoch, block) in blocks.iter().enumerate() {
             db.insert(LSN(epoch as u64, 0), block.clone()).unwrap();
         }
@@ -178,7 +156,8 @@ mod test {
         let block3 = create_block(Hash::digest(&block2));
         let blocks = vec![block1, block2, block3];
 
-        let db = ListDb::testing();
+        let (storage_cfg, _temp_dir) = StorageConfig::testing();
+        let db = ListDb::new(&storage_cfg.database_path);
         for (epoch, block) in blocks.iter().enumerate() {
             db.insert(LSN(epoch as u64, 0), block.clone()).unwrap();
         }
@@ -197,7 +176,8 @@ mod test {
             blocks.push(block);
         }
 
-        let db = ListDb::testing();
+        let (storage_cfg, _temp_dir) = StorageConfig::testing();
+        let db = ListDb::new(&storage_cfg.database_path);
         for (epoch, block) in blocks.iter().enumerate() {
             db.insert(LSN(epoch as u64, 0), block.clone()).unwrap();
         }

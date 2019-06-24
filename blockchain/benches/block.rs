@@ -26,7 +26,8 @@ fn push_macro_block(b: &mut Bencher) {
         NUM_NODES,
         timestamp,
     );
-    let mut chain = Blockchain::testing(cfg.clone(), genesis.clone(), timestamp)
+    let (storage_cfg, _temp_dir) = StorageConfig::testing();
+    let mut chain = Blockchain::new(cfg.clone(), storage_cfg.clone(), genesis.clone(), timestamp)
         .expect("Failed to create blockchain");
 
     //
@@ -75,11 +76,12 @@ fn push_macro_block(b: &mut Bencher) {
         || {
             info!("");
             // start bench to other blockchain
-            let chain = Blockchain::testing(cfg.clone(), genesis.clone(), timestamp).unwrap();
-            let blocks = blocks.clone();
-            (chain, blocks)
+            let (storage_cfg, temp_dir) = StorageConfig::testing();
+            let chain =
+                Blockchain::new(cfg.clone(), storage_cfg, genesis.clone(), timestamp).unwrap();
+            (chain, temp_dir, blocks.clone())
         },
-        |(mut chain, blocks)| {
+        |(mut chain, _temp_dir, blocks)| {
             for block in blocks {
                 chain.push_macro_block(block, timestamp).unwrap();
             }

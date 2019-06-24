@@ -57,7 +57,7 @@ lazy_static! {
     /// Regex to parse "pay" command.
     static ref PAY_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9A-Za-z]+)\s+(?P<amount>[0-9\.]{1,19})(?P<arguments>.+)?\s*$").unwrap();
     /// Regex to parse argument of "pay" command.
-    static ref PAY_ARGUMENTS_RE: Regex = Regex::new(r"^(\s+(?P<public>(/public)))?(\s+(?P<vs>(/vs)))?(\s+(?P<comment>[^/]+?))?(\s+(?P<lock>(/lock\s*[^/]*)))?(\s+(?P<fee>(/fee\s[0-9\.]{1,19})))?(\s+(?P<certificate>(/certificate)))?\s*$").unwrap();
+    static ref PAY_ARGUMENTS_RE: Regex = Regex::new(r"^(\s+(?P<public>(/public)))?(\s+(?P<snowball>(/snowball)))?(\s+(?P<comment>[^/]+?))?(\s+(?P<lock>(/lock\s*[^/]*)))?(\s+(?P<fee>(/fee\s[0-9\.]{1,19})))?(\s+(?P<certificate>(/certificate)))?\s*$").unwrap();
     /// Regex to parse "msg" command.
     static ref MSG_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<msg>.+)$").unwrap();
     /// Regex to parse "stake/unstake" command.

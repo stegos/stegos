@@ -1,0 +1,36 @@
+[general]
+chain = "dev"
+log4rs_config = "stegos-log4rs.toml"
+prometheus_endpoint = "127.0.0.1:9896"
+
+[blockchain_db]
+database_path = "testing/node06/data/chain"
+[wallet_db]
+database_path = "testing/node06/data/wallet"
+
+[keychain]
+password_file = "testing/node06/password.txt"
+wallet_skey_file = "testing/node06/wallet.skey"
+wallet_pkey_file = "testing/node06/wallet.pkey"
+network_skey_file = "testing/node06/network.skey"
+network_pkey_file = "testing/node06/network.pkey"
+
+[network]
+bind_ip = "127.0.0.1"
+bind_port = 10060
+advertise_local_ips = false
+hashcash_nbits = 4
+seed_nodes = [
+    "/ip4/127.0.0.1/tcp/10055",
+    "/ip4/127.0.0.1/tcp/10056",
+    "/ip4/127.0.0.1/tcp/10057",
+    "/ip4/127.0.0.1/tcp/10058",
+    "/ip4/127.0.0.1/tcp/10059",
+]
+advertised_addresses = [
+    "/ip4/127.0.0.1/tcp/10060",
+]
+
+[api]
+bind_ip = "127.0.0.1"
+bind_port = 3150

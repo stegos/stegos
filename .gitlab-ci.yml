@@ -2,7 +2,6 @@ stages:
   - fast_checks
   - build
   - test
-  - code_coverage
   - release
 
 before_script:
@@ -44,10 +43,6 @@ build:macos:
   script:
     - cargo test --all -- --nocapture
   dependencies: []
-  artifacts:
-    expire_in: 1 week
-    paths:
-      - target/
 
 test:linux:
   extends: .test
@@ -61,15 +56,14 @@ test:macos:
     - macos
 
 code_coverage:
-  stage: code_coverage
+  stage: test
   image: rust:1.34
   before_script: []
   script:
     - ci-scripts/coverage.sh
-  dependencies:
-    - test:linux
   tags:
     - linux
+  allow_failure: true
   only:
     - dev
     - master

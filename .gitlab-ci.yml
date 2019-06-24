@@ -58,7 +58,6 @@ test:macos:
 code_coverage:
   stage: test
   image: rust:1.34
-  before_script: []
   script:
     - ci-scripts/coverage.sh
   tags:

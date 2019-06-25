@@ -23,9 +23,9 @@
 use log::{debug, info, trace};
 use std::collections::BTreeMap;
 use std::mem;
-use stegos_crypto::curve1174::PublicKey;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::hashcash;
+use stegos_crypto::scc::PublicKey;
 use stegos_crypto::utils::print_nbits;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -140,14 +140,14 @@ impl Awards {
 mod test {
     use super::*;
 
-    use stegos_crypto::curve1174;
+    use stegos_crypto::scc;
 
     fn testing_keys() -> Vec<PublicKey> {
         vec![
-            curve1174::make_random_keys().1,
-            curve1174::make_random_keys().1,
-            curve1174::make_random_keys().1,
-            curve1174::make_random_keys().1,
+            scc::make_random_keys().1,
+            scc::make_random_keys().1,
+            scc::make_random_keys().1,
+            scc::make_random_keys().1,
         ]
     }
 

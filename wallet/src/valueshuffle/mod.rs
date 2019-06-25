@@ -102,13 +102,13 @@ use stegos_blockchain::PaymentTransaction;
 use stegos_blockchain::{Output, Timestamp};
 use stegos_blockchain::{PaymentOutput, PaymentPayloadData};
 use stegos_crypto::bulletproofs::{simple_commit, validate_range_proof};
-use stegos_crypto::curve1174::{
-    make_deterministic_keys, sign_hash, validate_sig, Fr, Pt, PublicKey, SchnorrSig, SecretKey,
-};
 use stegos_crypto::dicemix;
 use stegos_crypto::dicemix::*;
 use stegos_crypto::hash::{Hash, Hashable, Hasher, HASH_SIZE};
 use stegos_crypto::pbc;
+use stegos_crypto::scc::{
+    make_deterministic_keys, sign_hash, validate_sig, Fr, Pt, PublicKey, SchnorrSig, SecretKey,
+};
 use stegos_network::Network;
 use stegos_node::Node;
 use stegos_serialization::traits::ProtoConvert;
@@ -171,7 +171,7 @@ enum State {
 
 /// ValueShuffle Service.
 pub struct ValueShuffle {
-    /// Wallet's Curve1174 Secret Key.
+    /// Wallet's Secret Key.
     skey: SecretKey,
 
     /// Faciliator's PBC public key

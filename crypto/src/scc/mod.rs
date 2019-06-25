@@ -1,4 +1,4 @@
-//! curve1174 -- Improperly named (for retro-compat) crypto based on Ristretto Group
+//! scc -- Improperly named (for retro-compat) crypto based on Ristretto Group
 
 //
 // Copyright (c) 2019 Stegos AG

@@ -29,9 +29,9 @@ use stegos_serialization::traits::*;
 use crate::protos::valueshuffle;
 
 use std::collections::HashMap;
-use stegos_crypto::curve1174::{Fr, Pt, PublicKey, SchnorrSig, SecretKey};
 use stegos_crypto::dicemix;
 use stegos_crypto::hash::Hash;
+use stegos_crypto::scc::{Fr, Pt, PublicKey, SchnorrSig, SecretKey};
 
 type DcRow = Vec<Fr>;
 type DcSheet = Vec<DcRow>;
@@ -225,7 +225,7 @@ pub mod tests {
     use super::*;
     use std::dbg;
     use stegos_crypto::bulletproofs::simple_commit;
-    use stegos_crypto::curve1174::make_random_keys;
+    use stegos_crypto::scc::make_random_keys;
 
     #[test]
     fn vs_serialization() {

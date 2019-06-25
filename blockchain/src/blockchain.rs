@@ -44,10 +44,10 @@ use log::*;
 use rayon::prelude::*;
 use std::collections::BTreeMap;
 use stegos_crypto::bulletproofs::fee_a;
-use stegos_crypto::curve1174::{Fr, Pt, PublicKey, SecretKey};
 use stegos_crypto::hash::*;
 use stegos_crypto::pbc::VRF;
-use stegos_crypto::{curve1174, pbc};
+use stegos_crypto::scc::{Fr, Pt, PublicKey, SecretKey};
+use stegos_crypto::{pbc, scc};
 
 pub type ViewCounter = u32;
 pub type ValidatorId = u32;
@@ -611,7 +611,7 @@ impl Blockchain {
     pub(crate) fn wallet_by_network_key(
         &self,
         validator_pkey: &pbc::PublicKey,
-    ) -> Option<curve1174::PublicKey> {
+    ) -> Option<scc::PublicKey> {
         self.escrow.wallet_by_network_key(validator_pkey)
     }
 
@@ -804,7 +804,7 @@ impl Blockchain {
     pub fn create_macro_block(
         &self,
         view_change: u32,
-        beneficiary_pkey: &curve1174::PublicKey,
+        beneficiary_pkey: &scc::PublicKey,
         network_skey: &pbc::SecretKey,
         network_pkey: pbc::PublicKey,
         timestamp: Timestamp,

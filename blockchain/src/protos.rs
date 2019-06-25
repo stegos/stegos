@@ -30,9 +30,9 @@ use bitvector::BitVector;
 use crate::view_changes::*;
 use crate::*;
 use stegos_crypto::bulletproofs::BulletProof;
-use stegos_crypto::curve1174::{EncryptedPayload, Fr, Pt, PublicKey, SchnorrSig};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
+use stegos_crypto::scc::{EncryptedPayload, Fr, Pt, PublicKey, SchnorrSig};
 
 #[derive(Debug, Fail)]
 pub enum ProtoError {
@@ -769,9 +769,9 @@ impl ProtoConvert for SlashingProof {
 mod tests {
     use super::*;
     use crate::timestamp::Timestamp;
-    use stegos_crypto::curve1174;
     use stegos_crypto::hash::{Hash, Hashable};
     use stegos_crypto::pbc;
+    use stegos_crypto::scc;
 
     fn roundtrip<T>(x: &T) -> T
     where
@@ -784,7 +784,7 @@ mod tests {
 
     #[test]
     fn outputs() {
-        let (_skey1, pkey1) = curve1174::make_random_keys();
+        let (_skey1, pkey1) = scc::make_random_keys();
         let (network_skey1, network_pkey1) = pbc::make_random_keys();
 
         let amount = 1_000_000;
@@ -802,8 +802,8 @@ mod tests {
     }
 
     fn mktransaction() -> PaymentTransaction {
-        let (skey1, pkey1) = curve1174::make_random_keys();
-        let (_skey2, pkey2) = curve1174::make_random_keys();
+        let (skey1, pkey1) = scc::make_random_keys();
+        let (_skey2, pkey2) = scc::make_random_keys();
 
         let amount: i64 = 1_000_000;
         let fee: i64 = 0;
@@ -832,7 +832,7 @@ mod tests {
 
     #[test]
     fn coinbase_transaction() {
-        let (_skey, pkey) = curve1174::make_random_keys();
+        let (_skey, pkey) = scc::make_random_keys();
 
         let (output, gamma) = Output::new_payment(&pkey, 100).expect("Invalid keys");
         let coinbase = CoinbaseTransaction {
@@ -846,7 +846,7 @@ mod tests {
 
     #[test]
     fn public_payment_utxo() {
-        let (_skey, pkey) = curve1174::make_random_keys();
+        let (_skey, pkey) = scc::make_random_keys();
         let output = PublicPaymentOutput::new(&pkey, 100);
 
         roundtrip(&output);
@@ -874,7 +874,7 @@ mod tests {
 
     #[test]
     fn micro_blocks() {
-        let (skey, pkey) = curve1174::make_random_keys();
+        let (skey, pkey) = scc::make_random_keys();
         let (skeypbc, pkeypbc) = pbc::make_random_keys();
 
         let epoch: u64 = 10;
@@ -919,8 +919,8 @@ mod tests {
 
     #[test]
     fn macro_blocks() {
-        let (_skey1, pkey1) = curve1174::make_random_keys();
-        let (_skey2, pkey2) = curve1174::make_random_keys();
+        let (_skey1, pkey1) = scc::make_random_keys();
+        let (_skey2, pkey2) = scc::make_random_keys();
         let (skeypbc, pkeypbc) = pbc::make_random_keys();
 
         let epoch: u64 = 10;

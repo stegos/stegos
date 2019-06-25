@@ -34,9 +34,9 @@ use rand::thread_rng;
 use rand::Rng;
 use std::time::{Duration, SystemTime};
 use stegos_crypto::bulletproofs::*;
-use stegos_crypto::curve1174::*;
 use stegos_crypto::hash::*;
 use stegos_crypto::keying::*;
+use stegos_crypto::scc::*;
 
 // -------------------------------------------------------------------------------
 fn main() {

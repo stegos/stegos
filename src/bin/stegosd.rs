@@ -37,8 +37,8 @@ use std::path::PathBuf;
 use std::process;
 use stegos_api::WebSocketServer;
 use stegos_blockchain::{Blockchain, Timestamp};
-use stegos_crypto::curve1174;
 use stegos_crypto::pbc;
+use stegos_crypto::scc;
 use stegos_keychain::{self as keychain, KeyError};
 use stegos_network::{Libp2pNetwork, NETWORK_STATUS_TOPIC};
 use stegos_node::NodeService;
@@ -121,7 +121,7 @@ fn load_wallet_keys(
     wallet_pkey_file: &str,
     password_file: &str,
     recovery_file: &str,
-) -> Result<(curve1174::SecretKey, curve1174::PublicKey), KeyError> {
+) -> Result<(scc::SecretKey, scc::PublicKey), KeyError> {
     let wallet_skey_path = Path::new(wallet_skey_file);
     let wallet_pkey_path = Path::new(wallet_pkey_file);
 
@@ -134,7 +134,7 @@ fn load_wallet_keys(
         let (wallet_skey, wallet_pkey) = if !recovery_file.is_empty() {
             info!("Recovering keys...");
             let wallet_skey = keychain::input::read_recovery(recovery_file)?;
-            let wallet_pkey: curve1174::PublicKey = wallet_skey.clone().into();
+            let wallet_pkey: scc::PublicKey = wallet_skey.clone().into();
             info!(
                 "Recovered a wallet key: pkey={}",
                 String::from(&wallet_pkey)
@@ -142,7 +142,7 @@ fn load_wallet_keys(
             (wallet_skey, wallet_pkey)
         } else {
             debug!("Generating a new wallet key pair...");
-            let (wallet_skey, wallet_pkey) = curve1174::make_random_keys();
+            let (wallet_skey, wallet_pkey) = scc::make_random_keys();
             info!(
                 "Generated a new wallet key pair: pkey={}",
                 String::from(&wallet_pkey)

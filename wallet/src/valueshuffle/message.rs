@@ -24,16 +24,16 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use stegos_crypto::curve1174::Fr;
-use stegos_crypto::curve1174::Pt;
-use stegos_crypto::curve1174::PublicKey;
-use stegos_crypto::curve1174::SchnorrSig;
-use stegos_crypto::curve1174::SecretKey;
 use stegos_crypto::dicemix::DcMatrix;
 use stegos_crypto::dicemix::ParticipantID;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::hash::Hashable;
 use stegos_crypto::hash::Hasher;
+use stegos_crypto::scc::Fr;
+use stegos_crypto::scc::Pt;
+use stegos_crypto::scc::PublicKey;
+use stegos_crypto::scc::SchnorrSig;
+use stegos_crypto::scc::SecretKey;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum VsMsgType {

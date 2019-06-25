@@ -28,12 +28,12 @@ use rand::random;
 use serde_derive::{Deserialize, Serialize};
 use std::mem::transmute;
 use stegos_crypto::bulletproofs::{fee_a, make_range_proof, validate_range_proof, BulletProof};
-use stegos_crypto::curve1174::{
+use stegos_crypto::hash::{Hash, Hashable, Hasher, HASH_SIZE};
+use stegos_crypto::pbc;
+use stegos_crypto::scc::{
     aes_decrypt, aes_decrypt_with_rvalue, aes_encrypt, sign_hash, validate_sig, EncryptedPayload,
     Fr, Pt, PublicKey, SchnorrSig, SecretKey,
 };
-use stegos_crypto::hash::{Hash, Hashable, Hasher, HASH_SIZE};
-use stegos_crypto::pbc;
 use stegos_crypto::CryptoError;
 
 /// A magic value used to encode/decode payload.
@@ -825,7 +825,7 @@ pub mod tests {
 
     use rand::distributions::Alphanumeric;
     use rand::{thread_rng, Rng};
-    use stegos_crypto::curve1174::make_random_keys;
+    use stegos_crypto::scc::make_random_keys;
 
     fn random_string(len: usize) -> String {
         thread_rng().sample_iter(&Alphanumeric).take(len).collect()

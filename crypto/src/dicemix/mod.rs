@@ -27,9 +27,9 @@
 pub mod ffi;
 
 use crate::bulletproofs::*;
-use crate::curve1174;
 use crate::hash::{Hash, Hashable, Hasher};
 use crate::pbc;
+use crate::scc;
 use crate::utils::u8v_to_hexstr;
 use rayon::prelude::*;
 use std::cmp::Ordering;
@@ -92,12 +92,12 @@ participants engage.
 
 // -------------------------------------------------
 
-use curve1174::Fr;
-use curve1174::Pt;
+use scc::Fr;
+use scc::Pt;
 
-use curve1174::PublicKey;
-use curve1174::SchnorrSig;
-use curve1174::SecretKey;
+use scc::PublicKey;
+use scc::SchnorrSig;
+use scc::SecretKey;
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct ParticipantID {
     pub pkey: pbc::PublicKey,
@@ -851,9 +851,9 @@ mod tests {
         ];
 
         let sess = Hash::from_str("session1");
-        let (sess_sk1, sess_pk1) = curve1174::make_deterministic_keys(b"User1-session1");
-        let (sess_sk2, sess_pk2) = curve1174::make_deterministic_keys(b"User2-session1");
-        let (sess_sk3, sess_pk3) = curve1174::make_deterministic_keys(b"User3-session1");
+        let (sess_sk1, sess_pk1) = scc::make_deterministic_keys(b"User1-session1");
+        let (sess_sk2, sess_pk2) = scc::make_deterministic_keys(b"User2-session1");
+        let (sess_sk3, sess_pk3) = scc::make_deterministic_keys(b"User3-session1");
 
         let mut npk1 = HashMap::new();
         npk1.insert(ParticipantID::from_pk(pk2.clone()), sess_pk2);
@@ -1149,7 +1149,7 @@ mod tests {
         let mut sess_skeys = HashMap::new();
         for ix in 0..nparts {
             let seed = format!("User_{}_Session_Key", ix).into_bytes();
-            let (sk, pk) = curve1174::make_deterministic_keys(&seed);
+            let (sk, pk) = scc::make_deterministic_keys(&seed);
             let p = participants[ix].clone();
             sess_pkeys.insert(p.clone(), pk.clone());
             sess_skeys.insert(p.clone(), sk);

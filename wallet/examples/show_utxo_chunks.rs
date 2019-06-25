@@ -26,16 +26,16 @@
 #![allow(non_snake_case)]
 
 use stegos_blockchain::{Output, PaymentOutput, PaymentPayloadData, PaymentTransaction, Timestamp};
-use stegos_crypto::curve1174::make_random_keys;
-use stegos_crypto::curve1174::Fr;
-use stegos_crypto::curve1174::Pt;
-use stegos_crypto::curve1174::PublicKey;
-use stegos_crypto::curve1174::SchnorrSig;
-use stegos_crypto::curve1174::SecretKey;
 use stegos_crypto::dicemix::*;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::hash::{Hashable, Hasher, HASH_SIZE};
 use stegos_crypto::pbc;
+use stegos_crypto::scc::make_random_keys;
+use stegos_crypto::scc::Fr;
+use stegos_crypto::scc::Pt;
+use stegos_crypto::scc::PublicKey;
+use stegos_crypto::scc::SchnorrSig;
+use stegos_crypto::scc::SecretKey;
 use stegos_serialization::traits::ProtoConvert;
 
 fn main() {

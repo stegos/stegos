@@ -37,8 +37,8 @@ use std::time::Duration;
 pub use stegos_api::url;
 use stegos_api::*;
 use stegos_blockchain::Timestamp;
-use stegos_crypto::curve1174::PublicKey;
 use stegos_crypto::pbc;
+use stegos_crypto::scc::PublicKey;
 use stegos_keychain::input;
 
 const CONSOLE_HISTORY_LIMIT: u64 = 50;

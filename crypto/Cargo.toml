@@ -48,7 +48,7 @@ name = "bulletproofs"
 harness = false
 
 [[bench]]
-name = "curve1174"
+name = "scc"
 harness = false
 
 [[bench]]

@@ -30,9 +30,9 @@ use serde_derive::{Deserialize, Serialize};
 pub use stegos_blockchain::PaymentPayloadData;
 pub use stegos_blockchain::StakeInfo;
 use stegos_blockchain::Timestamp;
-use stegos_crypto::curve1174::PublicKey;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
+use stegos_crypto::scc::PublicKey;
 use stegos_node::EpochChanged;
 use stegos_node::OutputsChanged;
 

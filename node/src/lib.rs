@@ -55,7 +55,7 @@ use stegos_blockchain::*;
 use stegos_consensus::optimistic::{SealedViewChangeProof, ViewChangeCollector, ViewChangeMessage};
 use stegos_consensus::{self as consensus, Consensus, ConsensusMessage};
 use stegos_crypto::hash::Hash;
-use stegos_crypto::{curve1174, pbc};
+use stegos_crypto::{pbc, scc};
 use stegos_network::Network;
 use stegos_network::UnicastMessage;
 use stegos_serialization::traits::ProtoConvert;
@@ -244,7 +244,7 @@ pub struct NodeService {
     /// Blockchain.
     chain: Blockchain,
     /// Fee and reward recipient,
-    recipient_pkey: curve1174::PublicKey,
+    recipient_pkey: scc::PublicKey,
     /// Network secret key.
     network_pkey: pbc::PublicKey,
     /// Network secret key.
@@ -282,7 +282,7 @@ impl NodeService {
     pub fn new(
         cfg: NodeConfig,
         chain: Blockchain,
-        recipient_pkey: curve1174::PublicKey,
+        recipient_pkey: scc::PublicKey,
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
         network: Network,

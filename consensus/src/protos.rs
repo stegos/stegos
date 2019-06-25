@@ -165,7 +165,7 @@ mod tests {
     use bitvector::BitVector;
     use stegos_blockchain::Timestamp;
     use stegos_crypto::hash::{Hashable, Hasher};
-    use stegos_crypto::{curve1174, pbc};
+    use stegos_crypto::{pbc, scc};
 
     fn roundtrip<T>(x: &T) -> T
     where
@@ -218,7 +218,7 @@ mod tests {
 
     #[test]
     fn macro_blocks() {
-        let (skey, pkey) = curve1174::make_random_keys();
+        let (skey, pkey) = scc::make_random_keys();
         let (nskey, npkey) = pbc::make_random_keys();
 
         let epoch: u64 = 10;

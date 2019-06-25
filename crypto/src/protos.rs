@@ -25,13 +25,13 @@ use failure::Error;
 use stegos_serialization::traits::*;
 
 use crate::bulletproofs::BulletProof;
-use crate::curve1174::{EncryptedKey, EncryptedPayload, Fr, Pt, PublicKey, SchnorrSig, SecretKey};
 use crate::hash::Hash;
 use crate::hashcash::HashCashProof;
 use crate::pbc;
 use crate::pbc::G1;
 use crate::pbc::G2;
 use crate::pbc::VRF;
+use crate::scc::{EncryptedKey, EncryptedPayload, Fr, Pt, PublicKey, SchnorrSig, SecretKey};
 use crate::CryptoError;
 use ristretto_bulletproofs::RangeProof;
 
@@ -268,9 +268,9 @@ impl ProtoConvert for crate::dicemix::ParticipantID {
 mod tests {
     use super::*;
     use crate::bulletproofs::make_range_proof;
-    use crate::curve1174::{decrypt_key, encrypt_key, make_random_keys};
     use crate::hash::Hashable;
     use crate::pbc;
+    use crate::scc::{decrypt_key, encrypt_key, make_random_keys};
     use rand::rngs::ThreadRng;
     use rand::thread_rng;
     use rand::Rng;

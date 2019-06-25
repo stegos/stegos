@@ -26,8 +26,8 @@ use std::fs;
 use std::path::Path;
 use std::str::FromStr;
 
-use stegos_crypto::curve1174;
 use stegos_crypto::pbc;
+use stegos_crypto::scc;
 use stegos_serialization::traits::ProtoConvert;
 
 /// PEM tag for encrypted wallet secret key.
@@ -85,16 +85,16 @@ fn load_key(path: &Path, tag: &str) -> Result<Vec<u8>, KeyError> {
 
 fn load_encrypted_key(path: &Path, tag: &str, password: &str) -> Result<Vec<u8>, KeyError> {
     let skey = load_key(path, tag)?;
-    let skey = curve1174::EncryptedKey::from_buffer(&skey)
+    let skey = scc::EncryptedKey::from_buffer(&skey)
         .map_err(|e| KeyError::InvalidPayload(path.to_string_lossy().to_string(), e))?;
-    let skey = curve1174::decrypt_key(&password, &skey)
+    let skey = scc::decrypt_key(&password, &skey)
         .map_err(|_e| KeyError::InvalidPasswordPhrase(path.to_string_lossy().to_string()))?;
     Ok(skey)
 }
 
-pub fn load_wallet_pkey(path: &Path) -> Result<curve1174::PublicKey, KeyError> {
+pub fn load_wallet_pkey(path: &Path) -> Result<scc::PublicKey, KeyError> {
     let pkey_encoded = read(path)?;
-    curve1174::PublicKey::from_str(&String::from_utf8_lossy(&pkey_encoded))
+    scc::PublicKey::from_str(&String::from_utf8_lossy(&pkey_encoded))
         .map_err(|e| KeyError::InvalidKey(path.to_string_lossy().to_string(), e))
 }
 
@@ -104,9 +104,9 @@ pub fn load_network_pkey(path: &Path) -> Result<pbc::PublicKey, KeyError> {
         .map_err(|e| KeyError::InvalidKey(path.to_string_lossy().to_string(), e))
 }
 
-pub fn load_wallet_skey(path: &Path, password: &str) -> Result<curve1174::SecretKey, KeyError> {
+pub fn load_wallet_skey(path: &Path, password: &str) -> Result<scc::SecretKey, KeyError> {
     let bytes = load_encrypted_key(path, WALLET_ENCRYPTED_SKEY_TAG, password)?;
-    curve1174::SecretKey::try_from_bytes(&bytes)
+    scc::SecretKey::try_from_bytes(&bytes)
         .map_err(|e| KeyError::InvalidKey(path.to_string_lossy().to_string(), e))
 }
 
@@ -130,13 +130,13 @@ fn write_encrypted_key(
     contents: Vec<u8>,
     password: &str,
 ) -> Result<(), KeyError> {
-    let contents = curve1174::encrypt_key(&password, &contents)
+    let contents = scc::encrypt_key(&password, &contents)
         .into_buffer()
         .expect("Failed to encode encrypted payload");
     write_key(path, tag, contents)
 }
 
-pub fn write_wallet_pkey(path: &Path, pkey: &curve1174::PublicKey) -> Result<(), KeyError> {
+pub fn write_wallet_pkey(path: &Path, pkey: &scc::PublicKey) -> Result<(), KeyError> {
     write(path, String::from(pkey).as_bytes().to_vec())
 }
 
@@ -146,7 +146,7 @@ pub fn write_network_pkey(path: &Path, pkey: &pbc::PublicKey) -> Result<(), KeyE
 
 pub fn write_wallet_skey(
     path: &Path,
-    skey: &curve1174::SecretKey,
+    skey: &scc::SecretKey,
     password: &str,
 ) -> Result<(), KeyError> {
     let contents = skey.to_bytes().to_vec();
@@ -162,14 +162,14 @@ pub fn load_wallet_keypair(
     wallet_skey_file: &str,
     wallet_pkey_file: &str,
     password: &str,
-) -> Result<(curve1174::SecretKey, curve1174::PublicKey), KeyError> {
+) -> Result<(scc::SecretKey, scc::PublicKey), KeyError> {
     debug!(
         "Loading wallet key pair: wallet_skey_file={}, wallet_pkey_file={}...",
         wallet_skey_file, wallet_pkey_file
     );
     let wallet_pkey = load_wallet_pkey(Path::new(wallet_pkey_file))?;
     let wallet_skey = load_wallet_skey(Path::new(wallet_skey_file), password)?;
-    if let Err(_e) = curve1174::check_keying(&wallet_skey, &wallet_pkey) {
+    if let Err(_e) = scc::check_keying(&wallet_skey, &wallet_pkey) {
         return Err(KeyError::InvalidKeying(
             wallet_skey_file.to_string(),
             wallet_pkey_file.to_string(),

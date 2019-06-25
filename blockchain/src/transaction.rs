@@ -25,11 +25,11 @@ use crate::error::*;
 use crate::output::*;
 use crate::SlashingProof;
 use failure::Error;
-use stegos_crypto::curve1174::{
-    sign_hash, sign_hash_with_kval, Fr, Pt, PublicKey, SchnorrSig, SecretKey,
-};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
+use stegos_crypto::scc::{
+    sign_hash, sign_hash_with_kval, Fr, Pt, PublicKey, SchnorrSig, SecretKey,
+};
 
 //--------------------------------------------------------------------------------------------------
 // Slashing Transaction.

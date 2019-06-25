@@ -20,9 +20,9 @@
 // SOFTWARE.
 
 use stegos_blockchain::PaymentOutput;
-use stegos_crypto::curve1174;
 use stegos_crypto::dicemix;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
+use stegos_crypto::scc;
 
 /// A topic used for Join requests.
 pub const POOL_JOIN_TOPIC: &'static str = "txpool_join";
@@ -31,7 +31,7 @@ pub const POOL_ANNOUNCE_TOPIC: &'static str = "txpool_announce";
 
 type TXIN = Hash;
 type UTXO = PaymentOutput;
-type SchnorrSig = curve1174::SchnorrSig;
+type SchnorrSig = scc::SchnorrSig;
 type ParticipantID = dicemix::ParticipantID;
 
 // --------------------------------------------------

@@ -25,9 +25,9 @@ use crate::view_changes::ViewChangeProof;
 use crate::OutputError;
 use failure::Fail;
 use std::str::Utf8Error;
-use stegos_crypto::curve1174::PublicKey;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
+use stegos_crypto::scc::PublicKey;
 use stegos_crypto::CryptoError;
 
 #[derive(Debug, Fail)]

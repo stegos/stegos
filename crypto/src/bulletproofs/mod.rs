@@ -24,8 +24,8 @@
 
 #![allow(non_snake_case)]
 
-use crate::curve1174::{Fr, Pt, BPGENS, PCGENS};
 use crate::hash::*;
+use crate::scc::{Fr, Pt, BPGENS, PCGENS};
 use curve25519_dalek::scalar::Scalar;
 use merlin::Transcript;
 use rand::thread_rng;
@@ -121,7 +121,7 @@ pub fn validate_range_proof(bp: &BulletProof) -> bool {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::curve1174::{make_random_keys, sign_hash, validate_sig, PublicKey};
+    use crate::scc::{make_random_keys, sign_hash, validate_sig, PublicKey};
     use curve25519_dalek::ristretto::CompressedRistretto;
     use curve25519_dalek::ristretto::RistrettoPoint;
     use curve25519_dalek::scalar::Scalar;

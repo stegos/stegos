@@ -34,9 +34,9 @@ use crate::transaction::{
 use log::*;
 use std::collections::HashSet;
 use stegos_crypto::bulletproofs::{fee_a, simple_commit};
-use stegos_crypto::curve1174::{Fr, Pt};
 use stegos_crypto::hash::Hash;
-use stegos_crypto::{curve1174, pbc};
+use stegos_crypto::scc::{Fr, Pt};
+use stegos_crypto::{pbc, scc};
 
 impl CoinbaseTransaction {
     pub fn validate(&self) -> Result<(), BlockchainError> {
@@ -172,10 +172,10 @@ impl PaymentTransaction {
         eff_pkey -= adj;
 
         // Create public key and check signature
-        let eff_pkey: curve1174::PublicKey = eff_pkey.into();
+        let eff_pkey: scc::PublicKey = eff_pkey.into();
 
         // Check signature
-        curve1174::validate_sig(&tx_hash, &self.sig, &eff_pkey)
+        scc::validate_sig(&tx_hash, &self.sig, &eff_pkey)
             .map_err(|_e| TransactionError::InvalidSignature(tx_hash))?;
 
         // Transaction is valid.
@@ -756,7 +756,7 @@ pub mod tests {
     ///
     #[test]
     pub fn no_inputs() {
-        let (skey, pkey) = curve1174::make_random_keys();
+        let (skey, pkey) = scc::make_random_keys();
         let amount: i64 = 1_000_000;
         let fee: i64 = amount;
         let (input, _gamma1) = Output::new_payment(&pkey, amount).expect("keys are valid");
@@ -773,7 +773,7 @@ pub mod tests {
     #[test]
     pub fn no_outputs() {
         // No outputs
-        let (skey, pkey) = curve1174::make_random_keys();
+        let (skey, pkey) = scc::make_random_keys();
         let (tx, inputs, _outputs) = PaymentTransaction::new_test(&skey, &pkey, 100, 1, 0, 0, 100)
             .expect("transaction is valid");
         tx.validate(&inputs).expect("transaction is valid");
@@ -784,9 +784,9 @@ pub mod tests {
     ///
     #[test]
     pub fn payment_utxo() {
-        let (skey0, pkey0) = curve1174::make_random_keys();
-        let (skey1, pkey1) = curve1174::make_random_keys();
-        let (_skey2, pkey2) = curve1174::make_random_keys();
+        let (skey0, pkey0) = scc::make_random_keys();
+        let (skey1, pkey1) = scc::make_random_keys();
+        let (_skey2, pkey2) = scc::make_random_keys();
 
         let amount: i64 = 1_000_000;
         let fee: i64 = 1;
@@ -834,7 +834,7 @@ pub mod tests {
             let output = &mut tx.txouts[0];
             match output {
                 Output::PaymentOutput(ref mut o) => {
-                    let pt = curve1174::Pt::random();
+                    let pt = scc::Pt::random();
                     o.recipient = pt.into();
                 }
                 _ => panic!(),
@@ -951,7 +951,7 @@ pub mod tests {
     ///
     #[test]
     pub fn stake_utxo() {
-        let (skey1, pkey1) = curve1174::make_random_keys();
+        let (skey1, pkey1) = scc::make_random_keys();
         let (nskey, npkey) = pbc::make_random_keys();
 
         let amount: i64 = 1_000_000;
@@ -1031,7 +1031,7 @@ pub mod tests {
         let output = &mut tx.txouts[0];
         match output {
             Output::StakeOutput(ref mut o) => {
-                let pt = curve1174::Pt::random();
+                let pt = scc::Pt::random();
                 o.recipient = pt.into();
             }
             _ => panic!(),
@@ -1046,9 +1046,9 @@ pub mod tests {
 
     #[test]
     fn test_supertransaction() {
-        let (skey1, pkey1) = curve1174::make_random_keys();
-        let (skey2, pkey2) = curve1174::make_random_keys();
-        let (skey3, pkey3) = curve1174::make_random_keys();
+        let (skey1, pkey1) = scc::make_random_keys();
+        let (skey2, pkey2) = scc::make_random_keys();
+        let (skey3, pkey3) = scc::make_random_keys();
 
         let err_utxo = "Can't construct UTXO";
         let iamt1 = 101;
@@ -1059,33 +1059,33 @@ pub mod tests {
         let (inp3, gamma_i3) = Output::new_payment(&pkey3, iamt3).expect(err_utxo);
 
         let decr_err = "Can't decrypt UTXO payload";
-        let skeff1: curve1174::SecretKey = match inp1.clone() {
+        let skeff1: scc::SecretKey = match inp1.clone() {
             Output::PaymentOutput(o) => {
                 let payload = o.decrypt_payload(&skey1).expect(decr_err);
                 assert!(payload.gamma == gamma_i1);
-                let skeff: curve1174::SecretKey =
+                let skeff: scc::SecretKey =
                     (Fr::from(skey1.clone()) + payload.gamma * payload.delta).into();
                 skeff
             }
             _ => panic!("Invalid UTXO"),
         };
 
-        let skeff2: curve1174::SecretKey = match inp2.clone() {
+        let skeff2: scc::SecretKey = match inp2.clone() {
             Output::PaymentOutput(o) => {
                 let payload = o.decrypt_payload(&skey2).expect(decr_err);
                 assert!(payload.gamma == gamma_i2);
-                let skeff: curve1174::SecretKey =
+                let skeff: scc::SecretKey =
                     (Fr::from(skey2.clone()) + payload.gamma * payload.delta).into();
                 skeff
             }
             _ => panic!("Invalid UTXO"),
         };
 
-        let skeff3: curve1174::SecretKey = match inp3.clone() {
+        let skeff3: scc::SecretKey = match inp3.clone() {
             Output::PaymentOutput(o) => {
                 let payload = o.decrypt_payload(&skey3).expect(decr_err);
                 assert!(payload.gamma == gamma_i3);
-                let skeff: curve1174::SecretKey =
+                let skeff: scc::SecretKey =
                     (Fr::from(skey3.clone()) + payload.gamma * payload.delta).into();
                 skeff
             }
@@ -1136,8 +1136,8 @@ pub mod tests {
 
     #[test]
     fn create_validate_macro_block() {
-        let (_skey1, pkey1) = curve1174::make_random_keys();
-        let (_skey2, pkey2) = curve1174::make_random_keys();
+        let (_skey1, pkey1) = scc::make_random_keys();
+        let (_skey2, pkey2) = scc::make_random_keys();
         let (nskey, npkey) = pbc::make_random_keys();
 
         let epoch: u64 = 0;
@@ -1204,7 +1204,7 @@ pub mod tests {
 
     #[test]
     fn validate_pruned_micro_block() {
-        let (_skey, pkey) = curve1174::make_random_keys();
+        let (_skey, pkey) = scc::make_random_keys();
         let (nskey, npkey) = pbc::make_random_keys();
 
         let epoch: u64 = 0;
@@ -1251,7 +1251,7 @@ pub mod tests {
 
     #[test]
     fn create_validate_macro_block_with_staking() {
-        let (_skey1, pkey1) = curve1174::make_random_keys();
+        let (_skey1, pkey1) = scc::make_random_keys();
         let (nskey, npkey) = pbc::make_random_keys();
 
         let epoch: u64 = 0;
@@ -1390,7 +1390,7 @@ pub mod tests {
     fn create_money() {
         let input_amount: i64 = 100;
         let output_amount: i64 = 200;
-        let (_skey, pkey) = curve1174::make_random_keys();
+        let (_skey, pkey) = scc::make_random_keys();
         let (nskey, npkey) = pbc::make_random_keys();
 
         let epoch: u64 = 0;

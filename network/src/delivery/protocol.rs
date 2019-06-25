@@ -326,7 +326,7 @@ mod tests {
 
         let mut runtime = tokio::runtime::Runtime::new().unwrap();
         runtime
-            .block_on(server.select(client).map_err(|_| panic!()))
+            .block_on(server.select(client).map_err(|_| panic!()).map(drop))
             .unwrap();
     }
 

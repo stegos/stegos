@@ -21,6 +21,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#![deny(warnings)]
+
 mod config;
 mod error;
 mod loader;
@@ -272,7 +274,7 @@ pub struct NodeService {
     /// Triggered when outputs created and/or pruned.
     on_outputs_changed: Vec<UnboundedSender<OutputsChanged>>,
     /// Aggregated stream of events.
-    events: Box<Stream<Item = NodeMessage, Error = ()> + Send>,
+    events: Box<dyn Stream<Item = NodeMessage, Error = ()> + Send>,
 }
 
 impl NodeService {
@@ -300,7 +302,7 @@ impl NodeService {
         let on_epoch_changed = Vec::<UnboundedSender<EpochChanged>>::new();
         let on_outputs_changed = Vec::<UnboundedSender<OutputsChanged>>::new();
 
-        let mut streams = Vec::<Box<Stream<Item = NodeMessage, Error = ()> + Send>>::new();
+        let mut streams = Vec::<Box<dyn Stream<Item = NodeMessage, Error = ()> + Send>>::new();
 
         // Control messages
         streams.push(Box::new(inbox));

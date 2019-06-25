@@ -21,4 +21,5 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#![allow(bare_trait_objects)]
 include!(concat!(env!("OUT_DIR"), "/gatekeeper_proto/mod.rs"));

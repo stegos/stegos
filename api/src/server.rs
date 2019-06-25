@@ -48,9 +48,9 @@ const OUTPUT_BUFFER_SIZE: usize = 10;
 const CONSOLE_TOPIC: &'static str = "console";
 
 /// A type definition for sink.
-type WsSink = Box<Sink<SinkItem = OwnedMessage, SinkError = WebSocketError> + Send>;
+type WsSink = Box<dyn Sink<SinkItem = OwnedMessage, SinkError = WebSocketError> + Send>;
 /// A type definition for stream.
-type WsStream = Box<Stream<Item = OwnedMessage, Error = WebSocketError> + Send>;
+type WsStream = Box<dyn Stream<Item = OwnedMessage, Error = WebSocketError> + Send>;
 
 /// Handler of incoming connections.
 struct WebSocketHandler {

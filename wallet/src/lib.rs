@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-//#![deny(warnings)]
+#![deny(warnings)]
 
 mod api;
 mod change;
@@ -128,7 +128,7 @@ pub struct WalletService {
     // Events source
     //
     /// Incoming events.
-    events: Box<Stream<Item = WalletEvent, Error = ()> + Send>,
+    events: Box<dyn Stream<Item = WalletEvent, Error = ()> + Send>,
 }
 
 impl WalletService {
@@ -177,7 +177,7 @@ impl WalletService {
         //
         // Events.
         //
-        let mut events: Vec<Box<Stream<Item = WalletEvent, Error = ()> + Send>> = Vec::new();
+        let mut events: Vec<Box<dyn Stream<Item = WalletEvent, Error = ()> + Send>> = Vec::new();
 
         // Control messages.
         let (outbox, inbox) = unbounded::<WalletEvent>();

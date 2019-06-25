@@ -31,7 +31,7 @@ use std::path::Path;
 use std::result::Result;
 use stegos_api::ApiConfig;
 use stegos_blockchain::{ChainConfig, StorageConfig};
-use stegos_crypto::curve1174::PublicKey;
+use stegos_crypto::scc::PublicKey;
 use stegos_keychain::KeyChainConfig;
 use stegos_network::NetworkConfig;
 use stegos_node::NodeConfig;

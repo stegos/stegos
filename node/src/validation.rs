@@ -129,7 +129,7 @@ mod test {
     use stegos_blockchain::test::*;
     use stegos_blockchain::Timestamp;
     use stegos_blockchain::*;
-    use stegos_crypto::curve1174::Fr;
+    use stegos_crypto::scc::Fr;
 
     #[test]
     fn test_validate_transaction() {

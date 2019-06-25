@@ -23,8 +23,8 @@
 
 use failure::{format_err, Error};
 use stegos_blockchain::PaymentOutput;
-use stegos_crypto::curve1174::SchnorrSig;
 use stegos_crypto::hash::Hash;
+use stegos_crypto::scc::SchnorrSig;
 use stegos_crypto::{dicemix, CryptoError};
 use stegos_serialization::traits::*;
 
@@ -189,7 +189,7 @@ mod tests {
 
         let session_id = Hash::digest(&1u64);
         let mut participants: Vec<pbc::PublicKey> = Vec::new();
-        participants.push((pkey.clone(), Vec::new(), curve1174::SchnorrSig::new()));
+        participants.push((pkey.clone(), Vec::new(), scc::SchnorrSig::new()));
         participants.push(pkey1);
         let pool = PoolInfo {
             participants,

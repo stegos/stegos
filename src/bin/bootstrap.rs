@@ -32,7 +32,7 @@ use stegos_blockchain::{
     PaymentPayloadData, StakeOutput, Timestamp,
 };
 use stegos_crypto::hash::Hash;
-use stegos_crypto::{curve1174, pbc};
+use stegos_crypto::{pbc, scc};
 use stegos_keychain as keychain;
 use stegos_serialization::traits::ProtoConvert;
 
@@ -132,8 +132,8 @@ fn main() {
 
     let mut outputs: Vec<Output> = Vec::with_capacity(1 + keys as usize);
     let mut keychains = Vec::<(
-        curve1174::SecretKey,
-        curve1174::PublicKey,
+        scc::SecretKey,
+        scc::PublicKey,
         pbc::SecretKey,
         pbc::PublicKey,
     )>::new();
@@ -149,7 +149,7 @@ fn main() {
             .expect("failed to read password");
 
         // Generate keys.
-        let (wallet_skey, wallet_pkey) = curve1174::make_random_keys();
+        let (wallet_skey, wallet_pkey) = scc::make_random_keys();
         let (network_skey, network_pkey) = pbc::make_random_keys();
 
         // Write keys.

@@ -20,8 +20,8 @@
 // SOFTWARE.
 
 use crate::error::KeyError;
-use stegos_crypto::curve1174;
 use stegos_crypto::keying::{convert_int_to_wordlist, convert_wordlist_to_int};
+use stegos_crypto::scc;
 
 fn checksum(bytes: &[u8]) -> u8 {
     let mut chk: u8 = 0;
@@ -31,7 +31,7 @@ fn checksum(bytes: &[u8]) -> u8 {
     chk
 }
 
-pub fn wallet_skey_to_recovery(skey: &curve1174::SecretKey) -> String {
+pub fn wallet_skey_to_recovery(skey: &scc::SecretKey) -> String {
     let skey = skey.to_bytes();
     let mut bytes = [08; 33];
     bytes[0..32].copy_from_slice(&skey[..]);
@@ -40,13 +40,13 @@ pub fn wallet_skey_to_recovery(skey: &curve1174::SecretKey) -> String {
     words[..].join(" ")
 }
 
-pub fn recovery_to_wallet_skey(recovery: &str) -> Result<curve1174::SecretKey, KeyError> {
+pub fn recovery_to_wallet_skey(recovery: &str) -> Result<scc::SecretKey, KeyError> {
     let words: Vec<&str> = recovery.split(' ').collect();
     let bytes = convert_wordlist_to_int(&words).map_err(|_| KeyError::InvalidRecoveryPhrase)?;
     if checksum(&bytes[0..32]) != bytes[32] {
         return Err(KeyError::InvalidRecoveryPhrase);
     }
-    curve1174::SecretKey::try_from_bytes(&bytes[0..32]).map_err(|e| KeyError::InvalidRecoveryKey(e))
+    scc::SecretKey::try_from_bytes(&bytes[0..32]).map_err(|e| KeyError::InvalidRecoveryKey(e))
 }
 
 #[cfg(test)]
@@ -55,7 +55,7 @@ mod tests {
 
     #[test]
     fn encode_decode() {
-        let (skey, _pkey) = curve1174::make_random_keys();
+        let (skey, _pkey) = scc::make_random_keys();
         let words = wallet_skey_to_recovery(&skey);
         let skey2 = recovery_to_wallet_skey(&words).expect("invalid");
         assert_eq!(skey, skey2);

@@ -30,9 +30,9 @@ use log::*;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-use stegos_crypto::curve1174;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
+use stegos_crypto::scc;
 
 #[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd)]
 struct EscrowKey {
@@ -42,7 +42,7 @@ struct EscrowKey {
 
 #[derive(Debug, Clone)]
 struct EscrowValue {
-    wallet_pkey: curve1174::PublicKey,
+    wallet_pkey: scc::PublicKey,
     active_until_epoch: u64,
     amount: i64,
 }
@@ -72,7 +72,7 @@ pub struct ValidatorInfo {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct StakeInfo {
     pub utxo: Hash,
-    pub wallet_pkey: curve1174::PublicKey,
+    pub wallet_pkey: scc::PublicKey,
     pub active_until_epoch: u64,
     pub is_active: bool,
     pub amount: i64,
@@ -93,7 +93,7 @@ impl Escrow {
         &mut self,
         lsn: LSN,
         validator_pkey: pbc::PublicKey,
-        wallet_pkey: curve1174::PublicKey,
+        wallet_pkey: scc::PublicKey,
         output_hash: Hash,
         epoch: u64,
         stakes_epoch: u64,
@@ -207,10 +207,7 @@ impl Escrow {
     ///
     /// Return a wallet key by network key.
     ///
-    pub fn wallet_by_network_key(
-        &self,
-        validator_pkey: &pbc::PublicKey,
-    ) -> Option<curve1174::PublicKey> {
+    pub fn wallet_by_network_key(&self, validator_pkey: &pbc::PublicKey) -> Option<scc::PublicKey> {
         let (hash_min, hash_max) = Hash::bounds();
         let key_min = EscrowKey {
             validator_pkey: validator_pkey.clone(),

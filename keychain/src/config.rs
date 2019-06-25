@@ -31,9 +31,9 @@ pub struct KeyChainConfig {
     pub password_file: String,
     /// Path to recovery file.
     pub recovery_file: String,
-    /// Path to Curve1174 secret key.
+    /// Path to SCC secret key.
     pub wallet_skey_file: String,
-    /// Path to Curve1174 public key.
+    /// Path to SCC public key.
     pub wallet_pkey_file: String,
     /// Path to PBC secret key.
     pub network_skey_file: String,

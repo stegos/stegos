@@ -30,6 +30,9 @@ clear_on_drop = "0.2"
 serde = "1.0"
 paired = "0.15"
 ff = "0.4"
+curve25519-dalek = "1"
+merlin = "1"
+ristretto_bulletproofs = { package = "bulletproofs", version = "1" }
 
 [dev-dependencies]
 serde_json = "1.0"
@@ -45,7 +48,7 @@ name = "bulletproofs"
 harness = false
 
 [[bench]]
-name = "curve1174"
+name = "scc"
 harness = false
 
 [[bench]]

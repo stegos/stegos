@@ -6,8 +6,7 @@ message Pt {
 }
 
 message Fr {
-    bool wau = 1;
-    bytes data = 2;
+    bytes data = 1;
 }
 
 message G1 {
@@ -53,29 +52,9 @@ message EncryptedKey {
     SchnorrSig sig = 2;
 }
 
-message LR {
-    Pt l = 2;
-    Pt r = 3;
-};
-
-message DotProof {
-    Pt u = 1;
-    Pt pcmt = 2;
-    Fr a = 3;
-    Fr b = 4;
-    repeated LR xlrs = 5;
-};
-
 message BulletProof {
     Pt vcmt = 1;
-    Pt acmt = 2;
-    Pt scmt = 3;
-    Pt t1_cmt = 4;
-    Pt t2_cmt = 5;
-    Fr tau_x = 6;
-    Fr mu = 7;
-    Fr t_hat = 8;
-    DotProof dot_proof = 9;
+    bytes proof = 2;
 }
 
 message DiceMixParticipantID {

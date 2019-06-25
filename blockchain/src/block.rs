@@ -30,9 +30,9 @@ use crate::view_changes::ViewChangeProof;
 use bitvector::BitVector;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use stegos_crypto::curve1174::Fr;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
+use stegos_crypto::scc::Fr;
 
 /// Blockchain version.
 pub const VERSION: u64 = 1;

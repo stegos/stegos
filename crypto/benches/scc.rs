@@ -1,4 +1,4 @@
-//! Curve1174 Benchmark.
+//! Single-Curve Crypto Benchmark.
 
 //
 // MIT License
@@ -27,20 +27,20 @@
 use criterion::{black_box as bb, criterion_group, criterion_main, Bencher, Criterion};
 use simple_logger;
 use std::time::Duration;
-use stegos_crypto::curve1174;
 use stegos_crypto::hash::Hash;
+use stegos_crypto::scc;
 
 fn create_signature(b: &mut Bencher) {
     simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
     b.iter_with_setup(
         || {
-            let (skey, _pkey) = curve1174::make_random_keys();
+            let (skey, _pkey) = scc::make_random_keys();
             let hash = Hash::random();
             (hash, skey)
         },
         |(hash, skey)| {
-            curve1174::sign_hash(bb(&hash), bb(&skey));
+            scc::sign_hash(bb(&hash), bb(&skey));
         },
     );
 }
@@ -50,20 +50,20 @@ fn validate_signature(b: &mut Bencher) {
 
     b.iter_with_setup(
         || {
-            let (skey, pkey) = curve1174::make_random_keys();
+            let (skey, pkey) = scc::make_random_keys();
             let hash = Hash::random();
-            let signature = curve1174::sign_hash(&hash, &skey);
+            let signature = scc::sign_hash(&hash, &skey);
             (hash, signature, pkey)
         },
         |(hash, signature, pkey)| {
-            curve1174::validate_sig(bb(&hash), bb(&signature), bb(&pkey)).unwrap();
+            scc::validate_sig(bb(&hash), bb(&signature), bb(&pkey)).unwrap();
         },
     );
 }
 
 fn signature_benchmark(c: &mut Criterion) {
-    c.bench_function("curve1174::create_schnorr_signature", create_signature);
-    c.bench_function("curve1174::validate_schnorr_signature", validate_signature);
+    c.bench_function("scc::create_schnorr_signature", create_signature);
+    c.bench_function("scc::validate_schnorr_signature", validate_signature);
 }
 
 criterion_group! {

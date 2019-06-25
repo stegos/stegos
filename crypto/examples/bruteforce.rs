@@ -34,19 +34,19 @@ use rand::thread_rng;
 use rand::Rng;
 use std::time::{Duration, SystemTime};
 use stegos_crypto::bulletproofs::*;
-use stegos_crypto::curve1174::*;
 use stegos_crypto::hash::*;
 use stegos_crypto::keying::*;
+use stegos_crypto::scc::*;
 
 // -------------------------------------------------------------------------------
 fn main() {
-    let x = 0x1_0000_000i64;
+    let x = 0x1_0000_000u64;
     let cmt = simple_commit(&Fr::zero(), &Fr::from(x));
     println!("incr = {:?}", cmt);
     let minv = -0x8000_0000_0000_0000i128;
     let maxv = 0x7fff_ffff_ffff_ffffi128;
     let mut sum = simple_commit(&Fr::zero(), &Fr::zero());
-    let incr = simple_commit(&Fr::zero(), &Fr::from(1));
+    let incr = simple_commit(&Fr::zero(), &Fr::one());
     println!("incr = {:?}", incr);
     let mut ct = 0u32;
     let start = SystemTime::now();

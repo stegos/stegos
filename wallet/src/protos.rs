@@ -35,7 +35,7 @@ use crate::storage::{PaymentCertificate, PaymentTransactionValue};
 use stegos_blockchain::{
     PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput,
 };
-use stegos_crypto::curve1174::{Fr, PublicKey};
+use stegos_crypto::scc::{Fr, PublicKey};
 
 // -----------------------------------------------------------
 

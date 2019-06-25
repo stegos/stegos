@@ -27,9 +27,9 @@ use std::collections::HashSet;
 use stegos_blockchain::view_changes::ViewChangeProof;
 use stegos_blockchain::Timestamp;
 use stegos_blockchain::*;
-use stegos_crypto::curve1174::{self, Fr};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
+use stegos_crypto::scc::{self, Fr};
 
 /// Memory Pool of Transactions.
 pub struct Mempool {
@@ -161,7 +161,7 @@ impl Mempool {
         view_change_proof: Option<ViewChangeProof>,
         last_random: Hash,
         block_reward: i64,
-        recipient_pkey: &curve1174::PublicKey,
+        recipient_pkey: &scc::PublicKey,
         network_skey: &pbc::SecretKey,
         network_pkey: &pbc::PublicKey,
         max_utxo_in_block: usize,
@@ -285,7 +285,7 @@ mod test {
 
     #[test]
     fn basic() {
-        let (skey, pkey) = curve1174::make_random_keys();
+        let (skey, pkey) = scc::make_random_keys();
         let mut mempool = Mempool::new();
 
         let (tx1, inputs1, outputs1) =
@@ -352,7 +352,7 @@ mod test {
 
     #[test]
     pub fn partial_pruning1() {
-        let (skey, pkey) = curve1174::make_random_keys();
+        let (skey, pkey) = scc::make_random_keys();
         let mut mempool = Mempool::new();
 
         let (tx, inputs, outputs) = PaymentTransaction::new_test(&skey, &pkey, 100, 2, 100, 2, 0)
@@ -373,7 +373,7 @@ mod test {
 
     #[test]
     pub fn partial_pruning2() {
-        let (skey, pkey) = curve1174::make_random_keys();
+        let (skey, pkey) = scc::make_random_keys();
         let mut mempool = Mempool::new();
 
         let (tx, inputs, outputs) = PaymentTransaction::new_test(&skey, &pkey, 100, 2, 100, 2, 0)
@@ -394,7 +394,7 @@ mod test {
 
     #[test]
     fn create_block() {
-        let (recipient_skey, recipient_pkey) = curve1174::make_random_keys();
+        let (recipient_skey, recipient_pkey) = scc::make_random_keys();
         let (network_skey, network_pkey) = pbc::make_random_keys();
 
         let max_utxo_in_block: usize = 9;

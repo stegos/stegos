@@ -12,10 +12,10 @@ use log::*;
 use std::collections::HashMap;
 use std::time::Duration;
 use stegos_blockchain::PaymentOutput;
-use stegos_crypto::curve1174;
 use stegos_crypto::dicemix;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
+use stegos_crypto::scc;
 use stegos_network::Network;
 use stegos_node::EpochChanged;
 use stegos_node::Node;
@@ -28,7 +28,7 @@ const MIN_PARTICIPANTS: usize = 3;
 
 type TXIN = Hash;
 type UTXO = PaymentOutput;
-type SchnorrSig = curve1174::SchnorrSig;
+type SchnorrSig = scc::SchnorrSig;
 type ParticipantID = dicemix::ParticipantID;
 
 struct FacilitatorState {

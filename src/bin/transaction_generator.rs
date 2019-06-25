@@ -34,8 +34,8 @@ use std::process;
 use stegos::config::Config;
 use stegos::generator::{Generator, GeneratorMode};
 use stegos_blockchain::{Blockchain, Output, Timestamp};
-use stegos_crypto::curve1174;
 use stegos_crypto::pbc;
+use stegos_crypto::scc;
 use stegos_keychain as keychain;
 use stegos_network::Libp2pNetwork;
 use stegos_node::NodeService;
@@ -102,8 +102,8 @@ fn load_nodes_configs<'a>(
 
 struct GeneratorInstance {
     cfg: Config,
-    wallet_skey: curve1174::SecretKey,
-    wallet_pkey: curve1174::PublicKey,
+    wallet_skey: scc::SecretKey,
+    wallet_pkey: scc::PublicKey,
     network_skey: pbc::SecretKey,
     network_pkey: pbc::PublicKey,
     wallet_recover: Vec<(Output, u64)>,
@@ -220,11 +220,11 @@ fn run() -> Result<(), Error> {
     )?;
 
     info!("Recover wallets.");
-    let keys: Vec<curve1174::PublicKey> = instances
+    let keys: Vec<scc::PublicKey> = instances
         .iter()
         .map(|instance| instance.wallet_pkey)
         .collect();
-    let wallet_keys: Vec<(&curve1174::SecretKey, &curve1174::PublicKey)> = instances
+    let wallet_keys: Vec<(&scc::SecretKey, &scc::PublicKey)> = instances
         .iter()
         .map(|instance| (&instance.wallet_skey, &instance.wallet_pkey))
         .collect();

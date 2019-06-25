@@ -36,8 +36,8 @@ use stegos_blockchain::{
     PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput, StakeOutput,
     Timestamp, Transaction,
 };
-use stegos_crypto::curve1174::{make_random_keys, Fr, PublicKey};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
+use stegos_crypto::scc::{make_random_keys, Fr, PublicKey};
 use stegos_serialization::traits::ProtoConvert;
 use tempdir::TempDir;
 
@@ -393,7 +393,7 @@ impl PaymentCertificate {
             where
                 E: de::Error,
             {
-                Fr::try_from_hex(value, true).map_err(|e| E::custom(e))
+                Fr::try_from_hex(value).map_err(|e| E::custom(e))
             }
         }
         deserilizer.deserialize_string(FrVisitor)

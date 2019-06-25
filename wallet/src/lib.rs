@@ -51,9 +51,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use stegos_blockchain::Timestamp;
 use stegos_blockchain::*;
-use stegos_crypto::curve1174;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
+use stegos_crypto::scc;
 use stegos_keychain as keychain;
 use stegos_network::Network;
 use stegos_node::EpochChanged;
@@ -70,9 +70,9 @@ pub struct WalletService {
     /// Path to wallet secret key.
     wallet_skey_file: String,
     /// Wallet Secret Key.
-    wallet_skey: curve1174::SecretKey,
+    wallet_skey: scc::SecretKey,
     /// Wallet Public Key.
-    wallet_pkey: curve1174::PublicKey,
+    wallet_pkey: scc::PublicKey,
     /// Network Secret Key.
     network_skey: pbc::SecretKey,
     /// Network Public Key.
@@ -136,8 +136,8 @@ impl WalletService {
     pub fn new(
         database_path: &Path,
         wallet_skey_file: String,
-        wallet_skey: curve1174::SecretKey,
-        wallet_pkey: curve1174::PublicKey,
+        wallet_skey: scc::SecretKey,
+        wallet_pkey: scc::PublicKey,
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
         network: Network,
@@ -233,7 +233,7 @@ impl WalletService {
     }
 
     /// Unlock secret key.
-    fn unlock(&self, password: String) -> Result<curve1174::SecretKey, Error> {
+    fn unlock(&self, password: String) -> Result<scc::SecretKey, Error> {
         let wallet_skey_path = Path::new(&self.wallet_skey_file);
         let wallet_skey = keychain::keyfile::load_wallet_skey(wallet_skey_path, &password)?;
         Ok(wallet_skey)
@@ -243,7 +243,7 @@ impl WalletService {
     fn payment(
         &mut self,
         password: String,
-        recipient: &curve1174::PublicKey,
+        recipient: &scc::PublicKey,
         amount: i64,
         payment_fee: i64,
         comment: String,
@@ -302,7 +302,7 @@ impl WalletService {
     fn public_payment(
         &mut self,
         password: String,
-        recipient: &curve1174::PublicKey,
+        recipient: &scc::PublicKey,
         amount: i64,
         payment_fee: i64,
         locked_timestamp: Option<Timestamp>,
@@ -378,7 +378,7 @@ impl WalletService {
     fn secure_payment(
         &mut self,
         password: String,
-        recipient: &curve1174::PublicKey,
+        recipient: &scc::PublicKey,
         amount: i64,
         payment_fee: i64,
         comment: String,

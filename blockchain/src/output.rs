@@ -28,13 +28,12 @@ use rand::random;
 use serde_derive::{Deserialize, Serialize};
 use std::mem::transmute;
 use stegos_crypto::bulletproofs::{fee_a, make_range_proof, validate_range_proof, BulletProof};
-use stegos_crypto::curve1174::zap_bytes;
-use stegos_crypto::curve1174::{
-    aes_decrypt, aes_decrypt_with_rvalue, aes_encrypt, sign_hash, validate_sig, ECp,
-    EncryptedPayload, Fq, Fr, Pt, PublicKey, SchnorrSig, SecretKey, G, UNIQ,
-};
 use stegos_crypto::hash::{Hash, Hashable, Hasher, HASH_SIZE};
 use stegos_crypto::pbc;
+use stegos_crypto::scc::{
+    aes_decrypt, aes_decrypt_with_rvalue, aes_encrypt, sign_hash, validate_sig, EncryptedPayload,
+    Fr, Pt, PublicKey, SchnorrSig, SecretKey,
+};
 use stegos_crypto::CryptoError;
 
 /// A magic value used to encode/decode payload.
@@ -168,23 +167,22 @@ fn cloak_key(recipient_pkey: &PublicKey, gamma: &Fr) -> Result<(PublicKey, Fr), 
     // h is the digest of the recipients actual public key mixed with a timestamp.
     let mut hasher = Hasher::new();
     recipient_pkey.hash(&mut hasher);
-    Fq::random().hash(&mut hasher);
+    Fr::random().hash(&mut hasher);
     let h = hasher.result();
 
     // Use deterministic randomness here too, to protect against PRNG attacks.
-    let mut delta: Fr = Fr::synthetic_random(&"PKey", &*UNIQ, &h);
-    delta.set_wau();
+    let delta: Fr = Fr::synthetic_random(&"PKey", gamma, &h);
 
     // Resulting publickey will be a random-like value in a safe range of the field,
     // not too small, and not too large. This helps avoid brute force attacks, looking
     // for the discrete log corresponding to delta.
 
-    let pt = recipient_pkey.decompress()?;
+    let pt = Pt::from(*recipient_pkey);
     let cloaked_pt = {
         if (*gamma) == Fr::zero() {
-            pt + &delta * (*G)
+            pt + delta * Pt::one()
         } else {
-            pt + gamma * &delta * (*G)
+            pt + *gamma * delta * Pt::one()
         }
     };
     let cloaked_pkey = PublicKey::from(cloaked_pt);
@@ -282,12 +280,12 @@ impl PaymentPayload {
         pos += PAYMENT_PAYLOAD_MAGIC.len();
 
         // Gamma.
-        let gamma_bytes: [u8; 32] = self.gamma.to_lev_u8();
+        let gamma_bytes: [u8; 32] = self.gamma.to_bytes();
         payload[pos..pos + gamma_bytes.len()].copy_from_slice(&gamma_bytes);
         pos += gamma_bytes.len();
 
         // Delta.
-        let delta_bytes: [u8; 32] = self.delta.to_lev_u8();
+        let delta_bytes: [u8; 32] = self.delta.to_bytes();
         payload[pos..pos + delta_bytes.len()].copy_from_slice(&delta_bytes);
         pos += delta_bytes.len();
 
@@ -297,7 +295,7 @@ impl PaymentPayload {
         pos += amount_bytes.len();
 
         // Sender signature
-        let signature_u = self.signature.u.to_lev_u8();
+        let signature_u = self.signature.u.to_bytes();
         payload[pos..pos + signature_u.len()].copy_from_slice(&signature_u);
         pos += signature_u.len();
 
@@ -390,15 +388,13 @@ impl PaymentPayload {
         let mut gamma_bytes: [u8; 32] = [0u8; 32];
         gamma_bytes.copy_from_slice(&payload[pos..pos + 32]);
         pos += gamma_bytes.len();
-        let gamma: Fr = Fr::from_lev_u8(gamma_bytes, true);
-        zap_bytes(&mut gamma_bytes);
+        let gamma: Fr = Fr::try_from_bytes(&gamma_bytes[..]).expect("ok");
 
         // Delta.
         let mut delta_bytes: [u8; 32] = [0u8; 32];
         delta_bytes.copy_from_slice(&payload[pos..pos + 32]);
         pos += delta_bytes.len();
-        let delta: Fr = Fr::from_lev_u8(delta_bytes, true);
-        zap_bytes(&mut delta_bytes);
+        let delta: Fr = Fr::try_from_bytes(&delta_bytes[..]).expect("ok");
 
         // Amount.
         let mut amount_bytes: [u8; 8] = [0u8; 8];
@@ -413,14 +409,12 @@ impl PaymentPayload {
         let mut signature_u_bytes: [u8; 32] = [0u8; 32];
         signature_u_bytes.copy_from_slice(&payload[pos..pos + 32]);
         pos += signature_u_bytes.len();
-        let signature_u: Fr = Fr::from_lev_u8(signature_u_bytes, true);
-        zap_bytes(&mut signature_u_bytes);
+        let signature_u: Fr = Fr::try_from_bytes(&signature_u_bytes).expect("ok");
 
         let mut signature_k_bytes: [u8; 32] = [0u8; 32];
         signature_k_bytes.copy_from_slice(&payload[pos..pos + 32]);
         pos += signature_k_bytes.len();
         let signature_k: Pt = Pt::try_from_bytes(&signature_k_bytes)?;
-        zap_bytes(&mut signature_k_bytes);
 
         let signature = SchnorrSig {
             u: signature_u,
@@ -455,7 +449,6 @@ impl PaymentPayload {
                 return Err(OutputError::TrailingGarbage(output_hash).into());
             }
         }
-        zap_bytes(payload);
 
         let payload = PaymentPayload {
             delta,
@@ -507,11 +500,11 @@ impl PaymentOutput {
         let (payload, rvalue) = payload.encrypt(recipient_pkey)?;
 
         // Key cloaking hint for recipient = gamma * delta * Pkey
-        let hint = recipient_pkey.decompress()? * &gamma * delta;
+        let hint = Pt::from(*recipient_pkey) * gamma * delta;
 
         let output = PaymentOutput {
             recipient: cloaked_pkey,
-            cloaking_hint: hint.compress(),
+            cloaking_hint: hint,
             proof,
             locked_timestamp,
             payload,
@@ -547,15 +540,6 @@ impl PaymentOutput {
 
     /// Validates UTXO structure and keying.
     pub fn validate(&self) -> Result<(), BlockchainError> {
-        // valid recipient PKey?
-        let pt: Pt = self.recipient.into();
-        pt.decompress()?;
-
-        // valid PKey cloaking?
-        if self.cloaking_hint != Pt::zero() {
-            self.cloaking_hint.decompress()?;
-        };
-
         // check Bulletproof
         if !validate_range_proof(&self.proof) {
             let h = Hash::digest(self);
@@ -576,8 +560,8 @@ impl PaymentOutput {
     }
 
     /// Returns Pedersen commitment.
-    pub fn pedersen_commitment(&self) -> Result<ECp, CryptoError> {
-        self.proof.vcmt.decompress()
+    pub fn pedersen_commitment(&self) -> Result<Pt, CryptoError> {
+        Ok(self.proof.vcmt)
     }
 
     /// Checks that UTXO belongs to given key.
@@ -636,7 +620,6 @@ impl PublicPaymentOutput {
 
     /// Validates UTXO structure and keying.
     pub fn validate(&self) -> Result<(), BlockchainError> {
-        self.recipient.decompress()?;
         if self.amount <= 0 {
             let h = Hash::digest(self);
             return Err(OutputError::InvalidStake(h).into());
@@ -645,7 +628,7 @@ impl PublicPaymentOutput {
     }
 
     /// Returns Pedersen commitment.
-    pub fn pedersen_commitment(&self) -> Result<ECp, CryptoError> {
+    pub fn pedersen_commitment(&self) -> Result<Pt, CryptoError> {
         Ok(fee_a(self.amount))
     }
 
@@ -685,7 +668,6 @@ impl StakeOutput {
     /// Validates UTXO structure and keying.
     pub fn validate(&self) -> Result<(), BlockchainError> {
         let output_hash = Hash::digest(self);
-        self.recipient.decompress()?;
         if self.amount <= 0 {
             return Err(OutputError::InvalidStake(output_hash).into());
         }
@@ -698,7 +680,7 @@ impl StakeOutput {
     }
 
     /// Returns Pedersen commitment.
-    pub fn pedersen_commitment(&self) -> Result<ECp, CryptoError> {
+    pub fn pedersen_commitment(&self) -> Result<Pt, CryptoError> {
         Ok(fee_a(self.amount))
     }
 
@@ -736,17 +718,16 @@ impl Output {
     }
 
     /// Returns decompressed public key.
-    pub fn recipient_pkey(&self) -> Result<ECp, CryptoError> {
-        match self {
+    pub fn recipient_pkey(&self) -> Result<Pt, CryptoError> {
+        Ok(Pt::from(match self {
             Output::PaymentOutput(o) => o.recipient,
             Output::PublicPaymentOutput(o) => o.recipient,
             Output::StakeOutput(o) => o.recipient,
-        }
-        .decompress()
+        }))
     }
 
     /// Returns Pedersen commitment.
-    pub fn pedersen_commitment(&self) -> Result<ECp, CryptoError> {
+    pub fn pedersen_commitment(&self) -> Result<Pt, CryptoError> {
         match self {
             Output::PaymentOutput(o) => o.pedersen_commitment(),
             Output::PublicPaymentOutput(o) => o.pedersen_commitment(),
@@ -844,7 +825,7 @@ pub mod tests {
 
     use rand::distributions::Alphanumeric;
     use rand::{thread_rng, Rng};
-    use stegos_crypto::curve1174::make_random_keys;
+    use stegos_crypto::scc::make_random_keys;
 
     fn random_string(len: usize) -> String {
         thread_rng().sample_iter(&Alphanumeric).take(len).collect()

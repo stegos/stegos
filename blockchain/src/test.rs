@@ -35,16 +35,16 @@ use crate::transaction::{
 use bitvector::BitVector;
 use log::*;
 use std::collections::btree_map::BTreeMap;
-use stegos_crypto::curve1174::{self, Fr};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
+use stegos_crypto::scc::{self, Fr};
 
 #[derive(Clone, Debug)]
 pub struct KeyChain {
     /// Wallet Secret Key.
-    pub wallet_skey: curve1174::SecretKey,
+    pub wallet_skey: scc::SecretKey,
     /// Wallet Public Key.
-    pub wallet_pkey: curve1174::PublicKey,
+    pub wallet_pkey: scc::PublicKey,
     /// Network Secret Key.
     pub network_skey: pbc::SecretKey,
     /// Network Public Key.
@@ -53,7 +53,7 @@ pub struct KeyChain {
 
 impl KeyChain {
     pub fn new() -> Self {
-        let (wallet_skey, wallet_pkey) = curve1174::make_random_keys();
+        let (wallet_skey, wallet_pkey) = scc::make_random_keys();
         let (network_skey, network_pkey) = pbc::make_random_keys();
         Self {
             wallet_skey,
@@ -194,7 +194,7 @@ pub fn create_fake_micro_block(
     //
     // Create random transactions.
     //
-    let wallet_keys: Vec<(&curve1174::SecretKey, &curve1174::PublicKey)> = keychains
+    let wallet_keys: Vec<(&scc::SecretKey, &scc::PublicKey)> = keychains
         .iter()
         .map(|keychain| (&keychain.wallet_skey, &keychain.wallet_pkey))
         .collect();

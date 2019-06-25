@@ -29,11 +29,11 @@ use log::*;
 use serde_derive::Serialize;
 use std::convert::From;
 use stegos_blockchain::*;
-use stegos_crypto::curve1174::Fr;
-use stegos_crypto::curve1174::PublicKey;
-use stegos_crypto::curve1174::SecretKey;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
+use stegos_crypto::scc::Fr;
+use stegos_crypto::scc::PublicKey;
+use stegos_crypto::scc::SecretKey;
 
 /// Create trasnaction.
 #[derive(Serialize, Debug, PartialEq, Eq, Clone)]
@@ -644,8 +644,8 @@ where
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use stegos_crypto::curve1174::make_random_keys;
     use stegos_crypto::pbc;
+    use stegos_crypto::scc::make_random_keys;
 
     /// Check transaction signing and validation.
     #[test]

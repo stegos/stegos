@@ -202,7 +202,7 @@ impl NodeSandbox {
     fn new(
         node_cfg: NodeConfig,
         chain_cfg: ChainConfig,
-        recipient_pkey: curve1174::PublicKey,
+        recipient_pkey: scc::PublicKey,
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
         genesis: MacroBlock,

@@ -28,14 +28,14 @@ use log::*;
 use stegos_blockchain::Timestamp;
 use stegos_blockchain::{Block, BlockError, Blockchain, MacroBlock, Output, Transaction};
 use stegos_consensus::MacroBlockProposal;
-use stegos_crypto::curve1174;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
+use stegos_crypto::scc;
 
 pub fn create_macro_block_proposal(
     chain: &Blockchain,
     view_change: u32,
-    wallet_pkey: &curve1174::PublicKey,
+    wallet_pkey: &scc::PublicKey,
     network_skey: &pbc::SecretKey,
     network_pkey: &pbc::PublicKey,
 ) -> (MacroBlock, MacroBlockProposal) {

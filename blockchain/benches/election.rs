@@ -23,7 +23,7 @@
 use stegos_blockchain::election;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
-use test;
+extern crate test;
 use test::Bencher;
 
 #[bench]

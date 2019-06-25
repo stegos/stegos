@@ -14,22 +14,21 @@ fast_checks:
   stage: fast_checks
   before_script: []
   script:
-    - rustup component add rustfmt
-    - cargo install cargo-audit
     - cargo audit
     - cargo fmt --all -- --check
   tags:
     - linux
-  image: rust:1.34
+  image: stegos/rust:nightly-2019-06-25
 
 .build:
   stage: build
   script:
+    - rustc --version
     - cargo build
 
 build:linux:
   extends: .build
-  image: rust:1.34
+  image: stegos/rust:nightly-2019-06-25
   tags:
     - linux
 
@@ -41,12 +40,13 @@ build:macos:
 .test:
   stage: test
   script:
+    - rustc --version
     - cargo test --all -- --nocapture
   dependencies: []
 
 test:linux:
   extends: .test
-  image: rust:1.34
+  image: stegos/rust:nightly-2019-06-25
   tags:
     - linux
 
@@ -57,7 +57,7 @@ test:macos:
 
 code_coverage:
   stage: test
-  image: rust:1.34
+  image: stegos/rust:nightly-2019-06-25
   script:
     - ci-scripts/coverage.sh
   tags:
@@ -78,7 +78,7 @@ code_coverage:
 
 release:linux:
   extends: .release
-  image: rust:1.34
+  image: stegos/rust:nightly-2019-06-25
   script:
     - cargo install --bins --path . --root /usr/local && strip /usr/local/bin/{stegos,stegosd}
     - mkdir -p release/linux && mv /usr/local/bin/{stegos,stegosd} release/linux

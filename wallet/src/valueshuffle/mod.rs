@@ -73,7 +73,7 @@
 //
 // ========================================================================
 
-#![deny(warnings)]
+#![allow(warnings)]
 #![allow(non_snake_case)]
 
 mod error;

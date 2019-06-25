@@ -1,111 +1,100 @@
 #![feature(test)]
+
+use criterion::{criterion_group, criterion_main, Bencher, Criterion};
+use log::*;
 use simple_logger;
 use std::time::Duration;
-use stegos_blockchain::test::fake_genesis;
-use stegos_blockchain::{Blockchain, ChainConfig, Timestamp};
-use stegos_crypto::hash::Hash;
+use stegos_blockchain::{test, Blockchain, ChainConfig, MacroBlock, StorageConfig, Timestamp};
 
-#[macro_use]
-extern crate criterion;
-
-use criterion::{Bencher, Criterion};
-use stegos_blockchain::test::create_fake_micro_block;
-use stegos_crypto::pbc::{check_hash, make_random_keys, sign_hash};
-
-fn create_blocks(b: &mut Bencher) {
-    const NUM_NODES: usize = 1;
-
+fn push_macro_block(b: &mut Bencher) {
     simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
-    let timestamp_at_start = Timestamp::now();
-    let mut timestamp = timestamp_at_start;
-    let cfg: ChainConfig = ChainConfig {
-        micro_blocks_in_epoch: 100,
-        ..Default::default()
-    };
+    const NUM_NODES: usize = 32;
+    const STAKE_EPOCHS: u64 = 100; // disable re-staking
+    const EPOCHS: u64 = 10;
 
-    let (keychains, genesis) = fake_genesis(
+    //
+    // Initialize blockchain.
+    //
+    let mut timestamp = Timestamp::now();
+    let mut cfg: ChainConfig = Default::default();
+    cfg.stake_epochs = STAKE_EPOCHS;
+    cfg.micro_blocks_in_epoch = 2;
+    let (keychains, genesis) = test::fake_genesis(
         cfg.min_stake_amount,
-        cfg.min_stake_amount * (NUM_NODES as i64) + 100,
+        (NUM_NODES as i64) * cfg.min_stake_amount + 100,
         NUM_NODES,
         timestamp,
     );
+    let mut chain = Blockchain::testing(cfg.clone(), genesis.clone(), timestamp)
+        .expect("Failed to create blockchain");
 
-    let mut chain = Blockchain::testing(cfg.clone(), genesis.clone(), timestamp).unwrap();
-
-    let mut blocks = Vec::new();
-    // create valid blocks.
-    for _ in 0..10 {
+    //
+    // Generate epochs.
+    //
+    let mut blocks: Vec<MacroBlock> = Vec::new();
+    for epoch in 1..=EPOCHS {
+        assert_eq!(chain.epoch(), epoch);
+        info!("Generating epoch={}", epoch);
         timestamp += Duration::from_millis(1);
-        // Non-empty block.
         let (block, _input_hashes, _output_hashes) =
-            create_fake_micro_block(&chain, &keychains, timestamp);
-
+            test::create_fake_micro_block(&mut chain, &keychains, timestamp);
         chain
-            .push_micro_block(block.clone(), timestamp.clone())
-            .unwrap();
+            .push_micro_block(block, timestamp)
+            .expect("block is valid");
 
-        blocks.push((block, timestamp));
+        // Add empty micro blocks to finish the epoch.
+        for _offset in 1..cfg.micro_blocks_in_epoch {
+            timestamp += Duration::from_millis(1);
+            let block = test::create_micro_block_with_coinbase(&mut chain, &keychains, timestamp);
+            chain
+                .push_micro_block(block, timestamp)
+                .expect("block is valid");
+        }
+        assert_eq!(chain.offset(), cfg.micro_blocks_in_epoch);
+
+        // Create a macro block.
+        timestamp += Duration::from_millis(1);
+        let (block, _extra_transactions) =
+            test::create_fake_macro_block(&chain, &keychains, timestamp);
+
+        // Remove all micro blocks.
+        while chain.offset() > 0 {
+            chain.pop_micro_block().expect("Should be ok");
+        }
+
+        // Push macro block.
+        chain.push_macro_block(block.clone(), timestamp).unwrap();
+        blocks.push(block);
     }
+    assert_eq!(chain.epoch(), 1 + EPOCHS);
+    drop(chain);
 
-    println!("start tracking");
+    info!("Starting benchmark");
     b.iter_with_setup(
         || {
+            info!("");
             // start bench to other blockchain
-            Blockchain::testing(cfg.clone(), genesis.clone(), timestamp).unwrap()
+            let chain = Blockchain::testing(cfg.clone(), genesis.clone(), timestamp).unwrap();
+            let blocks = blocks.clone();
+            (chain, blocks)
         },
-        |mut chain| {
-            for (b, t) in &blocks {
-                chain.push_micro_block(b.clone(), t.clone()).unwrap();
+        |(mut chain, blocks)| {
+            for block in blocks {
+                chain.push_macro_block(block, timestamp).unwrap();
             }
         },
     );
 }
 
-fn block_benchmark(c: &mut Criterion) {
-    c.bench_function("block 10", create_blocks);
-}
-
-fn validate_bls_signature(b: &mut Bencher) {
-    simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
-
-    b.iter_with_setup(
-        || {
-            let (skey, pkey) = make_random_keys();
-            let hash = Hash::digest("test");
-            let signature = sign_hash(&hash, &skey);
-            (hash, signature, pkey)
-        },
-        |(hash, signature, pkey)| {
-            check_hash(&hash, &signature, &pkey).unwrap();
-        },
-    );
-}
-
-fn sign_bls_signature(b: &mut Bencher) {
-    simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
-
-    b.iter_with_setup(
-        || {
-            let (skey, _pkey) = make_random_keys();
-            let hash = Hash::digest("test");
-            (hash, skey)
-        },
-        |(hash, skey)| {
-            sign_hash(&hash, &skey);
-        },
-    );
-}
-
-fn bls_benchmark(c: &mut Criterion) {
-    c.bench_function("validate_bls_signature", validate_bls_signature);
-    c.bench_function("sign_bls_signature", sign_bls_signature);
+fn push_macro_block_benchmark(c: &mut Criterion) {
+    c.bench_function("blockchain::push_macro_block(10)", push_macro_block);
 }
 
 criterion_group! {
      name = benches;
      config = Criterion::default().measurement_time(Duration::from_secs(10)).warm_up_time(Duration::from_secs(1)).sample_size(2);
-     targets = block_benchmark, bls_benchmark
+     targets = push_macro_block_benchmark
 }
 
 criterion_main!(benches);

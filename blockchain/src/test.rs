@@ -29,7 +29,9 @@ use crate::election::mix;
 use crate::multisignature::create_multi_signature;
 use crate::output::{Output, PaymentOutput, PaymentPayloadData, StakeOutput};
 use crate::timestamp::Timestamp;
-use crate::transaction::{CoinbaseTransaction, PaymentTransaction, Transaction};
+use crate::transaction::{
+    CoinbaseTransaction, PaymentTransaction, RestakeTransaction, Transaction,
+};
 use bitvector::BitVector;
 use log::*;
 use std::collections::btree_map::BTreeMap;
@@ -163,77 +165,21 @@ pub fn create_fake_micro_block(
     let offset = chain.offset();
     let view_change = chain.view_change();
     let key = chain.select_leader(view_change);
-    let keys = keychains.iter().find(|p| p.network_pkey == key).unwrap();
+    let leader = keychains.iter().find(|p| p.network_pkey == key).unwrap();
     let previous = chain.last_block_hash().clone();
     let seed = mix(chain.last_random(), view_change);
-    let random = pbc::make_VRF(&keys.network_skey, &seed);
+    let random = pbc::make_VRF(&leader.network_skey, &seed);
     let block_reward = chain.cfg().block_reward;
-    let mut input_hashes: Vec<Hash> = Vec::new();
-    let mut inputs: Vec<Output> = Vec::new();
-    let mut monetary_balance: i64 = 0;
-    let mut staking_balance: i64 = 0;
-    for input_hash in chain.unspent() {
-        let input = chain
-            .output_by_hash(&input_hash)
-            .expect("no disk errors")
-            .expect("exists");
-        if cfg!(debug_assertions) {
-            input.validate().expect("Valid input");
-        }
-        match input {
-            Output::PaymentOutput(ref o) => {
-                let payload = o.decrypt_payload(&keys.wallet_skey).unwrap();
-                monetary_balance += payload.amount;
-            }
-            Output::PublicPaymentOutput(ref o) => {
-                monetary_balance += o.amount;
-            }
-            Output::StakeOutput(ref o) => {
-                staking_balance += o.amount;
-            }
-        }
-        input_hashes.push(input_hash.clone());
-        inputs.push(input);
-    }
-
-    let mut outputs: Vec<Output> = Vec::new();
-    let mut outputs_gamma = Fr::zero();
-    // Payments.
-    if monetary_balance > 0 {
-        let (output, output_gamma) =
-            PaymentOutput::new(&keys.wallet_pkey, monetary_balance).expect("keys are valid");
-        outputs.push(Output::PaymentOutput(output));
-        outputs_gamma += output_gamma;
-    }
-
-    // Stakes.
-    if staking_balance > 0 {
-        let output = StakeOutput::new(
-            &keys.wallet_pkey,
-            &keys.network_skey,
-            &keys.network_pkey,
-            staking_balance,
-        )
-        .expect("keys are valid");
-        outputs.push(Output::StakeOutput(output));
-    }
-
-    let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
     let block_fee: i64 = 0;
-    let tx = PaymentTransaction::new(
-        &keys.wallet_skey,
-        &inputs,
-        &outputs,
-        &outputs_gamma,
-        block_fee,
-    )
-    .expect("Invalid keys");
-    tx.validate(&inputs).expect("Invalid transaction");
+    let mut transactions: Vec<Transaction> = Vec::new();
 
+    //
+    // Create coinbase transaction.
+    //
     let coinbase_tx = {
         let data = PaymentPayloadData::Comment(format!("Block reward"));
         let (output, gamma, _rvalue) =
-            PaymentOutput::with_payload(None, &keys.wallet_pkey, block_reward, data, None)
+            PaymentOutput::with_payload(None, &leader.wallet_pkey, block_reward, data, None)
                 .expect("invalid keys");
         CoinbaseTransaction {
             block_reward,
@@ -243,21 +189,110 @@ pub fn create_fake_micro_block(
         }
     };
     coinbase_tx.validate().expect("Invalid transaction");
+    transactions.push(coinbase_tx.into());
 
-    let transactions: Vec<Transaction> = vec![coinbase_tx.into(), tx.into()];
+    //
+    // Create random transactions.
+    //
+    let wallet_keys: Vec<(&curve1174::SecretKey, &curve1174::PublicKey)> = keychains
+        .iter()
+        .map(|keychain| (&keychain.wallet_skey, &keychain.wallet_pkey))
+        .collect();
+    let wallets_recovery = chain.recover_wallets(&wallet_keys).unwrap();
+    for (keychain, unspent) in keychains.iter().zip(wallets_recovery) {
+        // Calculate actual balance.
+        let mut payments: Vec<Output> = Vec::new();
+        let mut stakes: Vec<Output> = Vec::new();
+        let mut payment_balance: i64 = 0;
+        let mut staking_balance: i64 = 0;
+        for (input, epoch) in unspent {
+            match input {
+                Output::PaymentOutput(ref o) => {
+                    let payload = o.decrypt_payload(&keychain.wallet_skey).unwrap();
+                    payment_balance += payload.amount;
+                    payments.push(input);
+                }
+                Output::PublicPaymentOutput(ref o) => {
+                    payment_balance += o.amount;
+                    payments.push(input);
+                }
+                Output::StakeOutput(ref o) => {
+                    let active_until_epoch = epoch + chain.cfg().stake_epochs;
+                    if active_until_epoch > chain.epoch() {
+                        continue;
+                    }
+                    staking_balance += o.amount;
+                    stakes.push(input);
+                }
+            }
+        }
 
+        // Payments.
+        if payment_balance > 0 {
+            let inputs = payments;
+            let mut outputs: Vec<Output> = Vec::new();
+            let mut outputs_gamma = Fr::zero();
+
+            let (output, output_gamma) =
+                PaymentOutput::new(&keychain.wallet_pkey, payment_balance).expect("keys are valid");
+            outputs.push(output.into());
+            outputs_gamma += output_gamma;
+            let tx = PaymentTransaction::new(
+                &keychain.wallet_skey,
+                &inputs,
+                &outputs,
+                &outputs_gamma,
+                block_fee,
+            )
+            .expect("Invalid keys");
+            tx.validate(&inputs).expect("Invalid transaction");
+            transactions.push(tx.into());
+        }
+
+        // Stakes.
+        if staking_balance > 0 {
+            let inputs = stakes;
+            let mut outputs: Vec<Output> = Vec::new();
+            let output = StakeOutput::new(
+                &keychain.wallet_pkey,
+                &keychain.network_skey,
+                &keychain.network_pkey,
+                staking_balance,
+            )
+            .expect("keys are valid");
+            outputs.push(output.into());
+            let tx = RestakeTransaction::new(
+                &keychain.network_skey,
+                &keychain.network_pkey,
+                &inputs,
+                &outputs,
+            )
+            .expect("Keys are valid");
+            transactions.push(tx.into());
+        }
+    }
+
+    //
+    // Create a block.
+    //
+    let mut input_hashes: Vec<Hash> = Vec::new();
+    let mut output_hashes: Vec<Hash> = Vec::new();
+    for tx in &transactions {
+        input_hashes.extend(tx.txins());
+        output_hashes.extend(tx.txouts().iter().map(Hash::digest));
+    }
     let mut block = MicroBlock::new(
         previous,
         epoch,
         offset,
         view_change,
         None,
-        keys.network_pkey,
+        leader.network_pkey,
         random,
         timestamp,
         transactions,
     );
-    block.sign(&keys.network_skey, &keys.network_pkey);
+    block.sign(&leader.network_skey, &leader.network_pkey);
     (block, input_hashes, output_hashes)
 }
 

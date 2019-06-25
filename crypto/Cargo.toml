@@ -33,7 +33,21 @@ ff = "0.4"
 
 [dev-dependencies]
 serde_json = "1.0"
+simple_logger = "1.2"
+criterion = "0.2"
 
 [build-dependencies]
 stegos_serialization = { version = "0.2.0", path = "../serialization" }
 cc = "1.0"
+
+[[bench]]
+name = "bulletproofs"
+harness = false
+
+[[bench]]
+name = "curve1174"
+harness = false
+
+[[bench]]
+name = "pbc"
+harness = false

@@ -143,6 +143,8 @@ type BalanceMap = MultiVersionedMap<(), Balance, LSN>;
 type ElectionResultList = MultiVersionedMap<(), ElectionResult, LSN>;
 type ValidatorsActivity = MultiVersionedMap<pbc::PublicKey, ValidatorAwardState, LSN>;
 
+pub type WalletRecoveryState = Vec<(Output, u64)>;
+
 /// The blockchain database.
 pub struct Blockchain {
     //
@@ -363,50 +365,49 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Helper for recover_wallet()
-    fn check_wallet_output(&self, skey: &SecretKey, pkey: &PublicKey, output: &Output) -> bool {
-        let output_hash = Hash::digest(&output);
-        if !self.contains_output(&output_hash) {
-            return false; // Spent.
-        }
-        output.is_my_utxo(skey, pkey)
-    }
-
     ///
     /// Recovery wallet state from the blockchain.
     /// TODO: this method is a temporary solution until persistence is implemented in wallet.
     /// https://github.com/stegos/stegos/issues/812
     ///
-    pub fn recover_wallet(
+    pub fn recover_wallets(
         &self,
-        skey: &SecretKey,
-        pkey: &PublicKey,
-    ) -> Result<Vec<(Output, u64)>, Error> {
-        let mut wallet_state: Vec<(Output, u64)> = Vec::new();
+        wallets: &[(&SecretKey, &PublicKey)],
+    ) -> Result<Vec<WalletRecoveryState>, Error> {
+        let mut wallets_state: Vec<WalletRecoveryState> = vec![Default::default(); wallets.len()];
         let mut epoch: u64 = 0;
+
+        let mut update_wallet_state = |output: &Output, epoch: u64| {
+            let output_hash = Hash::digest(&output);
+            if !self.contains_output(&output_hash) {
+                return; // Spent.
+            }
+            for (wallet_id, (skey, pkey)) in wallets.iter().enumerate() {
+                if output.is_my_utxo(*skey, *pkey) {
+                    wallets_state[wallet_id].push((output.clone(), epoch));
+                }
+            }
+        };
+
         for block in self.database.iter_starting(LSN(epoch, 0)) {
             match block {
                 Block::MacroBlock(block) => {
                     for (output, _) in block.outputs.leafs() {
-                        if self.check_wallet_output(skey, pkey, &output) {
-                            wallet_state.push((output.as_ref().clone(), epoch));
-                        }
+                        update_wallet_state(output.as_ref(), epoch);
                     }
                     epoch += 1;
                 }
                 Block::MicroBlock(block) => {
                     for tx in block.transactions {
                         for output in tx.txouts() {
-                            if self.check_wallet_output(skey, pkey, &output) {
-                                wallet_state.push((output.clone(), epoch));
-                            }
+                            update_wallet_state(output, epoch);
                         }
                     }
                 }
             }
         }
         assert_eq!(epoch, self.epoch);
-        Ok(wallet_state)
+        Ok(wallets_state)
     }
 
     //
@@ -906,6 +907,8 @@ impl Blockchain {
         block: MacroBlock,
         timestamp: Timestamp,
     ) -> Result<(Vec<Output>, Vec<Output>), Error> {
+        assert_eq!(self.offset(), 0);
+
         //
         // Resolve inputs.
         //
@@ -1558,16 +1561,20 @@ pub mod tests {
 
     #[test]
     fn iterate() {
+        const NUM_NODES: usize = 32;
+        const STAKE_EPOCHS: u64 = 2;
+        const EPOCHS: u64 = 10;
+
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
         let mut cfg: ChainConfig = Default::default();
-        cfg.stake_epochs = 1;
+        cfg.stake_epochs = STAKE_EPOCHS;
         cfg.micro_blocks_in_epoch = 2;
         let mut timestamp = Timestamp::now();
         let (keychains, genesis) = test::fake_genesis(
             cfg.min_stake_amount,
-            10 * cfg.min_stake_amount,
-            1,
+            (NUM_NODES as i64) * cfg.min_stake_amount + 100,
+            NUM_NODES,
             timestamp,
         );
         let temp_prefix: String = thread_rng().sample_iter(&Alphanumeric).take(30).collect();
@@ -1576,7 +1583,7 @@ pub mod tests {
         let mut chain = Blockchain::with_db(cfg.clone(), database, genesis.clone(), timestamp)
             .expect("Failed to create blockchain");
 
-        for _epoch in 0..2 {
+        for _epoch in 0..EPOCHS {
             let epoch = chain.epoch();
 
             //

@@ -224,9 +224,14 @@ fn run() -> Result<(), Error> {
         .iter()
         .map(|instance| instance.wallet_pkey)
         .collect();
-    for instance in instances.iter_mut() {
-        instance.wallet_recover =
-            chain.recover_wallet(&instance.wallet_skey, &instance.wallet_pkey)?;
+    let wallet_keys: Vec<(&curve1174::SecretKey, &curve1174::PublicKey)> = instances
+        .iter()
+        .map(|instance| (&instance.wallet_skey, &instance.wallet_pkey))
+        .collect();
+    let wallets_recovery = chain.recover_wallets(&wallet_keys)?;
+
+    for (instance, wallet_recover) in instances.iter_mut().zip(wallets_recovery) {
+        instance.wallet_recover = wallet_recover;
         // use single node keys.
         instance.network_skey = network_skey.clone();
         instance.network_pkey = network_pkey.clone();

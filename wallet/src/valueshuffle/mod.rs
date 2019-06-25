@@ -191,7 +191,7 @@ pub struct ValueShuffle {
     /// Network API.
     network: Network,
     /// Incoming events.
-    events: Box<Stream<Item = ValueShuffleEvent, Error = ()> + Send>,
+    events: Box<dyn Stream<Item = ValueShuffleEvent, Error = ()> + Send>,
 
     // --------------------------------------------
     // Items computed from TXINS before joining pool
@@ -354,7 +354,8 @@ impl ValueShuffle {
         //
         // Events.
         //
-        let mut events: Vec<Box<Stream<Item = ValueShuffleEvent, Error = ()> + Send>> = Vec::new();
+        let mut events: Vec<Box<dyn Stream<Item = ValueShuffleEvent, Error = ()> + Send>> =
+            Vec::new();
 
         // Network.
         let pool_formed = network

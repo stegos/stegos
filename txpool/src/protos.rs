@@ -19,6 +19,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#![allow(bare_trait_objects)]
+
 use failure::{format_err, Error};
 use stegos_blockchain::PaymentOutput;
 use stegos_crypto::curve1174::SchnorrSig;

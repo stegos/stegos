@@ -1,3 +1,5 @@
+#![deny(warnings)]
+
 mod messages;
 pub use crate::messages::*;
 
@@ -88,7 +90,7 @@ pub struct TransactionPoolService {
     network: Network,
     role: NodeRole,
 
-    events: Box<Stream<Item = PoolEvent, Error = ()> + Send>,
+    events: Box<dyn Stream<Item = PoolEvent, Error = ()> + Send>,
 }
 
 impl TransactionPoolService {
@@ -100,7 +102,7 @@ impl TransactionPoolService {
     ) -> TransactionPoolService {
         let facilitator_pkey: pbc::PublicKey = pbc::PublicKey::dum();
         let events = || -> Result<_, Error> {
-            let mut streams = Vec::<Box<Stream<Item = PoolEvent, Error = ()> + Send>>::new();
+            let mut streams = Vec::<Box<dyn Stream<Item = PoolEvent, Error = ()> + Send>>::new();
 
             // Unicast messages from other nodes
             let unicast_message = network

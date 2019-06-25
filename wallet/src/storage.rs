@@ -18,45 +18,28 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-#![allow(warnings)]
 
 //!
 //! Data objects used to store information about transaction, produced outputs, and consumed inputs.
 //!
 
-use std::fmt;
-use std::time::Duration;
-use stegos_blockchain::Timestamp;
-
-use stegos_blockchain::{
-    Output, PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput,
-    StakeOutput, Transaction,
-};
-use stegos_crypto::{
-    curve1174::{Fr, PublicKey},
-    hash::Hash,
-};
-
-use failure::{format_err, Error};
-use log::debug;
-
 use crate::api::*;
 use byteorder::{BigEndian, ByteOrder};
-use rand::distributions::Alphanumeric;
-use rand::thread_rng;
-use rand::Rng;
+use failure::Error;
+use log::debug;
 use rocksdb::{Direction, IteratorMode, WriteBatch, DB};
-use serde::export::PhantomData;
-use std::collections::HashMap;
-use std::hint::unreachable_unchecked;
-use stegos_crypto::hash::{Hashable, Hasher};
-use stegos_serialization::traits::ProtoConvert;
-use tempdir::TempDir;
-
 use serde::{Deserializer, Serializer};
 use serde_derive::{Deserialize, Serialize};
 use std::path::Path;
-use stegos_crypto::curve1174::make_random_keys;
+use std::time::Duration;
+use stegos_blockchain::{
+    PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput, StakeOutput,
+    Timestamp, Transaction,
+};
+use stegos_crypto::curve1174::{make_random_keys, Fr, PublicKey};
+use stegos_crypto::hash::{Hash, Hashable, Hasher};
+use stegos_serialization::traits::ProtoConvert;
+use tempdir::TempDir;
 
 const LEN_INDEX: [u8; 1] = [0; 1];
 const TIME_INDEX: [u8; 2] = [0; 2];
@@ -92,7 +75,7 @@ impl WalletLog {
             .and_then(|v| Self::len_from_bytes(&v))
             .unwrap_or(0);
 
-        let time = database
+        let _time = database
             .get(&TIME_INDEX)
             .expect("No error in database reading")
             .and_then(|v| Self::timestamp_from_bytes(&v))
@@ -107,9 +90,9 @@ impl WalletLog {
         }
     }
 
+    #[allow(unused)]
     pub fn testing() -> WalletLog {
-        let rand_string: String = thread_rng().sample_iter(&Alphanumeric).take(30).collect();
-        let temp_dir = TempDir::new(&rand_string).expect("couldn't create temp dir");
+        let temp_dir = TempDir::new("wallet").expect("couldn't create temp dir");
         let len = 0;
         let last_time = Timestamp::UNIX_EPOCH;
         let database = DB::open_default(temp_dir.path()).expect("couldn't open database");
@@ -120,6 +103,7 @@ impl WalletLog {
             last_time,
         }
     }
+
     /// Insert log entry as last entry in log.
     pub fn push_incomming(
         &mut self,
@@ -156,14 +140,15 @@ impl WalletLog {
         let mut batch = WriteBatch::default();
         // writebatch put fails if size exceeded u32::max, which is not our case.
         batch.put(&Self::bytes_from_timestamp(timestamp), &data)?;
-        batch.put(&LEN_INDEX, &Self::bytes_from_len(self.len));
-        batch.put(&TIME_INDEX, &Self::bytes_from_timestamp(timestamp));
+        batch.put(&LEN_INDEX, &Self::bytes_from_len(self.len))?;
+        batch.put(&TIME_INDEX, &Self::bytes_from_timestamp(timestamp))?;
         self.database.write(batch)?;
         self.len += 1;
         Ok(idx)
     }
 
     /// Edit log entry as by idx.
+    #[allow(unused)]
     pub fn update_log_entry<F>(&mut self, timestamp: Timestamp, mut func: F) -> Result<(), Error>
     where
         F: FnMut(LogEntry) -> Result<LogEntry, Error>,
@@ -343,6 +328,7 @@ impl LogEntry {
         }
     }
 
+    #[allow(unused)]
     fn testing_stub(id: usize) -> LogEntry {
         let (_s, p) = make_random_keys();
         let public = PublicPaymentOutput::new(&p, id as i64);
@@ -352,6 +338,7 @@ impl LogEntry {
         }
     }
 
+    #[allow(unused)]
     fn is_testing_stub(&self, id: usize) -> bool {
         match self {
             LogEntry::Incoming {
@@ -514,7 +501,7 @@ mod test {
 
         let mut db = WalletLog::testing();
         for (time, e) in entries.iter() {
-            db.push_entry(*time, e.clone());
+            db.push_entry(*time, e.clone()).unwrap();
         }
 
         // ignore that limit 10, still return 5 items
@@ -537,7 +524,7 @@ mod test {
 
         let mut db = WalletLog::testing();
         for (time, e) in entries.iter() {
-            db.push_entry(*time, e.clone());
+            db.push_entry(*time, e.clone()).unwrap();
         }
 
         for ((id, (t, ref saved)), (time2, _)) in db
@@ -559,7 +546,7 @@ mod test {
         let time = Timestamp::UNIX_EPOCH + Duration::from_millis(5);
         let mut db = WalletLog::testing();
         for (_, e) in entries.iter() {
-            db.push_entry(time, e.clone());
+            db.push_entry(time, e.clone()).unwrap();
         }
 
         for (id, (t, ref saved)) in db.iter_range(Timestamp::UNIX_EPOCH, 5).enumerate() {
@@ -580,10 +567,11 @@ mod test {
 
         let mut iter = entries.iter();
         let (_, e) = iter.next().unwrap();
-        db.push_entry(time, e.clone());
+        db.push_entry(time, e.clone()).unwrap();
 
         let (_, e) = iter.next().unwrap();
-        db.push_entry(time - Duration::from_millis(1), e.clone());
+        db.push_entry(time - Duration::from_millis(1), e.clone())
+            .unwrap();
 
         for (id, (t, ref saved)) in db.iter_range(Timestamp::UNIX_EPOCH, 5).enumerate() {
             debug!("saved = {:?}", saved);

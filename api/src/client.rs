@@ -44,7 +44,7 @@ const RECONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 type S = Framed<TcpStream, MessageCodec<OwnedMessage>>;
 type ClientSink = SplitSink<S>;
 type ClientStream = SplitStream<S>;
-type ConnectionFuture = Box<Future<Item = (S, Headers), Error = WebSocketError> + Send>;
+type ConnectionFuture = Box<dyn Future<Item = (S, Headers), Error = WebSocketError> + Send>;
 
 enum State {
     WaitReconnect(Delay),

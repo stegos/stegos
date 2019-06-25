@@ -44,7 +44,7 @@ use log::*;
 use rayon::prelude::*;
 use std::collections::BTreeMap;
 use stegos_crypto::bulletproofs::fee_a;
-use stegos_crypto::curve1174::{ECp, Fr, PublicKey, SecretKey, G};
+use stegos_crypto::curve1174::{Fr, Pt, PublicKey, SecretKey};
 use stegos_crypto::hash::*;
 use stegos_crypto::pbc::VRF;
 use stegos_crypto::{curve1174, pbc};
@@ -120,9 +120,9 @@ enum OutputKey {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Balance {
     /// The total sum of money created.
-    pub created: ECp,
+    pub created: Pt,
     /// The total sum of money burned.
-    pub burned: ECp,
+    pub burned: Pt,
     /// The total sum of gamma adjustments.
     pub gamma: Fr,
     /// The total sum of block rewards.
@@ -233,8 +233,8 @@ impl Blockchain {
         let output_by_hash: OutputByHashMap = OutputByHashMap::new();
         let mut balance: BalanceMap = BalanceMap::new();
         let initial_balance = Balance {
-            created: ECp::inf(),
-            burned: ECp::inf(),
+            created: Pt::identity(),
+            burned: Pt::identity(),
             gamma: Fr::zero(),
             block_reward: 0,
         };
@@ -1143,8 +1143,8 @@ impl Blockchain {
         }
         assert_eq!(self.block_by_hash.current_lsn(), lsn);
 
-        let mut burned = ECp::inf();
-        let mut created = ECp::inf();
+        let mut burned = Pt::identity();
+        let mut created = Pt::identity();
 
         //
         // Process inputs.
@@ -1235,7 +1235,7 @@ impl Blockchain {
         //
 
         // Check the block monetary balance.
-        if fee_a(block_reward) + burned - created != &gamma * (*G) {
+        if fee_a(block_reward) + burned - created != gamma * Pt::one() {
             panic!(
                 "Invalid block monetary balance: epoch={}, block={}",
                 epoch, &block_hash
@@ -1247,10 +1247,12 @@ impl Blockchain {
         let balance = Balance {
             created: orig_balance.created + created,
             burned: orig_balance.burned + burned,
-            gamma: &orig_balance.gamma + gamma,
+            gamma: orig_balance.gamma + gamma,
             block_reward: orig_balance.block_reward + block_reward,
         };
-        if fee_a(balance.block_reward) + balance.burned - balance.created != &balance.gamma * (*G) {
+        if fee_a(balance.block_reward) + balance.burned - balance.created
+            != balance.gamma * Pt::one()
+        {
             panic!(
                 "Invalid global monetary balance: epoch={}, block={}",
                 epoch, &block_hash

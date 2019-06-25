@@ -31,7 +31,7 @@ use stegos_crypto::pbc;
 use stegos_serialization::traits::ProtoConvert;
 
 /// PEM tag for encrypted wallet secret key.
-const WALLET_ENCRYPTED_SKEY_TAG: &'static str = "STEGOS-CURVE1174 ENCRYPTED SECRET KEY";
+const WALLET_ENCRYPTED_SKEY_TAG: &'static str = "STEGOS-CURVE25519 ENCRYPTED SECRET KEY";
 /// PEM tag for network secret key.
 const NETWORK_SKEY_TAG: &'static str = "STEGOS-PBC SECRET KEY";
 

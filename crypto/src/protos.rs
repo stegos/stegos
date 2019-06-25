@@ -24,9 +24,7 @@
 use failure::Error;
 use stegos_serialization::traits::*;
 
-use crate::aont::{aont_decrypt, aont_encrypt};
-use crate::bulletproofs::{BulletProof, DotProof, L2_NBASIS, LR};
-use crate::curve1174::zap_bytes;
+use crate::bulletproofs::BulletProof;
 use crate::curve1174::{EncryptedKey, EncryptedPayload, Fr, Pt, PublicKey, SchnorrSig, SecretKey};
 use crate::hash::Hash;
 use crate::hashcash::HashCashProof;
@@ -35,54 +33,9 @@ use crate::pbc::G1;
 use crate::pbc::G2;
 use crate::pbc::VRF;
 use crate::CryptoError;
+use ristretto_bulletproofs::RangeProof;
 
 include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
-
-impl ProtoConvert for Pt {
-    type Proto = crypto::Pt;
-    fn into_proto(&self) -> Self::Proto {
-        let mut proto = crypto::Pt::new();
-        proto.set_data(self.to_bytes().to_vec());
-        proto
-    }
-    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        Ok(Pt::try_from_bytes(proto.get_data())?)
-    }
-}
-
-impl ProtoConvert for Fr {
-    type Proto = crypto::Fr;
-    fn into_proto(&self) -> Self::Proto {
-        let mut proto = crypto::Fr::new();
-        let wau = self.has_wau();
-        let mut bytes = self.to_bytes();
-        proto.set_wau(wau);
-        if wau {
-            let ctxt = aont_encrypt(&bytes);
-            proto.set_data(ctxt);
-            zap_bytes(&mut bytes);
-        } else {
-            proto.set_data(bytes.to_vec());
-        }
-        proto
-    }
-    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let wau = proto.get_wau();
-        let mut bytes = if wau {
-            let ctxt = proto.get_data();
-            let mut decr = Vec::<u8>::new();
-            aont_decrypt(&ctxt, &mut decr)?;
-            decr
-        } else {
-            proto.get_data().to_vec()
-        };
-        let ans = Fr::try_from_bytes(&bytes, wau)?;
-        if wau {
-            zap_bytes(&mut bytes);
-        }
-        Ok(ans)
-    }
-}
 
 impl ProtoConvert for G1 {
     type Proto = crypto::G1;
@@ -120,11 +73,35 @@ impl ProtoConvert for Hash {
     }
 }
 
+impl ProtoConvert for Fr {
+    type Proto = crypto::Fr;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = crypto::Fr::new();
+        proto.set_data(self.to_bytes().to_vec());
+        proto
+    }
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        Ok(Fr::try_from_bytes(proto.get_data())?)
+    }
+}
+
+impl ProtoConvert for Pt {
+    type Proto = crypto::Pt;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = crypto::Pt::new();
+        proto.set_data(self.to_bytes().to_vec());
+        proto
+    }
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        Ok(Pt::try_from_bytes(proto.get_data())?)
+    }
+}
+
 impl ProtoConvert for SecretKey {
     type Proto = crypto::SecretKey;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = crypto::SecretKey::new();
-        proto.set_skeyf(Fr::from(self).into_proto());
+        proto.set_skeyf(Fr::from(*self).into_proto());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
@@ -137,7 +114,7 @@ impl ProtoConvert for PublicKey {
     type Proto = crypto::PublicKey;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = crypto::PublicKey::new();
-        let pt: Pt = (*self).into();
+        let pt = Pt::from(*self);
         proto.set_point(pt.into_proto());
         proto
     }
@@ -237,96 +214,18 @@ impl ProtoConvert for EncryptedKey {
     }
 }
 
-impl ProtoConvert for LR {
-    type Proto = crypto::LR;
-    fn into_proto(&self) -> Self::Proto {
-        let mut proto = crypto::LR::new();
-        proto.set_l(self.l.into_proto());
-        proto.set_r(self.r.into_proto());
-        proto
-    }
-    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let l = Pt::from_proto(proto.get_l())?;
-        let r = Pt::from_proto(proto.get_r())?;
-        Ok(LR { l, r })
-    }
-}
-
-impl ProtoConvert for DotProof {
-    type Proto = crypto::DotProof;
-    fn into_proto(&self) -> Self::Proto {
-        let mut proto = crypto::DotProof::new();
-        proto.set_u(self.u.into_proto());
-        proto.set_pcmt(self.pcmt.into_proto());
-        proto.set_a(self.a.into_proto());
-        proto.set_b(self.b.into_proto());
-        for lr in self.xlrs.iter() {
-            proto.xlrs.push(lr.into_proto());
-        }
-        proto
-    }
-    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let u = Pt::from_proto(proto.get_u())?;
-        let pcmt = Pt::from_proto(proto.get_pcmt())?;
-        let a = Fr::from_proto(proto.get_a())?;
-        let b = Fr::from_proto(proto.get_b())?;
-        let xlrs1 = proto.get_xlrs();
-        if xlrs1.len() != L2_NBASIS {
-            return Err(CryptoError::InvalidBinaryLength(L2_NBASIS, xlrs1.len()).into());
-        }
-
-        let zero = LR::from_proto(&xlrs1[0])?;
-        let mut xlrs: [LR; L2_NBASIS] = [zero; L2_NBASIS];
-        for (i, lr) in xlrs1.iter().enumerate() {
-            xlrs[i] = LR::from_proto(lr)?;
-        }
-
-        Ok(DotProof {
-            u,
-            pcmt,
-            a,
-            b,
-            xlrs,
-        })
-    }
-}
-
 impl ProtoConvert for BulletProof {
     type Proto = crypto::BulletProof;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = crypto::BulletProof::new();
         proto.set_vcmt(self.vcmt.into_proto());
-        proto.set_acmt(self.acmt.into_proto());
-        proto.set_scmt(self.scmt.into_proto());
-        proto.set_t1_cmt(self.t1_cmt.into_proto());
-        proto.set_t2_cmt(self.t2_cmt.into_proto());
-        proto.set_tau_x(self.tau_x.into_proto());
-        proto.set_mu(self.mu.into_proto());
-        proto.set_t_hat(self.t_hat.into_proto());
-        proto.set_dot_proof(self.dot_proof.into_proto());
+        proto.set_proof(self.proof.to_bytes());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let vcmt = Pt::from_proto(proto.get_vcmt())?;
-        let acmt = Pt::from_proto(proto.get_acmt())?;
-        let scmt = Pt::from_proto(proto.get_scmt())?;
-        let t1_cmt = Pt::from_proto(proto.get_t1_cmt())?;
-        let t2_cmt = Pt::from_proto(proto.get_t2_cmt())?;
-        let tau_x = Fr::from_proto(proto.get_tau_x())?;
-        let mu = Fr::from_proto(proto.get_mu())?;
-        let t_hat = Fr::from_proto(proto.get_t_hat())?;
-        let dot_proof = DotProof::from_proto(proto.get_dot_proof())?;
-        Ok(BulletProof {
-            vcmt,
-            acmt,
-            scmt,
-            t1_cmt,
-            t2_cmt,
-            tau_x,
-            mu,
-            t_hat,
-            dot_proof,
-        })
+        let proof = RangeProof::from_bytes(proto.get_proof())?;
+        Ok(BulletProof { vcmt, proof })
     }
 }
 
@@ -369,7 +268,7 @@ impl ProtoConvert for crate::dicemix::ParticipantID {
 mod tests {
     use super::*;
     use crate::bulletproofs::make_range_proof;
-    use crate::curve1174::{decrypt_key, encrypt_key, make_random_keys, ECp};
+    use crate::curve1174::{decrypt_key, encrypt_key, make_random_keys};
     use crate::hash::Hashable;
     use crate::pbc;
     use rand::rngs::ThreadRng;
@@ -387,7 +286,7 @@ mod tests {
 
     #[test]
     fn points() {
-        let pt: Pt = Pt::from(ECp::random());
+        let pt: Pt = Pt::random();
         roundtrip(&pt);
 
         let fr = Fr::random();
@@ -421,22 +320,6 @@ mod tests {
 
     #[test]
     fn bulletproofs() {
-        let lr = LR {
-            l: Pt::from(ECp::random()),
-            r: Pt::from(ECp::random()),
-        };
-        roundtrip(&lr);
-
-        let dp = DotProof {
-            u: Pt::random(),
-            pcmt: Pt::random(),
-            a: Fr::random(),
-            b: Fr::random(),
-            xlrs: [lr, lr, lr, lr, lr, lr],
-        };
-
-        roundtrip(&dp);
-
         let (bp, gamma) = make_range_proof(100);
         roundtrip(&bp);
         roundtrip(&gamma);

@@ -46,7 +46,7 @@ use stegos_crypto::keying::*;
 
 // -------------------------------------------------------------------------------
 fn main() {
-    curve1174_tests();
+    // curve1174_tests();
     let hv = Hash::from_vector(b"1FE9AB");
     let hs = Hash::from_str("1FE9AB");
     assert_eq!(hv, hs);

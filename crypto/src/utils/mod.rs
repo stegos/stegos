@@ -82,6 +82,9 @@ pub fn hexstr_to_lev_u8(s: &str, x: &mut [u8]) -> Result<bool, CryptoError> {
 
 pub fn u8v_to_hexstr(x: &[u8]) -> String {
     // produce a hexnum string from a byte vector
+    // NOTE: This prints successive hex digits from ascending memory locations
+    // and so it assumes that the bytes are in Big-Endian ordering if the printout
+    // is attempting to show large numerical values...
     let mut s = String::new();
     for ix in 0..x.len() {
         s.push_str(&format!("{:02x}", x[ix]));

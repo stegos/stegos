@@ -26,7 +26,7 @@ use crate::output::*;
 use crate::SlashingProof;
 use failure::Error;
 use stegos_crypto::curve1174::{
-    sign_hash, sign_hash_with_kval, ECp, Fr, PublicKey, SchnorrSig, SecretKey,
+    sign_hash, sign_hash_with_kval, Fr, Pt, PublicKey, SchnorrSig, SecretKey,
 };
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
@@ -228,12 +228,12 @@ impl PaymentTransaction {
         let mut txins: Vec<Hash> = Vec::with_capacity(inputs.len());
 
         for txin in inputs {
-            eff_skey += Fr::from(skey);
+            eff_skey += Fr::from(*skey);
             match txin {
                 Output::PaymentOutput(o) => {
                     let payload = o.decrypt_payload(skey)?;
-                    gamma_adj += &payload.gamma;
-                    eff_skey += payload.delta * &payload.gamma;
+                    gamma_adj += payload.gamma;
+                    eff_skey += payload.delta * payload.gamma;
                 }
                 Output::PublicPaymentOutput(_) => {}
                 Output::StakeOutput(_o) => {}
@@ -243,7 +243,7 @@ impl PaymentTransaction {
         }
 
         // gamma_adj == \sum(gamma_in) - \sum(gamma_out)
-        gamma_adj -= outputs_gamma;
+        gamma_adj -= *outputs_gamma;
 
         // Create a transaction body and calculate the hash.
         let mut tx = PaymentTransaction {
@@ -288,7 +288,7 @@ impl PaymentTransaction {
     pub fn new_super_transaction(
         skey: &SecretKey,
         k_val: &Fr,
-        sum_cap_k: &ECp,
+        sum_cap_k: &Pt,
         inputs: &[Output],
         outputs: &[Output],
         gamma_adj: &Fr,
@@ -298,7 +298,7 @@ impl PaymentTransaction {
         assert!(inputs.len() > 0 || outputs.len() > 0);
 
         let mut txins: Vec<Hash> = Vec::with_capacity(inputs.len());
-        let mut sum_pkey = ECp::inf();
+        let mut sum_pkey = Pt::inf();
 
         // check that each TXIN is unique
         for txin in inputs {

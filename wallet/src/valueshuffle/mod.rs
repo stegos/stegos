@@ -73,7 +73,6 @@
 //
 // ========================================================================
 
-#![allow(warnings)]
 #![allow(non_snake_case)]
 
 mod error;
@@ -104,7 +103,7 @@ use stegos_blockchain::{Output, Timestamp};
 use stegos_blockchain::{PaymentOutput, PaymentPayloadData};
 use stegos_crypto::bulletproofs::{simple_commit, validate_range_proof};
 use stegos_crypto::curve1174::{
-    make_deterministic_keys, sign_hash, validate_sig, ECp, Fr, Pt, PublicKey, SchnorrSig, SecretKey,
+    make_deterministic_keys, sign_hash, validate_sig, Fr, Pt, PublicKey, SchnorrSig, SecretKey,
 };
 use stegos_crypto::dicemix;
 use stegos_crypto::dicemix::*;
@@ -230,7 +229,7 @@ pub struct ValueShuffle {
 
     // K-value (= k * G) for each participant, used for Schnorr signature
     // final signatures will be based on sum of all K from remaining participants
-    sigK_vals: HashMap<ParticipantID, ECp>,
+    sigK_vals: HashMap<ParticipantID, Pt>,
 
     // Session round keying
     sess_pkey: PublicKey, // my public key
@@ -804,14 +803,9 @@ impl Future for ValueShuffle {
 
 // -------------------------------------------------
 
-fn is_valid_pt(pt: &Pt, ans: &mut ECp) -> bool {
-    match pt.decompress() {
-        Ok(ept) => {
-            *ans = ept;
-            true
-        }
-        _ => false,
-    }
+fn is_valid_pt(pt: &Pt, ans: &mut Pt) -> bool {
+    *ans = *pt;
+    true
 }
 
 type VsFunction = fn(&mut ValueShuffle) -> Result<(), Error>;
@@ -932,7 +926,7 @@ impl ValueShuffle {
         match msg {
             VsPayload::SharedKeying { pkey, ksig } => {
                 debug!("checking shared keying {:?} {:?}", pkey, ksig);
-                let mut pt = ECp::inf();
+                let mut pt = Pt::inf();
                 if is_valid_pt(&ksig, &mut pt) {
                     self.sigK_vals.insert(*from, pt);
                     self.sess_pkeys.insert(*from, *pkey);
@@ -1030,8 +1024,8 @@ impl ValueShuffle {
             let (gamma, delta, amount) = open_utxo(&utxo, &self.skey)?;
             assert!(gamma != Fr::zero());
             amt_in += amount;
-            self.txin_gamma_sum += &gamma;
-            my_signing_skeyF += Fr::from(&self.skey) + &gamma * delta;
+            self.txin_gamma_sum += gamma;
+            my_signing_skeyF += Fr::from(self.skey) + gamma * delta;
         }
         self.my_signing_skey = my_signing_skeyF.into();
 
@@ -1136,7 +1130,7 @@ impl ValueShuffle {
         // on the super transaction, we must be careful here for ourselves.
         // ===============================================================
 
-        let mut k = {
+        let k = {
             // construct a new session dependent secret sig.k val
             // We can't construct k based on hash of transaction to be
             // signed, since we don't have it yet.
@@ -1150,10 +1144,9 @@ impl ValueShuffle {
             self.my_signing_skey.hash(&mut state);
             Fr::from(state.result())
         };
-        k.set_wau();
         self.my_round_k = k;
         let my_sigK = times_G(&self.my_round_k); // = my_round_k * G
-        let my_sigKcmp = my_sigK.compress();
+        let my_sigKcmp = my_sigK;
 
         self.sigK_vals = HashMap::new();
         self.sigK_vals.insert(self.participant_key, my_sigK);
@@ -1230,12 +1223,12 @@ impl ValueShuffle {
         // -------------------------------------------------------------
         // for debugging - check that our contribution produces zero balance
         {
-            let mut cmt_sum = ECp::inf();
+            let mut cmt_sum = Pt::inf();
             for (_txin, u) in self.my_txins.clone() {
-                cmt_sum += u.proof.vcmt.decompress()?;
+                cmt_sum += u.proof.vcmt;
             }
             for u in my_utxos.clone() {
-                cmt_sum -= u.proof.vcmt.decompress()?;
+                cmt_sum -= u.proof.vcmt;
             }
             assert!(cmt_sum == simple_commit(&my_gamma_adj, &Fr::from(self.my_fee)));
         }
@@ -1472,7 +1465,7 @@ impl ValueShuffle {
         debug!("total fees {:?} -> {:?}", total_fees_f.clone(), total_fees);
         debug!("gamma_adj: {:?}", gamma_adj);
 
-        let mut K_sum = ECp::inf();
+        let mut K_sum = Pt::inf();
         self.participants.iter().for_each(|p| {
             let K = self.sigK_vals.get(p).expect("Can't access sigK");
             K_sum += *K;
@@ -1646,7 +1639,7 @@ impl ValueShuffle {
         &self,
         my_skey: &SecretKey,
         my_k: &Fr,
-        K_val: &ECp, // grand sum K for composite signing
+        K_val: &Pt, // grand sum K for composite signing
         txins: &Vec<UTXO>,
         utxos: &Vec<UTXO>,
         total_fee: i64,
@@ -1689,23 +1682,17 @@ impl ValueShuffle {
         // convert the messages into his UTXOS, and then verify that they satisfy the zero balance
         // condition with his TXIN.
 
-        let mut txin_sum = ECp::inf();
-        let mut eff_pkey = ECp::inf();
+        let mut txin_sum = Pt::inf();
+        let mut eff_pkey = Pt::inf();
         for (_txin, utxo) in data.all_txins.get(pid).expect("Can't access TXIN") {
             // all txins have already been checked for validity
             // these expects should never happen
-            let pkey_pt = Pt::from(utxo.recipient)
-                .decompress()
-                .expect("Can't decompress TXIN recipient pkey");
-            let cmt_pt = utxo
-                .proof
-                .vcmt
-                .decompress()
-                .expect("Can't decompress TXIN Bulletproof commitment");
+            let pkey_pt = Pt::from(utxo.recipient);
+            let cmt_pt = utxo.proof.vcmt;
             txin_sum += cmt_pt;
             eff_pkey += pkey_pt + cmt_pt;
         }
-        let mut txout_sum = ECp::inf();
+        let mut txout_sum = Pt::inf();
         for msg in msgs {
             let utxo = match deserialize_utxo(msg, data.serialized_utxo_size) {
                 Ok(u) => u,
@@ -1713,17 +1700,11 @@ impl ValueShuffle {
                     return false;
                 } // user supplied garbage
             };
-            match Pt::from(utxo.recipient).decompress() {
-                Ok(_) => {}
-                _ => {
-                    return false;
-                } // bad recipient pkey
-            }
             if !validate_range_proof(&utxo.proof) {
                 return false; // user had invalid Bulletproof
             }
             // we just passed Bulletproof checking, so the proof.vcmt must be okay
-            let cmt_pt = utxo.proof.vcmt.decompress().expect("Can't decompress Pt");
+            let cmt_pt = utxo.proof.vcmt;
             txout_sum += cmt_pt;
             eff_pkey -= cmt_pt;
         }
@@ -2016,7 +1997,7 @@ fn sign_utxos(utxos: &Vec<UTXO>, skey: &SecretKey) -> Result<SchnorrSig, Error> 
 }
 
 fn validate_ownership(txins: &Vec<(TXIN, UTXO)>, owner_sig: &SchnorrSig) -> Result<(), Error> {
-    let mut p_cmp = ECp::inf();
+    let mut p_cmp = Pt::inf();
     let hash = {
         let mut state = Hasher::new();
         for (txin, utxo) in txins {
@@ -2024,7 +2005,7 @@ fn validate_ownership(txins: &Vec<(TXIN, UTXO)>, owner_sig: &SchnorrSig) -> Resu
             if hash != *txin {
                 return Err(VsError::VsBadTXIN.into());
             }
-            p_cmp += Pt::from(utxo.recipient).decompress()?;
+            p_cmp += Pt::from(utxo.recipient);
             utxo.hash(&mut state);
         }
         state.result()
@@ -2055,9 +2036,9 @@ fn deserialize_utxo(msg: &Vec<u8>, ser_size: usize) -> Result<UTXO, Error> {
 // -------------------------------------------------
 // Domain helpers...
 
-fn times_G(val: &Fr) -> ECp {
+fn times_G(val: &Fr) -> Pt {
     // produce Pt = val*G
-    simple_commit(val, &Fr::zero())
+    *val * Pt::one()
 }
 
 // -----------------------------------------------------------------

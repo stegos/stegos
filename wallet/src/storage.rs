@@ -393,7 +393,7 @@ impl PaymentCertificate {
             where
                 E: de::Error,
             {
-                Fr::try_from_hex(value, true).map_err(|e| E::custom(e))
+                Fr::try_from_hex(value).map_err(|e| E::custom(e))
             }
         }
         deserilizer.deserialize_string(FrVisitor)

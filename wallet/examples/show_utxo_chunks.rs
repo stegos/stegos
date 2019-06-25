@@ -22,12 +22,11 @@
 //
 
 #![allow(unused)]
-#![deny(warnings)]
+// #![deny(warnings)]
 #![allow(non_snake_case)]
 
 use stegos_blockchain::{Output, PaymentOutput, PaymentPayloadData, PaymentTransaction, Timestamp};
 use stegos_crypto::curve1174::make_random_keys;
-use stegos_crypto::curve1174::ECp;
 use stegos_crypto::curve1174::Fr;
 use stegos_crypto::curve1174::Pt;
 use stegos_crypto::curve1174::PublicKey;

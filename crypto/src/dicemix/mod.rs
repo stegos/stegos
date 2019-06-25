@@ -39,6 +39,10 @@ use std::fmt;
 use std::os::raw::{c_char, c_int};
 use std::time::{Duration, SystemTime};
 
+use curve25519_dalek::ristretto::RistrettoPoint;
+use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek::traits::Identity;
+
 // ------------------------------------------------
 /*
 The DiceMix matrix... a multi-dimensional matrix of message
@@ -88,7 +92,6 @@ participants engage.
 
 // -------------------------------------------------
 
-use curve1174::ECp;
 use curve1174::Fr;
 use curve1174::Pt;
 
@@ -132,7 +135,7 @@ pub type DcMatrix = Vec<DcSheet>;
 // -------------------------------------------------
 
 const SLOT_BYTES: usize = 32; // must correspond to Fr bytes
-const MAX_BYTES: usize = 31; // for Fr we need < 249 bits
+const MAX_BYTES: usize = 31; // for Fr we need < 254 bits
 const NPREF: usize = 3; // bytes - will 24 bits be long enough?
 const NCHUNK: usize = MAX_BYTES - NPREF; // nbr bytes of message in prefixed chunks
 
@@ -203,7 +206,7 @@ pub fn split_message(msg: &[u8], max_cols: Option<usize>) -> DcRow {
     // form first segment
     let mut seg: [u8; SLOT_BYTES] = [0u8; SLOT_BYTES];
     stuff_slot(&mut seg, &msg, 0, 0, MAX_BYTES);
-    out.push(Fr::from_lev_u8(seg, true));
+    out.push(Fr::try_from_bytes(&seg).expect("ok"));
     let mut offs = MAX_BYTES;
     let nb = msg.len();
     let mut ncols = 1;
@@ -219,7 +222,7 @@ pub fn split_message(msg: &[u8], max_cols: Option<usize>) -> DcRow {
                 Some(ncmax) => assert!(ncols <= ncmax, "Message requires too many cols"),
             }
             stuff_slot(&mut seg, &msg, NPREF, offs, NCHUNK);
-            out.push(Fr::from_lev_u8(seg, true));
+            out.push(Fr::try_from_bytes(&seg).expect("ok"));
             offs += NCHUNK;
         }
     }
@@ -248,11 +251,12 @@ fn index_vec(dim: usize) -> Vec<usize> {
 
 fn exp_vec(base: &Fr, n: u64) -> Vec<Fr> {
     let mut vans = Vec::<Fr>::new();
+    let base = Scalar::from(*base);
     let mut tmp = base.clone();
-    vans.push(base.clone());
+    vans.push(Fr::from(base.clone()));
     for i in 1..n {
         tmp *= base;
-        vans.push(tmp.clone());
+        vans.push(Fr::from(tmp.clone()));
     }
     vans
 }
@@ -475,7 +479,7 @@ fn dc_open(
     for (_, mat) in mats {
         // add contribs from all users to remove cloaking
         // and form power sum
-        pwrsum += &mat[sheet][row][col];
+        pwrsum += mat[sheet][row][col];
     }
     let seed_str = gen_cell_seed(sheet, row + 1, col);
     for p in p_excl {
@@ -499,7 +503,8 @@ fn dc_solve(col: &mut Vec<Fr>) -> Vec<Fr> {
         CString::new(s).unwrap()
     }
 
-    let s_fr_mod = c_str(&Fr::modulus().nbr_str());
+    // For Curve25519 the modulus is 2^255-19
+    let s_fr_mod = c_str("1000000000000000000000000000000014DEF9DEA2F79CD65812631A5CF5D3ED");
 
     let n = col.len();
 
@@ -538,7 +543,7 @@ fn dc_solve(col: &mut Vec<Fr>) -> Vec<Fr> {
                 .map(|m_hex| {
                     let leading_non_zero = m_hex.iter().take_while(|c| **c != 0).count();
                     let rust_string = ::std::str::from_utf8(&m_hex[0..leading_non_zero]).unwrap();
-                    Fr::try_from_hex(rust_string, true).unwrap()
+                    Fr::try_from_hex(rust_string).unwrap()
                 })
                 .collect()
         }
@@ -565,13 +570,12 @@ pub fn dc_keys(
     // my_sess_skey is the secret key invented for each specific session round
     //
     let mut out = HashMap::new();
-    let alpha = Fr::from(my_sess_skey);
+    let alpha = Fr::from(*my_sess_skey);
     for pkey in participants.iter().filter(|p| **p != *my_id) {
         let sess_pkey = sess_pkeys.get(pkey).unwrap();
         let cpt = Pt::from(*sess_pkey);
-        let ecpt = cpt.decompress().unwrap();
 
-        let comm_pt = &alpha * ecpt;
+        let comm_pt = alpha * cpt;
         let ccpt = Pt::from(comm_pt);
 
         let mut state = Hasher::new();
@@ -636,15 +640,16 @@ where
                 let sheet = &mat[s];
                 let mut msg = Vec::<u8>::new();
                 let seed_str = gen_cell_seed(s, 0, 1);
-                let mut chunk1 =
-                    (&sheet[0][0] - dc_slot_pad(participants, pkey, &cloaks, &seed_str)).to_bytes();
+                let mut chunk1 = (sheet[0][0].clone()
+                    - dc_slot_pad(participants, pkey, &cloaks, &seed_str))
+                .to_bytes();
                 stuff_msg(&mut msg, &chunk1, 0, MAX_BYTES);
 
                 let dim_r = sheet.len(); // nbr of chunks
                 let dim_c = sheet[0].len(); // s.b. nbr of participants
                 for r in 1..dim_r {
                     let seed_str = gen_cell_seed(s, r, 1);
-                    let chunk = (&sheet[r][0]
+                    let chunk = (sheet[r][0].clone()
                         - dc_slot_pad(participants, pkey, &cloaks, &seed_str))
                     .to_bytes();
                     stuff_msg(&mut msg, &chunk, NPREF, NCHUNK);
@@ -737,7 +742,7 @@ pub fn dc_scalar_open(
     let mut pwrsum = Fr::zero();
     // add contribs from all users to remove cloaking
     // and form power sum
-    elts.iter().for_each(|(_, elt)| pwrsum += elt);
+    elts.iter().for_each(|(_, &elt)| pwrsum += elt);
     let seed_str = scalar_open_seed();
     for p in p_excl {
         let kxs = k_excl.get(p).unwrap();
@@ -759,12 +764,14 @@ mod tests {
         let v = split_message(&msg[..], None);
         dbg!(&v);
 
+        /* -- not possible for Scalar to be out of range
         // check that each Fr is < |Fr|
         let limit = Fr::modulus();
-        println!("{} = |Fr|", limit.nbr_str());
+        println!("{} = |Fr|", limit.to_hex());
         for val in v.clone() {
             assert!(val.bits() < limit);
         }
+        */
 
         // show component chunks
         println!("v len = {}", v.len());
@@ -773,10 +780,10 @@ mod tests {
         }
 
         // check that hash of first chunk is prefix of remaining chunks
-        let v0 = v[0].to_lev_u8();
+        let v0 = v[0].to_bytes();
         let h = Hash::from_vector(&v0).bits();
         for i in 1..v.len() {
-            let bits = v[i].to_lev_u8();
+            let bits = v[i].to_bytes();
             for j in 0..NPREF {
                 assert!(bits[j] == h[j]);
             }
@@ -785,7 +792,7 @@ mod tests {
         // reconstruct message from chunks
         let mut rmsg: Vec<char> = v0.iter().take(MAX_BYTES).map(|c| *c as char).collect();
         for i in 1..v.len() {
-            let mut bits = v[i].to_lev_u8();
+            let mut bits = v[i].to_bytes();
             for b in bits.iter().take(MAX_BYTES).skip(NPREF) {
                 rmsg.push(*b as char);
             }
@@ -912,7 +919,7 @@ mod tests {
         dbg!(&pad_1);
         dbg!(&pad_2);
         dbg!(&pad_3);
-        dbg!(&pad_1 + &pad_2 + &pad_3);
+        dbg!(pad_1 + pad_2 + pad_3);
 
         // show that adding together the padding from all of us, produces a zero Fr value
         assert!(pad_1 + pad_2 + pad_3 == Fr::zero());
@@ -974,7 +981,7 @@ mod tests {
             for c in 0..3 {
                 let mut sum = Fr::zero();
                 for sheet in matrix.clone() {
-                    sum += &sheet[r][c];
+                    sum += sheet[r][c];
                 }
                 row.push(sum);
             }
@@ -989,7 +996,7 @@ mod tests {
             let mut ebits = expon;
             while ebits > 0 {
                 if (ebits & 1) != 0 {
-                    tmp *= &x;
+                    tmp *= x;
                 }
                 ebits >>= 1;
                 x *= x.clone();
@@ -1157,7 +1164,7 @@ mod tests {
         let start = SystemTime::now();
         let sess = Hash::from_str("Session 1");
         let shared_cloaking = dc_keys(&participants, &sess_pkeys, &my_id, &my_sess_skey, &sess);
-        let timinig = start.elapsed();
+        let timinig = start.elapsed().unwrap();
         println!("Shared Cloaking Gen = {:?}", timing);
 
         // --------------------------------------------------------------

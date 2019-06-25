@@ -81,7 +81,11 @@ pub fn validate_proposed_macro_block(
     block_hash: &Hash,
     block_proposal: &MacroBlockProposal,
 ) -> Result<MacroBlock, Error> {
-    assert_eq!(block_proposal.header.epoch, chain.epoch());
+    if block_proposal.header.epoch != chain.epoch() {
+        return Err(
+            NodeBlockError::InvalidBlockEpoch(block_proposal.header.epoch, chain.epoch()).into(),
+        );
+    }
     assert!(chain.is_epoch_full());
     let epoch = block_proposal.header.epoch;
 

@@ -38,8 +38,17 @@ struct LockedRound {
     block_proposal: MacroBlockProposal,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum ConsensusState {
+#[derive(Debug, Eq, Copy, PartialEq, Clone)]
+pub struct ConsensusInfo {
+    pub epoch: u64,
+    pub round: u32,
+    pub state: ConsensusState,
+    pub prevotes_len: usize,
+    pub precommits_len: usize,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ConsensusState {
     /// Propose state.
     Propose,
     /// Prevote state.
@@ -168,6 +177,16 @@ impl Consensus {
         }
     }
 
+    pub fn to_info(&self) -> ConsensusInfo {
+        ConsensusInfo {
+            epoch: self.epoch,
+            round: self.round,
+            state: self.state,
+            prevotes_len: self.prevotes.len(),
+            precommits_len: self.precommits.len(),
+        }
+    }
+
     fn lock(&mut self) {
         assert_eq!(self.state, ConsensusState::Precommit);
         let block = self.block.take().expect("expected some block");
@@ -184,7 +203,7 @@ impl Consensus {
         self.reset();
     }
 
-    fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.state = ConsensusState::Propose;
         self.prevotes.clear();
         self.precommits.clear();
@@ -351,6 +370,8 @@ impl Consensus {
                 self.round,
                 &msg
             );
+            // Discard this message.
+            return Ok(());
         }
 
         // Check round.

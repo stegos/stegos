@@ -1230,6 +1230,10 @@ impl NodeService {
                         "Invalid block proposal: block_hash={}, error={}",
                         block_hash, e
                     );
+                    // TODO(vldm): Didn't go to state Prevote before checking proposed macro block.
+                    // for now we just return to Propose state, it's a bit hacky,
+                    // but without this consensus would be in buggy state
+                    consensus.reset();
                 }
             }
         }

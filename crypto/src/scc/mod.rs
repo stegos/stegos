@@ -120,22 +120,6 @@ pub struct EncryptedKey {
 }
 
 // -----------------------------------------------------------------------
-
-impl Hashable for Scalar {
-    fn hash(&self, state: &mut Hasher) {
-        "Scalar".hash(state);
-        self.to_bytes().hash(state);
-    }
-}
-
-impl Hashable for RistrettoPoint {
-    fn hash(&self, state: &mut Hasher) {
-        "Point".hash(state);
-        self.compress().to_bytes().hash(state);
-    }
-}
-
-// -----------------------------------------------------------------------
 // serialization support for Ristretto objects
 
 impl Fr {
@@ -220,7 +204,7 @@ impl fmt::Debug for Fr {
 impl Hashable for Fr {
     fn hash(&self, state: &mut Hasher) {
         "Fr".hash(state);
-        self.0.hash(state);
+        self.0.to_bytes().hash(state);
     }
 }
 
@@ -339,6 +323,13 @@ impl Pt {
                 }
             }
             Pt::PtNone => false,
+        }
+    }
+
+    pub fn is_decompressed(&self) -> bool {
+        match self {
+            Pt::PtRaw(_) => true,
+            _ => false,
         }
     }
 
@@ -694,7 +685,11 @@ impl PublicKey {
     }
 
     pub fn decompress(&self) -> Result<Self, CryptoError> {
-        Ok(PublicKey::from(Pt::from(*self).decompress()?))
+        if Pt::from(*self).is_decompressed() {
+            Ok(*self)
+        } else {
+            Ok(PublicKey::from(Pt::from(*self).decompress()?))
+        }
     }
 
     pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
@@ -1035,7 +1030,7 @@ pub fn aes_encrypt(msg: &[u8], pkey: &PublicKey) -> Result<(EncryptedPayload, Fr
         let ppt = RistrettoPoint::from(*pkey);
         let ap = alpha * ppt; // generate key (alpha*s*G = alpha*P), and hint ag = alpha*G
         let ag = alpha * RistrettoPoint::from(Pt::one());
-        let key = Hash::digest(&ap).bits();
+        let key = Hash::digest(&Pt::from(ap)).bits();
         let ctxt = aes_encrypt_with_key(msg, &key);
         Ok((
             EncryptedPayload {
@@ -1056,7 +1051,7 @@ pub fn aes_decrypt(payload: &EncryptedPayload, skey: &SecretKey) -> Result<Vec<u
         let zr = Scalar::from(*skey);
         let ag = RistrettoPoint::from(payload.ag);
         let asg = zr * ag; // compute the actual key seed = s*alpha*G
-        let key = Hash::digest(&asg).bits();
+        let key = Hash::digest(&Pt::from(asg)).bits();
         let ans = aes_encrypt_with_key(&payload.ctxt, &key);
         Ok(ans)
     }
@@ -1073,7 +1068,7 @@ pub fn aes_decrypt_with_rvalue(
     } else {
         // normal encryption, key = r * P
         let asg = Scalar::from(*rvalue) * RistrettoPoint::from(*pkey);
-        let key = Hash::digest(&asg).bits();
+        let key = Hash::digest(&Pt::from(asg)).bits();
         let ans = aes_encrypt_with_key(&payload.ctxt, &key);
         Ok(ans)
     }
@@ -1159,8 +1154,9 @@ pub mod tests {
                 .unwrap();
         assert_eq!(
             Hash::digest(&fr).to_hex(),
-            "cbea11b62f076ae22113247a0806272a6f56245751d42ba207f1fede15c90322"
+            "007435020d176664d58217a7ed2421256c9b9f4f4abca6746c4690916e406f68"
         );
+
         let pt =
             Pt::try_from_hex("4c1caaa3bac41c0bf6199cad16a30d8fb111c168780b6c9c5cee16ce974f8c3a")
                 .unwrap();
@@ -1172,7 +1168,7 @@ pub mod tests {
         let (skey, pkey) = make_deterministic_keys(b"test");
         assert_eq!(
             Hash::digest(&skey).to_hex(),
-            "21f13221bb9792ecf7e767535f8cf7b23e7afb291e19f76782640aea43c688fa"
+            "54e93b0d5fbcdf31fc816ab1ec21ea25d3e30b661526208a6b8dc0d1ab5d59a9"
         );
         assert_eq!(
             Hash::digest(&pkey).to_hex(),
@@ -1182,19 +1178,19 @@ pub mod tests {
         let sig = sign_hash(&Hash::digest("test"), &skey);
         assert_eq!(
             Hash::digest(&sig).to_hex(),
-            "3500d6fd11c6e5ad6bddcb387ddd0a6178ee2ea526005301b2207e3cf1c597f2"
+            "6b5b8ce2c4f4845f615c96928ff5f041842f01f1af841bc63c6d3174e597d108"
         );
 
         let (payload, _rvalue) = aes_encrypt(b"test", &pkey).unwrap();
         assert_eq!(
             Hash::digest(&payload).to_hex(),
-            "bbb2e0e61f055eda70466e4b57488d08f87d51a6baa486faa04d26e4d35e2ac7"
+            "5bc0c7cbf62322a386ade440d7cee20b88de0ac8f4b22b5123ebb0d44c519557"
         );
 
         let encrypted_key = encrypt_key("seed", b"key");
         assert_eq!(
             Hash::digest(&encrypted_key).to_hex(),
-            "16a72db9253a1112553e723152c7210374719fc43c4c09267d7dde6fee319aee"
+            "852430e8e65d6a23c05453e311ca8ad59a5550cff8bd89b0f5434ac9e7c552b6"
         );
     }
 

@@ -61,7 +61,7 @@ impl Hashable for BulletProof {
 
 impl Debug for BulletProof {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "BP(vcmt: {:?}, ...)", self.vcmt.compress().to_bytes())
+        write!(f, "BP(vcmt: {:?}, ...)", self.vcmt.to_bytes())
     }
 }
 
@@ -112,7 +112,7 @@ pub fn validate_range_proof(bp: &BulletProof) -> bool {
             &*BPGENS,
             &*PCGENS,
             &mut verifier_transcript,
-            &bp.vcmt.compress(),
+            &bp.vcmt.internal_use_compress(),
             64,
         )
         .is_ok()

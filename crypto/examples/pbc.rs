@@ -44,6 +44,6 @@ fn main() {
     let vrf = pbc::make_VRF(&skey, &hseed);
     println!("VRF Rand: {:?}", vrf.rand);
     println!("VRF Proof: {:?}", vrf.proof);
-    assert!(pbc::validate_VRF_randomness(&vrf));
-    assert!(pbc::validate_VRF_source(&vrf, &pkey, &hseed));
+    assert!(pbc::validate_VRF_randomness(&vrf).is_ok());
+    assert!(pbc::validate_VRF_source(&vrf, &pkey, &hseed).is_ok());
 }

@@ -32,6 +32,7 @@ use crate::pbc::internal::*;
 use crate::utils::*;
 use crate::CryptoError;
 use ff::*;
+use paired::bls12_381::{Bls12, Fq12, Fq2, Fq6, Fr, G1Compressed, G2Compressed};
 use paired::*;
 use rand::prelude::*;
 use serde::de::{Deserialize, Deserializer};
@@ -40,35 +41,38 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::hash as stdhash;
 use std::mem;
-use std::ops::AddAssign;
+use std::ops::{Add, AddAssign};
 
-type Engine = bls12_381::Bls12;
-pub type Fr = bls12_381::Fr;
-type FrRepr = bls12_381::FrRepr;
-type Fq2 = bls12_381::Fq2;
-type Fq6 = bls12_381::Fq6;
-type Fq12 = bls12_381::Fq12;
+// ------------------------------------------------
 
 #[derive(Copy, Clone)]
-pub struct G1(IG1<Engine>);
+pub enum G1 {
+    G1Raw(IG1<Bls12>),
+    G1Cmpr(G1Compressed),
+    G1None,
+}
 
 #[derive(Copy, Clone)]
-pub struct G2(IG2<Engine>);
+pub enum G2 {
+    G2Raw(IG2<Bls12>),
+    G2Cmpr(G2Compressed),
+    G2None,
+}
 
 #[derive(Clone)]
-pub struct SecretKey(ISecretKey<Engine>);
+pub struct SecretKey(ISecretKey<Bls12>);
 
 #[derive(Copy, Clone)]
-pub struct PublicKey(IPublicKey<Engine>);
+pub struct PublicKey(G2);
 
 #[derive(Copy, Clone)]
-pub struct Signature(ISignature<Engine>);
+pub struct Signature(G1);
 
 #[derive(Copy, Clone)]
-pub struct SecretSubKey(ISecretSubKey<Engine>);
+pub struct SecretSubKey(G1);
 
 #[derive(Copy, Clone)]
-pub struct PublicSubKey(IPublicSubKey<Engine>);
+pub struct PublicSubKey(G2);
 
 // -------------------------------------------------------------------------------
 
@@ -89,34 +93,72 @@ impl Drop for SecretKey {
 
 impl G1 {
     pub fn zero() -> Self {
-        G1(IG1::zero())
+        G1::G1Raw(IG1::<Bls12>::zero())
     }
 
     pub fn generator() -> Self {
-        G1(IG1::<Engine>::generator())
+        G1::G1Raw(IG1::<Bls12>::generator())
+    }
+
+    pub fn is_zero(&self) -> bool {
+        match self {
+            G1::G1Raw(g1) => g1.pt.is_zero(),
+            G1::G1Cmpr(cmpr) => match cmpr.into_affine() {
+                Ok(pt) => pt.is_zero(),
+                _ => panic!("should never happen"),
+            },
+            G1::G1None => panic!("should never happen"),
+        }
+    }
+
+    pub fn compress(&self) -> Self {
+        match self {
+            G1::G1Raw(g1) => G1::G1Cmpr(g1.pt.into_compressed()),
+            G1::G1Cmpr(_) => *self,
+            G1::G1None => panic!("should never happen"),
+        }
+    }
+
+    pub fn dcmpr(&self) -> Result<IG1<Bls12>, CryptoError> {
+        match self {
+            G1::G1Raw(g1) => Ok(*g1),
+            G1::G1Cmpr(cmpr) => match cmpr.into_affine() {
+                Ok(g1) => Ok(IG1::<Bls12> { pt: g1 }),
+                _ => Err(CryptoError::InvalidPoint),
+            },
+            G1::G1None => Err(CryptoError::InvalidPoint),
+        }
+    }
+
+    pub fn decompress(&self) -> Result<G1, CryptoError> {
+        Ok(G1::G1Raw(self.dcmpr()?))
     }
 
     pub fn to_bytes(&self) -> [u8; 48] {
-        let mut tmp = [0u8; 48];
-        let cpt = self.0.pt.into_compressed();
-        let me_ref = cpt.as_ref();
-        tmp.copy_from_slice(&me_ref[0..48]);
-        tmp
+        match self {
+            G1::G1Raw(g1) => {
+                let mut tmp = [0u8; 48];
+                let cpt = g1.pt.into_compressed();
+                let me_ref = cpt.as_ref();
+                tmp.copy_from_slice(&me_ref[0..48]);
+                tmp
+            }
+            G1::G1Cmpr(cmpr) => {
+                let mut bytes = [0u8; 48];
+                bytes.copy_from_slice(cmpr.as_ref());
+                bytes
+            }
+            G1::G1None => panic!("should never happen"),
+        }
     }
 
     pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
         if bytes.len() != 48 {
             return Err(CryptoError::InvalidBinaryLength(48, bytes.len()).into());
         }
-        let mut cpt = bls12_381::G1Compressed::empty();
+        let mut cpt = G1Compressed::empty();
         cpt.as_mut().copy_from_slice(bytes);
-        let pt = match cpt.into_affine() {
-            Ok(pt) => pt,
-            _ => {
-                return Err(CryptoError::InvalidPoint);
-            }
-        };
-        Ok(G1(IG1 { pt }))
+        Ok(G1::G1Cmpr(cpt))
     }
 
     pub fn to_hex(&self) -> String {
@@ -133,8 +175,7 @@ impl G1 {
 
 impl fmt::Debug for G1 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let cpt = self.0.pt.into_compressed();
-        let tmp = cpt.as_ref();
+        let tmp = self.to_bytes();
         write!(f, "SecureG1({})", u8v_to_hexstr(&tmp[0..48]))
     }
 }
@@ -142,14 +183,66 @@ impl fmt::Debug for G1 {
 impl Eq for G1 {}
 
 impl PartialEq for G1 {
-    fn eq(&self, b: &Self) -> bool {
-        self.0.pt == b.0.pt
+    fn eq(&self, other: &Self) -> bool {
+        for (a, b) in self.to_bytes().iter().zip(other.to_bytes().iter()) {
+            if a != b {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+impl Add<G1> for G1 {
+    type Output = G1;
+    fn add(self, other: G1) -> G1 {
+        match self {
+            G1::G1Raw(my_g1) => match other {
+                G1::G1Raw(other_g1) => {
+                    let mut sum = my_g1;
+                    sum.add_assign(other_g1);
+                    G1::G1Raw(sum)
+                }
+                G1::G1Cmpr(cmpr) => match cmpr.into_affine() {
+                    Ok(other_g1) => {
+                        let mut sum = my_g1;
+                        sum.add_assign(IG1::<Bls12> { pt: other_g1 });
+                        G1::G1Raw(sum)
+                    }
+                    _ => G1::G1None,
+                },
+                G1::G1None => G1::G1None,
+            },
+            G1::G1Cmpr(cmpr) => match cmpr.into_affine() {
+                Ok(my_g1) => match other {
+                    G1::G1Raw(other_g1) => {
+                        let mut sum = IG1::<Bls12> { pt: my_g1 };
+                        sum.add_assign(other_g1);
+                        G1::G1Raw(sum)
+                    }
+                    G1::G1Cmpr(cmpr) => {
+                        let pt = cmpr.into_affine();
+                        match pt {
+                            Ok(other_g1) => {
+                                let mut sum = IG1::<Bls12> { pt: my_g1 };
+                                sum.add_assign(IG1::<Bls12> { pt: other_g1 });
+                                G1::G1Raw(sum)
+                            }
+                            _ => G1::G1None,
+                        }
+                    }
+                    _ => G1::G1None,
+                },
+                _ => G1::G1None,
+            },
+            G1::G1None => G1::G1None,
+        }
     }
 }
 
 impl AddAssign<G1> for G1 {
     fn add_assign(&mut self, other: Self) {
-        self.0.add_assign(other.0)
+        *self = *self + other
     }
 }
 
@@ -157,34 +250,95 @@ impl AddAssign<G1> for G1 {
 
 impl G2 {
     pub fn zero() -> Self {
-        G2(IG2::zero())
+        G2::G2Raw(IG2::<Bls12>::zero())
     }
 
     pub fn generator() -> Self {
-        G2(IG2::<Engine>::generator())
+        G2::G2Raw(IG2::<Bls12>::generator())
+    }
+
+    pub fn is_zero(&self) -> bool {
+        match self {
+            G2::G2Raw(g2) => g2.pt.is_zero(),
+            G2::G2Cmpr(cmpr) => match cmpr.into_affine() {
+                Ok(pt) => pt.is_zero(),
+                _ => panic!("should never happen"),
+            },
+            G2::G2None => panic!("should never happen"),
+        }
+    }
+
+    pub fn compress(&self) -> Self {
+        match self {
+            G2::G2Raw(g2) => G2::G2Cmpr(g2.pt.into_compressed()),
+            G2::G2Cmpr(_) => *self,
+            G2::G2None => panic!("should never happen"),
+        }
+    }
+
+    pub fn dcmpr(&self) -> Result<IG2<Bls12>, CryptoError> {
+        match self {
+            G2::G2Raw(g2) => Ok(*g2),
+            G2::G2Cmpr(cmpr) => match cmpr.into_affine() {
+                Ok(g2) => Ok(IG2::<Bls12> { pt: g2 }),
+                _ => Err(CryptoError::InvalidPoint),
+            },
+            G2::G2None => Err(CryptoError::InvalidPoint),
+        }
+    }
+
+    pub fn decompress(&self) -> Result<G2, CryptoError> {
+        Ok(G2::G2Raw(self.dcmpr()?))
     }
 
     pub fn to_bytes(&self) -> [u8; 96] {
-        let mut tmp = [0u8; 96];
-        let cpt = self.0.pt.into_compressed();
-        let me_ref = cpt.as_ref();
-        tmp.copy_from_slice(&me_ref[0..96]);
-        tmp
+        match self {
+            G2::G2Raw(g2) => {
+                let mut tmp = [0u8; 96];
+                let cpt = g2.pt.into_compressed();
+                let me_ref = cpt.as_ref();
+                tmp.copy_from_slice(&me_ref[0..96]);
+                tmp
+            }
+            G2::G2Cmpr(cmpr) => {
+                let mut bytes = [0u8; 96];
+                bytes.copy_from_slice(cmpr.as_ref());
+                bytes
+            }
+            G2::G2None => panic!("should never happen"),
+        }
     }
+
+    // pub fn to_bytes(&self) -> [u8; 96] {
+    //     let mut tmp = [0u8; 96];
+    //     let cpt = self.0.pt.into_compressed();
+    //     let me_ref = cpt.as_ref();
+    //     tmp.copy_from_slice(&me_ref[0..96]);
+    //     tmp
+    // }
+
+    // pub fn xtry_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+    //     if bytes.len() != 96 {
+    //         return Err(CryptoError::InvalidBinaryLength(96, bytes.len()).into());
+    //     }
+    //     let mut cpt = bls12_381::G2Compressed::empty();
+    //     cpt.as_mut().copy_from_slice(bytes);
+    //     let pt = match cpt.into_affine() {
+    //         Ok(pt) => pt,
+    //         _ => {
+    //             return Err(CryptoError::InvalidPoint);
+    //         }
+    //     };
+    //     Ok(G2(IG2 { pt }))
+    // }
 
     pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
         if bytes.len() != 96 {
             return Err(CryptoError::InvalidBinaryLength(96, bytes.len()).into());
         }
-        let mut cpt = bls12_381::G2Compressed::empty();
+        let mut cpt = G2Compressed::empty();
         cpt.as_mut().copy_from_slice(bytes);
-        let pt = match cpt.into_affine() {
-            Ok(pt) => pt,
-            _ => {
-                return Err(CryptoError::InvalidPoint);
-            }
-        };
-        Ok(G2(IG2 { pt }))
+        Ok(G2::G2Cmpr(cpt))
     }
 
     pub fn to_hex(&self) -> String {
@@ -201,8 +355,7 @@ impl G2 {
 
 impl fmt::Debug for G2 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let cpt = self.0.pt.into_compressed();
-        let tmp = cpt.as_ref();
+        let tmp = self.to_bytes();
         write!(f, "SecureG2({})", u8v_to_hexstr(&tmp[0..96]))
     }
 }
@@ -210,14 +363,66 @@ impl fmt::Debug for G2 {
 impl Eq for G2 {}
 
 impl PartialEq for G2 {
-    fn eq(&self, b: &Self) -> bool {
-        self.0.pt == b.0.pt
+    fn eq(&self, other: &Self) -> bool {
+        for (a, b) in self.to_bytes().iter().zip(other.to_bytes().iter()) {
+            if a != b {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+impl Add<G2> for G2 {
+    type Output = G2;
+    fn add(self, other: G2) -> G2 {
+        match self {
+            G2::G2Raw(my_g2) => match other {
+                G2::G2Raw(other_g2) => {
+                    let mut sum = my_g2;
+                    sum.add_assign(other_g2);
+                    G2::G2Raw(sum)
+                }
+                G2::G2Cmpr(cmpr) => match cmpr.into_affine() {
+                    Ok(other_g2) => {
+                        let mut sum = my_g2;
+                        sum.add_assign(IG2::<Bls12> { pt: other_g2 });
+                        G2::G2Raw(sum)
+                    }
+                    _ => G2::G2None,
+                },
+                G2::G2None => G2::G2None,
+            },
+            G2::G2Cmpr(cmpr) => match cmpr.into_affine() {
+                Ok(my_g2) => match other {
+                    G2::G2Raw(other_g2) => {
+                        let mut sum = IG2::<Bls12> { pt: my_g2 };
+                        sum.add_assign(other_g2);
+                        G2::G2Raw(sum)
+                    }
+                    G2::G2Cmpr(cmpr) => {
+                        let pt = cmpr.into_affine();
+                        match pt {
+                            Ok(other_g2) => {
+                                let mut sum = IG2::<Bls12> { pt: my_g2 };
+                                sum.add_assign(IG2::<Bls12> { pt: other_g2 });
+                                G2::G2Raw(sum)
+                            }
+                            _ => G2::G2None,
+                        }
+                    }
+                    _ => G2::G2None,
+                },
+                _ => G2::G2None,
+            },
+            G2::G2None => G2::G2None,
+        }
     }
 }
 
 impl AddAssign<G2> for G2 {
     fn add_assign(&mut self, other: Self) {
-        self.0.add_assign(other.0)
+        *self = *self + other;
     }
 }
 
@@ -369,8 +574,11 @@ impl PublicKey {
     }
 
     pub fn to_bytes(&self) -> [u8; 96] {
-        let pt = G2::from(self.clone());
-        pt.to_bytes()
+        G2::from(self.clone()).to_bytes()
+    }
+
+    pub fn decompress(&self) -> Result<Self, CryptoError> {
+        Ok(PublicKey::from(G2::from(*self).decompress()?))
     }
 
     pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
@@ -382,8 +590,7 @@ impl PublicKey {
     }
 
     pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
-        let g = G2::try_from_hex(s)?;
-        Ok(PublicKey::from(g))
+        Ok(PublicKey::from(G2::try_from_hex(s)?))
     }
 }
 
@@ -409,8 +616,9 @@ impl<'de> Deserialize<'de> for PublicKey {
 impl Eq for PublicKey {}
 
 impl PartialEq for PublicKey {
-    fn eq(&self, b: &Self) -> bool {
-        self.0.p_pub == b.0.p_pub
+    fn eq(&self, other: &Self) -> bool {
+        // self.0.p_pub == other.0.p_pub
+        self.0 == other.0
     }
 }
 
@@ -449,24 +657,23 @@ impl stdhash::Hash for PublicKey {
     // std::HashMap needs this
     fn hash<H: stdhash::Hasher>(&self, state: &mut H) {
         stdhash::Hash::hash("PKey", state);
-        let bytes = self.to_bytes();
+        let bytes = G2::from(*self).to_bytes();
         stdhash::Hash::hash(&bytes[0..96], state);
     }
 }
 
 impl From<PublicKey> for G2 {
     fn from(pkey: PublicKey) -> Self {
-        G2(IG2 {
-            pt: pkey.0.p_pub.into_affine(),
-        })
+        pkey.0
+        // G2(IG2 {
+        //     pt: pkey.0.p_pub.into_affine(),
+        // })
     }
 }
 
 impl From<G2> for PublicKey {
     fn from(g: G2) -> Self {
-        PublicKey(IPublicKey {
-            p_pub: g.0.pt.into_projective(),
-        })
+        PublicKey(g)
     }
 }
 
@@ -510,17 +717,13 @@ impl Signature {
 
 impl From<Signature> for G1 {
     fn from(sig: Signature) -> Self {
-        G1(IG1 {
-            pt: sig.0.s.into_affine(),
-        })
+        sig.0
     }
 }
 
 impl From<G1> for Signature {
     fn from(g: G1) -> Self {
-        Signature(ISignature {
-            s: g.0.pt.into_projective(),
-        })
+        Signature(g)
     }
 }
 
@@ -534,25 +737,34 @@ impl fmt::Debug for Signature {
 impl Eq for Signature {}
 
 impl PartialEq for Signature {
-    fn eq(&self, b: &Self) -> bool {
-        self.0.s == b.0.s
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
     }
 }
 
 impl AddAssign<Signature> for Signature {
     fn add_assign(&mut self, other: Self) {
-        self.0.add_assign(other.0)
+        *self = Signature(self.0 + other.0)
     }
 }
 
 // -------------------------------------------------------------------
 
 pub fn sign_hash(h: &Hash, skey: &SecretKey) -> Signature {
-    Signature(skey.0.sign(h.base_vector()))
+    let pt = skey.0.sign(h.base_vector());
+    Signature(G1::G1Raw(IG1::<Bls12> {
+        pt: pt.s.into_affine(),
+    }))
 }
 
 pub fn check_hash(h: &Hash, sig: &Signature, pkey: &PublicKey) -> Result<(), CryptoError> {
-    if pkey.0.verify(h.base_vector(), &sig.0) {
+    let ipkey = IPublicKey::<Bls12> {
+        p_pub: G2::from(*pkey).dcmpr()?.pt.into_projective(),
+    };
+    let isig = ISignature::<Bls12> {
+        s: G1::from(*sig).dcmpr()?.pt.into_projective(),
+    };
+    if ipkey.verify(h.base_vector(), &isig) {
         Ok(())
     } else {
         Err(CryptoError::BadKeyingSignature)
@@ -588,9 +800,11 @@ pub fn make_deterministic_keys(seed: &[u8]) -> (SecretKey, PublicKey) {
     let iskey = ISecretKey {
         x: Fr::from(Hash::from_vector(seed)),
     };
-    let ipkey = IPublicKey::<Engine>::from_secret(&iskey);
+    let ipkey = IPublicKey::<Bls12>::from_secret(&iskey);
     let skey = SecretKey(iskey);
-    let pkey = PublicKey(ipkey);
+    let pkey = PublicKey(G2::G2Raw(IG2::<Bls12> {
+        pt: ipkey.p_pub.into_affine(),
+    }));
     (skey, pkey)
 }
 
@@ -610,25 +824,42 @@ pub fn check_keying(skey: &SecretKey, pkey: &PublicKey) -> Result<(), CryptoErro
 
 pub fn make_secret_subkey(skey: &SecretKey, seed: &[u8]) -> SecretSubKey {
     let id = Fr::from(Hash::from_vector(seed));
-    let iskey: ISecretSubKey<Engine> = skey.0.into_subkey(id);
-    SecretSubKey(iskey)
+    let iskey: ISecretSubKey<Bls12> = skey.0.into_subkey(id);
+    SecretSubKey(G1::G1Raw(IG1::<Bls12> {
+        pt: iskey.pt.into_affine(),
+    }))
 }
 
-pub fn make_public_subkey(pkey: &PublicKey, seed: &[u8]) -> PublicSubKey {
+pub fn make_public_subkey(pkey: &PublicKey, seed: &[u8]) -> Result<PublicSubKey, CryptoError> {
     let id = Fr::from(Hash::from_vector(seed));
-    let ipkey: IPublicSubKey<Engine> = pkey.0.into_subkey(id);
-    PublicSubKey(ipkey)
+    let ipkey = IPublicKey::<Bls12> {
+        p_pub: G2::from(*pkey).dcmpr()?.pt.into_projective(),
+    };
+    let ispkey: IPublicSubKey<Bls12> = ipkey.into_subkey(id);
+    Ok(PublicSubKey(G2::G2Raw(IG2::<Bls12> {
+        pt: ispkey.pt.into_affine(),
+    })))
 }
 
-pub fn validate_subkeying(skey: &SecretSubKey, pkey: &PublicSubKey) -> bool {
-    skey.0.check_vrf(&pkey.0)
+pub fn validate_subkeying(skey: &SecretSubKey, pkey: &PublicSubKey) -> Result<(), CryptoError> {
+    let isskey = ISecretSubKey::<Bls12> {
+        pt: skey.0.dcmpr()?.pt.into_projective(),
+    };
+    let ispkey = IPublicSubKey::<Bls12> {
+        pt: pkey.0.dcmpr()?.pt.into_projective(),
+    };
+    if isskey.check_vrf(&ispkey) {
+        Ok(())
+    } else {
+        Err(CryptoError::InvalidSubKeying)
+    }
 }
 
 // -----------------------------------------------------
 // Sakai-Hasakara Encryption
 
 #[derive(Copy, Clone)]
-pub struct RVal(IG2<Engine>);
+pub struct RVal(G2);
 
 impl RVal {
     pub fn to_hex(&self) -> String {
@@ -655,29 +886,27 @@ impl RVal {
 impl Hashable for RVal {
     fn hash(&self, state: &mut Hasher) {
         "SecureRVal".hash(state);
-        let cpt = self.0.pt.into_compressed();
-        let tmp = cpt.as_ref();
-        tmp[0..96].hash(state);
+        self.to_bytes().hash(state)
     }
 }
 
 impl Eq for RVal {}
 
 impl PartialEq for RVal {
-    fn eq(&self, b: &Self) -> bool {
-        self.0.pt == b.0.pt
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
     }
 }
 
 impl From<G2> for RVal {
     fn from(pt: G2) -> Self {
-        RVal(pt.0)
+        RVal(pt)
     }
 }
 
 impl From<RVal> for G2 {
     fn from(rv: RVal) -> Self {
-        G2(rv.0)
+        rv.0
     }
 }
 
@@ -717,11 +946,15 @@ impl EncryptedPacket {
     }
 }
 
-pub fn ibe_encrypt(msg: &[u8], pkey: &PublicKey, id: &[u8]) -> EncryptedPacket {
+pub fn ibe_encrypt(
+    msg: &[u8],
+    pkey: &PublicKey,
+    id: &[u8],
+) -> Result<EncryptedPacket, CryptoError> {
     let nmsg = msg.len();
 
     // compute IBE public key
-    let pkid = make_public_subkey(&pkey, &id);
+    let pkid = make_public_subkey(&pkey, &id)?;
 
     // compute hash of concatenated id:msg
     let mut concv = Vec::from(id);
@@ -730,34 +963,34 @@ pub fn ibe_encrypt(msg: &[u8], pkey: &PublicKey, id: &[u8]) -> EncryptedPacket {
     }
     let rhash = Hash::from_vector(&concv);
     let fr = Fr::from(rhash);
-    let ipt = pkid.0.pt.into_affine();
+    let ipt = pkid.0.dcmpr()?.pt;
     let irval = ipt.mul(fr);
-    let rval = RVal(IG2 {
+    let rval = RVal(G2::G2Raw(IG2::<Bls12> {
         pt: irval.into_affine(),
-    });
-    let pval: Fq12 = IG1::<Engine>::sakke_fqk(fr);
+    }));
+    let pval: Fq12 = IG1::<Bls12>::sakke_fqk(fr);
     let pvbytes = Hash::digest(&pval);
     let mut cmsg = hash_nbytes(nmsg, pvbytes.base_vector());
     // encrypt with (msg XOR H(pairing-val))
     for ix in 0..nmsg {
         cmsg[ix] ^= msg[ix];
     }
-    EncryptedPacket {
+    Ok(EncryptedPacket {
         pkey: pkey.clone(),
         id: id.to_vec(),
         rval,
         cmsg,
-    }
+    })
 }
 
-pub fn ibe_decrypt(pack: &EncryptedPacket, skey: &SecretKey) -> Option<Vec<u8>> {
+pub fn ibe_decrypt(pack: &EncryptedPacket, skey: &SecretKey) -> Result<Vec<u8>, CryptoError> {
     let skid = make_secret_subkey(&skey, &pack.id);
-    let pkid = make_public_subkey(&pack.pkey, &pack.id);
+    let pkid = make_public_subkey(&pack.pkey, &pack.id)?;
     let nmsg = pack.cmsg.len();
 
-    let irval = pack.rval.0.pt;
-    let isval = IG1::<Engine> {
-        pt: skid.0.pt.into_affine(),
+    let irval = pack.rval.0.dcmpr()?.pt;
+    let isval = IG1::<Bls12> {
+        pt: skid.0.dcmpr()?.pt,
     };
     let pval: Fq12 = IG1::pair_with(&isval, irval);
     let pvbytes = Hash::digest(&pval);
@@ -775,11 +1008,11 @@ pub fn ibe_decrypt(pack: &EncryptedPacket, skey: &SecretKey) -> Option<Vec<u8>> 
     }
     let rhash = Hash::from_vector(&concv);
     let fr = Fr::from(rhash);
-    let ipt = pkid.0.pt.into_affine();
+    let ipt = pkid.0.dcmpr()?.pt;
     if ipt.mul(fr).into_affine() == irval {
-        Some(msg)
+        Ok(msg)
     } else {
-        None
+        Err(CryptoError::InvalidDecryption)
     }
 }
 
@@ -810,24 +1043,28 @@ pub fn make_VRF(skey: &SecretKey, seed: &Hash) -> VRF {
     // pre-hashed before calling this function
     let id = Fr::from(*seed);
     let (key, fq12) = skey.0.into_vrf(id);
-    let proof = G1(IG1 {
+    let proof = G1::G1Raw(IG1::<Bls12> {
         pt: key.pt.into_affine(),
     });
     let rand = Hash::digest(&fq12);
     VRF { rand, proof }
 }
 
-pub fn validate_VRF_randomness(vrf: &VRF) -> bool {
+pub fn validate_VRF_randomness(vrf: &VRF) -> Result<(), CryptoError> {
     // Public validation - anyone can validate the randomness
     // knowing only its value and the accompanying proof.
-    let key = ISecretSubKey::<Engine> {
-        pt: vrf.proof.0.pt.into_projective(),
+    let key = ISecretSubKey::<Bls12> {
+        pt: vrf.proof.dcmpr()?.pt.into_projective(),
     };
     let rand = key.into_fq12();
-    vrf.rand == Hash::digest(&rand)
+    if vrf.rand == Hash::digest(&rand) {
+        Ok(())
+    } else {
+        Err(CryptoError::InvalidVRFRandomness)
+    }
 }
 
-pub fn validate_VRF_source(vrf: &VRF, pkey: &PublicKey, seed: &Hash) -> bool {
+pub fn validate_VRF_source(vrf: &VRF, pkey: &PublicKey, seed: &Hash) -> Result<(), CryptoError> {
     // whatever the source of the seed, it should all be
     // pre-hashed before calling this function.
     //
@@ -836,11 +1073,18 @@ pub fn validate_VRF_source(vrf: &VRF, pkey: &PublicKey, seed: &Hash) -> bool {
     // holder of the corresponding secret key and that seed.
     //
     let id = Fr::from(*seed);
-    let ipsubkey = pkey.0.into_subkey(id);
+    let ipsubkey = IPublicKey::<Bls12> {
+        p_pub: pkey.0.dcmpr()?.pt.into_projective(),
+    }
+    .into_subkey(id);
     let skey = ISecretSubKey {
-        pt: vrf.proof.0.pt.into_projective(),
+        pt: vrf.proof.dcmpr()?.pt.into_projective(),
     };
-    skey.check_vrf(&ipsubkey)
+    if skey.check_vrf(&ipsubkey) {
+        Ok(())
+    } else {
+        Err(CryptoError::InvalidVRFSource)
+    }
 }
 
 // -----------------------------------------------------------
@@ -1024,22 +1268,19 @@ mod tests {
         // check subkeying generation
         let id = b"Testing";
         let sskey = make_secret_subkey(&skey, id);
-        let pskey = make_public_subkey(&pkey, id);
-        assert!(validate_subkeying(&sskey, &pskey));
+        let pskey = make_public_subkey(&pkey, id).expect("ok");
+        assert!(validate_subkeying(&sskey, &pskey).is_ok());
 
         // check VRF
         let h = Hash::from_str("Testing");
         let vrf = make_VRF(&skey, &h);
-        assert!(validate_VRF_randomness(&vrf));
-        assert!(validate_VRF_source(&vrf, &pkey, &h));
+        assert!(validate_VRF_randomness(&vrf).is_ok());
+        assert!(validate_VRF_source(&vrf, &pkey, &h).is_ok());
 
         // check IBE Encryption
         let payload = b"This is a test payload";
-        let enc = ibe_encrypt(payload, &pkey, b"testing-identity");
-        let dec = match ibe_decrypt(&enc, &skey) {
-            Some(msg) => msg,
-            None => panic!("could not decrypt payload"),
-        };
+        let enc = ibe_encrypt(payload, &pkey, b"testing-identity").expect("ok");
+        let dec = ibe_decrypt(&enc, &skey).expect("ok");
         assert!(dec == payload);
 
         // get BLS Signature validation timing

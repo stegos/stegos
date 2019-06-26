@@ -92,6 +92,14 @@ pub enum CryptoError {
     InvalibBase58Length,
     #[fail(display = "Invalid Base58Check Version byte: {}", _0)]
     WrongBase58VerisonId(u8),
+    #[fail(display = "Invalid SubKeying")]
+    InvalidSubKeying,
+    #[fail(display = "Invalid Decryption")]
+    InvalidDecryption,
+    #[fail(display = "Invalid VRF Randomness")]
+    InvalidVRFRandomness,
+    #[fail(display = "Invalid VRF Source")]
+    InvalidVRFSource,
 }
 
 impl From<hex::FromHexError> for CryptoError {

@@ -1,4 +1,4 @@
-//! scc -- Improperly named (for retro-compat) crypto based on Ristretto Group
+//! scc - Single-Curve Сrypto based on Ristretto Group
 
 //
 // Copyright (c) 2019 Stegos AG
@@ -33,16 +33,14 @@ use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::{Identity, IsIdentity};
 use lazy_static::lazy_static;
-use rand;
 use rand::prelude::*;
 use rand::thread_rng;
-use ristretto_bulletproofs;
 use ristretto_bulletproofs::{BulletproofGens, PedersenGens};
 use serde::de::{Deserialize, Deserializer};
 use serde::ser::{Serialize, Serializer};
 use std::cmp::Ordering;
 use std::fmt;
-use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
+use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use std::str::FromStr;
 
 // -----------------------------------------------------------------
@@ -90,8 +88,12 @@ fn check_prng() {
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Fr(Scalar);
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub struct Pt(RistrettoPoint);
+#[derive(Copy, Clone)]
+pub enum Pt {
+    PtRaw(RistrettoPoint),
+    PtCmpr([u8; 32]),
+    PtNone,
+}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct SecretKey(Fr);
@@ -318,7 +320,7 @@ impl Pt {
     }
 
     pub fn identity() -> Self {
-        Pt::from(RistrettoPoint::identity())
+        Pt::inf()
     }
 
     pub fn one() -> Self {
@@ -326,7 +328,40 @@ impl Pt {
     }
 
     pub fn is_identity(&self) -> bool {
-        RistrettoPoint::from(*self).is_identity()
+        match self {
+            Pt::PtRaw(ipt) => ipt.is_identity(),
+            Pt::PtCmpr(ipt) => {
+                let cpt = CompressedRistretto::from_slice(ipt);
+                let dpt = cpt.decompress();
+                match dpt {
+                    None => false,
+                    Some(pt) => pt.is_identity(),
+                }
+            }
+            Pt::PtNone => false,
+        }
+    }
+
+    pub fn decompress(&self) -> Result<Pt, CryptoError> {
+        match self {
+            Pt::PtRaw(_) => Ok(*self),
+            Pt::PtCmpr(ipt) => {
+                let cpt = CompressedRistretto::from_slice(ipt);
+                let dpt = cpt.decompress();
+                match dpt {
+                    None => Err(CryptoError::InvalidPoint),
+                    Some(pt) => Ok(Pt::from(pt)),
+                }
+            }
+            Pt::PtNone => Err(CryptoError::InvalidPoint),
+        }
+    }
+
+    pub fn check_valid(&self) -> Result<(), CryptoError> {
+        match self.decompress() {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
+        }
     }
 
     pub fn random() -> Self {
@@ -334,23 +369,30 @@ impl Pt {
     }
 
     pub fn to_bytes(&self) -> [u8; 32] {
-        RistrettoPoint::from(*self).compress().to_bytes()
-    }
-
-    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
-        match CompressedRistretto::from_slice(bytes).decompress() {
-            None => Err(CryptoError::InvalidPoint),
-            Some(pt) => Ok(Pt(pt)),
+        match self {
+            Pt::PtRaw(ipt) => ipt.compress().to_bytes(),
+            Pt::PtCmpr(ipt) => *ipt,
+            Pt::PtNone => panic!("should never happen"),
         }
     }
 
-    pub fn compress(self) -> CompressedRistretto {
-        RistrettoPoint::from(self).compress()
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        if bytes.len() != 32 {
+            return Err(CryptoError::InvalidBinaryLength(32, bytes.len()));
+        }
+        let mut mybytes = [0u8; 32];
+        mybytes.copy_from_slice(bytes);
+        Ok(Pt::PtCmpr(mybytes))
     }
 
-    pub fn decompress(self) -> Result<Self, CryptoError> {
-        // we are always already decompressed
-        Ok(self)
+    pub fn internal_use_compress(&self) -> CompressedRistretto {
+        // Note: You should not call this.
+        // It is needed only for BulletProof wrapper code
+        match self {
+            Pt::PtRaw(ipt) => ipt.compress(),
+            Pt::PtCmpr(ipt) => CompressedRistretto::from_slice(ipt),
+            Pt::PtNone => RistrettoPoint::identity().compress(), // not really, but hopefully causes arith to fail
+        }
     }
 
     pub fn to_hex(&self) -> String {
@@ -368,8 +410,8 @@ impl Pt {
 
 impl Hashable for Pt {
     fn hash(&self, state: &mut Hasher) {
-        "Pt".hash(state);
-        self.0.hash(state);
+        "PtPoint".hash(state); // "Point" is for compatibility with Hashable(RistrettoPoint)
+        self.to_bytes().hash(state);
     }
 }
 
@@ -388,66 +430,206 @@ impl fmt::Display for Pt {
 
 impl From<Pt> for RistrettoPoint {
     fn from(pt: Pt) -> RistrettoPoint {
-        pt.0
+        match pt {
+            Pt::PtRaw(ipt) => ipt,
+            Pt::PtCmpr(ipt) => {
+                let cpt = CompressedRistretto::from_slice(&ipt);
+                let dpt = cpt.decompress();
+                match dpt {
+                    Some(pt) => pt,
+                    None => RistrettoPoint::identity(), // not really...
+                }
+            }
+            Pt::PtNone => RistrettoPoint::identity(), // not really...
+        }
+    }
+}
+
+impl From<CompressedRistretto> for Pt {
+    fn from(cpt: CompressedRistretto) -> Pt {
+        Pt::PtCmpr(cpt.to_bytes())
     }
 }
 
 impl From<RistrettoPoint> for Pt {
     fn from(pt: RistrettoPoint) -> Pt {
-        Pt(pt)
+        Pt::PtRaw(pt)
+    }
+}
+
+impl Mul<Scalar> for Pt {
+    type Output = Pt;
+    fn mul(self, other: Scalar) -> Pt {
+        match self {
+            Pt::PtRaw(ipt) => Pt::from(ipt * other),
+            Pt::PtCmpr(ipt) => {
+                let cpt = CompressedRistretto::from_slice(&ipt);
+                let dpt = cpt.decompress();
+                match dpt {
+                    None => Pt::PtNone,
+                    Some(pt) => Pt::from(pt * other),
+                }
+            }
+            Pt::PtNone => Pt::PtNone,
+        }
     }
 }
 
 impl Mul<Fr> for Pt {
     type Output = Pt;
     fn mul(self, other: Fr) -> Pt {
-        Pt::from(RistrettoPoint::from(self) * Scalar::from(other))
+        self * Scalar::from(other)
     }
 }
 
 impl Mul<Pt> for Fr {
     type Output = Pt;
     fn mul(self, other: Pt) -> Pt {
-        Pt::from(Scalar::from(self) * RistrettoPoint::from(other))
+        other * self
+    }
+}
+
+impl Div<Scalar> for Pt {
+    type Output = Pt;
+    fn div(self, other: Scalar) -> Pt {
+        assert!(other != Scalar::zero());
+        self * other.invert()
     }
 }
 
 impl Div<Fr> for Pt {
     type Output = Pt;
     fn div(self, other: Fr) -> Pt {
-        Pt::from(RistrettoPoint::from(self) * Scalar::from(other).invert())
+        self / Scalar::from(other)
+    }
+}
+
+impl Neg for Pt {
+    type Output = Pt;
+    fn neg(self) -> Pt {
+        match self {
+            Pt::PtRaw(pt) => Pt::from(-pt),
+            Pt::PtCmpr(pt) => {
+                let cpt = CompressedRistretto::from_slice(&pt);
+                let dpt = cpt.decompress();
+                match dpt {
+                    None => Pt::PtNone,
+                    Some(pt) => Pt::from(-pt),
+                }
+            }
+            Pt::PtNone => Pt::PtNone,
+        }
     }
 }
 
 impl AddAssign<Pt> for Pt {
     fn add_assign(&mut self, other: Pt) {
-        self.0 += RistrettoPoint::from(other);
+        *self = *self + other;
     }
 }
 
 impl SubAssign<Pt> for Pt {
     fn sub_assign(&mut self, other: Pt) {
-        self.0 -= RistrettoPoint::from(other);
+        *self = *self - other;
     }
 }
 
 impl MulAssign<Fr> for Pt {
     fn mul_assign(&mut self, other: Fr) {
-        self.0 *= Scalar::from(other);
+        *self = *self * other;
+    }
+}
+
+impl DivAssign<Fr> for Pt {
+    fn div_assign(&mut self, other: Fr) {
+        *self = *self / other;
     }
 }
 
 impl Add<Pt> for Pt {
     type Output = Pt;
     fn add(self, other: Pt) -> Pt {
-        Pt::from(RistrettoPoint::from(self) + RistrettoPoint::from(other))
+        match self {
+            Pt::PtRaw(ipt) => match other {
+                Pt::PtRaw(opt) => Pt::from(ipt + opt),
+                Pt::PtCmpr(opt) => {
+                    let cpt = CompressedRistretto::from_slice(&opt);
+                    let dpt = cpt.decompress();
+                    match dpt {
+                        None => Pt::PtNone,
+                        Some(pt) => Pt::from(ipt + pt),
+                    }
+                }
+                Pt::PtNone => Pt::PtNone,
+            },
+            Pt::PtCmpr(ipt) => {
+                let cpt = CompressedRistretto::from_slice(&ipt);
+                let dpt = cpt.decompress();
+                match dpt {
+                    None => Pt::PtNone,
+                    Some(pt) => match other {
+                        Pt::PtRaw(opt) => Pt::from(pt + opt),
+                        Pt::PtCmpr(opt) => {
+                            let cpt = CompressedRistretto::from_slice(&opt);
+                            let dpt = cpt.decompress();
+                            match dpt {
+                                None => Pt::PtNone,
+                                Some(pt2) => Pt::from(pt + pt2),
+                            }
+                        }
+                        Pt::PtNone => Pt::PtNone,
+                    },
+                }
+            }
+            Pt::PtNone => Pt::PtNone,
+        }
     }
 }
 
 impl Sub<Pt> for Pt {
     type Output = Pt;
     fn sub(self, other: Pt) -> Pt {
-        Pt::from(RistrettoPoint::from(self) - RistrettoPoint::from(other))
+        self + (-other)
+    }
+}
+
+impl Eq for Pt {}
+impl PartialEq<Pt> for Pt {
+    fn eq(&self, other: &Pt) -> bool {
+        match self {
+            Pt::PtRaw(apt) => match other {
+                Pt::PtRaw(bpt) => apt.eq(&bpt),
+                Pt::PtCmpr(bpt) => {
+                    let cpt = CompressedRistretto::from_slice(bpt);
+                    let dpt = cpt.decompress();
+                    match dpt {
+                        None => false,
+                        Some(pt) => apt.eq(&pt),
+                    }
+                }
+                Pt::PtNone => false,
+            },
+            Pt::PtCmpr(apt) => {
+                let cpt = CompressedRistretto::from_slice(apt);
+                let dpt = cpt.decompress();
+                match dpt {
+                    None => false,
+                    Some(pt) => match other {
+                        Pt::PtRaw(bpt) => pt.eq(&bpt),
+                        Pt::PtCmpr(bpt) => {
+                            let cpt = CompressedRistretto::from_slice(bpt);
+                            let dpt = cpt.decompress();
+                            match dpt {
+                                None => false,
+                                Some(pt2) => pt.eq(&pt2),
+                            }
+                        }
+                        Pt::PtNone => false,
+                    },
+                }
+            }
+            Pt::PtNone => false,
+        }
     }
 }
 
@@ -509,6 +691,10 @@ impl PublicKey {
 
     pub fn to_bytes(&self) -> [u8; 32] {
         Pt::from(*self).to_bytes()
+    }
+
+    pub fn decompress(&self) -> Result<Self, CryptoError> {
+        Ok(PublicKey::from(Pt::from(*self).decompress()?))
     }
 
     pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
@@ -964,6 +1150,52 @@ pub mod tests {
         let encoded = String::from(&pkey);
         let decoded = PublicKey::from_str(&encoded).unwrap();
         assert_eq!(pkey, decoded);
+    }
+
+    #[test]
+    fn check_hashable() {
+        let fr =
+            Fr::try_from_hex("0bc1914cd062c8a63b51171f8f8800d7043d0924eb8a521fbc1431018390d6ab")
+                .unwrap();
+        assert_eq!(
+            Hash::digest(&fr).to_hex(),
+            "cbea11b62f076ae22113247a0806272a6f56245751d42ba207f1fede15c90322"
+        );
+        let pt =
+            Pt::try_from_hex("4c1caaa3bac41c0bf6199cad16a30d8fb111c168780b6c9c5cee16ce974f8c3a")
+                .unwrap();
+        assert_eq!(
+            Hash::digest(&pt).to_hex(),
+            "cbef7083c5e397105417dca11bd15361ff000ec47746629bc94924f0368a02a5"
+        );
+
+        let (skey, pkey) = make_deterministic_keys(b"test");
+        assert_eq!(
+            Hash::digest(&skey).to_hex(),
+            "21f13221bb9792ecf7e767535f8cf7b23e7afb291e19f76782640aea43c688fa"
+        );
+        assert_eq!(
+            Hash::digest(&pkey).to_hex(),
+            "2e87868abe1889b7904a09f5e8464411674773842ab23b7dd132a9d4f47d3600"
+        );
+
+        let sig = sign_hash(&Hash::digest("test"), &skey);
+        assert_eq!(
+            Hash::digest(&sig).to_hex(),
+            "3500d6fd11c6e5ad6bddcb387ddd0a6178ee2ea526005301b2207e3cf1c597f2"
+        );
+
+        let (payload, _rvalue) = aes_encrypt(b"test", &pkey).unwrap();
+        assert_eq!(
+            Hash::digest(&payload).to_hex(),
+            "bbb2e0e61f055eda70466e4b57488d08f87d51a6baa486faa04d26e4d35e2ac7"
+        );
+
+        let encrypted_key = encrypt_key("seed", b"key");
+        assert_eq!(
+            Hash::digest(&encrypted_key).to_hex(),
+            "16a72db9253a1112553e723152c7210374719fc43c4c09267d7dde6fee319aee"
+        );
     }
 
     #[test]

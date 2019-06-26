@@ -461,7 +461,7 @@ impl Blockchain {
             }
 
             let seed = mix(self.last_macro_block_random(), header.view_change);
-            if !pbc::validate_VRF_source(&header.random, &header.pkey, &seed) {
+            if !pbc::validate_VRF_source(&header.random, &header.pkey, &seed).is_ok() {
                 return Err(BlockError::IncorrectRandom(epoch, *block_hash).into());
             }
         }
@@ -677,7 +677,7 @@ impl Blockchain {
 
         // Check random.
         let seed = mix(self.last_random(), block.header.view_change);
-        if !pbc::validate_VRF_source(&block.header.random, &leader, &seed) {
+        if !pbc::validate_VRF_source(&block.header.random, &leader, &seed).is_ok() {
             return Err(BlockError::IncorrectRandom(epoch, block_hash).into());
         }
 

@@ -730,7 +730,9 @@ pub struct UnicastPayload {
 fn encode_unicast(payload: UnicastPayload, sign_key: &pbc::SecretKey) -> Vec<u8> {
     let mut msg = unicast_proto::Message::new();
 
-    let enc_packet = pbc::ibe_encrypt(&payload.data, &payload.to, IBE_ID);
+    // NOTE: ibe_encrypt() can fail if payload.to is an invalid PublicKey
+    // It should be checked ahead of this place, using PublicKey::decompress()?
+    let enc_packet = pbc::ibe_encrypt(&payload.data, &payload.to, IBE_ID).expect("ok");
 
     let mut hasher = Hasher::new();
     payload.from.hash(&mut hasher);
@@ -793,7 +795,7 @@ fn decrypt_message(
         return Err(format_err!("Bad packet signature."));
     }
 
-    if let Some(data) = pbc::ibe_decrypt(&enc_packet, my_skey) {
+    if let Ok(data) = pbc::ibe_decrypt(&enc_packet, my_skey) {
         // if decrypted fine, check the signature
         payload.data = data;
         Ok(payload)

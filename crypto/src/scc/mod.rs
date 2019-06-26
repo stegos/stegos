@@ -967,6 +967,52 @@ pub mod tests {
     }
 
     #[test]
+    fn check_hashable() {
+        let fr =
+            Fr::try_from_hex("0bc1914cd062c8a63b51171f8f8800d7043d0924eb8a521fbc1431018390d6ab")
+                .unwrap();
+        assert_eq!(
+            Hash::digest(&fr).to_hex(),
+            "cbea11b62f076ae22113247a0806272a6f56245751d42ba207f1fede15c90322"
+        );
+        let pt =
+            Pt::try_from_hex("4c1caaa3bac41c0bf6199cad16a30d8fb111c168780b6c9c5cee16ce974f8c3a")
+                .unwrap();
+        assert_eq!(
+            Hash::digest(&pt).to_hex(),
+            "cbef7083c5e397105417dca11bd15361ff000ec47746629bc94924f0368a02a5"
+        );
+
+        let (skey, pkey) = make_deterministic_keys(b"test");
+        assert_eq!(
+            Hash::digest(&skey).to_hex(),
+            "21f13221bb9792ecf7e767535f8cf7b23e7afb291e19f76782640aea43c688fa"
+        );
+        assert_eq!(
+            Hash::digest(&pkey).to_hex(),
+            "2e87868abe1889b7904a09f5e8464411674773842ab23b7dd132a9d4f47d3600"
+        );
+
+        let sig = sign_hash(&Hash::digest("test"), &skey);
+        assert_eq!(
+            Hash::digest(&sig).to_hex(),
+            "3500d6fd11c6e5ad6bddcb387ddd0a6178ee2ea526005301b2207e3cf1c597f2"
+        );
+
+        let (payload, _rvalue) = aes_encrypt(b"test", &pkey).unwrap();
+        assert_eq!(
+            Hash::digest(&payload).to_hex(),
+            "bbb2e0e61f055eda70466e4b57488d08f87d51a6baa486faa04d26e4d35e2ac7"
+        );
+
+        let encrypted_key = encrypt_key("seed", b"key");
+        assert_eq!(
+            Hash::digest(&encrypted_key).to_hex(),
+            "16a72db9253a1112553e723152c7210374719fc43c4c09267d7dde6fee319aee"
+        );
+    }
+
+    #[test]
     fn check_serde() {
         let pkey = make_random_keys().1;
         let serialized = serde_json::to_string(&pkey).unwrap();

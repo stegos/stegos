@@ -1054,6 +1054,34 @@ mod tests {
             println!("BLS Verify = {:?}", timing / niter);
         }
     }
+
+    #[test]
+    fn check_hashable() {
+        let g1 = G1::try_from_hex("97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb").unwrap();
+        assert_eq!(
+            Hash::digest(&g1).to_hex(),
+            "87e0d085331d576e416af1c71e95d55158291f96a5993a270d19b0097ef743d1"
+        );
+        let g2 = G2::try_from_hex("93e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8").unwrap();
+        assert_eq!(
+            Hash::digest(&g2).to_hex(),
+            "51215d09ed805f5451bca1279c2e98a1e7b644b7f6c33151a43f4dd9eb11afeb"
+        );
+        let (skey, pkey) = make_deterministic_keys(b"test");
+        assert_eq!(
+            Hash::digest(&skey).to_hex(),
+            "eef43f315ee3de18f636e59dc55cc62c7a4f1e90bcd8609f07dff16f00e6dfa9"
+        );
+        assert_eq!(
+            Hash::digest(&pkey).to_hex(),
+            "8338feb8dafed3fd58163ab69726050bc183ecd74cfe11397dd81e69048a4ca7"
+        );
+        let sig = sign_hash(&Hash::digest("test"), &skey);
+        assert_eq!(
+            Hash::digest(&sig).to_hex(),
+            "904d6dcb433e4193d2af2eb4ae93312d43e70d2ca46e0eb8c8b6160cf6d299d8"
+        );
+    }
 }
 
 // ---------------------------------------------------------

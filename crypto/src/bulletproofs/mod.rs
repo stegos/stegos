@@ -125,6 +125,7 @@ pub mod tests {
     use curve25519_dalek::ristretto::CompressedRistretto;
     use curve25519_dalek::ristretto::RistrettoPoint;
     use curve25519_dalek::scalar::Scalar;
+    use hex;
     use std::time::SystemTime;
 
     #[test]
@@ -220,5 +221,25 @@ pub mod tests {
         let gamma_adj = gamma1 - gamma2 - gamma3;
         let pedsum = bp1.vcmt - bp2.vcmt - bp3.vcmt;
         assert!(pedsum == gamma_adj * Pt::one());
+    }
+
+    #[test]
+    fn check_hashable() {
+        //let (bp, _gamma) = make_range_proof(12345);
+        //let vcmt = hex::encode(bp.vcmt.to_bytes());
+        //let proof = hex::encode(bp.proof.to_bytes());
+        //println!("vcmt: {}", vcmt);
+        //println!("proof: {}", proof);
+        let vcmt = "4094e93f1aa89163bee6e1f5c013923fa7cc0b34793244751128ce0def09700b";
+        let vcmt = hex::decode(vcmt).unwrap();
+        let vcmt = Pt::try_from_bytes(&vcmt).unwrap();
+        let proof = "183ad8f0c37b55c7fe17bf0cf2e4968ad76dc53f2f57c1e90b3135d2c8f86f422a0a502eef0b114e3c4aef6ff58bbd1a12a148dad1dd7eb0747d2dccabb67f6d60fc5c6998f07ef05abe41fee9f23922bb46724eadb29221c7f3af0497601a39a651731679a8a7ffccb3185342e1a0faa49510c6c5e187d31e203dbd7ad86e53a156649e26b6b143cc45ffbd29b247776db7a00910c4c01f3933e1dd7120760a90ee0c2c0d3e6ee7f45adec9e65a7275162010326c341629cca78fdf099d7e0ce585f5b143bf37a0cfe84e22220c902086e10a0fe6271590c5027dc62a6141045cdaf8bf2463a90893aa32e8ef43e03228eaf046292bfa435f95cca90a81be68e267de39afda7d4780d30ab00fe318230a7daa2937a3392757634368a1d5fd052ab5abee1800670c2d39e04a4e426a2842ab596f7ac7a614b6c254dcc3e88b0412b76806eb00f62a6644e64bb0a088cbbad8bb8e29ecd5a1d680a96487d8c40ede4e84854ce5b0b219cbd92497b2a837e5fd4e378bb8f9913c203712ac11865f48429ecabdfb22a5312cd774b0229690ad9380a857df4976d41d71d71acfe755be001ca8151fecb5cef0408ec5f01a7e34320d7ac6600b2994841e0e978edf05121d15190467579103648f200c07ddcd3b36f365765711eb03a35487072957524a1915c374b27f7772ec7005e06e5534249e34051f83df0f3c131a7784f6ba04c0c1d686cb2c5f2b61e9d905077ad04695d528200c542a3f069e15be33f99b5f12b71ed72062c341f5f42829f64557dfd358710cddefb5241cdf2d31b69ed51cc8e265edddf9244a7624160c273e4372f3ee74e91832cac904adc2cd147cc859b6275249bc71bddcac23ddae32515f526c2f7e373a32a027af28694fc7700f09fde6d37578339675e03b0c8317f66b63147878e0546cce737e7ad61971a82000";
+        let proof = hex::decode(proof).unwrap();
+        let proof = RangeProof::from_bytes(&proof).unwrap();
+        let bp = BulletProof { vcmt, proof };
+        assert_eq!(
+            Hash::digest(&bp).to_hex(),
+            "ca0f704c358938845c5028bcb492e45f71fafda2c48a39a15a8e0a4def60df6c"
+        );
     }
 }

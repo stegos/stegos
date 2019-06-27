@@ -6,5 +6,5 @@ edition = "2018"
 
 [dependencies]
 futures = "0.1"
-libp2p-core = "0.9"
+libp2p-core = "0.10"
 tokio-io = "0.1"

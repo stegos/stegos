@@ -417,7 +417,7 @@ where
 
     fn poll(
         &mut self,
-        _poll_parameters: &mut PollParameters,
+        _poll_parameters: &mut impl PollParameters,
     ) -> Async<
         NetworkBehaviourAction<
             <Self::ProtocolsHandler as ProtocolsHandler>::InEvent,

@@ -56,6 +56,8 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 pub struct Ncp<TSubstream> {
     /// Out network key
     node_id: pbc::PublicKey,
+    /// List of advertised Multiaddrs
+    advertised_ips: Vec<Multiaddr>,
     /// Queue of internal events
     events: VecDeque<NcpEvent>,
     /// Events that need to be yielded to the outside when polling.
@@ -89,8 +91,17 @@ impl<TSubstream> Ncp<TSubstream> {
                 Err(_) => None,
             })
             .collect();
+        let advertised_ips: Vec<Multiaddr> = config
+            .advertised_addresses
+            .iter()
+            .filter_map(|a| match a.parse() {
+                Ok(addr) => Some(addr),
+                Err(_) => None,
+            })
+            .collect();
         Ncp {
             node_id: network_pkey,
+            advertised_ips,
             events: VecDeque::new(),
             out_events: VecDeque::new(),
             connected_peers: ExpiringQueue::new(IDLE_TIMEOUT),
@@ -198,7 +209,7 @@ where
 
     fn poll(
         &mut self,
-        poll_parameters: &mut PollParameters,
+        poll_parameters: &mut impl PollParameters,
     ) -> Async<
         NetworkBehaviourAction<
             <Self::ProtocolsHandler as ProtocolsHandler>::InEvent,
@@ -373,7 +384,7 @@ where
                     }
                     let peer = poll_parameters.local_peer_id().clone();
                     let mut peer_info = PeerInfo::new(&peer, &self.node_id);
-                    for addr in poll_parameters.external_addresses() {
+                    for addr in self.advertised_ips.iter() {
                         peer_info.addresses.push(addr.clone());
                     }
                     response.peers.push(peer_info);

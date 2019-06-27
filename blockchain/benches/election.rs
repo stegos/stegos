@@ -82,8 +82,6 @@ fn verify_vrf(b: &mut Bencher) {
     let vrf = pbc::make_VRF(&skey, &random);
 
     b.iter(|| {
-        assert!(test::black_box(pbc::validate_VRF_source(
-            &vrf, &pkey, &random
-        )));
+        test::black_box(pbc::validate_VRF_source(&vrf, &pkey, &random).unwrap());
     });
 }

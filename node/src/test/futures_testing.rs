@@ -19,7 +19,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use assert_matches::assert_matches;
 use futures::executor::{with_notify, Notify};
 use futures::{lazy, Async, Future};
 use log::debug;
@@ -150,6 +149,7 @@ pub fn wait(timer: &mut Timer<TestTimer>, duration: Duration) {
 
 #[test]
 fn test_timer() {
+    use assert_matches::assert_matches;
     start_test(|timer| {
         let clock = clock::now();
         let deadline = clock + Duration::from_millis(1000);

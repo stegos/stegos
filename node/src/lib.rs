@@ -30,9 +30,9 @@ mod mempool;
 pub mod metrics;
 mod proposal;
 pub mod protos;
-#[cfg(test)]
-mod test;
 pub mod txpool;
+#[doc(hidden)]
+pub mod test;
 mod validation;
 pub use crate::config::NodeConfig;
 use crate::error::*;
@@ -44,6 +44,7 @@ use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::sync::oneshot;
 use futures::{task, Async, Future, Poll, Stream};
 use futures_stream_select_all_send::select_all;
+pub use loader::CHAIN_LOADER_TOPIC;
 use log::*;
 use protobuf;
 use protobuf::Message;

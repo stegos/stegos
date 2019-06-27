@@ -359,6 +359,24 @@ pub trait Api<'p> {
         self.iter().count()
     }
 
+    //TODO: This temporary solution is used to emulate broadcast in network. For example
+    // when you need to send transaction over network, it should be broadcasted.
+    /// Take messages from topic, and broadcast to other nodes.
+    fn broadcast(&mut self, topic: &str) {
+        let mut messages = Vec::new();
+        for node in self.iter_mut() {
+            if let Some(m) = node.network_service.try_get_broadcast_raw(topic) {
+                messages.push(m)
+            }
+        }
+        for node in self.iter_mut() {
+            for msg in &messages {
+                node.network_service
+                    .receive_broadcast_raw(topic, msg.clone());
+            }
+        }
+        self.poll();
+    }
     /// Take micro block from leader, rebroadcast to other nodes.
     /// Should be used after block timeout.
     /// This function will poll() every node.

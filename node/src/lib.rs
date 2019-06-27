@@ -30,9 +30,9 @@ mod mempool;
 pub mod metrics;
 mod proposal;
 pub mod protos;
-pub mod txpool;
 #[doc(hidden)]
 pub mod test;
+pub mod txpool;
 mod validation;
 pub use crate::config::NodeConfig;
 use crate::error::*;
@@ -180,7 +180,7 @@ pub struct OutputsChanged {
 // ----------------------------------------------------------------
 
 /// Topic used for sending transactions.
-const TX_TOPIC: &'static str = "tx";
+pub const TX_TOPIC: &'static str = "tx";
 /// Topic used for consensus.
 const CONSENSUS_TOPIC: &'static str = "consensus";
 /// Topic for ViewChange message.

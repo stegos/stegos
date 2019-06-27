@@ -164,8 +164,37 @@ impl Loopback {
     }
 
     pub fn get_unicast<M: ProtoConvert>(&mut self, topic: &str, peer: &pbc::PublicKey) -> M {
+        let msg = self
+            .try_get_unicast_raw(topic, peer)
+            .expect("Expected message");
+        M::from_buffer(&msg).unwrap()
+    }
+
+    pub fn get_broadcast<M: ProtoConvert>(&mut self, topic: &str) -> M {
+        let msg = self.try_get_broadcast_raw(topic).expect("Expected message");
+        M::from_buffer(&msg).unwrap()
+    }
+
+    pub fn try_get_broadcast_raw(&mut self, topic: &str) -> Option<Vec<u8>> {
         let ref mut state = self.state.lock().unwrap();
-        match state.queue.pop_front().unwrap() {
+        match state.queue.pop_front()? {
+            MessageFromNode::Publish {
+                topic: msg_topic,
+                data: msg_data,
+            } => {
+                assert_eq!(topic, &msg_topic);
+                Some(msg_data.clone())
+            }
+            x => {
+                error!("Other message in queue = {:?}", x);
+                return None;
+            }
+        }
+    }
+
+    pub fn try_get_unicast_raw(&mut self, topic: &str, peer: &pbc::PublicKey) -> Option<Vec<u8>> {
+        let ref mut state = self.state.lock().unwrap();
+        match state.queue.pop_front()? {
             MessageFromNode::SendUnicast {
                 protocol_id: msg_topic,
                 to: msg_peer,
@@ -173,26 +202,11 @@ impl Loopback {
             } => {
                 assert_eq!(topic, &msg_topic);
                 assert_eq!(peer, &msg_peer);
-                M::from_buffer(&msg_data).unwrap()
+                Some(msg_data.clone())
             }
             x => {
-                panic!("Unexpected message {:?}", x);
-            }
-        }
-    }
-
-    pub fn get_broadcast<M: ProtoConvert>(&mut self, topic: &str) -> M {
-        let ref mut state = self.state.lock().unwrap();
-        match state.queue.pop_front().unwrap() {
-            MessageFromNode::Publish {
-                topic: msg_topic,
-                data: msg_data,
-            } => {
-                assert_eq!(topic, &msg_topic);
-                M::from_buffer(&msg_data).unwrap()
-            }
-            x => {
-                panic!("Unexpected message {:?}", x);
+                error!("Other message in queue = {:?}", x);
+                return None;
             }
         }
     }

@@ -111,14 +111,6 @@ impl G1 {
         }
     }
 
-    pub fn compress(&self) -> Self {
-        match self {
-            G1::G1Raw(g1) => G1::G1Cmpr(g1.pt.into_compressed()),
-            G1::G1Cmpr(_) => *self,
-            G1::G1None => panic!("should never happen"),
-        }
-    }
-
     pub fn dcmpr(&self) -> Result<IG1<Bls12>, CryptoError> {
         match self {
             G1::G1Raw(g1) => Ok(*g1),
@@ -130,8 +122,19 @@ impl G1 {
         }
     }
 
+    pub fn is_decompressed(&self) -> bool {
+        match self {
+            G1::G1Raw(_) => true,
+            _ => false,
+        }
+    }
+
     pub fn decompress(&self) -> Result<G1, CryptoError> {
-        Ok(G1::G1Raw(self.dcmpr()?))
+        if self.is_decompressed() {
+            Ok(*self)
+        } else {
+            Ok(G1::G1Raw(self.dcmpr()?))
+        }
     }
 
     pub fn to_bytes(&self) -> [u8; 48] {
@@ -268,14 +271,6 @@ impl G2 {
         }
     }
 
-    pub fn compress(&self) -> Self {
-        match self {
-            G2::G2Raw(g2) => G2::G2Cmpr(g2.pt.into_compressed()),
-            G2::G2Cmpr(_) => *self,
-            G2::G2None => panic!("should never happen"),
-        }
-    }
-
     pub fn dcmpr(&self) -> Result<IG2<Bls12>, CryptoError> {
         match self {
             G2::G2Raw(g2) => Ok(*g2),
@@ -287,8 +282,19 @@ impl G2 {
         }
     }
 
+    pub fn is_decompressed(&self) -> bool {
+        match self {
+            G2::G2Raw(_) => true,
+            _ => false,
+        }
+    }
+
     pub fn decompress(&self) -> Result<G2, CryptoError> {
-        Ok(G2::G2Raw(self.dcmpr()?))
+        if self.is_decompressed() {
+            Ok(*self)
+        } else {
+            Ok(G2::G2Raw(self.dcmpr()?))
+        }
     }
 
     pub fn to_bytes(&self) -> [u8; 96] {
@@ -308,29 +314,6 @@ impl G2 {
             G2::G2None => panic!("should never happen"),
         }
     }
-
-    // pub fn to_bytes(&self) -> [u8; 96] {
-    //     let mut tmp = [0u8; 96];
-    //     let cpt = self.0.pt.into_compressed();
-    //     let me_ref = cpt.as_ref();
-    //     tmp.copy_from_slice(&me_ref[0..96]);
-    //     tmp
-    // }
-
-    // pub fn xtry_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
-    //     if bytes.len() != 96 {
-    //         return Err(CryptoError::InvalidBinaryLength(96, bytes.len()).into());
-    //     }
-    //     let mut cpt = bls12_381::G2Compressed::empty();
-    //     cpt.as_mut().copy_from_slice(bytes);
-    //     let pt = match cpt.into_affine() {
-    //         Ok(pt) => pt,
-    //         _ => {
-    //             return Err(CryptoError::InvalidPoint);
-    //         }
-    //     };
-    //     Ok(G2(IG2 { pt }))
-    // }
 
     pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
         if bytes.len() != 96 {
@@ -578,7 +561,11 @@ impl PublicKey {
     }
 
     pub fn decompress(&self) -> Result<Self, CryptoError> {
-        Ok(PublicKey::from(G2::from(*self).decompress()?))
+        if G2::from(*self).is_decompressed() {
+            Ok(*self)
+        } else {
+            Ok(PublicKey::from(G2::from(*self).decompress()?))
+        }
     }
 
     pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {

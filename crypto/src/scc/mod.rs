@@ -1201,4 +1201,32 @@ pub mod tests {
         let deserialized: PublicKey = serde_json::from_str(&serialized).unwrap();
         assert_eq!(pkey, deserialized);
     }
+
+    #[test]
+    fn check_constant_time() {
+        use std::time::SystemTime;
+        let skey = SecretKey::from(Fr::one());
+        let kval = Fr::one();
+        let sumk = Pt::inf();
+        let sumpkey = Pt::inf();
+        let h = Hash::from_str("Testing");
+        let niter = 100_000;
+        let start = SystemTime::now();
+        for _ in 0..niter {
+            sign_hash_with_kval(&h, &skey, &kval, &sumk, &sumpkey);
+        }
+        let timing = start.elapsed().unwrap();
+        println!("Const Time (1) = {:?}", timing / niter);
+
+        let skey = SecretKey::from(
+            Fr::try_from_hex("0FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF")
+                .expect("ok)"),
+        );
+        let start = SystemTime::now();
+        for _ in 0..niter {
+            sign_hash_with_kval(&h, &skey, &kval, &sumk, &sumpkey);
+        }
+        let timing = start.elapsed().unwrap();
+        println!("Const Time (1111...) = {:?}", timing / niter);
+    }
 }

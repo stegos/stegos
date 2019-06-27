@@ -42,7 +42,6 @@ use stegos_crypto::scc;
 use stegos_keychain::{self as keychain, KeyError};
 use stegos_network::{Libp2pNetwork, NETWORK_STATUS_TOPIC};
 use stegos_node::NodeService;
-use stegos_txpool::TransactionPoolService;
 use stegos_wallet::WalletService;
 use tokio::runtime::Runtime;
 
@@ -339,9 +338,6 @@ fn run() -> Result<(), Error> {
         network.clone(),
     )?;
 
-    // Initialize TransactionPool.
-    let txpool_service = TransactionPoolService::new(network_pkey, network.clone(), node.clone());
-
     // Initialize Wallet.
     let (wallet_service, wallet) = WalletService::new(
         cfg.wallet_db.database_path.as_ref(),
@@ -377,7 +373,6 @@ fn run() -> Result<(), Error> {
             // TODO: how to handle errors here?
             node_service.init().expect("shit happens");
             executor.spawn(node_service);
-            executor.spawn(txpool_service);
             Ok(())
         });
     rt.spawn(network_ready_future);

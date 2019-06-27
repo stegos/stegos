@@ -32,6 +32,7 @@ mod proposal;
 pub mod protos;
 #[cfg(test)]
 mod test;
+pub mod txpool;
 mod validation;
 pub use crate::config::NodeConfig;
 use crate::error::*;
@@ -236,6 +237,7 @@ enum Validation {
         block_timer: BlockTimer,
     },
 }
+use crate::txpool::TransactionPoolService;
 use Validation::*;
 
 pub struct NodeService {
@@ -275,6 +277,9 @@ pub struct NodeService {
     on_outputs_changed: Vec<UnboundedSender<OutputsChanged>>,
     /// Aggregated stream of events.
     events: Box<dyn Stream<Item = NodeMessage, Error = ()> + Send>,
+
+    /// Txpool
+    txpool_service: TransactionPoolService,
 }
 
 impl NodeService {
@@ -343,6 +348,13 @@ impl NodeService {
 
         let events = select_all(streams);
 
+        let handler = Node {
+            outbox,
+            network: network.clone(),
+        };
+        let txpool_service =
+            TransactionPoolService::new(network_pkey, network.clone(), handler.clone());
+
         let service = NodeService {
             cfg,
             chain,
@@ -358,11 +370,7 @@ impl NodeService {
             on_epoch_changed,
             on_outputs_changed,
             events,
-        };
-
-        let handler = Node {
-            outbox,
-            network: network.clone(),
+            txpool_service,
         };
 
         Ok((service, handler))
@@ -1565,6 +1573,11 @@ impl Future for NodeService {
         if let Err(e) = result {
             error!("Error: {}", e);
         }
+
+        match self.txpool_service.poll().expect("txpool working") {
+            Async::Ready(_) => unreachable!(),
+            Async::NotReady => {}
+        };
 
         // Poll other events.
         loop {

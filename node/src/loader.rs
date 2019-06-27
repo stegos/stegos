@@ -137,11 +137,9 @@ impl NodeService {
         offset: u32,
     ) -> Result<(), Error> {
         // Send one epoch.
-        let blocks = self.chain.blocks_range(
-            epoch,
-            offset,
-            (self.chain.cfg().micro_blocks_in_epoch as u64) * self.cfg.loader_speed_in_epoch,
-        );
+        let blocks = self
+            .chain
+            .blocks_range(epoch, offset, self.cfg.loader_speed_in_epoch);
         info!("Feeding blocks: to={}, num_blocks={}", pkey, blocks.len());
         let msg = ChainLoaderMessage::Response(ResponseBlocks::new(blocks));
         self.network

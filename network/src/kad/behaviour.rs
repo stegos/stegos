@@ -282,7 +282,7 @@ impl<TSubstream> Kademlia<TSubstream> {
         &mut self,
         query: QueryTarget,
         request_id: KademliaRequestId,
-        parameters: &mut PollParameters<'_>,
+        parameters: &mut impl PollParameters,
     ) -> KademliaHandlerIn<TUserData> {
         match query {
             QueryTarget::FindPeer(key) => {
@@ -665,7 +665,7 @@ where
 
     fn poll(
         &mut self,
-        parameters: &mut PollParameters<'_>,
+        parameters: &mut impl PollParameters,
     ) -> Async<
         NetworkBehaviourAction<
             <Self::ProtocolsHandler as ProtocolsHandler>::InEvent,
@@ -941,7 +941,7 @@ fn gen_random_hash(my_id: &Multihash, bucket_num: usize) -> Result<Multihash, ()
 /// > **Note**: This is just a convenience function that doesn't do anything note-worthy.
 fn build_kad_peer(
     node_id: pbc::PublicKey,
-    parameters: &mut PollParameters<'_>,
+    parameters: &mut impl PollParameters,
     kbuckets: &KBucketsTable<pbc::PublicKey, NodeInfo>,
 ) -> KadPeer {
     let is_self = node_id == *kbuckets.my_id();

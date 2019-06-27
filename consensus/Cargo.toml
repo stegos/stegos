@@ -21,7 +21,7 @@ failure = "0.1"
 log = "0.4"
 protobuf = "2.6"
 lazy_static = "1.2"
-prometheus = "0.6"
+prometheus = "0.7"
 
 [dev-dependencies]
 stegos_keychain = { version = "0.2.0", path = "../keychain" }

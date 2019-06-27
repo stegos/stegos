@@ -24,7 +24,6 @@
 use failure::{format_err, Error};
 use futures::prelude::*;
 use futures::sync::mpsc;
-use ipnetwork::IpNetwork;
 use libp2p_core::multiaddr::{Multiaddr, Protocol};
 use libp2p_core::upgrade::{InboundUpgradeExt, OutboundUpgradeExt};
 use libp2p_core::{
@@ -37,7 +36,6 @@ use libp2p_secio as secio;
 use libp2p_tcp as tcp;
 use libp2p_yamux as yamux;
 use log::*;
-use pnet::datalink;
 use protobuf::Message as ProtoMessage;
 use smallvec::SmallVec;
 use std::collections::{HashMap, HashSet};
@@ -181,11 +179,6 @@ fn new_service(
 
         Swarm::new(transport, behaviour, peer_id)
     };
-
-    let mut my_addresses = my_external_address(config);
-    for a in my_addresses.drain(..).into_iter() {
-        Swarm::add_external_address(&mut swarm, a);
-    }
 
     let mut bind_ip = Multiaddr::from(Protocol::Ip4(config.bind_ip.clone().parse()?));
     bind_ip.push(Protocol::Tcp(config.bind_port));
@@ -677,45 +670,6 @@ pub enum ControlMessage {
         new_pkey: pbc::PublicKey,
         new_skey: pbc::SecretKey,
     },
-}
-
-fn my_external_address(config: &NetworkConfig) -> Vec<Multiaddr> {
-    let ifaces = datalink::interfaces();
-    let mut my_addresses: Vec<Multiaddr> = vec![];
-
-    for addr in config.advertised_addresses.iter() {
-        match addr.parse() {
-            Ok(maddr) => my_addresses.push(maddr),
-            Err(e) => error!("error parsing multiaddr: {} error: {}", addr, e),
-        }
-    }
-
-    let bind_port = config.bind_port;
-
-    if config.advertise_local_ips {
-        let ips = ifaces
-            .into_iter()
-            .filter(|ref i| i.is_up() && !i.is_loopback())
-            .flat_map(|ref i| i.ips.clone())
-            .filter(|ref ip| ip.is_ipv4());
-
-        let mut multiaddresses: Vec<Multiaddr> = ips
-            .map(|i| match i {
-                IpNetwork::V4(net) => net.ip(),
-                IpNetwork::V6(_) => unreachable!(),
-            })
-            .map(|a| Multiaddr::from(a))
-            .map(|mut a| {
-                a.push(Protocol::Tcp(bind_port));
-                a
-            })
-            .collect();
-
-        my_addresses.append(&mut multiaddresses);
-    }
-
-    debug!("My adverised addresses: {:#?}", my_addresses);
-    my_addresses
 }
 
 #[derive(Clone, Debug)]

@@ -34,8 +34,6 @@ pub struct NetworkConfig {
     pub bind_port: u16,
     /// List of advertised reachable address for this node
     pub advertised_addresses: Vec<String>,
-    /// Advertise local active, non-loopback addresses
-    pub advertise_local_ips: bool,
     /// DNS name of pool of seed nodes
     pub seed_pool: String,
     /// List of nodes to connect to on startup.
@@ -60,7 +58,6 @@ impl Default for NetworkConfig {
             seed_pool: "".to_string(),
             seed_nodes: vec![],
             advertised_addresses: vec![],
-            advertise_local_ips: false,
             bind_ip: "0.0.0.0".to_string(),
             min_connections: 8,
             max_connections: 32,

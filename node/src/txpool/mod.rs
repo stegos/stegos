@@ -1,10 +1,10 @@
 #![deny(warnings)]
 
-mod messages;
-pub use crate::messages::*;
+pub mod messages;
+pub use self::messages::*;
 
-pub mod protos;
-
+use crate::EpochChanged;
+use crate::Node;
 use failure::Error;
 use futures::{Async, Future, Poll, Stream};
 use futures_stream_select_all_send::select_all;
@@ -17,8 +17,6 @@ use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::scc;
 use stegos_network::Network;
-use stegos_node::EpochChanged;
-use stegos_node::Node;
 use stegos_serialization::traits::*;
 use tokio_timer::Interval;
 

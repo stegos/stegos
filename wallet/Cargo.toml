@@ -19,7 +19,6 @@ stegos_keychain = { version = "0.2.0", path = "../keychain" }
 stegos_network = { version = "0.4.0", path = "../network" }
 stegos_node = { version = "0.2.0", path = "../node" }
 stegos_serialization = { version = "0.2.0", path = "../serialization" }
-stegos_txpool = { version = "0.2.0", path = "../txpool" }
 serde = "1.0"
 serde_derive = "1.0"
 failure = "0.1"

@@ -39,7 +39,6 @@ use stegos_crypto::scc;
 use stegos_keychain as keychain;
 use stegos_network::Libp2pNetwork;
 use stegos_node::NodeService;
-use stegos_txpool::TransactionPoolService;
 use stegos_wallet::WalletService;
 use tokio::runtime::Runtime;
 
@@ -248,11 +247,6 @@ fn run() -> Result<(), Error> {
         network_pkey.clone(),
         network.clone(),
     )?;
-
-    // Initialize TransactionPool.
-    let txpool_service =
-        TransactionPoolService::new(network_pkey.clone(), network.clone(), node.clone());
-    rt.spawn(txpool_service);
 
     for instance in instances {
         let cfg = instance.cfg;

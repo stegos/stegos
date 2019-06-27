@@ -110,12 +110,12 @@ use stegos_crypto::scc::{
     make_deterministic_keys, sign_hash, validate_sig, Fr, Pt, PublicKey, SchnorrSig, SecretKey,
 };
 use stegos_network::Network;
+use stegos_node::txpool::PoolJoin;
+use stegos_node::txpool::PoolNotification;
+use stegos_node::txpool::POOL_ANNOUNCE_TOPIC;
+use stegos_node::txpool::POOL_JOIN_TOPIC;
 use stegos_node::Node;
 use stegos_serialization::traits::ProtoConvert;
-use stegos_txpool::PoolJoin;
-use stegos_txpool::PoolNotification;
-use stegos_txpool::POOL_ANNOUNCE_TOPIC;
-use stegos_txpool::POOL_JOIN_TOPIC;
 use tokio_timer::Interval;
 
 /// A topic used for ValueShuffle unicast communication.

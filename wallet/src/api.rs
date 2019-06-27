@@ -36,7 +36,7 @@ use stegos_crypto::scc::PublicKey;
 use stegos_node::EpochChanged;
 use stegos_node::OutputsChanged;
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Eq, PartialEq, Serialize, Deserialize, Clone, Debug)]
 pub enum LogEntryInfo {
     Incoming {
         timestamp: Timestamp,
@@ -73,7 +73,7 @@ pub struct PublicPaymentInfo {
 ///
 /// Out-of-band notifications.
 ///
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "notification")]
 #[serde(rename_all = "snake_case")]
 pub enum WalletNotification {
@@ -89,7 +89,7 @@ pub enum WalletNotification {
 ///
 /// RPC requests.
 ///
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "request")]
 #[serde(rename_all = "snake_case")]
 pub enum WalletRequest {
@@ -166,7 +166,7 @@ pub enum WalletRequest {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentTransactionInfo {
     pub tx_hash: Hash,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -176,7 +176,7 @@ pub struct PaymentTransactionInfo {
 ///
 /// RPC responses.
 ///
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "response")]
 #[serde(rename_all = "snake_case")]
 pub enum WalletResponse {
@@ -209,7 +209,7 @@ pub enum WalletResponse {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "result")]
 #[serde(rename_all = "snake_case")]
 pub enum TransactionCommitted {

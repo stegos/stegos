@@ -150,10 +150,22 @@ impl<E: Engine> ISecretKey<E> {
         }
     }
 
+    pub fn cloaked_pair(&self) -> (E::Fr, E::Fr) {
+        let mut cloak = E::Fr::rand(&mut thread_rng());
+        let mut tmp1 = self.x;
+        tmp1.add_assign(&cloak);
+        cloak.negate();
+        (tmp1, cloak)
+    }
+
     pub fn sign(&self, message: &[u8]) -> ISignature<E> {
         let cmsg = concat(HASH_KEY, message);
         let mut hpt = E::G1::hash(&cmsg);
-        hpt.mul_assign(self.x);
+        let mut hptc = hpt;
+        let (cskey, cloak) = self.cloaked_pair();
+        hptc.mul_assign(cloak);
+        hpt.mul_assign(cskey);
+        hpt.add_assign(&hptc);
         ISignature { s: hpt }
     }
 
@@ -186,9 +198,13 @@ impl<E: Engine> ISecretSubKey<E> {
 
 impl<E: Engine> IPublicKey<E> {
     pub fn from_secret(secret: &ISecretKey<E>) -> Self {
-        IPublicKey {
-            p_pub: E::G2Affine::one().mul(secret.x),
-        }
+        let mut tmp1 = E::G2Affine::one().into_projective();
+        let mut tmp2 = tmp1;
+        let (cskey, cloak) = secret.cloaked_pair();
+        tmp1.mul_assign(cskey);
+        tmp2.mul_assign(cloak);
+        tmp1.add_assign(&tmp2);
+        IPublicKey { p_pub: tmp1 }
     }
 
     pub fn verify(&self, message: &[u8], signature: &ISignature<E>) -> bool {

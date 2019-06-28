@@ -131,7 +131,7 @@ pub fn validate_proposed_macro_block(
     //
     // Validate base header.
     //
-    chain.validate_macro_block_header(block_hash, &block_proposal.header)?;
+    chain.validate_macro_block_header(block_hash, &block_proposal.header, false)?;
 
     // validate award.
     let (activity_map, winner) = chain.awards_from_active_epoch(&block_proposal.header.random);
@@ -216,8 +216,8 @@ pub fn validate_proposed_macro_block(
     }
 
     // Collect transactions from epoch.
-    let count = chain.cfg().micro_blocks_in_epoch as u64;
-    let blocks = chain.blocks_range(epoch, 0, count);
+    let count = chain.cfg().micro_blocks_in_epoch as usize;
+    let blocks: Vec<Block> = chain.blocks_starting(epoch, 0).take(count).collect();
     for (offset, block) in blocks.into_iter().enumerate() {
         let block = if let Block::MicroBlock(block) = block {
             block

@@ -163,7 +163,7 @@ pub enum Output {
 }
 
 /// Cloak recipient's public key.
-fn cloak_key(recipient_pkey: &PublicKey, gamma: &Fr) -> Result<(PublicKey, Fr), Error> {
+fn cloak_key(recipient_pkey: &PublicKey, gamma: &Fr) -> Result<(PublicKey, Fr), CryptoError> {
     // h is the digest of the recipients actual public key mixed with a timestamp.
     let mut hasher = Hasher::new();
     recipient_pkey.hash(&mut hasher);

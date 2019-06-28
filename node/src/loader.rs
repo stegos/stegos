@@ -137,9 +137,12 @@ impl NodeService {
         offset: u32,
     ) -> Result<(), Error> {
         // Send one epoch.
-        let blocks = self
+        let count = self.cfg.loader_speed_in_epoch as usize;
+        let blocks: Vec<Block> = self
             .chain
-            .blocks_range(epoch, offset, self.cfg.loader_speed_in_epoch);
+            .blocks_starting(epoch, offset)
+            .take(count)
+            .collect();
         info!("Feeding blocks: to={}, num_blocks={}", pkey, blocks.len());
         let msg = ChainLoaderMessage::Response(ResponseBlocks::new(blocks));
         self.network

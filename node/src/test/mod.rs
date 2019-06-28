@@ -212,7 +212,8 @@ impl NodeSandbox {
 
         // Create node, with first node keychain.
         let timestamp = Timestamp::now();
-        let chain = Blockchain::testing(chain_cfg, genesis, timestamp)
+        let (storage_cfg, _temp_dir) = StorageConfig::testing();
+        let chain = Blockchain::new(chain_cfg, storage_cfg, genesis, timestamp)
             .expect("Failed to create blockchain");
         let (mut node_service, node) = NodeService::new(
             node_cfg,

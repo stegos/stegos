@@ -423,6 +423,7 @@ impl Blockchain {
         &self,
         block_hash: &Hash,
         header: &MacroBlockHeader,
+        force_check: bool,
     ) -> Result<(), BlockchainError> {
         let epoch = header.epoch;
 
@@ -460,9 +461,11 @@ impl Blockchain {
                 .into());
             }
 
-            let seed = mix(self.last_macro_block_random(), header.view_change);
-            if !pbc::validate_VRF_source(&header.random, &header.pkey, &seed).is_ok() {
-                return Err(BlockError::IncorrectRandom(epoch, *block_hash).into());
+            if force_check {
+                let seed = mix(self.last_macro_block_random(), header.view_change);
+                if !pbc::validate_VRF_source(&header.random, &header.pkey, &seed).is_ok() {
+                    return Err(BlockError::IncorrectRandom(epoch, *block_hash).into());
+                }
             }
         }
 

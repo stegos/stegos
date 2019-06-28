@@ -117,8 +117,8 @@ pub fn fake_genesis(
         coins,
         activity_map,
         -outputs_gamma,
-        &[],
-        &outputs,
+        Vec::new(),
+        outputs,
     );
 
     (keychains, genesis)

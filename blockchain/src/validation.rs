@@ -400,7 +400,7 @@ impl MacroBlock {
         }
 
         // -\sum{C_o} for o in txouts
-        for (txout, _) in self.outputs.leafs() {
+        for txout in &self.outputs {
             txout.validate()?;
             pedersen_commitment_diff -= txout.pedersen_commitment()?;
         }
@@ -1153,9 +1153,9 @@ pub mod tests {
         //
         {
             let (output0, gamma0) = Output::new_payment(&pkey1, amount).unwrap();
-            let inputs1 = [Hash::digest(&output0)];
+            let inputs1 = vec![Hash::digest(&output0)];
             let (output1, gamma1) = Output::new_payment(&pkey2, amount).unwrap();
-            let outputs1 = [output1];
+            let outputs1 = vec![output1];
             let gamma = gamma0 - gamma1;
             let block = MacroBlock::new(
                 previous,
@@ -1167,8 +1167,8 @@ pub mod tests {
                 0,
                 BitVector::new(0),
                 gamma,
-                &inputs1,
-                &outputs1,
+                inputs1,
+                outputs1,
             );
             block.validate_balance(&[output0]).expect("block is valid");
         }
@@ -1178,9 +1178,9 @@ pub mod tests {
         //
         {
             let (output0, gamma0) = Output::new_payment(&pkey1, amount).unwrap();
-            let inputs1 = [Hash::digest(&output0)];
+            let inputs1 = vec![Hash::digest(&output0)];
             let (output1, gamma1) = Output::new_payment(&pkey2, amount - 1).unwrap();
-            let outputs1 = [output1];
+            let outputs1 = vec![output1];
             let gamma = gamma0 - gamma1;
             let block = MacroBlock::new(
                 previous,
@@ -1192,57 +1192,10 @@ pub mod tests {
                 0,
                 BitVector::new(0),
                 gamma,
-                &inputs1,
-                &outputs1,
+                inputs1,
+                outputs1,
             );
             match block.validate_balance(&[output0]).unwrap_err() {
-                BlockchainError::BlockError(BlockError::InvalidBlockBalance(_epoch, _hash)) => {}
-                _ => panic!(),
-            }
-        }
-    }
-
-    #[test]
-    fn validate_pruned_micro_block() {
-        let (_skey, pkey) = scc::make_random_keys();
-        let (nskey, npkey) = pbc::make_random_keys();
-
-        let epoch: u64 = 0;
-        let timestamp = Timestamp::now();
-        let view_change = 0;
-        let amount: i64 = 1_000_000;
-        let previous = Hash::digest(&"test".to_string());
-
-        let seed = mix(Hash::zero(), view_change);
-        let random = pbc::make_VRF(&nskey, &seed);
-
-        let (input, gamma0) = Output::new_payment(&pkey, amount).unwrap();
-        let input_hashes = [Hash::digest(&input)];
-        let inputs = [input];
-        let (output, gamma1) = Output::new_payment(&pkey, amount).unwrap();
-        let outputs = [output];
-        let gamma = gamma0 - gamma1;
-        let block = MacroBlock::new(
-            previous,
-            epoch,
-            view_change,
-            npkey,
-            random,
-            timestamp,
-            0,
-            BitVector::new(0),
-            gamma,
-            &input_hashes,
-            &outputs,
-        );
-        block.validate_balance(&inputs).expect("block is valid");
-
-        {
-            // Prune an output.
-            let mut block2 = block.clone();
-            let (_output, path) = block2.outputs.leafs()[0];
-            block2.outputs.prune(&path).expect("output exists");
-            match block2.validate_balance(&inputs).unwrap_err() {
                 BlockchainError::BlockError(BlockError::InvalidBlockBalance(_epoch, _hash)) => {}
                 _ => panic!(),
             }
@@ -1267,12 +1220,12 @@ pub mod tests {
         //
         {
             let input = Output::new_stake(&pkey1, &nskey, &npkey, amount).expect("keys are valid");
-            let input_hashes = [Hash::digest(&input)];
+            let input_hashes = vec![Hash::digest(&input)];
             let inputs = [input];
             let inputs_gamma = Fr::zero();
             let (output, outputs_gamma) =
                 Output::new_payment(&pkey1, amount).expect("keys are valid");
-            let outputs = [output];
+            let outputs = vec![output];
             let gamma = inputs_gamma - outputs_gamma;
             let block = MacroBlock::new(
                 previous,
@@ -1284,8 +1237,8 @@ pub mod tests {
                 0,
                 BitVector::new(0),
                 gamma,
-                &input_hashes[..],
-                &outputs[..],
+                input_hashes,
+                outputs,
             );
             block.validate_balance(&inputs).expect("block is valid");
         }
@@ -1296,11 +1249,11 @@ pub mod tests {
         {
             let (input, inputs_gamma) =
                 Output::new_payment(&pkey1, amount).expect("keys are valid");
-            let input_hashes = [Hash::digest(&input)];
-            let inputs = [input];
+            let input_hashes = vec![Hash::digest(&input)];
+            let inputs = vec![input];
             let output = Output::new_stake(&pkey1, &nskey, &npkey, amount).expect("keys are valid");
             let outputs_gamma = Fr::zero();
-            let outputs = [output];
+            let outputs = vec![output];
             let gamma = inputs_gamma - outputs_gamma;
             let block = MacroBlock::new(
                 previous,
@@ -1312,8 +1265,8 @@ pub mod tests {
                 0,
                 BitVector::new(0),
                 gamma,
-                &input_hashes[..],
-                &outputs[..],
+                input_hashes,
+                outputs,
             );
             block.validate_balance(&inputs).expect("block is valid");
         }
@@ -1324,13 +1277,13 @@ pub mod tests {
         {
             let (input, inputs_gamma) =
                 Output::new_payment(&pkey1, amount).expect("keys are valid");
-            let input_hashes = [Hash::digest(&input)];
+            let input_hashes = vec![Hash::digest(&input)];
             let inputs = [input];
             let output =
                 StakeOutput::new(&pkey1, &nskey, &npkey, amount - 1).expect("keys are valid");
             let output = Output::StakeOutput(output);
             let outputs_gamma = Fr::zero();
-            let outputs = [output];
+            let outputs = vec![output];
             let gamma = inputs_gamma - outputs_gamma;
             let block = MacroBlock::new(
                 previous,
@@ -1342,8 +1295,8 @@ pub mod tests {
                 0,
                 BitVector::new(0),
                 gamma,
-                &input_hashes[..],
-                &outputs[..],
+                input_hashes,
+                outputs,
             );
             match block.validate_balance(&inputs).unwrap_err() {
                 BlockchainError::BlockError(BlockError::InvalidBlockBalance(_epoch, _hash)) => {}
@@ -1357,14 +1310,14 @@ pub mod tests {
         {
             let (input, inputs_gamma) =
                 Output::new_payment(&pkey1, amount).expect("keys are valid");
-            let input_hashes = [Hash::digest(&input)];
+            let input_hashes = vec![Hash::digest(&input)];
             let inputs = [input];
             let mut output =
                 StakeOutput::new(&pkey1, &nskey, &npkey, amount).expect("keys are valid");
             output.amount = 0;
             let output = Output::StakeOutput(output);
             let outputs_gamma = Fr::zero();
-            let outputs = [output];
+            let outputs = vec![output];
             let gamma = inputs_gamma - outputs_gamma;
             let block = MacroBlock::new(
                 previous,
@@ -1376,8 +1329,8 @@ pub mod tests {
                 0,
                 BitVector::new(0),
                 gamma,
-                &input_hashes[..],
-                &outputs[..],
+                input_hashes,
+                outputs,
             );
             match block.validate_balance(&inputs).unwrap_err() {
                 BlockchainError::OutputError(OutputError::InvalidStake(_output_hash)) => {}
@@ -1403,10 +1356,10 @@ pub mod tests {
         let block_reward: i64 = output_amount - input_amount;
 
         let (input, input_gamma) = Output::new_payment(&pkey, input_amount).unwrap();
-        let input_hashes = [Hash::digest(&input)];
+        let input_hashes = vec![Hash::digest(&input)];
         let inputs = [input];
         let (output, output_gamma) = Output::new_payment(&pkey, output_amount).unwrap();
-        let outputs = [output];
+        let outputs = vec![output];
         let gamma = input_gamma - output_gamma;
         let block = MacroBlock::new(
             previous,
@@ -1418,8 +1371,8 @@ pub mod tests {
             block_reward,
             BitVector::new(0),
             gamma,
-            &input_hashes[..],
-            &outputs[..],
+            input_hashes,
+            outputs,
         );
         block.validate_balance(&inputs).expect("block is valid");
     }

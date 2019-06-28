@@ -85,17 +85,12 @@ message MacroBlockHeader {
     stegos.crypto.VRF random = 6;
     uint64 timestamp = 7;
     int64 block_reward = 8;
-    stegos.crypto.Fr gamma = 9;
-    stegos.crypto.Hash inputs_range_hash = 10;
-    stegos.crypto.Hash outputs_range_hash = 11;
-    repeated bool activity_map = 12;
-}
-
-message MerkleNode {
-    stegos.crypto.Hash hash = 1;
-    uint64 left = 2;
-    uint64 right = 3;
-    Output value = 4;
+    repeated bool activity_map = 9;
+    stegos.crypto.Fr gamma = 10;
+    stegos.crypto.Hash inputs_range_hash = 11;
+    uint32 inputs_len = 12;
+    stegos.crypto.Hash outputs_range_hash = 13;
+    uint32 outputs_len = 14;
 }
 
 message MacroBlock {
@@ -103,7 +98,7 @@ message MacroBlock {
     stegos.crypto.SecureSignature multisig = 2;
     repeated bool multisigmap = 3;
     repeated stegos.crypto.Hash inputs = 4;
-    repeated MerkleNode outputs = 5;
+    repeated Output outputs = 5;
 }
 
 message MicroBlockHeader {

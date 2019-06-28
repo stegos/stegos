@@ -242,9 +242,13 @@ pub struct MacroBlockHeader {
 
     /// Merklish root of all input hashes.
     pub inputs_range_hash: Hash,
+    /// The number of inputs in Merkle Tree to prevent potential attacks.
+    pub inputs_len: u32,
 
     /// Merklish root of all output hashes.
     pub outputs_range_hash: Hash,
+    /// The number of outputs in Merkle Tree to prevent potential attacks.
+    pub outputs_len: u32,
 }
 
 impl Hashable for MacroBlockHeader {
@@ -262,7 +266,9 @@ impl Hashable for MacroBlockHeader {
             (bit as u32).hash(state);
         }
         self.gamma.hash(state);
+        self.inputs_len.hash(state);
         self.inputs_range_hash.hash(state);
+        self.outputs_len.hash(state);
         self.outputs_range_hash.hash(state);
     }
 }
@@ -283,7 +289,7 @@ pub struct MacroBlock {
     pub inputs: Vec<Hash>,
 
     /// The list of transaction outputs in a Merkle Tree.
-    pub outputs: Merkle<Box<Output>>,
+    pub outputs: Vec<Output>,
 }
 
 impl MacroBlock {
@@ -298,8 +304,8 @@ impl MacroBlock {
         activity_map: BitVector,
     ) -> MacroBlock {
         let gamma = Fr::zero();
-        let inputs = [];
-        let outputs = [];
+        let inputs: Vec<Hash> = Vec::new();
+        let outputs: Vec<Output> = Vec::new();
         Self::new(
             previous,
             epoch,
@@ -310,8 +316,8 @@ impl MacroBlock {
             block_reward,
             activity_map,
             gamma,
-            &inputs,
-            &outputs,
+            inputs,
+            outputs,
         )
     }
 
@@ -378,8 +384,8 @@ impl MacroBlock {
             block_reward,
             activity_map,
             gamma,
-            &inputs,
-            &outputs,
+            inputs,
+            outputs,
         );
         Ok(block)
     }
@@ -394,35 +400,27 @@ impl MacroBlock {
         block_reward: i64,
         activity_map: BitVector,
         gamma: Fr,
-        inputs: &[Hash],
-        outputs: &[Output],
+        mut inputs: Vec<Hash>,
+        mut outputs: Vec<Output>,
     ) -> MacroBlock {
         // Re-order all inputs to blur transaction boundaries.
         // Current algorithm just sorts this list.
         // Since Hash is random, it has the same effect as shuffling.
-        let inputs_len = inputs.len();
-        let mut inputs: Vec<Hash> = inputs.iter().cloned().collect();
+        assert!(inputs.len() <= std::u32::MAX as usize);
+        let inputs_len = inputs.len() as u32;
         inputs.sort();
-        inputs.dedup(); // should do nothing
-        assert_eq!(inputs.len(), inputs_len, "inputs must be unique");
 
         // Calculate input_range_hash.
-        let inputs_range_hash = Self::calculate_inputs_range_hash(&inputs);
+        let inputs_range_hash = Self::calculate_range_hash(&inputs);
 
         // Re-order all outputs to blur transaction boundaries.
-        let outputs_len = outputs.len();
-        let mut outputs: Vec<(Hash, Box<Output>)> = outputs
-            .into_iter()
-            .map(|o| (Hash::digest(o), Box::<Output>::new(o.clone())))
-            .collect();
-        outputs.sort_by(|(h1, _o1), (h2, _o2)| h1.cmp(h2));
-        outputs.dedup_by(|(h1, _o1), (h2, _o2)| h1 == h2); // should do nothing
-        assert_eq!(outputs.len(), outputs_len, "outputs must be unique");
-        let outputs: Vec<Box<Output>> = outputs.into_iter().map(|(_h, o)| o).collect();
+        assert!(outputs.len() <= std::u32::MAX as usize);
+        let outputs_len = outputs.len() as u32;
+        outputs.sort_by_cached_key(Hash::digest);
 
-        // Create Merkle Tree and calculate outputs_range_hash.
-        let outputs = Merkle::from_array(&outputs);
-        let outputs_range_hash = outputs.roothash().clone();
+        // Calculate outputs_range_hash.
+        let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
+        let outputs_range_hash = Self::calculate_range_hash(&output_hashes);
 
         // Create header
         let header = MacroBlockHeader {
@@ -436,7 +434,9 @@ impl MacroBlock {
             block_reward,
             activity_map,
             gamma,
+            inputs_len,
             inputs_range_hash,
+            outputs_len,
             outputs_range_hash,
         };
 
@@ -452,9 +452,9 @@ impl MacroBlock {
         }
     }
 
-    pub(crate) fn calculate_inputs_range_hash(inputs: &[Hash]) -> Hash {
-        let inputs_tree = Merkle::from_array(inputs);
-        inputs_tree.roothash().clone()
+    pub(crate) fn calculate_range_hash(hashes: &[Hash]) -> Hash {
+        let tree = Merkle::from_array(hashes);
+        tree.roothash().clone()
     }
 }
 

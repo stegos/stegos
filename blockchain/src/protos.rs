@@ -481,53 +481,6 @@ impl ProtoConvert for MicroBlock {
     }
 }
 
-impl ProtoConvert for SerializedNode<Box<Output>> {
-    type Proto = blockchain::MerkleNode;
-    fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::MerkleNode::new();
-        proto.set_hash(self.hash.into_proto());
-        if let Some(left) = self.left {
-            proto.set_left(left as u64 + 1);
-        } else {
-            proto.set_left(0);
-        }
-        if let Some(right) = self.right {
-            proto.set_right(right as u64 + 1);
-        } else {
-            proto.set_right(0);
-        }
-        if let Some(ref value) = self.value {
-            proto.set_value(value.into_proto());
-        }
-        proto
-    }
-
-    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let hash = Hash::from_proto(proto.get_hash())?;
-        let left = if proto.get_left() > 0 {
-            Some((proto.get_left() - 1) as usize)
-        } else {
-            None
-        };
-        let right = if proto.get_right() > 0 {
-            Some((proto.get_right() - 1) as usize)
-        } else {
-            None
-        };
-        let value = if proto.has_value() {
-            Some(Box::new(Output::from_proto(proto.get_value())?))
-        } else {
-            None
-        };
-        Ok(SerializedNode::<Box<Output>> {
-            hash,
-            left,
-            right,
-            value,
-        })
-    }
-}
-
 impl ProtoConvert for MacroBlockHeader {
     type Proto = blockchain::MacroBlockHeader;
     fn into_proto(&self) -> Self::Proto {
@@ -548,7 +501,9 @@ impl ProtoConvert for MacroBlockHeader {
                 proto.activity_map[bit] = true;
             }
         }
+        proto.set_inputs_len(self.inputs_len);
         proto.set_inputs_range_hash(self.inputs_range_hash.into_proto());
+        proto.set_outputs_len(self.outputs_len);
         proto.set_outputs_range_hash(self.outputs_range_hash.into_proto());
         proto
     }
@@ -569,7 +524,9 @@ impl ProtoConvert for MacroBlockHeader {
             }
         }
         let gamma = Fr::from_proto(proto.get_gamma())?;
+        let inputs_len = proto.get_inputs_len();
         let inputs_range_hash = Hash::from_proto(proto.get_inputs_range_hash())?;
+        let outputs_len = proto.get_outputs_len();
         let outputs_range_hash = Hash::from_proto(proto.get_outputs_range_hash())?;
         if proto.activity_map.len() > VALIDATORS_MAX {
             return Err(
@@ -587,7 +544,9 @@ impl ProtoConvert for MacroBlockHeader {
             block_reward,
             activity_map,
             gamma,
+            inputs_len,
             inputs_range_hash,
+            outputs_len,
             outputs_range_hash,
         })
     }
@@ -609,7 +568,7 @@ impl ProtoConvert for MacroBlock {
         for input in &self.inputs {
             proto.inputs.push(input.into_proto());
         }
-        for output in self.outputs.serialize() {
+        for output in &self.outputs {
             proto.outputs.push(output.into_proto());
         }
         proto
@@ -642,9 +601,8 @@ impl ProtoConvert for MacroBlock {
 
         let mut outputs = Vec::with_capacity(proto.outputs.len());
         for output in proto.outputs.iter() {
-            outputs.push(SerializedNode::<Box<Output>>::from_proto(output)?);
+            outputs.push(Output::from_proto(output)?);
         }
-        let outputs = Merkle::deserialize(&outputs)?;
 
         Ok(MacroBlock {
             header,
@@ -934,9 +892,9 @@ mod tests {
         let (output0, gamma0) = Output::new_payment(&pkey1, amount).unwrap();
 
         // Transaction from 1 to 2
-        let inputs1 = [Hash::digest(&output0)];
+        let inputs1 = vec![Hash::digest(&output0)];
         let (output1, gamma1) = Output::new_payment(&pkey2, amount).unwrap();
-        let outputs1 = [output1];
+        let outputs1 = vec![output1];
         let gamma = gamma0 - gamma1;
 
         let seed = mix(Hash::digest("random"), view_change);
@@ -952,8 +910,8 @@ mod tests {
             block_reward,
             BitVector::new(0),
             gamma,
-            &inputs1,
-            &outputs1,
+            inputs1,
+            outputs1,
         );
         roundtrip(&block.header);
         roundtrip(&block);
@@ -964,11 +922,10 @@ mod tests {
         for (input1, input2) in block.inputs.iter().zip(block2.inputs.iter()) {
             assert_eq!(Hash::digest(&input1), Hash::digest(&input2));
         }
-        let outputs1 = block.outputs.leafs();
-        let outputs2 = block2.outputs.leafs();
+        let outputs1 = block.outputs;
+        let outputs2 = block2.outputs;
         assert_eq!(outputs1.len(), outputs2.len());
-        for ((input1, path1), (input2, path2)) in outputs1.iter().zip(outputs2.iter()) {
-            assert_eq!(path1, path2);
+        for (input1, input2) in outputs1.iter().zip(outputs2.iter()) {
             assert_eq!(Hash::digest(&input1), Hash::digest(&input2));
         }
     }

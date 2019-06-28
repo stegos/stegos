@@ -29,7 +29,6 @@ use crate::election::ElectionInfo;
 use crate::election::{self, ElectionResult};
 use crate::error::*;
 use crate::escrow::*;
-use crate::merkle::*;
 use crate::metrics;
 use crate::multisignature::check_multi_signature;
 use crate::mvcc::MultiVersionedMap;
@@ -101,8 +100,8 @@ enum OutputKey {
     MacroBlock {
         /// Block Epoch.
         epoch: u64,
-        /// Merkle Tree path inside block.
-        path: MerklePath,
+        /// Output number.
+        output_id: u32,
     },
     MicroBlock {
         /// Block Epoch.
@@ -392,8 +391,8 @@ impl Blockchain {
         for block in self.database.iter_starting(LSN(epoch, 0)) {
             match block {
                 Block::MacroBlock(block) => {
-                    for (output, _) in block.outputs.leafs() {
-                        update_wallet_state(output.as_ref(), epoch);
+                    for output in &block.outputs {
+                        update_wallet_state(output, epoch);
                     }
                     epoch += 1;
                 }
@@ -452,10 +451,10 @@ impl Blockchain {
     /// Resolve UTXO by hash.
     pub fn output_by_hash(&self, output_hash: &Hash) -> Result<Option<Output>, Error> {
         match self.output_by_hash.get(output_hash) {
-            Some(OutputKey::MacroBlock { epoch, path }) => {
+            Some(OutputKey::MacroBlock { epoch, output_id }) => {
                 let block = &self.macro_block(*epoch)?;
-                if let Some(output) = block.outputs.lookup(path) {
-                    Ok(Some(output.as_ref().clone()))
+                if let Some(output) = block.outputs.get(*output_id as usize) {
+                    Ok(Some(output.clone()))
                 } else {
                     Ok(None) // Pruned.
                 }
@@ -974,7 +973,9 @@ impl Blockchain {
         //
         // Prepare inputs.
         //
-        let inputs_range_hash = MacroBlock::calculate_inputs_range_hash(&block.inputs);
+        assert!(block.inputs.len() <= std::u32::MAX as usize);
+        assert_eq!(block.header.inputs_len, block.inputs.len() as u32);
+        let inputs_range_hash = MacroBlock::calculate_range_hash(&block.inputs);
         assert_eq!(
             block.header.inputs_range_hash, inputs_range_hash,
             "Invalid input range hash"
@@ -987,19 +988,23 @@ impl Blockchain {
         //
         // Prepare outputs.
         //
+        assert!(block.outputs.len() <= std::u32::MAX as usize);
+        assert_eq!(block.header.outputs_len, block.outputs.len() as u32);
+        let output_hashes: Vec<Hash> = block.outputs.iter().map(Hash::digest).collect();
+        let outputs_range_hash = MacroBlock::calculate_range_hash(&output_hashes);
         assert_eq!(
-            block.header.outputs_range_hash,
-            *block.outputs.roothash(),
+            block.header.outputs_range_hash, outputs_range_hash,
             "Invalid output range hash"
         );
-        let mut outputs: Vec<Output> = Vec::new();
-        let mut output_keys: Vec<OutputKey> = Vec::new();
-        for (output, path) in block.outputs.leafs() {
-            let output = output.as_ref().clone();
-            outputs.push(output);
-            let output_key = OutputKey::MacroBlock { epoch, path };
-            output_keys.push(output_key);
-        }
+        let outputs: Vec<Output> = block.outputs;
+        let output_keys: Vec<OutputKey> = outputs
+            .iter()
+            .enumerate()
+            .map(|(output_id, _o)| OutputKey::MacroBlock {
+                epoch,
+                output_id: output_id as u32,
+            })
+            .collect();
 
         // update award (skip genesis).
         if epoch > 0 {
@@ -1510,12 +1515,7 @@ pub mod tests {
         );
         let blockchain = Blockchain::testing(cfg, block1.clone(), timestamp)
             .expect("Failed to create blockchain");
-        let outputs: Vec<Output> = block1
-            .outputs
-            .leafs()
-            .iter()
-            .map(|(o, _p)| o.as_ref().clone())
-            .collect();
+        let outputs: Vec<Output> = block1.outputs.clone();
         let mut unspent: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
         unspent.sort();
         let mut unspent2: Vec<Hash> = blockchain.unspent().cloned().collect();
@@ -1550,7 +1550,7 @@ pub mod tests {
             .output_by_hash(&Hash::digest("test"))
             .expect("no disk errors")
             .is_none());
-        for (output, _path) in block1.outputs.leafs() {
+        for output in block1.outputs.iter() {
             let output_hash = Hash::digest(&output);
             let output2 = blockchain
                 .output_by_hash(&output_hash)

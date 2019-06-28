@@ -95,6 +95,9 @@ pub struct Merkle<T: Hashable> {
 
 // -------------------------------------
 
+const INNER_PREFIX: &'static str = "Inner";
+const LEAF_PREFIX: &'static str = "Leaf";
+
 /// 2**32 is the maximal number of elements.
 type Path = u32;
 
@@ -144,6 +147,7 @@ impl<T: Hashable + fmt::Debug> Merkle<T> {
         assert_eq!(height, height1);
 
         let mut hasher = Hasher::new();
+        INNER_PREFIX.hash(&mut hasher);
         left.hash.hash(&mut hasher);
         right.hash.hash(&mut hasher);
         let hash = hasher.result();
@@ -170,6 +174,7 @@ impl<T: Hashable + fmt::Debug> Merkle<T> {
 
         // Pair node with itself if it doesn't have right sibling.
         let mut hasher = Hasher::new();
+        INNER_PREFIX.hash(&mut hasher);
         left.hash.hash(&mut hasher);
         left.hash.hash(&mut hasher);
         let hash = hasher.result();
@@ -213,6 +218,7 @@ impl<T: Hashable + fmt::Debug> Merkle<T> {
 
         for value in src.iter() {
             let mut hasher = Hasher::new();
+            LEAF_PREFIX.hash(&mut hasher);
             value.hash(&mut hasher);
             let hash = hasher.result();
 
@@ -435,6 +441,7 @@ impl<T: Hashable + fmt::Debug> Merkle<T> {
 
                 // Check hash
                 let mut hasher = Hasher::new();
+                INNER_PREFIX.hash(&mut hasher);
                 left.hash.hash(&mut hasher);
                 right.hash.hash(&mut hasher);
                 let check_hash = hasher.result();
@@ -457,6 +464,7 @@ impl<T: Hashable + fmt::Debug> Merkle<T> {
 
                 // Check hash.
                 let mut hasher = Hasher::new();
+                INNER_PREFIX.hash(&mut hasher);
                 left.hash.hash(&mut hasher);
                 left.hash.hash(&mut hasher);
                 let check_hash = hasher.result();
@@ -474,7 +482,11 @@ impl<T: Hashable + fmt::Debug> Merkle<T> {
                 value: Some(ref value),
                 ..
             } => {
-                let check_hash = Hash::digest(value);
+                // Check hash.
+                let mut hasher = Hasher::new();
+                LEAF_PREFIX.hash(&mut hasher);
+                value.hash(&mut hasher);
+                let check_hash = hasher.result();
                 if *hash != check_hash {
                     return Err(MerkleError::ValidationError(*hash, check_hash));
                 }
@@ -787,7 +799,7 @@ pub mod tests {
         debug!("Tree: {:?}", tree);
         assert_eq!(
             tree.roothash().to_hex(),
-            "295cd1698c6ac5bd804a09e50f19f8549475e52db1c6ebd441ed0c7b256e1ddf"
+            "49df10d89947b56ab336a751c23454b61f276392ade7b902b19b7c17f5a537e6"
         );
 
         // Check hashes
@@ -810,7 +822,11 @@ pub mod tests {
         assert_eq!(tree.root.value, Some(data[0]));
 
         // Root hash must be the same as data[0].hash()
-        assert_eq!(*tree.roothash(), Hasher::digest(&data[0]));
+        let mut expected_roothash = Hasher::new();
+        LEAF_PREFIX.hash(&mut expected_roothash);
+        data[0].hash(&mut expected_roothash);
+        let expected_roothash = expected_roothash.result();
+        assert_eq!(*tree.roothash(), expected_roothash);
 
         // Check paths
         let paths = tree
@@ -861,7 +877,7 @@ pub mod tests {
         debug!("Tree: {:?}", tree);
         assert_eq!(
             tree.roothash().to_hex(),
-            "9cfc92fdc167efd8971ea01910586d551ab6f8a9bb9d56ee791fad27c0ec8da0"
+            "7f0d4c7739a71cf3757a1d5a1de25bd30b6d2ad8d96ea1ad870db84d76268a06"
         );
 
         // Check hashes
@@ -1000,10 +1016,10 @@ pub mod tests {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
         let data: [u32; 3] = [1, 2, 3];
         let node12_hash =
-            Hash::try_from_hex("fc484dcaf94a6a6e0b9d78fb42527f8b55555561a45eb34ed7fa58150f823df7")
+            Hash::try_from_hex("8b0a2385d83c8bf7be27e59996f7d881d3bf1fc6606f81ce600b753ad94192a2")
                 .unwrap();
         let node34_hash =
-            Hash::try_from_hex("02ebbd3fdf4b0c3d3bca09542b9b4810cd8a9c75fbc0cd4bb60d88d402da815f")
+            Hash::try_from_hex("8b0a2385d83c8bf7be27e59996f7d881d3bf1fc6606f81ce600b753ad94192a2")
                 .unwrap();
 
         //
@@ -1018,8 +1034,16 @@ pub mod tests {
         }
         match tree.validate() {
             Err(MerkleError::ValidationError(expected, got)) => {
-                assert_eq!(expected, Hash::digest(&1u32));
-                assert_eq!(got, Hash::digest(&0u32));
+                let mut expected2 = Hasher::new();
+                LEAF_PREFIX.hash(&mut expected2);
+                1u32.hash(&mut expected2);
+                let expected2 = expected2.result();
+                assert_eq!(expected, expected2);
+                let mut got2 = Hasher::new();
+                LEAF_PREFIX.hash(&mut got2);
+                0u32.hash(&mut got2);
+                let got2 = got2.result();
+                assert_eq!(got, got2);
             }
             _ => unreachable!(),
         }
@@ -1194,8 +1218,16 @@ pub mod tests {
         serialized[0].value = Some(0);
         match Merkle::deserialize(&serialized) {
             Err(MerkleError::ValidationError(expected, got)) => {
-                assert_eq!(expected, Hash::digest(&1u32));
-                assert_eq!(got, Hash::digest(&0u32));
+                let mut expected2 = Hasher::new();
+                LEAF_PREFIX.hash(&mut expected2);
+                1u32.hash(&mut expected2);
+                let expected2 = expected2.result();
+                assert_eq!(expected, expected2);
+                let mut got2 = Hasher::new();
+                LEAF_PREFIX.hash(&mut got2);
+                0u32.hash(&mut got2);
+                let got2 = got2.result();
+                assert_eq!(got, got2);
             }
             _ => unreachable!(),
         };

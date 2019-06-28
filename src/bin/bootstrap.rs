@@ -201,8 +201,8 @@ fn main() {
         coins,
         activity_map,
         -outputs_gamma,
-        &[],
-        &outputs,
+        Vec::new(),
+        outputs,
     );
 
     //

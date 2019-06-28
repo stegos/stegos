@@ -41,6 +41,7 @@ use std::time::Duration;
 pub use stegos_blockchain::test::*;
 use stegos_crypto::pbc;
 use stegos_crypto::pbc::{PublicKey, VRF};
+use stegos_network::Network;
 use tokio_timer::Timer;
 
 pub struct SandboxConfig {
@@ -243,6 +244,13 @@ impl NodeSandbox {
         }
     }
 
+    pub fn clone_network(&self) -> (Loopback, Network) {
+        (
+            self.network_service.clone(),
+            self.node_service.network.box_clone(),
+        )
+    }
+
     pub fn chain(&self) -> &Blockchain {
         &self.node_service.chain
     }
@@ -369,12 +377,40 @@ pub trait Api<'p> {
                 messages.push(m)
             }
         }
+        debug!("found {} messages, broadcast them.", messages.len());
         for node in self.iter_mut() {
             for msg in &messages {
                 node.network_service
                     .receive_broadcast_raw(topic, msg.clone());
             }
         }
+        self.poll();
+    }
+    /// Take message from protocol_id, and broadcast to concrete node.
+    fn deliver_unicast(&mut self, protocol_id: &str) {
+        // deliver all messages, even if some node send multiple broadcasts messages.
+        let mut messages = HashMap::new();
+        for node in self.iter_mut() {
+            while let Some((msg, peer)) = node.network_service.try_get_unicast_raw(protocol_id) {
+                messages
+                    .entry(peer)
+                    .or_insert(vec![])
+                    .push((msg, node.node_service.network_pkey));
+            }
+        }
+        debug!("found {} receivers, unicast them.", messages.len());
+        for node in self.iter_mut() {
+            let empty_slice: &[_] = &[];
+            for (msg, peer) in messages
+                .get(&node.node_service.network_pkey)
+                .map(AsRef::as_ref)
+                .unwrap_or(empty_slice)
+            {
+                node.network_service
+                    .receive_unicast_raw(*peer, protocol_id, msg.clone());
+            }
+        }
+
         self.poll();
     }
     /// Take micro block from leader, rebroadcast to other nodes.

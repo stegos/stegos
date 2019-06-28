@@ -23,17 +23,14 @@ pub use stegos_node::test::*;
 mod wallet_transaction;
 use super::Wallet;
 use crate::{WalletResponse, WalletService};
-use futures::future::Loop;
 use stegos_blockchain::{Blockchain, ChainConfig};
-use stegos_blockchain::{Output, Transaction};
-use stegos_crypto::hash::Hash;
-use stegos_crypto::{pbc, scc};
+use stegos_crypto::scc;
 use stegos_network::Network;
 use tempdir::TempDir;
 
 use futures::sync::oneshot;
 use futures::{Async, Future};
-use log::{info, trace};
+use log::info;
 use stegos_node::Node;
 
 const PASSWORD: &str = "1234";
@@ -50,20 +47,27 @@ fn genesis_wallets(s: &mut Sandbox) -> Vec<WalletSandbox> {
 struct WalletSandbox {
     //TODO: moove tempdir out of wallet sandbox
     _tmp_dir: TempDir,
+    #[allow(dead_code)]
     network: Loopback,
     wallet: Wallet,
     wallet_service: WalletService,
 }
 
 impl WalletSandbox {
-    pub fn new(stake_epochs: u64, keys: KeyChain, node: Node, chain: &Blockchain) -> WalletSandbox {
+    pub fn new(
+        stake_epochs: u64,
+        keys: KeyChain,
+        node: Node,
+        chain: &Blockchain,
+        network_service: Loopback,
+        network: Network,
+    ) -> WalletSandbox {
         let temp_dir = TempDir::new("wallet").unwrap();
         let network_pkey = keys.network_pkey;
         let network_skey = keys.network_skey.clone();
         let wallet_pkey = keys.wallet_pkey;
         let wallet_skey = keys.wallet_skey.clone();
         // init network
-        let (network_service, network) = Loopback::new();
         let mut database_path = temp_dir.path().to_path_buf();
 
         database_path.push("database_path");
@@ -106,9 +110,19 @@ impl WalletSandbox {
         let stake_epochs = s.config.chain.stake_epochs;
         let node = s.nodes[node_id].node.clone();
         let keys = s.keychains[node_id].clone();
-        Self::new(stake_epochs, keys, node, &s.nodes[node_id].chain())
+        // genesis wallets should reuse the same network.
+        let (network_service, network) = s.nodes[node_id].clone_network();
+        Self::new(
+            stake_epochs,
+            keys,
+            node,
+            &s.nodes[node_id].chain(),
+            network_service,
+            network,
+        )
     }
 
+    #[allow(dead_code)]
     pub fn new_custom(s: &mut Sandbox, node_id: usize) -> WalletSandbox {
         let stake_epochs = s.config.chain.stake_epochs;
         let node = s.nodes[node_id].node.clone();
@@ -117,7 +131,16 @@ impl WalletSandbox {
         let (skey, pkey) = scc::make_random_keys();
         keys.wallet_pkey = pkey;
         keys.wallet_skey = skey;
-        Self::new(stake_epochs, keys, node, &s.nodes[node_id].chain())
+
+        let (network_service, network) = Loopback::new();
+        Self::new(
+            stake_epochs,
+            keys,
+            node,
+            &s.nodes[node_id].chain(),
+            network_service,
+            network,
+        )
     }
 
     pub fn poll(&mut self) {

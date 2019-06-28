@@ -163,11 +163,19 @@ impl Loopback {
         }
     }
 
-    pub fn get_unicast<M: ProtoConvert>(&mut self, topic: &str, peer: &pbc::PublicKey) -> M {
-        let msg = self
-            .try_get_unicast_raw(topic, peer)
-            .expect("Expected message");
-        M::from_buffer(&msg).unwrap()
+    pub fn get_unicast_to_peer<M: ProtoConvert>(
+        &mut self,
+        topic: &str,
+        peer: &pbc::PublicKey,
+    ) -> M {
+        let (msg, msg_peer) = self.get_unicast(topic);
+        assert_eq!(peer, &msg_peer);
+        msg
+    }
+
+    pub fn get_unicast<M: ProtoConvert>(&mut self, topic: &str) -> (M, pbc::PublicKey) {
+        let (msg, msg_peer) = self.try_get_unicast_raw(topic).expect("Expected message");
+        (M::from_buffer(&msg).unwrap(), msg_peer)
     }
 
     pub fn get_broadcast<M: ProtoConvert>(&mut self, topic: &str) -> M {
@@ -186,27 +194,24 @@ impl Loopback {
                 Some(msg_data.clone())
             }
             x => {
-                error!("Other message in queue = {:?}", x);
-                return None;
+                panic!("Other message in queue = {:?}", x);
             }
         }
     }
 
-    pub fn try_get_unicast_raw(&mut self, topic: &str, peer: &pbc::PublicKey) -> Option<Vec<u8>> {
+    pub fn try_get_unicast_raw(&mut self, protocol_id: &str) -> Option<(Vec<u8>, pbc::PublicKey)> {
         let ref mut state = self.state.lock().unwrap();
         match state.queue.pop_front()? {
             MessageFromNode::SendUnicast {
-                protocol_id: msg_topic,
+                protocol_id: msg_protocol_id,
                 to: msg_peer,
                 data: msg_data,
             } => {
-                assert_eq!(topic, &msg_topic);
-                assert_eq!(peer, &msg_peer);
-                Some(msg_data.clone())
+                assert_eq!(protocol_id, &msg_protocol_id);
+                Some((msg_data.clone(), msg_peer.clone()))
             }
             x => {
-                error!("Other message in queue = {:?}", x);
-                return None;
+                panic!("Other message in queue = {:?}", x);
             }
         }
     }

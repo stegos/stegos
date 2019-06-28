@@ -70,7 +70,8 @@ fn push_macro_block(b: &mut Bencher) {
         micro_blocks_in_epoch: 1,
         ..Default::default()
     };
-    let (storage_cfg, _temp_dir) = StorageConfig::testing();
+    let (mut storage_cfg, _temp_dir) = StorageConfig::testing();
+    storage_cfg.force_check = false;
     let blocks = generate_chain(cfg.clone(), storage_cfg.clone(), NUM_NODES, EPOCHS);
 
     // Try to apply blocks to a new blockchain.
@@ -99,7 +100,8 @@ fn recover_macro_block(b: &mut Bencher) {
         micro_blocks_in_epoch: 1,
         ..Default::default()
     };
-    let (storage_cfg, _temp_dir) = StorageConfig::testing();
+    let (mut storage_cfg, _temp_dir) = StorageConfig::testing();
+    storage_cfg.force_check = false;
     let blocks = generate_chain(cfg.clone(), storage_cfg.clone(), NUM_NODES, EPOCHS);
 
     // Try to recovery from the disk.

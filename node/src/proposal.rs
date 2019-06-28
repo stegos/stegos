@@ -131,7 +131,7 @@ pub fn validate_proposed_macro_block(
     //
     // Validate base header.
     //
-    chain.validate_macro_block_header(block_hash, &block_proposal.header)?;
+    chain.validate_macro_block_header(block_hash, &block_proposal.header, false)?;
 
     // validate award.
     let (activity_map, winner) = chain.awards_from_active_epoch(&block_proposal.header.random);

@@ -260,7 +260,7 @@ impl Blockchain {
             epoch_activity,
         };
 
-        blockchain.recover(genesis, timestamp)?;
+        blockchain.recover(genesis, timestamp, storage_cfg.force_check)?;
         Ok(blockchain)
     }
 
@@ -272,6 +272,7 @@ impl Blockchain {
         &mut self,
         genesis: MacroBlock,
         timestamp: Timestamp,
+        force_check: bool,
     ) -> Result<(), BlockchainError> {
         let genesis_hash = Hash::digest(&genesis);
 
@@ -292,7 +293,7 @@ impl Blockchain {
         info!("Recovering blockchain from the disk...");
 
         // Recover genesis.
-        self.recover_block(block, timestamp)?;
+        self.recover_block(block, timestamp, force_check)?;
 
         // Check genesis.
         if genesis_hash != self.last_block_hash() {
@@ -303,7 +304,7 @@ impl Blockchain {
 
         // Recover remaining blocks.
         for block in blocks {
-            self.recover_block(block, timestamp)?;
+            self.recover_block(block, timestamp, force_check)?;
         }
 
         info!(
@@ -314,7 +315,12 @@ impl Blockchain {
         Ok(())
     }
 
-    fn recover_block(&mut self, block: Block, timestamp: Timestamp) -> Result<(), BlockchainError> {
+    fn recover_block(
+        &mut self,
+        block: Block,
+        timestamp: Timestamp,
+        force_check: bool,
+    ) -> Result<(), BlockchainError> {
         // Skip validate_macro_block()/validate_micro_block().
         match block {
             Block::MicroBlock(block) => {
@@ -326,21 +332,32 @@ impl Blockchain {
                 );
                 self.validate_micro_block(&block, timestamp)?;
                 let lsn = LSN(block.header.epoch, block.header.offset);
-                let _ = self.register_micro_block(lsn, block, timestamp);
+                let _ = self.register_micro_block(lsn, block, timestamp, force_check);
             }
             Block::MacroBlock(block) => {
+                let block_hash = Hash::digest(&block);
                 debug!(
                     "Recovering a macro block from the disk: epoch={}, block={}",
-                    block.header.epoch,
-                    Hash::digest(&block)
+                    block.header.epoch, block_hash
                 );
+                if force_check && self.epoch > 0 {
+                    // Validate signature (already checked by Node).
+                    check_multi_signature(
+                        &block_hash,
+                        &block.multisig,
+                        &block.multisigmap,
+                        self.validators(),
+                        self.total_slots(),
+                    )
+                    .expect("Invalid multisignature");
+                }
                 let mut inputs: Vec<Output> = Vec::with_capacity(block.inputs.len());
                 for input_hash in &block.inputs {
                     let input = self.output_by_hash(input_hash)?.expect("Missing output");
                     inputs.push(input);
                 }
                 let lsn = LSN(block.header.epoch, MACRO_BLOCK_OFFSET);
-                let _ = self.register_macro_block(lsn, block, inputs, timestamp);
+                let _ = self.register_macro_block(lsn, block, inputs, timestamp, force_check);
             }
         }
         Ok(())
@@ -933,7 +950,9 @@ impl Blockchain {
         //
         // Update in-memory indexes and metadata.
         //
-        let (inputs, outputs) = self.register_macro_block(lsn, block, inputs, timestamp);
+        let force_check = true;
+        let (inputs, outputs) =
+            self.register_macro_block(lsn, block, inputs, timestamp, force_check);
 
         Ok((inputs, outputs))
     }
@@ -948,6 +967,7 @@ impl Blockchain {
         block: MacroBlock,
         inputs: Vec<Output>,
         timestamp: Timestamp,
+        force_check: bool,
     ) -> (Vec<Output>, Vec<Output>) {
         let block_hash = Hash::digest(&block);
         assert_eq!(self.epoch, block.header.epoch);
@@ -959,20 +979,8 @@ impl Blockchain {
             epoch, &block_hash
         );
 
-        if epoch > 0 && cfg!(debug_assertions) {
-            // Validate signature (already checked by Node).
-            check_multi_signature(
-                &block_hash,
-                &block.multisig,
-                &block.multisigmap,
-                self.validators(),
-                self.total_slots(),
-            )
-            .expect("Invalid multisignature");
-        }
-
         // Validate base header.
-        self.validate_macro_block_header(&block_hash, &block.header)
+        self.validate_macro_block_header(&block_hash, &block.header, force_check)
             .expect("Invalid block header");
 
         //
@@ -980,11 +988,13 @@ impl Blockchain {
         //
         assert!(block.inputs.len() <= std::u32::MAX as usize);
         assert_eq!(block.header.inputs_len, block.inputs.len() as u32);
-        let inputs_range_hash = MacroBlock::calculate_range_hash(&block.inputs);
-        assert_eq!(
-            block.header.inputs_range_hash, inputs_range_hash,
-            "Invalid input range hash"
-        );
+        if force_check {
+            let inputs_range_hash = MacroBlock::calculate_range_hash(&block.inputs);
+            assert_eq!(
+                block.header.inputs_range_hash, inputs_range_hash,
+                "Invalid input range hash"
+            );
+        }
         let input_hashes = block.inputs;
         for (input_hash, input) in input_hashes.iter().zip(inputs.iter()) {
             debug_assert_eq!(input_hash, &Hash::digest(&input));
@@ -995,12 +1005,14 @@ impl Blockchain {
         //
         assert!(block.outputs.len() <= std::u32::MAX as usize);
         assert_eq!(block.header.outputs_len, block.outputs.len() as u32);
-        let output_hashes: Vec<Hash> = block.outputs.iter().map(Hash::digest).collect();
-        let outputs_range_hash = MacroBlock::calculate_range_hash(&output_hashes);
-        assert_eq!(
-            block.header.outputs_range_hash, outputs_range_hash,
-            "Invalid output range hash"
-        );
+        if force_check {
+            let output_hashes: Vec<Hash> = block.outputs.iter().map(Hash::digest).collect();
+            let outputs_range_hash = MacroBlock::calculate_range_hash(&output_hashes);
+            assert_eq!(
+                block.header.outputs_range_hash, outputs_range_hash,
+                "Invalid output range hash"
+            );
+        }
         let outputs: Vec<Output> = block.outputs;
         let output_keys: Vec<OutputKey> = outputs
             .iter()
@@ -1044,6 +1056,7 @@ impl Blockchain {
             block.header.gamma,
             block.header.block_reward,
             timestamp,
+            force_check,
         );
 
         //
@@ -1119,7 +1132,8 @@ impl Blockchain {
         //
         // Update in-memory indexes and metadata.
         //
-        let (inputs, outputs) = self.register_micro_block(lsn, block, timestamp)?;
+        let force_check = true;
+        let (inputs, outputs) = self.register_micro_block(lsn, block, timestamp, force_check)?;
 
         Ok((inputs, outputs))
     }
@@ -1138,6 +1152,7 @@ impl Blockchain {
         gamma: Fr,
         block_reward: i64,
         _timestamp: Timestamp,
+        force_check: bool,
     ) {
         let epoch = self.epoch;
 
@@ -1193,9 +1208,11 @@ impl Blockchain {
         //
         // Process outputs.
         //
-        outputs.par_iter().for_each(|output| {
-            output.validate().expect("valid UTXO");
-        });
+        if force_check {
+            outputs.par_iter().for_each(|output| {
+                output.validate().expect("valid UTXO");
+            });
+        }
 
         for (output_key, output) in output_keys.into_iter().zip(outputs) {
             let output_hash = Hash::digest(output);
@@ -1287,6 +1304,7 @@ impl Blockchain {
         lsn: LSN,
         block: MicroBlock,
         timestamp: Timestamp,
+        force_check: bool,
     ) -> Result<(Vec<Output>, Vec<Output>), BlockchainError> {
         assert_eq!(self.epoch, block.header.epoch);
         assert_eq!(self.offset, block.header.offset);
@@ -1392,6 +1410,7 @@ impl Blockchain {
             gamma,
             block_reward,
             timestamp,
+            force_check,
         );
 
         //

@@ -76,9 +76,11 @@ impl Default for Config {
             keychain: Default::default(),
             blockchain_db: StorageConfig {
                 database_path: "data/chain".to_string(),
+                ..Default::default()
             },
             wallet_db: StorageConfig {
                 database_path: "data/wallet".to_string(),
+                ..Default::default()
             },
             api: Default::default(),
         }

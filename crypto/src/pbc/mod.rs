@@ -165,21 +165,22 @@ impl G1 {
     }
 
     pub fn to_hex(&self) -> String {
-        let bytes = self.to_bytes();
+        let mut bytes = self.to_bytes();
+        bytes.reverse();
         u8v_to_hexstr(&bytes)
     }
 
     pub fn try_from_hex(s: &str) -> Result<G1, CryptoError> {
         let mut tmp = [0u8; 48];
-        hexstr_to_bev_u8(&s, &mut tmp)?;
+        hexstr_to_lev_u8(&s, &mut tmp)?;
         G1::try_from_bytes(&tmp)
     }
 }
 
 impl fmt::Debug for G1 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let tmp = self.to_bytes();
-        write!(f, "SecureG1({})", u8v_to_hexstr(&tmp[0..48]))
+        let tmp = self.to_hex();
+        write!(f, "SecureG1({})", tmp)
     }
 }
 
@@ -325,21 +326,22 @@ impl G2 {
     }
 
     pub fn to_hex(&self) -> String {
-        let bytes = self.to_bytes();
+        let mut bytes = self.to_bytes();
+        bytes.reverse();
         u8v_to_hexstr(&bytes)
     }
 
     pub fn try_from_hex(s: &str) -> Result<G2, CryptoError> {
         let mut tmp = [0u8; 96];
-        hexstr_to_bev_u8(&s, &mut tmp)?;
+        hexstr_to_lev_u8(&s, &mut tmp)?;
         G2::try_from_bytes(&tmp)
     }
 }
 
 impl fmt::Debug for G2 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let tmp = self.to_bytes();
-        write!(f, "SecureG2({})", u8v_to_hexstr(&tmp[0..96]))
+        let tmp = self.to_hex();
+        write!(f, "SecureG2({})", tmp)
     }
 }
 
@@ -516,12 +518,14 @@ impl SecretKey {
     }
 
     pub fn to_hex(&self) -> String {
-        u8v_to_hexstr(&self.to_bytes())
+        let mut bytes = self.to_bytes();
+        bytes.reverse();
+        u8v_to_hexstr(&bytes)
     }
 
     pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
         let mut tmp = [0u8; 32];
-        hexstr_to_bev_u8(s, &mut tmp)?;
+        hexstr_to_lev_u8(s, &mut tmp)?;
         Self::try_from_bytes(&tmp)
     }
 }
@@ -529,7 +533,7 @@ impl SecretKey {
 impl fmt::Debug for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let hex = self.to_hex();
-        write!(f, "PublicKey({})", hex)
+        write!(f, "SecretKey({})", hex)
     }
 }
 
@@ -537,7 +541,7 @@ impl fmt::Display for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // display only first 6 bytes.
         let hex = self.to_hex();
-        write!(f, "{}", &hex[0..12])
+        write!(f, "SecretKey({})", &hex[0..12])
     }
 }
 
@@ -620,7 +624,7 @@ impl fmt::Display for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // display only first 6 bytes.
         let hex = self.to_hex();
-        write!(f, "{}", &hex[0..12])
+        write!(f, "PublicKey({})", &hex[0..12])
     }
 }
 
@@ -1288,12 +1292,12 @@ mod tests {
         let g1 = G1::try_from_hex("97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb").unwrap();
         assert_eq!(
             Hash::digest(&g1).to_hex(),
-            "87e0d085331d576e416af1c71e95d55158291f96a5993a270d19b0097ef743d1"
+            "cec61d62607e1e3d7d06d32751c8eb6f6063822d4c11cfc32e48cbda2828d471"
         );
         let g2 = G2::try_from_hex("93e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8").unwrap();
         assert_eq!(
             Hash::digest(&g2).to_hex(),
-            "51215d09ed805f5451bca1279c2e98a1e7b644b7f6c33151a43f4dd9eb11afeb"
+            "2fe6ac58d0a52d3679db09388c10d078a2e268f2db5018faad073ffaff587109"
         );
         let (skey, pkey) = make_deterministic_keys(b"test");
         assert_eq!(
@@ -1309,6 +1313,33 @@ mod tests {
             Hash::digest(&sig).to_hex(),
             "904d6dcb433e4193d2af2eb4ae93312d43e70d2ca46e0eb8c8b6160cf6d299d8"
         );
+    }
+
+    #[test]
+    fn check_constant_time() {
+        use std::time::SystemTime;
+        let skey = SecretKey::try_from_hex(
+            "0000000000000000000000000000000000000000000000000000000000000001",
+        )
+        .expect("ok");
+        println!("SecretKey = {:?}", skey);
+        let h = Hash::from_str("Testing");
+        let niter = 10_000;
+        let start = SystemTime::now();
+        for _ in 0..niter {
+            sign_hash(&h, &skey);
+        }
+        let timing = start.elapsed().unwrap();
+        println!("Time (1) = {:?}", timing / niter);
+
+        let (skey, _pkey) = make_random_keys();
+        println!("SecretKey = {:?}", skey);
+        let start = SystemTime::now();
+        for _ in 0..niter {
+            sign_hash(&h, &skey);
+        }
+        let timing = start.elapsed().unwrap();
+        println!("Time (1111...) = {:?}", timing / niter);
     }
 }
 

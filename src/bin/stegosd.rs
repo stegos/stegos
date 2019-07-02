@@ -21,11 +21,9 @@
 
 use stegos::*;
 
-use atty;
 use clap;
 use clap::{App, Arg, ArgMatches};
 use dirs;
-use failure::format_err;
 use failure::Error;
 use futures::stream::Stream;
 use futures::Future;
@@ -34,8 +32,8 @@ use hyper::service::service_fn_ok;
 use log::*;
 use std::path::Path;
 use std::path::PathBuf;
-use std::process;
-use stegos_api::WebSocketServer;
+use std::{fs, process};
+use stegos_api::{load_or_create_api_token, WebSocketServer};
 use stegos_blockchain::{Blockchain, Timestamp};
 use stegos_crypto::pbc;
 use stegos_crypto::scc;
@@ -91,48 +89,26 @@ pub fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error
             format!("_stegos._tcp.{}.aws.stegos.com", cfg.general.chain).to_string();
     }
 
-    // Password options.
-    if let Some(password_file) = args.value_of("password-file") {
-        cfg.keychain.password_file = password_file.to_string();
-    }
-    if keychain::input::is_input_interactive(&cfg.keychain.password_file)
-        && !atty::is(atty::Stream::Stdin)
-    {
-        return Err(format_err!("No TTY found to read password from"));
-    }
-
-    // Recovery options.
-    if let Some(recovery_file) = args.value_of("recovery-file") {
-        cfg.keychain.recovery_file = recovery_file.to_string();
-    }
-    if keychain::input::is_input_interactive(&cfg.keychain.recovery_file)
-        && !atty::is(atty::Stream::Stdin)
-    {
-        return Err(format_err!("No TTY found to read recovery from"));
-    }
-
     Ok(cfg)
 }
 
 /// Load or create wallet keys.
 fn load_wallet_keys(
-    wallet_skey_file: &str,
-    wallet_pkey_file: &str,
-    password_file: &str,
-    recovery_file: &str,
+    wallet_skey_file: &Path,
+    wallet_pkey_file: &Path,
+    password_file: &Path,
+    recovery_file: &Path,
 ) -> Result<(scc::SecretKey, scc::PublicKey), KeyError> {
-    let wallet_skey_path = Path::new(wallet_skey_file);
-    let wallet_pkey_path = Path::new(wallet_pkey_file);
-
-    if !wallet_skey_path.exists() && !wallet_pkey_path.exists() {
+    if !wallet_skey_file.exists() && !wallet_pkey_file.exists() {
         debug!(
             "Can't find keys on the disk: skey_file={}, pkey_file={}",
-            wallet_skey_file, wallet_pkey_file
+            wallet_skey_file.to_string_lossy(),
+            wallet_pkey_file.to_string_lossy()
         );
 
-        let (wallet_skey, wallet_pkey) = if !recovery_file.is_empty() {
+        let (wallet_skey, wallet_pkey) = if recovery_file.is_file() {
             info!("Recovering keys...");
-            let wallet_skey = keychain::input::read_recovery(recovery_file)?;
+            let wallet_skey = keychain::input::read_recovery_from_file(recovery_file)?;
             let wallet_pkey: scc::PublicKey = wallet_skey.clone().into();
             info!(
                 "Recovered a wallet key: pkey={}",
@@ -149,18 +125,23 @@ fn load_wallet_keys(
             (wallet_skey, wallet_pkey)
         };
 
-        let password = keychain::input::read_password(password_file, true)?;
-        keychain::keyfile::write_wallet_pkey(wallet_pkey_path, &wallet_pkey)?;
-        keychain::keyfile::write_wallet_skey(wallet_skey_path, &wallet_skey, &password)?;
+        let password = String::new();
+        keychain::keyfile::write_wallet_pkey(&wallet_pkey_file, &wallet_pkey)?;
+        keychain::keyfile::write_wallet_skey(&wallet_skey_file, &wallet_skey, &password)?;
         info!(
             "Wrote wallet key pair: skey_file={}, pkey_file={}",
-            wallet_skey_file, wallet_pkey_file
+            wallet_skey_file.to_string_lossy(),
+            wallet_pkey_file.to_string_lossy()
         );
 
         Ok((wallet_skey, wallet_pkey))
     } else {
         debug!("Loading wallet keys from the disk...");
-        let password = keychain::input::read_password(password_file, false)?;
+        let password = if password_file.is_file() {
+            keychain::input::read_password_from_file(&password_file)?
+        } else {
+            String::new()
+        };
 
         let (wallet_skey, wallet_pkey) = keychain::keyfile::load_wallet_keypair(
             &wallet_skey_file,
@@ -174,16 +155,14 @@ fn load_wallet_keys(
 
 /// Load or create network keys.
 fn load_network_keys(
-    network_skey_file: &str,
-    network_pkey_file: &str,
+    network_skey_file: &Path,
+    network_pkey_file: &Path,
 ) -> Result<(pbc::SecretKey, pbc::PublicKey), KeyError> {
-    let network_skey_path = Path::new(network_skey_file);
-    let network_pkey_path = Path::new(network_pkey_file);
-
-    if !network_skey_path.exists() && !network_pkey_path.exists() {
+    if !network_skey_file.exists() && !network_pkey_file.exists() {
         debug!(
             "Can't find network keys on the disk: skey_file={}, pkey_file={}",
-            network_skey_file, network_pkey_file
+            network_skey_file.to_string_lossy(),
+            network_pkey_file.to_string_lossy()
         );
 
         debug!("Generating a new network key pair...");
@@ -193,11 +172,12 @@ fn load_network_keys(
             network_pkey.to_hex()
         );
 
-        keychain::keyfile::write_network_pkey(network_pkey_path, &network_pkey)?;
-        keychain::keyfile::write_network_skey(network_skey_path, &network_skey)?;
+        keychain::keyfile::write_network_pkey(&network_pkey_file, &network_pkey)?;
+        keychain::keyfile::write_network_skey(&network_skey_file, &network_skey)?;
         info!(
             "Wrote network key pair to the disk: skey_file={}, pkey_file={}",
-            network_skey_file, network_pkey_file,
+            network_skey_file.to_string_lossy(),
+            network_pkey_file.to_string_lossy(),
         );
 
         Ok((network_skey, network_pkey))
@@ -234,19 +214,6 @@ fn run() -> Result<(), Error> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("password-file")
-                .short("p")
-                .long("password-file")
-                .help("Read wallet's password from a file")
-                .long_help(
-                    "Read wallet's password from a file. \
-                     Provide a path to file which contains wallet password.\
-                     Use '--password-file -' to read password from terminal.",
-                )
-                .takes_value(true)
-                .value_name("FILE"),
-        )
-        .arg(
             Arg::with_name("recovery-file")
                 .short("r")
                 .long("recovery-file")
@@ -278,18 +245,39 @@ fn run() -> Result<(), Error> {
     // Print welcome message
     info!("{} {}", name, version);
 
+    let data_dir = cfg.general.data_dir.clone();
+    if !data_dir.exists() {
+        fs::create_dir_all(&data_dir)?;
+    }
+    let chain_dir = data_dir.join("chain");
+    if !chain_dir.exists() {
+        fs::create_dir(&chain_dir)?;
+    }
+    let wallets_dir = data_dir.join("wallets");
+    if !wallets_dir.exists() {
+        fs::create_dir(&wallets_dir)?;
+    }
+
     // Initialize keychain
-    let (network_skey, network_pkey) = load_network_keys(
-        &cfg.keychain.network_skey_file,
-        &cfg.keychain.network_pkey_file,
-    )?;
+    let network_skey_file = data_dir.join("network.skey");
+    let network_pkey_file = data_dir.join("network.pkey");
+    let (network_skey, network_pkey) = load_network_keys(&network_skey_file, &network_pkey_file)?;
+    let wallet_id = 1;
+    let wallet_database_dir = wallets_dir.join(format!("{}", wallet_id));
+    let wallet_skey_file = wallets_dir.join(format!("{}.skey", wallet_id));
+    let wallet_pkey_file = wallets_dir.join(format!("{}.pkey", wallet_id));
+    let password_file = wallets_dir.join(format!("{}.pass", wallet_id));
+    let recovery_file = if let Some(recovery_file) = args.value_of("recovery-file") {
+        PathBuf::from(recovery_file)
+    } else {
+        PathBuf::new()
+    };
     let (wallet_skey, wallet_pkey) = load_wallet_keys(
-        &cfg.keychain.wallet_skey_file,
-        &cfg.keychain.wallet_pkey_file,
-        &cfg.keychain.password_file,
-        &cfg.keychain.recovery_file,
+        &wallet_skey_file,
+        &wallet_pkey_file,
+        &password_file,
+        &recovery_file,
     )?;
-    let recipient_pkey = wallet_pkey.clone();
 
     // Resolve seed pool (works, if chain=='testent', does nothing otherwise)
     resolve_pool(&mut cfg)?;
@@ -317,8 +305,9 @@ fn run() -> Result<(), Error> {
     let genesis = initialize_genesis(&cfg)?;
     let timestamp = Timestamp::now();
     let chain = Blockchain::new(
-        cfg.chain.clone().into(),
-        cfg.blockchain_db,
+        cfg.chain.clone(),
+        &chain_dir,
+        cfg.general.force_check,
         genesis,
         timestamp,
     )?;
@@ -332,7 +321,6 @@ fn run() -> Result<(), Error> {
     let (mut node_service, node) = NodeService::new(
         cfg.node.clone(),
         chain,
-        recipient_pkey.clone(),
         network_skey.clone(),
         network_pkey.clone(),
         network.clone(),
@@ -340,8 +328,8 @@ fn run() -> Result<(), Error> {
 
     // Initialize Wallet.
     let (wallet_service, wallet) = WalletService::new(
-        cfg.wallet_db.database_path.as_ref(),
-        cfg.keychain.wallet_skey_file,
+        &wallet_database_dir,
+        &wallet_skey_file,
         wallet_skey,
         wallet_pkey,
         network_skey,
@@ -354,13 +342,18 @@ fn run() -> Result<(), Error> {
     rt.spawn(wallet_service);
 
     // Start WebSocket API server.
-    WebSocketServer::spawn(
-        cfg.api,
-        rt.executor(),
-        network.clone(),
-        wallet.clone(),
-        node.clone(),
-    )?;
+    if cfg.general.api_endpoint != "" {
+        let token_file = data_dir.join("api.token");
+        let api_token = load_or_create_api_token(&token_file)?;
+        WebSocketServer::spawn(
+            cfg.general.api_endpoint,
+            api_token,
+            rt.executor(),
+            network.clone(),
+            wallet.clone(),
+            node.clone(),
+        )?;
+    }
 
     // Start all services when network is ready.
     let executor = rt.executor();
@@ -397,7 +390,7 @@ fn main() {
 mod tests {
     use super::*;
     use simple_logger;
-    use stegos_blockchain::StorageConfig;
+    use tempdir::TempDir;
 
     #[test]
     // #[ignore]
@@ -408,9 +401,15 @@ mod tests {
         config.general.chain = chain.to_string();
         let genesis = initialize_genesis(&config).expect("testnet looks like unloadable.");
         let timestamp = Timestamp::now();
-        let (storage_cfg, _temp_dir) = StorageConfig::testing();
-        Blockchain::new(Default::default(), storage_cfg, genesis, timestamp)
-            .expect("testnet looks like unloadable.");
+        let chain_dir = TempDir::new("test").unwrap();
+        Blockchain::new(
+            Default::default(),
+            chain_dir.path(),
+            true,
+            genesis,
+            timestamp,
+        )
+        .expect("testnet looks like unloadable.");
     }
 
     #[test]
@@ -422,9 +421,15 @@ mod tests {
         config.general.chain = chain.to_string();
         let genesis = initialize_genesis(&config).expect("devnet looks like unloadable.");
         let timestamp = Timestamp::now();
-        let (storage_cfg, _temp_dir) = StorageConfig::testing();
-        Blockchain::new(Default::default(), storage_cfg, genesis, timestamp)
-            .expect("devnet looks like unloadable.");
+        let chain_dir = TempDir::new("test").unwrap();
+        Blockchain::new(
+            Default::default(),
+            chain_dir.path(),
+            true,
+            genesis,
+            timestamp,
+        )
+        .expect("devnet looks like unloadable.");
     }
 
     #[test]
@@ -435,9 +440,15 @@ mod tests {
         config.general.chain = chain.to_string();
         let genesis = initialize_genesis(&config).expect("dev looks like unloadable.");
         let timestamp = Timestamp::now();
-        let (storage_cfg, _temp_dir) = StorageConfig::testing();
-        Blockchain::new(Default::default(), storage_cfg, genesis, timestamp)
-            .expect("dev looks like unloadable.");
+        let chain_dir = TempDir::new("test").unwrap();
+        Blockchain::new(
+            Default::default(),
+            chain_dir.path(),
+            true,
+            genesis,
+            timestamp,
+        )
+        .expect("dev looks like unloadable.");
     }
 
     #[test]

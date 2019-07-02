@@ -96,7 +96,7 @@ impl ConsoleService {
 
     /// Background thread to read stdin.
     fn readline_thread_f(mut tx: Sender<String>) {
-        // Use ~/.share/stegos.history for command line history.
+        // Use ~/.share/stegos/console.history for command line history.
         let history_path = dirs::data_dir()
             .unwrap_or(PathBuf::from(r"."))
             .join(PathBuf::from(consts::HISTORY_FILE_NAME));

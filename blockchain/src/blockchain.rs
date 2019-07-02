@@ -42,6 +42,7 @@ use log::*;
 use rayon::prelude::*;
 use rocksdb;
 use std::collections::BTreeMap;
+use std::path::Path;
 use stegos_crypto::bulletproofs::fee_a;
 use stegos_crypto::hash::*;
 use stegos_crypto::pbc::VRF;
@@ -203,14 +204,15 @@ impl Blockchain {
 
     pub fn new(
         cfg: ChainConfig,
-        storage_cfg: StorageConfig,
+        chain_dir: &Path,
+        force_check: bool,
         genesis: MacroBlock,
         timestamp: Timestamp,
     ) -> Result<Blockchain, BlockchainError> {
         //
         // Storage.
         //
-        let database = rocksdb::DB::open_default(&storage_cfg.database_path)?;
+        let database = rocksdb::DB::open_default(chain_dir)?;
         let block_by_hash: BlockByHashMap = BlockByHashMap::new();
         let output_by_hash: OutputByHashMap = OutputByHashMap::new();
         let mut balance: BalanceMap = BalanceMap::new();
@@ -260,7 +262,7 @@ impl Blockchain {
             epoch_activity,
         };
 
-        blockchain.recover(genesis, timestamp, storage_cfg.force_check)?;
+        blockchain.recover(genesis, timestamp, force_check)?;
         Ok(blockchain)
     }
 
@@ -613,10 +615,7 @@ impl Blockchain {
     /// Return a wallet key by network key.
     ///
     #[inline]
-    pub(crate) fn wallet_by_network_key(
-        &self,
-        validator_pkey: &pbc::PublicKey,
-    ) -> Option<scc::PublicKey> {
+    pub fn wallet_by_network_key(&self, validator_pkey: &pbc::PublicKey) -> Option<scc::PublicKey> {
         self.escrow.wallet_by_network_key(validator_pkey)
     }
 
@@ -1529,6 +1528,7 @@ pub mod tests {
     use simple_logger;
     use std::collections::BTreeMap;
     use std::time::Duration;
+    use tempdir::TempDir;
 
     #[test]
     fn basic() {
@@ -1542,8 +1542,8 @@ pub mod tests {
             3,
             timestamp,
         );
-        let (storage_cfg, _temp_dir) = StorageConfig::testing();
-        let blockchain = Blockchain::new(cfg, storage_cfg.clone(), block1.clone(), timestamp)
+        let chain_dir = TempDir::new("test").unwrap();
+        let blockchain = Blockchain::new(cfg, chain_dir.path(), false, block1.clone(), timestamp)
             .expect("Failed to create blockchain");
         let outputs: Vec<Output> = block1.outputs.clone();
         let mut unspent: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
@@ -1609,10 +1609,15 @@ pub mod tests {
             NUM_NODES,
             timestamp,
         );
-        let (storage_cfg, _temp_dir) = StorageConfig::testing();
-        let mut chain =
-            Blockchain::new(cfg.clone(), storage_cfg.clone(), genesis.clone(), timestamp)
-                .expect("Failed to create blockchain");
+        let chain_dir = TempDir::new("test").unwrap();
+        let mut chain = Blockchain::new(
+            cfg.clone(),
+            chain_dir.path(),
+            true,
+            genesis.clone(),
+            timestamp,
+        )
+        .expect("Failed to create blockchain");
 
         for _epoch in 0..EPOCHS {
             let epoch = chain.epoch();
@@ -1696,7 +1701,7 @@ pub mod tests {
         let block_hash = chain.last_block_hash();
         let balance = chain.balance().clone();
         drop(chain);
-        let chain = Blockchain::new(cfg, storage_cfg, genesis, timestamp)
+        let chain = Blockchain::new(cfg, chain_dir.path(), true, genesis, timestamp)
             .expect("Failed to create blockchain");
         assert_eq!(epoch, chain.epoch());
         assert_eq!(offset, chain.offset());
@@ -1717,10 +1722,15 @@ pub mod tests {
             1,
             timestamp,
         );
-        let (storage_cfg, _temp_dir) = StorageConfig::testing();
-        let mut chain =
-            Blockchain::new(cfg.clone(), storage_cfg.clone(), genesis.clone(), timestamp)
-                .expect("Failed to create blockchain");
+        let chain_dir = TempDir::new("test").unwrap();
+        let mut chain = Blockchain::new(
+            cfg.clone(),
+            chain_dir.path(),
+            true,
+            genesis.clone(),
+            timestamp,
+        )
+        .expect("Failed to create blockchain");
 
         let epoch0 = chain.epoch();
         let offset0 = chain.offset();
@@ -1809,7 +1819,7 @@ pub mod tests {
         // Recovery.
         //
         drop(chain);
-        let chain = Blockchain::new(cfg, storage_cfg, genesis, timestamp)
+        let chain = Blockchain::new(cfg, chain_dir.path(), true, genesis, timestamp)
             .expect("Failed to create blockchain");
         assert_eq!(epoch0, chain.epoch());
         assert_eq!(offset0, chain.offset());
@@ -1835,8 +1845,8 @@ pub mod tests {
         let stake = cfg.min_stake_amount;
         let (keychains, blocks) =
             test::fake_genesis(stake, 10 * cfg.min_stake_amount, 1, timestamp);
-        let (storage_cfg, _temp_dir) = StorageConfig::testing();
-        let mut blockchain = Blockchain::new(cfg, storage_cfg, blocks, timestamp)
+        let chain_dir = TempDir::new("test").unwrap();
+        let mut blockchain = Blockchain::new(cfg, chain_dir.path(), true, blocks, timestamp)
             .expect("Failed to create blockchain");
         let epoch = blockchain.epoch();
         let starting_offset = blockchain.offset();

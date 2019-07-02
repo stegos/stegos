@@ -21,7 +21,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::config::ApiConfig;
 use crate::crypto::ApiToken;
 use crate::{
     decode, encode, NetworkNotification, NetworkRequest, NetworkResponse, Request, RequestId,
@@ -377,7 +376,8 @@ pub struct WebSocketServer {}
 
 impl WebSocketServer {
     pub fn spawn(
-        cfg: ApiConfig,
+        endpoint: String,
+        api_token: ApiToken,
         executor: TaskExecutor,
         network: Network,
         wallet: Wallet,
@@ -387,8 +387,7 @@ impl WebSocketServer {
         let network2 = network.clone();
         let wallet2 = wallet.clone();
         let node2 = node.clone();
-        let addr: SocketAddr = format!("{}:{}", cfg.bind_ip, cfg.bind_port).parse()?;
-        let key = crate::config::load_or_create_api_token(&cfg.token_file)?;
+        let addr: SocketAddr = endpoint.parse()?;
         info!("Starting WebSocket API on {}", &addr);
         let server = TcpListener::bind(&addr)?
             .incoming()
@@ -406,7 +405,7 @@ impl WebSocketServer {
                         return Ok(());
                     }
                 };
-                let key = key.clone();
+                let api_token = api_token.clone();
                 debug!("[{}] accepted", peer);
                 let s = s
                     .into_ws()
@@ -425,7 +424,7 @@ impl WebSocketServer {
                                 info!("[{}] Connected", peer);
                                 WebSocketHandler::new(
                                     peer,
-                                    key,
+                                    api_token,
                                     sink,
                                     stream,
                                     network3.clone(),

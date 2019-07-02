@@ -159,20 +159,21 @@ pub fn write_network_skey(path: &Path, skey: &pbc::SecretKey) -> Result<(), KeyE
 }
 
 pub fn load_wallet_keypair(
-    wallet_skey_file: &str,
-    wallet_pkey_file: &str,
+    wallet_skey_file: &Path,
+    wallet_pkey_file: &Path,
     password: &str,
 ) -> Result<(scc::SecretKey, scc::PublicKey), KeyError> {
     debug!(
         "Loading wallet key pair: wallet_skey_file={}, wallet_pkey_file={}...",
-        wallet_skey_file, wallet_pkey_file
+        wallet_skey_file.to_string_lossy(),
+        wallet_pkey_file.to_string_lossy()
     );
-    let wallet_pkey = load_wallet_pkey(Path::new(wallet_pkey_file))?;
-    let wallet_skey = load_wallet_skey(Path::new(wallet_skey_file), password)?;
+    let wallet_pkey = load_wallet_pkey(wallet_pkey_file)?;
+    let wallet_skey = load_wallet_skey(wallet_skey_file, password)?;
     if let Err(_e) = scc::check_keying(&wallet_skey, &wallet_pkey) {
         return Err(KeyError::InvalidKeying(
-            wallet_skey_file.to_string(),
-            wallet_pkey_file.to_string(),
+            wallet_skey_file.to_string_lossy().to_string(),
+            wallet_pkey_file.to_string_lossy().to_string(),
         ));
     }
     info!("Loaded wallet key pair: pkey={}", wallet_pkey);
@@ -180,20 +181,21 @@ pub fn load_wallet_keypair(
 }
 
 pub fn load_network_keypair(
-    network_skey_file: &str,
-    network_pkey_file: &str,
+    network_skey_file: &Path,
+    network_pkey_file: &Path,
 ) -> Result<(pbc::SecretKey, pbc::PublicKey), KeyError> {
     debug!(
         "Loading network key pair: network_skey_file={}, network_pkey_file={}...",
-        network_skey_file, network_pkey_file
+        network_skey_file.to_string_lossy(),
+        network_pkey_file.to_string_lossy()
     );
-    let network_pkey = load_network_pkey(Path::new(network_pkey_file))?;
-    let network_skey = load_network_skey(Path::new(network_skey_file))?;
+    let network_pkey = load_network_pkey(network_pkey_file)?;
+    let network_skey = load_network_skey(network_skey_file)?;
 
     if let Err(_e) = pbc::check_keying(&network_skey, &network_pkey) {
         return Err(KeyError::InvalidKeying(
-            network_skey_file.to_string(),
-            network_pkey_file.to_string(),
+            network_skey_file.to_string_lossy().to_string(),
+            network_pkey_file.to_string_lossy().to_string(),
         ));
     }
     info!("Loaded network key pair: pkey={}", network_pkey);

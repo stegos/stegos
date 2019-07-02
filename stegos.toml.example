@@ -2,23 +2,18 @@
 ## Sample configuration file for Stegos
 ##
 [general]
+# Chain: mainnet, testnet, devnet, dev.
 chain = "testnet"
+# Logger configuration.
 log4rs_config = "stegos-log4rs.toml"
-prometheus_endpoint = "0.0.0.0:9898"
-
-[keychain]
-# Path to wallet secret key
-wallet_skey_file = "wallet.skey"
-# Path to wallet public key
-wallet_pkey_file = "wallet.pkey"
-# Path to network secret key
-network_skey_file = "network.skey"
-# Path to network public key
-network_pkey_file = "network.pkey"
-# Path to wallet password file (use '-' for interactive prompt)
-password_file = "-"
-# Path to 24-word recovery phrase (use '-' for interactive prompt)
-recovery_file = ""
+# Prometheus endpoint.
+prometheus_endpoint = "127.0.0.1:9898"
+# WebSocket API endpoint.
+api_endpoint = "127.0.0.1:3145"
+# Data directory (default is ~/.local/share/stegos)
+data_dir = "./data"
+# Force full validation (BP + BLS + VRF) of blockchain on recovery.
+force_check = true
 
 [network]
 # Local IP to bind to
@@ -36,17 +31,3 @@ seed_nodes = [
     "/ip4/127.0.0.1/tcp/10050",
     "/ip4/127.0.0.1/tcp/10051",
 ]
-# Path to Peers public key file in DER format
-public_key = "testing/node01/public-key.der"
-# Path to Peers private key file in PKCS8 format
-private_key = "testing/node01/private-key.pk8"
-# Topic name for Broadcast communications
-broadcast_topic = "stegos"
-
-[api]
-# Local IP address to bind to
-bind_ip = "0.0.0.0"
-# Local IP port to bind to
-bind_port = 3145
-# Path to file to store API key
-token_file = "api_token.txt"

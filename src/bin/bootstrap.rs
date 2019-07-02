@@ -145,7 +145,7 @@ fn main() {
         let network_skey_file = format!("network{:02}.skey", i + 1);
         let network_pkey_file = format!("network{:02}.pkey", i + 1);
 
-        let password = keychain::input::read_password_from_file(&password_file)
+        let password = keychain::input::read_password_from_file(Path::new(&password_file))
             .expect("failed to read password");
 
         // Generate keys.

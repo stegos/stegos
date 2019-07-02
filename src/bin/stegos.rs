@@ -21,8 +21,9 @@
 
 use clap;
 use clap::{App, Arg};
+use std::path::Path;
+use stegos::config::GeneralConfig;
 use stegos::console::{url, ConsoleService};
-use stegos_api::ApiConfig;
 use tokio::runtime::Runtime;
 
 fn main() {
@@ -38,26 +39,30 @@ fn main() {
         env!("VERSION_DATE")
     );
 
-    let api_config: ApiConfig = Default::default();
-    let default_uri = format!("ws://{}:{}", api_config.bind_ip, api_config.bind_port);
-    let default_token_file = api_config.token_file;
+    let gcfg: GeneralConfig = Default::default();
+    let default_token_file = gcfg
+        .data_dir
+        .join("api.token")
+        .to_string_lossy()
+        .to_string();
+    let default_endpoint = format!("ws://{}", gcfg.api_endpoint);
 
     let args = App::new(name)
         .version(&version[..])
         .author("Stegos AG <info@stegos.com>")
         .about("Stegos is a completely anonymous and confidential cryptocurrency.")
         .arg(
-            Arg::with_name("uri")
+            Arg::with_name("endpoint")
                 .index(1)
-                .help("API URI, e.g. ws://127.0.0.1:3145")
-                .default_value(&default_uri)
+                .help("API ENDPOINT, e.g. ws://127.0.0.1:3145")
+                .default_value(&default_endpoint)
                 .takes_value(true)
                 .validator(|uri| {
                     url::Url::parse(&uri)
                         .map(|_| ())
                         .map_err(|e| format!("{}", e))
                 })
-                .value_name("URI"),
+                .value_name("ENDPOINT"),
         )
         .arg(
             Arg::with_name("token-file")
@@ -67,7 +72,7 @@ fn main() {
                 .default_value(&default_token_file)
                 .takes_value(true)
                 .validator(|token_file| {
-                    stegos_api::load_api_token(&token_file)
+                    stegos_api::load_api_token(Path::new(&token_file))
                         .map(|_| ())
                         .map_err(|e| format!("{:?}", e))
                 })
@@ -76,8 +81,8 @@ fn main() {
         .get_matches();
 
     let token_file = args.value_of("token-file").unwrap();
-    let uri = args.value_of("uri").unwrap().to_string();
-    let api_token = stegos_api::load_api_token(&token_file).unwrap();
+    let uri = args.value_of("endpoint").unwrap().to_string();
+    let api_token = stegos_api::load_api_token(Path::new(token_file)).unwrap();
 
     println!("{} {}", name, version);
     println!("Type 'help' to get help");

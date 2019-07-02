@@ -27,8 +27,6 @@ use std::fs;
 use std::path::Path;
 use stegos_crypto::scc;
 
-/// PEM tag for encrypted wallet secret key.
-const RECOVERY_PROMPT: &'static str = "Enter 24-word recovery phrase: ";
 const PASSWORD_PROMPT: &'static str = "Enter password: ";
 const PASSWORD_PROMPT1: &'static str = "Enter new password: ";
 const PASSWORD_PROMPT2: &'static str = "Enter same password again: ";
@@ -46,35 +44,15 @@ pub fn is_input_interactive(file: &str) -> bool {
     file == "" || file == "-"
 }
 
-fn read_recovery_from_stdin() -> Result<scc::SecretKey, KeyError> {
-    loop {
-        let recovery = prompt_password_stdout(RECOVERY_PROMPT)
-            .map_err(|e| KeyError::InputOutputError("stdin".to_string(), e))?;
-        match recovery_to_wallet_skey(&recovery) {
-            Ok(skey) => return Ok(skey),
-            Err(e) => {
-                eprintln!("{}", e);
-                continue;
-            }
-        }
-    }
-}
-
-fn read_recovery_from_file(recovery_file: &str) -> Result<scc::SecretKey, KeyError> {
-    info!("Reading recovery phrase from file {}...", recovery_file);
-    let recovery_file_path = Path::new(recovery_file);
-    let mut recovery = fs::read_to_string(recovery_file_path)
-        .map_err(|e| KeyError::InputOutputError(recovery_file.to_string(), e))?;
+pub fn read_recovery_from_file(recovery_file: &Path) -> Result<scc::SecretKey, KeyError> {
+    info!(
+        "Reading recovery phrase from file {}...",
+        recovery_file.to_string_lossy()
+    );
+    let mut recovery = fs::read_to_string(recovery_file)
+        .map_err(|e| KeyError::InputOutputError(recovery_file.to_string_lossy().to_string(), e))?;
     fix_newline(&mut recovery);
     Ok(recovery_to_wallet_skey(&recovery)?)
-}
-
-pub fn read_recovery(recovery_file: &str) -> Result<scc::SecretKey, KeyError> {
-    if is_input_interactive(recovery_file) {
-        read_recovery_from_stdin()
-    } else {
-        read_recovery_from_file(recovery_file)
-    }
 }
 
 pub fn read_password_from_stdin(confirm: bool) -> Result<String, KeyError> {
@@ -104,19 +82,13 @@ pub fn read_password_from_stdin(confirm: bool) -> Result<String, KeyError> {
     }
 }
 
-pub fn read_password_from_file(password_file: &str) -> Result<String, KeyError> {
-    info!("Reading password from file {}...", password_file);
-    let password_file_path = Path::new(password_file);
-    let mut password = fs::read_to_string(password_file_path)
-        .map_err(|e| KeyError::InputOutputError(password_file.to_string(), e))?;
+pub fn read_password_from_file(password_file: &Path) -> Result<String, KeyError> {
+    info!(
+        "Reading password from file {}...",
+        password_file.to_string_lossy()
+    );
+    let mut password = fs::read_to_string(password_file)
+        .map_err(|e| KeyError::InputOutputError(password_file.to_string_lossy().to_string(), e))?;
     fix_newline(&mut password);
     Ok(password)
-}
-
-pub fn read_password(password_file: &str, confirm: bool) -> Result<String, KeyError> {
-    if is_input_interactive(password_file) {
-        read_password_from_stdin(confirm)
-    } else {
-        read_password_from_file(password_file)
-    }
 }

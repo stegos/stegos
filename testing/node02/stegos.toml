@@ -2,18 +2,9 @@
 chain = "dev"
 log4rs_config = "stegos-log4rs.toml"
 prometheus_endpoint = "127.0.0.1:9892"
-
-[blockchain_db]
-database_path = "testing/node02/data/chain"
-[wallet_db]
-database_path = "testing/node02/data/wallet"
-
-[keychain]
-password_file = "testing/node02/password.txt"
-wallet_skey_file = "testing/node02/wallet.skey"
-wallet_pkey_file = "testing/node02/wallet.pkey"
-network_skey_file = "testing/node02/network.skey"
-network_pkey_file = "testing/node02/network.pkey"
+api_endpoint = "127.0.0.1:3146"
+data_dir = "testing/node02/data"
+force_check = true
 
 [network]
 bind_ip = "127.0.0.1"
@@ -24,11 +15,10 @@ seed_nodes = [
     "/ip4/127.0.0.1/tcp/10055",
     "/ip4/127.0.0.1/tcp/10057",
     "/ip4/127.0.0.1/tcp/10058",
+    "/ip4/127.0.0.1/tcp/10059",
+    "/ip4/127.0.0.1/tcp/10060",
+    "/ip4/127.0.0.1/tcp/10061",
 ]
 advertised_addresses = [
     "/ip4/127.0.0.1/tcp/10056",
 ]
-
-[api]
-bind_ip = "127.0.0.1"
-bind_port = 3146

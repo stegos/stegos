@@ -50,7 +50,7 @@ use futures::Stream;
 use futures_stream_select_all_send::select_all;
 use log::*;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use stegos_blockchain::Timestamp;
 use stegos_blockchain::*;
 use stegos_crypto::hash::Hash;
@@ -69,7 +69,7 @@ pub struct WalletService {
     // Config
     //
     /// Path to wallet secret key.
-    wallet_skey_file: String,
+    wallet_skey_file: PathBuf,
     /// Wallet Secret Key.
     wallet_skey: scc::SecretKey,
     /// Wallet Public Key.
@@ -135,8 +135,8 @@ pub struct WalletService {
 impl WalletService {
     /// Create a new wallet.
     pub fn new(
-        database_path: &Path,
-        wallet_skey_file: String,
+        database_dir: &Path,
+        wallet_skey_file: &Path,
         wallet_skey: scc::SecretKey,
         wallet_pkey: scc::PublicKey,
         network_skey: pbc::SecretKey,
@@ -148,6 +148,7 @@ impl WalletService {
     ) -> (Self, Wallet) {
         info!("My wallet key: {}", String::from(&wallet_pkey));
         debug!("My network key: {}", network_pkey.to_hex());
+
         //
         // State.
         //
@@ -169,7 +170,7 @@ impl WalletService {
 
         let last_macro_block_timestamp = Timestamp::UNIX_EPOCH;
 
-        let wallet_log = WalletLog::open(database_path);
+        let wallet_log = WalletLog::open(database_dir);
         //
         // Subscriptions.
         //
@@ -193,7 +194,7 @@ impl WalletService {
         let events = select_all(events);
 
         let mut service = WalletService {
-            wallet_skey_file,
+            wallet_skey_file: wallet_skey_file.to_path_buf(),
             wallet_skey,
             wallet_pkey,
             network_skey,

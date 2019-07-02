@@ -19,11 +19,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-// #![deny(warnings)]
+#![deny(warnings)]
 
-mod config;
 mod error;
-pub use config::*;
 pub use error::*;
 pub mod input;
 pub mod keyfile;

@@ -19,6 +19,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#![allow(unused)]
+
 pub use stegos_node::test::*;
 mod wallet_transaction;
 use super::Wallet;
@@ -68,15 +70,15 @@ impl WalletSandbox {
         let wallet_pkey = keys.wallet_pkey;
         let wallet_skey = keys.wallet_skey.clone();
         // init network
-        let mut database_path = temp_dir.path().to_path_buf();
+        let mut database_dir = temp_dir.path().to_path_buf();
 
-        database_path.push("database_path");
-        let mut wallet_skey_path = temp_dir.path().to_path_buf();
-        wallet_skey_path.push("wallet.skey");
-        stegos_keychain::keyfile::write_wallet_skey(&wallet_skey_path, &wallet_skey, PASSWORD)
+        database_dir.push("database_path");
+        let mut wallet_skey_file = temp_dir.path().to_path_buf();
+        wallet_skey_file.push("wallet.skey");
+        stegos_keychain::keyfile::write_wallet_skey(&wallet_skey_file, &wallet_skey, PASSWORD)
             .unwrap();
 
-        info!("Wrote wallet key pair: skey_file={:?}", wallet_skey_path);
+        info!("Wrote wallet key pair: skey_file={:?}", wallet_skey_file);
 
         let persistent_state = chain
             .recover_wallets(&[(&wallet_skey, &wallet_pkey)])
@@ -86,8 +88,8 @@ impl WalletSandbox {
             .unwrap();
 
         let (wallet_service, wallet) = WalletService::new(
-            &database_path,
-            wallet_skey_path.to_str().unwrap().to_string(),
+            &database_dir,
+            &wallet_skey_file,
             wallet_skey,
             wallet_pkey,
             network_skey,

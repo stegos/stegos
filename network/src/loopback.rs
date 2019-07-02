@@ -163,36 +163,55 @@ impl Loopback {
         }
     }
 
-    pub fn get_unicast<M: ProtoConvert>(&mut self, topic: &str, peer: &pbc::PublicKey) -> M {
-        let ref mut state = self.state.lock().unwrap();
-        match state.queue.pop_front().unwrap() {
-            MessageFromNode::SendUnicast {
-                protocol_id: msg_topic,
-                to: msg_peer,
-                data: msg_data,
-            } => {
-                assert_eq!(topic, &msg_topic);
-                assert_eq!(peer, &msg_peer);
-                M::from_buffer(&msg_data).unwrap()
-            }
-            x => {
-                panic!("Unexpected message {:?}", x);
-            }
-        }
+    pub fn get_unicast_to_peer<M: ProtoConvert>(
+        &mut self,
+        topic: &str,
+        peer: &pbc::PublicKey,
+    ) -> M {
+        let (msg, msg_peer) = self.get_unicast(topic);
+        assert_eq!(peer, &msg_peer);
+        msg
+    }
+
+    pub fn get_unicast<M: ProtoConvert>(&mut self, topic: &str) -> (M, pbc::PublicKey) {
+        let (msg, msg_peer) = self.try_get_unicast_raw(topic).expect("Expected message");
+        (M::from_buffer(&msg).unwrap(), msg_peer)
     }
 
     pub fn get_broadcast<M: ProtoConvert>(&mut self, topic: &str) -> M {
+        let msg = self.try_get_broadcast_raw(topic).expect("Expected message");
+        M::from_buffer(&msg).unwrap()
+    }
+
+    pub fn try_get_broadcast_raw(&mut self, topic: &str) -> Option<Vec<u8>> {
         let ref mut state = self.state.lock().unwrap();
-        match state.queue.pop_front().unwrap() {
+        match state.queue.pop_front()? {
             MessageFromNode::Publish {
                 topic: msg_topic,
                 data: msg_data,
             } => {
                 assert_eq!(topic, &msg_topic);
-                M::from_buffer(&msg_data).unwrap()
+                Some(msg_data.clone())
             }
             x => {
-                panic!("Unexpected message {:?}", x);
+                panic!("Other message in queue = {:?}", x);
+            }
+        }
+    }
+
+    pub fn try_get_unicast_raw(&mut self, protocol_id: &str) -> Option<(Vec<u8>, pbc::PublicKey)> {
+        let ref mut state = self.state.lock().unwrap();
+        match state.queue.pop_front()? {
+            MessageFromNode::SendUnicast {
+                protocol_id: msg_protocol_id,
+                to: msg_peer,
+                data: msg_data,
+            } => {
+                assert_eq!(protocol_id, &msg_protocol_id);
+                Some((msg_data.clone(), msg_peer.clone()))
+            }
+            x => {
+                panic!("Other message in queue = {:?}", x);
             }
         }
     }

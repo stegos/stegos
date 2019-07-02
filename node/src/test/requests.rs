@@ -52,7 +52,7 @@ fn request_on_timeout() {
         for node in &mut p.parts.1.nodes {
             let _: ChainLoaderMessage = node
                 .network_service
-                .get_unicast(crate::loader::CHAIN_LOADER_TOPIC, &leader_pk);
+                .get_unicast_to_peer(crate::loader::CHAIN_LOADER_TOPIC, &leader_pk);
         }
 
         let leader = p.parts.0.first_mut();

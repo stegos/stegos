@@ -548,7 +548,7 @@ fn resolve_fork_without_block() {
         node.poll();
         let proof: SealedViewChangeProof = node
             .network_service
-            .get_unicast(crate::VIEW_CHANGE_DIRECT, &leader_pk);
+            .get_unicast_to_peer(crate::VIEW_CHANGE_DIRECT, &leader_pk);
 
         let first_leader = r.parts.0.first_mut();
         assert_eq!(leader_pk, first_leader.node_service.network_pkey);
@@ -668,7 +668,7 @@ fn issue_896_resolve_fork() {
         node.poll();
         let proof: SealedViewChangeProof = node
             .network_service
-            .get_unicast(crate::VIEW_CHANGE_DIRECT, &leader_pk);
+            .get_unicast_to_peer(crate::VIEW_CHANGE_DIRECT, &leader_pk);
 
         // wait half of view_change timer
         r.wait(r.config.node.micro_block_timeout / 2);

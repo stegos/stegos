@@ -23,6 +23,7 @@
 
 use super::*;
 use crate::*;
+use assert_matches::assert_matches;
 use std::time::Duration;
 use stegos_blockchain::Block;
 use stegos_consensus::{ConsensusInfo, ConsensusMessageBody, ConsensusState};

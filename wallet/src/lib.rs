@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#![deny(warnings)]
+//#![deny(warnings)]
 
 mod api;
 mod change;
@@ -29,6 +29,8 @@ mod error;
 mod metrics;
 mod protos;
 mod storage;
+#[doc(hidden)]
+pub mod test;
 mod transaction;
 mod valueshuffle;
 

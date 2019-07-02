@@ -78,7 +78,7 @@
 mod error;
 pub use error::*;
 
-mod message;
+pub mod message;
 use message::*;
 
 mod protos;

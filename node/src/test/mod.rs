@@ -19,21 +19,29 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+// most of the code is used in tests, so it can false positive detected as unused during build.
+#![allow(dead_code)]
+
 pub mod futures_testing;
 
 use self::futures_testing::{start_test, wait, TestTimer};
 pub use stegos_network::loopback::Loopback;
+#[cfg(test)]
 mod consensus;
+#[cfg(test)]
 mod integration;
+#[cfg(test)]
 mod microblocks;
+#[cfg(test)]
 mod requests;
+
 use crate::*;
-use assert_matches::assert_matches;
 use log::Level;
 use std::time::Duration;
 pub use stegos_blockchain::test::*;
 use stegos_crypto::pbc;
 use stegos_crypto::pbc::{PublicKey, VRF};
+use stegos_network::Network;
 use tokio_timer::Timer;
 
 pub struct SandboxConfig {
@@ -56,9 +64,10 @@ impl Default for SandboxConfig {
 
 #[allow(unused)]
 pub struct Sandbox<'timer> {
-    nodes: Vec<NodeSandbox>,
-    timer: &'timer mut Timer<TestTimer>,
-    config: SandboxConfig,
+    pub nodes: Vec<NodeSandbox>,
+    pub keychains: Vec<KeyChain>,
+    pub timer: &'timer mut Timer<TestTimer>,
+    pub config: SandboxConfig,
 }
 
 impl<'timer> Sandbox<'timer> {
@@ -78,7 +87,7 @@ impl<'timer> Sandbox<'timer> {
                 timestamp,
             );
             let mut nodes = Vec::new();
-            for keys in keychains {
+            for keys in keychains.clone() {
                 let node = NodeSandbox::new(
                     config.node.clone(),
                     config.chain.clone(),
@@ -91,6 +100,7 @@ impl<'timer> Sandbox<'timer> {
             }
             let sandbox = Sandbox {
                 nodes,
+                keychains,
                 timer,
                 config,
             };
@@ -106,7 +116,10 @@ impl<'timer> Sandbox<'timer> {
         wait(&mut *self.timer, duration)
     }
 
-    fn split<'a>(&'a mut self, first_partitions_nodes: &[pbc::PublicKey]) -> PartitionGuard<'a> {
+    pub fn split<'a>(
+        &'a mut self,
+        first_partitions_nodes: &[pbc::PublicKey],
+    ) -> PartitionGuard<'a> {
         let divider = |key| {
             first_partitions_nodes
                 .iter()
@@ -136,8 +149,8 @@ impl<'timer> Sandbox<'timer> {
 /// This wrapper was designed to represent splitted parts of network.
 #[allow(unused)]
 #[derive(Default)]
-struct Partition<'p> {
-    nodes: Vec<&'p mut NodeSandbox>,
+pub struct Partition<'p> {
+    pub nodes: Vec<&'p mut NodeSandbox>,
 }
 #[allow(dead_code)]
 impl<'p> Partition<'p> {
@@ -145,7 +158,7 @@ impl<'p> Partition<'p> {
     // to proove that it is safe this implemetation contain intermediate vector.
     // This function can be rewrited as unsafe,
     // or may be later rewrited just as `self.into_iter().map(|i|*i)`
-    fn reborrow_nodes<'a>(&'a self) -> impl Iterator<Item = &'a NodeSandbox>
+    pub fn reborrow_nodes<'a>(&'a self) -> impl Iterator<Item = &'a NodeSandbox>
     where
         'p: 'a,
     {
@@ -156,7 +169,7 @@ impl<'p> Partition<'p> {
         }
         arr.into_iter()
     }
-    fn reborrow_nodes_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut NodeSandbox>
+    pub fn reborrow_nodes_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut NodeSandbox>
     where
         'p: 'a,
     {
@@ -179,10 +192,10 @@ impl Drop for NodeSandbox {
 }
 
 #[allow(unused)]
-struct PartitionGuard<'p> {
-    timer: &'p mut Timer<TestTimer>,
+pub struct PartitionGuard<'p> {
+    pub timer: &'p mut Timer<TestTimer>,
     pub config: &'p SandboxConfig,
-    parts: (Partition<'p>, Partition<'p>),
+    pub parts: (Partition<'p>, Partition<'p>),
 }
 
 #[allow(dead_code)]
@@ -192,14 +205,14 @@ impl<'p> PartitionGuard<'p> {
     }
 }
 
-struct NodeSandbox {
+pub struct NodeSandbox {
     pub network_service: Loopback,
     pub node: Node,
     pub node_service: NodeService,
 }
 
 impl NodeSandbox {
-    fn new(
+    pub fn new(
         node_cfg: NodeConfig,
         chain_cfg: ChainConfig,
         recipient_pkey: scc::PublicKey,
@@ -232,13 +245,31 @@ impl NodeSandbox {
         }
     }
 
+    pub fn clone_network(&self) -> (Loopback, Network) {
+        (
+            self.network_service.clone(),
+            self.node_service.network.box_clone(),
+        )
+    }
+
+    pub fn chain(&self) -> &Blockchain {
+        &self.node_service.chain
+    }
+
+    pub fn keys(&self) -> (pbc::PublicKey, pbc::SecretKey) {
+        (
+            self.node_service.network_pkey,
+            self.node_service.network_skey.clone(),
+        )
+    }
+
     #[allow(dead_code)]
-    fn create_vrf_from_seed(&self, random: Hash, view_change: u32) -> VRF {
+    pub fn create_vrf_from_seed(&self, random: Hash, view_change: u32) -> VRF {
         let seed = mix(random, view_change);
         pbc::make_VRF(&self.node_service.network_skey, &seed)
     }
 
-    fn validator_id(&self) -> Option<usize> {
+    pub fn validator_id(&self) -> Option<usize> {
         let key = self.node_service.network_pkey;
         self.node_service
             .chain
@@ -249,12 +280,12 @@ impl NodeSandbox {
             .map(|(id, _)| id)
     }
 
-    fn poll(&mut self) {
+    pub fn poll(&mut self) {
         futures_testing::execute(&mut self.node_service);
     }
 }
 
-trait Api<'p> {
+pub trait Api<'p> {
     fn iter_mut<'a>(&'a mut self) -> Box<dyn Iterator<Item = &'a mut NodeSandbox> + 'a>
     where
         'p: 'a;
@@ -337,8 +368,54 @@ trait Api<'p> {
         self.iter().count()
     }
 
+    //TODO: This temporary solution is used to emulate broadcast in network. For example
+    // when you need to send transaction over network, it should be broadcasted.
+    /// Take messages from topic, and broadcast to other nodes.
+    fn broadcast(&mut self, topic: &str) {
+        let mut messages = Vec::new();
+        for node in self.iter_mut() {
+            if let Some(m) = node.network_service.try_get_broadcast_raw(topic) {
+                messages.push(m)
+            }
+        }
+        debug!("found {} messages, broadcast them.", messages.len());
+        for node in self.iter_mut() {
+            for msg in &messages {
+                node.network_service
+                    .receive_broadcast_raw(topic, msg.clone());
+            }
+        }
+        self.poll();
+    }
+    /// Take message from protocol_id, and broadcast to concrete node.
+    fn deliver_unicast(&mut self, protocol_id: &str) {
+        // deliver all messages, even if some node send multiple broadcasts messages.
+        let mut messages = HashMap::new();
+        for node in self.iter_mut() {
+            while let Some((msg, peer)) = node.network_service.try_get_unicast_raw(protocol_id) {
+                messages
+                    .entry(peer)
+                    .or_insert(vec![])
+                    .push((msg, node.node_service.network_pkey));
+            }
+        }
+        debug!("found {} receivers, unicast them.", messages.len());
+        for node in self.iter_mut() {
+            let empty_slice: &[_] = &[];
+            for (msg, peer) in messages
+                .get(&node.node_service.network_pkey)
+                .map(AsRef::as_ref)
+                .unwrap_or(empty_slice)
+            {
+                node.network_service
+                    .receive_unicast_raw(*peer, protocol_id, msg.clone());
+            }
+        }
+
+        self.poll();
+    }
     /// Take micro block from leader, rebroadcast to other nodes.
-    /// Use after block timeout.
+    /// Should be used after block timeout.
     /// This function will poll() every node.
     fn skip_micro_block(&mut self) {
         self.assert_synchronized();
@@ -462,7 +539,7 @@ impl<'p> Api<'p> for Sandbox<'p> {
 }
 
 /// Inner logic specific for cheater slashing.
-fn slash_cheater_inner<'a>(
+pub fn slash_cheater_inner<'a>(
     s: &'a mut Sandbox,
     leader_pk: PublicKey,
     mut filter_nodes: Vec<PublicKey>,
@@ -504,7 +581,7 @@ fn slash_cheater_inner<'a>(
     r
 }
 
-fn precondition_n_different_block_leaders(s: &mut Sandbox, different_leaders: u32) {
+pub fn precondition_n_different_block_leaders(s: &mut Sandbox, different_leaders: u32) {
     skip_blocks_until(s, |s| {
         let leaders: Vec<_> = (0..different_leaders)
             .map(|id| s.future_block_leader(id).unwrap())
@@ -518,7 +595,7 @@ fn precondition_n_different_block_leaders(s: &mut Sandbox, different_leaders: u3
     })
 }
 
-fn precondition_n_different_viewchange_leaders(s: &mut Sandbox, different_leaders: u32) {
+pub fn precondition_n_different_viewchange_leaders(s: &mut Sandbox, different_leaders: u32) {
     skip_blocks_until(s, |s| {
         let leaders: Vec<_> = (0..different_leaders)
             .map(|id| s.future_view_change_leader(id))
@@ -533,7 +610,7 @@ fn precondition_n_different_viewchange_leaders(s: &mut Sandbox, different_leader
 }
 
 /// Skip blocks until condition not true
-fn skip_blocks_until<F>(s: &mut Sandbox, mut condition: F)
+pub fn skip_blocks_until<F>(s: &mut Sandbox, mut condition: F)
 where
     F: FnMut(&mut Sandbox) -> bool,
 {
@@ -559,17 +636,20 @@ pub fn check_unique<T: Ord + Clone + PartialEq>(original: Vec<T>) -> bool {
 }
 
 // tests
+#[cfg(test)]
+mod test_framework {
+    use super::*;
+    #[test]
+    fn test_partition() {
+        let config: SandboxConfig = Default::default();
 
-#[test]
-fn test_partition() {
-    let config: SandboxConfig = Default::default();
-
-    Sandbox::start(config, |mut s| {
-        s.poll();
-        let leader_pk = s.nodes[0].node_service.chain.leader();
-        let r = s.split(&[leader_pk]);
-        assert_eq!(r.parts.0.nodes.len(), 1);
-        assert_eq!(r.parts.1.nodes.len(), 3);
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
-    });
+        Sandbox::start(config, |mut s| {
+            s.poll();
+            let leader_pk = s.nodes[0].node_service.chain.leader();
+            let r = s.split(&[leader_pk]);
+            assert_eq!(r.parts.0.nodes.len(), 1);
+            assert_eq!(r.parts.1.nodes.len(), 3);
+            s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        });
+    }
 }

@@ -862,6 +862,25 @@ impl NodeService {
 
         let (inputs, outputs) = self.chain.push_macro_block(block, timestamp)?;
 
+        let mut statuses = HashMap::new();
+        let mut transactions = HashMap::new();
+        // Remove conflict transactions from the mempool.
+        let tx_info = self.mempool.prune(&inputs, &outputs);
+        for (tx_hash, (tx, full)) in tx_info {
+            let status = if full {
+                TransactionStatus::Committed { epoch }
+            } else {
+                TransactionStatus::Conflicted {
+                    epoch,
+                    offset: None,
+                }
+            };
+            assert!(statuses.insert(tx_hash, status).is_none());
+            assert!(transactions.insert(tx_hash, tx).is_none());
+        }
+
+        assert_eq!(statuses.len(), transactions.len());
+
         if !was_synchronized && self.is_synchronized() {
             info!(
                 "Synchronized with the network: epoch={}, last_block={}",
@@ -875,11 +894,13 @@ impl NodeService {
             validators: self.chain.validators().clone(),
             facilitator: self.chain.facilitator().clone(),
             last_macro_block_timestamp: self.chain.last_macro_block_timestamp(),
+            transactions,
+            statuses,
             inputs: inputs.clone(),
             outputs: outputs.clone(),
         };
 
-        self.on_block_added(timestamp, inputs, outputs);
+        self.on_block_added(timestamp);
 
         let event: NodeNotification = msg.into();
         self.on_node_notification
@@ -905,22 +926,34 @@ impl NodeService {
                 return Err(BlockchainError::ExpectedMicroBlock(epoch, offset, hash).into());
             }
         }
-        let (inputs, outputs, transactions) = self.chain.push_micro_block(block, timestamp)?;
+        let (inputs, outputs, block_transactions) =
+            self.chain.push_micro_block(block, timestamp)?;
 
-        let tx_len = transactions.len();
-        let transactions: HashMap<_, _> = transactions
-            .into_iter()
-            .map(|tx| (Hash::digest(&tx), tx))
-            .collect();
+        let mut statuses = HashMap::new();
+        let mut transactions = HashMap::new();
+        // Remove conflict transactions from the mempool.
+        let mut tx_info = self.mempool.prune(&inputs, &outputs);
+        tx_info.extend(
+            block_transactions
+                .clone()
+                .into_iter()
+                .map(|(h, tx)| (h, (tx, true))),
+        );
+        for (tx_hash, (tx, full)) in tx_info {
+            let status = if full && block_transactions.contains_key(&tx_hash) {
+                TransactionStatus::Prepare { epoch, offset }
+            } else {
+                TransactionStatus::Conflicted {
+                    epoch,
+                    offset: offset.into(),
+                }
+            };
+            assert!(statuses.insert(tx_hash, status).is_none());
+            assert!(transactions.insert(tx_hash, tx).is_none());
+        }
 
-        let statuses: HashMap<_, _> = transactions
-            .iter()
-            .map(|tx| tx.0)
-            .map(|h| (*h, TransactionStatus::Prepare { epoch, offset }))
-            .collect();
-
-        assert_eq!(tx_len, transactions.len());
-        assert_eq!(tx_len, statuses.len());
+        assert_eq!(statuses.len(), transactions.len());
+        assert!(transactions.len() >= block_transactions.len());
 
         let msg = NewMicroBlock {
             epoch,
@@ -931,7 +964,7 @@ impl NodeService {
             outputs: outputs.clone(),
         };
 
-        self.on_block_added(timestamp, inputs, outputs);
+        self.on_block_added(timestamp);
 
         let event: NodeNotification = msg.into();
         self.on_node_notification
@@ -939,15 +972,11 @@ impl NodeService {
         Ok(())
     }
 
-    fn on_block_added(&mut self, timestamp: Timestamp, inputs: Vec<Output>, outputs: Vec<Output>) {
-        let input_hashes: Vec<_> = inputs.iter().map(Hash::digest).collect();
-        let output_hashes: Vec<_> = outputs.iter().map(Hash::digest).collect();
-        // Remove old transactions from the mempool.
-        self.mempool.prune(&input_hashes, &output_hashes);
+    /// update metrics and statuses on block processing.
+    fn on_block_added(&mut self, timestamp: Timestamp) {
         metrics::MEMPOOL_TRANSACTIONS.set(self.mempool.len() as i64);
         metrics::MEMPOOL_INPUTS.set(self.mempool.inputs_len() as i64);
         metrics::MEMPOOL_OUTPUTS.set(self.mempool.inputs_len() as i64);
-
         self.last_block_clock = clock::now();
         let local_timestamp: i64 = Timestamp::now().into();
         let remote_timestamp: i64 = timestamp.into();
@@ -983,6 +1012,18 @@ impl NodeService {
         &mut self,
         tx: UnboundedSender<NodeNotification>,
     ) -> Result<(), Error> {
+        let msg = NewMacroBlock {
+            epoch: self.chain.epoch(),
+            last_macro_block_timestamp: self.chain.last_macro_block_timestamp(),
+            facilitator: self.chain.facilitator().clone(),
+            validators: self.chain.validators().clone(),
+            transactions: HashMap::new(),
+            statuses: HashMap::new(),
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+        };
+        let msg = msg.into();
+        tx.unbounded_send(msg).ok(); // ignore error.
         self.on_node_notification.push(tx);
         Ok(())
     }

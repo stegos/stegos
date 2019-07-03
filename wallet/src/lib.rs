@@ -46,9 +46,10 @@ use futures::future::IntoFuture;
 use futures::sync::{mpsc, oneshot};
 use futures::{task, Async, Future, Poll, Stream};
 use log::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use stegos_blockchain::Timestamp;
 use stegos_blockchain::*;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{pbc, scc};
@@ -127,14 +128,9 @@ struct UnsealedAccountService {
     /// ValueShuffle State.
     vs: ValueShuffle,
 
-    //
-    // Transaction watcher
-    //
-    /// Map of inputs of transaction interests, that we wait for.
-    transactions_interest: HashMap<Hash, Hash>,
-    /// Set of unprocessed transactions, with pending sender.
-    unprocessed_transactions:
-        HashMap<Hash, (SavedTransaction, Vec<oneshot::Sender<AccountResponse>>)>,
+    //TODO: Temporary hack to receive newly created transaction from valueshuffle.
+    wallet_tx_info_receiver: mpsc::UnboundedReceiver<PaymentTransaction>,
+    vs_session: Hash,
 
     //
     // Api subscribers
@@ -180,16 +176,16 @@ impl UnsealedAccountService {
 
         let public_payments = HashMap::new();
         let stakes: HashMap<Hash, StakeValue> = HashMap::new();
+        let (wallet_tx_info, wallet_tx_info_receiver) = mpsc::unbounded();
         let vs = ValueShuffle::new(
             account_skey.clone(),
             account_pkey.clone(),
             network_pkey.clone(),
             network.clone(),
             node.clone(),
+            wallet_tx_info,
         );
-
-        let transactions_interest = HashMap::new();
-        let unprocessed_transactions = HashMap::new();
+        let vs_session = Hash::zero();
 
         let last_macro_block_timestamp = Timestamp::UNIX_EPOCH;
 
@@ -224,6 +220,8 @@ impl UnsealedAccountService {
             public_payments,
             stakes,
             vs,
+            wallet_tx_info_receiver,
+            vs_session,
             stake_epochs,
             last_macro_block_timestamp,
             network,
@@ -232,8 +230,6 @@ impl UnsealedAccountService {
             recovery_rx,
             events,
             node_notifications,
-            transactions_interest,
-            unprocessed_transactions,
         }
     }
 
@@ -288,8 +284,6 @@ impl UnsealedAccountService {
         metrics::WALLET_CREATEAD_PAYMENTS
             .with_label_values(&[&String::from(&self.account_pkey)])
             .inc();
-        //firstly check that no conflict input was found;
-        self.add_transaction_interest(tx.into());
 
         Ok(payment_info)
     }
@@ -332,33 +326,8 @@ impl UnsealedAccountService {
         metrics::WALLET_CREATEAD_PAYMENTS
             .with_label_values(&[&String::from(&self.account_pkey)])
             .inc();
-        //firstly check that no conflict input was found;
-        self.add_transaction_interest(tx.into());
 
         Ok(payment_info)
-    }
-
-    fn add_transaction_interest(&mut self, tx: SavedTransaction) {
-        debug!("Add transaction in interest list: tx = {:?}", tx);
-        let tx_hash = Hash::digest(&tx);
-        let tx_ins = tx.txins();
-        let mut conflict = false;
-        for input in tx_ins {
-            if self.transactions_interest.contains_key(&input) {
-                error!("Conflict transaction found.");
-                conflict = true;
-                break;
-            }
-        }
-
-        if !conflict {
-            debug!("No conflict found, adding transaction into interest map.");
-            for input in tx_ins {
-                assert!(self.transactions_interest.insert(*input, tx_hash).is_none())
-            }
-            self.unprocessed_transactions
-                .insert(tx_hash, (tx.into(), Vec::new()));
-        }
     }
 
     fn get_tx_history(&self, starting_from: Timestamp, limit: u64) -> Vec<LogEntryInfo> {
@@ -391,14 +360,14 @@ impl UnsealedAccountService {
             locked_timestamp,
             self.last_macro_block_timestamp,
         )?;
+        let session_id = Hash::random();
         self.vs.queue_transaction(&inputs, &outputs, fee)?;
-        let saved_tx = SavedTransaction::ValueShuffle(inputs.iter().map(|(h, _)| *h).collect());
-        let hash = Hash::digest(&saved_tx);
+        self.vs_session = session_id;
+
         metrics::WALLET_CREATEAD_SECURE_PAYMENTS
             .with_label_values(&[&String::from(&self.account_pkey)])
             .inc();
-        self.add_transaction_interest(saved_tx);
-        Ok(hash)
+        Ok(session_id)
     }
 
     /// Stake money into the escrow.
@@ -530,7 +499,6 @@ impl UnsealedAccountService {
     ) {
         let saved_balance = self.balance();
 
-        self.find_committed_txs(&inputs);
         for input in inputs {
             self.on_output_pruned(epoch, input);
         }
@@ -623,69 +591,6 @@ impl UnsealedAccountService {
             }
         };
     }
-    fn wait_for_commit(&mut self, tx_hash: Hash, sender: oneshot::Sender<AccountResponse>) {
-        use std::collections::hash_map::Entry;
-        if let Entry::Occupied(mut o) = self.unprocessed_transactions.entry(tx_hash) {
-            debug!("Adding our sender to watcher: tx_hash = {}", tx_hash);
-            o.get_mut().1.push(sender);
-        } else {
-            debug!(
-                "Transaction was commited before, or not known to our wallet: tx_hash = {}",
-                tx_hash
-            );
-            let _ = sender.send(AccountResponse::TransactionCommitted(
-                TransactionCommitted::NotFoundInMempool {},
-            ));
-        }
-    }
-
-    fn find_committed_txs(&mut self, pruned_inputs: &[Output]) {
-        let hash_set: HashSet<Hash> = pruned_inputs.iter().map(Hash::digest).collect();
-        for input in &hash_set {
-            if let Some(tx_hash) = self.transactions_interest.get(input) {
-                let (tx, senders) = self
-                    .unprocessed_transactions
-                    .remove(tx_hash)
-                    .expect("Transaction not found in set.");
-
-                let mut conflict = false;
-                for input_hash in tx.txins() {
-                    self.transactions_interest.remove(input_hash).unwrap();
-                    if !hash_set.contains(input_hash) {
-                        conflict = true;
-                    }
-                }
-
-                let commited = if conflict {
-                    warn!("Conflicted transaction processed.");
-
-                    TransactionCommitted::ConflictTransactionCommitted {
-                        conflicted_output: *input,
-                    }
-                } else {
-                    TransactionCommitted::Committed {}
-                };
-
-                match tx {
-                    SavedTransaction::Regular(_) => {
-                        metrics::WALLET_COMMITTED_PAYMENTS
-                            .with_label_values(&[&String::from(&self.account_pkey)])
-                            .inc();
-                    }
-                    SavedTransaction::ValueShuffle(_) => {
-                        metrics::WALLET_COMMITTED_SECURE_PAYMENTS
-                            .with_label_values(&[&String::from(&self.account_pkey)])
-                            .inc();
-                    }
-                };
-                let msg = AccountResponse::TransactionCommitted(commited);
-                // send notification about committed transaction, drop errors if found.
-                senders
-                    .into_iter()
-                    .for_each(move |ch| drop(ch.send(msg.clone())));
-            }
-        }
-    }
 
     /// Called when UTXO is spent.
     fn on_output_pruned(&mut self, _epoch: u64, output: Output) {
@@ -738,6 +643,7 @@ impl UnsealedAccountService {
     }
 
     fn notify(&mut self, notification: AccountNotification) {
+        trace!("created notification = {:?}", notification);
         self.subscribers
             .retain(move |tx| tx.unbounded_send(notification.clone()).is_ok());
     }
@@ -813,6 +719,30 @@ impl Future for UnsealedAccountService {
         }
 
         loop {
+            match self
+                .wallet_tx_info_receiver
+                .poll()
+                .expect("all errors are already handled")
+            {
+                Async::Ready(msg) => {
+                    let tx = msg.expect("channel not ended.");
+                    let tx_hash = Hash::digest(&tx);
+                    metrics::WALLET_COMMITTED_SECURE_PAYMENTS
+                        .with_label_values(&[&String::from(&self.account_pkey)])
+                        .inc();
+                    let notify = AccountNotification::SnowballCreated {
+                        tx_hash,
+                        session_id: self.vs_session,
+                    };
+                    self.notify(notify);
+                }
+                Async::NotReady => {
+                    break;
+                }
+            }
+        }
+
+        loop {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => match event {
                     AccountEvent::Request { request, tx } => {
@@ -863,17 +793,11 @@ impl Future for UnsealedAccountService {
                                 comment,
                                 locked_timestamp,
                             ) {
-                                Ok(session_id) => {
-                                    AccountResponse::ValueShuffleStarted { session_id }
-                                }
+                                Ok(session_id) => AccountResponse::SnowballStarted { session_id },
                                 Err(e) => AccountResponse::Error {
                                     error: format!("{}", e),
                                 },
                             },
-                            AccountRequest::WaitForCommit { tx_hash } => {
-                                self.wait_for_commit(tx_hash, tx);
-                                continue;
-                            }
                             AccountRequest::Stake {
                                 amount,
                                 payment_fee,

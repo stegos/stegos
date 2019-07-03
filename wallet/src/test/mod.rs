@@ -33,7 +33,7 @@ use stegos_network::Network;
 use tempdir::TempDir;
 
 use futures::sync::{mpsc, oneshot};
-use futures::{Async, Future};
+use futures::{Async, Future, Stream};
 use log::info;
 use stegos_node::Node;
 
@@ -158,6 +158,23 @@ fn get_request(mut rx: oneshot::Receiver<AccountResponse>) -> AccountResponse {
     match rx.poll() {
         Ok(Async::Ready(msg)) => return msg,
         _ => panic!("No message received in time, or error when receiving message"),
+    }
+}
+
+fn get_notification(rx: &mut mpsc::UnboundedReceiver<AccountNotification>) -> AccountNotification {
+    match rx.poll() {
+        Ok(Async::Ready(Some(msg))) => return msg,
+        _ => panic!("No message received in time, or error when receiving message"),
+    }
+}
+
+fn clear_notification(rx: &mut mpsc::UnboundedReceiver<AccountNotification>) {
+    loop {
+        match rx.poll() {
+            Ok(Async::NotReady) => break,
+            Ok(Async::Ready(Some(_))) => {}
+            _ => panic!("No message received in time, or error when receiving message"),
+        }
     }
 }
 

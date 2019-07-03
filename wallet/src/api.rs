@@ -73,7 +73,17 @@ pub struct PublicPaymentInfo {
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum AccountNotification {
-    BalanceChanged { balance: i64 },
+    BalanceChanged {
+        balance: i64,
+    },
+    SnowballCreated {
+        tx_hash: Hash,
+        session_id: Hash,
+    },
+    TransactionStatus {
+        tx_hash: Hash,
+        status: TransactionStatus,
+    },
     Received(PaymentInfo),
     ReceivedPublic(PublicPaymentInfo),
     Spent(PaymentInfo),
@@ -121,9 +131,6 @@ pub enum AccountRequest {
         payment_fee: i64,
         comment: String,
         locked_timestamp: Option<Timestamp>,
-    },
-    WaitForCommit {
-        tx_hash: Hash,
     },
     Stake {
         amount: i64,
@@ -191,10 +198,9 @@ pub enum AccountResponse {
     Sealed,
     Unsealed,
     TransactionCreated(PaymentTransactionInfo),
-    ValueShuffleStarted {
+    SnowballStarted {
         session_id: Hash,
     },
-    TransactionCommitted(TransactionCommitted),
     BalanceInfo {
         balance: i64,
     },
@@ -243,11 +249,10 @@ pub enum WalletResponse {
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "result")]
 #[serde(rename_all = "snake_case")]
-pub enum TransactionCommitted {
+pub enum TransactionStatus {
     // TODO: add info about rollback.
     Committed {},
-    NotFoundInMempool {}, //TODO: replace, after persistent for all created transactions.
-    ConflictTransactionCommitted { conflicted_output: Hash },
+    ConflictTransactionCommitted { conflict_tx: Option<Hash> },
 }
 
 impl From<PaymentInfo> for OutputInfo {

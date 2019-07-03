@@ -84,6 +84,9 @@ pub struct NewMacroBlock {
     pub facilitator: pbc::PublicKey,
     pub validators: Vec<(pbc::PublicKey, i64)>,
     #[serde(skip)]
+    pub transactions: HashMap<Hash, Transaction>,
+    pub statuses: HashMap<Hash, TransactionStatus>,
+    #[serde(skip)]
     pub inputs: Vec<Output>,
     #[serde(skip)]
     pub outputs: Vec<Output>,
@@ -173,6 +176,6 @@ pub enum TransactionStatus {
     /// Transaction was rejected, because other conflicted
     Conflicted {
         epoch: u64,
-        conflict_tx: Option<Hash>,
+        offset: Option<u32>,
     },
 }

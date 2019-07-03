@@ -41,7 +41,7 @@ use byteorder::{BigEndian, ByteOrder};
 use log::*;
 use rayon::prelude::*;
 use rocksdb;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use stegos_crypto::bulletproofs::fee_a;
 use stegos_crypto::hash::*;
@@ -1119,7 +1119,7 @@ impl Blockchain {
         &mut self,
         block: MicroBlock,
         timestamp: Timestamp,
-    ) -> Result<(Vec<Output>, Vec<Output>, Vec<Transaction>), BlockchainError> {
+    ) -> Result<(Vec<Output>, Vec<Output>, HashMap<Hash, Transaction>), BlockchainError> {
         //
         // Validate the micro block.
         //
@@ -1307,7 +1307,7 @@ impl Blockchain {
         block: MicroBlock,
         timestamp: Timestamp,
         force_check: bool,
-    ) -> Result<(Vec<Output>, Vec<Output>, Vec<Transaction>), BlockchainError> {
+    ) -> Result<(Vec<Output>, Vec<Output>, HashMap<Hash, Transaction>), BlockchainError> {
         assert_eq!(self.epoch, block.header.epoch);
         assert_eq!(self.offset, block.header.offset);
         assert!(!self.is_epoch_full());
@@ -1324,9 +1324,12 @@ impl Blockchain {
         let mut outputs: Vec<Output> = Vec::new();
         let mut gamma = Fr::zero();
         let mut block_reward: i64 = 0;
+        let mut txs = HashMap::new();
         // Regular transactions.
-        for (tx_id, tx) in block.transactions.iter().enumerate() {
+        for (tx_id, tx) in block.transactions.into_iter().enumerate() {
             assert!(tx_id < std::u32::MAX as usize);
+
+            let tx_hash = Hash::digest(&tx);
             for input_hash in tx.txins() {
                 let input = self.output_by_hash(input_hash)?.expect("Missing output");
                 inputs.push(input);
@@ -1343,7 +1346,7 @@ impl Blockchain {
                 outputs.push(output.clone());
                 output_keys.push(output_key);
             }
-            match tx {
+            match &tx {
                 Transaction::CoinbaseTransaction(tx) => {
                     block_reward += tx.block_reward;
                     gamma += tx.gamma;
@@ -1375,6 +1378,8 @@ impl Blockchain {
                 }
                 Transaction::ServiceAwardTransaction(_tx) => unreachable!(),
             }
+
+            assert!(txs.insert(tx_hash, tx).is_none());
         }
 
         //
@@ -1432,7 +1437,7 @@ impl Blockchain {
             outputs.len()
         );
 
-        Ok((inputs, outputs, block.transactions))
+        Ok((inputs, outputs, txs))
     }
 
     pub fn pop_micro_block(

@@ -86,6 +86,7 @@ mod protos;
 use crate::valueshuffle::message::DirectMessage;
 use failure::Error;
 use failure::{bail, format_err};
+use futures::sync::mpsc::UnboundedSender;
 use futures::Async;
 use futures::Future;
 use futures::Poll;
@@ -187,6 +188,8 @@ pub struct ValueShuffle {
     participants: Vec<ParticipantID>,
     // My Node
     node: Node,
+    // Sent transaction.
+    wallet_tx_info: UnboundedSender<PaymentTransaction>,
     /// Network API.
     network: Network,
     /// Incoming events.
@@ -338,6 +341,7 @@ impl ValueShuffle {
         participant_pkey: pbc::PublicKey,
         network: Network,
         node: Node,
+        wallet_tx_info: UnboundedSender<PaymentTransaction>,
     ) -> ValueShuffle {
         //
         // State.
@@ -390,6 +394,7 @@ impl ValueShuffle {
         let events = select_all(events);
 
         ValueShuffle {
+            wallet_tx_info,
             skey: skey.clone(),
             facilitator_pkey,
             future_facilitator,
@@ -1547,6 +1552,7 @@ impl ValueShuffle {
                 self.send_super_transaction();
                 debug!("Sent SuperTransaction to BlockChain");
             }
+            self.wallet_tx_info.unbounded_send(self.trans.clone())?;
             self.reset_state(); // indicate nothing more to follow, restartable
             self.msg_queue.clear();
             self.session_round = 0; // for possible restarts

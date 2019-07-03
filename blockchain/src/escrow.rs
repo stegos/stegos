@@ -117,7 +117,7 @@ impl Escrow {
             );
         }
 
-        let (active_balance, expired_balance) = self.get(&validator_pkey, epoch);
+        let (active_balance, expired_balance) = self.validator_balance(&validator_pkey, epoch);
         debug!(
             "Staked: utxo={}, validator={}, amount={}, active_until_epoch={}, active_balance={}, expired_balance={}",
             output_hash, &validator_pkey, amount, active_until_epoch, active_balance, expired_balance
@@ -140,7 +140,7 @@ impl Escrow {
         };
         let val = self.escrow.remove(lsn, &key).expect("stake exists");
 
-        let (active_balance, expired_balance) = self.get(&validator_pkey, epoch);
+        let (active_balance, expired_balance) = self.validator_balance(&validator_pkey, epoch);
         debug!(
             "Unstaked: utxo={}, validator={}, amount={}, active_balance={}, expired_balance={}",
             output_hash, validator_pkey, val.amount, active_balance, expired_balance
@@ -148,79 +148,57 @@ impl Escrow {
     }
 
     ///
+    /// Iterate over stakes of specified validator.
+    ///
+    pub fn iter_validator_stakes(
+        &self,
+        validator_pkey: &pbc::PublicKey,
+    ) -> impl Iterator<Item = (&Hash, i64, &scc::PublicKey, u64)> {
+        let (hash_min, hash_max) = Hash::bounds();
+        let key_min = EscrowKey {
+            validator_pkey: validator_pkey.clone(),
+            output_hash: hash_min,
+        };
+        let key_max = EscrowKey {
+            validator_pkey: validator_pkey.clone(),
+            output_hash: hash_max,
+        };
+
+        self.escrow.range(&key_min..=&key_max).map(|(key, value)| {
+            (
+                &key.output_hash,
+                value.amount,
+                &value.wallet_pkey,
+                value.active_until_epoch,
+            )
+        })
+    }
+
+    ///
     /// Get staked value for validator.
     ///
     /// Returns (active_balance, expired_balance) stake.
     ///
-    pub fn get(&self, validator_pkey: &pbc::PublicKey, epoch: u64) -> (i64, i64) {
-        let (hash_min, hash_max) = Hash::bounds();
-        let key_min = EscrowKey {
-            validator_pkey: validator_pkey.clone(),
-            output_hash: hash_min,
-        };
-        let key_max = EscrowKey {
-            validator_pkey: validator_pkey.clone(),
-            output_hash: hash_max,
-        };
-
-        let mut active_balance: i64 = 0;
-        let mut expired_balance: i64 = 0;
-        for (key, value) in self.escrow.range(&key_min..=&key_max) {
-            assert_eq!(&key.validator_pkey, validator_pkey);
-            if value.active_until_epoch >= epoch {
-                active_balance += value.amount;
-            } else {
-                expired_balance += value.amount;
-            }
-        }
-
-        (active_balance, expired_balance)
-    }
-
-    ///
-    /// Returns list of utxos for specific validator.
-    ///
-    pub fn staker_outputs(&self, validator_pkey: &pbc::PublicKey, epoch: u64) -> (Vec<Hash>, i64) {
-        let (hash_min, hash_max) = Hash::bounds();
-        let key_min = EscrowKey {
-            validator_pkey: validator_pkey.clone(),
-            output_hash: hash_min,
-        };
-        let key_max = EscrowKey {
-            validator_pkey: validator_pkey.clone(),
-            output_hash: hash_max,
-        };
-
-        let mut result = Vec::new();
-        let mut stake = 0;
-        for (key, value) in self.escrow.range(&key_min..=&key_max) {
-            assert_eq!(&key.validator_pkey, validator_pkey);
-            if value.active_until_epoch >= epoch {
-                stake += value.amount;
-                result.push(key.output_hash)
-            }
-        }
-
-        (result, stake)
+    pub fn validator_balance(&self, validator_pkey: &pbc::PublicKey, epoch: u64) -> (i64, i64) {
+        self.iter_validator_stakes(validator_pkey).fold(
+            (0i64, 0i64),
+            |(active_balance, expired_balance), (_, amount, _, active_until_epoch)| {
+                if active_until_epoch >= epoch {
+                    (active_balance + amount, expired_balance)
+                } else {
+                    (active_balance, expired_balance + amount)
+                }
+            },
+        )
     }
 
     ///
     /// Return a wallet key by network key.
     ///
     pub fn wallet_by_network_key(&self, validator_pkey: &pbc::PublicKey) -> Option<scc::PublicKey> {
-        let (hash_min, hash_max) = Hash::bounds();
-        let key_min = EscrowKey {
-            validator_pkey: validator_pkey.clone(),
-            output_hash: hash_min,
-        };
-        let key_max = EscrowKey {
-            validator_pkey: validator_pkey.clone(),
-            output_hash: hash_max,
-        };
-        self.escrow
-            .range(&key_min..=&key_max)
+        self.iter_validator_stakes(&validator_pkey)
             .next()
-            .map(|(_k, v)| v.wallet_pkey)
+            .map(|(_hash, _amount, wallet_pkey, _active_until_epoch)| wallet_pkey.clone())
     }
 
     ///
@@ -300,7 +278,7 @@ impl Escrow {
         }
 
         for (validator_pkey, balance) in &staking_balance {
-            let (active_balance, expired_balance) = self.get(validator_pkey, epoch);
+            let (active_balance, expired_balance) = self.validator_balance(validator_pkey, epoch);
             let expected_balance = active_balance + expired_balance + balance;
             if expected_balance < active_balance {
                 return Err(BlockchainError::StakeIsLocked(

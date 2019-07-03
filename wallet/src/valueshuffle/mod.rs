@@ -483,7 +483,7 @@ impl ValueShuffle {
     /// Called when facilitator has been changed.
     fn on_facilitator_changed(&mut self, facilitator: pbc::PublicKey) -> Result<(), Error> {
         match self.state {
-            State::Offline | State::PoolFinished | State::PoolRestart => {}
+            State::Offline | State::PoolFinished | State::PoolRestart | State::PoolWait => {}
             // in progress some session, keep new facilitator in future facilitator.
             _ => {
                 debug!(
@@ -496,8 +496,9 @@ impl ValueShuffle {
         }
         debug!("Changed facilitator: facilitator={}", facilitator);
         self.facilitator_pkey = facilitator;
+        self.future_facilitator = None;
         // Last session was canceled, rejoining to new facilitator.
-        if self.state == State::PoolRestart {
+        if self.state == State::PoolRestart || self.state == State::PoolWait {
             debug!("Found new facilitator, rejoining to new pool.");
             self.send_pool_join()?;
         }

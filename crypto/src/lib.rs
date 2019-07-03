@@ -31,6 +31,7 @@ pub mod pbc;
 pub mod protos;
 pub mod scc;
 pub mod utils;
+pub mod vdfmon;
 
 use base58check::{FromBase58CheckError, FromBase58Error};
 use failure::Fail;

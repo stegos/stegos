@@ -33,6 +33,7 @@ ff = "0.4"
 curve25519-dalek = "1"
 merlin = "1"
 ristretto_bulletproofs = { package = "bulletproofs", version = "1" }
+vdf = "0.1"
 
 [dev-dependencies]
 serde_json = "1.0"
@@ -54,3 +55,4 @@ harness = false
 [[bench]]
 name = "pbc"
 harness = false
+

@@ -29,7 +29,7 @@ mod error;
 mod metrics;
 mod protos;
 mod storage;
-#[doc(hidden)]
+#[cfg(test)]
 pub mod test;
 mod transaction;
 mod valueshuffle;

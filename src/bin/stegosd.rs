@@ -272,7 +272,7 @@ fn run() -> Result<(), Error> {
     } else {
         PathBuf::new()
     };
-    let (wallet_skey, wallet_pkey) = load_wallet_keys(
+    let (_wallet_skey, wallet_pkey) = load_wallet_keys(
         &wallet_skey_file,
         &wallet_pkey_file,
         &password_file,
@@ -325,14 +325,13 @@ fn run() -> Result<(), Error> {
     let (wallet_service, wallet) = WalletService::new(
         &wallet_database_dir,
         &wallet_skey_file,
-        wallet_skey,
-        wallet_pkey,
+        &wallet_pkey_file,
         network_skey,
         network_pkey,
         network.clone(),
         node.clone(),
         cfg.chain.stake_epochs,
-    );
+    )?;
     rt.spawn(wallet_service);
 
     // Start WebSocket API server.

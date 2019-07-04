@@ -24,13 +24,15 @@
 pub use stegos_node::test::*;
 mod wallet_transaction;
 use super::Wallet;
-use crate::{WalletResponse, WalletService};
+use crate::{
+    UnsealedWalletService, WalletEvent, WalletNotification, WalletResponse, WalletService,
+};
 use stegos_blockchain::{Blockchain, ChainConfig};
 use stegos_crypto::scc;
 use stegos_network::Network;
 use tempdir::TempDir;
 
-use futures::sync::oneshot;
+use futures::sync::{mpsc, oneshot};
 use futures::{Async, Future};
 use log::info;
 use stegos_node::Node;
@@ -52,7 +54,7 @@ struct WalletSandbox {
     #[allow(dead_code)]
     network: Loopback,
     wallet: Wallet,
-    wallet_service: WalletService,
+    wallet_service: UnsealedWalletService,
 }
 
 impl WalletSandbox {
@@ -73,16 +75,23 @@ impl WalletSandbox {
         let mut database_dir = temp_dir.path().to_path_buf();
 
         database_dir.push("database_path");
-        let mut wallet_skey_file = temp_dir.path().to_path_buf();
-        wallet_skey_file.push("wallet.skey");
+        let wallet_skey_file = temp_dir.path().join("wallet.skey");
+        let wallet_pkey_file = temp_dir.path().join("wallet.pkey");
         stegos_keychain::keyfile::write_wallet_skey(&wallet_skey_file, &wallet_skey, PASSWORD)
             .unwrap();
+        stegos_keychain::keyfile::write_wallet_pkey(&wallet_pkey_file, &wallet_pkey).unwrap();
 
-        info!("Wrote wallet key pair: skey_file={:?}", wallet_skey_file);
+        info!(
+            "Wrote wallet key pair: skey_file={:?}, pkey_file={:?}",
+            wallet_skey_file, wallet_pkey_file
+        );
 
-        let (wallet_service, wallet) = WalletService::new(
-            &database_dir,
-            &wallet_skey_file,
+        let (outbox, events) = mpsc::unbounded::<WalletEvent>();
+        let subscribers: Vec<mpsc::UnboundedSender<WalletNotification>> = Vec::new();
+        let wallet_service = UnsealedWalletService::new(
+            database_dir,
+            wallet_skey_file,
+            wallet_pkey_file,
             wallet_skey,
             wallet_pkey,
             network_skey,
@@ -90,7 +99,10 @@ impl WalletSandbox {
             network,
             node,
             stake_epochs,
+            subscribers,
+            events,
         );
+        let wallet = Wallet { outbox };
 
         WalletSandbox {
             wallet,

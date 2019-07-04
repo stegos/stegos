@@ -91,6 +91,10 @@ pub enum WalletNotification {
 #[serde(tag = "request")]
 #[serde(rename_all = "snake_case")]
 pub enum WalletRequest {
+    Seal,
+    Unseal {
+        password: String,
+    },
     Payment {
         recipient: PublicKey,
         amount: i64,
@@ -157,6 +161,8 @@ pub struct PaymentTransactionInfo {
 #[serde(tag = "response")]
 #[serde(rename_all = "snake_case")]
 pub enum WalletResponse {
+    Sealed,
+    Unsealed,
     TransactionCreated(PaymentTransactionInfo),
     ValueShuffleStarted {
         session_id: Hash,

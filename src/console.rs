@@ -142,6 +142,8 @@ impl ConsoleService {
 
     fn help() {
         eprintln!("Usage:");
+        eprintln!("lock - lock the wallet");
+        eprintln!("ulnock - unlock the wallet");
         eprintln!(
             "pay ADDRESS AMOUNT [COMMENT] [/public] [/snowball] [/lock duration] [/fee fee] - send money"
         );
@@ -227,7 +229,10 @@ impl ConsoleService {
 
     fn send_wallet_request(&mut self, request: WalletRequest) -> Result<(), Error> {
         match &request {
-            WalletRequest::ChangePassword { .. } => {} // Don't print this request.
+            // Don't print these requests.
+            WalletRequest::ChangePassword { .. } => {}
+            WalletRequest::Seal { .. } => {}
+            WalletRequest::Unseal { .. } => {}
             _ => {
                 Self::print(&request);
             }
@@ -253,7 +258,12 @@ impl ConsoleService {
 
     /// Called when line is typed on standard input.
     fn on_input(&mut self, msg: &str) -> Result<bool, Error> {
-        if msg.starts_with("net publish ") {
+        if msg == "lock" || msg == "seal" {
+            self.send_wallet_request(WalletRequest::Seal {})?;
+        } else if msg == "unlock" || msg == "unseal" {
+            let password = input::read_password_from_stdin(false)?;
+            self.send_wallet_request(WalletRequest::Unseal { password })?;
+        } else if msg.starts_with("net publish ") {
             let caps = match PUBLISH_COMMAND_RE.captures(&msg[12..]) {
                 Some(c) => c,
                 None => {

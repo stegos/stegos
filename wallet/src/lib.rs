@@ -42,6 +42,7 @@ use crate::valueshuffle::ValueShuffle;
 use failure::Error;
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::sync::oneshot;
+use futures::task;
 use futures::Async;
 use futures::Future;
 use futures::Poll;
@@ -55,18 +56,24 @@ use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::scc;
 use stegos_keychain as keychain;
+use stegos_keychain::keyfile::load_wallet_pkey;
+use stegos_keychain::KeyError;
 use stegos_network::Network;
 use stegos_node::{Node, NodeNotification, NodeRequest, NodeResponse};
 use storage::*;
 
 const STAKE_FEE: i64 = 0;
 
-pub struct WalletService {
+pub struct UnsealedWalletService {
     //
     // Config
     //
+    /// Path to RocksDB directory.
+    database_dir: PathBuf,
     /// Path to wallet secret key.
     wallet_skey_file: PathBuf,
+    /// Path to wallet public key.
+    wallet_pkey_file: PathBuf,
     /// Wallet Secret Key.
     wallet_skey: scc::SecretKey,
     /// Wallet Public Key.
@@ -95,10 +102,9 @@ pub struct WalletService {
     /// Persistent part of the state.
     wallet_log: WalletLog,
 
-    //
-    // Node api (shared)
-    //
-    /// Node API.
+    /// Network API (shared).
+    network: Network,
+    /// Node API (shared).
     node: Node,
 
     //
@@ -133,11 +139,12 @@ pub struct WalletService {
     node_notifications: UnboundedReceiver<NodeNotification>,
 }
 
-impl WalletService {
+impl UnsealedWalletService {
     /// Create a new wallet.
-    pub fn new(
-        database_dir: &Path,
-        wallet_skey_file: &Path,
+    fn new(
+        database_dir: PathBuf,
+        wallet_skey_file: PathBuf,
+        wallet_pkey_file: PathBuf,
         wallet_skey: scc::SecretKey,
         wallet_pkey: scc::PublicKey,
         network_skey: pbc::SecretKey,
@@ -145,7 +152,9 @@ impl WalletService {
         network: Network,
         node: Node,
         stake_epochs: u64,
-    ) -> (Self, Wallet) {
+        subscribers: Vec<UnboundedSender<WalletNotification>>,
+        events: UnboundedReceiver<WalletEvent>,
+    ) -> Self {
         info!("My wallet key: {}", String::from(&wallet_pkey));
         debug!("My network key: {}", network_pkey.to_hex());
 
@@ -170,7 +179,7 @@ impl WalletService {
 
         let last_macro_block_timestamp = Timestamp::UNIX_EPOCH;
 
-        let wallet_log = WalletLog::open(database_dir);
+        let wallet_log = WalletLog::open(&database_dir);
 
         //
         // Recovery.
@@ -182,23 +191,15 @@ impl WalletService {
         let recovery_rx = Some(node.request(recovery_request));
 
         //
-        // Subscriptions.
-        //
-        let subscribers: Vec<UnboundedSender<WalletNotification>> = Vec::new();
-
-        //
-        // API requests.
-        //
-        let (outbox, events) = unbounded::<WalletEvent>();
-
-        //
         // Notifications from node.
         //
 
         let node_notifications = node.subscribe();
 
-        let service = WalletService {
-            wallet_skey_file: wallet_skey_file.to_path_buf(),
+        UnsealedWalletService {
+            database_dir,
+            wallet_skey_file,
+            wallet_pkey_file,
             wallet_skey,
             wallet_pkey,
             network_skey,
@@ -211,6 +212,7 @@ impl WalletService {
             vs,
             stake_epochs,
             last_macro_block_timestamp,
+            network,
             node,
             subscribers,
             recovery_rx,
@@ -218,15 +220,7 @@ impl WalletService {
             node_notifications,
             transactions_interest,
             unprocessed_transactions,
-        };
-
-        metrics::WALLET_BALANCES
-            .with_label_values(&[&String::from(&service.wallet_pkey)])
-            .set(service.balance());
-
-        let api = Wallet { outbox };
-
-        (service, api)
+        }
     }
 
     /// Send money.
@@ -766,7 +760,7 @@ impl From<Vec<LogEntryInfo>> for WalletResponse {
 }
 
 // Event loop.
-impl Future for WalletService {
+impl Future for UnsealedWalletService {
     type Item = ();
     type Error = ();
 
@@ -805,6 +799,14 @@ impl Future for WalletService {
                 Async::Ready(Some(event)) => match event {
                     WalletEvent::Request { request, tx } => {
                         let response = match request {
+                            WalletRequest::Unseal { password: _ } => WalletResponse::Error {
+                                error: "Already unsealed".to_string(),
+                            },
+                            WalletRequest::Seal {} => {
+                                tx.send(WalletResponse::Sealed).ok();
+                                // Finish this future.
+                                return Ok(Async::Ready(()));
+                            }
                             WalletRequest::Payment {
                                 recipient,
                                 amount,
@@ -954,5 +956,224 @@ impl Future for WalletService {
         }
 
         Ok(Async::NotReady)
+    }
+}
+
+pub struct SealedWalletService {
+    /// Path to database dir.
+    database_dir: PathBuf,
+    /// Path to wallet secret key.
+    wallet_skey_file: PathBuf,
+    /// Path to wallet public key.
+    wallet_pkey_file: PathBuf,
+    /// Wallet Public Key.
+    wallet_pkey: scc::PublicKey,
+    /// Network Secret Key.
+    network_skey: pbc::SecretKey,
+    /// Network Public Key.
+    network_pkey: pbc::PublicKey,
+    /// Lifetime of stake.
+    stake_epochs: u64,
+
+    /// Network API (shared).
+    network: Network,
+    /// Node API (shared).
+    node: Node,
+
+    //
+    // Api subscribers
+    //
+    subscribers: Vec<UnboundedSender<WalletNotification>>,
+    /// Incoming events.
+    events: UnboundedReceiver<WalletEvent>,
+}
+
+impl SealedWalletService {
+    fn new(
+        database_dir: PathBuf,
+        wallet_skey_file: PathBuf,
+        wallet_pkey_file: PathBuf,
+        wallet_pkey: scc::PublicKey,
+        network_skey: pbc::SecretKey,
+        network_pkey: pbc::PublicKey,
+        network: Network,
+        node: Node,
+        stake_epochs: u64,
+        subscribers: Vec<UnboundedSender<WalletNotification>>,
+        events: UnboundedReceiver<WalletEvent>,
+    ) -> Self {
+        SealedWalletService {
+            database_dir,
+            wallet_skey_file,
+            wallet_pkey_file,
+            wallet_pkey,
+            network_skey,
+            network_pkey,
+            stake_epochs,
+            node,
+            network,
+            subscribers,
+            events,
+        }
+    }
+
+    fn load_secret_key(&self, password: &str) -> Result<scc::SecretKey, KeyError> {
+        let wallet_skey = keychain::keyfile::load_wallet_skey(&self.wallet_skey_file, password)?;
+
+        if let Err(_e) = scc::check_keying(&wallet_skey, &self.wallet_pkey) {
+            return Err(KeyError::InvalidKeying(
+                self.wallet_skey_file.to_string_lossy().to_string(),
+                self.wallet_pkey_file.to_string_lossy().to_string(),
+            ));
+        }
+        Ok(wallet_skey)
+    }
+}
+
+// Event loop.
+impl Future for SealedWalletService {
+    type Item = scc::SecretKey;
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        loop {
+            match self.events.poll().expect("all errors are already handled") {
+                Async::Ready(Some(event)) => match event {
+                    WalletEvent::Request { request, tx } => {
+                        let response = match request {
+                            WalletRequest::Unseal { password } => {
+                                match self.load_secret_key(&password) {
+                                    Ok(wallet_skey) => {
+                                        tx.send(WalletResponse::Unsealed).ok(); // ignore errors.
+                                                                                // Finish this future.
+                                        return Ok(Async::Ready(wallet_skey));
+                                    }
+                                    Err(e) => WalletResponse::Error {
+                                        error: format!("{}", e),
+                                    },
+                                }
+                            }
+                            WalletRequest::KeysInfo {} => WalletResponse::KeysInfo {
+                                wallet_address: self.wallet_pkey,
+                                network_address: self.network_pkey,
+                            },
+                            _ => WalletResponse::Error {
+                                error: "Wallet is sealed".to_string(),
+                            },
+                        };
+                        tx.send(response).ok(); // ignore errors.
+                    }
+                    WalletEvent::Subscribe { tx } => {
+                        self.subscribers.push(tx);
+                    }
+                },
+                Async::Ready(None) => unreachable!(), // never happens
+                Async::NotReady => return Ok(Async::NotReady),
+            }
+        }
+    }
+}
+
+pub enum WalletService {
+    Invalid,
+    Sealed(SealedWalletService),
+    Unsealed(UnsealedWalletService),
+}
+
+// Event loop.
+impl Future for WalletService {
+    type Item = ();
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        match self {
+            WalletService::Invalid => unreachable!(),
+            WalletService::Sealed(sealed) => match sealed.poll().unwrap() {
+                Async::Ready(wallet_skey) => {
+                    let sealed = match std::mem::replace(self, WalletService::Invalid) {
+                        WalletService::Sealed(old) => old,
+                        _ => unreachable!(),
+                    };
+                    info!("Unsealed wallet: pkey={}", &sealed.wallet_pkey);
+                    let unsealed = UnsealedWalletService::new(
+                        sealed.database_dir,
+                        sealed.wallet_skey_file,
+                        sealed.wallet_pkey_file,
+                        wallet_skey,
+                        sealed.wallet_pkey,
+                        sealed.network_skey,
+                        sealed.network_pkey,
+                        sealed.network,
+                        sealed.node,
+                        sealed.stake_epochs,
+                        sealed.subscribers,
+                        sealed.events,
+                    );
+                    std::mem::replace(self, WalletService::Unsealed(unsealed));
+                    task::current().notify();
+                }
+                Async::NotReady => {}
+            },
+            WalletService::Unsealed(unsealed) => match unsealed.poll().unwrap() {
+                Async::Ready(()) => {
+                    let unsealed = match std::mem::replace(self, WalletService::Invalid) {
+                        WalletService::Unsealed(old) => old,
+                        _ => unreachable!(),
+                    };
+                    info!("Sealed wallet: pkey={}", &unsealed.wallet_pkey);
+                    let sealed = SealedWalletService::new(
+                        unsealed.database_dir,
+                        unsealed.wallet_skey_file,
+                        unsealed.wallet_pkey_file,
+                        unsealed.wallet_pkey,
+                        unsealed.network_skey,
+                        unsealed.network_pkey,
+                        unsealed.network,
+                        unsealed.node,
+                        unsealed.stake_epochs,
+                        unsealed.subscribers,
+                        unsealed.events,
+                    );
+                    std::mem::replace(self, WalletService::Sealed(sealed));
+                    task::current().notify();
+                }
+                Async::NotReady => {}
+            },
+        }
+        Ok(Async::NotReady)
+    }
+}
+
+impl WalletService {
+    /// Create a new wallet.
+    pub fn new(
+        database_dir: &Path,
+        wallet_skey_file: &Path,
+        wallet_pkey_file: &Path,
+        network_skey: pbc::SecretKey,
+        network_pkey: pbc::PublicKey,
+        network: Network,
+        node: Node,
+        stake_epochs: u64,
+    ) -> Result<(Self, Wallet), KeyError> {
+        let wallet_pkey = load_wallet_pkey(wallet_pkey_file)?;
+        let subscribers: Vec<UnboundedSender<WalletNotification>> = Vec::new();
+        let (outbox, events) = unbounded::<WalletEvent>();
+        let service = SealedWalletService::new(
+            database_dir.to_path_buf(),
+            wallet_skey_file.to_path_buf(),
+            wallet_pkey_file.to_path_buf(),
+            wallet_pkey,
+            network_skey,
+            network_pkey,
+            network,
+            node,
+            stake_epochs,
+            subscribers,
+            events,
+        );
+        let service = WalletService::Sealed(service);
+        let api = Wallet { outbox };
+        Ok((service, api))
     }
 }

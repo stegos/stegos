@@ -622,7 +622,7 @@ impl NodeService {
 
         // Truncate the blockchain.
         while self.chain.offset() > offset {
-            let (inputs, outputs) = self.chain.pop_micro_block()?;
+            let (inputs, outputs, txs) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
             let msg = OutputsChanged {
                 epoch: self.chain.epoch(),
@@ -630,6 +630,8 @@ impl NodeService {
                 outputs,
                 final_block: false,
             };
+
+            self.mempool.pop_microblock(txs);
             self.on_outputs_changed
                 .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
         }
@@ -836,7 +838,7 @@ impl NodeService {
 
         // Remove all micro blocks.
         while self.chain.offset() > 0 {
-            let (inputs, outputs) = self.chain.pop_micro_block()?;
+            let (inputs, outputs, _txs) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
             let msg = OutputsChanged {
                 epoch: self.chain.epoch(),
@@ -987,7 +989,7 @@ impl NodeService {
     fn handle_pop_block(&mut self) -> Result<(), Error> {
         warn!("Received a request to revert the latest block");
         if self.chain.offset() > 1 {
-            let (inputs, outputs) = self.chain.pop_micro_block()?;
+            let (inputs, outputs, txs) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
             let msg = OutputsChanged {
                 epoch: self.chain.epoch(),
@@ -995,6 +997,7 @@ impl NodeService {
                 outputs,
                 final_block: false,
             };
+            self.mempool.pop_microblock(txs);
             self.on_outputs_changed
                 .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
             self.update_validation_status()

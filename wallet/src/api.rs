@@ -93,8 +93,6 @@ pub enum WalletNotification {
 #[serde(rename_all = "snake_case")]
 pub enum WalletRequest {
     Payment {
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        password: String,
         recipient: PublicKey,
         amount: i64,
         payment_fee: i64,
@@ -103,16 +101,12 @@ pub enum WalletRequest {
         with_certificate: bool,
     },
     PublicPayment {
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        password: String,
         recipient: PublicKey,
         amount: i64,
         payment_fee: i64,
         locked_timestamp: Option<Timestamp>,
     },
     SecurePayment {
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        password: String,
         recipient: PublicKey,
         amount: i64,
         payment_fee: i64,
@@ -123,29 +117,18 @@ pub enum WalletRequest {
         tx_hash: Hash,
     },
     Stake {
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        password: String,
         amount: i64,
         payment_fee: i64,
     },
     Unstake {
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        password: String,
         amount: i64,
         payment_fee: i64,
     },
     UnstakeAll {
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        password: String,
         payment_fee: i64,
     },
-    RestakeAll {
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        password: String,
-    },
+    RestakeAll {},
     CloakAll {
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        password: String,
         payment_fee: i64,
     },
     KeysInfo {},
@@ -156,13 +139,9 @@ pub enum WalletRequest {
         limit: u64,
     },
     ChangePassword {
-        old_password: String,
         new_password: String,
     },
-    GetRecovery {
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        password: String,
-    },
+    GetRecovery {},
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]

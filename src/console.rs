@@ -225,29 +225,12 @@ impl ConsoleService {
         Ok(())
     }
 
-    fn send_wallet_request(&mut self, mut request: WalletRequest) -> Result<(), Error> {
+    fn send_wallet_request(&mut self, request: WalletRequest) -> Result<(), Error> {
         match &request {
             WalletRequest::ChangePassword { .. } => {} // Don't print this request.
             _ => {
                 Self::print(&request);
             }
-        }
-        let password = match &mut request {
-            WalletRequest::Payment { password, .. }
-            | WalletRequest::PublicPayment { password, .. }
-            | WalletRequest::SecurePayment { password, .. }
-            | WalletRequest::Stake { password, .. }
-            | WalletRequest::Unstake { password, .. }
-            | WalletRequest::UnstakeAll { password, .. }
-            | WalletRequest::RestakeAll { password, .. }
-            | WalletRequest::CloakAll { password, .. }
-            | WalletRequest::GetRecovery { password, .. } => Some(password),
-            _ => None,
-        };
-
-        if let Some(password) = password {
-            let password1 = input::read_password_from_stdin(false)?;
-            std::mem::replace(password, password1);
         }
 
         let request = Request {
@@ -270,7 +253,6 @@ impl ConsoleService {
 
     /// Called when line is typed on standard input.
     fn on_input(&mut self, msg: &str) -> Result<bool, Error> {
-        let password = String::new();
         if msg.starts_with("net publish ") {
             let caps = match PUBLISH_COMMAND_RE.captures(&msg[12..]) {
                 Some(c) => c,
@@ -410,7 +392,6 @@ impl ConsoleService {
 
             let request = if snowball {
                 WalletRequest::SecurePayment {
-                    password,
                     recipient,
                     amount,
                     payment_fee,
@@ -419,7 +400,6 @@ impl ConsoleService {
                 }
             } else if public {
                 WalletRequest::PublicPayment {
-                    password,
                     recipient,
                     amount,
                     payment_fee,
@@ -427,7 +407,6 @@ impl ConsoleService {
                 }
             } else {
                 WalletRequest::Payment {
-                    password,
                     recipient,
                     amount,
                     payment_fee,
@@ -461,7 +440,6 @@ impl ConsoleService {
             assert!(comment.len() > 0);
 
             let request = WalletRequest::Payment {
-                password,
                 recipient,
                 amount,
                 payment_fee,
@@ -490,17 +468,13 @@ impl ConsoleService {
             };
             let payment_fee = PAYMENT_FEE;
             let request = WalletRequest::Stake {
-                password,
                 amount,
                 payment_fee,
             };
             self.send_wallet_request(request)?
         } else if msg == "unstake" {
             let payment_fee = PAYMENT_FEE;
-            let request = WalletRequest::UnstakeAll {
-                password,
-                payment_fee,
-            };
+            let request = WalletRequest::UnstakeAll { payment_fee };
             self.send_wallet_request(request)?
         } else if msg.starts_with("unstake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[8..]) {
@@ -522,20 +496,16 @@ impl ConsoleService {
             };
             let payment_fee = PAYMENT_FEE;
             let request = WalletRequest::Unstake {
-                password,
                 amount,
                 payment_fee,
             };
             self.send_wallet_request(request)?
         } else if msg == "restake" {
-            let request = WalletRequest::RestakeAll { password };
+            let request = WalletRequest::RestakeAll {};
             self.send_wallet_request(request)?
         } else if msg == "cloak" {
             let payment_fee = PAYMENT_FEE;
-            let request = WalletRequest::CloakAll {
-                password,
-                payment_fee,
-            };
+            let request = WalletRequest::CloakAll { payment_fee };
             self.send_wallet_request(request)?
         } else if msg == "show version" {
             eprintln!(
@@ -575,15 +545,11 @@ impl ConsoleService {
             };
             self.send_wallet_request(request)?
         } else if msg == "show recovery" {
-            let request = WalletRequest::GetRecovery { password };
+            let request = WalletRequest::GetRecovery {};
             self.send_wallet_request(request)?
         } else if msg == "passwd" {
-            let old_password = input::read_password_from_stdin(false)?;
             let new_password = input::read_password_from_stdin(true)?;
-            let request = WalletRequest::ChangePassword {
-                old_password,
-                new_password,
-            };
+            let request = WalletRequest::ChangePassword { new_password };
             self.send_wallet_request(request)?
         } else if msg == "db pop block" {
             let request = NodeRequest::PopBlock {};

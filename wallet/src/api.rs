@@ -33,7 +33,6 @@ use stegos_blockchain::Timestamp;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::scc::PublicKey;
-use stegos_node::NodeNotification;
 
 #[derive(Eq, PartialEq, Serialize, Deserialize, Clone, Debug)]
 pub enum LogEntryInfo {
@@ -212,11 +211,6 @@ pub(crate) enum WalletEvent {
         request: WalletRequest,
         tx: oneshot::Sender<WalletResponse>,
     },
-
-    //
-    // Internal events.
-    //
-    NodeNotification(NodeNotification),
 }
 
 #[derive(Debug, Clone)]

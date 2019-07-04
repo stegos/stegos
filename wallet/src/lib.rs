@@ -40,13 +40,12 @@ pub use crate::transaction::TransactionType;
 use crate::transaction::*;
 use crate::valueshuffle::ValueShuffle;
 use failure::Error;
-use futures::sync::mpsc::{unbounded, UnboundedSender};
+use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::sync::oneshot;
 use futures::Async;
 use futures::Future;
 use futures::Poll;
 use futures::Stream;
-use futures_stream_select_all_send::select_all;
 use log::*;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -128,8 +127,10 @@ pub struct WalletService {
     //
     /// Recovery status.
     recovery_rx: Option<oneshot::Receiver<NodeResponse>>,
-    /// Incoming events.
-    events: Box<dyn Stream<Item = WalletEvent, Error = ()> + Send>,
+    /// API Requests.
+    events: UnboundedReceiver<WalletEvent>,
+    /// Notifications from node.
+    node_notifications: UnboundedReceiver<NodeNotification>,
 }
 
 impl WalletService {
@@ -186,21 +187,15 @@ impl WalletService {
         let subscribers: Vec<UnboundedSender<WalletNotification>> = Vec::new();
 
         //
-        // Events.
+        // API requests.
         //
-        let mut events: Vec<Box<dyn Stream<Item = WalletEvent, Error = ()> + Send>> = Vec::new();
+        let (outbox, events) = unbounded::<WalletEvent>();
 
-        // Control messages.
-        let (outbox, inbox) = unbounded::<WalletEvent>();
-        events.push(Box::new(inbox));
+        //
+        // Notifications from node.
+        //
 
-        // UTXO changes.
-        let node_outputs = node
-            .subscribe()
-            .map(|outputs| WalletEvent::NodeNotification(outputs));
-        events.push(Box::new(node_outputs));
-
-        let events = select_all(events);
+        let node_notifications = node.subscribe();
 
         let service = WalletService {
             wallet_skey_file: wallet_skey_file.to_path_buf(),
@@ -220,6 +215,7 @@ impl WalletService {
             subscribers,
             recovery_rx,
             events,
+            node_notifications,
             transactions_interest,
             unprocessed_transactions,
         };
@@ -924,36 +920,39 @@ impl Future for WalletService {
                     WalletEvent::Subscribe { tx } => {
                         self.subscribers.push(tx);
                     }
-                    WalletEvent::NodeNotification(notification) => match notification {
-                        NodeNotification::NewMicroBlock(block) => {
-                            assert!(self.recovery_rx.is_none(), "recovered from the disk");
-                            self.on_outputs_changed(
-                                block.epoch,
-                                block.inputs,
-                                block.outputs,
-                                false,
-                            );
-                        }
-                        NodeNotification::NewMacroBlock(block) => {
-                            assert!(self.recovery_rx.is_none(), "recovered from the disk");
-                            self.on_outputs_changed(block.epoch, block.inputs, block.outputs, true);
-                            self.on_epoch_changed(block.epoch, block.last_macro_block_timestamp);
-                        }
-                        NodeNotification::RollbackMicroBlock(block) => {
-                            assert!(self.recovery_rx.is_none(), "recovered from the disk");
-                            self.on_outputs_changed(
-                                block.epoch,
-                                block.inputs,
-                                block.outputs,
-                                false,
-                            );
-                        }
-                        _ => {}
-                    },
                 },
                 Async::Ready(None) => unreachable!(), // never happens
-                Async::NotReady => return Ok(Async::NotReady),
+                Async::NotReady => break,
             }
         }
+
+        loop {
+            match self
+                .node_notifications
+                .poll()
+                .expect("all errors are already handled")
+            {
+                Async::Ready(Some(notification)) => match notification {
+                    NodeNotification::NewMicroBlock(block) => {
+                        assert!(self.recovery_rx.is_none(), "recovered from the disk");
+                        self.on_outputs_changed(block.epoch, block.inputs, block.outputs, false);
+                    }
+                    NodeNotification::NewMacroBlock(block) => {
+                        assert!(self.recovery_rx.is_none(), "recovered from the disk");
+                        self.on_outputs_changed(block.epoch, block.inputs, block.outputs, true);
+                        self.on_epoch_changed(block.epoch, block.last_macro_block_timestamp);
+                    }
+                    NodeNotification::RollbackMicroBlock(block) => {
+                        assert!(self.recovery_rx.is_none(), "recovered from the disk");
+                        self.on_outputs_changed(block.epoch, block.inputs, block.outputs, false);
+                    }
+                    _ => {}
+                },
+                Async::Ready(None) => unreachable!(), // never happens
+                Async::NotReady => break,
+            }
+        }
+
+        Ok(Async::NotReady)
     }
 }

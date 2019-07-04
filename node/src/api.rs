@@ -22,9 +22,11 @@
 // SOFTWARE.
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
-use stegos_blockchain::{ElectionInfo, EscrowInfo, Output, Timestamp, Transaction};
+use stegos_blockchain::{
+    ElectionInfo, EscrowInfo, Output, Timestamp, Transaction, WalletRecoveryState,
+};
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc;
+use stegos_crypto::{pbc, scc};
 
 ///
 /// RPC requests.
@@ -36,6 +38,13 @@ pub enum NodeRequest {
     ElectionInfo {},
     EscrowInfo {},
     PopBlock {},
+    #[serde(skip)]
+    RecoverWallet {
+        /// Wallet Secret Key.
+        wallet_skey: scc::SecretKey,
+        /// Wallet Public Key.
+        wallet_pkey: scc::PublicKey,
+    },
 }
 
 ///
@@ -48,7 +57,11 @@ pub enum NodeResponse {
     ElectionInfo(ElectionInfo),
     EscrowInfo(EscrowInfo),
     BlockPopped,
-    Error { error: String },
+    #[serde(skip)]
+    WalletRecovered(WalletRecoveryState),
+    Error {
+        error: String,
+    },
 }
 
 /// Send when synchronization status has been changed.

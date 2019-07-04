@@ -311,11 +311,6 @@ fn run() -> Result<(), Error> {
         genesis,
         timestamp,
     )?;
-    let wallet_persistent_state = chain
-        .recover_wallets(&[(&wallet_skey, &wallet_pkey)])?
-        .into_iter()
-        .next()
-        .unwrap();
 
     // Initialize node
     let (mut node_service, node) = NodeService::new(
@@ -337,7 +332,6 @@ fn run() -> Result<(), Error> {
         network.clone(),
         node.clone(),
         cfg.chain.stake_epochs,
-        wallet_persistent_state,
     );
     rt.spawn(wallet_service);
 

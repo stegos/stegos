@@ -57,7 +57,7 @@ use stegos_blockchain::*;
 use stegos_consensus::optimistic::{SealedViewChangeProof, ViewChangeCollector, ViewChangeMessage};
 use stegos_consensus::{self as consensus, Consensus, ConsensusMessage};
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc;
+use stegos_crypto::{pbc, scc};
 use stegos_network::Network;
 use stegos_network::UnicastMessage;
 use stegos_serialization::traits::ProtoConvert;
@@ -1043,6 +1043,23 @@ impl NodeService {
         Ok(())
     }
 
+    /// Handler for NodeMessage::RecoverWallet.
+    fn handle_recover_wallet(
+        &mut self,
+        wallet_skey: &scc::SecretKey,
+        wallet_pkey: &scc::PublicKey,
+    ) -> Result<WalletRecoveryState, Error> {
+        debug!("Recovering wallet from blockchain: pkey={}", wallet_pkey);
+        let wallet_persistent_state = self
+            .chain
+            .recover_wallets(&[(wallet_skey, wallet_pkey)])?
+            .into_iter()
+            .next()
+            .unwrap();
+        info!("Recovered wallet from blockchain: pkey={}", wallet_pkey);
+        Ok(wallet_persistent_state)
+    }
+
     /// Send block to network.
     fn send_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
@@ -1642,6 +1659,17 @@ impl Future for NodeService {
                                 }
                                 NodeRequest::PopBlock {} => match self.handle_pop_block() {
                                     Ok(()) => NodeResponse::BlockPopped,
+                                    Err(e) => NodeResponse::Error {
+                                        error: format!("{}", e),
+                                    },
+                                },
+                                NodeRequest::RecoverWallet {
+                                    wallet_skey,
+                                    wallet_pkey,
+                                } => match self.handle_recover_wallet(&wallet_skey, &wallet_pkey) {
+                                    Ok(wallet_persistent_state) => {
+                                        NodeResponse::WalletRecovered(wallet_persistent_state)
+                                    }
                                     Err(e) => NodeResponse::Error {
                                         error: format!("{}", e),
                                     },

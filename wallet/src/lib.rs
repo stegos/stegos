@@ -40,8 +40,7 @@ pub use crate::transaction::TransactionType;
 use crate::transaction::*;
 use crate::valueshuffle::ValueShuffle;
 use failure::Error;
-use futures::sync::mpsc::unbounded;
-use futures::sync::mpsc::UnboundedSender;
+use futures::sync::mpsc::{unbounded, UnboundedSender};
 use futures::sync::oneshot;
 use futures::Async;
 use futures::Future;
@@ -58,8 +57,7 @@ use stegos_crypto::pbc;
 use stegos_crypto::scc;
 use stegos_keychain as keychain;
 use stegos_network::Network;
-use stegos_node::Node;
-use stegos_node::NodeNotification;
+use stegos_node::{Node, NodeNotification, NodeRequest, NodeResponse};
 use storage::*;
 
 const STAKE_FEE: i64 = 0;
@@ -128,6 +126,8 @@ pub struct WalletService {
     //
     // Events source
     //
+    /// Recovery status.
+    recovery_rx: Option<oneshot::Receiver<NodeResponse>>,
     /// Incoming events.
     events: Box<dyn Stream<Item = WalletEvent, Error = ()> + Send>,
 }
@@ -144,7 +144,6 @@ impl WalletService {
         network: Network,
         node: Node,
         stake_epochs: u64,
-        persistent_state: Vec<(Output, u64)>,
     ) -> (Self, Wallet) {
         info!("My wallet key: {}", String::from(&wallet_pkey));
         debug!("My network key: {}", network_pkey.to_hex());
@@ -171,6 +170,16 @@ impl WalletService {
         let last_macro_block_timestamp = Timestamp::UNIX_EPOCH;
 
         let wallet_log = WalletLog::open(database_dir);
+
+        //
+        // Recovery.
+        //
+        let recovery_request = NodeRequest::RecoverWallet {
+            wallet_skey: wallet_skey.clone(),
+            wallet_pkey: wallet_pkey.clone(),
+        };
+        let recovery_rx = Some(node.request(recovery_request));
+
         //
         // Subscriptions.
         //
@@ -193,7 +202,7 @@ impl WalletService {
 
         let events = select_all(events);
 
-        let mut service = WalletService {
+        let service = WalletService {
             wallet_skey_file: wallet_skey_file.to_path_buf(),
             wallet_skey,
             wallet_pkey,
@@ -209,15 +218,11 @@ impl WalletService {
             last_macro_block_timestamp,
             node,
             subscribers,
+            recovery_rx,
             events,
             transactions_interest,
             unprocessed_transactions,
         };
-
-        // Recover state.
-        for (output, epoch) in persistent_state {
-            service.on_output_created(epoch, output, false);
-        }
 
         metrics::WALLET_BALANCES
             .with_label_values(&[&String::from(&service.wallet_pkey)])
@@ -770,6 +775,29 @@ impl Future for WalletService {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        // Recovery information from node.
+        if let Some(mut recovery_rx) = self.recovery_rx.take() {
+            match recovery_rx.poll() {
+                Ok(Async::Ready(response)) => {
+                    match response {
+                        NodeResponse::WalletRecovered(persistent_state) => {
+                            // Recover state.
+                            for (output, epoch) in persistent_state {
+                                self.on_output_created(epoch, output, false);
+                            }
+                        }
+                        NodeResponse::Error { error } => {
+                            // Sic: this case is hard to recover.
+                            panic!("Failed to recover wallet: {:?}", error);
+                        }
+                        _ => unreachable!(),
+                    };
+                }
+                Ok(Async::NotReady) => self.recovery_rx = Some(recovery_rx),
+                Err(_) => panic!("disconnected"),
+            }
+        }
+
         loop {
             if let Async::NotReady = self.vs.poll().expect("all errors are already handled") {
                 break;
@@ -898,6 +926,7 @@ impl Future for WalletService {
                     }
                     WalletEvent::NodeNotification(notification) => match notification {
                         NodeNotification::NewMicroBlock(block) => {
+                            assert!(self.recovery_rx.is_none(), "recovered from the disk");
                             self.on_outputs_changed(
                                 block.epoch,
                                 block.inputs,
@@ -906,10 +935,12 @@ impl Future for WalletService {
                             );
                         }
                         NodeNotification::NewMacroBlock(block) => {
+                            assert!(self.recovery_rx.is_none(), "recovered from the disk");
                             self.on_outputs_changed(block.epoch, block.inputs, block.outputs, true);
                             self.on_epoch_changed(block.epoch, block.last_macro_block_timestamp);
                         }
                         NodeNotification::RollbackMicroBlock(block) => {
+                            assert!(self.recovery_rx.is_none(), "recovered from the disk");
                             self.on_outputs_changed(
                                 block.epoch,
                                 block.inputs,

@@ -80,13 +80,6 @@ impl WalletSandbox {
 
         info!("Wrote wallet key pair: skey_file={:?}", wallet_skey_file);
 
-        let persistent_state = chain
-            .recover_wallets(&[(&wallet_skey, &wallet_pkey)])
-            .unwrap()
-            .into_iter()
-            .next()
-            .unwrap();
-
         let (wallet_service, wallet) = WalletService::new(
             &database_dir,
             &wallet_skey_file,
@@ -97,7 +90,6 @@ impl WalletSandbox {
             network,
             node,
             stake_epochs,
-            persistent_state,
         );
 
         WalletSandbox {

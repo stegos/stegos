@@ -36,9 +36,11 @@ mod microblocks;
 mod requests;
 
 use crate::*;
+use assert_matches::assert_matches;
 use log::Level;
 use std::time::Duration;
 pub use stegos_blockchain::test::*;
+use stegos_consensus::ConsensusMessageBody;
 use stegos_crypto::pbc;
 use stegos_crypto::pbc::{PublicKey, VRF};
 use stegos_network::Network;
@@ -436,6 +438,142 @@ pub trait Api<'p> {
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
         }
         self.poll();
+    }
+
+    fn skip_macro_block(&mut self) {
+        let stake_epochs = self.first().chain().cfg().stake_epochs;
+        let epoch = self.first().node_service.chain.epoch();
+        let round = self.first().node_service.chain.view_change();
+        let last_macro_block_hash = self.first().node_service.chain.last_macro_block_hash();
+        let leader_pk = self.first().node_service.chain.leader();
+        let leader_node = self.node(&leader_pk).unwrap();
+        // Check for a proposal from the leader.
+        let proposal: ConsensusMessage = leader_node
+            .network_service
+            .get_broadcast(crate::CONSENSUS_TOPIC);
+        debug!("Proposal: {:?}", proposal);
+        assert_eq!(proposal.epoch, epoch);
+        assert_eq!(proposal.round, round);
+        assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
+
+        // Send this proposal to other nodes.
+        for node in self.iter_except(&[leader_pk]) {
+            node.network_service
+                .receive_broadcast(crate::CONSENSUS_TOPIC, proposal.clone());
+        }
+        self.poll();
+
+        // Check for pre-votes.
+        let mut prevotes: Vec<ConsensusMessage> = Vec::with_capacity(self.num_nodes());
+        for node in self.iter_mut() {
+            let prevote: ConsensusMessage =
+                node.network_service.get_broadcast(crate::CONSENSUS_TOPIC);
+            assert_eq!(prevote.epoch, epoch);
+            assert_eq!(prevote.round, round);
+            assert_eq!(prevote.block_hash, proposal.block_hash);
+            assert_matches!(prevote.body, ConsensusMessageBody::Prevote);
+            prevotes.push(prevote);
+        }
+
+        // Send these pre-votes to nodes.
+        for i in 0..self.num_nodes() {
+            for (j, node) in self.iter_mut().enumerate() {
+                if i != j {
+                    node.network_service
+                        .receive_broadcast(crate::CONSENSUS_TOPIC, prevotes[i].clone());
+                }
+            }
+        }
+        self.poll();
+
+        // Check for pre-commits.
+        let mut precommits: Vec<ConsensusMessage> = Vec::with_capacity(self.num_nodes());
+        for node in self.iter_mut() {
+            let precommit: ConsensusMessage =
+                node.network_service.get_broadcast(crate::CONSENSUS_TOPIC);
+            assert_eq!(precommit.epoch, epoch);
+            assert_eq!(precommit.round, round);
+            assert_eq!(precommit.block_hash, proposal.block_hash);
+            if let ConsensusMessageBody::Precommit(block_hash_sig) = precommit.body {
+                pbc::check_hash(
+                    &proposal.block_hash,
+                    &block_hash_sig,
+                    &node.node_service.network_pkey,
+                )
+                .unwrap();
+            } else {
+                panic!("Invalid packet");
+            }
+            precommits.push(precommit);
+        }
+
+        // Send these pre-commits to nodes.
+        for i in 0..self.num_nodes() {
+            for (j, node) in self.iter_mut().enumerate() {
+                if i != j {
+                    node.network_service
+                        .receive_broadcast(crate::CONSENSUS_TOPIC, precommits[i].clone());
+                }
+            }
+        }
+        self.poll();
+
+        let restake_epoch = ((1 + epoch) % stake_epochs) == 0;
+        let mut restakes: Vec<Transaction> = Vec::with_capacity(self.num_nodes());
+        // Process re-stakes.
+        if restake_epoch {
+            debug!("Re-stake should happen in this epoch: {}", epoch);
+            let restake: Transaction = self
+                .node(&leader_pk)
+                .unwrap()
+                .network_service
+                .get_broadcast(crate::TX_TOPIC);
+            debug!("Got restake: {:?}", restake);
+            restakes.push(restake);
+        }
+
+        // Receive sealed block.
+        let block: Block = self
+            .node(&leader_pk)
+            .unwrap()
+            .network_service
+            .get_broadcast(crate::SEALED_BLOCK_TOPIC);
+        let macro_block = block.clone().unwrap_macro();
+        let block_hash = Hash::digest(&macro_block);
+        assert_eq!(block_hash, proposal.block_hash);
+        assert_eq!(macro_block.header.epoch, epoch);
+        assert_eq!(macro_block.header.previous, last_macro_block_hash);
+
+        // Send this sealed block to all other nodes expect the leader.
+        for node in self.iter_except(&[leader_pk]) {
+            node.network_service
+                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
+        }
+        self.poll();
+
+        // Check state of all nodes.
+        for node in self.iter() {
+            assert_eq!(node.node_service.chain.epoch(), epoch + 1);
+            assert_eq!(node.node_service.chain.offset(), 0);
+            assert_eq!(node.node_service.chain.last_macro_block_hash(), block_hash);
+            assert_eq!(node.node_service.chain.last_block_hash(), block_hash);
+        }
+
+        // Process re-stakes.
+        if restake_epoch {
+            for node in self.iter_except(&[leader_pk]) {
+                let restake: Transaction = node.network_service.get_broadcast(crate::TX_TOPIC);
+                debug!("Got restake: {:?}", restake);
+                restakes.push(restake);
+            }
+            for node in self.iter_mut() {
+                for restake in restakes.iter() {
+                    node.network_service
+                        .receive_broadcast(crate::TX_TOPIC, restake.clone());
+                }
+            }
+            self.poll();
+        }
     }
 
     fn leader(&mut self) -> pbc::PublicKey {

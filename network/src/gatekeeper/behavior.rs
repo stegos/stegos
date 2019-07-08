@@ -31,6 +31,7 @@ use libp2p_core::{
 use log::*;
 use lru_time_cache::LruCache;
 use rand::{seq::SliceRandom, thread_rng};
+use std::cmp::max;
 use std::error;
 use std::time::{Duration, SystemTime};
 use std::{
@@ -54,8 +55,6 @@ const HASH_CASH_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const HASH_CASH_PROOF_TTL: Duration = Duration::from_secs(365 * 24 * 60 * 60);
 // How long to wait for next event
 const HANDSHAKE_STEP_TIMEOUT: Duration = Duration::from_secs(30);
-// Nuber of concurrent solver threads
-const SOLVER_THREADS: usize = 4;
 
 /// Network behavior to handle initial nodes handshake
 pub struct Gatekeeper<TSubstream> {
@@ -85,6 +84,8 @@ pub struct Gatekeeper<TSubstream> {
     solution_stream: UnboundedReceiver<Solution>,
     /// Solvers - set of currently running solvers
     solvers: HashSet<PeerId>,
+    /// Number of allowed solvers threads (max(num_vpus-2, 1))
+    solver_threads: usize,
     /// Queue of puzzles, waiting to be solved
     puzzles_queue: VecDeque<PeerId>,
     /// Hashcash complexity
@@ -123,7 +124,8 @@ impl<TSubstream> Gatekeeper<TSubstream> {
         }
 
         let (solution_sink, solution_stream) = unbounded::<Solution>();
-
+        let solver_threads = max(num_cpus::get() - 2, 1);
+        debug!(target: "stegos_network::gatekeeper", "number of HashCash solver threads: {}", solver_threads);
         Gatekeeper {
             events,
             connected_peers: HashSet::new(),
@@ -143,6 +145,7 @@ impl<TSubstream> Gatekeeper<TSubstream> {
             solution_sink,
             solution_stream,
             solvers: HashSet::new(),
+            solver_threads,
             puzzles_queue: VecDeque::new(),
             hashcash_nbits: config.hashcash_nbits,
             readiness_threshold: config.readiness_threshold,
@@ -442,7 +445,7 @@ where
             }
         }
 
-        if self.solvers.len() < SOLVER_THREADS && self.puzzles_queue.len() > 0 {
+        if self.solvers.len() < self.solver_threads && self.puzzles_queue.len() > 0 {
             loop {
                 if self.puzzles_queue.is_empty() {
                     break;

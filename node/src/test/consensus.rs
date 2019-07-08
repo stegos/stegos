@@ -30,10 +30,18 @@ use stegos_consensus::{ConsensusInfo, ConsensusMessageBody, ConsensusState};
 use stegos_crypto::pbc;
 use stegos_crypto::pbc::{make_random_keys, SecretKey, Signature};
 
-fn assert_epoch_in_notification(receiver: &mut UnboundedReceiver<OutputsChanged>, epoch: u64) {
+fn assert_epoch_in_notification(receiver: &mut UnboundedReceiver<NodeNotification>, epoch: u64) {
     match receiver.poll() {
         Ok(Async::Ready(Some(msg))) => {
-            assert_eq!(msg.epoch, epoch, "epoch are different");
+            let epoch2 = match msg {
+                NodeNotification::NewMicroBlock(new_micro_block) => new_micro_block.epoch,
+                NodeNotification::NewMacroBlock(new_macro_block) => new_macro_block.epoch,
+                NodeNotification::RollbackMicroBlock(rollback_micro_block) => {
+                    rollback_micro_block.epoch
+                }
+                NodeNotification::SyncChanged(sync_changed) => sync_changed.epoch,
+            };
+            assert_eq!(epoch, epoch2, "epoch are different");
         }
         _ => panic!("No message received in time, or error when receiving message"),
     }
@@ -55,7 +63,7 @@ fn smoke_test() {
 
         // this channel are especially for test bug with restaking.
         // We assert that node send correct epoch in outputschanged notification notification.
-        let mut first_node_channel = s.first().node.subscribe_outputs_changed();
+        let mut first_node_channel = s.first().node.subscribe();
 
         s.poll();
         s.wait(s.config.node.tx_wait_timeout);

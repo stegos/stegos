@@ -35,7 +35,7 @@ pub use crate::config::ApiConfig;
 pub use crate::crypto::ApiToken;
 pub use crate::error::KeyError;
 pub use crate::server::WebSocketServer;
-pub use stegos_node::{EpochChanged, NodeRequest, NodeResponse, SyncChanged};
+pub use stegos_node::{NodeNotification, NodeRequest, NodeResponse};
 pub use stegos_wallet::{WalletNotification, WalletRequest, WalletResponse};
 pub use websocket::WebSocketError;
 
@@ -123,14 +123,6 @@ pub struct Request {
     #[serde(default)]
     #[serde(skip_serializing_if = "is_request_id_default")]
     pub id: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "notification")]
-#[serde(rename_all = "snake_case")]
-pub enum NodeNotification {
-    SyncChanged(SyncChanged),
-    EpochChanged(EpochChanged),
 }
 
 #[derive(Debug, Serialize, Deserialize)]

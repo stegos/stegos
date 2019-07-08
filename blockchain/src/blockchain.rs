@@ -1115,7 +1115,7 @@ impl Blockchain {
         &mut self,
         block: MicroBlock,
         timestamp: Timestamp,
-    ) -> Result<(Vec<Output>, Vec<Output>), BlockchainError> {
+    ) -> Result<(Vec<Output>, Vec<Output>, Vec<Transaction>), BlockchainError> {
         //
         // Validate the micro block.
         //
@@ -1133,9 +1133,7 @@ impl Blockchain {
         // Update in-memory indexes and metadata.
         //
         let force_check = true;
-        let (inputs, outputs) = self.register_micro_block(lsn, block, timestamp, force_check)?;
-
-        Ok((inputs, outputs))
+        self.register_micro_block(lsn, block, timestamp, force_check)
     }
 
     ///
@@ -1305,7 +1303,7 @@ impl Blockchain {
         block: MicroBlock,
         timestamp: Timestamp,
         force_check: bool,
-    ) -> Result<(Vec<Output>, Vec<Output>), BlockchainError> {
+    ) -> Result<(Vec<Output>, Vec<Output>, Vec<Transaction>), BlockchainError> {
         assert_eq!(self.epoch, block.header.epoch);
         assert_eq!(self.offset, block.header.offset);
         assert!(!self.is_epoch_full());
@@ -1323,7 +1321,7 @@ impl Blockchain {
         let mut gamma = Fr::zero();
         let mut block_reward: i64 = 0;
         // Regular transactions.
-        for (tx_id, tx) in block.transactions.into_iter().enumerate() {
+        for (tx_id, tx) in block.transactions.iter().enumerate() {
             assert!(tx_id < std::u32::MAX as usize);
             for input_hash in tx.txins() {
                 let input = self.output_by_hash(input_hash)?.expect("Missing output");
@@ -1430,7 +1428,7 @@ impl Blockchain {
             outputs.len()
         );
 
-        Ok((inputs, outputs))
+        Ok((inputs, outputs, block.transactions))
     }
 
     pub fn pop_micro_block(

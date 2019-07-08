@@ -114,7 +114,7 @@ use stegos_node::txpool::PoolJoin;
 use stegos_node::txpool::PoolNotification;
 use stegos_node::txpool::POOL_ANNOUNCE_TOPIC;
 use stegos_node::txpool::POOL_JOIN_TOPIC;
-use stegos_node::Node;
+use stegos_node::{Node, NodeNotification};
 use stegos_serialization::traits::ProtoConvert;
 use tokio_timer::Interval;
 
@@ -365,7 +365,11 @@ impl ValueShuffle {
 
         // Facilitator elections.
         let facilitator_changed = node
-            .subscribe_epoch_changed()
+            .subscribe()
+            .filter_map(|e| match e {
+                NodeNotification::NewMacroBlock(b) => Some(b),
+                _ => None,
+            })
             .map(|epoch| ValueShuffleEvent::FacilitatorChanged(epoch.facilitator));
         events.push(Box::new(facilitator_changed));
 

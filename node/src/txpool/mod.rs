@@ -3,7 +3,8 @@
 pub mod messages;
 pub use self::messages::*;
 
-use crate::EpochChanged;
+use crate::api::NodeNotification;
+use crate::NewMacroBlock;
 use crate::Node;
 use failure::Error;
 use futures::{Async, Future, Poll, Stream};
@@ -79,7 +80,7 @@ pub(crate) enum PoolEvent {
     //
     // Internal events.
     //
-    EpochChanged(EpochChanged),
+    NewMacroBlock(NewMacroBlock),
 }
 
 pub struct TransactionPoolService {
@@ -110,8 +111,12 @@ impl TransactionPoolService {
 
             // Epoch Changes
             let epoch_changes = node
-                .subscribe_epoch_changed()
-                .map(|m| PoolEvent::EpochChanged(m));
+                .subscribe()
+                .filter_map(|e| match e {
+                    NodeNotification::NewMacroBlock(b) => Some(b),
+                    _ => None,
+                })
+                .map(|m| PoolEvent::NewMacroBlock(m));
             streams.push(Box::new(epoch_changes));
 
             Ok(select_all(streams))
@@ -127,9 +132,12 @@ impl TransactionPoolService {
         }
     }
 
-    fn handle_epoch(&mut self, epoch: EpochChanged) -> Result<(), Error> {
-        debug!("Changed facilitator: facilitator={}", epoch.facilitator);
-        let role = if epoch.facilitator == self.pkey {
+    fn handle_epoch(&mut self, new_macro_block: NewMacroBlock) -> Result<(), Error> {
+        debug!(
+            "Changed facilitator: facilitator={}",
+            new_macro_block.facilitator
+        );
+        let role = if new_macro_block.facilitator == self.pkey {
             info!("I am facilitator.");
             NodeRole::Facilitator(FacilitatorState::new())
         } else {
@@ -143,7 +151,7 @@ impl TransactionPoolService {
         };
 
         self.role = role;
-        self.facilitator_pkey = epoch.facilitator;
+        self.facilitator_pkey = new_macro_block.facilitator;
         Ok(())
     }
 
@@ -265,7 +273,7 @@ impl TransactionPoolService {
                         PoolJoin::from_buffer(&data)
                             .and_then(|pj_rec| self.handle_join_message(pj_rec, from))
                     }
-                    PoolEvent::EpochChanged(epoch) => self.handle_epoch(epoch),
+                    PoolEvent::NewMacroBlock(epoch) => self.handle_epoch(epoch),
                 };
 
                 if let Err(e) = result {

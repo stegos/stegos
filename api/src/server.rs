@@ -24,8 +24,8 @@
 use crate::config::ApiConfig;
 use crate::crypto::ApiToken;
 use crate::{
-    decode, encode, NetworkNotification, NetworkRequest, NetworkResponse, NodeNotification,
-    Request, RequestId, RequestKind, Response, ResponseKind,
+    decode, encode, NetworkNotification, NetworkRequest, NetworkResponse, Request, RequestId,
+    RequestKind, Response, ResponseKind,
 };
 use failure::Error;
 use futures::sync::{mpsc, oneshot};
@@ -34,7 +34,7 @@ use log::*;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use stegos_network::{Network, UnicastMessage};
-use stegos_node::{EpochChanged, Node, NodeResponse, SyncChanged};
+use stegos_node::{Node, NodeNotification, NodeResponse};
 use stegos_wallet::{Wallet, WalletNotification, WalletResponse};
 use tokio::net::TcpListener;
 use tokio::runtime::TaskExecutor;
@@ -81,9 +81,7 @@ struct WebSocketHandler {
     /// Node RPC responses.
     node_responses: Vec<(RequestId, oneshot::Receiver<NodeResponse>)>,
     /// Synchronization Status Changed Notification.
-    node_sync_changed: mpsc::UnboundedReceiver<SyncChanged>,
-    /// Epoch Changed Notification.
-    node_epoch_changed: mpsc::UnboundedReceiver<EpochChanged>,
+    node_notifications: mpsc::UnboundedReceiver<NodeNotification>,
 }
 
 impl WebSocketHandler {
@@ -106,8 +104,7 @@ impl WebSocketHandler {
         let wallet_notifications = wallet.subscribe();
         let wallet_responses = Vec::new();
         let node_responses = Vec::new();
-        let node_sync_changed = node.subscribe_sync_changed();
-        let node_epoch_changed = node.subscribe_epoch_changed();
+        let node_notifications = node.subscribe();
         WebSocketHandler {
             peer,
             api_token,
@@ -122,8 +119,7 @@ impl WebSocketHandler {
             wallet_responses,
             node,
             node_responses,
-            node_sync_changed,
-            node_epoch_changed,
+            node_notifications,
         }
     }
 
@@ -350,27 +346,10 @@ impl Future for WebSocketHandler {
             }
         }
 
-        // Height changes.
+        // Node notifications.
         loop {
-            match self.node_sync_changed.poll().expect("connected") {
+            match self.node_notifications.poll().expect("connected") {
                 Async::Ready(Some(msg)) => {
-                    let msg = NodeNotification::SyncChanged(msg);
-                    let msg = Response {
-                        kind: ResponseKind::NodeNotification(msg),
-                        id: 0,
-                    };
-                    self.send(msg);
-                }
-                Async::Ready(None) => return Ok(Async::Ready(())),
-                Async::NotReady => break, // fall through
-            }
-        }
-
-        // Epoch changes.
-        loop {
-            match self.node_epoch_changed.poll().expect("connected") {
-                Async::Ready(Some(msg)) => {
-                    let msg = NodeNotification::EpochChanged(msg);
                     let msg = Response {
                         kind: ResponseKind::NodeNotification(msg),
                         id: 0,

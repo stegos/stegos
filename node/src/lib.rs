@@ -23,6 +23,7 @@
 
 #![deny(warnings)]
 
+pub mod api;
 mod config;
 mod error;
 mod loader;
@@ -34,6 +35,7 @@ pub mod protos;
 pub mod test;
 pub mod txpool;
 mod validation;
+pub use crate::api::*;
 pub use crate::config::NodeConfig;
 use crate::error::*;
 use crate::loader::ChainLoaderMessage;
@@ -48,8 +50,6 @@ pub use loader::CHAIN_LOADER_TOPIC;
 use log::*;
 use protobuf;
 use protobuf::Message;
-use serde_derive::Deserialize;
-use serde_derive::Serialize;
 use std::collections::HashMap;
 use std::time::Instant;
 use stegos_blockchain::Timestamp;
@@ -95,84 +95,12 @@ impl Node {
     }
 
     /// Subscribe to synchronization status changes.
-    pub fn subscribe_sync_changed(&self) -> UnboundedReceiver<SyncChanged> {
+    pub fn subscribe(&self) -> UnboundedReceiver<NodeNotification> {
         let (tx, rx) = unbounded();
-        let msg = NodeMessage::SubscribeSyncChanged(tx);
+        let msg = NodeMessage::SubscribeNodeNotification(tx);
         self.outbox.unbounded_send(msg).expect("connected");
         rx
     }
-
-    /// Subscribe to epoch changes.
-    pub fn subscribe_epoch_changed(&self) -> UnboundedReceiver<EpochChanged> {
-        let (tx, rx) = unbounded();
-        let msg = NodeMessage::SubscribeEpochChanged(tx);
-        self.outbox.unbounded_send(msg).expect("connected");
-        rx
-    }
-
-    /// Subscribe to UTXO changes.
-    pub fn subscribe_outputs_changed(&self) -> UnboundedReceiver<OutputsChanged> {
-        let (tx, rx) = unbounded();
-        let msg = NodeMessage::SubscribeOutputsChanged(tx);
-        self.outbox.unbounded_send(msg).expect("connected");
-        rx
-    }
-}
-
-///
-/// RPC requests.
-///
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "request")]
-#[serde(rename_all = "snake_case")]
-pub enum NodeRequest {
-    ElectionInfo {},
-    EscrowInfo {},
-    PopBlock {},
-}
-
-///
-/// RPC responses.
-///
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "response")]
-#[serde(rename_all = "snake_case")]
-pub enum NodeResponse {
-    ElectionInfo(ElectionInfo),
-    EscrowInfo(EscrowInfo),
-    BlockPopped,
-    Error { error: String },
-}
-
-/// Send when synchronization status has been changed.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SyncChanged {
-    pub is_synchronized: bool,
-    pub epoch: u64,
-    pub offset: u32,
-    pub view_change: u32,
-    pub last_block_hash: Hash,
-    pub last_macro_block_hash: Hash,
-    pub last_macro_block_timestamp: Timestamp,
-    pub local_timestamp: Timestamp,
-}
-
-/// Send when epoch is changed.3
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct EpochChanged {
-    pub epoch: u64,
-    pub last_macro_block_timestamp: Timestamp,
-    pub facilitator: pbc::PublicKey,
-    pub validators: Vec<(pbc::PublicKey, i64)>,
-}
-
-/// Send when outputs created and/or pruned.
-#[derive(Debug, Clone)]
-pub struct OutputsChanged {
-    pub epoch: u64,
-    pub inputs: Vec<Output>,
-    pub outputs: Vec<Output>,
-    pub final_block: bool,
 }
 
 // ----------------------------------------------------------------
@@ -195,9 +123,7 @@ pub enum NodeMessage {
     //
     // Public API
     //
-    SubscribeSyncChanged(UnboundedSender<SyncChanged>),
-    SubscribeEpochChanged(UnboundedSender<EpochChanged>),
-    SubscribeOutputsChanged(UnboundedSender<OutputsChanged>),
+    SubscribeNodeNotification(UnboundedSender<NodeNotification>),
     Request {
         request: NodeRequest,
         tx: oneshot::Sender<NodeResponse>,
@@ -271,11 +197,7 @@ pub struct NodeService {
     /// Network interface.
     network: Network,
     /// Triggered when epoch is changed.
-    on_sync_changed: Vec<UnboundedSender<SyncChanged>>,
-    /// Triggered when epoch is changed.
-    on_epoch_changed: Vec<UnboundedSender<EpochChanged>>,
-    /// Triggered when outputs created and/or pruned.
-    on_outputs_changed: Vec<UnboundedSender<OutputsChanged>>,
+    on_node_notification: Vec<UnboundedSender<NodeNotification>>,
     /// Aggregated stream of events.
     events: Box<dyn Stream<Item = NodeMessage, Error = ()> + Send>,
 
@@ -304,9 +226,7 @@ impl NodeService {
         };
         let cheating_proofs = HashMap::new();
 
-        let on_sync_changed = Vec::<UnboundedSender<SyncChanged>>::new();
-        let on_epoch_changed = Vec::<UnboundedSender<EpochChanged>>::new();
-        let on_outputs_changed = Vec::<UnboundedSender<OutputsChanged>>::new();
+        let on_node_notification = Vec::new();
 
         let mut streams = Vec::<Box<dyn Stream<Item = NodeMessage, Error = ()> + Send>>::new();
 
@@ -367,11 +287,9 @@ impl NodeService {
             last_block_clock,
             cheating_proofs,
             network: network.clone(),
-            on_sync_changed,
-            on_epoch_changed,
-            on_outputs_changed,
             events,
             txpool_service,
+            on_node_notification,
         };
 
         Ok((service, handler))
@@ -624,16 +542,36 @@ impl NodeService {
         while self.chain.offset() > offset {
             let (inputs, outputs, txs) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
-            let msg = OutputsChanged {
+            self.mempool.pop_microblock(txs.clone());
+
+            let recovered_transaction: HashMap<_, _> =
+                txs.into_iter().map(|tx| (Hash::digest(&tx), tx)).collect();
+
+            let statuses = recovered_transaction
+                .iter()
+                .map(|tx| tx.0)
+                .map(|h| {
+                    (
+                        *h,
+                        TransactionStatus::Rollback {
+                            epoch: self.chain.epoch(),
+                            offset: self.chain.offset(),
+                        },
+                    )
+                })
+                .collect();
+            let msg = RollbackMicroBlock {
                 epoch: self.chain.epoch(),
+                offset: self.chain.offset(),
+                recovered_transaction,
+                statuses,
                 inputs,
                 outputs,
-                final_block: false,
             };
 
-            self.mempool.pop_microblock(txs);
-            self.on_outputs_changed
-                .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
+            let event: NodeNotification = msg.into();
+            self.on_node_notification
+                .retain(move |ch| ch.unbounded_send(event.clone()).is_ok());
         }
         assert_eq!(offset, self.chain.offset());
 
@@ -840,15 +778,18 @@ impl NodeService {
         while self.chain.offset() > 0 {
             let (inputs, outputs, _txs) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
-            let msg = OutputsChanged {
-                epoch: self.chain.epoch(),
+            let msg = RollbackMicroBlock {
+                epoch,
+                offset: self.chain.offset(),
+                recovered_transaction: HashMap::new(),
+                statuses: HashMap::new(),
                 inputs,
                 outputs,
-                final_block: false,
             };
-            // TODO: merge this event with OutputsChanged below.
-            self.on_outputs_changed
-                .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
+
+            let event: NodeNotification = msg.into();
+            self.on_node_notification
+                .retain(move |ch| ch.unbounded_send(event.clone()).is_ok());
         }
         assert_eq!(0, self.chain.offset());
 
@@ -862,20 +803,22 @@ impl NodeService {
             );
         }
 
-        self.on_block_added(epoch, timestamp, inputs, outputs, true);
-
-        let msg = EpochChanged {
-            epoch: self.chain.epoch(),
+        let msg = NewMacroBlock {
+            epoch,
             validators: self.chain.validators().clone(),
             facilitator: self.chain.facilitator().clone(),
             last_macro_block_timestamp: self.chain.last_macro_block_timestamp(),
+            inputs: inputs.clone(),
+            outputs: outputs.clone(),
         };
 
-        self.on_epoch_changed
-            .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
+        self.on_block_added(timestamp, inputs, outputs);
+
+        let event: NodeNotification = msg.into();
+        self.on_node_notification
+            .retain(move |ch| ch.unbounded_send(event.clone()).is_ok());
 
         self.cheating_proofs.clear();
-        self.update_validation_status();
 
         Ok(())
     }
@@ -894,43 +837,50 @@ impl NodeService {
                 return Err(BlockchainError::ExpectedMicroBlock(epoch, offset, hash).into());
             }
         }
+        let (inputs, outputs, transactions) = self.chain.push_micro_block(block, timestamp)?;
 
-        let (inputs, outputs) = self.chain.push_micro_block(block, timestamp)?;
-        self.on_block_added(self.chain.epoch(), timestamp, inputs, outputs, false);
-        self.update_validation_status();
+        let tx_len = transactions.len();
+        let transactions: HashMap<_, _> = transactions
+            .into_iter()
+            .map(|tx| (Hash::digest(&tx), tx))
+            .collect();
 
+        let statuses: HashMap<_, _> = transactions
+            .iter()
+            .map(|tx| tx.0)
+            .map(|h| (*h, TransactionStatus::Prepare { epoch, offset }))
+            .collect();
+
+        assert_eq!(tx_len, transactions.len());
+        assert_eq!(tx_len, statuses.len());
+
+        let msg = NewMicroBlock {
+            epoch,
+            offset,
+            transactions,
+            statuses,
+            inputs: inputs.clone(),
+            outputs: outputs.clone(),
+        };
+
+        self.on_block_added(timestamp, inputs, outputs);
+
+        let event: NodeNotification = msg.into();
+        self.on_node_notification
+            .retain(move |ch| ch.unbounded_send(event.clone()).is_ok());
         Ok(())
     }
 
-    // macroblock should be triggered as a block from past epoch.
-    fn on_block_added(
-        &mut self,
-        epoch: u64,
-        timestamp: Timestamp,
-        inputs: Vec<Output>,
-        outputs: Vec<Output>,
-        final_block: bool,
-    ) {
+    fn on_block_added(&mut self, timestamp: Timestamp, inputs: Vec<Output>, outputs: Vec<Output>) {
+        let input_hashes: Vec<_> = inputs.iter().map(Hash::digest).collect();
+        let output_hashes: Vec<_> = outputs.iter().map(Hash::digest).collect();
         // Remove old transactions from the mempool.
-        let input_hashes: Vec<Hash> = inputs.iter().map(|o| Hash::digest(o)).collect();
-        let output_hashes: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
         self.mempool.prune(&input_hashes, &output_hashes);
         metrics::MEMPOOL_TRANSACTIONS.set(self.mempool.len() as i64);
         metrics::MEMPOOL_INPUTS.set(self.mempool.inputs_len() as i64);
         metrics::MEMPOOL_OUTPUTS.set(self.mempool.inputs_len() as i64);
 
-        // Notify subscribers.
-        let msg = OutputsChanged {
-            epoch,
-            inputs,
-            outputs,
-            final_block,
-        };
-        self.on_outputs_changed
-            .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
-
         self.last_block_clock = clock::now();
-
         let local_timestamp: i64 = Timestamp::now().into();
         let remote_timestamp: i64 = timestamp.into();
         let lag = local_timestamp - remote_timestamp;
@@ -938,6 +888,7 @@ impl NodeService {
         metrics::BLOCK_LOCAL_TIMESTAMP.set(local_timestamp);
         metrics::BLOCK_LAG.set(lag); // can be negative.
         self.on_sync_changed();
+        self.update_validation_status();
     }
 
     fn on_sync_changed(&mut self) {
@@ -953,35 +904,27 @@ impl NodeService {
             last_macro_block_timestamp: self.chain.last_macro_block_timestamp(),
             local_timestamp: Timestamp::now(),
         };
-        self.on_sync_changed
-            .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
-    }
 
-    /// Handler for NodeMessage::SubscribeSyncChanged.
-    fn handle_sync_changed(&mut self, tx: UnboundedSender<SyncChanged>) -> Result<(), Error> {
-        self.on_sync_changed.push(tx);
-        Ok(())
+        let event: NodeNotification = msg.into();
+        self.on_node_notification
+            .retain(move |ch| ch.unbounded_send(event.clone()).is_ok());
     }
-
-    /// Handler for NodeMessage::SubscribeEpoch.
-    fn handle_subscribe_epoch(&mut self, tx: UnboundedSender<EpochChanged>) -> Result<(), Error> {
-        let msg = EpochChanged {
-            epoch: self.chain.epoch(),
-            validators: self.chain.validators().clone(),
-            facilitator: self.chain.facilitator().clone(),
-            last_macro_block_timestamp: self.chain.last_macro_block_timestamp(),
-        };
-        tx.unbounded_send(msg).ok(); // ignore error.
-        self.on_epoch_changed.push(tx);
-        Ok(())
-    }
-
-    /// Handler for NodeMessage::SubscribeOutputs.
-    fn handle_subscribe_outputs(
+    /// Handler for NodeMessage::SubscribeNodeNotification.
+    fn handle_subscribe_node_notification(
         &mut self,
-        tx: UnboundedSender<OutputsChanged>,
+        tx: UnboundedSender<NodeNotification>,
     ) -> Result<(), Error> {
-        self.on_outputs_changed.push(tx);
+        let msg = NewMacroBlock {
+            epoch: self.chain.epoch(),
+            last_macro_block_timestamp: self.chain.last_macro_block_timestamp(),
+            facilitator: self.chain.facilitator().clone(),
+            validators: self.chain.validators().clone(),
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+        };
+        let msg = msg.into();
+        tx.unbounded_send(msg).ok(); // ignore error.
+        self.on_node_notification.push(tx);
         Ok(())
     }
 
@@ -991,15 +934,37 @@ impl NodeService {
         if self.chain.offset() > 1 {
             let (inputs, outputs, txs) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
-            let msg = OutputsChanged {
+
+            self.mempool.pop_microblock(txs.clone());
+
+            let recovered_transaction: HashMap<_, _> =
+                txs.into_iter().map(|tx| (Hash::digest(&tx), tx)).collect();
+
+            let statuses: HashMap<_, _> = recovered_transaction
+                .iter()
+                .map(|tx| tx.0)
+                .map(|h| {
+                    (
+                        *h,
+                        TransactionStatus::Rollback {
+                            epoch: self.chain.epoch(),
+                            offset: self.chain.offset(),
+                        },
+                    )
+                })
+                .collect();
+            let msg = RollbackMicroBlock {
                 epoch: self.chain.epoch(),
+                offset: self.chain.offset(),
+                recovered_transaction,
+                statuses,
                 inputs,
                 outputs,
-                final_block: false,
             };
-            self.mempool.pop_microblock(txs);
-            self.on_outputs_changed
-                .retain(move |ch| ch.unbounded_send(msg.clone()).is_ok());
+
+            let event: NodeNotification = msg.into();
+            self.on_node_notification
+                .retain(move |ch| ch.unbounded_send(event.clone()).is_ok());
             self.update_validation_status()
         } else {
             error!(
@@ -1588,10 +1553,8 @@ impl Future for NodeService {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => {
                     let result: Result<(), Error> = match event {
-                        NodeMessage::SubscribeSyncChanged(tx) => self.handle_sync_changed(tx),
-                        NodeMessage::SubscribeEpochChanged(tx) => self.handle_subscribe_epoch(tx),
-                        NodeMessage::SubscribeOutputsChanged(tx) => {
-                            self.handle_subscribe_outputs(tx)
+                        NodeMessage::SubscribeNodeNotification(tx) => {
+                            self.handle_subscribe_node_notification(tx)
                         }
                         NodeMessage::Request { request, tx } => {
                             let response = match request {

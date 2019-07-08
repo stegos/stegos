@@ -58,9 +58,8 @@ use stegos_crypto::pbc;
 use stegos_crypto::scc;
 use stegos_keychain as keychain;
 use stegos_network::Network;
-use stegos_node::EpochChanged;
 use stegos_node::Node;
-use stegos_node::OutputsChanged;
+use stegos_node::NodeNotification;
 use storage::*;
 
 const STAKE_FEE: i64 = 0;
@@ -185,16 +184,10 @@ impl WalletService {
         let (outbox, inbox) = unbounded::<WalletEvent>();
         events.push(Box::new(inbox));
 
-        // Epoch changes.
-        let node_epochs = node
-            .subscribe_epoch_changed()
-            .map(|epoch| WalletEvent::NodeEpochChanged(epoch));
-        events.push(Box::new(node_epochs));
-
         // UTXO changes.
         let node_outputs = node
-            .subscribe_outputs_changed()
-            .map(|outputs| WalletEvent::NodeOutputsChanged(outputs));
+            .subscribe()
+            .map(|outputs| WalletEvent::NodeNotification(outputs));
         events.push(Box::new(node_outputs));
 
         let events = select_all(events);
@@ -1006,21 +999,29 @@ impl Future for WalletService {
                     WalletEvent::Subscribe { tx } => {
                         self.subscribers.push(tx);
                     }
-                    WalletEvent::NodeOutputsChanged(OutputsChanged {
-                        epoch,
-                        inputs,
-                        outputs,
-                        final_block,
-                    }) => {
-                        self.on_outputs_changed(epoch, inputs, outputs, final_block);
-                    }
-                    WalletEvent::NodeEpochChanged(EpochChanged {
-                        epoch,
-                        last_macro_block_timestamp,
-                        ..
-                    }) => {
-                        self.on_epoch_changed(epoch, last_macro_block_timestamp);
-                    }
+                    WalletEvent::NodeNotification(notification) => match notification {
+                        NodeNotification::NewMicroBlock(block) => {
+                            self.on_outputs_changed(
+                                block.epoch,
+                                block.inputs,
+                                block.outputs,
+                                false,
+                            );
+                        }
+                        NodeNotification::NewMacroBlock(block) => {
+                            self.on_outputs_changed(block.epoch, block.inputs, block.outputs, true);
+                            self.on_epoch_changed(block.epoch, block.last_macro_block_timestamp);
+                        }
+                        NodeNotification::RollbackMicroBlock(block) => {
+                            self.on_outputs_changed(
+                                block.epoch,
+                                block.inputs,
+                                block.outputs,
+                                false,
+                            );
+                        }
+                        _ => {}
+                    },
                 },
                 Async::Ready(None) => unreachable!(), // never happens
                 Async::NotReady => return Ok(Async::NotReady),

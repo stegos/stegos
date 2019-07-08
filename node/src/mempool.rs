@@ -92,6 +92,36 @@ impl Mempool {
         assert!(exists.is_none());
     }
 
+    ///
+    /// Clear transactions that was
+    ///
+    pub fn pop_microblock(&mut self, txs: Vec<Transaction>) {
+        let mut tx_hashes: HashSet<Hash> = HashSet::new();
+
+        // remove txs with inputs that was
+        for tx in &txs {
+            for output in tx.txouts() {
+                let input_hash = Hash::digest(output);
+                if let Some(tx_hash) = self.inputs.remove(&input_hash) {
+                    tx_hashes.insert(tx_hash);
+                }
+            }
+        }
+
+        debug!(
+            "Recovered {} txs, removed {} txs that is conflict to current state.",
+            txs.len(),
+            tx_hashes.len()
+        );
+
+        self.prune_txs(tx_hashes);
+
+        for tx in txs {
+            let tx_hash = Hash::digest(&tx);
+            self.push_tx(tx_hash, tx)
+        }
+    }
+
     /// Prune old transactions contains tx_hash from the mempool.
     pub fn prune(&mut self, input_hashes: &[Hash], output_hashes: &[Hash]) {
         let mut tx_hashes: HashSet<Hash> = HashSet::new();
@@ -110,6 +140,10 @@ impl Mempool {
             }
         }
 
+        self.prune_txs(tx_hashes)
+    }
+
+    fn prune_txs(&mut self, tx_hashes: HashSet<Hash>) {
         // Prune transactions.
         for tx_hash in tx_hashes {
             let tx = self.pool.remove(&tx_hash).expect("transaction exists");
@@ -390,6 +424,43 @@ mod test {
             let output_hash = Hash::digest(&output);
             assert!(!mempool.contains_output(&output_hash));
         }
+    }
+
+    #[test]
+    pub fn rollback_tx() {
+        let (skey, pkey) = scc::make_random_keys();
+        let mut mempool = Mempool::new();
+
+        let (tx1, inputs1, outputs1) =
+            PaymentTransaction::new_test(&skey, &pkey, 100, 2, 200, 1, 0)
+                .expect("transaction valid");
+        let tx_hash1 = Hash::digest(&tx1);
+
+        mempool.push_tx(tx_hash1.clone(), tx1.clone().into());
+
+        assert!(mempool.contains_tx(&tx_hash1));
+        assert_eq!(mempool.len(), 1);
+        //
+        // Pruning.
+        //
+        let input1_hashes: Vec<Hash> = inputs1.iter().map(|o| Hash::digest(o)).collect();
+        let output1_hashes: Vec<Hash> = outputs1.iter().map(|o| Hash::digest(o)).collect();
+        mempool.prune(&input1_hashes, &output1_hashes);
+
+        let (tx2, _inputs2, _outputs2) =
+            PaymentTransaction::new_test(&skey, &pkey, 300, 1, 100, 3, 0)
+                .expect("transaction valid");
+
+        let tx_hash2 = Hash::digest(&tx2);
+        mempool.push_tx(tx_hash2.clone(), tx2.clone().into());
+        assert!(mempool.contains_tx(&tx_hash2));
+        assert!(!mempool.contains_tx(&tx_hash1));
+        assert_eq!(mempool.len(), 1);
+
+        mempool.pop_microblock(vec![tx1.clone().into()]);
+        assert!(mempool.contains_tx(&tx_hash2));
+        assert!(mempool.contains_tx(&tx_hash1));
+        assert_eq!(mempool.len(), 2);
     }
 
     #[test]

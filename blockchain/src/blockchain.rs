@@ -1433,7 +1433,9 @@ impl Blockchain {
         Ok((inputs, outputs))
     }
 
-    pub fn pop_micro_block(&mut self) -> Result<(Vec<Output>, Vec<Output>), BlockchainError> {
+    pub fn pop_micro_block(
+        &mut self,
+    ) -> Result<(Vec<Output>, Vec<Output>, Vec<Transaction>), BlockchainError> {
         assert!(self.epoch > 0, "doesn't work for genesis");
         assert!(self.offset > 0, "attempt to revert the macro block");
         let offset = self.offset - 1;
@@ -1480,6 +1482,7 @@ impl Blockchain {
 
         let mut created: Vec<Output> = Vec::new();
         let mut pruned: Vec<Output> = Vec::new();
+        let mut removed = Vec::new();
         for tx in block.transactions {
             for input_hash in tx.txins() {
                 let input = self.output_by_hash(input_hash)?.expect("exists");
@@ -1497,6 +1500,12 @@ impl Blockchain {
                     self.epoch, &block_hash, &output_hash
                 );
             }
+            match tx {
+                Transaction::PaymentTransaction(_) | Transaction::RestakeTransaction(_) => {
+                    removed.push(tx)
+                }
+                _ => continue,
+            }
         }
 
         info!(
@@ -1508,7 +1517,7 @@ impl Blockchain {
             pruned.len()
         );
 
-        Ok((pruned, created))
+        Ok((pruned, created, removed))
     }
 }
 

@@ -494,49 +494,6 @@ impl WalletService {
         Ok((tx_hash, 0))
     }
 
-    /// Re-stake expiring stakes.
-    fn restake_expiring(&mut self) -> Result<(), Error> {
-        assert_eq!(STAKE_FEE, 0);
-        let epoch = self.epoch;
-        let stakes: Vec<&StakeOutput> = self
-            .stakes
-            .iter()
-            .filter_map(|(hash, val)| {
-                trace!(
-                    "Check expiring stake: utxo={}, amount={}, active_until_epoch={}, epoch={}",
-                    hash,
-                    val.output.amount,
-                    val.active_until_epoch,
-                    epoch
-                );
-                // Re-stake in one epoch before expiration.
-                if val.active_until_epoch <= epoch + 1 {
-                    info!(
-                        "Expiring stake: utxo={}, amount={}, active_until_epoch={}, epoch={}",
-                        hash, val.output.amount, val.active_until_epoch, epoch
-                    );
-                    Some(&val.output)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        if stakes.is_empty() {
-            return Ok(()); // Nothing to re-stake.
-        }
-
-        let tx = create_restaking_transaction(
-            &self.wallet_skey,
-            &self.wallet_pkey,
-            &self.network_pkey,
-            &self.network_skey,
-            stakes.into_iter(),
-        )?;
-        self.node.send_transaction(tx.into())?;
-        Ok(())
-    }
-
     /// Cloak all available public outputs.
     fn cloak_all(
         &mut self,
@@ -800,11 +757,6 @@ impl WalletService {
     fn on_epoch_changed(&mut self, epoch: u64, time: Timestamp) {
         self.epoch = epoch;
         self.last_macro_block_timestamp = time;
-
-        trace!("Updating node epoch = {}", epoch);
-        if let Err(e) = self.restake_expiring() {
-            error!("Failed to re-stake: {}", e);
-        }
     }
 
     fn notify(&mut self, notification: WalletNotification) {

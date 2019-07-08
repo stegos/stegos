@@ -30,156 +30,27 @@ use stegos_consensus::{ConsensusInfo, ConsensusMessageBody, ConsensusState};
 use stegos_crypto::pbc;
 use stegos_crypto::pbc::{make_random_keys, SecretKey, Signature};
 
-fn assert_epoch_in_notification(receiver: &mut UnboundedReceiver<NodeNotification>, epoch: u64) {
-    match receiver.poll() {
-        Ok(Async::Ready(Some(msg))) => {
-            let epoch2 = match msg {
-                NodeNotification::NewMicroBlock(new_micro_block) => new_micro_block.epoch,
-                NodeNotification::NewMacroBlock(new_macro_block) => new_macro_block.epoch,
-                NodeNotification::RollbackMicroBlock(rollback_micro_block) => {
-                    rollback_micro_block.epoch
-                }
-                NodeNotification::SyncChanged(sync_changed) => sync_changed.epoch,
-            };
-            assert_eq!(epoch, epoch2, "epoch are different");
-        }
-        _ => panic!("No message received in time, or error when receiving message"),
-    }
-}
-
 #[test]
 fn smoke_test() {
-    let mut cfg: ChainConfig = Default::default();
-    cfg.micro_blocks_in_epoch = 1;
+    const NUM_RESTAKES: u64 = 3;
+    let cfg = ChainConfig {
+        micro_blocks_in_epoch: 1,
+        stake_epochs: 2,
+        ..Default::default()
+    };
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
         ..Default::default()
     };
-    assert!(config.chain.stake_epochs > 1);
-
     Sandbox::start(config, |mut s| {
-        // Create one micro block.
-
-        // this channel are especially for test bug with restaking.
-        // We assert that node send correct epoch in outputschanged notification notification.
-        let mut first_node_channel = s.first().node.subscribe();
-
-        s.poll();
-        s.wait(s.config.node.tx_wait_timeout);
-        s.skip_micro_block();
-
-        // we starting at 1st epoch, so first microblock should be created at 1st epoch
-        assert_epoch_in_notification(&mut first_node_channel, 1);
-
-        let topic = crate::CONSENSUS_TOPIC;
-        let epoch = s.nodes[0].node_service.chain.epoch();
-        let round = s.nodes[0].node_service.chain.view_change();
-        let last_macro_block_hash = s.nodes[0].node_service.chain.last_macro_block_hash();
-
-        let leader_pk = s.nodes[0].node_service.chain.leader();
-        let leader_node = s.node(&leader_pk).unwrap();
-        // Check for a proposal from the leader.
-        let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
-        debug!("Proposal: {:?}", proposal);
-        assert_eq!(proposal.epoch, epoch);
-        assert_eq!(proposal.round, round);
-        assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
-
-        // Send this proposal to other nodes.
-        for node in s.iter_except(&[leader_pk]) {
-            node.network_service
-                .receive_broadcast(topic, proposal.clone());
-        }
-        s.poll();
-
-        // Check for pre-votes.
-        let mut prevotes: Vec<ConsensusMessage> = Vec::with_capacity(s.num_nodes());
-        for node in s.nodes.iter_mut() {
-            let prevote: ConsensusMessage = node.network_service.get_broadcast(topic);
-            assert_eq!(prevote.epoch, epoch);
-            assert_eq!(prevote.round, round);
-            assert_eq!(prevote.block_hash, proposal.block_hash);
-            assert_matches!(prevote.body, ConsensusMessageBody::Prevote);
-            prevotes.push(prevote);
-        }
-
-        // Send these pre-votes to nodes.
-        for i in 0..s.num_nodes() {
-            for j in 0..s.num_nodes() {
-                if i != j {
-                    s.nodes[i]
-                        .network_service
-                        .receive_broadcast(topic, prevotes[j].clone());
-                }
+        for _epoch in 1..=(1 + NUM_RESTAKES * s.config.chain.stake_epochs + 1) {
+            for _offset in 0..s.config.chain.micro_blocks_in_epoch {
+                s.poll();
+                s.wait(s.config.node.tx_wait_timeout);
+                s.skip_micro_block();
             }
-        }
-        s.poll();
-
-        // Check for pre-commits.
-        let mut precommits: Vec<ConsensusMessage> = Vec::with_capacity(s.num_nodes());
-        for node in s.nodes.iter_mut() {
-            let precommit: ConsensusMessage = node.network_service.get_broadcast(topic);
-            assert_eq!(precommit.epoch, epoch);
-            assert_eq!(precommit.round, round);
-            assert_eq!(precommit.block_hash, proposal.block_hash);
-            if let ConsensusMessageBody::Precommit(block_hash_sig) = precommit.body {
-                pbc::check_hash(
-                    &proposal.block_hash,
-                    &block_hash_sig,
-                    &node.node_service.network_pkey,
-                )
-                .unwrap();
-            } else {
-                panic!("Invalid packet");
-            }
-            precommits.push(precommit);
-        }
-
-        // Send these pre-commits to nodes.
-        for i in 0..s.num_nodes() {
-            for j in 0..s.num_nodes() {
-                if i != j {
-                    s.nodes[i]
-                        .network_service
-                        .receive_broadcast(topic, precommits[j].clone());
-                }
-            }
-        }
-        s.poll();
-
-        // Receive sealed block.
-        let block: Block = s
-            .node(&leader_pk)
-            .unwrap()
-            .network_service
-            .get_broadcast(crate::SEALED_BLOCK_TOPIC);
-        let macro_block = block.clone().unwrap_macro();
-        let block_hash = Hash::digest(&macro_block);
-        assert_eq!(block_hash, proposal.block_hash);
-        assert_eq!(macro_block.header.epoch, epoch);
-        assert_eq!(macro_block.header.previous, last_macro_block_hash);
-
-        // Send this sealed block to all other nodes expect the first not leader.
-        for node in s.iter_except(&[leader_pk]) {
-            node.network_service
-                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
-        }
-        s.poll();
-
-        // notification about rollback microblock
-        assert_epoch_in_notification(&mut first_node_channel, 1);
-
-        // notification about macroblock
-        // we starting at 1st epoch, so first macro block should be created at 1st epoch too.
-        assert_epoch_in_notification(&mut first_node_channel, 1);
-
-        // Check state of (0..NUM_NODES - 1) nodes.
-        for node in s.iter_except(&[leader_pk]) {
-            assert_eq!(node.node_service.chain.epoch(), epoch + 1);
-            assert_eq!(node.node_service.chain.offset(), 0);
-            assert_eq!(node.node_service.chain.last_macro_block_hash(), block_hash);
-            assert_eq!(node.node_service.chain.last_block_hash(), block_hash);
+            s.skip_macro_block();
         }
     });
 }

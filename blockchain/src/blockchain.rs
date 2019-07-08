@@ -599,13 +599,14 @@ impl Blockchain {
     }
 
     ///
-    /// Get staked value for validator.
-    ///
-    /// Returns (active_balance, expired_balance) stake.
+    /// Iterate over stakes of specified validator.
     ///
     #[inline]
-    pub(crate) fn staker_outputs(&self, validator_pkey: &pbc::PublicKey) -> (Vec<Hash>, i64) {
-        self.escrow.staker_outputs(validator_pkey, self.epoch)
+    pub fn iter_validator_stakes(
+        &self,
+        validator_pkey: &pbc::PublicKey,
+    ) -> impl Iterator<Item = (&Hash, i64, &scc::PublicKey, u64)> {
+        self.escrow.iter_validator_stakes(validator_pkey)
     }
 
     ///

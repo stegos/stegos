@@ -299,7 +299,17 @@ impl NodeService {
     pub fn init(&mut self) -> Result<(), Error> {
         self.update_validation_status();
         self.on_sync_changed();
+        self.restake_expiring_stakes()?;
         self.request_history(self.chain.epoch())?;
+        Ok(())
+    }
+
+    /// Send transaction to node and to the network.
+    fn send_transaction(&mut self, tx: Transaction) -> Result<(), Error> {
+        let data = tx.into_buffer()?;
+        self.network.publish(&TX_TOPIC, data.clone())?;
+        info!("Sent transaction to the network: tx={}", Hash::digest(&tx));
+        self.handle_transaction(tx)?;
         Ok(())
     }
 
@@ -365,6 +375,67 @@ impl NodeService {
         metrics::MEMPOOL_TRANSACTIONS.set(self.mempool.len() as i64);
         metrics::MEMPOOL_INPUTS.set(self.mempool.inputs_len() as i64);
         metrics::MEMPOOL_OUTPUTS.set(self.mempool.inputs_len() as i64);
+
+        Ok(())
+    }
+
+    ///
+    /// Re-stake expiring stakes.
+    ///
+    fn restake_expiring_stakes(&mut self) -> Result<(), Error> {
+        assert_eq!(self.cfg.min_stake_fee, 0);
+        let mut inputs: Vec<Output> = Vec::new();
+        let mut outputs: Vec<Output> = Vec::new();
+        for (input_hash, amount, wallet_pkey, active_until_epoch) in
+            self.chain.iter_validator_stakes(&self.network_pkey)
+        {
+            // Re-stake in one epoch before expiration.
+            if active_until_epoch >= self.chain.epoch() + 1 {
+                debug!(
+                    "Skip restaking: utxo={}, active_until_epoch={}, epoch={}",
+                    input_hash,
+                    active_until_epoch,
+                    self.chain.epoch()
+                );
+                continue;
+            }
+
+            let input = self
+                .chain
+                .output_by_hash(input_hash)?
+                .expect("Stake exists");
+
+            trace!("Creating StakeUTXO...");
+            let output =
+                Output::new_stake(wallet_pkey, &self.network_skey, &self.network_pkey, amount)?;
+            let output_hash = Hash::digest(&output);
+
+            info!(
+                "Restake: old_utxo={}, new_utxo={}, amount={}",
+                input_hash, output_hash, amount
+            );
+
+            inputs.push(input);
+            outputs.push(output);
+        }
+        assert_eq!(inputs.len(), outputs.len());
+
+        if inputs.is_empty() {
+            return Ok(()); // Nothing to re-stake.
+        }
+
+        trace!("Signing transaction...");
+        let tx =
+            RestakeTransaction::new(&self.network_skey, &self.network_pkey, &inputs, &outputs)?;
+        let tx_hash = Hash::digest(&tx);
+        info!(
+            "Created a restaking transaction: hash={}, inputs={}, outputs={}",
+            tx_hash,
+            tx.txins.len(),
+            tx.txouts.len()
+        );
+
+        self.send_transaction(tx.into())?;
 
         Ok(())
     }
@@ -819,6 +890,7 @@ impl NodeService {
             .retain(move |ch| ch.unbounded_send(event.clone()).is_ok());
 
         self.cheating_proofs.clear();
+        self.restake_expiring_stakes()?;
 
         Ok(())
     }

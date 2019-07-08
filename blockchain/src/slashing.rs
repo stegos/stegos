@@ -102,7 +102,17 @@ pub fn confiscate_tx(
 ) -> Result<SlashingTransaction, BlockchainError> {
     assert_eq!(proof.block1.header.pkey, proof.block2.header.pkey);
     let ref cheater = proof.block1.header.pkey;
-    let (inputs, stake) = chain.staker_outputs(cheater);
+    let epoch = chain.epoch();
+    let (inputs, stake) = chain.iter_validator_stakes(cheater).fold(
+        (Vec::<Hash>::new(), 0i64),
+        |(mut result, mut stake), (hash, amount, _, active_until_epoch)| {
+            if active_until_epoch >= epoch {
+                stake += amount;
+                result.push(hash.clone());
+            }
+            (result, stake)
+        },
+    );
     let validators: Vec<_> = chain
         .validators()
         .iter()

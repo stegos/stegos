@@ -186,6 +186,7 @@ fn vs_start(
 }
 
 /// 3 nodes send monet to 1 recipient, using vs
+#[ignore]
 #[test]
 fn create_vs_tx() {
     const SEND_TOKENS: i64 = 10;

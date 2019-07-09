@@ -52,6 +52,7 @@ impl Default for NodeConfig {
     fn default() -> Self {
         NodeConfig {
             tx_wait_timeout: Duration::from_secs(5),
+            // Sic: synchronize this value with ChainConfig::vetted_timeout.
             micro_block_timeout: Duration::from_secs(30),
             macro_block_timeout: Duration::from_secs(30),
             max_utxo_in_tx: 500,

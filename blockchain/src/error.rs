@@ -21,8 +21,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::output::OutputError;
+use crate::timestamp::Timestamp;
 use crate::view_changes::ViewChangeProof;
-use crate::OutputError;
 use failure::Fail;
 use rocksdb;
 use std::str::Utf8Error;
@@ -333,6 +334,16 @@ pub enum BlockError {
         _0, _1
     )]
     TooBigActivitymap(usize, usize),
+    #[fail(
+        display = "Found a outdated block proposal: epoch={}, block={}, block_time={} last_block_time={}.",
+        _0, _1, _2, _3
+    )]
+    OutdatedBlock(u64, Hash, Timestamp, Timestamp),
+    #[fail(
+        display = "Timestamp is out of sync: epoch={}, block={}, block_time={}, our_time={}",
+        _0, _1, _2, _3
+    )]
+    OutOfSyncTimestamp(u64, Hash, Timestamp, Timestamp),
 }
 
 #[derive(Debug, Fail)]

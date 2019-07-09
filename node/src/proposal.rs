@@ -21,7 +21,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::config::NodeConfig;
 use crate::error::*;
 use failure::Error;
 use log::*;
@@ -38,9 +37,9 @@ pub fn create_macro_block_proposal(
     account_pkey: &scc::PublicKey,
     network_skey: &pbc::SecretKey,
     network_pkey: &pbc::PublicKey,
+    timestamp: Timestamp,
 ) -> (MacroBlock, MacroBlockProposal) {
     assert!(chain.is_epoch_full());
-    let timestamp = Timestamp::now();
     debug!(
         "Creating a new macro block proposal: epoch={}, view_change={}",
         chain.epoch(),
@@ -75,7 +74,6 @@ pub fn create_macro_block_proposal(
 /// Validate proposed macro block.
 ///
 pub fn validate_proposed_macro_block(
-    cfg: &NodeConfig,
     chain: &Blockchain,
     view_change: u32,
     block_hash: &Hash,
@@ -101,37 +99,15 @@ pub fn validate_proposed_macro_block(
     }
 
     //
-    // Validate timestamp.
-    //
-    let block_timestamp = block_proposal.header.timestamp;
-    let last_block_timestamp = chain.last_macro_block_timestamp();
-    let current_timestamp = Timestamp::now();
-    if block_timestamp <= last_block_timestamp {
-        return Err(NodeBlockError::OutdatedBlock(
-            epoch,
-            block_hash.clone(),
-            block_timestamp,
-            last_block_timestamp,
-        )
-        .into());
-    }
-    if block_timestamp >= current_timestamp {
-        let duration = block_timestamp.duration_since(current_timestamp);
-        if duration > cfg.macro_block_timeout {
-            return Err(NodeBlockError::OutOfSyncTimestamp(
-                epoch,
-                block_hash.clone(),
-                block_timestamp,
-                current_timestamp,
-            )
-            .into());
-        }
-    }
-
-    //
     // Validate base header.
     //
-    chain.validate_macro_block_header(block_hash, &block_proposal.header, false)?;
+    let current_timestamp = Timestamp::now();
+    chain.validate_macro_block_header(
+        block_hash,
+        &block_proposal.header,
+        false,
+        current_timestamp,
+    )?;
 
     // validate award.
     let (activity_map, winner) = chain.awards_from_active_epoch(&block_proposal.header.random);

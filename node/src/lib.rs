@@ -51,7 +51,7 @@ use log::*;
 use protobuf;
 use protobuf::Message;
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use stegos_blockchain::Timestamp;
 use stegos_blockchain::*;
 use stegos_consensus::optimistic::{SealedViewChangeProof, ViewChangeCollector, ViewChangeMessage};
@@ -1271,7 +1271,6 @@ impl NodeService {
         if consensus.should_prevote() {
             let (block_hash, block_proposal, view_change) = consensus.get_proposal();
             match proposal::validate_proposed_macro_block(
-                &self.cfg,
                 &self.chain,
                 view_change,
                 block_hash,
@@ -1309,15 +1308,28 @@ impl NodeService {
     /// True if the node is synchronized with the network.
     fn is_synchronized(&self) -> bool {
         let timestamp = Timestamp::now();
-        let block_timestamp = self.chain.last_macro_block_timestamp();
-        block_timestamp
-            + self.cfg.micro_block_timeout * self.chain.cfg().micro_blocks_in_epoch
-            + self.cfg.macro_block_timeout
-            >= timestamp
+        let block_timestamp = self.chain.last_block_timestamp();
+        if self.cfg.macro_block_timeout > self.cfg.micro_block_timeout {
+            block_timestamp + self.cfg.macro_block_timeout >= timestamp
+        } else {
+            block_timestamp + self.cfg.micro_block_timeout >= timestamp
+        }
+    }
+
+    /// Get a timestamp for the next block.
+    fn next_block_timestamp(&self) -> Timestamp {
+        let timestamp = Timestamp::now();
+        if timestamp > self.chain.last_block_timestamp() {
+            timestamp
+        } else {
+            // Timestamp must be increasing.
+            self.chain.last_block_timestamp() + Duration::from_millis(1)
+        }
     }
 
     /// Propose a new macro block.
     fn propose_macro_block(&mut self) -> Result<(), Error> {
+        let timestamp = self.next_block_timestamp();
         let (block_timer, consensus) = match &mut self.validation {
             MacroBlockValidator {
                 block_timer,
@@ -1346,6 +1358,7 @@ impl NodeService {
             &recipient_pkey,
             &self.network_skey,
             &self.network_pkey,
+            timestamp,
         );
         let block_hash = Hash::digest(&block);
         consensus.propose(block_hash, block_proposal);
@@ -1519,6 +1532,7 @@ impl NodeService {
             .chain
             .account_by_network_key(&self.network_pkey)
             .expect("Staked");
+        let timestamp = self.next_block_timestamp();
         let mut block = self.mempool.create_block(
             previous,
             epoch,
@@ -1531,6 +1545,7 @@ impl NodeService {
             &self.network_skey,
             &self.network_pkey,
             self.cfg.max_utxo_in_block,
+            timestamp,
         );
 
         let block_hash = Hash::digest(&block);

@@ -416,6 +416,38 @@ impl MacroBlock {
 }
 
 impl Blockchain {
+    pub(crate) fn validate_block_timestamp(
+        &self,
+        epoch: u64,
+        block_hash: &Hash,
+        block_timestamp: Timestamp,
+        timestamp: Timestamp,
+    ) -> Result<(), BlockError> {
+        let last_block_timestamp = self.last_block_timestamp();
+        if block_timestamp <= last_block_timestamp {
+            return Err(BlockError::OutdatedBlock(
+                epoch,
+                block_hash.clone(),
+                block_timestamp,
+                last_block_timestamp,
+            )
+            .into());
+        }
+        if block_timestamp >= timestamp {
+            let duration = block_timestamp.duration_since(timestamp);
+            if duration > self.cfg().vetted_timestamp_delta {
+                return Err(BlockError::OutOfSyncTimestamp(
+                    epoch,
+                    block_hash.clone(),
+                    block_timestamp,
+                    timestamp,
+                )
+                .into());
+            }
+        }
+        Ok(())
+    }
+
     ///
     /// Validate base block header.
     ///
@@ -424,6 +456,7 @@ impl Blockchain {
         block_hash: &Hash,
         header: &MacroBlockHeader,
         force_check: bool,
+        timestamp: Timestamp,
     ) -> Result<(), BlockchainError> {
         let epoch = header.epoch;
 
@@ -469,6 +502,9 @@ impl Blockchain {
             }
         }
 
+        // Validate timestamp.
+        self.validate_block_timestamp(epoch, block_hash, header.timestamp, timestamp)?;
+
         Ok(())
     }
 
@@ -478,7 +514,6 @@ impl Blockchain {
     fn validate_micro_block_tx(
         &self,
         tx: &Transaction,
-        _timestamp: Timestamp,
         leader: pbc::PublicKey,
         inputs_set: &mut HashSet<Hash>,
         outputs_set: &mut HashSet<Hash>,
@@ -558,7 +593,7 @@ impl Blockchain {
     /// * `timestamp` - current time.
     ///                         Used to validating escrow.
     ///
-    pub fn validate_micro_block(
+    pub(crate) fn validate_micro_block(
         &self,
         block: &MicroBlock,
         timestamp: Timestamp,
@@ -684,6 +719,9 @@ impl Blockchain {
             return Err(BlockError::IncorrectRandom(epoch, block_hash).into());
         }
 
+        // Validate timestamp.
+        self.validate_block_timestamp(epoch, &block_hash, block.header.timestamp, timestamp)?;
+
         //
         // Validate transactions_hash.
         let transactions_range_hash =
@@ -715,13 +753,7 @@ impl Blockchain {
                 }
                 coinbase_fee += tx.block_fee;
             }
-            self.validate_micro_block_tx(
-                tx,
-                timestamp,
-                block.header.pkey,
-                &mut inputs_set,
-                &mut outputs_set,
-            )?;
+            self.validate_micro_block_tx(tx, block.header.pkey, &mut inputs_set, &mut outputs_set)?;
             fee += tx.fee();
         }
         if coinbase_fee != fee {

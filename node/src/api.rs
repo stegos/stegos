@@ -32,7 +32,7 @@ use stegos_crypto::{pbc, scc};
 /// RPC requests.
 ///
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "request")]
+#[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum NodeRequest {
     ElectionInfo {},
@@ -51,7 +51,7 @@ pub enum NodeRequest {
 /// RPC responses.
 ///
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "response")]
+#[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum NodeResponse {
     ElectionInfo(ElectionInfo),
@@ -116,7 +116,7 @@ pub struct NewMicroBlock {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "notification")]
+#[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum NodeNotification {
     NewMicroBlock(NewMicroBlock),

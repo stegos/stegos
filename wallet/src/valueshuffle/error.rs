@@ -46,4 +46,6 @@ pub enum VsError {
     VsNotInSession,
     #[fail(display = "Invalid message")]
     VsInvalidMessage,
+    #[fail(display = "Not enough participants: {}", _0)]
+    VsTooFewParticipants(usize),
 }

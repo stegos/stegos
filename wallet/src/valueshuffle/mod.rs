@@ -171,7 +171,7 @@ enum State {
 
 /// ValueShuffle Service.
 pub struct ValueShuffle {
-    /// Wallet's Secret Key.
+    /// Account Secret Key.
     skey: SecretKey,
 
     /// Faciliator's PBC public key
@@ -782,7 +782,7 @@ impl Future for ValueShuffle {
                                 }
                                 if msg.destination != self.participant_key {
                                     trace!(
-                                        "Message to other wallet: destination={} = our_key={}",
+                                        "Message to other account: destination={} = our_key={}",
                                         msg.destination,
                                         self.participant_key
                                     );

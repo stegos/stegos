@@ -39,7 +39,7 @@ use stegos_crypto::pbc;
 use stegos_keychain::{self as keychain, KeyError};
 use stegos_network::{Libp2pNetwork, NETWORK_STATUS_TOPIC};
 use stegos_node::NodeService;
-use stegos_wallet::WalletManagerService;
+use stegos_wallet::WalletService;
 use tokio::runtime::Runtime;
 
 use crate::report_metrics;
@@ -178,9 +178,9 @@ fn run() -> Result<(), Error> {
     if !chain_dir.exists() {
         fs::create_dir(&chain_dir)?;
     }
-    let wallets_dir = data_dir.join("wallets");
-    if !wallets_dir.exists() {
-        fs::create_dir(&wallets_dir)?;
+    let accounts_dir = data_dir.join("accounts");
+    if !accounts_dir.exists() {
+        fs::create_dir(&accounts_dir)?;
     }
 
     // Initialize keychain
@@ -230,9 +230,9 @@ fn run() -> Result<(), Error> {
         network.clone(),
     )?;
 
-    // Initialize Wallet Manager.
-    let (wallet_service, wallet) = WalletManagerService::new(
-        &wallets_dir,
+    // Initialize Wallet.
+    let (wallet_service, wallet) = WalletService::new(
+        &accounts_dir,
         network_skey,
         network_pkey,
         network.clone(),

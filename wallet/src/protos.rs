@@ -40,17 +40,17 @@ use stegos_crypto::scc::{Fr, PublicKey};
 // -----------------------------------------------------------
 
 impl ProtoConvert for LogEntry {
-    type Proto = wallet_log::LogEntry;
+    type Proto = account_log::LogEntry;
     fn into_proto(&self) -> Self::Proto {
-        let mut msg = wallet_log::LogEntry::new();
+        let mut msg = account_log::LogEntry::new();
         match self {
             LogEntry::Outgoing { tx } => {
-                let mut enum_value = wallet_log::Outgoing::new();
+                let mut enum_value = account_log::Outgoing::new();
                 enum_value.set_value(tx.into_proto());
                 msg.set_outgoing(enum_value);
             }
             LogEntry::Incoming { output } => {
-                let mut enum_value = wallet_log::Incoming::new();
+                let mut enum_value = account_log::Incoming::new();
                 enum_value.set_output(output.into_proto());
 
                 msg.set_incoming(enum_value);
@@ -61,12 +61,12 @@ impl ProtoConvert for LogEntry {
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let payload = match proto.enum_value {
-            Some(wallet_log::LogEntry_oneof_enum_value::incoming(ref msg)) => {
+            Some(account_log::LogEntry_oneof_enum_value::incoming(ref msg)) => {
                 let output = OutputValue::from_proto(msg.get_output())?;
 
                 LogEntry::Incoming { output }
             }
-            Some(wallet_log::LogEntry_oneof_enum_value::outgoing(ref msg)) => {
+            Some(account_log::LogEntry_oneof_enum_value::outgoing(ref msg)) => {
                 let tx = PaymentTransactionValue::from_proto(msg.get_value())?;
                 LogEntry::Outgoing { tx }
             }
@@ -81,9 +81,9 @@ impl ProtoConvert for LogEntry {
 }
 
 impl ProtoConvert for PaymentValue {
-    type Proto = wallet_log::PaymentValue;
+    type Proto = account_log::PaymentValue;
     fn into_proto(&self) -> Self::Proto {
-        let mut msg = wallet_log::PaymentValue::new();
+        let mut msg = account_log::PaymentValue::new();
         msg.set_output(self.output.into_proto());
         msg.set_amount(self.amount);
         msg.set_comment(String::from("test"));
@@ -105,9 +105,9 @@ impl ProtoConvert for PaymentValue {
 }
 
 impl ProtoConvert for OutputValue {
-    type Proto = wallet_log::OutputValue;
+    type Proto = account_log::OutputValue;
     fn into_proto(&self) -> Self::Proto {
-        let mut msg = wallet_log::OutputValue::new();
+        let mut msg = account_log::OutputValue::new();
         match self {
             OutputValue::Payment(p) => msg.set_payment(p.into_proto()),
             OutputValue::PublicPayment(p) => msg.set_public_payment(p.into_proto()),
@@ -117,11 +117,11 @@ impl ProtoConvert for OutputValue {
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let payload = match proto.enum_value {
-            Some(wallet_log::OutputValue_oneof_enum_value::payment(ref msg)) => {
+            Some(account_log::OutputValue_oneof_enum_value::payment(ref msg)) => {
                 let output = PaymentValue::from_proto(msg)?;
                 output.into()
             }
-            Some(wallet_log::OutputValue_oneof_enum_value::public_payment(ref msg)) => {
+            Some(account_log::OutputValue_oneof_enum_value::public_payment(ref msg)) => {
                 let output = PublicPaymentOutput::from_proto(msg)?;
                 output.into()
             }
@@ -139,9 +139,9 @@ impl ProtoConvert for OutputValue {
 }
 
 impl ProtoConvert for PaymentCertificate {
-    type Proto = wallet_log::PaymentCertificate;
+    type Proto = account_log::PaymentCertificate;
     fn into_proto(&self) -> Self::Proto {
-        let mut msg = wallet_log::PaymentCertificate::new();
+        let mut msg = account_log::PaymentCertificate::new();
         msg.set_id(self.id);
         msg.set_recipient(self.recipient.into_proto());
         msg.set_rvalue(self.rvalue.into_proto());
@@ -167,9 +167,9 @@ impl ProtoConvert for PaymentCertificate {
 }
 
 impl ProtoConvert for PaymentTransactionValue {
-    type Proto = wallet_log::PaymentTransactionValue;
+    type Proto = account_log::PaymentTransactionValue;
     fn into_proto(&self) -> Self::Proto {
-        let mut msg = wallet_log::PaymentTransactionValue::new();
+        let mut msg = account_log::PaymentTransactionValue::new();
         msg.set_tx(self.tx.into_proto());
         for certificate in &self.certificates {
             msg.certificates.push(certificate.into_proto());

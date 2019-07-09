@@ -31,7 +31,7 @@ fn checksum(bytes: &[u8]) -> u8 {
     chk
 }
 
-pub fn wallet_skey_to_recovery(skey: &scc::SecretKey) -> String {
+pub fn account_skey_to_recovery(skey: &scc::SecretKey) -> String {
     let skey = skey.to_bytes();
     let mut bytes = [08; 33];
     bytes[0..32].copy_from_slice(&skey[..]);
@@ -40,7 +40,7 @@ pub fn wallet_skey_to_recovery(skey: &scc::SecretKey) -> String {
     words[..].join(" ")
 }
 
-pub fn recovery_to_wallet_skey(recovery: &str) -> Result<scc::SecretKey, KeyError> {
+pub fn recovery_to_account_skey(recovery: &str) -> Result<scc::SecretKey, KeyError> {
     let words: Vec<&str> = recovery.split(' ').collect();
     let bytes = convert_wordlist_to_int(&words).map_err(|_| KeyError::InvalidRecoveryPhrase)?;
     if checksum(&bytes[0..32]) != bytes[32] {
@@ -56,8 +56,8 @@ mod tests {
     #[test]
     fn encode_decode() {
         let (skey, _pkey) = scc::make_random_keys();
-        let words = wallet_skey_to_recovery(&skey);
-        let skey2 = recovery_to_wallet_skey(&words).expect("invalid");
+        let words = account_skey_to_recovery(&skey);
+        let skey2 = recovery_to_account_skey(&words).expect("invalid");
         assert_eq!(skey, skey2);
 
         // Check invalid checksum.
@@ -66,7 +66,7 @@ mod tests {
         bytes[32] = !bytes[32]; // mutate checksum.
         let words = convert_int_to_wordlist(&bytes);
         let words = words[..].join(" ");
-        let e = recovery_to_wallet_skey(&words).expect_err("invalid");
+        let e = recovery_to_account_skey(&words).expect_err("invalid");
         match e {
             KeyError::InvalidRecoveryPhrase => {}
             _ => panic!("Invalid error"),

@@ -41,10 +41,10 @@ use stegos_crypto::scc::{self, Fr};
 
 #[derive(Clone, Debug)]
 pub struct KeyChain {
-    /// Wallet Secret Key.
-    pub wallet_skey: scc::SecretKey,
-    /// Wallet Public Key.
-    pub wallet_pkey: scc::PublicKey,
+    /// Account Secret Key.
+    pub account_skey: scc::SecretKey,
+    /// Account Public Key.
+    pub account_pkey: scc::PublicKey,
     /// Network Secret Key.
     pub network_skey: pbc::SecretKey,
     /// Network Public Key.
@@ -53,11 +53,11 @@ pub struct KeyChain {
 
 impl KeyChain {
     pub fn new() -> Self {
-        let (wallet_skey, wallet_pkey) = scc::make_random_keys();
+        let (account_skey, account_pkey) = scc::make_random_keys();
         let (network_skey, network_pkey) = pbc::make_random_keys();
         Self {
-            wallet_skey,
-            wallet_pkey,
+            account_skey,
+            account_pkey,
             network_skey,
             network_pkey,
         }
@@ -79,7 +79,7 @@ pub fn fake_genesis(
 
         // Create a stake.
         let output = StakeOutput::new(
-            &keychain.wallet_pkey,
+            &keychain.account_pkey,
             &keychain.network_skey,
             &keychain.network_pkey,
             stake,
@@ -95,7 +95,7 @@ pub fn fake_genesis(
     // Create an initial payment.
     assert!(payout > 0);
     let (output, outputs_gamma) =
-        PaymentOutput::new(&keychains[0].wallet_pkey, payout).expect("invalid keys");
+        PaymentOutput::new(&keychains[0].account_pkey, payout).expect("invalid keys");
     outputs.push(output.into());
 
     // Calculate initial values.
@@ -147,7 +147,7 @@ pub fn create_fake_macro_block(
     let keys = keychains.iter().find(|p| p.network_pkey == key).unwrap();
     let (mut block, extra_transactions) = chain.create_macro_block(
         view_change,
-        &keys.wallet_pkey,
+        &keys.account_pkey,
         &keys.network_skey,
         keys.network_pkey,
         timestamp,
@@ -179,7 +179,7 @@ pub fn create_fake_micro_block(
     let coinbase_tx = {
         let data = PaymentPayloadData::Comment(format!("Block reward"));
         let (output, gamma, _rvalue) =
-            PaymentOutput::with_payload(None, &leader.wallet_pkey, block_reward, data, None)
+            PaymentOutput::with_payload(None, &leader.account_pkey, block_reward, data, None)
                 .expect("invalid keys");
         CoinbaseTransaction {
             block_reward,
@@ -194,12 +194,12 @@ pub fn create_fake_micro_block(
     //
     // Create random transactions.
     //
-    let wallet_keys: Vec<(&scc::SecretKey, &scc::PublicKey)> = keychains
+    let account_keys: Vec<(&scc::SecretKey, &scc::PublicKey)> = keychains
         .iter()
-        .map(|keychain| (&keychain.wallet_skey, &keychain.wallet_pkey))
+        .map(|keychain| (&keychain.account_skey, &keychain.account_pkey))
         .collect();
-    let wallets_recovery = chain.recover_wallets(&wallet_keys).unwrap();
-    for (keychain, unspent) in keychains.iter().zip(wallets_recovery) {
+    let accounts_recovery = chain.recover_accounts(&account_keys).unwrap();
+    for (keychain, unspent) in keychains.iter().zip(accounts_recovery) {
         // Calculate actual balance.
         let mut payments: Vec<Output> = Vec::new();
         let mut stakes: Vec<Output> = Vec::new();
@@ -208,7 +208,7 @@ pub fn create_fake_micro_block(
         for (input, epoch) in unspent {
             match input {
                 Output::PaymentOutput(ref o) => {
-                    let payload = o.decrypt_payload(&keychain.wallet_skey).unwrap();
+                    let payload = o.decrypt_payload(&keychain.account_skey).unwrap();
                     payment_balance += payload.amount;
                     payments.push(input);
                 }
@@ -234,11 +234,12 @@ pub fn create_fake_micro_block(
             let mut outputs_gamma = Fr::zero();
 
             let (output, output_gamma) =
-                PaymentOutput::new(&keychain.wallet_pkey, payment_balance).expect("keys are valid");
+                PaymentOutput::new(&keychain.account_pkey, payment_balance)
+                    .expect("keys are valid");
             outputs.push(output.into());
             outputs_gamma += output_gamma;
             let tx = PaymentTransaction::new(
-                &keychain.wallet_skey,
+                &keychain.account_skey,
                 &inputs,
                 &outputs,
                 &outputs_gamma,
@@ -254,7 +255,7 @@ pub fn create_fake_micro_block(
             let inputs = stakes;
             let mut outputs: Vec<Output> = Vec::new();
             let output = StakeOutput::new(
-                &keychain.wallet_pkey,
+                &keychain.account_pkey,
                 &keychain.network_skey,
                 &keychain.network_pkey,
                 staking_balance,
@@ -322,7 +323,7 @@ pub fn create_micro_block_with_coinbase(
 
         let data = PaymentPayloadData::Comment(format!("Block {}", comment));
         let (output_fee, gamma_fee, _rvalue) =
-            PaymentOutput::with_payload(None, &keys.wallet_pkey, amount, data.clone(), None)
+            PaymentOutput::with_payload(None, &keys.account_pkey, amount, data.clone(), None)
                 .expect("invalid keys");
         gamma -= gamma_fee;
 

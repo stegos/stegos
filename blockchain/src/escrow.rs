@@ -42,7 +42,7 @@ struct EscrowKey {
 
 #[derive(Debug, Clone)]
 struct EscrowValue {
-    wallet_pkey: scc::PublicKey,
+    account_pkey: scc::PublicKey,
     active_until_epoch: u64,
     amount: i64,
 }
@@ -72,7 +72,7 @@ pub struct ValidatorInfo {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct StakeInfo {
     pub utxo: Hash,
-    pub wallet_pkey: scc::PublicKey,
+    pub account_pkey: scc::PublicKey,
     pub active_until_epoch: u64,
     pub is_active: bool,
     pub amount: i64,
@@ -93,7 +93,7 @@ impl Escrow {
         &mut self,
         lsn: LSN,
         validator_pkey: pbc::PublicKey,
-        wallet_pkey: scc::PublicKey,
+        account_pkey: scc::PublicKey,
         output_hash: Hash,
         epoch: u64,
         stakes_epoch: u64,
@@ -105,7 +105,7 @@ impl Escrow {
             output_hash,
         };
         let value = EscrowValue {
-            wallet_pkey,
+            account_pkey,
             active_until_epoch,
             amount,
         };
@@ -168,7 +168,7 @@ impl Escrow {
             (
                 &key.output_hash,
                 value.amount,
-                &value.wallet_pkey,
+                &value.account_pkey,
                 value.active_until_epoch,
             )
         })
@@ -193,12 +193,15 @@ impl Escrow {
     }
 
     ///
-    /// Return a wallet key by network key.
+    /// Return an account key by network key.
     ///
-    pub fn wallet_by_network_key(&self, validator_pkey: &pbc::PublicKey) -> Option<scc::PublicKey> {
+    pub fn account_by_network_key(
+        &self,
+        validator_pkey: &pbc::PublicKey,
+    ) -> Option<scc::PublicKey> {
         self.iter_validator_stakes(&validator_pkey)
             .next()
-            .map(|(_hash, _amount, wallet_pkey, _active_until_epoch)| wallet_pkey.clone())
+            .map(|(_hash, _amount, account_pkey, _active_until_epoch)| account_pkey.clone())
     }
 
     ///
@@ -259,11 +262,11 @@ impl Escrow {
                 Output::PaymentOutput(_o) => {}
                 Output::PublicPaymentOutput(_o) => {}
                 Output::StakeOutput(o) => {
-                    if let Some(wallet) = self.wallet_by_network_key(&o.validator) {
-                        if wallet != o.recipient {
+                    if let Some(account_pkey) = self.account_by_network_key(&o.validator) {
+                        if account_pkey != o.recipient {
                             let utxo_hash = Hash::digest(output);
-                            return Err(BlockchainError::StakeOutputWithDifferentWalletKey(
-                                wallet,
+                            return Err(BlockchainError::StakeOutputWithDifferentAccountKey(
+                                account_pkey,
                                 o.recipient,
                                 utxo_hash,
                             )
@@ -307,7 +310,7 @@ impl Escrow {
             let is_active = v.active_until_epoch >= epoch;
             let stake = StakeInfo {
                 utxo: k.output_hash,
-                wallet_pkey: v.wallet_pkey,
+                account_pkey: v.account_pkey,
                 active_until_epoch: v.active_until_epoch,
                 is_active,
                 amount: v.amount,

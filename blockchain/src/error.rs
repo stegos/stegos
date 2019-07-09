@@ -54,11 +54,11 @@ pub enum BlockchainError {
     )]
     HaveMicroBlocks(u64, u32, Hash),
     #[fail(
-        display = "TXOUTs with different wallet key: wallet_key_before:{},\
-                   wallet_key_after={},  utxo={}",
+        display = "TXOUTs with different account key: account_key_before:{},\
+                   account_key_after={},  utxo={}",
         _0, _1, _2
     )]
-    StakeOutputWithDifferentWalletKey(PublicKey, PublicKey, Hash),
+    StakeOutputWithDifferentAccountKey(PublicKey, PublicKey, Hash),
     #[fail(
         display = "Stake is locked: validator={}, expected_balance={}, minimum_balance={}",
         _0, _1, _2

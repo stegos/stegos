@@ -35,16 +35,16 @@ const PAYMENT_FEE: i64 = 1_000; // 0.001 STG
 #[test]
 fn empty_log_at_start() {
     Sandbox::start(Default::default(), |mut s| {
-        let mut wallets = genesis_wallets(&mut s);
+        let mut accounts = genesis_accounts(&mut s);
         s.poll();
-        let rx = wallets[0].wallet.request(WalletRequest::HistoryInfo {
+        let rx = accounts[0].account.request(AccountRequest::HistoryInfo {
             starting_from: Timestamp::now() - Duration::from_secs(1000),
             limit: 1,
         });
-        wallets[0].poll();
+        accounts[0].poll();
         let response = get_request(rx);
         info!("{:?}", response);
-        assert_eq!(response, WalletResponse::HistoryInfo { log: vec![] });
+        assert_eq!(response, AccountResponse::HistoryInfo { log: vec![] });
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC])
     });
 }
@@ -52,13 +52,12 @@ fn empty_log_at_start() {
 #[test]
 fn create_tx() {
     Sandbox::start(Default::default(), |mut s| {
-        let mut wallets = genesis_wallets(&mut s);
+        let mut accounts = genesis_accounts(&mut s);
 
         s.poll();
-        //        s.add_money(wallet.wallet_service.wallet_pkey, 100);
-        let recipient = wallets[1].wallet_service.wallet_pkey;
+        let recipient = accounts[1].account_service.account_pkey;
 
-        let rx = wallets[0].wallet.request(WalletRequest::Payment {
+        let rx = accounts[0].account.request(AccountRequest::Payment {
             recipient,
             amount: 10,
             payment_fee: PAYMENT_FEE,
@@ -67,11 +66,11 @@ fn create_tx() {
             with_certificate: false,
         });
 
-        wallets[0].poll();
+        accounts[0].poll();
         let response = get_request(rx);
         info!("{:?}", response);
         let tx_hash = match response {
-            WalletResponse::TransactionCreated(tx) => {
+            AccountResponse::TransactionCreated(tx) => {
                 assert!(tx.certificates.is_empty());
                 tx.tx_hash
             }
@@ -82,66 +81,66 @@ fn create_tx() {
 
         // rebroadcast transaction to each node
         s.broadcast(stegos_node::TX_TOPIC);
-        let mut commited_status = wallets[0]
-            .wallet
-            .request(WalletRequest::WaitForCommit { tx_hash });
+        let mut commited_status = accounts[0]
+            .account
+            .request(AccountRequest::WaitForCommit { tx_hash });
 
-        wallets[0].poll();
+        accounts[0].poll();
         assert_eq!(commited_status.poll(), Ok(Async::NotReady));
         s.wait(s.config.node.tx_wait_timeout);
         s.skip_micro_block();
 
-        wallets[0].poll();
+        accounts[0].poll();
 
         assert_matches!(
             get_request(commited_status),
-            WalletResponse::TransactionCommitted(_)
+            AccountResponse::TransactionCommitted(_)
         );
-        let commited_status_post = wallets[0]
-            .wallet
-            .request(WalletRequest::WaitForCommit { tx_hash });
-        wallets[0].poll();
+        let commited_status_post = accounts[0]
+            .account
+            .request(AccountRequest::WaitForCommit { tx_hash });
+        accounts[0].poll();
         assert_matches!(
             get_request(commited_status_post),
-            WalletResponse::TransactionCommitted(_)
+            AccountResponse::TransactionCommitted(_)
         );
     });
 }
 
-// genesis wallet should has atleast N* amount of wallets
-fn precondition_each_wallet_has_tokens(
+// genesis account should has atleast N* amount of accounts
+fn precondition_each_account_has_tokens(
     s: &mut Sandbox,
     amount: i64,
-    genesis_wallet: &mut WalletSandbox,
-    wallets: &mut [WalletSandbox],
+    genesis_account: &mut AccountSandbox,
+    accounts: &mut [AccountSandbox],
 ) {
-    for new_wallet in wallets.iter() {
-        let rx = genesis_wallet.wallet.request(WalletRequest::Payment {
-            recipient: new_wallet.wallet_service.wallet_pkey,
+    for new_account in accounts.iter() {
+        let rx = genesis_account.account.request(AccountRequest::Payment {
+            recipient: new_account.account_service.account_pkey,
             amount,
             payment_fee: PAYMENT_FEE,
             comment: "Test".to_string(),
             locked_timestamp: None,
             with_certificate: false,
         });
-        genesis_wallet.poll();
-        assert_matches!(get_request(rx), WalletResponse::TransactionCreated(_));
+        genesis_account.poll();
+        assert_matches!(get_request(rx), AccountResponse::TransactionCreated(_));
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
         // rebroadcast transaction to each node
         s.broadcast(stegos_node::TX_TOPIC);
         s.wait(s.config.node.tx_wait_timeout);
         s.skip_micro_block();
-        genesis_wallet.poll();
+        genesis_account.poll();
     }
 
-    for new_wallet in wallets {
-        new_wallet.poll();
-        let rx = new_wallet.wallet.request(WalletRequest::BalanceInfo {});
-        new_wallet.poll();
+    for new_account in accounts {
+        new_account.poll();
+        let rx = new_account.account.request(AccountRequest::BalanceInfo {});
+        new_account.poll();
 
         match get_request(rx) {
-            WalletResponse::BalanceInfo { balance } => {
+            AccountResponse::BalanceInfo { balance } => {
                 dbg!((balance, amount));
                 assert!(balance >= amount);
             }
@@ -153,9 +152,9 @@ fn precondition_each_wallet_has_tokens(
 fn vs_start(
     recipient: PublicKey,
     amount: i64,
-    wallet: &mut WalletSandbox,
-) -> Receiver<WalletResponse> {
-    let rx = wallet.wallet.request(WalletRequest::SecurePayment {
+    account: &mut AccountSandbox,
+) -> Receiver<AccountResponse> {
+    let rx = account.account.request(AccountRequest::SecurePayment {
         recipient,
         amount,
         payment_fee: PAYMENT_FEE,
@@ -163,20 +162,20 @@ fn vs_start(
         locked_timestamp: None,
     });
 
-    wallet.poll();
+    account.poll();
 
     let response = get_request(rx);
     info!("{:?}", response);
     let tx_hash = match response {
-        WalletResponse::ValueShuffleStarted { session_id } => session_id,
+        AccountResponse::ValueShuffleStarted { session_id } => session_id,
         _ => panic!("Wrong respnse to payment request"),
     };
 
-    let mut commited_status = wallet
-        .wallet
-        .request(WalletRequest::WaitForCommit { tx_hash });
+    let mut commited_status = account
+        .account
+        .request(AccountRequest::WaitForCommit { tx_hash });
 
-    wallet.poll();
+    account.poll();
     assert_eq!(commited_status.poll(), Ok(Async::NotReady));
 
     commited_status
@@ -198,22 +197,22 @@ fn create_vs_tx() {
         ..Default::default()
     };
     Sandbox::start(config, |mut s| {
-        let mut wallets = genesis_wallets(&mut s);
+        let mut accounts = genesis_accounts(&mut s);
 
         s.poll();
-        let (genesis, rest) = wallets.split_at_mut(1);
-        precondition_each_wallet_has_tokens(&mut s, MIN_AMOUNT, &mut genesis[0], rest);
+        let (genesis, rest) = accounts.split_at_mut(1);
+        precondition_each_account_has_tokens(&mut s, MIN_AMOUNT, &mut genesis[0], rest);
 
-        let num_nodes = wallets.len() - 1;
+        let num_nodes = accounts.len() - 1;
         let sleep_since_epoch = s.config.node.tx_wait_timeout * num_nodes as u32;
 
-        let recipient = wallets[3].wallet_service.wallet_pkey;
+        let recipient = accounts[3].account_service.account_pkey;
 
         let mut committed_statuses = Vec::new();
         for i in 0..num_nodes {
-            let status = vs_start(recipient, SEND_TOKENS, &mut wallets[i]);
+            let status = vs_start(recipient, SEND_TOKENS, &mut accounts[i]);
             committed_statuses.push(status);
-            wallets[i].poll();
+            accounts[i].poll();
         }
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
 
@@ -247,13 +246,13 @@ fn create_vs_tx() {
         s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
 
         debug!("===== VS STARTED NEW POOL: Send::SharedKeying =====");
-        wallets.iter_mut().for_each(WalletSandbox::poll);
+        accounts.iter_mut().for_each(AccountSandbox::poll);
 
         let mut shared_keying = HashMap::new();
-        for wallet in wallets.iter_mut().take(num_nodes) {
+        for account in accounts.iter_mut().take(num_nodes) {
             for _ in 0..num_nodes - 1 {
                 // each node send message to rest
-                let (msg, peer) = wallet
+                let (msg, peer) = account
                     .network
                     .get_unicast::<valueshuffle::message::DirectMessage>(
                         crate::valueshuffle::VALUE_SHUFFLE_TOPIC,
@@ -274,16 +273,16 @@ fn create_vs_tx() {
             }
         }
 
-        for wallet in wallets.iter_mut().take(num_nodes) {
+        for account in accounts.iter_mut().take(num_nodes) {
             debug!(
                 "Receiving msg to peer = {}",
-                wallet.wallet_service.network_pkey
+                account.account_service.network_pkey
             );
             for msg in shared_keying
-                .get(&wallet.wallet_service.network_pkey)
+                .get(&account.account_service.network_pkey)
                 .unwrap()
             {
-                wallet.network.receive_unicast(
+                account.network.receive_unicast(
                     msg.source.pkey,
                     crate::valueshuffle::VALUE_SHUFFLE_TOPIC,
                     msg.clone(),
@@ -292,13 +291,13 @@ fn create_vs_tx() {
         }
 
         debug!("===== VS Receive shared keying: Send::Commitment =====");
-        wallets.iter_mut().for_each(WalletSandbox::poll);
+        accounts.iter_mut().for_each(AccountSandbox::poll);
 
         let mut commitments = HashMap::new();
-        for wallet in wallets.iter_mut().take(num_nodes) {
+        for account in accounts.iter_mut().take(num_nodes) {
             for _ in 0..num_nodes - 1 {
                 // each node send message to rest
-                let (msg, peer) = wallet
+                let (msg, peer) = account
                     .network
                     .get_unicast::<valueshuffle::message::DirectMessage>(
                         crate::valueshuffle::VALUE_SHUFFLE_TOPIC,
@@ -318,12 +317,12 @@ fn create_vs_tx() {
             }
         }
 
-        for wallet in wallets.iter_mut().take(num_nodes) {
+        for account in accounts.iter_mut().take(num_nodes) {
             for msg in commitments
-                .get(&wallet.wallet_service.network_pkey)
+                .get(&account.account_service.network_pkey)
                 .unwrap()
             {
-                wallet.network.receive_unicast(
+                account.network.receive_unicast(
                     msg.source.pkey,
                     crate::valueshuffle::VALUE_SHUFFLE_TOPIC,
                     msg.clone(),
@@ -332,13 +331,13 @@ fn create_vs_tx() {
         }
 
         debug!("===== VS Receive commitment: produce CloakedVals =====");
-        wallets.iter_mut().for_each(WalletSandbox::poll);
+        accounts.iter_mut().for_each(AccountSandbox::poll);
 
         let mut cloaked_vals = HashMap::new();
-        for wallet in wallets.iter_mut().take(num_nodes) {
+        for account in accounts.iter_mut().take(num_nodes) {
             for _ in 0..num_nodes - 1 {
                 // each node send message to rest
-                let (msg, peer) = wallet
+                let (msg, peer) = account
                     .network
                     .get_unicast::<valueshuffle::message::DirectMessage>(
                         crate::valueshuffle::VALUE_SHUFFLE_TOPIC,
@@ -358,12 +357,12 @@ fn create_vs_tx() {
             }
         }
 
-        for wallet in wallets.iter_mut().take(num_nodes) {
+        for account in accounts.iter_mut().take(num_nodes) {
             for msg in cloaked_vals
-                .get(&wallet.wallet_service.network_pkey)
+                .get(&account.account_service.network_pkey)
                 .unwrap()
             {
-                wallet.network.receive_unicast(
+                account.network.receive_unicast(
                     msg.source.pkey,
                     crate::valueshuffle::VALUE_SHUFFLE_TOPIC,
                     msg.clone(),
@@ -372,13 +371,13 @@ fn create_vs_tx() {
         }
 
         debug!("===== VS Receive CloakedVals: produce signatures =====");
-        wallets.iter_mut().for_each(WalletSandbox::poll);
+        accounts.iter_mut().for_each(AccountSandbox::poll);
 
         let mut signatures = HashMap::new();
-        for wallet in wallets.iter_mut().take(num_nodes) {
+        for account in accounts.iter_mut().take(num_nodes) {
             for _ in 0..num_nodes - 1 {
                 // each node send message to rest
-                let (msg, peer) = wallet
+                let (msg, peer) = account
                     .network
                     .get_unicast::<valueshuffle::message::DirectMessage>(
                         crate::valueshuffle::VALUE_SHUFFLE_TOPIC,
@@ -398,9 +397,12 @@ fn create_vs_tx() {
             }
         }
 
-        for wallet in wallets.iter_mut().take(num_nodes) {
-            for msg in signatures.get(&wallet.wallet_service.network_pkey).unwrap() {
-                wallet.network.receive_unicast(
+        for account in accounts.iter_mut().take(num_nodes) {
+            for msg in signatures
+                .get(&account.account_service.network_pkey)
+                .unwrap()
+            {
+                account.network.receive_unicast(
                     msg.source.pkey,
                     crate::valueshuffle::VALUE_SHUFFLE_TOPIC,
                     msg.clone(),
@@ -408,7 +410,7 @@ fn create_vs_tx() {
             }
         }
         debug!("===== VS Receive Signatures: produce tx =====");
-        wallets.iter_mut().for_each(WalletSandbox::poll);
+        accounts.iter_mut().for_each(AccountSandbox::poll);
         // rebroadcast transaction to each node
         debug!("===== BROADCAST VS TRANSACTION =====");
         s.broadcast(stegos_node::TX_TOPIC);
@@ -416,11 +418,11 @@ fn create_vs_tx() {
         s.wait(s.config.node.tx_wait_timeout);
         s.skip_micro_block();
 
-        for (wallet, committed_status) in wallets.iter_mut().zip(committed_statuses) {
-            wallet.poll();
+        for (account, committed_status) in accounts.iter_mut().zip(committed_statuses) {
+            account.poll();
             assert_matches!(
                 get_request(committed_status),
-                WalletResponse::TransactionCommitted(_)
+                AccountResponse::TransactionCommitted(_)
             );
         }
     });

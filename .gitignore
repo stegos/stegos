@@ -15,11 +15,11 @@ logs/
 
 # Test data
 /testing/node*/data/chain/
-/testing/node*/data/wallets/*/
-/testing/node*/data/wallets/*.skey
-/testing/node*/data/wallets/*.pkey
-!/testing/node*/data/wallets/1.skey
-!/testing/node*/data/wallets/1.pkey
+/testing/node*/data/accounts/*/
+/testing/node*/data/accounts/*.skey
+/testing/node*/data/accounts/*.pkey
+!/testing/node*/data/accounts/1.skey
+!/testing/node*/data/accounts/1.pkey
 /testing/node*/data/api.token
 /data/
 

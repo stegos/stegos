@@ -29,6 +29,7 @@ use stegos_blockchain::Timestamp;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::scc::PublicKey;
+use stegos_node::TransactionStatus;
 
 pub type AccountId = String;
 
@@ -186,6 +187,7 @@ pub struct PaymentTransactionInfo {
     pub tx_hash: Hash,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub certificates: Vec<PaymentCertificate>,
+    pub status: TransactionStatus,
 }
 
 ///
@@ -244,15 +246,6 @@ pub enum WalletResponse {
         #[serde(flatten)]
         response: AccountResponse,
     },
-}
-
-#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "result")]
-#[serde(rename_all = "snake_case")]
-pub enum TransactionStatus {
-    // TODO: add info about rollback.
-    Committed {},
-    ConflictTransactionCommitted { conflict_tx: Option<Hash> },
 }
 
 impl From<PaymentInfo> for OutputInfo {

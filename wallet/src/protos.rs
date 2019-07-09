@@ -36,6 +36,7 @@ use stegos_blockchain::{
     PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput,
 };
 use stegos_crypto::scc::{Fr, PublicKey};
+use stegos_node::TransactionStatus;
 
 // -----------------------------------------------------------
 
@@ -174,6 +175,40 @@ impl ProtoConvert for PaymentTransactionValue {
         for certificate in &self.certificates {
             msg.certificates.push(certificate.into_proto());
         }
+        let mut status = account_log::TransactionStatus::new();
+        match self.status {
+            TransactionStatus::Accepted { .. } => status.set_accepted(vec![0]),
+            TransactionStatus::Created { .. } => status.set_created(vec![0]),
+            TransactionStatus::Rejected { ref error } => status.set_rejected(error.clone()),
+            TransactionStatus::Committed { epoch } => {
+                let mut epoch_with_offset = account_log::EpochWithOffset::new();
+                epoch_with_offset.set_epoch(epoch);
+                status.set_committed(epoch_with_offset);
+            }
+            TransactionStatus::Conflicted { epoch, offset } => {
+                let mut epoch_with_offset = account_log::EpochWithOffset::new();
+                epoch_with_offset.set_epoch(epoch);
+                if let Some(offset) = offset {
+                    epoch_with_offset.set_offset(offset)
+                } else {
+                    epoch_with_offset.set_offset(u32::max_value())
+                }
+                status.set_conflicted(epoch_with_offset);
+            }
+            TransactionStatus::Prepare { epoch, offset } => {
+                let mut epoch_with_offset = account_log::EpochWithOffset::new();
+                epoch_with_offset.set_epoch(epoch);
+                epoch_with_offset.set_offset(offset);
+                status.set_prepare(epoch_with_offset);
+            }
+            TransactionStatus::Rollback { epoch, offset } => {
+                let mut epoch_with_offset = account_log::EpochWithOffset::new();
+                epoch_with_offset.set_epoch(epoch);
+                epoch_with_offset.set_offset(offset);
+                status.set_rollback(epoch_with_offset);
+            }
+        }
+        msg.set_status(status);
         msg
     }
 
@@ -183,8 +218,129 @@ impl ProtoConvert for PaymentTransactionValue {
         for certificate in proto.certificates.iter() {
             certificates.push(PaymentCertificate::from_proto(certificate)?);
         }
-
-        let payload = PaymentTransactionValue { tx, certificates };
+        let status = match proto.get_status().enum_value {
+            Some(account_log::TransactionStatus_oneof_enum_value::created(ref _msg)) => {
+                TransactionStatus::Created {}
+            }
+            Some(account_log::TransactionStatus_oneof_enum_value::accepted(ref _msg)) => {
+                TransactionStatus::Accepted {}
+            }
+            Some(account_log::TransactionStatus_oneof_enum_value::rejected(ref msg)) => {
+                TransactionStatus::Rejected { error: msg.clone() }
+            }
+            Some(account_log::TransactionStatus_oneof_enum_value::committed(ref msg)) => {
+                let epoch = msg.get_epoch();
+                TransactionStatus::Committed { epoch }
+            }
+            Some(account_log::TransactionStatus_oneof_enum_value::prepare(ref msg)) => {
+                let epoch = msg.get_epoch();
+                let offset = msg.get_offset();
+                TransactionStatus::Prepare { epoch, offset }
+            }
+            Some(account_log::TransactionStatus_oneof_enum_value::rollback(ref msg)) => {
+                let epoch = msg.get_epoch();
+                let offset = msg.get_offset();
+                TransactionStatus::Rollback { epoch, offset }
+            }
+            Some(account_log::TransactionStatus_oneof_enum_value::conflicted(ref msg)) => {
+                let epoch = msg.get_epoch();
+                let offset = msg.get_offset();
+                let offset = if offset == u32::max_value() {
+                    None
+                } else {
+                    Some(offset)
+                };
+                TransactionStatus::Conflicted { epoch, offset }
+            }
+            None => {
+                return Err(ProtoError::MissingField(
+                    "enum_value".to_string(),
+                    "enum_value".to_string(),
+                )
+                .into());
+            }
+        };
+        let payload = PaymentTransactionValue {
+            tx,
+            status,
+            certificates,
+        };
         Ok(payload)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use stegos_crypto::hash::{Hash, Hashable};
+
+    fn roundtrip<T>(x: &T) -> T
+    where
+        T: ProtoConvert + Hashable + std::fmt::Debug,
+    {
+        let r = T::from_proto(&x.clone().into_proto()).unwrap();
+        assert_eq!(Hash::digest(x), Hash::digest(&r));
+        r
+    }
+
+    #[test]
+    fn transaction_status() {
+        let tx = PaymentTransaction::dum();
+        let epoch = 12;
+        let offset = 43;
+        let request = PaymentTransactionValue {
+            tx: tx.clone(),
+            certificates: vec![],
+            status: TransactionStatus::Accepted {},
+        };
+        roundtrip(&request);
+
+        let request = PaymentTransactionValue {
+            tx: tx.clone(),
+            certificates: vec![],
+            status: TransactionStatus::Rejected {
+                error: "e".to_string(),
+            },
+        };
+        roundtrip(&request);
+
+        let request = PaymentTransactionValue {
+            tx: tx.clone(),
+            certificates: vec![],
+            status: TransactionStatus::Created {},
+        };
+        roundtrip(&request);
+
+        let request = PaymentTransactionValue {
+            tx: tx.clone(),
+            certificates: vec![],
+            status: TransactionStatus::Committed { epoch },
+        };
+        roundtrip(&request);
+
+        let request = PaymentTransactionValue {
+            tx: tx.clone(),
+            certificates: vec![],
+            status: TransactionStatus::Prepare { epoch, offset },
+        };
+        roundtrip(&request);
+
+        let request = PaymentTransactionValue {
+            tx: tx.clone(),
+            certificates: vec![],
+            status: TransactionStatus::Rollback { epoch, offset },
+        };
+        roundtrip(&request);
+
+        let request = PaymentTransactionValue {
+            tx: tx.clone(),
+            certificates: vec![],
+            status: TransactionStatus::Conflicted {
+                epoch,
+                offset: offset.into(),
+            },
+        };
+        roundtrip(&request);
     }
 }

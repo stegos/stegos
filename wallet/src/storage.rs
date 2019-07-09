@@ -26,7 +26,7 @@
 use crate::api::*;
 use byteorder::{BigEndian, ByteOrder};
 use failure::Error;
-use log::debug;
+use log::{debug, trace};
 use rocksdb::{Direction, IteratorMode, WriteBatch, DB};
 use serde::{Deserializer, Serializer};
 use serde_derive::{Deserialize, Serialize};
@@ -37,8 +37,9 @@ use stegos_blockchain::{
     PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput, StakeOutput,
     Timestamp,
 };
-use stegos_crypto::hash::Hash;
+use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::scc::{make_random_keys, Fr, PublicKey};
+use stegos_node::TransactionStatus;
 use stegos_serialization::traits::ProtoConvert;
 use tempdir::TempDir;
 
@@ -84,13 +85,15 @@ impl AccountLog {
             .unwrap_or(Timestamp::UNIX_EPOCH);
         debug!("Loading database with {} entryes", len);
 
-        AccountLog {
+        let mut log = AccountLog {
             _temp_dir: None,
             database,
             len,
             last_time: Timestamp::now(),
             created_txs: HashMap::new(),
-        }
+        };
+        log.recover_state();
+        log
     }
 
     #[allow(unused)]
@@ -105,6 +108,24 @@ impl AccountLog {
             len,
             last_time,
             created_txs: HashMap::new(),
+        }
+    }
+
+    pub fn recover_state(&mut self) {
+        // TODO: limit time for recover
+        // (for example, if some transaction was created weak ago, it's no reason to resend it)
+        let starting_time = Timestamp::UNIX_EPOCH;
+        for (timestamp, entry) in self.iter_range(starting_time, u64::max_value()) {
+            match entry {
+                LogEntry::Incoming { .. } => {}
+                LogEntry::Outgoing { tx } => {
+                    let tx_hash = Hash::digest(&tx.tx);
+
+                    let status = tx.status;
+                    trace!("Recovered tx: tx={}, status={:?}", tx_hash, status);
+                    assert!(self.created_txs.insert(tx_hash, timestamp).is_none());
+                }
+            }
         }
     }
 
@@ -257,12 +278,32 @@ pub struct PaymentCertificate {
     pub amount: i64,
 }
 
+impl Hashable for PaymentCertificate {
+    fn hash(&self, hasher: &mut Hasher) {
+        self.id.hash(hasher);
+        self.recipient.hash(hasher);
+        self.rvalue.hash(hasher);
+        self.amount.hash(hasher);
+    }
+}
+
 /// Information about created transactions
 #[derive(Serialize, Clone, Debug)]
 pub struct PaymentTransactionValue {
     #[serde(skip_serializing)]
     pub tx: PaymentTransaction,
+    pub status: TransactionStatus,
     pub certificates: Vec<PaymentCertificate>,
+}
+
+impl Hashable for PaymentTransactionValue {
+    fn hash(&self, hasher: &mut Hasher) {
+        self.tx.hash(hasher);
+        self.status.hash(hasher);
+        for certificate in &self.certificates {
+            certificate.hash(hasher);
+        }
+    }
 }
 
 /// Represents Outputs created by account.
@@ -420,7 +461,11 @@ impl PaymentTransactionValue {
         assert_eq!(tx.txouts.len(), 2);
         assert!(certificates.len() <= 1);
 
-        PaymentTransactionValue { certificates, tx }
+        PaymentTransactionValue {
+            certificates,
+            tx,
+            status: TransactionStatus::Created {},
+        }
     }
 
     pub fn new_cloak(tx: PaymentTransaction) -> PaymentTransactionValue {
@@ -429,6 +474,7 @@ impl PaymentTransactionValue {
         PaymentTransactionValue {
             certificates: Vec::new(),
             tx,
+            status: TransactionStatus::Created {},
         }
     }
 
@@ -436,6 +482,7 @@ impl PaymentTransactionValue {
         PaymentTransactionValue {
             certificates: Vec::new(),
             tx,
+            status: TransactionStatus::Created {},
         }
     }
 
@@ -444,6 +491,7 @@ impl PaymentTransactionValue {
         PaymentTransactionInfo {
             tx_hash,
             certificates: self.certificates.clone(),
+            status: self.status.clone(),
         }
     }
 }

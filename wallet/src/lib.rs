@@ -41,7 +41,7 @@ use self::storage::*;
 use self::transaction::*;
 use self::valueshuffle::ValueShuffle;
 use api::*;
-use failure::Error;
+use failure::{bail, Error};
 use futures::future::IntoFuture;
 use futures::sync::{mpsc, oneshot};
 use futures::{task, Async, Future, Poll, Stream};
@@ -57,7 +57,9 @@ use stegos_keychain as keychain;
 use stegos_keychain::keyfile::{load_account_pkey, write_account_pkey, write_account_skey};
 use stegos_keychain::KeyError;
 use stegos_network::Network;
-use stegos_node::{Node, NodeNotification, NodeRequest, NodeResponse};
+use stegos_node::NodeNotification;
+use stegos_node::TransactionStatus;
+use stegos_node::{Node, NodeRequest, NodeResponse};
 use tokio::runtime::TaskExecutor;
 
 const STAKE_FEE: i64 = 0;
@@ -642,6 +644,48 @@ impl UnsealedAccountService {
         self.last_macro_block_timestamp = time;
     }
 
+    fn on_tx_statuses_changed(&mut self, changes: HashMap<Hash, TransactionStatus>) {
+        trace!("Updated mempool event");
+        for (tx_hash, status) in changes {
+            if let Some(timestamp) = self.account_log.tx_entry(tx_hash) {
+                // update persistent info.
+                self.account_log
+                    .update_log_entry(timestamp, |mut e| {
+                        match &mut e {
+                            LogEntry::Outgoing { ref mut tx } => {
+                                tx.status = status.clone();
+                            }
+                            LogEntry::Incoming { .. } => {
+                                bail!("BUG: Expected outgoing transaction.")
+                            }
+                        };
+                        Ok(e)
+                    })
+                    .expect("Cannot update status.");
+
+                // update metrics
+                match status {
+                    TransactionStatus::Committed { .. } | TransactionStatus::Prepare { .. } => {
+                        metrics::WALLET_COMMITTED_PAYMENTS
+                            .with_label_values(&[&String::from(&self.account_pkey)])
+                            .inc();
+                    }
+                    TransactionStatus::Rollback { .. } => {
+                        metrics::WALLET_COMMITTED_PAYMENTS
+                            .with_label_values(&[&String::from(&self.account_pkey)])
+                            .dec();
+                    }
+                    _ => {}
+                }
+
+                let msg = AccountNotification::TransactionStatus { tx_hash, status };
+                self.notify(msg);
+            } else {
+                trace!("Transaction was not found = {}", tx_hash);
+            }
+        }
+    }
+
     fn notify(&mut self, notification: AccountNotification) {
         trace!("created notification = {:?}", notification);
         self.subscribers
@@ -667,6 +711,7 @@ impl From<Result<(Hash, i64), Error>> for AccountResponse {
                 let info = PaymentTransactionInfo {
                     tx_hash: hash,
                     certificates: vec![],
+                    status: TransactionStatus::Created {},
                 };
                 AccountResponse::TransactionCreated(info)
             }
@@ -879,15 +924,18 @@ impl Future for UnsealedAccountService {
                 Async::Ready(Some(notification)) => match notification {
                     NodeNotification::NewMicroBlock(block) => {
                         assert!(self.recovery_rx.is_none(), "recovered from the disk");
+                        self.on_tx_statuses_changed(block.statuses);
                         self.on_outputs_changed(block.epoch, block.inputs, block.outputs, false);
                     }
                     NodeNotification::NewMacroBlock(block) => {
                         assert!(self.recovery_rx.is_none(), "recovered from the disk");
+                        self.on_tx_statuses_changed(block.statuses);
                         self.on_outputs_changed(block.epoch, block.inputs, block.outputs, true);
                         self.on_epoch_changed(block.epoch, block.last_macro_block_timestamp);
                     }
                     NodeNotification::RollbackMicroBlock(block) => {
                         assert!(self.recovery_rx.is_none(), "recovered from the disk");
+                        self.on_tx_statuses_changed(block.statuses);
                         self.on_outputs_changed(block.epoch, block.inputs, block.outputs, false);
                     }
                     _ => {}

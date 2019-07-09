@@ -69,7 +69,7 @@ fn create_tx() {
         accounts[0].poll();
         let response = get_request(rx);
         info!("{:?}", response);
-        let tx_hash = match response {
+        let _tx_hash = match response {
             AccountResponse::TransactionCreated(tx) => {
                 assert!(tx.certificates.is_empty());
                 tx.tx_hash
@@ -158,7 +158,7 @@ fn vs_start(recipient: PublicKey, amount: i64, account: &mut AccountSandbox) -> 
 }
 
 /// 3 nodes send monet to 1 recipient, using vs
-#[ignore]
+//#[ignore]
 #[test]
 fn create_vs_tx() {
     const SEND_TOKENS: i64 = 10;
@@ -423,7 +423,7 @@ fn create_vs_tx() {
             // ignore multiple notification, and assert that notification not equal to our.
             while let AccountNotification::TransactionStatus {
                 tx_hash,
-                status: TransactionStatus::Committed {},
+                status: TransactionStatus::Prepare { .. },
             } = get_notification(notification)
             {
                 if tx_hash != my_tx_hash.unwrap() {

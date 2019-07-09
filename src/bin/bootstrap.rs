@@ -27,6 +27,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::process;
+use std::str::FromStr;
 use stegos_blockchain::{
     create_multi_signature, Block, ChainConfig, MacroBlock, Output, PaymentOutput,
     PaymentPayloadData, StakeOutput, Timestamp,
@@ -85,6 +86,19 @@ fn main() {
                 .value_name("NUMBER")
                 .help("Stake per each validator.")
                 .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("owner")
+                .short("o")
+                .long("owner")
+                .value_name("ADDRESS")
+                .help("Public key of account, used to make all stake transactions")
+                .takes_value(true)
+                .validator(|address| {
+                    scc::PublicKey::from_str(&address)
+                        .map(|_| ())
+                        .map_err(|e| format!("{:?}", e))
+                }),
         )
         .get_matches();
 
@@ -171,7 +185,7 @@ fn main() {
         let (network_skey, network_pkey) = pbc::make_random_keys();
 
         // Write keys.
-        info!("New wallet key: {}", String::from(&account_pkey));
+        info!("New account key: {}", String::from(&account_pkey));
         keychain::keyfile::write_account_pkey(Path::new(&account_pkey_file), &account_pkey)
             .expect("failed to write account pkey");
         keychain::keyfile::write_account_skey(
@@ -179,27 +193,41 @@ fn main() {
             &account_skey,
             &password,
         )
-        .expect("failed to write wallet skey");
+        .expect("failed to write account skey");
         keychain::keyfile::write_network_pkey(Path::new(&network_pkey_file), &network_pkey)
             .expect("failed to write network pkey");
         keychain::keyfile::write_network_skey(Path::new(&network_skey_file), &network_skey)
             .expect("failed to write account skey");
 
+        keychains.push((
+            account_skey,
+            account_pkey,
+            network_skey.clone(),
+            network_pkey.clone(),
+        ));
+
         // Create a stake.
-        let output = StakeOutput::new(&account_pkey, &network_skey, &network_pkey, stake)
-            .expect("invalid keys");
+        let output = match args.value_of("owner") {
+            Some(address) => {
+                let addr = scc::PublicKey::from_str(address).expect("already validated by clap");
+                StakeOutput::new(&addr, &network_skey, &network_pkey, stake).expect("invalid keys")
+            }
+            None => StakeOutput::new(&(keychains[0].1), &network_skey, &network_pkey, stake)
+                .expect("invalid keys"),
+        };
         assert!(payout >= stake);
         payout -= stake;
         outputs.push(output.into());
-
-        keychains.push((account_skey, account_pkey, network_skey, network_pkey));
     }
 
     // Create an initial payment.
-    let beneficiary_pkey = &keychains[0].1;
+    let beneficiary_pkey = match args.value_of("owner") {
+        Some(address) => scc::PublicKey::from_str(address).expect("already validated by clap"),
+        None => keychains[0].1.clone(),
+    };
     let output_data = PaymentPayloadData::Comment("Genesis".to_string());
     let (output, outputs_gamma, _rvalue) =
-        PaymentOutput::with_payload(None, beneficiary_pkey, payout, output_data, None)
+        PaymentOutput::with_payload(None, &beneficiary_pkey, payout, output_data, None)
             .expect("invalid keys");
     outputs.push(output.into());
 

@@ -17,10 +17,15 @@ cargo run --bin bootstrap -- --keys $NUM_KEYS
 mkdir -p testing
 for i in $(seq -f "%02g" 1 $NUM_KEYS); do
     data_dir="testing/node$i/data"
+    mkdir -p $data_dir
     rm -f password$i.txt
-    mkdir -p ${data_dir}/accounts
-    mv -f account$i.pkey ${data_dir}/accounts/1.pkey
-    mv -f account$i.skey ${data_dir}/accounts/1.skey
+    if [ $i == "01" ] ; then
+      mkdir -p ${data_dir}/accounts
+      mv -f account$i.pkey ${data_dir}/accounts/1.pkey
+      mv -f account$i.skey ${data_dir}/accounts/1.skey
+    else
+      rm account$i.?key
+    fi
     mv -f network$i.pkey ${data_dir}/network.pkey
     mv -f network$i.skey ${data_dir}/network.skey
     NODE_ID=$i j2 --format=env testing/stegos.toml.j2 >testing/node$i/stegos.toml

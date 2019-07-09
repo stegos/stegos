@@ -23,7 +23,5 @@
 
 mod error;
 pub use error::*;
-pub mod input;
 pub mod keyfile;
 pub mod pem;
-pub mod recovery;

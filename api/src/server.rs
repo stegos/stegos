@@ -34,7 +34,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use stegos_network::{Network, UnicastMessage};
 use stegos_node::{Node, NodeNotification, NodeResponse};
-use stegos_wallet::{Wallet, WalletNotification, WalletResponse};
+use stegos_wallet::{WalletManager, WalletsNotification, WalletsResponse};
 use tokio::net::TcpListener;
 use tokio::runtime::TaskExecutor;
 use websocket::message::OwnedMessage;
@@ -70,11 +70,11 @@ struct WebSocketHandler {
     /// Network broadcast subscribtions.
     network_broadcast: HashMap<String, mpsc::UnboundedReceiver<Vec<u8>>>,
     /// Wallet API.
-    wallet: Wallet,
+    wallet: WalletManager,
     /// Wallet events.
-    wallet_notifications: mpsc::UnboundedReceiver<WalletNotification>,
+    wallet_notifications: mpsc::UnboundedReceiver<WalletsNotification>,
     /// Wallet RPC responses.
-    wallet_responses: Vec<(RequestId, oneshot::Receiver<WalletResponse>)>,
+    wallet_responses: Vec<(RequestId, oneshot::Receiver<WalletsResponse>)>,
     /// Node API.
     node: Node,
     /// Node RPC responses.
@@ -90,7 +90,7 @@ impl WebSocketHandler {
         sink: WsSink,
         stream: WsStream,
         network: Network,
-        wallet: Wallet,
+        wallet: WalletManager,
         node: Node,
     ) -> Self {
         let need_flush = false;
@@ -177,7 +177,7 @@ impl WebSocketHandler {
                 };
                 self.send(response);
             }
-            RequestKind::WalletRequest(wallet_request) => {
+            RequestKind::WalletsRequest(wallet_request) => {
                 self.wallet_responses
                     .push((request.id, self.wallet.request(wallet_request)));
             }
@@ -304,7 +304,7 @@ impl Future for WebSocketHandler {
             match self.wallet_notifications.poll() {
                 Ok(Async::Ready(Some(notification))) => {
                     let response = Response {
-                        kind: ResponseKind::WalletNotification(notification),
+                        kind: ResponseKind::WalletsNotification(notification),
                         id: 0,
                     };
                     self.send(response);
@@ -320,7 +320,7 @@ impl Future for WebSocketHandler {
             match rx.poll() {
                 Ok(Async::Ready(response)) => {
                     let response = Response {
-                        kind: ResponseKind::WalletResponse(response),
+                        kind: ResponseKind::WalletsResponse(response),
                         id,
                     };
                     self.send(response);
@@ -380,7 +380,7 @@ impl WebSocketServer {
         api_token: ApiToken,
         executor: TaskExecutor,
         network: Network,
-        wallet: Wallet,
+        wallet: WalletManager,
         node: Node,
     ) -> Result<(), Error> {
         let executor2 = executor.clone();

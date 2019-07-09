@@ -26,8 +26,10 @@
 mod api;
 mod change;
 mod error;
+mod manager;
 mod metrics;
 mod protos;
+mod recovery;
 mod storage;
 #[cfg(test)]
 pub mod test;
@@ -36,6 +38,7 @@ mod valueshuffle;
 
 pub use crate::api::*;
 use crate::error::WalletError;
+pub use crate::manager::WalletManagerService;
 pub use crate::transaction::TransactionType;
 use crate::transaction::*;
 use crate::valueshuffle::ValueShuffle;
@@ -488,9 +491,7 @@ impl UnsealedWalletService {
 
     /// Return recovery codes.
     fn get_recovery(&mut self) -> Result<String, Error> {
-        Ok(keychain::recovery::wallet_skey_to_recovery(
-            &self.wallet_skey,
-        ))
+        Ok(crate::recovery::wallet_skey_to_recovery(&self.wallet_skey))
     }
 
     /// Get actual balance.

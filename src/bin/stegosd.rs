@@ -36,11 +36,10 @@ use std::{fs, process};
 use stegos_api::{load_or_create_api_token, WebSocketServer};
 use stegos_blockchain::{Blockchain, Timestamp};
 use stegos_crypto::pbc;
-use stegos_crypto::scc;
 use stegos_keychain::{self as keychain, KeyError};
 use stegos_network::{Libp2pNetwork, NETWORK_STATUS_TOPIC};
 use stegos_node::NodeService;
-use stegos_wallet::WalletService;
+use stegos_wallet::WalletManagerService;
 use tokio::runtime::Runtime;
 
 use crate::report_metrics;
@@ -90,67 +89,6 @@ pub fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error
     }
 
     Ok(cfg)
-}
-
-/// Load or create wallet keys.
-fn load_wallet_keys(
-    wallet_skey_file: &Path,
-    wallet_pkey_file: &Path,
-    password_file: &Path,
-    recovery_file: &Path,
-) -> Result<(scc::SecretKey, scc::PublicKey), KeyError> {
-    if !wallet_skey_file.exists() && !wallet_pkey_file.exists() {
-        debug!(
-            "Can't find keys on the disk: skey_file={}, pkey_file={}",
-            wallet_skey_file.to_string_lossy(),
-            wallet_pkey_file.to_string_lossy()
-        );
-
-        let (wallet_skey, wallet_pkey) = if recovery_file.is_file() {
-            info!("Recovering keys...");
-            let wallet_skey = keychain::input::read_recovery_from_file(recovery_file)?;
-            let wallet_pkey: scc::PublicKey = wallet_skey.clone().into();
-            info!(
-                "Recovered a wallet key: pkey={}",
-                String::from(&wallet_pkey)
-            );
-            (wallet_skey, wallet_pkey)
-        } else {
-            debug!("Generating a new wallet key pair...");
-            let (wallet_skey, wallet_pkey) = scc::make_random_keys();
-            info!(
-                "Generated a new wallet key pair: pkey={}",
-                String::from(&wallet_pkey)
-            );
-            (wallet_skey, wallet_pkey)
-        };
-
-        let password = String::new();
-        keychain::keyfile::write_wallet_pkey(&wallet_pkey_file, &wallet_pkey)?;
-        keychain::keyfile::write_wallet_skey(&wallet_skey_file, &wallet_skey, &password)?;
-        info!(
-            "Wrote wallet key pair: skey_file={}, pkey_file={}",
-            wallet_skey_file.to_string_lossy(),
-            wallet_pkey_file.to_string_lossy()
-        );
-
-        Ok((wallet_skey, wallet_pkey))
-    } else {
-        debug!("Loading wallet keys from the disk...");
-        let password = if password_file.is_file() {
-            keychain::input::read_password_from_file(&password_file)?
-        } else {
-            String::new()
-        };
-
-        let (wallet_skey, wallet_pkey) = keychain::keyfile::load_wallet_keypair(
-            &wallet_skey_file,
-            &wallet_pkey_file,
-            &password,
-        )?;
-
-        Ok((wallet_skey, wallet_pkey))
-    }
 }
 
 /// Load or create network keys.
@@ -214,19 +152,6 @@ fn run() -> Result<(), Error> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("recovery-file")
-                .short("r")
-                .long("recovery-file")
-                .help("Recover wallet from 24-word recovery phrase")
-                .long_help(
-                    "Recover wallet from 24-word recovery phrase. \
-                     Provide a path to file which contains 24-word recovery phrase.\
-                     Use '--recovery-file -' to read recovery phrase from terminal.",
-                )
-                .takes_value(true)
-                .value_name("FILE"),
-        )
-        .arg(
             Arg::with_name("chain")
                 .short("n")
                 .long("chain")
@@ -262,22 +187,6 @@ fn run() -> Result<(), Error> {
     let network_skey_file = data_dir.join("network.skey");
     let network_pkey_file = data_dir.join("network.pkey");
     let (network_skey, network_pkey) = load_network_keys(&network_skey_file, &network_pkey_file)?;
-    let wallet_id = 1;
-    let wallet_database_dir = wallets_dir.join(format!("{}", wallet_id));
-    let wallet_skey_file = wallets_dir.join(format!("{}.skey", wallet_id));
-    let wallet_pkey_file = wallets_dir.join(format!("{}.pkey", wallet_id));
-    let password_file = wallets_dir.join(format!("{}.pass", wallet_id));
-    let recovery_file = if let Some(recovery_file) = args.value_of("recovery-file") {
-        PathBuf::from(recovery_file)
-    } else {
-        PathBuf::new()
-    };
-    let (_wallet_skey, wallet_pkey) = load_wallet_keys(
-        &wallet_skey_file,
-        &wallet_pkey_file,
-        &password_file,
-        &recovery_file,
-    )?;
 
     // Resolve seed pool (works, if chain=='testent', does nothing otherwise)
     resolve_pool(&mut cfg)?;
@@ -321,15 +230,14 @@ fn run() -> Result<(), Error> {
         network.clone(),
     )?;
 
-    // Initialize Wallet.
-    let (wallet_service, wallet) = WalletService::new(
-        &wallet_database_dir,
-        &wallet_skey_file,
-        &wallet_pkey_file,
+    // Initialize Wallet Manager.
+    let (wallet_service, wallet) = WalletManagerService::new(
+        &wallets_dir,
         network_skey,
         network_pkey,
         network.clone(),
         node.clone(),
+        rt.executor(),
         cfg.chain.stake_epochs,
     )?;
     rt.spawn(wallet_service);

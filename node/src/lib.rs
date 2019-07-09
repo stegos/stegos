@@ -977,21 +977,12 @@ impl NodeService {
         self.on_node_notification
             .retain(move |ch| ch.unbounded_send(event.clone()).is_ok());
     }
+
     /// Handler for NodeMessage::SubscribeNodeNotification.
     fn handle_subscribe_node_notification(
         &mut self,
         tx: UnboundedSender<NodeNotification>,
     ) -> Result<(), Error> {
-        let msg = NewMacroBlock {
-            epoch: self.chain.epoch(),
-            last_macro_block_timestamp: self.chain.last_macro_block_timestamp(),
-            facilitator: self.chain.facilitator().clone(),
-            validators: self.chain.validators().clone(),
-            inputs: Vec::new(),
-            outputs: Vec::new(),
-        };
-        let msg = msg.into();
-        tx.unbounded_send(msg).ok(); // ignore error.
         self.on_node_notification.push(tx);
         Ok(())
     }

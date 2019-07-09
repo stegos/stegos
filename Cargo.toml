@@ -60,6 +60,7 @@ tokio-timer = "0.2"
 toml = "0.5"
 humantime = "1.2.0"
 tempdir = "0.3"
+rpassword = "3.0"
 
 [build-dependencies]
 regex = "1.0"

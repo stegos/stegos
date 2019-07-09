@@ -19,9 +19,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::error::KeyError;
 use stegos_crypto::keying::{convert_int_to_wordlist, convert_wordlist_to_int};
 use stegos_crypto::scc;
+use stegos_keychain::KeyError;
 
 fn checksum(bytes: &[u8]) -> u8 {
     let mut chk: u8 = 0;

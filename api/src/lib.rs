@@ -53,7 +53,7 @@ fn is_request_id_default(id: &RequestId) -> bool {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "request")]
+#[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkRequest {
     SubscribeUnicast {
@@ -80,7 +80,7 @@ pub enum NetworkRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "response")]
+#[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkResponse {
     SubscribedUnicast,
@@ -93,7 +93,7 @@ pub enum NetworkResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "notification")]
+#[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkNotification {
     UnicastMessage {

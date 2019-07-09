@@ -74,7 +74,7 @@ pub struct PublicPaymentInfo {
 /// Out-of-band notifications.
 ///
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "notification")]
+#[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum WalletNotification {
     BalanceChanged { balance: i64 },
@@ -98,7 +98,7 @@ pub struct WalletsNotification {
 /// RPC requests.
 ///
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "request")]
+#[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum WalletRequest {
     Seal,
@@ -159,7 +159,7 @@ pub enum WalletRequest {
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[serde(tag = "request")]
+#[serde(tag = "type")]
 pub enum WalletManagerRequest {
     ListWallets {},
     CreateWallet { password: String },
@@ -189,7 +189,7 @@ pub struct PaymentTransactionInfo {
 /// RPC responses.
 ///
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "response")]
+#[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum WalletResponse {
     Sealed,
@@ -225,7 +225,7 @@ pub enum WalletResponse {
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[serde(tag = "response")]
+#[serde(tag = "type")]
 pub enum WalletManagerResponse {
     WalletsInfo { wallets: Vec<WalletId> },
     WalletCreated { wallet_id: WalletId },

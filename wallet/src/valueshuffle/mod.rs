@@ -115,7 +115,7 @@ use stegos_node::txpool::PoolJoin;
 use stegos_node::txpool::PoolNotification;
 use stegos_node::txpool::POOL_ANNOUNCE_TOPIC;
 use stegos_node::txpool::POOL_JOIN_TOPIC;
-use stegos_node::{Node, NodeNotification};
+use stegos_node::{Node, NodeNotification, NodeResponse, TransactionStatus};
 use stegos_serialization::traits::ProtoConvert;
 use tokio_timer::Interval;
 
@@ -189,7 +189,7 @@ pub struct ValueShuffle {
     // My Node
     node: Node,
     // Sent transaction.
-    wallet_tx_info: UnboundedSender<PaymentTransaction>,
+    wallet_tx_info: UnboundedSender<(PaymentTransaction, TransactionStatus)>,
     /// Network API.
     network: Network,
     /// Incoming events.
@@ -341,7 +341,7 @@ impl ValueShuffle {
         participant_pkey: pbc::PublicKey,
         network: Network,
         node: Node,
-        wallet_tx_info: UnboundedSender<PaymentTransaction>,
+        wallet_tx_info: UnboundedSender<(PaymentTransaction, TransactionStatus)>,
     ) -> ValueShuffle {
         //
         // State.
@@ -1544,15 +1544,7 @@ impl ValueShuffle {
         debug!("total sig {:?}", self.trans.sig);
 
         if self.validate_transaction() {
-            let leader = self.leader_id();
-            debug!("Leader = {}", leader);
-            if self.participant_key == leader {
-                // if I'm leader, then send the completed super-transaction
-                // to the blockchain.
-                self.send_super_transaction();
-                debug!("Sent SuperTransaction to BlockChain");
-            }
-            self.wallet_tx_info.unbounded_send(self.trans.clone())?;
+            self.execute_super_transaction()?;
             self.reset_state(); // indicate nothing more to follow, restartable
             self.msg_queue.clear();
             self.session_round = 0; // for possible restarts
@@ -1909,11 +1901,25 @@ impl ValueShuffle {
 
     // -------------------------------------------------
 
-    fn send_super_transaction(&self) {
-        // send final superTransaction to blockchain
-        self.node
-            .send_transaction(self.trans.clone().into())
-            .expect("Can't send super-transaction");
+    /// For leader: Send super transaction to mempool.
+    /// For every node: send transaction to the wallet.
+    fn execute_super_transaction(&mut self) -> Result<(), Error> {
+        let leader = self.leader_id();
+        debug!("Leader = {}", leader);
+        let tx = self.trans.clone();
+        let status = if self.participant_key == leader {
+            // if I'm leader, then send the completed super-transaction
+            // to the blockchain.
+            debug!("Sending SuperTransaction to BlockChain");
+            match self.node.send_transaction(tx.clone().into()).wait()? {
+                NodeResponse::AddTransaction { status, .. } => status,
+                _ => unreachable!(),
+            }
+        } else {
+            TransactionStatus::Created {}
+        };
+        self.wallet_tx_info.unbounded_send((tx, status))?;
+        Ok(())
     }
 
     fn leader_id(&mut self) -> ParticipantID {

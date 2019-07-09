@@ -158,7 +158,6 @@ fn vs_start(recipient: PublicKey, amount: i64, account: &mut AccountSandbox) -> 
 }
 
 /// 3 nodes send monet to 1 recipient, using vs
-//#[ignore]
 #[test]
 fn create_vs_tx() {
     const SEND_TOKENS: i64 = 10;

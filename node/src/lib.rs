@@ -48,8 +48,6 @@ use futures::{task, Async, Future, Poll, Stream};
 use futures_stream_select_all_send::select_all;
 pub use loader::CHAIN_LOADER_TOPIC;
 use log::*;
-use protobuf;
-use protobuf::Message;
 use std::collections::HashMap;
 use std::time::Instant;
 use stegos_blockchain::Timestamp;
@@ -76,14 +74,12 @@ pub struct Node {
 
 impl Node {
     /// Send transaction to node and to the network.
-    pub fn send_transaction(&self, tx: Transaction) -> Result<(), Error> {
-        let proto = tx.into_proto();
-        let data = proto.write_to_bytes()?;
-        self.network.publish(&TX_TOPIC, data.clone())?;
-        info!("Sent transaction to the network: tx={}", Hash::digest(&tx));
-        let msg = NodeMessage::Transaction(data);
-        self.outbox.unbounded_send(msg)?;
-        Ok(())
+    pub fn send_transaction(&self, transaction: Transaction) -> oneshot::Receiver<NodeResponse> {
+        let (tx, rx) = oneshot::channel();
+        let request = NodeRequest::AddTransaction(transaction);
+        let msg = NodeMessage::Request { request, tx };
+        self.outbox.unbounded_send(msg).expect("connected");
+        rx
     }
 
     /// Execute a Node Request.
@@ -1028,6 +1024,16 @@ impl NodeService {
         Ok(())
     }
 
+    /// Handler for NodeRequest::AddTransaction
+    fn handle_add_tx(&mut self, tx: Transaction) -> TransactionStatus {
+        match self.send_transaction(tx.clone()) {
+            Ok(()) => TransactionStatus::Accepted {},
+            Err(e) => TransactionStatus::Rejected {
+                error: e.to_string(),
+            },
+        }
+    }
+
     /// Handler for NodeMessage::PopBlock.
     fn handle_pop_block(&mut self) -> Result<(), Error> {
         warn!("Received a request to revert the latest block");
@@ -1707,6 +1713,13 @@ impl Future for NodeService {
                                         Err(e) => NodeResponse::Error {
                                             error: format!("{}", e),
                                         },
+                                    }
+                                }
+                                NodeRequest::AddTransaction(tx) => {
+                                    let hash = Hash::digest(&tx);
+                                    NodeResponse::AddTransaction {
+                                        hash,
+                                        status: self.handle_add_tx(tx),
                                     }
                                 }
                             };

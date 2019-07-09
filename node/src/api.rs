@@ -45,6 +45,8 @@ pub enum NodeRequest {
         /// Account Public Key.
         account_pkey: scc::PublicKey,
     },
+    #[serde(skip)]
+    AddTransaction(Transaction),
 }
 
 ///
@@ -59,6 +61,11 @@ pub enum NodeResponse {
     BlockPopped,
     #[serde(skip)]
     AccountRecovered(AccountRecoveryState),
+    #[serde(skip)]
+    AddTransaction {
+        hash: Hash,
+        status: TransactionStatus,
+    },
     Error {
         error: String,
     },

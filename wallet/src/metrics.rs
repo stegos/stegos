@@ -47,7 +47,7 @@ lazy_static! {
         &["wallet"]
     )
     .unwrap();
-    pub static ref WALLET_COMMITTED_SECURE_PAYMENTS: IntCounterVec = register_int_counter_vec!(
+    pub static ref WALLET_PUBLISHED_PAYMENTS: IntCounterVec = register_int_counter_vec!(
         "stegos_wallet_spay_committed",
         "Count of secure payment txs committed per wallet",
         &["wallet"]

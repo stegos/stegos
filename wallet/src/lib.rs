@@ -131,8 +131,9 @@ struct UnsealedAccountService {
     vs: ValueShuffle,
 
     //TODO: Temporary hack to receive newly created transaction from valueshuffle.
-    wallet_tx_info_receiver: mpsc::UnboundedReceiver<PaymentTransaction>,
+    wallet_tx_info_receiver: mpsc::UnboundedReceiver<(PaymentTransaction, TransactionStatus)>,
     vs_session: Hash,
+    transaction_response: Option<oneshot::Receiver<NodeResponse>>,
 
     //
     // Api subscribers
@@ -192,7 +193,7 @@ impl UnsealedAccountService {
         let last_macro_block_timestamp = Timestamp::UNIX_EPOCH;
 
         let account_log = AccountLog::open(&database_dir);
-
+        let transaction_response = None;
         //
         // Recovery.
         //
@@ -232,6 +233,7 @@ impl UnsealedAccountService {
             recovery_rx,
             events,
             node_notifications,
+            transaction_response,
         }
     }
 
@@ -282,7 +284,7 @@ impl UnsealedAccountService {
             .push_outgoing(Timestamp::now(), payment_info.clone())?;
 
         let tx: Transaction = tx.into();
-        self.node.send_transaction(tx.clone())?;
+        self.send_transaction(tx.clone())?;
         metrics::WALLET_CREATEAD_PAYMENTS
             .with_label_values(&[&String::from(&self.account_pkey)])
             .inc();
@@ -324,7 +326,7 @@ impl UnsealedAccountService {
             .push_outgoing(Timestamp::now(), payment_info.clone())?;
 
         let tx: Transaction = tx.into();
-        self.node.send_transaction(tx.clone())?;
+        self.send_transaction(tx.clone())?;
         metrics::WALLET_CREATEAD_PAYMENTS
             .with_label_values(&[&String::from(&self.account_pkey)])
             .inc();
@@ -391,13 +393,13 @@ impl UnsealedAccountService {
         self.account_log
             .push_outgoing(Timestamp::now(), payment_info.clone())?;
 
-        self.node.send_transaction(tx.into())?;
+        self.send_transaction(tx.into())?;
         Ok(payment_info)
     }
 
     /// Unstake money from the escrow.
     /// NOTE: amount must include PAYMENT_FEE.
-    fn unstake(&self, amount: i64, payment_fee: i64) -> Result<PaymentTransactionValue, Error> {
+    fn unstake(&mut self, amount: i64, payment_fee: i64) -> Result<PaymentTransactionValue, Error> {
         let unspent_iter = self.stakes.values().map(|v| &v.output);
         let tx = create_unstaking_transaction(
             &self.account_skey,
@@ -411,12 +413,12 @@ impl UnsealedAccountService {
             self.last_macro_block_timestamp,
         )?;
         let payment_info = PaymentTransactionValue::new_stake(tx.clone());
-        self.node.send_transaction(tx.into())?;
+        self.send_transaction(tx.into())?;
         Ok(payment_info)
     }
 
     /// Unstake all of the money from the escrow.
-    fn unstake_all(&self, payment_fee: i64) -> Result<PaymentTransactionValue, Error> {
+    fn unstake_all(&mut self, payment_fee: i64) -> Result<PaymentTransactionValue, Error> {
         let mut amount: i64 = 0;
         for val in self.stakes.values() {
             amount += val.output.amount;
@@ -440,7 +442,7 @@ impl UnsealedAccountService {
             stakes,
         )?;
         let tx_hash = Hash::digest(&tx);
-        self.node.send_transaction(tx.into())?;
+        self.send_transaction(tx.into())?;
         Ok((tx_hash, 0))
     }
 
@@ -460,7 +462,7 @@ impl UnsealedAccountService {
         )?;
 
         let info = PaymentTransactionValue::new_cloak(tx.clone());
-        self.node.send_transaction(tx.into())?;
+        self.send_transaction(tx.into())?;
         Ok(info)
     }
 
@@ -639,50 +641,66 @@ impl UnsealedAccountService {
         }
     }
 
+    fn send_transaction(&mut self, tx: Transaction) -> Result<(), Error> {
+        if self.transaction_response.is_some() {
+            bail!(
+                "Cannot create new transaction, tx={}, \
+                 old transaction stil on the way to mempool.",
+                Hash::digest(&tx)
+            )
+        } else {
+            self.transaction_response = Some(self.node.send_transaction(tx.clone()));
+            task::current().notify();
+        }
+        Ok(())
+    }
+
     fn on_epoch_changed(&mut self, epoch: u64, time: Timestamp) {
         self.epoch = epoch;
         self.last_macro_block_timestamp = time;
     }
 
+    fn on_tx_status(&mut self, tx_hash: Hash, status: TransactionStatus) {
+        if let Some(timestamp) = self.account_log.tx_entry(tx_hash) {
+            // update persistent info.
+            self.account_log
+                .update_log_entry(timestamp, |mut e| {
+                    match &mut e {
+                        LogEntry::Outgoing { ref mut tx } => {
+                            tx.status = status.clone();
+                        }
+                        LogEntry::Incoming { .. } => bail!("BUG: Expected outgoing transaction."),
+                    };
+                    Ok(e)
+                })
+                .expect("Cannot update status.");
+
+            // update metrics
+            match status {
+                TransactionStatus::Committed { .. } | TransactionStatus::Prepare { .. } => {
+                    metrics::WALLET_COMMITTED_PAYMENTS
+                        .with_label_values(&[&String::from(&self.account_pkey)])
+                        .inc();
+                }
+                TransactionStatus::Rollback { .. } => {
+                    metrics::WALLET_COMMITTED_PAYMENTS
+                        .with_label_values(&[&String::from(&self.account_pkey)])
+                        .dec();
+                }
+                _ => {}
+            }
+
+            let msg = AccountNotification::TransactionStatus { tx_hash, status };
+            self.notify(msg);
+        } else {
+            trace!("Transaction was not found = {}", tx_hash);
+        }
+    }
+
     fn on_tx_statuses_changed(&mut self, changes: HashMap<Hash, TransactionStatus>) {
         trace!("Updated mempool event");
         for (tx_hash, status) in changes {
-            if let Some(timestamp) = self.account_log.tx_entry(tx_hash) {
-                // update persistent info.
-                self.account_log
-                    .update_log_entry(timestamp, |mut e| {
-                        match &mut e {
-                            LogEntry::Outgoing { ref mut tx } => {
-                                tx.status = status.clone();
-                            }
-                            LogEntry::Incoming { .. } => {
-                                bail!("BUG: Expected outgoing transaction.")
-                            }
-                        };
-                        Ok(e)
-                    })
-                    .expect("Cannot update status.");
-
-                // update metrics
-                match status {
-                    TransactionStatus::Committed { .. } | TransactionStatus::Prepare { .. } => {
-                        metrics::WALLET_COMMITTED_PAYMENTS
-                            .with_label_values(&[&String::from(&self.account_pkey)])
-                            .inc();
-                    }
-                    TransactionStatus::Rollback { .. } => {
-                        metrics::WALLET_COMMITTED_PAYMENTS
-                            .with_label_values(&[&String::from(&self.account_pkey)])
-                            .dec();
-                    }
-                    _ => {}
-                }
-
-                let msg = AccountNotification::TransactionStatus { tx_hash, status };
-                self.notify(msg);
-            } else {
-                trace!("Transaction was not found = {}", tx_hash);
-            }
+            self.on_tx_status(tx_hash, status)
         }
     }
 
@@ -757,6 +775,24 @@ impl Future for UnsealedAccountService {
             }
         }
 
+        if let Some(mut transaction_response) = self.transaction_response.take() {
+            match transaction_response.poll().expect("connected") {
+                Async::Ready(response) => {
+                    match response {
+                        NodeResponse::AddTransaction { hash, status } => {
+                            // Recover state.
+                            self.on_tx_status(hash, status);
+                        }
+                        NodeResponse::Error { error } => {
+                            error!("Failed to get transaction status: {:?}", error);
+                        }
+                        _ => unreachable!(),
+                    };
+                }
+                Async::NotReady => self.transaction_response = Some(transaction_response),
+            }
+        }
+
         loop {
             if let Async::NotReady = self.vs.poll().expect("all errors are already handled") {
                 break;
@@ -770,15 +806,18 @@ impl Future for UnsealedAccountService {
                 .expect("all errors are already handled")
             {
                 Async::Ready(msg) => {
-                    let tx = msg.expect("channel not ended.");
+                    let (tx, status) = msg.expect("channel not ended.");
                     let tx_hash = Hash::digest(&tx);
-                    metrics::WALLET_COMMITTED_SECURE_PAYMENTS
+                    metrics::WALLET_PUBLISHED_PAYMENTS
                         .with_label_values(&[&String::from(&self.account_pkey)])
                         .inc();
                     let notify = AccountNotification::SnowballCreated {
                         tx_hash,
                         session_id: self.vs_session,
                     };
+                    self.notify(notify);
+
+                    let notify = AccountNotification::TransactionStatus { tx_hash, status };
                     self.notify(notify);
                 }
                 Async::NotReady => {

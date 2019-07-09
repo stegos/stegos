@@ -22,6 +22,7 @@
 // SOFTWARE.
 
 use serde_derive::{Deserialize, Serialize};
+use std::time::Duration;
 
 /// Blockchain configuration.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -41,6 +42,8 @@ pub struct ChainConfig {
     pub block_reward: i64,
     /// Service award part of block reward.
     pub service_award_per_epoch: i64,
+    /// Maximal delta between block's timestamp and local timestamp.
+    pub vetted_timestamp_delta: Duration,
 }
 
 impl Default for ChainConfig {
@@ -54,6 +57,8 @@ impl Default for ChainConfig {
             awards_difficulty: 3,
             block_reward: 40_000_000, // 40 STG
             service_award_per_epoch: 20_000_000i64 * (micro_blocks_in_epoch as i64 + 1), // 20 STG per block
+            // Sic: synchronize this value with NodeConfig::{micro, macro}_block_timeout.
+            vetted_timestamp_delta: Duration::from_secs(30),
         }
     }
 }

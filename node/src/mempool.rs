@@ -199,8 +199,8 @@ impl Mempool {
         network_skey: &pbc::SecretKey,
         network_pkey: &pbc::PublicKey,
         max_utxo_in_block: usize,
+        timestamp: Timestamp,
     ) -> MicroBlock {
-        let timestamp = Timestamp::now();
         let seed = mix(last_random, view_change);
         let random = pbc::make_VRF(network_skey, &seed);
 
@@ -489,6 +489,7 @@ mod test {
         mempool.push_tx(tx_hash3.clone(), tx3.clone().into());
 
         let previous = Hash::digest(&1u64);
+        let timestamp = Timestamp::now();
         let epoch = 1;
         let offset = 5;
         let view_change = 0;
@@ -505,6 +506,7 @@ mod test {
             &network_skey,
             &network_pkey,
             max_utxo_in_block,
+            timestamp,
         );
 
         assert_eq!(block.transactions.len(), 3);

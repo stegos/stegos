@@ -187,6 +187,8 @@ pub struct Blockchain {
     last_macro_block_hash: Hash,
     /// Copy of the last macro block random.
     last_macro_block_random: Hash,
+    /// A timestamp from the last block.
+    last_block_timestamp: Timestamp,
     /// Copy of the last block hash.
     last_block_hash: Hash,
 
@@ -233,8 +235,9 @@ impl Blockchain {
         let view_change_proof = None;
         let election_result = ElectionResultList::new();
         let last_macro_block_timestamp = Timestamp::UNIX_EPOCH;
-        let last_macro_block_random = Hash::digest("genesis");
         let last_macro_block_hash = Hash::digest("genesis");
+        let last_macro_block_random = Hash::digest("genesis");
+        let last_block_timestamp = Timestamp::UNIX_EPOCH;
         let last_block_hash = Hash::digest("genesis");
 
         //
@@ -255,8 +258,9 @@ impl Blockchain {
             election_result,
             view_change_proof,
             last_macro_block_timestamp,
-            last_macro_block_random,
             last_macro_block_hash,
+            last_macro_block_random,
+            last_block_timestamp,
             last_block_hash,
             awards,
             epoch_activity,
@@ -334,7 +338,7 @@ impl Blockchain {
                 );
                 self.validate_micro_block(&block, timestamp)?;
                 let lsn = LSN(block.header.epoch, block.header.offset);
-                let _ = self.register_micro_block(lsn, block, timestamp, force_check);
+                let _ = self.register_micro_block(lsn, block, force_check);
             }
             Block::MacroBlock(block) => {
                 let block_hash = Hash::digest(&block);
@@ -359,7 +363,7 @@ impl Blockchain {
                     inputs.push(input);
                 }
                 let lsn = LSN(block.header.epoch, MACRO_BLOCK_OFFSET);
-                let _ = self.register_macro_block(lsn, block, inputs, timestamp, force_check);
+                let _ = self.register_macro_block(lsn, block, inputs, force_check, timestamp);
             }
         }
         Ok(())
@@ -573,6 +577,12 @@ impl Blockchain {
     pub fn last_macro_block_hash(&self) -> Hash {
         assert!(self.epoch > 0);
         self.last_macro_block_hash
+    }
+
+    /// Return the timestamp from the last block.
+    #[inline]
+    pub fn last_block_timestamp(&self) -> Timestamp {
+        self.last_block_timestamp
     }
 
     /// Return the last block hash.
@@ -956,7 +966,7 @@ impl Blockchain {
         //
         let force_check = true;
         let (inputs, outputs) =
-            self.register_macro_block(lsn, block, inputs, timestamp, force_check);
+            self.register_macro_block(lsn, block, inputs, force_check, timestamp);
 
         Ok((inputs, outputs))
     }
@@ -970,8 +980,8 @@ impl Blockchain {
         lsn: LSN,
         block: MacroBlock,
         inputs: Vec<Output>,
-        timestamp: Timestamp,
         force_check: bool,
+        timestamp: Timestamp,
     ) -> (Vec<Output>, Vec<Output>) {
         let block_hash = Hash::digest(&block);
         assert_eq!(self.epoch, block.header.epoch);
@@ -984,7 +994,7 @@ impl Blockchain {
         );
 
         // Validate base header.
-        self.validate_macro_block_header(&block_hash, &block.header, force_check)
+        self.validate_macro_block_header(&block_hash, &block.header, force_check, timestamp)
             .expect("Invalid block header");
 
         //
@@ -1059,7 +1069,7 @@ impl Blockchain {
             &outputs,
             block.header.gamma,
             block.header.block_reward,
-            timestamp,
+            block.header.timestamp,
             force_check,
         );
 
@@ -1137,7 +1147,7 @@ impl Blockchain {
         // Update in-memory indexes and metadata.
         //
         let force_check = true;
-        self.register_micro_block(lsn, block, timestamp, force_check)
+        self.register_micro_block(lsn, block, force_check)
     }
 
     ///
@@ -1153,7 +1163,7 @@ impl Blockchain {
         outputs: &[Output],
         gamma: Fr,
         block_reward: i64,
-        _timestamp: Timestamp,
+        timestamp: Timestamp,
         force_check: bool,
     ) {
         let epoch = self.epoch;
@@ -1292,6 +1302,7 @@ impl Blockchain {
         //
         // Update metadata.
         //
+        self.last_block_timestamp = timestamp;
         self.last_block_hash = block_hash;
         self.offset += 1;
         metrics::OFFSET.set(self.offset as i64);
@@ -1305,7 +1316,6 @@ impl Blockchain {
         &mut self,
         lsn: LSN,
         block: MicroBlock,
-        timestamp: Timestamp,
         force_check: bool,
     ) -> Result<(Vec<Output>, Vec<Output>, Vec<Transaction>), BlockchainError> {
         assert_eq!(self.epoch, block.header.epoch);
@@ -1411,7 +1421,7 @@ impl Blockchain {
             &outputs,
             gamma,
             block_reward,
-            timestamp,
+            block.header.timestamp,
             force_check,
         );
 
@@ -1445,16 +1455,16 @@ impl Blockchain {
         // Remove from the disk.
         //
         let block = self.micro_block(self.epoch, offset)?;
-        let (previous, lsn) = if offset == 0 {
+        let (previous, lsn, last_block_timestamp) = if offset == 0 {
             // Previous block is Macro Block.
             let block = self.macro_block(self.epoch - 1)?;
             let lsn = LSN(self.epoch - 1, MACRO_BLOCK_OFFSET);
-            (Hash::digest(&block), lsn)
+            (Hash::digest(&block), lsn, block.header.timestamp)
         } else {
             // Previous block is Micro Block.
             let block = self.micro_block(self.epoch, offset - 1)?;
             let lsn = LSN(self.epoch, offset - 1);
-            (Hash::digest(&block), lsn)
+            (Hash::digest(&block), lsn, block.header.timestamp)
         };
         self.database
             .delete(&Self::block_key(LSN(self.epoch, offset)))?;
@@ -1478,6 +1488,7 @@ impl Blockchain {
         assert!(self.escrow.current_lsn() <= lsn);
         self.offset = offset;
         self.last_block_hash = previous;
+        self.last_block_timestamp = last_block_timestamp;
         self.reset_view_change();
         metrics::OFFSET.set(self.offset as i64);
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
@@ -1718,15 +1729,21 @@ pub mod tests {
     fn rollback() {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
+        //
+        // Create genesis block.
+        //
         let mut timestamp = Timestamp::now();
+        let block_timestamp0 = timestamp;
         let cfg: ChainConfig = Default::default();
         let (keychains, genesis) = test::fake_genesis(
             cfg.min_stake_amount,
             10 * cfg.min_stake_amount,
             1,
-            timestamp,
+            block_timestamp0,
         );
+        let block_hash0 = Hash::digest(&genesis);
         let chain_dir = TempDir::new("test").unwrap();
+        timestamp += Duration::from_millis(1);
         let mut chain = Blockchain::new(
             cfg.clone(),
             chain_dir.path(),
@@ -1735,25 +1752,39 @@ pub mod tests {
             timestamp,
         )
         .expect("Failed to create blockchain");
-
+        assert_eq!(1, chain.epoch());
+        assert_eq!(0, chain.offset());
+        assert_eq!(1, chain.blocks().count());
+        assert_eq!(0, chain.view_change());
+        assert_eq!(block_hash0, chain.last_block_hash());
+        assert_eq!(block_hash0, chain.last_macro_block_hash());
+        assert_eq!(block_timestamp0, chain.last_block_timestamp());
+        assert_eq!(block_timestamp0, chain.last_macro_block_timestamp());
         let epoch0 = chain.epoch();
         let offset0 = chain.offset();
         let count0 = chain.blocks().count();
-        let block_hash0 = chain.last_block_hash();
         let balance0 = chain.balance().clone();
         let escrow0 = chain.escrow_info().clone();
 
-        // Register a micro block.
+        //
+        // Register a micro block #1.
+        //
         timestamp += Duration::from_millis(1);
+        let block_timestamp1 = timestamp;
         let (block1, input_hashes1, output_hashes1) =
-            test::create_fake_micro_block(&mut chain, &keychains, timestamp);
+            test::create_fake_micro_block(&mut chain, &keychains, block_timestamp1);
+        let block_hash1 = Hash::digest(&block1);
+        timestamp += Duration::from_millis(1);
         chain
             .push_micro_block(block1, timestamp)
             .expect("block is valid");
-        assert_eq!(count0 + 1, chain.blocks().count());
-        assert_eq!(offset0 + 1, chain.offset());
+        assert_eq!(2, chain.blocks().count());
+        assert_eq!(1, chain.offset());
         assert_eq!(0, chain.view_change());
-        assert_ne!(block_hash0, chain.last_block_hash());
+        assert_eq!(block_hash1, chain.last_block_hash());
+        assert_eq!(block_timestamp1, chain.last_block_timestamp());
+        assert_eq!(block_hash0, chain.last_macro_block_hash());
+        assert_eq!(block_timestamp0, chain.last_macro_block_timestamp());
         assert_ne!(&balance0, chain.balance());
         for input_hash in &input_hashes1 {
             assert!(!chain.contains_output(input_hash));
@@ -1767,18 +1798,26 @@ pub mod tests {
         let balance1 = chain.balance().clone();
         let escrow1 = chain.escrow_info().clone();
 
-        // Register one more micro block.
+        //
+        // Register a micro block #2.
+        //
         timestamp += Duration::from_millis(1);
+        let block_timestamp2 = timestamp;
         let (block2, input_hashes2, output_hashes2) =
-            test::create_fake_micro_block(&mut chain, &keychains, timestamp);
+            test::create_fake_micro_block(&mut chain, &keychains, block_timestamp2);
+        let block_hash2 = Hash::digest(&block2);
+        timestamp += Duration::from_millis(1);
         chain
-            .push_micro_block(block2, timestamp)
+            .push_micro_block(block2, block_timestamp2)
             .expect("block is valid");
-        assert_eq!(epoch0, chain.epoch());
-        assert_eq!(offset1 + 1, chain.offset());
+        assert_eq!(1, chain.epoch());
+        assert_eq!(2, chain.offset());
         assert_eq!(0, chain.view_change());
-        assert_eq!(count1 + 1, chain.blocks().count());
-        assert_ne!(block_hash1, chain.last_block_hash());
+        assert_eq!(3, chain.blocks().count());
+        assert_eq!(block_hash2, chain.last_block_hash());
+        assert_eq!(block_timestamp2, chain.last_block_timestamp());
+        assert_eq!(block_hash0, chain.last_macro_block_hash());
+        assert_eq!(block_timestamp0, chain.last_macro_block_timestamp());
         assert_ne!(&balance1, chain.balance());
         for input_hash in &input_hashes2 {
             assert!(!chain.contains_output(input_hash));
@@ -1787,13 +1826,18 @@ pub mod tests {
             assert!(chain.contains_output(output_hash));
         }
 
-        // Pop the last micro block.
+        //
+        // Pop micro block #2.
+        //
         chain.pop_micro_block().expect("no disk errors");
         assert_eq!(epoch0, chain.epoch());
         assert_eq!(offset1, chain.offset());
         assert_eq!(0, chain.view_change());
         assert_eq!(count1, chain.blocks().count());
         assert_eq!(block_hash1, chain.last_block_hash());
+        assert_eq!(block_timestamp1, chain.last_block_timestamp());
+        assert_eq!(block_hash0, chain.last_macro_block_hash());
+        assert_eq!(block_timestamp0, chain.last_macro_block_timestamp());
         assert_eq!(&balance1, chain.balance());
         assert_eq!(escrow1, chain.escrow_info());
         for input_hash in &input_hashes2 {
@@ -1803,13 +1847,48 @@ pub mod tests {
             assert!(!chain.contains_output(output_hash));
         }
 
-        // Pop the previous micro block.
+        //
+        // Try to recover after popping micro block #2.
+        //
+        drop(chain);
+        timestamp += Duration::from_secs(60 * 60 * 24);
+        let mut chain = Blockchain::new(
+            cfg.clone(),
+            chain_dir.path(),
+            true,
+            genesis.clone(),
+            timestamp,
+        )
+        .expect("Failed to create blockchain");
+        assert_eq!(epoch0, chain.epoch());
+        assert_eq!(offset1, chain.offset());
+        assert_eq!(0, chain.view_change());
+        assert_eq!(count1, chain.blocks().count());
+        assert_eq!(block_hash1, chain.last_block_hash());
+        assert_eq!(block_timestamp1, chain.last_block_timestamp());
+        assert_eq!(block_hash0, chain.last_macro_block_hash());
+        assert_eq!(block_timestamp0, chain.last_macro_block_timestamp());
+        assert_eq!(&balance1, chain.balance());
+        assert_eq!(escrow1, chain.escrow_info());
+        for input_hash in &input_hashes2 {
+            assert!(chain.contains_output(&input_hash));
+        }
+        for output_hash in &output_hashes2 {
+            assert!(!chain.contains_output(&output_hash));
+        }
+
+        //
+        // Pop micro block #1.
+        //
         chain.pop_micro_block().expect("no disk errors");
         assert_eq!(epoch0, chain.epoch());
         assert_eq!(offset0, chain.offset());
         assert_eq!(0, chain.view_change());
         assert_eq!(count0, chain.blocks().count());
         assert_eq!(block_hash0, chain.last_block_hash());
+        assert_eq!(block_timestamp0, chain.last_block_timestamp());
+        assert_eq!(block_hash0, chain.last_macro_block_hash());
+        assert_eq!(block_timestamp0, chain.last_macro_block_timestamp());
         assert_eq!(&balance0, chain.balance());
         assert_eq!(escrow0, chain.escrow_info());
         for input_hash in &input_hashes1 {
@@ -1820,16 +1899,26 @@ pub mod tests {
         }
 
         //
-        // Recovery.
+        // Try to recover after popping micro block #1.
         //
         drop(chain);
-        let chain = Blockchain::new(cfg, chain_dir.path(), true, genesis, timestamp)
-            .expect("Failed to create blockchain");
+        timestamp += Duration::from_secs(60 * 60 * 24);
+        let chain = Blockchain::new(
+            cfg.clone(),
+            chain_dir.path(),
+            true,
+            genesis.clone(),
+            timestamp,
+        )
+        .expect("Failed to create blockchain");
         assert_eq!(epoch0, chain.epoch());
         assert_eq!(offset0, chain.offset());
         assert_eq!(0, chain.view_change());
         assert_eq!(count0, chain.blocks().count());
         assert_eq!(block_hash0, chain.last_block_hash());
+        assert_eq!(block_timestamp0, chain.last_block_timestamp());
+        assert_eq!(block_hash0, chain.last_macro_block_hash());
+        assert_eq!(block_timestamp0, chain.last_macro_block_timestamp());
         assert_eq!(&balance0, chain.balance());
         assert_eq!(escrow0, chain.escrow_info());
         for input_hash in &input_hashes1 {
@@ -1838,6 +1927,7 @@ pub mod tests {
         for output_hash in &output_hashes1 {
             assert!(!chain.contains_output(&output_hash));
         }
+        drop(chain);
     }
 
     #[test]

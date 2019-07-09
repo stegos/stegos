@@ -27,12 +27,9 @@ use std::fs::File;
 use std::io;
 use std::io::ErrorKind;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::result::Result;
-use stegos_api::ApiConfig;
-use stegos_blockchain::{ChainConfig, StorageConfig};
-use stegos_crypto::scc::PublicKey;
-use stegos_keychain::KeyChainConfig;
+use stegos_blockchain::ChainConfig;
 use stegos_network::NetworkConfig;
 use stegos_node::NodeConfig;
 use toml;
@@ -55,14 +52,6 @@ pub struct Config {
     pub node: NodeConfig,
     /// Network configuration.
     pub network: NetworkConfig,
-    /// Key Chain configuration.
-    pub keychain: KeyChainConfig,
-    /// Storage configuration.
-    pub blockchain_db: StorageConfig,
-    /// Storage configuration.
-    pub wallet_db: StorageConfig,
-    /// WebSocket API configuration.
-    pub api: ApiConfig,
 }
 
 /// Default values for global configuration.
@@ -73,16 +62,6 @@ impl Default for Config {
             chain: Default::default(),
             node: Default::default(),
             network: Default::default(),
-            keychain: Default::default(),
-            blockchain_db: StorageConfig {
-                database_path: "data/chain".to_string(),
-                ..Default::default()
-            },
-            wallet_db: StorageConfig {
-                database_path: "data/wallet".to_string(),
-                ..Default::default()
-            },
-            api: Default::default(),
         }
     }
 }
@@ -93,21 +72,31 @@ impl Default for Config {
 pub struct GeneralConfig {
     /// Chain name.
     pub chain: String,
+    /// Data directory.
+    pub data_dir: PathBuf,
+    /// Force strict checking (BP + BLS + VRF) of blockchain on the disk.
+    pub force_check: bool,
     /// Log4RS configuration file
     pub log4rs_config: String,
     /// Prometheus exporter endpoint
     pub prometheus_endpoint: String,
-    /// Start transaction generator to some receivers.
-    pub generate_txs: Vec<PublicKey>,
+    /// WebSocket API endpoint,
+    pub api_endpoint: String,
 }
 
 impl Default for GeneralConfig {
     fn default() -> Self {
+        // `~/.local/share/stegos` or just `data` in the current directory
+        let data_dir = dirs::data_dir()
+            .map(|p| p.join("stegos"))
+            .unwrap_or(PathBuf::from(r"data"));
         GeneralConfig {
             chain: "testnet".to_string(),
+            data_dir,
+            force_check: cfg!(debug_assertions),
             log4rs_config: "stegos-log4rs.toml".to_string(),
             prometheus_endpoint: "".to_string(),
-            generate_txs: Vec::new(),
+            api_endpoint: "0.0.0.0:3145".to_string(),
         }
     }
 }

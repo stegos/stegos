@@ -24,19 +24,19 @@
 #![deny(warnings)]
 
 mod client;
-mod config;
 mod crypto;
 mod error;
 mod server;
 
 pub use crate::client::{url, WebSocketClient};
-pub use crate::config::load_api_token;
-pub use crate::config::ApiConfig;
-pub use crate::crypto::ApiToken;
+pub use crate::crypto::{load_api_token, load_or_create_api_token, ApiToken};
 pub use crate::error::KeyError;
 pub use crate::server::WebSocketServer;
 pub use stegos_node::{NodeNotification, NodeRequest, NodeResponse};
-pub use stegos_wallet::{WalletNotification, WalletRequest, WalletResponse};
+pub use stegos_wallet::{
+    WalletId, WalletManager, WalletManagerRequest, WalletManagerResponse, WalletRequest,
+    WalletResponse, WalletsNotification, WalletsRequest, WalletsResponse,
+};
 pub use websocket::WebSocketError;
 
 use crate::crypto::{decrypt, encrypt};
@@ -111,7 +111,7 @@ pub enum NetworkNotification {
 #[serde(untagged)]
 pub enum RequestKind {
     NetworkRequest(NetworkRequest),
-    WalletRequest(WalletRequest),
+    WalletsRequest(WalletsRequest),
     NodeRequest(NodeRequest),
 }
 
@@ -130,8 +130,8 @@ pub struct Request {
 pub enum ResponseKind {
     NetworkResponse(NetworkResponse),
     NetworkNotification(NetworkNotification),
-    WalletResponse(WalletResponse),
-    WalletNotification(WalletNotification),
+    WalletsResponse(WalletsResponse),
+    WalletsNotification(WalletsNotification),
     NodeResponse(NodeResponse),
     NodeNotification(NodeNotification),
 }

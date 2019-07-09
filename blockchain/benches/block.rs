@@ -3,12 +3,14 @@
 use criterion::{criterion_group, criterion_main, Bencher, Criterion};
 use log::*;
 use simple_logger;
+use std::path::Path;
 use std::time::Duration;
-use stegos_blockchain::{test, Blockchain, ChainConfig, MacroBlock, StorageConfig, Timestamp};
+use stegos_blockchain::{test, Blockchain, ChainConfig, MacroBlock, Timestamp};
+use tempdir::TempDir;
 
 fn generate_chain(
     cfg: ChainConfig,
-    storage_cfg: StorageConfig,
+    chain_dir: &Path,
     num_nodes: usize,
     epochs: u64,
 ) -> Vec<MacroBlock> {
@@ -22,7 +24,7 @@ fn generate_chain(
         num_nodes,
         timestamp,
     );
-    let mut chain = Blockchain::new(cfg.clone(), storage_cfg.clone(), genesis.clone(), timestamp)
+    let mut chain = Blockchain::new(cfg.clone(), chain_dir, false, genesis.clone(), timestamp)
         .expect("Failed to create blockchain");
 
     //
@@ -70,18 +72,23 @@ fn push_macro_block(b: &mut Bencher) {
         micro_blocks_in_epoch: 1,
         ..Default::default()
     };
-    let (mut storage_cfg, _temp_dir) = StorageConfig::testing();
-    storage_cfg.force_check = false;
-    let blocks = generate_chain(cfg.clone(), storage_cfg.clone(), NUM_NODES, EPOCHS);
+    let chain_dir = TempDir::new("bench").unwrap();
+    let blocks = generate_chain(cfg.clone(), chain_dir.path(), NUM_NODES, EPOCHS);
 
     // Try to apply blocks to a new blockchain.
     info!("Starting benchmark");
     let timestamp = Timestamp::now();
     b.iter_with_setup(
         || {
-            let (storage_cfg, temp_dir) = StorageConfig::testing();
-            let chain =
-                Blockchain::new(cfg.clone(), storage_cfg, blocks[0].clone(), timestamp).unwrap();
+            let chain_dir = TempDir::new("bench").unwrap();
+            let chain = Blockchain::new(
+                cfg.clone(),
+                chain_dir.path(),
+                false,
+                blocks[0].clone(),
+                timestamp,
+            )
+            .unwrap();
             (chain, temp_dir, blocks.clone())
         },
         |(mut chain, _temp_dir, blocks)| {
@@ -100,9 +107,8 @@ fn recover_macro_block(b: &mut Bencher) {
         micro_blocks_in_epoch: 1,
         ..Default::default()
     };
-    let (mut storage_cfg, _temp_dir) = StorageConfig::testing();
-    storage_cfg.force_check = false;
-    let blocks = generate_chain(cfg.clone(), storage_cfg.clone(), NUM_NODES, EPOCHS);
+    let chain_dir = TempDir::new("bench").unwrap();
+    let blocks = generate_chain(cfg.clone(), chain_dir.path(), NUM_NODES, EPOCHS);
 
     // Try to recovery from the disk.
     info!("Starting benchmark");
@@ -110,7 +116,8 @@ fn recover_macro_block(b: &mut Bencher) {
     b.iter(|| {
         let _chain = Blockchain::new(
             cfg.clone(),
-            storage_cfg.clone(),
+            chain_dir.path(),
+            false,
             blocks[0].clone(),
             timestamp,
         )

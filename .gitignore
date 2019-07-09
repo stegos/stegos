@@ -14,7 +14,13 @@ logs/
 /api_token.txt
 
 # Test data
-/testing/node*/data/
+/testing/node*/data/chain/
+/testing/node*/data/wallets/*/
+/testing/node*/data/wallets/*.skey
+/testing/node*/data/wallets/*.pkey
+!/testing/node*/data/wallets/1.skey
+!/testing/node*/data/wallets/1.pkey
+/testing/node*/data/api.token
 /data/
 
 # IDE files

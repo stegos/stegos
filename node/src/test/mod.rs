@@ -44,6 +44,7 @@ use stegos_consensus::ConsensusMessageBody;
 use stegos_crypto::pbc;
 use stegos_crypto::pbc::{PublicKey, VRF};
 use stegos_network::Network;
+use tempdir::TempDir;
 use tokio_timer::Timer;
 
 pub struct SandboxConfig {
@@ -93,7 +94,6 @@ impl<'timer> Sandbox<'timer> {
                 let node = NodeSandbox::new(
                     config.node.clone(),
                     config.chain.clone(),
-                    keys.wallet_pkey,
                     keys.network_skey,
                     keys.network_pkey,
                     genesis.clone(),
@@ -217,7 +217,6 @@ impl NodeSandbox {
     pub fn new(
         node_cfg: NodeConfig,
         chain_cfg: ChainConfig,
-        recipient_pkey: scc::PublicKey,
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
         genesis: MacroBlock,
@@ -227,18 +226,11 @@ impl NodeSandbox {
 
         // Create node, with first node keychain.
         let timestamp = Timestamp::now();
-        let (storage_cfg, _temp_dir) = StorageConfig::testing();
-        let chain = Blockchain::new(chain_cfg, storage_cfg, genesis, timestamp)
+        let chain_dir = TempDir::new("test").unwrap();
+        let chain = Blockchain::new(chain_cfg, chain_dir.path(), true, genesis, timestamp)
             .expect("Failed to create blockchain");
-        let (mut node_service, node) = NodeService::new(
-            node_cfg,
-            chain,
-            recipient_pkey,
-            network_skey,
-            network_pkey,
-            network,
-        )
-        .unwrap();
+        let (mut node_service, node) =
+            NodeService::new(node_cfg, chain, network_skey, network_pkey, network).unwrap();
         node_service.init().unwrap();
         Self {
             network_service,

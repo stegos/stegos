@@ -172,8 +172,6 @@ pub struct NodeService {
     cfg: NodeConfig,
     /// Blockchain.
     chain: Blockchain,
-    /// Fee and reward recipient,
-    recipient_pkey: scc::PublicKey,
     /// Network secret key.
     network_pkey: pbc::PublicKey,
     /// Network secret key.
@@ -210,7 +208,6 @@ impl NodeService {
     pub fn new(
         cfg: NodeConfig,
         chain: Blockchain,
-        recipient_pkey: scc::PublicKey,
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
         network: Network,
@@ -279,7 +276,6 @@ impl NodeService {
         let service = NodeService {
             cfg,
             chain,
-            recipient_pkey,
             network_skey,
             network_pkey,
             mempool,
@@ -981,21 +977,12 @@ impl NodeService {
         self.on_node_notification
             .retain(move |ch| ch.unbounded_send(event.clone()).is_ok());
     }
+
     /// Handler for NodeMessage::SubscribeNodeNotification.
     fn handle_subscribe_node_notification(
         &mut self,
         tx: UnboundedSender<NodeNotification>,
     ) -> Result<(), Error> {
-        let msg = NewMacroBlock {
-            epoch: self.chain.epoch(),
-            last_macro_block_timestamp: self.chain.last_macro_block_timestamp(),
-            facilitator: self.chain.facilitator().clone(),
-            validators: self.chain.validators().clone(),
-            inputs: Vec::new(),
-            outputs: Vec::new(),
-        };
-        let msg = msg.into();
-        tx.unbounded_send(msg).ok(); // ignore error.
         self.on_node_notification.push(tx);
         Ok(())
     }
@@ -1045,6 +1032,23 @@ impl NodeService {
             );
         }
         Ok(())
+    }
+
+    /// Handler for NodeMessage::RecoverWallet.
+    fn handle_recover_wallet(
+        &mut self,
+        wallet_skey: &scc::SecretKey,
+        wallet_pkey: &scc::PublicKey,
+    ) -> Result<WalletRecoveryState, Error> {
+        debug!("Recovering wallet from blockchain: pkey={}", wallet_pkey);
+        let wallet_persistent_state = self
+            .chain
+            .recover_wallets(&[(wallet_skey, wallet_pkey)])?
+            .into_iter()
+            .next()
+            .unwrap();
+        info!("Recovered wallet from blockchain: pkey={}", wallet_pkey);
+        Ok(wallet_persistent_state)
     }
 
     /// Send block to network.
@@ -1332,10 +1336,14 @@ impl NodeService {
         task::current().notify();
 
         // Propose a new block.
+        let recipient_pkey = self
+            .chain
+            .wallet_by_network_key(&self.network_pkey)
+            .expect("Staked");
         let (block, block_proposal) = proposal::create_macro_block_proposal(
             &self.chain,
             consensus.round(),
-            &self.recipient_pkey,
+            &recipient_pkey,
             &self.network_skey,
             &self.network_pkey,
         );
@@ -1507,6 +1515,10 @@ impl NodeService {
         }
 
         // Create a new micro block from the mempool.
+        let recipient_pkey = self
+            .chain
+            .wallet_by_network_key(&self.network_pkey)
+            .expect("Staked");
         let mut block = self.mempool.create_block(
             previous,
             epoch,
@@ -1515,7 +1527,7 @@ impl NodeService {
             view_change_proof,
             self.chain.last_random(),
             self.chain.cfg().block_reward,
-            &self.recipient_pkey,
+            &recipient_pkey,
             &self.network_skey,
             &self.network_pkey,
             self.cfg.max_utxo_in_block,
@@ -1638,6 +1650,17 @@ impl Future for NodeService {
                                 }
                                 NodeRequest::PopBlock {} => match self.handle_pop_block() {
                                     Ok(()) => NodeResponse::BlockPopped,
+                                    Err(e) => NodeResponse::Error {
+                                        error: format!("{}", e),
+                                    },
+                                },
+                                NodeRequest::RecoverWallet {
+                                    wallet_skey,
+                                    wallet_pkey,
+                                } => match self.handle_recover_wallet(&wallet_skey, &wallet_pkey) {
+                                    Ok(wallet_persistent_state) => {
+                                        NodeResponse::WalletRecovered(wallet_persistent_state)
+                                    }
                                     Err(e) => NodeResponse::Error {
                                         error: format!("{}", e),
                                     },

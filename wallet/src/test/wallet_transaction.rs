@@ -59,7 +59,6 @@ fn create_tx() {
         let recipient = wallets[1].wallet_service.wallet_pkey;
 
         let rx = wallets[0].wallet.request(WalletRequest::Payment {
-            password: PASSWORD.to_string(),
             recipient,
             amount: 10,
             payment_fee: PAYMENT_FEE,
@@ -118,7 +117,6 @@ fn precondition_each_wallet_has_tokens(
 ) {
     for new_wallet in wallets.iter() {
         let rx = genesis_wallet.wallet.request(WalletRequest::Payment {
-            password: PASSWORD.to_string(),
             recipient: new_wallet.wallet_service.wallet_pkey,
             amount,
             payment_fee: PAYMENT_FEE,
@@ -158,7 +156,6 @@ fn vs_start(
     wallet: &mut WalletSandbox,
 ) -> Receiver<WalletResponse> {
     let rx = wallet.wallet.request(WalletRequest::SecurePayment {
-        password: PASSWORD.to_string(),
         recipient,
         amount,
         payment_fee: PAYMENT_FEE,

@@ -33,7 +33,8 @@ use stegos_blockchain::Timestamp;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::scc::PublicKey;
-use stegos_node::NodeNotification;
+
+pub type WalletId = String;
 
 #[derive(Eq, PartialEq, Serialize, Deserialize, Clone, Debug)]
 pub enum LogEntryInfo {
@@ -85,6 +86,14 @@ pub enum WalletNotification {
     Unstaked(StakeInfo),
 }
 
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct WalletsNotification {
+    pub wallet_id: WalletId,
+    #[serde(flatten)]
+    pub notification: WalletNotification,
+}
+
 ///
 /// RPC requests.
 ///
@@ -92,9 +101,11 @@ pub enum WalletNotification {
 #[serde(tag = "request")]
 #[serde(rename_all = "snake_case")]
 pub enum WalletRequest {
-    Payment {
-        #[serde(default, skip_serializing_if = "String::is_empty")]
+    Seal,
+    Unseal {
         password: String,
+    },
+    Payment {
         recipient: PublicKey,
         amount: i64,
         payment_fee: i64,
@@ -103,16 +114,12 @@ pub enum WalletRequest {
         with_certificate: bool,
     },
     PublicPayment {
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        password: String,
         recipient: PublicKey,
         amount: i64,
         payment_fee: i64,
         locked_timestamp: Option<Timestamp>,
     },
     SecurePayment {
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        password: String,
         recipient: PublicKey,
         amount: i64,
         payment_fee: i64,
@@ -123,29 +130,18 @@ pub enum WalletRequest {
         tx_hash: Hash,
     },
     Stake {
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        password: String,
         amount: i64,
         payment_fee: i64,
     },
     Unstake {
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        password: String,
         amount: i64,
         payment_fee: i64,
     },
     UnstakeAll {
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        password: String,
         payment_fee: i64,
     },
-    RestakeAll {
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        password: String,
-    },
+    RestakeAll {},
     CloakAll {
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        password: String,
         payment_fee: i64,
     },
     KeysInfo {},
@@ -156,12 +152,29 @@ pub enum WalletRequest {
         limit: u64,
     },
     ChangePassword {
-        old_password: String,
         new_password: String,
     },
-    GetRecovery {
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        password: String,
+    GetRecovery {},
+}
+
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[serde(tag = "request")]
+pub enum WalletManagerRequest {
+    ListWallets {},
+    CreateWallet { password: String },
+    RecoverWallet { recovery: String, password: String },
+}
+
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[serde(untagged)]
+pub enum WalletsRequest {
+    WalletManagerRequest(WalletManagerRequest),
+    WalletRequest {
+        wallet_id: WalletId,
+        #[serde(flatten)]
+        request: WalletRequest,
     },
 }
 
@@ -179,6 +192,8 @@ pub struct PaymentTransactionInfo {
 #[serde(tag = "response")]
 #[serde(rename_all = "snake_case")]
 pub enum WalletResponse {
+    Sealed,
+    Unsealed,
     TransactionCreated(PaymentTransactionInfo),
     ValueShuffleStarted {
         session_id: Hash,
@@ -209,6 +224,27 @@ pub enum WalletResponse {
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[serde(tag = "response")]
+pub enum WalletManagerResponse {
+    WalletsInfo { wallets: Vec<WalletId> },
+    WalletCreated { wallet_id: WalletId },
+    Error { error: String },
+}
+
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[serde(untagged)]
+pub enum WalletsResponse {
+    WalletManagerResponse(WalletManagerResponse),
+    WalletResponse {
+        wallet_id: WalletId,
+        #[serde(flatten)]
+        response: WalletResponse,
+    },
+}
+
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "result")]
 #[serde(rename_all = "snake_case")]
 pub enum TransactionCommitted {
@@ -233,11 +269,17 @@ pub(crate) enum WalletEvent {
         request: WalletRequest,
         tx: oneshot::Sender<WalletResponse>,
     },
+}
 
-    //
-    // Internal events.
-    //
-    NodeNotification(NodeNotification),
+#[derive(Debug)]
+pub(crate) enum WalletsEvent {
+    Subscribe {
+        tx: UnboundedSender<WalletsNotification>,
+    },
+    Request {
+        request: WalletsRequest,
+        tx: oneshot::Sender<WalletsResponse>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -263,6 +305,29 @@ impl Wallet {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct WalletManager {
+    pub(crate) outbox: UnboundedSender<WalletsEvent>,
+}
+
+impl WalletManager {
+    /// Subscribe for changes.
+    pub fn subscribe(&self) -> UnboundedReceiver<WalletsNotification> {
+        let (tx, rx) = unbounded();
+        let msg = WalletsEvent::Subscribe { tx };
+        self.outbox.unbounded_send(msg).expect("connected");
+        rx
+    }
+
+    /// Execute a Wallet Request.
+    pub fn request(&self, request: WalletsRequest) -> oneshot::Receiver<WalletsResponse> {
+        let (tx, rx) = oneshot::channel();
+        let msg = WalletsEvent::Request { request, tx };
+        self.outbox.unbounded_send(msg).expect("connected");
+        rx
+    }
+}
+
 impl From<PaymentInfo> for OutputInfo {
     fn from(pi: PaymentInfo) -> OutputInfo {
         OutputInfo::Payment(pi)
@@ -278,5 +343,34 @@ impl From<PublicPaymentInfo> for OutputInfo {
 impl From<StakeInfo> for OutputInfo {
     fn from(pi: StakeInfo) -> OutputInfo {
         OutputInfo::Staked(pi)
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    /// Check encoding/decoding of API structures.
+    #[test]
+    fn serde() {
+        let request1 = WalletsRequest::WalletManagerRequest(WalletManagerRequest::CreateWallet {
+            password: "password xx".to_string(),
+        });
+        let json1 = serde_json::to_string(&request1).unwrap();
+        let request1_check: WalletsRequest = serde_json::from_str(&json1).unwrap();
+        assert_eq!(&request1, &request1_check);
+        println!("{:?} {}", &request1, json1);
+
+        let request2 = WalletsRequest::WalletRequest {
+            wallet_id: "my_wallet_id".to_string(),
+            request: WalletRequest::Stake {
+                amount: 4324,
+                payment_fee: 10,
+            },
+        };
+        let json2 = serde_json::to_string(&request2).unwrap();
+        let request2_check: WalletsRequest = serde_json::from_str(&json2).unwrap();
+        assert_eq!(&request2, &request2_check);
+        println!("{:?} {}", &request2, json2);
     }
 }

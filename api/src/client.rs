@@ -53,8 +53,8 @@ enum State {
 }
 
 pub struct WebSocketClient {
-    /// Remote URI.
-    uri: String,
+    /// Remote endpoint.
+    endpoint: String,
     /// API Token.
     api_token: ApiToken,
     /// True if outgoing buffer should be flushed on the next poll().
@@ -64,11 +64,11 @@ pub struct WebSocketClient {
 }
 
 impl WebSocketClient {
-    pub fn new(uri: String, api_token: ApiToken) -> Self {
+    pub fn new(endpoint: String, api_token: ApiToken) -> Self {
         let state = State::WaitReconnect(Delay::new(clock::now()));
         let need_flush = false;
         Self {
-            uri,
+            endpoint,
             api_token,
             need_flush,
             state,
@@ -76,7 +76,7 @@ impl WebSocketClient {
     }
 
     pub fn send(&mut self, msg: Request) -> Result<(), WebSocketError> {
-        trace!("[{}] <= {:?}", self.uri, msg);
+        trace!("[{}] <= {:?}", self.endpoint, msg);
         let msg = encode(&self.api_token, &msg);
         let msg = OwnedMessage::Text(msg);
         self.send_raw(msg)
@@ -116,7 +116,7 @@ impl WebSocketClient {
                         let state = State::Connected(sink, stream);
                         std::mem::replace(&mut self.state, state);
                         task::current().notify();
-                        debug!("[{}] Connected", self.uri);
+                        debug!("[{}] Connected", self.endpoint);
                     }
                     Async::NotReady => {}
                 }
@@ -125,13 +125,13 @@ impl WebSocketClient {
                 trace!("poll: state=WaitReconnect");
                 match delay.poll().unwrap() {
                     Async::Ready(()) => {
-                        let connect_fut = ClientBuilder::new(&self.uri)
+                        let connect_fut = ClientBuilder::new(&self.endpoint)
                             .unwrap()
                             .async_connect_insecure();
                         let state = State::Connect(connect_fut);
                         std::mem::replace(&mut self.state, state);
                         task::current().notify();
-                        debug!("[{}] Connecting...", self.uri);
+                        debug!("[{}] Connecting...", self.endpoint);
                     }
                     Async::NotReady => {}
                 }
@@ -149,30 +149,30 @@ impl WebSocketClient {
 
                 match stream.poll()? {
                     Async::Ready(Some(OwnedMessage::Text(msg))) => {
-                        trace!("[{}] => Text({})", self.uri, msg);
+                        trace!("[{}] => Text({})", self.endpoint, msg);
                         let response: Response = decode(&self.api_token, &msg)?;
-                        trace!("[{}] => {:?}", self.uri, response);
+                        trace!("[{}] => {:?}", self.endpoint, response);
                         return Ok(Async::Ready(response));
                     }
                     Async::Ready(Some(OwnedMessage::Binary(msg))) => {
-                        trace!("[{}] => Binary(len={})", self.uri, msg.len());
+                        trace!("[{}] => Binary(len={})", self.endpoint, msg.len());
                         return Err(WebSocketError::ResponseError("binary is not supported"));
                     }
                     Async::Ready(Some(OwnedMessage::Ping(msg))) => {
-                        trace!("[{}] => Ping(len={})", self.uri, msg.len());
+                        trace!("[{}] => Ping(len={})", self.endpoint, msg.len());
                         self.send_raw(OwnedMessage::Pong(msg))?;
                     }
                     Async::Ready(Some(OwnedMessage::Pong(msg))) => {
-                        trace!("[{}] => Pong(len={})", self.uri, msg.len());
+                        trace!("[{}] => Pong(len={})", self.endpoint, msg.len());
                     }
                     Async::Ready(Some(OwnedMessage::Close(data))) => {
-                        trace!("[{}] => Close(has_data={})", self.uri, data.is_some());
+                        trace!("[{}] => Close(has_data={})", self.endpoint, data.is_some());
                         return Err(WebSocketError::IoError(
                             std::io::ErrorKind::ConnectionReset.into(),
                         ));
                     }
                     Async::Ready(None) => {
-                        trace!("[{}] => EOF", self.uri);
+                        trace!("[{}] => EOF", self.endpoint);
                         return Err(WebSocketError::IoError(
                             std::io::ErrorKind::ConnectionReset.into(),
                         ));
@@ -194,12 +194,15 @@ impl Future for WebSocketClient {
         match self.poll_impl() {
             Ok(r) => Ok(r),
             Err(e) => {
-                error!("[{}] {:?}", self.uri, e);
+                error!("[{}] {:?}", self.endpoint, e);
                 let deadline = clock::now() + RECONNECT_TIMEOUT;
                 let state2 = State::WaitReconnect(Delay::new(deadline));
                 std::mem::replace(&mut self.state, state2);
                 task::current().notify();
-                debug!("[{}] Reconnecting after {:?}", self.uri, RECONNECT_TIMEOUT);
+                debug!(
+                    "[{}] Reconnecting after {:?}",
+                    self.endpoint, RECONNECT_TIMEOUT
+                );
                 Ok(Async::NotReady)
             }
         }

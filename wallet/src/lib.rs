@@ -26,8 +26,10 @@
 mod api;
 mod change;
 mod error;
+mod manager;
 mod metrics;
 mod protos;
+mod recovery;
 mod storage;
 #[cfg(test)]
 pub mod test;
@@ -36,40 +38,45 @@ mod valueshuffle;
 
 pub use crate::api::*;
 use crate::error::WalletError;
+pub use crate::manager::WalletManagerService;
 pub use crate::transaction::TransactionType;
 use crate::transaction::*;
 use crate::valueshuffle::ValueShuffle;
 use failure::Error;
-use futures::sync::mpsc::unbounded;
-use futures::sync::mpsc::UnboundedSender;
+use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::sync::oneshot;
+use futures::task;
 use futures::Async;
 use futures::Future;
 use futures::Poll;
 use futures::Stream;
-use futures_stream_select_all_send::select_all;
 use log::*;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use stegos_blockchain::Timestamp;
 use stegos_blockchain::*;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::scc;
 use stegos_keychain as keychain;
+use stegos_keychain::keyfile::load_wallet_pkey;
+use stegos_keychain::KeyError;
 use stegos_network::Network;
-use stegos_node::Node;
-use stegos_node::NodeNotification;
+use stegos_node::{Node, NodeNotification, NodeRequest, NodeResponse};
 use storage::*;
 
 const STAKE_FEE: i64 = 0;
 
-pub struct WalletService {
+pub struct UnsealedWalletService {
     //
     // Config
     //
+    /// Path to RocksDB directory.
+    database_dir: PathBuf,
     /// Path to wallet secret key.
-    wallet_skey_file: String,
+    wallet_skey_file: PathBuf,
+    /// Path to wallet public key.
+    wallet_pkey_file: PathBuf,
     /// Wallet Secret Key.
     wallet_skey: scc::SecretKey,
     /// Wallet Public Key.
@@ -98,10 +105,9 @@ pub struct WalletService {
     /// Persistent part of the state.
     wallet_log: WalletLog,
 
-    //
-    // Node api (shared)
-    //
-    /// Node API.
+    /// Network API (shared).
+    network: Network,
+    /// Node API (shared).
     node: Node,
 
     //
@@ -128,15 +134,20 @@ pub struct WalletService {
     //
     // Events source
     //
-    /// Incoming events.
-    events: Box<dyn Stream<Item = WalletEvent, Error = ()> + Send>,
+    /// Recovery status.
+    recovery_rx: Option<oneshot::Receiver<NodeResponse>>,
+    /// API Requests.
+    events: UnboundedReceiver<WalletEvent>,
+    /// Notifications from node.
+    node_notifications: UnboundedReceiver<NodeNotification>,
 }
 
-impl WalletService {
+impl UnsealedWalletService {
     /// Create a new wallet.
-    pub fn new(
-        database_path: &Path,
-        wallet_skey_file: String,
+    fn new(
+        database_dir: PathBuf,
+        wallet_skey_file: PathBuf,
+        wallet_pkey_file: PathBuf,
         wallet_skey: scc::SecretKey,
         wallet_pkey: scc::PublicKey,
         network_skey: pbc::SecretKey,
@@ -144,10 +155,12 @@ impl WalletService {
         network: Network,
         node: Node,
         stake_epochs: u64,
-        persistent_state: Vec<(Output, u64)>,
-    ) -> (Self, Wallet) {
+        subscribers: Vec<UnboundedSender<WalletNotification>>,
+        events: UnboundedReceiver<WalletEvent>,
+    ) -> Self {
         info!("My wallet key: {}", String::from(&wallet_pkey));
         debug!("My network key: {}", network_pkey.to_hex());
+
         //
         // State.
         //
@@ -169,31 +182,27 @@ impl WalletService {
 
         let last_macro_block_timestamp = Timestamp::UNIX_EPOCH;
 
-        let wallet_log = WalletLog::open(database_path);
-        //
-        // Subscriptions.
-        //
-        let subscribers: Vec<UnboundedSender<WalletNotification>> = Vec::new();
+        let wallet_log = WalletLog::open(&database_dir);
 
         //
-        // Events.
+        // Recovery.
         //
-        let mut events: Vec<Box<dyn Stream<Item = WalletEvent, Error = ()> + Send>> = Vec::new();
+        let recovery_request = NodeRequest::RecoverWallet {
+            wallet_skey: wallet_skey.clone(),
+            wallet_pkey: wallet_pkey.clone(),
+        };
+        let recovery_rx = Some(node.request(recovery_request));
 
-        // Control messages.
-        let (outbox, inbox) = unbounded::<WalletEvent>();
-        events.push(Box::new(inbox));
+        //
+        // Notifications from node.
+        //
 
-        // UTXO changes.
-        let node_outputs = node
-            .subscribe()
-            .map(|outputs| WalletEvent::NodeNotification(outputs));
-        events.push(Box::new(node_outputs));
+        let node_notifications = node.subscribe();
 
-        let events = select_all(events);
-
-        let mut service = WalletService {
+        UnsealedWalletService {
+            database_dir,
             wallet_skey_file,
+            wallet_pkey_file,
             wallet_skey,
             wallet_pkey,
             network_skey,
@@ -206,38 +215,20 @@ impl WalletService {
             vs,
             stake_epochs,
             last_macro_block_timestamp,
+            network,
             node,
             subscribers,
+            recovery_rx,
             events,
+            node_notifications,
             transactions_interest,
             unprocessed_transactions,
-        };
-
-        // Recover state.
-        for (output, epoch) in persistent_state {
-            service.on_output_created(epoch, output, false);
         }
-
-        metrics::WALLET_BALANCES
-            .with_label_values(&[&String::from(&service.wallet_pkey)])
-            .set(service.balance());
-
-        let api = Wallet { outbox };
-
-        (service, api)
-    }
-
-    /// Unlock secret key.
-    fn unlock(&self, password: String) -> Result<scc::SecretKey, Error> {
-        let wallet_skey_path = Path::new(&self.wallet_skey_file);
-        let wallet_skey = keychain::keyfile::load_wallet_skey(wallet_skey_path, &password)?;
-        Ok(wallet_skey)
     }
 
     /// Send money.
     fn payment(
         &mut self,
-        password: String,
         recipient: &scc::PublicKey,
         amount: i64,
         payment_fee: i64,
@@ -245,7 +236,6 @@ impl WalletService {
         locked_timestamp: Option<Timestamp>,
         with_certificate: bool,
     ) -> Result<PaymentTransactionValue, Error> {
-        let wallet_skey = self.unlock(password)?;
         let data = PaymentPayloadData::Comment(comment);
         let unspent_iter = self
             .payments
@@ -270,7 +260,7 @@ impl WalletService {
         )?;
 
         // Transaction TXINs can generally have different keying for each one
-        let tx = PaymentTransaction::new(&wallet_skey, &inputs, &outputs, &gamma, fee)?;
+        let tx = PaymentTransaction::new(&self.wallet_skey, &inputs, &outputs, &gamma, fee)?;
         let payment_info = PaymentTransactionValue::new_payment(
             data.into(),
             *recipient,
@@ -296,13 +286,11 @@ impl WalletService {
     /// Send money public.
     fn public_payment(
         &mut self,
-        password: String,
         recipient: &scc::PublicKey,
         amount: i64,
         payment_fee: i64,
         locked_timestamp: Option<Timestamp>,
     ) -> Result<PaymentTransactionValue, Error> {
-        let wallet_skey = self.unlock(password)?;
         let unspent_iter = self
             .payments
             .values()
@@ -321,7 +309,7 @@ impl WalletService {
         )?;
 
         // Transaction TXINs can generally have different keying for each one
-        let tx = PaymentTransaction::new(&wallet_skey, &inputs, &outputs, &gamma, fee)?;
+        let tx = PaymentTransaction::new(&self.wallet_skey, &inputs, &outputs, &gamma, fee)?;
         let payment_info =
             PaymentTransactionValue::new_payment(None, *recipient, tx.clone(), &rvalues, amount);
 
@@ -372,15 +360,12 @@ impl WalletService {
     /// Send money using value shuffle.
     fn secure_payment(
         &mut self,
-        password: String,
         recipient: &scc::PublicKey,
         amount: i64,
         payment_fee: i64,
         comment: String,
         locked_timestamp: Option<Timestamp>,
     ) -> Result<Hash, Error> {
-        let _wallet_skey = self.unlock(password)?;
-        // TODO: refactor ValueShuffle to request secret key explicitly.
         let unspent_iter = self
             .payments
             .values()
@@ -406,16 +391,10 @@ impl WalletService {
     }
 
     /// Stake money into the escrow.
-    fn stake(
-        &mut self,
-        password: String,
-        amount: i64,
-        payment_fee: i64,
-    ) -> Result<PaymentTransactionValue, Error> {
-        let wallet_skey = self.unlock(password)?;
+    fn stake(&mut self, amount: i64, payment_fee: i64) -> Result<PaymentTransactionValue, Error> {
         let unspent_iter = self.payments.values().map(|v| (&v.output, v.amount));
         let tx = create_staking_transaction(
-            &wallet_skey,
+            &self.wallet_skey,
             &self.wallet_pkey,
             &self.network_pkey,
             &self.network_skey,
@@ -436,16 +415,10 @@ impl WalletService {
 
     /// Unstake money from the escrow.
     /// NOTE: amount must include PAYMENT_FEE.
-    fn unstake(
-        &self,
-        password: String,
-        amount: i64,
-        payment_fee: i64,
-    ) -> Result<PaymentTransactionValue, Error> {
-        let wallet_skey = self.unlock(password)?;
+    fn unstake(&self, amount: i64, payment_fee: i64) -> Result<PaymentTransactionValue, Error> {
         let unspent_iter = self.stakes.values().map(|v| &v.output);
         let tx = create_unstaking_transaction(
-            &wallet_skey,
+            &self.wallet_skey,
             &self.wallet_pkey,
             &self.network_pkey,
             &self.network_skey,
@@ -461,21 +434,16 @@ impl WalletService {
     }
 
     /// Unstake all of the money from the escrow.
-    fn unstake_all(
-        &self,
-        password: String,
-        payment_fee: i64,
-    ) -> Result<PaymentTransactionValue, Error> {
+    fn unstake_all(&self, payment_fee: i64) -> Result<PaymentTransactionValue, Error> {
         let mut amount: i64 = 0;
         for val in self.stakes.values() {
             amount += val.output.amount;
         }
-        self.unstake(password, amount, payment_fee)
+        self.unstake(amount, payment_fee)
     }
 
     /// Restake all available stakes (even if not expired).
-    fn restake_all(&mut self, password: String) -> Result<(Hash, i64), Error> {
-        let wallet_skey = self.unlock(password)?;
+    fn restake_all(&mut self) -> Result<(Hash, i64), Error> {
         assert_eq!(STAKE_FEE, 0);
         if self.stakes.is_empty() {
             return Err(WalletError::NothingToRestake.into());
@@ -483,7 +451,7 @@ impl WalletService {
 
         let stakes = self.stakes.values().map(|val| &val.output);
         let tx = create_restaking_transaction(
-            &wallet_skey,
+            &self.wallet_skey,
             &self.wallet_pkey,
             &self.network_pkey,
             &self.network_skey,
@@ -495,19 +463,14 @@ impl WalletService {
     }
 
     /// Cloak all available public outputs.
-    fn cloak_all(
-        &mut self,
-        password: String,
-        payment_fee: i64,
-    ) -> Result<PaymentTransactionValue, Error> {
-        let wallet_skey = self.unlock(password)?;
+    fn cloak_all(&mut self, payment_fee: i64) -> Result<PaymentTransactionValue, Error> {
         if self.public_payments.is_empty() {
             return Err(WalletError::NotEnoughMoney.into());
         }
 
         let public_utxos = self.public_payments.values();
         let tx = create_cloaking_transaction(
-            &wallet_skey,
+            &self.wallet_skey,
             &self.wallet_pkey,
             public_utxos,
             payment_fee,
@@ -520,17 +483,15 @@ impl WalletService {
     }
 
     /// Change the password.
-    fn change_password(&mut self, old_password: String, new_password: String) -> Result<(), Error> {
+    fn change_password(&mut self, new_password: String) -> Result<(), Error> {
         let wallet_skey_path = Path::new(&self.wallet_skey_file);
-        let wallet_skey = keychain::keyfile::load_wallet_skey(wallet_skey_path, &old_password)?;
-        keychain::keyfile::write_wallet_skey(wallet_skey_path, &wallet_skey, &new_password)?;
+        keychain::keyfile::write_wallet_skey(wallet_skey_path, &self.wallet_skey, &new_password)?;
         Ok(())
     }
 
     /// Return recovery codes.
-    fn get_recovery(&mut self, password: String) -> Result<String, Error> {
-        let wallet_skey = self.unlock(password)?;
-        Ok(keychain::recovery::wallet_skey_to_recovery(&wallet_skey))
+    fn get_recovery(&mut self) -> Result<String, Error> {
+        Ok(crate::recovery::wallet_skey_to_recovery(&self.wallet_skey))
     }
 
     /// Get actual balance.
@@ -800,11 +761,34 @@ impl From<Vec<LogEntryInfo>> for WalletResponse {
 }
 
 // Event loop.
-impl Future for WalletService {
+impl Future for UnsealedWalletService {
     type Item = ();
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        // Recovery information from node.
+        if let Some(mut recovery_rx) = self.recovery_rx.take() {
+            match recovery_rx.poll() {
+                Ok(Async::Ready(response)) => {
+                    match response {
+                        NodeResponse::WalletRecovered(persistent_state) => {
+                            // Recover state.
+                            for (output, epoch) in persistent_state {
+                                self.on_output_created(epoch, output, false);
+                            }
+                        }
+                        NodeResponse::Error { error } => {
+                            // Sic: this case is hard to recover.
+                            panic!("Failed to recover wallet: {:?}", error);
+                        }
+                        _ => unreachable!(),
+                    };
+                }
+                Ok(Async::NotReady) => self.recovery_rx = Some(recovery_rx),
+                Err(_) => panic!("disconnected"),
+            }
+        }
+
         loop {
             if let Async::NotReady = self.vs.poll().expect("all errors are already handled") {
                 break;
@@ -816,8 +800,15 @@ impl Future for WalletService {
                 Async::Ready(Some(event)) => match event {
                     WalletEvent::Request { request, tx } => {
                         let response = match request {
+                            WalletRequest::Unseal { password: _ } => WalletResponse::Error {
+                                error: "Already unsealed".to_string(),
+                            },
+                            WalletRequest::Seal {} => {
+                                tx.send(WalletResponse::Sealed).ok();
+                                // Finish this future.
+                                return Ok(Async::Ready(()));
+                            }
                             WalletRequest::Payment {
-                                password,
                                 recipient,
                                 amount,
                                 payment_fee,
@@ -826,7 +817,6 @@ impl Future for WalletService {
                                 with_certificate,
                             } => self
                                 .payment(
-                                    password,
                                     &recipient,
                                     amount,
                                     payment_fee,
@@ -836,29 +826,20 @@ impl Future for WalletService {
                                 )
                                 .into(),
                             WalletRequest::PublicPayment {
-                                password,
                                 recipient,
                                 amount,
                                 payment_fee,
                                 locked_timestamp,
                             } => self
-                                .public_payment(
-                                    password,
-                                    &recipient,
-                                    amount,
-                                    payment_fee,
-                                    locked_timestamp,
-                                )
+                                .public_payment(&recipient, amount, payment_fee, locked_timestamp)
                                 .into(),
                             WalletRequest::SecurePayment {
-                                password,
                                 recipient,
                                 amount,
                                 payment_fee,
                                 comment,
                                 locked_timestamp,
                             } => match self.secure_payment(
-                                password,
                                 &recipient,
                                 amount,
                                 payment_fee,
@@ -877,26 +858,20 @@ impl Future for WalletService {
                                 continue;
                             }
                             WalletRequest::Stake {
-                                password,
                                 amount,
                                 payment_fee,
-                            } => self.stake(password, amount, payment_fee).into(),
+                            } => self.stake(amount, payment_fee).into(),
                             WalletRequest::Unstake {
-                                password,
                                 amount,
                                 payment_fee,
-                            } => self.unstake(password, amount, payment_fee).into(),
-                            WalletRequest::UnstakeAll {
-                                password,
-                                payment_fee,
-                            } => self.unstake_all(password, payment_fee).into(),
-                            WalletRequest::RestakeAll { password } => {
-                                self.restake_all(password).into()
+                            } => self.unstake(amount, payment_fee).into(),
+                            WalletRequest::UnstakeAll { payment_fee } => {
+                                self.unstake_all(payment_fee).into()
                             }
-                            WalletRequest::CloakAll {
-                                password,
-                                payment_fee,
-                            } => self.cloak_all(password, payment_fee).into(),
+                            WalletRequest::RestakeAll {} => self.restake_all().into(),
+                            WalletRequest::CloakAll { payment_fee } => {
+                                self.cloak_all(payment_fee).into()
+                            }
                             WalletRequest::KeysInfo {} => WalletResponse::KeysInfo {
                                 wallet_address: self.wallet_pkey,
                                 network_address: self.network_pkey,
@@ -928,56 +903,278 @@ impl Future for WalletService {
                                 starting_from,
                                 limit,
                             } => self.get_tx_history(starting_from, limit).into(),
-                            WalletRequest::ChangePassword {
-                                old_password,
-                                new_password,
-                            } => match self.change_password(old_password, new_password) {
-                                Ok(()) => WalletResponse::PasswordChanged,
-                                Err(e) => WalletResponse::Error {
-                                    error: format!("{}", e),
-                                },
-                            },
-                            WalletRequest::GetRecovery { password } => {
-                                match self.get_recovery(password) {
-                                    Ok(recovery) => WalletResponse::Recovery { recovery },
+                            WalletRequest::ChangePassword { new_password } => {
+                                match self.change_password(new_password) {
+                                    Ok(()) => WalletResponse::PasswordChanged,
                                     Err(e) => WalletResponse::Error {
                                         error: format!("{}", e),
                                     },
                                 }
                             }
+                            WalletRequest::GetRecovery {} => match self.get_recovery() {
+                                Ok(recovery) => WalletResponse::Recovery { recovery },
+                                Err(e) => WalletResponse::Error {
+                                    error: format!("{}", e),
+                                },
+                            },
                         };
                         tx.send(response).ok(); // ignore errors.
                     }
                     WalletEvent::Subscribe { tx } => {
                         self.subscribers.push(tx);
                     }
-                    WalletEvent::NodeNotification(notification) => match notification {
-                        NodeNotification::NewMicroBlock(block) => {
-                            self.on_outputs_changed(
-                                block.epoch,
-                                block.inputs,
-                                block.outputs,
-                                false,
-                            );
-                        }
-                        NodeNotification::NewMacroBlock(block) => {
-                            self.on_outputs_changed(block.epoch, block.inputs, block.outputs, true);
-                            self.on_epoch_changed(block.epoch, block.last_macro_block_timestamp);
-                        }
-                        NodeNotification::RollbackMicroBlock(block) => {
-                            self.on_outputs_changed(
-                                block.epoch,
-                                block.inputs,
-                                block.outputs,
-                                false,
-                            );
-                        }
-                        _ => {}
-                    },
+                },
+                Async::Ready(None) => unreachable!(), // never happens
+                Async::NotReady => break,
+            }
+        }
+
+        loop {
+            match self
+                .node_notifications
+                .poll()
+                .expect("all errors are already handled")
+            {
+                Async::Ready(Some(notification)) => match notification {
+                    NodeNotification::NewMicroBlock(block) => {
+                        assert!(self.recovery_rx.is_none(), "recovered from the disk");
+                        self.on_outputs_changed(block.epoch, block.inputs, block.outputs, false);
+                    }
+                    NodeNotification::NewMacroBlock(block) => {
+                        assert!(self.recovery_rx.is_none(), "recovered from the disk");
+                        self.on_outputs_changed(block.epoch, block.inputs, block.outputs, true);
+                        self.on_epoch_changed(block.epoch, block.last_macro_block_timestamp);
+                    }
+                    NodeNotification::RollbackMicroBlock(block) => {
+                        assert!(self.recovery_rx.is_none(), "recovered from the disk");
+                        self.on_outputs_changed(block.epoch, block.inputs, block.outputs, false);
+                    }
+                    _ => {}
+                },
+                Async::Ready(None) => unreachable!(), // never happens
+                Async::NotReady => break,
+            }
+        }
+
+        Ok(Async::NotReady)
+    }
+}
+
+pub struct SealedWalletService {
+    /// Path to database dir.
+    database_dir: PathBuf,
+    /// Path to wallet secret key.
+    wallet_skey_file: PathBuf,
+    /// Path to wallet public key.
+    wallet_pkey_file: PathBuf,
+    /// Wallet Public Key.
+    wallet_pkey: scc::PublicKey,
+    /// Network Secret Key.
+    network_skey: pbc::SecretKey,
+    /// Network Public Key.
+    network_pkey: pbc::PublicKey,
+    /// Lifetime of stake.
+    stake_epochs: u64,
+
+    /// Network API (shared).
+    network: Network,
+    /// Node API (shared).
+    node: Node,
+
+    //
+    // Api subscribers
+    //
+    subscribers: Vec<UnboundedSender<WalletNotification>>,
+    /// Incoming events.
+    events: UnboundedReceiver<WalletEvent>,
+}
+
+impl SealedWalletService {
+    fn new(
+        database_dir: PathBuf,
+        wallet_skey_file: PathBuf,
+        wallet_pkey_file: PathBuf,
+        wallet_pkey: scc::PublicKey,
+        network_skey: pbc::SecretKey,
+        network_pkey: pbc::PublicKey,
+        network: Network,
+        node: Node,
+        stake_epochs: u64,
+        subscribers: Vec<UnboundedSender<WalletNotification>>,
+        events: UnboundedReceiver<WalletEvent>,
+    ) -> Self {
+        SealedWalletService {
+            database_dir,
+            wallet_skey_file,
+            wallet_pkey_file,
+            wallet_pkey,
+            network_skey,
+            network_pkey,
+            stake_epochs,
+            node,
+            network,
+            subscribers,
+            events,
+        }
+    }
+
+    fn load_secret_key(&self, password: &str) -> Result<scc::SecretKey, KeyError> {
+        let wallet_skey = keychain::keyfile::load_wallet_skey(&self.wallet_skey_file, password)?;
+
+        if let Err(_e) = scc::check_keying(&wallet_skey, &self.wallet_pkey) {
+            return Err(KeyError::InvalidKeying(
+                self.wallet_skey_file.to_string_lossy().to_string(),
+                self.wallet_pkey_file.to_string_lossy().to_string(),
+            ));
+        }
+        Ok(wallet_skey)
+    }
+}
+
+// Event loop.
+impl Future for SealedWalletService {
+    type Item = scc::SecretKey;
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        loop {
+            match self.events.poll().expect("all errors are already handled") {
+                Async::Ready(Some(event)) => match event {
+                    WalletEvent::Request { request, tx } => {
+                        let response = match request {
+                            WalletRequest::Unseal { password } => {
+                                match self.load_secret_key(&password) {
+                                    Ok(wallet_skey) => {
+                                        tx.send(WalletResponse::Unsealed).ok(); // ignore errors.
+                                                                                // Finish this future.
+                                        return Ok(Async::Ready(wallet_skey));
+                                    }
+                                    Err(e) => WalletResponse::Error {
+                                        error: format!("{}", e),
+                                    },
+                                }
+                            }
+                            WalletRequest::KeysInfo {} => WalletResponse::KeysInfo {
+                                wallet_address: self.wallet_pkey,
+                                network_address: self.network_pkey,
+                            },
+                            _ => WalletResponse::Error {
+                                error: "Wallet is sealed".to_string(),
+                            },
+                        };
+                        tx.send(response).ok(); // ignore errors.
+                    }
+                    WalletEvent::Subscribe { tx } => {
+                        self.subscribers.push(tx);
+                    }
                 },
                 Async::Ready(None) => unreachable!(), // never happens
                 Async::NotReady => return Ok(Async::NotReady),
             }
         }
+    }
+}
+
+pub enum WalletService {
+    Invalid,
+    Sealed(SealedWalletService),
+    Unsealed(UnsealedWalletService),
+}
+
+// Event loop.
+impl Future for WalletService {
+    type Item = ();
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        match self {
+            WalletService::Invalid => unreachable!(),
+            WalletService::Sealed(sealed) => match sealed.poll().unwrap() {
+                Async::Ready(wallet_skey) => {
+                    let sealed = match std::mem::replace(self, WalletService::Invalid) {
+                        WalletService::Sealed(old) => old,
+                        _ => unreachable!(),
+                    };
+                    info!("Unsealed wallet: pkey={}", &sealed.wallet_pkey);
+                    let unsealed = UnsealedWalletService::new(
+                        sealed.database_dir,
+                        sealed.wallet_skey_file,
+                        sealed.wallet_pkey_file,
+                        wallet_skey,
+                        sealed.wallet_pkey,
+                        sealed.network_skey,
+                        sealed.network_pkey,
+                        sealed.network,
+                        sealed.node,
+                        sealed.stake_epochs,
+                        sealed.subscribers,
+                        sealed.events,
+                    );
+                    std::mem::replace(self, WalletService::Unsealed(unsealed));
+                    task::current().notify();
+                }
+                Async::NotReady => {}
+            },
+            WalletService::Unsealed(unsealed) => match unsealed.poll().unwrap() {
+                Async::Ready(()) => {
+                    let unsealed = match std::mem::replace(self, WalletService::Invalid) {
+                        WalletService::Unsealed(old) => old,
+                        _ => unreachable!(),
+                    };
+                    info!("Sealed wallet: pkey={}", &unsealed.wallet_pkey);
+                    let sealed = SealedWalletService::new(
+                        unsealed.database_dir,
+                        unsealed.wallet_skey_file,
+                        unsealed.wallet_pkey_file,
+                        unsealed.wallet_pkey,
+                        unsealed.network_skey,
+                        unsealed.network_pkey,
+                        unsealed.network,
+                        unsealed.node,
+                        unsealed.stake_epochs,
+                        unsealed.subscribers,
+                        unsealed.events,
+                    );
+                    std::mem::replace(self, WalletService::Sealed(sealed));
+                    task::current().notify();
+                }
+                Async::NotReady => {}
+            },
+        }
+        Ok(Async::NotReady)
+    }
+}
+
+impl WalletService {
+    /// Create a new wallet.
+    pub fn new(
+        database_dir: &Path,
+        wallet_skey_file: &Path,
+        wallet_pkey_file: &Path,
+        network_skey: pbc::SecretKey,
+        network_pkey: pbc::PublicKey,
+        network: Network,
+        node: Node,
+        stake_epochs: u64,
+    ) -> Result<(Self, Wallet), KeyError> {
+        let wallet_pkey = load_wallet_pkey(wallet_pkey_file)?;
+        let subscribers: Vec<UnboundedSender<WalletNotification>> = Vec::new();
+        let (outbox, events) = unbounded::<WalletEvent>();
+        let service = SealedWalletService::new(
+            database_dir.to_path_buf(),
+            wallet_skey_file.to_path_buf(),
+            wallet_pkey_file.to_path_buf(),
+            wallet_pkey,
+            network_skey,
+            network_pkey,
+            network,
+            node,
+            stake_epochs,
+            subscribers,
+            events,
+        );
+        let service = WalletService::Sealed(service);
+        let api = Wallet { outbox };
+        Ok((service, api))
     }
 }

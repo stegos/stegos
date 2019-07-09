@@ -34,7 +34,25 @@ use stegos_blockchain::{
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{pbc, scc};
 use stegos_keychain as keychain;
+use stegos_keychain::KeyError;
 use stegos_serialization::traits::ProtoConvert;
+
+fn fix_newline(password: &mut String) {
+    if password.ends_with('\n') {
+        password.pop();
+        if password.ends_with('\r') {
+            password.pop();
+        }
+    }
+}
+
+fn read_password_from_file(password_file: &Path) -> Result<String, KeyError> {
+    info!("Reading password from file {:?}...", password_file);
+    let mut password = fs::read_to_string(password_file)
+        .map_err(|e| KeyError::InputOutputError(password_file.to_string_lossy().to_string(), e))?;
+    fix_newline(&mut password);
+    Ok(password)
+}
 
 fn main() {
     simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
@@ -145,8 +163,8 @@ fn main() {
         let network_skey_file = format!("network{:02}.skey", i + 1);
         let network_pkey_file = format!("network{:02}.pkey", i + 1);
 
-        let password = keychain::input::read_password_from_file(&password_file)
-            .expect("failed to read password");
+        let password =
+            read_password_from_file(Path::new(&password_file)).expect("failed to read password");
 
         // Generate keys.
         let (wallet_skey, wallet_pkey) = scc::make_random_keys();

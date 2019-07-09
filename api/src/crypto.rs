@@ -23,10 +23,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::error::KeyError;
 use crypto::aes::{self, KeySize};
 use crypto::symmetriccipher::SynchronousStreamCipher;
+use log::info;
 use rand::{thread_rng, RngCore};
+use std::fs;
 use std::iter::repeat;
+use std::path::Path;
 
 /// Key size for API token
 pub const API_TOKENSIZE: usize = 16;
@@ -63,6 +67,33 @@ pub fn decrypt(key: &ApiToken, ciphertext: &[u8]) -> Vec<u8> {
     let mut output: Vec<u8> = repeat(0u8).take(ciphertext.len() - 16).collect();
     cipher.process(&ciphertext[16..], &mut output);
     output
+}
+
+// Load API Key from file, generate new key, if file is missing
+pub fn load_or_create_api_token(token_file: &Path) -> Result<ApiToken, KeyError> {
+    if !token_file.exists() {
+        info!("API Key file is missing, generating new one");
+        let token = ApiToken::new();
+        fs::write(token_file.clone(), base64::encode(&token.0))
+            .map_err(|e| KeyError::InputOutputError(token_file.to_string_lossy().to_string(), e))?;
+        return Ok(token);
+    } else {
+        return load_api_token(token_file);
+    }
+}
+
+/// Load API token from a file.
+pub fn load_api_token(token_file: &Path) -> Result<ApiToken, KeyError> {
+    let token = fs::read_to_string(token_file)
+        .map_err(|e| KeyError::InputOutputError(token_file.to_string_lossy().to_string(), e))?;
+    let token = base64::decode(&token)
+        .map_err(|e| KeyError::ParseError(token_file.to_string_lossy().to_string(), e))?;
+    if token.len() != API_TOKENSIZE {
+        return Err(KeyError::InvalidKeySize(API_TOKENSIZE, token.len()).into());
+    }
+    let mut token2 = [0u8; API_TOKENSIZE];
+    token2.copy_from_slice(&token);
+    Ok(ApiToken(token2))
 }
 
 #[cfg(test)]

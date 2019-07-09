@@ -130,6 +130,7 @@ mod test {
     use stegos_blockchain::Timestamp;
     use stegos_blockchain::*;
     use stegos_crypto::scc::Fr;
+    use tempdir::TempDir;
 
     #[test]
     fn test_validate_transaction() {
@@ -147,8 +148,9 @@ mod test {
         let (wallet_skey, wallet_pkey) = (keychain.wallet_skey, keychain.wallet_pkey);
         let (network_skey, network_pkey) = (keychain.network_skey, keychain.network_pkey);
         let mut mempool = Mempool::new();
-        let (storage_cfg, _temp_dir) = StorageConfig::testing();
-        let chain = Blockchain::new(cfg, storage_cfg, genesis, timestamp)
+        let chain_dir = TempDir::new("test").unwrap();
+        let force_check = true;
+        let chain = Blockchain::new(cfg, chain_dir.path(), force_check, genesis, timestamp)
             .expect("Failed to create blockchain");
         let mut inputs: Vec<Output> = Vec::new();
         let mut stakes: Vec<Output> = Vec::new();

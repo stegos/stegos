@@ -21,7 +21,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::config::ApiConfig;
 use crate::crypto::ApiToken;
 use crate::{
     decode, encode, NetworkNotification, NetworkRequest, NetworkResponse, Request, RequestId,
@@ -35,7 +34,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use stegos_network::{Network, UnicastMessage};
 use stegos_node::{Node, NodeNotification, NodeResponse};
-use stegos_wallet::{Wallet, WalletNotification, WalletResponse};
+use stegos_wallet::{WalletManager, WalletsNotification, WalletsResponse};
 use tokio::net::TcpListener;
 use tokio::runtime::TaskExecutor;
 use websocket::message::OwnedMessage;
@@ -71,11 +70,11 @@ struct WebSocketHandler {
     /// Network broadcast subscribtions.
     network_broadcast: HashMap<String, mpsc::UnboundedReceiver<Vec<u8>>>,
     /// Wallet API.
-    wallet: Wallet,
+    wallet: WalletManager,
     /// Wallet events.
-    wallet_notifications: mpsc::UnboundedReceiver<WalletNotification>,
+    wallet_notifications: mpsc::UnboundedReceiver<WalletsNotification>,
     /// Wallet RPC responses.
-    wallet_responses: Vec<(RequestId, oneshot::Receiver<WalletResponse>)>,
+    wallet_responses: Vec<(RequestId, oneshot::Receiver<WalletsResponse>)>,
     /// Node API.
     node: Node,
     /// Node RPC responses.
@@ -91,7 +90,7 @@ impl WebSocketHandler {
         sink: WsSink,
         stream: WsStream,
         network: Network,
-        wallet: Wallet,
+        wallet: WalletManager,
         node: Node,
     ) -> Self {
         let need_flush = false;
@@ -178,7 +177,7 @@ impl WebSocketHandler {
                 };
                 self.send(response);
             }
-            RequestKind::WalletRequest(wallet_request) => {
+            RequestKind::WalletsRequest(wallet_request) => {
                 self.wallet_responses
                     .push((request.id, self.wallet.request(wallet_request)));
             }
@@ -305,7 +304,7 @@ impl Future for WebSocketHandler {
             match self.wallet_notifications.poll() {
                 Ok(Async::Ready(Some(notification))) => {
                     let response = Response {
-                        kind: ResponseKind::WalletNotification(notification),
+                        kind: ResponseKind::WalletsNotification(notification),
                         id: 0,
                     };
                     self.send(response);
@@ -321,7 +320,7 @@ impl Future for WebSocketHandler {
             match rx.poll() {
                 Ok(Async::Ready(response)) => {
                     let response = Response {
-                        kind: ResponseKind::WalletResponse(response),
+                        kind: ResponseKind::WalletsResponse(response),
                         id,
                     };
                     self.send(response);
@@ -377,18 +376,18 @@ pub struct WebSocketServer {}
 
 impl WebSocketServer {
     pub fn spawn(
-        cfg: ApiConfig,
+        endpoint: String,
+        api_token: ApiToken,
         executor: TaskExecutor,
         network: Network,
-        wallet: Wallet,
+        wallet: WalletManager,
         node: Node,
     ) -> Result<(), Error> {
         let executor2 = executor.clone();
         let network2 = network.clone();
         let wallet2 = wallet.clone();
         let node2 = node.clone();
-        let addr: SocketAddr = format!("{}:{}", cfg.bind_ip, cfg.bind_port).parse()?;
-        let key = crate::config::load_or_create_api_token(&cfg.token_file)?;
+        let addr: SocketAddr = endpoint.parse()?;
         info!("Starting WebSocket API on {}", &addr);
         let server = TcpListener::bind(&addr)?
             .incoming()
@@ -406,7 +405,7 @@ impl WebSocketServer {
                         return Ok(());
                     }
                 };
-                let key = key.clone();
+                let api_token = api_token.clone();
                 debug!("[{}] accepted", peer);
                 let s = s
                     .into_ws()
@@ -425,7 +424,7 @@ impl WebSocketServer {
                                 info!("[{}] Connected", peer);
                                 WebSocketHandler::new(
                                     peer,
-                                    key,
+                                    api_token,
                                     sink,
                                     stream,
                                     network3.clone(),

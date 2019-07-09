@@ -22,10 +22,6 @@
 // SOFTWARE.
 
 use crate::storage::PaymentCertificate;
-use futures::sync::mpsc::unbounded;
-use futures::sync::mpsc::UnboundedReceiver;
-use futures::sync::mpsc::UnboundedSender;
-use futures::sync::oneshot;
 use serde_derive::{Deserialize, Serialize};
 pub use stegos_blockchain::PaymentPayloadData;
 pub use stegos_blockchain::StakeInfo;
@@ -252,80 +248,6 @@ pub enum TransactionCommitted {
     Committed {},
     NotFoundInMempool {}, //TODO: replace, after persistent for all created transactions.
     ConflictTransactionCommitted { conflicted_output: Hash },
-}
-
-///
-/// Events.
-///
-#[derive(Debug)]
-pub(crate) enum AccountEvent {
-    //
-    // Public API.
-    //
-    Subscribe {
-        tx: UnboundedSender<AccountNotification>,
-    },
-    Request {
-        request: AccountRequest,
-        tx: oneshot::Sender<AccountResponse>,
-    },
-}
-
-#[derive(Debug)]
-pub(crate) enum WalletEvent {
-    Subscribe {
-        tx: UnboundedSender<WalletNotification>,
-    },
-    Request {
-        request: WalletRequest,
-        tx: oneshot::Sender<WalletResponse>,
-    },
-}
-
-#[derive(Debug, Clone)]
-pub struct Account {
-    pub(crate) outbox: UnboundedSender<AccountEvent>,
-}
-
-impl Account {
-    /// Subscribe for changes.
-    pub fn subscribe(&self) -> UnboundedReceiver<AccountNotification> {
-        let (tx, rx) = unbounded();
-        let msg = AccountEvent::Subscribe { tx };
-        self.outbox.unbounded_send(msg).expect("connected");
-        rx
-    }
-
-    /// Execute a request.
-    pub fn request(&self, request: AccountRequest) -> oneshot::Receiver<AccountResponse> {
-        let (tx, rx) = oneshot::channel();
-        let msg = AccountEvent::Request { request, tx };
-        self.outbox.unbounded_send(msg).expect("connected");
-        rx
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Wallet {
-    pub(crate) outbox: UnboundedSender<WalletEvent>,
-}
-
-impl Wallet {
-    /// Subscribe for changes.
-    pub fn subscribe(&self) -> UnboundedReceiver<WalletNotification> {
-        let (tx, rx) = unbounded();
-        let msg = WalletEvent::Subscribe { tx };
-        self.outbox.unbounded_send(msg).expect("connected");
-        rx
-    }
-
-    /// Execute a Wallet Request.
-    pub fn request(&self, request: WalletRequest) -> oneshot::Receiver<WalletResponse> {
-        let (tx, rx) = oneshot::channel();
-        let msg = WalletEvent::Request { request, tx };
-        self.outbox.unbounded_send(msg).expect("connected");
-        rx
-    }
 }
 
 impl From<PaymentInfo> for OutputInfo {

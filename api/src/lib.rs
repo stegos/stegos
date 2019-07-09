@@ -33,10 +33,7 @@ pub use crate::crypto::{load_api_token, load_or_create_api_token, ApiToken};
 pub use crate::error::KeyError;
 pub use crate::server::WebSocketServer;
 pub use stegos_node::{NodeNotification, NodeRequest, NodeResponse};
-pub use stegos_wallet::{
-    AccountId, AccountRequest, AccountResponse, Wallet, WalletControlRequest,
-    WalletControlResponse, WalletNotification, WalletRequest, WalletResponse,
-};
+pub use stegos_wallet::api::*;
 pub use websocket::WebSocketError;
 
 use crate::crypto::{decrypt, encrypt};

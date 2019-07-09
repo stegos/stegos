@@ -22,10 +22,10 @@
 #![allow(unused)]
 
 pub use stegos_node::test::*;
-mod wallet_transaction;
-use super::Wallet;
+mod account_transaction;
+use super::Account;
 use crate::{
-    UnsealedWalletService, WalletEvent, WalletNotification, WalletResponse, WalletService,
+    AccountEvent, AccountNotification, AccountResponse, AccountService, UnsealedAccountService,
 };
 use stegos_blockchain::{Blockchain, ChainConfig};
 use stegos_crypto::scc;
@@ -39,25 +39,25 @@ use stegos_node::Node;
 
 const PASSWORD: &str = "1234";
 
-fn genesis_wallets(s: &mut Sandbox) -> Vec<WalletSandbox> {
-    let mut wallets = Vec::new();
+fn genesis_accounts(s: &mut Sandbox) -> Vec<AccountSandbox> {
+    let mut accounts = Vec::new();
     for i in 0..s.nodes.len() {
-        let wallet = WalletSandbox::new_genesis(s, i);
-        wallets.push(wallet);
+        let account = AccountSandbox::new_genesis(s, i);
+        accounts.push(account);
     }
-    wallets
+    accounts
 }
 
-struct WalletSandbox {
-    //TODO: moove tempdir out of wallet sandbox
+struct AccountSandbox {
+    //TODO: moove tempdir out of account sandbox
     _tmp_dir: TempDir,
     #[allow(dead_code)]
     network: Loopback,
-    wallet: Wallet,
-    wallet_service: UnsealedWalletService,
+    account: Account,
+    account_service: UnsealedAccountService,
 }
 
-impl WalletSandbox {
+impl AccountSandbox {
     pub fn new(
         stake_epochs: u64,
         keys: KeyChain,
@@ -65,35 +65,35 @@ impl WalletSandbox {
         chain: &Blockchain,
         network_service: Loopback,
         network: Network,
-    ) -> WalletSandbox {
-        let temp_dir = TempDir::new("wallet").unwrap();
+    ) -> AccountSandbox {
+        let temp_dir = TempDir::new("account").unwrap();
         let network_pkey = keys.network_pkey;
         let network_skey = keys.network_skey.clone();
-        let wallet_pkey = keys.wallet_pkey;
-        let wallet_skey = keys.wallet_skey.clone();
+        let account_pkey = keys.account_pkey;
+        let account_skey = keys.account_skey.clone();
         // init network
         let mut database_dir = temp_dir.path().to_path_buf();
 
         database_dir.push("database_path");
-        let wallet_skey_file = temp_dir.path().join("wallet.skey");
-        let wallet_pkey_file = temp_dir.path().join("wallet.pkey");
-        stegos_keychain::keyfile::write_wallet_skey(&wallet_skey_file, &wallet_skey, PASSWORD)
+        let account_skey_file = temp_dir.path().join("account.skey");
+        let account_pkey_file = temp_dir.path().join("account.pkey");
+        stegos_keychain::keyfile::write_account_skey(&account_skey_file, &account_skey, PASSWORD)
             .unwrap();
-        stegos_keychain::keyfile::write_wallet_pkey(&wallet_pkey_file, &wallet_pkey).unwrap();
+        stegos_keychain::keyfile::write_account_pkey(&account_pkey_file, &account_pkey).unwrap();
 
         info!(
-            "Wrote wallet key pair: skey_file={:?}, pkey_file={:?}",
-            wallet_skey_file, wallet_pkey_file
+            "Wrote account key pair: skey_file={:?}, pkey_file={:?}",
+            account_skey_file, account_pkey_file
         );
 
-        let (outbox, events) = mpsc::unbounded::<WalletEvent>();
-        let subscribers: Vec<mpsc::UnboundedSender<WalletNotification>> = Vec::new();
-        let wallet_service = UnsealedWalletService::new(
+        let (outbox, events) = mpsc::unbounded::<AccountEvent>();
+        let subscribers: Vec<mpsc::UnboundedSender<AccountNotification>> = Vec::new();
+        let account_service = UnsealedAccountService::new(
             database_dir,
-            wallet_skey_file,
-            wallet_pkey_file,
-            wallet_skey,
-            wallet_pkey,
+            account_skey_file,
+            account_pkey_file,
+            account_skey,
+            account_pkey,
             network_skey,
             network_pkey,
             network,
@@ -102,21 +102,21 @@ impl WalletSandbox {
             subscribers,
             events,
         );
-        let wallet = Wallet { outbox };
+        let account = Account { outbox };
 
-        WalletSandbox {
-            wallet,
-            wallet_service,
+        AccountSandbox {
+            account,
+            account_service,
             network: network_service,
             _tmp_dir: temp_dir,
         }
     }
 
-    pub fn new_genesis(s: &mut Sandbox, node_id: usize) -> WalletSandbox {
+    pub fn new_genesis(s: &mut Sandbox, node_id: usize) -> AccountSandbox {
         let stake_epochs = s.config.chain.stake_epochs;
         let node = s.nodes[node_id].node.clone();
         let keys = s.keychains[node_id].clone();
-        // genesis wallets should reuse the same network.
+        // genesis accounts should reuse the same network.
         let (network_service, network) = s.nodes[node_id].clone_network();
         Self::new(
             stake_epochs,
@@ -129,14 +129,14 @@ impl WalletSandbox {
     }
 
     #[allow(dead_code)]
-    pub fn new_custom(s: &mut Sandbox, node_id: usize) -> WalletSandbox {
+    pub fn new_custom(s: &mut Sandbox, node_id: usize) -> AccountSandbox {
         let stake_epochs = s.config.chain.stake_epochs;
         let node = s.nodes[node_id].node.clone();
         let mut keys = s.keychains[node_id].clone();
-        // change wallet keys to custom
+        // change account keys to custom
         let (skey, pkey) = scc::make_random_keys();
-        keys.wallet_pkey = pkey;
-        keys.wallet_skey = skey;
+        keys.account_pkey = pkey;
+        keys.account_skey = skey;
 
         let (network_service, network) = Loopback::new();
         Self::new(
@@ -150,11 +150,11 @@ impl WalletSandbox {
     }
 
     pub fn poll(&mut self) {
-        futures_testing::execute(&mut self.wallet_service);
+        futures_testing::execute(&mut self.account_service);
     }
 }
 
-fn get_request(mut rx: oneshot::Receiver<WalletResponse>) -> WalletResponse {
+fn get_request(mut rx: oneshot::Receiver<AccountResponse>) -> AccountResponse {
     match rx.poll() {
         Ok(Async::Ready(msg)) => return msg,
         _ => panic!("No message received in time, or error when receiving message"),

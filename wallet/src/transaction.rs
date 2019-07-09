@@ -81,7 +81,7 @@ where
     // Find inputs
     //
 
-    trace!("Checking for available funds in the wallet...");
+    trace!("Checking for available funds in the account...");
     let fee = payment_fee;
     let fee_change = fee + payment_fee;
     let (inputs, fee, change) = find_utxo(unspent_iter, amount, fee, fee_change, last_block_time)?;
@@ -191,7 +191,7 @@ where
     // Find inputs
     //
 
-    trace!("Checking for available funds in the wallet...");
+    trace!("Checking for available funds in the account...");
     let fee = payment_fee;
     let fee_change = fee + payment_fee;
     let (inputs, fee, change) = find_utxo(unspent_iter, amount, fee, fee_change, last_block_time)?;
@@ -326,7 +326,7 @@ where
     // Find inputs
     //
 
-    trace!("Checking for available funds in the wallet...");
+    trace!("Checking for available funds in the account...");
     let fee = stake_fee;
     let fee_change = fee + payment_fee;
     let unspent_iter = unspent_iter.map(|(o, a)| (o, a, None));
@@ -428,7 +428,7 @@ where
     // Find inputs
     //
 
-    trace!("Checking for staked money in the wallet...");
+    trace!("Checking for staked money in the account...");
     let unspent_iter = unspent_iter.map(|o| (o, o.amount, None));
     let amount = amount - payment_fee;
     let (inputs, fee, change) = find_utxo(
@@ -568,7 +568,7 @@ where
     // Find inputs
     //
 
-    trace!("Checking for available public funds in the wallet...");
+    trace!("Checking for available public funds in the account...");
     let fee = payment_fee;
     let mut inputs = Vec::new();
     let mut total_amount = -payment_fee;

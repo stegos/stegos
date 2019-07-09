@@ -67,7 +67,7 @@ lazy_static! {
     /// Regex to parse "send" command.
     static ref SEND_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<topic>[0-9A-Za-z]+)\s+(?P<msg>.+)$").unwrap();
     /// Regex to parse "use" command.
-    static ref USE_COMMAND_RE: Regex = Regex::new(r"\s*(?P<wallet_id>[0-9A-Za-z]+)\s*$").unwrap();
+    static ref USE_COMMAND_RE: Regex = Regex::new(r"\s*(?P<account_id>[0-9A-Za-z]+)\s*$").unwrap();
 }
 
 const RECOVERY_PROMPT: &'static str = "Enter 24-word recovery phrase: ";
@@ -113,8 +113,8 @@ const PAYMENT_FEE: i64 = 1_000; // 0.001 STG
 pub struct ConsoleService {
     /// API client.
     client: WebSocketClient,
-    /// Current Wallet Id.
-    wallet_id: Arc<Mutex<WalletId>>,
+    /// Current Account Id.
+    account_id: Arc<Mutex<AccountId>>,
     /// A channel to receive message from stdin thread.
     stdin: Receiver<String>,
     /// A thread used for readline.
@@ -126,20 +126,20 @@ impl ConsoleService {
     pub fn new(uri: String, api_token: ApiToken) -> ConsoleService {
         let (tx, rx) = channel::<String>(1);
         let client = WebSocketClient::new(uri, api_token);
-        let wallet_id = Arc::new(Mutex::new("1".to_string()));
-        let th_wallet_id = wallet_id.clone();
-        let stdin_th = thread::spawn(move || Self::readline_thread_f(tx, th_wallet_id));
+        let account_id = Arc::new(Mutex::new("1".to_string()));
+        let th_account_id = account_id.clone();
+        let stdin_th = thread::spawn(move || Self::readline_thread_f(tx, th_account_id));
         let stdin = rx;
         ConsoleService {
             client,
-            wallet_id,
+            account_id,
             stdin,
             stdin_th,
         }
     }
 
     /// Background thread to read stdin.
-    fn readline_thread_f(mut tx: Sender<String>, wallet_id: Arc<Mutex<WalletId>>) {
+    fn readline_thread_f(mut tx: Sender<String>, account_id: Arc<Mutex<AccountId>>) {
         // Use ~/.share/stegos/console.history for command line history.
         let history_path = dirs::data_dir()
             .unwrap_or(PathBuf::from(r"."))
@@ -157,7 +157,7 @@ impl ConsoleService {
         rl.load_history(&history_path).ok(); // just ignore errors
 
         loop {
-            let prompt = format!("wallet#{}> ", wallet_id.lock().unwrap().clone());
+            let prompt = format!("account#{}> ", account_id.lock().unwrap().clone());
             match rl.readline(&prompt) {
                 Ok(line) => {
                     if line.is_empty() {
@@ -188,13 +188,13 @@ impl ConsoleService {
     fn help() {
         eprintln!("Usage:");
 
-        eprintln!("show wallets - show available wallets");
-        eprintln!("use WALLET_ID - switch to a wallet");
-        eprintln!("create wallet - add a new wallet");
-        eprintln!("recover wallet - recover wallet from 24-word recovery phrase");
-        eprintln!("passwd - change wallet's password");
-        eprintln!("lock - lock the wallet");
-        eprintln!("unlock - unlock the wallet");
+        eprintln!("show accounts - show available accounts");
+        eprintln!("use ACCOUNT_ID - switch to a account");
+        eprintln!("create account - add a new account");
+        eprintln!("recover account - recover account from 24-word recovery phrase");
+        eprintln!("passwd - change account's password");
+        eprintln!("lock - lock the account");
+        eprintln!("unlock - unlock the account");
         eprintln!();
         eprintln!(
             "pay ADDRESS AMOUNT [COMMENT] [/public] [/snowball] [/lock duration] [/fee fee] - send money"
@@ -269,7 +269,7 @@ impl ConsoleService {
     }
 
     fn help_use() {
-        eprintln!("Usage: use WALLET_ID");
+        eprintln!("Usage: use ACCOUNT_ID");
         eprintln!();
     }
 
@@ -283,8 +283,8 @@ impl ConsoleService {
         Ok(())
     }
 
-    fn send_wallet_manager_request(&mut self, request: WalletManagerRequest) -> Result<(), Error> {
-        let request = WalletsRequest::WalletManagerRequest(request);
+    fn send_wallet_control_request(&mut self, request: WalletControlRequest) -> Result<(), Error> {
+        let request = WalletRequest::WalletControlRequest(request);
         let request = Request {
             kind: RequestKind::WalletsRequest(request),
             id: 0,
@@ -293,19 +293,22 @@ impl ConsoleService {
         Ok(())
     }
 
-    fn send_wallet_request(&mut self, request: WalletRequest) -> Result<(), Error> {
+    fn send_account_request(&mut self, request: AccountRequest) -> Result<(), Error> {
         match &request {
             // Don't print these requests.
-            WalletRequest::ChangePassword { .. } => {}
-            WalletRequest::Seal { .. } => {}
-            WalletRequest::Unseal { .. } => {}
+            AccountRequest::ChangePassword { .. } => {}
+            AccountRequest::Seal { .. } => {}
+            AccountRequest::Unseal { .. } => {}
             _ => {
                 Self::print(&request);
             }
         }
 
-        let wallet_id: String = self.wallet_id.lock().unwrap().clone();
-        let request = WalletsRequest::WalletRequest { wallet_id, request };
+        let account_id: String = self.account_id.lock().unwrap().clone();
+        let request = WalletRequest::AccountRequest {
+            account_id,
+            request,
+        };
 
         let request = Request {
             kind: RequestKind::WalletsRequest(request),
@@ -328,10 +331,10 @@ impl ConsoleService {
     /// Called when line is typed on standard input.
     fn on_input(&mut self, msg: &str) -> Result<bool, Error> {
         if msg == "lock" || msg == "seal" {
-            self.send_wallet_request(WalletRequest::Seal {})?;
+            self.send_account_request(AccountRequest::Seal {})?;
         } else if msg == "unlock" || msg == "unseal" {
             let password = read_password_from_stdin(false)?;
-            self.send_wallet_request(WalletRequest::Unseal { password })?;
+            self.send_account_request(AccountRequest::Unseal { password })?;
         } else if msg.starts_with("net publish ") {
             let caps = match PUBLISH_COMMAND_RE.captures(&msg[12..]) {
                 Some(c) => c,
@@ -384,7 +387,7 @@ impl ConsoleService {
             let recipient = match scc::PublicKey::from_str(recipient) {
                 Ok(r) => r,
                 Err(e) => {
-                    eprintln!("Invalid wallet public key '{}': {}", recipient, e);
+                    eprintln!("Invalid account public key '{}': {}", recipient, e);
                     Self::help_pay();
                     return Ok(true);
                 }
@@ -470,7 +473,7 @@ impl ConsoleService {
             }
 
             let request = if snowball {
-                WalletRequest::SecurePayment {
+                AccountRequest::SecurePayment {
                     recipient,
                     amount,
                     payment_fee,
@@ -478,14 +481,14 @@ impl ConsoleService {
                     locked_timestamp,
                 }
             } else if public {
-                WalletRequest::PublicPayment {
+                AccountRequest::PublicPayment {
                     recipient,
                     amount,
                     payment_fee,
                     locked_timestamp,
                 }
             } else {
-                WalletRequest::Payment {
+                AccountRequest::Payment {
                     recipient,
                     amount,
                     payment_fee,
@@ -494,7 +497,7 @@ impl ConsoleService {
                     with_certificate,
                 }
             };
-            self.send_wallet_request(request)?
+            self.send_account_request(request)?
         } else if msg.starts_with("msg ") {
             let caps = match MSG_COMMAND_RE.captures(&msg[4..]) {
                 Some(c) => c,
@@ -508,7 +511,7 @@ impl ConsoleService {
             let recipient = match scc::PublicKey::from_str(recipient) {
                 Ok(r) => r,
                 Err(e) => {
-                    eprintln!("Invalid wallet public key '{}': {}", recipient, e);
+                    eprintln!("Invalid account public key '{}': {}", recipient, e);
                     Self::help_msg();
                     return Ok(true);
                 }
@@ -518,7 +521,7 @@ impl ConsoleService {
             let comment = caps.name("msg").unwrap().as_str().to_string();
             assert!(comment.len() > 0);
 
-            let request = WalletRequest::Payment {
+            let request = AccountRequest::Payment {
                 recipient,
                 amount,
                 payment_fee,
@@ -526,7 +529,7 @@ impl ConsoleService {
                 locked_timestamp: None,
                 with_certificate: false,
             };
-            self.send_wallet_request(request)?
+            self.send_account_request(request)?
         } else if msg.starts_with("stake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[6..]) {
                 Some(c) => c,
@@ -546,15 +549,15 @@ impl ConsoleService {
                 }
             };
             let payment_fee = PAYMENT_FEE;
-            let request = WalletRequest::Stake {
+            let request = AccountRequest::Stake {
                 amount,
                 payment_fee,
             };
-            self.send_wallet_request(request)?
+            self.send_account_request(request)?
         } else if msg == "unstake" {
             let payment_fee = PAYMENT_FEE;
-            let request = WalletRequest::UnstakeAll { payment_fee };
-            self.send_wallet_request(request)?
+            let request = AccountRequest::UnstakeAll { payment_fee };
+            self.send_account_request(request)?
         } else if msg.starts_with("unstake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[8..]) {
                 Some(c) => c,
@@ -574,18 +577,18 @@ impl ConsoleService {
                 }
             };
             let payment_fee = PAYMENT_FEE;
-            let request = WalletRequest::Unstake {
+            let request = AccountRequest::Unstake {
                 amount,
                 payment_fee,
             };
-            self.send_wallet_request(request)?
+            self.send_account_request(request)?
         } else if msg == "restake" {
-            let request = WalletRequest::RestakeAll {};
-            self.send_wallet_request(request)?
+            let request = AccountRequest::RestakeAll {};
+            self.send_account_request(request)?
         } else if msg == "cloak" {
             let payment_fee = PAYMENT_FEE;
-            let request = WalletRequest::CloakAll { payment_fee };
-            self.send_wallet_request(request)?
+            let request = AccountRequest::CloakAll { payment_fee };
+            self.send_account_request(request)?
         } else if msg == "show version" {
             eprintln!(
                 "Stegos {}.{}.{} ({} {})",
@@ -597,11 +600,11 @@ impl ConsoleService {
             );
             return Ok(true);
         } else if msg == "show keys" {
-            let request = WalletRequest::KeysInfo {};
-            self.send_wallet_request(request)?
+            let request = AccountRequest::KeysInfo {};
+            self.send_account_request(request)?
         } else if msg == "show balance" {
-            let request = WalletRequest::BalanceInfo {};
-            self.send_wallet_request(request)?
+            let request = AccountRequest::BalanceInfo {};
+            self.send_account_request(request)?
         } else if msg == "show election" {
             let request = NodeRequest::ElectionInfo {};
             self.send_node_request(request)?
@@ -609,8 +612,8 @@ impl ConsoleService {
             let request = NodeRequest::EscrowInfo {};
             self.send_node_request(request)?
         } else if msg == "show utxo" {
-            let request = WalletRequest::UnspentInfo {};
-            self.send_wallet_request(request)?
+            let request = AccountRequest::UnspentInfo {};
+            self.send_account_request(request)?
         } else if msg.starts_with("show history") {
             let arg = &msg[12..];
             let starting_from = if arg.is_empty() {
@@ -618,32 +621,32 @@ impl ConsoleService {
             } else {
                 parse_past_datetime(arg)?
             };
-            let request = WalletRequest::HistoryInfo {
+            let request = AccountRequest::HistoryInfo {
                 starting_from,
                 limit: CONSOLE_HISTORY_LIMIT,
             };
-            self.send_wallet_request(request)?
+            self.send_account_request(request)?
         } else if msg == "show recovery" {
-            let request = WalletRequest::GetRecovery {};
-            self.send_wallet_request(request)?
-        } else if msg == "show wallets" {
-            let request = WalletManagerRequest::ListWallets {};
-            self.send_wallet_manager_request(request)?;
-        } else if msg == "create wallet" {
+            let request = AccountRequest::GetRecovery {};
+            self.send_account_request(request)?
+        } else if msg == "show accounts" {
+            let request = WalletControlRequest::ListWallets {};
+            self.send_wallet_control_request(request)?;
+        } else if msg == "create account" {
             let password = read_password_from_stdin(true)?;
-            let request = WalletManagerRequest::CreateWallet { password };
-            self.send_wallet_manager_request(request)?;
-        } else if msg == "recover wallet" {
+            let request = WalletControlRequest::CreateWallet { password };
+            self.send_wallet_control_request(request)?;
+        } else if msg == "recover account" {
             let recovery = read_recovery_from_stdin()?;
             let password = read_password_from_stdin(true)?;
-            let request = WalletManagerRequest::RecoverWallet { recovery, password };
-            self.send_wallet_manager_request(request)?;
+            let request = WalletControlRequest::RecoverWallet { recovery, password };
+            self.send_wallet_control_request(request)?;
         } else if msg == "passwd" {
             let new_password = read_password_from_stdin(true)?;
-            let request = WalletRequest::ChangePassword { new_password };
-            self.send_wallet_request(request)?
+            let request = AccountRequest::ChangePassword { new_password };
+            self.send_account_request(request)?
         } else if msg == "use" {
-            let mut locked = self.wallet_id.lock().unwrap();
+            let mut locked = self.account_id.lock().unwrap();
             std::mem::replace(&mut *locked, String::new());
             return Ok(true);
         } else if msg.starts_with("use ") {
@@ -654,9 +657,9 @@ impl ConsoleService {
                     return Ok(true);
                 }
             };
-            let wallet_id = caps.name("wallet_id").unwrap().as_str().to_string();
-            let mut locked = self.wallet_id.lock().unwrap();
-            std::mem::replace(&mut *locked, wallet_id);
+            let account_id = caps.name("account_id").unwrap().as_str().to_string();
+            let mut locked = self.account_id.lock().unwrap();
+            std::mem::replace(&mut *locked, account_id);
             return Ok(true);
         } else if msg == "db pop block" {
             let request = NodeRequest::PopBlock {};
@@ -681,7 +684,7 @@ impl ConsoleService {
         Self::print(&response);
         match &response.kind {
             ResponseKind::NodeResponse(_)
-            | ResponseKind::WalletsResponse(_)
+            | ResponseKind::WalletResponse(_)
             | ResponseKind::NetworkResponse(_) => {
                 self.stdin_th.thread().unpark();
             }

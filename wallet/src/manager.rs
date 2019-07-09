@@ -1,4 +1,4 @@
-//! Wallet Manager.
+//! Wallet.
 
 //
 // Copyright (c) 2019 Stegos AG
@@ -22,11 +22,11 @@
 // SOFTWARE.
 
 use crate::api::{
-    Wallet, WalletId, WalletManager, WalletManagerRequest, WalletManagerResponse,
-    WalletNotification, WalletRequest, WalletsEvent, WalletsRequest, WalletsResponse,
+    Account, AccountId, AccountNotification, AccountRequest, Wallet, WalletControlRequest,
+    WalletControlResponse, WalletEvent, WalletRequest, WalletResponse,
 };
-use crate::recovery::recovery_to_wallet_skey;
-use crate::{WalletService, WalletsNotification};
+use crate::recovery::recovery_to_account_skey;
+use crate::{AccountService, WalletNotification};
 use failure::Error;
 use futures::future::IntoFuture;
 use futures::stream::Stream;
@@ -37,60 +37,60 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use stegos_crypto::{pbc, scc};
-use stegos_keychain::keyfile::{write_wallet_pkey, write_wallet_skey};
+use stegos_keychain::keyfile::{write_account_pkey, write_account_skey};
 use stegos_network::Network;
 use stegos_node::Node;
 use tokio::runtime::TaskExecutor;
 
-struct WalletHandle {
+struct AccountHandle {
     /// Wallet API.
-    wallet: Wallet,
+    account: Account,
     /// Wallet Notifications.
-    wallet_notifications: mpsc::UnboundedReceiver<WalletNotification>,
+    account_notifications: mpsc::UnboundedReceiver<AccountNotification>,
 }
 
-pub struct WalletManagerService {
-    wallets_dir: PathBuf,
+pub struct WalletService {
+    accounts_dir: PathBuf,
     network_skey: pbc::SecretKey,
     network_pkey: pbc::PublicKey,
     network: Network,
     node: Node,
     executor: TaskExecutor,
     stake_epochs: u64,
-    wallets: HashMap<WalletId, WalletHandle>,
-    subscribers: Vec<mpsc::UnboundedSender<WalletsNotification>>,
-    events: mpsc::UnboundedReceiver<WalletsEvent>,
+    accounts: HashMap<AccountId, AccountHandle>,
+    subscribers: Vec<mpsc::UnboundedSender<WalletNotification>>,
+    events: mpsc::UnboundedReceiver<WalletEvent>,
 }
 
-impl WalletManagerService {
+impl WalletService {
     pub fn new(
-        wallets_dir: &Path,
+        accounts_dir: &Path,
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
         network: Network,
         node: Node,
         executor: TaskExecutor,
         stake_epochs: u64,
-    ) -> Result<(Self, WalletManager), Error> {
-        let (outbox, events) = mpsc::unbounded::<WalletsEvent>();
-        let subscribers: Vec<mpsc::UnboundedSender<WalletsNotification>> = Vec::new();
-        let mut service = WalletManagerService {
-            wallets_dir: wallets_dir.to_path_buf(),
+    ) -> Result<(Self, Wallet), Error> {
+        let (outbox, events) = mpsc::unbounded::<WalletEvent>();
+        let subscribers: Vec<mpsc::UnboundedSender<WalletNotification>> = Vec::new();
+        let mut service = WalletService {
+            accounts_dir: accounts_dir.to_path_buf(),
             network_skey,
             network_pkey,
             network,
             node,
             executor,
             stake_epochs,
-            wallets: HashMap::new(),
+            accounts: HashMap::new(),
             subscribers,
             events,
         };
 
-        info!("Scanning directory {:?} for wallet keys", wallets_dir);
+        info!("Scanning directory {:?} for account keys", accounts_dir);
 
-        // Scan directory for wallets.
-        for entry in fs::read_dir(wallets_dir)? {
+        // Scan directory for accounts.
+        for entry in fs::read_dir(accounts_dir)? {
             let entry = entry?;
             let file_type = entry.file_type()?;
             if !file_type.is_file() {
@@ -98,8 +98,8 @@ impl WalletManagerService {
             }
 
             // Find a secret key.
-            let wallet_skey_file = entry.path();
-            match wallet_skey_file.extension() {
+            let account_skey_file = entry.path();
+            match account_skey_file.extension() {
                 Some(ext) => {
                     if ext != "skey" {
                         continue;
@@ -108,133 +108,133 @@ impl WalletManagerService {
                 None => continue,
             }
 
-            debug!("Found a potential secret key: {:?}", wallet_skey_file);
+            debug!("Found a potential secret key: {:?}", account_skey_file);
 
-            // Extract wallet name.
-            let wallet_id: String = match wallet_skey_file.file_stem() {
+            // Extract account name.
+            let account_id: String = match account_skey_file.file_stem() {
                 Some(stem) => match stem.to_str() {
                     Some(name) => name.to_string(),
                     None => {
-                        warn!("Invalid file name: file={:?}", wallet_skey_file);
+                        warn!("Invalid file name: file={:?}", account_skey_file);
                         continue;
                     }
                 },
                 None => {
-                    warn!("Invalid file name: file={:?}", wallet_skey_file);
+                    warn!("Invalid file name: file={:?}", account_skey_file);
                     continue;
                 }
             };
 
-            debug!("Recovering wallet {}", wallet_id);
-            service.open_wallet(&wallet_id)?;
-            info!("Recovered wallet {}", wallet_id);
+            debug!("Recovering account {}", account_id);
+            service.open_account(&account_id)?;
+            info!("Recovered account {}", account_id);
         }
 
-        info!("Found {} wallet(s)", service.wallets.len());
-        let api = WalletManager { outbox };
+        info!("Found {} account(s)", service.accounts.len());
+        let api = Wallet { outbox };
         Ok((service, api))
     }
 
     ///
-    /// Open existing wallet.
+    /// Open existing account.
     ///
-    fn open_wallet(&mut self, wallet_id: &str) -> Result<(), Error> {
-        let wallet_database_dir = self.wallets_dir.join(wallet_id);
-        let wallet_skey_file = self.wallets_dir.join(format!("{}.skey", wallet_id));
-        let wallet_pkey_file = self.wallets_dir.join(format!("{}.pkey", wallet_id));
-        let (wallet_service, wallet) = WalletService::new(
-            &wallet_database_dir,
-            &wallet_skey_file,
-            &wallet_pkey_file,
+    fn open_account(&mut self, account_id: &str) -> Result<(), Error> {
+        let account_database_dir = self.accounts_dir.join(account_id);
+        let account_skey_file = self.accounts_dir.join(format!("{}.skey", account_id));
+        let account_pkey_file = self.accounts_dir.join(format!("{}.pkey", account_id));
+        let (account_service, account) = AccountService::new(
+            &account_database_dir,
+            &account_skey_file,
+            &account_pkey_file,
             self.network_skey.clone(),
             self.network_pkey.clone(),
             self.network.clone(),
             self.node.clone(),
             self.stake_epochs,
         )?;
-        let wallet_notifications = wallet.subscribe();
-        let handle = WalletHandle {
-            wallet,
-            wallet_notifications,
+        let account_notifications = account.subscribe();
+        let handle = AccountHandle {
+            account,
+            account_notifications,
         };
-        self.wallets.insert(wallet_id.to_string(), handle);
-        self.executor.spawn(wallet_service);
+        self.accounts.insert(account_id.to_string(), handle);
+        self.executor.spawn(account_service);
         Ok(())
     }
 
-    /// Find the next available wallet id.
-    fn find_wallet_id(&self) -> WalletId {
+    /// Find the next available account id.
+    fn find_account_id(&self) -> AccountId {
         for i in 1..std::u64::MAX {
-            let wallet_id = i.to_string();
-            if !self.wallets.contains_key(&wallet_id) {
-                return wallet_id;
+            let account_id = i.to_string();
+            if !self.accounts.contains_key(&account_id) {
+                return account_id;
             }
         }
         unreachable!();
     }
 
     ///
-    /// Create a new wallet for provided keys.
+    /// Create a new account for provided keys.
     ///
-    fn create_wallet(
+    fn create_account(
         &mut self,
-        wallet_skey: scc::SecretKey,
-        wallet_pkey: scc::PublicKey,
+        account_skey: scc::SecretKey,
+        account_pkey: scc::PublicKey,
         password: &str,
-    ) -> Result<WalletId, Error> {
-        let wallet_id = self.find_wallet_id();
-        let wallet_skey_file = self.wallets_dir.join(format!("{}.skey", wallet_id));
-        let wallet_pkey_file = self.wallets_dir.join(format!("{}.pkey", wallet_id));
-        write_wallet_pkey(&wallet_pkey_file, &wallet_pkey)?;
-        write_wallet_skey(&wallet_skey_file, &wallet_skey, password)?;
-        self.open_wallet(&wallet_id)?;
-        Ok(wallet_id)
+    ) -> Result<AccountId, Error> {
+        let account_id = self.find_account_id();
+        let account_skey_file = self.accounts_dir.join(format!("{}.skey", account_id));
+        let account_pkey_file = self.accounts_dir.join(format!("{}.pkey", account_id));
+        write_account_pkey(&account_pkey_file, &account_pkey)?;
+        write_account_skey(&account_skey_file, &account_skey, password)?;
+        self.open_account(&account_id)?;
+        Ok(account_id)
     }
 
-    fn handle_manager_request(
+    fn handle_control_request(
         &mut self,
-        request: WalletManagerRequest,
-    ) -> Result<WalletManagerResponse, Error> {
+        request: WalletControlRequest,
+    ) -> Result<WalletControlResponse, Error> {
         match request {
-            WalletManagerRequest::ListWallets {} => {
-                let wallets = self.wallets.keys().cloned().collect();
-                Ok(WalletManagerResponse::WalletsInfo { wallets })
+            WalletControlRequest::ListWallets {} => {
+                let accounts = self.accounts.keys().cloned().collect();
+                Ok(WalletControlResponse::AccountsInfo { accounts })
             }
-            WalletManagerRequest::CreateWallet { password } => {
-                let (wallet_skey, wallet_pkey) = scc::make_random_keys();
-                let wallet_id = self.create_wallet(wallet_skey, wallet_pkey, &password)?;
-                Ok(WalletManagerResponse::WalletCreated { wallet_id })
+            WalletControlRequest::CreateWallet { password } => {
+                let (account_skey, account_pkey) = scc::make_random_keys();
+                let account_id = self.create_account(account_skey, account_pkey, &password)?;
+                Ok(WalletControlResponse::AccountCreated { account_id })
             }
-            WalletManagerRequest::RecoverWallet { recovery, password } => {
+            WalletControlRequest::RecoverWallet { recovery, password } => {
                 info!("Recovering keys...");
-                let wallet_skey = recovery_to_wallet_skey(&recovery)?;
-                let wallet_pkey: scc::PublicKey = wallet_skey.clone().into();
+                let account_skey = recovery_to_account_skey(&recovery)?;
+                let account_pkey: scc::PublicKey = account_skey.clone().into();
                 info!(
-                    "Recovered a wallet key: pkey={}",
-                    String::from(&wallet_pkey)
+                    "Recovered a account key: pkey={}",
+                    String::from(&account_pkey)
                 );
-                let wallet_id = self.create_wallet(wallet_skey, wallet_pkey, &password)?;
-                Ok(WalletManagerResponse::WalletCreated { wallet_id })
+                let account_id = self.create_account(account_skey, account_pkey, &password)?;
+                Ok(WalletControlResponse::AccountCreated { account_id })
             }
         }
     }
 
-    fn handle_wallet_request(
+    fn handle_account_request(
         &mut self,
-        wallet_id: String,
-        request: WalletRequest,
-        tx: oneshot::Sender<WalletsResponse>,
+        account_id: String,
+        request: AccountRequest,
+        tx: oneshot::Sender<WalletResponse>,
     ) {
-        match self.wallets.get(&wallet_id) {
+        match self.accounts.get(&account_id) {
             Some(handle) => {
                 let fut = handle
-                    .wallet
+                    .account
                     .request(request)
                     .into_future()
                     .map_err(|_| ())
                     .map(move |response| {
-                        let r = WalletsResponse::WalletResponse {
-                            wallet_id,
+                        let r = WalletResponse::AccountResponse {
+                            account_id,
                             response,
                         };
                         tx.send(r).ok(); // ignore error;
@@ -242,17 +242,17 @@ impl WalletManagerService {
                 self.executor.spawn(fut);
             }
             None => {
-                let r = WalletManagerResponse::Error {
-                    error: format!("Unknown wallet: {}", wallet_id),
+                let r = WalletControlResponse::Error {
+                    error: format!("Unknown account: {}", account_id),
                 };
-                let r = WalletsResponse::WalletManagerResponse(r);
+                let r = WalletResponse::WalletControlResponse(r);
                 tx.send(r).ok(); // ignore error;
             }
         }
     }
 }
 
-impl Future for WalletManagerService {
+impl Future for WalletService {
     type Item = ();
     type Error = ();
 
@@ -261,24 +261,25 @@ impl Future for WalletManagerService {
         loop {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => match event {
-                    WalletsEvent::Subscribe { tx } => {
+                    WalletEvent::Subscribe { tx } => {
                         self.subscribers.push(tx);
                     }
-                    WalletsEvent::Request { request, tx } => {
+                    WalletEvent::Request { request, tx } => {
                         match request {
-                            WalletsRequest::WalletManagerRequest(request) => {
-                                let response = match self.handle_manager_request(request) {
+                            WalletRequest::WalletControlRequest(request) => {
+                                let response = match self.handle_control_request(request) {
                                     Ok(r) => r,
-                                    Err(e) => WalletManagerResponse::Error {
+                                    Err(e) => WalletControlResponse::Error {
                                         error: format!("{}", e),
                                     },
                                 };
-                                let response = WalletsResponse::WalletManagerResponse(response);
+                                let response = WalletResponse::WalletControlResponse(response);
                                 tx.send(response).ok(); // ignore errors.
                             }
-                            WalletsRequest::WalletRequest { wallet_id, request } => {
-                                self.handle_wallet_request(wallet_id, request, tx)
-                            }
+                            WalletRequest::AccountRequest {
+                                account_id,
+                                request,
+                            } => self.handle_account_request(account_id, request, tx),
                         }
                     }
                 },
@@ -288,18 +289,18 @@ impl Future for WalletManagerService {
         }
 
         // Forward notifications.
-        for (wallet_id, handle) in self.wallets.iter_mut() {
+        for (account_id, handle) in self.accounts.iter_mut() {
             loop {
-                match handle.wallet_notifications.poll() {
+                match handle.account_notifications.poll() {
                     Ok(Async::Ready(Some(notification))) => {
-                        let notification = WalletsNotification {
-                            wallet_id: wallet_id.clone(),
+                        let notification = WalletNotification {
+                            account_id: account_id.clone(),
                             notification,
                         };
                         self.subscribers
                             .retain(move |tx| tx.unbounded_send(notification.clone()).is_ok());
                     }
-                    Ok(Async::Ready(None)) => panic!("Wallet has died"),
+                    Ok(Async::Ready(None)) => panic!("AccountService has died"),
                     Ok(Async::NotReady) => break,
                     Err(()) => unreachable!(),
                 }

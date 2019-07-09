@@ -30,8 +30,8 @@ use stegos_crypto::pbc;
 use stegos_crypto::scc;
 use stegos_serialization::traits::ProtoConvert;
 
-/// PEM tag for encrypted wallet secret key.
-const WALLET_ENCRYPTED_SKEY_TAG: &'static str = "STEGOS-CURVE25519 ENCRYPTED SECRET KEY";
+/// PEM tag for encrypted account secret key.
+const ACCOUNT_ENCRYPTED_SKEY_TAG: &'static str = "STEGOS-CURVE25519 ENCRYPTED SECRET KEY";
 /// PEM tag for network secret key.
 const NETWORK_SKEY_TAG: &'static str = "STEGOS-PBC SECRET KEY";
 
@@ -92,7 +92,7 @@ fn load_encrypted_key(path: &Path, tag: &str, password: &str) -> Result<Vec<u8>,
     Ok(skey)
 }
 
-pub fn load_wallet_pkey(path: &Path) -> Result<scc::PublicKey, KeyError> {
+pub fn load_account_pkey(path: &Path) -> Result<scc::PublicKey, KeyError> {
     let pkey_encoded = read(path)?;
     scc::PublicKey::from_str(&String::from_utf8_lossy(&pkey_encoded))
         .map_err(|e| KeyError::InvalidKey(path.to_string_lossy().to_string(), e))
@@ -104,8 +104,8 @@ pub fn load_network_pkey(path: &Path) -> Result<pbc::PublicKey, KeyError> {
         .map_err(|e| KeyError::InvalidKey(path.to_string_lossy().to_string(), e))
 }
 
-pub fn load_wallet_skey(path: &Path, password: &str) -> Result<scc::SecretKey, KeyError> {
-    let bytes = load_encrypted_key(path, WALLET_ENCRYPTED_SKEY_TAG, password)?;
+pub fn load_account_skey(path: &Path, password: &str) -> Result<scc::SecretKey, KeyError> {
+    let bytes = load_encrypted_key(path, ACCOUNT_ENCRYPTED_SKEY_TAG, password)?;
     scc::SecretKey::try_from_bytes(&bytes)
         .map_err(|e| KeyError::InvalidKey(path.to_string_lossy().to_string(), e))
 }
@@ -136,7 +136,7 @@ fn write_encrypted_key(
     write_key(path, tag, contents)
 }
 
-pub fn write_wallet_pkey(path: &Path, pkey: &scc::PublicKey) -> Result<(), KeyError> {
+pub fn write_account_pkey(path: &Path, pkey: &scc::PublicKey) -> Result<(), KeyError> {
     write(path, String::from(pkey).as_bytes().to_vec())
 }
 
@@ -144,13 +144,13 @@ pub fn write_network_pkey(path: &Path, pkey: &pbc::PublicKey) -> Result<(), KeyE
     write(path, pkey.to_hex().as_bytes().to_vec())
 }
 
-pub fn write_wallet_skey(
+pub fn write_account_skey(
     path: &Path,
     skey: &scc::SecretKey,
     password: &str,
 ) -> Result<(), KeyError> {
     let contents = skey.to_bytes().to_vec();
-    write_encrypted_key(path, WALLET_ENCRYPTED_SKEY_TAG, contents, password)
+    write_encrypted_key(path, ACCOUNT_ENCRYPTED_SKEY_TAG, contents, password)
 }
 
 pub fn write_network_skey(path: &Path, skey: &pbc::SecretKey) -> Result<(), KeyError> {
@@ -158,26 +158,26 @@ pub fn write_network_skey(path: &Path, skey: &pbc::SecretKey) -> Result<(), KeyE
     write_key(path, NETWORK_SKEY_TAG, contents)
 }
 
-pub fn load_wallet_keypair(
-    wallet_skey_file: &Path,
-    wallet_pkey_file: &Path,
+pub fn load_account_keypair(
+    account_skey_file: &Path,
+    account_pkey_file: &Path,
     password: &str,
 ) -> Result<(scc::SecretKey, scc::PublicKey), KeyError> {
     debug!(
-        "Loading wallet key pair: wallet_skey_file={}, wallet_pkey_file={}...",
-        wallet_skey_file.to_string_lossy(),
-        wallet_pkey_file.to_string_lossy()
+        "Loading account key pair: account_skey_file={}, account_pkey_file={}...",
+        account_skey_file.to_string_lossy(),
+        account_pkey_file.to_string_lossy()
     );
-    let wallet_pkey = load_wallet_pkey(wallet_pkey_file)?;
-    let wallet_skey = load_wallet_skey(wallet_skey_file, password)?;
-    if let Err(_e) = scc::check_keying(&wallet_skey, &wallet_pkey) {
+    let account_pkey = load_account_pkey(account_pkey_file)?;
+    let account_skey = load_account_skey(account_skey_file, password)?;
+    if let Err(_e) = scc::check_keying(&account_skey, &account_pkey) {
         return Err(KeyError::InvalidKeying(
-            wallet_skey_file.to_string_lossy().to_string(),
-            wallet_pkey_file.to_string_lossy().to_string(),
+            account_skey_file.to_string_lossy().to_string(),
+            account_pkey_file.to_string_lossy().to_string(),
         ));
     }
-    info!("Loaded wallet key pair: pkey={}", wallet_pkey);
-    Ok((wallet_skey, wallet_pkey))
+    info!("Loaded account key pair: pkey={}", account_pkey);
+    Ok((account_skey, account_pkey))
 }
 
 pub fn load_network_keypair(

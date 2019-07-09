@@ -158,8 +158,8 @@ fn main() {
     let mut payout: i64 = coins;
     for i in 0..keys {
         let password_file = format!("password{:02}.txt", i + 1);
-        let wallet_skey_file = format!("wallet{:02}.skey", i + 1);
-        let wallet_pkey_file = format!("wallet{:02}.pkey", i + 1);
+        let account_skey_file = format!("account{:02}.skey", i + 1);
+        let account_pkey_file = format!("account{:02}.pkey", i + 1);
         let network_skey_file = format!("network{:02}.skey", i + 1);
         let network_pkey_file = format!("network{:02}.pkey", i + 1);
 
@@ -167,28 +167,32 @@ fn main() {
             read_password_from_file(Path::new(&password_file)).expect("failed to read password");
 
         // Generate keys.
-        let (wallet_skey, wallet_pkey) = scc::make_random_keys();
+        let (account_skey, account_pkey) = scc::make_random_keys();
         let (network_skey, network_pkey) = pbc::make_random_keys();
 
         // Write keys.
-        info!("New wallet key: {}", String::from(&wallet_pkey));
-        keychain::keyfile::write_wallet_pkey(Path::new(&wallet_pkey_file), &wallet_pkey)
-            .expect("failed to write wallet pkey");
-        keychain::keyfile::write_wallet_skey(Path::new(&wallet_skey_file), &wallet_skey, &password)
-            .expect("failed to write wallet skey");
+        info!("New wallet key: {}", String::from(&account_pkey));
+        keychain::keyfile::write_account_pkey(Path::new(&account_pkey_file), &account_pkey)
+            .expect("failed to write account pkey");
+        keychain::keyfile::write_account_skey(
+            Path::new(&account_skey_file),
+            &account_skey,
+            &password,
+        )
+        .expect("failed to write wallet skey");
         keychain::keyfile::write_network_pkey(Path::new(&network_pkey_file), &network_pkey)
             .expect("failed to write network pkey");
         keychain::keyfile::write_network_skey(Path::new(&network_skey_file), &network_skey)
-            .expect("failed to write wallet skey");
+            .expect("failed to write account skey");
 
         // Create a stake.
-        let output = StakeOutput::new(&wallet_pkey, &network_skey, &network_pkey, stake)
+        let output = StakeOutput::new(&account_pkey, &network_skey, &network_pkey, stake)
             .expect("invalid keys");
         assert!(payout >= stake);
         payout -= stake;
         outputs.push(output.into());
 
-        keychains.push((wallet_skey, wallet_pkey, network_skey, network_pkey));
+        keychains.push((account_skey, account_pkey, network_skey, network_pkey));
     }
 
     // Create an initial payment.

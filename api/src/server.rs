@@ -34,7 +34,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use stegos_network::{Network, UnicastMessage};
 use stegos_node::{Node, NodeNotification, NodeResponse};
-use stegos_wallet::{WalletManager, WalletsNotification, WalletsResponse};
+use stegos_wallet::{Wallet, WalletNotification, WalletResponse};
 use tokio::net::TcpListener;
 use tokio::runtime::TaskExecutor;
 use websocket::message::OwnedMessage;
@@ -70,11 +70,11 @@ struct WebSocketHandler {
     /// Network broadcast subscribtions.
     network_broadcast: HashMap<String, mpsc::UnboundedReceiver<Vec<u8>>>,
     /// Wallet API.
-    wallet: WalletManager,
+    wallet: Wallet,
     /// Wallet events.
-    wallet_notifications: mpsc::UnboundedReceiver<WalletsNotification>,
+    wallet_notifications: mpsc::UnboundedReceiver<WalletNotification>,
     /// Wallet RPC responses.
-    wallet_responses: Vec<(RequestId, oneshot::Receiver<WalletsResponse>)>,
+    wallet_responses: Vec<(RequestId, oneshot::Receiver<WalletResponse>)>,
     /// Node API.
     node: Node,
     /// Node RPC responses.
@@ -90,7 +90,7 @@ impl WebSocketHandler {
         sink: WsSink,
         stream: WsStream,
         network: Network,
-        wallet: WalletManager,
+        wallet: Wallet,
         node: Node,
     ) -> Self {
         let need_flush = false;
@@ -304,7 +304,7 @@ impl Future for WebSocketHandler {
             match self.wallet_notifications.poll() {
                 Ok(Async::Ready(Some(notification))) => {
                     let response = Response {
-                        kind: ResponseKind::WalletsNotification(notification),
+                        kind: ResponseKind::WalletNotification(notification),
                         id: 0,
                     };
                     self.send(response);
@@ -315,12 +315,12 @@ impl Future for WebSocketHandler {
             }
         }
 
-        let wallet_responses = std::mem::replace(&mut self.wallet_responses, Vec::new());
-        for (id, mut rx) in wallet_responses {
+        let account_responses = std::mem::replace(&mut self.wallet_responses, Vec::new());
+        for (id, mut rx) in account_responses {
             match rx.poll() {
                 Ok(Async::Ready(response)) => {
                     let response = Response {
-                        kind: ResponseKind::WalletsResponse(response),
+                        kind: ResponseKind::WalletResponse(response),
                         id,
                     };
                     self.send(response);
@@ -380,7 +380,7 @@ impl WebSocketServer {
         api_token: ApiToken,
         executor: TaskExecutor,
         network: Network,
-        wallet: WalletManager,
+        wallet: Wallet,
         node: Node,
     ) -> Result<(), Error> {
         let executor2 = executor.clone();

@@ -138,7 +138,7 @@ pub struct PublicPaymentOutput {
 /// Stake UTXO.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct StakeOutput {
-    /// Uncloaked wallet key of validator.
+    /// Uncloaked account key of validator.
     pub recipient: PublicKey,
 
     /// Uncloaked network key of validator.

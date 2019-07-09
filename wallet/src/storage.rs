@@ -52,20 +52,20 @@ pub enum LogEntry {
 
 /// Currently we support only transaction that have 2 outputs,
 /// one for recipient, and one for change.
-pub struct WalletLog {
+pub struct AccountLog {
     /// Guard object for temporary directory.
     _temp_dir: Option<TempDir>,
     /// RocksDB database object.
     database: DB,
-    /// Len of wallet log.
+    /// Len of account log.
     len: u64,
     /// last known system time.
     last_time: Timestamp,
 }
 
-impl WalletLog {
+impl AccountLog {
     /// Open database.
-    pub fn open(path: &Path) -> WalletLog {
+    pub fn open(path: &Path) -> AccountLog {
         debug!("Database path = {}", path.to_string_lossy());
         let database = DB::open_default(path).expect("couldn't open database");
 
@@ -82,7 +82,7 @@ impl WalletLog {
             .unwrap_or(Timestamp::UNIX_EPOCH);
         debug!("Loading database with {} entryes", len);
 
-        WalletLog {
+        AccountLog {
             _temp_dir: None,
             database,
             len,
@@ -91,12 +91,12 @@ impl WalletLog {
     }
 
     #[allow(unused)]
-    pub fn testing() -> WalletLog {
-        let temp_dir = TempDir::new("wallet").expect("couldn't create temp dir");
+    pub fn testing() -> AccountLog {
+        let temp_dir = TempDir::new("account").expect("couldn't create temp dir");
         let len = 0;
         let last_time = Timestamp::UNIX_EPOCH;
         let database = DB::open_default(temp_dir.path()).expect("couldn't open database");
-        WalletLog {
+        AccountLog {
             _temp_dir: Some(temp_dir),
             database,
             len,
@@ -228,7 +228,7 @@ impl WalletLog {
     }
 }
 
-/// Transaction that is known by wallet.
+/// Transaction that is known by account.
 #[derive(Debug)]
 pub enum SavedTransaction {
     Regular(Transaction),
@@ -259,7 +259,7 @@ pub struct PaymentTransactionValue {
     pub certificates: Vec<PaymentCertificate>,
 }
 
-/// Represents Outputs created by wallet.
+/// Represents Outputs created by account.
 /// With extended info about its creation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -296,7 +296,7 @@ impl StakeValue {
     pub fn to_info(&self, epoch: u64) -> StakeInfo {
         let is_active = self.active_until_epoch >= epoch;
         StakeInfo {
-            wallet_pkey: self.output.recipient,
+            account_pkey: self.output.recipient,
             utxo: Hash::digest(&self.output),
             amount: self.output.amount,
             active_until_epoch: self.active_until_epoch,
@@ -499,7 +499,7 @@ mod test {
 
         let entries: Vec<_> = (0..5).map(create_entry).collect();
 
-        let mut db = WalletLog::testing();
+        let mut db = AccountLog::testing();
         for (time, e) in entries.iter() {
             db.push_entry(*time, e.clone()).unwrap();
         }
@@ -522,7 +522,7 @@ mod test {
 
         let entries: Vec<_> = (0..256).map(create_entry).collect();
 
-        let mut db = WalletLog::testing();
+        let mut db = AccountLog::testing();
         for (time, e) in entries.iter() {
             db.push_entry(*time, e.clone()).unwrap();
         }
@@ -544,7 +544,7 @@ mod test {
 
         let entries: Vec<_> = (0..2).map(create_entry).collect();
         let time = Timestamp::UNIX_EPOCH + Duration::from_millis(5);
-        let mut db = WalletLog::testing();
+        let mut db = AccountLog::testing();
         for (_, e) in entries.iter() {
             db.push_entry(time, e.clone()).unwrap();
         }
@@ -563,7 +563,7 @@ mod test {
 
         let entries: Vec<_> = (0..2).map(create_entry).collect();
         let time = Timestamp::UNIX_EPOCH + Duration::from_millis(5);
-        let mut db = WalletLog::testing();
+        let mut db = AccountLog::testing();
 
         let mut iter = entries.iter();
         let (_, e) = iter.next().unwrap();

@@ -34,8 +34,8 @@ pub use crate::error::KeyError;
 pub use crate::server::WebSocketServer;
 pub use stegos_node::{NodeNotification, NodeRequest, NodeResponse};
 pub use stegos_wallet::{
-    WalletId, WalletManager, WalletManagerRequest, WalletManagerResponse, WalletRequest,
-    WalletResponse, WalletsNotification, WalletsRequest, WalletsResponse,
+    AccountId, AccountRequest, AccountResponse, Wallet, WalletControlRequest,
+    WalletControlResponse, WalletNotification, WalletRequest, WalletResponse,
 };
 pub use websocket::WebSocketError;
 
@@ -111,7 +111,7 @@ pub enum NetworkNotification {
 #[serde(untagged)]
 pub enum RequestKind {
     NetworkRequest(NetworkRequest),
-    WalletsRequest(WalletsRequest),
+    WalletsRequest(WalletRequest),
     NodeRequest(NodeRequest),
 }
 
@@ -130,8 +130,8 @@ pub struct Request {
 pub enum ResponseKind {
     NetworkResponse(NetworkResponse),
     NetworkNotification(NetworkNotification),
-    WalletsResponse(WalletsResponse),
-    WalletsNotification(WalletsNotification),
+    WalletResponse(WalletResponse),
+    WalletNotification(WalletNotification),
     NodeResponse(NodeResponse),
     NodeNotification(NodeNotification),
 }

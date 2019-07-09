@@ -34,7 +34,7 @@ use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::scc::PublicKey;
 
-pub type WalletId = String;
+pub type AccountId = String;
 
 #[derive(Eq, PartialEq, Serialize, Deserialize, Clone, Debug)]
 pub enum LogEntryInfo {
@@ -76,7 +76,7 @@ pub struct PublicPaymentInfo {
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
-pub enum WalletNotification {
+pub enum AccountNotification {
     BalanceChanged { balance: i64 },
     Received(PaymentInfo),
     ReceivedPublic(PublicPaymentInfo),
@@ -88,10 +88,10 @@ pub enum WalletNotification {
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct WalletsNotification {
-    pub wallet_id: WalletId,
+pub struct WalletNotification {
+    pub account_id: AccountId,
     #[serde(flatten)]
-    pub notification: WalletNotification,
+    pub notification: AccountNotification,
 }
 
 ///
@@ -100,7 +100,7 @@ pub struct WalletsNotification {
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
-pub enum WalletRequest {
+pub enum AccountRequest {
     Seal,
     Unseal {
         password: String,
@@ -160,7 +160,7 @@ pub enum WalletRequest {
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[serde(tag = "type")]
-pub enum WalletManagerRequest {
+pub enum WalletControlRequest {
     ListWallets {},
     CreateWallet { password: String },
     RecoverWallet { recovery: String, password: String },
@@ -169,12 +169,12 @@ pub enum WalletManagerRequest {
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[serde(untagged)]
-pub enum WalletsRequest {
-    WalletManagerRequest(WalletManagerRequest),
-    WalletRequest {
-        wallet_id: WalletId,
+pub enum WalletRequest {
+    WalletControlRequest(WalletControlRequest),
+    AccountRequest {
+        account_id: AccountId,
         #[serde(flatten)]
-        request: WalletRequest,
+        request: AccountRequest,
     },
 }
 
@@ -191,7 +191,7 @@ pub struct PaymentTransactionInfo {
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
-pub enum WalletResponse {
+pub enum AccountResponse {
     Sealed,
     Unsealed,
     TransactionCreated(PaymentTransactionInfo),
@@ -203,7 +203,7 @@ pub enum WalletResponse {
         balance: i64,
     },
     KeysInfo {
-        wallet_address: PublicKey,
+        account_address: PublicKey,
         network_address: pbc::PublicKey,
     },
     UnspentInfo {
@@ -226,21 +226,21 @@ pub enum WalletResponse {
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[serde(tag = "type")]
-pub enum WalletManagerResponse {
-    WalletsInfo { wallets: Vec<WalletId> },
-    WalletCreated { wallet_id: WalletId },
+pub enum WalletControlResponse {
+    AccountsInfo { accounts: Vec<AccountId> },
+    AccountCreated { account_id: AccountId },
     Error { error: String },
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[serde(untagged)]
-pub enum WalletsResponse {
-    WalletManagerResponse(WalletManagerResponse),
-    WalletResponse {
-        wallet_id: WalletId,
+pub enum WalletResponse {
+    WalletControlResponse(WalletControlResponse),
+    AccountResponse {
+        account_id: AccountId,
         #[serde(flatten)]
-        response: WalletResponse,
+        response: AccountResponse,
     },
 }
 
@@ -258,10 +258,21 @@ pub enum TransactionCommitted {
 /// Events.
 ///
 #[derive(Debug)]
-pub(crate) enum WalletEvent {
+pub(crate) enum AccountEvent {
     //
     // Public API.
     //
+    Subscribe {
+        tx: UnboundedSender<AccountNotification>,
+    },
+    Request {
+        request: AccountRequest,
+        tx: oneshot::Sender<AccountResponse>,
+    },
+}
+
+#[derive(Debug)]
+pub(crate) enum WalletEvent {
     Subscribe {
         tx: UnboundedSender<WalletNotification>,
     },
@@ -271,15 +282,27 @@ pub(crate) enum WalletEvent {
     },
 }
 
-#[derive(Debug)]
-pub(crate) enum WalletsEvent {
-    Subscribe {
-        tx: UnboundedSender<WalletsNotification>,
-    },
-    Request {
-        request: WalletsRequest,
-        tx: oneshot::Sender<WalletsResponse>,
-    },
+#[derive(Debug, Clone)]
+pub struct Account {
+    pub(crate) outbox: UnboundedSender<AccountEvent>,
+}
+
+impl Account {
+    /// Subscribe for changes.
+    pub fn subscribe(&self) -> UnboundedReceiver<AccountNotification> {
+        let (tx, rx) = unbounded();
+        let msg = AccountEvent::Subscribe { tx };
+        self.outbox.unbounded_send(msg).expect("connected");
+        rx
+    }
+
+    /// Execute a request.
+    pub fn request(&self, request: AccountRequest) -> oneshot::Receiver<AccountResponse> {
+        let (tx, rx) = oneshot::channel();
+        let msg = AccountEvent::Request { request, tx };
+        self.outbox.unbounded_send(msg).expect("connected");
+        rx
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -300,29 +323,6 @@ impl Wallet {
     pub fn request(&self, request: WalletRequest) -> oneshot::Receiver<WalletResponse> {
         let (tx, rx) = oneshot::channel();
         let msg = WalletEvent::Request { request, tx };
-        self.outbox.unbounded_send(msg).expect("connected");
-        rx
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct WalletManager {
-    pub(crate) outbox: UnboundedSender<WalletsEvent>,
-}
-
-impl WalletManager {
-    /// Subscribe for changes.
-    pub fn subscribe(&self) -> UnboundedReceiver<WalletsNotification> {
-        let (tx, rx) = unbounded();
-        let msg = WalletsEvent::Subscribe { tx };
-        self.outbox.unbounded_send(msg).expect("connected");
-        rx
-    }
-
-    /// Execute a Wallet Request.
-    pub fn request(&self, request: WalletsRequest) -> oneshot::Receiver<WalletsResponse> {
-        let (tx, rx) = oneshot::channel();
-        let msg = WalletsEvent::Request { request, tx };
         self.outbox.unbounded_send(msg).expect("connected");
         rx
     }
@@ -353,23 +353,23 @@ pub mod tests {
     /// Check encoding/decoding of API structures.
     #[test]
     fn serde() {
-        let request1 = WalletsRequest::WalletManagerRequest(WalletManagerRequest::CreateWallet {
+        let request1 = WalletRequest::WalletControlRequest(WalletControlRequest::CreateWallet {
             password: "password xx".to_string(),
         });
         let json1 = serde_json::to_string(&request1).unwrap();
-        let request1_check: WalletsRequest = serde_json::from_str(&json1).unwrap();
+        let request1_check: WalletRequest = serde_json::from_str(&json1).unwrap();
         assert_eq!(&request1, &request1_check);
         println!("{:?} {}", &request1, json1);
 
-        let request2 = WalletsRequest::WalletRequest {
-            wallet_id: "my_wallet_id".to_string(),
-            request: WalletRequest::Stake {
+        let request2 = WalletRequest::AccountRequest {
+            account_id: "my_account_id".to_string(),
+            request: AccountRequest::Stake {
                 amount: 4324,
                 payment_fee: 10,
             },
         };
         let json2 = serde_json::to_string(&request2).unwrap();
-        let request2_check: WalletsRequest = serde_json::from_str(&json2).unwrap();
+        let request2_check: WalletRequest = serde_json::from_str(&json2).unwrap();
         assert_eq!(&request2, &request2_check);
         println!("{:?} {}", &request2, json2);
     }

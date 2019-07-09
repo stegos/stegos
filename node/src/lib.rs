@@ -382,7 +382,7 @@ impl NodeService {
         assert_eq!(self.cfg.min_stake_fee, 0);
         let mut inputs: Vec<Output> = Vec::new();
         let mut outputs: Vec<Output> = Vec::new();
-        for (input_hash, amount, wallet_pkey, active_until_epoch) in
+        for (input_hash, amount, account_pkey, active_until_epoch) in
             self.chain.iter_validator_stakes(&self.network_pkey)
         {
             // Re-stake in one epoch before expiration.
@@ -403,7 +403,7 @@ impl NodeService {
 
             trace!("Creating StakeUTXO...");
             let output =
-                Output::new_stake(wallet_pkey, &self.network_skey, &self.network_pkey, amount)?;
+                Output::new_stake(account_pkey, &self.network_skey, &self.network_pkey, amount)?;
             let output_hash = Hash::digest(&output);
 
             info!(
@@ -1034,21 +1034,21 @@ impl NodeService {
         Ok(())
     }
 
-    /// Handler for NodeMessage::RecoverWallet.
-    fn handle_recover_wallet(
+    /// Handler for NodeMessage::RecoverAccount.
+    fn handle_recover_account(
         &mut self,
-        wallet_skey: &scc::SecretKey,
-        wallet_pkey: &scc::PublicKey,
-    ) -> Result<WalletRecoveryState, Error> {
-        debug!("Recovering wallet from blockchain: pkey={}", wallet_pkey);
-        let wallet_persistent_state = self
+        account_skey: &scc::SecretKey,
+        account_pkey: &scc::PublicKey,
+    ) -> Result<AccountRecoveryState, Error> {
+        debug!("Recovering account from blockchain: pkey={}", account_pkey);
+        let account_persistent_state = self
             .chain
-            .recover_wallets(&[(wallet_skey, wallet_pkey)])?
+            .recover_accounts(&[(account_skey, account_pkey)])?
             .into_iter()
             .next()
             .unwrap();
-        info!("Recovered wallet from blockchain: pkey={}", wallet_pkey);
-        Ok(wallet_persistent_state)
+        info!("Recovered account from blockchain: pkey={}", account_pkey);
+        Ok(account_persistent_state)
     }
 
     /// Send block to network.
@@ -1338,7 +1338,7 @@ impl NodeService {
         // Propose a new block.
         let recipient_pkey = self
             .chain
-            .wallet_by_network_key(&self.network_pkey)
+            .account_by_network_key(&self.network_pkey)
             .expect("Staked");
         let (block, block_proposal) = proposal::create_macro_block_proposal(
             &self.chain,
@@ -1517,7 +1517,7 @@ impl NodeService {
         // Create a new micro block from the mempool.
         let recipient_pkey = self
             .chain
-            .wallet_by_network_key(&self.network_pkey)
+            .account_by_network_key(&self.network_pkey)
             .expect("Staked");
         let mut block = self.mempool.create_block(
             previous,
@@ -1654,17 +1654,20 @@ impl Future for NodeService {
                                         error: format!("{}", e),
                                     },
                                 },
-                                NodeRequest::RecoverWallet {
-                                    wallet_skey,
-                                    wallet_pkey,
-                                } => match self.handle_recover_wallet(&wallet_skey, &wallet_pkey) {
-                                    Ok(wallet_persistent_state) => {
-                                        NodeResponse::WalletRecovered(wallet_persistent_state)
+                                NodeRequest::RecoverAccount {
+                                    account_skey,
+                                    account_pkey,
+                                } => {
+                                    match self.handle_recover_account(&account_skey, &account_pkey)
+                                    {
+                                        Ok(account_persistent_state) => {
+                                            NodeResponse::AccountRecovered(account_persistent_state)
+                                        }
+                                        Err(e) => NodeResponse::Error {
+                                            error: format!("{}", e),
+                                        },
                                     }
-                                    Err(e) => NodeResponse::Error {
-                                        error: format!("{}", e),
-                                    },
-                                },
+                                }
                             };
                             tx.send(response).ok(); // ignore errors.
                             Ok(())

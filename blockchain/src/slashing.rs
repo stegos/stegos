@@ -136,8 +136,8 @@ pub fn confiscate_tx(
     let mut outputs = Vec::new();
     for validator in &validators {
         let key = chain
-            .wallet_by_network_key(validator)
-            .expect("validator has wallet key");
+            .account_by_network_key(validator)
+            .expect("validator has account key");
         let mut output = PublicPaymentOutput::new(&key, piece);
         if validator == our_key {
             output.amount += change

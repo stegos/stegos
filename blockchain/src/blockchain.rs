@@ -144,7 +144,7 @@ type BalanceMap = MultiVersionedMap<(), Balance, LSN>;
 type ElectionResultList = MultiVersionedMap<(), ElectionResult, LSN>;
 type ValidatorsActivity = MultiVersionedMap<pbc::PublicKey, ValidatorAwardState, LSN>;
 
-pub type WalletRecoveryState = Vec<(Output, u64)>;
+pub type AccountRecoveryState = Vec<(Output, u64)>;
 
 /// The blockchain database.
 pub struct Blockchain {
@@ -366,25 +366,26 @@ impl Blockchain {
     }
 
     ///
-    /// Recovery wallet state from the blockchain.
+    /// Recovery account state from the blockchain.
     /// TODO: this method is a temporary solution until persistence is implemented in wallet.
     /// https://github.com/stegos/stegos/issues/812
     ///
-    pub fn recover_wallets(
+    pub fn recover_accounts(
         &self,
-        wallets: &[(&SecretKey, &PublicKey)],
-    ) -> Result<Vec<WalletRecoveryState>, BlockchainError> {
-        let mut wallets_state: Vec<WalletRecoveryState> = vec![Default::default(); wallets.len()];
+        accounts: &[(&SecretKey, &PublicKey)],
+    ) -> Result<Vec<AccountRecoveryState>, BlockchainError> {
+        let mut accounts_state: Vec<AccountRecoveryState> =
+            vec![Default::default(); accounts.len()];
         let mut epoch: u64 = 0;
 
-        let mut update_wallet_state = |output: &Output, epoch: u64| {
+        let mut update_account_state = |output: &Output, epoch: u64| {
             let output_hash = Hash::digest(&output);
             if !self.contains_output(&output_hash) {
                 return; // Spent.
             }
-            for (wallet_id, (skey, pkey)) in wallets.iter().enumerate() {
+            for (account_id, (skey, pkey)) in accounts.iter().enumerate() {
                 if output.is_my_utxo(*skey, *pkey) {
-                    wallets_state[wallet_id].push((output.clone(), epoch));
+                    accounts_state[account_id].push((output.clone(), epoch));
                 }
             }
         };
@@ -393,21 +394,21 @@ impl Blockchain {
             match block {
                 Block::MacroBlock(block) => {
                     for output in &block.outputs {
-                        update_wallet_state(output, epoch);
+                        update_account_state(output, epoch);
                     }
                     epoch += 1;
                 }
                 Block::MicroBlock(block) => {
                     for tx in block.transactions {
                         for output in tx.txouts() {
-                            update_wallet_state(output, epoch);
+                            update_account_state(output, epoch);
                         }
                     }
                 }
             }
         }
         assert_eq!(epoch, self.epoch);
-        Ok(wallets_state)
+        Ok(accounts_state)
     }
 
     //
@@ -612,11 +613,14 @@ impl Blockchain {
     }
 
     ///
-    /// Return a wallet key by network key.
+    /// Return an account key by network key.
     ///
     #[inline]
-    pub fn wallet_by_network_key(&self, validator_pkey: &pbc::PublicKey) -> Option<scc::PublicKey> {
-        self.escrow.wallet_by_network_key(validator_pkey)
+    pub fn account_by_network_key(
+        &self,
+        validator_pkey: &pbc::PublicKey,
+    ) -> Option<scc::PublicKey> {
+        self.escrow.account_by_network_key(validator_pkey)
     }
 
     /// Return information about escrow.
@@ -654,7 +658,7 @@ impl Blockchain {
 
     /// Try producing service awards.
     /// Returns current activity map,
-    /// Also returns wallets PublicKey of the winner of service award,
+    /// Also returns account PublicKey of the winner of service award,
     /// and amount of winning, if winner was found.
     pub fn awards_from_active_epoch(&self, random: &VRF) -> (BitVector, Option<(PublicKey, i64)>) {
         let mut service_awards = self.service_awards().clone();
@@ -678,8 +682,8 @@ impl Blockchain {
         let validators_activity = epoch_activity.iter().map(|(k, v)| {
             (
                 self.escrow
-                    .wallet_by_network_key(k)
-                    .expect("validator has wallet"),
+                    .account_by_network_key(k)
+                    .expect("validator has account key"),
                 *v,
             )
         });
@@ -700,10 +704,10 @@ impl Blockchain {
         };
         for (validator_id, (validator, _)) in validators.iter().enumerate() {
             let activity = activity_map.contains(validator_id);
-            let validator_wallet = self
+            let validator_account = self
                 .escrow
-                .wallet_by_network_key(validator)
-                .expect("Validator with wallet");
+                .account_by_network_key(validator)
+                .expect("Validator with account key");
             let activity = if activity {
                 ValidatorAwardState::Active
             } else {
@@ -713,12 +717,12 @@ impl Blockchain {
             // multiple validators can have single wallet.
             // So try to override only Active state.
             if let Some(ValidatorAwardState::FailedAt(..)) =
-                validators_activity.get(&validator_wallet)
+                validators_activity.get(&validator_account)
             {
                 continue;
             }
 
-            validators_activity.insert(validator_wallet, activity);
+            validators_activity.insert(validator_account, activity);
         }
         Ok(validators_activity)
     }

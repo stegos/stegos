@@ -1,5 +1,5 @@
 syntax = "proto3";
-package stegos.wallet_log;
+package stegos.account_log;
 
 import "crypto.proto";
 import "blockchain.proto";

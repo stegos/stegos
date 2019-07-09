@@ -23,7 +23,7 @@
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 use stegos_blockchain::{
-    ElectionInfo, EscrowInfo, Output, Timestamp, Transaction, WalletRecoveryState,
+    AccountRecoveryState, ElectionInfo, EscrowInfo, Output, Timestamp, Transaction,
 };
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{pbc, scc};
@@ -39,11 +39,11 @@ pub enum NodeRequest {
     EscrowInfo {},
     PopBlock {},
     #[serde(skip)]
-    RecoverWallet {
-        /// Wallet Secret Key.
-        wallet_skey: scc::SecretKey,
-        /// Wallet Public Key.
-        wallet_pkey: scc::PublicKey,
+    RecoverAccount {
+        /// Account Secret Key.
+        account_skey: scc::SecretKey,
+        /// Account Public Key.
+        account_pkey: scc::PublicKey,
     },
 }
 
@@ -58,7 +58,7 @@ pub enum NodeResponse {
     EscrowInfo(EscrowInfo),
     BlockPopped,
     #[serde(skip)]
-    WalletRecovered(WalletRecoveryState),
+    AccountRecovered(AccountRecoveryState),
     Error {
         error: String,
     },

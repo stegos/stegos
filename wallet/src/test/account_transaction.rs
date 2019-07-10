@@ -66,10 +66,11 @@ fn create_tx() {
             with_certificate: false,
         });
 
+        assert_eq!(notification.poll(), Ok(Async::NotReady));
         accounts[0].poll();
         let response = get_request(rx);
         info!("{:?}", response);
-        let _tx_hash = match response {
+        let my_tx = match response {
             AccountResponse::TransactionCreated(tx) => {
                 assert!(tx.certificates.is_empty());
                 tx.tx_hash
@@ -79,19 +80,30 @@ fn create_tx() {
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
 
+        // poll sandbox, to process transaction.
+        s.poll();
         // rebroadcast transaction to each node
         s.broadcast(stegos_node::TX_TOPIC);
         accounts[0].poll();
-        assert_eq!(notification.poll(), Ok(Async::NotReady));
+        match get_notification(&mut notification) {
+            AccountNotification::TransactionStatus {
+                tx_hash,
+                status: TransactionStatus::Accepted {},
+            } => assert_eq!(tx_hash, my_tx),
+            _ => unreachable!(),
+        }
         s.wait(s.config.node.tx_wait_timeout);
         s.skip_micro_block();
 
         accounts[0].poll();
 
-        assert_matches!(
-           get_notification(&mut notification),
-           AccountNotification::TransactionStatus{..}
-        );
+        match get_notification(&mut notification) {
+            AccountNotification::TransactionStatus {
+                tx_hash,
+                status: TransactionStatus::Prepare { .. },
+            } => assert_eq!(tx_hash, my_tx),
+            _ => unreachable!(),
+        }
     });
 }
 
@@ -115,6 +127,8 @@ fn precondition_each_account_has_tokens(
         assert_matches!(get_request(rx), AccountResponse::TransactionCreated(_));
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+        // poll sandbox, to process transaction.
+        s.poll();
         // rebroadcast transaction to each node
         s.broadcast(stegos_node::TX_TOPIC);
         s.wait(s.config.node.tx_wait_timeout);
@@ -407,10 +421,23 @@ fn create_vs_tx() {
 
                 e => panic!("{:?}", e),
             });
+            // tx created -> accepted(only leader) -> prepare, go thought this states.
+            match get_notification(notification) {
+                AccountNotification::TransactionStatus {
+                    tx_hash,
+                    status: TransactionStatus::Created { .. },
+                } => {
+                    if tx_hash != my_tx_hash.unwrap() {
+                        unreachable!()
+                    }
+                }
+                _ => unreachable!(),
+            }
         }
-        debug!("===== BROADCAST VS TRANSACTION =====");
-        s.broadcast(stegos_node::TX_TOPIC);
 
+        debug!("===== BROADCAST VS TRANSACTION =====");
+        s.poll();
+        s.broadcast(stegos_node::TX_TOPIC);
         s.wait(s.config.node.tx_wait_timeout);
         s.skip_micro_block();
 

@@ -131,7 +131,7 @@ struct UnsealedAccountService {
     vs: ValueShuffle,
 
     //TODO: Temporary hack to receive newly created transaction from valueshuffle.
-    wallet_tx_info_receiver: mpsc::UnboundedReceiver<(PaymentTransaction, TransactionStatus)>,
+    wallet_tx_info_receiver: mpsc::UnboundedReceiver<(PaymentTransaction, bool)>,
     vs_session: Hash,
     transaction_response: Option<oneshot::Receiver<NodeResponse>>,
 
@@ -660,6 +660,36 @@ impl UnsealedAccountService {
         self.last_macro_block_timestamp = time;
     }
 
+    fn handle_snowball_transaction(
+        &mut self,
+        tx: PaymentTransaction,
+        leader: bool,
+    ) -> Result<(), Error> {
+        let tx_hash = Hash::digest(&tx);
+        metrics::WALLET_PUBLISHED_PAYMENTS
+            .with_label_values(&[&String::from(&self.account_pkey)])
+            .inc();
+        let notify = AccountNotification::SnowballCreated {
+            tx_hash,
+            session_id: self.vs_session,
+        };
+        self.notify(notify);
+
+        let payment_info = PaymentTransactionValue::new_vs(tx.clone());
+
+        self.account_log
+            .push_outgoing(Timestamp::now(), payment_info.clone())?;
+        self.on_tx_status(tx_hash, TransactionStatus::Created {});
+
+        if leader {
+            // if I'm leader, then send the completed super-transaction
+            // to the blockchain.
+            debug!("Sending SuperTransaction to BlockChain");
+            self.send_transaction(tx.into())?
+        }
+        Ok(())
+    }
+
     fn on_tx_status(&mut self, tx_hash: Hash, status: TransactionStatus) {
         if let Some(timestamp) = self.account_log.tx_entry(tx_hash) {
             // update persistent info.
@@ -806,19 +836,10 @@ impl Future for UnsealedAccountService {
                 .expect("all errors are already handled")
             {
                 Async::Ready(msg) => {
-                    let (tx, status) = msg.expect("channel not ended.");
-                    let tx_hash = Hash::digest(&tx);
-                    metrics::WALLET_PUBLISHED_PAYMENTS
-                        .with_label_values(&[&String::from(&self.account_pkey)])
-                        .inc();
-                    let notify = AccountNotification::SnowballCreated {
-                        tx_hash,
-                        session_id: self.vs_session,
-                    };
-                    self.notify(notify);
-
-                    let notify = AccountNotification::TransactionStatus { tx_hash, status };
-                    self.notify(notify);
+                    let (tx, leader) = msg.expect("channel not ended.");
+                    if let Err(e) = self.handle_snowball_transaction(tx, leader) {
+                        error!("Error during processing valueshuffle transaction = {}", e);
+                    }
                 }
                 Async::NotReady => {
                     break;

@@ -192,10 +192,10 @@ impl AccountLog {
         let value = self.database.get(&key)?.expect("Log entry not found.");
         let entry = LogEntry::from_buffer(&value)?;
 
-        debug!("Entry before = {:?}", entry);
+        trace!("Entry before = {:?}", entry);
         let entry = func(entry)?;
 
-        debug!("Entry after = {:?}", entry);
+        trace!("Entry after = {:?}", entry);
         let data = entry.into_buffer().expect("couldn't serialize block.");
 
         let mut batch = WriteBatch::default();
@@ -463,6 +463,15 @@ impl PaymentTransactionValue {
 
         PaymentTransactionValue {
             certificates,
+            tx,
+            status: TransactionStatus::Created {},
+        }
+    }
+
+    pub fn new_vs(tx: PaymentTransaction) -> PaymentTransactionValue {
+        assert!(tx.txouts.len() >= 2);
+        PaymentTransactionValue {
+            certificates: Vec::new(),
             tx,
             status: TransactionStatus::Created {},
         }

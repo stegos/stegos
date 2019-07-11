@@ -334,19 +334,27 @@ impl NodeService {
         };
 
         // Limit the number of inputs and outputs.
-        let utxo_count = tx.txins().len() + tx.txouts().len();
-        if utxo_count > self.cfg.max_utxo_in_tx {
-            return Err(NodeTransactionError::TooLarge(
+        if tx.txins().len() > self.cfg.max_inputs_in_tx {
+            return Err(NodeTransactionError::TooManyInputs(
                 tx_hash,
-                utxo_count,
-                self.cfg.max_utxo_in_tx,
+                tx.txouts().len(),
+                self.cfg.max_inputs_in_tx,
+            )
+            .into());
+        }
+        if tx.txouts().len() > self.cfg.max_outputs_in_tx {
+            return Err(NodeTransactionError::TooManyOutputs(
+                tx_hash,
+                tx.txouts().len(),
+                self.cfg.max_outputs_in_tx,
             )
             .into());
         }
 
         // Limit the maximum size of mempool.
-        let utxo_in_mempool = self.mempool.inputs_len() + self.mempool.outputs_len();
-        if utxo_in_mempool > self.cfg.max_utxo_in_mempool {
+        if self.mempool.inputs_len() > self.cfg.max_inputs_in_mempool
+            || self.mempool.outputs_len() > self.cfg.max_outputs_in_mempool
+        {
             return Err(NodeTransactionError::MempoolIsFull(tx_hash).into());
         }
 
@@ -1591,7 +1599,8 @@ impl NodeService {
             &recipient_pkey,
             &self.network_skey,
             &self.network_pkey,
-            self.cfg.max_utxo_in_block,
+            self.cfg.max_inputs_in_block,
+            self.cfg.max_outputs_in_block,
             timestamp,
         );
 

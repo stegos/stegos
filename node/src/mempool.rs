@@ -232,7 +232,8 @@ impl Mempool {
         recipient_pkey: &scc::PublicKey,
         network_skey: &pbc::SecretKey,
         network_pkey: &pbc::PublicKey,
-        max_utxo_in_block: usize,
+        max_inputs_in_block: usize,
+        max_outputs_in_block: usize,
         timestamp: Timestamp,
     ) -> MicroBlock {
         let seed = mix(last_random, view_change);
@@ -256,7 +257,8 @@ impl Mempool {
         //
         // Mempool Transactions.
         //
-        let mut utxo_in_block: usize = 1; // Coinbase has one output
+        let mut inputs_in_block: usize = 0;
+        let mut outputs_in_block: usize = 1; // Coinbase has one output
         let mut block_fee: i64 = 0;
         let mut transactions: Vec<Transaction> = Vec::new();
         // Reserve a place for coinbase.
@@ -272,16 +274,18 @@ impl Mempool {
                 }
             };
 
-            // Check the maximum number of UTXO in block.
-            if utxo_in_block + tx.txins().len() + tx.txouts().len() >= max_utxo_in_block {
+            // Check the maximum inputs and output number of UTXO in block.
+            if inputs_in_block + tx.txins().len() >= max_inputs_in_block
+                || outputs_in_block + tx.txouts().len() >= max_outputs_in_block
+            {
                 break;
             }
 
             debug!("Processing transaction: hash={}", &tx_hash);
             transactions.push(tx.clone());
             block_fee += tx.fee();
-            utxo_in_block += tx.txins().len();
-            utxo_in_block += tx.txouts().len();
+            inputs_in_block += tx.txins().len();
+            outputs_in_block += tx.txouts().len();
         }
 
         debug!(
@@ -502,7 +506,8 @@ mod test {
         let (recipient_skey, recipient_pkey) = scc::make_random_keys();
         let (network_skey, network_pkey) = pbc::make_random_keys();
 
-        let max_utxo_in_block: usize = 9;
+        let max_inputs_in_block: usize = 100500;
+        let max_outputs_in_block: usize = 7;
         let mut mempool = Mempool::new();
 
         let (tx1, _inputs1, _outputs1) =
@@ -539,7 +544,8 @@ mod test {
             &recipient_pkey,
             &network_skey,
             &network_pkey,
-            max_utxo_in_block,
+            max_inputs_in_block,
+            max_outputs_in_block,
             timestamp,
         );
 

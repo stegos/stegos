@@ -92,7 +92,6 @@ fn create_tx() {
             } => assert_eq!(tx_hash, my_tx),
             _ => unreachable!(),
         }
-        s.wait(s.config.node.tx_wait_timeout);
         s.skip_micro_block();
 
         accounts[0].poll();
@@ -131,7 +130,6 @@ fn precondition_each_account_has_tokens(
         s.poll();
         // rebroadcast transaction to each node
         s.broadcast(stegos_node::TX_TOPIC);
-        s.wait(s.config.node.tx_wait_timeout);
         s.skip_micro_block();
         genesis_account.poll();
     }
@@ -428,7 +426,6 @@ fn create_vs_tx() {
         debug!("===== BROADCAST VS TRANSACTION =====");
         s.poll();
         s.broadcast(stegos_node::TX_TOPIC);
-        s.wait(s.config.node.tx_wait_timeout);
         s.skip_micro_block();
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications_new) {

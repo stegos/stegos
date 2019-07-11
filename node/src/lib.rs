@@ -136,7 +136,13 @@ pub enum NodeMessage {
     ChainLoaderMessage(UnicastMessage),
 }
 
-enum BlockTimer {
+enum MicroBlockTimer {
+    None,
+    Propose(oneshot::Receiver<Vec<u8>>),
+    ViewChange(Delay),
+}
+
+enum MacroBlockTimer {
     None,
     Propose(Delay),
     ViewChange(Delay),
@@ -148,7 +154,7 @@ enum Validation {
         /// Collector of view change.
         view_change_collector: ViewChangeCollector,
         /// Propose or View Change timer
-        block_timer: BlockTimer,
+        block_timer: MicroBlockTimer,
         /// A queue of consensus message from the future epoch.
         // TODO: Resolve unknown blocks using requests-responses.
         future_consensus_messages: Vec<ConsensusMessage>,
@@ -158,10 +164,11 @@ enum Validation {
         /// pBFT consensus,
         consensus: Consensus,
         /// Propose or View Change timer
-        block_timer: BlockTimer,
+        block_timer: MacroBlockTimer,
     },
 }
 use crate::txpool::TransactionPoolService;
+use std::thread;
 use Validation::*;
 
 pub struct NodeService {
@@ -1151,14 +1158,15 @@ impl NodeService {
             );
             consensus::metrics::CONSENSUS_ROLE
                 .set(consensus::metrics::ConsensusRole::Leader as i64);
-            let deadline = if self.chain.view_change() == 0 {
-                // Wait some time to collect transactions.
-                clock::now() + self.cfg.tx_wait_timeout
-            } else {
-                // Propose the new block immediately on the next event loop iteration.
-                clock::now()
+            let (tx, rx) = oneshot::channel::<Vec<u8>>();
+            std::mem::replace(block_timer, MicroBlockTimer::Propose(rx));
+            let solver = self.chain.vdf_solver();
+            let solver = move || {
+                let solution = solver();
+                tx.send(solution).expect("node is alive");
             };
-            std::mem::replace(block_timer, BlockTimer::Propose(Delay::new(deadline)));
+            // Spawn a background thread to solve VDF puzzle.
+            thread::spawn(solver);
         } else {
             info!("I'm validator, waiting for the next micro block: epoch={}, offset={}, view_change={}, last_block={}, leader={}",
                   self.chain.epoch(),
@@ -1169,7 +1177,10 @@ impl NodeService {
             consensus::metrics::CONSENSUS_ROLE
                 .set(consensus::metrics::ConsensusRole::Validator as i64);
             let deadline = clock::now() + self.cfg.micro_block_timeout;
-            std::mem::replace(block_timer, BlockTimer::ViewChange(Delay::new(deadline)));
+            std::mem::replace(
+                block_timer,
+                MicroBlockTimer::ViewChange(Delay::new(deadline)),
+            );
         };
 
         task::current().notify();
@@ -1198,7 +1209,7 @@ impl NodeService {
             // Consensus may have locked proposal.
             if consensus.should_propose() {
                 let deadline = clock::now();
-                std::mem::replace(block_timer, BlockTimer::Propose(Delay::new(deadline)));
+                std::mem::replace(block_timer, MacroBlockTimer::Propose(Delay::new(deadline)));
             }
         } else {
             info!(
@@ -1212,7 +1223,10 @@ impl NodeService {
                 .set(consensus::metrics::ConsensusRole::Validator as i64);
             let relevant_round = 1 + consensus.round();
             let deadline = clock::now() + relevant_round * self.cfg.macro_block_timeout;
-            std::mem::replace(block_timer, BlockTimer::ViewChange(Delay::new(deadline)));
+            std::mem::replace(
+                block_timer,
+                MacroBlockTimer::ViewChange(Delay::new(deadline)),
+            );
         }
 
         task::current().notify();
@@ -1242,7 +1256,7 @@ impl NodeService {
 
             self.validation = MicroBlockValidator {
                 view_change_collector,
-                block_timer: BlockTimer::None,
+                block_timer: MicroBlockTimer::None,
                 future_consensus_messages: Vec::new(),
             };
             self.on_micro_block_leader_changed();
@@ -1284,7 +1298,7 @@ impl NodeService {
             // Set validator state.
             self.validation = MacroBlockValidator {
                 consensus,
-                block_timer: BlockTimer::None,
+                block_timer: MacroBlockTimer::None,
             };
 
             self.on_macro_block_leader_changed();
@@ -1400,7 +1414,10 @@ impl NodeService {
         // Set view_change timer.
         let relevant_round = 1 + consensus.round();
         let deadline = clock::now() + relevant_round * self.cfg.macro_block_timeout;
-        std::mem::replace(block_timer, BlockTimer::ViewChange(Delay::new(deadline)));
+        std::mem::replace(
+            block_timer,
+            MacroBlockTimer::ViewChange(Delay::new(deadline)),
+        );
         task::current().notify();
 
         // Propose a new block.
@@ -1526,7 +1543,10 @@ impl NodeService {
 
         // Update timer.
         let deadline = clock::now() + self.cfg.micro_block_timeout;
-        std::mem::replace(block_timer, BlockTimer::ViewChange(Delay::new(deadline)));
+        std::mem::replace(
+            block_timer,
+            MicroBlockTimer::ViewChange(Delay::new(deadline)),
+        );
         task::current().notify();
 
         // Send a view_change message.
@@ -1553,7 +1573,7 @@ impl NodeService {
     ///
     /// Create a new micro block.
     ///
-    fn create_micro_block(&mut self) -> Result<(), Error> {
+    fn create_micro_block(&mut self, solution: Vec<u8>) -> Result<(), Error> {
         match &self.validation {
             MicroBlockValidator { .. } => {}
             _ => panic!("Expected MicroBlockValidator State"),
@@ -1596,6 +1616,7 @@ impl NodeService {
             view_change,
             view_change_proof,
             self.chain.last_random(),
+            solution,
             self.chain.cfg().block_reward,
             &recipient_pkey,
             &self.network_skey,
@@ -1658,37 +1679,37 @@ impl Future for NodeService {
         let result = match &mut self.validation {
             MicroBlockAuditor
             | MicroBlockValidator {
-                block_timer: BlockTimer::None,
+                block_timer: MicroBlockTimer::None,
                 ..
             }
             | MacroBlockAuditor
             | MacroBlockValidator {
-                block_timer: BlockTimer::None,
+                block_timer: MacroBlockTimer::None,
                 ..
             } => Ok(()),
             MicroBlockValidator {
-                block_timer: BlockTimer::Propose(timer),
+                block_timer: MicroBlockTimer::Propose(solver),
                 ..
-            } => match timer.poll().unwrap() {
-                Async::Ready(()) => self.create_micro_block(),
+            } => match solver.poll().unwrap() {
+                Async::Ready(solution) => self.create_micro_block(solution),
                 Async::NotReady => Ok(()),
             },
             MicroBlockValidator {
-                block_timer: BlockTimer::ViewChange(timer),
+                block_timer: MicroBlockTimer::ViewChange(timer),
                 ..
             } => match timer.poll().unwrap() {
                 Async::Ready(()) => self.handle_micro_block_viewchange_timer(),
                 Async::NotReady => Ok(()),
             },
             MacroBlockValidator {
-                block_timer: BlockTimer::Propose(timer),
+                block_timer: MacroBlockTimer::Propose(timer),
                 ..
             } => match timer.poll().unwrap() {
                 Async::Ready(()) => self.propose_macro_block(),
                 Async::NotReady => Ok(()),
             },
             MacroBlockValidator {
-                block_timer: BlockTimer::ViewChange(timer),
+                block_timer: MacroBlockTimer::ViewChange(timer),
                 ..
             } => match timer.poll().unwrap() {
                 Async::Ready(()) => self.handle_macro_block_viewchange_timer(),

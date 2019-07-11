@@ -855,7 +855,6 @@ where
             break;
         }
         info!("Skipping microlock.");
-        s.wait(s.config.node.tx_wait_timeout);
         s.skip_micro_block()
     }
     assert!(ready, "Not enought micriblocks found");

@@ -51,7 +51,6 @@ fn dead_leader() {
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
         // let leader shoot his block
-        s.wait(s.config.node.tx_wait_timeout);
         s.poll();
         // emulate timeout on other nodes, and wait for request
         s.wait(s.config.node.micro_block_timeout);
@@ -134,7 +133,6 @@ fn silent_view_change() {
         let leader_pk = s.leader();
         let new_leader = s.future_view_change_leader(1);
 
-        s.wait(s.config.node.tx_wait_timeout);
         s.poll();
         s.wait(s.config.node.micro_block_timeout);
         info!("======= PARTITION BEGIN =======");
@@ -246,7 +244,6 @@ fn double_view_change() {
                 break;
             }
 
-            s.wait(s.config.node.tx_wait_timeout);
             s.skip_micro_block();
             blocks += 1;
         }
@@ -255,7 +252,6 @@ fn double_view_change() {
         let leader_pk = s.nodes[0].node_service.chain.leader();
         s.for_each(|node| assert_eq!(starting_view_changes, node.chain.view_change()));
 
-        s.wait(s.config.node.tx_wait_timeout);
         s.poll();
         s.wait(s.config.node.micro_block_timeout);
         info!("======= PARTITION BEGIN =======");
@@ -375,8 +371,6 @@ fn resolve_fork_for_view_change() {
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
 
-        s.wait(s.config.node.tx_wait_timeout);
-
         s.poll();
         s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
 
@@ -484,8 +478,6 @@ fn resolve_fork_without_block() {
         let starting_offset = s.nodes[0].node_service.chain.offset();
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
-
-        s.wait(s.config.node.tx_wait_timeout);
 
         s.poll();
         s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
@@ -605,8 +597,6 @@ fn issue_896_resolve_fork() {
         let starting_offset = s.nodes[0].node_service.chain.offset();
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
-
-        s.wait(s.config.node.tx_wait_timeout);
 
         s.poll();
         s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
@@ -732,8 +722,6 @@ fn out_of_order_keyblock_proposal() {
     Sandbox::start(config, |mut s| {
         s.poll();
 
-        s.wait(s.config.node.tx_wait_timeout);
-
         let epoch = s.nodes[0].node_service.chain.epoch();
         let round = s.nodes[0].node_service.chain.view_change();
 
@@ -747,6 +735,7 @@ fn out_of_order_keyblock_proposal() {
             let timestamp = Timestamp::now();
             let seed = mix(last_random, round);
             let random = pbc::make_VRF(&leader_node.node_service.network_skey, &seed);
+            let difficulty = leader_node.node_service.chain.difficulty();
             let leader = leader_node.node_service.network_pkey;
             let block_reward = 0;
             let activity_map = BitVector::new(0);
@@ -756,6 +745,7 @@ fn out_of_order_keyblock_proposal() {
                 round,
                 leader,
                 random,
+                difficulty,
                 timestamp,
                 block_reward,
                 activity_map,
@@ -830,6 +820,7 @@ fn micro_block_without_signature() {
             leader.node_service.chain.view_change(),
         );
         let random = pbc::make_VRF(&leader.node_service.network_skey, &seed);
+        let solution = leader.node_service.chain.vdf_solver()();
         let block = MicroBlock::empty(
             last_block_hash,
             epoch,
@@ -838,6 +829,7 @@ fn micro_block_without_signature() {
             None,
             leader.node_service.network_pkey,
             random,
+            solution,
             timestamp,
         );
         let block: Block = Block::MicroBlock(block);
@@ -883,7 +875,6 @@ fn slash_cheater() {
 
         let cheater = s.nodes[0].node_service.chain.leader();
         info!("CREATE BLOCK. LEADER = {}", cheater);
-        s.wait(s.config.node.tx_wait_timeout);
         s.poll();
 
         let mut r = slash_cheater_inner(&mut s, cheater, vec![]);
@@ -896,9 +887,6 @@ fn slash_cheater() {
         r.parts
             .1
             .for_each(|node| assert_eq!(node.cheating_proofs.len(), 1));
-
-        // wait for block;
-        r.wait(r.config.node.tx_wait_timeout);
         r.parts.1.skip_micro_block();
 
         // assert that nodes in partition 1 exclude node from partition 0.

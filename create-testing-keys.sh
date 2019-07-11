@@ -12,7 +12,7 @@ for i in $(seq -f "%02g" 1 $NUM_KEYS); do
 done
 
 # Generate account keys
-cargo run --bin bootstrap -- --keys $NUM_KEYS
+cargo run --bin bootstrap -- --keys $NUM_KEYS --difficulty 200
 
 mkdir -p testing
 for i in $(seq -f "%02g" 1 $NUM_KEYS); do

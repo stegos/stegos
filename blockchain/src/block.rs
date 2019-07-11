@@ -70,6 +70,9 @@ pub struct MicroBlockHeader {
     /// Generated random value by leader.
     pub random: pbc::VRF,
 
+    /// Solution for VDF.
+    pub solution: Vec<u8>,
+
     /// UNIX timestamp of block creation.
     pub timestamp: Timestamp,
 
@@ -103,6 +106,7 @@ impl Hashable for MicroBlockHeader {
         }
         self.pkey.hash(state);
         self.random.hash(state);
+        self.solution.hash(state);
         self.timestamp.hash(state);
         self.transactions_range_hash.hash(state);
     }
@@ -126,6 +130,7 @@ impl MicroBlock {
         view_change_proof: Option<ViewChangeProof>,
         pkey: pbc::PublicKey,
         random: pbc::VRF,
+        solution: Vec<u8>,
         timestamp: Timestamp,
         transactions: Vec<Transaction>,
     ) -> MicroBlock {
@@ -139,6 +144,7 @@ impl MicroBlock {
             view_change_proof,
             pkey,
             random,
+            solution,
             timestamp,
             transactions_range_hash,
         };
@@ -159,6 +165,7 @@ impl MicroBlock {
         view_change_proof: Option<ViewChangeProof>,
         pkey: pbc::PublicKey,
         random: pbc::VRF,
+        solution: Vec<u8>,
         timestamp: Timestamp,
     ) -> MicroBlock {
         let transactions = Vec::new();
@@ -170,6 +177,7 @@ impl MicroBlock {
             view_change_proof,
             pkey,
             random,
+            solution,
             timestamp,
             transactions,
         )
@@ -228,6 +236,9 @@ pub struct MacroBlockHeader {
     /// Latest random of the leader.
     pub random: pbc::VRF,
 
+    /// Difficulty of Verifiable Delay Function.
+    pub difficulty: u64,
+
     /// UNIX timestamp of block creation.
     pub timestamp: Timestamp,
 
@@ -260,6 +271,7 @@ impl Hashable for MacroBlockHeader {
         self.view_change.hash(state);
         self.pkey.hash(state);
         self.random.hash(state);
+        self.difficulty.hash(state);
         self.timestamp.hash(state);
         self.block_reward.hash(state);
         for bit in self.activity_map.iter() {
@@ -299,6 +311,7 @@ impl MacroBlock {
         view_change: u32,
         pkey: pbc::PublicKey,
         random: pbc::VRF,
+        difficulty: u64,
         timestamp: Timestamp,
         block_reward: i64,
         activity_map: BitVector,
@@ -312,6 +325,7 @@ impl MacroBlock {
             view_change,
             pkey,
             random,
+            difficulty,
             timestamp,
             block_reward,
             activity_map,
@@ -330,6 +344,7 @@ impl MacroBlock {
         view_change: u32,
         pkey: pbc::PublicKey,
         random: pbc::VRF,
+        difficulty: u64,
         timestamp: Timestamp,
         block_reward: i64,
         activity_map: BitVector,
@@ -380,6 +395,7 @@ impl MacroBlock {
             view_change,
             pkey,
             random,
+            difficulty,
             timestamp,
             block_reward,
             activity_map,
@@ -396,6 +412,7 @@ impl MacroBlock {
         view_change: u32,
         pkey: pbc::PublicKey,
         random: pbc::VRF,
+        difficulty: u64,
         timestamp: Timestamp,
         block_reward: i64,
         activity_map: BitVector,
@@ -430,6 +447,7 @@ impl MacroBlock {
             view_change,
             pkey,
             random,
+            difficulty,
             timestamp,
             block_reward,
             activity_map,

@@ -414,6 +414,7 @@ impl ProtoConvert for MicroBlockHeader {
         }
         proto.set_pkey(self.pkey.into_proto());
         proto.set_random(self.random.into_proto());
+        proto.set_solution(self.solution.clone());
         let timestamp: u64 = self.timestamp.into();
         proto.set_timestamp(timestamp);
         proto.set_transactions_range_hash(self.transactions_range_hash.into_proto());
@@ -433,6 +434,7 @@ impl ProtoConvert for MicroBlockHeader {
         };
         let pkey = pbc::PublicKey::from_proto(proto.get_pkey())?;
         let random = pbc::VRF::from_proto(proto.get_random())?;
+        let solution = proto.get_solution().to_vec();
         let timestamp: Timestamp = proto.get_timestamp().into();
         let transactions_range_hash = Hash::from_proto(proto.get_transactions_range_hash())?;
         Ok(MicroBlockHeader {
@@ -444,6 +446,7 @@ impl ProtoConvert for MicroBlockHeader {
             view_change_proof,
             pkey,
             random,
+            solution,
             timestamp,
             transactions_range_hash,
         })
@@ -491,6 +494,7 @@ impl ProtoConvert for MacroBlockHeader {
         proto.set_view_change(self.view_change);
         proto.set_pkey(self.pkey.into_proto());
         proto.set_random(self.random.into_proto());
+        proto.set_difficulty(self.difficulty);
         proto.set_timestamp(self.timestamp.into());
         proto.set_block_reward(self.block_reward);
         proto.set_gamma(self.gamma.into_proto());
@@ -515,6 +519,7 @@ impl ProtoConvert for MacroBlockHeader {
         let view_change = proto.get_view_change();
         let pkey = pbc::PublicKey::from_proto(proto.get_pkey())?;
         let random = pbc::VRF::from_proto(proto.get_random())?;
+        let difficulty = proto.get_difficulty();
         let timestamp = proto.get_timestamp().into();
         let block_reward = proto.get_block_reward();
         let mut activity_map = BitVector::new(VALIDATORS_MAX);
@@ -540,6 +545,7 @@ impl ProtoConvert for MacroBlockHeader {
             view_change,
             pkey,
             random,
+            difficulty,
             timestamp,
             block_reward,
             activity_map,
@@ -842,6 +848,7 @@ mod tests {
         let offset = 20;
         let seed = mix(Hash::digest("random"), view_change);
         let random = pbc::make_VRF(&skeypbc, &seed);
+        let solution = vec![1u8, 2, 3, 4];
 
         // View Changes Proof.
         let sig = pbc::sign_hash(&previous, &skeypbc);
@@ -862,6 +869,7 @@ mod tests {
             view_change_proof,
             pkeypbc,
             random,
+            solution,
             timestamp,
             transactions,
         );
@@ -899,6 +907,7 @@ mod tests {
 
         let seed = mix(Hash::digest("random"), view_change);
         let random = pbc::make_VRF(&skeypbc, &seed);
+        let difficulty = 100500u64;
 
         let block = MacroBlock::new(
             previous,
@@ -906,6 +915,7 @@ mod tests {
             view_change,
             pkeypbc,
             random,
+            difficulty,
             timestamp,
             block_reward,
             BitVector::new(0),

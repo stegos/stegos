@@ -481,8 +481,16 @@ impl Blockchain {
             return Err(BlockError::MacroBlockHashCollision(epoch, *block_hash).into());
         }
 
-        // Check previous hash (skip for genesis).
+        // Validate timestamp.
+        self.validate_block_timestamp(epoch, block_hash, header.timestamp, timestamp)?;
+
+        // Check VDF difficulty.
+        self.vdf
+            .check_difficulty(header.difficulty)
+            .map_err(|_| BlockError::InvalidVDFComplexity(epoch, *block_hash, header.difficulty))?;
+
         if epoch > 0 {
+            // Check previous hash (skip for genesis).
             let previous_hash = self.last_macro_block_hash();
             if previous_hash != header.previous {
                 return Err(BlockError::InvalidMacroBlockPreviousHash(
@@ -494,16 +502,26 @@ impl Blockchain {
                 .into());
             }
 
+            // Check VRF.
             if force_check {
                 let seed = mix(self.last_macro_block_random(), header.view_change);
                 if !pbc::validate_VRF_source(&header.random, &header.pkey, &seed).is_ok() {
                     return Err(BlockError::IncorrectRandom(epoch, *block_hash).into());
                 }
             }
-        }
 
-        // Validate timestamp.
-        self.validate_block_timestamp(epoch, block_hash, header.timestamp, timestamp)?;
+            // Check that VDF difficulty is constant.
+            // Sic:
+            if header.difficulty != self.difficulty() {
+                return Err(BlockError::UnexpectedVDFComplexity(
+                    epoch,
+                    *block_hash,
+                    self.difficulty(),
+                    header.difficulty,
+                )
+                .into());
+            }
+        }
 
         Ok(())
     }
@@ -713,14 +731,21 @@ impl Blockchain {
             return Err(BlockError::CoinbaseMustBeFirst(block_hash).into());
         }
 
+        // Validate timestamp.
+        self.validate_block_timestamp(epoch, &block_hash, block.header.timestamp, timestamp)?;
+
         // Check random.
-        let seed = mix(self.last_random(), block.header.view_change);
+        let last_random = self.last_random();
+        let seed = mix(last_random, block.header.view_change);
         if !pbc::validate_VRF_source(&block.header.random, &leader, &seed).is_ok() {
             return Err(BlockError::IncorrectRandom(epoch, block_hash).into());
         }
 
-        // Validate timestamp.
-        self.validate_block_timestamp(epoch, &block_hash, block.header.timestamp, timestamp)?;
+        // Check VDF solution.
+        let challenge = last_random.to_bytes();
+        self.vdf
+            .verify(&challenge, self.difficulty(), &block.header.solution)
+            .map_err(|_| BlockError::InvalidVDFProof(epoch, block_hash))?;
 
         //
         // Validate transactions_hash.
@@ -1182,6 +1207,7 @@ pub mod tests {
         let previous = Hash::digest("test");
         let seed = mix(Hash::zero(), view_change);
         let random = pbc::make_VRF(&nskey, &seed);
+        let complexity = 1235;
 
         //
         // Valid block with transaction from 1 to 2
@@ -1198,6 +1224,7 @@ pub mod tests {
                 view_change,
                 npkey,
                 random,
+                complexity,
                 timestamp,
                 0,
                 BitVector::new(0),
@@ -1223,6 +1250,7 @@ pub mod tests {
                 view_change,
                 npkey,
                 random,
+                complexity,
                 timestamp,
                 0,
                 BitVector::new(0),
@@ -1249,6 +1277,7 @@ pub mod tests {
         let previous = Hash::digest(&"test".to_string());
         let seed = mix(Hash::zero(), view_change);
         let random = pbc::make_VRF(&nskey, &seed);
+        let complexity = 100500;
 
         //
         // Escrow as an input.
@@ -1268,6 +1297,7 @@ pub mod tests {
                 view_change,
                 npkey,
                 random,
+                complexity,
                 timestamp,
                 0,
                 BitVector::new(0),
@@ -1296,6 +1326,7 @@ pub mod tests {
                 view_change,
                 npkey,
                 random,
+                complexity,
                 timestamp,
                 0,
                 BitVector::new(0),
@@ -1326,6 +1357,7 @@ pub mod tests {
                 view_change,
                 npkey,
                 random,
+                complexity,
                 timestamp,
                 0,
                 BitVector::new(0),
@@ -1360,6 +1392,7 @@ pub mod tests {
                 view_change,
                 npkey,
                 random,
+                complexity,
                 timestamp,
                 0,
                 BitVector::new(0),
@@ -1388,6 +1421,7 @@ pub mod tests {
 
         let seed = mix(Hash::zero(), view_change);
         let random = pbc::make_VRF(&nskey, &seed);
+        let complexity = 100500;
         let block_reward: i64 = output_amount - input_amount;
 
         let (input, input_gamma) = Output::new_payment(&pkey, input_amount).unwrap();
@@ -1402,6 +1436,7 @@ pub mod tests {
             view_change,
             npkey,
             random,
+            complexity,
             timestamp,
             block_reward,
             BitVector::new(0),

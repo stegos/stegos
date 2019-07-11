@@ -88,7 +88,6 @@ fn rollback_slashing() {
 
         let second_leader = s.future_view_change_leader(1);
         info!("CREATE BLOCK. LEADER = {}", first_leader);
-        s.wait(s.config.node.tx_wait_timeout);
         s.poll();
 
         // init view_change
@@ -128,7 +127,6 @@ fn rollback_slashing() {
             .for_each(|node| assert_eq!(node.cheating_proofs.len(), 1));
 
         // wait for block;
-        r.wait(r.config.node.tx_wait_timeout);
         r.parts.1.skip_micro_block();
 
         // assert that nodes in partition 1 exclude node from partition 0.
@@ -201,7 +199,6 @@ fn finalized_slashing() {
 
         let cheater = s.nodes[0].node_service.chain.leader();
         info!("CREATE BLOCK. LEADER = {}", cheater);
-        s.wait(s.config.node.tx_wait_timeout);
         s.poll();
 
         let mut r = slash_cheater_inner(&mut s, cheater, vec![]);
@@ -216,7 +213,6 @@ fn finalized_slashing() {
             .for_each(|node| assert_eq!(node.cheating_proofs.len(), 1));
 
         // wait for block;
-        r.wait(r.config.node.tx_wait_timeout);
         r.parts.1.skip_micro_block();
 
         // assert that nodes in partition 1 exclude node from partition 0.
@@ -235,7 +231,6 @@ fn finalized_slashing() {
 
         for _offset in offset..r.config.chain.micro_blocks_in_epoch {
             r.parts.1.poll();
-            r.wait(r.config.node.tx_wait_timeout);
             r.parts.1.skip_micro_block();
         }
         r.parts.1.skip_macro_block();
@@ -269,7 +264,6 @@ fn finalized_slashing_with_service_award() {
 
         let cheater = s.nodes[0].node_service.chain.leader();
         info!("CREATE BLOCK. LEADER = {}", cheater);
-        s.wait(s.config.node.tx_wait_timeout);
         s.poll();
 
         let mut r = slash_cheater_inner(&mut s, cheater, vec![]);
@@ -284,7 +278,6 @@ fn finalized_slashing_with_service_award() {
             .for_each(|node| assert_eq!(node.cheating_proofs.len(), 1));
 
         // wait for block;
-        r.wait(r.config.node.tx_wait_timeout);
         r.parts.1.skip_micro_block();
 
         // assert that nodes in partition 1 exclude node from partition 0.
@@ -304,7 +297,6 @@ fn finalized_slashing_with_service_award() {
         // ignore microblocks for auditor
         for _offset in offset..r.config.chain.micro_blocks_in_epoch {
             r.parts.1.poll();
-            r.wait(r.config.node.tx_wait_timeout);
             r.parts.1.skip_micro_block();
         }
 
@@ -348,7 +340,6 @@ fn finalized_slashing_with_service_award_for_auditor() {
             "CREATE BLOCK. LEADER = {}, ACCOUNT = {}",
             cheater, cheater_wallet
         );
-        s.wait(s.config.node.tx_wait_timeout);
         s.poll();
 
         let mut r = slash_cheater_inner(&mut s, cheater, vec![]);
@@ -366,7 +357,6 @@ fn finalized_slashing_with_service_award_for_auditor() {
             .for_each(|node| assert_eq!(node.cheating_proofs.len(), 1));
 
         // wait for block;
-        r.wait(r.config.node.tx_wait_timeout);
         r.parts.1.skip_micro_block();
 
         // assert that nodes in partition 1 exclude node from partition 0.
@@ -385,7 +375,6 @@ fn finalized_slashing_with_service_award_for_auditor() {
 
         for _offset in offset..r.config.chain.micro_blocks_in_epoch {
             r.parts.1.poll();
-            r.wait(r.config.node.tx_wait_timeout);
             r.parts.1.skip_micro_block();
         }
 

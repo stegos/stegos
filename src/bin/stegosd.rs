@@ -310,7 +310,7 @@ mod tests {
     use tempdir::TempDir;
 
     #[test]
-    // #[ignore]
+    #[ignore]
     fn is_testnet_loadable() {
         let _ = simple_logger::init_with_level(log::Level::Debug);
         let mut config = config::Config::default();
@@ -330,7 +330,7 @@ mod tests {
     }
 
     #[test]
-    // #[ignore]
+    #[ignore]
     fn is_devnet_loadable() {
         let _ = simple_logger::init_with_level(log::Level::Debug);
         let mut config = config::Config::default();

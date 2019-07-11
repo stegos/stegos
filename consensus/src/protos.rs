@@ -226,6 +226,7 @@ mod tests {
         let timestamp = Timestamp::now();
         let previous = Hash::digest(&"test".to_string());
         let random = pbc::make_VRF(&nskey, &Hash::digest("test"));
+        let difficulty = 100500;
         let block_reward = 0;
         let activity_map = BitVector::new(0);
         let block = MacroBlock::empty(
@@ -234,6 +235,7 @@ mod tests {
             view_change,
             npkey,
             random,
+            difficulty,
             timestamp,
             block_reward,
             activity_map,

@@ -211,6 +211,7 @@ pub fn validate_proposed_macro_block(
         block_proposal.header.view_change,
         block_proposal.header.pkey,
         block_proposal.header.random,
+        block_proposal.header.difficulty,
         block_proposal.header.timestamp,
         full_reward,
         activity_map,

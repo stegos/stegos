@@ -25,12 +25,12 @@
 
 use crate::api::*;
 use byteorder::{BigEndian, ByteOrder};
-use failure::Error;
+use failure::{bail, Error};
 use log::{debug, trace};
 use rocksdb::{Direction, IteratorMode, WriteBatch, DB};
 use serde::{Deserializer, Serializer};
 use serde_derive::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Duration;
 use stegos_blockchain::{
@@ -63,7 +63,10 @@ pub struct AccountLog {
     len: u64,
     /// last known system time.
     last_time: Timestamp,
+    /// Index of all created transactions by this wallet.
     created_txs: HashMap<Hash, Timestamp>,
+    /// Index of all transactions that wasn't rejected or committed.
+    pending_txs: HashSet<Hash>,
 }
 
 impl AccountLog {
@@ -91,6 +94,7 @@ impl AccountLog {
             len,
             last_time: Timestamp::now(),
             created_txs: HashMap::new(),
+            pending_txs: HashSet::new(),
         };
         log.recover_state();
         log
@@ -108,6 +112,7 @@ impl AccountLog {
             len,
             last_time,
             created_txs: HashMap::new(),
+            pending_txs: HashSet::new(),
         }
     }
 
@@ -124,9 +129,50 @@ impl AccountLog {
                     let status = tx.status;
                     trace!("Recovered tx: tx={}, status={:?}", tx_hash, status);
                     assert!(self.created_txs.insert(tx_hash, timestamp).is_none());
+                    self.update_pending_tx(tx_hash, status)
                 }
             }
         }
+    }
+
+    fn update_pending_tx(&mut self, tx_hash: Hash, status: TransactionStatus) {
+        match status {
+            TransactionStatus::Created {} | TransactionStatus::Accepted {} => {}
+            _ => {
+                trace!("Found status that is final, didn't add transaction to pending list.");
+                let _ = self.pending_txs.remove(&tx_hash);
+                return;
+            }
+        }
+        let tx_timestamp = *self
+            .created_txs
+            .get(&tx_hash)
+            .expect("transaction in created list");
+        trace!(
+            "Found transaction with status = {:?}, with timestamp = {}, adding to list.",
+            status,
+            tx_timestamp
+        );
+        self.pending_txs.insert(tx_hash);
+    }
+
+    /// Return iterator over transactions
+    pub fn pending_txs<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = Result<PaymentTransactionValue, Error>> + 'a {
+        self.pending_txs.iter().map(move |tx_hash| {
+            let tx_key = self
+                .created_txs
+                .get(tx_hash)
+                .expect("Transaction should exist");
+            let key = Self::bytes_from_timestamp(*tx_key);
+            let value = self.database.get(&key)?.expect("Log entry not found.");
+            let entry = LogEntry::from_buffer(&value)?;
+            Ok(match entry {
+                LogEntry::Outgoing { tx } => tx,
+                _ => panic!("Found link to incomming entry, in transaaction list."),
+            })
+        })
     }
 
     /// Returns exact timestamp of created transaction, if tx found.
@@ -151,9 +197,11 @@ impl AccountLog {
         tx: PaymentTransactionValue,
     ) -> Result<Timestamp, Error> {
         let tx_hash = Hash::digest(&tx.tx);
+        let status = tx.status.clone();
         let entry = LogEntry::Outgoing { tx };
         let timestamp = self.push_entry(timestamp, entry)?;
         assert!(self.created_txs.insert(tx_hash, timestamp).is_none());
+        self.update_pending_tx(tx_hash, status);
         Ok(timestamp)
     }
 
@@ -183,8 +231,7 @@ impl AccountLog {
     }
 
     /// Edit log entry as by idx.
-    #[allow(unused)]
-    pub fn update_log_entry<F>(&mut self, timestamp: Timestamp, mut func: F) -> Result<(), Error>
+    fn update_log_entry<F>(&mut self, timestamp: Timestamp, mut func: F) -> Result<(), Error>
     where
         F: FnMut(LogEntry) -> Result<LogEntry, Error>,
     {
@@ -203,6 +250,27 @@ impl AccountLog {
         batch.put(&key, &data)?;
         self.database.write(batch)?;
 
+        Ok(())
+    }
+
+    /// Edit log entry as by idx.
+    pub fn update_tx_status(
+        &mut self,
+        tx_hash: Hash,
+        timestamp: Timestamp,
+        status: TransactionStatus,
+    ) -> Result<(), Error> {
+        self.update_log_entry(timestamp, |mut e| {
+            match &mut e {
+                LogEntry::Outgoing { ref mut tx } => {
+                    tx.status = status.clone();
+                }
+                LogEntry::Incoming { .. } => bail!("Expected outgoing transaction."),
+            };
+            Ok(e)
+        })?;
+
+        self.update_pending_tx(tx_hash, status);
         Ok(())
     }
 

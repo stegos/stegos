@@ -83,6 +83,7 @@ pub enum AccountNotification {
     },
     TransactionStatus {
         tx_hash: Hash,
+        #[serde(flatten)]
         status: TransactionStatus,
     },
     Received(PaymentInfo),
@@ -187,6 +188,7 @@ pub struct PaymentTransactionInfo {
     pub tx_hash: Hash,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub certificates: Vec<PaymentCertificate>,
+    #[serde(flatten)]
     pub status: TransactionStatus,
 }
 

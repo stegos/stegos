@@ -160,6 +160,8 @@ impl From<RollbackMicroBlock> for NodeNotification {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(tag = "status")]
+#[serde(rename_all = "snake_case")]
 pub enum TransactionStatus {
     Created {},
     Accepted {},

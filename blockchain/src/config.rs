@@ -25,7 +25,7 @@ use serde_derive::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// Blockchain configuration.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(default)]
 pub struct ChainConfig {
     /// Maximal number of slots for election.

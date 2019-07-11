@@ -25,7 +25,7 @@ use serde_derive::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// Node configuration.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(default)]
 pub struct NodeConfig {
     /// How long wait for transactions before starting to create a new block.

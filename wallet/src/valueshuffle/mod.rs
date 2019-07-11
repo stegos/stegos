@@ -542,11 +542,16 @@ impl ValueShuffle {
     }
 
     fn zap_state(&mut self) {
+        debug!("Zapping state, trying to restart Snowcrash.");
         self.msg_queue.clear();
         self.waiting = 0;
-        self.state = State::Offline;
-        self.msg_state = VsMsgType::None;
+        self.session_round = 0;
         self.try_update_facilitator();
+        self.state = State::PoolWait;
+        self.msg_state = VsMsgType::None;
+        if let Err(e) = self.try_send_pool_join() {
+            debug!("Error joining pool during state zap: error={:?}", e)
+        }
     }
 
     /// Called when a new txpool is formed.
@@ -661,6 +666,14 @@ impl ValueShuffle {
             Ok(ans) => Ok(ans),
             Err(err) => {
                 self.zap_state();
+                self.state = State::PoolWait;
+                self.msg_state = VsMsgType::None;
+                if let Err(e) = self.send_pool_join() {
+                    debug!(
+                        "Error attempting to join pool on pool restart: error={:?}",
+                        e
+                    )
+                }
                 Err(err)
             }
         }
@@ -888,16 +901,40 @@ impl ValueShuffle {
         sid: &Hash,
         payload: &VsPayload,
     ) -> bool {
-        *sid == self.session_id
-            && self.pending_participants.contains(from)
-            && match (self.msg_state, payload) {
-                (VsMsgType::SharedKeying, VsPayload::SharedKeying { .. })
-                | (VsMsgType::Commitment, VsPayload::Commitment { .. })
-                | (VsMsgType::CloakedVals, VsPayload::CloakedVals { .. })
-                | (VsMsgType::Signature, VsPayload::Signature { .. })
-                | (VsMsgType::SecretKeying, VsPayload::SecretKeying { .. }) => true,
-                _ => false,
+        if *sid != self.session_id {
+            debug!(
+                "SessionID misatch: ours={}, their={}",
+                self.session_id, *sid
+            );
+            return false;
+        }
+        if !self.pending_participants.contains(from) {
+            debug!(
+                "Not waiting for messages from this participant: participant={}",
+                from
+            );
+            return false;
+        }
+        match (self.msg_state, payload) {
+            (VsMsgType::SharedKeying, VsPayload::SharedKeying { .. })
+            | (VsMsgType::Commitment, VsPayload::Commitment { .. })
+            | (VsMsgType::CloakedVals, VsPayload::CloakedVals { .. })
+            | (VsMsgType::Signature, VsPayload::Signature { .. })
+            | (VsMsgType::SecretKeying, VsPayload::SecretKeying { .. }) => {
+                debug!(
+                    "Message accepted: msg_state={:?}, payload={}",
+                    self.msg_state, payload
+                );
+                true
             }
+            _ => {
+                debug!(
+                    "Unexpected message state/payload: msg_state={:?}, payload={}",
+                    self.msg_state, payload
+                );
+                false
+            }
+        }
     }
 
     fn handle_message(&mut self, from: &ParticipantID, payload: &VsPayload) -> Result<(), Error> {
@@ -1087,7 +1124,7 @@ impl ValueShuffle {
         match self.try_vs_start() {
             Ok(()) => Ok(()),
             Err(err) => {
-                self.reset_state();
+                self.zap_state();
                 Err(err)
             }
         }
@@ -1100,7 +1137,7 @@ impl ValueShuffle {
 
         debug!("In vs_start()");
         if self.participants.len() < 3 {
-            return Err(VsError::VsFail.into());
+            return Err(VsError::VsTooFewParticipants(self.participants.len()).into());
         }
         self.participants.sort(); // put into consistent order
         self.session_round += 1;
@@ -1177,7 +1214,7 @@ impl ValueShuffle {
         match self.try_vs_commit() {
             Ok(()) => Ok(()),
             Err(err) => {
-                self.reset_state();
+                self.zap_state();
                 Err(err)
             }
         }
@@ -1190,7 +1227,7 @@ impl ValueShuffle {
 
         debug!("In vs_commit()");
         if self.participants.len() < 3 {
-            return Err(VsError::VsFail.into());
+            return Err(VsError::VsTooFewParticipants(self.participants.len()).into());
         }
 
         // Generate shared cloaking factors
@@ -1290,7 +1327,7 @@ impl ValueShuffle {
         match self.try_vs_share_cloaked_data() {
             Ok(()) => Ok(()),
             Err(err) => {
-                self.reset_state();
+                self.zap_state();
                 Err(err)
             }
         }
@@ -1375,7 +1412,7 @@ impl ValueShuffle {
         match self.try_vs_make_supertransaction() {
             Ok(()) => Ok(()),
             Err(err) => {
-                self.reset_state();
+                self.zap_state();
                 Err(err)
             }
         }
@@ -1508,7 +1545,7 @@ impl ValueShuffle {
         match self.try_vs_sign_supertransaction() {
             Ok(()) => Ok(()),
             Err(err) => {
-                self.reset_state();
+                self.zap_state();
                 Err(err)
             }
         }
@@ -1578,7 +1615,7 @@ impl ValueShuffle {
         match self.try_vs_blame_discovery() {
             Ok(ans) => Ok(ans),
             Err(err) => {
-                self.reset_state();
+                self.zap_state();
                 Err(err)
             }
         }

@@ -205,11 +205,14 @@ impl TransactionPoolService {
                     })
                 }
                 let session_id = Hash::random();
+                info!(
+                    "Formed a new pool: session_id={}, participants={:?}",
+                    session_id, &participants
+                );
                 let info = PoolInfo {
                     participants: participants.clone(),
                     session_id,
                 };
-                info!("Formed a new pool: participants={:?}", &participants);
                 let msg: PoolNotification = info.into();
                 let data = msg.into_buffer()?;
                 for part in participants {

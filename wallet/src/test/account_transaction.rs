@@ -151,7 +151,12 @@ fn precondition_each_account_has_tokens(
     }
 }
 
-fn vs_start(recipient: PublicKey, amount: i64, account: &mut AccountSandbox) -> Hash {
+fn vs_start(
+    recipient: PublicKey,
+    amount: i64,
+    account: &mut AccountSandbox,
+    notification: &mut mpsc::UnboundedReceiver<AccountNotification>,
+) -> (Hash, oneshot::Receiver<AccountResponse>) {
     let rx = account.account.request(AccountRequest::SecurePayment {
         recipient,
         amount,
@@ -162,13 +167,10 @@ fn vs_start(recipient: PublicKey, amount: i64, account: &mut AccountSandbox) -> 
 
     account.poll();
 
-    let response = get_request(rx);
-    info!("{:?}", response);
-    let session_id = match response {
-        AccountResponse::SnowballStarted { session_id } => session_id,
-        _ => panic!("Wrong respnse to payment request"),
-    };
-    session_id
+    match get_notification(notification) {
+        AccountNotification::SnowballStarted { session_id } => (session_id, rx),
+        e => panic!("{:?}", e),
+    }
 }
 
 /// 3 nodes send monet to 1 recipient, using vs
@@ -199,9 +201,10 @@ fn create_vs_tx() {
 
         let mut notifications = Vec::new();
         for i in 0..num_nodes {
-            let id = vs_start(recipient, SEND_TOKENS, &mut accounts[i]);
-            let notification = accounts[i].account.subscribe();
-            notifications.push((notification, id));
+            let mut notification = accounts[i].account.subscribe();
+            let (id, response) =
+                vs_start(recipient, SEND_TOKENS, &mut accounts[i], &mut notification);
+            notifications.push((notification, id, response));
             accounts[i].poll();
         }
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
@@ -234,7 +237,7 @@ fn create_vs_tx() {
         }
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications) {
-            let (notification, _) = status;
+            let (notification, _, _) = status;
             account.poll();
             clear_notification(notification)
         }
@@ -410,29 +413,16 @@ fn create_vs_tx() {
         accounts.iter_mut().for_each(AccountSandbox::poll);
         // rebroadcast transaction to each node
         let mut my_tx_hash = None;
-        for (account, status) in accounts.iter_mut().zip(&mut notifications) {
-            let (notification, hash) = status;
+        let mut notifications_new = Vec::new();
+        for (account, status) in accounts.iter_mut().zip(notifications) {
+            let (mut notification, hash, response) = status;
             account.poll();
-            my_tx_hash = Some(match get_notification(notification) {
-                AccountNotification::SnowballCreated {
-                    tx_hash,
-                    session_id,
-                } if session_id == *hash => tx_hash,
+            my_tx_hash = Some(match get_request(response) {
+                AccountResponse::TransactionCreated(tx) => tx.tx_hash,
 
                 e => panic!("{:?}", e),
             });
-            // tx created -> accepted(only leader) -> prepare, go thought this states.
-            match get_notification(notification) {
-                AccountNotification::TransactionStatus {
-                    tx_hash,
-                    status: TransactionStatus::Created { .. },
-                } => {
-                    if tx_hash != my_tx_hash.unwrap() {
-                        unreachable!()
-                    }
-                }
-                _ => unreachable!(),
-            }
+            notifications_new.push((notification, hash))
         }
 
         debug!("===== BROADCAST VS TRANSACTION =====");
@@ -441,7 +431,7 @@ fn create_vs_tx() {
         s.wait(s.config.node.tx_wait_timeout);
         s.skip_micro_block();
 
-        for (account, status) in accounts.iter_mut().zip(&mut notifications) {
+        for (account, status) in accounts.iter_mut().zip(&mut notifications_new) {
             let (notification, _hash) = status;
 
             account.poll();

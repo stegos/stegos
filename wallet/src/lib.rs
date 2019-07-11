@@ -132,7 +132,7 @@ struct UnsealedAccountService {
 
     //TODO: Temporary hack to receive newly created transaction from valueshuffle.
     wallet_tx_info_receiver: mpsc::UnboundedReceiver<(PaymentTransaction, bool)>,
-    vs_session: Hash,
+    vs_session: Option<(Hash, oneshot::Sender<AccountResponse>)>,
     transaction_response: Option<oneshot::Receiver<NodeResponse>>,
 
     //
@@ -188,7 +188,7 @@ impl UnsealedAccountService {
             node.clone(),
             wallet_tx_info,
         );
-        let vs_session = Hash::zero();
+        let vs_session = None;
 
         let last_macro_block_timestamp = Timestamp::UNIX_EPOCH;
 
@@ -366,7 +366,6 @@ impl UnsealedAccountService {
         )?;
         let session_id = Hash::random();
         self.vs.queue_transaction(&inputs, &outputs, fee)?;
-        self.vs_session = session_id;
 
         metrics::WALLET_CREATEAD_SECURE_PAYMENTS
             .with_label_values(&[&String::from(&self.account_pkey)])
@@ -664,14 +663,15 @@ impl UnsealedAccountService {
         &mut self,
         tx: PaymentTransaction,
         leader: bool,
-    ) -> Result<(), Error> {
+        session_id: Hash,
+    ) -> Result<PaymentTransactionInfo, Error> {
         let tx_hash = Hash::digest(&tx);
         metrics::WALLET_PUBLISHED_PAYMENTS
             .with_label_values(&[&String::from(&self.account_pkey)])
             .inc();
         let notify = AccountNotification::SnowballCreated {
             tx_hash,
-            session_id: self.vs_session,
+            session_id,
         };
         self.notify(notify);
 
@@ -679,7 +679,6 @@ impl UnsealedAccountService {
 
         self.account_log
             .push_outgoing(Timestamp::now(), payment_info.clone())?;
-        self.on_tx_status(tx_hash, TransactionStatus::Created {});
 
         if leader {
             // if I'm leader, then send the completed super-transaction
@@ -687,7 +686,7 @@ impl UnsealedAccountService {
             debug!("Sending SuperTransaction to BlockChain");
             self.send_transaction(tx.into())?
         }
-        Ok(())
+        Ok(payment_info.to_info())
     }
 
     fn on_tx_status(&mut self, tx_hash: Hash, status: TransactionStatus) {
@@ -837,8 +836,16 @@ impl Future for UnsealedAccountService {
             {
                 Async::Ready(msg) => {
                     let (tx, leader) = msg.expect("channel not ended.");
-                    if let Err(e) = self.handle_snowball_transaction(tx, leader) {
-                        error!("Error during processing valueshuffle transaction = {}", e);
+
+                    let (session_id, response_sender) =
+                        self.vs_session.take().expect("active snowball session");
+                    match self.handle_snowball_transaction(tx, leader, session_id) {
+                        Ok(tx) => {
+                            let _ = response_sender.send(AccountResponse::TransactionCreated(tx));
+                        }
+                        Err(e) => {
+                            error!("Error during processing valueshuffle transaction = {}", e)
+                        }
                     }
                 }
                 Async::NotReady => {
@@ -885,24 +892,6 @@ impl Future for UnsealedAccountService {
                             } => self
                                 .public_payment(&recipient, amount, payment_fee, locked_timestamp)
                                 .into(),
-                            AccountRequest::SecurePayment {
-                                recipient,
-                                amount,
-                                payment_fee,
-                                comment,
-                                locked_timestamp,
-                            } => match self.secure_payment(
-                                &recipient,
-                                amount,
-                                payment_fee,
-                                comment,
-                                locked_timestamp,
-                            ) {
-                                Ok(session_id) => AccountResponse::SnowballStarted { session_id },
-                                Err(e) => AccountResponse::Error {
-                                    error: format!("{}", e),
-                                },
-                            },
                             AccountRequest::Stake {
                                 amount,
                                 payment_fee,
@@ -959,6 +948,30 @@ impl Future for UnsealedAccountService {
                             }
                             AccountRequest::GetRecovery {} => match self.get_recovery() {
                                 Ok(recovery) => AccountResponse::Recovery { recovery },
+                                Err(e) => AccountResponse::Error {
+                                    error: format!("{}", e),
+                                },
+                            },
+                            AccountRequest::SecurePayment {
+                                recipient,
+                                amount,
+                                payment_fee,
+                                comment,
+                                locked_timestamp,
+                            } => match self.secure_payment(
+                                &recipient,
+                                amount,
+                                payment_fee,
+                                comment,
+                                locked_timestamp,
+                            ) {
+                                Ok(session_id) => {
+                                    self.notify(AccountNotification::SnowballStarted {
+                                        session_id,
+                                    });
+                                    self.vs_session = (session_id, tx).into();
+                                    continue;
+                                }
                                 Err(e) => AccountResponse::Error {
                                     error: format!("{}", e),
                                 },

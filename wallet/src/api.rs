@@ -77,6 +77,9 @@ pub enum AccountNotification {
     BalanceChanged {
         balance: i64,
     },
+    SnowballStarted {
+        session_id: Hash,
+    },
     SnowballCreated {
         tx_hash: Hash,
         session_id: Hash,
@@ -200,9 +203,6 @@ pub enum AccountResponse {
     Sealed,
     Unsealed,
     TransactionCreated(PaymentTransactionInfo),
-    SnowballStarted {
-        session_id: Hash,
-    },
     BalanceInfo {
         balance: i64,
     },

@@ -31,6 +31,7 @@ use rpassword::prompt_password_stdout;
 use rustyline as rl;
 use serde::ser::Serialize;
 use std::fmt;
+use std::io::stdin;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -192,6 +193,7 @@ impl ConsoleService {
         eprintln!("use ACCOUNT_ID - switch to a account");
         eprintln!("create account - add a new account");
         eprintln!("recover account - recover account from 24-word recovery phrase");
+        eprintln!("delete account - delete active account");
         eprintln!("passwd - change account's password");
         eprintln!("lock - lock the account");
         eprintln!("unlock - unlock the account");
@@ -661,6 +663,22 @@ impl ConsoleService {
             let mut locked = self.account_id.lock().unwrap();
             std::mem::replace(&mut *locked, account_id);
             return Ok(true);
+        } else if msg.starts_with("delete account") {
+            eprint!("Are you sure? Please type YES to continue: ");
+            let mut yes = String::new();
+            stdin().read_line(&mut yes).unwrap();
+            if yes.trim_end() != "YES" {
+                eprintln!("Cancelled");
+                return Ok(true);
+            }
+            let account_id = {
+                let mut locked = self.account_id.lock().unwrap();
+                let account_id = locked.clone();
+                std::mem::replace(&mut *locked, String::new());
+                account_id
+            };
+            let request = WalletControlRequest::DeleteAccount { account_id };
+            self.send_wallet_control_request(request)?;
         } else if msg == "db pop block" {
             let request = NodeRequest::PopBlock {};
             self.send_node_request(request)?

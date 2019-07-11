@@ -778,7 +778,7 @@ impl From<Vec<LogEntryInfo>> for AccountResponse {
 
 // Event loop.
 impl Future for UnsealedAccountService {
-    type Item = ();
+    type Item = Option<()>;
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -858,7 +858,7 @@ impl Future for UnsealedAccountService {
                             AccountRequest::Seal {} => {
                                 tx.send(AccountResponse::Sealed).ok();
                                 // Finish this future.
-                                return Ok(Async::Ready(()));
+                                return Ok(Async::Ready(Some(())));
                             }
                             AccountRequest::Payment {
                                 recipient,
@@ -970,7 +970,7 @@ impl Future for UnsealedAccountService {
                         self.subscribers.push(tx);
                     }
                 },
-                Async::Ready(None) => unreachable!(), // never happens
+                Async::Ready(None) => return Ok(Async::Ready(None)),
                 Async::NotReady => break,
             }
         }
@@ -1082,7 +1082,7 @@ impl SealedAccountService {
 
 // Event loop.
 impl Future for SealedAccountService {
-    type Item = scc::SecretKey;
+    type Item = Option<scc::SecretKey>;
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -1096,7 +1096,7 @@ impl Future for SealedAccountService {
                                     Ok(account_skey) => {
                                         tx.send(AccountResponse::Unsealed).ok(); // ignore errors.
                                                                                  // Finish this future.
-                                        return Ok(Async::Ready(account_skey));
+                                        return Ok(Async::Ready(Some(account_skey)));
                                     }
                                     Err(e) => AccountResponse::Error {
                                         error: format!("{}", e),
@@ -1117,7 +1117,7 @@ impl Future for SealedAccountService {
                         self.subscribers.push(tx);
                     }
                 },
-                Async::Ready(None) => unreachable!(), // never happens
+                Async::Ready(None) => return Ok(Async::Ready(None)),
                 Async::NotReady => return Ok(Async::NotReady),
             }
         }
@@ -1139,7 +1139,11 @@ impl Future for AccountService {
         match self {
             AccountService::Invalid => unreachable!(),
             AccountService::Sealed(sealed) => match sealed.poll().unwrap() {
-                Async::Ready(account_skey) => {
+                Async::Ready(None) => {
+                    debug!("Terminated");
+                    return Ok(Async::Ready(()));
+                }
+                Async::Ready(Some(account_skey)) => {
                     let sealed = match std::mem::replace(self, AccountService::Invalid) {
                         AccountService::Sealed(old) => old,
                         _ => unreachable!(),
@@ -1165,7 +1169,11 @@ impl Future for AccountService {
                 Async::NotReady => {}
             },
             AccountService::Unsealed(unsealed) => match unsealed.poll().unwrap() {
-                Async::Ready(()) => {
+                Async::Ready(None) => {
+                    debug!("Terminated");
+                    return Ok(Async::Ready(()));
+                }
+                Async::Ready(Some(())) => {
                     let unsealed = match std::mem::replace(self, AccountService::Invalid) {
                         AccountService::Unsealed(old) => old,
                         _ => unreachable!(),
@@ -1435,6 +1443,31 @@ impl WalletService {
                 );
                 let account_id = self.create_account(account_skey, account_pkey, &password)?;
                 Ok(WalletControlResponse::AccountCreated { account_id })
+            }
+            WalletControlRequest::DeleteAccount { account_id } => {
+                match self.accounts.remove(&account_id) {
+                    Some(_handle) => {
+                        warn!("Removing account {}", account_id);
+                        let skey_file = self.accounts_dir.join(format!("{}.skey", &account_id));
+                        let skey_file_bkp = skey_file.with_extension("skey~");
+                        let pkey_file = self.accounts_dir.join(format!("{}.pkey", &account_id));
+                        let pkey_file_bkp = pkey_file.with_extension("pkey~");
+                        let database_dir = self.accounts_dir.join(&account_id);
+                        warn!("Renaming {:?} to {:?}", skey_file, skey_file_bkp);
+                        fs::rename(skey_file, skey_file_bkp)?;
+                        warn!("Renaming {:?} to {:?}", pkey_file, pkey_file_bkp);
+                        fs::rename(pkey_file, pkey_file_bkp)?;
+                        if database_dir.exists() {
+                            warn!("Removing {:?}", database_dir);
+                            fs::remove_dir_all(database_dir)?;
+                        }
+                        // AccountService will be destroyed automatically.
+                        Ok(WalletControlResponse::AccountDeleted { account_id })
+                    }
+                    None => Ok(WalletControlResponse::Error {
+                        error: format!("Unknown account: {}", account_id),
+                    }),
+                }
             }
         }
     }

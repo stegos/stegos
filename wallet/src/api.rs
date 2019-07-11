@@ -168,6 +168,7 @@ pub enum WalletControlRequest {
     ListAccounts {},
     CreateAccount { password: String },
     RecoverAccount { recovery: String, password: String },
+    DeleteAccount { account_id: AccountId },
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
@@ -233,6 +234,7 @@ pub enum AccountResponse {
 pub enum WalletControlResponse {
     AccountsInfo { accounts: Vec<AccountId> },
     AccountCreated { account_id: AccountId },
+    AccountDeleted { account_id: AccountId },
     Error { error: String },
 }
 

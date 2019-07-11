@@ -3,7 +3,7 @@ chain = "dev"
 log4rs_config = "stegos-log4rs.toml"
 prometheus_endpoint = "127.0.0.1:9892"
 api_endpoint = "127.0.0.1:3146"
-data_dir = "testing/node02/data"
+data_dir = "testing/node02"
 force_check = true
 
 [network]

@@ -1271,6 +1271,7 @@ struct AccountHandle {
 
 pub struct WalletService {
     accounts_dir: PathBuf,
+    accounts_db_dir: PathBuf,
     network_skey: pbc::SecretKey,
     network_pkey: pbc::PublicKey,
     network: Network,
@@ -1285,6 +1286,7 @@ pub struct WalletService {
 impl WalletService {
     pub fn new(
         accounts_dir: &Path,
+        accounts_db_dir: &Path,
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
         network: Network,
@@ -1296,6 +1298,7 @@ impl WalletService {
         let subscribers: Vec<mpsc::UnboundedSender<WalletNotification>> = Vec::new();
         let mut service = WalletService {
             accounts_dir: accounts_dir.to_path_buf(),
+            accounts_db_dir: accounts_db_dir.to_path_buf(),
             network_skey,
             network_pkey,
             network,
@@ -1313,34 +1316,24 @@ impl WalletService {
         for entry in fs::read_dir(accounts_dir)? {
             let entry = entry?;
             let file_type = entry.file_type()?;
-            if !file_type.is_file() {
+            if !file_type.is_dir() {
                 continue;
             }
 
             // Find a secret key.
-            let account_skey_file = entry.path();
-            match account_skey_file.extension() {
-                Some(ext) => {
-                    if ext != "skey" {
-                        continue;
-                    }
-                }
-                None => continue,
+            let account_skey_file = entry.path().join("account.skey");
+            let account_pkey_file = entry.path().join("account.pkey");
+            if !account_skey_file.exists() || !account_pkey_file.exists() {
+                continue;
             }
 
             debug!("Found a potential secret key: {:?}", account_skey_file);
 
             // Extract account name.
-            let account_id: String = match account_skey_file.file_stem() {
-                Some(stem) => match stem.to_str() {
-                    Some(name) => name.to_string(),
-                    None => {
-                        warn!("Invalid file name: file={:?}", account_skey_file);
-                        continue;
-                    }
-                },
-                None => {
-                    warn!("Invalid file name: file={:?}", account_skey_file);
+            let account_id: String = match entry.file_name().into_string() {
+                Ok(id) => id,
+                Err(os_string) => {
+                    warn!("Invalid folder name: folder={:?}", os_string);
                     continue;
                 }
             };
@@ -1359,9 +1352,15 @@ impl WalletService {
     /// Open existing account.
     ///
     fn open_account(&mut self, account_id: &str) -> Result<(), Error> {
-        let account_database_dir = self.accounts_dir.join(account_id);
-        let account_skey_file = self.accounts_dir.join(format!("{}.skey", account_id));
-        let account_pkey_file = self.accounts_dir.join(format!("{}.pkey", account_id));
+        let account_database_dir = self.accounts_db_dir.join(account_id);
+        let account_skey_file = self
+            .accounts_dir
+            .join(format!("{}", account_id))
+            .join("account.skey");
+        let account_pkey_file = self
+            .accounts_dir
+            .join(format!("{}", account_id))
+            .join("account.pkey");
         let (account_service, account) = AccountService::new(
             &account_database_dir,
             &account_skey_file,
@@ -1403,8 +1402,12 @@ impl WalletService {
         password: &str,
     ) -> Result<AccountId, Error> {
         let account_id = self.find_account_id();
-        let account_skey_file = self.accounts_dir.join(format!("{}.skey", account_id));
-        let account_pkey_file = self.accounts_dir.join(format!("{}.pkey", account_id));
+        let account_dir = self.accounts_dir.join(format!("{}", account_id));
+        if !account_dir.exists() {
+            fs::create_dir_all(&account_dir)?;
+        }
+        let account_skey_file = account_dir.join("account.skey");
+        let account_pkey_file = account_dir.join("account.pkey");
         write_account_pkey(&account_pkey_file, &account_pkey)?;
         write_account_skey(&account_skey_file, &account_skey, password)?;
         self.open_account(&account_id)?;

@@ -267,7 +267,6 @@ mod test {
             let (output, outputs_gamma) = Output::new_payment(&account_pkey, amount - fee).unwrap();
             let outputs: Vec<Output> = vec![output];
             let input_hashes: Vec<Hash> = inputs.iter().map(|o| Hash::digest(o)).collect();
-            let output_hashes: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
             let tx: Transaction =
                 PaymentTransaction::new(&account_skey, &inputs, &outputs, &outputs_gamma, fee)
                     .unwrap()
@@ -315,7 +314,7 @@ mod test {
                 _ => panic!(),
             }
 
-            mempool.prune(&input_hashes, &output_hashes);
+            mempool.prune(&inputs, &outputs);
             validate_external_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect("transaction is valid");
             validate_external_transaction(
@@ -477,7 +476,7 @@ mod test {
                 _ => panic!(),
             }
 
-            mempool.prune(&[], &output_hashes);
+            mempool.prune(&[], &outputs);
         }
     }
 }

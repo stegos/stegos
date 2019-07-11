@@ -26,18 +26,20 @@
 use crate::api::*;
 use byteorder::{BigEndian, ByteOrder};
 use failure::Error;
-use log::debug;
+use log::{debug, trace};
 use rocksdb::{Direction, IteratorMode, WriteBatch, DB};
 use serde::{Deserializer, Serializer};
 use serde_derive::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 use stegos_blockchain::{
     PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput, StakeOutput,
-    Timestamp, Transaction,
+    Timestamp,
 };
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::scc::{make_random_keys, Fr, PublicKey};
+use stegos_node::TransactionStatus;
 use stegos_serialization::traits::ProtoConvert;
 use tempdir::TempDir;
 
@@ -61,6 +63,7 @@ pub struct AccountLog {
     len: u64,
     /// last known system time.
     last_time: Timestamp,
+    created_txs: HashMap<Hash, Timestamp>,
 }
 
 impl AccountLog {
@@ -82,12 +85,15 @@ impl AccountLog {
             .unwrap_or(Timestamp::UNIX_EPOCH);
         debug!("Loading database with {} entryes", len);
 
-        AccountLog {
+        let mut log = AccountLog {
             _temp_dir: None,
             database,
             len,
             last_time: Timestamp::now(),
-        }
+            created_txs: HashMap::new(),
+        };
+        log.recover_state();
+        log
     }
 
     #[allow(unused)]
@@ -101,7 +107,31 @@ impl AccountLog {
             database,
             len,
             last_time,
+            created_txs: HashMap::new(),
         }
+    }
+
+    pub fn recover_state(&mut self) {
+        // TODO: limit time for recover
+        // (for example, if some transaction was created weak ago, it's no reason to resend it)
+        let starting_time = Timestamp::UNIX_EPOCH;
+        for (timestamp, entry) in self.iter_range(starting_time, u64::max_value()) {
+            match entry {
+                LogEntry::Incoming { .. } => {}
+                LogEntry::Outgoing { tx } => {
+                    let tx_hash = Hash::digest(&tx.tx);
+
+                    let status = tx.status;
+                    trace!("Recovered tx: tx={}, status={:?}", tx_hash, status);
+                    assert!(self.created_txs.insert(tx_hash, timestamp).is_none());
+                }
+            }
+        }
+    }
+
+    /// Returns exact timestamp of created transaction, if tx found.
+    pub fn tx_entry(&self, tx_hash: Hash) -> Option<Timestamp> {
+        self.created_txs.get(&tx_hash).cloned()
     }
 
     /// Insert log entry as last entry in log.
@@ -109,7 +139,7 @@ impl AccountLog {
         &mut self,
         timestamp: Timestamp,
         incoming: OutputValue,
-    ) -> Result<u64, Error> {
+    ) -> Result<Timestamp, Error> {
         let entry = LogEntry::Incoming { output: incoming };
         self.push_entry(timestamp, entry)
     }
@@ -119,14 +149,19 @@ impl AccountLog {
         &mut self,
         timestamp: Timestamp,
         tx: PaymentTransactionValue,
-    ) -> Result<u64, Error> {
+    ) -> Result<Timestamp, Error> {
+        let tx_hash = Hash::digest(&tx.tx);
         let entry = LogEntry::Outgoing { tx };
-        self.push_entry(timestamp, entry)
+        let timestamp = self.push_entry(timestamp, entry)?;
+        assert!(self.created_txs.insert(tx_hash, timestamp).is_none());
+        Ok(timestamp)
     }
 
-    fn push_entry(&mut self, mut timestamp: Timestamp, entry: LogEntry) -> Result<u64, Error> {
-        let idx = self.len;
-
+    fn push_entry(
+        &mut self,
+        mut timestamp: Timestamp,
+        entry: LogEntry,
+    ) -> Result<Timestamp, Error> {
         let data = entry.into_buffer().expect("couldn't serialize block.");
 
         // avoid key collisions by increasing time.
@@ -136,15 +171,15 @@ impl AccountLog {
         } else {
             self.last_time = timestamp;
         }
-
+        let len = self.len + 1;
         let mut batch = WriteBatch::default();
         // writebatch put fails if size exceeded u32::max, which is not our case.
         batch.put(&Self::bytes_from_timestamp(timestamp), &data)?;
-        batch.put(&LEN_INDEX, &Self::bytes_from_len(self.len))?;
+        batch.put(&LEN_INDEX, &Self::bytes_from_len(len))?;
         batch.put(&TIME_INDEX, &Self::bytes_from_timestamp(timestamp))?;
         self.database.write(batch)?;
-        self.len += 1;
-        Ok(idx)
+        self.len = len;
+        Ok(timestamp)
     }
 
     /// Edit log entry as by idx.
@@ -157,10 +192,10 @@ impl AccountLog {
         let value = self.database.get(&key)?.expect("Log entry not found.");
         let entry = LogEntry::from_buffer(&value)?;
 
-        debug!("Entry before = {:?}", entry);
+        trace!("Entry before = {:?}", entry);
         let entry = func(entry)?;
 
-        debug!("Entry after = {:?}", entry);
+        trace!("Entry after = {:?}", entry);
         let data = entry.into_buffer().expect("couldn't serialize block.");
 
         let mut batch = WriteBatch::default();
@@ -228,14 +263,6 @@ impl AccountLog {
     }
 }
 
-/// Transaction that is known by account.
-#[derive(Debug)]
-pub enum SavedTransaction {
-    Regular(Transaction),
-    /// Stub implementation for value shuffle transaction, which contain only inputs.
-    ValueShuffle(Vec<Hash>),
-}
-
 /// Information about created output.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct PaymentCertificate {
@@ -251,12 +278,32 @@ pub struct PaymentCertificate {
     pub amount: i64,
 }
 
+impl Hashable for PaymentCertificate {
+    fn hash(&self, hasher: &mut Hasher) {
+        self.id.hash(hasher);
+        self.recipient.hash(hasher);
+        self.rvalue.hash(hasher);
+        self.amount.hash(hasher);
+    }
+}
+
 /// Information about created transactions
 #[derive(Serialize, Clone, Debug)]
 pub struct PaymentTransactionValue {
     #[serde(skip_serializing)]
     pub tx: PaymentTransaction,
+    pub status: TransactionStatus,
     pub certificates: Vec<PaymentCertificate>,
+}
+
+impl Hashable for PaymentTransactionValue {
+    fn hash(&self, hasher: &mut Hasher) {
+        self.tx.hash(hasher);
+        self.status.hash(hasher);
+        for certificate in &self.certificates {
+            certificate.hash(hasher);
+        }
+    }
 }
 
 /// Represents Outputs created by account.
@@ -349,15 +396,6 @@ impl LogEntry {
     }
 }
 
-impl SavedTransaction {
-    pub fn txins(&self) -> &[Hash] {
-        match self {
-            SavedTransaction::Regular(t) => t.txins(),
-            SavedTransaction::ValueShuffle(inputs) => &inputs,
-        }
-    }
-}
-
 pub fn public_payment_info(output: &PublicPaymentOutput) -> PublicPaymentInfo {
     PublicPaymentInfo {
         utxo: Hash::digest(&output),
@@ -423,7 +461,20 @@ impl PaymentTransactionValue {
         assert_eq!(tx.txouts.len(), 2);
         assert!(certificates.len() <= 1);
 
-        PaymentTransactionValue { certificates, tx }
+        PaymentTransactionValue {
+            certificates,
+            tx,
+            status: TransactionStatus::Created {},
+        }
+    }
+
+    pub fn new_vs(tx: PaymentTransaction) -> PaymentTransactionValue {
+        assert!(tx.txouts.len() >= 2);
+        PaymentTransactionValue {
+            certificates: Vec::new(),
+            tx,
+            status: TransactionStatus::Created {},
+        }
     }
 
     pub fn new_cloak(tx: PaymentTransaction) -> PaymentTransactionValue {
@@ -432,6 +483,7 @@ impl PaymentTransactionValue {
         PaymentTransactionValue {
             certificates: Vec::new(),
             tx,
+            status: TransactionStatus::Created {},
         }
     }
 
@@ -439,6 +491,7 @@ impl PaymentTransactionValue {
         PaymentTransactionValue {
             certificates: Vec::new(),
             tx,
+            status: TransactionStatus::Created {},
         }
     }
 
@@ -447,6 +500,7 @@ impl PaymentTransactionValue {
         PaymentTransactionInfo {
             tx_hash,
             certificates: self.certificates.clone(),
+            status: self.status.clone(),
         }
     }
 }
@@ -460,26 +514,6 @@ impl From<PaymentValue> for OutputValue {
 impl From<PublicPaymentOutput> for OutputValue {
     fn from(value: PublicPaymentOutput) -> OutputValue {
         OutputValue::PublicPayment(value)
-    }
-}
-
-impl Hashable for SavedTransaction {
-    fn hash(&self, state: &mut Hasher) {
-        match self {
-            SavedTransaction::Regular(t) => t.hash(state),
-            SavedTransaction::ValueShuffle(hashes) => {
-                "ValueShuffle".hash(state);
-                for h in hashes {
-                    h.hash(state)
-                }
-            }
-        }
-    }
-}
-
-impl From<Transaction> for SavedTransaction {
-    fn from(tx: Transaction) -> SavedTransaction {
-        SavedTransaction::Regular(tx)
     }
 }
 

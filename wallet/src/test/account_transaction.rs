@@ -25,8 +25,7 @@ use super::*;
 use crate::valueshuffle::message::{Message, VsPayload};
 use crate::*;
 use assert_matches::assert_matches;
-use futures::sync::oneshot::Receiver;
-use futures::{Async, Future};
+use futures::Async;
 use std::time::Duration;
 use stegos_crypto::scc::PublicKey;
 
@@ -57,6 +56,7 @@ fn create_tx() {
         s.poll();
         let recipient = accounts[1].account_service.account_pkey;
 
+        let mut notification = accounts[0].account.subscribe();
         let rx = accounts[0].account.request(AccountRequest::Payment {
             recipient,
             amount: 10,
@@ -66,10 +66,11 @@ fn create_tx() {
             with_certificate: false,
         });
 
+        assert_eq!(notification.poll(), Ok(Async::NotReady));
         accounts[0].poll();
         let response = get_request(rx);
         info!("{:?}", response);
-        let tx_hash = match response {
+        let my_tx = match response {
             AccountResponse::TransactionCreated(tx) => {
                 assert!(tx.certificates.is_empty());
                 tx.tx_hash
@@ -79,31 +80,30 @@ fn create_tx() {
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
 
+        // poll sandbox, to process transaction.
+        s.poll();
         // rebroadcast transaction to each node
         s.broadcast(stegos_node::TX_TOPIC);
-        let mut commited_status = accounts[0]
-            .account
-            .request(AccountRequest::WaitForCommit { tx_hash });
-
         accounts[0].poll();
-        assert_eq!(commited_status.poll(), Ok(Async::NotReady));
+        match get_notification(&mut notification) {
+            AccountNotification::TransactionStatus {
+                tx_hash,
+                status: TransactionStatus::Accepted {},
+            } => assert_eq!(tx_hash, my_tx),
+            _ => unreachable!(),
+        }
         s.wait(s.config.node.tx_wait_timeout);
         s.skip_micro_block();
 
         accounts[0].poll();
 
-        assert_matches!(
-            get_request(commited_status),
-            AccountResponse::TransactionCommitted(_)
-        );
-        let commited_status_post = accounts[0]
-            .account
-            .request(AccountRequest::WaitForCommit { tx_hash });
-        accounts[0].poll();
-        assert_matches!(
-            get_request(commited_status_post),
-            AccountResponse::TransactionCommitted(_)
-        );
+        match get_notification(&mut notification) {
+            AccountNotification::TransactionStatus {
+                tx_hash,
+                status: TransactionStatus::Prepare { .. },
+            } => assert_eq!(tx_hash, my_tx),
+            _ => unreachable!(),
+        }
     });
 }
 
@@ -127,6 +127,8 @@ fn precondition_each_account_has_tokens(
         assert_matches!(get_request(rx), AccountResponse::TransactionCreated(_));
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+        // poll sandbox, to process transaction.
+        s.poll();
         // rebroadcast transaction to each node
         s.broadcast(stegos_node::TX_TOPIC);
         s.wait(s.config.node.tx_wait_timeout);
@@ -149,11 +151,7 @@ fn precondition_each_account_has_tokens(
     }
 }
 
-fn vs_start(
-    recipient: PublicKey,
-    amount: i64,
-    account: &mut AccountSandbox,
-) -> Receiver<AccountResponse> {
+fn vs_start(recipient: PublicKey, amount: i64, account: &mut AccountSandbox) -> Hash {
     let rx = account.account.request(AccountRequest::SecurePayment {
         recipient,
         amount,
@@ -166,23 +164,14 @@ fn vs_start(
 
     let response = get_request(rx);
     info!("{:?}", response);
-    let tx_hash = match response {
-        AccountResponse::ValueShuffleStarted { session_id } => session_id,
+    let session_id = match response {
+        AccountResponse::SnowballStarted { session_id } => session_id,
         _ => panic!("Wrong respnse to payment request"),
     };
-
-    let mut commited_status = account
-        .account
-        .request(AccountRequest::WaitForCommit { tx_hash });
-
-    account.poll();
-    assert_eq!(commited_status.poll(), Ok(Async::NotReady));
-
-    commited_status
+    session_id
 }
 
 /// 3 nodes send monet to 1 recipient, using vs
-#[ignore]
 #[test]
 fn create_vs_tx() {
     const SEND_TOKENS: i64 = 10;
@@ -202,16 +191,17 @@ fn create_vs_tx() {
         s.poll();
         let (genesis, rest) = accounts.split_at_mut(1);
         precondition_each_account_has_tokens(&mut s, MIN_AMOUNT, &mut genesis[0], rest);
-
         let num_nodes = accounts.len() - 1;
+        assert!(num_nodes >= 3);
         let sleep_since_epoch = s.config.node.tx_wait_timeout * num_nodes as u32;
 
         let recipient = accounts[3].account_service.account_pkey;
 
-        let mut committed_statuses = Vec::new();
+        let mut notifications = Vec::new();
         for i in 0..num_nodes {
-            let status = vs_start(recipient, SEND_TOKENS, &mut accounts[i]);
-            committed_statuses.push(status);
+            let id = vs_start(recipient, SEND_TOKENS, &mut accounts[i]);
+            let notification = accounts[i].account.subscribe();
+            notifications.push((notification, id));
             accounts[i].poll();
         }
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
@@ -242,6 +232,13 @@ fn create_vs_tx() {
                 s.poll();
             }
         }
+
+        for (account, status) in accounts.iter_mut().zip(&mut notifications) {
+            let (notification, _) = status;
+            account.poll();
+            clear_notification(notification)
+        }
+
         debug!("===== ANONCING TXPOOL =====");
         s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
 
@@ -412,18 +409,53 @@ fn create_vs_tx() {
         debug!("===== VS Receive Signatures: produce tx =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         // rebroadcast transaction to each node
-        debug!("===== BROADCAST VS TRANSACTION =====");
-        s.broadcast(stegos_node::TX_TOPIC);
+        let mut my_tx_hash = None;
+        for (account, status) in accounts.iter_mut().zip(&mut notifications) {
+            let (notification, hash) = status;
+            account.poll();
+            my_tx_hash = Some(match get_notification(notification) {
+                AccountNotification::SnowballCreated {
+                    tx_hash,
+                    session_id,
+                } if session_id == *hash => tx_hash,
 
+                e => panic!("{:?}", e),
+            });
+            // tx created -> accepted(only leader) -> prepare, go thought this states.
+            match get_notification(notification) {
+                AccountNotification::TransactionStatus {
+                    tx_hash,
+                    status: TransactionStatus::Created { .. },
+                } => {
+                    if tx_hash != my_tx_hash.unwrap() {
+                        unreachable!()
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        debug!("===== BROADCAST VS TRANSACTION =====");
+        s.poll();
+        s.broadcast(stegos_node::TX_TOPIC);
         s.wait(s.config.node.tx_wait_timeout);
         s.skip_micro_block();
 
-        for (account, committed_status) in accounts.iter_mut().zip(committed_statuses) {
+        for (account, status) in accounts.iter_mut().zip(&mut notifications) {
+            let (notification, _hash) = status;
+
             account.poll();
-            assert_matches!(
-                get_request(committed_status),
-                AccountResponse::TransactionCommitted(_)
-            );
+
+            // ignore multiple notification, and assert that notification not equal to our.
+            while let AccountNotification::TransactionStatus {
+                tx_hash,
+                status: TransactionStatus::Prepare { .. },
+            } = get_notification(notification)
+            {
+                if tx_hash != my_tx_hash.unwrap() {
+                    unreachable!()
+                }
+            }
         }
     });
 }

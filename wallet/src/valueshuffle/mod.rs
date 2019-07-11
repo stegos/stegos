@@ -86,6 +86,7 @@ mod protos;
 use crate::valueshuffle::message::DirectMessage;
 use failure::Error;
 use failure::{bail, format_err};
+use futures::sync::mpsc::UnboundedSender;
 use futures::Async;
 use futures::Future;
 use futures::Poll;
@@ -185,8 +186,8 @@ pub struct ValueShuffle {
     participant_key: ParticipantID,
     /// Public keys of txpool's members,
     participants: Vec<ParticipantID>,
-    // My Node
-    node: Node,
+    // Sent transaction.
+    wallet_tx_info: UnboundedSender<(PaymentTransaction, bool)>,
     /// Network API.
     network: Network,
     /// Incoming events.
@@ -338,6 +339,7 @@ impl ValueShuffle {
         participant_pkey: pbc::PublicKey,
         network: Network,
         node: Node,
+        wallet_tx_info: UnboundedSender<(PaymentTransaction, bool)>,
     ) -> ValueShuffle {
         //
         // State.
@@ -390,6 +392,7 @@ impl ValueShuffle {
         let events = select_all(events);
 
         ValueShuffle {
+            wallet_tx_info,
             skey: skey.clone(),
             facilitator_pkey,
             future_facilitator,
@@ -397,7 +400,6 @@ impl ValueShuffle {
             participant_key,
             participants: participants.clone(), // empty vector
             session_id,
-            node,
             network,
             events,
 
@@ -483,7 +485,7 @@ impl ValueShuffle {
     /// Called when facilitator has been changed.
     fn on_facilitator_changed(&mut self, facilitator: pbc::PublicKey) -> Result<(), Error> {
         match self.state {
-            State::Offline | State::PoolFinished | State::PoolRestart => {}
+            State::Offline | State::PoolFinished | State::PoolRestart | State::PoolWait => {}
             // in progress some session, keep new facilitator in future facilitator.
             _ => {
                 debug!(
@@ -496,8 +498,9 @@ impl ValueShuffle {
         }
         debug!("Changed facilitator: facilitator={}", facilitator);
         self.facilitator_pkey = facilitator;
+        self.future_facilitator = None;
         // Last session was canceled, rejoining to new facilitator.
-        if self.state == State::PoolRestart {
+        if self.state == State::PoolRestart || self.state == State::PoolWait {
             debug!("Found new facilitator, rejoining to new pool.");
             self.send_pool_join()?;
         }
@@ -1575,14 +1578,7 @@ impl ValueShuffle {
         debug!("total sig {:?}", self.trans.sig);
 
         if self.validate_transaction() {
-            let leader = self.leader_id();
-            debug!("Leader = {}", leader);
-            if self.participant_key == leader {
-                // if I'm leader, then send the completed super-transaction
-                // to the blockchain.
-                self.send_super_transaction();
-                debug!("Sent SuperTransaction to BlockChain");
-            }
+            self.execute_super_transaction()?;
             self.reset_state(); // indicate nothing more to follow, restartable
             self.msg_queue.clear();
             self.session_round = 0; // for possible restarts
@@ -1939,11 +1935,14 @@ impl ValueShuffle {
 
     // -------------------------------------------------
 
-    fn send_super_transaction(&self) {
-        // send final superTransaction to blockchain
-        self.node
-            .send_transaction(self.trans.clone().into())
-            .expect("Can't send super-transaction");
+    /// Send transaction to the wallet.
+    fn execute_super_transaction(&mut self) -> Result<(), Error> {
+        let leader = self.leader_id();
+        debug!("Leader = {}", leader);
+        let tx = self.trans.clone();
+        self.wallet_tx_info
+            .unbounded_send((tx, self.participant_key == leader))?;
+        Ok(())
     }
 
     fn leader_id(&mut self) -> ParticipantID {

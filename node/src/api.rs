@@ -25,7 +25,7 @@ use std::collections::HashMap;
 use stegos_blockchain::{
     AccountRecoveryState, ElectionInfo, EscrowInfo, Output, Timestamp, Transaction,
 };
-use stegos_crypto::hash::Hash;
+use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::{pbc, scc};
 
 ///
@@ -45,6 +45,8 @@ pub enum NodeRequest {
         /// Account Public Key.
         account_pkey: scc::PublicKey,
     },
+    #[serde(skip)]
+    AddTransaction(Transaction),
 }
 
 ///
@@ -59,6 +61,11 @@ pub enum NodeResponse {
     BlockPopped,
     #[serde(skip)]
     AccountRecovered(AccountRecoveryState),
+    #[serde(skip)]
+    AddTransaction {
+        hash: Hash,
+        status: TransactionStatus,
+    },
     Error {
         error: String,
     },
@@ -83,6 +90,9 @@ pub struct NewMacroBlock {
     pub last_macro_block_timestamp: Timestamp,
     pub facilitator: pbc::PublicKey,
     pub validators: Vec<(pbc::PublicKey, i64)>,
+    #[serde(skip)]
+    pub transactions: HashMap<Hash, Transaction>,
+    pub statuses: HashMap<Hash, TransactionStatus>,
     #[serde(skip)]
     pub inputs: Vec<Output>,
     #[serde(skip)]
@@ -149,7 +159,7 @@ impl From<RollbackMicroBlock> for NodeNotification {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub enum TransactionStatus {
     Created {},
     Accepted {},
@@ -173,6 +183,44 @@ pub enum TransactionStatus {
     /// Transaction was rejected, because other conflicted
     Conflicted {
         epoch: u64,
-        conflict_tx: Option<Hash>,
+        offset: Option<u32>,
     },
+}
+
+impl Hashable for TransactionStatus {
+    fn hash(&self, hasher: &mut Hasher) {
+        match self {
+            TransactionStatus::Created {} => "Created".hash(hasher),
+            TransactionStatus::Accepted {} => "Accepted".hash(hasher),
+            TransactionStatus::Rejected { error } => {
+                "Rejected".hash(hasher);
+                error.hash(hasher)
+            }
+            TransactionStatus::Prepare { epoch, offset } => {
+                "Prepare".hash(hasher);
+                epoch.hash(hasher);
+                offset.hash(hasher);
+            }
+            TransactionStatus::Rollback { epoch, offset } => {
+                "Rollback".hash(hasher);
+                epoch.hash(hasher);
+                offset.hash(hasher);
+            }
+            TransactionStatus::Committed { epoch } => {
+                "Committed".hash(hasher);
+                epoch.hash(hasher);
+            }
+            TransactionStatus::Conflicted { epoch, offset } => {
+                "Conflicted".hash(hasher);
+
+                epoch.hash(hasher);
+                if let Some(offset) = offset {
+                    "some".hash(hasher);
+                    offset.hash(hasher);
+                } else {
+                    "none".hash(hasher);
+                }
+            }
+        }
+    }
 }

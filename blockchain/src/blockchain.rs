@@ -938,6 +938,11 @@ impl Blockchain {
     ///
     /// Add a new block into blockchain.
     ///
+    /// # Arguments
+    ///
+    /// * `block` - a macro block to add.
+    /// * `timestamp` - block arrival timestamp.
+    ///
     pub fn push_macro_block(
         &mut self,
         block: MacroBlock,
@@ -1060,7 +1065,7 @@ impl Blockchain {
         //
         // Register block.
         //
-        self.register_block(
+        self.register_inputs_and_outputs(
             lsn,
             block_hash,
             input_hashes,
@@ -1069,7 +1074,6 @@ impl Blockchain {
             &outputs,
             block.header.gamma,
             block.header.block_reward,
-            block.header.timestamp,
             force_check,
         );
 
@@ -1078,6 +1082,8 @@ impl Blockchain {
         //
         self.epoch += 1;
         self.offset = 0;
+        self.last_block_timestamp = block.header.timestamp;
+        self.last_block_hash = block_hash;
         self.last_macro_block_timestamp = block.header.timestamp;
         self.last_macro_block_random = block.header.random.rand;
         self.last_macro_block_hash = block_hash;
@@ -1125,6 +1131,11 @@ impl Blockchain {
     ///
     /// Add a new micro block into blockchain.
     ///
+    /// # Arguments
+    ///
+    /// * `block` - a micro block to add.
+    /// * `timestamp` - block arrival timestamp.
+    ///
     pub fn push_micro_block(
         &mut self,
         block: MicroBlock,
@@ -1153,7 +1164,7 @@ impl Blockchain {
     ///
     /// Common part of register_macro_block()/register_micro_block().
     ///
-    fn register_block(
+    fn register_inputs_and_outputs(
         &mut self,
         lsn: LSN,
         block_hash: Hash,
@@ -1163,7 +1174,6 @@ impl Blockchain {
         outputs: &[Output],
         gamma: Fr,
         block_reward: i64,
-        timestamp: Timestamp,
         force_check: bool,
     ) {
         let epoch = self.epoch;
@@ -1298,14 +1308,6 @@ impl Blockchain {
         }
         self.balance.insert(lsn, (), balance);
         assert_eq!(self.balance.current_lsn(), lsn);
-
-        //
-        // Update metadata.
-        //
-        self.last_block_timestamp = timestamp;
-        self.last_block_hash = block_hash;
-        self.offset += 1;
-        metrics::OFFSET.set(self.offset as i64);
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
     }
 
@@ -1412,7 +1414,7 @@ impl Blockchain {
         //
         // Register block.
         //
-        self.register_block(
+        self.register_inputs_and_outputs(
             lsn,
             block_hash,
             input_hashes,
@@ -1421,13 +1423,16 @@ impl Blockchain {
             &outputs,
             gamma,
             block_reward,
-            block.header.timestamp,
             force_check,
         );
 
         //
         // Update metadata.
         //
+        self.last_block_timestamp = block.header.timestamp;
+        self.last_block_hash = block_hash;
+        self.offset += 1;
+        metrics::OFFSET.set(self.offset as i64);
         let mut election_result = self.election_result().clone();
         election_result.view_change = 0;
         election_result.random = block.header.random;

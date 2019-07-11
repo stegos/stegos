@@ -827,7 +827,7 @@ impl NodeService {
     /// Try to apply a new micro block into the blockchain.
     fn apply_macro_block(&mut self, block: MacroBlock) -> Result<(), Error> {
         let hash = Hash::digest(&block);
-        let timestamp = block.header.timestamp;
+        let timestamp = Timestamp::now();
         let epoch = block.header.epoch;
         let was_synchronized = self.is_synchronized();
 
@@ -894,7 +894,7 @@ impl NodeService {
     /// Try to apply a new micro block into the blockchain.
     fn apply_micro_block(&mut self, block: MicroBlock) -> Result<(), Error> {
         let hash = Hash::digest(&block);
-        let timestamp = block.header.timestamp;
+        let timestamp = Timestamp::now();
         let epoch = block.header.epoch;
         let offset = block.header.offset;
 

@@ -1416,16 +1416,16 @@ impl WalletService {
         request: WalletControlRequest,
     ) -> Result<WalletControlResponse, Error> {
         match request {
-            WalletControlRequest::ListWallets {} => {
+            WalletControlRequest::ListAccounts {} => {
                 let accounts = self.accounts.keys().cloned().collect();
                 Ok(WalletControlResponse::AccountsInfo { accounts })
             }
-            WalletControlRequest::CreateWallet { password } => {
+            WalletControlRequest::CreateAccount { password } => {
                 let (account_skey, account_pkey) = scc::make_random_keys();
                 let account_id = self.create_account(account_skey, account_pkey, &password)?;
                 Ok(WalletControlResponse::AccountCreated { account_id })
             }
-            WalletControlRequest::RecoverWallet { recovery, password } => {
+            WalletControlRequest::RecoverAccount { recovery, password } => {
                 info!("Recovering keys...");
                 let account_skey = recovery_to_account_skey(&recovery)?;
                 let account_pkey: scc::PublicKey = account_skey.clone().into();

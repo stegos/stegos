@@ -630,16 +630,16 @@ impl ConsoleService {
             let request = AccountRequest::GetRecovery {};
             self.send_account_request(request)?
         } else if msg == "show accounts" {
-            let request = WalletControlRequest::ListWallets {};
+            let request = WalletControlRequest::ListAccounts {};
             self.send_wallet_control_request(request)?;
         } else if msg == "create account" {
             let password = read_password_from_stdin(true)?;
-            let request = WalletControlRequest::CreateWallet { password };
+            let request = WalletControlRequest::CreateAccount { password };
             self.send_wallet_control_request(request)?;
         } else if msg == "recover account" {
             let recovery = read_recovery_from_stdin()?;
             let password = read_password_from_stdin(true)?;
-            let request = WalletControlRequest::RecoverWallet { recovery, password };
+            let request = WalletControlRequest::RecoverAccount { recovery, password };
             self.send_wallet_control_request(request)?;
         } else if msg == "passwd" {
             let new_password = read_password_from_stdin(true)?;

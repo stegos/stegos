@@ -35,6 +35,7 @@ use crate::storage::{PaymentCertificate, PaymentTransactionValue};
 use stegos_blockchain::{
     PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput,
 };
+use stegos_crypto::hash::Hash;
 use stegos_crypto::scc::{Fr, PublicKey};
 use stegos_node::TransactionStatus;
 
@@ -87,21 +88,45 @@ impl ProtoConvert for PaymentValue {
         let mut msg = account_log::PaymentValue::new();
         msg.set_output(self.output.into_proto());
         msg.set_amount(self.amount);
-        msg.set_comment(String::from("test"));
+        let mut payload = account_log::PaymentPayload::new();
+        match self.data {
+            PaymentPayloadData::Comment(ref s) => {
+                payload.set_comment(s.clone());
+            }
+            PaymentPayloadData::ContentHash(ref h) => {
+                payload.set_hash(h.into_proto());
+            }
+        }
+        msg.set_payload(payload);
         msg
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let output = PaymentOutput::from_proto(proto.get_output())?;
         let amount = proto.get_amount();
-        let comment = String::from("test");
-        let payload = PaymentValue {
-            output,
-            amount,
-            data: PaymentPayloadData::Comment(comment),
+
+        let data = match proto.get_payload().data {
+            Some(account_log::PaymentPayload_oneof_data::comment(ref msg)) => {
+                PaymentPayloadData::Comment(msg.clone())
+            }
+            Some(account_log::PaymentPayload_oneof_data::hash(ref msg)) => {
+                let hash = Hash::from_proto(msg)?;
+                PaymentPayloadData::ContentHash(hash)
+            }
+            None => {
+                return Err(
+                    ProtoError::MissingField("payload".to_string(), "payload".to_string()).into(),
+                );
+            }
         };
 
-        Ok(payload)
+        let value = PaymentValue {
+            output,
+            amount,
+            data,
+        };
+
+        Ok(value)
     }
 }
 

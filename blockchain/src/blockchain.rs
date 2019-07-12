@@ -1050,7 +1050,12 @@ impl Blockchain {
             self.awards
                 .finalize_epoch(self.cfg.service_award_per_epoch, validators_activity);
             let winner = self.awards.check_winners(block.header.random.rand);
-            info!("Service award found a winner: winner_pk={}", winner_pk);
+            if let Some((winner_pk, amount)) = winner {
+                info!(
+                    "Service award found a winner: winner_pk={}, amount={}",
+                    winner_pk, amount
+                );
+            }
             // calculate block reward + service award.
             let full_reward = self.cfg().block_reward
                 * (self.cfg().micro_blocks_in_epoch as i64 + 1i64)

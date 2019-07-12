@@ -23,7 +23,7 @@ use tokio_timer::Interval;
 
 pub const MESSAGE_TIMEOUT: Duration = Duration::from_secs(30);
 const MIN_PARTICIPANTS: usize = 3;
-//const MAX_PARTICIPANTS: usize = 10;
+const MAX_PARTICIPANTS: usize = 20;
 
 type TXIN = Hash;
 type UTXO = PaymentOutput;
@@ -243,6 +243,10 @@ impl TransactionPoolService {
             NodeRole::Facilitator(ref mut state) => {
                 if state.add_participant(from, data) {
                     info!("Added a new member: pkey={}", from);
+
+                    if state.participants.len() >= MAX_PARTICIPANTS {
+                        self.try_notify_participants()?
+                    }
                 }
             }
         }

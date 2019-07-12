@@ -455,7 +455,7 @@ impl UnsealedAccountService {
     /// Cloak all available public outputs.
     fn cloak_all(&mut self, payment_fee: i64) -> Result<PaymentTransactionValue, Error> {
         if self.public_payments.is_empty() {
-            return Err(WalletError::NotEnoughMoney.into());
+            return Err(WalletError::NoPublicOutputs.into());
         }
 
         let public_utxos = self.public_payments.values();

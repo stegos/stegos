@@ -68,6 +68,7 @@ impl Default for SandboxConfig {
 #[allow(unused)]
 pub struct Sandbox<'timer> {
     pub nodes: Vec<NodeSandbox>,
+    pub auditor: NodeSandbox,
     pub keychains: Vec<KeyChain>,
     pub timer: &'timer mut Timer<TestTimer>,
     pub config: SandboxConfig,
@@ -100,12 +101,23 @@ impl<'timer> Sandbox<'timer> {
                 );
                 nodes.push(node)
             }
+            let auditor_keychain = KeyChain::new();
+            let auditor = NodeSandbox::new(
+                config.node.clone(),
+                config.chain.clone(),
+                auditor_keychain.network_skey,
+                auditor_keychain.network_pkey,
+                genesis.clone(),
+            );
+
             let sandbox = Sandbox {
                 nodes,
                 keychains,
                 timer,
                 config,
+                auditor,
             };
+
             for node in sandbox.nodes.iter() {
                 assert_eq!(node.node_service.chain.epoch(), 1);
                 assert_eq!(node.node_service.chain.offset(), 0);
@@ -139,6 +151,9 @@ impl<'timer> Sandbox<'timer> {
             }
         }
 
+        //TODO: add support of multiple auditors, and allow to choose on which side should be auditors.
+        part2.auditor = Some(&mut self.auditor);
+
         PartitionGuard {
             timer: &mut *self.timer,
             config: &self.config,
@@ -153,6 +168,7 @@ impl<'timer> Sandbox<'timer> {
 #[derive(Default)]
 pub struct Partition<'p> {
     pub nodes: Vec<&'p mut NodeSandbox>,
+    pub auditor: Option<&'p mut NodeSandbox>,
 }
 #[allow(dead_code)]
 impl<'p> Partition<'p> {
@@ -284,6 +300,14 @@ pub trait Api<'p> {
     where
         'p: 'a;
 
+    fn auditor_mut<'a>(&'a mut self) -> Option<&'a mut NodeSandbox>
+    where
+        'p: 'a;
+
+    fn auditor<'a>(&'a self) -> Option<&'a NodeSandbox>
+    where
+        'p: 'a;
+
     fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a NodeSandbox> + 'a>
     where
         'p: 'a;
@@ -331,6 +355,12 @@ pub trait Api<'p> {
             assert_eq!(node.node_service.chain.offset(), offset);
             assert_eq!(node.node_service.chain.last_block_hash(), last_block);
         }
+
+        if let Some(auditor) = self.auditor() {
+            assert_eq!(auditor.node_service.chain.epoch(), epoch);
+            assert_eq!(auditor.node_service.chain.offset(), offset);
+            assert_eq!(auditor.node_service.chain.last_block_hash(), last_block);
+        }
     }
 
     /// Filter messages from specific protocol_ids.
@@ -338,12 +368,20 @@ pub trait Api<'p> {
         for node in &mut self.iter_mut() {
             node.network_service.filter_unicast(protocol_ids)
         }
+
+        if let Some(auditor) = self.auditor_mut() {
+            auditor.network_service.filter_unicast(protocol_ids)
+        }
     }
 
     /// Filter messages from specific topics.
     fn filter_broadcast(&mut self, topics: &[&str]) {
         for node in &mut self.iter_mut() {
             node.network_service.filter_broadcast(topics)
+        }
+
+        if let Some(auditor) = self.auditor_mut() {
+            auditor.network_service.filter_broadcast(topics)
         }
     }
 
@@ -355,6 +393,10 @@ pub trait Api<'p> {
                 node.validator_id()
             );
             node.poll();
+        }
+        info!("============ POLLING auditor ============");
+        if let Some(auditor) = self.auditor_mut() {
+            auditor.poll();
         }
     }
 
@@ -427,6 +469,12 @@ pub trait Api<'p> {
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
         for node in self.iter_except(&[leader_pk]) {
             node.network_service
+                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
+        }
+
+        if let Some(auditor) = self.auditor_mut() {
+            auditor
+                .network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
         }
         self.poll();
@@ -541,6 +589,13 @@ pub trait Api<'p> {
             node.network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
         }
+
+        if let Some(auditor) = self.auditor_mut() {
+            auditor
+                .network_service
+                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
+        }
+
         self.poll();
 
         // Check state of all nodes.
@@ -651,6 +706,30 @@ impl<'p> Api<'p> for Partition<'p> {
     {
         Box::new(self.reborrow_nodes_mut())
     }
+
+    fn auditor_mut<'a>(&'a mut self) -> Option<&'a mut NodeSandbox>
+    where
+        'p: 'a,
+    {
+        // reborrow auditor
+        if let Some(&mut ref mut s) = self.auditor {
+            Some(s)
+        } else {
+            None
+        }
+    }
+
+    fn auditor<'a>(&'a self) -> Option<&'a NodeSandbox>
+    where
+        'p: 'a,
+    {
+        // reborrow auditor
+        if let Some(&mut ref s) = self.auditor {
+            Some(s)
+        } else {
+            None
+        }
+    }
 }
 
 impl<'p> Api<'p> for Sandbox<'p> {
@@ -665,6 +744,18 @@ impl<'p> Api<'p> for Sandbox<'p> {
         'p: 'a,
     {
         Box::new(self.nodes.iter_mut())
+    }
+    fn auditor_mut<'a>(&'a mut self) -> Option<&'a mut NodeSandbox>
+    where
+        'p: 'a,
+    {
+        Some(&mut self.auditor)
+    }
+    fn auditor<'a>(&'a self) -> Option<&'a NodeSandbox>
+    where
+        'p: 'a,
+    {
+        Some(&self.auditor)
     }
 }
 
@@ -698,12 +789,25 @@ pub fn slash_cheater_inner<'a>(
         node.network_service
             .receive_broadcast(crate::SEALED_BLOCK_TOPIC, b1.clone());
     }
+
+    if let Some(auditor) = r.parts.1.auditor_mut() {
+        auditor
+            .network_service
+            .receive_broadcast(crate::SEALED_BLOCK_TOPIC, b1.clone());
+    }
+
     r.parts
         .1
         .for_each(|node| assert_eq!(node.cheating_proofs.len(), 0));
 
     for node in r.parts.1.iter_mut() {
         node.network_service
+            .receive_broadcast(crate::SEALED_BLOCK_TOPIC, b2.clone());
+    }
+
+    if let Some(auditor) = r.parts.1.auditor_mut() {
+        auditor
+            .network_service
             .receive_broadcast(crate::SEALED_BLOCK_TOPIC, b2.clone());
     }
 

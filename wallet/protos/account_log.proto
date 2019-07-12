@@ -6,15 +6,15 @@ import "blockchain.proto";
 
 message PaymentPayload {
     oneof data {
-        string comment = 1;
-        bytes hash = 2;
+        stegos.crypto.Hash hash = 1;
+        string comment = 2;
     }
 }
 
 message PaymentValue {
     stegos.blockchain.PaymentOutput output = 1;
     int64 amount = 2;
-    string comment = 3;
+    PaymentPayload payload = 3;
 }
 
 // Possible outputs

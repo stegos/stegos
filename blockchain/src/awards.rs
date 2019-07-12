@@ -126,8 +126,8 @@ impl Awards {
         let winner_num = winner_num.checked_abs().unwrap_or(0) as usize;
         let winner = winner_num % array.len();
         let winner_pk = array[winner];
-        info!(
-            "Service award found a winner: num_validators={}, winner={}, winner_pk={}",
+        trace!(
+            "Service award produce winner: num_validators={}, winner={}, winner_pk={}",
             array.len(),
             winner,
             winner_pk

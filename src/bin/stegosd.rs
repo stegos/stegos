@@ -24,7 +24,7 @@ use stegos::*;
 use clap;
 use clap::{App, Arg, ArgMatches};
 use dirs;
-use failure::Error;
+use failure::{format_err, Error};
 use futures::stream::Stream;
 use futures::Future;
 use hyper::server::Server;
@@ -86,6 +86,21 @@ pub fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error
     if cfg.general.chain != "dev" && cfg.network.seed_pool == "" {
         cfg.network.seed_pool =
             format!("_stegos._tcp.{}.aws.stegos.com", cfg.general.chain).to_string();
+    }
+
+    // Disable [chain] and [node] sections for mainnet and testnet.
+    let is_prod = cfg.general.chain == "mainnet" || cfg.general.chain == "testnet";
+    if is_prod && cfg.chain != Default::default() {
+        return Err(format_err!(
+            "Can't override [chain] options for {}",
+            cfg.general.chain
+        ));
+    }
+    if is_prod && cfg.node != Default::default() {
+        return Err(format_err!(
+            "Can't override [node] options for {}",
+            cfg.general.chain
+        ));
     }
 
     Ok(cfg)

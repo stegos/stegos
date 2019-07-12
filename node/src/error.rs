@@ -39,10 +39,15 @@ pub enum NodeTransactionError {
     #[fail(display = "Transaction already exists in mempool: tx={}", _0)]
     AlreadyExists(Hash),
     #[fail(
-        display = "Transaction is too large: tx={}, got_inout={}, max_inout={}",
+        display = "Transaction is too large: tx={}, got_inputs={}, max_inputs={}",
         _0, _1, _2
     )]
-    TooLarge(Hash, usize, usize),
+    TooManyInputs(Hash, usize, usize),
+    #[fail(
+        display = "Transaction is too large: tx={}, got_outputs={}, max_outputs={}",
+        _0, _1, _2
+    )]
+    TooManyOutputs(Hash, usize, usize),
     #[fail(display = "Can't process transaction - mempool is full: tx={}", _0)]
     MempoolIsFull(Hash),
 }

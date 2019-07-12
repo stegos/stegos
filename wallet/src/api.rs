@@ -169,9 +169,10 @@ pub enum AccountRequest {
 #[serde(rename_all = "snake_case")]
 #[serde(tag = "type")]
 pub enum WalletControlRequest {
-    ListWallets {},
-    CreateWallet { password: String },
-    RecoverWallet { recovery: String, password: String },
+    ListAccounts {},
+    CreateAccount { password: String },
+    RecoverAccount { recovery: String, password: String },
+    DeleteAccount { account_id: AccountId },
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
@@ -235,6 +236,7 @@ pub enum AccountResponse {
 pub enum WalletControlResponse {
     AccountsInfo { accounts: Vec<AccountId> },
     AccountCreated { account_id: AccountId },
+    AccountDeleted { account_id: AccountId },
     Error { error: String },
 }
 
@@ -275,7 +277,7 @@ pub mod tests {
     /// Check encoding/decoding of API structures.
     #[test]
     fn serde() {
-        let request1 = WalletRequest::WalletControlRequest(WalletControlRequest::CreateWallet {
+        let request1 = WalletRequest::WalletControlRequest(WalletControlRequest::CreateAccount {
             password: "password xx".to_string(),
         });
         let json1 = serde_json::to_string(&request1).unwrap();

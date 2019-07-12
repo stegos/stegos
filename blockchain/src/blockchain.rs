@@ -542,16 +542,23 @@ impl Blockchain {
         self.select_leader(self.view_change())
     }
 
-    /// Return the current epoch facilitator.
+    /// Returns the current epoch facilitator.
     #[inline]
     pub fn facilitator(&self) -> &pbc::PublicKey {
         &self.election_result().facilitator
     }
 
-    /// Return the current epoch validators with their stakes.
+    /// Returns the current epoch validators with their stakes.
     #[inline]
     pub fn validators(&self) -> &Vec<(pbc::PublicKey, i64)> {
         &self.election_result().validators
+    }
+
+    /// Returns the validators list, at begining of the epoch
+    #[inline]
+    pub fn validators_at_epoch_start(&self) -> Vec<(pbc::PublicKey, i64)> {
+        let epoch_info = self.election_result_by_offset(0).unwrap();
+        epoch_info.validators
     }
 
     /// Returns true if peer is validator in current epoch.
@@ -673,22 +680,35 @@ impl Blockchain {
     pub fn awards_from_active_epoch(&self, random: &VRF) -> (BitVector, Option<(PublicKey, i64)>) {
         let mut service_awards = self.service_awards().clone();
 
-        let mut epoch_activity = self.epoch_activity().clone();
+        let epoch_activity = self.epoch_activity().clone();
+        // use only validators that exist at end of epoch (self.validators() - return current validator list)
+        // This will filter out slashed cheaters.
+        let epoch_activity: HashMap<_, _> = self
+            .validators()
+            .iter()
+            .map(|(k, _)| {
+                (
+                    k,
+                    epoch_activity
+                        .get(k)
+                        .cloned()
+                        .unwrap_or(ValidatorAwardState::Active),
+                )
+            })
+            .collect();
 
         let mut activity_map = BitVector::ones(self.validators().len());
+
         for (id, (validator, _)) in self.validators().iter().enumerate() {
             match epoch_activity.get(validator) {
                 // if validator failed, remove it from bitmap.
                 Some(ValidatorAwardState::FailedAt(..)) => {
                     activity_map.remove(id);
                 }
-                // add info about missing validators
-                None => {
-                    epoch_activity.insert(*validator, ValidatorAwardState::Active);
-                }
                 _ => {}
             }
         }
+
         let validators_activity = epoch_activity.iter().map(|(k, v)| {
             (
                 self.escrow

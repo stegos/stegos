@@ -27,6 +27,7 @@ use std::collections::BTreeMap;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
 
+/// Group of validators, should be ordered and unique by pbc::PublicKey.
 pub type StakersGroup = Vec<(pbc::PublicKey, i64)>;
 
 /// User-friendly printable representation of state.

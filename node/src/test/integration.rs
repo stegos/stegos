@@ -172,3 +172,69 @@ fn rollback_slashing() {
         s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
     });
 }
+
+// CASE finalized slashing:
+//
+// Asserts that after macroblock slashing is finalized, and proofs are cleared.
+
+#[test]
+fn finalized_slashing() {
+    let mut cfg: ChainConfig = Default::default();
+    cfg.micro_blocks_in_epoch = 20;
+    let config = SandboxConfig {
+        num_nodes: 4,
+        chain: cfg,
+        ..Default::default()
+    };
+
+    Sandbox::start(config, |mut s| {
+        s.poll();
+
+        precondition_n_different_block_leaders(&mut s, 2);
+        // next leader should be from different partition.
+
+        let cheater = s.nodes[0].node_service.chain.leader();
+        info!("CREATE BLOCK. LEADER = {}", cheater);
+        s.wait(s.config.node.tx_wait_timeout);
+        s.poll();
+
+        let mut r = slash_cheater_inner(&mut s, cheater, vec![]);
+
+        info!(
+            "CHECK IF CHEATER WAS DETECTED. LEADER={}",
+            r.parts.1.first().node_service.chain.leader()
+        );
+        // each node should add proof of slashing into state.
+        r.parts
+            .1
+            .for_each(|node| assert_eq!(node.cheating_proofs.len(), 1));
+
+        // wait for block;
+        r.wait(r.config.node.tx_wait_timeout);
+        r.parts.1.skip_micro_block();
+
+        // assert that nodes in partition 1 exclude node from partition 0.
+        for node in r.parts.1.iter() {
+            let validators: HashSet<_> = node
+                .node_service
+                .chain
+                .validators()
+                .iter()
+                .map(|(p, _)| *p)
+                .collect();
+            assert!(!validators.contains(&cheater))
+        }
+
+        let offset = r.parts.1.first().node_service.chain.offset();
+
+        for _offset in offset..r.config.chain.micro_blocks_in_epoch {
+            r.parts.1.poll();
+            r.wait(r.config.node.tx_wait_timeout);
+            r.parts.1.skip_micro_block();
+        }
+        r.parts.1.skip_macro_block();
+        r.parts
+            .1
+            .for_each(|node| assert_eq!(node.cheating_proofs.len(), 0));
+    });
+}

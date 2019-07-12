@@ -49,6 +49,7 @@ use log::*;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use stegos_blockchain::Timestamp;
 use stegos_blockchain::*;
 use stegos_crypto::hash::Hash;
@@ -61,8 +62,10 @@ use stegos_node::NodeNotification;
 use stegos_node::TransactionStatus;
 use stegos_node::{Node, NodeRequest, NodeResponse};
 use tokio::runtime::TaskExecutor;
+use tokio_timer::Interval;
 
 const STAKE_FEE: i64 = 0;
+const RESEND_TX_INTERVAL: Duration = Duration::from_secs(2 * 60);
 
 ///
 /// Events.
@@ -123,6 +126,8 @@ struct UnsealedAccountService {
     network: Network,
     /// Node API (shared).
     node: Node,
+    /// Resend timeout.
+    resend_tx: Interval,
 
     //
     // Value shuffle api (owned)
@@ -194,6 +199,7 @@ impl UnsealedAccountService {
 
         let account_log = AccountLog::open(&database_dir);
         let transaction_response = None;
+        let resend_tx = Interval::new(tokio_timer::clock::now(), RESEND_TX_INTERVAL);
         //
         // Recovery.
         //
@@ -222,6 +228,7 @@ impl UnsealedAccountService {
             payments,
             public_payments,
             stakes,
+            resend_tx,
             vs,
             wallet_tx_info_receiver,
             vs_session,
@@ -694,15 +701,7 @@ impl UnsealedAccountService {
         if let Some(timestamp) = self.account_log.tx_entry(tx_hash) {
             // update persistent info.
             self.account_log
-                .update_log_entry(timestamp, |mut e| {
-                    match &mut e {
-                        LogEntry::Outgoing { ref mut tx } => {
-                            tx.status = status.clone();
-                        }
-                        LogEntry::Incoming { .. } => bail!("BUG: Expected outgoing transaction."),
-                    };
-                    Ok(e)
-                })
+                .update_tx_status(tx_hash, timestamp, status.clone())
                 .expect("Cannot update status.");
 
             // update metrics
@@ -731,6 +730,24 @@ impl UnsealedAccountService {
         trace!("Updated mempool event");
         for (tx_hash, status) in changes {
             self.on_tx_status(tx_hash, status)
+        }
+    }
+
+    fn handle_resend_pending_txs(&mut self) {
+        let txs: Vec<_> = self.account_log.pending_txs().collect();
+        for tx in txs {
+            match tx {
+                Ok(tx) => {
+                    debug!(
+                        "Found pending transaction for resending: tx_hash = {}, status = {:?}",
+                        Hash::digest(&tx.tx),
+                        tx.status
+                    );
+                    // ignore error.
+                    let _ = self.send_transaction(tx.tx.into());
+                }
+                Err(e) => error!("Error during processing database = {}", e),
+            }
         }
     }
 
@@ -826,6 +843,14 @@ impl Future for UnsealedAccountService {
         loop {
             if let Async::NotReady = self.vs.poll().expect("all errors are already handled") {
                 break;
+            }
+        }
+
+        loop {
+            match self.resend_tx.poll().expect("no errors in timers") {
+                Async::Ready(Some(_t)) => self.handle_resend_pending_txs(),
+                Async::NotReady => break,
+                e => panic!("Error in handling resend tx timer = {:?}", e),
             }
         }
 

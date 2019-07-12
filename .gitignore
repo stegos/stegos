@@ -14,14 +14,14 @@ logs/
 /api_token.txt
 
 # Test data
-/testing/node*/data/chain/
-/testing/node*/data/accounts/*/
-/testing/node*/data/accounts/*.skey
-/testing/node*/data/accounts/*.pkey
-!/testing/node*/data/accounts/1.skey
-!/testing/node*/data/accounts/1.pkey
-/testing/node*/data/api.token
-/data/
+/testing/node*/data
+/testing/node*/db
+/testing/node*/keys/accounts/*
+!/testing/node01/keys/accounts/1
+/testing/node*/keys/api.token
+/data
+/db
+/keys
 
 # IDE files
 /.vscode

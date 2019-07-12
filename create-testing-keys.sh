@@ -16,13 +16,13 @@ cargo run --bin bootstrap -- --keys $NUM_KEYS
 
 mkdir -p testing
 for i in $(seq -f "%02g" 1 $NUM_KEYS); do
-    data_dir="testing/node$i/data"
+    data_dir="testing/node$i/keys"
     mkdir -p $data_dir
     rm -f password$i.txt
     if [ $i == "01" ] ; then
-      mkdir -p ${data_dir}/accounts
-      mv -f account$i.pkey ${data_dir}/accounts/1.pkey
-      mv -f account$i.skey ${data_dir}/accounts/1.skey
+      mkdir -p ${data_dir}/accounts/1
+      mv -f account$i.pkey ${data_dir}/accounts/1/account.pkey
+      mv -f account$i.skey ${data_dir}/accounts/1/account.skey
     else
       rm account$i.?key
     fi

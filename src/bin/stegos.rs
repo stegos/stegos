@@ -42,6 +42,7 @@ fn main() {
     let gcfg: GeneralConfig = Default::default();
     let default_token_file = gcfg
         .data_dir
+        .join("keys")
         .join("api.token")
         .to_string_lossy()
         .to_string();

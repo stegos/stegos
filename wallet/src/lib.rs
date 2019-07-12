@@ -50,7 +50,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use stegos_blockchain::Timestamp;
 use stegos_blockchain::*;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{pbc, scc};
@@ -1317,7 +1316,6 @@ struct AccountHandle {
 
 pub struct WalletService {
     accounts_dir: PathBuf,
-    accounts_db_dir: PathBuf,
     network_skey: pbc::SecretKey,
     network_pkey: pbc::PublicKey,
     network: Network,
@@ -1332,7 +1330,6 @@ pub struct WalletService {
 impl WalletService {
     pub fn new(
         accounts_dir: &Path,
-        accounts_db_dir: &Path,
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
         network: Network,
@@ -1344,7 +1341,6 @@ impl WalletService {
         let subscribers: Vec<mpsc::UnboundedSender<WalletNotification>> = Vec::new();
         let mut service = WalletService {
             accounts_dir: accounts_dir.to_path_buf(),
-            accounts_db_dir: accounts_db_dir.to_path_buf(),
             network_skey,
             network_pkey,
             network,
@@ -1361,8 +1357,7 @@ impl WalletService {
         // Scan directory for accounts.
         for entry in fs::read_dir(accounts_dir)? {
             let entry = entry?;
-            let file_type = entry.file_type()?;
-            if !file_type.is_dir() {
+            if entry.path().starts_with(".") || !entry.file_type()?.is_dir() {
                 continue;
             }
 
@@ -1398,15 +1393,10 @@ impl WalletService {
     /// Open existing account.
     ///
     fn open_account(&mut self, account_id: &str) -> Result<(), Error> {
-        let account_database_dir = self.accounts_db_dir.join(account_id);
-        let account_skey_file = self
-            .accounts_dir
-            .join(format!("{}", account_id))
-            .join("account.skey");
-        let account_pkey_file = self
-            .accounts_dir
-            .join(format!("{}", account_id))
-            .join("account.pkey");
+        let account_dir = self.accounts_dir.join(account_id);
+        let account_database_dir = account_dir.join("history");
+        let account_skey_file = account_dir.join("account.skey");
+        let account_pkey_file = account_dir.join("account.pkey");
         let (account_service, account) = AccountService::new(
             &account_database_dir,
             &account_skey_file,
@@ -1431,7 +1421,8 @@ impl WalletService {
     fn find_account_id(&self) -> AccountId {
         for i in 1..std::u64::MAX {
             let account_id = i.to_string();
-            if !self.accounts.contains_key(&account_id) {
+            let account_dir = self.accounts_dir.join(&account_id);
+            if !self.accounts.contains_key(&account_id) && !account_dir.exists() {
                 return account_id;
             }
         }
@@ -1449,9 +1440,7 @@ impl WalletService {
     ) -> Result<AccountId, Error> {
         let account_id = self.find_account_id();
         let account_dir = self.accounts_dir.join(format!("{}", account_id));
-        if !account_dir.exists() {
-            fs::create_dir_all(&account_dir)?;
-        }
+        fs::create_dir_all(&account_dir)?;
         let account_skey_file = account_dir.join("account.skey");
         let account_pkey_file = account_dir.join("account.pkey");
         write_account_pkey(&account_pkey_file, &account_pkey)?;
@@ -1489,18 +1478,19 @@ impl WalletService {
                 match self.accounts.remove(&account_id) {
                     Some(_handle) => {
                         warn!("Removing account {}", account_id);
-                        let skey_file = self.accounts_dir.join(format!("{}.skey", &account_id));
-                        let skey_file_bkp = skey_file.with_extension("skey~");
-                        let pkey_file = self.accounts_dir.join(format!("{}.pkey", &account_id));
-                        let pkey_file_bkp = pkey_file.with_extension("pkey~");
-                        let database_dir = self.accounts_dir.join(&account_id);
-                        warn!("Renaming {:?} to {:?}", skey_file, skey_file_bkp);
-                        fs::rename(skey_file, skey_file_bkp)?;
-                        warn!("Renaming {:?} to {:?}", pkey_file, pkey_file_bkp);
-                        fs::rename(pkey_file, pkey_file_bkp)?;
-                        if database_dir.exists() {
-                            warn!("Removing {:?}", database_dir);
-                            fs::remove_dir_all(database_dir)?;
+                        let account_dir = self.accounts_dir.join(&account_id);
+                        if account_dir.exists() {
+                            let suffix = Timestamp::now()
+                                .duration_since(Timestamp::UNIX_EPOCH)
+                                .as_secs();
+                            let trash_dir = self.accounts_dir.join(".trash");
+                            if !trash_dir.exists() {
+                                fs::create_dir_all(&trash_dir)?;
+                            }
+                            let account_dir_bkp =
+                                trash_dir.join(format!("{}-{}", &account_id, suffix));
+                            warn!("Renaming {:?} to {:?}", account_dir, account_dir_bkp);
+                            fs::rename(account_dir, account_dir_bkp)?;
                         }
                         // AccountService will be destroyed automatically.
                         Ok(WalletControlResponse::AccountDeleted { account_id })

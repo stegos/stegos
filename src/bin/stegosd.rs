@@ -189,22 +189,18 @@ fn run() -> Result<(), Error> {
     if !data_dir.exists() {
         fs::create_dir_all(&data_dir)?;
     }
-    let chain_dir = data_dir.join("db").join("chain");
+    let chain_dir = data_dir.join("chain");
     if !chain_dir.exists() {
         fs::create_dir_all(&chain_dir)?;
     }
-    let accounts_db_dir = data_dir.join("db").join("accounts");
-    if !accounts_db_dir.exists() {
-        fs::create_dir_all(&accounts_db_dir)?;
-    }
-    let accounts_dir = data_dir.join("keys").join("accounts");
+    let accounts_dir = data_dir.join("accounts");
     if !accounts_dir.exists() {
         fs::create_dir_all(&accounts_dir)?;
     }
 
     // Initialize keychain
-    let network_skey_file = data_dir.join("keys").join("network.skey");
-    let network_pkey_file = data_dir.join("keys").join("network.pkey");
+    let network_skey_file = data_dir.join("network.skey");
+    let network_pkey_file = data_dir.join("network.pkey");
     let (network_skey, network_pkey) = load_network_keys(&network_skey_file, &network_pkey_file)?;
 
     // Resolve seed pool (works, if chain=='testent', does nothing otherwise)
@@ -252,7 +248,6 @@ fn run() -> Result<(), Error> {
     // Initialize Wallet.
     let (wallet_service, wallet) = WalletService::new(
         &accounts_dir,
-        &accounts_db_dir,
         network_skey,
         network_pkey,
         network.clone(),
@@ -264,7 +259,7 @@ fn run() -> Result<(), Error> {
 
     // Start WebSocket API server.
     if cfg.general.api_endpoint != "" {
-        let token_file = data_dir.join("keys").join("api.token");
+        let token_file = data_dir.join("api.token");
         let api_token = load_or_create_api_token(&token_file)?;
         WebSocketServer::spawn(
             cfg.general.api_endpoint,

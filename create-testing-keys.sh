@@ -16,7 +16,7 @@ cargo run --bin bootstrap -- --keys $NUM_KEYS
 
 mkdir -p testing
 for i in $(seq -f "%02g" 1 $NUM_KEYS); do
-    data_dir="testing/node$i/keys"
+    data_dir="testing/node$i"
     mkdir -p $data_dir
     rm -f password$i.txt
     if [ $i == "01" ] ; then

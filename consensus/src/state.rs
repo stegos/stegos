@@ -146,6 +146,7 @@ impl Consensus {
     ) -> Self {
         assert!(validators.contains_key(&pkey));
         let state = ConsensusState::Propose;
+        metrics::CONSENSUS_STATE.set(metrics::ConsensusState::Propose as i64);
         debug!("New => {}({}:{})", state.name(), epoch, 0);
         let prevotes: BTreeMap<pbc::PublicKey, pbc::Signature> = BTreeMap::new();
         let precommits: BTreeMap<pbc::PublicKey, pbc::Signature> = BTreeMap::new();
@@ -729,5 +730,11 @@ impl Consensus {
             stake += self.validators.get(pk).expect("vote from validator");
         }
         check_supermajority(stake, self.total_slots)
+    }
+}
+
+impl Drop for Consensus {
+    fn drop(&mut self) {
+        metrics::CONSENSUS_STATE.set(metrics::ConsensusState::NotInConsensus as i64);
     }
 }

@@ -39,7 +39,7 @@ fn generate_chain(
             timestamp += Duration::from_millis(1);
             let (block, _input_hashes, _output_hashes) =
                 test::create_fake_micro_block(&mut chain, &keychains, timestamp);
-            chain.push_micro_block(block).expect("block is valid");
+            chain.push_micro_block(block).expect("no I/O errors");
         }
         assert_eq!(chain.offset(), cfg.micro_blocks_in_epoch);
 
@@ -50,7 +50,7 @@ fn generate_chain(
 
         // Remove all micro blocks.
         while chain.offset() > 0 {
-            chain.pop_micro_block().expect("Should be ok");
+            chain.pop_micro_block().expect("no I/O errors");
         }
 
         // Push macro block.

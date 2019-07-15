@@ -32,6 +32,8 @@ use stegos_crypto::pbc;
 use stegos_crypto::scc::PublicKey;
 use stegos_crypto::CryptoError;
 
+pub type StorageError = rocksdb::Error;
+
 #[derive(Debug, Fail)]
 pub enum BlockchainError {
     #[fail(
@@ -65,8 +67,8 @@ pub enum BlockchainError {
         _0, _1, _2
     )]
     StakeIsLocked(pbc::PublicKey, i64, i64),
-    #[fail(display = "Internal storage error={}", _0)]
-    StorageError(rocksdb::Error),
+    #[fail(display = "Storage I/O error={}", _0)]
+    StorageError(StorageError),
     #[fail(display = "Transaction error={}", _0)]
     TransactionError(TransactionError),
     #[fail(display = "Block error={}", _0)]

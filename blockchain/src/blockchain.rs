@@ -464,7 +464,7 @@ impl Blockchain {
     }
 
     /// Resolve UTXO by hash.
-    pub fn output_by_hash(&self, output_hash: &Hash) -> Result<Option<Output>, BlockchainError> {
+    pub fn output_by_hash(&self, output_hash: &Hash) -> Result<Option<Output>, StorageError> {
         match self.output_by_hash.get(output_hash) {
             Some(OutputKey::MacroBlock { epoch, output_id }) => {
                 let block = &self.macro_block(*epoch)?;
@@ -504,7 +504,7 @@ impl Blockchain {
     }
 
     /// Get a block by position.
-    fn block(&self, lsn: LSN) -> Result<Block, BlockchainError> {
+    fn block(&self, lsn: LSN) -> Result<Block, StorageError> {
         match self.database.get(&Self::block_key(lsn))? {
             Some(buffer) => Ok(Block::from_buffer(&buffer).expect("couldn't deserialize block.")),
             None => panic!("Block must exists"),
@@ -512,12 +512,12 @@ impl Blockchain {
     }
 
     /// Get a micro block by offset.
-    pub fn micro_block(&self, epoch: u64, offset: u32) -> Result<MicroBlock, BlockchainError> {
+    pub fn micro_block(&self, epoch: u64, offset: u32) -> Result<MicroBlock, StorageError> {
         Ok(self.block(LSN(epoch, offset))?.unwrap_micro())
     }
 
     /// Get a block by offset.
-    pub fn macro_block(&self, epoch: u64) -> Result<MacroBlock, BlockchainError> {
+    pub fn macro_block(&self, epoch: u64) -> Result<MacroBlock, StorageError> {
         Ok(self.block(LSN(epoch, MACRO_BLOCK_OFFSET))?.unwrap_macro())
     }
 
@@ -870,7 +870,7 @@ impl Blockchain {
     }
 
     /// Write block to the disk.
-    fn write_block(&self, lsn: LSN, block: Block) -> Result<(), BlockchainError> {
+    fn write_block(&self, lsn: LSN, block: Block) -> Result<(), StorageError> {
         let data = block.into_buffer().expect("couldn't serialize block.");
         let mut batch = rocksdb::WriteBatch::default();
         // writebatch put fails if size exceeded u32::max, which is not our case.
@@ -1001,7 +1001,7 @@ impl Blockchain {
         &mut self,
         block: MacroBlock,
         timestamp: Timestamp,
-    ) -> Result<(Vec<Output>, Vec<Output>), BlockchainError> {
+    ) -> Result<(Vec<Output>, Vec<Output>), StorageError> {
         assert_eq!(self.offset(), 0);
 
         //
@@ -1200,7 +1200,7 @@ impl Blockchain {
     pub fn push_micro_block(
         &mut self,
         block: MicroBlock,
-    ) -> Result<(Vec<Output>, Vec<Output>, HashMap<Hash, Transaction>), BlockchainError> {
+    ) -> Result<(Vec<Output>, Vec<Output>, HashMap<Hash, Transaction>), StorageError> {
         //
         // Write the micro block to the disk.
         //
@@ -1374,7 +1374,7 @@ impl Blockchain {
         lsn: LSN,
         block: MicroBlock,
         force_check: bool,
-    ) -> Result<(Vec<Output>, Vec<Output>, HashMap<Hash, Transaction>), BlockchainError> {
+    ) -> Result<(Vec<Output>, Vec<Output>, HashMap<Hash, Transaction>), StorageError> {
         assert_eq!(self.epoch, block.header.epoch);
         assert_eq!(self.offset, block.header.offset);
         assert!(!self.is_epoch_full());
@@ -1512,7 +1512,7 @@ impl Blockchain {
 
     pub fn pop_micro_block(
         &mut self,
-    ) -> Result<(Vec<Output>, Vec<Output>, Vec<Transaction>), BlockchainError> {
+    ) -> Result<(Vec<Output>, Vec<Output>, Vec<Transaction>), StorageError> {
         assert!(self.epoch > 0, "doesn't work for genesis");
         assert!(self.offset > 0, "attempt to revert the macro block");
         let offset = self.offset - 1;
@@ -1736,7 +1736,7 @@ pub mod tests {
                 chain
                     .validate_micro_block(&block, timestamp)
                     .expect("block is valid");
-                chain.push_micro_block(block).expect("block is valid");
+                chain.push_micro_block(block).expect("no I/O errors");
                 assert_eq!(hash, chain.last_block_hash());
                 assert_eq!(offset + 1, chain.offset());
             }
@@ -1846,7 +1846,7 @@ pub mod tests {
             test::create_fake_micro_block(&mut chain, &keychains, block_timestamp1);
         let block_hash1 = Hash::digest(&block1);
         timestamp += Duration::from_millis(1);
-        chain.push_micro_block(block1).expect("block is valid");
+        chain.push_micro_block(block1).expect("no I/O errors");
         assert_eq!(2, chain.blocks().count());
         assert_eq!(1, chain.offset());
         assert_eq!(0, chain.view_change());
@@ -1876,7 +1876,7 @@ pub mod tests {
             test::create_fake_micro_block(&mut chain, &keychains, block_timestamp2);
         let block_hash2 = Hash::digest(&block2);
         timestamp += Duration::from_millis(1);
-        chain.push_micro_block(block2).expect("block is valid");
+        chain.push_micro_block(block2).expect("no I/O errors");
         assert_eq!(1, chain.epoch());
         assert_eq!(2, chain.offset());
         assert_eq!(0, chain.view_change());

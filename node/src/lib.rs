@@ -337,7 +337,7 @@ impl NodeService {
         if tx.txins().len() > self.cfg.max_inputs_in_tx {
             return Err(NodeTransactionError::TooManyInputs(
                 tx_hash,
-                tx.txouts().len(),
+                tx.txins().len(),
                 self.cfg.max_inputs_in_tx,
             )
             .into());

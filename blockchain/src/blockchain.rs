@@ -1200,13 +1200,7 @@ impl Blockchain {
     pub fn push_micro_block(
         &mut self,
         block: MicroBlock,
-        timestamp: Timestamp,
     ) -> Result<(Vec<Output>, Vec<Output>, HashMap<Hash, Transaction>), BlockchainError> {
-        //
-        // Validate the micro block.
-        //
-        self.validate_micro_block(&block, timestamp)?;
-
         //
         // Write the micro block to the disk.
         //
@@ -1719,8 +1713,9 @@ pub mod tests {
             let hash = Hash::digest(&block);
             let offset = chain.offset();
             chain
-                .push_micro_block(block, timestamp)
+                .validate_micro_block(&block, timestamp)
                 .expect("block is valid");
+            chain.push_micro_block(block).expect("no I/O errors");
             assert_eq!(hash, chain.last_block_hash());
             assert_eq!(offset + 1, chain.offset());
             for input_hash in input_hashes {
@@ -1739,8 +1734,9 @@ pub mod tests {
                     test::create_micro_block_with_coinbase(&mut chain, &keychains, timestamp);
                 let hash = Hash::digest(&block);
                 chain
-                    .push_micro_block(block, timestamp)
+                    .validate_micro_block(&block, timestamp)
                     .expect("block is valid");
+                chain.push_micro_block(block).expect("block is valid");
                 assert_eq!(hash, chain.last_block_hash());
                 assert_eq!(offset + 1, chain.offset());
             }
@@ -1850,9 +1846,7 @@ pub mod tests {
             test::create_fake_micro_block(&mut chain, &keychains, block_timestamp1);
         let block_hash1 = Hash::digest(&block1);
         timestamp += Duration::from_millis(1);
-        chain
-            .push_micro_block(block1, timestamp)
-            .expect("block is valid");
+        chain.push_micro_block(block1).expect("block is valid");
         assert_eq!(2, chain.blocks().count());
         assert_eq!(1, chain.offset());
         assert_eq!(0, chain.view_change());
@@ -1882,9 +1876,7 @@ pub mod tests {
             test::create_fake_micro_block(&mut chain, &keychains, block_timestamp2);
         let block_hash2 = Hash::digest(&block2);
         timestamp += Duration::from_millis(1);
-        chain
-            .push_micro_block(block2, block_timestamp2)
-            .expect("block is valid");
+        chain.push_micro_block(block2).expect("block is valid");
         assert_eq!(1, chain.epoch());
         assert_eq!(2, chain.offset());
         assert_eq!(0, chain.view_change());
@@ -2024,9 +2016,7 @@ pub mod tests {
         for _offset in 2..12 {
             timestamp += Duration::from_millis(1);
             let block = test::create_micro_block_with_coinbase(&blockchain, &keychains, timestamp);
-            blockchain
-                .push_micro_block(block, timestamp)
-                .expect("Invalid block");
+            blockchain.push_micro_block(block).expect("Invalid block");
         }
 
         assert_eq!(

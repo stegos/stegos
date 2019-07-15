@@ -937,8 +937,8 @@ impl NodeService {
                 return Err(BlockchainError::ExpectedMicroBlock(epoch, offset, hash).into());
             }
         }
-        let (inputs, outputs, block_transactions) =
-            self.chain.push_micro_block(block, timestamp)?;
+        self.chain.validate_micro_block(&block, timestamp)?;
+        let (inputs, outputs, block_transactions) = self.chain.push_micro_block(block)?;
 
         let mut statuses = HashMap::new();
         let mut transactions = HashMap::new();

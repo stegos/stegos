@@ -768,7 +768,7 @@ impl Blockchain {
     /// * `timestamp` - current time.
     ///                         Used to validating escrow.
     ///
-    pub(crate) fn validate_micro_block(
+    pub fn validate_micro_block(
         &self,
         block: &MicroBlock,
         timestamp: Timestamp,

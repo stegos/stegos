@@ -143,6 +143,8 @@ fn rollback_slashing() {
 
         let new_leader_node = s.node(&second_leader).unwrap();
         info!("CREATE BLOCK FROM VIEWCHANGE. LEADER = {}", second_leader);
+        new_leader_node.handle_vdf();
+        new_leader_node.poll();
         let block: Block = new_leader_node
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);

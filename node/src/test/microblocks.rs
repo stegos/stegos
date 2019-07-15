@@ -82,6 +82,8 @@ fn dead_leader() {
         for node in r.parts.1.iter_mut() {
             info!("processing validator = {:?}", node.validator_id());
             if next_leader == node.node_service.network_pkey {
+                node.handle_vdf();
+                node.poll();
                 let _: Block = node.network_service.get_broadcast(SEALED_BLOCK_TOPIC);
                 // If node was leader, they have produced micro block,
                 assert_eq!(node.node_service.chain.view_change(), 0);
@@ -161,6 +163,7 @@ fn silent_view_change() {
                     .network_service
                     .receive_broadcast(crate::VIEW_CHANGE_TOPIC, msg.clone())
             }
+            new_leader_node.handle_vdf();
             new_leader_node.poll();
 
             info!("======= BROADCAST BLOCK =======");
@@ -293,7 +296,8 @@ fn double_view_change() {
             r.parts.1.poll();
             let new_leader_node = r.parts.1.node(&new_leader).unwrap();
             // new leader receive all view change messages and produce new block.
-
+            new_leader_node.handle_vdf();
+            new_leader_node.poll();
             let _: Block = new_leader_node
                 .network_service
                 .get_broadcast(crate::SEALED_BLOCK_TOPIC);
@@ -376,6 +380,9 @@ fn resolve_fork_for_view_change() {
 
         let leader = s.node(&leader_pk).unwrap();
         // forget block
+
+        leader.handle_vdf();
+        leader.poll();
         let _b: Block = leader
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
@@ -408,8 +415,8 @@ fn resolve_fork_for_view_change() {
                 .network_service
                 .receive_broadcast(crate::VIEW_CHANGE_TOPIC, msg.clone())
         }
+        new_leader_node.handle_vdf();
         new_leader_node.poll();
-
         info!("======= BROADCAST BLOCK =======");
         let block: Block = new_leader_node
             .network_service
@@ -483,6 +490,9 @@ fn resolve_fork_without_block() {
         s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
 
         let leader = s.node(&leader_pk).unwrap();
+
+        leader.handle_vdf();
+        leader.poll();
         // forget block
         let first_block: Block = leader
             .network_service
@@ -518,7 +528,8 @@ fn resolve_fork_without_block() {
         r.parts.1.poll();
 
         let new_leader_node = r.parts.1.node(&new_leader).unwrap();
-
+        new_leader_node.handle_vdf();
+        new_leader_node.poll();
         info!("======= BROADCAST BLOCK =======");
         let _block: Block = new_leader_node
             .network_service
@@ -602,6 +613,9 @@ fn issue_896_resolve_fork() {
         s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
 
         let leader = s.node(&leader_pk).unwrap();
+
+        leader.handle_vdf();
+        leader.poll();
         // forget block
         let first_block: Block = leader
             .network_service
@@ -638,6 +652,8 @@ fn issue_896_resolve_fork() {
 
         let new_leader_node = r.parts.1.node(&new_leader).unwrap();
 
+        new_leader_node.handle_vdf();
+        new_leader_node.poll();
         info!("======= BROADCAST BLOCK =======");
         let _block: Block = new_leader_node
             .network_service

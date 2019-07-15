@@ -227,6 +227,7 @@ pub struct NodeSandbox {
     pub network_service: Loopback,
     pub node: Node,
     pub node_service: NodeService,
+    vdf_execution: VDFExecution,
 }
 
 impl NodeSandbox {
@@ -249,6 +250,7 @@ impl NodeSandbox {
             NodeService::new(node_cfg, chain, network_skey, network_pkey, network).unwrap();
         node_service.init().unwrap();
         Self {
+            vdf_execution: VDFExecution::Nothing,
             network_service,
             node,
             node_service,
@@ -290,8 +292,79 @@ impl NodeSandbox {
             .map(|(id, _)| id)
     }
 
+    pub fn handle_vdf(&mut self) {
+        self.vdf_execution.try_produce();
+        self.vdf_execution = VDFExecution::WaitForVDF;
+    }
+
     pub fn poll(&mut self) {
-        futures_testing::execute(&mut self.node_service);
+        futures_testing::execute(|| {
+            match self.node_service.validation {
+                Validation::MicroBlockValidator {
+                    block_timer: MicroBlockTimer::Propose(ref mut rx),
+                    ..
+                } => {
+                    trace!("Poll in propose, vdf_execution={:?}", self.vdf_execution);
+
+                    if self.vdf_execution.pending_vdf() {
+                        return self.node_service.poll();
+                    }
+
+                    // if we wait for micro block, and we are leader for micro block,
+                    // then synchronously wait until vdf computes.
+                    let (tx, mut rx_new) = futures::oneshot::<Vec<u8>>();
+                    std::mem::swap(rx, &mut rx_new);
+                    let data = rx_new.wait().unwrap();
+                    match &self.vdf_execution {
+                        VDFExecution::WaitForVDF => tx.send(data).unwrap(),
+                        // save for future usage
+                        VDFExecution::Nothing => {
+                            self.vdf_execution = VDFExecution::PendingVDF { tx, data };
+                        }
+                        e => panic!("VDF execution in wrong state = {:?}", e),
+                    }
+
+                    self.vdf_execution.try_unset()
+                }
+                _ => {}
+            };
+            self.node_service.poll()
+        });
+    }
+}
+
+#[derive(Debug)]
+enum VDFExecution {
+    PendingVDF {
+        data: Vec<u8>,
+        tx: oneshot::Sender<Vec<u8>>,
+    },
+    Nothing,
+    WaitForVDF,
+}
+
+impl VDFExecution {
+    fn pending_vdf(&self) -> bool {
+        match self {
+            VDFExecution::PendingVDF { .. } => true,
+            _ => false,
+        }
+    }
+
+    fn try_produce(&mut self) {
+        match std::mem::replace(self, VDFExecution::Nothing) {
+            VDFExecution::PendingVDF { data, tx } => tx.send(data).unwrap(),
+            e => *self = e,
+        }
+    }
+
+    fn try_unset(&mut self) {
+        match self {
+            VDFExecution::WaitForVDF => {
+                *self = VDFExecution::Nothing;
+            }
+            _ => (),
+        }
     }
 }
 
@@ -461,6 +534,7 @@ pub trait Api<'p> {
         );
         let leader_pk = self.first().node_service.chain.leader();
         trace!("Acording to partition info, next leader = {}", leader_pk);
+        self.node(&leader_pk).unwrap().handle_vdf();
         self.poll();
         self.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
         let leader = self.node(&leader_pk).unwrap();
@@ -770,6 +844,8 @@ pub fn slash_cheater_inner<'a>(
     filter_nodes.push(leader_pk);
     let mut r = s.split(&filter_nodes);
     let leader = &mut r.parts.0.node(&leader_pk).unwrap();
+    leader.handle_vdf();
+    leader.poll();
     let b1: Block = leader
         .network_service
         .get_broadcast(crate::SEALED_BLOCK_TOPIC);

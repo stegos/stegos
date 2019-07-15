@@ -20,7 +20,7 @@
 // SOFTWARE.
 
 use futures::executor::{with_notify, Notify};
-use futures::{lazy, Async, Future};
+use futures::{lazy, Async};
 use log::debug;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
@@ -58,18 +58,18 @@ impl Notify for NodeNotify {
     }
 }
 
-/// poll future as may times as it needs.
-pub fn execute<T: Future>(future: &mut T)
+/// execute poll fn as may times as it needs.
+pub fn execute<U, E, F: FnMut() -> Result<Async<U>, E>>(mut future: F)
 where
-    <T as Future>::Item: Debug + Eq,
-    <T as Future>::Error: Debug + Eq,
+    U: Debug + Eq,
+    E: Debug + Eq,
 {
     let ref node_notify = Arc::new(NodeNotify {
         repeat_poll: Mutex::new(false),
     });
 
     with_notify(node_notify, 1, || loop {
-        assert_eq!(future.poll(), Ok(Async::NotReady));
+        assert_eq!(future(), Ok(Async::NotReady));
         if !node_notify.is_set() {
             break;
         }
@@ -150,6 +150,7 @@ pub fn wait(timer: &mut Timer<TestTimer>, duration: Duration) {
 #[test]
 fn test_timer() {
     use assert_matches::assert_matches;
+    use futures::Future;
     start_test(|timer| {
         let clock = clock::now();
         let deadline = clock + Duration::from_millis(1000);

@@ -193,7 +193,6 @@ fn create_vs_tx() {
         precondition_each_account_has_tokens(&mut s, MIN_AMOUNT, &mut genesis[0], rest);
         let num_nodes = accounts.len() - 1;
         assert!(num_nodes >= 3);
-        let sleep_since_epoch = s.config.node.tx_wait_timeout * num_nodes as u32;
 
         let recipient = accounts[3].account_service.account_pkey;
 
@@ -213,25 +212,11 @@ fn create_vs_tx() {
 
         // this code are done just to work with different timeout configuration.
         {
-            // we already sleep for 3 microblocks,
-            let sleep_time = if stegos_node::txpool::MESSAGE_TIMEOUT > sleep_since_epoch {
-                stegos_node::txpool::MESSAGE_TIMEOUT - sleep_since_epoch
-            } else {
-                Duration::from_millis(0)
-            };
+            let sleep_time = stegos_node::txpool::MESSAGE_TIMEOUT;
 
             s.wait(sleep_time);
-            // if we sleep enought for microblock, then broadcast microblock.
-            if sleep_time >= s.config.node.tx_wait_timeout {
-                s.skip_micro_block();
-                // if we sleep enought for view_change, then filter_view_change.
-                if sleep_time >= s.config.node.micro_block_timeout {
-                    s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
-                }
-            } else {
-                // if not, just poll to triger txpoll_anouncment
-                s.poll();
-            }
+            // if not, just poll to triger txpoll_anouncment
+            s.poll();
         }
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications) {
@@ -240,6 +225,8 @@ fn create_vs_tx() {
             clear_notification(notification)
         }
 
+        s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
         debug!("===== ANONCING TXPOOL =====");
         s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
 

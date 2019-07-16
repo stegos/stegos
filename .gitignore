@@ -15,9 +15,7 @@ logs/
 
 # Test data
 /testing/node*/chain
-/testing/node*/accounts/*
-!/testing/node01/accounts/1/account.pkey
-!/testing/node01/accounts/1/account.skey
+/testing/node*/accounts/*/history
 /testing/node*/api.token
 /data
 

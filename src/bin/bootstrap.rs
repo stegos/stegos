@@ -207,14 +207,9 @@ fn main() {
         ));
 
         // Create a stake.
-        let output = match args.value_of("owner") {
-            Some(address) => {
-                let addr = scc::PublicKey::from_str(address).expect("already validated by clap");
-                StakeOutput::new(&addr, &network_skey, &network_pkey, stake).expect("invalid keys")
-            }
-            None => StakeOutput::new(&(keychains[0].1), &network_skey, &network_pkey, stake)
-                .expect("invalid keys"),
-        };
+        let output = StakeOutput::new(&account_pkey, &network_skey, &network_pkey, stake)
+            .expect("invalid keys");
+
         assert!(payout >= stake);
         payout -= stake;
         outputs.push(output.into());

@@ -133,7 +133,6 @@ struct UnsealedAccountService {
     //
     /// ValueShuffle State.
     vs: ValueShuffle,
-
     //TODO: Temporary hack to receive newly created transaction from valueshuffle.
     wallet_tx_info_receiver: mpsc::UnboundedReceiver<(PaymentTransaction, bool)>,
     vs_session: Option<(Hash, oneshot::Sender<AccountResponse>)>,
@@ -1029,6 +1028,8 @@ impl Future for UnsealedAccountService {
                         self.on_tx_statuses_changed(block.statuses);
                         self.on_outputs_changed(block.epoch, block.inputs, block.outputs, true);
                         self.on_epoch_changed(block.epoch, block.last_macro_block_timestamp);
+                        let updated_statuses = self.account_log.finalize_epoch_txs();
+                        self.on_tx_statuses_changed(updated_statuses);
                     }
                     NodeNotification::RollbackMicroBlock(block) => {
                         assert!(self.recovery_rx.is_none(), "recovered from the disk");

@@ -67,6 +67,8 @@ pub struct AccountLog {
     created_txs: HashMap<Hash, Timestamp>,
     /// Index of all transactions that wasn't rejected or committed.
     pending_txs: HashSet<Hash>,
+    /// Transactions that was created in current epoch.
+    epoch_transactions: HashSet<Hash>,
 }
 
 impl AccountLog {
@@ -95,6 +97,7 @@ impl AccountLog {
             last_time: Timestamp::now(),
             created_txs: HashMap::new(),
             pending_txs: HashSet::new(),
+            epoch_transactions: HashSet::new(),
         };
         log.recover_state();
         log
@@ -113,6 +116,7 @@ impl AccountLog {
             last_time,
             created_txs: HashMap::new(),
             pending_txs: HashSet::new(),
+            epoch_transactions: HashSet::new(),
         }
     }
 
@@ -125,17 +129,27 @@ impl AccountLog {
                 LogEntry::Incoming { .. } => {}
                 LogEntry::Outgoing { tx } => {
                     let tx_hash = Hash::digest(&tx.tx);
-
                     let status = tx.status;
                     trace!("Recovered tx: tx={}, status={:?}", tx_hash, status);
                     assert!(self.created_txs.insert(tx_hash, timestamp).is_none());
-                    self.update_pending_tx(tx_hash, status)
+                    self.update_pending_tx(tx_hash, status.clone());
                 }
             }
         }
     }
 
     fn update_pending_tx(&mut self, tx_hash: Hash, status: TransactionStatus) {
+        match status {
+            TransactionStatus::Prepare { .. } => {
+                self.epoch_transactions.insert(tx_hash);
+            }
+            _ => {
+                trace!("Found status that is not equal to Prepare.");
+                let _ = self.epoch_transactions.remove(&tx_hash);
+                return;
+            }
+        }
+
         match status {
             TransactionStatus::Created {} | TransactionStatus::Accepted {} => {}
             _ => {
@@ -272,6 +286,42 @@ impl AccountLog {
 
         self.update_pending_tx(tx_hash, status);
         Ok(())
+    }
+
+    /// Finalize Prepare status for transaction, return list of updated transactions
+    pub fn finalize_epoch_txs(&mut self) -> HashMap<Hash, TransactionStatus> {
+        debug!("Finalize epoch txs");
+        let mut result = HashMap::new();
+        let txs = std::mem::replace(&mut self.epoch_transactions, Default::default());
+        for tx_hash in txs {
+            let timestamp = self
+                .tx_entry(tx_hash)
+                .expect("Transaction should be found in tx list");
+
+            let mut changed_to_status = None;
+            self.update_log_entry(timestamp, |mut e| {
+                match &mut e {
+                    LogEntry::Outgoing { ref mut tx } => match tx.status {
+                        TransactionStatus::Prepare { epoch, .. } => {
+                            trace!("Finalize tx={}", tx_hash);
+                            let status = TransactionStatus::Committed { epoch };
+                            tx.status = status.clone();
+                            changed_to_status = Some(status);
+                        }
+                        _ => {}
+                    },
+                    LogEntry::Incoming { .. } => bail!("Expected outgoing transaction."),
+                };
+                Ok(e)
+            })
+            .expect("error in updating status.");
+
+            if let Some(status) = changed_to_status {
+                result.insert(tx_hash, status.clone());
+                self.update_pending_tx(tx_hash, status);
+            }
+        }
+        result
     }
 
     /// List log entries starting from `offset`, limited by `limit`.

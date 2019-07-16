@@ -840,7 +840,7 @@ impl NodeService {
             &hash,
             &block.multisig,
             &block.multisigmap,
-            self.chain.validators(),
+            &self.chain.validators_at_epoch_start(),
             self.chain.total_slots(),
         )
         .map_err(|e| BlockError::InvalidBlockSignature(e, epoch, hash))?;
@@ -1264,7 +1264,7 @@ impl NodeService {
                 self.network_skey.clone(),
                 self.network_pkey.clone(),
                 self.chain.election_result().clone(),
-                self.chain.validators().iter().cloned().collect(),
+                self.chain.validators_at_epoch_start().into_iter().collect(),
             );
 
             // Flush pending messages.

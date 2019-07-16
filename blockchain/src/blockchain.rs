@@ -542,16 +542,23 @@ impl Blockchain {
         self.select_leader(self.view_change())
     }
 
-    /// Return the current epoch facilitator.
+    /// Returns the current epoch facilitator.
     #[inline]
     pub fn facilitator(&self) -> &pbc::PublicKey {
         &self.election_result().facilitator
     }
 
-    /// Return the current epoch validators with their stakes.
+    /// Returns the current epoch validators with their stakes.
     #[inline]
     pub fn validators(&self) -> &Vec<(pbc::PublicKey, i64)> {
         &self.election_result().validators
+    }
+
+    /// Returns the validators list, at begining of the epoch
+    #[inline]
+    pub fn validators_at_epoch_start(&self) -> Vec<(pbc::PublicKey, i64)> {
+        let epoch_info = self.election_result_by_offset(0).unwrap();
+        epoch_info.validators
     }
 
     /// Returns true if peer is validator in current epoch.
@@ -657,7 +664,8 @@ impl Blockchain {
     }
 
     /// Returns current service awards state.
-    pub(crate) fn service_awards(&self) -> &Awards {
+    #[doc(hidden)] // TODO used for test
+    pub fn service_awards(&self) -> &Awards {
         &self.awards
     }
 
@@ -673,22 +681,38 @@ impl Blockchain {
     pub fn awards_from_active_epoch(&self, random: &VRF) -> (BitVector, Option<(PublicKey, i64)>) {
         let mut service_awards = self.service_awards().clone();
 
-        let mut epoch_activity = self.epoch_activity().clone();
+        let epoch_activity = self.epoch_activity().clone();
+        // use only validators that exist at end of epoch (self.validators() - return current validator list)
+        // This will filter out slashed cheaters.
+        // Also remove cheater validators.
+        let epoch_activity: HashMap<_, _> = self
+            .validators()
+            .iter()
+            .map(|(k, _)| {
+                (
+                    k,
+                    epoch_activity
+                        .get(k)
+                        .cloned()
+                        .unwrap_or(ValidatorAwardState::Active),
+                )
+            })
+            .collect();
 
-        let mut activity_map = BitVector::ones(self.validators().len());
-        for (id, (validator, _)) in self.validators().iter().enumerate() {
+        let epoch_validators = self.validators_at_epoch_start();
+
+        let mut activity_map = BitVector::ones(epoch_validators.len());
+
+        for (id, (validator, _)) in epoch_validators.iter().enumerate() {
             match epoch_activity.get(validator) {
-                // if validator failed, remove it from bitmap.
-                Some(ValidatorAwardState::FailedAt(..)) => {
+                // if validator failed, or cheater, remove it from bitmap.
+                Some(ValidatorAwardState::FailedAt(..)) | None => {
                     activity_map.remove(id);
-                }
-                // add info about missing validators
-                None => {
-                    epoch_activity.insert(*validator, ValidatorAwardState::Active);
                 }
                 _ => {}
             }
         }
+
         let validators_activity = epoch_activity.iter().map(|(k, v)| {
             (
                 self.escrow
@@ -697,6 +721,7 @@ impl Blockchain {
                 *v,
             )
         });
+
         service_awards.finalize_epoch(self.cfg().service_award_per_epoch, validators_activity);
         (activity_map, service_awards.check_winners(random.rand))
     }
@@ -708,7 +733,7 @@ impl Blockchain {
         activity_map: &BitVector,
     ) -> Result<BTreeMap<PublicKey, ValidatorAwardState>, BlockchainError> {
         let mut validators_activity = BTreeMap::new();
-        let validators = self.validators();
+        let validators = self.validators_at_epoch_start();
         if activity_map.len() > validators.len() {
             return Err(BlockError::TooBigActivitymap(activity_map.len(), validators.len()).into());
         };

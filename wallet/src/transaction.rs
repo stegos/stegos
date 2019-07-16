@@ -60,6 +60,7 @@ pub(crate) fn create_vs_payment_transaction<'a, UnspentIter>(
     data: String,
     locked_timestamp: Option<Timestamp>,
     last_block_time: Timestamp,
+    max_inputs_in_tx: usize,
 ) -> Result<(Vec<(Hash, PaymentOutput)>, Vec<ProposedUTXO>, i64), Error>
 where
     UnspentIter: Iterator<Item = (&'a PaymentOutput, i64, Option<Timestamp>)>,
@@ -84,7 +85,14 @@ where
     trace!("Checking for available funds in the account...");
     let fee = payment_fee;
     let fee_change = fee + payment_fee;
-    let (inputs, fee, change) = find_utxo(unspent_iter, amount, fee, fee_change, last_block_time)?;
+    let (inputs, fee, change) = find_utxo(
+        unspent_iter,
+        amount,
+        fee,
+        fee_change,
+        last_block_time,
+        max_inputs_in_tx,
+    )?;
     let inputs: Vec<Output> = inputs
         .into_iter()
         .map(|o| Output::PaymentOutput(o.clone()))
@@ -174,6 +182,7 @@ pub(crate) fn create_payment_transaction<'a, UnspentIter>(
     transaction: TransactionType,
     locked_timestamp: Option<Timestamp>,
     last_block_time: Timestamp,
+    max_inputs_in_tx: usize,
 ) -> Result<(Vec<Output>, Vec<Output>, Fr, Vec<Option<Fr>>, i64), Error>
 where
     UnspentIter: Iterator<Item = (&'a PaymentOutput, i64, Option<Timestamp>)>,
@@ -194,7 +203,14 @@ where
     trace!("Checking for available funds in the account...");
     let fee = payment_fee;
     let fee_change = fee + payment_fee;
-    let (inputs, fee, change) = find_utxo(unspent_iter, amount, fee, fee_change, last_block_time)?;
+    let (inputs, fee, change) = find_utxo(
+        unspent_iter,
+        amount,
+        fee,
+        fee_change,
+        last_block_time,
+        max_inputs_in_tx,
+    )?;
     let inputs: Vec<Output> = inputs
         .into_iter()
         .map(|o| Output::PaymentOutput(o.clone()))
@@ -306,6 +322,7 @@ pub(crate) fn create_staking_transaction<'a, UnspentIter>(
     payment_fee: i64,
     stake_fee: i64,
     last_block_time: Timestamp,
+    max_inputs_in_tx: usize,
 ) -> Result<PaymentTransaction, Error>
 where
     UnspentIter: Iterator<Item = (&'a PaymentOutput, i64)>,
@@ -330,7 +347,14 @@ where
     let fee = stake_fee;
     let fee_change = fee + payment_fee;
     let unspent_iter = unspent_iter.map(|(o, a)| (o, a, None));
-    let (inputs, fee, change) = find_utxo(unspent_iter, amount, fee, fee_change, last_block_time)?;
+    let (inputs, fee, change) = find_utxo(
+        unspent_iter,
+        amount,
+        fee,
+        fee_change,
+        last_block_time,
+        max_inputs_in_tx,
+    )?;
     let inputs: Vec<Output> = inputs
         .into_iter()
         .map(|o| Output::PaymentOutput(o.clone()))
@@ -411,6 +435,7 @@ pub(crate) fn create_unstaking_transaction<'a, UnspentIter>(
     payment_fee: i64,
     stake_fee: i64,
     last_block_time: Timestamp,
+    max_inputs_in_tx: usize,
 ) -> Result<PaymentTransaction, Error>
 where
     UnspentIter: Iterator<Item = &'a StakeOutput>,
@@ -437,6 +462,7 @@ where
         payment_fee,
         payment_fee + stake_fee,
         last_block_time,
+        max_inputs_in_tx,
     )?;
     let inputs: Vec<Output> = inputs
         .into_iter()
@@ -652,6 +678,7 @@ pub mod tests {
     fn unstaking_transactions() {
         let payment_fee: i64 = 1;
         let stake_fee: i64 = 1;
+        let max_inputs_in_tx: usize = 3;
         assert!(payment_fee > 0 && stake_fee > 0);
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
@@ -677,6 +704,7 @@ pub mod tests {
             payment_fee,
             stake_fee,
             Timestamp::now(),
+            max_inputs_in_tx,
         )
         .expect("tx is created");
         tx.validate(&inputs).expect("tx is valid");
@@ -702,6 +730,7 @@ pub mod tests {
             payment_fee,
             stake_fee,
             Timestamp::now(),
+            max_inputs_in_tx,
         )
         .expect("tx is created");
         tx.validate(&inputs).expect("tx is valid");
@@ -732,6 +761,7 @@ pub mod tests {
             payment_fee,
             stake_fee,
             Timestamp::now(),
+            max_inputs_in_tx,
         )
         .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {
@@ -750,6 +780,7 @@ pub mod tests {
             payment_fee,
             stake_fee,
             Timestamp::now(),
+            max_inputs_in_tx,
         )
         .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {
@@ -769,6 +800,7 @@ pub mod tests {
             payment_fee,
             stake_fee,
             Timestamp::now(),
+            max_inputs_in_tx,
         )
         .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {
@@ -791,6 +823,7 @@ pub mod tests {
             payment_fee,
             stake_fee,
             Timestamp::now(),
+            max_inputs_in_tx,
         )
         .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {

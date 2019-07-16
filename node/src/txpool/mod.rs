@@ -23,7 +23,7 @@ use tokio_timer::Interval;
 
 pub const MESSAGE_TIMEOUT: Duration = Duration::from_secs(30);
 const MIN_PARTICIPANTS: usize = 3;
-const MAX_PARTICIPANTS: usize = 20;
+pub const MAX_PARTICIPANTS: usize = 20;
 
 type TXIN = Hash;
 type UTXO = PaymentOutput;

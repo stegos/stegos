@@ -59,6 +59,7 @@ use stegos_keychain::KeyError;
 use stegos_network::Network;
 use stegos_node::NodeNotification;
 use stegos_node::TransactionStatus;
+use stegos_node::MAX_PARTICIPANTS;
 use stegos_node::{Node, NodeRequest, NodeResponse};
 use tokio::runtime::TaskExecutor;
 use tokio_timer::Interval;
@@ -103,6 +104,8 @@ struct UnsealedAccountService {
     network_pkey: pbc::PublicKey,
     /// Lifetime of stake.
     stake_epochs: u64,
+    /// Maximum allowed count of input UTXOs (from Node config)
+    max_inputs_in_tx: usize,
 
     //
     // Current state
@@ -169,6 +172,7 @@ impl UnsealedAccountService {
         network: Network,
         node: Node,
         stake_epochs: u64,
+        max_inputs_in_tx: usize,
         subscribers: Vec<mpsc::UnboundedSender<AccountNotification>>,
         events: mpsc::UnboundedReceiver<AccountEvent>,
     ) -> Self {
@@ -232,6 +236,7 @@ impl UnsealedAccountService {
             wallet_tx_info_receiver,
             vs_session,
             stake_epochs,
+            max_inputs_in_tx,
             last_macro_block_timestamp,
             network,
             node,
@@ -274,6 +279,7 @@ impl UnsealedAccountService {
             TransactionType::Regular(data.clone()),
             locked_timestamp,
             self.last_macro_block_timestamp,
+            self.max_inputs_in_tx,
         )?;
 
         // Transaction TXINs can generally have different keying for each one
@@ -321,6 +327,7 @@ impl UnsealedAccountService {
             TransactionType::Public,
             locked_timestamp,
             self.last_macro_block_timestamp,
+            self.max_inputs_in_tx,
         )?;
 
         // Transaction TXINs can generally have different keying for each one
@@ -369,6 +376,7 @@ impl UnsealedAccountService {
             comment,
             locked_timestamp,
             self.last_macro_block_timestamp,
+            self.max_inputs_in_tx / MAX_PARTICIPANTS,
         )?;
         let session_id = Hash::random();
         self.vs.queue_transaction(&inputs, &outputs, fee)?;
@@ -392,6 +400,7 @@ impl UnsealedAccountService {
             payment_fee,
             STAKE_FEE,
             self.last_macro_block_timestamp,
+            self.max_inputs_in_tx,
         )?;
         let payment_info = PaymentTransactionValue::new_stake(tx.clone());
 
@@ -416,6 +425,7 @@ impl UnsealedAccountService {
             payment_fee,
             STAKE_FEE,
             self.last_macro_block_timestamp,
+            self.max_inputs_in_tx,
         )?;
         let payment_info = PaymentTransactionValue::new_stake(tx.clone());
         self.send_transaction(tx.into())?;
@@ -1061,6 +1071,8 @@ struct SealedAccountService {
     network_pkey: pbc::PublicKey,
     /// Lifetime of stake.
     stake_epochs: u64,
+    /// Maximum allowed count of input UTXOs
+    max_inputs_in_tx: usize,
 
     /// Network API (shared).
     network: Network,
@@ -1086,6 +1098,7 @@ impl SealedAccountService {
         network: Network,
         node: Node,
         stake_epochs: u64,
+        max_inputs_in_tx: usize,
         subscribers: Vec<mpsc::UnboundedSender<AccountNotification>>,
         events: mpsc::UnboundedReceiver<AccountEvent>,
     ) -> Self {
@@ -1097,6 +1110,7 @@ impl SealedAccountService {
             network_skey,
             network_pkey,
             stake_epochs,
+            max_inputs_in_tx,
             node,
             network,
             subscribers,
@@ -1197,6 +1211,7 @@ impl Future for AccountService {
                         sealed.network,
                         sealed.node,
                         sealed.stake_epochs,
+                        sealed.max_inputs_in_tx,
                         sealed.subscribers,
                         sealed.events,
                     );
@@ -1226,6 +1241,7 @@ impl Future for AccountService {
                         unsealed.network,
                         unsealed.node,
                         unsealed.stake_epochs,
+                        unsealed.max_inputs_in_tx,
                         unsealed.subscribers,
                         unsealed.events,
                     );
@@ -1250,6 +1266,7 @@ impl AccountService {
         network: Network,
         node: Node,
         stake_epochs: u64,
+        max_inputs_in_tx: usize,
     ) -> Result<(Self, Account), KeyError> {
         let account_pkey = load_account_pkey(account_pkey_file)?;
         let subscribers: Vec<mpsc::UnboundedSender<AccountNotification>> = Vec::new();
@@ -1264,6 +1281,7 @@ impl AccountService {
             network,
             node,
             stake_epochs,
+            max_inputs_in_tx,
             subscribers,
             events,
         );
@@ -1322,6 +1340,7 @@ pub struct WalletService {
     node: Node,
     executor: TaskExecutor,
     stake_epochs: u64,
+    max_inputs_in_tx: usize,
     accounts: HashMap<AccountId, AccountHandle>,
     subscribers: Vec<mpsc::UnboundedSender<WalletNotification>>,
     events: mpsc::UnboundedReceiver<WalletEvent>,
@@ -1336,6 +1355,7 @@ impl WalletService {
         node: Node,
         executor: TaskExecutor,
         stake_epochs: u64,
+        max_inputs_in_tx: usize,
     ) -> Result<(Self, Wallet), Error> {
         let (outbox, events) = mpsc::unbounded::<WalletEvent>();
         let subscribers: Vec<mpsc::UnboundedSender<WalletNotification>> = Vec::new();
@@ -1347,6 +1367,7 @@ impl WalletService {
             node,
             executor,
             stake_epochs,
+            max_inputs_in_tx,
             accounts: HashMap::new(),
             subscribers,
             events,
@@ -1406,6 +1427,7 @@ impl WalletService {
             self.network.clone(),
             self.node.clone(),
             self.stake_epochs,
+            self.max_inputs_in_tx,
         )?;
         let account_notifications = account.subscribe();
         let handle = AccountHandle {

@@ -40,6 +40,7 @@ pub use crate::config::NodeConfig;
 use crate::error::*;
 use crate::loader::ChainLoaderMessage;
 use crate::mempool::Mempool;
+pub use crate::txpool::MAX_PARTICIPANTS;
 use crate::validation::*;
 use failure::Error;
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};

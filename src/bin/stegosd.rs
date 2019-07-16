@@ -254,6 +254,7 @@ fn run() -> Result<(), Error> {
         node.clone(),
         rt.executor(),
         cfg.chain.stake_epochs,
+        cfg.node.max_inputs_in_tx,
     )?;
     rt.spawn(wallet_service);
 

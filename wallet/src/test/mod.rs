@@ -60,6 +60,7 @@ struct AccountSandbox {
 impl AccountSandbox {
     pub fn new(
         stake_epochs: u64,
+        max_inputs_in_tx: usize,
         keys: KeyChain,
         node: Node,
         chain: &Blockchain,
@@ -99,6 +100,7 @@ impl AccountSandbox {
             network,
             node,
             stake_epochs,
+            max_inputs_in_tx,
             subscribers,
             events,
         );
@@ -114,12 +116,14 @@ impl AccountSandbox {
 
     pub fn new_genesis(s: &mut Sandbox, node_id: usize) -> AccountSandbox {
         let stake_epochs = s.config.chain.stake_epochs;
+        let max_inputs_in_tx = s.config.node.max_inputs_in_tx;
         let node = s.nodes[node_id].node.clone();
         let keys = s.keychains[node_id].clone();
         // genesis accounts should reuse the same network.
         let (network_service, network) = s.nodes[node_id].clone_network();
         Self::new(
             stake_epochs,
+            max_inputs_in_tx,
             keys,
             node,
             &s.nodes[node_id].chain(),
@@ -131,6 +135,7 @@ impl AccountSandbox {
     #[allow(dead_code)]
     pub fn new_custom(s: &mut Sandbox, node_id: usize) -> AccountSandbox {
         let stake_epochs = s.config.chain.stake_epochs;
+        let max_inputs_in_tx = s.config.node.max_inputs_in_tx;
         let node = s.nodes[node_id].node.clone();
         let mut keys = s.keychains[node_id].clone();
         // change account keys to custom
@@ -141,6 +146,7 @@ impl AccountSandbox {
         let (network_service, network) = Loopback::new();
         Self::new(
             stake_epochs,
+            max_inputs_in_tx,
             keys,
             node,
             &s.nodes[node_id].chain(),

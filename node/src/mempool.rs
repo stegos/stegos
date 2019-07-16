@@ -228,6 +228,7 @@ impl Mempool {
         view_change: u32,
         view_change_proof: Option<ViewChangeProof>,
         last_random: Hash,
+        solution: Vec<u8>,
         block_reward: i64,
         recipient_pkey: &scc::PublicKey,
         network_skey: &pbc::SecretKey,
@@ -345,6 +346,7 @@ impl Mempool {
             view_change_proof,
             network_pkey.clone(),
             random,
+            solution,
             timestamp,
             transactions,
         )
@@ -533,6 +535,7 @@ mod test {
         let offset = 5;
         let view_change = 0;
         let reward = 10;
+        let solution = vec![1, 2, 3, 4];
         let block = mempool.create_block(
             previous,
             epoch,
@@ -540,6 +543,7 @@ mod test {
             view_change,
             None,
             Hash::digest("test"),
+            solution,
             reward,
             &recipient_pkey,
             &network_skey,

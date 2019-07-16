@@ -47,7 +47,6 @@ fn smoke_test() {
         for _epoch in 1..=(1 + NUM_RESTAKES * s.config.chain.stake_epochs + 1) {
             for _offset in 0..s.config.chain.micro_blocks_in_epoch {
                 s.poll();
-                s.wait(s.config.node.tx_wait_timeout);
                 s.skip_micro_block();
             }
             s.skip_macro_block();
@@ -56,7 +55,7 @@ fn smoke_test() {
 }
 
 #[test]
-fn autocomit() {
+fn autocommit() {
     let mut cfg: ChainConfig = Default::default();
     cfg.micro_blocks_in_epoch = 1;
     let config = SandboxConfig {
@@ -68,8 +67,6 @@ fn autocomit() {
 
     Sandbox::start(config, |mut s| {
         // Create one micro block.
-        s.poll();
-        s.wait(s.config.node.tx_wait_timeout);
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
@@ -88,8 +85,8 @@ fn autocomit() {
         for node in s.iter_except(&[leader_pk]) {
             node.network_service
                 .receive_broadcast(topic, proposal.clone());
+            node.poll();
         }
-        s.poll();
 
         for i in 0..s.num_nodes() {
             let prevote: ConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
@@ -125,8 +122,8 @@ fn autocomit() {
         for node in s.iter_except(&[leader_pk]).skip(1) {
             node.network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
+            node.poll();
         }
-        s.poll();
 
         // Check state of (0..NUM_NODES - 1) nodes.
         for node in s.iter_except(&[leader_pk]).skip(1) {
@@ -143,7 +140,7 @@ fn autocomit() {
             last_block_hash
         );
 
-        // Wait for TX_WAIT_TIMEOUT.
+        // Wait for macro block timeout.
         s.wait(s.config.node.macro_block_timeout);
         let last_node = s.iter_except(&skip_leader).next().unwrap();
         last_node.poll();
@@ -176,7 +173,6 @@ fn round() {
     Sandbox::start(config, |mut s| {
         // Create one micro block.
         s.poll();
-        s.wait(s.config.node.tx_wait_timeout);
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
@@ -278,7 +274,6 @@ fn multiple_rounds() {
     Sandbox::start(config, |mut s| {
         // Create one micro block.
         s.poll();
-        s.wait(s.config.node.tx_wait_timeout);
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
@@ -345,8 +340,7 @@ fn lock() {
 
     Sandbox::start(config, |mut s| {
         // Create one micro block.
-        s.poll();
-        s.wait(s.config.node.tx_wait_timeout);
+        s.poll();;
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
@@ -480,6 +474,7 @@ fn out_of_order_micro_block() {
             leader.node_service.chain.view_change(),
         );
         let random = pbc::make_VRF(&leader.node_service.network_skey, &seed);
+        let solution = leader.node_service.chain.vdf_solver()();
 
         let mut block = MicroBlock::empty(
             last_block_hash,
@@ -489,6 +484,7 @@ fn out_of_order_micro_block() {
             None,
             leader.node_service.network_pkey,
             random,
+            solution,
             timestamp,
         );
         let leader_node = s.node(&leader_pk).unwrap();
@@ -739,7 +735,6 @@ fn invalid_proposes() {
         // Create one micro block.
 
         s.poll();
-        s.wait(s.config.node.tx_wait_timeout);
         s.skip_micro_block();
 
         let round = s.nodes[0].node_service.chain.view_change();
@@ -763,7 +758,6 @@ fn invalid_proposes_on_2nd_round() {
         // Create one micro block.
 
         s.poll();
-        s.wait(s.config.node.tx_wait_timeout);
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
@@ -804,7 +798,6 @@ fn multiple_proposes() {
         // Create one micro block.
 
         s.poll();
-        s.wait(s.config.node.tx_wait_timeout);
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
@@ -893,7 +886,6 @@ fn invalid_prevotes() {
     Sandbox::start(config, |mut s| {
         // Create one micro block.
         s.poll();
-        s.wait(s.config.node.tx_wait_timeout);
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
@@ -970,7 +962,6 @@ fn invalid_prevotes_leader() {
     Sandbox::start(config, |mut s| {
         // Create one micro block.
         s.poll();
-        s.wait(s.config.node.tx_wait_timeout);
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;

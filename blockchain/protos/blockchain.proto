@@ -83,6 +83,7 @@ message MacroBlockHeader {
     uint32 view_change = 4;
     stegos.crypto.SecurePublicKey pkey = 5;
     stegos.crypto.VRF random = 6;
+    uint64 difficulty = 15;
     uint64 timestamp = 7;
     int64 block_reward = 8;
     repeated bool activity_map = 9;
@@ -110,6 +111,7 @@ message MicroBlockHeader {
     ViewChangeProof view_change_proof = 6;
     stegos.crypto.SecurePublicKey pkey = 7;
     stegos.crypto.VRF random = 8;
+    bytes solution = 11;
     uint64 timestamp = 9;
     stegos.crypto.Hash transactions_range_hash = 10;
 }

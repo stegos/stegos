@@ -100,6 +100,16 @@ fn main() {
                         .map_err(|e| format!("{:?}", e))
                 }),
         )
+        .arg(
+            Arg::with_name("difficulty")
+                .short("d")
+                .long("difficulty")
+                .value_name("DIFFICULTY")
+                .default_value("100")
+                .validator(|s| s.parse::<u64>().map(|_| ()).map_err(|e| format!("{}", e)))
+                .help("Difficulty of VDF")
+                .takes_value(true),
+        )
         .get_matches();
 
     let keys = if let Some(keys) = args.value_of("keys") {
@@ -159,6 +169,8 @@ fn main() {
     } else {
         cfg.min_stake_amount
     };
+
+    let difficulty = args.value_of("difficulty").unwrap().parse::<u64>().unwrap();
 
     info!("Generating genesis ...");
 
@@ -242,6 +254,7 @@ fn main() {
         view_change,
         keychains[0].3.clone(),
         random,
+        difficulty,
         timestamp,
         coins,
         activity_map,

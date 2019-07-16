@@ -28,8 +28,6 @@ use std::time::Duration;
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(default)]
 pub struct NodeConfig {
-    /// How long wait for transactions before starting to create a new block.
-    pub tx_wait_timeout: Duration,
     /// How long wait for micro blocks.
     pub micro_block_timeout: Duration,
     /// How long wait for the keu blocks.
@@ -57,7 +55,6 @@ pub struct NodeConfig {
 impl Default for NodeConfig {
     fn default() -> Self {
         NodeConfig {
-            tx_wait_timeout: Duration::from_secs(5),
             // Sic: synchronize this value with ChainConfig::vetted_timeout.
             micro_block_timeout: Duration::from_secs(30),
             macro_block_timeout: Duration::from_secs(30),

@@ -104,6 +104,7 @@ pub fn fake_genesis(
     let previous = Hash::digest("genesis");
     let seed = Hash::digest("genesis");
     let random = pbc::make_VRF(&keychains[0].network_skey, &seed);
+    let difficulty = 0; // enable mock.
     let activity_map = BitVector::ones(keychains.len());
 
     // Create a block.
@@ -113,6 +114,7 @@ pub fn fake_genesis(
         view_change,
         keychains[0].network_pkey.clone(),
         random,
+        difficulty,
         timestamp,
         coins,
         activity_map,
@@ -167,8 +169,10 @@ pub fn create_fake_micro_block(
     let key = chain.select_leader(view_change);
     let leader = keychains.iter().find(|p| p.network_pkey == key).unwrap();
     let previous = chain.last_block_hash().clone();
-    let seed = mix(chain.last_random(), view_change);
+    let last_random = chain.last_random();
+    let seed = mix(last_random, view_change);
     let random = pbc::make_VRF(&leader.network_skey, &seed);
+    let solution = chain.vdf_solver()();
     let block_reward = chain.cfg().block_reward;
     let block_fee: i64 = 0;
     let mut transactions: Vec<Transaction> = Vec::new();
@@ -290,6 +294,7 @@ pub fn create_fake_micro_block(
         None,
         leader.network_pkey,
         random,
+        solution,
         timestamp,
         transactions,
     );
@@ -308,8 +313,10 @@ pub fn create_micro_block_with_coinbase(
     let view_change = chain.view_change();
     let key = chain.select_leader(view_change);
     let keys = keychains.iter().find(|p| p.network_pkey == key).unwrap();
-    let seed = mix(chain.last_random(), view_change);
+    let last_random = chain.last_random();
+    let seed = mix(last_random, view_change);
     let random = pbc::make_VRF(&keys.network_skey, &seed);
+    let solution = chain.vdf_solver()();
     let mut txouts: Vec<Output> = Vec::new();
     let mut gamma = Fr::zero();
 
@@ -352,6 +359,7 @@ pub fn create_micro_block_with_coinbase(
         None,
         keys.network_pkey,
         random,
+        solution,
         timestamp,
         txs,
     );

@@ -33,8 +33,8 @@ use crate::transaction::{
     CoinbaseTransaction, PaymentTransaction, RestakeTransaction, SlashingTransaction, Transaction,
 };
 use log::*;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use std::collections::HashSet;
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use std::collections::{HashMap, HashSet};
 use stegos_crypto::bulletproofs::{fee_a, simple_commit};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::scc::{Fr, Pt};
@@ -156,7 +156,6 @@ impl PaymentTransaction {
             if !txouts_set.insert(txout_hash) {
                 return Err(TransactionError::DuplicateOutput(tx_hash, txout_hash).into());
             }
-            txout.validate()?;
             let cmt = txout.pedersen_commitment()?;
             txout_sum += cmt;
             eff_pkey -= cmt;
@@ -825,12 +824,12 @@ impl Blockchain {
     ///
     /// A helper for validate_micro_block().
     ///
-    fn validate_micro_block_tx(
+    fn validate_micro_block_tx<'a>(
         &self,
-        tx: &Transaction,
+        tx: &'a Transaction,
         leader: pbc::PublicKey,
         inputs_set: &mut HashSet<Hash>,
-        outputs_set: &mut HashSet<Hash>,
+        outputs_set: &mut HashMap<Hash, &'a Output>,
     ) -> Result<(), BlockchainError> {
         let tx_hash = Hash::digest(&tx);
         let mut inputs: Vec<Output> = Vec::new();
@@ -868,10 +867,10 @@ impl Blockchain {
         for output in tx.txouts() {
             let output_hash = Hash::digest(output);
             // Check that the output is unique and don't overlap with other transactions.
-            if outputs_set.contains(&output_hash) || self.contains_output(&output_hash) {
+            if outputs_set.contains_key(&output_hash) || self.contains_output(&output_hash) {
                 return Err(TransactionError::OutputHashCollision(tx_hash, output_hash).into());
             }
-            outputs_set.insert(output_hash.clone());
+            outputs_set.insert(output_hash.clone(), output);
         }
 
         match tx {
@@ -1059,7 +1058,7 @@ impl Blockchain {
         }
 
         let mut inputs_set: HashSet<Hash> = HashSet::new();
-        let mut outputs_set: HashSet<Hash> = HashSet::new();
+        let mut outputs_set: HashMap<Hash, &Output> = HashMap::new();
         let mut fee: i64 = 0;
 
         //
@@ -1088,6 +1087,13 @@ impl Blockchain {
             .into());
         }
 
+        //
+        // Validate outputs.
+        //
+        outputs_set
+            .into_par_iter()
+            .try_for_each(|(_hash, o)| o.validate())?;
+
         debug!(
             "The micro block is valid: epoch={}, block={}",
             epoch, &block_hash
@@ -1102,6 +1108,7 @@ pub mod tests {
     use super::*;
     use crate::block::MacroBlock;
     use crate::output::OutputError;
+    use crate::output::PaymentOutput;
     use crate::output::StakeOutput;
     use crate::timestamp::Timestamp;
     use bitvector::BitVector;
@@ -1146,6 +1153,18 @@ pub mod tests {
 
         let amount: i64 = 1_000_000;
         let fee: i64 = 1;
+
+        //
+        // Invalid BulletProof.
+        //
+        let (mut output, _gamma) = PaymentOutput::new(&pkey1, 100).unwrap();
+        output.proof.vcmt = Pt::random();
+        match output.validate().unwrap_err() {
+            BlockchainError::OutputError(OutputError::InvalidBulletProof(output_hash)) => {
+                assert_eq!(output_hash, Hash::digest(&output));
+            }
+            e => panic!("{}", e),
+        };
 
         //
         // Zero amount.
@@ -1314,6 +1333,26 @@ pub mod tests {
         let fee: i64 = 1;
 
         //
+        // Invalid amount.
+        //
+        let mut output = StakeOutput::new(&pkey1, &nskey, &npkey, 100).expect("keys are valid");
+        output.amount = 0; // mutate amount.
+        match output.validate().unwrap_err() {
+            BlockchainError::OutputError(OutputError::InvalidStake(_output_hash)) => {}
+            e => panic!("{:?}", e),
+        };
+
+        //
+        // Invalid signature.
+        //
+        let mut output = StakeOutput::new(&pkey1, &nskey, &npkey, 100).expect("keys are valid");
+        output.amount = 10; // mutate amount.
+        match output.validate().unwrap_err() {
+            BlockchainError::OutputError(OutputError::InvalidStakeSignature(_output_hash)) => {}
+            e => panic!("{:?}", e),
+        };
+
+        //
         // StakeUTXO as an input.
         //
         let input = Output::new_stake(&pkey1, &nskey, &npkey, amount).expect("keys are valid");
@@ -1353,24 +1392,7 @@ pub mod tests {
             BlockchainError::TransactionError(TransactionError::InvalidMonetaryBalance(
                 _tx_hash,
             )) => {}
-            _ => panic!(),
-        };
-
-        //
-        // Invalid stake.
-        //
-        let (input, _inputs_gamma) = Output::new_payment(&pkey1, amount).expect("keys are valid");
-        let inputs = [input];
-        let mut output =
-            StakeOutput::new(&pkey1, &nskey, &npkey, amount - fee).expect("keys are valid");
-        output.amount = 0;
-        let output = Output::StakeOutput(output);
-        let outputs_gamma = Fr::zero();
-        let tx = PaymentTransaction::new(&skey1, &inputs, &[output], &outputs_gamma, fee)
-            .expect("keys are valid");
-        match tx.validate(&inputs).unwrap_err() {
-            BlockchainError::OutputError(OutputError::InvalidStake(_output_hash)) => {}
-            e => panic!("{}", e),
+            e => panic!("{:?}", e),
         };
 
         //
@@ -1392,11 +1414,11 @@ pub mod tests {
             }
             _ => panic!(),
         };
-        let e = tx.validate(&inputs).expect_err("transaction is invalid");
-        dbg!(&e);
-        match e {
-            BlockchainError::OutputError(OutputError::InvalidStakeSignature(_output_hash)) => {}
-            _ => panic!(),
+        match tx.validate(&inputs).expect_err("transaction is invalid") {
+            BlockchainError::TransactionError(TransactionError::InvalidSignature(tx_hash)) => {
+                assert_eq!(tx_hash, Hash::digest(&tx));
+            }
+            e => panic!("{:?}", e),
         }
     }
 

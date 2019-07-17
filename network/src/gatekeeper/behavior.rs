@@ -39,11 +39,11 @@ use std::{
     marker::PhantomData,
     thread,
 };
-use stegos_crypto::hashcash::{self, HashCashProof};
+use stegos_crypto::vdf::{self, VDF};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use super::handler::{GatekeeperHandler, GatekeeperSendEvent};
-use super::protocol::GatekeeperMessage;
+use super::protocol::{GatekeeperMessage, VDFProof};
 use crate::config::NetworkConfig;
 use crate::utils::{ExpiringQueue, PeerIdKey};
 
@@ -70,26 +70,26 @@ pub struct Gatekeeper<TSubstream> {
     pending_out_peers: ExpiringQueue<PeerId, DialerPeerState>,
     /// Incoming peers tring to negotiate with us
     pending_in_peers: ExpiringQueue<PeerId, ListenerPeerState>,
-    /// Unlocked peers (passed HashCash handshake)
+    /// Unlocked peers (passed VDF handshake)
     unlocked_peers: LruCache<PeerIdKey, ()>,
-    /// HshCash puzzle geneated by us
-    our_puzzles: LruCache<PeerIdKey, HashCashPuzzle>,
-    /// Incommming puzzles (with solutions)
-    input_puzzles: LruCache<PeerIdKey, (HashCashPuzzle, Option<i64>)>,
     /// Upstream events when Dialer/Listeners are ready
     protocol_updates: VecDeque<PeerEvent>,
-    /// Channel used to send solutions for HashCash puzzles
+    /// Channel used to send solutions for VDF puzzles
     solution_sink: UnboundedSender<Solution>,
-    /// Output channel with HashCash solutions
+    /// Output channel with VDF proofs
     solution_stream: UnboundedReceiver<Solution>,
     /// Solvers - set of currently running solvers
     solvers: HashSet<PeerId>,
     /// Number of allowed solvers threads (max(num_vpus-2, 1))
     solver_threads: usize,
-    /// Queue of puzzles, waiting to be solved
-    puzzles_queue: VecDeque<PeerId>,
-    /// Hashcash complexity
-    hashcash_nbits: usize,
+    /// VDF challenges geneated by us
+    our_challenges: LruCache<PeerIdKey, VDFChallenge>,
+    /// Incoming solved Challenges
+    solved_vdfs: LruCache<PeerIdKey, (VDFChallenge, Option<Vec<u8>>)>,
+    /// Queue of VDF challenges from remote peers, waiting to be solved
+    challenges_queue: VecDeque<PeerId>,
+    /// VDF complexity
+    hanshake_puzzle_difficulty: u64,
     /// Netwrok readyness threshold
     readiness_threshold: usize,
     /// Marker to pin the generics.
@@ -125,7 +125,7 @@ impl<TSubstream> Gatekeeper<TSubstream> {
 
         let (solution_sink, solution_stream) = unbounded::<Solution>();
         let solver_threads = max(num_cpus::get() - 2, 1);
-        debug!(target: "stegos_network::gatekeeper", "number of HashCash solver threads: {}", solver_threads);
+        debug!(target: "stegos_network::gatekeeper", "number of VDF solver threads: {}", solver_threads);
         Gatekeeper {
             events,
             connected_peers: HashSet::new(),
@@ -134,11 +134,11 @@ impl<TSubstream> Gatekeeper<TSubstream> {
             pending_out_peers: ExpiringQueue::new(HANDSHAKE_STEP_TIMEOUT),
             pending_in_peers: ExpiringQueue::new(HANDSHAKE_STEP_TIMEOUT),
             unlocked_peers: LruCache::<PeerIdKey, ()>::with_expiry_duration(HASH_CASH_PROOF_TTL),
-            our_puzzles: LruCache::<PeerIdKey, HashCashPuzzle>::with_expiry_duration(
+            our_challenges: LruCache::<PeerIdKey, VDFChallenge>::with_expiry_duration(
                 HASH_CASH_PROOF_TTL,
             ),
-            input_puzzles:
-                LruCache::<PeerIdKey, (HashCashPuzzle, Option<i64>)>::with_expiry_duration(
+            solved_vdfs:
+                LruCache::<PeerIdKey, (VDFChallenge, Option<Vec<u8>>)>::with_expiry_duration(
                     HASH_CASH_PROOF_TTL,
                 ),
             protocol_updates: VecDeque::new(),
@@ -146,8 +146,8 @@ impl<TSubstream> Gatekeeper<TSubstream> {
             solution_stream,
             solvers: HashSet::new(),
             solver_threads,
-            puzzles_queue: VecDeque::new(),
-            hashcash_nbits: config.hashcash_nbits,
+            challenges_queue: VecDeque::new(),
+            hanshake_puzzle_difficulty: config.hanshake_puzzle_difficulty,
             readiness_threshold: config.readiness_threshold,
             marker: PhantomData,
         }
@@ -173,13 +173,13 @@ impl<TSubstream> Gatekeeper<TSubstream> {
         self.protocol_updates.push_back(event);
     }
 
-    fn send_new_puzlle(&mut self, peer_id: PeerId) {
-        let seed = generate_puzzle(&peer_id);
-        self.our_puzzles.insert(
+    fn send_new_challenge(&mut self, peer_id: PeerId) {
+        let challenge = generate_challenge(&peer_id);
+        self.our_challenges.insert(
             peer_id.clone().into(),
-            HashCashPuzzle {
-                seed: seed.clone(),
-                nbits: self.hashcash_nbits,
+            VDFChallenge {
+                challenge: challenge.clone(),
+                difficulty: self.hanshake_puzzle_difficulty,
             },
         );
         self.pending_in_peers
@@ -187,13 +187,13 @@ impl<TSubstream> Gatekeeper<TSubstream> {
         self.events.push_back(NetworkBehaviourAction::SendEvent {
             peer_id,
             event: GatekeeperSendEvent::Send(GatekeeperMessage::ChallengeReply {
-                seed,
-                nbits: self.hashcash_nbits,
+                challenge,
+                difficulty: self.hanshake_puzzle_difficulty,
             }),
         })
     }
 
-    fn handle_unlock_request(&mut self, peer_id: PeerId, proof: Option<HashCashProof>) {
+    fn handle_unlock_request(&mut self, peer_id: PeerId, proof: Option<VDFProof>) {
         if self.unlocked_peers.contains_key(&peer_id.clone().into()) {
             debug!(target: "stegos_network::gatekeeper", "unlock request from already unlocked peer: peer_id={}", peer_id);
             self.pending_in_peers
@@ -219,23 +219,23 @@ impl<TSubstream> Gatekeeper<TSubstream> {
             Some(p) => p,
             None => {
                 debug!(target: "stegos_network::gatekeeper", "unlock request without proof: peer_id={}", peer_id);
-                self.send_new_puzlle(peer_id);
+                self.send_new_challenge(peer_id);
                 return;
             }
         };
 
-        let puzzle = match self.our_puzzles.get(&peer_id.clone().into()) {
+        let challenge = match self.our_challenges.get(&peer_id.clone().into()) {
             Some(p) => p,
             None => {
                 debug!(target: "stegos_network::gatekeeper", "unlock request with proof, but no puzzle, sending new puzzle: peer_id={}", peer_id);
-                self.send_new_puzlle(peer_id);
+                self.send_new_challenge(peer_id);
                 return;
             }
         };
 
-        if proof.seed == puzzle.seed
-            && proof.nbits == puzzle.nbits
-            && local_check_proof(&proof, self.hashcash_nbits)
+        if proof.challenge == challenge.challenge
+            && proof.difficulty == challenge.difficulty
+            && local_check_proof(&proof, challenge.difficulty)
         {
             debug!(target: "stegos_network::gatekeeper", "unlock request with valid proof, peer_id={}", peer_id);
             self.unlocked_peers.insert(peer_id.clone().into(), ());
@@ -251,27 +251,27 @@ impl<TSubstream> Gatekeeper<TSubstream> {
             }
         } else {
             debug!(target: "stegos_network::gatekeeper", "unlock request with invalid proof, sending new puzzle: peer_id={}", peer_id);
-            self.send_new_puzlle(peer_id);
+            self.send_new_challenge(peer_id);
         }
     }
 
-    fn handle_challenge_reply(&mut self, peer_id: PeerId, seed: Vec<u8>, nbits: usize) {
-        debug!(target: "stegos_network::gatekeeper", "received puzzle: peer_id={}", peer_id);
+    fn handle_challenge_reply(&mut self, peer_id: PeerId, challenge: Vec<u8>, difficulty: u64) {
+        debug!(target: "stegos_network::gatekeeper", "received challenge: peer_id={}", peer_id);
         if !self.pending_out_peers.contains_key(&peer_id) {
-            debug!(target: "stegos_network::gatekeeper", "puzzle from peer we are not going to connect to, ignoring: peer_id={}", peer_id);
+            debug!(target: "stegos_network::gatekeeper", "challenge from peer we are not going to connect to, ignoring: peer_id={}", peer_id);
             return;
         }
-        let puzzle = HashCashPuzzle {
-            seed: seed.clone(),
-            nbits,
+        let challenge = VDFChallenge {
+            challenge: challenge.clone(),
+            difficulty,
         };
-        if let Some(p) = self.input_puzzles.get(&peer_id.clone().into()) {
-            if p.0.seed == seed && p.1.is_some() {
+        if let Some(p) = self.solved_vdfs.get(&peer_id.clone().into()) {
+            if p.0.challenge == challenge.challenge && p.1.is_some() {
                 // Already solved this puzzle
-                let proof = HashCashProof {
-                    seed: p.0.seed.clone(),
-                    nbits: p.0.nbits,
-                    count: p.1.expect("checked for Some earlier"),
+                let proof = VDFProof {
+                    challenge: p.0.challenge.clone(),
+                    difficulty: p.0.difficulty,
+                    proof: p.1.clone().expect("Checked for Some earlier"),
                 };
                 self.events.push_back(NetworkBehaviourAction::SendEvent {
                     peer_id: peer_id.clone(),
@@ -284,12 +284,12 @@ impl<TSubstream> Gatekeeper<TSubstream> {
                 return;
             }
         }
-        self.input_puzzles
-            .insert(peer_id.clone().into(), (puzzle.clone(), None));
+        self.solved_vdfs
+            .insert(peer_id.clone().into(), (challenge.clone(), None));
         self.pending_out_peers
-            .insert(peer_id.clone(), DialerPeerState::SolvingPuzzle);
+            .insert(peer_id.clone(), DialerPeerState::SolvingVDF);
         // put peer into the queue to be solved.
-        self.puzzles_queue.push_back(peer_id);
+        self.challenges_queue.push_back(peer_id);
     }
 }
 
@@ -393,12 +393,13 @@ where
             GatekeeperMessage::UnlockRequest { proof } => {
                 self.handle_unlock_request(propagation_source, proof)
             }
-            GatekeeperMessage::ChallengeReply { seed, nbits } => {
-                self.handle_challenge_reply(propagation_source, seed, nbits)
-            }
+            GatekeeperMessage::ChallengeReply {
+                challenge,
+                difficulty,
+            } => self.handle_challenge_reply(propagation_source, challenge, difficulty),
             GatekeeperMessage::PermitReply { connection_allowed } => {
                 if connection_allowed {
-                    debug!(target: "stegos_network::gatekeeper", "succesfully negotiated hashcash: peer_id={}", propagation_source);
+                    debug!(target: "stegos_network::gatekeeper", "succesfully negotiated VDF handshake: peer_id={}", propagation_source);
                     self.unlocked_peers
                         .insert(propagation_source.clone().into(), ());
                     self.pending_out_peers
@@ -429,12 +430,19 @@ where
     > {
         match self.solution_stream.poll() {
             Ok(Async::Ready(Some((peer_id, proof, duration)))) => {
-                debug!(target: "stegos_network::gatekeeper", "solved puzzle: peer_id={}, duration={}.{}sec", peer_id, duration.as_secs(), duration.subsec_millis());
                 self.solvers.remove(&peer_id);
-                self.protocol_updates.push_back(PeerEvent::PuzzleSolved {
-                    peer_id: peer_id.clone(),
-                    answer: proof.count,
-                });
+                match proof {
+                    Ok(proof) => {
+                        debug!(target: "stegos_network::gatekeeper", "solved puzzle: peer_id={}, duration={}.{}sec", peer_id, duration.as_secs(), duration.subsec_millis());
+                        self.protocol_updates.push_back(PeerEvent::VDFSolved {
+                            peer_id: peer_id.clone(),
+                            proof: proof.clone(),
+                        });
+                    }
+                    Err(e) => {
+                        debug!(target: "stegos_network::gatekeeper", "failure solving VDF: {:?}", e)
+                    }
+                }
             }
             Ok(Async::Ready(None)) => {
                 debug!(target: "stegos_network::gatekeeper", "solution stream gone!");
@@ -445,29 +453,30 @@ where
             }
         }
 
-        if self.solvers.len() < self.solver_threads && self.puzzles_queue.len() > 0 {
+        if self.solvers.len() < self.solver_threads && self.challenges_queue.len() > 0 {
             loop {
-                if self.puzzles_queue.is_empty() {
+                if self.challenges_queue.is_empty() {
                     break;
                 }
-                let peer_id = self.puzzles_queue.pop_front().unwrap();
-                if let Some(puzzle) = self.input_puzzles.get(&peer_id.clone().into()) {
+                let peer_id = self.challenges_queue.pop_front().unwrap();
+                if let Some(challenge) = self.solved_vdfs.get(&peer_id.clone().into()) {
                     debug!(target: "stegos_network::gatekeeper", "starting thread to solve puzzle: peer_id={}", peer_id);
                     let tx = self.solution_sink.clone();
-                    let p = puzzle.0.clone();
+                    let p = challenge.0.clone();
                     let peer_id = peer_id.clone();
                     self.solvers.insert(peer_id.clone());
                     thread::spawn(move || {
                         let start = SystemTime::now();
-                        info!("Solving a hashcash puzzle: peer_id={:?}", peer_id);
-                        let proof = hashcash::delay(p.nbits, &p.seed);
-                        info!("Solved a hashcash puzzle: peer_id={:?}", peer_id);
+                        let vdf = VDF::new();
+                        info!("Solving a VDF puzzle: peer_id={:?}", peer_id);
+                        let proof = vdf.solve(&p.challenge, p.difficulty);
+                        info!("Solved a VDF puzzle: peer_id={:?}", peer_id);
                         if let Err(e) = tx.unbounded_send((
                             peer_id,
                             proof,
-                            start.elapsed().expect("hashcash always takes some time"),
+                            start.elapsed().expect("VDF always takes some time"),
                         )) {
-                            debug!(target: "stegos_network::gatekeeper", "failed to send hashcash solution to the channel: {}", e);
+                            debug!(target: "stegos_network::gatekeeper", "failed to send VDF proof to the channel: {}", e);
                         }
                     });
                     break;
@@ -486,12 +495,12 @@ where
                     ))
                 }
                 PeerEvent::EnabledListener { peer_id } => {
-                    let puzzle = self.input_puzzles.get(&peer_id.clone().into()).clone();
-                    let proof = match puzzle {
-                        Some((p, Some(count))) => Some(HashCashProof {
-                            seed: p.seed.clone(),
-                            nbits: p.nbits,
-                            count: *count,
+                    let challenge = self.solved_vdfs.get(&peer_id.clone().into()).clone();
+                    let proof = match challenge {
+                        Some((p, Some(proof))) => Some(VDFProof {
+                            challenge: p.challenge.clone(),
+                            difficulty: p.difficulty,
+                            proof: proof.clone(),
                         }),
                         Some((_, None)) => None,
                         None => None,
@@ -521,22 +530,24 @@ where
                         self.pending_out_peers.remove(&peer_id);
                     }
                 }
-                PeerEvent::PuzzleSolved { peer_id, answer } => {
-                    if let Some(mut puzzle) = self.input_puzzles.get_mut(&peer_id.clone().into()) {
-                        debug!(target: "stegos_network::gatekeeper", "puzzle solved, sending proof: peer_id={}", peer_id);
+                PeerEvent::VDFSolved { peer_id, proof } => {
+                    if let Some(mut challenge) = self.solved_vdfs.get_mut(&peer_id.clone().into()) {
+                        debug!(target: "stegos_network::gatekeeper", "VDF solved, sending proof: peer_id={}", peer_id);
                         self.pending_out_peers
                             .insert(peer_id.clone().into(), DialerPeerState::ProofSent);
-                        puzzle.1 = Some(answer);
-                        let proof = HashCashProof {
-                            seed: puzzle.0.seed.clone(),
-                            nbits: puzzle.0.nbits,
-                            count: answer,
+                        challenge.1 = Some(proof.clone());
+                        let vdf_proof = VDFProof {
+                            challenge: challenge.0.challenge.clone(),
+                            difficulty: challenge.0.difficulty,
+                            proof: proof.clone(),
                         };
                         if self.connected_peers.contains(&peer_id) {
                             self.events.push_back(NetworkBehaviourAction::SendEvent {
                                 peer_id,
                                 event: GatekeeperSendEvent::Send(
-                                    GatekeeperMessage::UnlockRequest { proof: Some(proof) },
+                                    GatekeeperMessage::UnlockRequest {
+                                        proof: Some(vdf_proof),
+                                    },
                                 ),
                             })
                         } else {
@@ -554,7 +565,7 @@ where
         loop {
             match self.pending_out_peers.poll() {
                 Ok(Async::Ready(ref entry)) => {
-                    debug!(target: "stegos_network::gatekeeper", "peer hashcash expired: peer_id={}", entry.clone().0);
+                    debug!(target: "stegos_network::gatekeeper", "peer VDF expired: peer_id={}", entry.clone().0);
                     // Do cleanup
                 }
                 Ok(Async::NotReady) => break,
@@ -568,7 +579,7 @@ where
         loop {
             match self.pending_in_peers.poll() {
                 Ok(Async::Ready(ref entry)) => {
-                    debug!(target: "stegos_network::gatekeeper", "peer hashcash expired: peer_id={}", entry.clone().0);
+                    debug!(target: "stegos_network::gatekeeper", "peer VDF expired: peer_id={}", entry.clone().0);
                     // Do cleanup
                 }
                 Ok(Async::NotReady) => break,
@@ -587,11 +598,15 @@ where
     }
 }
 
-fn local_check_proof(proof: &HashCashProof, nbits: usize) -> bool {
-    hashcash::check_proof(proof, nbits)
+fn local_check_proof(proof: &VDFProof, difficulty: u64) -> bool {
+    let vdf = VDF::new();
+    if let Err(_) = vdf.verify(&proof.challenge, difficulty, &proof.proof) {
+        return false;
+    }
+    true
 }
 
-fn generate_puzzle(_peer_id: &PeerId) -> Vec<u8> {
+fn generate_challenge(_peer_id: &PeerId) -> Vec<u8> {
     let key = (0..256).map(|_| rand::random::<u8>()).collect::<Vec<_>>();
     key
 }
@@ -615,29 +630,24 @@ pub enum GatekeeperOutEvent {
     Disconnected {
         peer_id: PeerId,
     },
-    Solve {
-        peer_id: PeerId,
-        seed: Vec<u8>,
-        nbits: usize,
-    },
     Finished {
         peer_id: PeerId,
     },
     NetworkReady,
 }
 
-type Solution = (PeerId, HashCashProof, Duration);
+type Solution = (PeerId, Result<Vec<u8>, vdf::InvalidIterations>, Duration);
 
 #[derive(Clone)]
-struct HashCashPuzzle {
-    seed: Vec<u8>,
-    nbits: usize,
+struct VDFChallenge {
+    challenge: Vec<u8>,
+    difficulty: u64,
 }
 
 pub enum PeerEvent {
     Connected { peer_id: PeerId },
     EnabledListener { peer_id: PeerId },
-    PuzzleSolved { peer_id: PeerId, answer: i64 },
+    VDFSolved { peer_id: PeerId, proof: Vec<u8> },
     EnabledDialer { peer_id: PeerId },
 }
 
@@ -646,7 +656,7 @@ pub enum DialerPeerState {
     WaitingListener,
     WaitingDialer,
     UnlockRequestSent,
-    SolvingPuzzle,
+    SolvingVDF,
     ProofSent,
     Unlocked,
 }
@@ -658,7 +668,6 @@ pub enum ListenerPeerState {
 }
 
 // Trait for debugging external types
-
 trait StegosDisplay {
     fn display(&self) -> String;
 }

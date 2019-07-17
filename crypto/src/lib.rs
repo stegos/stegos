@@ -25,7 +25,6 @@ pub mod aont;
 pub mod bulletproofs;
 pub mod dicemix;
 pub mod hash;
-pub mod hashcash;
 pub mod keying;
 pub mod pbc;
 pub mod protos;

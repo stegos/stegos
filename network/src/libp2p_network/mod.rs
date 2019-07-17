@@ -527,13 +527,6 @@ where
                 self.floodsub.enable_outgoing(&peer_id);
                 self.gatekeeper.notify(PeerEvent::EnabledDialer { peer_id });
             }
-            GatekeeperOutEvent::Solve { peer_id, .. } => {
-                // do puzzle solving
-                self.gatekeeper.notify(PeerEvent::PuzzleSolved {
-                    peer_id,
-                    answer: 42,
-                })
-            }
             GatekeeperOutEvent::Finished { peer_id } => {
                 self.floodsub.enable_outgoing(&peer_id);
             }

@@ -298,36 +298,17 @@ impl NodeSandbox {
     }
 
     pub fn poll(&mut self) {
-        futures_testing::execute(|| {
-            match self.node_service.validation {
+        futures_testing::execute(|notify| {
+            notify.internal_routine(|| match self.node_service.validation {
                 Validation::MicroBlockValidator {
                     block_timer: MicroBlockTimer::Propose(ref mut rx),
                     ..
                 } => {
                     trace!("Poll in propose, vdf_execution={:?}", self.vdf_execution);
-
-                    if self.vdf_execution.pending_vdf() {
-                        return self.node_service.poll();
-                    }
-
-                    // if we wait for micro block, and we are leader for micro block,
-                    // then synchronously wait until vdf computes.
-                    let (tx, mut rx_new) = futures::oneshot::<Vec<u8>>();
-                    std::mem::swap(rx, &mut rx_new);
-                    let data = rx_new.wait().unwrap();
-                    match &self.vdf_execution {
-                        VDFExecution::WaitForVDF => tx.send(data).unwrap(),
-                        // save for future usage
-                        VDFExecution::Nothing => {
-                            self.vdf_execution = VDFExecution::PendingVDF { tx, data };
-                        }
-                        e => panic!("VDF execution in wrong state = {:?}", e),
-                    }
-
-                    self.vdf_execution.try_unset()
+                    self.vdf_execution.add_vdf(rx);
                 }
                 _ => {}
-            };
+            });
             self.node_service.poll()
         });
     }
@@ -344,16 +325,29 @@ enum VDFExecution {
 }
 
 impl VDFExecution {
-    fn pending_vdf(&self) -> bool {
+    pub(crate) fn add_vdf(&mut self, rx: &mut oneshot::Receiver<Vec<u8>>) {
+        // release old vdf.
+        self.try_produce();
+
+        let (tx, mut rx_new) = futures::oneshot::<Vec<u8>>();
+        std::mem::swap(rx, &mut rx_new);
+        let data = rx_new.wait().unwrap();
         match self {
-            VDFExecution::PendingVDF { .. } => true,
-            _ => false,
+            // if we wait for micro block, and we are leader for micro block,
+            // then synchronously wait until vdf computes.
+            VDFExecution::WaitForVDF => tx.send(data).unwrap(),
+            // if we not waiting for microblock, save vdf for future computation.
+            VDFExecution::Nothing => {
+                *self = VDFExecution::PendingVDF { tx, data };
+            }
+            e => panic!("VDF execution in wrong state = {:?}", e),
         }
+        self.try_unset();
     }
 
     fn try_produce(&mut self) {
         match std::mem::replace(self, VDFExecution::Nothing) {
-            VDFExecution::PendingVDF { data, tx } => tx.send(data).unwrap(),
+            VDFExecution::PendingVDF { data, tx } => drop(tx.send(data)), // drop error because tx channel could be outdated.
             e => *self = e,
         }
     }

@@ -33,8 +33,8 @@ use tokio_timer::{
     timer::Timer,
 };
 
-/// helper trait that allow multiple polling of task in test, if notify was called.
-struct NodeNotify {
+/// helper type that allows multiple polling of task in test, if notify was called.
+pub struct NodeNotify {
     pub repeat_poll: Mutex<bool>,
 }
 
@@ -50,6 +50,18 @@ impl NodeNotify {
     fn is_set(&self) -> bool {
         *self.repeat_poll.lock().unwrap()
     }
+
+    /// Call internal routine, and ignore any notifications,
+    /// if any was set during internal routine.
+    ///
+    /// Some times testing framework need to create internal channels,
+    /// or futures, which notify event should be ignored.
+    pub fn internal_routine<F: FnMut()>(&self, mut routine: F) {
+        let flag = self.is_set();
+        debug!("Calling internal routing, flag = {}", flag);
+        routine();
+        *self.repeat_poll.lock().unwrap() = flag;
+    }
 }
 
 impl Notify for NodeNotify {
@@ -59,7 +71,7 @@ impl Notify for NodeNotify {
 }
 
 /// execute poll fn as may times as it needs.
-pub fn execute<U, E, F: FnMut() -> Result<Async<U>, E>>(mut future: F)
+pub fn execute<U, E, F: FnMut(&NodeNotify) -> Result<Async<U>, E>>(mut future: F)
 where
     U: Debug + Eq,
     E: Debug + Eq,
@@ -69,7 +81,7 @@ where
     });
 
     with_notify(node_notify, 1, || loop {
-        assert_eq!(future(), Ok(Async::NotReady));
+        assert_eq!(future(&node_notify), Ok(Async::NotReady));
         if !node_notify.is_set() {
             break;
         }

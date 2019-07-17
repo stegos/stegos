@@ -1,22 +1,22 @@
 syntax = "proto3";
 package gatekeeper.pb;
 
-message HashcashProof {
-    bytes seed = 1;
-    uint32 nbits = 2;
-    sint64 count = 3;
+message VDFProof {
+    bytes challenge = 1;
+    uint64 difficulty = 2;
+    bytes vdf_proof = 3;
 }
 
 message UnlockRequest {
     // Optional proof
-    HashcashProof proof = 1;
+    VDFProof proof = 1;
 }
 
 message ChallengeReply {
     // Puzzle seed
-    bytes seed = 1;
+    bytes challenge = 1;
     // Number of bits to calculate
-    uint32 nbits = 2;
+    uint64 difficulty = 2;
 }
 
 message PermitReply {

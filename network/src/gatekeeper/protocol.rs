@@ -26,7 +26,6 @@ use futures::future;
 use libp2p_core::{upgrade::Negotiated, InboundUpgrade, OutboundUpgrade, UpgradeInfo};
 use protobuf::Message as ProtobufMessage;
 use std::{io, iter};
-use stegos_crypto::hashcash::HashCashProof;
 use tokio::codec::{Decoder, Encoder, Framed};
 use tokio::io::{AsyncRead, AsyncWrite};
 use unsigned_varint::codec;
@@ -106,20 +105,23 @@ impl Encoder for GatekeeperCodec {
             GatekeeperMessage::UnlockRequest { proof } => {
                 let mut msg_typ = gatekeeper_proto::UnlockRequest::new();
                 if let Some(proof) = proof {
-                    let mut proof_proto = gatekeeper_proto::HashcashProof::new();
-                    proof_proto.set_seed(proof.seed);
-                    proof_proto.set_nbits(proof.nbits as u32);
-                    proof_proto.set_count(proof.count);
+                    let mut proof_proto = gatekeeper_proto::VDFProof::new();
+                    proof_proto.set_challenge(proof.challenge);
+                    proof_proto.set_difficulty(proof.difficulty);
+                    proof_proto.set_vdf_proof(proof.proof);
                     msg_typ.set_proof(proof_proto);
                 }
                 let mut proto_msg = gatekeeper_proto::Message::new();
                 proto_msg.set_unlock_request(msg_typ);
                 proto_msg
             }
-            GatekeeperMessage::ChallengeReply { seed, nbits } => {
+            GatekeeperMessage::ChallengeReply {
+                challenge,
+                difficulty,
+            } => {
                 let mut msg_typ = gatekeeper_proto::ChallengeReply::new();
-                msg_typ.set_seed(seed);
-                msg_typ.set_nbits(nbits as u32);
+                msg_typ.set_challenge(challenge);
+                msg_typ.set_difficulty(difficulty);
                 let mut proto_msg = gatekeeper_proto::Message::new();
                 proto_msg.set_challenge_reply(msg_typ);
                 proto_msg
@@ -164,13 +166,13 @@ impl Decoder for GatekeeperCodec {
             Some(Message_oneof_typ::unlock_request(unlock_request_msg)) => {
                 let proof = if unlock_request_msg.has_proof() {
                     let proof_msg = unlock_request_msg.get_proof();
-                    let seed = proof_msg.get_seed();
-                    let nbits = proof_msg.get_nbits() as usize;
-                    let count = proof_msg.get_count();
-                    Some(HashCashProof {
-                        seed: seed.to_vec(),
-                        nbits,
-                        count,
+                    let challenge = proof_msg.get_challenge();
+                    let difficulty = proof_msg.get_difficulty();
+                    let vdf_proof = proof_msg.get_vdf_proof();
+                    Some(VDFProof {
+                        challenge: challenge.to_vec(),
+                        difficulty,
+                        proof: vdf_proof.to_vec(),
                     })
                 } else {
                     None
@@ -179,8 +181,8 @@ impl Decoder for GatekeeperCodec {
             }
             Some(Message_oneof_typ::challenge_reply(reply_msg)) => {
                 Ok(Some(GatekeeperMessage::ChallengeReply {
-                    seed: reply_msg.get_seed().to_vec(),
-                    nbits: reply_msg.get_nbits() as usize,
+                    challenge: reply_msg.get_challenge().to_vec(),
+                    difficulty: reply_msg.get_difficulty(),
                 }))
             }
             Some(Message_oneof_typ::permit_reply(reply_msg)) => {
@@ -198,21 +200,27 @@ impl Decoder for GatekeeperCodec {
     }
 }
 
-/// Struct
+/// Structs
+/// VDF solution proof
+#[derive(Debug, Clone, PartialEq)]
+pub struct VDFProof {
+    pub challenge: Vec<u8>,
+    pub difficulty: u64,
+    pub proof: Vec<u8>,
+}
 
 /// Message that we can send to a peer or received from a peer.
 #[derive(Debug, Clone, PartialEq)]
 pub enum GatekeeperMessage {
-    UnlockRequest { proof: Option<HashCashProof> },
-    ChallengeReply { seed: Vec<u8>, nbits: usize },
+    UnlockRequest { proof: Option<VDFProof> },
+    ChallengeReply { challenge: Vec<u8>, difficulty: u64 },
     PermitReply { connection_allowed: bool },
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{GatekeeperCodec, GatekeeperMessage};
+    use super::{GatekeeperCodec, GatekeeperMessage, VDFProof};
     use futures::{future, Future, Sink, Stream};
-    use stegos_crypto::hashcash::HashCashProof;
     use tokio::codec::Framed;
     use tokio::net::{TcpListener, TcpStream};
 
@@ -221,17 +229,17 @@ mod tests {
         let unlock_request_null = GatekeeperMessage::UnlockRequest { proof: None };
         test_one(unlock_request_null);
 
-        let proof = HashCashProof {
-            seed: rand::random::<[u8; 20]>().to_vec(),
-            nbits: rand::random::<usize>(),
-            count: rand::random::<i64>(),
+        let proof = VDFProof {
+            challenge: rand::random::<[u8; 20]>().to_vec(),
+            difficulty: rand::random::<u64>(),
+            proof: rand::random::<[u8; 20]>().to_vec(),
         };
         let unlock_request_proof = GatekeeperMessage::UnlockRequest { proof: Some(proof) };
         test_one(unlock_request_proof);
 
         let challenge_reply = GatekeeperMessage::ChallengeReply {
-            seed: random_vec(256),
-            nbits: 16,
+            challenge: random_vec(256),
+            difficulty: 16,
         };
         test_one(challenge_reply);
 

@@ -24,7 +24,6 @@ use log::{debug, info, trace};
 use std::collections::BTreeMap;
 use std::mem;
 use stegos_crypto::hash::Hash;
-use stegos_crypto::hashcash;
 use stegos_crypto::scc::PublicKey;
 use stegos_crypto::utils::print_nbits;
 
@@ -101,7 +100,7 @@ impl Awards {
     /// If this function returns winners PublicKey,
     /// then new service award budget would be set to zero.
     pub fn check_winners(&mut self, random: Hash) -> Option<(PublicKey, i64)> {
-        if !hashcash::chkbits(random.base_vector(), self.difficulty) {
+        if !chkbits(random.base_vector(), self.difficulty) {
             debug!(
                 "Not lucky random in service award: difficulty={}, random_bytes={}",
                 self.difficulty,
@@ -134,6 +133,17 @@ impl Awards {
         );
         Some((winner_pk, mem::replace(&mut self.budget, 0)))
     }
+}
+
+pub fn chkbits(h: &[u8], nbits: usize) -> bool {
+    for i in 0..nbits {
+        let byte = i / 8;
+        let bit = i % 8;
+        if 0 != (h[byte] & (1 << bit)) {
+            return false;
+        }
+    }
+    true
 }
 
 #[cfg(test)]

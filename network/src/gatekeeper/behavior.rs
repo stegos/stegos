@@ -70,13 +70,13 @@ pub struct Gatekeeper<TSubstream> {
     pending_out_peers: ExpiringQueue<PeerId, DialerPeerState>,
     /// Incoming peers tring to negotiate with us
     pending_in_peers: ExpiringQueue<PeerId, ListenerPeerState>,
-    /// Unlocked peers (passed HashCash handshake)
+    /// Unlocked peers (passed VDF handshake)
     unlocked_peers: LruCache<PeerIdKey, ()>,
     /// Upstream events when Dialer/Listeners are ready
     protocol_updates: VecDeque<PeerEvent>,
-    /// Channel used to send solutions for HashCash puzzles
+    /// Channel used to send solutions for VDF puzzles
     solution_sink: UnboundedSender<Solution>,
-    /// Output channel with HashCash solutions
+    /// Output channel with VDF proofs
     solution_stream: UnboundedReceiver<Solution>,
     /// Solvers - set of currently running solvers
     solvers: HashSet<PeerId>,
@@ -88,8 +88,8 @@ pub struct Gatekeeper<TSubstream> {
     solved_vdfs: LruCache<PeerIdKey, (VDFChallenge, Option<Vec<u8>>)>,
     /// Queue of VDF challenges from remote peers, waiting to be solved
     challenges_queue: VecDeque<PeerId>,
-    /// Hashcash complexity
-    hashcash_difficulty: u64,
+    /// VDF complexity
+    hanshake_puzzle_difficulty: u64,
     /// Netwrok readyness threshold
     readiness_threshold: usize,
     /// Marker to pin the generics.
@@ -125,7 +125,7 @@ impl<TSubstream> Gatekeeper<TSubstream> {
 
         let (solution_sink, solution_stream) = unbounded::<Solution>();
         let solver_threads = max(num_cpus::get() - 2, 1);
-        debug!(target: "stegos_network::gatekeeper", "number of HashCash solver threads: {}", solver_threads);
+        debug!(target: "stegos_network::gatekeeper", "number of VDF solver threads: {}", solver_threads);
         Gatekeeper {
             events,
             connected_peers: HashSet::new(),
@@ -147,7 +147,7 @@ impl<TSubstream> Gatekeeper<TSubstream> {
             solvers: HashSet::new(),
             solver_threads,
             challenges_queue: VecDeque::new(),
-            hashcash_difficulty: config.hashcash_difficulty,
+            hanshake_puzzle_difficulty: config.hanshake_puzzle_difficulty,
             readiness_threshold: config.readiness_threshold,
             marker: PhantomData,
         }
@@ -179,7 +179,7 @@ impl<TSubstream> Gatekeeper<TSubstream> {
             peer_id.clone().into(),
             VDFChallenge {
                 challenge: challenge.clone(),
-                difficulty: self.hashcash_difficulty,
+                difficulty: self.hanshake_puzzle_difficulty,
             },
         );
         self.pending_in_peers
@@ -188,7 +188,7 @@ impl<TSubstream> Gatekeeper<TSubstream> {
             peer_id,
             event: GatekeeperSendEvent::Send(GatekeeperMessage::ChallengeReply {
                 challenge,
-                difficulty: self.hashcash_difficulty,
+                difficulty: self.hanshake_puzzle_difficulty,
             }),
         })
     }
@@ -399,7 +399,7 @@ where
             } => self.handle_challenge_reply(propagation_source, challenge, difficulty),
             GatekeeperMessage::PermitReply { connection_allowed } => {
                 if connection_allowed {
-                    debug!(target: "stegos_network::gatekeeper", "succesfully negotiated hashcash: peer_id={}", propagation_source);
+                    debug!(target: "stegos_network::gatekeeper", "succesfully negotiated VDF handshake: peer_id={}", propagation_source);
                     self.unlocked_peers
                         .insert(propagation_source.clone().into(), ());
                     self.pending_out_peers
@@ -468,15 +468,15 @@ where
                     thread::spawn(move || {
                         let start = SystemTime::now();
                         let vdf = VDF::new();
-                        info!("Solving a hashcash puzzle: peer_id={:?}", peer_id);
+                        info!("Solving a VDF puzzle: peer_id={:?}", peer_id);
                         let proof = vdf.solve(&p.challenge, p.difficulty);
-                        info!("Solved a hashcash puzzle: peer_id={:?}", peer_id);
+                        info!("Solved a VDF puzzle: peer_id={:?}", peer_id);
                         if let Err(e) = tx.unbounded_send((
                             peer_id,
                             proof,
-                            start.elapsed().expect("hashcash always takes some time"),
+                            start.elapsed().expect("VDF always takes some time"),
                         )) {
-                            debug!(target: "stegos_network::gatekeeper", "failed to send hashcash solution to the channel: {}", e);
+                            debug!(target: "stegos_network::gatekeeper", "failed to send VDF proof to the channel: {}", e);
                         }
                     });
                     break;
@@ -565,7 +565,7 @@ where
         loop {
             match self.pending_out_peers.poll() {
                 Ok(Async::Ready(ref entry)) => {
-                    debug!(target: "stegos_network::gatekeeper", "peer hashcash expired: peer_id={}", entry.clone().0);
+                    debug!(target: "stegos_network::gatekeeper", "peer VDF expired: peer_id={}", entry.clone().0);
                     // Do cleanup
                 }
                 Ok(Async::NotReady) => break,
@@ -579,7 +579,7 @@ where
         loop {
             match self.pending_in_peers.poll() {
                 Ok(Async::Ready(ref entry)) => {
-                    debug!(target: "stegos_network::gatekeeper", "peer hashcash expired: peer_id={}", entry.clone().0);
+                    debug!(target: "stegos_network::gatekeeper", "peer VDF expired: peer_id={}", entry.clone().0);
                     // Do cleanup
                 }
                 Ok(Async::NotReady) => break,

@@ -39,7 +39,9 @@ fn generate_chain(
             timestamp += Duration::from_millis(1);
             let (block, _input_hashes, _output_hashes) =
                 test::create_fake_micro_block(&mut chain, &keychains, timestamp);
-            chain.push_micro_block(block).expect("no I/O errors");
+            chain
+                .push_micro_block(block, timestamp)
+                .expect("no I/O errors");
         }
         assert_eq!(chain.offset(), cfg.micro_blocks_in_epoch);
 

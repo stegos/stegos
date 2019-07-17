@@ -25,6 +25,7 @@ use crate::block::{Block, MacroBlock, MacroBlockHeader, MicroBlock, VERSION};
 use crate::blockchain::{Blockchain, ChainInfo};
 use crate::election::mix;
 use crate::error::{BlockError, BlockchainError, SlashingError, TransactionError};
+use crate::multisignature::check_multi_signature;
 use crate::output::{Output, OutputError, PublicPaymentOutput};
 use crate::slashing::confiscate_tx;
 use crate::timestamp::Timestamp;
@@ -32,6 +33,7 @@ use crate::transaction::{
     CoinbaseTransaction, PaymentTransaction, RestakeTransaction, SlashingTransaction, Transaction,
 };
 use log::*;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::collections::HashSet;
 use stegos_crypto::bulletproofs::{fee_a, simple_commit};
 use stegos_crypto::hash::Hash;
@@ -455,7 +457,6 @@ impl Blockchain {
         &self,
         block_hash: &Hash,
         header: &MacroBlockHeader,
-        force_check: bool,
         timestamp: Timestamp,
     ) -> Result<(), BlockchainError> {
         let epoch = header.epoch;
@@ -481,6 +482,18 @@ impl Blockchain {
             return Err(BlockError::MacroBlockHashCollision(epoch, *block_hash).into());
         }
 
+        // Check previous hash.
+        let previous_hash = self.last_macro_block_hash();
+        if previous_hash != header.previous {
+            return Err(BlockError::InvalidMacroBlockPreviousHash(
+                epoch,
+                *block_hash,
+                header.previous,
+                previous_hash,
+            )
+            .into());
+        }
+
         // Validate timestamp.
         self.validate_block_timestamp(epoch, block_hash, header.timestamp, timestamp)?;
 
@@ -490,28 +503,13 @@ impl Blockchain {
             .map_err(|_| BlockError::InvalidVDFComplexity(epoch, *block_hash, header.difficulty))?;
 
         if epoch > 0 {
-            // Check previous hash (skip for genesis).
-            let previous_hash = self.last_macro_block_hash();
-            if previous_hash != header.previous {
-                return Err(BlockError::InvalidMacroBlockPreviousHash(
-                    epoch,
-                    *block_hash,
-                    header.previous,
-                    previous_hash,
-                )
-                .into());
-            }
-
             // Check VRF.
-            if force_check {
-                let seed = mix(self.last_macro_block_random(), header.view_change);
-                if !pbc::validate_VRF_source(&header.random, &header.pkey, &seed).is_ok() {
-                    return Err(BlockError::IncorrectRandom(epoch, *block_hash).into());
-                }
+            let seed = mix(self.last_macro_block_random(), header.view_change);
+            if !pbc::validate_VRF_source(&header.random, &header.pkey, &seed).is_ok() {
+                return Err(BlockError::IncorrectRandom(epoch, *block_hash).into());
             }
 
             // Check that VDF difficulty is constant.
-            // Sic:
             if header.difficulty != self.difficulty() {
                 return Err(BlockError::UnexpectedVDFComplexity(
                     epoch,
@@ -522,6 +520,147 @@ impl Blockchain {
                 .into());
             }
         }
+
+        // Check the number of inputs.
+        if header.inputs_len > std::u32::MAX {
+            return Err(BlockError::TooManyInputs(
+                epoch,
+                *block_hash,
+                header.inputs_len as usize,
+                std::u32::MAX as usize,
+            )
+            .into());
+        }
+
+        // Check the number of outputs.
+        if header.outputs_len > std::u32::MAX {
+            return Err(BlockError::TooManyOutputs(
+                epoch,
+                *block_hash,
+                header.outputs_len as usize,
+                std::u32::MAX as usize,
+            )
+            .into());
+        }
+
+        Ok(())
+    }
+
+    ///
+    /// Validate a macro block from the disk.
+    ///
+    pub(crate) fn validate_macro_block(
+        &mut self,
+        block: &MacroBlock,
+        inputs: &[Output],
+        timestamp: Timestamp,
+    ) -> Result<(), BlockchainError> {
+        let block_hash = Hash::digest(&block);
+        assert_eq!(self.epoch(), block.header.epoch);
+        let epoch = block.header.epoch;
+        assert_eq!(self.offset(), 0);
+        for (input_hash, input) in block.inputs.iter().zip(inputs.iter()) {
+            debug_assert_eq!(input_hash, &Hash::digest(&input));
+        }
+
+        debug!(
+            "Validating a macro block: epoch={}, block={}",
+            epoch, &block_hash
+        );
+
+        //
+        // Validate multi-signature.
+        //
+        if epoch > 0 {
+            // Validate signature (already checked by Node).
+            check_multi_signature(
+                &block_hash,
+                &block.multisig,
+                &block.multisigmap,
+                self.validators(),
+                self.total_slots(),
+            )
+            .map_err(|e| BlockError::InvalidBlockSignature(e, epoch, block_hash))?;
+        }
+
+        //
+        // Validate header.
+        //
+        self.validate_macro_block_header(&block_hash, &block.header, timestamp)?;
+
+        //
+        // Validate Awards.
+        //
+        if epoch > 0 {
+            let (_activity_map, winner) = self.awards_from_active_epoch(&block.header.random);
+            // calculate block reward + service award.
+            let full_reward = self.cfg().block_reward
+                * (self.cfg().micro_blocks_in_epoch as i64 + 1i64)
+                + winner.map(|(_, a)| a).unwrap_or(0);
+
+            if block.header.block_reward != full_reward {
+                return Err(BlockError::InvalidMacroBlockReward(
+                    epoch,
+                    block_hash,
+                    block.header.block_reward,
+                    full_reward,
+                )
+                .into());
+            }
+        }
+
+        //
+        // Validate inputs.
+        //
+        if block.header.inputs_len != block.inputs.len() as u32 {
+            return Err(BlockError::InvalidInputsLen(
+                epoch,
+                block_hash,
+                block.header.inputs_len as usize,
+                block.inputs.len(),
+            )
+            .into());
+        }
+        let inputs_range_hash = MacroBlock::calculate_range_hash(&block.inputs);
+        if block.header.inputs_range_hash != inputs_range_hash {
+            return Err(BlockError::InvalidBlockInputsHash(
+                epoch,
+                block_hash,
+                inputs_range_hash,
+                block.header.inputs_range_hash,
+            )
+            .into());
+        }
+
+        //
+        // Validate outputs.
+        //
+        if block.header.outputs_len != block.outputs.len() as u32 {
+            return Err(BlockError::InvalidInputsLen(
+                epoch,
+                block_hash,
+                block.header.outputs_len as usize,
+                block.inputs.len(),
+            )
+            .into());
+        }
+        let output_hashes: Vec<Hash> = block.outputs.iter().map(Hash::digest).collect();
+        let outputs_range_hash = MacroBlock::calculate_range_hash(&output_hashes);
+        if block.header.outputs_range_hash != outputs_range_hash {
+            return Err(BlockError::InvalidBlockInputsHash(
+                epoch,
+                block_hash,
+                outputs_range_hash,
+                block.header.outputs_range_hash,
+            )
+            .into());
+        }
+        block.outputs.par_iter().try_for_each(Output::validate)?;
+
+        //
+        // Validate balance.
+        //
+        block.validate_balance(&inputs)?;
 
         Ok(())
     }
@@ -557,7 +696,7 @@ impl Blockchain {
         // Validate base header.
         //
         let current_timestamp = Timestamp::now();
-        self.validate_macro_block_header(block_hash, &header, false, current_timestamp)?;
+        self.validate_macro_block_header(block_hash, &header, current_timestamp)?;
 
         // validate award.
         let (activity_map, winner) = self.awards_from_active_epoch(&header.random);

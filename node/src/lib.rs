@@ -938,7 +938,8 @@ impl NodeService {
             }
         }
         self.chain.validate_micro_block(&block, timestamp)?;
-        let (inputs, outputs, block_transactions) = self.chain.push_micro_block(block)?;
+        let (inputs, outputs, block_transactions) =
+            self.chain.push_micro_block(block, timestamp)?;
 
         let mut statuses = HashMap::new();
         let mut transactions = HashMap::new();

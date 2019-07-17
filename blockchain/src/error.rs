@@ -376,6 +376,26 @@ pub enum BlockError {
         _0, _1, _2, _3
     )]
     OutOfSyncViewChange(u64, Hash, u32, u32),
+    #[fail(
+        display = "Invalid number of inputs in a macro block: epoch={}, block={}, expected={}, got={}",
+        _0, _1, _2, _3
+    )]
+    InvalidInputsLen(u64, Hash, usize, usize),
+    #[fail(
+        display = "Invalid number of outputs in a macro block: epoch={}, block={}, expected={}, got={}",
+        _0, _1, _2, _3
+    )]
+    InvalidOutputsLen(u64, Hash, usize, usize),
+    #[fail(
+        display = "Macro block is too large: epoch={}, block={}, got_inputs={}, max_inputs={}",
+        _0, _1, _2, _3
+    )]
+    TooManyInputs(u64, Hash, usize, usize),
+    #[fail(
+        display = "Macro block is too large: epoch={}, block={}, got_outputs={}, max_outputs={}",
+        _0, _1, _2, _3
+    )]
+    TooManyOutputs(u64, Hash, usize, usize),
 }
 
 #[derive(Debug, Fail)]

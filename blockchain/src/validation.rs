@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::block::{MacroBlock, MacroBlockHeader, MicroBlock, VERSION};
+use crate::block::{Block, MacroBlock, MacroBlockHeader, MicroBlock, VERSION};
 use crate::blockchain::{Blockchain, ChainInfo};
 use crate::election::mix;
 use crate::error::{BlockError, BlockchainError, SlashingError, TransactionError};
@@ -451,7 +451,7 @@ impl Blockchain {
     ///
     /// Validate base block header.
     ///
-    pub fn validate_macro_block_header(
+    pub(crate) fn validate_macro_block_header(
         &self,
         block_hash: &Hash,
         header: &MacroBlockHeader,
@@ -524,6 +524,163 @@ impl Blockchain {
         }
 
         Ok(())
+    }
+
+    ///
+    /// Validate proposed macro block.
+    ///
+    pub fn validate_proposed_macro_block(
+        &self,
+        view_change: u32,
+        block_hash: &Hash,
+        header: &MacroBlockHeader,
+        transactions: &[Transaction],
+    ) -> Result<MacroBlock, BlockchainError> {
+        if header.epoch != self.epoch() {
+            return Err(BlockError::InvalidBlockEpoch(header.epoch, self.epoch()).into());
+        }
+        assert!(self.is_epoch_full());
+        let epoch = header.epoch;
+
+        // Ensure that block was produced at round lower than current.
+        if header.view_change > view_change {
+            return Err(BlockError::OutOfSyncViewChange(
+                epoch,
+                block_hash.clone(),
+                header.view_change,
+                view_change,
+            )
+            .into());
+        }
+
+        //
+        // Validate base header.
+        //
+        let current_timestamp = Timestamp::now();
+        self.validate_macro_block_header(block_hash, &header, false, current_timestamp)?;
+
+        // validate award.
+        let (activity_map, winner) = self.awards_from_active_epoch(&header.random);
+
+        //
+        // Validate transactions.
+        //
+
+        let mut transactions = transactions.to_vec();
+
+        let mut tx_len = 1;
+        // Coinbase.
+        if let Some(Transaction::CoinbaseTransaction(tx)) = transactions.get(0) {
+            tx.validate()?;
+            if tx.block_reward != self.cfg().block_reward {
+                return Err(BlockError::InvalidMacroBlockReward(
+                    epoch,
+                    block_hash.clone(),
+                    tx.block_reward,
+                    self.cfg().block_reward,
+                )
+                .into());
+            }
+
+            if tx.block_fee != 0 {
+                return Err(BlockError::InvalidMacroBlockFee(
+                    epoch,
+                    block_hash.clone(),
+                    tx.block_fee,
+                    0,
+                )
+                .into());
+            }
+        } else {
+            // Force coinbase if reward is not zero.
+            return Err(BlockError::CoinbaseMustBeFirst(block_hash.clone()).into());
+        }
+        let mut full_reward =
+            self.cfg().block_reward * (self.cfg().micro_blocks_in_epoch as i64 + 1i64);
+
+        // Add tx if winner found.
+        if let Some((k, reward)) = winner {
+            tx_len += 1;
+            full_reward += reward;
+            if let Some(Transaction::ServiceAwardTransaction(tx)) = transactions.get(1) {
+                if tx.winner_reward.len() != 1 {
+                    return Err(BlockError::AwardMoreThanOneWinner(
+                        block_hash.clone(),
+                        tx.winner_reward.len(),
+                    )
+                    .into());
+                }
+                let ref output = tx.winner_reward[0];
+
+                if let Output::PublicPaymentOutput(out) = output {
+                    if out.recipient != k {
+                        return Err(BlockError::AwardDifferentWinner(
+                            block_hash.clone(),
+                            out.recipient,
+                            k,
+                        )
+                        .into());
+                    }
+                    if out.amount != reward {
+                        return Err(BlockError::AwardDifferentReward(
+                            block_hash.clone(),
+                            out.amount,
+                            reward,
+                        )
+                        .into());
+                    }
+                } else {
+                    return Err(BlockError::AwardDifferentOutputType(block_hash.clone()).into());
+                }
+            } else {
+                return Err(BlockError::NoServiceAwardTx(block_hash.clone()).into());
+            }
+        }
+
+        if transactions.len() > tx_len {
+            return Err(BlockError::InvalidBlockBalance(epoch, block_hash.clone()).into());
+        }
+
+        // Collect transactions from epoch.
+        let count = self.cfg().micro_blocks_in_epoch as usize;
+        let blocks: Vec<Block> = self.blocks_starting(epoch, 0).take(count).collect();
+        for (offset, block) in blocks.into_iter().enumerate() {
+            let block = if let Block::MicroBlock(block) = block {
+                block
+            } else {
+                panic!("Expected micro block: epoch={}, offset={}", epoch, offset);
+            };
+
+            transactions.extend(block.transactions);
+        }
+
+        // Re-create original block.
+        let block = MacroBlock::from_transactions(
+            header.previous,
+            epoch,
+            header.view_change,
+            header.pkey,
+            header.random,
+            header.difficulty,
+            header.timestamp,
+            full_reward,
+            activity_map,
+            &transactions,
+        )?;
+
+        // Check that block has the same hash.
+        let expected_block_hash = Hash::digest(&block);
+        if block_hash != &expected_block_hash {
+            return Err(BlockError::InvalidBlockProposal(
+                block.header.epoch,
+                expected_block_hash,
+                block_hash.clone(),
+            )
+            .into());
+        }
+
+        debug!("Macro block proposal is valid: block={:?}", block_hash);
+        Ok(block)
     }
 
     ///

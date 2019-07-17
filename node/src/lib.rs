@@ -29,7 +29,6 @@ mod error;
 mod loader;
 mod mempool;
 pub mod metrics;
-mod proposal;
 pub mod protos;
 #[doc(hidden)]
 pub mod test;
@@ -54,7 +53,7 @@ use std::time::{Duration, Instant};
 use stegos_blockchain::Timestamp;
 use stegos_blockchain::*;
 use stegos_consensus::optimistic::{SealedViewChangeProof, ViewChangeCollector, ViewChangeMessage};
-use stegos_consensus::{self as consensus, Consensus, ConsensusMessage};
+use stegos_consensus::{self as consensus, Consensus, ConsensusMessage, MacroBlockProposal};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{pbc, scc};
 use stegos_network::Network;
@@ -1340,11 +1339,11 @@ impl NodeService {
 
         if consensus.should_prevote() {
             let (block_hash, block_proposal, view_change) = consensus.get_proposal();
-            match proposal::validate_proposed_macro_block(
-                &self.chain,
+            match self.chain.validate_proposed_macro_block(
                 view_change,
                 block_hash,
-                block_proposal,
+                &block_proposal.header,
+                &block_proposal.transactions,
             ) {
                 Ok(macro_block) => consensus.prevote(macro_block),
                 Err(e) => {
@@ -1420,20 +1419,40 @@ impl NodeService {
         );
         task::current().notify();
 
+        debug!(
+            "Creating a new macro block proposal: epoch={}, view_change={}",
+            self.chain.epoch(),
+            consensus.round(),
+        );
+
         // Propose a new block.
         let recipient_pkey = self
             .chain
             .account_by_network_key(&self.network_pkey)
             .expect("Staked");
-        let (block, block_proposal) = proposal::create_macro_block_proposal(
-            &self.chain,
+
+        let (block, transactions) = self.chain.create_macro_block(
             consensus.round(),
             &recipient_pkey,
             &self.network_skey,
-            &self.network_pkey,
+            self.network_pkey.clone(),
             timestamp,
         );
         let block_hash = Hash::digest(&block);
+
+        // Create block proposal.
+        let block_proposal = MacroBlockProposal {
+            header: block.header.clone(),
+            transactions,
+        };
+
+        info!(
+            "Created a new macro block proposal: epoch={}, view_change={}, hash={}",
+            self.chain.epoch(),
+            consensus.round(),
+            block_hash
+        );
+
         consensus.propose(block_hash, block_proposal);
         consensus.prevote(block);
         self.handle_consensus_events();

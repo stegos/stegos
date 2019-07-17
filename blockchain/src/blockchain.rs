@@ -1023,7 +1023,7 @@ impl Blockchain {
         //
         // Update in-memory indexes and metadata.
         //
-        let force_check = true;
+        let force_check = false;
         let (inputs, outputs) =
             self.register_macro_block(lsn, block, inputs, force_check, timestamp);
 

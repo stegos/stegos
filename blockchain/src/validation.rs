@@ -910,6 +910,7 @@ impl Blockchain {
         &self,
         block: &MicroBlock,
         timestamp: Timestamp,
+        validate_utxo: bool,
     ) -> Result<(), BlockchainError> {
         let epoch = block.header.epoch;
         let offset = block.header.offset;
@@ -1090,9 +1091,11 @@ impl Blockchain {
         //
         // Validate outputs.
         //
-        outputs_set
-            .into_par_iter()
-            .try_for_each(|(_hash, o)| o.validate())?;
+        if validate_utxo {
+            outputs_set
+                .into_par_iter()
+                .try_for_each(|(_hash, o)| o.validate())?;
+        }
 
         debug!(
             "The micro block is valid: epoch={}, block={}",

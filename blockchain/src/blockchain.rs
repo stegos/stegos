@@ -344,7 +344,7 @@ impl Blockchain {
                     Hash::digest(&block)
                 );
                 if force_check {
-                    self.validate_micro_block(&block, timestamp)?;
+                    self.validate_micro_block(&block, timestamp, true)?;
                 }
                 let lsn = LSN(block.header.epoch, block.header.offset);
                 let _ = self.register_micro_block(lsn, block);
@@ -1184,7 +1184,7 @@ impl Blockchain {
         // Double-check if debug.
         //
         if cfg!(debug_assertions) {
-            self.validate_micro_block(&block, timestamp)
+            self.validate_micro_block(&block, timestamp, true)
                 .expect("block is valid");
         }
 

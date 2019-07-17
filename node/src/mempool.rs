@@ -75,6 +75,13 @@ impl Mempool {
     }
 
     ///
+    /// Returns transactions by hash.
+    ///
+    pub fn get_tx(&self, tx_hash: &Hash) -> Option<&Transaction> {
+        self.pool.get(tx_hash)
+    }
+
+    ///
     /// Queues a transaction to the mempool.
     ///
     pub fn push_tx(&mut self, tx_hash: Hash, tx: Transaction) {

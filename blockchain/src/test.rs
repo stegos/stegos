@@ -101,8 +101,9 @@ pub fn fake_genesis(
     // Calculate initial values.
     let epoch: u64 = 0;
     let view_change: u32 = 0;
+    let last_macro_block_random = Hash::digest("genesis");
     let previous = Hash::digest("genesis");
-    let seed = Hash::digest("genesis");
+    let seed = mix(last_macro_block_random, view_change);
     let random = pbc::make_VRF(&keychains[0].network_skey, &seed);
     let difficulty = 0; // enable mock.
     let activity_map = BitVector::ones(keychains.len());

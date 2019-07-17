@@ -501,23 +501,21 @@ impl Blockchain {
             .check_difficulty(header.difficulty)
             .map_err(|_| BlockError::InvalidVDFComplexity(epoch, *block_hash, header.difficulty))?;
 
-        if epoch > 0 {
-            // Check VRF.
-            let seed = mix(self.last_macro_block_random(), header.view_change);
-            if !pbc::validate_VRF_source(&header.random, &header.pkey, &seed).is_ok() {
-                return Err(BlockError::IncorrectRandom(epoch, *block_hash).into());
-            }
+        // Check that VDF difficulty is constant.
+        if epoch > 0 && header.difficulty != self.difficulty() {
+            return Err(BlockError::UnexpectedVDFComplexity(
+                epoch,
+                *block_hash,
+                self.difficulty(),
+                header.difficulty,
+            )
+            .into());
+        }
 
-            // Check that VDF difficulty is constant.
-            if header.difficulty != self.difficulty() {
-                return Err(BlockError::UnexpectedVDFComplexity(
-                    epoch,
-                    *block_hash,
-                    self.difficulty(),
-                    header.difficulty,
-                )
-                .into());
-            }
+        // Check VRF.
+        let seed = mix(self.last_macro_block_random(), header.view_change);
+        if !pbc::validate_VRF_source(&header.random, &header.pkey, &seed).is_ok() {
+            return Err(BlockError::IncorrectRandom(epoch, *block_hash).into());
         }
 
         // Check the number of inputs.

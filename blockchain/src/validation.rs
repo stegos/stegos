@@ -21,10 +21,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::block::{MacroBlock, MacroBlockHeader, MicroBlock, VERSION};
+use crate::block::{Block, MacroBlock, MacroBlockHeader, MicroBlock, VERSION};
 use crate::blockchain::{Blockchain, ChainInfo};
 use crate::election::mix;
 use crate::error::{BlockError, BlockchainError, SlashingError, TransactionError};
+use crate::multisignature::check_multi_signature;
 use crate::output::{Output, OutputError, PublicPaymentOutput};
 use crate::slashing::confiscate_tx;
 use crate::timestamp::Timestamp;
@@ -32,7 +33,8 @@ use crate::transaction::{
     CoinbaseTransaction, PaymentTransaction, RestakeTransaction, SlashingTransaction, Transaction,
 };
 use log::*;
-use std::collections::HashSet;
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use std::collections::{HashMap, HashSet};
 use stegos_crypto::bulletproofs::{fee_a, simple_commit};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::scc::{Fr, Pt};
@@ -154,7 +156,6 @@ impl PaymentTransaction {
             if !txouts_set.insert(txout_hash) {
                 return Err(TransactionError::DuplicateOutput(tx_hash, txout_hash).into());
             }
-            txout.validate()?;
             let cmt = txout.pedersen_commitment()?;
             txout_sum += cmt;
             eff_pkey -= cmt;
@@ -451,11 +452,10 @@ impl Blockchain {
     ///
     /// Validate base block header.
     ///
-    pub fn validate_macro_block_header(
+    pub(crate) fn validate_macro_block_header(
         &self,
         block_hash: &Hash,
         header: &MacroBlockHeader,
-        force_check: bool,
         timestamp: Timestamp,
     ) -> Result<(), BlockchainError> {
         let epoch = header.epoch;
@@ -481,6 +481,18 @@ impl Blockchain {
             return Err(BlockError::MacroBlockHashCollision(epoch, *block_hash).into());
         }
 
+        // Check previous hash.
+        let previous_hash = self.last_macro_block_hash();
+        if previous_hash != header.previous {
+            return Err(BlockError::InvalidMacroBlockPreviousHash(
+                epoch,
+                *block_hash,
+                header.previous,
+                previous_hash,
+            )
+            .into());
+        }
+
         // Validate timestamp.
         self.validate_block_timestamp(epoch, block_hash, header.timestamp, timestamp)?;
 
@@ -489,52 +501,333 @@ impl Blockchain {
             .check_difficulty(header.difficulty)
             .map_err(|_| BlockError::InvalidVDFComplexity(epoch, *block_hash, header.difficulty))?;
 
-        if epoch > 0 {
-            // Check previous hash (skip for genesis).
-            let previous_hash = self.last_macro_block_hash();
-            if previous_hash != header.previous {
-                return Err(BlockError::InvalidMacroBlockPreviousHash(
-                    epoch,
-                    *block_hash,
-                    header.previous,
-                    previous_hash,
-                )
-                .into());
-            }
+        // Check that VDF difficulty is constant.
+        if epoch > 0 && header.difficulty != self.difficulty() {
+            return Err(BlockError::UnexpectedVDFComplexity(
+                epoch,
+                *block_hash,
+                self.difficulty(),
+                header.difficulty,
+            )
+            .into());
+        }
 
-            // Check VRF.
-            if force_check {
-                let seed = mix(self.last_macro_block_random(), header.view_change);
-                if !pbc::validate_VRF_source(&header.random, &header.pkey, &seed).is_ok() {
-                    return Err(BlockError::IncorrectRandom(epoch, *block_hash).into());
-                }
-            }
+        // Check VRF.
+        let seed = mix(self.last_macro_block_random(), header.view_change);
+        if !pbc::validate_VRF_source(&header.random, &header.pkey, &seed).is_ok() {
+            return Err(BlockError::IncorrectRandom(epoch, *block_hash).into());
+        }
 
-            // Check that VDF difficulty is constant.
-            // Sic:
-            if header.difficulty != self.difficulty() {
-                return Err(BlockError::UnexpectedVDFComplexity(
-                    epoch,
-                    *block_hash,
-                    self.difficulty(),
-                    header.difficulty,
-                )
-                .into());
-            }
+        // Check the number of inputs.
+        if header.inputs_len > std::u32::MAX {
+            return Err(BlockError::TooManyInputs(
+                epoch,
+                *block_hash,
+                header.inputs_len as usize,
+                std::u32::MAX as usize,
+            )
+            .into());
+        }
+
+        // Check the number of outputs.
+        if header.outputs_len > std::u32::MAX {
+            return Err(BlockError::TooManyOutputs(
+                epoch,
+                *block_hash,
+                header.outputs_len as usize,
+                std::u32::MAX as usize,
+            )
+            .into());
         }
 
         Ok(())
     }
 
     ///
+    /// Validate a macro block from the disk.
+    ///
+    pub(crate) fn validate_macro_block(
+        &mut self,
+        block: &MacroBlock,
+        inputs: &[Output],
+        timestamp: Timestamp,
+    ) -> Result<(), BlockchainError> {
+        let block_hash = Hash::digest(&block);
+        assert_eq!(self.epoch(), block.header.epoch);
+        let epoch = block.header.epoch;
+        assert_eq!(self.offset(), 0);
+        for (input_hash, input) in block.inputs.iter().zip(inputs.iter()) {
+            debug_assert_eq!(input_hash, &Hash::digest(&input));
+        }
+
+        debug!(
+            "Validating a macro block: epoch={}, block={}",
+            epoch, &block_hash
+        );
+
+        //
+        // Validate multi-signature.
+        //
+        if epoch > 0 {
+            // Validate signature (already checked by Node).
+            check_multi_signature(
+                &block_hash,
+                &block.multisig,
+                &block.multisigmap,
+                self.validators(),
+                self.total_slots(),
+            )
+            .map_err(|e| BlockError::InvalidBlockSignature(e, epoch, block_hash))?;
+        }
+
+        //
+        // Validate header.
+        //
+        self.validate_macro_block_header(&block_hash, &block.header, timestamp)?;
+
+        //
+        // Validate Awards.
+        //
+        if epoch > 0 {
+            let (_activity_map, winner) = self.awards_from_active_epoch(&block.header.random);
+            // calculate block reward + service award.
+            let full_reward = self.cfg().block_reward
+                * (self.cfg().micro_blocks_in_epoch as i64 + 1i64)
+                + winner.map(|(_, a)| a).unwrap_or(0);
+
+            if block.header.block_reward != full_reward {
+                return Err(BlockError::InvalidMacroBlockReward(
+                    epoch,
+                    block_hash,
+                    block.header.block_reward,
+                    full_reward,
+                )
+                .into());
+            }
+        }
+
+        //
+        // Validate inputs.
+        //
+        if block.header.inputs_len != block.inputs.len() as u32 {
+            return Err(BlockError::InvalidInputsLen(
+                epoch,
+                block_hash,
+                block.header.inputs_len as usize,
+                block.inputs.len(),
+            )
+            .into());
+        }
+        let inputs_range_hash = MacroBlock::calculate_range_hash(&block.inputs);
+        if block.header.inputs_range_hash != inputs_range_hash {
+            return Err(BlockError::InvalidBlockInputsHash(
+                epoch,
+                block_hash,
+                inputs_range_hash,
+                block.header.inputs_range_hash,
+            )
+            .into());
+        }
+
+        //
+        // Validate outputs.
+        //
+        if block.header.outputs_len != block.outputs.len() as u32 {
+            return Err(BlockError::InvalidInputsLen(
+                epoch,
+                block_hash,
+                block.header.outputs_len as usize,
+                block.inputs.len(),
+            )
+            .into());
+        }
+        let output_hashes: Vec<Hash> = block.outputs.iter().map(Hash::digest).collect();
+        let outputs_range_hash = MacroBlock::calculate_range_hash(&output_hashes);
+        if block.header.outputs_range_hash != outputs_range_hash {
+            return Err(BlockError::InvalidBlockInputsHash(
+                epoch,
+                block_hash,
+                outputs_range_hash,
+                block.header.outputs_range_hash,
+            )
+            .into());
+        }
+        block.outputs.par_iter().try_for_each(Output::validate)?;
+
+        //
+        // Validate balance.
+        //
+        block.validate_balance(&inputs)?;
+
+        Ok(())
+    }
+
+    ///
+    /// Validate proposed macro block.
+    ///
+    pub fn validate_proposed_macro_block(
+        &self,
+        view_change: u32,
+        block_hash: &Hash,
+        header: &MacroBlockHeader,
+        transactions: &[Transaction],
+    ) -> Result<MacroBlock, BlockchainError> {
+        if header.epoch != self.epoch() {
+            return Err(BlockError::InvalidBlockEpoch(header.epoch, self.epoch()).into());
+        }
+        assert!(self.is_epoch_full());
+        let epoch = header.epoch;
+
+        // Ensure that block was produced at round lower than current.
+        if header.view_change > view_change {
+            return Err(BlockError::OutOfSyncViewChange(
+                epoch,
+                block_hash.clone(),
+                header.view_change,
+                view_change,
+            )
+            .into());
+        }
+
+        //
+        // Validate base header.
+        //
+        let current_timestamp = Timestamp::now();
+        self.validate_macro_block_header(block_hash, &header, current_timestamp)?;
+
+        // validate award.
+        let (activity_map, winner) = self.awards_from_active_epoch(&header.random);
+
+        //
+        // Validate transactions.
+        //
+
+        let mut transactions = transactions.to_vec();
+
+        let mut tx_len = 1;
+        // Coinbase.
+        if let Some(Transaction::CoinbaseTransaction(tx)) = transactions.get(0) {
+            tx.validate()?;
+            if tx.block_reward != self.cfg().block_reward {
+                return Err(BlockError::InvalidMacroBlockReward(
+                    epoch,
+                    block_hash.clone(),
+                    tx.block_reward,
+                    self.cfg().block_reward,
+                )
+                .into());
+            }
+
+            if tx.block_fee != 0 {
+                return Err(BlockError::InvalidMacroBlockFee(
+                    epoch,
+                    block_hash.clone(),
+                    tx.block_fee,
+                    0,
+                )
+                .into());
+            }
+        } else {
+            // Force coinbase if reward is not zero.
+            return Err(BlockError::CoinbaseMustBeFirst(block_hash.clone()).into());
+        }
+        let mut full_reward =
+            self.cfg().block_reward * (self.cfg().micro_blocks_in_epoch as i64 + 1i64);
+
+        // Add tx if winner found.
+        if let Some((k, reward)) = winner {
+            tx_len += 1;
+            full_reward += reward;
+            if let Some(Transaction::ServiceAwardTransaction(tx)) = transactions.get(1) {
+                if tx.winner_reward.len() != 1 {
+                    return Err(BlockError::AwardMoreThanOneWinner(
+                        block_hash.clone(),
+                        tx.winner_reward.len(),
+                    )
+                    .into());
+                }
+                let ref output = tx.winner_reward[0];
+
+                if let Output::PublicPaymentOutput(out) = output {
+                    if out.recipient != k {
+                        return Err(BlockError::AwardDifferentWinner(
+                            block_hash.clone(),
+                            out.recipient,
+                            k,
+                        )
+                        .into());
+                    }
+                    if out.amount != reward {
+                        return Err(BlockError::AwardDifferentReward(
+                            block_hash.clone(),
+                            out.amount,
+                            reward,
+                        )
+                        .into());
+                    }
+                } else {
+                    return Err(BlockError::AwardDifferentOutputType(block_hash.clone()).into());
+                }
+            } else {
+                return Err(BlockError::NoServiceAwardTx(block_hash.clone()).into());
+            }
+        }
+
+        if transactions.len() > tx_len {
+            return Err(BlockError::InvalidBlockBalance(epoch, block_hash.clone()).into());
+        }
+
+        // Collect transactions from epoch.
+        let count = self.cfg().micro_blocks_in_epoch as usize;
+        let blocks: Vec<Block> = self.blocks_starting(epoch, 0).take(count).collect();
+        for (offset, block) in blocks.into_iter().enumerate() {
+            let block = if let Block::MicroBlock(block) = block {
+                block
+            } else {
+                panic!("Expected micro block: epoch={}, offset={}", epoch, offset);
+            };
+
+            transactions.extend(block.transactions);
+        }
+
+        // Re-create original block.
+        let block = MacroBlock::from_transactions(
+            header.previous,
+            epoch,
+            header.view_change,
+            header.pkey,
+            header.random,
+            header.difficulty,
+            header.timestamp,
+            full_reward,
+            activity_map,
+            &transactions,
+        )?;
+
+        // Check that block has the same hash.
+        let expected_block_hash = Hash::digest(&block);
+        if block_hash != &expected_block_hash {
+            return Err(BlockError::InvalidBlockProposal(
+                block.header.epoch,
+                expected_block_hash,
+                block_hash.clone(),
+            )
+            .into());
+        }
+
+        debug!("Macro block proposal is valid: block={:?}", block_hash);
+        Ok(block)
+    }
+
+    ///
     /// A helper for validate_micro_block().
     ///
-    fn validate_micro_block_tx(
+    fn validate_micro_block_tx<'a>(
         &self,
-        tx: &Transaction,
+        tx: &'a Transaction,
         leader: pbc::PublicKey,
         inputs_set: &mut HashSet<Hash>,
-        outputs_set: &mut HashSet<Hash>,
+        outputs_set: &mut HashMap<Hash, &'a Output>,
     ) -> Result<(), BlockchainError> {
         let tx_hash = Hash::digest(&tx);
         let mut inputs: Vec<Output> = Vec::new();
@@ -572,10 +865,10 @@ impl Blockchain {
         for output in tx.txouts() {
             let output_hash = Hash::digest(output);
             // Check that the output is unique and don't overlap with other transactions.
-            if outputs_set.contains(&output_hash) || self.contains_output(&output_hash) {
+            if outputs_set.contains_key(&output_hash) || self.contains_output(&output_hash) {
                 return Err(TransactionError::OutputHashCollision(tx_hash, output_hash).into());
             }
-            outputs_set.insert(output_hash.clone());
+            outputs_set.insert(output_hash.clone(), output);
         }
 
         match tx {
@@ -611,10 +904,11 @@ impl Blockchain {
     /// * `timestamp` - current time.
     ///                         Used to validating escrow.
     ///
-    pub(crate) fn validate_micro_block(
+    pub fn validate_micro_block(
         &self,
         block: &MicroBlock,
         timestamp: Timestamp,
+        validate_utxo: bool,
     ) -> Result<(), BlockchainError> {
         let epoch = block.header.epoch;
         let offset = block.header.offset;
@@ -763,7 +1057,7 @@ impl Blockchain {
         }
 
         let mut inputs_set: HashSet<Hash> = HashSet::new();
-        let mut outputs_set: HashSet<Hash> = HashSet::new();
+        let mut outputs_set: HashMap<Hash, &Output> = HashMap::new();
         let mut fee: i64 = 0;
 
         //
@@ -792,6 +1086,15 @@ impl Blockchain {
             .into());
         }
 
+        //
+        // Validate outputs.
+        //
+        if validate_utxo {
+            outputs_set
+                .into_par_iter()
+                .try_for_each(|(_hash, o)| o.validate())?;
+        }
+
         debug!(
             "The micro block is valid: epoch={}, block={}",
             epoch, &block_hash
@@ -806,6 +1109,7 @@ pub mod tests {
     use super::*;
     use crate::block::MacroBlock;
     use crate::output::OutputError;
+    use crate::output::PaymentOutput;
     use crate::output::StakeOutput;
     use crate::timestamp::Timestamp;
     use bitvector::BitVector;
@@ -850,6 +1154,18 @@ pub mod tests {
 
         let amount: i64 = 1_000_000;
         let fee: i64 = 1;
+
+        //
+        // Invalid BulletProof.
+        //
+        let (mut output, _gamma) = PaymentOutput::new(&pkey1, 100).unwrap();
+        output.proof.vcmt = Pt::random();
+        match output.validate().unwrap_err() {
+            BlockchainError::OutputError(OutputError::InvalidBulletProof(output_hash)) => {
+                assert_eq!(output_hash, Hash::digest(&output));
+            }
+            e => panic!("{}", e),
+        };
 
         //
         // Zero amount.
@@ -1018,6 +1334,26 @@ pub mod tests {
         let fee: i64 = 1;
 
         //
+        // Invalid amount.
+        //
+        let mut output = StakeOutput::new(&pkey1, &nskey, &npkey, 100).expect("keys are valid");
+        output.amount = 0; // mutate amount.
+        match output.validate().unwrap_err() {
+            BlockchainError::OutputError(OutputError::InvalidStake(_output_hash)) => {}
+            e => panic!("{:?}", e),
+        };
+
+        //
+        // Invalid signature.
+        //
+        let mut output = StakeOutput::new(&pkey1, &nskey, &npkey, 100).expect("keys are valid");
+        output.amount = 10; // mutate amount.
+        match output.validate().unwrap_err() {
+            BlockchainError::OutputError(OutputError::InvalidStakeSignature(_output_hash)) => {}
+            e => panic!("{:?}", e),
+        };
+
+        //
         // StakeUTXO as an input.
         //
         let input = Output::new_stake(&pkey1, &nskey, &npkey, amount).expect("keys are valid");
@@ -1057,24 +1393,7 @@ pub mod tests {
             BlockchainError::TransactionError(TransactionError::InvalidMonetaryBalance(
                 _tx_hash,
             )) => {}
-            _ => panic!(),
-        };
-
-        //
-        // Invalid stake.
-        //
-        let (input, _inputs_gamma) = Output::new_payment(&pkey1, amount).expect("keys are valid");
-        let inputs = [input];
-        let mut output =
-            StakeOutput::new(&pkey1, &nskey, &npkey, amount - fee).expect("keys are valid");
-        output.amount = 0;
-        let output = Output::StakeOutput(output);
-        let outputs_gamma = Fr::zero();
-        let tx = PaymentTransaction::new(&skey1, &inputs, &[output], &outputs_gamma, fee)
-            .expect("keys are valid");
-        match tx.validate(&inputs).unwrap_err() {
-            BlockchainError::OutputError(OutputError::InvalidStake(_output_hash)) => {}
-            e => panic!("{}", e),
+            e => panic!("{:?}", e),
         };
 
         //
@@ -1096,11 +1415,11 @@ pub mod tests {
             }
             _ => panic!(),
         };
-        let e = tx.validate(&inputs).expect_err("transaction is invalid");
-        dbg!(&e);
-        match e {
-            BlockchainError::OutputError(OutputError::InvalidStakeSignature(_output_hash)) => {}
-            _ => panic!(),
+        match tx.validate(&inputs).expect_err("transaction is invalid") {
+            BlockchainError::TransactionError(TransactionError::InvalidSignature(tx_hash)) => {
+                assert_eq!(tx_hash, Hash::digest(&tx));
+            }
+            e => panic!("{:?}", e),
         }
     }
 

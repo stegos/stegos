@@ -29,7 +29,6 @@ mod error;
 mod loader;
 mod mempool;
 pub mod metrics;
-mod proposal;
 pub mod protos;
 #[doc(hidden)]
 pub mod test;
@@ -40,6 +39,7 @@ pub use crate::config::NodeConfig;
 use crate::error::*;
 use crate::loader::ChainLoaderMessage;
 use crate::mempool::Mempool;
+use crate::txpool::TransactionPoolService;
 pub use crate::txpool::MAX_PARTICIPANTS;
 use crate::validation::*;
 use failure::Error;
@@ -49,18 +49,21 @@ use futures::{task, Async, Future, Poll, Stream};
 use futures_stream_select_all_send::select_all;
 pub use loader::CHAIN_LOADER_TOPIC;
 use log::*;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::collections::HashMap;
+use std::thread;
 use std::time::{Duration, Instant};
 use stegos_blockchain::Timestamp;
 use stegos_blockchain::*;
 use stegos_consensus::optimistic::{SealedViewChangeProof, ViewChangeCollector, ViewChangeMessage};
-use stegos_consensus::{self as consensus, Consensus, ConsensusMessage};
+use stegos_consensus::{self as consensus, Consensus, ConsensusMessage, MacroBlockProposal};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{pbc, scc};
 use stegos_network::Network;
 use stegos_network::UnicastMessage;
 use stegos_serialization::traits::ProtoConvert;
 use tokio_timer::{clock, Delay};
+use Validation::*;
 
 // ----------------------------------------------------------------
 // Public API.
@@ -167,9 +170,6 @@ enum Validation {
         block_timer: MacroBlockTimer,
     },
 }
-use crate::txpool::TransactionPoolService;
-use std::thread;
-use Validation::*;
 
 pub struct NodeService {
     /// Config.
@@ -938,6 +938,34 @@ impl NodeService {
                 return Err(BlockchainError::ExpectedMicroBlock(epoch, offset, hash).into());
             }
         }
+
+        // Validate Micro Block.
+        {
+            let mut outputs: Vec<&Output> = Vec::new();
+            for tx in &block.transactions {
+                // Skip trransactions from mempool.
+                let tx_hash = Hash::digest(&tx);
+                if let Some(tx2) = self.mempool.get_tx(&tx_hash) {
+                    // Extra checks to avoid the second pre-image attack.
+                    if tx.txins().len() == tx2.txins().len()
+                        && tx.txouts().len() == tx2.txouts().len()
+                    {
+                        // Transaction presents in mempool.
+                        // Already validated by validate_external_transaction().
+                        continue;
+                    }
+                }
+                // Transaction doesn't present in mempool.
+                outputs.extend(tx.txouts());
+            }
+            // Validate all new outputs.
+            outputs.into_par_iter().try_for_each(Output::validate)?;
+            let validate_utxo = false; // validated above.
+            self.chain
+                .validate_micro_block(&block, timestamp, validate_utxo)?;
+        }
+
+        // Apply Micro Block.
         let (inputs, outputs, block_transactions) =
             self.chain.push_micro_block(block, timestamp)?;
 
@@ -1340,11 +1368,11 @@ impl NodeService {
 
         if consensus.should_prevote() {
             let (block_hash, block_proposal, view_change) = consensus.get_proposal();
-            match proposal::validate_proposed_macro_block(
-                &self.chain,
+            match self.chain.validate_proposed_macro_block(
                 view_change,
                 block_hash,
-                block_proposal,
+                &block_proposal.header,
+                &block_proposal.transactions,
             ) {
                 Ok(macro_block) => consensus.prevote(macro_block),
                 Err(e) => {
@@ -1420,20 +1448,40 @@ impl NodeService {
         );
         task::current().notify();
 
+        debug!(
+            "Creating a new macro block proposal: epoch={}, view_change={}",
+            self.chain.epoch(),
+            consensus.round(),
+        );
+
         // Propose a new block.
         let recipient_pkey = self
             .chain
             .account_by_network_key(&self.network_pkey)
             .expect("Staked");
-        let (block, block_proposal) = proposal::create_macro_block_proposal(
-            &self.chain,
+
+        let (block, transactions) = self.chain.create_macro_block(
             consensus.round(),
             &recipient_pkey,
             &self.network_skey,
-            &self.network_pkey,
+            self.network_pkey.clone(),
             timestamp,
         );
         let block_hash = Hash::digest(&block);
+
+        // Create block proposal.
+        let block_proposal = MacroBlockProposal {
+            header: block.header.clone(),
+            transactions,
+        };
+
+        info!(
+            "Created a new macro block proposal: epoch={}, view_change={}, hash={}",
+            self.chain.epoch(),
+            consensus.round(),
+            block_hash
+        );
+
         consensus.propose(block_hash, block_proposal);
         consensus.prevote(block);
         self.handle_consensus_events();

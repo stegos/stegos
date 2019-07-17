@@ -41,7 +41,7 @@ fn generate_chain(
                 test::create_fake_micro_block(&mut chain, &keychains, timestamp);
             chain
                 .push_micro_block(block, timestamp)
-                .expect("block is valid");
+                .expect("no I/O errors");
         }
         assert_eq!(chain.offset(), cfg.micro_blocks_in_epoch);
 
@@ -52,7 +52,7 @@ fn generate_chain(
 
         // Remove all micro blocks.
         while chain.offset() > 0 {
-            chain.pop_micro_block().expect("Should be ok");
+            chain.pop_micro_block().expect("no I/O errors");
         }
 
         // Push macro block.

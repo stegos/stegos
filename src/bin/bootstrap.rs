@@ -29,7 +29,7 @@ use std::path::Path;
 use std::process;
 use std::str::FromStr;
 use stegos_blockchain::{
-    create_multi_signature, Block, ChainConfig, MacroBlock, Output, PaymentOutput,
+    create_multi_signature, mix, Block, ChainConfig, MacroBlock, Output, PaymentOutput,
     PaymentPayloadData, StakeOutput, Timestamp,
 };
 use stegos_crypto::hash::Hash;
@@ -242,7 +242,8 @@ fn main() {
     let epoch: u64 = 0;
     let view_change: u32 = 0;
     let previous = Hash::digest("genesis");
-    let seed = Hash::digest("genesis");
+    let last_macro_block_random = Hash::digest("genesis");
+    let seed = mix(last_macro_block_random, view_change);
     let random = pbc::make_VRF(&keychains[0].2, &seed);
     let activity_map = BitVector::ones(keychains.len());
     let timestamp = Timestamp::now();

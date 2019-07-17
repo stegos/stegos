@@ -24,7 +24,7 @@
 // SOFTWARE.
 
 use failure::Fail;
-use stegos_blockchain::{BlockError, BlockchainError};
+use stegos_blockchain::{BlockError, BlockchainError, StorageError};
 use stegos_crypto::hash::Hash;
 
 #[derive(Debug, Fail, PartialEq, Eq)]
@@ -52,25 +52,6 @@ pub enum NodeTransactionError {
     MempoolIsFull(Hash),
 }
 
-#[derive(Debug, Fail, PartialEq, Eq)]
-pub enum NodeBlockError {
-    #[fail(
-        display = "Invalid block proposal: epoch={}, expected={}, got={}",
-        _0, _1, _2
-    )]
-    InvalidBlockProposal(u64, Hash, Hash),
-    #[fail(
-        display = "Invalid block epoch found: block_epoch={}, chain_epoch={}",
-        _0, _1
-    )]
-    InvalidBlockEpoch(u64, u64),
-    #[fail(
-        display = "Proposed view_change different from ours: epoch={}, block={}, block_viewchange={}, our_viewchange={}",
-        _0, _1, _2, _3
-    )]
-    OutOfSyncViewChange(u64, Hash, u32, u32),
-}
-
 #[derive(Debug, Fail)]
 pub enum ForkError {
     #[fail(display = "Our branch is more significant, drop this block.")]
@@ -85,12 +66,6 @@ impl From<failure::Error> for ForkError {
     }
 }
 
-impl From<NodeBlockError> for ForkError {
-    fn from(err: NodeBlockError) -> ForkError {
-        ForkError::Error(err.into())
-    }
-}
-
 impl From<BlockError> for ForkError {
     fn from(err: BlockError) -> ForkError {
         ForkError::Error(err.into())
@@ -99,6 +74,12 @@ impl From<BlockError> for ForkError {
 
 impl From<BlockchainError> for ForkError {
     fn from(err: BlockchainError) -> ForkError {
+        ForkError::Error(err.into())
+    }
+}
+
+impl From<StorageError> for ForkError {
+    fn from(err: StorageError) -> ForkError {
         ForkError::Error(err.into())
     }
 }

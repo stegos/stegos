@@ -32,6 +32,8 @@ use stegos_crypto::pbc;
 use stegos_crypto::scc::PublicKey;
 use stegos_crypto::CryptoError;
 
+pub type StorageError = rocksdb::Error;
+
 #[derive(Debug, Fail)]
 pub enum BlockchainError {
     #[fail(
@@ -65,8 +67,8 @@ pub enum BlockchainError {
         _0, _1, _2
     )]
     StakeIsLocked(pbc::PublicKey, i64, i64),
-    #[fail(display = "Internal storage error={}", _0)]
-    StorageError(rocksdb::Error),
+    #[fail(display = "Storage I/O error={}", _0)]
+    StorageError(StorageError),
     #[fail(display = "Transaction error={}", _0)]
     TransactionError(TransactionError),
     #[fail(display = "Block error={}", _0)]
@@ -359,6 +361,41 @@ pub enum BlockError {
         _0, _1, _2, _3
     )]
     OutOfSyncTimestamp(u64, Hash, Timestamp, Timestamp),
+    #[fail(
+        display = "Invalid block proposal: epoch={}, expected={}, got={}",
+        _0, _1, _2
+    )]
+    InvalidBlockProposal(u64, Hash, Hash),
+    #[fail(
+        display = "Invalid block epoch found: block_epoch={}, chain_epoch={}",
+        _0, _1
+    )]
+    InvalidBlockEpoch(u64, u64),
+    #[fail(
+        display = "Proposed view_change different from ours: epoch={}, block={}, block_viewchange={}, our_viewchange={}",
+        _0, _1, _2, _3
+    )]
+    OutOfSyncViewChange(u64, Hash, u32, u32),
+    #[fail(
+        display = "Invalid number of inputs in a macro block: epoch={}, block={}, expected={}, got={}",
+        _0, _1, _2, _3
+    )]
+    InvalidInputsLen(u64, Hash, usize, usize),
+    #[fail(
+        display = "Invalid number of outputs in a macro block: epoch={}, block={}, expected={}, got={}",
+        _0, _1, _2, _3
+    )]
+    InvalidOutputsLen(u64, Hash, usize, usize),
+    #[fail(
+        display = "Macro block is too large: epoch={}, block={}, got_inputs={}, max_inputs={}",
+        _0, _1, _2, _3
+    )]
+    TooManyInputs(u64, Hash, usize, usize),
+    #[fail(
+        display = "Macro block is too large: epoch={}, block={}, got_outputs={}, max_outputs={}",
+        _0, _1, _2, _3
+    )]
+    TooManyOutputs(u64, Hash, usize, usize),
 }
 
 #[derive(Debug, Fail)]

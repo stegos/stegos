@@ -100,6 +100,7 @@ pub(crate) fn validate_external_transaction(
         if mempool.contains_output(&output_hash) || chain.contains_output(&output_hash) {
             return Err(TransactionError::OutputHashCollision(tx_hash, output_hash).into());
         }
+        output.validate()?;
     }
 
     match tx {

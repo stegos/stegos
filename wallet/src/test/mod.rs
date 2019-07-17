@@ -156,7 +156,7 @@ impl AccountSandbox {
     }
 
     pub fn poll(&mut self) {
-        futures_testing::execute(|| self.account_service.poll());
+        futures_testing::execute(|_| self.account_service.poll());
     }
 }
 

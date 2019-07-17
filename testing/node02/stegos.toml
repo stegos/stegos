@@ -10,7 +10,7 @@ force_check = true
 bind_ip = "127.0.0.1"
 bind_port = 10056
 advertise_local_ips = false
-hashcash_nbits = 4
+hashcash_difficulty = 100
 seed_nodes = [
     "/ip4/127.0.0.1/tcp/10055",
     "/ip4/127.0.0.1/tcp/10057",

@@ -27,6 +27,8 @@ use super::*;
 use crate::*;
 use std::collections::HashSet;
 use stegos_blockchain::Block;
+use stegos_blockchain::Output;
+use stegos_blockchain::ValidatorAwardState;
 
 // CASE rollback slashing:
 // Nodes [A, B, C, D]
@@ -406,5 +408,226 @@ fn finalized_slashing_with_service_award_for_auditor() {
             .service_awards()
             .clone();
         assert_eq!(award, auditor_award);
+    });
+}
+
+fn service_award_round_normal(s: &mut Sandbox, service_award_budget: i64) {
+    let offset = s.first().node_service.chain.offset();
+    let epoch = s.first().node_service.chain.epoch();
+
+    // ignore microblocks for auditor
+    for _offset in offset..s.config.chain.micro_blocks_in_epoch {
+        s.poll();
+        s.skip_micro_block();
+    }
+
+    s.skip_macro_block();
+    for node in s.iter_mut() {
+        //award was executed
+        assert_eq!(node.node_service.chain.service_awards().budget(), 0);
+        assert_eq!(
+            node.node_service.chain.last_block_hash(),
+            node.node_service.chain.last_macro_block_hash()
+        );
+        let block_hash = node.node_service.chain.last_block_hash();
+        let block = node.node_service.chain.macro_block(epoch).unwrap();
+        assert_eq!(Hash::digest(&block), block_hash);
+        let mut outputs = Vec::new();
+        for output in block.outputs {
+            match output {
+                Output::PublicPaymentOutput(p) => outputs.push(p),
+                _ => {}
+            }
+        }
+
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(outputs[0].amount, service_award_budget);
+    }
+
+    s.assert_synchronized();
+}
+
+fn service_award_round_without_participants(s: &mut Sandbox) {
+    let offset = s.first().node_service.chain.offset();
+    let epoch = s.first().node_service.chain.epoch();
+
+    let mut nodes: HashSet<_> = s.iter().map(|n| n.node_service.network_pkey).collect();
+
+    // skipp all leaders atleast once
+    for offset in offset..s.config.chain.micro_blocks_in_epoch {
+        s.poll();
+
+        let leader_pk = s.first().chain().leader();
+
+        let second_leader = s.future_view_change_leader(1);
+        // if leader already skipper, or next view_change_leader is current, just skip_micro_block
+        if !nodes.contains(&leader_pk) || second_leader == leader_pk {
+            s.skip_micro_block();
+            continue;
+        }
+
+        // check that this leader didn't failed at current epoch
+        for node in s.iter_mut() {
+            assert_eq!(
+                node.node_service
+                    .chain
+                    .epoch_activity()
+                    .get(&leader_pk)
+                    .unwrap_or(&ValidatorAwardState::Active),
+                &ValidatorAwardState::Active
+            );
+        }
+
+        let node = s.node(&leader_pk).unwrap();
+        node.handle_vdf();
+        node.poll();
+
+        s.wait(s.config.node.micro_block_timeout);
+        s.poll();
+
+        // emulate dead leader for other nodes
+        // filter messages from chain loader.
+        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        // filter block message from node.
+        s.filter_broadcast(&[crate::SEALED_BLOCK_TOPIC]);
+        info!("======= PARTITION BEGIN =======");
+        let mut r = s.split(&[leader_pk]);
+
+        let mut msgs = Vec::new();
+        for node in &mut r.parts.1.nodes {
+            let msg: ViewChangeMessage = node.network_service.get_broadcast(VIEW_CHANGE_TOPIC);
+            msgs.push(msg);
+        }
+        assert_eq!(msgs.len(), 3);
+
+        info!("======= BROADCAST VIEW_CHANGES =======");
+        for node in &mut r.parts.1.nodes {
+            for msg in &msgs {
+                node.network_service
+                    .receive_broadcast(crate::VIEW_CHANGE_TOPIC, msg.clone())
+            }
+        }
+        r.parts.1.poll();
+        r.parts.0.filter_broadcast(&[crate::VIEW_CHANGE_TOPIC]);
+        let new_leader_node = r.parts.1.node(&second_leader).unwrap();
+        new_leader_node.handle_vdf();
+        new_leader_node.poll();
+        info!("======= BROADCAST BLOCK =======");
+        let block: Block = new_leader_node
+            .network_service
+            .get_broadcast(crate::SEALED_BLOCK_TOPIC);
+
+        for node in s.iter_mut() {
+            node.network_service
+                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone())
+        }
+
+        s.auditor
+            .network_service
+            .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
+
+        s.poll();
+
+        s.assert_synchronized();
+
+        // check that after failing leader marked as failed.
+        for node in s.iter_mut() {
+            assert_eq!(
+                node.node_service
+                    .chain
+                    .epoch_activity()
+                    .get(&leader_pk)
+                    .unwrap(),
+                &ValidatorAwardState::FailedAt(epoch, offset)
+            );
+        }
+
+        nodes.remove(&leader_pk);
+    }
+
+    assert!(
+        nodes.is_empty(),
+        "Too few microblocks, test failed to skip all leaders."
+    );
+
+    s.skip_macro_block();
+
+    let service_award_budget = s.config.chain.service_award_per_epoch;
+    for node in s.iter_mut() {
+        //award was executed without winners, list of activity should be cleared
+        assert_eq!(
+            node.node_service.chain.service_awards().budget(),
+            service_award_budget
+        );
+        assert_eq!(
+            node.node_service
+                .chain
+                .service_awards()
+                .validators_activivty()
+                .len(),
+            0
+        );
+        assert_eq!(
+            node.node_service.chain.last_block_hash(),
+            node.node_service.chain.last_macro_block_hash()
+        );
+        let block_hash = node.node_service.chain.last_block_hash();
+        let block = node.node_service.chain.macro_block(epoch).unwrap();
+        assert_eq!(Hash::digest(&block), block_hash);
+        let mut outputs = Vec::new();
+        for output in block.outputs {
+            match output {
+                Output::PublicPaymentOutput(p) => outputs.push(p),
+                _ => {}
+            }
+        }
+        assert_eq!(outputs.len(), 0);
+    }
+
+    s.assert_synchronized();
+}
+
+// CASE service award with 0 difficulty.
+// Assert that we have one winner.
+#[test]
+fn service_award_state() {
+    let mut cfg: ChainConfig = Default::default();
+    cfg.micro_blocks_in_epoch = 20;
+    // execute award alays
+    cfg.awards_difficulty = 0;
+    let config = SandboxConfig {
+        num_nodes: 4,
+        chain: cfg,
+        ..Default::default()
+    };
+
+    Sandbox::start(config, |mut s| {
+        s.poll();
+
+        let budget = s.config.chain.service_award_per_epoch;
+        service_award_round_normal(&mut s, budget);
+    });
+}
+
+// CASE service award with 0 difficulty, and every validator atleast once skip his order.
+// Assert that we have no winner, budget is equal to service_award_budget, and activity map is cleared.
+#[test]
+fn service_award_state_no_winners() {
+    let mut cfg: ChainConfig = Default::default();
+    cfg.micro_blocks_in_epoch = 50;
+    // execute award alays
+    cfg.awards_difficulty = 0;
+    let config = SandboxConfig {
+        num_nodes: 4,
+        chain: cfg,
+        ..Default::default()
+    };
+
+    Sandbox::start(config, |mut s| {
+        s.poll();
+        service_award_round_without_participants(&mut s);
+
+        let budget = s.config.chain.service_award_per_epoch;
+        service_award_round_normal(&mut s, budget * 2)
     });
 }

@@ -418,6 +418,7 @@ pub trait Api<'p> {
         let offset = self.first().node_service.chain.offset();
         let last_block = self.first().node_service.chain.last_block_hash();
         for node in self.iter() {
+            trace!("Checking node = {:?}", node.validator_id());
             assert_eq!(node.node_service.chain.epoch(), epoch);
             assert_eq!(node.node_service.chain.offset(), offset);
             assert_eq!(node.node_service.chain.last_block_hash(), last_block);

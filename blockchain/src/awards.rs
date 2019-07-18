@@ -54,6 +54,14 @@ impl Awards {
         }
     }
 
+    pub fn validators_activivty(&self) -> &BTreeMap<PublicKey, ValidatorAwardState> {
+        &self.validators_activity
+    }
+
+    pub fn budget(&self) -> i64 {
+        self.budget
+    }
+
     fn add_reward(&mut self, piece: i64) {
         assert!(piece > 0);
         self.budget += piece;

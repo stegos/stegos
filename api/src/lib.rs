@@ -155,19 +155,26 @@ pub fn decode<T: DeserializeOwned>(api_token: &ApiToken, msg: &str) -> Result<T,
         Ok(r) => r,
         Err(e) => {
             error!("Failed to base64::decode message: error={}", e);
-            return Err(WebSocketError::RequestError("Invalid request"));
+            return Err(WebSocketError::RequestError("Failed to base64::decode"));
         }
     };
     let msg = decrypt(api_token, &msg);
+    // Check for {} brackets in decoded message.
+    const LEFT_BRACKET: u8 = 123;
+    const RIGHT_BRACKET: u8 = 125;
+    if msg.len() < 2 || msg[0] != LEFT_BRACKET || msg[msg.len() - 1] != RIGHT_BRACKET {
+        error!("Failed to decrypt message");
+        return Err(WebSocketError::RequestError("Failed to decrypt"));
+    }
     let msg: T = match serde_json::from_slice(&msg) {
         Ok(r) => r,
         Err(e) => {
             error!(
-                "Failed to deserialize: msg={}, error={}",
+                "Failed to parse JSON: msg={}, error={}",
                 String::from_utf8_lossy(&msg),
                 e
             );
-            return Err(WebSocketError::RequestError("Invalid request"));
+            return Err(WebSocketError::RequestError("Failed to parse JSON"));
         }
     };
     Ok(msg)

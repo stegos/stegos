@@ -61,6 +61,13 @@ impl Mempool {
     }
 
     ///
+    /// Get TX by `input_hash`.
+    ///
+    pub fn get_tx_by_input(&self, input_hash: &Hash) -> Option<&Hash> {
+        self.inputs.get(input_hash)
+    }
+
+    ///
     /// Checks if the mempool contains a transaction with claims `output_hash`.
     ///
     pub fn contains_output(&self, output_hash: &Hash) -> bool {

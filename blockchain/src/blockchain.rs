@@ -1136,8 +1136,17 @@ impl Blockchain {
         debug!("Set difficulty to to {}", self.difficulty);
 
         info!(
-            "Registered a macro block: epoch={}, block={}",
-            epoch, block_hash
+            "Registered a macro block: epoch={}, block={}, inputs={:?}, outputs={:?}",
+            epoch,
+            block_hash,
+            inputs
+                .iter()
+                .map(|o| Hash::digest(o).to_string())
+                .collect::<Vec<String>>(),
+            outputs
+                .iter()
+                .map(|o| Hash::digest(o).to_string())
+                .collect::<Vec<String>>(),
         );
         debug!("Validators: {:?}", &self.validators());
 
@@ -1499,12 +1508,19 @@ impl Blockchain {
         metrics::EMISSION.set(self.balance().block_reward);
 
         info!(
-            "Registered a micro block: epoch={}, offset={}, block={}, inputs={}, outputs={}",
+            "Registered a micro block: epoch={}, offset={}, block={}, txs={:?}, inputs={:?}, outputs={:?}",
             epoch,
             offset,
             block_hash,
-            inputs.len(),
-            outputs.len()
+            txs.iter()
+                .map(|(h, _1tx)| h.to_string())
+                .collect::<Vec<String>>(),
+            inputs.iter()
+                .map(|o| Hash::digest(o).to_string())
+                .collect::<Vec<String>>(),
+            outputs.iter()
+                .map(|o| Hash::digest(o).to_string())
+                .collect::<Vec<String>>(),
         );
 
         Ok((inputs, outputs, txs))
@@ -1592,12 +1608,18 @@ impl Blockchain {
         metrics::EMISSION.set(self.balance().block_reward);
 
         info!(
-            "Reverted a micro block: epoch={}, offset={}, block={}, inputs={}, outputs={}",
+            "Reverted a micro block: epoch={}, offset={}, block={}, inputs={:?}, outputs={:?}",
             self.epoch,
             offset,
             &block_hash,
-            created.len(),
-            pruned.len()
+            created
+                .iter()
+                .map(|o| Hash::digest(o).to_string())
+                .collect::<Vec<String>>(),
+            pruned
+                .iter()
+                .map(|o| Hash::digest(o).to_string())
+                .collect::<Vec<String>>(),
         );
 
         Ok((pruned, created, removed))

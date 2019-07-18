@@ -63,7 +63,7 @@ impl Default for NodeConfig {
             max_inputs_in_block: 10000,
             max_outputs_in_block: 1000,
             max_inputs_in_mempool: 100000,
-            max_outputs_in_mempool: 10000,
+            max_outputs_in_mempool: 2,
             loader_speed_in_epoch: 100,
             min_payment_fee: 1_000, // 0.001 STG
             min_stake_fee: 0,       // free

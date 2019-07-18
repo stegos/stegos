@@ -126,9 +126,9 @@ pub fn report_metrics(_req: Request<Body>) -> Response<Body> {
     //
     // Calculate actual value of BLOCK_IDLE metric.
     //
-    let block_local_timestamp = stegos_node::metrics::BLOCK_LOCAL_TIMESTAMP.get();
-    if block_local_timestamp > 0 {
-        let timestamp: i64 = Timestamp::now().into();
+    let block_local_timestamp: f64 = stegos_node::metrics::BLOCK_LOCAL_TIMESTAMP.get();
+    if block_local_timestamp > 0.0 {
+        let timestamp: f64 = Timestamp::now().into();
         stegos_node::metrics::BLOCK_IDLE.set(timestamp - block_local_timestamp);
     }
     let mut buffer = vec![];

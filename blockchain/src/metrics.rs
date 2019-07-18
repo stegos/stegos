@@ -37,4 +37,63 @@ lazy_static! {
         register_int_gauge!("stegos_blockchain_offset", "Current microblock number").unwrap();
     pub static ref UTXO_LEN: IntGauge =
         register_int_gauge!("stegos_blockchain_utxo", "Size of UTXO map").unwrap();
+    pub static ref DIFFICULTY: IntGauge =
+        register_int_gauge!("stegos_blockchain_difficulty", "Current difficulty").unwrap();
+    pub static ref EMISSION: IntGauge =
+        register_int_gauge!("stegos_blockchain_emission", "Monetary emission").unwrap();
+    pub static ref MACRO_BLOCK_INPUTS: IntGauge = register_int_gauge!(
+        "stegos_macro_blocks_inputs",
+        "The number of inputs in a macro block."
+    )
+    .unwrap();
+    pub static ref MACRO_BLOCK_INPUTS_HG: Histogram = register_histogram!(
+        "stegos_macro_blocks_inputs_hg",
+        "Histogram of the number of inputs in a macro block.",
+        exponential_buckets(1.0, 2.0, 20).unwrap()
+    )
+    .unwrap();
+    pub static ref MACRO_BLOCK_OUTPUTS: IntGauge = register_int_gauge!(
+        "stegos_macro_blocks_outputs",
+        "The number of outputs in a macro block."
+    )
+    .unwrap();
+    pub static ref MACRO_BLOCK_OUTPUTS_HG: Histogram = register_histogram!(
+        "stegos_macro_blocks_outputs_hg",
+        "Histogram of the number of outputs in a macro block.",
+        exponential_buckets(1.0, 2.0, 20).unwrap()
+    )
+    .unwrap();
+    pub static ref MICRO_BLOCK_INPUTS: IntGauge = register_int_gauge!(
+        "stegos_micro_blocks_inputs",
+        "The number of inputs in a micro block."
+    )
+    .unwrap();
+    pub static ref MICRO_BLOCK_INPUTS_HG: Histogram = register_histogram!(
+        "stegos_micro_blocks_inputs_hg",
+        "Histogram of the number of inputs in a micro block.",
+        exponential_buckets(1.0, 2.0, 20).unwrap()
+    )
+    .unwrap();
+    pub static ref MICRO_BLOCK_OUTPUTS: IntGauge = register_int_gauge!(
+        "stegos_micro_blocks_outputs",
+        "The number of outputs in a micro block."
+    )
+    .unwrap();
+    pub static ref MICRO_BLOCK_OUTPUTS_HG: Histogram = register_histogram!(
+        "stegos_micro_blocks_outputs_hg",
+        "Histogram of the number of outputs in a micro block.",
+        exponential_buckets(1.0, 2.0, 20).unwrap()
+    )
+    .unwrap();
+    pub static ref MICRO_BLOCK_TRANSACTIONS: IntGauge = register_int_gauge!(
+        "stegos_micro_blocks_transactions",
+        "The number of transactions in a micro block."
+    )
+    .unwrap();
+    pub static ref MICRO_BLOCK_TRANSACTIONS_HG: Histogram = register_histogram!(
+        "stegos_micro_blocks_transactions_hg",
+        "Histogram of the number of transactions in a micro block.",
+        exponential_buckets(1.0, 2.0, 20).unwrap()
+    )
+    .unwrap();
 }

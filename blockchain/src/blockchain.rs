@@ -1134,14 +1134,25 @@ impl Blockchain {
         );
         self.difficulty = block.header.difficulty;
         debug!("Set difficulty to to {}", self.difficulty);
-        metrics::EPOCH.inc();
-        metrics::OFFSET.set(0);
 
         info!(
             "Registered a macro block: epoch={}, block={}",
             epoch, block_hash
         );
         debug!("Validators: {:?}", &self.validators());
+
+        //
+        // Update metrics.
+        //
+        metrics::EPOCH.inc();
+        metrics::OFFSET.set(0);
+        metrics::MACRO_BLOCK_INPUTS.set(inputs.len() as i64);
+        metrics::MACRO_BLOCK_OUTPUTS.set(outputs.len() as i64);
+        metrics::MACRO_BLOCK_INPUTS_HG.observe(inputs.len() as f64);
+        metrics::MACRO_BLOCK_OUTPUTS_HG.observe(outputs.len() as f64);
+        metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
+        metrics::EMISSION.set(self.balance().block_reward);
+        metrics::DIFFICULTY.set(self.difficulty as i64);
         for (key, stake) in self.validators().iter() {
             let key_str = key.to_string();
             metrics::VALIDATOR_STAKE_GAUGEVEC
@@ -1340,7 +1351,6 @@ impl Blockchain {
         }
         self.balance.insert(lsn, (), balance);
         assert_eq!(self.balance.current_lsn(), lsn);
-        metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
     }
 
     ///
@@ -1470,11 +1480,23 @@ impl Blockchain {
         self.last_block_timestamp = block.header.timestamp;
         self.last_block_hash = block_hash;
         self.offset += 1;
-        metrics::OFFSET.set(self.offset as i64);
         let mut election_result = self.election_result().clone();
         election_result.view_change = 0;
         election_result.random = block.header.random;
         self.election_result.insert(lsn, (), election_result);
+
+        //
+        // Update metrics.
+        //
+        metrics::OFFSET.set(self.offset as i64);
+        metrics::MICRO_BLOCK_INPUTS.set(inputs.len() as i64);
+        metrics::MICRO_BLOCK_OUTPUTS.set(outputs.len() as i64);
+        metrics::MICRO_BLOCK_TRANSACTIONS.set(txs.len() as i64);
+        metrics::MICRO_BLOCK_INPUTS_HG.observe(inputs.len() as f64);
+        metrics::MICRO_BLOCK_OUTPUTS_HG.observe(outputs.len() as f64);
+        metrics::MICRO_BLOCK_TRANSACTIONS_HG.observe(txs.len() as f64);
+        metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
+        metrics::EMISSION.set(self.balance().block_reward);
 
         info!(
             "Registered a micro block: epoch={}, offset={}, block={}, inputs={}, outputs={}",
@@ -1533,8 +1555,6 @@ impl Blockchain {
         self.last_block_hash = previous;
         self.last_block_timestamp = last_block_timestamp;
         self.reset_view_change();
-        metrics::OFFSET.set(self.offset as i64);
-        metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
 
         let mut created: Vec<Output> = Vec::new();
         let mut pruned: Vec<Output> = Vec::new();
@@ -1563,6 +1583,13 @@ impl Blockchain {
                 _ => continue,
             }
         }
+
+        //
+        // Update metrics.
+        //
+        metrics::OFFSET.set(self.offset as i64);
+        metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
+        metrics::EMISSION.set(self.balance().block_reward);
 
         info!(
             "Reverted a micro block: epoch={}, offset={}, block={}, inputs={}, outputs={}",

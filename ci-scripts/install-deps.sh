@@ -16,14 +16,14 @@ install_deps_linux() {
             wget \
             zlib1g-dev
 
-    (cd /usr/local && curl -L https://github.com/stegos/stegos-external-libs/releases/download/v0.4/stegos-external-libs-linux.tgz |
+    (cd /usr/local && curl -L https://github.com/stegos/stegos-external-libs/releases/download/v0.5/stegos-external-libs-linux.tgz |
         tar xvfz -)
     ldconfig
 }
 
 install_deps_macos() {
     brew install gmp mpfr protobuf zlib cmake pkg-config
-    (cd /usr/local && curl -L https://github.com/stegos/stegos-external-libs/releases/download/v0.3/stegos-external-libs-osx.tgz |
+    (cd /usr/local && curl -L https://github.com/stegos/stegos-external-libs/releases/download/v0.5/stegos-external-libs-osx.tgz |
         tar xvfz -)
 }
 

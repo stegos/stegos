@@ -82,6 +82,8 @@ struct WebSocketHandler {
     node_responses: Vec<(RequestId, oneshot::Receiver<NodeResponse>)>,
     /// Synchronization Status Changed Notification.
     node_notifications: mpsc::UnboundedReceiver<NodeNotification>,
+    /// Server version.
+    version: String,
 }
 
 impl WebSocketHandler {
@@ -93,6 +95,7 @@ impl WebSocketHandler {
         network: Network,
         wallet: Wallet,
         node: Node,
+        version: String,
     ) -> Self {
         let need_flush = false;
         let mut network_unicast = HashMap::new();
@@ -120,6 +123,7 @@ impl WebSocketHandler {
             node,
             node_responses,
             node_notifications,
+            version,
         }
     }
 
@@ -128,6 +132,10 @@ impl WebSocketHandler {
         network_request: NetworkRequest,
     ) -> Result<NetworkResponse, Error> {
         match network_request {
+            NetworkRequest::VersionInfo {} => {
+                let version = self.version.clone();
+                Ok(NetworkResponse::VersionInfo { version })
+            }
             NetworkRequest::SubscribeUnicast { topic } => {
                 if !self.network_unicast.contains_key(&topic) {
                     let rx = self.network.subscribe_unicast(&topic)?;
@@ -383,11 +391,13 @@ impl WebSocketServer {
         network: Network,
         wallet: Wallet,
         node: Node,
+        version: String,
     ) -> Result<(), Error> {
         let executor2 = executor.clone();
         let network2 = network.clone();
         let wallet2 = wallet.clone();
         let node2 = node.clone();
+        let version2 = version.clone();
         let addr: SocketAddr = endpoint.parse()?;
         info!("Starting WebSocket API on {}", &addr);
         let server = TcpListener::bind(&addr)?
@@ -399,6 +409,7 @@ impl WebSocketServer {
                 let network3 = network2.clone();
                 let wallet3 = wallet2.clone();
                 let node3 = node2.clone();
+                let version3 = version2.clone();
                 let peer = match s.peer_addr() {
                     Ok(p) => p,
                     Err(e) => {
@@ -431,6 +442,7 @@ impl WebSocketServer {
                                     network3.clone(),
                                     wallet3.clone(),
                                     node3.clone(),
+                                    version3.clone(),
                                 )
                             })
                             .map_err(move |e| {

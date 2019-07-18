@@ -269,6 +269,7 @@ fn run() -> Result<(), Error> {
             network.clone(),
             wallet.clone(),
             node.clone(),
+            version,
         )?;
     }
 

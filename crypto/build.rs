@@ -16,6 +16,7 @@ fn main() {
 
     // Tell rustc to link against flint and gmp
     println!("cargo:rustc-link-search=/usr/local/lib");
+    println!("cargo:rustc-link-search=/usr/lib");
     println!("cargo:rustc-link-search=/usr/lib/x86_64-linux-gnu");
     println!("cargo:rustc-link-lib=static=flint");
     println!("cargo:rustc-link-lib=static=gmp");

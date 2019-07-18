@@ -103,6 +103,18 @@ impl Into<i64> for Timestamp {
     }
 }
 
+impl From<f64> for Timestamp {
+    fn from(timestamp: f64) -> Self {
+        Timestamp((timestamp * 1e9).round() as u64)
+    }
+}
+
+impl Into<f64> for Timestamp {
+    fn into(self) -> f64 {
+        self.0 as f64 / 1e9
+    }
+}
+
 impl From<SystemTime> for Timestamp {
     fn from(timestamp: SystemTime) -> Self {
         let since_the_epoch = timestamp

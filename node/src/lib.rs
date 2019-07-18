@@ -489,7 +489,7 @@ impl NodeService {
                   self.chain.offset(),
                   self.chain.last_block_hash());
 
-            metrics::CHEATS.inc();
+            metrics::MICRO_BLOCKS_CHEATS.inc();
 
             let proof = SlashingProof::new_unchecked(remote.clone(), local);
 
@@ -605,7 +605,7 @@ impl NodeService {
             return Err(BlockError::InvalidViewChangeProof(epoch, proof.proof, e).into());
         }
 
-        metrics::FORKS.inc();
+        metrics::MICRO_BLOCKS_FORKS.inc();
 
         warn!(
             "A fork detected: epoch={}, offset={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, current_offset={}",
@@ -912,7 +912,7 @@ impl NodeService {
             outputs: outputs.clone(),
         };
 
-        self.on_block_added(timestamp);
+        self.on_block_added(timestamp, true);
 
         let event: NodeNotification = msg.into();
         self.on_node_notification
@@ -941,6 +941,7 @@ impl NodeService {
 
         // Validate Micro Block.
         {
+            let _timer = metrics::MICRO_BLOCK_VALIDATE_TIME_HG.start_timer();
             let mut outputs: Vec<&Output> = Vec::new();
             for tx in &block.transactions {
                 // Skip trransactions from mempool.
@@ -1004,7 +1005,7 @@ impl NodeService {
             outputs: outputs.clone(),
         };
 
-        self.on_block_added(timestamp);
+        self.on_block_added(timestamp, false);
 
         let event: NodeNotification = msg.into();
         self.on_node_notification
@@ -1013,17 +1014,28 @@ impl NodeService {
     }
 
     /// update metrics and statuses on block processing.
-    fn on_block_added(&mut self, timestamp: Timestamp) {
+    fn on_block_added(&mut self, timestamp: Timestamp, mblock: bool) {
         metrics::MEMPOOL_TRANSACTIONS.set(self.mempool.len() as i64);
         metrics::MEMPOOL_INPUTS.set(self.mempool.inputs_len() as i64);
         metrics::MEMPOOL_OUTPUTS.set(self.mempool.inputs_len() as i64);
+        let last_block_clock = self.last_block_clock;
         self.last_block_clock = clock::now();
-        let local_timestamp: i64 = Timestamp::now().into();
-        let remote_timestamp: i64 = timestamp.into();
-        let lag = local_timestamp - remote_timestamp;
+        let local_timestamp: f64 = Timestamp::now().into();
+        let remote_timestamp: f64 = timestamp.into();
+        let lag = local_timestamp - remote_timestamp; // can be negative.
         metrics::BLOCK_REMOTE_TIMESTAMP.set(remote_timestamp);
         metrics::BLOCK_LOCAL_TIMESTAMP.set(local_timestamp);
         metrics::BLOCK_LAG.set(lag); // can be negative.
+        if mblock {
+            metrics::MACRO_BLOCK_LAG.set(lag);
+            metrics::MACRO_BLOCK_LAG_HG.observe(lag);
+        } else {
+            metrics::MICRO_BLOCK_LAG.set(lag);
+            metrics::MICRO_BLOCK_LAG_HG.observe(lag);
+            let interval = self.last_block_clock.duration_since(last_block_clock);
+            let interval = (interval.as_secs() as f64) + (interval.subsec_nanos() as f64) * 1e-9;
+            metrics::MICRO_BLOCK_INTERVAL_HG.observe(interval);
+        }
         self.on_sync_changed();
         self.update_validation_status();
     }
@@ -1367,6 +1379,7 @@ impl NodeService {
         };
 
         if consensus.should_prevote() {
+            let _timer = metrics::MACRO_BLOCK_VALIDATE_TIME_HG.start_timer();
             let (block_hash, block_proposal, view_change) = consensus.get_proposal();
             match self.chain.validate_proposed_macro_block(
                 view_change,
@@ -1454,6 +1467,8 @@ impl NodeService {
             consensus.round(),
         );
 
+        let _timer = metrics::MACRO_BLOCK_CREATE_TIME_HG.start_timer();
+
         // Propose a new block.
         let recipient_pkey = self
             .chain
@@ -1502,7 +1517,7 @@ impl NodeService {
             warn!("Timed out while waiting for the committed block from the leader, applying automatically: epoch={}",
                   self.chain.epoch()
             );
-            metrics::AUTOCOMMIT.inc();
+            metrics::MACRO_BLOCKS_AUTOCOMMITS.inc();
             // Auto-commit proposed block and send it to the network.
             self.commit_proposed_block();
             return Ok(());
@@ -1638,6 +1653,7 @@ impl NodeService {
             "Creating a new micro block: epoch={}, offset={}, view_change={}, last_block={}",
             epoch, offset, view_change, previous
         );
+        let _timer = metrics::MICRO_BLOCK_CREATE_TIME_HG.start_timer();
 
         for (cheater, proof) in &self.cheating_proofs {
             // the cheater was already punished, so we keep proofs for rollback case,

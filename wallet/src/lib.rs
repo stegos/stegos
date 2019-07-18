@@ -1379,7 +1379,12 @@ impl WalletService {
         // Scan directory for accounts.
         for entry in fs::read_dir(accounts_dir)? {
             let entry = entry?;
-            if entry.path().starts_with(".") || !entry.file_type()?.is_dir() {
+            let name = entry.file_name().into_string();
+            // Skip non-UTF-8 filenames
+            if name.is_err() {
+                continue;
+            }
+            if name.unwrap().starts_with(".") || !entry.file_type()?.is_dir() {
                 continue;
             }
 

@@ -628,6 +628,18 @@ impl Blockchain {
             )
             .into());
         }
+        for (input_hash, input) in block.inputs.iter().zip(inputs) {
+            if let Some(timestamp) = input.locked_timestamp() {
+                if timestamp >= self.last_macro_block_timestamp() {
+                    return Err(OutputError::UtxoLocked(
+                        *input_hash,
+                        timestamp,
+                        self.last_macro_block_timestamp(),
+                    )
+                    .into());
+                }
+            }
+        }
 
         //
         // Validate outputs.

@@ -53,6 +53,8 @@ fn is_request_id_default(id: &RequestId) -> bool {
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkRequest {
+    // VersionInfo is not about Network, but let's keep it here to simplify all things.
+    VersionInfo {},
     SubscribeUnicast {
         topic: String,
     },
@@ -80,6 +82,7 @@ pub enum NetworkRequest {
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkResponse {
+    VersionInfo { version: String },
     SubscribedUnicast,
     SubscribedBroadcast,
     UnsubscribedUnicast,

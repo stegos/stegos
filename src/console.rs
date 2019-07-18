@@ -592,14 +592,7 @@ impl ConsoleService {
             let request = AccountRequest::CloakAll { payment_fee };
             self.send_account_request(request)?
         } else if msg == "show version" {
-            eprintln!(
-                "Stegos {}.{}.{} ({} {})",
-                env!("VERSION_MAJOR"),
-                env!("VERSION_MINOR"),
-                env!("VERSION_PATCH"),
-                env!("VERSION_COMMIT"),
-                env!("VERSION_DATE")
-            );
+            self.send_network_request(NetworkRequest::VersionInfo {})?;
             return Ok(true);
         } else if msg == "show keys" {
             let request = AccountRequest::KeysInfo {};

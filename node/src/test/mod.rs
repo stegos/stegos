@@ -47,6 +47,10 @@ use stegos_network::Network;
 use tempdir::TempDir;
 use tokio_timer::Timer;
 
+use rand::{thread_rng, Rng};
+use rand_core::SeedableRng;
+use rand_isaac::IsaacRng;
+
 pub struct SandboxConfig {
     pub node: NodeConfig,
     pub chain: ChainConfig,
@@ -72,6 +76,7 @@ pub struct Sandbox<'timer> {
     pub keychains: Vec<KeyChain>,
     pub timer: &'timer mut Timer<TestTimer>,
     pub config: SandboxConfig,
+    pub prng: IsaacRng,
 }
 
 impl<'timer> Sandbox<'timer> {
@@ -84,11 +89,22 @@ impl<'timer> Sandbox<'timer> {
             let num_nodes = config.num_nodes;
             let timestamp = Timestamp::now();
 
+            let mut thread_rng = thread_rng();
+
+            let starting_seed = thread_rng.gen::<[u8; 32]>();
+
+            // to reproduce test, just uncomment this line,
+            // and replace this variable from the output seed.
+            //            let starting_seed = [98, 205, 131, 252, 208, 247, 228, 95, 76, 184, 202, 37, 219, 148, 172, 68, 132, 207, 102, 110, 93, 159, 16, 56, 2, 52, 104, 216, 246, 44, 148, 40];
+            trace!("Start test with seed = {:?}", starting_seed);
+
+            let mut prng = IsaacRng::from_seed(starting_seed);
             let (keychains, genesis) = fake_genesis(
                 config.chain.min_stake_amount,
                 1000 * config.chain.min_stake_amount,
                 num_nodes,
                 timestamp,
+                Some(&mut prng),
             );
             let mut nodes = Vec::new();
             for keys in keychains.clone() {
@@ -101,7 +117,7 @@ impl<'timer> Sandbox<'timer> {
                 );
                 nodes.push(node)
             }
-            let auditor_keychain = KeyChain::new();
+            let auditor_keychain = KeyChain::new(&mut prng);
             let auditor = NodeSandbox::new(
                 config.node.clone(),
                 config.chain.clone(),
@@ -116,6 +132,7 @@ impl<'timer> Sandbox<'timer> {
                 timer,
                 config,
                 auditor,
+                prng,
             };
 
             for node in sandbox.nodes.iter() {

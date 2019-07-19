@@ -1627,6 +1627,7 @@ pub mod tests {
             10 * cfg.min_stake_amount,
             3,
             timestamp,
+            None,
         );
         let chain_dir = TempDir::new("test").unwrap();
         let blockchain = Blockchain::new(cfg, chain_dir.path(), false, block1.clone(), timestamp)
@@ -1695,6 +1696,7 @@ pub mod tests {
             (NUM_NODES as i64) * cfg.min_stake_amount + 100,
             NUM_NODES,
             timestamp,
+            None,
         );
         let chain_dir = TempDir::new("test").unwrap();
         let mut chain = Blockchain::new(
@@ -1814,6 +1816,7 @@ pub mod tests {
             10 * cfg.min_stake_amount,
             1,
             block_timestamp0,
+            None,
         );
         let block_hash0 = Hash::digest(&genesis);
         let chain_dir = TempDir::new("test").unwrap();
@@ -2012,7 +2015,7 @@ pub mod tests {
         cfg.micro_blocks_in_epoch = 100500;
         let stake = cfg.min_stake_amount;
         let (keychains, blocks) =
-            test::fake_genesis(stake, 10 * cfg.min_stake_amount, 1, timestamp);
+            test::fake_genesis(stake, 10 * cfg.min_stake_amount, 1, timestamp, None);
         let chain_dir = TempDir::new("test").unwrap();
         let mut blockchain = Blockchain::new(cfg, chain_dir.path(), true, blocks, timestamp)
             .expect("Failed to create blockchain");

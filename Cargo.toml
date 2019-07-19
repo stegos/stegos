@@ -47,7 +47,7 @@ log = "0.4"
 log4rs = { version = "0.8", features = ["all_components", "gzip", "file", "toml_format"] }
 prometheus = "0.7"
 protobuf = "2.6"
-rand = "0.6"
+rand = "0.7.0"
 regex = "1.1"
 resolve = "0.2"
 rustyline = "4.1"

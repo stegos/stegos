@@ -827,7 +827,6 @@ impl Blockchain {
             .into());
         }
 
-        debug!("Macro block proposal is valid: block={:?}", block_hash);
         Ok(block)
     }
 
@@ -925,10 +924,6 @@ impl Blockchain {
         let epoch = block.header.epoch;
         let offset = block.header.offset;
         let block_hash = Hash::digest(&block);
-        debug!(
-            "Validating a micro block: epoch={}, offset={}, block={}",
-            epoch, offset, &block_hash
-        );
 
         // Check block version.
         if block.header.version != VERSION {
@@ -1106,11 +1101,6 @@ impl Blockchain {
                 .into_par_iter()
                 .try_for_each(|(_hash, o)| o.validate())?;
         }
-
-        debug!(
-            "The micro block is valid: epoch={}, block={}",
-            epoch, &block_hash
-        );
 
         Ok(())
     }

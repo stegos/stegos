@@ -49,7 +49,7 @@ lazy_static! {
     pub static ref MACRO_BLOCK_INPUTS_HG: Histogram = register_histogram!(
         "stegos_macro_blocks_inputs_hg",
         "Histogram of the number of inputs in a macro block.",
-        exponential_buckets(1.0, 2.0, 20).unwrap()
+        vec![1., 5., 10., 20., 30., 40., 50., 100., 1000.0]
     )
     .unwrap();
     pub static ref MACRO_BLOCK_OUTPUTS: IntGauge = register_int_gauge!(
@@ -60,7 +60,7 @@ lazy_static! {
     pub static ref MACRO_BLOCK_OUTPUTS_HG: Histogram = register_histogram!(
         "stegos_macro_blocks_outputs_hg",
         "Histogram of the number of outputs in a macro block.",
-        exponential_buckets(1.0, 2.0, 20).unwrap()
+        vec![1., 5., 10., 20., 30., 40., 50., 100.]
     )
     .unwrap();
     pub static ref MICRO_BLOCK_INPUTS: IntGauge = register_int_gauge!(
@@ -71,7 +71,7 @@ lazy_static! {
     pub static ref MICRO_BLOCK_INPUTS_HG: Histogram = register_histogram!(
         "stegos_micro_blocks_inputs_hg",
         "Histogram of the number of inputs in a micro block.",
-        exponential_buckets(1.0, 2.0, 20).unwrap()
+        vec![1., 5., 10., 20., 30., 40., 50., 100., 1000.0]
     )
     .unwrap();
     pub static ref MICRO_BLOCK_OUTPUTS: IntGauge = register_int_gauge!(
@@ -82,7 +82,7 @@ lazy_static! {
     pub static ref MICRO_BLOCK_OUTPUTS_HG: Histogram = register_histogram!(
         "stegos_micro_blocks_outputs_hg",
         "Histogram of the number of outputs in a micro block.",
-        exponential_buckets(1.0, 2.0, 20).unwrap()
+        vec![1., 5., 10., 20., 30., 40., 50., 100.]
     )
     .unwrap();
     pub static ref MICRO_BLOCK_TRANSACTIONS: IntGauge = register_int_gauge!(
@@ -93,7 +93,7 @@ lazy_static! {
     pub static ref MICRO_BLOCK_TRANSACTIONS_HG: Histogram = register_histogram!(
         "stegos_micro_blocks_transactions_hg",
         "Histogram of the number of transactions in a micro block.",
-        exponential_buckets(1.0, 2.0, 20).unwrap()
+        vec![1., 5., 10., 20., 30., 40., 50., 100.]
     )
     .unwrap();
 }

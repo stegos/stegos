@@ -874,6 +874,7 @@ impl NodeService {
     fn apply_macro_block(&mut self, block: MacroBlock) -> Result<(), Error> {
         let hash = Hash::digest(&block);
         let timestamp = Timestamp::now();
+        let block_timestamp = block.header.timestamp;
         let epoch = block.header.epoch;
         let was_synchronized = self.is_synchronized();
 
@@ -946,7 +947,7 @@ impl NodeService {
             outputs: outputs.clone(),
         };
 
-        self.on_block_added(timestamp, true);
+        self.on_block_added(block_timestamp, true);
 
         let event: NodeNotification = msg.into();
         self.on_node_notification
@@ -962,6 +963,7 @@ impl NodeService {
     fn apply_micro_block(&mut self, block: MicroBlock) -> Result<(), Error> {
         let hash = Hash::digest(&block);
         let timestamp = Timestamp::now();
+        let block_timestamp = block.header.timestamp;
         let epoch = block.header.epoch;
         let offset = block.header.offset;
 
@@ -974,11 +976,18 @@ impl NodeService {
         }
 
         // Validate Micro Block.
-        {
-            let _timer = metrics::MICRO_BLOCK_VALIDATE_TIME_HG.start_timer();
+        let inputs_len: usize = block.transactions.iter().map(|tx| tx.txins().len()).sum();
+        let outputs_len: usize = block.transactions.iter().map(|tx| tx.txouts().len()).sum();
+        let txs_len = block.transactions.len();
+        debug!(
+            "Validating a micro block: epoch={}, offset={}, block={}, inputs_len={}, outputs_len={}, txs_len={}",
+            epoch, offset, &hash, inputs_len, outputs_len, txs_len,
+        );
+        let start_clock = clock::now();
+        let r = {
             let mut outputs: Vec<&Output> = Vec::new();
             for tx in &block.transactions {
-                // Skip trransactions from mempool.
+                // Skip transactions from mempool.
                 let tx_hash = Hash::digest(&tx);
                 if let Some(tx2) = self.mempool.get_tx(&tx_hash) {
                     // Extra checks to avoid the second pre-image attack.
@@ -993,11 +1002,33 @@ impl NodeService {
                 // Transaction doesn't present in mempool.
                 outputs.extend(tx.txouts());
             }
-            // Validate all new outputs.
-            outputs.into_par_iter().try_for_each(Output::validate)?;
-            let validate_utxo = false; // validated above.
-            self.chain
-                .validate_micro_block(&block, timestamp, validate_utxo)?;
+            match outputs.into_par_iter().try_for_each(Output::validate) {
+                Ok(()) => {
+                    let validate_utxo = false; // validated above.
+                    self.chain
+                        .validate_micro_block(&block, timestamp, validate_utxo)
+                }
+                Err(e) => Err(e),
+            }
+        };
+        let duration = clock::now().duration_since(start_clock);
+        let duration = (duration.as_secs() as f64) + (duration.subsec_nanos() as f64) * 1e-9;
+        metrics::MICRO_BLOCK_VALIDATE_TIME.set(duration);
+        metrics::MICRO_BLOCK_VALIDATE_TIME_HG.observe(duration);
+        match r {
+            Ok(()) => {
+                debug!(
+                    "The micro block is valid: epoch={}, offset={}, block={}, inputs_len={}, outputs_len={}, txs_len={}, duration={:.3}",
+                    epoch, offset, &hash, inputs_len, outputs_len, txs_len, duration
+                );
+            }
+            Err(e) => {
+                error!(
+                    "The micro block is invalid: epoch={}, offset={}, block={}, inputs_len={}, outputs_len={}, txs_len={}, duration={:.3}, e={}",
+                    epoch, offset, &hash, inputs_len, outputs_len, txs_len, duration, e
+                );
+                return Err(e.into());
+            }
         }
 
         // Apply Micro Block.
@@ -1039,7 +1070,7 @@ impl NodeService {
             outputs: outputs.clone(),
         };
 
-        self.on_block_added(timestamp, false);
+        self.on_block_added(block_timestamp, false);
 
         let event: NodeNotification = msg.into();
         self.on_node_notification
@@ -1048,18 +1079,17 @@ impl NodeService {
     }
 
     /// update metrics and statuses on block processing.
-    fn on_block_added(&mut self, timestamp: Timestamp, mblock: bool) {
+    fn on_block_added(&mut self, block_timestamp: Timestamp, mblock: bool) {
         metrics::MEMPOOL_TRANSACTIONS.set(self.mempool.len() as i64);
         metrics::MEMPOOL_INPUTS.set(self.mempool.inputs_len() as i64);
         metrics::MEMPOOL_OUTPUTS.set(self.mempool.inputs_len() as i64);
         let last_block_clock = self.last_block_clock;
         self.last_block_clock = clock::now();
         let local_timestamp: f64 = Timestamp::now().into();
-        let remote_timestamp: f64 = timestamp.into();
+        let remote_timestamp: f64 = block_timestamp.into();
         let lag = local_timestamp - remote_timestamp; // can be negative.
         metrics::BLOCK_REMOTE_TIMESTAMP.set(remote_timestamp);
         metrics::BLOCK_LOCAL_TIMESTAMP.set(local_timestamp);
-        metrics::BLOCK_LAG.set(lag); // can be negative.
         if mblock {
             metrics::MACRO_BLOCK_LAG.set(lag);
             metrics::MACRO_BLOCK_LAG_HG.observe(lag);
@@ -1068,6 +1098,7 @@ impl NodeService {
             metrics::MICRO_BLOCK_LAG_HG.observe(lag);
             let interval = self.last_block_clock.duration_since(last_block_clock);
             let interval = (interval.as_secs() as f64) + (interval.subsec_nanos() as f64) * 1e-9;
+            metrics::MICRO_BLOCK_INTERVAL.set(interval);
             metrics::MICRO_BLOCK_INTERVAL_HG.observe(interval);
         }
         self.on_sync_changed();
@@ -1407,25 +1438,41 @@ impl NodeService {
     }
 
     fn handle_consensus_events(&mut self) {
+        let epoch = self.chain.epoch();
         let consensus = match &mut self.validation {
             MacroBlockValidator { consensus, .. } => consensus,
             _ => panic!("Expected MacroBlockValidator state"),
         };
 
         if consensus.should_prevote() {
-            let _timer = metrics::MACRO_BLOCK_VALIDATE_TIME_HG.start_timer();
             let (block_hash, block_proposal, view_change) = consensus.get_proposal();
-            match self.chain.validate_proposed_macro_block(
+            debug!(
+                "Validating a macro block proposal: epoch={}, block={}",
+                epoch, &block_hash
+            );
+            let start_clock = clock::now();
+            let r = self.chain.validate_proposed_macro_block(
                 view_change,
                 block_hash,
                 &block_proposal.header,
                 &block_proposal.transactions,
-            ) {
-                Ok(macro_block) => consensus.prevote(macro_block),
+            );
+            let duration = clock::now().duration_since(start_clock);
+            let duration = (duration.as_secs() as f64) + (duration.subsec_nanos() as f64) * 1e-9;
+            metrics::MACRO_BLOCK_VALIDATE_TIME.set(duration);
+            metrics::MACRO_BLOCK_VALIDATE_TIME_HG.observe(duration);
+            match r {
+                Ok(macro_block) => {
+                    debug!(
+                        "The macro block proposal is valid: epoch={}, block={}, duration={:.3}",
+                        epoch, &block_hash, duration
+                    );
+                    consensus.prevote(macro_block)
+                }
                 Err(e) => {
                     error!(
-                        "Invalid block proposal: block_hash={}, error={}",
-                        block_hash, e
+                        "The macro block proposal is invalid: epoch={}, block={}, duration={:.3}, e={}",
+                        epoch, &block_hash, duration, e
                     );
                     // TODO(vldm): Didn't go to state Prevote before checking proposed macro block.
                     // for now we just return to Propose state, it's a bit hacky,
@@ -1500,8 +1547,7 @@ impl NodeService {
             self.chain.epoch(),
             consensus.round(),
         );
-
-        let _timer = metrics::MACRO_BLOCK_CREATE_TIME_HG.start_timer();
+        let start_clock = clock::now();
 
         // Propose a new block.
         let recipient_pkey = self
@@ -1524,11 +1570,16 @@ impl NodeService {
             transactions,
         };
 
+        let duration = clock::now().duration_since(start_clock);
+        let duration = (duration.as_secs() as f64) + (duration.subsec_nanos() as f64) * 1e-9;
+        metrics::MACRO_BLOCK_CREATE_TIME.set(duration);
+        metrics::MACRO_BLOCK_CREATE_TIME_HG.observe(duration);
         info!(
-            "Created a new macro block proposal: epoch={}, view_change={}, hash={}",
+            "Created a new macro block proposal: epoch={}, view_change={}, hash={}, duration={:.3}",
             self.chain.epoch(),
             consensus.round(),
-            block_hash
+            block_hash,
+            duration
         );
 
         consensus.propose(block_hash, block_proposal);
@@ -1687,7 +1738,7 @@ impl NodeService {
             "Creating a new micro block: epoch={}, offset={}, view_change={}, last_block={}",
             epoch, offset, view_change, previous
         );
-        let _timer = metrics::MICRO_BLOCK_CREATE_TIME_HG.start_timer();
+        let start_clock = clock::now();
 
         for (cheater, proof) in &self.cheating_proofs {
             // the cheater was already punished, so we keep proofs for rollback case,
@@ -1729,13 +1780,18 @@ impl NodeService {
         // Sign block.
         block.sign(&self.network_skey, &self.network_pkey);
 
+        let duration = clock::now().duration_since(start_clock);
+        let duration = (duration.as_secs() as f64) + (duration.subsec_nanos() as f64) * 1e-9;
+        metrics::MICRO_BLOCK_CREATE_TIME.set(duration);
+        metrics::MICRO_BLOCK_CREATE_TIME_HG.observe(duration);
         info!(
-            "Created a micro block: epoch={}, offset={}, view_change={}, block={}, transactions={}",
+            "Created a micro block: epoch={}, offset={}, view_change={}, block={}, transactions={}, duration={:.3}",
             epoch,
             offset,
             view_change,
             &block_hash,
             block.transactions.len(),
+            duration,
         );
 
         let block2 = block.clone();

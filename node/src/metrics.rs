@@ -34,8 +34,6 @@ lazy_static! {
         register_gauge!("stegos_block_local_timestamp", "The local time at this node when the last block was registered.").unwrap();
     pub static ref BLOCK_IDLE: Gauge =
         register_gauge!("stegos_block_idle", "The elapsed time since the last block, i.e. it is the time difference between the local time at this node and the time when the last block was registered.").unwrap();
-    pub static ref BLOCK_LAG: Gauge =
-        register_gauge!("stegos_block_lag", "The last block creation + validation + propagation time, i.e. it is the time difference between the local time at a remote leader when the last block began to be created and the local time at this node when this block was registered.").unwrap();
 
     //
     // Macro Blocks.
@@ -50,27 +48,37 @@ lazy_static! {
         "The number of forced view_changes for the macro blocks."
     )
     .unwrap();
+    pub static ref MACRO_BLOCK_CREATE_TIME: Gauge = register_gauge!(
+        "stegos_macro_block_create_time",
+        "Macro block create time."
+    )
+    .unwrap();
     pub static ref MACRO_BLOCK_CREATE_TIME_HG: Histogram = register_histogram!(
         "stegos_macro_block_create_time_hg",
         "Histogram of macro block creation time",
-         linear_buckets(0.015, 0.005, 20).unwrap()
+         vec![0.020, 0.030, 0.040, 0.050, 0.060, 0.070, 0.080, 0.090, 0.100]
+    )
+    .unwrap();
+    pub static ref MACRO_BLOCK_VALIDATE_TIME: Gauge = register_gauge!(
+        "stegos_macro_block_validate_time",
+        "Macro block validate time."
     )
     .unwrap();
     pub static ref MACRO_BLOCK_VALIDATE_TIME_HG: Histogram = register_histogram!(
         "stegos_macro_block_validate_time_hg",
         "Histogram of macro block validation time",
-         linear_buckets(0.015, 0.005, 20).unwrap()
+          vec![0.005, 0.010, 0.015, 0.020, 0.025, 0.030, 0.035, 0.040, 0.050, 0.100]
     )
     .unwrap();
     pub static ref MACRO_BLOCK_LAG: Gauge = register_gauge!(
         "stegos_macro_block_lag",
-        "The same as stegos_block_lag, but only for macro blocks."
+        "Macro block creation + validation + propagation time, i.e. it is the time difference between the local time at a remote leader when the last block began to be created and the local time at this node when this block was registered."
     )
     .unwrap();
     pub static ref MACRO_BLOCK_LAG_HG: Histogram = register_histogram!(
         "stegos_macro_block_lag_hg",
         "Histogram of stegos_macro_block_lag",
-         linear_buckets(0.015, 0.005, 20).unwrap()
+         vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1., 2., 3., 4., 5.]
     )
     .unwrap();
 
@@ -83,7 +91,7 @@ lazy_static! {
     )
     .unwrap();
     pub static ref MICRO_BLOCKS_CHEATS: IntCounter = register_int_counter!(
-        "stegos_mirco_blocks_cheats",
+        "stegos_micro_blocks_cheats",
         "The number of duplicate blocks for the same slot detected"
     )
     .unwrap();
@@ -92,33 +100,48 @@ lazy_static! {
         "The number of forced view_changes for the micro blocks."
     )
     .unwrap();
+    pub static ref MICRO_BLOCK_CREATE_TIME: Gauge = register_gauge!(
+        "stegos_micro_block_create_time",
+        "Micro block create time."
+    )
+    .unwrap();
     pub static ref MICRO_BLOCK_CREATE_TIME_HG: Histogram = register_histogram!(
         "stegos_micro_block_create_time_hg",
         "Histogram of micro block creation time",
-         linear_buckets(0.015, 0.005, 20).unwrap()
+         vec![0.020, 0.030, 0.040, 0.050, 0.060, 0.070, 0.080, 0.090, 0.100]
+    )
+    .unwrap();
+    pub static ref MICRO_BLOCK_VALIDATE_TIME: Gauge = register_gauge!(
+        "stegos_micro_block_validate_time",
+        "Micro block validate time."
     )
     .unwrap();
     pub static ref MICRO_BLOCK_VALIDATE_TIME_HG: Histogram = register_histogram!(
         "stegos_micro_block_validate_time_hg",
         "Histogram of micro block validation time",
-         exponential_buckets(0.002, 2.0, 10).unwrap()
+         vec![0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2., 3., 4., 5.]
     )
     .unwrap();
     pub static ref MICRO_BLOCK_LAG: Gauge = register_gauge!(
         "stegos_micro_block_lag",
-        "The same as stegos_block_lag, but only for micro blocks."
+        "Like stegos_macro_block_lag, but for micro blocks."
     )
     .unwrap();
     pub static ref MICRO_BLOCK_LAG_HG: Histogram = register_histogram!(
-        "stegos_micro_blocks_lag_hg",
+        "stegos_micro_block_lag_hg",
         "Histogram of stegos_micro_block_lag.",
-        exponential_buckets(0.015, 2.0, 20).unwrap()
+         vec![0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2., 3., 4., 5., 6., 7., 8., 9., 10.]
+    )
+    .unwrap();
+    pub static ref MICRO_BLOCK_INTERVAL: Gauge = register_gauge!(
+        "stegos_micro_block_interval",
+        "Interval between two micro blocks."
     )
     .unwrap();
     pub static ref MICRO_BLOCK_INTERVAL_HG: Histogram = register_histogram!(
         "stegos_micro_block_interval_hg",
         "Histogram of micro block intervals",
-         exponential_buckets(0.002, 2.0, 10).unwrap()
+         vec![1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 20., 30., 40., 50., 60.]
     )
     .unwrap();
 

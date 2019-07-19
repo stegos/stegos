@@ -624,7 +624,7 @@ impl fmt::Display for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // display only first 6 bytes.
         let hex = self.to_hex();
-        write!(f, "PublicKey({})", &hex[0..12])
+        write!(f, "{}", &hex[0..12])
     }
 }
 

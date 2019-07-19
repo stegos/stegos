@@ -307,8 +307,21 @@ impl NodeService {
     /// Send transaction to node and to the network.
     fn send_transaction(&mut self, tx: Transaction) -> Result<(), Error> {
         let data = tx.into_buffer()?;
+        let tx_hash = Hash::digest(&tx);
         self.network.publish(&TX_TOPIC, data.clone())?;
-        info!("Sent transaction to the network: tx={}", Hash::digest(&tx));
+        info!(
+            "Sent transaction to the network: tx={}, inputs={:?}, outputs={:?}, fee={}",
+            &tx_hash,
+            tx.txins()
+                .iter()
+                .map(|h| h.to_string())
+                .collect::<Vec<String>>(),
+            tx.txouts()
+                .iter()
+                .map(|o| Hash::digest(o).to_string())
+                .collect::<Vec<String>>(),
+            tx.fee()
+        );
         self.handle_transaction(tx)?;
         Ok(())
     }
@@ -318,52 +331,61 @@ impl NodeService {
         let tx_hash = Hash::digest(&tx);
         if !self.is_synchronized() {
             debug!(
-                "Node is not synchronized - ignore transaction from the network: tx={}, inputs={}, outputs={}, fee={}",
+                "Node is not synchronized - ignore transaction from the network: tx={}, inputs={:?}, outputs={:?}, fee={}",
                 &tx_hash,
-                tx.txins().len(),
-                tx.txouts().len(),
+                tx.txins(),
+                tx.txouts().iter().map(Hash::digest),
                 tx.fee()
             );
             return Ok(());
         }
         info!(
-            "Received transaction from the network: tx={}, inputs={}, outputs={}, fee={}",
+            "Received transaction from the network: tx={}, inputs={:?}, outputs={:?}, fee={}",
             &tx_hash,
-            tx.txins().len(),
-            tx.txouts().len(),
+            tx.txins()
+                .iter()
+                .map(|h| h.to_string())
+                .collect::<Vec<String>>(),
+            tx.txouts()
+                .iter()
+                .map(|o| Hash::digest(o).to_string())
+                .collect::<Vec<String>>(),
             tx.fee()
         );
 
         // Check that transaction has proper type.
-        match &tx {
-            Transaction::PaymentTransaction(_tx) => {}
-            Transaction::RestakeTransaction(_tx) => {}
+        let check_limits = match &tx {
+            Transaction::PaymentTransaction(_tx) => true,
+            Transaction::RestakeTransaction(_tx) => false,
             _ => return Err(NodeTransactionError::InvalidType(tx_hash).into()),
         };
 
-        // Limit the number of inputs and outputs.
-        if tx.txins().len() > self.cfg.max_inputs_in_tx {
-            return Err(NodeTransactionError::TooManyInputs(
-                tx_hash,
-                tx.txins().len(),
-                self.cfg.max_inputs_in_tx,
-            )
-            .into());
-        }
-        if tx.txouts().len() > self.cfg.max_outputs_in_tx {
-            return Err(NodeTransactionError::TooManyOutputs(
-                tx_hash,
-                tx.txouts().len(),
-                self.cfg.max_outputs_in_tx,
-            )
-            .into());
-        }
+        // Ignore all limits for RestakeTransaction.
+        if check_limits {
+            // Limit the number of inputs and outputs.
+            if tx.txins().len() > self.cfg.max_inputs_in_tx {
+                return Err(NodeTransactionError::TooManyInputs(
+                    tx_hash,
+                    tx.txins().len(),
+                    self.cfg.max_inputs_in_tx,
+                )
+                .into());
+            }
+            if tx.txouts().len() > self.cfg.max_outputs_in_tx {
+                return Err(NodeTransactionError::TooManyOutputs(
+                    tx_hash,
+                    tx.txouts().len(),
+                    self.cfg.max_outputs_in_tx,
+                )
+                .into());
+            }
 
-        // Limit the maximum size of mempool.
-        if self.mempool.inputs_len() > self.cfg.max_inputs_in_mempool
-            || self.mempool.outputs_len() > self.cfg.max_outputs_in_mempool
-        {
-            return Err(NodeTransactionError::MempoolIsFull(tx_hash).into());
+            // Limit the maximum size of mempool.
+            if self.mempool.inputs_len() > self.cfg.max_inputs_in_mempool
+                || self.mempool.outputs_len() > self.cfg.max_outputs_in_mempool
+            {
+                return Err(NodeTransactionError::MempoolIsFull(tx_hash).into());
+            }
         }
 
         // Validate transaction.
@@ -391,6 +413,10 @@ impl NodeService {
     /// Re-stake expiring stakes.
     ///
     fn restake_expiring_stakes(&mut self) -> Result<(), Error> {
+        if !self.is_synchronized() {
+            // Don't re-stake during bootstrap, wait for the actual network state.
+            return Ok(());
+        }
         assert_eq!(self.cfg.min_stake_fee, 0);
         let mut inputs: Vec<Output> = Vec::new();
         let mut outputs: Vec<Output> = Vec::new();
@@ -400,10 +426,18 @@ impl NodeService {
             // Re-stake in one epoch before expiration.
             if active_until_epoch >= self.chain.epoch() + 1 {
                 debug!(
-                    "Skip restaking: utxo={}, active_until_epoch={}, epoch={}",
+                    "Skip restaking - stake is active: utxo={}, active_until_epoch={}, epoch={}",
                     input_hash,
                     active_until_epoch,
                     self.chain.epoch()
+                );
+                continue;
+            }
+
+            if let Some(tx_hash) = self.mempool.get_tx_by_input(input_hash) {
+                debug!(
+                    "Skip re-staking - stake is used by tx: utxo={}, tx={}",
+                    input_hash, tx_hash
                 );
                 continue;
             }

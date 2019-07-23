@@ -77,7 +77,7 @@ pub struct GeneralConfig {
     /// Force strict checking (BP + BLS + VRF) of blockchain on the disk.
     pub force_check: bool,
     /// Log4RS configuration file
-    pub log4rs_config: String,
+    pub log_config: PathBuf,
     /// Prometheus exporter endpoint
     pub prometheus_endpoint: String,
     /// WebSocket API endpoint,
@@ -94,7 +94,7 @@ impl Default for GeneralConfig {
             chain: "testnet".to_string(),
             data_dir,
             force_check: cfg!(debug_assertions),
-            log4rs_config: "stegos-log4rs.toml".to_string(),
+            log_config: PathBuf::new(),
             prometheus_endpoint: "".to_string(),
             api_endpoint: "0.0.0.0:3145".to_string(),
         }

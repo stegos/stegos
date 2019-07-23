@@ -37,7 +37,6 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-pub use stegos_api::url;
 use stegos_api::*;
 use stegos_blockchain::Timestamp;
 use stegos_crypto::{pbc, scc};
@@ -297,10 +296,14 @@ impl ConsoleService {
 
     fn send_account_request(&mut self, request: AccountRequest) -> Result<(), Error> {
         match &request {
-            // Don't print these requests.
-            AccountRequest::ChangePassword { .. } => {}
-            AccountRequest::Seal { .. } => {}
-            AccountRequest::Unseal { .. } => {}
+            AccountRequest::ChangePassword { .. }
+            | AccountRequest::Seal { .. }
+            | AccountRequest::Unseal { .. } => {
+                // Print passwords only if Trace level is enabled.
+                if log::log_enabled!(log::Level::Trace) {
+                    Self::print(&request);
+                }
+            }
             _ => {
                 Self::print(&request);
             }
@@ -692,14 +695,22 @@ impl ConsoleService {
     }
 
     fn on_response(&mut self, response: Response) {
-        Self::print(&response);
         match &response.kind {
             ResponseKind::NodeResponse(_)
             | ResponseKind::WalletResponse(_)
             | ResponseKind::NetworkResponse(_) => {
+                Self::print(&response);
                 self.stdin_th.thread().unpark();
             }
-            _ => {}
+            ResponseKind::NodeNotification(_) => {
+                // Print NodeNotifications only if Debug level is enabled.
+                if log::log_enabled!(log::Level::Debug) {
+                    Self::print(&response);
+                }
+            }
+            _ => {
+                Self::print(&response);
+            }
         }
     }
 }

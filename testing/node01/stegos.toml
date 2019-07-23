@@ -1,6 +1,6 @@
 [general]
 chain = "dev"
-log4rs_config = "stegos-log4rs.toml"
+log_config = "stegos-log4rs.toml"
 prometheus_endpoint = "127.0.0.1:9891"
 api_endpoint = "127.0.0.1:3145"
 data_dir = "testing/node01"

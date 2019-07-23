@@ -30,8 +30,10 @@ use futures::Future;
 use hyper::server::Server;
 use hyper::service::service_fn_ok;
 use log::*;
+use std::net::SocketAddr;
 use std::path::Path;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::{fs, process};
 use stegos_api::{load_or_create_api_token, WebSocketServer};
 use stegos_blockchain::{Blockchain, Timestamp};
@@ -82,6 +84,40 @@ pub fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error
     if let Some(chain) = args.value_of("chain") {
         cfg.general.chain = chain.to_string();
     }
+
+    // Override global.data_dir via command-line.
+    if let Some(data_dir) = args.value_of_os("data-dir") {
+        cfg.general.data_dir = PathBuf::from(data_dir);
+    }
+
+    // Override global.force_check via command-line.
+    if args.is_present("force-check") {
+        cfg.general.force_check = true;
+    }
+
+    // Override global.log_config via command-line.
+    if let Some(log_config) = args.value_of_os("log-config") {
+        cfg.general.log_config = PathBuf::from(log_config);
+    }
+
+    // Override global.prometheus_endpoint via command-line.
+    if let Some(prometheus_endpoint) = args.value_of("prometheus-endpoint") {
+        cfg.general.prometheus_endpoint = prometheus_endpoint.to_string();
+    }
+    if cfg.general.prometheus_endpoint != "" {
+        SocketAddr::from_str(&cfg.general.prometheus_endpoint)
+            .map_err(|e| format_err!("Invalid prometheus_endpoint: {}", e))?;
+    }
+
+    // Override global.api_endpoint via command-line.
+    if let Some(api_endpoint) = args.value_of("api-endpoint") {
+        cfg.general.api_endpoint = api_endpoint.to_string();
+    }
+    if cfg.general.api_endpoint != "" {
+        SocketAddr::from_str(&cfg.general.api_endpoint)
+            .map_err(|e| format_err!("Invalid api_endpoint: {}", e))?;
+    }
+
     // Use default SRV record for the chain
     if cfg.general.chain != "dev" && cfg.network.seed_pool == "" {
         cfg.network.seed_pool =
@@ -167,6 +203,48 @@ fn run() -> Result<(), Error> {
                 .takes_value(true),
         )
         .arg(
+            Arg::with_name("log-config")
+                .short("l")
+                .long("log-config")
+                .value_name("FILE")
+                .help("Path to stegos-log4rs.toml configuration file")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("data-dir")
+                .short("d")
+                .long("data-dir")
+                .value_name("DIR")
+                .help("Path to data directory")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("api-endpoint")
+                .short("a")
+                .long("api-endpoint")
+                .value_name("ENDPOINT")
+                .help("API ENDPOINT, e.g. 127.0.0.1:3145")
+                .validator(|uri| {
+                    SocketAddr::from_str(&uri)
+                        .map(|_| ())
+                        .map_err(|e| format!("{}", e))
+                })
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("prometheus-endpoint")
+                .short("p")
+                .long("prometheus-endpoint")
+                .value_name("ENDPOINT")
+                .help("PROMETHEUS ENDPOINT, e.g. 127.0.0.1:9090")
+                .takes_value(true)
+                .validator(|uri| {
+                    SocketAddr::from_str(&uri)
+                        .map(|_| ())
+                        .map_err(|e| format!("{}", e))
+                }),
+        )
+        .arg(
             Arg::with_name("chain")
                 .short("n")
                 .long("chain")
@@ -174,28 +252,50 @@ fn run() -> Result<(), Error> {
                 .help("Specify chain to use: testnet or dev")
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("verbose")
+                .help("Change verbosity level")
+                .short("v")
+                .long("verbose")
+                .multiple(true),
+        )
+        .arg(
+            Arg::with_name("force-check")
+                .help("Force BP, BLS, VRF validation during recovery")
+                .long("force-check"),
+        )
         .get_matches();
 
     // Parse configuration
     let mut cfg = load_configuration(&args)?;
 
     // Initialize logger
-    initialize_logger(&cfg)?;
+    let verbosity = args.occurrences_of("verbose");
+    let level = match verbosity {
+        0 => log::LevelFilter::Info,
+        1 => log::LevelFilter::Debug,
+        2 | _ => log::LevelFilter::Trace,
+    };
+    initialize_logger(&cfg, level)?;
 
     // Print welcome message
     info!("{} {}", name, version);
 
+    info!("Data directory: {}", cfg.general.data_dir.to_string_lossy());
     let data_dir = cfg.general.data_dir.clone();
     if !data_dir.exists() {
-        fs::create_dir_all(&data_dir)?;
+        fs::create_dir_all(&data_dir)
+            .map_err(|e| format_err!("{}: {}", e, data_dir.to_string_lossy()))?
     }
     let chain_dir = data_dir.join("chain");
     if !chain_dir.exists() {
-        fs::create_dir_all(&chain_dir)?;
+        fs::create_dir(&chain_dir)
+            .map_err(|e| format_err!("{}: {}", e, chain_dir.to_string_lossy()))?
     }
     let accounts_dir = data_dir.join("accounts");
     if !accounts_dir.exists() {
-        fs::create_dir_all(&accounts_dir)?;
+        fs::create_dir(&accounts_dir)
+            .map_err(|e| format_err!("{}: {}", e, accounts_dir.to_string_lossy()))?
     }
 
     // Initialize keychain
@@ -213,10 +313,10 @@ fn run() -> Result<(), Error> {
 
     // Start metrics exporter
     if cfg.general.prometheus_endpoint != "" {
-        // Prepare HTTP service to export Prometheus metrics
-        let prom_serv = || service_fn_ok(report_metrics);
-        let addr = cfg.general.prometheus_endpoint.as_str().parse()?;
+        let addr: SocketAddr = cfg.general.prometheus_endpoint.parse()?;
+        info!("Starting Prometheus Exporter on {}", &addr);
 
+        let prom_serv = || service_fn_ok(report_metrics);
         let hyper_service = Server::bind(&addr)
             .serve(prom_serv)
             .map_err(|e| error!("failed to bind prometheus exporter: {}", e));
@@ -298,7 +398,7 @@ fn run() -> Result<(), Error> {
 // 2
 fn main() {
     if let Err(e) = run() {
-        println!("Failed with error: {}", e); // Logger can be not yet initialized.
+        eprintln!("Failed with error: {}", e); // Logger can be not yet initialized.
         error!("{}", e);
         process::exit(1)
     };

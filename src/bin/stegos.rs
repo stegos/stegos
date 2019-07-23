@@ -21,14 +21,14 @@
 
 use clap;
 use clap::{App, Arg};
+use std::net::SocketAddr;
 use std::path::Path;
+use std::str::FromStr;
 use stegos::config::GeneralConfig;
-use stegos::console::{url, ConsoleService};
+use stegos::console::ConsoleService;
 use tokio::runtime::Runtime;
 
 fn main() {
-    simple_logger::init_with_level(log::Level::Info).unwrap_or_default();
-
     let name = "Stegos CLI";
     let version = format!(
         "{}.{}.{} ({} {})",
@@ -45,24 +45,26 @@ fn main() {
         .join("api.token")
         .to_string_lossy()
         .to_string();
-    let default_endpoint = format!("ws://{}", gcfg.api_endpoint);
+    let default_endpoint = gcfg.api_endpoint;
 
     let args = App::new(name)
         .version(&version[..])
         .author("Stegos AG <info@stegos.com>")
         .about("Stegos is a completely anonymous and confidential cryptocurrency.")
         .arg(
-            Arg::with_name("endpoint")
+            Arg::with_name("api-endpoint")
                 .index(1)
-                .help("API ENDPOINT, e.g. ws://127.0.0.1:3145")
-                .default_value(&default_endpoint)
+                .short("a")
+                .long("api-endpoint")
+                .value_name("ENDPOINT")
+                .help("API ENDPOINT, e.g. 127.0.0.1:3145")
                 .takes_value(true)
+                .default_value(&default_endpoint)
                 .validator(|uri| {
-                    url::Url::parse(&uri)
+                    SocketAddr::from_str(&uri)
                         .map(|_| ())
                         .map_err(|e| format!("{}", e))
-                })
-                .value_name("ENDPOINT"),
+                }),
         )
         .arg(
             Arg::with_name("token-file")
@@ -78,10 +80,25 @@ fn main() {
                 })
                 .value_name("FILE"),
         )
+        .arg(
+            Arg::with_name("verbose")
+                .help("Change verbosity level")
+                .short("v")
+                .long("verbose")
+                .multiple(true),
+        )
         .get_matches();
 
+    let verbosity = args.occurrences_of("verbose");
+    let level = match verbosity {
+        0 => log::Level::Info,
+        1 => log::Level::Debug,
+        2 | _ => log::Level::Trace,
+    };
+    simple_logger::init_with_level(level).unwrap_or_default();
+
     let token_file = args.value_of("token-file").unwrap();
-    let uri = args.value_of("endpoint").unwrap().to_string();
+    let uri = format!("ws://{}", args.value_of("api-endpoint").unwrap());
     let api_token = stegos_api::load_api_token(Path::new(token_file)).unwrap();
 
     println!("{} {}", name, version);

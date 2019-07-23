@@ -7,10 +7,11 @@ stages:
 before_script:
   - ci-scripts/install-deps.sh
 
-# Running fast-checks to notice an author that his pull-request fails our standatds.
+# Running fast-checks to notice an author that his pull-request fails our standards.
 # This checks should not produce any artifacts
-# Allow to fail until fix for RUSTSEC-2019-0003 is released
+# Allow to fail until fix for https://github.com/stegos/stegos/issues/1149 is released
 fast_checks:
+  allow_failure: true
   stage: fast_checks
   before_script: []
   script:

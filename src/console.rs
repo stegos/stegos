@@ -20,7 +20,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 use crate::consts;
-use crate::money::parse_money;
 use dirs;
 use failure::{format_err, Error};
 use futures::sync::mpsc::{channel, Receiver, Sender};
@@ -56,13 +55,13 @@ const CONSOLE_HISTORY_LIMIT: u64 = 50;
 
 lazy_static! {
     /// Regex to parse "pay" command.
-    static ref PAY_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9A-Za-z]+)\s+(?P<amount>[0-9\.]{1,19})(?P<arguments>.+)?\s*$").unwrap();
+    static ref PAY_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9A-Za-z]+)\s+(?P<amount>[0-9_]{1,19})(?P<arguments>.+)?\s*$").unwrap();
     /// Regex to parse argument of "pay" command.
-    static ref PAY_ARGUMENTS_RE: Regex = Regex::new(r"^(\s+(?P<public>(/public)))?(\s+(?P<snowball>(/snowball)))?(\s+(?P<comment>[^/]+?))?(\s+(?P<lock>(/lock\s*[^/]*)))?(\s+(?P<fee>(/fee\s[0-9\.]{1,19})))?(\s+(?P<certificate>(/certificate)))?\s*$").unwrap();
+    static ref PAY_ARGUMENTS_RE: Regex = Regex::new(r"^(\s+(?P<public>(/public)))?(\s+(?P<snowball>(/snowball)))?(\s+(?P<comment>[^/]+?))?(\s+(?P<lock>(/lock\s*[^/]*)))?(\s+(?P<fee>(/fee\s[0-9_]{1,19})))?(\s+(?P<certificate>(/certificate)))?\s*$").unwrap();
     /// Regex to parse "msg" command.
     static ref MSG_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<msg>.+)$").unwrap();
     /// Regex to parse "stake/unstake" command.
-    static ref STAKE_COMMAND_RE: Regex = Regex::new(r"\s*(?P<amount>[0-9\.]{1,19})\s*$").unwrap();
+    static ref STAKE_COMMAND_RE: Regex = Regex::new(r"\s*(?P<amount>[0-9]{1,19})\s*$").unwrap();
     /// Regex to parse "publish" command.
     static ref PUBLISH_COMMAND_RE: Regex = Regex::new(r"\s*(?P<topic>[0-9A-Za-z]+)\s+(?P<msg>.*)$").unwrap();
     /// Regex to parse "send" command.
@@ -106,6 +105,13 @@ fn read_password_from_stdin(confirm: bool) -> Result<String, KeyError> {
 fn read_recovery_from_stdin() -> Result<String, KeyError> {
     Ok(prompt_password_stdout(RECOVERY_PROMPT)
         .map_err(|e| KeyError::InputOutputError("stdin".to_string(), e))?)
+}
+
+fn parse_money(amount: &str) -> Result<i64, Error> {
+    amount
+        .replace("_", "")
+        .parse::<i64>()
+        .map_err(|e| format_err!("{}", e))
 }
 
 const PAYMENT_FEE: i64 = 1_000; // 0.001 STG
@@ -240,25 +246,25 @@ impl ConsoleService {
             "Usage: pay ADDRESS AMOUNT [COMMENT] [/snowball] [/public] [/lock DATETIME] [/fee FEE]"
         );
         eprintln!(" - ADDRESS recipient's address");
-        eprintln!(" - AMOUNT amount in STG");
+        eprintln!(" - AMOUNT amount in μSTG");
         eprintln!(" - COMMENT purpose of payment");
         eprintln!(" - /snowball use Snowball mixing protocol");
         eprintln!(" - /public don't encrypt recipient and amount (not recommended)");
         eprintln!(" - /lock DATETIME lock money until the specified time:");
         eprintln!("       '2019-07-01 12:52:11', '2019-07-01T12:52:11Z', '15days 2min 2s'");
-        eprintln!(" - /fee FEE set fee per each created UTXO");
+        eprintln!(" - /fee FEE set fee in μSTG per each created UTXO");
         eprintln!();
     }
 
     fn help_stake() {
         eprintln!("Usage: stake AMOUNT");
-        eprintln!(" - AMOUNT amount to stake into escrow, in STG");
+        eprintln!(" - AMOUNT amount to stake into escrow, in μSTG");
         eprintln!();
     }
 
     fn help_unstake() {
         eprintln!("Usage: unstake [AMOUNT]");
-        eprintln!(" - AMOUNT amount to unstake from escrow, in STG");
+        eprintln!(" - AMOUNT amount to unstake from escrow, in μSTG");
         eprintln!("   if not specified, unstakes all of the money");
         eprintln!();
     }
@@ -398,7 +404,7 @@ impl ConsoleService {
             let amount = match parse_money(amount) {
                 Ok(amount) => amount,
                 Err(e) => {
-                    eprintln!("{}", e);
+                    eprintln!("Invalid amount '{}': {}", amount, e);
                     Self::help_pay();
                     return Ok(true);
                 }
@@ -430,16 +436,18 @@ impl ConsoleService {
                             None => None,
                         };
                         // Parse /fee.
-                        let fee_arg = caps.name("fee").map(|s| {
-                            assert!(s.as_str().starts_with("/fee "));
-                            parse_money(&s.as_str()[5..])
-                        });
-                        let payment_fee = match fee_arg {
-                            Some(Ok(fee)) => fee,
-                            Some(Err(e)) => {
-                                eprintln!("{}", e);
-                                Self::help_pay();
-                                return Ok(true);
+                        let payment_fee = match caps.name("fee") {
+                            Some(s) => {
+                                assert!(s.as_str().starts_with("/fee "));
+                                let fee = &s.as_str()[5..];
+                                match parse_money(fee) {
+                                    Ok(fee) => fee,
+                                    Err(e) => {
+                                        eprintln!("Invalid fee '{}': {}", fee, e);
+                                        Self::help_pay();
+                                        return Ok(true);
+                                    }
+                                }
                             }
                             None => PAYMENT_FEE, // use the default value.
                         };
@@ -546,7 +554,7 @@ impl ConsoleService {
                 Ok(amount) => amount,
                 Err(e) => {
                     eprintln!("{}", e);
-                    Self::help_stake();
+                    Self::help_pay();
                     return Ok(true);
                 }
             };
@@ -570,14 +578,7 @@ impl ConsoleService {
             };
 
             let amount = caps.name("amount").unwrap().as_str();
-            let amount = match parse_money(amount) {
-                Ok(amount) => amount,
-                Err(e) => {
-                    eprintln!("{}", e);
-                    Self::help_unstake();
-                    return Ok(true);
-                }
-            };
+            let amount = amount.parse::<i64>().expect("checked by regex");
             let payment_fee = PAYMENT_FEE;
             let request = AccountRequest::Unstake {
                 amount,

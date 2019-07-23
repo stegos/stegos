@@ -36,15 +36,9 @@ fn empty_log_at_start() {
     Sandbox::start(Default::default(), |mut s| {
         let mut accounts = genesis_accounts(&mut s);
         s.poll();
-        let rx = accounts[0].account.request(AccountRequest::HistoryInfo {
-            starting_from: Timestamp::now() - Duration::from_secs(1000),
-            limit: 1,
-        });
-        accounts[0].poll();
-        let response = get_request(rx);
-        info!("{:?}", response);
-        assert_eq!(response, AccountResponse::HistoryInfo { log: vec![] });
-        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC])
+        let log = account_history(&mut accounts[0]);
+        assert_eq!(log.len(), 0);
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
     });
 }
 
@@ -104,6 +98,518 @@ fn create_tx() {
             _ => unreachable!(),
         }
     });
+}
+
+#[test]
+fn create_tx_with_certificate() {
+    Sandbox::start(Default::default(), |mut s| {
+        let mut accounts = genesis_accounts(&mut s);
+
+        s.poll();
+        let recipient = accounts[1].account_service.account_pkey;
+
+        let mut notification = accounts[0].account.subscribe();
+        let rx = accounts[0].account.request(AccountRequest::Payment {
+            recipient,
+            amount: 10,
+            payment_fee: PAYMENT_FEE,
+            comment: "Test".to_string(),
+            locked_timestamp: None,
+            with_certificate: true,
+        });
+
+        assert_eq!(notification.poll(), Ok(Async::NotReady));
+        accounts[0].poll();
+        let response = get_request(rx);
+        info!("{:?}", response);
+        let my_tx = match response {
+            AccountResponse::TransactionCreated(tx) => {
+                assert_eq!(tx.certificates.len(), 1);
+                assert_eq!(tx.certificates[0].recipient, recipient);
+                assert_eq!(tx.certificates[0].amount, 10);
+
+                // TODO: Get transaction from the node using api.
+                {
+                    let timestamp = accounts[0]
+                        .account_service
+                        .account_log
+                        .tx_entry(tx.tx_hash)
+                        .unwrap();
+                    let tx_entry = accounts[0]
+                        .account_service
+                        .account_log
+                        .iter_range(timestamp, 1)
+                        .next()
+                        .unwrap();
+                    let output = match tx_entry.1 {
+                        LogEntry::Outgoing { ref tx } => {
+                            &tx.tx.txouts[tx.certificates[0].id as usize]
+                        }
+                        _ => panic!("Expected outgoing entry."),
+                    };
+                    let output = match output {
+                        Output::PaymentOutput(o) => o,
+                        _ => panic!("Expected payment output."),
+                    };
+                    // check that we cant decrypt payment using our secretkeys
+
+                    assert!(output
+                        .decrypt_payload(&accounts[0].account_service.account_skey)
+                        .is_err());
+                    let actual_amount = output
+                        .verify_proof_of_payment(
+                            &accounts[0].account_service.account_pkey,
+                            &tx.certificates[0].rvalue,
+                            &recipient,
+                        )
+                        .unwrap();
+                    assert_eq!(actual_amount, 10);
+                }
+
+                tx.tx_hash
+            }
+            _ => panic!("Wrong respnse to payment request"),
+        };
+
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+        // poll sandbox, to process transaction.
+        s.poll();
+        // rebroadcast transaction to each node
+        s.broadcast(stegos_node::TX_TOPIC);
+        accounts[0].poll();
+        match get_notification(&mut notification) {
+            AccountNotification::TransactionStatus {
+                tx_hash,
+                status: TransactionStatus::Accepted {},
+            } => assert_eq!(tx_hash, my_tx),
+            _ => unreachable!(),
+        }
+        s.skip_micro_block();
+
+        accounts[0].poll();
+
+        match get_notification(&mut notification) {
+            AccountNotification::TransactionStatus {
+                tx_hash,
+                status: TransactionStatus::Prepare { .. },
+            } => assert_eq!(tx_hash, my_tx),
+            _ => unreachable!(),
+        }
+    });
+}
+
+#[test]
+fn full_transfer() {
+    Sandbox::start(Default::default(), |mut s| {
+        let mut accounts = genesis_accounts(&mut s);
+
+        s.poll();
+
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+        let rx = accounts[0].account.request(AccountRequest::BalanceInfo {});
+
+        accounts[0].poll();
+        let response = get_request(rx);
+        info!("{:?}", response);
+        let balance = match response {
+            AccountResponse::BalanceInfo { balance } => balance,
+            _ => panic!("Wrong response to payment request"),
+        };
+
+        let recipient = accounts[1].account_service.account_pkey;
+
+        let mut notification = accounts[0].account.subscribe();
+        let rx = accounts[0].account.request(AccountRequest::Payment {
+            recipient,
+            amount: balance - PAYMENT_FEE,
+            payment_fee: PAYMENT_FEE,
+            comment: "Test".to_string(),
+            locked_timestamp: None,
+            with_certificate: false,
+        });
+
+        assert_eq!(notification.poll(), Ok(Async::NotReady));
+        accounts[0].poll();
+        let response = get_request(rx);
+        info!("{:?}", response);
+        let my_tx = match response {
+            AccountResponse::TransactionCreated(tx) => {
+                assert!(tx.certificates.is_empty());
+                tx.tx_hash
+            }
+            _ => panic!("Wrong respnse to payment request"),
+        };
+
+        // poll sandbox, to process transaction.
+        s.poll();
+        // rebroadcast transaction to each node
+        s.broadcast(stegos_node::TX_TOPIC);
+        accounts[0].poll();
+        match get_notification(&mut notification) {
+            AccountNotification::TransactionStatus {
+                tx_hash,
+                status: TransactionStatus::Accepted {},
+            } => assert_eq!(tx_hash, my_tx),
+            _ => unreachable!(),
+        }
+        s.skip_micro_block();
+
+        accounts[0].poll();
+
+        match get_notification(&mut notification) {
+            AccountNotification::TransactionStatus {
+                tx_hash,
+                status: TransactionStatus::Prepare { .. },
+            } => assert_eq!(tx_hash, my_tx),
+            _ => unreachable!(),
+        }
+    });
+}
+
+#[test]
+fn create_tx_invalid() {
+    Sandbox::start(Default::default(), |mut s| {
+        let mut accounts = genesis_accounts(&mut s);
+
+        s.poll();
+
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+        let rx = accounts[0].account.request(AccountRequest::BalanceInfo {});
+
+        accounts[0].poll();
+        let response = get_request(rx);
+        info!("{:?}", response);
+        let balance = match response {
+            AccountResponse::BalanceInfo { balance } => balance,
+            _ => panic!("Wrong response to payment request"),
+        };
+
+        let recipient = accounts[1].account_service.account_pkey;
+
+        // invalid amount
+        let rx = accounts[0].account.request(AccountRequest::Payment {
+            recipient,
+            amount: -10,
+            payment_fee: PAYMENT_FEE,
+            comment: "Test".to_string(),
+            locked_timestamp: None,
+            with_certificate: false,
+        });
+
+        accounts[0].poll();
+        let response = get_request(rx);
+        info!("{:?}", response);
+        match response {
+            AccountResponse::Error { error } => {}
+            _ => panic!("Wrong response to payment request"),
+        };
+
+        // money more than exist
+        let rx = accounts[0].account.request(AccountRequest::Payment {
+            recipient,
+            amount: balance - PAYMENT_FEE + 1, // 1 token more than real balance
+            payment_fee: PAYMENT_FEE,
+            comment: "Test".to_string(),
+            locked_timestamp: None,
+            with_certificate: false,
+        });
+
+        accounts[0].poll();
+        let response = get_request(rx);
+        info!("{:?}", response);
+        match response {
+            AccountResponse::Error { error } => {}
+            _ => panic!("Wrong response to payment request"),
+        };
+        // comment too long
+
+        let rx = accounts[0].account.request(AccountRequest::Payment {
+            recipient,
+            amount: 10,
+            payment_fee: PAYMENT_FEE,
+            comment: std::iter::repeat('a').take(PAYMENT_DATA_LEN - 1).collect(),
+            locked_timestamp: None,
+            with_certificate: false,
+        });
+
+        accounts[0].poll();
+        let response = get_request(rx);
+        info!("{:?}", response);
+        match response {
+            AccountResponse::Error { error } => {}
+            _ => panic!("Wrong response to payment request"),
+        };
+    });
+}
+
+#[test]
+fn get_recovery_key() {
+    Sandbox::start(Default::default(), |mut s| {
+        let mut accounts = genesis_accounts(&mut s);
+
+        s.poll();
+        let recipient = accounts[1].account_service.account_pkey;
+
+        let mut notification = accounts[0].account.subscribe();
+        let rx = accounts[0].account.request(AccountRequest::GetRecovery {});
+
+        assert_eq!(notification.poll(), Ok(Async::NotReady));
+        accounts[0].poll();
+
+        let response = get_request(rx);
+        info!("{:?}", response);
+        let recovery = match response {
+            AccountResponse::Recovery { recovery } => recovery,
+            _ => panic!("Wrong respnse to payment request"),
+        };
+
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+    });
+}
+
+#[test]
+fn wait_for_epoch_end_with_tx() {
+    Sandbox::start(Default::default(), |mut s| {
+        let mut accounts = genesis_accounts(&mut s);
+
+        s.poll();
+        let recipient = accounts[1].account_service.account_pkey;
+
+        let mut notification = accounts[0].account.subscribe();
+        let rx = accounts[0].account.request(AccountRequest::Payment {
+            recipient,
+            amount: 10,
+            payment_fee: PAYMENT_FEE,
+            comment: "Test".to_string(),
+            locked_timestamp: None,
+            with_certificate: false,
+        });
+
+        assert_eq!(notification.poll(), Ok(Async::NotReady));
+        accounts[0].poll();
+        let response = get_request(rx);
+        info!("{:?}", response);
+        let my_tx = match response {
+            AccountResponse::TransactionCreated(tx) => {
+                assert!(tx.certificates.is_empty());
+                tx.tx_hash
+            }
+            _ => panic!("Wrong respnse to payment request"),
+        };
+
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+        // poll sandbox, to process transaction.
+        s.poll();
+        // rebroadcast transaction to each node
+        s.broadcast(stegos_node::TX_TOPIC);
+        accounts[0].poll();
+        match get_notification(&mut notification) {
+            AccountNotification::TransactionStatus {
+                tx_hash,
+                status: TransactionStatus::Accepted {},
+            } => assert_eq!(tx_hash, my_tx),
+            _ => unreachable!(),
+        }
+        s.skip_micro_block();
+
+        accounts[0].poll();
+
+        match get_notification(&mut notification) {
+            AccountNotification::TransactionStatus {
+                tx_hash,
+                status: TransactionStatus::Prepare { .. },
+            } => assert_eq!(tx_hash, my_tx),
+            _ => unreachable!(),
+        }
+
+        let offset = s.first().chain().offset();
+
+        for offset in offset..s.config.chain.micro_blocks_in_epoch {
+            s.poll();
+            s.skip_micro_block()
+        }
+        s.skip_macro_block();
+        accounts[0].poll();
+
+        // ignore multiple notification, and assert that notification not equal to our.
+        while let AccountNotification::TransactionStatus {
+            tx_hash,
+            status: TransactionStatus::Committed { .. },
+        } = get_notification(&mut notification)
+        {
+            if tx_hash != my_tx {
+                unreachable!()
+            }
+        }
+    });
+}
+
+#[test]
+fn create_public_tx() {
+    Sandbox::start(Default::default(), |mut s| {
+        let mut accounts = genesis_accounts(&mut s);
+
+        s.poll();
+        let recipient = accounts[1].account_service.account_pkey;
+
+        let mut notification = accounts[0].account.subscribe();
+        let rx = accounts[0].account.request(AccountRequest::PublicPayment {
+            recipient,
+            amount: 10,
+            payment_fee: PAYMENT_FEE,
+            locked_timestamp: None,
+        });
+
+        assert_eq!(notification.poll(), Ok(Async::NotReady));
+        accounts[0].poll();
+        let response = get_request(rx);
+        info!("{:?}", response);
+        let my_tx = match response {
+            AccountResponse::TransactionCreated(tx) => {
+                assert!(tx.certificates.is_empty());
+                tx.tx_hash
+            }
+            _ => panic!("Wrong respnse to payment request"),
+        };
+
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+        // poll sandbox, to process transaction.
+        s.poll();
+        // rebroadcast transaction to each node
+        s.broadcast(stegos_node::TX_TOPIC);
+        accounts[0].poll();
+        match get_notification(&mut notification) {
+            AccountNotification::TransactionStatus {
+                tx_hash,
+                status: TransactionStatus::Accepted {},
+            } => assert_eq!(tx_hash, my_tx),
+            _ => unreachable!(),
+        }
+        s.skip_micro_block();
+
+        let epoch = s.first().chain().epoch();
+        let offset = s.first().chain().offset();
+        let microblock = s.first().chain().micro_block(epoch, offset - 1).unwrap();
+        let our_tx = microblock.transactions.last();
+        let our_tx = match our_tx {
+            Some(Transaction::PaymentTransaction(tx)) => tx,
+            _ => panic!(" not expeceted tx"),
+        };
+
+        let our_output = match our_tx.txouts.first() {
+            Some(Output::PublicPaymentOutput(p)) => p,
+            _ => panic!(" not expeceted output"),
+        };
+
+        assert_eq!(our_output.amount, 10);
+        assert_eq!(our_output.recipient, recipient);
+
+        accounts[0].poll();
+
+        match get_notification(&mut notification) {
+            AccountNotification::TransactionStatus {
+                tx_hash,
+                status: TransactionStatus::Prepare { .. },
+            } => assert_eq!(tx_hash, my_tx),
+            _ => unreachable!(),
+        }
+    });
+}
+
+#[test]
+fn recovery_acount_after_tx() {
+    Sandbox::start(Default::default(), |mut s| {
+        let mut accounts = genesis_accounts(&mut s);
+
+        s.poll();
+        let recipient = accounts[1].account_service.account_pkey;
+
+        let mut notification = accounts[0].account.subscribe();
+        let rx = accounts[0].account.request(AccountRequest::Payment {
+            recipient,
+            amount: 10,
+            payment_fee: PAYMENT_FEE,
+            comment: "Test".to_string(),
+            locked_timestamp: None,
+            with_certificate: false,
+        });
+
+        assert_eq!(notification.poll(), Ok(Async::NotReady));
+        accounts[0].poll();
+        let response = get_request(rx);
+        info!("{:?}", response);
+        let my_tx = match response {
+            AccountResponse::TransactionCreated(tx) => {
+                assert!(tx.certificates.is_empty());
+                tx.tx_hash
+            }
+            _ => panic!("Wrong respnse to payment request"),
+        };
+
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+        // poll sandbox, to process transaction.
+        s.poll();
+        // rebroadcast transaction to each node
+        s.broadcast(stegos_node::TX_TOPIC);
+        accounts[0].poll();
+        match get_notification(&mut notification) {
+            AccountNotification::TransactionStatus {
+                tx_hash,
+                status: TransactionStatus::Accepted {},
+            } => assert_eq!(tx_hash, my_tx),
+            _ => unreachable!(),
+        }
+        s.skip_micro_block();
+
+        accounts[0].poll();
+
+        match get_notification(&mut notification) {
+            AccountNotification::TransactionStatus {
+                tx_hash,
+                status: TransactionStatus::Prepare { .. },
+            } => assert_eq!(tx_hash, my_tx),
+            _ => unreachable!(),
+        }
+
+        let log = account_history(&mut accounts[0]);
+
+        assert_eq!(log.len(), 1);
+
+        // save account dirs, and destroy accounts.
+        let dirs: Vec<_> = accounts.into_iter().map(|acc| acc._tmp_dir).collect();
+
+        let mut accounts = Vec::new();
+        for (i, path) in (0..s.nodes.len()).zip(dirs) {
+            let account = AccountSandbox::new_genesis(&mut s, i, path.into());
+            accounts.push(account);
+        }
+
+        let log_after_recovery = account_history(&mut accounts[0]);
+
+        assert_eq!(log_after_recovery.len(), 1);
+        assert_eq!(log, log_after_recovery);
+    });
+}
+
+fn account_history(account: &mut AccountSandbox) -> Vec<LogEntryInfo> {
+    let rx = account.account.request(AccountRequest::HistoryInfo {
+        starting_from: Timestamp::now() - Duration::from_secs(1000),
+        limit: 1,
+    });
+    account.poll();
+
+    let response = get_request(rx);
+    info!("{:?}", response);
+
+    let log = match response {
+        AccountResponse::HistoryInfo { log } => log,
+        _ => panic!("Wrong responses was found"),
+    };
+    log
 }
 
 // genesis account should has atleast N* amount of accounts

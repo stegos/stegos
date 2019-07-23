@@ -42,7 +42,7 @@ const PASSWORD: &str = "1234";
 fn genesis_accounts(s: &mut Sandbox) -> Vec<AccountSandbox> {
     let mut accounts = Vec::new();
     for i in 0..s.nodes.len() {
-        let account = AccountSandbox::new_genesis(s, i);
+        let account = AccountSandbox::new_genesis(s, i, None);
         accounts.push(account);
     }
     accounts
@@ -66,18 +66,19 @@ impl AccountSandbox {
         chain: &Blockchain,
         network_service: Loopback,
         network: Network,
+        path: Option<TempDir>,
     ) -> AccountSandbox {
-        let temp_dir = TempDir::new("account").unwrap();
+        let temp_dir = path.unwrap_or(TempDir::new("account").unwrap());
+        let temp_path = temp_dir.path();
         let network_pkey = keys.network_pkey;
         let network_skey = keys.network_skey.clone();
         let account_pkey = keys.account_pkey;
         let account_skey = keys.account_skey.clone();
-        // init network
-        let mut database_dir = temp_dir.path().to_path_buf();
 
-        database_dir.push("database_path");
-        let account_skey_file = temp_dir.path().join("account.skey");
-        let account_pkey_file = temp_dir.path().join("account.pkey");
+        let database_dir = temp_path.join("database_path");
+        let account_skey_file = temp_path.join("account.skey");
+        let account_pkey_file = temp_path.join("account.pkey");
+
         stegos_keychain::keyfile::write_account_skey(&account_skey_file, &account_skey, PASSWORD)
             .unwrap();
         stegos_keychain::keyfile::write_account_pkey(&account_pkey_file, &account_pkey).unwrap();
@@ -114,7 +115,7 @@ impl AccountSandbox {
         }
     }
 
-    pub fn new_genesis(s: &mut Sandbox, node_id: usize) -> AccountSandbox {
+    pub fn new_genesis(s: &mut Sandbox, node_id: usize, path: Option<TempDir>) -> AccountSandbox {
         let stake_epochs = s.config.chain.stake_epochs;
         let max_inputs_in_tx = s.config.node.max_inputs_in_tx;
         let node = s.nodes[node_id].node.clone();
@@ -129,11 +130,12 @@ impl AccountSandbox {
             &s.nodes[node_id].chain(),
             network_service,
             network,
+            path,
         )
     }
 
     #[allow(dead_code)]
-    pub fn new_custom(s: &mut Sandbox, node_id: usize) -> AccountSandbox {
+    pub fn new_custom(s: &mut Sandbox, node_id: usize, path: Option<TempDir>) -> AccountSandbox {
         let stake_epochs = s.config.chain.stake_epochs;
         let max_inputs_in_tx = s.config.node.max_inputs_in_tx;
         let node = s.nodes[node_id].node.clone();
@@ -144,6 +146,7 @@ impl AccountSandbox {
         keys.account_skey = skey;
 
         let (network_service, network) = Loopback::new();
+
         Self::new(
             stake_epochs,
             max_inputs_in_tx,
@@ -152,6 +155,7 @@ impl AccountSandbox {
             &s.nodes[node_id].chain(),
             network_service,
             network,
+            path,
         )
     }
 

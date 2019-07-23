@@ -576,7 +576,7 @@ impl PaymentTransactionValue {
             })
             .collect();
 
-        assert_eq!(tx.txouts.len(), 2);
+        assert!(tx.txouts.len() <= 2);
         assert!(certificates.len() <= 1);
 
         PaymentTransactionValue {

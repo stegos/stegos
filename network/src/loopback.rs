@@ -41,15 +41,13 @@ impl NetworkProvider for LoopbackNetwork {
     fn subscribe(&self, stopic: &str) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error> {
         let topic: String = stopic.to_string();
         let (tx, rx) = mpsc::unbounded();
-        assert!(
-            self.state
-                .lock()
-                .unwrap()
-                .consumers
-                .insert(topic, tx)
-                .is_none(),
-            format!("multiple subscribe to topic {}", stopic)
-        );
+        self.state
+            .lock()
+            .unwrap()
+            .consumers
+            .entry(topic)
+            .or_default()
+            .push(tx);
         Ok(rx)
     }
 
@@ -59,15 +57,13 @@ impl NetworkProvider for LoopbackNetwork {
     ) -> Result<mpsc::UnboundedReceiver<UnicastMessage>, Error> {
         let topic: String = stopic.to_string();
         let (tx, rx) = mpsc::unbounded::<UnicastMessage>();
-        assert!(
-            self.state
-                .lock()
-                .unwrap()
-                .unicast_consumers
-                .insert(topic, tx)
-                .is_none(),
-            format!("multiple unicast subscribe to topic {}", stopic)
-        );
+        self.state
+            .lock()
+            .unwrap()
+            .unicast_consumers
+            .entry(topic)
+            .or_default()
+            .push(tx);
         Ok(rx)
     }
 
@@ -105,8 +101,8 @@ impl NetworkProvider for LoopbackNetwork {
 
 #[derive(Debug, Clone)]
 struct LoopbackState {
-    consumers: HashMap<String, mpsc::UnboundedSender<Vec<u8>>>,
-    unicast_consumers: HashMap<String, mpsc::UnboundedSender<UnicastMessage>>,
+    consumers: HashMap<String, Vec<mpsc::UnboundedSender<Vec<u8>>>>,
+    unicast_consumers: HashMap<String, Vec<mpsc::UnboundedSender<UnicastMessage>>>,
     queue: VecDeque<MessageFromNode>,
 }
 
@@ -269,11 +265,12 @@ impl Loopback {
 
     pub fn receive_broadcast_raw(&mut self, topic: &str, data: Vec<u8>) {
         let ref mut state = self.state.lock().unwrap();
-        let ref mut node = state
+        let ref mut nodes = state
             .consumers
-            .get(topic)
+            .get_mut(topic)
             .expect("Node didn't subscribe to broadcast");
-        node.unbounded_send(data).expect("channel error")
+
+        nodes.retain(move |tx| tx.unbounded_send(data.clone()).is_ok());
     }
 
     pub fn receive_broadcast<M: ProtoConvert>(&mut self, topic: &str, msg: M) {
@@ -282,12 +279,12 @@ impl Loopback {
 
     pub fn receive_unicast_raw(&mut self, peer: pbc::PublicKey, topic: &str, data: Vec<u8>) {
         let ref mut state = self.state.lock().unwrap();
-        let ref mut node = state
+        let ref mut nodes = state
             .unicast_consumers
-            .get(topic)
+            .get_mut(topic)
             .expect("Node didn't subscribe to unicast");
         let message = UnicastMessage { from: peer, data };
-        node.unbounded_send(message).expect("channel error")
+        nodes.retain(move |tx| tx.unbounded_send(message.clone()).is_ok());
     }
 
     pub fn receive_unicast<M: ProtoConvert>(&mut self, peer: pbc::PublicKey, topic: &str, msg: M) {

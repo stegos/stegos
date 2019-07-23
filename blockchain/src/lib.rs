@@ -43,6 +43,7 @@ mod transaction;
 mod validation;
 pub mod view_changes;
 
+pub use crate::awards::ValidatorAwardState;
 pub use crate::block::*;
 pub use crate::blockchain::*;
 pub use crate::config::*;

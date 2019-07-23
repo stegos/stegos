@@ -589,7 +589,13 @@ impl Blockchain {
         // Validate Awards.
         //
         if epoch > 0 {
-            let (_activity_map, winner) = self.awards_from_active_epoch(&block.header.random);
+            let validators_activity = self
+                .epoch_activity_from_macro_block(&block.header.activity_map)
+                .unwrap();
+            let mut service_awards = self.service_awards().clone();
+            service_awards.finalize_epoch(self.cfg().service_award_per_epoch, validators_activity);
+            let winner = service_awards.check_winners(block.header.random.rand);
+
             // calculate block reward + service award.
             let full_reward = self.cfg().block_reward
                 * (self.cfg().micro_blocks_in_epoch as i64 + 1i64)

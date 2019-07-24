@@ -22,7 +22,6 @@
 pub mod config;
 pub mod console;
 pub mod consts;
-pub mod money;
 
 use failure::format_err;
 use failure::Error;

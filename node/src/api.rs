@@ -169,7 +169,7 @@ pub enum TransactionStatus {
         error: String,
     },
     /// Transaction was included in microblock.
-    Prepare {
+    Prepared {
         epoch: u64,
         offset: u32,
     },
@@ -198,7 +198,7 @@ impl Hashable for TransactionStatus {
                 "Rejected".hash(hasher);
                 error.hash(hasher)
             }
-            TransactionStatus::Prepare { epoch, offset } => {
+            TransactionStatus::Prepared { epoch, offset } => {
                 "Prepare".hash(hasher);
                 epoch.hash(hasher);
                 offset.hash(hasher);

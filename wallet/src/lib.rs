@@ -713,7 +713,7 @@ impl UnsealedAccountService {
 
             // update metrics
             match status {
-                TransactionStatus::Committed { .. } | TransactionStatus::Prepare { .. } => {
+                TransactionStatus::Committed { .. } | TransactionStatus::Prepared { .. } => {
                     metrics::WALLET_COMMITTED_PAYMENTS
                         .with_label_values(&[&String::from(&self.account_pkey)])
                         .inc();

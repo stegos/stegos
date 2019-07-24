@@ -1047,7 +1047,7 @@ impl NodeService {
         );
         for (tx_hash, (tx, full)) in tx_info {
             let status = if full && block_transactions.contains_key(&tx_hash) {
-                TransactionStatus::Prepare { epoch, offset }
+                TransactionStatus::Prepared { epoch, offset }
             } else {
                 TransactionStatus::Conflicted {
                     epoch,

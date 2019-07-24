@@ -141,7 +141,7 @@ impl AccountLog {
     fn update_pending_tx(&mut self, tx_hash: Hash, status: TransactionStatus) {
         // update epoch transactions
         match status {
-            TransactionStatus::Prepare { .. } => {
+            TransactionStatus::Prepared { .. } => {
                 self.epoch_transactions.insert(tx_hash);
             }
             _ => {
@@ -303,7 +303,7 @@ impl AccountLog {
             self.update_log_entry(timestamp, |mut e| {
                 match &mut e {
                     LogEntry::Outgoing { ref mut tx } => match tx.status {
-                        TransactionStatus::Prepare { epoch, .. } => {
+                        TransactionStatus::Prepared { epoch, .. } => {
                             trace!("Finalize tx={}", tx_hash);
                             let status = TransactionStatus::Committed { epoch };
                             tx.status = status.clone();

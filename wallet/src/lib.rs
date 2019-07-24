@@ -813,8 +813,14 @@ impl Future for UnsealedAccountService {
                     match response {
                         NodeResponse::AccountRecovered(persistent_state) => {
                             // Recover state.
-                            for (output, epoch) in persistent_state {
-                                self.on_output_created(epoch, output, false);
+                            for OutputRecovery {
+                                output,
+                                epoch,
+                                is_final,
+                                ..
+                            } in persistent_state
+                            {
+                                self.on_output_created(epoch, output, is_final);
                             }
                         }
                         NodeResponse::Error { error } => {

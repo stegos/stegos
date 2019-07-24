@@ -741,6 +741,7 @@ impl UnsealedAccountService {
     }
 
     fn handle_resend_pending_txs(&mut self) {
+        trace!("Handle resend pending transactions");
         let txs: Vec<_> = self.account_log.pending_txs().collect();
         for tx in txs {
             match tx {
@@ -759,7 +760,7 @@ impl UnsealedAccountService {
     }
 
     fn notify(&mut self, notification: AccountNotification) {
-        trace!("created notification = {:?}", notification);
+        trace!("Created notification = {:?}", notification);
         self.subscribers
             .retain(move |tx| tx.unbounded_send(notification.clone()).is_ok());
     }

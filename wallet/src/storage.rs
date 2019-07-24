@@ -139,6 +139,7 @@ impl AccountLog {
     }
 
     fn update_pending_tx(&mut self, tx_hash: Hash, status: TransactionStatus) {
+        // update epoch transactions
         match status {
             TransactionStatus::Prepare { .. } => {
                 self.epoch_transactions.insert(tx_hash);
@@ -146,28 +147,28 @@ impl AccountLog {
             _ => {
                 trace!("Found status that is not equal to Prepare.");
                 let _ = self.epoch_transactions.remove(&tx_hash);
-                return;
             }
         }
 
+        // update pending transactions
         match status {
-            TransactionStatus::Created {} | TransactionStatus::Accepted {} => {}
+            TransactionStatus::Created {} | TransactionStatus::Accepted {} => {
+                let tx_timestamp = *self
+                    .created_txs
+                    .get(&tx_hash)
+                    .expect("transaction in created list");
+                trace!(
+                    "Found transaction with status = {:?}, with timestamp = {}, adding to list.",
+                    status,
+                    tx_timestamp
+                );
+                self.pending_txs.insert(tx_hash);
+            }
             _ => {
                 trace!("Found status that is final, didn't add transaction to pending list.");
                 let _ = self.pending_txs.remove(&tx_hash);
-                return;
             }
         }
-        let tx_timestamp = *self
-            .created_txs
-            .get(&tx_hash)
-            .expect("transaction in created list");
-        trace!(
-            "Found transaction with status = {:?}, with timestamp = {}, adding to list.",
-            status,
-            tx_timestamp
-        );
-        self.pending_txs.insert(tx_hash);
     }
 
     /// Return iterator over transactions

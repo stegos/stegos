@@ -21,7 +21,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::hash::Hash;
 use vdf_field::{Field, Fv, FvRepr, PrimeField, PrimeFieldRepr};
 
 // -----------------------------------------------
@@ -161,6 +160,7 @@ impl VDF {
 
 #[test]
 fn test_fv() {
+    use crate::hash::Hash;
     use std::time::SystemTime;
     let vdf = VDF::new();
     let mult = 5000;

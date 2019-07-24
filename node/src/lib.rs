@@ -1268,7 +1268,7 @@ impl NodeService {
             let solver = self.chain.vdf_solver();
             let solver = move || {
                 let solution = solver();
-                tx.send(solution).expect("node is alive");
+                tx.send(solution).ok(); // ignore errors.
             };
             // Spawn a background thread to solve VDF puzzle.
             thread::spawn(solver);

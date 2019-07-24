@@ -399,7 +399,7 @@ impl WebSocketServer {
         let node2 = node.clone();
         let version2 = version.clone();
         let addr: SocketAddr = endpoint.parse()?;
-        info!("Starting WebSocket API on {}", &addr);
+        info!("Starting API Server on {}", &addr);
         let server = TcpListener::bind(&addr)?
             .incoming()
             .map_err(|e| {

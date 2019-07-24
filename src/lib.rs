@@ -34,21 +34,23 @@ use log4rs::encode::pattern::PatternEncoder;
 use log4rs::{Error as LogError, Handle as LogHandle};
 use prometheus::{self, Encoder};
 use resolve::{config::DnsConfig, record::Srv, resolver};
-use std::path::Path;
 use stegos_blockchain::Timestamp;
 use stegos_blockchain::{Block, MacroBlock};
 use stegos_crypto::hash::Hash;
 use stegos_serialization::traits::*;
 
-pub fn initialize_logger(cfg: &config::Config) -> Result<LogHandle, LogError> {
+pub fn initialize_logger(
+    cfg: &config::Config,
+    level: log::LevelFilter,
+) -> Result<LogHandle, LogError> {
     // Try to load log4rs config file
-    let path = Path::new(&cfg.general.log4rs_config);
-    if !cfg.general.log4rs_config.is_empty() && path.is_file() {
-        match log4rs::load_config_file(path, Default::default()) {
+    if !cfg.general.log_config.as_os_str().is_empty() {
+        match log4rs::load_config_file(&cfg.general.log_config, Default::default()) {
             Ok(config) => return Ok(log4rs::init_config(config)?),
             Err(e) => {
-                error!("Failed to read log4rs config file: {}", e);
-                println!("Failed to read log4rs config file: {}", e);
+                return Err(LogError::Log4rs(
+                    format_err!("Failed to read log_config file: {}", e).into(),
+                ));
             }
         }
     };
@@ -60,15 +62,16 @@ pub fn initialize_logger(cfg: &config::Config) -> Result<LogHandle, LogError> {
         .build();
     let config = LogConfig::builder()
         .appender(Appender::builder().build("stdout", Box::new(stdout)))
-        .logger(Logger::builder().build("stegos", LevelFilter::Info))
-        .logger(Logger::builder().build("stegos_blockchain", LevelFilter::Info))
-        .logger(Logger::builder().build("stegos_crypto", LevelFilter::Info))
-        .logger(Logger::builder().build("stegos_consensus", LevelFilter::Info))
-        .logger(Logger::builder().build("stegos_keychain", LevelFilter::Info))
-        .logger(Logger::builder().build("stegos_node", LevelFilter::Info))
-        .logger(Logger::builder().build("stegos_network", LevelFilter::Info))
-        .logger(Logger::builder().build("stegos_txpool", LevelFilter::Info))
-        .logger(Logger::builder().build("stegos_wallet", LevelFilter::Info))
+        .logger(Logger::builder().build("stegos", level))
+        .logger(Logger::builder().build("stegosd", level))
+        .logger(Logger::builder().build("stegos_api", level))
+        .logger(Logger::builder().build("stegos_blockchain", level))
+        .logger(Logger::builder().build("stegos_crypto", level))
+        .logger(Logger::builder().build("stegos_consensus", level))
+        .logger(Logger::builder().build("stegos_keychain", level))
+        .logger(Logger::builder().build("stegos_node", level))
+        .logger(Logger::builder().build("stegos_network", level))
+        .logger(Logger::builder().build("stegos_wallet", level))
         .build(Root::builder().appender("stdout").build(LevelFilter::Warn))
         .expect("console logger should never fail");
 

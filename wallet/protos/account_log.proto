@@ -42,6 +42,7 @@ message PaymentTransactionValue {
     stegos.blockchain.PaymentTransaction tx = 1;
     TransactionStatus status = 2;
     repeated PaymentCertificate certificates = 3;
+    int64 amount = 4;
 }
 
 // Incoming event

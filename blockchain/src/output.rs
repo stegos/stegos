@@ -191,6 +191,7 @@ fn cloak_key(recipient_pkey: &PublicKey, gamma: &Fr) -> Result<(PublicKey, Fr), 
 
 /// Unpacked data field of PaymentPayload.
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
+#[serde(rename_all = "snake_case")]
 pub enum PaymentPayloadData {
     /// A string up to PAYLOAD_DATA_LEN - 2 bytes inclusive.
     Comment(String),

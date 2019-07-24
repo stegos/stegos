@@ -23,6 +23,7 @@ fn generate_chain(
         (num_nodes as i64) * cfg.min_stake_amount + 100,
         num_nodes,
         timestamp,
+        None,
     );
     let mut chain = Blockchain::new(cfg.clone(), chain_dir, false, genesis.clone(), timestamp)
         .expect("Failed to create blockchain");

@@ -34,6 +34,8 @@ use crate::transaction::{
 };
 use bitvector::BitVector;
 use log::*;
+use rand::{thread_rng, Rng};
+use rand_core::RngCore;
 use std::collections::btree_map::BTreeMap;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
@@ -52,9 +54,9 @@ pub struct KeyChain {
 }
 
 impl KeyChain {
-    pub fn new() -> Self {
-        let (account_skey, account_pkey) = scc::make_random_keys();
-        let (network_skey, network_pkey) = pbc::make_random_keys();
+    pub fn new(rng: &mut dyn RngCore) -> Self {
+        let (account_skey, account_pkey) = scc::make_deterministic_keys(&rng.gen::<[u8; 32]>());
+        let (network_skey, network_pkey) = pbc::make_deterministic_keys(&rng.gen::<[u8; 32]>());
         Self {
             account_skey,
             account_pkey,
@@ -69,13 +71,16 @@ pub fn fake_genesis(
     coins: i64,
     num_nodes: usize,
     timestamp: Timestamp,
+    prng: Option<&mut dyn RngCore>,
 ) -> (Vec<KeyChain>, MacroBlock) {
     let mut keychains = Vec::with_capacity(num_nodes);
     let mut outputs: Vec<Output> = Vec::with_capacity(1 + keychains.len());
     let mut payout = coins;
+    let mut thread_rng = thread_rng();
+    let rng = prng.unwrap_or(&mut thread_rng);
     for _i in 0..num_nodes {
         // Generate keys.
-        let keychain = KeyChain::new();
+        let keychain = KeyChain::new(rng);
 
         // Create a stake.
         let output = StakeOutput::new(
@@ -94,6 +99,7 @@ pub fn fake_genesis(
 
     // Create an initial payment.
     assert!(payout > 0);
+    //TODO: Should we also create outputs in predictable way?
     let (output, outputs_gamma) =
         PaymentOutput::new(&keychains[0].account_pkey, payout).expect("invalid keys");
     outputs.push(output.into());

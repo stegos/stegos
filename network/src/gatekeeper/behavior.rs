@@ -39,7 +39,7 @@ use std::{
     marker::PhantomData,
     thread,
 };
-use stegos_crypto::vdf::{self, VDF};
+use stegos_crypto::vdf::VDF;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use super::handler::{GatekeeperHandler, GatekeeperSendEvent};
@@ -431,18 +431,11 @@ where
         match self.solution_stream.poll() {
             Ok(Async::Ready(Some((peer_id, proof, duration)))) => {
                 self.solvers.remove(&peer_id);
-                match proof {
-                    Ok(proof) => {
-                        debug!(target: "stegos_network::gatekeeper", "solved puzzle: peer_id={}, duration={}.{}sec", peer_id, duration.as_secs(), duration.subsec_millis());
-                        self.protocol_updates.push_back(PeerEvent::VDFSolved {
-                            peer_id: peer_id.clone(),
-                            proof: proof.clone(),
-                        });
-                    }
-                    Err(e) => {
-                        debug!(target: "stegos_network::gatekeeper", "failure solving VDF: {:?}", e)
-                    }
-                }
+                debug!(target: "stegos_network::gatekeeper", "solved puzzle: peer_id={}, duration={}.{}sec", peer_id, duration.as_secs(), duration.subsec_millis());
+                self.protocol_updates.push_back(PeerEvent::VDFSolved {
+                    peer_id: peer_id.clone(),
+                    proof: proof.clone(),
+                });
             }
             Ok(Async::Ready(None)) => {
                 debug!(target: "stegos_network::gatekeeper", "solution stream gone!");
@@ -636,7 +629,7 @@ pub enum GatekeeperOutEvent {
     NetworkReady,
 }
 
-type Solution = (PeerId, Result<Vec<u8>, vdf::InvalidIterations>, Duration);
+type Solution = (PeerId, Vec<u8>, Duration);
 
 #[derive(Clone)]
 struct VDFChallenge {

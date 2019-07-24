@@ -111,7 +111,7 @@ pub fn fake_genesis(
     let previous = Hash::digest("genesis");
     let seed = mix(last_macro_block_random, view_change);
     let random = pbc::make_VRF(&keychains[0].network_skey, &seed);
-    let difficulty = 0; // enable mock.
+    let difficulty = 1;
     let activity_map = BitVector::ones(keychains.len());
 
     // Create a block.

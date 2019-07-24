@@ -496,11 +496,6 @@ impl Blockchain {
         // Validate timestamp.
         self.validate_block_timestamp(epoch, block_hash, header.timestamp, timestamp)?;
 
-        // Check VDF difficulty.
-        self.vdf
-            .check_difficulty(header.difficulty)
-            .map_err(|_| BlockError::InvalidVDFComplexity(epoch, *block_hash, header.difficulty))?;
-
         // Check that VDF difficulty is constant.
         if epoch > 0 && header.difficulty != self.difficulty() {
             return Err(BlockError::UnexpectedVDFComplexity(

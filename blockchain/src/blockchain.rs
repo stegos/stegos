@@ -615,10 +615,7 @@ impl Blockchain {
         let challenge = self.last_random().to_bytes();
         let vdf = self.vdf.clone();
         let difficulty = self.difficulty;
-        move || {
-            vdf.solve(&challenge, difficulty)
-                .expect("complexity is valid")
-        }
+        move || vdf.solve(&challenge, difficulty)
     }
 
     /// A shortcut for self.escrow.validate_stakes().

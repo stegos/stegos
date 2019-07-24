@@ -42,7 +42,10 @@ const PASSWORD: &str = "1234";
 fn genesis_accounts(s: &mut Sandbox) -> Vec<AccountSandbox> {
     let mut accounts = Vec::new();
     for i in 0..s.nodes.len() {
-        let account = AccountSandbox::new_genesis(s, i, None);
+        let mut account = AccountSandbox::new_genesis(s, i, None);
+        account.poll();
+        s.nodes[i].poll(); // give node a time to process wallet recovery.
+        account.poll();
         accounts.push(account);
     }
     accounts

@@ -319,6 +319,7 @@ mod tests {
         let offset = 43;
         let request = PaymentTransactionValue {
             tx: tx.clone(),
+            amount: 0,
             certificates: vec![],
             status: TransactionStatus::Accepted {},
         };
@@ -326,6 +327,7 @@ mod tests {
 
         let request = PaymentTransactionValue {
             tx: tx.clone(),
+            amount: 32,
             certificates: vec![],
             status: TransactionStatus::Rejected {
                 error: "e".to_string(),
@@ -335,6 +337,7 @@ mod tests {
 
         let request = PaymentTransactionValue {
             tx: tx.clone(),
+            amount: 4,
             certificates: vec![],
             status: TransactionStatus::Created {},
         };
@@ -342,6 +345,7 @@ mod tests {
 
         let request = PaymentTransactionValue {
             tx: tx.clone(),
+            amount: 5,
             certificates: vec![],
             status: TransactionStatus::Committed { epoch },
         };
@@ -349,6 +353,7 @@ mod tests {
 
         let request = PaymentTransactionValue {
             tx: tx.clone(),
+            amount: 6,
             certificates: vec![],
             status: TransactionStatus::Prepared { epoch, offset },
         };
@@ -356,6 +361,7 @@ mod tests {
 
         let request = PaymentTransactionValue {
             tx: tx.clone(),
+            amount: 7,
             certificates: vec![],
             status: TransactionStatus::Rollback { epoch, offset },
         };
@@ -363,6 +369,7 @@ mod tests {
 
         let request = PaymentTransactionValue {
             tx: tx.clone(),
+            amount: 8,
             certificates: vec![],
             status: TransactionStatus::Conflicted {
                 epoch,

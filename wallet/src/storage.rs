@@ -94,7 +94,7 @@ impl AccountLog {
             .expect("No error in database reading")
             .and_then(|v| Self::timestamp_from_bytes(&v))
             .unwrap_or(Timestamp::UNIX_EPOCH);
-        debug!("Loading database with {} entryes", len);
+        debug!("Loading database with {} entries", len);
 
         let mut log = AccountLog {
             _temp_dir: None,

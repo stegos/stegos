@@ -93,7 +93,7 @@ fn create_tx() {
         match get_notification(&mut notification) {
             AccountNotification::TransactionStatus {
                 tx_hash,
-                status: TransactionStatus::Prepare { .. },
+                status: TransactionStatus::Prepared { .. },
             } => assert_eq!(tx_hash, my_tx),
             _ => unreachable!(),
         }
@@ -192,7 +192,7 @@ fn create_tx_with_certificate() {
         match get_notification(&mut notification) {
             AccountNotification::TransactionStatus {
                 tx_hash,
-                status: TransactionStatus::Prepare { .. },
+                status: TransactionStatus::Prepared { .. },
             } => assert_eq!(tx_hash, my_tx),
             _ => unreachable!(),
         }
@@ -260,7 +260,7 @@ fn full_transfer() {
         match get_notification(&mut notification) {
             AccountNotification::TransactionStatus {
                 tx_hash,
-                status: TransactionStatus::Prepare { .. },
+                status: TransactionStatus::Prepared { .. },
             } => assert_eq!(tx_hash, my_tx),
             _ => unreachable!(),
         }
@@ -419,7 +419,7 @@ fn wait_for_epoch_end_with_tx() {
         match get_notification(&mut notification) {
             AccountNotification::TransactionStatus {
                 tx_hash,
-                status: TransactionStatus::Prepare { .. },
+                status: TransactionStatus::Prepared { .. },
             } => assert_eq!(tx_hash, my_tx),
             _ => unreachable!(),
         }
@@ -512,7 +512,7 @@ fn create_public_tx() {
         match get_notification(&mut notification) {
             AccountNotification::TransactionStatus {
                 tx_hash,
-                status: TransactionStatus::Prepare { .. },
+                status: TransactionStatus::Prepared { .. },
             } => assert_eq!(tx_hash, my_tx),
             _ => unreachable!(),
         }
@@ -570,7 +570,7 @@ fn recovery_acount_after_tx() {
         match get_notification(&mut notification) {
             AccountNotification::TransactionStatus {
                 tx_hash,
-                status: TransactionStatus::Prepare { .. },
+                status: TransactionStatus::Prepared { .. },
             } => assert_eq!(tx_hash, my_tx),
             _ => unreachable!(),
         }
@@ -930,7 +930,7 @@ fn create_vs_tx() {
             // ignore multiple notification, and assert that notification not equal to our.
             while let AccountNotification::TransactionStatus {
                 tx_hash,
-                status: TransactionStatus::Prepare { .. },
+                status: TransactionStatus::Prepared { .. },
             } = get_notification(notification)
             {
                 if tx_hash != my_tx_hash.unwrap() {

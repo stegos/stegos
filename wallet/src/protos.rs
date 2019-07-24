@@ -220,7 +220,7 @@ impl ProtoConvert for PaymentTransactionValue {
                 }
                 status.set_conflicted(epoch_with_offset);
             }
-            TransactionStatus::Prepare { epoch, offset } => {
+            TransactionStatus::Prepared { epoch, offset } => {
                 let mut epoch_with_offset = account_log::EpochWithOffset::new();
                 epoch_with_offset.set_epoch(epoch);
                 epoch_with_offset.set_offset(offset);
@@ -261,7 +261,7 @@ impl ProtoConvert for PaymentTransactionValue {
             Some(account_log::TransactionStatus_oneof_enum_value::prepare(ref msg)) => {
                 let epoch = msg.get_epoch();
                 let offset = msg.get_offset();
-                TransactionStatus::Prepare { epoch, offset }
+                TransactionStatus::Prepared { epoch, offset }
             }
             Some(account_log::TransactionStatus_oneof_enum_value::rollback(ref msg)) => {
                 let epoch = msg.get_epoch();
@@ -350,7 +350,7 @@ mod tests {
         let request = PaymentTransactionValue {
             tx: tx.clone(),
             certificates: vec![],
-            status: TransactionStatus::Prepare { epoch, offset },
+            status: TransactionStatus::Prepared { epoch, offset },
         };
         roundtrip(&request);
 

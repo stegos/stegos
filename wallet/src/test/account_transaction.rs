@@ -37,7 +37,7 @@ fn empty_log_at_start() {
         let mut accounts = genesis_accounts(&mut s);
         s.poll();
         let log = account_history(&mut accounts[0]);
-        assert_eq!(log.len(), 0);
+        assert_eq!(log.len(), 1);
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
     });
 }
@@ -527,6 +527,11 @@ fn recovery_acount_after_tx() {
         s.poll();
         let recipient = accounts[1].account_service.account_pkey;
 
+        accounts[0].poll();
+
+        let log = account_history(&mut accounts[0]);
+
+        assert_eq!(log.len(), 1);
         let mut notification = accounts[0].account.subscribe();
         let rx = accounts[0].account.request(AccountRequest::Payment {
             recipient,
@@ -577,7 +582,8 @@ fn recovery_acount_after_tx() {
 
         let log = account_history(&mut accounts[0]);
 
-        assert_eq!(log.len(), 1);
+        let len = log.len();
+        assert!(len >= 3); // genesis utxo + tx + change utxo + Optional<Reward>
 
         // save account dirs, and destroy accounts.
         let dirs: Vec<_> = accounts.into_iter().map(|acc| acc._tmp_dir).collect();
@@ -590,7 +596,7 @@ fn recovery_acount_after_tx() {
 
         let log_after_recovery = account_history(&mut accounts[0]);
 
-        assert_eq!(log_after_recovery.len(), 1);
+        assert_eq!(log_after_recovery.len(), len);
         assert_eq!(log, log_after_recovery);
     });
 }
@@ -598,7 +604,7 @@ fn recovery_acount_after_tx() {
 fn account_history(account: &mut AccountSandbox) -> Vec<LogEntryInfo> {
     let rx = account.account.request(AccountRequest::HistoryInfo {
         starting_from: Timestamp::now() - Duration::from_secs(1000),
-        limit: 1,
+        limit: 100,
     });
     account.poll();
 

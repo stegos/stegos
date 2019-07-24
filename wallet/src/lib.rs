@@ -508,13 +508,7 @@ impl UnsealedAccountService {
     }
 
     /// Called when outputs registered and/or pruned.
-    fn on_outputs_changed(
-        &mut self,
-        epoch: u64,
-        inputs: Vec<Output>,
-        outputs: Vec<Output>,
-        persist: bool,
-    ) {
+    fn on_outputs_changed(&mut self, epoch: u64, inputs: Vec<Output>, outputs: Vec<Output>) {
         let saved_balance = self.balance();
 
         for input in inputs {
@@ -522,7 +516,7 @@ impl UnsealedAccountService {
         }
 
         for output in outputs {
-            self.on_output_created(epoch, output, persist);
+            self.on_output_created(epoch, output);
         }
 
         let balance = self.balance();
@@ -536,7 +530,7 @@ impl UnsealedAccountService {
     }
 
     /// Called when UTXO is created.
-    fn on_output_created(&mut self, epoch: u64, output: Output, persist: bool) {
+    fn on_output_created(&mut self, epoch: u64, output: Output) {
         if !output.is_my_utxo(&self.account_skey, &self.account_pkey) {
             return;
         }
@@ -557,14 +551,13 @@ impl UnsealedAccountService {
                         data: data.clone(),
                     };
 
-                    if persist {
-                        if let Err(e) = self
-                            .account_log
-                            .push_incomming(Timestamp::now(), value.clone().into())
-                        {
-                            error!("Error when adding incomming tx = {}", e)
-                        }
+                    if let Err(e) = self
+                        .account_log
+                        .push_incomming(Timestamp::now(), value.clone().into())
+                    {
+                        error!("Error when adding incomming tx = {}", e)
                     }
+
                     let info = value.to_info();
                     let missing = self.payments.insert(hash, value);
                     assert!(missing.is_none());
@@ -577,13 +570,11 @@ impl UnsealedAccountService {
                 info!("Received public payment: utxo={}, amount={}", hash, amount);
                 let value = o.clone();
 
-                if persist {
-                    if let Err(e) = self
-                        .account_log
-                        .push_incomming(Timestamp::now(), value.clone().into())
-                    {
-                        error!("Error when adding incomming tx = {}", e)
-                    }
+                if let Err(e) = self
+                    .account_log
+                    .push_incomming(Timestamp::now(), value.clone().into())
+                {
+                    error!("Error when adding incomming tx = {}", e)
                 }
 
                 let info = public_payment_info(&value);
@@ -813,14 +804,8 @@ impl Future for UnsealedAccountService {
                     match response {
                         NodeResponse::AccountRecovered(persistent_state) => {
                             // Recover state.
-                            for OutputRecovery {
-                                output,
-                                epoch,
-                                is_final,
-                                ..
-                            } in persistent_state
-                            {
-                                self.on_output_created(epoch, output, is_final);
+                            for OutputRecovery { output, epoch, .. } in persistent_state {
+                                self.on_output_created(epoch, output);
                             }
                         }
                         NodeResponse::Error { error } => {
@@ -1037,12 +1022,12 @@ impl Future for UnsealedAccountService {
                     NodeNotification::NewMicroBlock(block) => {
                         assert!(self.recovery_rx.is_none(), "recovered from the disk");
                         self.on_tx_statuses_changed(block.statuses);
-                        self.on_outputs_changed(block.epoch, block.inputs, block.outputs, false);
+                        self.on_outputs_changed(block.epoch, block.inputs, block.outputs);
                     }
                     NodeNotification::NewMacroBlock(block) => {
                         assert!(self.recovery_rx.is_none(), "recovered from the disk");
                         self.on_tx_statuses_changed(block.statuses);
-                        self.on_outputs_changed(block.epoch, block.inputs, block.outputs, true);
+                        self.on_outputs_changed(block.epoch, block.inputs, block.outputs);
                         self.on_epoch_changed(block.epoch, block.last_macro_block_timestamp);
                         let updated_statuses = self.account_log.finalize_epoch_txs();
                         self.on_tx_statuses_changed(updated_statuses);
@@ -1050,7 +1035,7 @@ impl Future for UnsealedAccountService {
                     NodeNotification::RollbackMicroBlock(block) => {
                         assert!(self.recovery_rx.is_none(), "recovered from the disk");
                         self.on_tx_statuses_changed(block.statuses);
-                        self.on_outputs_changed(block.epoch, block.inputs, block.outputs, false);
+                        self.on_outputs_changed(block.epoch, block.inputs, block.outputs);
                     }
                     _ => {}
                 },

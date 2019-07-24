@@ -138,7 +138,7 @@ struct UnsealedAccountService {
     vs: ValueShuffle,
     //TODO: Temporary hack to receive newly created transaction from valueshuffle.
     wallet_tx_info_receiver: mpsc::UnboundedReceiver<(PaymentTransaction, bool)>,
-    vs_session: Option<(Hash, oneshot::Sender<AccountResponse>)>,
+    vs_session: Option<(Hash, oneshot::Sender<AccountResponse>, i64)>,
     transaction_response: Option<oneshot::Receiver<NodeResponse>>,
 
     //
@@ -401,7 +401,7 @@ impl UnsealedAccountService {
             self.last_macro_block_timestamp,
             self.max_inputs_in_tx,
         )?;
-        let payment_info = PaymentTransactionValue::new_stake(tx.clone());
+        let payment_info = PaymentTransactionValue::new_stake(tx.clone(), amount);
 
         self.account_log
             .push_outgoing(Timestamp::now(), payment_info.clone())?;
@@ -426,7 +426,7 @@ impl UnsealedAccountService {
             self.last_macro_block_timestamp,
             self.max_inputs_in_tx,
         )?;
-        let payment_info = PaymentTransactionValue::new_stake(tx.clone());
+        let payment_info = PaymentTransactionValue::new_stake(tx.clone(), amount);
         self.send_transaction(tx.into())?;
         Ok(payment_info)
     }
@@ -447,6 +447,11 @@ impl UnsealedAccountService {
             return Err(WalletError::NothingToRestake.into());
         }
 
+        let mut amount = 0;
+        for output in self.stakes.values().map(|val| &val.output) {
+            amount += output.amount;
+        }
+
         let stakes = self.stakes.values().map(|val| &val.output);
         let tx = create_restaking_transaction(
             &self.account_skey,
@@ -457,13 +462,18 @@ impl UnsealedAccountService {
         )?;
         let tx_hash = Hash::digest(&tx);
         self.send_transaction(tx.into())?;
-        Ok((tx_hash, 0))
+        Ok((tx_hash, amount))
     }
 
     /// Cloak all available public outputs.
     fn cloak_all(&mut self, payment_fee: i64) -> Result<PaymentTransactionValue, Error> {
         if self.public_payments.is_empty() {
             return Err(WalletError::NoPublicOutputs.into());
+        }
+
+        let mut amount = 0;
+        for output in self.public_payments.values() {
+            amount += output.amount
         }
 
         let public_utxos = self.public_payments.values();
@@ -475,7 +485,7 @@ impl UnsealedAccountService {
             self.last_macro_block_timestamp,
         )?;
 
-        let info = PaymentTransactionValue::new_cloak(tx.clone());
+        let info = PaymentTransactionValue::new_cloak(tx.clone(), amount);
         self.send_transaction(tx.into())?;
         Ok(info)
     }
@@ -679,6 +689,7 @@ impl UnsealedAccountService {
         tx: PaymentTransaction,
         leader: bool,
         session_id: Hash,
+        amount: i64,
     ) -> Result<PaymentTransactionInfo, Error> {
         let tx_hash = Hash::digest(&tx);
         metrics::WALLET_PUBLISHED_PAYMENTS
@@ -690,7 +701,7 @@ impl UnsealedAccountService {
         };
         self.notify(notify);
 
-        let payment_info = PaymentTransactionValue::new_vs(tx.clone());
+        let payment_info = PaymentTransactionValue::new_vs(tx.clone(), amount);
 
         self.account_log
             .push_outgoing(Timestamp::now(), payment_info.clone())?;
@@ -779,9 +790,10 @@ impl From<Result<PaymentTransactionValue, Error>> for AccountResponse {
 impl From<Result<(Hash, i64), Error>> for AccountResponse {
     fn from(r: Result<(Hash, i64), Error>) -> Self {
         match r {
-            Ok((hash, _fee)) => {
+            Ok((hash, amount)) => {
                 let info = PaymentTransactionInfo {
                     tx_hash: hash,
+                    amount,
                     certificates: vec![],
                     status: TransactionStatus::Created {},
                 };
@@ -873,9 +885,9 @@ impl Future for UnsealedAccountService {
                 Async::Ready(msg) => {
                     let (tx, leader) = msg.expect("channel not ended.");
 
-                    let (session_id, response_sender) =
+                    let (session_id, response_sender, amount) =
                         self.vs_session.take().expect("active snowball session");
-                    match self.handle_snowball_transaction(tx, leader, session_id) {
+                    match self.handle_snowball_transaction(tx, leader, session_id, amount) {
                         Ok(tx) => {
                             let _ = response_sender.send(AccountResponse::TransactionCreated(tx));
                         }
@@ -1005,7 +1017,7 @@ impl Future for UnsealedAccountService {
                                     self.notify(AccountNotification::SnowballStarted {
                                         session_id,
                                     });
-                                    self.vs_session = (session_id, tx).into();
+                                    self.vs_session = (session_id, tx, amount).into();
                                     continue;
                                 }
                                 Err(e) => AccountResponse::Error {

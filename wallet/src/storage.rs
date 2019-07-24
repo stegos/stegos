@@ -411,6 +411,7 @@ pub struct PaymentTransactionValue {
     #[serde(skip_serializing)]
     pub tx: PaymentTransaction,
     pub status: TransactionStatus,
+    pub amount: i64,
     pub certificates: Vec<PaymentCertificate>,
 }
 
@@ -582,33 +583,37 @@ impl PaymentTransactionValue {
         PaymentTransactionValue {
             certificates,
             tx,
+            amount,
             status: TransactionStatus::Created {},
         }
     }
 
-    pub fn new_vs(tx: PaymentTransaction) -> PaymentTransactionValue {
+    pub fn new_vs(tx: PaymentTransaction, amount: i64) -> PaymentTransactionValue {
         assert!(tx.txouts.len() >= 2);
         PaymentTransactionValue {
             certificates: Vec::new(),
             tx,
+            amount,
             status: TransactionStatus::Created {},
         }
     }
 
-    pub fn new_cloak(tx: PaymentTransaction) -> PaymentTransactionValue {
+    pub fn new_cloak(tx: PaymentTransaction, amount: i64) -> PaymentTransactionValue {
         assert_eq!(tx.txouts.len(), 1);
 
         PaymentTransactionValue {
             certificates: Vec::new(),
             tx,
+            amount,
             status: TransactionStatus::Created {},
         }
     }
 
-    pub fn new_stake(tx: PaymentTransaction) -> PaymentTransactionValue {
+    pub fn new_stake(tx: PaymentTransaction, amount: i64) -> PaymentTransactionValue {
         PaymentTransactionValue {
             certificates: Vec::new(),
             tx,
+            amount,
             status: TransactionStatus::Created {},
         }
     }
@@ -617,6 +622,7 @@ impl PaymentTransactionValue {
         let tx_hash = Hash::digest(&self.tx);
         PaymentTransactionInfo {
             tx_hash,
+            amount: self.amount,
             certificates: self.certificates.clone(),
             status: self.status.clone(),
         }

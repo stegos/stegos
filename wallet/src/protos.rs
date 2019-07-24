@@ -234,6 +234,7 @@ impl ProtoConvert for PaymentTransactionValue {
             }
         }
         msg.set_status(status);
+        msg.set_amount(self.amount);
         msg
     }
 
@@ -285,9 +286,11 @@ impl ProtoConvert for PaymentTransactionValue {
                 .into());
             }
         };
+        let amount = proto.get_amount();
         let payload = PaymentTransactionValue {
             tx,
             status,
+            amount,
             certificates,
         };
         Ok(payload)

@@ -34,6 +34,8 @@ use stegos_node::TransactionStatus;
 pub type AccountId = String;
 
 #[derive(Eq, PartialEq, Serialize, Deserialize, Clone, Debug)]
+#[serde(tag = "type")]
+#[serde(rename_all = "snake_case")]
 pub enum LogEntryInfo {
     Incoming {
         timestamp: Timestamp,
@@ -46,6 +48,8 @@ pub enum LogEntryInfo {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[serde(tag = "output_type")]
 pub enum OutputInfo {
     Payment(PaymentInfo),
     PublicPayment(PublicPaymentInfo),
@@ -56,6 +60,7 @@ pub enum OutputInfo {
 pub struct PaymentInfo {
     pub utxo: Hash,
     pub amount: i64,
+    #[serde(flatten)]
     pub data: PaymentPayloadData,
     pub locked_timestamp: Option<Timestamp>,
 }
@@ -190,6 +195,7 @@ pub enum WalletRequest {
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentTransactionInfo {
     pub tx_hash: Hash,
+    pub amount: i64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub certificates: Vec<PaymentCertificate>,
     #[serde(flatten)]

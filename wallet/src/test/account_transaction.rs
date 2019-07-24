@@ -587,6 +587,7 @@ fn recovery_acount_after_tx() {
             let account = AccountSandbox::new_genesis(&mut s, i, path.into());
             accounts.push(account);
         }
+        s.poll();
 
         let log_after_recovery = account_history(&mut accounts[0]);
 

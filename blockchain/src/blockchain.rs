@@ -143,7 +143,15 @@ type BalanceMap = MultiVersionedMap<(), Balance, LSN>;
 type ElectionResultList = MultiVersionedMap<(), ElectionResult, LSN>;
 type ValidatorsActivity = MultiVersionedMap<pbc::PublicKey, ValidatorAwardState, LSN>;
 
-pub type AccountRecoveryState = Vec<(Output, u64)>;
+#[derive(Eq, PartialEq, Debug, Clone)]
+pub struct OutputRecovery {
+    pub output: Output,
+    pub epoch: u64,
+    pub is_final: bool,
+    pub timestamp: Timestamp,
+}
+
+pub type AccountRecoveryState = Vec<OutputRecovery>;
 
 /// The blockchain database.
 pub struct Blockchain {
@@ -383,30 +391,36 @@ impl Blockchain {
             vec![Default::default(); accounts.len()];
         let mut epoch: u64 = 0;
 
-        let mut update_account_state = |output: &Output, epoch: u64| {
-            let output_hash = Hash::digest(&output);
-            if !self.contains_output(&output_hash) {
-                return; // Spent.
-            }
-            for (account_id, (skey, pkey)) in accounts.iter().enumerate() {
-                if output.is_my_utxo(*skey, *pkey) {
-                    accounts_state[account_id].push((output.clone(), epoch));
+        let mut update_account_state =
+            |output: &Output, epoch: u64, is_final: bool, timestamp: Timestamp| {
+                let output_hash = Hash::digest(&output);
+                if !self.contains_output(&output_hash) {
+                    return; // Spent.
                 }
-            }
-        };
+                for (account_id, (skey, pkey)) in accounts.iter().enumerate() {
+                    if output.is_my_utxo(*skey, *pkey) {
+                        accounts_state[account_id].push(OutputRecovery {
+                            output: output.clone(),
+                            epoch,
+                            is_final,
+                            timestamp,
+                        });
+                    }
+                }
+            };
 
         for block in self.blocks_starting(epoch, 0) {
             match block {
                 Block::MacroBlock(block) => {
                     for output in &block.outputs {
-                        update_account_state(output, epoch);
+                        update_account_state(output, epoch, true, block.header.timestamp);
                     }
                     epoch += 1;
                 }
                 Block::MicroBlock(block) => {
                     for tx in block.transactions {
                         for output in tx.txouts() {
-                            update_account_state(output, epoch);
+                            update_account_state(output, epoch, false, block.header.timestamp);
                         }
                     }
                 }

@@ -34,8 +34,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Duration;
 use stegos_blockchain::{
-    PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput, StakeOutput,
-    Timestamp,
+    Output, PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput,
+    StakeOutput, Timestamp,
 };
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::scc::{make_random_keys, Fr, PublicKey};
@@ -63,6 +63,12 @@ pub struct AccountLog {
     len: u64,
     /// last known system time.
     last_time: Timestamp,
+
+    //
+    // Indexes
+    //
+    /// Index of all created transactions by this wallet.
+    utxos_list: HashMap<Hash, Timestamp>,
     /// Index of all created transactions by this wallet.
     created_txs: HashMap<Hash, Timestamp>,
     /// Index of all transactions that wasn't rejected or committed.
@@ -98,6 +104,7 @@ impl AccountLog {
             created_txs: HashMap::new(),
             pending_txs: HashSet::new(),
             epoch_transactions: HashSet::new(),
+            utxos_list: HashMap::new(),
         };
         log.recover_state();
         log
@@ -117,6 +124,7 @@ impl AccountLog {
             created_txs: HashMap::new(),
             pending_txs: HashSet::new(),
             epoch_transactions: HashSet::new(),
+            utxos_list: HashMap::new(),
         }
     }
 
@@ -126,7 +134,11 @@ impl AccountLog {
         let starting_time = Timestamp::UNIX_EPOCH;
         for (timestamp, entry) in self.iter_range(starting_time, u64::max_value()) {
             match entry {
-                LogEntry::Incoming { .. } => {}
+                LogEntry::Incoming { output } => {
+                    let output_hash = Hash::digest(&output.to_output());
+                    trace!("Recovered output: output={}", output_hash);
+                    assert!(self.utxos_list.insert(output_hash, timestamp).is_none());
+                }
                 LogEntry::Outgoing { tx } => {
                     let tx_hash = Hash::digest(&tx.tx);
                     let status = tx.status;
@@ -201,8 +213,15 @@ impl AccountLog {
         timestamp: Timestamp,
         incoming: OutputValue,
     ) -> Result<Timestamp, Error> {
+        let output_hash = Hash::digest(&incoming.to_output());
+        if let Some(time) = self.utxos_list.get(&output_hash) {
+            trace!("Skip adding, log already contain output = {}", output_hash);
+            return Ok(*time);
+        }
         let entry = LogEntry::Incoming { output: incoming };
-        self.push_entry(timestamp, entry)
+        let timestamp = self.push_entry(timestamp, entry)?;
+        assert!(self.utxos_list.insert(output_hash, timestamp).is_none());
+        Ok(timestamp)
     }
 
     /// Insert log entry as last entry in log.
@@ -477,6 +496,13 @@ impl OutputValue {
         match self {
             OutputValue::Payment(o) => o.to_info().into(),
             OutputValue::PublicPayment(o) => public_payment_info(&o).into(),
+        }
+    }
+
+    pub fn to_output(&self) -> Output {
+        match self {
+            OutputValue::Payment(o) => o.output.clone().into(),
+            OutputValue::PublicPayment(o) => o.clone().into(),
         }
     }
 }

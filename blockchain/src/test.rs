@@ -32,6 +32,7 @@ use crate::timestamp::Timestamp;
 use crate::transaction::{
     CoinbaseTransaction, PaymentTransaction, RestakeTransaction, Transaction,
 };
+use crate::OutputRecovery;
 use bitvector::BitVector;
 use log::*;
 use rand::{thread_rng, Rng};
@@ -216,16 +217,16 @@ pub fn create_fake_micro_block(
         let mut stakes: Vec<Output> = Vec::new();
         let mut payment_balance: i64 = 0;
         let mut staking_balance: i64 = 0;
-        for (input, epoch) in unspent {
-            match input {
+        for OutputRecovery { output, epoch, .. } in unspent {
+            match output {
                 Output::PaymentOutput(ref o) => {
                     let payload = o.decrypt_payload(&keychain.account_skey).unwrap();
                     payment_balance += payload.amount;
-                    payments.push(input);
+                    payments.push(output);
                 }
                 Output::PublicPaymentOutput(ref o) => {
                     payment_balance += o.amount;
-                    payments.push(input);
+                    payments.push(output);
                 }
                 Output::StakeOutput(ref o) => {
                     let active_until_epoch = epoch + chain.cfg().stake_epochs;
@@ -233,7 +234,7 @@ pub fn create_fake_micro_block(
                         continue;
                     }
                     staking_balance += o.amount;
-                    stakes.push(input);
+                    stakes.push(output);
                 }
             }
         }

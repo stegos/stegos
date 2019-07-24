@@ -1148,11 +1148,22 @@ impl NodeService {
     /// Handler for NodeRequest::AddTransaction
     fn handle_add_tx(&mut self, tx: Transaction) -> TransactionStatus {
         match self.send_transaction(tx.clone()) {
-            Ok(()) => TransactionStatus::Accepted {},
-            Err(e) => TransactionStatus::Rejected {
-                error: e.to_string(),
+            Ok(()) => {}
+            Err(e) => match e.downcast::<NodeTransactionError>() {
+                Ok(NodeTransactionError::AlreadyExists(_)) => {}
+                Ok(v) => {
+                    return TransactionStatus::Rejected {
+                        error: v.to_string(),
+                    }
+                }
+                Err(e) => {
+                    return TransactionStatus::Rejected {
+                        error: e.to_string(),
+                    }
+                }
             },
         }
+        TransactionStatus::Accepted {}
     }
 
     /// Handler for NodeMessage::PopBlock.

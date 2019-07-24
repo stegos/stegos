@@ -602,6 +602,100 @@ fn recovery_acount_after_tx() {
     });
 }
 
+#[test]
+fn send_node_duplicate_tx() {
+    Sandbox::start(Default::default(), |mut s| {
+        let mut accounts = genesis_accounts(&mut s);
+
+        s.poll();
+        let recipient = accounts[1].account_service.account_pkey;
+
+        accounts[0].poll();
+
+        let log = account_history(&mut accounts[0]);
+
+        assert_eq!(log.len(), 1);
+        let mut notification = accounts[0].account.subscribe();
+        let rx = accounts[0].account.request(AccountRequest::Payment {
+            recipient,
+            amount: 10,
+            payment_fee: PAYMENT_FEE,
+            comment: "Test".to_string(),
+            locked_timestamp: None,
+            with_certificate: false,
+        });
+
+        assert_eq!(notification.poll(), Ok(Async::NotReady));
+        accounts[0].poll();
+        let response = get_request(rx);
+        info!("{:?}", response);
+        let my_tx = match response {
+            AccountResponse::TransactionCreated(tx) => {
+                assert!(tx.certificates.is_empty());
+                tx.tx_hash
+            }
+            _ => panic!("Wrong respnse to payment request"),
+        };
+
+        s.nodes[0].poll(); // give node time to process tx
+
+        accounts[0].poll(); // process update status
+
+        let log = account_history(&mut accounts[0]);
+
+        let len = log.len();
+        assert_eq!(len, 2);
+
+        match log.last().unwrap() {
+            LogEntryInfo::Outgoing {
+                tx:
+                    PaymentTransactionInfo {
+                        status: TransactionStatus::Accepted {},
+                        ..
+                    },
+                ..
+            } => {}
+            e => panic!("Incorrect entry = {:?}.", e),
+        }
+
+        // save account dirs, and destroy accounts.
+        let dirs: Vec<_> = accounts.into_iter().map(|acc| acc._tmp_dir).collect();
+
+        let mut accounts = Vec::new();
+        for (i, path) in (0..s.nodes.len()).zip(dirs) {
+            let account = AccountSandbox::new_genesis(&mut s, i, path.into());
+            accounts.push(account);
+        }
+        s.poll();
+
+        accounts[0].poll();
+
+        s.nodes[0].poll(); // give node time to process tx
+
+        accounts[0].poll();
+
+        let log_after_recovery = account_history(&mut accounts[0]);
+
+        assert_eq!(len, 2);
+
+        match log_after_recovery.last().unwrap() {
+            LogEntryInfo::Outgoing {
+                tx:
+                    PaymentTransactionInfo {
+                        status: TransactionStatus::Accepted {},
+                        ..
+                    },
+                ..
+            } => {}
+            e => panic!("Incorrect entry = {:?}.", e),
+        }
+
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+        s.filter_broadcast(&[stegos_node::TX_TOPIC]);
+    });
+}
+
 fn account_history(account: &mut AccountSandbox) -> Vec<LogEntryInfo> {
     let rx = account.account.request(AccountRequest::HistoryInfo {
         starting_from: Timestamp::now() - Duration::from_secs(1000),

@@ -807,9 +807,10 @@ impl Future for UnsealedAccountService {
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         // Recovery information from node.
-        if let Some(mut recovery_rx) = self.recovery_rx.take() {
+        if let Some(ref mut recovery_rx) = &mut self.recovery_rx {
             match recovery_rx.poll() {
                 Ok(Async::Ready(response)) => {
+                    self.recovery_rx = None;
                     match response {
                         NodeResponse::AccountRecovered(persistent_state) => {
                             // Recover state.
@@ -824,7 +825,9 @@ impl Future for UnsealedAccountService {
                         _ => unreachable!(),
                     };
                 }
-                Ok(Async::NotReady) => self.recovery_rx = Some(recovery_rx),
+                Ok(Async::NotReady) => {
+                    return Ok(Async::NotReady);
+                }
                 Err(_) => panic!("disconnected"),
             }
         }

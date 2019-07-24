@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Stegos AG <info@stegos.com>"]
 categories = ["cryptography"]
 description = "Stegos - Auxiliary Extensions for Crypto Library"
+edition = "2018"
 
 [dependencies.blake2b_simd]
 version = "0.4.1"

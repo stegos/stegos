@@ -21,13 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#![allow(unused_imports)]
-
-extern crate ff;
-extern crate rand;
-
 pub use ff::{Field, PrimeField, PrimeFieldDecodingError, PrimeFieldRepr};
-use rand::Rand;
 
 // Use prime base q = 2^255 - 79*12 - 1 = 3 mod 4
 #[derive(PrimeField)]

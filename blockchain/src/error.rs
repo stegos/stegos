@@ -301,11 +301,6 @@ pub enum BlockError {
     )]
     InvalidVDFProof(u64, Hash),
     #[fail(
-        display = "Received block with invalid VDF complexity: epoch={}, block={}, got={}",
-        _0, _1, _2
-    )]
-    InvalidVDFComplexity(u64, Hash, u64),
-    #[fail(
         display = "Received block with unexpected VDF complexity: epoch={}, block={}, expected={}, got={}",
         _0, _1, _2, _3
     )]

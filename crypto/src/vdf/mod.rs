@@ -21,10 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#![allow(unused_imports)]
-
 use crate::hash::Hash;
-
 use vdf_field::{Field, Fv, FvRepr, PrimeField, PrimeFieldRepr};
 
 // -----------------------------------------------
@@ -77,7 +74,7 @@ fn fv_to_bytes(fv: Fv) -> [u8; 32] {
 
 // --------------------------------------------------------------
 
-/// Conventional wrapper around Sqrt VDF which supports difficulty = 0.
+/// VDF Implementation.
 #[derive(Debug, Copy, Clone)]
 pub struct VDF {
     qp1d4: FvRepr,
@@ -86,9 +83,6 @@ pub struct VDF {
 
 #[derive(Debug, Copy, Clone)]
 pub struct InvalidVDFProof();
-
-#[derive(Debug, Copy, Clone)]
-pub struct InvalidIterations(); // just here for backward compatibility - never happens
 
 impl VDF {
     pub fn new() -> VDF {
@@ -133,23 +127,13 @@ impl VDF {
 
     // --- API ---
 
-    pub fn solve(&self, challenge: &[u8], difficulty: u64) -> Result<Vec<u8>, InvalidIterations> {
-        // note for future client rewrite - this never returns any errors
-        if difficulty != 0 {
-            let mut x = checked_bytes_to_fv(challenge);
-            for _ in 0..difficulty {
-                x = self.g(x);
-            }
-            let bytes = fv_to_bytes(x);
-            return Ok(bytes.to_vec());
+    pub fn solve(&self, challenge: &[u8], difficulty: u64) -> Vec<u8> {
+        let mut x = checked_bytes_to_fv(challenge);
+        for _ in 0..difficulty {
+            x = self.g(x);
         }
-        // Use mocked version for difficulty == 0.
-        Ok(Hash::digest(&challenge).to_bytes()[..].to_vec())
-    }
-
-    pub fn check_difficulty(&self, _difficulty: u64) -> Result<(), InvalidIterations> {
-        // note for future client rewrite - this never returns any errors
-        Ok(())
+        let bytes = fv_to_bytes(x);
+        bytes.to_vec()
     }
 
     pub fn verify(
@@ -158,26 +142,18 @@ impl VDF {
         difficulty: u64,
         alleged_solution: &[u8],
     ) -> Result<(), InvalidVDFProof> {
-        if difficulty != 0 {
-            let mut x = unchecked_bytes_to_fv(alleged_solution);
-            for _ in 0..difficulty {
-                self.h(&mut x);
-            }
-            x.square();
-            let mut ans = checked_bytes_to_fv(challenge);
-            ans.square();
-            if ans == x {
-                return Ok(());
-            } else {
-                return Err(InvalidVDFProof());
-            }
+        let mut x = unchecked_bytes_to_fv(alleged_solution);
+        for _ in 0..difficulty {
+            self.h(&mut x);
         }
-        // Use mocked version for difficulty == 0.
-        let solution = Hash::digest(&challenge).to_bytes()[..].to_vec();
-        if &alleged_solution[..] == &solution[..] {
+        x.square();
+        let mut ans = checked_bytes_to_fv(challenge);
+        ans.square();
+        if ans == x {
             return Ok(());
+        } else {
+            return Err(InvalidVDFProof());
         }
-        return Err(InvalidVDFProof());
     }
 }
 
@@ -185,14 +161,14 @@ impl VDF {
 
 #[test]
 fn test_fv() {
-    use std::time::{Duration, SystemTime};
+    use std::time::SystemTime;
     let vdf = VDF::new();
-    let mult = 50000;
+    let mult = 5000;
     for ix in 0..11 {
         let challenge = Hash::random().to_bytes();
         let difficulty = ix * mult;
         let start = SystemTime::now();
-        let ans = vdf.solve(&challenge, difficulty).unwrap();
+        let ans = vdf.solve(&challenge, difficulty);
         let timing = start.elapsed().unwrap();
         println!("Solve {} = {:?}", difficulty, timing);
 

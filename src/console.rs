@@ -38,6 +38,7 @@ use std::thread;
 use std::time::Duration;
 use stegos_api::*;
 use stegos_blockchain::Timestamp;
+use stegos_crypto::hash::Hash;
 use stegos_crypto::{pbc, scc};
 
 const CONSOLE_HISTORY_LIMIT: u64 = 50;
@@ -65,6 +66,8 @@ lazy_static! {
     static ref PUBLISH_COMMAND_RE: Regex = Regex::new(r"\s*(?P<topic>[0-9A-Za-z]+)\s+(?P<msg>.*)$").unwrap();
     /// Regex to parse "send" command.
     static ref SEND_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<topic>[0-9A-Za-z]+)\s+(?P<msg>.+)$").unwrap();
+    /// Regex to parse "validate certificate" command.
+    static ref VALIDATE_CERTIFICATE_COMMAND_RE: Regex = Regex::new(r"\s*(?P<utxo>[0-9a-f]+)\s+(?P<spender>[0-9A-Za-z]+)\s+(?P<recipient>[0-9A-Za-z]+)\s+(?P<amount>[0-9\.]{1,19})\s+(?P<rvalue>[0-9a-f]+)\s*$").unwrap();
     /// Regex to parse "use" command.
     static ref USE_COMMAND_RE: Regex = Regex::new(r"\s*(?P<account_id>[0-9A-Za-z]+)\s*$").unwrap();
 }
@@ -204,8 +207,9 @@ impl ConsoleService {
         eprintln!("unlock - unlock the account");
         eprintln!();
         eprintln!(
-            "pay ADDRESS AMOUNT [COMMENT] [/public] [/snowball] [/lock duration] [/fee fee] - send money"
+            "pay ADDRESS AMOUNT [COMMENT] [/snowball] [/public] [/lock DATETIME] [/fee FEE] [/certificate] - send money"
         );
+        eprintln!("validate certificate UTXO SENDER_ADDRESS RECIPIENT_ADDRESS AMOUNT RVALUE - check that payment certificate is valid");
         eprintln!("msg ADDRESS MESSAGE - send a message via blockchain");
         eprintln!("stake AMOUNT - stake money");
         eprintln!("unstake [AMOUNT] - unstake money");
@@ -242,7 +246,7 @@ impl ConsoleService {
 
     fn help_pay() {
         eprintln!(
-            "Usage: pay ADDRESS AMOUNT [COMMENT] [/snowball] [/public] [/lock DATETIME] [/fee FEE]"
+            "Usage: pay ADDRESS AMOUNT [COMMENT] [/snowball] [/public] [/lock DATETIME] [/fee FEE] [/certificate]"
         );
         eprintln!(" - ADDRESS recipient's address");
         eprintln!(" - AMOUNT amount in μSTG");
@@ -252,12 +256,25 @@ impl ConsoleService {
         eprintln!(" - /lock DATETIME lock money until the specified time:");
         eprintln!("       '2019-07-01 12:52:11', '2019-07-01T12:52:11Z', '15days 2min 2s'");
         eprintln!(" - /fee FEE set fee in μSTG per each created UTXO");
+        eprintln!(" - /certificate create payment certificate");
         eprintln!();
     }
 
     fn help_stake() {
         eprintln!("Usage: stake AMOUNT");
         eprintln!(" - AMOUNT amount to stake into escrow, in μSTG");
+        eprintln!();
+    }
+
+    fn help_validate_certificate() {
+        eprintln!(
+            "Usage: validate certificate UTXO SENDER_ADDRESS RECIPIENT_ADDRESS AMOUNT RVALUE"
+        );
+        eprintln!(" - UTXO - UTXO ID");
+        eprintln!(" - SENDER_ADDRESS - senders's address");
+        eprintln!(" - RECIPIENT_ADDRESS - recipient's address");
+        eprintln!(" - AMOUNT - amount in μSTG");
+        eprintln!(" - RVALUE - decryption key");
         eprintln!();
     }
 
@@ -511,6 +528,70 @@ impl ConsoleService {
                 }
             };
             self.send_account_request(request)?
+        } else if msg.starts_with("validate certificate ") {
+            let caps = match VALIDATE_CERTIFICATE_COMMAND_RE.captures(&msg[20..]) {
+                Some(c) => c,
+                None => {
+                    Self::help_validate_certificate();
+                    return Ok(true);
+                }
+            };
+
+            let utxo = caps.name("utxo").unwrap().as_str();
+            let utxo = match Hash::try_from_hex(utxo) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid UTXO hash '{}': {}", utxo, e);
+                    Self::help_validate_certificate();
+                    return Ok(true);
+                }
+            };
+
+            let spender = caps.name("spender").unwrap().as_str();
+            let spender = match scc::PublicKey::from_str(spender) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid spender address '{}': {}", spender, e);
+                    Self::help_validate_certificate();
+                    return Ok(true);
+                }
+            };
+            let recipient = caps.name("recipient").unwrap().as_str();
+            let recipient = match scc::PublicKey::from_str(recipient) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid recipient address '{}': {}", recipient, e);
+                    Self::help_validate_certificate();
+                    return Ok(true);
+                }
+            };
+            let amount = caps.name("amount").unwrap().as_str();
+            let amount = match parse_money(amount) {
+                Ok(amount) => amount,
+                Err(e) => {
+                    eprintln!("{}", e);
+                    Self::help_validate_certificate();
+                    return Ok(true);
+                }
+            };
+            let rvalue = caps.name("rvalue").unwrap().as_str();
+            let rvalue = match scc::Fr::try_from_hex(rvalue) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid rvalue '{}': {}", rvalue, e);
+                    Self::help_validate_certificate();
+                    return Ok(true);
+                }
+            };
+
+            let request = NodeRequest::ValidateCertificate {
+                utxo,
+                spender,
+                recipient,
+                amount,
+                rvalue,
+            };
+            self.send_node_request(request)?
         } else if msg.starts_with("msg ") {
             let caps = match MSG_COMMAND_RE.captures(&msg[4..]) {
                 Some(c) => c,

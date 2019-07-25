@@ -151,14 +151,14 @@ fn create_tx_with_certificate() {
                     assert!(output
                         .decrypt_payload(&accounts[0].account_service.account_skey)
                         .is_err());
-                    let actual_amount = output
-                        .verify_proof_of_payment(
+                    output
+                        .validate_certificate(
                             &accounts[0].account_service.account_pkey,
-                            &tx.outputs[0].info.rvalue.unwrap(),
                             &recipient,
+                            10,
+                            &tx.outputs[0].info.rvalue.unwrap(),
                         )
                         .unwrap();
-                    assert_eq!(actual_amount, 10);
                 }
 
                 tx.tx_hash

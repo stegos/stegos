@@ -663,7 +663,7 @@ impl PaymentTransactionValue {
         }
     }
 
-    pub fn to_info(&self) -> PaymentTransactionInfo {
+    pub fn to_info(&self) -> TransactionInfo {
         let tx_hash = Hash::digest(&self.tx);
 
         // merge output with extended info.
@@ -678,9 +678,10 @@ impl PaymentTransactionValue {
             })
             .collect();
 
-        PaymentTransactionInfo {
+        TransactionInfo {
             tx_hash,
             outputs,
+            fee: self.tx.fee,
             inputs: self.tx.txins.clone(),
             status: self.status.clone(),
         }

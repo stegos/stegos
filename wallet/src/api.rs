@@ -44,7 +44,7 @@ pub enum LogEntryInfo {
     Outgoing {
         timestamp: Timestamp,
         #[serde(flatten)]
-        tx: PaymentTransactionInfo,
+        tx: TransactionInfo,
     },
 }
 
@@ -201,8 +201,9 @@ pub struct ExtendedOutputInfo {
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
-pub struct PaymentTransactionInfo {
+pub struct TransactionInfo {
     pub tx_hash: Hash,
+    pub fee: i64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub outputs: Vec<ExtendedOutputInfo>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -220,7 +221,7 @@ pub struct PaymentTransactionInfo {
 pub enum AccountResponse {
     Sealed,
     Unsealed,
-    TransactionCreated(PaymentTransactionInfo),
+    TransactionCreated(TransactionInfo),
     BalanceInfo {
         balance: i64,
     },

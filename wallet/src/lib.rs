@@ -435,15 +435,10 @@ impl UnsealedAccountService {
     }
 
     /// Restake all available stakes (even if not expired).
-    fn restake_all(&mut self) -> Result<(Hash, i64), Error> {
+    fn restake_all(&mut self) -> Result<TransactionInfo, Error> {
         assert_eq!(STAKE_FEE, 0);
         if self.stakes.is_empty() {
             return Err(WalletError::NothingToRestake.into());
-        }
-
-        let mut amount = 0;
-        for output in self.stakes.values().map(|val| &val.output) {
-            amount += output.amount;
         }
 
         let stakes = self.stakes.values().map(|val| &val.output);
@@ -456,7 +451,13 @@ impl UnsealedAccountService {
         )?;
         let tx_hash = Hash::digest(&tx);
         self.send_transaction(tx.into())?;
-        Ok((tx_hash, amount))
+        Ok(TransactionInfo {
+            tx_hash,
+            fee: 0,
+            outputs: vec![],
+            inputs: vec![],
+            status: TransactionStatus::Created {},
+        })
     }
 
     /// Cloak all available public outputs.
@@ -669,7 +670,7 @@ impl UnsealedAccountService {
         tx: PaymentTransaction,
         leader: bool,
         session_id: Hash,
-    ) -> Result<PaymentTransactionInfo, Error> {
+    ) -> Result<TransactionInfo, Error> {
         let tx_hash = Hash::digest(&tx);
         metrics::WALLET_PUBLISHED_PAYMENTS
             .with_label_values(&[&String::from(&self.account_pkey)])
@@ -767,18 +768,11 @@ impl From<Result<PaymentTransactionValue, Error>> for AccountResponse {
     }
 }
 
-impl From<Result<(Hash, i64), Error>> for AccountResponse {
-    fn from(r: Result<(Hash, i64), Error>) -> Self {
+/// This could be used for non PaymentTx.
+impl From<Result<TransactionInfo, Error>> for AccountResponse {
+    fn from(r: Result<TransactionInfo, Error>) -> Self {
         match r {
-            Ok((hash, _amount)) => {
-                let info = PaymentTransactionInfo {
-                    tx_hash: hash,
-                    outputs: vec![],
-                    inputs: vec![],
-                    status: TransactionStatus::Created {},
-                };
-                AccountResponse::TransactionCreated(info)
-            }
+            Ok(info) => AccountResponse::TransactionCreated(info),
             Err(e) => AccountResponse::Error {
                 error: format!("{}", e),
             },

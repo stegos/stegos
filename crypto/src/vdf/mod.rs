@@ -50,13 +50,6 @@ fn checked_bytes_to_fv(bytes: &[u8]) -> Fv {
     Fv::from_repr(rep).unwrap()
 }
 
-fn unchecked_bytes_to_fv(bytes: &[u8]) -> Fv {
-    // unchecked - expects a valid field value in little-endian byte form
-    // should only be called on items produced by fv_to_bytes()
-    let rep = bytes_to_fvrep(bytes);
-    Fv::from_repr(rep).unwrap()
-}
-
 fn fv_to_bytes(fv: Fv) -> [u8; 32] {
     let fvr = fv.into_repr();
     let mut bytes = [0u8; 32];
@@ -77,7 +70,7 @@ fn fv_to_bytes(fv: Fv) -> [u8; 32] {
 #[derive(Debug, Copy, Clone)]
 pub struct VDF {
     qp1d4: FvRepr,
-    one: Fv,
+    flip: Fv,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -93,19 +86,19 @@ impl VDF {
         modrep.shr(2);
         VDF {
             qp1d4: modrep,
-            one: Fv::from_repr(rep1).unwrap(),
+            flip: Fv::from_repr(FvRepr([2, 0, 0, 0])).unwrap(),
         }
     }
 
     // --- internal routines ----
 
-    fn xor1(&self, fv: &mut Fv) {
-        // Field val XOR 1
+    fn xor2(&self, fv: &mut Fv) {
+        // Field val XOR 2
         let rep = fv.into_repr();
-        if rep.is_odd() {
-            fv.sub_assign(&self.one);
+        if 0 == (rep.0[0] & 2) {
+            fv.add_assign(&self.flip);
         } else {
-            fv.add_assign(&self.one);
+            fv.sub_assign(&self.flip);
         }
     }
 
@@ -113,14 +106,14 @@ impl VDF {
         // the slow prover function
         // iterated square roots with XOR fenceposts
         let mut ans = x.pow(self.qp1d4);
-        self.xor1(&mut ans);
+        self.xor2(&mut ans);
         ans
     }
 
     fn h(&self, x: &mut Fv) {
         // the fast validator function
         // iterated squaring with XOR fenceposts
-        self.xor1(x);
+        self.xor2(x);
         x.square();
     }
 
@@ -141,7 +134,7 @@ impl VDF {
         difficulty: u64,
         alleged_solution: &[u8],
     ) -> Result<(), InvalidVDFProof> {
-        let mut x = unchecked_bytes_to_fv(alleged_solution);
+        let mut x = checked_bytes_to_fv(alleged_solution);
         for _ in 0..difficulty {
             self.h(&mut x);
         }
@@ -177,4 +170,14 @@ fn test_fv() {
         let timing = start.elapsed().unwrap();
         println!("Verify {} = {:?}", difficulty, timing);
     }
+}
+
+#[test]
+fn test_fv0() {
+    let vdf = VDF::new();
+    let challenge = [0u8; 1];
+    let difficulty = 2;
+    let ans = vdf.solve(&challenge, difficulty);
+    println!("ans = {:?}", ans);
+    assert!(vdf.verify(&challenge, difficulty, &ans).is_ok());
 }

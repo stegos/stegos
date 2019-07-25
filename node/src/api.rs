@@ -47,6 +47,13 @@ pub enum NodeRequest {
     },
     #[serde(skip)]
     AddTransaction(Transaction),
+    ValidateCertificate {
+        utxo: Hash,
+        spender: scc::PublicKey,
+        recipient: scc::PublicKey,
+        amount: i64,
+        rvalue: scc::Fr,
+    },
 }
 
 ///
@@ -66,6 +73,7 @@ pub enum NodeResponse {
         hash: Hash,
         status: TransactionStatus,
     },
+    CertificateValid,
     Error {
         error: String,
     },

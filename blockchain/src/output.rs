@@ -79,6 +79,8 @@ pub enum OutputError {
     CryptoError(CryptoError),
     #[fail(display = "Error in decoding utf string ={}", _0)]
     UtfError(std::str::Utf8Error),
+    #[fail(display = "Invalid payment certificate")]
+    InvalidCertificate,
 }
 
 impl From<CryptoError> for OutputError {
@@ -572,25 +574,27 @@ impl PaymentOutput {
     }
 
     // Returns the amount from the encrypted payload,
-    // if you know the secret r_value for the payload keying
-    pub fn verify_proof_of_payment(
+    // if you know the secret rvalue for the payload keying
+    pub fn validate_certificate(
         &self,
         spender_pkey: &PublicKey,
-        r_value: &Fr,
         recipient_pkey: &PublicKey,
-    ) -> Result<i64, Error> {
+        amount: i64,
+        rvalue: &Fr,
+    ) -> Result<(), OutputError> {
         let output_hash = Hash::digest(self);
-        let payload = PaymentPayload::decrypt_with_rvalue(
-            output_hash,
-            &self.payload,
-            r_value,
-            recipient_pkey,
-        )?;
+        let payload =
+            PaymentPayload::decrypt_with_rvalue(output_hash, &self.payload, rvalue, recipient_pkey)
+                .map_err(|_| OutputError::InvalidCertificate)?;
 
         let hash = Hash::digest(&payload);
+        validate_sig(&hash, &payload.signature, spender_pkey)
+            .map_err(|_| OutputError::InvalidCertificate)?;
 
-        validate_sig(&hash, &payload.signature, spender_pkey)?;
-        Ok(payload.amount)
+        if payload.amount != amount {
+            return Err(OutputError::InvalidCertificate.into());
+        }
+        Ok(())
     }
 }
 
@@ -824,6 +828,7 @@ impl Hashable for Box<Output> {
 pub mod tests {
     use super::*;
 
+    use assert_matches::assert_matches;
     use rand::distributions::Alphanumeric;
     use rand::{thread_rng, Rng};
     use stegos_crypto::scc::make_random_keys;
@@ -994,5 +999,36 @@ pub mod tests {
             BlockchainError::OutputError(OutputError::PayloadDecryptionError(_output_hash)) => (),
             _ => panic!(),
         };
+    }
+
+    ///
+    /// Tests validation of payment certificates.
+    #[test]
+    fn payment_certificate() {
+        use simple_logger;
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+        let (spender_skey, spender_pkey) = make_random_keys();
+        let (_recipient_skey, recipient_pkey) = make_random_keys();
+        let amount = 100500;
+        let data = PaymentPayloadData::Comment("Hello".to_string());
+        let (output, _gamma, rvalue) =
+            PaymentOutput::with_payload(Some(&spender_skey), &recipient_pkey, amount, data, None)
+                .expect("encryption successful");
+
+        output
+            .validate_certificate(&spender_pkey, &recipient_pkey, amount, &rvalue)
+            .unwrap();
+        let e = output
+            .validate_certificate(&spender_pkey, &recipient_pkey, amount + 1, &rvalue)
+            .unwrap_err();
+        assert_matches!(e, OutputError::InvalidCertificate);
+        let e = output
+            .validate_certificate(&recipient_pkey, &spender_pkey, amount, &rvalue)
+            .unwrap_err();
+        assert_matches!(e, OutputError::InvalidCertificate);
+        let e = output
+            .validate_certificate(&spender_pkey, &recipient_pkey, amount, &Fr::random())
+            .unwrap_err();
+        assert_matches!(e, OutputError::InvalidCertificate);
     }
 }

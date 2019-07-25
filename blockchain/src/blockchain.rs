@@ -501,6 +501,51 @@ impl Blockchain {
         }
     }
 
+    ///
+    /// Resolve historic and possible spent UTXO by hash.
+    /// Needed to validate Payment Certificate.
+    ///
+    /// NOTE: this function full-scans the entire blockchain.
+    ///
+    pub fn historic_output_by_hash(
+        &self,
+        output_hash: &Hash,
+    ) -> Result<Option<Output>, StorageError> {
+        if let Some(output) = self.output_by_hash(output_hash)? {
+            // We are lucky - output is not spent.
+            return Ok(Some(output));
+        }
+
+        //
+        // Bad case. We don't have db index to find a spent UTXO by its hash quickly.
+        // Scan entire blockchain like recover_account() does.
+        // This operation should be very rare and used only by client's nodes.
+        // Don't care about optimizations here. At least for now.
+        //
+        for block in self.blocks_starting(0, 0) {
+            match block {
+                Block::MacroBlock(block) => {
+                    for output in &block.outputs {
+                        if &Hash::digest(&output) == output_hash {
+                            return Ok(Some(output.clone()));
+                        }
+                    }
+                }
+                Block::MicroBlock(block) => {
+                    for tx in block.transactions {
+                        for output in tx.txouts() {
+                            if &Hash::digest(&output) == output_hash {
+                                return Ok(Some(output.clone()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
     /// Checks whether a block exists or not.
     pub fn contains_block(&self, block_hash: &Hash) -> bool {
         if let Some(_lsn) = self.block_by_hash.get(block_hash) {
@@ -2095,5 +2140,77 @@ pub mod tests {
                 .count(),
             0
         );
+    }
+
+    #[test]
+    fn historic_output_by_hash() {
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+
+        let mut cfg: ChainConfig = Default::default();
+        cfg.stake_epochs = 1000;
+        cfg.micro_blocks_in_epoch = 1;
+        let mut timestamp = Timestamp::now();
+        let (keychains, genesis) = test::fake_genesis(
+            cfg.min_stake_amount,
+            cfg.min_stake_amount + 100,
+            1,
+            timestamp,
+            None,
+        );
+        let chain_dir = TempDir::new("test").unwrap();
+        let mut chain = Blockchain::new(
+            cfg.clone(),
+            chain_dir.path(),
+            true,
+            genesis.clone(),
+            timestamp,
+        )
+        .expect("Failed to create blockchain");
+
+        //
+        // Spent by Micro Block.
+        //
+        timestamp += Duration::from_secs(1);
+        let (block, _input_hashes, _output_hashes) =
+            test::create_fake_micro_block(&mut chain, &keychains, timestamp);
+        let (inputs, _outputs, _txs) = chain
+            .push_micro_block(block, timestamp)
+            .expect("no I/O errors");
+
+        let historic_output = &inputs[0];
+        let historic_output2 = chain
+            .historic_output_by_hash(&Hash::digest(&historic_output))
+            .expect("no I/O errors")
+            .expect("exists");
+        assert_eq!(historic_output, &historic_output2);
+
+        //
+        // Spent by Macro Block.
+        //
+        timestamp += Duration::from_secs(1);
+        let (block, _extra_transactions) =
+            test::create_fake_macro_block(&chain, &keychains, timestamp);
+        while chain.offset() > 0 {
+            chain.pop_micro_block().expect("Should be ok");
+        }
+        let (inputs, outputs) = chain
+            .push_macro_block(block, timestamp)
+            .expect("Invalid block");
+        let historic_output = &inputs[0];
+        let historic_output2 = chain
+            .historic_output_by_hash(&Hash::digest(&historic_output))
+            .expect("no I/O errors")
+            .expect("exists");
+        assert_eq!(historic_output, &historic_output2);
+
+        //
+        // Unspent.
+        //
+        let unspent_output = &outputs[0];
+        let unspent_output2 = chain
+            .historic_output_by_hash(&Hash::digest(&unspent_output))
+            .expect("no I/O errors")
+            .expect("exists");
+        assert_eq!(unspent_output, &unspent_output2);
     }
 }

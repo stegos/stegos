@@ -39,7 +39,10 @@ pub type AccountId = String;
 pub enum LogEntryInfo {
     Incoming {
         timestamp: Timestamp,
+
+        #[serde(flatten)]
         output: OutputInfo,
+        is_change: bool,
     },
     Outgoing {
         timestamp: Timestamp,

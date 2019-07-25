@@ -48,8 +48,13 @@ const TIME_INDEX: [u8; 2] = [0; 2];
 
 #[derive(Debug, Clone)]
 pub enum LogEntry {
-    Incoming { output: OutputValue },
-    Outgoing { tx: PaymentTransactionValue },
+    Incoming {
+        output: OutputValue,
+        is_change: bool,
+    },
+    Outgoing {
+        tx: PaymentTransactionValue,
+    },
 }
 
 /// Currently we support only transaction that have 2 outputs,
@@ -67,6 +72,8 @@ pub struct AccountLog {
     //
     // Indexes
     //
+    /// Index of UTXOS that known to be change.
+    known_changes: HashSet<Hash>,
     /// Index of all created transactions by this wallet.
     utxos_list: HashMap<Hash, Timestamp>,
     /// Index of all created transactions by this wallet.
@@ -105,6 +112,7 @@ impl AccountLog {
             pending_txs: HashSet::new(),
             epoch_transactions: HashSet::new(),
             utxos_list: HashMap::new(),
+            known_changes: HashSet::new(),
         };
         log.recover_state();
         log
@@ -125,6 +133,7 @@ impl AccountLog {
             pending_txs: HashSet::new(),
             epoch_transactions: HashSet::new(),
             utxos_list: HashMap::new(),
+            known_changes: HashSet::new(),
         }
     }
 
@@ -134,9 +143,13 @@ impl AccountLog {
         let starting_time = Timestamp::UNIX_EPOCH;
         for (timestamp, entry) in self.iter_range(starting_time, u64::max_value()) {
             match entry {
-                LogEntry::Incoming { output } => {
+                LogEntry::Incoming { output, is_change } => {
                     let output_hash = Hash::digest(&output.to_output());
-                    trace!("Recovered output: output={}", output_hash);
+                    trace!(
+                        "Recovered output: output={}, is_change={}",
+                        output_hash,
+                        is_change
+                    );
                     assert!(self.utxos_list.insert(output_hash, timestamp).is_none());
                 }
                 LogEntry::Outgoing { tx } => {
@@ -144,13 +157,19 @@ impl AccountLog {
                     let status = tx.status;
                     trace!("Recovered tx: tx={}, status={:?}", tx_hash, status);
                     assert!(self.created_txs.insert(tx_hash, timestamp).is_none());
-                    self.update_pending_tx(tx_hash, status.clone());
+                    self.update_tx_indexes(tx_hash, status.clone());
+                    for utxo in tx.outputs.iter().zip(&tx.tx.txouts) {
+                        if utxo.0.is_change {
+                            let utxo_hash = Hash::digest(&utxo.1);
+                            self.known_changes.insert(utxo_hash);
+                        }
+                    }
                 }
             }
         }
     }
 
-    fn update_pending_tx(&mut self, tx_hash: Hash, status: TransactionStatus) {
+    fn update_tx_indexes(&mut self, tx_hash: Hash, status: TransactionStatus) {
         // update epoch transactions
         match status {
             TransactionStatus::Prepared { .. } => {
@@ -218,7 +237,12 @@ impl AccountLog {
             trace!("Skip adding, log already contain output = {}", output_hash);
             return Ok(*time);
         }
-        let entry = LogEntry::Incoming { output: incoming };
+
+        let is_change = self.known_changes.contains(&output_hash);
+        let entry = LogEntry::Incoming {
+            output: incoming,
+            is_change,
+        };
         let timestamp = self.push_entry(timestamp, entry)?;
         assert!(self.utxos_list.insert(output_hash, timestamp).is_none());
         Ok(timestamp)
@@ -232,10 +256,16 @@ impl AccountLog {
     ) -> Result<Timestamp, Error> {
         let tx_hash = Hash::digest(&tx.tx);
         let status = tx.status.clone();
-        let entry = LogEntry::Outgoing { tx };
+        let entry = LogEntry::Outgoing { tx: tx.clone() };
         let timestamp = self.push_entry(timestamp, entry)?;
         assert!(self.created_txs.insert(tx_hash, timestamp).is_none());
-        self.update_pending_tx(tx_hash, status);
+        self.update_tx_indexes(tx_hash, status);
+        for utxo in tx.outputs.iter().zip(&tx.tx.txouts) {
+            if utxo.0.is_change {
+                let utxo_hash = Hash::digest(&utxo.1);
+                self.known_changes.insert(utxo_hash);
+            }
+        }
         Ok(timestamp)
     }
 
@@ -304,7 +334,7 @@ impl AccountLog {
             Ok(e)
         })?;
 
-        self.update_pending_tx(tx_hash, status);
+        self.update_tx_indexes(tx_hash, status);
         Ok(())
     }
 
@@ -338,7 +368,7 @@ impl AccountLog {
 
             if let Some(status) = changed_to_status {
                 result.insert(tx_hash, status.clone());
-                self.update_pending_tx(tx_hash, status);
+                self.update_tx_indexes(tx_hash, status);
             }
         }
         result
@@ -520,9 +550,13 @@ impl OutputValue {
 impl LogEntry {
     pub fn to_info(&self, timestamp: Timestamp) -> LogEntryInfo {
         match *self {
-            LogEntry::Incoming { ref output } => LogEntryInfo::Incoming {
+            LogEntry::Incoming {
+                ref output,
+                is_change,
+            } => LogEntryInfo::Incoming {
                 timestamp,
                 output: output.to_info(),
+                is_change,
             },
             LogEntry::Outgoing { ref tx } => LogEntryInfo::Outgoing {
                 timestamp,
@@ -538,6 +572,7 @@ impl LogEntry {
 
         LogEntry::Incoming {
             output: OutputValue::PublicPayment(public),
+            is_change: false,
         }
     }
 
@@ -546,6 +581,7 @@ impl LogEntry {
         match self {
             LogEntry::Incoming {
                 output: OutputValue::PublicPayment(output),
+                ..
             } => output.amount == id as i64,
             _ => false,
         }

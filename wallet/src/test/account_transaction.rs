@@ -614,7 +614,7 @@ fn send_node_duplicate_tx() {
         info!("{:?}", response);
         let my_tx = match response {
             AccountResponse::TransactionCreated(tx) => {
-                assert!(tx.certificates.is_empty());
+                assert!(!tx.outputs.is_empty());
                 tx.tx_hash
             }
             _ => panic!("Wrong respnse to payment request"),
@@ -632,7 +632,7 @@ fn send_node_duplicate_tx() {
         match log.last().unwrap() {
             LogEntryInfo::Outgoing {
                 tx:
-                    PaymentTransactionInfo {
+                    TransactionInfo {
                         status: TransactionStatus::Accepted {},
                         ..
                     },
@@ -664,7 +664,7 @@ fn send_node_duplicate_tx() {
         match log_after_recovery.last().unwrap() {
             LogEntryInfo::Outgoing {
                 tx:
-                    PaymentTransactionInfo {
+                    TransactionInfo {
                         status: TransactionStatus::Accepted {},
                         ..
                     },

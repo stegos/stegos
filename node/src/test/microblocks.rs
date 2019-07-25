@@ -28,6 +28,7 @@ use std::collections::HashSet;
 use stegos_blockchain::Block;
 use stegos_consensus::MacroBlockProposal;
 use stegos_consensus::{optimistic::SealedViewChangeProof, ConsensusMessage, ConsensusMessageBody};
+use stegos_crypto::pbc::Signature;
 
 // CASE partition:
 // Nodes [A, B, C, D]
@@ -809,7 +810,7 @@ fn out_of_order_keyblock_proposal() {
 }
 
 #[test]
-fn micro_block_without_signature() {
+fn invalid_microblock() {
     let config = SandboxConfig {
         num_nodes: 3,
         ..Default::default()
@@ -818,49 +819,108 @@ fn micro_block_without_signature() {
     Sandbox::start(config, |mut s| {
         s.poll();
 
+        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
         let offset = s.nodes[0].node_service.chain.offset();
 
         s.for_each(|node| assert_eq!(node.chain.offset(), offset));
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
-        //create valid but out of order fake micro block.
-        let timestamp = Timestamp::now();
-
-        let epoch = s.nodes[0].node_service.chain.epoch();
-        let round = s.nodes[0].node_service.chain.view_change();
-        let last_block_hash = s.nodes[0].node_service.chain.last_block_hash();
-
-        let leader = s.node(&leader_pk).unwrap();
-        let seed = mix(
-            leader.node_service.chain.last_random(),
-            leader.node_service.chain.view_change(),
-        );
-        let random = pbc::make_VRF(&leader.node_service.network_skey, &seed);
-        let solution = leader.node_service.chain.vdf_solver()();
-        let block = MicroBlock::empty(
-            last_block_hash,
-            epoch,
-            offset,
-            round + 1,
-            None,
-            leader.node_service.network_pkey,
-            random,
-            solution,
-            timestamp,
-        );
-        let block: Block = Block::MicroBlock(block);
 
         let mut r = s.split(&[leader_pk]);
+        let leader = r.parts.0.first_mut();
+        leader.handle_vdf();
+        leader.poll();
+        let block: Block = leader.network_service.get_broadcast(SEALED_BLOCK_TOPIC);
+
+        let other = r.parts.1.first_mut();
+        let mut blocks = Vec::new();
+        {
+            let source = match block {
+                Block::MicroBlock(block) => block,
+                _ => panic!("Expecting microblock"),
+            };
+
+            // block without signature
+            let mut block = source.clone();
+            block.sig = Signature::zero();
+            blocks.push(Block::MicroBlock(block));
+
+            macro_rules! modify_block {
+                ($block: ident, $do:stmt) => {
+                    let mut $block = source.clone();
+                    $do;
+                    $block.sign(
+                        &leader.node_service.network_skey,
+                        &leader.node_service.network_pkey,
+                    );
+                    blocks.push(Block::MicroBlock($block));
+                };
+            }
+
+            // invalid epoch
+            modify_block!(block, block.header.epoch += 1);
+            modify_block!(block, block.header.epoch -= 1);
+
+            // invalid offset
+            modify_block!(block, block.header.offset += 1);
+            modify_block!(block, block.header.offset -= 1);
+
+            // invalid Version
+            modify_block!(block, block.header.version += 1);
+            modify_block!(block, block.header.version -= 1);
+
+            // invalid view_change
+            modify_block!(block, block.header.view_change += 1);
+            modify_block!(block, block.header.view_change -= 1);
+
+            // invalid pk
+            let mut block = source.clone();
+            block.header.pkey = other.node_service.network_pkey;
+            block.sign(
+                &other.node_service.network_skey,
+                &other.node_service.network_pkey,
+            );
+
+            // invalid previous
+            modify_block!(block, block.header.previous = Hash::digest("test"));
+
+            // invalid vdf solution
+            modify_block!(block, block.header.solution = vec![1; 1]);
+            modify_block!(block, block.header.solution = vec![1; 10]);
+            modify_block!(block, block.header.solution = vec![1; 256]);
+            modify_block!(block, block.header.solution = vec![1; 1024]);
+            modify_block!(block, block.header.solution = vec![0; 1024]);
+            modify_block!(block, block.header.solution = vec![32; 1024]);
+            modify_block!(block, block.header.solution = vec![0xff; 32]);
+            // invalid timestamp
+            modify_block!(block, block.header.timestamp += Duration::from_secs(1000));
+            modify_block!(block, block.header.timestamp -= Duration::from_secs(1000));
+
+            // invalid range_hash
+            modify_block!(
+                block,
+                block.header.transactions_range_hash = Hash::digest("test")
+            );
+
+            // without transactions
+            modify_block!(block, block.transactions = vec![]);
+
+            //TODO: view_change_proof
+        }
+
         // broadcast block to other nodes.
         for node in &mut r.parts.1.iter_mut() {
-            node.network_service
-                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone())
+            for block in &blocks {
+                node.network_service
+                    .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone())
+            }
         }
         r.parts.1.poll();
 
         r.parts
             .1
             .for_each(|node| assert_eq!(node.chain.offset(), offset));
+
         s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
     });
 }

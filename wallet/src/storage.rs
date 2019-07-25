@@ -403,25 +403,36 @@ impl AccountLog {
 
 /// Information about created output.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct PaymentCertificate {
-    /// Certificate of creation for utxo.
-    pub id: u32,
+pub struct ExtendedOutputValue {
     /// destination PublicKey.
     pub recipient: PublicKey,
-    /// Rvalue used to decrypt PaymentPayload in case of unfair recipient.
-    #[serde(serialize_with = "PaymentCertificate::serialize_rvalue")]
-    #[serde(deserialize_with = "PaymentCertificate::deserialize_rvalue")]
-    pub rvalue: Fr,
     /// amount of money sended in utxo.
     pub amount: i64,
+    /// Rvalue used to decrypt PaymentPayload in case of unfair recipient.
+    #[serde(serialize_with = "ExtendedOutputValue::serialize_rvalue")]
+    #[serde(deserialize_with = "ExtendedOutputValue::deserialize_rvalue")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rvalue: Option<Fr>,
+    /// Data that was sent in output.
+    /// If output is public, then data would be missing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(flatten)]
+    pub data: Option<PaymentPayloadData>,
+    /// Is current utxo change?.
+    pub is_change: bool,
 }
 
-impl Hashable for PaymentCertificate {
+impl Hashable for ExtendedOutputValue {
     fn hash(&self, hasher: &mut Hasher) {
-        self.id.hash(hasher);
         self.recipient.hash(hasher);
-        self.rvalue.hash(hasher);
         self.amount.hash(hasher);
+        if let Some(rvalue) = &self.rvalue {
+            rvalue.hash(hasher);
+        }
+        if let Some(data) = &self.data {
+            data.hash(hasher);
+        }
+        self.is_change.hash(hasher);
     }
 }
 
@@ -431,16 +442,15 @@ pub struct PaymentTransactionValue {
     #[serde(skip_serializing)]
     pub tx: PaymentTransaction,
     pub status: TransactionStatus,
-    pub amount: i64,
-    pub certificates: Vec<PaymentCertificate>,
+    pub outputs: Vec<ExtendedOutputValue>,
 }
 
 impl Hashable for PaymentTransactionValue {
     fn hash(&self, hasher: &mut Hasher) {
         self.tx.hash(hasher);
         self.status.hash(hasher);
-        for certificate in &self.certificates {
-            certificate.hash(hasher);
+        for output in &self.outputs {
+            output.hash(hasher);
         }
     }
 }
@@ -550,21 +560,26 @@ pub fn public_payment_info(output: &PublicPaymentOutput) -> PublicPaymentInfo {
     }
 }
 
-impl PaymentCertificate {
-    fn serialize_rvalue<S>(rvalue: &Fr, serializer: S) -> Result<S::Ok, S::Error>
+impl ExtendedOutputValue {
+    fn serialize_rvalue<S>(rvalue: &Option<Fr>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        serializer.serialize_str(&rvalue.to_hex())
+        if let Some(rvalue) = rvalue {
+            serializer.serialize_some(&rvalue.to_hex())
+        } else {
+            serializer.serialize_none()
+        }
     }
 
-    fn deserialize_rvalue<'de, D>(deserilizer: D) -> Result<Fr, D::Error>
+    fn deserialize_rvalue<'de, D>(deserilizer: D) -> Result<Option<Fr>, D::Error>
     where
         D: Deserializer<'de>,
     {
         use serde::de::{self, Visitor};
         use std::fmt;
         struct FrVisitor;
+        struct OptFrVisitor;
 
         impl<'de> Visitor<'de> for FrVisitor {
             type Value = Fr;
@@ -572,7 +587,6 @@ impl PaymentCertificate {
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str("a hex representation of Fr")
             }
-
             fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
             where
                 E: de::Error,
@@ -580,77 +594,94 @@ impl PaymentCertificate {
                 Fr::try_from_hex(value).map_err(|e| E::custom(e))
             }
         }
-        deserilizer.deserialize_string(FrVisitor)
+
+        impl<'de> Visitor<'de> for OptFrVisitor {
+            type Value = Option<Fr>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a optional hex representation of Fr")
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                Ok(Some(deserializer.deserialize_str(FrVisitor)?))
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(None)
+            }
+        }
+
+        deserilizer.deserialize_option(OptFrVisitor)
     }
 }
 
 impl PaymentTransactionValue {
     pub fn new_payment(
-        _data: Option<PaymentPayloadData>,
-        recipient: PublicKey,
         tx: PaymentTransaction,
-        rvalues: &[Option<Fr>],
-        amount: i64,
+        outputs: Vec<ExtendedOutputValue>,
     ) -> PaymentTransactionValue {
-        let certificates: Vec<_> = rvalues
-            .iter()
-            .enumerate()
-            .filter_map(|(id, r)| r.clone().map(|r| (id, r)))
-            .map(|(id, rvalue)| PaymentCertificate {
-                id: id as u32,
-                rvalue,
-                recipient,
-                amount,
-            })
-            .collect();
-
         assert!(tx.txouts.len() <= 2);
-        assert!(certificates.len() <= 1);
+        assert_eq!(tx.txouts.len(), outputs.len());
 
         PaymentTransactionValue {
-            certificates,
+            outputs,
             tx,
-            amount,
             status: TransactionStatus::Created {},
         }
     }
 
-    pub fn new_vs(tx: PaymentTransaction, amount: i64) -> PaymentTransactionValue {
+    pub fn new_vs(tx: PaymentTransaction) -> PaymentTransactionValue {
         assert!(tx.txouts.len() >= 2);
         PaymentTransactionValue {
-            certificates: Vec::new(),
+            outputs: Vec::new(),
             tx,
-            amount,
             status: TransactionStatus::Created {},
         }
     }
 
-    pub fn new_cloak(tx: PaymentTransaction, amount: i64) -> PaymentTransactionValue {
+    pub fn new_cloak(tx: PaymentTransaction) -> PaymentTransactionValue {
         assert_eq!(tx.txouts.len(), 1);
 
         PaymentTransactionValue {
-            certificates: Vec::new(),
+            outputs: Vec::new(),
             tx,
-            amount,
             status: TransactionStatus::Created {},
         }
     }
 
-    pub fn new_stake(tx: PaymentTransaction, amount: i64) -> PaymentTransactionValue {
+    pub fn new_stake(tx: PaymentTransaction) -> PaymentTransactionValue {
         PaymentTransactionValue {
-            certificates: Vec::new(),
+            outputs: Vec::new(),
             tx,
-            amount,
             status: TransactionStatus::Created {},
         }
     }
 
     pub fn to_info(&self) -> PaymentTransactionInfo {
         let tx_hash = Hash::digest(&self.tx);
+
+        // merge output with extended info.
+        let outputs = self
+            .tx
+            .txouts
+            .iter()
+            .zip(self.outputs.iter().cloned())
+            .map(|(o, e)| ExtendedOutputInfo {
+                utxo: Hash::digest(o),
+                info: e,
+            })
+            .collect();
+
         PaymentTransactionInfo {
             tx_hash,
-            amount: self.amount,
-            certificates: self.certificates.clone(),
+            outputs,
+            inputs: self.tx.txins.clone(),
             status: self.status.clone(),
         }
     }

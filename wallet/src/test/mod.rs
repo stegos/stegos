@@ -32,6 +32,7 @@ use stegos_crypto::scc;
 use stegos_network::Network;
 use tempdir::TempDir;
 
+use crate::api::PaymentTransactionInfo;
 use futures::sync::{mpsc, oneshot};
 use futures::{Async, Future, Stream};
 use log::info;

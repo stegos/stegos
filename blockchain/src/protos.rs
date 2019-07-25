@@ -47,6 +47,40 @@ use stegos_crypto::protos::*;
 use stegos_crypto::CryptoError;
 include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
 
+impl ProtoConvert for PaymentPayloadData {
+    type Proto = blockchain::PaymentPayloadData;
+    fn into_proto(&self) -> Self::Proto {
+        let mut msg = blockchain::PaymentPayloadData::new();
+        match self {
+            PaymentPayloadData::Comment(ref s) => {
+                msg.set_comment(s.clone());
+            }
+            PaymentPayloadData::ContentHash(ref h) => {
+                msg.set_hash(h.into_proto());
+            }
+        }
+        msg
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let data = match proto.data {
+            Some(blockchain::PaymentPayloadData_oneof_data::comment(ref msg)) => {
+                PaymentPayloadData::Comment(msg.clone())
+            }
+            Some(blockchain::PaymentPayloadData_oneof_data::hash(ref msg)) => {
+                let hash = Hash::from_proto(msg)?;
+                PaymentPayloadData::ContentHash(hash)
+            }
+            None => {
+                return Err(
+                    ProtoError::MissingField("payload".to_string(), "payload".to_string()).into(),
+                );
+            }
+        };
+        Ok(data)
+    }
+}
+
 impl ProtoConvert for PaymentOutput {
     type Proto = blockchain::PaymentOutput;
     fn into_proto(&self) -> Self::Proto {

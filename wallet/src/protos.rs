@@ -31,11 +31,10 @@ use stegos_blockchain::protos::*;
 use stegos_crypto::protos::*;
 include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
 use super::storage::{LogEntry, OutputValue, PaymentValue};
-use crate::storage::{PaymentCertificate, PaymentTransactionValue};
+use crate::storage::{ExtendedOutputValue, PaymentTransactionValue};
 use stegos_blockchain::{
     PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput,
 };
-use stegos_crypto::hash::Hash;
 use stegos_crypto::scc::{Fr, PublicKey};
 use stegos_node::TransactionStatus;
 
@@ -88,37 +87,14 @@ impl ProtoConvert for PaymentValue {
         let mut msg = account_log::PaymentValue::new();
         msg.set_output(self.output.into_proto());
         msg.set_amount(self.amount);
-        let mut payload = account_log::PaymentPayload::new();
-        match self.data {
-            PaymentPayloadData::Comment(ref s) => {
-                payload.set_comment(s.clone());
-            }
-            PaymentPayloadData::ContentHash(ref h) => {
-                payload.set_hash(h.into_proto());
-            }
-        }
-        msg.set_payload(payload);
+        msg.set_payload(self.data.into_proto());
         msg
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let output = PaymentOutput::from_proto(proto.get_output())?;
         let amount = proto.get_amount();
-
-        let data = match proto.get_payload().data {
-            Some(account_log::PaymentPayload_oneof_data::comment(ref msg)) => {
-                PaymentPayloadData::Comment(msg.clone())
-            }
-            Some(account_log::PaymentPayload_oneof_data::hash(ref msg)) => {
-                let hash = Hash::from_proto(msg)?;
-                PaymentPayloadData::ContentHash(hash)
-            }
-            None => {
-                return Err(
-                    ProtoError::MissingField("payload".to_string(), "payload".to_string()).into(),
-                );
-            }
-        };
+        let data = PaymentPayloadData::from_proto(proto.get_payload())?;
 
         let value = PaymentValue {
             output,
@@ -163,29 +139,58 @@ impl ProtoConvert for OutputValue {
         Ok(payload)
     }
 }
+//
+///// destination PublicKey.
+//pub recipient: PublicKey,
+///// amount of money sended in utxo.
+//pub amount: i64,
+///// Rvalue used to decrypt PaymentPayload in case of unfair recipient.
+//#[serde(serialize_with = "PaymentCertificate::serialize_rvalue")]
+//#[serde(deserialize_with = "PaymentCertificate::deserialize_rvalue")]
+//pub rvalue: Option<Fr>,
+///// Data that was sent in output.
+///// If output is public, then data would be missing.
+//pub data: Option<PaymentPayloadData>,
+///// Is current utxo change?.
+//pub is_change: bool,
 
-impl ProtoConvert for PaymentCertificate {
-    type Proto = account_log::PaymentCertificate;
+impl ProtoConvert for ExtendedOutputValue {
+    type Proto = account_log::ExtendedOutputValue;
     fn into_proto(&self) -> Self::Proto {
-        let mut msg = account_log::PaymentCertificate::new();
-        msg.set_id(self.id);
+        let mut msg = account_log::ExtendedOutputValue::new();
         msg.set_recipient(self.recipient.into_proto());
-        msg.set_rvalue(self.rvalue.into_proto());
         msg.set_amount(self.amount);
+        if let Some(ref rvalue) = self.rvalue {
+            msg.set_rvalue(rvalue.into_proto());
+        }
+        if let Some(ref data) = self.data {
+            msg.set_data(data.into_proto());
+        }
+        msg.set_is_change(self.is_change);
         msg
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let id = proto.get_id();
         let recipient = PublicKey::from_proto(proto.get_recipient())?;
-        let rvalue = Fr::from_proto(proto.get_rvalue())?;
         let amount = proto.get_amount();
+        let data = if proto.has_data() {
+            Some(PaymentPayloadData::from_proto(proto.get_data())?)
+        } else {
+            None
+        };
+        let rvalue = if proto.has_rvalue() {
+            Some(Fr::from_proto(proto.get_rvalue())?)
+        } else {
+            None
+        };
 
-        let payload = PaymentCertificate {
-            id,
+        let is_change = proto.get_is_change();
+        let payload = ExtendedOutputValue {
             recipient,
-            rvalue,
             amount,
+            rvalue,
+            data,
+            is_change,
         };
 
         Ok(payload)
@@ -197,8 +202,8 @@ impl ProtoConvert for PaymentTransactionValue {
     fn into_proto(&self) -> Self::Proto {
         let mut msg = account_log::PaymentTransactionValue::new();
         msg.set_tx(self.tx.into_proto());
-        for certificate in &self.certificates {
-            msg.certificates.push(certificate.into_proto());
+        for output in &self.outputs {
+            msg.outputs.push(output.into_proto());
         }
         let mut status = account_log::TransactionStatus::new();
         match self.status {
@@ -234,15 +239,14 @@ impl ProtoConvert for PaymentTransactionValue {
             }
         }
         msg.set_status(status);
-        msg.set_amount(self.amount);
         msg
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let tx = PaymentTransaction::from_proto(proto.get_tx())?;
-        let mut certificates = Vec::<PaymentCertificate>::with_capacity(proto.certificates.len());
-        for certificate in proto.certificates.iter() {
-            certificates.push(PaymentCertificate::from_proto(certificate)?);
+        let mut outputs = Vec::<ExtendedOutputValue>::with_capacity(proto.outputs.len());
+        for output in proto.outputs.iter() {
+            outputs.push(ExtendedOutputValue::from_proto(output)?);
         }
         let status = match proto.get_status().enum_value {
             Some(account_log::TransactionStatus_oneof_enum_value::created(ref _msg)) => {
@@ -286,12 +290,10 @@ impl ProtoConvert for PaymentTransactionValue {
                 .into());
             }
         };
-        let amount = proto.get_amount();
         let payload = PaymentTransactionValue {
             tx,
             status,
-            amount,
-            certificates,
+            outputs,
         };
         Ok(payload)
     }
@@ -319,16 +321,14 @@ mod tests {
         let offset = 43;
         let request = PaymentTransactionValue {
             tx: tx.clone(),
-            amount: 0,
-            certificates: vec![],
+            outputs: vec![],
             status: TransactionStatus::Accepted {},
         };
         roundtrip(&request);
 
         let request = PaymentTransactionValue {
             tx: tx.clone(),
-            amount: 32,
-            certificates: vec![],
+            outputs: vec![],
             status: TransactionStatus::Rejected {
                 error: "e".to_string(),
             },
@@ -337,40 +337,35 @@ mod tests {
 
         let request = PaymentTransactionValue {
             tx: tx.clone(),
-            amount: 4,
-            certificates: vec![],
+            outputs: vec![],
             status: TransactionStatus::Created {},
         };
         roundtrip(&request);
 
         let request = PaymentTransactionValue {
             tx: tx.clone(),
-            amount: 5,
-            certificates: vec![],
+            outputs: vec![],
             status: TransactionStatus::Committed { epoch },
         };
         roundtrip(&request);
 
         let request = PaymentTransactionValue {
             tx: tx.clone(),
-            amount: 6,
-            certificates: vec![],
+            outputs: vec![],
             status: TransactionStatus::Prepared { epoch, offset },
         };
         roundtrip(&request);
 
         let request = PaymentTransactionValue {
             tx: tx.clone(),
-            amount: 7,
-            certificates: vec![],
+            outputs: vec![],
             status: TransactionStatus::Rollback { epoch, offset },
         };
         roundtrip(&request);
 
         let request = PaymentTransactionValue {
             tx: tx.clone(),
-            amount: 8,
-            certificates: vec![],
+            outputs: vec![],
             status: TransactionStatus::Conflicted {
                 epoch,
                 offset: offset.into(),

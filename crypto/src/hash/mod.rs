@@ -252,6 +252,13 @@ pub trait Hashable {
     fn hash(&self, state: &mut Hasher);
 }
 
+impl Hashable for bool {
+    fn hash(&self, state: &mut Hasher) {
+        let data = if *self { 1 } else { 0 };
+        state.input(&[data])
+    }
+}
+
 impl Hashable for u8 {
     fn hash(&self, state: &mut Hasher) {
         state.input(&[*self])

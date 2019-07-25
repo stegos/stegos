@@ -21,7 +21,7 @@ use stegos_network::Network;
 use stegos_serialization::traits::*;
 use tokio_timer::Interval;
 
-pub const MESSAGE_TIMEOUT: Duration = Duration::from_secs(30);
+pub const MESSAGE_TIMEOUT: Duration = Duration::from_secs(10);
 const MIN_PARTICIPANTS: usize = 3;
 pub const MAX_PARTICIPANTS: usize = 20;
 

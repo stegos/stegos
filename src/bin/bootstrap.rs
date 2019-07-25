@@ -105,7 +105,7 @@ fn main() {
                 .short("d")
                 .long("difficulty")
                 .value_name("DIFFICULTY")
-                .default_value("100")
+                .default_value("500000")
                 .validator(|s| s.parse::<u64>().map(|_| ()).map_err(|e| format!("{}", e)))
                 .help("Difficulty of VDF")
                 .takes_value(true),

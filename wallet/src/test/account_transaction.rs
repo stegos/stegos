@@ -65,10 +65,7 @@ fn create_tx() {
         let response = get_request(rx);
         info!("{:?}", response);
         let my_tx = match response {
-            AccountResponse::TransactionCreated(tx) => {
-                assert!(tx.certificates.is_empty());
-                tx.tx_hash
-            }
+            AccountResponse::TransactionCreated(tx) => tx.tx_hash,
             _ => panic!("Wrong respnse to payment request"),
         };
 
@@ -124,9 +121,9 @@ fn create_tx_with_certificate() {
         info!("{:?}", response);
         let my_tx = match response {
             AccountResponse::TransactionCreated(tx) => {
-                assert_eq!(tx.certificates.len(), 1);
-                assert_eq!(tx.certificates[0].recipient, recipient);
-                assert_eq!(tx.certificates[0].amount, 10);
+                assert_eq!(tx.outputs.len(), 2);
+                assert_eq!(tx.outputs[0].info.recipient, recipient);
+                assert_eq!(tx.outputs[0].info.amount, 10);
 
                 // TODO: Get transaction from the node using api.
                 {
@@ -142,9 +139,7 @@ fn create_tx_with_certificate() {
                         .next()
                         .unwrap();
                     let output = match tx_entry.1 {
-                        LogEntry::Outgoing { ref tx } => {
-                            &tx.tx.txouts[tx.certificates[0].id as usize]
-                        }
+                        LogEntry::Outgoing { ref tx } => &tx.tx.txouts[0],
                         _ => panic!("Expected outgoing entry."),
                     };
                     let output = match output {
@@ -159,7 +154,7 @@ fn create_tx_with_certificate() {
                     let actual_amount = output
                         .verify_proof_of_payment(
                             &accounts[0].account_service.account_pkey,
-                            &tx.certificates[0].rvalue,
+                            &tx.outputs[0].info.rvalue.unwrap(),
                             &recipient,
                         )
                         .unwrap();
@@ -234,10 +229,7 @@ fn full_transfer() {
         let response = get_request(rx);
         info!("{:?}", response);
         let my_tx = match response {
-            AccountResponse::TransactionCreated(tx) => {
-                assert!(tx.certificates.is_empty());
-                tx.tx_hash
-            }
+            AccountResponse::TransactionCreated(tx) => tx.tx_hash,
             _ => panic!("Wrong respnse to payment request"),
         };
 
@@ -391,10 +383,7 @@ fn wait_for_epoch_end_with_tx() {
         let response = get_request(rx);
         info!("{:?}", response);
         let my_tx = match response {
-            AccountResponse::TransactionCreated(tx) => {
-                assert!(tx.certificates.is_empty());
-                tx.tx_hash
-            }
+            AccountResponse::TransactionCreated(tx) => tx.tx_hash,
             _ => panic!("Wrong respnse to payment request"),
         };
 
@@ -467,10 +456,7 @@ fn create_public_tx() {
         let response = get_request(rx);
         info!("{:?}", response);
         let my_tx = match response {
-            AccountResponse::TransactionCreated(tx) => {
-                assert!(tx.certificates.is_empty());
-                tx.tx_hash
-            }
+            AccountResponse::TransactionCreated(tx) => tx.tx_hash,
             _ => panic!("Wrong respnse to payment request"),
         };
 
@@ -547,10 +533,7 @@ fn recovery_acount_after_tx() {
         let response = get_request(rx);
         info!("{:?}", response);
         let my_tx = match response {
-            AccountResponse::TransactionCreated(tx) => {
-                assert!(tx.certificates.is_empty());
-                tx.tx_hash
-            }
+            AccountResponse::TransactionCreated(tx) => tx.tx_hash,
             _ => panic!("Wrong respnse to payment request"),
         };
 
@@ -631,7 +614,7 @@ fn send_node_duplicate_tx() {
         info!("{:?}", response);
         let my_tx = match response {
             AccountResponse::TransactionCreated(tx) => {
-                assert!(tx.certificates.is_empty());
+                assert!(!tx.outputs.is_empty());
                 tx.tx_hash
             }
             _ => panic!("Wrong respnse to payment request"),
@@ -649,7 +632,7 @@ fn send_node_duplicate_tx() {
         match log.last().unwrap() {
             LogEntryInfo::Outgoing {
                 tx:
-                    PaymentTransactionInfo {
+                    TransactionInfo {
                         status: TransactionStatus::Accepted {},
                         ..
                     },
@@ -681,7 +664,7 @@ fn send_node_duplicate_tx() {
         match log_after_recovery.last().unwrap() {
             LogEntryInfo::Outgoing {
                 tx:
-                    PaymentTransactionInfo {
+                    TransactionInfo {
                         status: TransactionStatus::Accepted {},
                         ..
                     },

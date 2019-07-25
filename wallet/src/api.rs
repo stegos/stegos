@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::storage::PaymentCertificate;
+use crate::storage::ExtendedOutputValue;
 use serde_derive::{Deserialize, Serialize};
 pub use stegos_blockchain::PaymentPayloadData;
 pub use stegos_blockchain::StakeInfo;
@@ -39,11 +39,15 @@ pub type AccountId = String;
 pub enum LogEntryInfo {
     Incoming {
         timestamp: Timestamp,
+
+        #[serde(flatten)]
         output: OutputInfo,
+        is_change: bool,
     },
     Outgoing {
         timestamp: Timestamp,
-        tx: PaymentTransactionInfo,
+        #[serde(flatten)]
+        tx: TransactionInfo,
     },
 }
 
@@ -193,11 +197,20 @@ pub enum WalletRequest {
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
-pub struct PaymentTransactionInfo {
+pub struct ExtendedOutputInfo {
+    pub utxo: Hash,
+    #[serde(flatten)]
+    pub info: ExtendedOutputValue,
+}
+
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionInfo {
     pub tx_hash: Hash,
-    pub amount: i64,
+    pub fee: i64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub certificates: Vec<PaymentCertificate>,
+    pub outputs: Vec<ExtendedOutputInfo>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<Hash>,
     #[serde(flatten)]
     pub status: TransactionStatus,
 }
@@ -211,7 +224,7 @@ pub struct PaymentTransactionInfo {
 pub enum AccountResponse {
     Sealed,
     Unsealed,
-    TransactionCreated(PaymentTransactionInfo),
+    TransactionCreated(TransactionInfo),
     BalanceInfo {
         balance: i64,
     },

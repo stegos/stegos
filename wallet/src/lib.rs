@@ -138,7 +138,7 @@ struct UnsealedAccountService {
     vs: ValueShuffle,
     //TODO: Temporary hack to receive newly created transaction from valueshuffle.
     wallet_tx_info_receiver: mpsc::UnboundedReceiver<(PaymentTransaction, bool)>,
-    vs_session: Option<(Hash, oneshot::Sender<AccountResponse>, i64)>,
+    vs_session: Option<(Hash, oneshot::Sender<AccountResponse>)>,
     transaction_response: Option<oneshot::Receiver<NodeResponse>>,
 
     //
@@ -268,7 +268,7 @@ impl UnsealedAccountService {
             None
         };
 
-        let (inputs, outputs, gamma, rvalues, fee) = create_payment_transaction(
+        let (inputs, outputs, gamma, extended_outputs, fee) = create_payment_transaction(
             sender,
             &self.account_pkey,
             recipient,
@@ -283,13 +283,8 @@ impl UnsealedAccountService {
 
         // Transaction TXINs can generally have different keying for each one
         let tx = PaymentTransaction::new(&self.account_skey, &inputs, &outputs, &gamma, fee)?;
-        let payment_info = PaymentTransactionValue::new_payment(
-            data.into(),
-            *recipient,
-            tx.clone(),
-            &rvalues,
-            amount,
-        );
+
+        let payment_info = PaymentTransactionValue::new_payment(tx.clone(), extended_outputs);
 
         self.account_log
             .push_outgoing(Timestamp::now(), payment_info.clone())?;
@@ -316,7 +311,7 @@ impl UnsealedAccountService {
             .values()
             .map(|v| (&v.output, v.amount, v.output.locked_timestamp.clone()));
 
-        let (inputs, outputs, gamma, rvalues, fee) = create_payment_transaction(
+        let (inputs, outputs, gamma, extended_outputs, fee) = create_payment_transaction(
             Some(&self.account_skey),
             &self.account_pkey,
             recipient,
@@ -331,8 +326,7 @@ impl UnsealedAccountService {
 
         // Transaction TXINs can generally have different keying for each one
         let tx = PaymentTransaction::new(&self.account_skey, &inputs, &outputs, &gamma, fee)?;
-        let payment_info =
-            PaymentTransactionValue::new_payment(None, *recipient, tx.clone(), &rvalues, amount);
+        let payment_info = PaymentTransactionValue::new_payment(tx.clone(), extended_outputs);
 
         self.account_log
             .push_outgoing(Timestamp::now(), payment_info.clone())?;
@@ -401,7 +395,7 @@ impl UnsealedAccountService {
             self.last_macro_block_timestamp,
             self.max_inputs_in_tx,
         )?;
-        let payment_info = PaymentTransactionValue::new_stake(tx.clone(), amount);
+        let payment_info = PaymentTransactionValue::new_stake(tx.clone());
 
         self.account_log
             .push_outgoing(Timestamp::now(), payment_info.clone())?;
@@ -426,7 +420,7 @@ impl UnsealedAccountService {
             self.last_macro_block_timestamp,
             self.max_inputs_in_tx,
         )?;
-        let payment_info = PaymentTransactionValue::new_stake(tx.clone(), amount);
+        let payment_info = PaymentTransactionValue::new_stake(tx.clone());
         self.send_transaction(tx.into())?;
         Ok(payment_info)
     }
@@ -441,15 +435,10 @@ impl UnsealedAccountService {
     }
 
     /// Restake all available stakes (even if not expired).
-    fn restake_all(&mut self) -> Result<(Hash, i64), Error> {
+    fn restake_all(&mut self) -> Result<TransactionInfo, Error> {
         assert_eq!(STAKE_FEE, 0);
         if self.stakes.is_empty() {
             return Err(WalletError::NothingToRestake.into());
-        }
-
-        let mut amount = 0;
-        for output in self.stakes.values().map(|val| &val.output) {
-            amount += output.amount;
         }
 
         let stakes = self.stakes.values().map(|val| &val.output);
@@ -462,18 +451,19 @@ impl UnsealedAccountService {
         )?;
         let tx_hash = Hash::digest(&tx);
         self.send_transaction(tx.into())?;
-        Ok((tx_hash, amount))
+        Ok(TransactionInfo {
+            tx_hash,
+            fee: 0,
+            outputs: vec![],
+            inputs: vec![],
+            status: TransactionStatus::Created {},
+        })
     }
 
     /// Cloak all available public outputs.
     fn cloak_all(&mut self, payment_fee: i64) -> Result<PaymentTransactionValue, Error> {
         if self.public_payments.is_empty() {
             return Err(WalletError::NoPublicOutputs.into());
-        }
-
-        let mut amount = 0;
-        for output in self.public_payments.values() {
-            amount += output.amount
         }
 
         let public_utxos = self.public_payments.values();
@@ -485,7 +475,7 @@ impl UnsealedAccountService {
             self.last_macro_block_timestamp,
         )?;
 
-        let info = PaymentTransactionValue::new_cloak(tx.clone(), amount);
+        let info = PaymentTransactionValue::new_cloak(tx.clone());
         self.send_transaction(tx.into())?;
         Ok(info)
     }
@@ -680,8 +670,7 @@ impl UnsealedAccountService {
         tx: PaymentTransaction,
         leader: bool,
         session_id: Hash,
-        amount: i64,
-    ) -> Result<PaymentTransactionInfo, Error> {
+    ) -> Result<TransactionInfo, Error> {
         let tx_hash = Hash::digest(&tx);
         metrics::WALLET_PUBLISHED_PAYMENTS
             .with_label_values(&[&String::from(&self.account_pkey)])
@@ -692,7 +681,7 @@ impl UnsealedAccountService {
         };
         self.notify(notify);
 
-        let payment_info = PaymentTransactionValue::new_vs(tx.clone(), amount);
+        let payment_info = PaymentTransactionValue::new_vs(tx.clone());
 
         self.account_log
             .push_outgoing(Timestamp::now(), payment_info.clone())?;
@@ -779,18 +768,11 @@ impl From<Result<PaymentTransactionValue, Error>> for AccountResponse {
     }
 }
 
-impl From<Result<(Hash, i64), Error>> for AccountResponse {
-    fn from(r: Result<(Hash, i64), Error>) -> Self {
+/// This could be used for non PaymentTx.
+impl From<Result<TransactionInfo, Error>> for AccountResponse {
+    fn from(r: Result<TransactionInfo, Error>) -> Self {
         match r {
-            Ok((hash, amount)) => {
-                let info = PaymentTransactionInfo {
-                    tx_hash: hash,
-                    amount,
-                    certificates: vec![],
-                    status: TransactionStatus::Created {},
-                };
-                AccountResponse::TransactionCreated(info)
-            }
+            Ok(info) => AccountResponse::TransactionCreated(info),
             Err(e) => AccountResponse::Error {
                 error: format!("{}", e),
             },
@@ -877,9 +859,9 @@ impl Future for UnsealedAccountService {
                 Async::Ready(msg) => {
                     let (tx, leader) = msg.expect("channel not ended.");
 
-                    let (session_id, response_sender, amount) =
+                    let (session_id, response_sender) =
                         self.vs_session.take().expect("active snowball session");
-                    match self.handle_snowball_transaction(tx, leader, session_id, amount) {
+                    match self.handle_snowball_transaction(tx, leader, session_id) {
                         Ok(tx) => {
                             let _ = response_sender.send(AccountResponse::TransactionCreated(tx));
                         }
@@ -1009,7 +991,7 @@ impl Future for UnsealedAccountService {
                                     self.notify(AccountNotification::SnowballStarted {
                                         session_id,
                                     });
-                                    self.vs_session = (session_id, tx, amount).into();
+                                    self.vs_session = (session_id, tx).into();
                                     continue;
                                 }
                                 Err(e) => AccountResponse::Error {

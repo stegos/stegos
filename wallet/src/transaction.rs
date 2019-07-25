@@ -23,6 +23,7 @@
 
 use crate::change::*;
 use crate::error::*;
+use crate::storage::ExtendedOutputValue;
 use crate::valueshuffle::ProposedUTXO;
 use failure::Error;
 use log::*;
@@ -183,7 +184,7 @@ pub(crate) fn create_payment_transaction<'a, UnspentIter>(
     locked_timestamp: Option<Timestamp>,
     last_block_time: Timestamp,
     max_inputs_in_tx: usize,
-) -> Result<(Vec<Output>, Vec<Output>, Fr, Vec<Option<Fr>>, i64), Error>
+) -> Result<(Vec<Output>, Vec<Output>, Fr, Vec<ExtendedOutputValue>, i64), Error>
 where
     UnspentIter: Iterator<Item = (&'a PaymentOutput, i64, Option<Timestamp>)>,
 {
@@ -234,10 +235,10 @@ where
     //
 
     let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
-    let mut rvalues = Vec::with_capacity(2);
+    let mut extended_outputs = Vec::with_capacity(2);
 
     // Create an output for payment
-    let (output1, gamma1, rvalue) = match transaction {
+    let (output1, gamma1, extended_output) = match transaction {
         TransactionType::Regular(data) => {
             data.validate()?;
             trace!("Creating payment UTXO...");
@@ -257,7 +258,16 @@ where
                 "Created payment UTXO: hash={}, recipient={}, amount={}, data={:?}, locked={:?}",
                 output1_hash, recipient, amount, data, locked_timestamp
             );
-            (Output::PaymentOutput(output1), gamma1, rvalue)
+
+            let extended_output = ExtendedOutputValue {
+                rvalue,
+                recipient: *recipient,
+                amount,
+                data: data.into(),
+                is_change: false,
+            };
+
+            (Output::PaymentOutput(output1), gamma1, extended_output)
         }
         TransactionType::Public => {
             trace!("Creating public payment UTXO...");
@@ -272,11 +282,26 @@ where
                 "Created public payment UTXO: hash={}, recipient={}, amount={}, locked={:?}",
                 output1_hash, recipient, amount, locked_timestamp
             );
-            (Output::PublicPaymentOutput(output1), gamma1, None)
+
+            let extended_output = ExtendedOutputValue {
+                rvalue: None,
+                recipient: *recipient,
+                amount,
+                data: None,
+                is_change: false,
+            };
+
+            (
+                Output::PublicPaymentOutput(output1),
+                gamma1,
+                extended_output,
+            )
         }
     };
+
     outputs.push(output1);
-    rvalues.push(rvalue);
+    extended_outputs.push(extended_output);
+
     let mut gamma = gamma1;
 
     if change > 0 {
@@ -293,8 +318,14 @@ where
             data
         );
         outputs.push(Output::PaymentOutput(output2));
-        // Save change without certificate.
-        rvalues.push(None);
+        let extended_output = ExtendedOutputValue {
+            rvalue: None,
+            recipient: *sender_pkey,
+            amount: change,
+            data: data.into(),
+            is_change: true,
+        };
+        extended_outputs.push(extended_output);
         gamma += gamma2;
     }
 
@@ -307,8 +338,8 @@ where
         fee
     );
 
-    assert_eq!(rvalues.len(), outputs.len());
-    Ok((inputs, outputs, gamma, rvalues, fee))
+    assert_eq!(extended_outputs.len(), outputs.len());
+    Ok((inputs, outputs, gamma, extended_outputs, fee))
 }
 
 /// Create a new staking transaction.

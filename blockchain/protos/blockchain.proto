@@ -4,6 +4,13 @@ package stegos.blockchain;
 import "crypto.proto";
 import "view_changes.proto";
 
+message PaymentPayloadData {
+    oneof data {
+        stegos.crypto.Hash hash = 1;
+        string comment = 2;
+    }
+}
+
 message PaymentOutput {
     stegos.crypto.PublicKey recipient = 1;
     stegos.crypto.Pt cloaking_hint = 2;

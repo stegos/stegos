@@ -49,7 +49,7 @@ use log::*;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use stegos_blockchain::*;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{pbc, scc};
@@ -62,10 +62,12 @@ use stegos_node::TransactionStatus;
 use stegos_node::MAX_PARTICIPANTS;
 use stegos_node::{Node, NodeRequest, NodeResponse};
 use tokio::runtime::TaskExecutor;
-use tokio_timer::Interval;
+use tokio_timer::{clock, Interval};
 
 const STAKE_FEE: i64 = 0;
 const RESEND_TX_INTERVAL: Duration = Duration::from_secs(2 * 60);
+const PENDING_UTXO_TIME: Duration = Duration::from_secs(2 * 60);
+const CHECK_PENDING_UTXO: Duration = Duration::from_secs(10);
 
 ///
 /// Events.
@@ -116,7 +118,8 @@ struct UnsealedAccountService {
     last_macro_block_timestamp: Timestamp,
 
     /// Unspent Payment UXTO.
-    payments: HashMap<Hash, PaymentValue>,
+    // Store time in Instant, to be more compatible with tokio-timer.
+    payments: HashMap<Hash, (PaymentValue, Option<Instant>)>,
     /// Unspent Payment UXTO.
     public_payments: HashMap<Hash, PublicPaymentOutput>,
     /// Unspent Stake UTXO.
@@ -130,6 +133,9 @@ struct UnsealedAccountService {
     node: Node,
     /// Resend timeout.
     resend_tx: Interval,
+
+    /// Check for pending utxos.
+    check_pending_utxos: Interval,
 
     //
     // Value shuffle api (owned)
@@ -182,7 +188,7 @@ impl UnsealedAccountService {
         // State.
         //
         let epoch = 0;
-        let payments: HashMap<Hash, PaymentValue> = HashMap::new();
+        let payments = HashMap::new();
 
         let public_payments = HashMap::new();
         let stakes: HashMap<Hash, StakeValue> = HashMap::new();
@@ -201,7 +207,8 @@ impl UnsealedAccountService {
 
         let account_log = AccountLog::open(&database_dir);
         let transaction_response = None;
-        let resend_tx = Interval::new(tokio_timer::clock::now(), RESEND_TX_INTERVAL);
+        let resend_tx = Interval::new(clock::now(), RESEND_TX_INTERVAL);
+        let check_pending_utxos = Interval::new(clock::now(), CHECK_PENDING_UTXO);
         //
         // Recovery.
         //
@@ -231,6 +238,7 @@ impl UnsealedAccountService {
             public_payments,
             stakes,
             resend_tx,
+            check_pending_utxos,
             vs,
             wallet_tx_info_receiver,
             vs_session,
@@ -261,7 +269,8 @@ impl UnsealedAccountService {
         let unspent_iter = self
             .payments
             .values()
-            .map(|v| (&v.output, v.amount, v.output.locked_timestamp.clone()));
+            .filter(|(_, t)| t.is_none())
+            .map(|(ref v, _)| (&v.output, v.amount, v.output.locked_timestamp.clone()));
         let sender = if with_certificate {
             Some(&self.account_skey)
         } else {
@@ -289,6 +298,11 @@ impl UnsealedAccountService {
         self.account_log
             .push_outgoing(Timestamp::now(), payment_info.clone())?;
 
+        let time = clock::now();
+        for input in &tx.txins {
+            self.payments.get_mut(input).unwrap().1 = Some(time);
+        }
+
         let tx: Transaction = tx.into();
         self.send_transaction(tx.clone())?;
         metrics::WALLET_CREATEAD_PAYMENTS
@@ -309,7 +323,8 @@ impl UnsealedAccountService {
         let unspent_iter = self
             .payments
             .values()
-            .map(|v| (&v.output, v.amount, v.output.locked_timestamp.clone()));
+            .filter(|(_, t)| t.is_none())
+            .map(|(ref v, _)| (&v.output, v.amount, v.output.locked_timestamp.clone()));
 
         let (inputs, outputs, gamma, extended_outputs, fee) = create_payment_transaction(
             Some(&self.account_skey),
@@ -330,6 +345,11 @@ impl UnsealedAccountService {
 
         self.account_log
             .push_outgoing(Timestamp::now(), payment_info.clone())?;
+
+        let time = clock::now();
+        for input in &tx.txins {
+            self.payments.get_mut(input).unwrap().1 = Some(time);
+        }
 
         let tx: Transaction = tx.into();
         self.send_transaction(tx.clone())?;
@@ -359,7 +379,8 @@ impl UnsealedAccountService {
         let unspent_iter = self
             .payments
             .values()
-            .map(|v| (&v.output, v.amount, v.output.locked_timestamp.clone()));
+            .filter(|(_, t)| t.is_none())
+            .map(|(ref v, _)| (&v.output, v.amount, v.output.locked_timestamp.clone()));
         let (inputs, outputs, fee) = create_vs_payment_transaction(
             &self.account_pkey,
             recipient,
@@ -374,6 +395,11 @@ impl UnsealedAccountService {
         let session_id = Hash::random();
         self.vs.queue_transaction(&inputs, &outputs, fee)?;
 
+        let time = clock::now();
+        for (input, _) in &inputs {
+            self.payments.get_mut(&input).unwrap().1 = Some(time);
+        }
+
         metrics::WALLET_CREATEAD_SECURE_PAYMENTS
             .with_label_values(&[&String::from(&self.account_pkey)])
             .inc();
@@ -382,7 +408,11 @@ impl UnsealedAccountService {
 
     /// Stake money into the escrow.
     fn stake(&mut self, amount: i64, payment_fee: i64) -> Result<PaymentTransactionValue, Error> {
-        let unspent_iter = self.payments.values().map(|v| (&v.output, v.amount));
+        let unspent_iter = self
+            .payments
+            .values()
+            .filter(|(_, t)| t.is_none())
+            .map(|(ref v, _)| (&v.output, v.amount));
         let tx = create_staking_transaction(
             &self.account_skey,
             &self.account_pkey,
@@ -399,6 +429,11 @@ impl UnsealedAccountService {
 
         self.account_log
             .push_outgoing(Timestamp::now(), payment_info.clone())?;
+
+        let time = clock::now();
+        for input in &tx.txins {
+            self.payments.get_mut(input).unwrap().1 = Some(time);
+        }
 
         self.send_transaction(tx.into())?;
         Ok(payment_info)
@@ -501,7 +536,7 @@ impl UnsealedAccountService {
     /// Get actual balance.
     fn balance(&self) -> i64 {
         let mut balance: i64 = 0;
-        for val in self.payments.values() {
+        for (val, _) in self.payments.values() {
             balance += val.amount;
         }
         balance
@@ -558,8 +593,8 @@ impl UnsealedAccountService {
                         error!("Error when adding incomming tx = {}", e)
                     }
 
-                    let info = value.to_info();
-                    let missing = self.payments.insert(hash, value);
+                    let info = value.to_info(None);
+                    let missing = self.payments.insert(hash, (value, None));
                     assert!(missing.is_none());
                     self.notify(AccountNotification::Received(info));
                 }
@@ -615,8 +650,8 @@ impl UnsealedAccountService {
                 {
                     info!("Spent: utxo={}, amount={}, data={:?}", hash, amount, data);
                     match self.payments.remove(&hash) {
-                        Some(value) => {
-                            let info = value.to_info();
+                        Some((value, time)) => {
+                            let info = value.to_info(time);
                             self.notify(AccountNotification::Spent(info));
                         }
                         None => panic!("Inconsistent account state"),
@@ -750,6 +785,21 @@ impl UnsealedAccountService {
         }
     }
 
+    fn handle_check_pending_utxos(&mut self, now: Instant) {
+        trace!("Handle check pending utxo transactions");
+        for (hash, utxo) in &mut self.payments {
+            match utxo {
+                (_, Some(t)) => {
+                    if *t + PENDING_UTXO_TIME <= now {
+                        trace!("Found outdated pending utxo = {}", hash);
+                        utxo.1 = None;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn notify(&mut self, notification: AccountNotification) {
         trace!("Created notification = {:?}", notification);
         self.subscribers
@@ -852,6 +902,18 @@ impl Future for UnsealedAccountService {
 
         loop {
             match self
+                .check_pending_utxos
+                .poll()
+                .expect("no errors in timers")
+            {
+                Async::Ready(Some(t)) => self.handle_check_pending_utxos(t),
+                Async::NotReady => break,
+                e => panic!("Error in handling check pending utxos timer = {:?}", e),
+            }
+        }
+
+        loop {
+            match self
                 .wallet_tx_info_receiver
                 .poll()
                 .expect("all errors are already handled")
@@ -944,7 +1006,7 @@ impl Future for UnsealedAccountService {
                                     .map(public_payment_info)
                                     .collect();
                                 let payments: Vec<PaymentInfo> =
-                                    self.payments.values().map(PaymentValue::to_info).collect();
+                                    self.payments.values().map(|(v, t)| v.to_info(*t)).collect();
                                 let stakes: Vec<StakeInfo> = self
                                     .stakes
                                     .values()

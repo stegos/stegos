@@ -32,7 +32,7 @@ use serde::{Deserializer, Serializer};
 use serde_derive::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use stegos_blockchain::{
     Output, PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput,
     StakeOutput, Timestamp,
@@ -508,12 +508,23 @@ pub struct StakeValue {
 }
 
 impl PaymentValue {
-    pub fn to_info(&self) -> PaymentInfo {
+    pub fn to_info(&self, time: Option<Instant>) -> PaymentInfo {
+        // Convert Time from instant to timestamp, for visualise in API.
+        let pending_timestamp = time.and_then(|t| {
+            let now = tokio_timer::clock::now();
+            if t + super::PENDING_UTXO_TIME < now {
+                return None;
+            }
+            let duration_to_end = t + super::PENDING_UTXO_TIME - now;
+            Some(Timestamp::now() + duration_to_end)
+        });
+
         PaymentInfo {
             utxo: Hash::digest(&self.output),
             amount: self.amount,
             data: self.data.clone(),
             locked_timestamp: self.output.locked_timestamp,
+            pending_timestamp,
         }
     }
 }
@@ -534,7 +545,7 @@ impl StakeValue {
 impl OutputValue {
     pub fn to_info(&self) -> OutputInfo {
         match self {
-            OutputValue::Payment(o) => o.to_info().into(),
+            OutputValue::Payment(o) => o.to_info(None).into(),
             OutputValue::PublicPayment(o) => public_payment_info(&o).into(),
         }
     }

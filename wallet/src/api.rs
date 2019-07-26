@@ -67,6 +67,8 @@ pub struct PaymentInfo {
     #[serde(flatten)]
     pub data: PaymentPayloadData,
     pub locked_timestamp: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_timestamp: Option<Timestamp>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]

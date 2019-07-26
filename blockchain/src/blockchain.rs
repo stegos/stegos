@@ -147,6 +147,7 @@ type ValidatorsActivity = MultiVersionedMap<pbc::PublicKey, ValidatorAwardState,
 pub struct OutputRecovery {
     pub output: Output,
     pub epoch: u64,
+    pub block_hash: Hash,
     pub is_final: bool,
     pub timestamp: Timestamp,
 }
@@ -392,7 +393,11 @@ impl Blockchain {
         let mut epoch: u64 = 0;
 
         let mut update_account_state =
-            |output: &Output, epoch: u64, is_final: bool, timestamp: Timestamp| {
+            |output: &Output,
+             epoch: u64,
+             block_hash: &Hash,
+             is_final: bool,
+             timestamp: Timestamp| {
                 let output_hash = Hash::digest(&output);
                 if !self.contains_output(&output_hash) {
                     return; // Spent.
@@ -402,6 +407,7 @@ impl Blockchain {
                         accounts_state[account_id].push(OutputRecovery {
                             output: output.clone(),
                             epoch,
+                            block_hash: block_hash.clone(),
                             is_final,
                             timestamp,
                         });
@@ -410,17 +416,30 @@ impl Blockchain {
             };
 
         for block in self.blocks_starting(epoch, 0) {
+            let block_hash = Hash::digest(&block);
             match block {
                 Block::MacroBlock(block) => {
                     for output in &block.outputs {
-                        update_account_state(output, epoch, true, block.header.timestamp);
+                        update_account_state(
+                            output,
+                            epoch,
+                            &block_hash,
+                            true,
+                            block.header.timestamp,
+                        );
                     }
                     epoch += 1;
                 }
                 Block::MicroBlock(block) => {
                     for tx in block.transactions {
                         for output in tx.txouts() {
-                            update_account_state(output, epoch, false, block.header.timestamp);
+                            update_account_state(
+                                output,
+                                epoch,
+                                &block_hash,
+                                false,
+                                block.header.timestamp,
+                            );
                         }
                     }
                 }
@@ -470,12 +489,22 @@ impl Blockchain {
     }
 
     /// Resolve UTXO by hash.
-    pub fn output_by_hash(&self, output_hash: &Hash) -> Result<Option<Output>, StorageError> {
+    pub fn output_by_hash_with_proof(
+        &self,
+        output_hash: &Hash,
+    ) -> Result<Option<OutputRecovery>, StorageError> {
         match self.output_by_hash.get(output_hash) {
             Some(OutputKey::MacroBlock { epoch, output_id }) => {
-                let block = &self.macro_block(*epoch)?;
+                let block = self.macro_block(*epoch)?;
                 if let Some(output) = block.outputs.get(*output_id as usize) {
-                    Ok(Some(output.clone()))
+                    let result = OutputRecovery {
+                        output: output.clone(),
+                        epoch: block.header.epoch,
+                        block_hash: Hash::digest(&block),
+                        is_final: true,
+                        timestamp: block.header.timestamp,
+                    };
+                    Ok(Some(result))
                 } else {
                     Ok(None) // Pruned.
                 }
@@ -495,10 +524,25 @@ impl Blockchain {
                     .txouts()
                     .get(*txout_id as usize)
                     .expect("Corrupted outputs_by_hash (Micro-3)");
-                Ok(Some(output.clone()))
+                let result = OutputRecovery {
+                    output: output.clone(),
+                    epoch: block.header.epoch,
+                    block_hash: Hash::digest(&block),
+                    is_final: false,
+                    timestamp: block.header.timestamp,
+                };
+                Ok(Some(result))
             }
             None => Ok(None),
         }
+    }
+
+    /// Resolve UTXO by hash.
+    #[inline]
+    pub fn output_by_hash(&self, output_hash: &Hash) -> Result<Option<Output>, StorageError> {
+        Ok(self
+            .output_by_hash_with_proof(output_hash)?
+            .map(|r| r.output))
     }
 
     ///
@@ -507,13 +551,13 @@ impl Blockchain {
     ///
     /// NOTE: this function full-scans the entire blockchain.
     ///
-    pub fn historic_output_by_hash(
+    pub fn historic_output_by_hash_with_proof(
         &self,
         output_hash: &Hash,
-    ) -> Result<Option<Output>, StorageError> {
-        if let Some(output) = self.output_by_hash(output_hash)? {
+    ) -> Result<Option<OutputRecovery>, StorageError> {
+        if let Some(recovery) = self.output_by_hash_with_proof(output_hash)? {
             // We are lucky - output is not spent.
-            return Ok(Some(output));
+            return Ok(Some(recovery));
         }
 
         //
@@ -527,15 +571,29 @@ impl Blockchain {
                 Block::MacroBlock(block) => {
                     for output in &block.outputs {
                         if &Hash::digest(&output) == output_hash {
-                            return Ok(Some(output.clone()));
+                            let result = OutputRecovery {
+                                output: output.clone(),
+                                epoch: block.header.epoch,
+                                block_hash: Hash::digest(&block),
+                                is_final: true,
+                                timestamp: block.header.timestamp,
+                            };
+                            return Ok(Some(result));
                         }
                     }
                 }
                 Block::MicroBlock(block) => {
-                    for tx in block.transactions {
+                    for tx in &block.transactions {
                         for output in tx.txouts() {
                             if &Hash::digest(&output) == output_hash {
-                                return Ok(Some(output.clone()));
+                                let result = OutputRecovery {
+                                    output: output.clone(),
+                                    epoch: block.header.epoch,
+                                    block_hash: Hash::digest(&block),
+                                    is_final: false,
+                                    timestamp: block.header.timestamp,
+                                };
+                                return Ok(Some(result));
                             }
                         }
                     }
@@ -2157,6 +2215,8 @@ pub mod tests {
             timestamp,
             None,
         );
+        let genesis_timestamp = timestamp;
+        let genesis_hash = Hash::digest(&genesis);
         let chain_dir = TempDir::new("test").unwrap();
         let mut chain = Blockchain::new(
             cfg.clone(),
@@ -2173,16 +2233,34 @@ pub mod tests {
         timestamp += Duration::from_secs(1);
         let (block, _input_hashes, _output_hashes) =
             test::create_fake_micro_block(&mut chain, &keychains, timestamp);
-        let (inputs, _outputs, _txs) = chain
+        let (inputs, outputs, _txs) = chain
             .push_micro_block(block, timestamp)
             .expect("no I/O errors");
 
         let historic_output = &inputs[0];
-        let historic_output2 = chain
-            .historic_output_by_hash(&Hash::digest(&historic_output))
+        let historic_output_proof = chain
+            .historic_output_by_hash_with_proof(&Hash::digest(&historic_output))
             .expect("no I/O errors")
             .expect("exists");
-        assert_eq!(historic_output, &historic_output2);
+        assert_eq!(&historic_output_proof.output, historic_output);
+        assert_eq!(historic_output_proof.epoch, 0);
+        assert_eq!(&historic_output_proof.block_hash, &genesis_hash);
+        assert_eq!(historic_output_proof.is_final, true);
+        assert_eq!(historic_output_proof.timestamp, genesis_timestamp);
+
+        //
+        // Created by Micro Block.
+        //
+        let unspent_output = &outputs[0];
+        let unspent_output_proof = chain
+            .historic_output_by_hash_with_proof(&Hash::digest(&unspent_output))
+            .expect("no I/O errors")
+            .expect("exists");
+        assert_eq!(&unspent_output_proof.output, unspent_output);
+        assert_eq!(unspent_output_proof.epoch, 1);
+        assert_eq!(unspent_output_proof.block_hash, chain.last_block_hash());
+        assert_eq!(unspent_output_proof.is_final, false);
+        assert_eq!(unspent_output_proof.timestamp, chain.last_block_timestamp());
 
         //
         // Spent by Macro Block.
@@ -2197,20 +2275,31 @@ pub mod tests {
             .push_macro_block(block, timestamp)
             .expect("Invalid block");
         let historic_output = &inputs[0];
-        let historic_output2 = chain
-            .historic_output_by_hash(&Hash::digest(&historic_output))
+        let historic_output_proof = chain
+            .historic_output_by_hash_with_proof(&Hash::digest(&historic_output))
             .expect("no I/O errors")
             .expect("exists");
-        assert_eq!(historic_output, &historic_output2);
+        assert_eq!(&historic_output_proof.output, historic_output);
+        assert_eq!(historic_output_proof.epoch, 0);
+        assert_eq!(historic_output_proof.block_hash, genesis_hash);
+        assert_eq!(historic_output_proof.is_final, true);
+        assert_eq!(historic_output_proof.timestamp, genesis_timestamp);
 
         //
-        // Unspent.
+        // Created by Macro Block.
         //
         let unspent_output = &outputs[0];
-        let unspent_output2 = chain
-            .historic_output_by_hash(&Hash::digest(&unspent_output))
+        let unspent_output_proof = chain
+            .historic_output_by_hash_with_proof(&Hash::digest(&unspent_output))
             .expect("no I/O errors")
             .expect("exists");
-        assert_eq!(unspent_output, &unspent_output2);
+        assert_eq!(&unspent_output_proof.output, unspent_output);
+        assert_eq!(unspent_output_proof.epoch, 1);
+        assert_eq!(unspent_output_proof.block_hash, chain.last_block_hash());
+        assert_eq!(unspent_output_proof.is_final, true);
+        assert_eq!(
+            unspent_output_proof.timestamp,
+            chain.last_macro_block_timestamp()
+        );
     }
 }

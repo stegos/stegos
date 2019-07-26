@@ -67,7 +67,7 @@ lazy_static! {
     /// Regex to parse "send" command.
     static ref SEND_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<topic>[0-9A-Za-z]+)\s+(?P<msg>.+)$").unwrap();
     /// Regex to parse "validate certificate" command.
-    static ref VALIDATE_CERTIFICATE_COMMAND_RE: Regex = Regex::new(r"\s*(?P<utxo>[0-9a-f]+)\s+(?P<spender>[0-9A-Za-z]+)\s+(?P<recipient>[0-9A-Za-z]+)\s+(?P<amount>[0-9\.]{1,19})\s+(?P<rvalue>[0-9a-f]+)\s*$").unwrap();
+    static ref VALIDATE_CERTIFICATE_COMMAND_RE: Regex = Regex::new(r"\s*(?P<utxo>[0-9a-f]+)\s+(?P<spender>[0-9A-Za-z]+)\s+(?P<recipient>[0-9A-Za-z]+)\s+(?P<rvalue>[0-9a-f]+)\s*$").unwrap();
     /// Regex to parse "use" command.
     static ref USE_COMMAND_RE: Regex = Regex::new(r"\s*(?P<account_id>[0-9A-Za-z]+)\s*$").unwrap();
 }
@@ -209,7 +209,7 @@ impl ConsoleService {
         eprintln!(
             "pay ADDRESS AMOUNT [COMMENT] [/snowball] [/public] [/lock DATETIME] [/fee FEE] [/certificate] - send money"
         );
-        eprintln!("validate certificate UTXO SENDER_ADDRESS RECIPIENT_ADDRESS AMOUNT RVALUE - check that payment certificate is valid");
+        eprintln!("validate certificate UTXO SENDER_ADDRESS RECIPIENT_ADDRESS RVALUE - check that payment certificate is valid");
         eprintln!("msg ADDRESS MESSAGE - send a message via blockchain");
         eprintln!("stake AMOUNT - stake money");
         eprintln!("unstake [AMOUNT] - unstake money");
@@ -267,13 +267,10 @@ impl ConsoleService {
     }
 
     fn help_validate_certificate() {
-        eprintln!(
-            "Usage: validate certificate UTXO SENDER_ADDRESS RECIPIENT_ADDRESS AMOUNT RVALUE"
-        );
+        eprintln!("Usage: validate certificate UTXO SENDER_ADDRESS RECIPIENT_ADDRESS RVALUE");
         eprintln!(" - UTXO - UTXO ID");
         eprintln!(" - SENDER_ADDRESS - senders's address");
         eprintln!(" - RECIPIENT_ADDRESS - recipient's address");
-        eprintln!(" - AMOUNT - amount in μSTG");
         eprintln!(" - RVALUE - decryption key");
         eprintln!();
     }
@@ -565,15 +562,6 @@ impl ConsoleService {
                     return Ok(true);
                 }
             };
-            let amount = caps.name("amount").unwrap().as_str();
-            let amount = match parse_money(amount) {
-                Ok(amount) => amount,
-                Err(e) => {
-                    eprintln!("{}", e);
-                    Self::help_validate_certificate();
-                    return Ok(true);
-                }
-            };
             let rvalue = caps.name("rvalue").unwrap().as_str();
             let rvalue = match scc::Fr::try_from_hex(rvalue) {
                 Ok(r) => r,
@@ -588,7 +576,6 @@ impl ConsoleService {
                 utxo,
                 spender,
                 recipient,
-                amount,
                 rvalue,
             };
             self.send_node_request(request)?

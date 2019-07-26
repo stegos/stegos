@@ -579,9 +579,8 @@ impl PaymentOutput {
         &self,
         spender_pkey: &PublicKey,
         recipient_pkey: &PublicKey,
-        amount: i64,
         rvalue: &Fr,
-    ) -> Result<(), OutputError> {
+    ) -> Result<i64, OutputError> {
         let output_hash = Hash::digest(self);
         let payload =
             PaymentPayload::decrypt_with_rvalue(output_hash, &self.payload, rvalue, recipient_pkey)
@@ -591,10 +590,7 @@ impl PaymentOutput {
         validate_sig(&hash, &payload.signature, spender_pkey)
             .map_err(|_| OutputError::InvalidCertificate)?;
 
-        if payload.amount != amount {
-            return Err(OutputError::InvalidCertificate.into());
-        }
-        Ok(())
+        Ok(payload.amount)
     }
 }
 
@@ -1015,19 +1011,16 @@ pub mod tests {
             PaymentOutput::with_payload(Some(&spender_skey), &recipient_pkey, amount, data, None)
                 .expect("encryption successful");
 
-        output
-            .validate_certificate(&spender_pkey, &recipient_pkey, amount, &rvalue)
+        let amount2 = output
+            .validate_certificate(&spender_pkey, &recipient_pkey, &rvalue)
             .unwrap();
+        assert_eq!(amount, amount2);
         let e = output
-            .validate_certificate(&spender_pkey, &recipient_pkey, amount + 1, &rvalue)
+            .validate_certificate(&recipient_pkey, &spender_pkey, &rvalue)
             .unwrap_err();
         assert_matches!(e, OutputError::InvalidCertificate);
         let e = output
-            .validate_certificate(&recipient_pkey, &spender_pkey, amount, &rvalue)
-            .unwrap_err();
-        assert_matches!(e, OutputError::InvalidCertificate);
-        let e = output
-            .validate_certificate(&spender_pkey, &recipient_pkey, amount, &Fr::random())
+            .validate_certificate(&spender_pkey, &recipient_pkey, &Fr::random())
             .unwrap_err();
         assert_matches!(e, OutputError::InvalidCertificate);
     }

@@ -208,7 +208,7 @@ fn full_transfer() {
         let response = get_request(rx);
         info!("{:?}", response);
         let balance = match response {
-            AccountResponse::BalanceInfo { balance } => balance,
+            AccountResponse::BalanceInfo { balance, .. } => balance,
             _ => panic!("Wrong response to payment request"),
         };
 
@@ -273,7 +273,7 @@ fn create_tx_invalid() {
         let response = get_request(rx);
         info!("{:?}", response);
         let balance = match response {
-            AccountResponse::BalanceInfo { balance } => balance,
+            AccountResponse::BalanceInfo { balance, .. } => balance,
             _ => panic!("Wrong response to payment request"),
         };
 
@@ -730,7 +730,7 @@ fn precondition_each_account_has_tokens(
         new_account.poll();
 
         match get_request(rx) {
-            AccountResponse::BalanceInfo { balance } => {
+            AccountResponse::BalanceInfo { balance, .. } => {
                 dbg!((balance, amount));
                 assert!(balance >= amount);
             }

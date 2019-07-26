@@ -58,11 +58,12 @@ message BulletProof {
 }
 
 message DiceMixParticipantID {
-    stegos.crypto.SecurePublicKey pkey = 1;
+    SecurePublicKey pkey = 1;
     bytes seed = 2;
 }
 
 message VRF {
-    stegos.crypto.Hash rand = 1;
-    stegos.crypto.G1 proof = 2;
+    Hash rand = 1;
+    G1 proof = 2;
 }
+

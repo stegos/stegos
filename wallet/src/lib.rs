@@ -28,6 +28,7 @@ mod change;
 mod error;
 mod metrics;
 mod protos;
+mod queryshuffle;
 mod recovery;
 mod snowball;
 mod storage;

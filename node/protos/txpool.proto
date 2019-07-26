@@ -34,3 +34,6 @@ message PoolNotification {
     }
 }
 
+message QueryPoolJoin {
+    bytes seed = 1;
+}

@@ -38,7 +38,9 @@ use stegos_crypto::hash::Hash;
 use stegos_crypto::scc::SchnorrSig;
 use stegos_crypto::{dicemix, CryptoError};
 
-use crate::txpool::messages::{ParticipantTXINMap, PoolInfo, PoolJoin, PoolNotification};
+use crate::txpool::messages::{
+    ParticipantTXINMap, PoolInfo, PoolJoin, PoolNotification, QueryPoolJoin,
+};
 
 impl ProtoConvert for RequestBlocks {
     type Proto = loader::RequestBlocks;
@@ -220,6 +222,24 @@ impl ProtoConvert for PoolNotification {
             txpool::PoolNotification_oneof_body::canceled(_) => PoolNotification::Canceled,
         };
         Ok(chain_message)
+    }
+}
+
+impl ProtoConvert for QueryPoolJoin {
+    type Proto = txpool::QueryPoolJoin;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = txpool::QueryPoolJoin::new();
+        proto.set_seed(self.seed.to_vec());
+        proto
+    }
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let seed_slice = proto.get_seed();
+        if seed_slice.len() != 32 {
+            return Err(CryptoError::InvalidBinaryLength(32, seed_slice.len()).into());
+        }
+        let mut seed: [u8; 32] = [0u8; 32];
+        seed.copy_from_slice(seed_slice);
+        Ok(QueryPoolJoin { seed })
     }
 }
 

@@ -29,6 +29,11 @@ pub const POOL_JOIN_TOPIC: &'static str = "txpool_join";
 /// A topic for PoolInfo messages.
 pub const POOL_ANNOUNCE_TOPIC: &'static str = "txpool_announce";
 
+/// A topic used for QueryPool Join requests.
+pub const QUERY_POOL_JOIN_TOPIC: &'static str = "querypool_join";
+/// A topic for Query PoolInfo messages.
+pub const QUERY_POOL_ANNOUNCE_TOPIC: &'static str = "querypool_announce";
+
 type TXIN = Hash;
 type UTXO = PaymentOutput;
 type SchnorrSig = scc::SchnorrSig;
@@ -70,6 +75,14 @@ pub enum PoolNotification {
 
 // --------------------------------------------------
 
+/// Send when node wants to join QueryPool.
+#[derive(Debug, Clone)]
+pub struct QueryPoolJoin {
+    pub seed: [u8; 32],
+}
+
+// --------------------------------------------------
+
 impl Hashable for PoolJoin {
     fn hash(&self, state: &mut Hasher) {
         "PoolJoin".hash(state);
@@ -78,6 +91,13 @@ impl Hashable for PoolJoin {
         }
         self.seed.hash(state);
         self.ownsig.hash(state);
+    }
+}
+
+impl Hashable for QueryPoolJoin {
+    fn hash(&self, state: &mut Hasher) {
+        "QueryPoolJoin".hash(state);
+        self.seed.hash(state);
     }
 }
 

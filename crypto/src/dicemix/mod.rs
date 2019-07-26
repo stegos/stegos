@@ -98,6 +98,7 @@ use scc::Pt;
 use scc::PublicKey;
 use scc::SchnorrSig;
 use scc::SecretKey;
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct ParticipantID {
     pub pkey: pbc::PublicKey,

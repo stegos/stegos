@@ -42,7 +42,7 @@ use crate::mempool::Mempool;
 use crate::txpool::TransactionPoolService;
 pub use crate::txpool::MAX_PARTICIPANTS;
 use crate::validation::*;
-use failure::{format_err, Error};
+use failure::Error;
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::sync::oneshot;
 use futures::{task, Async, Future, Poll, Stream};
@@ -1937,31 +1937,40 @@ impl Future for NodeService {
                                     utxo,
                                     spender,
                                     recipient,
-                                    amount,
                                     rvalue,
-                                } => {
-                                    let r: Result<(), Error> = match self
-                                        .chain
-                                        .historic_output_by_hash(&utxo)
-                                    {
-                                        Err(e) => Err(e.into()),
-                                        Ok(None) => Err(format_err!("Missing output: {}", utxo)),
-                                        Ok(Some(Output::PaymentOutput(output))) => match output
-                                            .validate_certificate(
-                                                &spender, &recipient, amount, &rvalue,
-                                            ) {
-                                            Ok(()) => Ok(()),
-                                            Err(e) => Err(e.into()),
-                                        },
-                                        Ok(Some(_)) => Err(OutputError::InvalidCertificate.into()),
-                                    };
-                                    match r {
-                                        Ok(()) => NodeResponse::CertificateValid,
-                                        Err(e) => NodeResponse::Error {
-                                            error: format!("{}", e),
-                                        },
+                                } => match self.chain.historic_output_by_hash_with_proof(&utxo) {
+                                    Err(e) => NodeResponse::Error {
+                                        error: format!("{}", e),
+                                    },
+                                    Ok(None) => NodeResponse::Error {
+                                        error: format!("Missing UTXO: {}", utxo),
+                                    },
+                                    Ok(Some(OutputRecovery {
+                                        output: Output::PaymentOutput(output),
+                                        epoch,
+                                        block_hash,
+                                        is_final,
+                                        timestamp,
+                                    })) => {
+                                        match output
+                                            .validate_certificate(&spender, &recipient, &rvalue)
+                                        {
+                                            Ok(amount) => NodeResponse::CertificateValid {
+                                                epoch,
+                                                block_hash,
+                                                is_final,
+                                                timestamp,
+                                                amount,
+                                            },
+                                            Err(e) => NodeResponse::Error {
+                                                error: format!("{}", e),
+                                            },
+                                        }
                                     }
-                                }
+                                    Ok(Some(_)) => NodeResponse::Error {
+                                        error: format!("Invalid UTXO type: {}", utxo),
+                                    },
+                                },
                             };
                             tx.send(response).ok(); // ignore errors.
                             Ok(())

@@ -51,7 +51,6 @@ pub enum NodeRequest {
         utxo: Hash,
         spender: scc::PublicKey,
         recipient: scc::PublicKey,
-        amount: i64,
         rvalue: scc::Fr,
     },
 }
@@ -73,7 +72,13 @@ pub enum NodeResponse {
         hash: Hash,
         status: TransactionStatus,
     },
-    CertificateValid,
+    CertificateValid {
+        epoch: u64,
+        block_hash: Hash,
+        is_final: bool,
+        timestamp: Timestamp,
+        amount: i64,
+    },
     Error {
         error: String,
     },

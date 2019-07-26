@@ -87,12 +87,17 @@ pub struct PublicPaymentInfo {
 pub enum AccountNotification {
     BalanceChanged {
         balance: i64,
+        available_balance: i64,
     },
     SnowballStarted {
         session_id: Hash,
     },
     SnowballCreated {
         tx_hash: Hash,
+        session_id: Hash,
+    },
+    SnowballStopped {
+        tx_hash: Option<Hash>,
         session_id: Hash,
     },
     TransactionStatus {
@@ -229,6 +234,7 @@ pub enum AccountResponse {
     TransactionCreated(TransactionInfo),
     BalanceInfo {
         balance: i64,
+        available_balance: i64,
     },
     KeysInfo {
         account_address: PublicKey,

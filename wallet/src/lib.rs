@@ -39,7 +39,7 @@ use self::error::WalletError;
 use self::recovery::recovery_to_account_skey;
 use self::storage::*;
 use self::transaction::*;
-use self::valueshuffle::ValueShuffle;
+use self::valueshuffle::{ValueShuffle, ValueShuffleOutput};
 use api::*;
 use failure::{bail, Error};
 use futures::future::IntoFuture;
@@ -66,7 +66,7 @@ use tokio_timer::{clock, Interval};
 
 const STAKE_FEE: i64 = 0;
 const RESEND_TX_INTERVAL: Duration = Duration::from_secs(2 * 60);
-const PENDING_UTXO_TIME: Duration = Duration::from_secs(2 * 60);
+const PENDING_UTXO_TIME: Duration = Duration::from_secs(5 * 60);
 const CHECK_PENDING_UTXO: Duration = Duration::from_secs(10);
 
 ///
@@ -143,7 +143,7 @@ struct UnsealedAccountService {
     /// ValueShuffle State.
     vs: ValueShuffle,
     //TODO: Temporary hack to receive newly created transaction from valueshuffle.
-    wallet_tx_info_receiver: mpsc::UnboundedReceiver<(PaymentTransaction, bool)>,
+    wallet_tx_info_receiver: mpsc::UnboundedReceiver<ValueShuffleOutput>,
     vs_session: Option<(Hash, oneshot::Sender<AccountResponse>)>,
     transaction_response: Option<oneshot::Receiver<NodeResponse>>,
 
@@ -534,17 +534,31 @@ impl UnsealedAccountService {
     }
 
     /// Get actual balance.
-    fn balance(&self) -> i64 {
+    fn balance(&self) -> (i64, i64) {
+        let time = Timestamp::now();
         let mut balance: i64 = 0;
-        for (val, _) in self.payments.values() {
+        let mut available_balance: i64 = 0;
+        for (val, locked) in self.payments.values() {
             balance += val.amount;
+
+            if let Some(t) = val.output.locked_timestamp {
+                if t > time {
+                    continue;
+                }
+            }
+
+            if locked.is_some() {
+                continue;
+            }
+
+            available_balance += val.amount;
         }
-        balance
+        (balance, available_balance)
     }
 
     /// Called when outputs registered and/or pruned.
     fn on_outputs_changed(&mut self, epoch: u64, inputs: Vec<Output>, outputs: Vec<Output>) {
-        let saved_balance = self.balance();
+        let (saved_balance, saved_available_balance) = self.balance();
 
         for input in inputs {
             self.on_output_pruned(epoch, input);
@@ -554,13 +568,22 @@ impl UnsealedAccountService {
             self.on_output_created(epoch, output);
         }
 
-        let balance = self.balance();
-        if saved_balance != balance {
+        let (balance, available_balance) = self.balance();
+
+        metrics::WALLET_BALANCES
+            .with_label_values(&[&String::from(&self.account_pkey)])
+            .set(balance);
+
+        metrics::WALLET_AVALIABLE_BALANCES
+            .with_label_values(&[&String::from(&self.account_pkey)])
+            .set(available_balance);
+
+        if saved_balance != balance || saved_available_balance != available_balance {
             debug!("Balance changed");
-            metrics::WALLET_BALANCES
-                .with_label_values(&[&String::from(&self.account_pkey)])
-                .set(balance);
-            self.notify(AccountNotification::BalanceChanged { balance });
+            self.notify(AccountNotification::BalanceChanged {
+                balance,
+                available_balance,
+            });
         }
     }
 
@@ -704,12 +727,15 @@ impl UnsealedAccountService {
         &mut self,
         tx: PaymentTransaction,
         leader: bool,
+        full: bool,
         session_id: Hash,
     ) -> Result<TransactionInfo, Error> {
         let tx_hash = Hash::digest(&tx);
-        metrics::WALLET_PUBLISHED_PAYMENTS
-            .with_label_values(&[&String::from(&self.account_pkey)])
-            .inc();
+        if full {
+            metrics::WALLET_PUBLISHED_PAYMENTS
+                .with_label_values(&[&String::from(&self.account_pkey)])
+                .inc();
+        }
         let notify = AccountNotification::SnowballCreated {
             tx_hash,
             session_id,
@@ -721,7 +747,7 @@ impl UnsealedAccountService {
         self.account_log
             .push_outgoing(Timestamp::now(), payment_info.clone())?;
 
-        if leader {
+        if leader && full {
             // if I'm leader, then send the completed super-transaction
             // to the blockchain.
             debug!("Sending SuperTransaction to BlockChain");
@@ -787,16 +813,30 @@ impl UnsealedAccountService {
 
     fn handle_check_pending_utxos(&mut self, now: Instant) {
         trace!("Handle check pending utxo transactions");
+        let (balance, saved_available_balance) = self.balance();
+        let mut available_balance = saved_available_balance;
         for (hash, utxo) in &mut self.payments {
             match utxo {
                 (_, Some(t)) => {
                     if *t + PENDING_UTXO_TIME <= now {
                         trace!("Found outdated pending utxo = {}", hash);
                         utxo.1 = None;
+                        available_balance += utxo.0.amount;
                     }
                 }
                 _ => {}
             }
+        }
+
+        if saved_available_balance != available_balance {
+            metrics::WALLET_AVALIABLE_BALANCES
+                .with_label_values(&[&String::from(&self.account_pkey)])
+                .set(available_balance);
+            debug!("Balance changed");
+            self.notify(AccountNotification::BalanceChanged {
+                balance,
+                available_balance,
+            });
         }
     }
 
@@ -919,18 +959,41 @@ impl Future for UnsealedAccountService {
                 .expect("all errors are already handled")
             {
                 Async::Ready(msg) => {
-                    let (tx, leader) = msg.expect("channel not ended.");
-
                     let (session_id, response_sender) =
                         self.vs_session.take().expect("active snowball session");
-                    match self.handle_snowball_transaction(tx, leader, session_id) {
-                        Ok(tx) => {
-                            let _ = response_sender.send(AccountResponse::TransactionCreated(tx));
+                    let response = match msg.expect("channel not ended.") {
+                        ValueShuffleOutput::SignedTransaction(tx, leader) => {
+                            match self.handle_snowball_transaction(tx, leader, true, session_id) {
+                                Ok(tx) => AccountResponse::TransactionCreated(tx),
+                                Err(e) => {
+                                    error!("Error during processing snowball transaction = {}", e);
+                                    AccountResponse::Error {
+                                        error: e.to_string(),
+                                    }
+                                }
+                            }
                         }
-                        Err(e) => {
-                            error!("Error during processing valueshuffle transaction = {}", e)
+                        ValueShuffleOutput::UnsignedTransaction(tx) => {
+                            let tx_hash = Hash::digest(&tx);
+
+                            let _ = self.handle_snowball_transaction(tx, false, false, session_id);
+
+                            AccountResponse::Error {
+                                error: format!("Found unsigned transaction = {}", tx_hash),
+                            }
                         }
-                    }
+                        ValueShuffleOutput::Failure(error, txins) => {
+                            warn!("Error during snowball session error={}.", error);
+                            for utxo in txins {
+                                self.payments.get_mut(&utxo.0).unwrap().1 = None;
+                            }
+                            AccountResponse::Error {
+                                error: error.to_string(),
+                            }
+                        }
+                    };
+
+                    let _ = response_sender.send(response);
                 }
                 Async::NotReady => {
                     break;
@@ -995,9 +1058,13 @@ impl Future for UnsealedAccountService {
                                 account_address: self.account_pkey,
                                 network_address: self.network_pkey,
                             },
-                            AccountRequest::BalanceInfo {} => AccountResponse::BalanceInfo {
-                                balance: self.balance(),
-                            },
+                            AccountRequest::BalanceInfo {} => {
+                                let (balance, available_balance) = self.balance();
+                                AccountResponse::BalanceInfo {
+                                    balance,
+                                    available_balance,
+                                }
+                            }
                             AccountRequest::UnspentInfo {} => {
                                 let epoch = self.epoch;
                                 let public_payments: Vec<PublicPaymentInfo> = self

@@ -29,6 +29,12 @@ lazy_static! {
         &["wallet"]
     )
     .unwrap();
+    pub static ref WALLET_AVALIABLE_BALANCES: IntGaugeVec = register_int_gauge_vec!(
+        "stegos_available_wallet_balances",
+        "Active balance per wallet public key",
+        &["wallet"]
+    )
+    .unwrap();
     pub static ref WALLET_CREATEAD_PAYMENTS: IntGaugeVec = register_int_gauge_vec!(
         "stegos_wallet_pay_count",
         "Count of payment txs created per wallet",

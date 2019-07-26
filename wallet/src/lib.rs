@@ -39,7 +39,7 @@ use self::error::WalletError;
 use self::recovery::recovery_to_account_skey;
 use self::storage::*;
 use self::transaction::*;
-use self::valueshuffle::ValueShuffle;
+use self::valueshuffle::{ValueShuffle, ValueShuffleOutput};
 use api::*;
 use failure::{bail, Error};
 use futures::future::IntoFuture;
@@ -143,7 +143,7 @@ struct UnsealedAccountService {
     /// ValueShuffle State.
     vs: ValueShuffle,
     //TODO: Temporary hack to receive newly created transaction from valueshuffle.
-    wallet_tx_info_receiver: mpsc::UnboundedReceiver<(PaymentTransaction, bool)>,
+    wallet_tx_info_receiver: mpsc::UnboundedReceiver<ValueShuffleOutput>,
     vs_session: Option<(Hash, oneshot::Sender<AccountResponse>)>,
     transaction_response: Option<oneshot::Receiver<NodeResponse>>,
 
@@ -918,20 +918,23 @@ impl Future for UnsealedAccountService {
                 .poll()
                 .expect("all errors are already handled")
             {
-                Async::Ready(msg) => {
-                    let (tx, leader) = msg.expect("channel not ended.");
-
-                    let (session_id, response_sender) =
-                        self.vs_session.take().expect("active snowball session");
-                    match self.handle_snowball_transaction(tx, leader, session_id) {
-                        Ok(tx) => {
-                            let _ = response_sender.send(AccountResponse::TransactionCreated(tx));
-                        }
-                        Err(e) => {
-                            error!("Error during processing valueshuffle transaction = {}", e)
+                Async::Ready(msg) => match msg.expect("channel not ended.") {
+                    ValueShuffleOutput::SignedTransaction(tx, leader) => {
+                        let (session_id, response_sender) =
+                            self.vs_session.take().expect("active snowball session");
+                        match self.handle_snowball_transaction(tx, leader, session_id) {
+                            Ok(tx) => {
+                                let _ =
+                                    response_sender.send(AccountResponse::TransactionCreated(tx));
+                            }
+                            Err(e) => {
+                                error!("Error during processing valueshuffle transaction = {}", e)
+                            }
                         }
                     }
-                }
+                    ValueShuffleOutput::UnsignedTransaction(_tx) => unimplemented!(),
+                    ValueShuffleOutput::Failure(_error, _txins) => unimplemented!(),
+                },
                 Async::NotReady => {
                     break;
                 }

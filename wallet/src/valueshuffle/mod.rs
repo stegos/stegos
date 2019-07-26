@@ -74,6 +74,7 @@
 // ========================================================================
 
 #![allow(non_snake_case)]
+#![allow(warnings)]
 
 mod error;
 pub use error::*;
@@ -170,6 +171,14 @@ enum State {
     PoolRestart,
 }
 
+#[derive(Debug)]
+/// Possible outcomes of ValueShuffle
+pub enum ValueShuffleOutput {
+    Failure(Error, Vec<(TXIN, UTXO)>),
+    UnsignedTransaction(PaymentTransaction),
+    SignedTransaction(PaymentTransaction, bool),
+}
+
 /// ValueShuffle Service.
 pub struct ValueShuffle {
     /// Account Secret Key.
@@ -187,7 +196,7 @@ pub struct ValueShuffle {
     /// Public keys of txpool's members,
     participants: Vec<ParticipantID>,
     // Sent transaction.
-    wallet_tx_info: UnboundedSender<(PaymentTransaction, bool)>,
+    wallet_tx_info: UnboundedSender<ValueShuffleOutput>,
     /// Network API.
     network: Network,
     /// Incoming events.
@@ -339,7 +348,7 @@ impl ValueShuffle {
         participant_pkey: pbc::PublicKey,
         network: Network,
         node: Node,
-        wallet_tx_info: UnboundedSender<(PaymentTransaction, bool)>,
+        wallet_tx_info: UnboundedSender<ValueShuffleOutput>,
     ) -> ValueShuffle {
         //
         // State.
@@ -459,7 +468,7 @@ impl ValueShuffle {
         self.my_fee = fee;
 
         if txouts.len() > MAX_UTXOS {
-            self.zap_state();
+            self.reset_state();
             return Err(VsError::VsTooManyUTXO.into());
         }
 
@@ -467,6 +476,12 @@ impl ValueShuffle {
         self.state = State::PoolWait;
         self.msg_state = VsMsgType::None;
         self.send_pool_join()
+    }
+
+    /// Terminate ValueShuffle (used when ValueShuffle takes too long)
+    pub fn terminate(&mut self) {
+        debug!("Resetting ValueShuffle on request from outside.");
+        self.reset_state();
     }
 
     // ----------------------------------------------------------------------------------------------
@@ -520,7 +535,7 @@ impl ValueShuffle {
         match self.try_send_pool_join() {
             Ok(()) => Ok(()),
             Err(err) => {
-                self.zap_state();
+                self.zap_state(format_err!("ValueShuffle error: {:?}", err));
                 Err(err)
             }
         }
@@ -541,20 +556,26 @@ impl ValueShuffle {
         self.waiting = 0; // reset timeout counter
         self.state = State::PoolFinished;
         self.msg_state = VsMsgType::None;
+        self.msg_queue.clear();
+        self.session_round = 0;
         self.try_update_facilitator();
     }
 
-    fn zap_state(&mut self) {
-        debug!("Zapping state, trying to restart Snowcrash.");
+    fn zap_state(&mut self, err: Error) {
+        debug!("Zapping state, returning error to upper level.");
+        if let Err(e) = self
+            .wallet_tx_info
+            .unbounded_send(ValueShuffleOutput::Failure(err, self.my_txins.clone()))
+        {
+            debug!("Error returning error from ValueShuffle: {:?}", e);
+        }
+
         self.msg_queue.clear();
         self.waiting = 0;
         self.session_round = 0;
         self.try_update_facilitator();
-        self.state = State::PoolWait;
+        self.state = State::PoolFinished;
         self.msg_state = VsMsgType::None;
-        if let Err(e) = self.try_send_pool_join() {
-            debug!("Error joining pool during state zap: error={:?}", e)
-        }
     }
 
     /// Called when a new txpool is formed.
@@ -565,7 +586,7 @@ impl ValueShuffle {
     ) -> Result<(), Error> {
         match self.try_on_pool_notification(from, pool_info) {
             Err(err) => {
-                self.zap_state();
+                self.zap_state(format_err!("ValueShuffle error: {:?}", err));
                 return Err(err);
             }
             _ => {
@@ -589,7 +610,7 @@ impl ValueShuffle {
                     "Old facilitator decide to stop forming pool, trying to rejoin to the new one."
                 );
                 let changed = self.future_facilitator.is_some();
-                self.zap_state();
+                self.reset_state();
                 if changed {
                     debug!("Found new facilitator, rejoining to new pool.");
                     self.send_pool_join()?;
@@ -668,15 +689,7 @@ impl ValueShuffle {
         match self.try_on_restart_pool(from, without_part, session_id) {
             Ok(ans) => Ok(ans),
             Err(err) => {
-                self.zap_state();
-                self.state = State::PoolWait;
-                self.msg_state = VsMsgType::None;
-                if let Err(e) = self.send_pool_join() {
-                    debug!(
-                        "Error attempting to join pool on pool restart: error={:?}",
-                        e
-                    )
-                }
+                self.zap_state(format_err!("ValueShuffle error: {:?}", err));
                 Err(err)
             }
         }
@@ -1127,7 +1140,7 @@ impl ValueShuffle {
         match self.try_vs_start() {
             Ok(()) => Ok(()),
             Err(err) => {
-                self.zap_state();
+                self.zap_state(format_err!("ValueShuffle error: {:?}", err));
                 Err(err)
             }
         }
@@ -1217,7 +1230,7 @@ impl ValueShuffle {
         match self.try_vs_commit() {
             Ok(()) => Ok(()),
             Err(err) => {
-                self.zap_state();
+                self.zap_state(format_err!("ValueShuffle error: {:?}", err));
                 Err(err)
             }
         }
@@ -1330,7 +1343,7 @@ impl ValueShuffle {
         match self.try_vs_share_cloaked_data() {
             Ok(()) => Ok(()),
             Err(err) => {
-                self.zap_state();
+                self.zap_state(format_err!("ValueShuffle error: {:?}", err));
                 Err(err)
             }
         }
@@ -1415,7 +1428,7 @@ impl ValueShuffle {
         match self.try_vs_make_supertransaction() {
             Ok(()) => Ok(()),
             Err(err) => {
-                self.zap_state();
+                self.zap_state(format_err!("ValueShuffle error: {:?}", err));
                 Err(err)
             }
         }
@@ -1548,7 +1561,7 @@ impl ValueShuffle {
         match self.try_vs_sign_supertransaction() {
             Ok(()) => Ok(()),
             Err(err) => {
-                self.zap_state();
+                self.zap_state(format_err!("ValueShuffle error: {:?}", err));
                 Err(err)
             }
         }
@@ -1561,10 +1574,15 @@ impl ValueShuffle {
 
         debug!("In vs_sign_supertransaction()");
         if !self.pending_participants.is_empty() {
-            // we can't do discovery on partial data
-            // so merge local exclusions with outer list for
-            // next session round
-            return self.vs_start();
+            // We didn't recieve all signatures in time.
+            // So, return constructed unsigned transaction and reset the state
+            let tx = self.trans.clone();
+            self.wallet_tx_info
+                .unbounded_send(ValueShuffleOutput::UnsignedTransaction(tx))?;
+            self.reset_state();
+            self.msg_queue.clear();
+            self.session_round = 0;
+            return Ok(());
         }
 
         let mut sig = self.trans.sig.clone();
@@ -1611,7 +1629,7 @@ impl ValueShuffle {
         match self.try_vs_blame_discovery() {
             Ok(ans) => Ok(ans),
             Err(err) => {
-                self.zap_state();
+                self.zap_state(format_err!("ValueShuffle error: {:?}", err));
                 Err(err)
             }
         }
@@ -1941,7 +1959,10 @@ impl ValueShuffle {
         debug!("Leader = {}", leader);
         let tx = self.trans.clone();
         self.wallet_tx_info
-            .unbounded_send((tx, self.participant_key == leader))?;
+            .unbounded_send(ValueShuffleOutput::SignedTransaction(
+                tx,
+                self.participant_key == leader,
+            ))?;
         Ok(())
     }
 

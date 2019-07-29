@@ -29,6 +29,7 @@ use futures::Async;
 use std::string::ToString;
 use std::time::Duration;
 use stegos_crypto::scc::PublicKey;
+use stegos_node::txpool;
 
 const PAYMENT_FEE: i64 = 1_000; // 0.001 STG
 
@@ -1111,24 +1112,59 @@ fn annihilation() {
         }
         s.poll();
         s.skip_micro_block();
-
-        let rx = accounts[0].account.request(AccountRequest::BalanceInfo {});
-        accounts[0].poll();
-        let balance = match get_request(rx) {
-            AccountResponse::BalanceInfo { balance, .. } => balance,
-            _ => panic!("Wrong response to payment request"),
-        };
-
         s.skip_macro_block();
-        accounts[0].poll();
+    });
+}
 
-        let rx = accounts[0].account.request(AccountRequest::BalanceInfo {});
+// check that after message from wrong facilitator, snowball will not break it's session.
+// For more detail, see: #1177
+#[test]
+fn vs_with_wrong_facilitator_pool() {
+    const SEND_TOKENS: i64 = 10;
+    // send MINIMAL_TOKEN + FEE
+    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    // set micro_blocks to some big value.
+    let config = SandboxConfig {
+        chain: ChainConfig {
+            micro_blocks_in_epoch: 2000,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    Sandbox::start(config, |mut s| {
+        let mut accounts = genesis_accounts(&mut s);
+
+        s.poll();
+        let (genesis, rest) = accounts.split_at_mut(1);
+        let num_nodes = accounts.len() - 1;
+        assert!(num_nodes >= 3);
+
+        let recipient = accounts[3].account_service.account_pkey;
+
+        let mut notification = accounts[0].account.subscribe();
+        let (id, response) = vs_start(recipient, SEND_TOKENS, &mut accounts[0], &mut notification);
         accounts[0].poll();
-        let balance2 = match get_request(rx) {
-            AccountResponse::BalanceInfo { balance, .. } => balance,
-            _ => panic!("Wrong response to payment request"),
+        assert!(accounts[0].account_service.vs_session.is_some());
+
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+        s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
+
+        let (_, key) = pbc::make_random_keys();
+
+        let msg = txpool::messages::PoolInfo {
+            participants: vec![],
+            session_id: Hash::digest("test"),
         };
 
-        assert_eq!(balance, balance2);
+        accounts[0]
+            .network
+            .receive_unicast(key, txpool::POOL_ANNOUNCE_TOPIC, msg);
+        accounts[0].poll();
+        assert!(accounts[0].account_service.vs_session.is_some());
+
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+        s.filter_unicast(&[txpool::POOL_JOIN_TOPIC]);
+        s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
     });
 }

@@ -600,7 +600,10 @@ impl ValueShuffle {
         from: pbc::PublicKey,
         pool_info: Vec<u8>,
     ) -> Result<(), Error> {
-        self.ensure_facilitator(from)?;
+        if let Err(e) = self.ensure_facilitator(from) {
+            warn!("Found different facilitator: e = {}", e);
+            return Ok(());
+        }
 
         let pool_info = PoolNotification::from_buffer(&pool_info)?;
         debug!("pool = {:?}", pool_info);
@@ -707,7 +710,10 @@ impl ValueShuffle {
     ) -> Result<(), Error> {
         // called from facilitator node when it is discovered that "without_part" has submitted
         // a side transaction containing a same TXIN as already submitted to the pool - a bad actor.
-        self.ensure_facilitator(from.pkey)?;
+        if let Err(e) = self.ensure_facilitator(from.pkey) {
+            warn!("Found different facilitator: e = {}", e);
+            return Ok(());
+        }
         self.session_id = session_id;
         self.session_round = 0;
         let excl = vec![without_part];

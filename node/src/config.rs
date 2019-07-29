@@ -59,7 +59,7 @@ impl Default for NodeConfig {
             micro_block_timeout: Duration::from_secs(30),
             macro_block_timeout: Duration::from_secs(30),
             max_inputs_in_tx: 1000,
-            max_outputs_in_tx: 10,
+            max_outputs_in_tx: 50,
             max_inputs_in_block: 10000,
             max_outputs_in_block: 1000,
             max_inputs_in_mempool: 100000,

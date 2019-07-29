@@ -119,7 +119,9 @@ struct UnsealedAccountService {
 
     /// Unspent Payment UXTO.
     // Store time in Instant, to be more compatible with tokio-timer.
-    payments: HashMap<Hash, (PaymentValue, Option<Instant>)>,
+    payments: HashMap<Hash, PaymentValue>,
+    /// List of pending utxos.
+    pending_payments: HashMap<Hash, PendingOutput>,
     /// Unspent Payment UXTO.
     public_payments: HashMap<Hash, PublicPaymentOutput>,
     /// Unspent Stake UTXO.
@@ -189,6 +191,7 @@ impl UnsealedAccountService {
         //
         let epoch = 0;
         let payments = HashMap::new();
+        let pending_payments = HashMap::new();
 
         let public_payments = HashMap::new();
         let stakes: HashMap<Hash, StakeValue> = HashMap::new();
@@ -235,6 +238,7 @@ impl UnsealedAccountService {
             account_log,
             epoch,
             payments,
+            pending_payments,
             public_payments,
             stakes,
             resend_tx,
@@ -268,9 +272,9 @@ impl UnsealedAccountService {
         let data = PaymentPayloadData::Comment(comment);
         let unspent_iter = self
             .payments
-            .values()
-            .filter(|(_, t)| t.is_none())
-            .map(|(ref v, _)| (&v.output, v.amount, v.output.locked_timestamp.clone()));
+            .iter()
+            .filter(|(h, _)| self.pending_payments.get(h).is_none())
+            .map(|(_, v)| (&v.output, v.amount, v.output.locked_timestamp.clone()));
         let sender = if with_certificate {
             Some(&self.account_skey)
         } else {
@@ -300,7 +304,16 @@ impl UnsealedAccountService {
 
         let time = clock::now();
         for input in &tx.txins {
-            self.payments.get_mut(input).unwrap().1 = Some(time);
+            assert!(self
+                .pending_payments
+                .insert(
+                    *input,
+                    PendingOutput {
+                        time,
+                        vs_session: None,
+                    }
+                )
+                .is_none());
         }
 
         let tx: Transaction = tx.into();
@@ -322,9 +335,9 @@ impl UnsealedAccountService {
     ) -> Result<PaymentTransactionValue, Error> {
         let unspent_iter = self
             .payments
-            .values()
-            .filter(|(_, t)| t.is_none())
-            .map(|(ref v, _)| (&v.output, v.amount, v.output.locked_timestamp.clone()));
+            .iter()
+            .filter(|(h, _)| self.pending_payments.get(h).is_none())
+            .map(|(_, v)| (&v.output, v.amount, v.output.locked_timestamp.clone()));
 
         let (inputs, outputs, gamma, extended_outputs, fee) = create_payment_transaction(
             Some(&self.account_skey),
@@ -348,7 +361,16 @@ impl UnsealedAccountService {
 
         let time = clock::now();
         for input in &tx.txins {
-            self.payments.get_mut(input).unwrap().1 = Some(time);
+            assert!(self
+                .pending_payments
+                .insert(
+                    *input,
+                    PendingOutput {
+                        time,
+                        vs_session: None,
+                    }
+                )
+                .is_none());
         }
 
         let tx: Transaction = tx.into();
@@ -378,9 +400,9 @@ impl UnsealedAccountService {
     ) -> Result<Hash, Error> {
         let unspent_iter = self
             .payments
-            .values()
-            .filter(|(_, t)| t.is_none())
-            .map(|(ref v, _)| (&v.output, v.amount, v.output.locked_timestamp.clone()));
+            .iter()
+            .filter(|(h, _)| self.pending_payments.get(h).is_none())
+            .map(|(_, v)| (&v.output, v.amount, v.output.locked_timestamp.clone()));
         let (inputs, outputs, fee) = create_vs_payment_transaction(
             &self.account_pkey,
             recipient,
@@ -397,7 +419,16 @@ impl UnsealedAccountService {
 
         let time = clock::now();
         for (input, _) in &inputs {
-            self.payments.get_mut(&input).unwrap().1 = Some(time);
+            assert!(self
+                .pending_payments
+                .insert(
+                    *input,
+                    PendingOutput {
+                        time,
+                        vs_session: Some(session_id),
+                    }
+                )
+                .is_none());
         }
 
         metrics::WALLET_CREATEAD_SECURE_PAYMENTS
@@ -410,9 +441,9 @@ impl UnsealedAccountService {
     fn stake(&mut self, amount: i64, payment_fee: i64) -> Result<PaymentTransactionValue, Error> {
         let unspent_iter = self
             .payments
-            .values()
-            .filter(|(_, t)| t.is_none())
-            .map(|(ref v, _)| (&v.output, v.amount));
+            .iter()
+            .filter(|(h, _)| self.pending_payments.get(h).is_none())
+            .map(|(_, v)| (&v.output, v.amount));
         let tx = create_staking_transaction(
             &self.account_skey,
             &self.account_pkey,
@@ -432,7 +463,16 @@ impl UnsealedAccountService {
 
         let time = clock::now();
         for input in &tx.txins {
-            self.payments.get_mut(input).unwrap().1 = Some(time);
+            assert!(self
+                .pending_payments
+                .insert(
+                    *input,
+                    PendingOutput {
+                        time,
+                        vs_session: None,
+                    }
+                )
+                .is_none());
         }
 
         self.send_transaction(tx.into())?;
@@ -538,7 +578,7 @@ impl UnsealedAccountService {
         let time = Timestamp::now();
         let mut balance: i64 = 0;
         let mut available_balance: i64 = 0;
-        for (val, locked) in self.payments.values() {
+        for (hash, val) in self.payments.iter() {
             balance += val.amount;
 
             if let Some(t) = val.output.locked_timestamp {
@@ -547,7 +587,7 @@ impl UnsealedAccountService {
                 }
             }
 
-            if locked.is_some() {
+            if self.pending_payments.get(hash).is_some() {
                 continue;
             }
 
@@ -617,7 +657,7 @@ impl UnsealedAccountService {
                     }
 
                     let info = value.to_info(None);
-                    let missing = self.payments.insert(hash, (value, None));
+                    let missing = self.payments.insert(hash, value);
                     assert!(missing.is_none());
                     self.notify(AccountNotification::Received(info));
                 }
@@ -673,8 +713,8 @@ impl UnsealedAccountService {
                 {
                     info!("Spent: utxo={}, amount={}, data={:?}", hash, amount, data);
                     match self.payments.remove(&hash) {
-                        Some((value, time)) => {
-                            let info = value.to_info(time);
+                        Some(value) => {
+                            let info = value.to_info(self.pending_payments.get(&hash));
                             self.notify(AccountNotification::Spent(info));
                         }
                         None => panic!("Inconsistent account state"),
@@ -813,31 +853,49 @@ impl UnsealedAccountService {
 
     fn handle_check_pending_utxos(&mut self, now: Instant) {
         trace!("Handle check pending utxo transactions");
-        let (balance, saved_available_balance) = self.balance();
-        let mut available_balance = saved_available_balance;
-        for (hash, utxo) in &mut self.payments {
-            match utxo {
-                (_, Some(t)) => {
-                    if *t + PENDING_UTXO_TIME <= now {
-                        trace!("Found outdated pending utxo = {}", hash);
-                        utxo.1 = None;
-                        available_balance += utxo.0.amount;
+        let pending = std::mem::replace(&mut self.pending_payments, HashMap::new());
+        let mut balance_unlocked = false;
+        for (hash, p) in pending {
+            if p.time + PENDING_UTXO_TIME <= now {
+                trace!("Found outdated pending utxo = {}", hash);
+                balance_unlocked = true;
+                match (p.vs_session, &self.vs_session) {
+                    (Some(hash), Some(vs_session)) if hash == vs_session.0 => {
+                        info!(
+                            "Some outputs of snowball are now outdated: vs_session = {}",
+                            hash
+                        );
+                        self.vs.terminate();
+                        let _ = self.vs_session.take();
                     }
+                    (Some(hash), _) => {
+                        trace!(
+                            "Found outdated pending utxo, for outdated vs_session = {}",
+                            hash
+                        );
+                    }
+                    _ => {}
                 }
-                _ => {}
+            } else {
+                assert!(self.pending_payments.insert(hash, p).is_none());
             }
         }
 
-        if saved_available_balance != available_balance {
-            metrics::WALLET_AVALIABLE_BALANCES
-                .with_label_values(&[&String::from(&self.account_pkey)])
-                .set(available_balance);
-            debug!("Balance changed");
-            self.notify(AccountNotification::BalanceChanged {
-                balance,
-                available_balance,
-            });
+        if !balance_unlocked {
+            return;
         }
+
+        // if balance was changed return new balance.
+
+        let (balance, available_balance) = self.balance();
+        metrics::WALLET_AVALIABLE_BALANCES
+            .with_label_values(&[&String::from(&self.account_pkey)])
+            .set(available_balance);
+        debug!("Balance changed");
+        self.notify(AccountNotification::BalanceChanged {
+            balance,
+            available_balance,
+        });
     }
 
     fn notify(&mut self, notification: AccountNotification) {
@@ -985,7 +1043,7 @@ impl Future for UnsealedAccountService {
                         ValueShuffleOutput::Failure(error, txins) => {
                             warn!("Error during snowball session error={}.", error);
                             for utxo in txins {
-                                self.payments.get_mut(&utxo.0).unwrap().1 = None;
+                                assert!(self.pending_payments.remove(&utxo.0).is_some())
                             }
                             AccountResponse::Error {
                                 error: error.to_string(),
@@ -1072,8 +1130,11 @@ impl Future for UnsealedAccountService {
                                     .values()
                                     .map(public_payment_info)
                                     .collect();
-                                let payments: Vec<PaymentInfo> =
-                                    self.payments.values().map(|(v, t)| v.to_info(*t)).collect();
+                                let payments: Vec<PaymentInfo> = self
+                                    .payments
+                                    .iter()
+                                    .map(|(h, v)| v.to_info(self.pending_payments.get(h)))
+                                    .collect();
                                 let stakes: Vec<StakeInfo> = self
                                     .stakes
                                     .values()

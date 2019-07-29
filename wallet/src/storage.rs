@@ -485,6 +485,11 @@ impl Hashable for PaymentTransactionValue {
     }
 }
 
+pub struct PendingOutput {
+    pub time: Instant,
+    pub vs_session: Option<Hash>,
+}
+
 /// Represents Outputs created by account.
 /// With extended info about its creation.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -508,14 +513,14 @@ pub struct StakeValue {
 }
 
 impl PaymentValue {
-    pub fn to_info(&self, time: Option<Instant>) -> PaymentInfo {
+    pub fn to_info(&self, pending: Option<&PendingOutput>) -> PaymentInfo {
         // Convert Time from instant to timestamp, for visualise in API.
-        let pending_timestamp = time.and_then(|t| {
+        let pending_timestamp = pending.and_then(|p| {
             let now = tokio_timer::clock::now();
-            if t + super::PENDING_UTXO_TIME < now {
+            if p.time + super::PENDING_UTXO_TIME < now {
                 return None;
             }
-            let duration_to_end = t + super::PENDING_UTXO_TIME - now;
+            let duration_to_end = p.time + super::PENDING_UTXO_TIME - now;
             Some(Timestamp::now() + duration_to_end)
         });
 

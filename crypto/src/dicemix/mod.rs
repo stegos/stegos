@@ -378,7 +378,7 @@ pub fn dc_decode(
     // form the exclusion list for missing matrices,
     // and check to be sure that all matrices have the same
     // dimensions.
-    let dim_p = participants.len(); // includes me
+    let dim_p = participants.len() + p_excl.len(); // includes me, and MIA's
     let dim_r = nchunks;
     let dim_c = dim_p;
     let dim_s = nsheets;

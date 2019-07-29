@@ -1023,3 +1023,53 @@ fn create_vs_tx() {
         }
     });
 }
+
+/// !! This tests asserts internal state, so it could not be ported to API directly. !!
+/// 1 node failed to join pool, and reset snowball on timeout
+#[test]
+fn vs_failed_join() {
+    const SEND_TOKENS: i64 = 10;
+    // send MINIMAL_TOKEN + FEE
+    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    // set micro_blocks to some big value.
+    let config = SandboxConfig {
+        chain: ChainConfig {
+            micro_blocks_in_epoch: 2000,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    Sandbox::start(config, |mut s| {
+        let mut accounts = genesis_accounts(&mut s);
+
+        s.poll();
+        let (genesis, rest) = accounts.split_at_mut(1);
+        let num_nodes = accounts.len() - 1;
+        assert!(num_nodes >= 3);
+
+        let recipient = accounts[3].account_service.account_pkey;
+
+        let mut notification = accounts[0].account.subscribe();
+        let (id, response) = vs_start(recipient, SEND_TOKENS, &mut accounts[0], &mut notification);
+        accounts[0].poll();
+        assert!(accounts[0].account_service.vs_session.is_some());
+        assert!(!accounts[0].account_service.pending_payments.is_empty());
+
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+        s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
+
+        debug!("===== JOINING TXPOOL =====");
+        s.deliver_unicast(stegos_node::txpool::POOL_JOIN_TOPIC);
+        s.poll();
+
+        s.wait(crate::PENDING_UTXO_TIME);
+        s.poll();
+
+        accounts[0].poll();
+        assert!(accounts[0].account_service.pending_payments.is_empty());
+        assert!(accounts[0].account_service.vs_session.is_none());
+
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+        s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
+    });
+}

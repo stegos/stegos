@@ -480,7 +480,7 @@ impl ValueShuffle {
 
     /// Terminate ValueShuffle (used when ValueShuffle takes too long)
     pub fn terminate(&mut self) {
-        debug!("Resetting ValueShuffle on request from outside.");
+        warn!("Resetting ValueShuffle on request from outside.");
         self.reset_state();
     }
 

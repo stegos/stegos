@@ -544,16 +544,12 @@ impl Blockchain {
     pub(crate) fn validate_macro_block(
         &mut self,
         block: &MacroBlock,
-        inputs: &[Output],
         timestamp: Timestamp,
     ) -> Result<(), BlockchainError> {
         let block_hash = Hash::digest(&block);
         assert_eq!(self.epoch(), block.header.epoch);
         let epoch = block.header.epoch;
         assert_eq!(self.offset(), 0);
-        for (input_hash, input) in block.inputs.iter().zip(inputs.iter()) {
-            debug_assert_eq!(input_hash, &Hash::digest(&input));
-        }
 
         debug!(
             "Validating a macro block: epoch={}, block={}",
@@ -608,41 +604,6 @@ impl Blockchain {
         }
 
         //
-        // Validate inputs.
-        //
-        if block.header.inputs_len != block.inputs.len() as u32 {
-            return Err(BlockError::InvalidInputsLen(
-                epoch,
-                block_hash,
-                block.header.inputs_len as usize,
-                block.inputs.len(),
-            )
-            .into());
-        }
-        let inputs_range_hash = MacroBlock::calculate_range_hash(&block.inputs);
-        if block.header.inputs_range_hash != inputs_range_hash {
-            return Err(BlockError::InvalidBlockInputsHash(
-                epoch,
-                block_hash,
-                inputs_range_hash,
-                block.header.inputs_range_hash,
-            )
-            .into());
-        }
-        for (input_hash, input) in block.inputs.iter().zip(inputs) {
-            if let Some(timestamp) = input.locked_timestamp() {
-                if timestamp >= self.last_macro_block_timestamp() {
-                    return Err(OutputError::UtxoLocked(
-                        *input_hash,
-                        timestamp,
-                        self.last_macro_block_timestamp(),
-                    )
-                    .into());
-                }
-            }
-        }
-
-        //
         // Validate outputs.
         //
         if block.header.outputs_len != block.outputs.len() as u32 {
@@ -666,6 +627,63 @@ impl Blockchain {
             .into());
         }
         block.outputs.par_iter().try_for_each(Output::validate)?;
+
+        //
+        // Validate inputs.
+        //
+        if block.header.inputs_len != block.inputs.len() as u32 {
+            return Err(BlockError::InvalidInputsLen(
+                epoch,
+                block_hash,
+                block.header.inputs_len as usize,
+                block.inputs.len(),
+            )
+            .into());
+        }
+        let inputs_range_hash = MacroBlock::calculate_range_hash(&block.inputs);
+        if block.header.inputs_range_hash != inputs_range_hash {
+            return Err(BlockError::InvalidBlockInputsHash(
+                epoch,
+                block_hash,
+                inputs_range_hash,
+                block.header.inputs_range_hash,
+            )
+            .into());
+        }
+        let outputs: HashMap<Hash, Output> = block
+            .outputs
+            .iter()
+            .map(|o| (Hash::digest(o), o.clone()))
+            .collect();
+        let mut inputs: Vec<Output> = Vec::new();
+        for input_hash in block.inputs.iter() {
+            let input = if let Some(input) = outputs.get(input_hash) {
+                input.clone()
+            } else {
+                match self.output_by_hash(&input_hash)? {
+                    Some(r) => r,
+                    None => {
+                        return Err(BlockError::MissingBlockInput(
+                            epoch,
+                            block_hash,
+                            input_hash.clone(),
+                        )
+                        .into())
+                    }
+                }
+            };
+            if let Some(timestamp) = input.locked_timestamp() {
+                if timestamp >= self.last_macro_block_timestamp() {
+                    return Err(OutputError::UtxoLocked(
+                        *input_hash,
+                        timestamp,
+                        self.last_macro_block_timestamp(),
+                    )
+                    .into());
+                }
+            }
+            inputs.push(input);
+        }
 
         //
         // Validate balance.

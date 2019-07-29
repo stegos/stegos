@@ -359,10 +359,6 @@ impl MacroBlock {
         for tx in transactions {
             gamma += tx.gamma();
             for input_hash in tx.txins() {
-                // Prune output if exists.outputs.
-                if let Some(_) = outputs.remove(input_hash) {
-                    continue;
-                }
                 if !inputs.insert(input_hash.clone()) {
                     // Can happen due to double-spending in micro-blocks.
                     return Err(TransactionError::DuplicateInput(

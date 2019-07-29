@@ -912,7 +912,7 @@ impl NodeService {
         let mut statuses = HashMap::new();
         let mut transactions = HashMap::new();
         // Remove conflict transactions from the mempool.
-        let tx_info = self.mempool.prune(&inputs, &outputs);
+        let tx_info = self.mempool.prune(inputs.keys(), outputs.keys());
         for (tx_hash, (tx, full)) in tx_info {
             let status = if full {
                 TransactionStatus::Committed { epoch }
@@ -1038,7 +1038,7 @@ impl NodeService {
         let mut statuses = HashMap::new();
         let mut transactions = HashMap::new();
         // Remove conflict transactions from the mempool.
-        let mut tx_info = self.mempool.prune(&inputs, &outputs);
+        let mut tx_info = self.mempool.prune(inputs.keys(), outputs.keys());
         tx_info.extend(
             block_transactions
                 .clone()
@@ -1136,11 +1136,11 @@ impl NodeService {
             validators: self.chain.validators().clone(),
             transactions: HashMap::new(),
             statuses: HashMap::new(),
-            inputs: Vec::new(),
-            outputs: Vec::new(),
+            inputs: HashMap::new(),
+            outputs: HashMap::new(),
         };
         let msg = msg.into();
-        tx.unbounded_send(msg).ok(); // ignore error.
+        tx.unbounded_send(msg).ok(); // ignore error
         self.on_node_notification.push(tx);
         Ok(())
     }

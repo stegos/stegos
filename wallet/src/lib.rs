@@ -597,15 +597,21 @@ impl UnsealedAccountService {
     }
 
     /// Called when outputs registered and/or pruned.
-    fn on_outputs_changed(&mut self, epoch: u64, inputs: Vec<Output>, outputs: Vec<Output>) {
+    fn on_outputs_changed(
+        &mut self,
+        epoch: u64,
+        inputs: HashMap<Hash, Output>,
+        outputs: HashMap<Hash, Output>,
+    ) {
         let (saved_balance, saved_available_balance) = self.balance();
 
-        for input in inputs {
-            self.on_output_pruned(epoch, input);
+        // This order is important - first create outputs, then remove inputs.
+        // Otherwise it will fail in case of annihilated input/output in a macro block.
+        for (output_hash, output) in outputs {
+            self.on_output_created(epoch, output_hash, output);
         }
-
-        for output in outputs {
-            self.on_output_created(epoch, output);
+        for (input_hash, input) in inputs {
+            self.on_output_pruned(epoch, input_hash, input);
         }
 
         let (balance, available_balance) = self.balance();
@@ -628,11 +634,10 @@ impl UnsealedAccountService {
     }
 
     /// Called when UTXO is created.
-    fn on_output_created(&mut self, epoch: u64, output: Output) {
+    fn on_output_created(&mut self, epoch: u64, hash: Hash, output: Output) {
         if !output.is_my_utxo(&self.account_skey, &self.account_pkey) {
             return;
         }
-        let hash = Hash::digest(&output);
         match output {
             Output::PaymentOutput(o) => {
                 if let Ok(PaymentPayload { amount, data, .. }) =
@@ -700,12 +705,10 @@ impl UnsealedAccountService {
     }
 
     /// Called when UTXO is spent.
-    fn on_output_pruned(&mut self, _epoch: u64, output: Output) {
+    fn on_output_pruned(&mut self, _epoch: u64, hash: Hash, output: Output) {
         if !output.is_my_utxo(&self.account_skey, &self.account_pkey) {
             return;
         }
-        let hash = Hash::digest(&output);
-
         match output {
             Output::PaymentOutput(o) => {
                 if let Ok(PaymentPayload { amount, data, .. }) =
@@ -949,7 +952,8 @@ impl Future for UnsealedAccountService {
                         NodeResponse::AccountRecovered(persistent_state) => {
                             // Recover state.
                             for OutputRecovery { output, epoch, .. } in persistent_state {
-                                self.on_output_created(epoch, output);
+                                let output_hash = Hash::digest(&output);
+                                self.on_output_created(epoch, output_hash, output);
                             }
                         }
                         NodeResponse::Error { error } => {

@@ -107,9 +107,9 @@ pub struct NewMacroBlock {
     pub transactions: HashMap<Hash, Transaction>,
     pub statuses: HashMap<Hash, TransactionStatus>,
     #[serde(skip)]
-    pub inputs: Vec<Output>,
+    pub inputs: HashMap<Hash, Output>,
     #[serde(skip)]
-    pub outputs: Vec<Output>,
+    pub outputs: HashMap<Hash, Output>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -120,9 +120,9 @@ pub struct RollbackMicroBlock {
     pub recovered_transaction: HashMap<Hash, Transaction>,
     pub statuses: HashMap<Hash, TransactionStatus>,
     #[serde(skip)]
-    pub inputs: Vec<Output>,
+    pub inputs: HashMap<Hash, Output>,
     #[serde(skip)]
-    pub outputs: Vec<Output>,
+    pub outputs: HashMap<Hash, Output>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -133,9 +133,9 @@ pub struct NewMicroBlock {
     pub transactions: HashMap<Hash, Transaction>,
     pub statuses: HashMap<Hash, TransactionStatus>,
     #[serde(skip)]
-    pub inputs: Vec<Output>,
+    pub inputs: HashMap<Hash, Output>,
     #[serde(skip)]
-    pub outputs: Vec<Output>,
+    pub outputs: HashMap<Hash, Output>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

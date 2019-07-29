@@ -315,7 +315,9 @@ mod test {
                 _ => panic!(),
             }
 
-            mempool.prune(&inputs, &outputs);
+            let input_hashes: Vec<Hash> = inputs.iter().map(Hash::digest).collect();
+            let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
+            mempool.prune(input_hashes.iter(), output_hashes.iter());
             validate_external_transaction(&tx, &mempool, &chain, timestamp, payment_fee, stake_fee)
                 .expect("transaction is valid");
             validate_external_transaction(
@@ -477,7 +479,9 @@ mod test {
                 _ => panic!(),
             }
 
-            mempool.prune(&[], &outputs);
+            let input_hashes: Vec<Hash> = vec![];
+            let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
+            mempool.prune(input_hashes.iter(), output_hashes.iter());
         }
     }
 }

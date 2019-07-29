@@ -26,6 +26,7 @@ use crate::valueshuffle::message::{Message, VsPayload};
 use crate::*;
 use assert_matches::assert_matches;
 use futures::Async;
+use std::string::ToString;
 use std::time::Duration;
 use stegos_crypto::scc::PublicKey;
 
@@ -1071,5 +1072,63 @@ fn vs_failed_join() {
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
         s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
+    });
+}
+
+/// Tests that annihilated inputs/outputs doesn't crash on_outputs_changed().
+#[test]
+fn annihilation() {
+    let cfg = ChainConfig {
+        micro_blocks_in_epoch: 3,
+        ..Default::default()
+    };
+    let config = SandboxConfig {
+        chain: cfg,
+        num_nodes: 3,
+        ..Default::default()
+    };
+    Sandbox::start(config, |mut s| {
+        let mut accounts = genesis_accounts(&mut s);
+        for _offset in 0..s.config.chain.micro_blocks_in_epoch - 1 {
+            let recipient = accounts[0].account_service.account_pkey;
+            let rx = accounts[0].account.request(AccountRequest::Payment {
+                recipient,
+                amount: 1,
+                payment_fee: PAYMENT_FEE,
+                comment: "Test".to_string(),
+                locked_timestamp: None,
+                with_certificate: false,
+            });
+            accounts[0].poll();
+            assert_matches!(get_request(rx), AccountResponse::TransactionCreated(_));
+            s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+            // poll sandbox, to process transaction.
+            s.poll();
+            // rebroadcast transaction to each node
+            s.broadcast(stegos_node::TX_TOPIC);
+            s.skip_micro_block();
+            accounts[0].poll();
+        }
+        s.poll();
+        s.skip_micro_block();
+
+        let rx = accounts[0].account.request(AccountRequest::BalanceInfo {});
+        accounts[0].poll();
+        let balance = match get_request(rx) {
+            AccountResponse::BalanceInfo { balance, .. } => balance,
+            _ => panic!("Wrong response to payment request"),
+        };
+
+        s.skip_macro_block();
+        accounts[0].poll();
+
+        let rx = accounts[0].account.request(AccountRequest::BalanceInfo {});
+        accounts[0].poll();
+        let balance2 = match get_request(rx) {
+            AccountResponse::BalanceInfo { balance, .. } => balance,
+            _ => panic!("Wrong response to payment request"),
+        };
+
+        assert_eq!(balance, balance2);
     });
 }

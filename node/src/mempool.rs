@@ -139,13 +139,16 @@ impl Mempool {
     /// Prune old transactions contains tx_hash from the mempool.
     ///
     /// Returns List of txs that was removed.
-    pub fn prune(
+    pub fn prune<'a, HashIterator>(
         &mut self,
-        input_hashes: &[Output],
-        output_hashes: &[Output],
-    ) -> HashMap<Hash, (Transaction, bool)> {
-        let input_hashes: HashSet<Hash> = input_hashes.into_iter().map(Hash::digest).collect();
-        let output_hashes: HashSet<Hash> = output_hashes.into_iter().map(Hash::digest).collect();
+        input_hashes: HashIterator,
+        output_hashes: HashIterator,
+    ) -> HashMap<Hash, (Transaction, bool)>
+    where
+        HashIterator: Iterator<Item = &'a Hash>,
+    {
+        let input_hashes: HashSet<Hash> = input_hashes.cloned().collect();
+        let output_hashes: HashSet<Hash> = output_hashes.cloned().collect();
 
         let mut tx_hashes: HashSet<Hash> = HashSet::new();
         // Collect transactions affected by inputs.
@@ -404,7 +407,9 @@ mod test {
         //
         // Pruning.
         //
-        mempool.prune(&inputs1, &outputs1);
+        let input_hashes: Vec<Hash> = inputs1.iter().map(Hash::digest).collect();
+        let output_hashes: Vec<Hash> = outputs1.iter().map(Hash::digest).collect();
+        mempool.prune(input_hashes.iter(), output_hashes.iter());
         assert!(!mempool.contains_tx(&tx_hash1));
         for input in &inputs1 {
             let input_hash = Hash::digest(input);
@@ -434,7 +439,9 @@ mod test {
             PaymentTransaction::new_test(&skey, &pkey, 1100, 2, 550, 2, 0)
                 .expect("transaction valid");
 
-        mempool.prune(&inputs3, &outputs3);
+        let input_hashes: Vec<Hash> = inputs3.iter().map(Hash::digest).collect();
+        let output_hashes: Vec<Hash> = outputs3.iter().map(Hash::digest).collect();
+        mempool.prune(input_hashes.iter(), output_hashes.iter());
         assert!(mempool.contains_tx(&tx_hash1));
         assert!(mempool.contains_tx(&tx_hash2));
         assert_eq!(mempool.len(), 2);
@@ -449,7 +456,9 @@ mod test {
             .expect("transaction valid");
         let tx_hash = Hash::digest(&tx);
         mempool.push_tx(tx_hash.clone(), tx.clone().into());
-        mempool.prune(&[inputs[0].clone()], &vec![]);
+        let input_hashes: Vec<Hash> = vec![Hash::digest(&inputs[0])];
+        let output_hashes: Vec<Hash> = vec![];
+        mempool.prune(input_hashes.iter(), output_hashes.iter());
         assert!(!mempool.contains_tx(&tx_hash));
         for input in inputs {
             let input_hash = Hash::digest(&input);
@@ -470,7 +479,9 @@ mod test {
             .expect("transaction valid");
         let tx_hash = Hash::digest(&tx);
         mempool.push_tx(tx_hash.clone(), tx.clone().into());
-        mempool.prune(&vec![], &[outputs[0].clone()]);
+        let input_hashes = vec![];
+        let output_hashes = vec![Hash::digest(&outputs[0])];
+        mempool.prune(input_hashes.iter(), output_hashes.iter());
         assert!(!mempool.contains_tx(&tx_hash));
         for input in inputs {
             let input_hash = Hash::digest(&input);
@@ -499,7 +510,9 @@ mod test {
         //
         // Pruning.
         //
-        mempool.prune(&inputs1, &outputs1);
+        let input_hashes: Vec<Hash> = inputs1.iter().map(Hash::digest).collect();
+        let output_hashes: Vec<Hash> = outputs1.iter().map(Hash::digest).collect();
+        mempool.prune(input_hashes.iter(), output_hashes.iter());
 
         let (tx2, _inputs2, _outputs2) =
             PaymentTransaction::new_test(&skey, &pkey, 300, 1, 100, 3, 0)

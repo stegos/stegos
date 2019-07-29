@@ -364,16 +364,11 @@ impl Blockchain {
                     "Recovering a macro block from the disk: epoch={}, block={}",
                     block.header.epoch, block_hash
                 );
-                let mut inputs: Vec<Output> = Vec::with_capacity(block.inputs.len());
-                for input_hash in &block.inputs {
-                    let input = self.output_by_hash(input_hash)?.expect("Missing output");
-                    inputs.push(input);
-                }
                 if force_check {
-                    self.validate_macro_block(&block, &inputs, timestamp)?;
+                    self.validate_macro_block(&block, timestamp)?;
                 }
                 let lsn = LSN(block.header.epoch, MACRO_BLOCK_OFFSET);
-                let _ = self.register_macro_block(lsn, block, inputs);
+                let _ = self.register_macro_block(lsn, block)?;
             }
         }
         Ok(())
@@ -1105,24 +1100,15 @@ impl Blockchain {
         &mut self,
         block: MacroBlock,
         timestamp: Timestamp,
-    ) -> Result<(Vec<Output>, Vec<Output>), StorageError> {
+    ) -> Result<(HashMap<Hash, Output>, HashMap<Hash, Output>), StorageError> {
         assert_eq!(self.epoch, block.header.epoch);
         assert_eq!(self.offset(), 0);
-
-        //
-        // Resolve inputs.
-        //
-        let mut inputs: Vec<Output> = Vec::with_capacity(block.inputs.len());
-        for input_hash in &block.inputs {
-            let input = self.output_by_hash(input_hash)?.expect("Missing output");
-            inputs.push(input);
-        }
 
         //
         // Double-check if debug.
         //
         if cfg!(debug_assertions) {
-            self.validate_macro_block(&block, &inputs, timestamp)
+            self.validate_macro_block(&block, timestamp)
                 .expect("block is valid");
         }
 
@@ -1135,9 +1121,7 @@ impl Blockchain {
         //
         // Update in-memory indexes and metadata.
         //
-        let (inputs, outputs) = self.register_macro_block(lsn, block, inputs);
-
-        Ok((inputs, outputs))
+        self.register_macro_block(lsn, block)
     }
 
     ///
@@ -1148,8 +1132,7 @@ impl Blockchain {
         &mut self,
         lsn: LSN,
         block: MacroBlock,
-        inputs: Vec<Output>,
-    ) -> (Vec<Output>, Vec<Output>) {
+    ) -> Result<(HashMap<Hash, Output>, HashMap<Hash, Output>), StorageError> {
         assert_eq!(block.header.version, VERSION);
         assert_eq!(self.epoch, block.header.epoch);
         assert_eq!(self.offset(), 0);
@@ -1165,26 +1148,40 @@ impl Blockchain {
         );
 
         //
-        // Prepare inputs.
+        // Prepare inputs and outputs.
         //
         assert!(block.inputs.len() <= std::u32::MAX as usize);
         assert_eq!(block.header.inputs_len, block.inputs.len() as u32);
-        let input_hashes = block.inputs;
-
-        //
-        // Prepare outputs.
-        //
         assert!(block.outputs.len() <= std::u32::MAX as usize);
         assert_eq!(block.header.outputs_len, block.outputs.len() as u32);
-        let outputs: Vec<Output> = block.outputs;
-        let output_keys: Vec<OutputKey> = outputs
-            .iter()
-            .enumerate()
-            .map(|(output_id, _o)| OutputKey::MacroBlock {
+        let mut inputs: HashMap<Hash, Output> = HashMap::with_capacity(block.inputs.len());
+        let mut outputs: HashMap<Hash, (Output, OutputKey)> =
+            HashMap::with_capacity(block.outputs.len());
+        let mut compacted: HashMap<Hash, Output> = HashMap::new();
+        for (output_id, output) in block.outputs.into_iter().enumerate() {
+            let output_hash = Hash::digest(&output);
+            let output_key = OutputKey::MacroBlock {
                 epoch,
                 output_id: output_id as u32,
-            })
-            .collect();
+            };
+            let prev = outputs.insert(output_hash, (output, output_key));
+            assert!(prev.is_none(), "duplicate output");
+        }
+        for input_hash in block.inputs {
+            if let Some((output, _output_key)) = outputs.remove(&input_hash) {
+                // Annihilate the input and output.
+                debug!(
+                    "Annihilate UXTO: epoch={}, block={}, utxo={}",
+                    epoch, block_hash, input_hash
+                );
+                let prev = compacted.insert(input_hash, output);
+                assert!(prev.is_none(), "duplicate output");
+                continue;
+            }
+            let input = self.output_by_hash(&input_hash)?.expect("Missing input");
+            let prev = inputs.insert(input_hash, input);
+            assert!(prev.is_none(), "duplicate input");
+        }
 
         // update award (skip genesis).
         if epoch > 0 {
@@ -1217,9 +1214,7 @@ impl Blockchain {
         self.register_inputs_and_outputs(
             lsn,
             block_hash,
-            input_hashes,
             &inputs,
-            output_keys,
             &outputs,
             block.header.gamma,
             block.header.block_reward,
@@ -1249,21 +1244,6 @@ impl Blockchain {
         self.difficulty = block.header.difficulty;
         debug!("Set difficulty to to {}", self.difficulty);
 
-        info!(
-            "Registered a macro block: epoch={}, block={}, inputs={:?}, outputs={:?}",
-            epoch,
-            block_hash,
-            inputs
-                .iter()
-                .map(|o| Hash::digest(o).to_string())
-                .collect::<Vec<String>>(),
-            outputs
-                .iter()
-                .map(|o| Hash::digest(o).to_string())
-                .collect::<Vec<String>>(),
-        );
-        debug!("Validators: {:?}", &self.validators());
-
         //
         // Update metrics.
         //
@@ -1291,7 +1271,29 @@ impl Blockchain {
         self.balance.checkpoint();
         self.escrow.checkpoint();
 
-        (inputs, outputs)
+        let mut outputs: HashMap<Hash, Output> =
+            outputs.into_iter().map(|(h, (o, _k))| (h, o)).collect();
+        // Re-add compacted inputs and outputs.
+        for (input_hash, input) in compacted {
+            outputs.insert(input_hash.clone(), input.clone());
+            inputs.insert(input_hash, input);
+        }
+        info!(
+            "Registered a macro block: epoch={}, block={}, inputs={:?}, outputs={:?}",
+            epoch,
+            block_hash,
+            inputs
+                .keys()
+                .map(ToString::to_string)
+                .collect::<Vec<String>>(),
+            outputs
+                .keys()
+                .map(ToString::to_string)
+                .collect::<Vec<String>>(),
+        );
+        debug!("Validators: {:?}", &self.validators());
+
+        Ok((inputs, outputs))
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -1310,7 +1312,14 @@ impl Blockchain {
         &mut self,
         block: MicroBlock,
         timestamp: Timestamp,
-    ) -> Result<(Vec<Output>, Vec<Output>, HashMap<Hash, Transaction>), StorageError> {
+    ) -> Result<
+        (
+            HashMap<Hash, Output>,
+            HashMap<Hash, Output>,
+            HashMap<Hash, Transaction>,
+        ),
+        StorageError,
+    > {
         assert_eq!(self.epoch, block.header.epoch);
         assert_eq!(self.offset, block.header.offset);
 
@@ -1341,10 +1350,8 @@ impl Blockchain {
         &mut self,
         lsn: LSN,
         block_hash: Hash,
-        input_hashes: Vec<Hash>,
-        inputs: &[Output],
-        output_keys: Vec<OutputKey>,
-        outputs: &[Output],
+        inputs: &HashMap<Hash, Output>,
+        outputs: &HashMap<Hash, (Output, OutputKey)>,
         gamma: Fr,
         block_reward: i64,
     ) {
@@ -1367,8 +1374,7 @@ impl Blockchain {
         //
         // Process inputs.
         //
-        for (input_hash, input) in input_hashes.iter().zip(inputs) {
-            debug_assert_eq!(input_hash, &Hash::digest(input));
+        for (input_hash, input) in inputs.iter() {
             if self.output_by_hash.remove(lsn, input_hash).is_none() {
                 panic!(
                     "Missing input UTXO: epoch={}, block={}, utxo={}",
@@ -1402,13 +1408,11 @@ impl Blockchain {
         //
         // Process outputs.
         //
-        for (output_key, output) in output_keys.into_iter().zip(outputs) {
-            let output_hash = Hash::digest(output);
-
+        for (output_hash, (output, output_key)) in outputs.iter() {
             // Update indexes.
-            if let Some(_) = self
-                .output_by_hash
-                .insert(lsn, output_hash.clone(), output_key)
+            if let Some(_) =
+                self.output_by_hash
+                    .insert(lsn, output_hash.clone(), output_key.clone())
             {
                 panic!(
                     "UTXO hash collision: epoch={}, block={}, utxo={}",
@@ -1429,7 +1433,7 @@ impl Blockchain {
                         lsn,
                         o.validator,
                         o.recipient,
-                        output_hash,
+                        output_hash.clone(),
                         self.epoch,
                         self.cfg.stake_epochs,
                         o.amount,
@@ -1483,7 +1487,14 @@ impl Blockchain {
         &mut self,
         lsn: LSN,
         block: MicroBlock,
-    ) -> Result<(Vec<Output>, Vec<Output>, HashMap<Hash, Transaction>), StorageError> {
+    ) -> Result<
+        (
+            HashMap<Hash, Output>,
+            HashMap<Hash, Output>,
+            HashMap<Hash, Transaction>,
+        ),
+        StorageError,
+    > {
         assert_eq!(block.header.version, VERSION);
         assert_eq!(self.epoch, block.header.epoch);
         assert_eq!(self.offset, block.header.offset);
@@ -1497,24 +1508,27 @@ impl Blockchain {
         //
         // Prepare inputs && outputs.
         //
-        let mut input_hashes = Vec::new();
-        let mut inputs: Vec<Output> = Vec::new();
-        let mut output_keys: Vec<OutputKey> = Vec::new();
-        let mut outputs: Vec<Output> = Vec::new();
+        let mut inputs: HashMap<Hash, Output> = HashMap::new();
+        let mut outputs: HashMap<Hash, (Output, OutputKey)> = HashMap::new();
         let mut gamma = Fr::zero();
         let mut block_reward: i64 = 0;
-        let mut txs = HashMap::new();
+        let mut txs: HashMap<Hash, Transaction> = HashMap::new();
         // Regular transactions.
         for (tx_id, tx) in block.transactions.into_iter().enumerate() {
             assert!(tx_id < std::u32::MAX as usize);
 
             let tx_hash = Hash::digest(&tx);
             for input_hash in tx.txins() {
+                assert!(
+                    !outputs.contains_key(&input_hash),
+                    "annihilation in micro block"
+                );
                 let input = self.output_by_hash(input_hash)?.expect("Missing output");
-                inputs.push(input);
-                input_hashes.push(input_hash.clone());
+                let prev = inputs.insert(input_hash.clone(), input);
+                assert!(prev.is_none(), "duplicate input");
             }
             for (txout_id, output) in tx.txouts().iter().enumerate() {
+                let output_hash = Hash::digest(output);
                 assert!(txout_id < std::u32::MAX as usize);
                 let output_key = OutputKey::MicroBlock {
                     epoch,
@@ -1522,8 +1536,8 @@ impl Blockchain {
                     tx_id: tx_id as u32,
                     txout_id: txout_id as u32,
                 };
-                outputs.push(output.clone());
-                output_keys.push(output_key);
+                let prev = outputs.insert(output_hash, (output.clone(), output_key));
+                assert!(prev.is_none(), "duplicate output");
             }
             match &tx {
                 Transaction::CoinbaseTransaction(tx) => {
@@ -1586,16 +1600,7 @@ impl Blockchain {
         //
         // Register block.
         //
-        self.register_inputs_and_outputs(
-            lsn,
-            block_hash,
-            input_hashes,
-            &inputs,
-            output_keys,
-            &outputs,
-            gamma,
-            block_reward,
-        );
+        self.register_inputs_and_outputs(lsn, block_hash, &inputs, &outputs, gamma, block_reward);
 
         //
         // Update metadata.
@@ -1626,23 +1631,32 @@ impl Blockchain {
             epoch,
             offset,
             block_hash,
-            txs.iter()
-                .map(|(h, _1tx)| h.to_string())
+            txs.keys()
+                .map(ToString::to_string)
                 .collect::<Vec<String>>(),
-            inputs.iter()
-                .map(|o| Hash::digest(o).to_string())
+            inputs.keys()
+                .map(ToString::to_string)
                 .collect::<Vec<String>>(),
-            outputs.iter()
-                .map(|o| Hash::digest(o).to_string())
+            outputs.keys()
+                .map(ToString::to_string)
                 .collect::<Vec<String>>(),
         );
 
+        let outputs: HashMap<Hash, Output> =
+            outputs.into_iter().map(|(h, (o, _k))| (h, o)).collect();
         Ok((inputs, outputs, txs))
     }
 
     pub fn pop_micro_block(
         &mut self,
-    ) -> Result<(Vec<Output>, Vec<Output>, Vec<Transaction>), StorageError> {
+    ) -> Result<
+        (
+            HashMap<Hash, Output>,
+            HashMap<Hash, Output>,
+            Vec<Transaction>,
+        ),
+        StorageError,
+    > {
         assert!(self.epoch > 0, "doesn't work for genesis");
         assert!(self.offset > 0, "attempt to revert the macro block");
         let offset = self.offset - 1;
@@ -1686,21 +1700,21 @@ impl Blockchain {
         self.last_block_timestamp = last_block_timestamp;
         self.reset_view_change();
 
-        let mut created: Vec<Output> = Vec::new();
-        let mut pruned: Vec<Output> = Vec::new();
+        let mut created: HashMap<Hash, Output> = HashMap::new();
+        let mut pruned: HashMap<Hash, Output> = HashMap::new();
         let mut removed = Vec::new();
         for tx in block.transactions {
             for input_hash in tx.txins() {
                 let input = self.output_by_hash(input_hash)?.expect("exists");
-                created.push(input);
+                created.insert(input_hash.clone(), input);
                 debug!(
                     "Restored UXTO: epoch={}, block={}, utxo={}",
                     self.epoch, &block_hash, &input_hash
                 );
             }
             for output in tx.txouts() {
-                pruned.push(output.clone());
                 let output_hash = Hash::digest(output);
+                pruned.insert(output_hash, output.clone());
                 debug!(
                     "Reverted UTXO: epoch={}, block={}, utxo={}",
                     self.epoch, &block_hash, &output_hash
@@ -1727,12 +1741,12 @@ impl Blockchain {
             offset,
             &block_hash,
             created
-                .iter()
-                .map(|o| Hash::digest(o).to_string())
+                .keys()
+                .map(ToString::to_string)
                 .collect::<Vec<String>>(),
             pruned
-                .iter()
-                .map(|o| Hash::digest(o).to_string())
+                .keys()
+                .map(ToString::to_string)
                 .collect::<Vec<String>>(),
         );
 
@@ -1848,38 +1862,24 @@ pub mod tests {
             let epoch = chain.epoch();
 
             //
-            // Non-empty block.
+            // Micro Block.
             //
-            timestamp += Duration::from_secs(rng.gen_range(5, 10));
-            let (block, input_hashes, output_hashes) =
-                test::create_fake_micro_block(&mut chain, &keychains, timestamp);
-            let hash = Hash::digest(&block);
-            let offset = chain.offset();
-            chain
-                .push_micro_block(block, timestamp)
-                .expect("no I/O errors");
-            assert_eq!(hash, chain.last_block_hash());
-            assert_eq!(offset + 1, chain.offset());
-            for input_hash in input_hashes {
-                assert!(!chain.contains_output(&input_hash));
-            }
-            for output_hash in output_hashes {
-                assert!(chain.contains_output(&output_hash));
-            }
-
-            for offset in 1..chain.cfg().micro_blocks_in_epoch {
-                //
-                // Empty block.
-                //
+            for offset in 0..chain.cfg().micro_blocks_in_epoch {
                 timestamp += Duration::from_secs(rng.gen_range(5, 10));
-                let block =
-                    test::create_micro_block_with_coinbase(&mut chain, &keychains, timestamp);
+                let (block, input_hashes, output_hashes) =
+                    test::create_fake_micro_block(&mut chain, &keychains, timestamp);
                 let hash = Hash::digest(&block);
                 chain
                     .push_micro_block(block, timestamp)
                     .expect("no I/O errors");
                 assert_eq!(hash, chain.last_block_hash());
                 assert_eq!(offset + 1, chain.offset());
+                for input_hash in input_hashes {
+                    assert!(!chain.contains_output(&input_hash));
+                }
+                for output_hash in output_hashes {
+                    assert!(chain.contains_output(&output_hash));
+                }
             }
 
             //
@@ -1894,7 +1894,7 @@ pub mod tests {
 
             // Collect unspent outputs.
             let mut unspent: Vec<Hash> = chain.unspent().cloned().collect();
-            for tx in extra_transactions {
+            for tx in &extra_transactions {
                 assert_eq!(tx.txins().len(), 0);
                 for output in tx.txouts() {
                     let output_hash = Hash::digest(output);
@@ -2237,7 +2237,7 @@ pub mod tests {
             .push_micro_block(block, timestamp)
             .expect("no I/O errors");
 
-        let historic_output = &inputs[0];
+        let historic_output = inputs.values().next().unwrap();
         let historic_output_proof = chain
             .historic_output_by_hash_with_proof(&Hash::digest(&historic_output))
             .expect("no I/O errors")
@@ -2251,9 +2251,9 @@ pub mod tests {
         //
         // Created by Micro Block.
         //
-        let unspent_output = &outputs[0];
+        let unspent_output = outputs.values().next().unwrap();
         let unspent_output_proof = chain
-            .historic_output_by_hash_with_proof(&Hash::digest(&unspent_output))
+            .historic_output_by_hash_with_proof(&Hash::digest(unspent_output))
             .expect("no I/O errors")
             .expect("exists");
         assert_eq!(&unspent_output_proof.output, unspent_output);
@@ -2271,10 +2271,10 @@ pub mod tests {
         while chain.offset() > 0 {
             chain.pop_micro_block().expect("Should be ok");
         }
-        let (inputs, outputs) = chain
+        let (inputs, _outputs) = chain
             .push_macro_block(block, timestamp)
             .expect("Invalid block");
-        let historic_output = &inputs[0];
+        let historic_output = inputs.values().next().unwrap();
         let historic_output_proof = chain
             .historic_output_by_hash_with_proof(&Hash::digest(&historic_output))
             .expect("no I/O errors")
@@ -2288,7 +2288,7 @@ pub mod tests {
         //
         // Created by Macro Block.
         //
-        let unspent_output = &outputs[0];
+        let unspent_output = outputs.values().next().unwrap();
         let unspent_output_proof = chain
             .historic_output_by_hash_with_proof(&Hash::digest(&unspent_output))
             .expect("no I/O errors")

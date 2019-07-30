@@ -342,7 +342,7 @@ pub fn dc_decode(
     nsheets: usize,
     nchunks: usize,
     p_excl: &Vec<ParticipantID>,
-    k_excl: &HashMap<ParticipantID, HashMap<ParticipantID, Hash>>,
+    k_excl: &HashMap<ParticipantID, Hash>,
 ) -> Vec<Vec<u8>> {
     // Accept a 4-D array (vector of 3-D vectors) containing
     // modular powers of cloaked chunks. Split along first dimension,
@@ -473,7 +473,7 @@ fn dc_open(
     row: usize,
     col: usize,
     p_excl: &Vec<ParticipantID>,
-    k_excl: &HashMap<ParticipantID, HashMap<ParticipantID, Hash>>,
+    k_excl: &HashMap<ParticipantID, Hash>,
 ) -> Fr {
     let mut pwrsum = Fr::zero();
     for (_, mat) in mats {
@@ -483,8 +483,7 @@ fn dc_open(
     }
     let seed_str = gen_cell_seed(sheet, row + 1, col);
     for p in p_excl {
-        let kxs = k_excl.get(p).unwrap();
-        pwrsum -= dc_slot_pad(p_excl, &p, &kxs, &seed_str);
+        pwrsum -= dc_slot_pad(p_excl, &p, &k_excl, &seed_str);
     }
     pwrsum
 }
@@ -1025,7 +1024,8 @@ mod tests {
         mats.insert(ParticipantID::from_pk(pk3.clone()), vec![sheet_3.clone()]);
 
         let p_excl = Vec::<ParticipantID>::new();
-        let k_excl: HashMap<ParticipantID, HashMap<ParticipantID, Hash>> = HashMap::new();
+        let k_excl: HashMap<ParticipantID, Hash> = HashMap::new();
+        let my_id = all_participants[0];
 
         // interim test - try opening every cell of the sum sheet
         // result should be same as our direct sum sheet created above.
@@ -1046,7 +1046,7 @@ mod tests {
         let msgs = dc_decode(
             &all_participants,
             &mats,
-            &ParticipantID::from_pk(pk1.clone()),
+            &my_id,
             1,
             max_cells,
             &p_excl,
@@ -1282,6 +1282,8 @@ mod tests {
             let p = participants[ix].clone();
             k_excl.insert(p, HashMap::new());
         }
+        let my_id = participants[0];
+        let k_exs = k_excl.get(&my_id).unwrap();
         let msgs = dc_decode(
             &participants,
             &matrices,
@@ -1289,7 +1291,7 @@ mod tests {
             nsheets,
             max_cells,
             &p_excl,
-            &k_excl,
+            &k_exs,
         );
         let timing = start.elapsed();
         println!("{}x{} Solve {} Time = {:?}", nsheets, nrows, ncols, timing);

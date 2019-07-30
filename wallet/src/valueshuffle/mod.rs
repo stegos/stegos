@@ -1471,6 +1471,8 @@ impl ValueShuffle {
         });
         debug!("txin hash: {}", state.result());
 
+        // get the cloaks we put there for all missing participants
+        let k_excl = self.all_excl_k_cloaks.get(&self.participant_key).unwrap();
         let msgs = dc_decode(
             &self.participants,
             &self.matrices,
@@ -1478,7 +1480,7 @@ impl ValueShuffle {
             MAX_UTXOS,
             self.dicemix_nbr_utxo_chunks.unwrap(),
             &self.excl_participants_with_cloaks, // the excluded participants
-            &self.all_excl_k_cloaks,
+            &k_excl,
         );
         debug!("nbr msgs = {}", msgs.len());
 

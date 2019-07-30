@@ -280,16 +280,10 @@ pub struct ValueShuffle {
     // commitments from each participant = hash(matrix, gamma_adj, fee)
     commits: HashMap<ParticipantID, Hash>,
 
+    commit_phase_participants: Vec<ParticipantID>,
+
     // --------------------------------------------
     // Items computed in vs_share_cloaked_data()
-
-    // list of participants that did not send us commitments
-    // but with whom we sent commitments and computed sharing cloaks
-    excl_participants_with_cloaks: Vec<ParticipantID>,
-
-    // table of participant cloaking hashes used with excluded participants
-    // one of these from each remaining participant during blame discovery
-    all_excl_k_cloaks: HashMap<ParticipantID, HashMap<ParticipantID, Hash>>,
 
     // --------------------------------------------
     // Items computed in vs_make_supertransaction()
@@ -305,12 +299,28 @@ pub struct ValueShuffle {
     // Final multi-signature is sum of these individual signatures
     signatures: HashMap<ParticipantID, SchnorrSig>,
 
+    // list of participants that did not send us matrices
+    // but to whom we sent our matrix,
+    // and for whom we computed sharing cloaks
+    excl_participants: Vec<ParticipantID>,
+
+    // dictionary by participantID of the cloaking factors
+    // used for the missing participants.
+    excl_cloaks: HashMap<ParticipantID, Hash>,
+
     // --------------------------------------------
     // Items computed in vs_sign_supertransaction()
 
     // if we enter a blame cycle, we broadcast our session skey
     // and collect those from remaining participants
     sess_skeys: HashMap<ParticipantID, SecretKey>,
+
+    // table of participant cloaking hashes used with excluded participants
+    // one of these from each remaining participant during blame discovery
+    all_excl_cloaks: HashMap<ParticipantID, HashMap<ParticipantID, Hash>>,
+
+    // supertransaction participant lists from fellow participants
+    all_parts_info: HashMap<ParticipantID, Vec<ParticipantID>>,
 
     // --------------------------------------------
     // Send/Receieve - we start by sending to all participants,
@@ -324,7 +334,7 @@ pub struct ValueShuffle {
     // Send/Receive exchange. Reset to None at termination of Receive.
     // Receive can terminate either by timeout, or early after receiving
     // from all expected participants.
-    msg_state: VsMsgType,
+    msg_state: VsMsgExpectedType,
 
     // Timeout handling - we record the beginning of our timeout
     // period at start of Receive, and decrement waiting on each 1s tick
@@ -429,15 +439,16 @@ impl ValueShuffle {
             sess_skeys: HashMap::new(),
             sess_pkeys: HashMap::new(),
             k_cloaks: HashMap::new(),
-            all_excl_k_cloaks: HashMap::new(),
+            excl_cloaks: HashMap::new(),
+            all_excl_cloaks: HashMap::new(),
             commits: HashMap::new(),
             matrices: HashMap::new(),
             cloaked_gamma_adjs: HashMap::new(),
             cloaked_fees: HashMap::new(),
             signatures: HashMap::new(),
             pending_participants: HashSet::new(),
-            excl_participants_with_cloaks: Vec::new(),
-            msg_state: VsMsgType::None,
+            excl_participants: Vec::new(),
+            msg_state: VsMsgExpectedType::None,
             trans: PaymentTransaction::dum(),
             wait_start: SystemTime::now(),
             waiting: 0,
@@ -445,6 +456,8 @@ impl ValueShuffle {
             serialized_utxo_size: None,
             dicemix_nbr_utxo_chunks: None,
             pending_removals: Vec::new(),
+            commit_phase_participants: Vec::new(),
+            all_parts_info: HashMap::new(),
         }
     }
 
@@ -474,7 +487,7 @@ impl ValueShuffle {
 
         // Send PoolJoin on the first request.
         self.state = State::PoolWait;
-        self.msg_state = VsMsgType::None;
+        self.msg_state = VsMsgExpectedType::None;
         self.send_pool_join()
     }
 
@@ -555,7 +568,7 @@ impl ValueShuffle {
     fn reset_state(&mut self) {
         self.waiting = 0; // reset timeout counter
         self.state = State::PoolFinished;
-        self.msg_state = VsMsgType::None;
+        self.msg_state = VsMsgExpectedType::None;
         self.msg_queue.clear();
         self.session_round = 0;
         self.try_update_facilitator();
@@ -575,7 +588,7 @@ impl ValueShuffle {
         self.session_round = 0;
         self.try_update_facilitator();
         self.state = State::PoolFinished;
-        self.msg_state = VsMsgType::None;
+        self.msg_state = VsMsgExpectedType::None;
     }
 
     /// Called when a new txpool is formed.
@@ -660,6 +673,7 @@ impl ValueShuffle {
 
         self.participants.sort();
         self.participants.dedup();
+
         debug!("Formed txpool: members={}", self.participants.len());
         for pkey in &self.participants {
             debug!("{:?}", pkey);
@@ -720,7 +734,7 @@ impl ValueShuffle {
         match self.state {
             State::PoolFormed | State::PoolFinished => {
                 match self.msg_state {
-                    VsMsgType::None => {
+                    VsMsgExpectedType::None => {
                         // We aren't currently running, but we can restart with the
                         // participants left over from previous run.
                         // Facilitator should have already discarded our previous supertransaction.
@@ -738,7 +752,7 @@ impl ValueShuffle {
                         self.exclude_participants(&excl);
                         // set state to reflect this division of participants list state
                         // in case we abort vs_start
-                        self.msg_state = VsMsgType::None;
+                        self.msg_state = VsMsgExpectedType::None;
                         return self.vs_start();
                     }
                 }
@@ -861,24 +875,24 @@ impl ValueShuffle {
                 // whichever participants did not respond are in self.pending_participants.
                 debug!("vs timeout, msg_state: {:?}", self.msg_state);
                 let state = self.msg_state;
-                self.msg_state = VsMsgType::None;
+                self.msg_state = VsMsgExpectedType::None;
                 match state {
-                    VsMsgType::None => {
+                    VsMsgExpectedType::None => {
                         return Ok(());
                     }
-                    VsMsgType::SharedKeying => {
+                    VsMsgExpectedType::SharedKeying => {
                         return self.vs_commit();
                     }
-                    VsMsgType::Commitment => {
+                    VsMsgExpectedType::Commitment => {
                         return self.vs_share_cloaked_data();
                     }
-                    VsMsgType::CloakedVals => {
+                    VsMsgExpectedType::CloakedVals => {
                         return self.vs_make_supertransaction();
                     }
-                    VsMsgType::Signature => {
+                    VsMsgExpectedType::Signature => {
                         return self.vs_sign_supertransaction();
                     }
-                    VsMsgType::SecretKeying => {
+                    VsMsgExpectedType::SecretKeying => {
                         return self.vs_blame_discovery();
                     }
                 }
@@ -938,11 +952,11 @@ impl ValueShuffle {
             return false;
         }
         match (self.msg_state, payload) {
-            (VsMsgType::SharedKeying, VsPayload::SharedKeying { .. })
-            | (VsMsgType::Commitment, VsPayload::Commitment { .. })
-            | (VsMsgType::CloakedVals, VsPayload::CloakedVals { .. })
-            | (VsMsgType::Signature, VsPayload::Signature { .. })
-            | (VsMsgType::SecretKeying, VsPayload::SecretKeying { .. }) => {
+            (VsMsgExpectedType::SharedKeying, VsPayload::SharedKeying { .. })
+            | (VsMsgExpectedType::Commitment, VsPayload::Commitment { .. })
+            | (VsMsgExpectedType::CloakedVals, VsPayload::CloakedVals { .. })
+            | (VsMsgExpectedType::Signature, VsPayload::Signature { .. })
+            | (VsMsgExpectedType::SecretKeying, VsPayload::SecretKeying { .. }) => {
                 debug!(
                     "Message accepted: msg_state={:?}, payload={}",
                     self.msg_state, payload
@@ -961,12 +975,12 @@ impl ValueShuffle {
 
     fn handle_message(&mut self, from: &ParticipantID, payload: &VsPayload) -> Result<(), Error> {
         match self.msg_state {
-            VsMsgType::None => Err(VsError::VsNotInSession.into()),
-            VsMsgType::SharedKeying => self.handle_shared_keying(from, payload),
-            VsMsgType::Commitment => self.handle_commitment(from, payload),
-            VsMsgType::CloakedVals => self.handle_cloaked_vals(from, payload),
-            VsMsgType::Signature => self.handle_signature(from, payload),
-            VsMsgType::SecretKeying => self.handle_secret_keying(from, payload),
+            VsMsgExpectedType::None => Err(VsError::VsNotInSession.into()),
+            VsMsgExpectedType::SharedKeying => self.handle_shared_keying(from, payload),
+            VsMsgExpectedType::Commitment => self.handle_commitment(from, payload),
+            VsMsgExpectedType::CloakedVals => self.handle_cloaked_vals(from, payload),
+            VsMsgExpectedType::Signature => self.handle_signature(from, payload),
+            VsMsgExpectedType::SecretKeying => self.handle_secret_keying(from, payload),
         }
     }
 
@@ -977,7 +991,7 @@ impl ValueShuffle {
             // we bomb out of the vfn(). We do this in case of any incoming
             // VsRestart messages which are sensitive to the state of the
             // participants list and pending_participants.
-            self.msg_state = VsMsgType::None;
+            self.msg_state = VsMsgExpectedType::None;
             vfn(self)
         } else {
             Ok(())
@@ -991,9 +1005,12 @@ impl ValueShuffle {
                 debug!("checking shared keying {:?} {:?}", pkey, ksig);
                 let mut pt = Pt::inf();
                 if is_valid_pt(&ksig, &mut pt) {
+                    debug!("shared keying okay {:?}", pkey);
                     self.sigK_vals.insert(*from, pt);
                     self.sess_pkeys.insert(*from, *pkey);
                     return self.maybe_do(from, Self::vs_commit);
+                } else {
+                    debug!("shared keying bad {:?}", pkey);
                 }
             }
             _ => {}
@@ -1025,12 +1042,23 @@ impl ValueShuffle {
             } => {
                 let cmt = self.commits.get(from).expect("Can't access commit");
                 debug!("Checking commitment {}", cmt);
-                if *cmt == hash_data(matrix, gamma_sum, fee_sum) {
+                if *cmt == hash_data(matrix, gamma_sum, fee_sum)
+                // DiceMix expects to be able to find all missing
+                // participant cloaking values
+                && self.excl_participants.iter().all(|p| cloaks.contains_key(p))
+                // and we won't be able to form the same supertransaction as others
+                // unless they have exactly the same missing participants that we do
+                && cloaks.keys().all(|p| self.excl_participants.contains(p))
+                {
+                    debug!("Commitment check passed {}", cmt);
+                    debug!("Saving cloaked data");
                     self.matrices.insert(*from, matrix.clone());
                     self.cloaked_gamma_adjs.insert(*from, gamma_sum.clone());
                     self.cloaked_fees.insert(*from, fee_sum.clone());
-                    self.all_excl_k_cloaks.insert(*from, cloaks.clone());
+                    self.all_excl_cloaks.insert(*from, cloaks.clone());
                     return self.maybe_do(from, Self::vs_make_supertransaction);
+                } else {
+                    debug!("Commitment check failed {}", cmt);
                 }
             }
             _ => {}
@@ -1116,17 +1144,18 @@ impl ValueShuffle {
         Ok(msg)
     }
 
-    fn prep_rx(&mut self, msgtype: VsMsgType, timeout: i16) {
+    fn prep_rx(&mut self, msgtype: VsMsgExpectedType, timeout: i16) {
         // transfer other participants into pending_participants
         // and set new msg_state for expected kind of messages
-        self.pending_participants = HashSet::new();
-        for p in &self.participants {
-            if *p != self.participant_key {
-                self.pending_participants.insert(*p);
-            }
-        }
-        self.participants = Vec::new();
-        self.participants.push(self.participant_key);
+        let mut other_participants: HashSet<ParticipantID> = HashSet::new();
+        self.participants
+            .iter()
+            .filter(|&&p| p != self.participant_key)
+            .for_each(|&p| {
+                other_participants.insert(p);
+            });
+        self.pending_participants = other_participants;
+        self.participants = vec![self.participant_key];
 
         // arrange to ignore enqueue timer events unless they
         // are timestamped later than now.
@@ -1252,9 +1281,12 @@ impl ValueShuffle {
             return Err(VsError::VsTooFewParticipants(self.participants.len()).into());
         }
 
+        // participants at the time of matrix construction
+        self.commit_phase_participants = self.participants.clone();
+
         // Generate shared cloaking factors
         self.k_cloaks = dc_keys(
-            &self.participants,
+            &self.commit_phase_participants,
             &self.sess_pkeys,
             &self.participant_key,
             &self.sess_skey,
@@ -1286,19 +1318,17 @@ impl ValueShuffle {
         // -------------------------------------------------------------
         // for debugging - check that our contribution produces zero balance
         {
-            let mut cmt_sum = Pt::inf();
-            for (_txin, u) in self.my_txins.clone() {
-                cmt_sum += u.proof.vcmt;
-            }
-            for u in my_utxos.clone() {
-                cmt_sum -= u.proof.vcmt;
-            }
+            let cmt_sum = self
+                .my_txins
+                .iter()
+                .fold(Pt::inf(), |sum, (_, u)| sum + u.proof.vcmt);
+            let cmt_sum = my_utxos.iter().fold(cmt_sum, |sum, u| sum - u.proof.vcmt);
             assert!(cmt_sum == simple_commit(&my_gamma_adj, &Fr::from(self.my_fee)));
         }
         // -------------------------------------------------------------
 
         let my_matrix = Self::encode_matrix(
-            &self.participants,
+            &self.commit_phase_participants,
             &my_utxos,
             &self.participant_key,
             &self.k_cloaks,
@@ -1312,7 +1342,7 @@ impl ValueShuffle {
         self.cloaked_gamma_adjs = HashMap::new();
         let my_cloaked_gamma_adj = dc_encode_scalar(
             my_gamma_adj,
-            &self.participants,
+            &self.commit_phase_participants,
             &self.participant_key,
             &self.k_cloaks,
         );
@@ -1322,7 +1352,7 @@ impl ValueShuffle {
         self.cloaked_fees = HashMap::new();
         let my_cloaked_fee = dc_encode_scalar(
             Fr::from(self.my_fee),
-            &self.participants,
+            &self.commit_phase_participants,
             &self.participant_key,
             &self.k_cloaks,
         );
@@ -1366,37 +1396,25 @@ impl ValueShuffle {
             return Err(VsError::VsFail.into());
         }
 
-        // save the excluded participants at this point
-        // they match up with k_cloaks.
-        self.excl_participants_with_cloaks = Vec::new();
-        for p in &self.pending_participants {
-            self.excl_participants_with_cloaks.push(*p);
-        }
-
-        // ---------------------------------------------------------------
-        // NOTE:
-        // from here to end, we keep newly excluded pkeys in a separate list
-        // for use by potential blame discovery. Those newly excluded keys
-        // will have had cloaking factors generated by us for them.
-        //
-        // If there are no further critical dropouts, then we can still de-cloak the
-        // remaining shared data with the keying info we are about to send everyone.
-        //
-        // If there are further critical dropouts, then we just abort the current
-        // round and proceed anew with remaining participants.
-        // ---------------------------------------------------------------
-
-        // collect the cloaking factors shared with non-responding participants
-        // we share these with all other partipants, along with our cloaked data
-        // in case anyone decides that we need a blame discovery session
-        self.all_excl_k_cloaks = HashMap::new();
-        let mut my_excl_k_cloaks: HashMap<ParticipantID, Hash> = HashMap::new();
-        for p in &self.excl_participants_with_cloaks {
-            let cloak = self.k_cloaks.get(p).expect("Can't access cloaking");
-            my_excl_k_cloaks.insert(*p, *cloak);
-        }
-        self.all_excl_k_cloaks
-            .insert(self.participant_key, my_excl_k_cloaks.clone());
+        // make note of missing participants here
+        // so we can furnish decloaking values to other participants
+        let mut excl_cloaks = HashMap::new();
+        let mut excl_participants = Vec::new();
+        let prev_parts = self.commit_phase_participants.clone();
+        let cur_parts = self.participants.clone();
+        prev_parts
+            .iter()
+            .filter(|p| !cur_parts.contains(p))
+            .for_each(|&p| {
+                excl_participants.push(p);
+                let cloaks = self.k_cloaks.get(&p).expect("can't get k_cloaks");
+                excl_cloaks.insert(p, cloaks.clone());
+            });
+        self.excl_participants = excl_participants;
+        self.excl_cloaks = excl_cloaks;
+        self.all_excl_cloaks = HashMap::new();
+        self.all_excl_cloaks
+            .insert(self.participant_key, self.excl_cloaks.clone());
 
         // send committed and cloaked data to all participants
         let my_matrix = self
@@ -1412,11 +1430,15 @@ impl ValueShuffle {
             .get(&self.participant_key)
             .expect("Can't access my own fee");
 
+        self.all_parts_info = HashMap::new();
+        self.all_parts_info
+            .insert(self.participant_key, self.participants.clone());
+
         self.send_cloaked_data(
             &my_matrix,
             &my_cloaked_gamma_adj,
             &my_cloaked_fee,
-            &my_excl_k_cloaks,
+            &self.excl_cloaks,
         );
 
         // At this point, if we don't hear valid responses from all
@@ -1428,6 +1450,17 @@ impl ValueShuffle {
         self.receive_cloaked_data();
 
         Ok(())
+    }
+
+    fn had_dropouts(&self) -> bool {
+        !(self
+            .participants
+            .iter()
+            .all(|p| self.commit_phase_participants.contains(p))
+            && (self
+                .commit_phase_participants
+                .iter()
+                .all(|p| self.participants.contains(p))))
     }
 
     fn vs_make_supertransaction(&mut self) -> Result<(), Error> {
@@ -1446,18 +1479,31 @@ impl ValueShuffle {
         //   - .expect() errors -> should never happen in proper code
         //
         debug!("In vs_make_supertransaction()");
-        if !self.pending_participants.is_empty() {
-            // we can't do discovery on partial data
-            // so merge local exclusions with outer list for
-            // next session round
+
+        if self.participants.len() < 3 {
+            debug!("Too few shared participants");
+            return Err(VsError::VsFail.into());
+        }
+
+        if self.had_dropouts() {
+            // if we don't have exactly the same participants as when
+            // we shared the cloaked data, then we won't be able to
+            // agree on the contents of a supertransaction, and signing
+            // will fail. So may as well restart now.
+            //
+            // An inifinite restart loop is avoided here because we obviously
+            // now have fewer participants than before. Either we eventually
+            // succeed, or we fail by having fewer than 3 participants.
+            debug!("dropouts occurred - restarting");
             return self.vs_start();
         }
 
+        // -------------------------------------------------------
         // we got valid responses from all participants,
         let mut trn_txins = Vec::<UTXO>::new();
-        self.participants.sort();
+        self.commit_phase_participants.sort();
         let mut state = Hasher::new();
-        self.participants.iter().for_each(|p| {
+        self.commit_phase_participants.iter().for_each(|p| {
             // TXINs have already been checked and
             // these expects should never happen
             self.all_txins
@@ -1472,24 +1518,23 @@ impl ValueShuffle {
         debug!("txin hash: {}", state.result());
 
         // get the cloaks we put there for all missing participants
-        let k_excl = self.all_excl_k_cloaks.get(&self.participant_key).unwrap();
         let msgs = dc_decode(
             &self.participants,
             &self.matrices,
             &self.participant_key,
             MAX_UTXOS,
             self.dicemix_nbr_utxo_chunks.unwrap(),
-            &self.excl_participants_with_cloaks, // the excluded participants
-            &k_excl,
+            &self.excl_participants, // the excluded participants
+            &self.all_excl_cloaks,
         );
         debug!("nbr msgs = {}", msgs.len());
 
         let mut all_utxos = Vec::<UTXO>::new();
         let mut all_utxo_cmts = Vec::<Pt>::new();
         let mut state = Hasher::new();
-        for msg in msgs {
+        msgs.iter().for_each(|msg| {
             // we might have garbage data...
-            match deserialize_utxo(&msg, self.serialized_utxo_size.unwrap()) {
+            match deserialize_utxo(msg, self.serialized_utxo_size.unwrap()) {
                 Ok(utxo) => {
                     all_utxos.push(utxo.clone());
                     utxo.hash(&mut state);
@@ -1497,26 +1542,28 @@ impl ValueShuffle {
                 }
                 _ => {} // this will cause failure below
             }
-        }
+        });
         debug!("txout hash: {}", state.result());
         // --------------------------------------------------------
         // for debugging - ensure that all of our txouts made it
         {
             debug!("nbr txouts = {}", all_utxos.len());
-            for cmt in self.my_utxos.clone() {
-                assert!(all_utxo_cmts.contains(&cmt));
-            }
+            self.my_utxos
+                .iter()
+                .for_each(|ucmt| assert!(all_utxo_cmts.contains(ucmt)));
         }
         // --------------------------------------------------------
         let gamma_adj = dc_scalar_open(
+            &self.participants,
             &self.cloaked_gamma_adjs,
-            &self.excl_participants_with_cloaks,
-            &self.all_excl_k_cloaks,
+            &self.excl_participants,
+            &self.all_excl_cloaks,
         );
         let total_fees_f = dc_scalar_open(
+            &self.participants,
             &self.cloaked_fees,
-            &self.excl_participants_with_cloaks,
-            &self.all_excl_k_cloaks,
+            &self.excl_participants,
+            &self.all_excl_cloaks,
         );
         let total_fees = {
             match total_fees_f.clone().to_i64() {
@@ -1530,11 +1577,12 @@ impl ValueShuffle {
         debug!("total fees {:?} -> {:?}", total_fees_f.clone(), total_fees);
         debug!("gamma_adj: {:?}", gamma_adj);
 
-        let mut K_sum = Pt::inf();
-        self.participants.iter().for_each(|p| {
-            let K = self.sigK_vals.get(p).expect("Can't access sigK");
-            K_sum += *K;
-        });
+        let K_sum = self
+            .commit_phase_participants
+            .iter()
+            .fold(Pt::inf(), |sum, p| {
+                sum + *self.sigK_vals.get(p).expect("can't get sigK value")
+            });
 
         self.trans = self.make_super_transaction(
             &self.my_signing_skey,
@@ -1581,26 +1629,25 @@ impl ValueShuffle {
         //   - .expect() errors -> should never happen in correct code
 
         debug!("In vs_sign_supertransaction()");
-        if !self.pending_participants.is_empty() {
-            // We didn't recieve all signatures in time.
-            // So, return constructed unsigned transaction and reset the state
-            let tx = self.trans.clone();
-            self.wallet_tx_info
-                .unbounded_send(ValueShuffleOutput::UnsignedTransaction(tx))?;
-            self.reset_state();
-            self.msg_queue.clear();
-            self.session_round = 0;
-            return Ok(());
+        if !self
+            .commit_phase_participants
+            .iter()
+            .all(|p| self.signatures.contains_key(p))
+        {
+            // we don't have the requisite signatures,
+            // so just start a new session. Could only have happened if
+            // fewer participants responded.
+            debug!("incorrect number of signaturs obtained - restarting without them");
+            return self.vs_start();
         }
 
-        let mut sig = self.trans.sig.clone();
-        for p in &self.participants {
-            if *p != self.participant_key {
-                let other_sig = self.signatures.get(p).expect("Can't access sig");
-                sig += &other_sig;
-            }
-        }
-        self.trans.sig = sig;
+        self.trans.sig = self
+            .commit_phase_participants
+            .iter()
+            .filter(|&&p| p != self.participant_key)
+            .fold(self.trans.sig, |sig, p| {
+                sig + self.signatures.get(p).expect("can't get peer signature")
+            });
         debug!("total sig {:?}", self.trans.sig);
 
         if self.validate_transaction() {
@@ -1648,8 +1695,13 @@ impl ValueShuffle {
         //   - normal exit
 
         debug!("In vs_blame_discovery()");
-        if self.pending_participants.is_empty() {
+        if self.had_dropouts() {
+            // if there were too few session keys received, then
+            // someone dropped out, and we restart without them.
+            debug!("too few session keys for blame cycle");
+        } else {
             // everyone responded with their secret session key
+
             // let's do blame discovery
             // collect pkeys of cheaters and add to exclusions for next round
             let data = ValidationData {
@@ -1660,7 +1712,7 @@ impl ValueShuffle {
             };
             debug!("calling dc_reconstruct()");
             let new_p_excl = dc_reconstruct(
-                &self.participants,
+                &self.commit_phase_participants,
                 &self.sess_pkeys,
                 &self.participant_key,
                 &self.sess_skeys,
@@ -1668,8 +1720,8 @@ impl ValueShuffle {
                 &self.cloaked_gamma_adjs,
                 &self.cloaked_fees,
                 &self.session_id,
-                &self.excl_participants_with_cloaks,
-                &self.all_excl_k_cloaks,
+                &self.excl_participants,
+                &self.all_excl_cloaks,
                 Self::validate_uncloaked_contrib,
                 &data,
             );
@@ -1877,7 +1929,7 @@ impl ValueShuffle {
 
         // we allow the receive_xxx to specify individual timeout periods
         // in case they need to vary
-        self.prep_rx(VsMsgType::SharedKeying, VS_TIMEOUT);
+        self.prep_rx(VsMsgExpectedType::SharedKeying, VS_TIMEOUT);
     }
 
     // -------------------------------------------------
@@ -1893,7 +1945,7 @@ impl ValueShuffle {
         // if any fail to send commitments, add them to exclusion list p_excl
 
         // fill in commits
-        self.prep_rx(VsMsgType::Commitment, VS_TIMEOUT);
+        self.prep_rx(VsMsgExpectedType::Commitment, VS_TIMEOUT);
     }
 
     // -------------------------------------------------
@@ -1903,14 +1955,14 @@ impl ValueShuffle {
         matrix: &DcMatrix,
         cloaked_gamma_adj: &Fr,
         cloaked_fee: &Fr,
-        excl_k_cloaks: &HashMap<ParticipantID, Hash>,
+        cloaks: &HashMap<ParticipantID, Hash>,
     ) {
         // send matrix, sum, and excl_k_cloaks to all participants
         let payload = VsPayload::CloakedVals {
             matrix: matrix.clone(),
             gamma_sum: cloaked_gamma_adj.clone(),
             fee_sum: cloaked_fee.clone(),
-            cloaks: excl_k_cloaks.clone(),
+            cloaks: cloaks.clone(),
         };
         self.send_signed_message(&payload);
     }
@@ -1923,7 +1975,7 @@ impl ValueShuffle {
 
         // fill in matrices, cloaked_gamma_adj, cloaked_fees,
         // and all_excl_k_cloaks, using commits to validate incoming data
-        self.prep_rx(VsMsgType::CloakedVals, VS_TIMEOUT);
+        self.prep_rx(VsMsgExpectedType::CloakedVals, VS_TIMEOUT);
     }
 
     // -------------------------------------------------
@@ -1941,7 +1993,7 @@ impl ValueShuffle {
         // Partial valid = K component is valid ECC point
 
         // fill in signatures
-        self.prep_rx(VsMsgType::Signature, VS_TIMEOUT);
+        self.prep_rx(VsMsgExpectedType::Signature, VS_TIMEOUT);
     }
 
     // -------------------------------------------------
@@ -1956,7 +2008,7 @@ impl ValueShuffle {
         // non-respondents are added to p_excl
 
         // fills in sess_skeys
-        self.prep_rx(VsMsgType::SecretKeying, VS_TIMEOUT);
+        self.prep_rx(VsMsgExpectedType::SecretKeying, VS_TIMEOUT);
     }
 
     // -------------------------------------------------
@@ -2093,6 +2145,7 @@ fn deserialize_utxo(msg: &Vec<u8>, ser_size: usize) -> Result<UTXO, Error> {
     // DiceMix returns a byte vector whose length is some integral
     // number of Field size. But proto-bufs is very particular about
     // what it is handed, and complains about trailing padding bytes.
+    // otherwise, deserialize and return
     match UTXO::from_buffer(&msg[0..ser_size]) {
         Err(err) => {
             debug!("deserialization error: {:?}", err);

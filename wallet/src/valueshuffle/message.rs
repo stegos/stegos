@@ -36,7 +36,9 @@ use stegos_crypto::scc::SchnorrSig;
 use stegos_crypto::scc::SecretKey;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub(crate) enum VsMsgType {
+pub(crate) enum VsMsgExpectedType {
+    // used to indicate what kind of message payloads are wanted
+    // in a collection pause between ValueShuffle phases.
     None, // when msg_state == None the participants list is complete
     SharedKeying,
     Commitment,
@@ -47,6 +49,8 @@ pub(crate) enum VsMsgType {
 
 #[derive(Debug, Clone)]
 pub(crate) enum VsPayload {
+    // Message payload types that are of interest to various phases
+    // of ValueShuffle
     SharedKeying {
         pkey: PublicKey,
         ksig: Pt,
@@ -70,7 +74,10 @@ pub(crate) enum VsPayload {
 
 #[derive(Debug, Clone)]
 pub(crate) enum Message {
+    // types of messages delivered by the event system
     VsMessage {
+        // this is the kind of message, whose payload
+        // may be of interest to waiting phases in ValueShuffle
         sid: Hash,
         payload: VsPayload,
     },
@@ -82,6 +89,9 @@ pub(crate) enum Message {
 
 #[derive(Debug, Clone)]
 pub(crate) struct DirectMessage {
+    // this kind of message could also deliver items
+    // of interest to ValueShuffle phases.
+    // it acts as an addressed envelope for contained Message.
     pub source: ParticipantID,
     pub destination: ParticipantID,
     pub message: Message,
@@ -98,7 +108,7 @@ impl fmt::Display for VsPayload {
             VsPayload::Commitment { cmt } => write!(f, "VsPayload::Commitment( cmt: {})", cmt),
             VsPayload::CloakedVals { .. } => write!(f, "VsPayload::CloakedVals(...)"),
             VsPayload::Signature { sig } => write!(f, "VsPayload::Signature( sig: {:?})", sig),
-            VsPayload::SecretKeying { skey } => {
+            VsPayload::SecretKeying { skey, .. } => {
                 write!(f, "VsPayload::SecretKeying( skey: {:?})", skey)
             }
         }
@@ -143,6 +153,16 @@ impl Hashable for Message {
 
 impl Hashable for VsPayload {
     fn hash(&self, state: &mut Hasher) {
+        fn hash_cloaks(cloaks: &HashMap<ParticipantID, Hash>, state: &mut Hasher) {
+            // Hashes on collections can't be consistent
+            // unless the collections are pre-sorted
+            let mut skeys: Vec<ParticipantID> = cloaks.keys().map(|&k| k).collect();
+            skeys.sort();
+            skeys.iter().for_each(|p| {
+                p.hash(state);
+                cloaks.get(p).unwrap().hash(state);
+            });
+        }
         match self {
             VsPayload::SharedKeying { pkey, ksig } => {
                 pkey.hash(state);
@@ -166,11 +186,7 @@ impl Hashable for VsPayload {
                 }
                 gamma_sum.hash(state);
                 fee_sum.hash(state);
-                for (p, h) in cloaks {
-                    // Q: does delivery maintain send order?
-                    p.hash(state);
-                    h.hash(state);
-                }
+                hash_cloaks(cloaks, state);
             }
             VsPayload::Signature { sig } => {
                 sig.hash(state);

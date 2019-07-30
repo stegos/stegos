@@ -222,6 +222,7 @@ pub fn split_message(msg: &[u8], max_cols: Option<usize>) -> DcRow {
                 Some(ncmax) => assert!(ncols <= ncmax, "Message requires too many cols"),
             }
             stuff_slot(&mut seg, &msg, NPREF, offs, NCHUNK);
+            // Fr::try_from_bytes() checks for valid input range 0 <= val < modulus
             out.push(Fr::try_from_bytes(&seg).expect("ok"));
             offs += NCHUNK;
         }
@@ -281,7 +282,7 @@ pub fn dc_encode_sheet(
     // remove ourself from the participants list, if present
     let parts: Vec<ParticipantID> = participants
         .iter()
-        .filter(|p| **p != *my_id)
+        .filter(|&&p| p != *my_id)
         .map(|p| p.clone())
         .collect();
     let nparts = parts.len() + 1; // one row for each of us, including me
@@ -289,10 +290,10 @@ pub fn dc_encode_sheet(
     let nchunks = chunks.len();
     index_vec(nchunks)
         .par_iter()
-        .map(|r_ix| {
-            let mut row = exp_vec(&chunks[*r_ix], nparts as u64);
+        .map(|&r_ix| {
+            let mut row = exp_vec(&chunks[r_ix], nparts as u64);
             for c_ix in 0..nparts {
-                let seed_str = gen_cell_seed(sheet, *r_ix, c_ix + 1);
+                let seed_str = gen_cell_seed(sheet, r_ix, c_ix);
                 row[c_ix] += dc_slot_pad(&parts, &my_id, share_cloaks, &seed_str);
             }
             row
@@ -307,23 +308,24 @@ fn dc_slot_pad(
     seed: &Vec<u8>,
 ) -> Fr {
     // construct a self-cancelling cloaking factor based on the seed.
-    let mut sum = Fr::zero();
-    for p_other in participants.iter().filter(|p| **p != *my_id) {
-        // excluding ourself, which would have no effect anyway,
-        // but would probably not have a share_cloaks entry for ourself.
-        let mut state = Hasher::new();
-        let share_cloak = share_cloaks.get(p_other).unwrap();
-        share_cloak.hash(&mut state);
-        (*seed).hash(&mut state);
-        let h = state.result();
-        let val = Fr::from(h);
-        if my_id < p_other {
-            sum -= val;
-        } else if my_id > p_other {
-            sum += val;
-        }
-    }
-    sum
+    participants
+        .iter()
+        .filter(|&p| *p != *my_id)
+        .fold(Fr::zero(), |sum, p| {
+            // excluding ourself, which would have no effect anyway,
+            // but would probably not have a share_cloaks entry for ourself.
+            let share_cloak = share_cloaks.get(p).unwrap();
+            let mut state = Hasher::new();
+            share_cloak.hash(&mut state);
+            (*seed).hash(&mut state);
+            let h = state.result();
+            let val = Fr::from(h);
+            if *my_id < *p {
+                sum - val
+            } else {
+                sum + val
+            }
+        })
 }
 
 // -----------------------------------------------------------------------
@@ -342,7 +344,7 @@ pub fn dc_decode(
     nsheets: usize,
     nchunks: usize,
     p_excl: &Vec<ParticipantID>,
-    k_excl: &HashMap<ParticipantID, Hash>,
+    k_excl: &HashMap<ParticipantID, HashMap<ParticipantID, Hash>>,
 ) -> Vec<Vec<u8>> {
     // Accept a 4-D array (vector of 3-D vectors) containing
     // modular powers of cloaked chunks. Split along first dimension,
@@ -395,22 +397,30 @@ pub fn dc_decode(
 
     let msgs: Vec<Vec<Vec<u8>>> = index_vec(dim_s)
         .par_iter()
-        .map(|s_ix| {
+        .map(|&s_ix| {
             // operate on one sheet at a time
             // (one message from each participant)
             let mut sheet: Vec<DcRow> = index_vec(dim_r)
                 .par_iter()
-                .map(|r_ix| {
+                .map(|&r_ix| {
                     // each row contains the cloaked powers of a chunk
                     let mut row = Vec::<Fr>::new();
                     for c_ix in 0..dim_c {
                         // dc_open forms a sum of powers and automatically
                         // uncloaks the power sum
-                        row.push(dc_open(&mats, *s_ix, *r_ix, c_ix, p_excl, k_excl));
+                        row.push(dc_open(
+                            participants,
+                            &mats,
+                            s_ix,
+                            r_ix,
+                            c_ix,
+                            p_excl,
+                            k_excl,
+                        ));
                     }
                     // find the roots (original chunks) for the polynomial
                     // corresponding to this sequence of power sums.
-                    dc_solve(&mut row)
+                    dc_solve(&row)
                 })
                 .collect(); // we now have a sheet of uncloaked chunks
 
@@ -468,22 +478,23 @@ pub fn dc_decode(
 }
 
 fn dc_open(
+    participants: &Vec<ParticipantID>,
     mats: &HashMap<ParticipantID, DcMatrix>,
     sheet: usize,
     row: usize,
     col: usize,
     p_excl: &Vec<ParticipantID>,
-    k_excl: &HashMap<ParticipantID, Hash>,
+    k_excl: &HashMap<ParticipantID, HashMap<ParticipantID, Hash>>,
 ) -> Fr {
-    let mut pwrsum = Fr::zero();
-    for (_, mat) in mats {
-        // add contribs from all users to remove cloaking
-        // and form power sum
-        pwrsum += mat[sheet][row][col];
-    }
-    let seed_str = gen_cell_seed(sheet, row + 1, col);
-    for p in p_excl {
-        pwrsum -= dc_slot_pad(p_excl, &p, &k_excl, &seed_str);
+    let mut pwrsum = mats
+        .iter()
+        .fold(Fr::zero(), |sum, (_, mat)| sum + mat[sheet][row][col]);
+    if !p_excl.is_empty() {
+        let seed_str = gen_cell_seed(sheet, row, col);
+        participants.iter().for_each(|p| {
+            let ktbl = k_excl.get(p).expect("can't get k_excl");
+            pwrsum -= dc_slot_pad(p_excl, p, ktbl, &seed_str);
+        });
     }
     pwrsum
 }
@@ -497,12 +508,14 @@ const RET_INVALID: c_int = 1;
 const RET_NON_MONIC_ROOT: c_int = 2;
 const RET_NOT_ENOUGH_ROOTS: c_int = 3;
 
-fn dc_solve(col: &mut Vec<Fr>) -> Vec<Fr> {
+fn dc_solve(col: &Vec<Fr>) -> Vec<Fr> {
     fn c_str(s: &str) -> CString {
         CString::new(s).unwrap()
     }
 
-    // For Curve25519 the modulus is 2^255-19
+    // For Curve25519 the modulus is 2^255-19 (embedding field)
+    // Both the Ristretto group and the Ed25519 basepoint have prime order
+    // |Fr| = 2^{252} + 27742317777372353535851937790883648493 .
     let s_fr_mod = c_str("1000000000000000000000000000000014DEF9DEA2F79CD65812631A5CF5D3ED");
 
     let n = col.len();
@@ -568,22 +581,19 @@ pub fn dc_keys(
     // my_sess_pkey is the public key invented for each specific session round
     // my_sess_skey is the secret key invented for each specific session round
     //
-    let mut out = HashMap::new();
+    let mut out: HashMap<ParticipantID, Hash> = HashMap::new();
     let alpha = Fr::from(*my_sess_skey);
-    for pkey in participants.iter().filter(|p| **p != *my_id) {
-        let sess_pkey = sess_pkeys.get(pkey).unwrap();
-        let cpt = Pt::from(*sess_pkey);
-
-        let comm_pt = alpha * cpt;
-        let ccpt = Pt::from(comm_pt);
+    participants.iter().filter(|&&p| p != *my_id).for_each(|p| {
+        let sess_pkey = sess_pkeys.get(p).expect("can't get session pkey");
+        let comm_pt = alpha * Pt::from(*sess_pkey);
 
         let mut state = Hasher::new();
         sess.hash(&mut state);
-        ccpt.hash(&mut state);
+        comm_pt.hash(&mut state);
         let comm = state.result();
 
-        out.insert(pkey.clone(), comm);
-    }
+        out.insert(*p, comm);
+    });
     out
 }
 
@@ -638,7 +648,7 @@ where
                 // sheet as shared with all participants
                 let sheet = &mat[s];
                 let mut msg = Vec::<u8>::new();
-                let seed_str = gen_cell_seed(s, 0, 1);
+                let seed_str = gen_cell_seed(s, 0, 0);
                 let mut chunk1 = (sheet[0][0].clone()
                     - dc_slot_pad(participants, pkey, &cloaks, &seed_str))
                 .to_bytes();
@@ -647,7 +657,7 @@ where
                 let dim_r = sheet.len(); // nbr of chunks
                 let dim_c = sheet[0].len(); // s.b. nbr of participants
                 for r in 1..dim_r {
-                    let seed_str = gen_cell_seed(s, r, 1);
+                    let seed_str = gen_cell_seed(s, r, 0);
                     let chunk = (sheet[r][0].clone()
                         - dc_slot_pad(participants, pkey, &cloaks, &seed_str))
                     .to_bytes();
@@ -712,6 +722,9 @@ where
     out
 }
 
+// -----------------------------------------------------------
+// Shared scalar sums
+
 fn scalar_open_seed() -> Vec<u8> {
     format!("sum").into_bytes()
 }
@@ -734,20 +747,22 @@ pub fn dc_encode_scalar(
 }
 
 pub fn dc_scalar_open(
+    participants: &Vec<ParticipantID>,
     elts: &HashMap<ParticipantID, Fr>,
     p_excl: &Vec<ParticipantID>,
     k_excl: &HashMap<ParticipantID, HashMap<ParticipantID, Hash>>,
 ) -> Fr {
-    let mut pwrsum = Fr::zero();
     // add contribs from all users to remove cloaking
-    // and form power sum
-    elts.iter().for_each(|(_, &elt)| pwrsum += elt);
-    let seed_str = scalar_open_seed();
-    for p in p_excl {
-        let kxs = k_excl.get(p).unwrap();
-        pwrsum -= dc_slot_pad(p_excl, &p, &kxs, &seed_str);
+    // and form sum of shared scalar values
+    let mut sum = elts.iter().fold(Fr::zero(), |sum, (_, &elt)| sum + elt);
+    if !p_excl.is_empty() {
+        let seed_str = scalar_open_seed();
+        participants.iter().for_each(|p| {
+            let ktbl = k_excl.get(p).expect("can't get k_excl");
+            sum -= dc_slot_pad(p_excl, p, ktbl, &seed_str);
+        });
     }
-    pwrsum
+    sum
 }
 
 // -------------------------------------------------------------------------
@@ -1024,7 +1039,7 @@ mod tests {
         mats.insert(ParticipantID::from_pk(pk3.clone()), vec![sheet_3.clone()]);
 
         let p_excl = Vec::<ParticipantID>::new();
-        let k_excl: HashMap<ParticipantID, Hash> = HashMap::new();
+        let k_excl: HashMap<ParticipantID, HashMap<ParticipantID, Hash>> = HashMap::new();
         let my_id = all_participants[0];
 
         // interim test - try opening every cell of the sum sheet
@@ -1033,7 +1048,7 @@ mod tests {
         for r in 0..n_rows {
             let mut row = Vec::<Fr>::new();
             for c in 0..3 {
-                let val = dc_open(&mats, 0, r, c, &p_excl, &k_excl);
+                let val = dc_open(&all_participants, &mats, 0, r, c, &p_excl, &k_excl);
                 assert!(val == sum_sheet[r][c]);
                 row.push(val);
             }
@@ -1291,7 +1306,7 @@ mod tests {
             nsheets,
             max_cells,
             &p_excl,
-            &k_exs,
+            &k_excl,
         );
         let timing = start.elapsed();
         println!("{}x{} Solve {} Time = {:?}", nsheets, nrows, ncols, timing);
@@ -1420,5 +1435,60 @@ mod tests {
     #[test]
     fn tst_10_5() {
         tst_end_to_end(10, 5, 1350);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_solver_panic() {
+        fn add_col(col: &mut Vec<Fr>, x: &Vec<Fr>) {
+            for ix in 0..col.len() {
+                col[ix] += x[ix];
+            }
+        }
+
+        let f1 = Fr::random();
+        let f2 = Fr::random();
+        let f3 = Fr::random();
+        let f4 = Fr::random();
+        let mut col = exp_vec(&f1, 4);
+        add_col(&mut col, &exp_vec(&f2, 4));
+        add_col(&mut col, &exp_vec(&f3, 4));
+        add_col(&mut col, &exp_vec(&f4, 4));
+
+        // introduce a spurious inconsistency
+        // adding in one more vector than the dimension expected
+        //  - should force a non-monic solution error
+        add_col(&mut col, &vec![Fr::one(), Fr::one(), Fr::one(), Fr::one()]);
+
+        dc_solve(&col); // this should panic with non-monic solution
+    }
+
+    #[test]
+    fn test_solver() {
+        fn add_col(col: &mut Vec<Fr>, x: &Vec<Fr>) {
+            for ix in 0..col.len() {
+                col[ix] += x[ix];
+            }
+        }
+
+        for _ in 0..1000 {
+            let f1 = Fr::random();
+            let f2 = Fr::random();
+            let f3 = Fr::random();
+            let f4 = Fr::random();
+            let mut col = exp_vec(&f1, 4);
+            add_col(&mut col, &exp_vec(&f2, 4));
+            add_col(&mut col, &exp_vec(&f3, 4));
+            add_col(&mut col, &exp_vec(&f4, 4));
+            /* */
+            let ans = dc_solve(&col);
+            if !(ans.contains(&f1) && ans.contains(&f2) && ans.contains(&f3) && ans.contains(&f4)) {
+                println!("col = {:?}", col);
+                println!("[f1,f2,f3,f4] = [{:?}, {:?}, {:?}, {:?}]", f1, f2, f3, f4);
+                println!("ans = {:?}", ans);
+                panic!("invalid recovery");
+            };
+            /* */
+        }
     }
 }

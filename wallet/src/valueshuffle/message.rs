@@ -58,13 +58,14 @@ pub(crate) enum VsPayload {
         matrix: DcMatrix,
         gamma_sum: Fr,
         fee_sum: Fr,
-        cloaks: HashMap<ParticipantID, Hash>,
     },
     Signature {
         sig: SchnorrSig,
     },
     SecretKeying {
         skey: SecretKey,
+        parts: Vec<ParticipantID>,
+        cloaks: HashMap<ParticipantID, Hash>,
     },
 }
 
@@ -98,7 +99,7 @@ impl fmt::Display for VsPayload {
             VsPayload::Commitment { cmt } => write!(f, "VsPayload::Commitment( cmt: {})", cmt),
             VsPayload::CloakedVals { .. } => write!(f, "VsPayload::CloakedVals(...)"),
             VsPayload::Signature { sig } => write!(f, "VsPayload::Signature( sig: {:?})", sig),
-            VsPayload::SecretKeying { skey } => {
+            VsPayload::SecretKeying { skey, .. } => {
                 write!(f, "VsPayload::SecretKeying( skey: {:?})", skey)
             }
         }
@@ -155,7 +156,6 @@ impl Hashable for VsPayload {
                 matrix,
                 gamma_sum,
                 fee_sum,
-                cloaks,
             } => {
                 for p in matrix {
                     for r in p {
@@ -166,17 +166,23 @@ impl Hashable for VsPayload {
                 }
                 gamma_sum.hash(state);
                 fee_sum.hash(state);
-                for (p, h) in cloaks {
-                    // Q: does delivery maintain send order?
-                    p.hash(state);
-                    h.hash(state);
-                }
             }
             VsPayload::Signature { sig } => {
                 sig.hash(state);
             }
-            VsPayload::SecretKeying { skey } => {
+            VsPayload::SecretKeying {
+                skey,
+                parts,
+                cloaks,
+            } => {
                 skey.hash(state);
+                for p in parts {
+                    p.hash(state);
+                }
+                for (p, h) in cloaks {
+                    p.hash(state);
+                    h.hash(state);
+                }
             }
         }
     }

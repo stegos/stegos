@@ -222,6 +222,7 @@ pub fn split_message(msg: &[u8], max_cols: Option<usize>) -> DcRow {
                 Some(ncmax) => assert!(ncols <= ncmax, "Message requires too many cols"),
             }
             stuff_slot(&mut seg, &msg, NPREF, offs, NCHUNK);
+            // Fr::try_from_bytes() checks for valid input range 0 <= val < modulus
             out.push(Fr::try_from_bytes(&seg).expect("ok"));
             offs += NCHUNK;
         }
@@ -410,7 +411,7 @@ pub fn dc_decode(
                     }
                     // find the roots (original chunks) for the polynomial
                     // corresponding to this sequence of power sums.
-                    dc_solve(&mut row)
+                    dc_solve(&row)
                 })
                 .collect(); // we now have a sheet of uncloaked chunks
 
@@ -497,12 +498,41 @@ const RET_INVALID: c_int = 1;
 const RET_NON_MONIC_ROOT: c_int = 2;
 const RET_NOT_ENOUGH_ROOTS: c_int = 3;
 
-fn dc_solve(col: &mut Vec<Fr>) -> Vec<Fr> {
+fn check_valid_field_value(rep: &[u8; 32]) {
+    // check for valid input
+
+    // For Curve25519 the modulus is 2^255-19 (embedding field)
+    // Both the Ristretto group and the Ed25519 basepoint have prime order
+    // |Fr| = 2^{252} + 27742317777372353535851937790883648493 .
+    let modulus: [u8; 32] = [
+        0xED, 0xD3, 0xF5, 0x5C, 0x1A, 0x63, 0x12, 0x58, 0xD6, 0x9C, 0xF7, 0xA2, 0xDE, 0xF9, 0xDE,
+        0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x10,
+    ];
+    for ix in (0..32).rev() {
+        if rep[ix] > modulus[ix] {
+            panic!("Invalid field value");
+        } else if rep[ix] < modulus[ix] {
+            break;
+        }
+    }
+}
+
+fn dc_solve(col: &Vec<Fr>) -> Vec<Fr> {
     fn c_str(s: &str) -> CString {
         CString::new(s).unwrap()
     }
 
-    // For Curve25519 the modulus is 2^255-19
+    // check for valid inputs
+    // (how can they not be?) invalid can't happen, but just in case
+    for x in col.clone() {
+        let xrep = x.to_bytes();
+        check_valid_field_value(&xrep);
+    }
+
+    // For Curve25519 the modulus is 2^255-19 (embedding field)
+    // Both the Ristretto group and the Ed25519 basepoint have prime order
+    // |Fr| = 2^{252} + 27742317777372353535851937790883648493 .
     let s_fr_mod = c_str("1000000000000000000000000000000014DEF9DEA2F79CD65812631A5CF5D3ED");
 
     let n = col.len();
@@ -712,6 +742,9 @@ where
     out
 }
 
+// -----------------------------------------------------------
+// Shared scalar sums
+
 fn scalar_open_seed() -> Vec<u8> {
     format!("sum").into_bytes()
 }
@@ -736,18 +769,17 @@ pub fn dc_encode_scalar(
 pub fn dc_scalar_open(
     elts: &HashMap<ParticipantID, Fr>,
     p_excl: &Vec<ParticipantID>,
-    k_excl: &HashMap<ParticipantID, HashMap<ParticipantID, Hash>>,
+    k_excl: &HashMap<ParticipantID, Hash>,
 ) -> Fr {
-    let mut pwrsum = Fr::zero();
+    let mut sum = Fr::zero();
     // add contribs from all users to remove cloaking
     // and form power sum
-    elts.iter().for_each(|(_, &elt)| pwrsum += elt);
+    elts.iter().for_each(|(_, &elt)| sum += elt);
     let seed_str = scalar_open_seed();
     for p in p_excl {
-        let kxs = k_excl.get(p).unwrap();
-        pwrsum -= dc_slot_pad(p_excl, &p, &kxs, &seed_str);
+        sum -= dc_slot_pad(p_excl, &p, &k_excl, &seed_str);
     }
-    pwrsum
+    sum
 }
 
 // -------------------------------------------------------------------------
@@ -1420,5 +1452,60 @@ mod tests {
     #[test]
     fn tst_10_5() {
         tst_end_to_end(10, 5, 1350);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_solver_panic() {
+        fn add_col(col: &mut Vec<Fr>, x: &Vec<Fr>) {
+            for ix in 0..col.len() {
+                col[ix] += x[ix];
+            }
+        }
+
+        let f1 = Fr::random();
+        let f2 = Fr::random();
+        let f3 = Fr::random();
+        let f4 = Fr::random();
+        let mut col = exp_vec(&f1, 4);
+        add_col(&mut col, &exp_vec(&f2, 4));
+        add_col(&mut col, &exp_vec(&f3, 4));
+        add_col(&mut col, &exp_vec(&f4, 4));
+
+        // introduce a spurious inconsistency
+        // adding in one more vector than the dimension expected
+        //  - should force a non-monic solution error
+        add_col(&mut col, &vec![Fr::one(), Fr::one(), Fr::one(), Fr::one()]);
+
+        dc_solve(&col); // this should panic with non-monic solution
+    }
+
+    #[test]
+    fn test_solver() {
+        fn add_col(col: &mut Vec<Fr>, x: &Vec<Fr>) {
+            for ix in 0..col.len() {
+                col[ix] += x[ix];
+            }
+        }
+
+        for _ in 0..1000 {
+            let f1 = Fr::random();
+            let f2 = Fr::random();
+            let f3 = Fr::random();
+            let f4 = Fr::random();
+            let mut col = exp_vec(&f1, 4);
+            add_col(&mut col, &exp_vec(&f2, 4));
+            add_col(&mut col, &exp_vec(&f3, 4));
+            add_col(&mut col, &exp_vec(&f4, 4));
+            /* */
+            let ans = dc_solve(&col);
+            if !(ans.contains(&f1) && ans.contains(&f2) && ans.contains(&f3) && ans.contains(&f4)) {
+                println!("col = {:?}", col);
+                println!("[f1,f2,f3,f4] = [{:?}, {:?}, {:?}, {:?}]", f1, f2, f3, f4);
+                println!("ans = {:?}", ans);
+                panic!("invalid recovery");
+            };
+            /* */
+        }
     }
 }

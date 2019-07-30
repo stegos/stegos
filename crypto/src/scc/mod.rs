@@ -1248,4 +1248,44 @@ pub mod tests {
         let timing = start.elapsed().unwrap();
         println!("Const Time (1111...) = {:?}", timing / niter);
     }
+
+    #[test]
+    fn check_hex_conversions() {
+        let str = "1000000000000000000000000000000000000000000000000000000000000000";
+        let x = Fr::try_from_hex(str).expect("ok");
+        let rep = x.to_bytes();
+        println!("x = {:?}", x);
+        println!("rep = {:?}", rep);
+        assert!(
+            rep == [
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 16
+            ]
+        );
+
+        let str = "1000000000000000000000000000000014DEF9DEA2F79CD65812631A5CF5D3ED";
+        let _x = Fr::try_from_hex(str).expect_err("ok");
+
+        let str = "0000000000000000000000000000000000000000000000000000000000000001";
+        let x = Fr::try_from_hex(str).expect("ok");
+        let rep = x.to_bytes();
+        println!("x = {:?}", x);
+        assert!(
+            rep == [
+                1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0
+            ]
+        );
+
+        let str = "1";
+        let x = Fr::try_from_hex(str).expect("ok");
+        let rep = x.to_bytes();
+        println!("x = {:?}", x);
+        assert!(
+            rep == [
+                1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0
+            ]
+        );
+    }
 }

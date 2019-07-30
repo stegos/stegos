@@ -56,7 +56,6 @@ impl ProtoConvert for VsPayload {
                 matrix,
                 gamma_sum,
                 fee_sum,
-                cloaks,
             } => {
                 let mut body = valueshuffle::CloakedVals::new();
                 let mut dcsheets = valueshuffle::DcMatrix::new();
@@ -74,10 +73,6 @@ impl ProtoConvert for VsPayload {
                 body.set_matrix(dcsheets);
                 body.set_gamma_sum(gamma_sum.into_proto());
                 body.set_fee_sum(fee_sum.into_proto());
-                for (p, h) in cloaks {
-                    body.parts.push(p.into_proto());
-                    body.cloaks.push(h.into_proto());
-                }
                 msg.set_cloakedvals(body);
             }
             VsPayload::Signature { sig } => {
@@ -85,9 +80,20 @@ impl ProtoConvert for VsPayload {
                 body.set_sig(sig.into_proto());
                 msg.set_signature(body);
             }
-            VsPayload::SecretKeying { skey } => {
+            VsPayload::SecretKeying {
+                skey,
+                parts,
+                cloaks,
+            } => {
                 let mut body = valueshuffle::SecretKeying::new();
                 body.set_skey(skey.into_proto());
+                for p in parts {
+                    body.parts.push(p.into_proto());
+                }
+                for (p, h) in cloaks {
+                    body.drops.push(p.into_proto());
+                    body.cloaks.push(h.into_proto());
+                }
                 msg.set_secretkeying(body);
             }
         }
@@ -120,27 +126,33 @@ impl ProtoConvert for VsPayload {
                     }
                     matrix.push(rows);
                 }
-                let mut cloaks: HashMap<ParticipantID, Hash> = HashMap::new();
-                for (part, hash) in msg.parts.iter().zip(msg.cloaks.iter()) {
-                    let p = ParticipantID::from_proto(part)?;
-                    let h = Hash::from_proto(hash)?;
-                    cloaks.insert(p, h);
-                }
                 let gamma_sum = Fr::from_proto(msg.get_gamma_sum())?;
                 let fee_sum = Fr::from_proto(msg.get_fee_sum())?;
                 VsPayload::CloakedVals {
                     matrix,
                     gamma_sum,
                     fee_sum,
-                    cloaks,
                 }
             }
             Some(valueshuffle::VsPayload_oneof_body::signature(ref msg)) => VsPayload::Signature {
                 sig: SchnorrSig::from_proto(msg.get_sig())?,
             },
             Some(valueshuffle::VsPayload_oneof_body::secretkeying(ref msg)) => {
+                let mut parts = Vec::<ParticipantID>::new();
+                for part in msg.parts.iter() {
+                    let p = ParticipantID::from_proto(part)?;
+                    parts.push(p);
+                }
+                let mut cloaks: HashMap<ParticipantID, Hash> = HashMap::new();
+                for (drop, hash) in msg.drops.iter().zip(msg.cloaks.iter()) {
+                    let p = ParticipantID::from_proto(drop)?;
+                    let h = Hash::from_proto(hash)?;
+                    cloaks.insert(p, h);
+                }
                 VsPayload::SecretKeying {
                     skey: SecretKey::from_proto(msg.get_skey())?,
+                    parts,
+                    cloaks,
                 }
             }
             None => {

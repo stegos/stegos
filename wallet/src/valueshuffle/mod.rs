@@ -867,7 +867,7 @@ impl ValueShuffle {
     fn handle_vs_timer(&mut self, when: SystemTime) -> Result<(), Error> {
         // self.waiting contains the nbr seconds countdown until a timeout
         // specify waiting = 0 for no timeout checking
-        if self.waiting > 0 && when > self.wait_start {
+        if self.waiting > 0 && when >= self.wait_start {
             self.waiting -= 1;
             if 0 == self.waiting {
                 // reset msg_state to indicate done waiting for this kind of message

@@ -85,7 +85,20 @@ impl<'timer> Sandbox<'timer> {
         F: FnOnce(Sandbox),
     {
         start_test(|timer| {
-            let _ = simple_logger::init_with_level(Level::Trace);
+            let var = std::env::var("STEGOS_TEST_LOGS_LEVEL")
+                .ok()
+                .map(|s| s.to_lowercase());
+            let level = match var.as_ref().map(AsRef::as_ref) {
+                Some("off") => None,
+                Some("error") => Some(Level::Error),
+                Some("warn") => Some(Level::Warn),
+                _ => Some(Level::Trace),
+            };
+
+            if let Some(level) = level {
+                let _ = simple_logger::init_with_level(level);
+            }
+
             let num_nodes = config.num_nodes;
             let timestamp = Timestamp::now();
 

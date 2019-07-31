@@ -123,8 +123,8 @@ use tokio_timer::Interval;
 /// A topic used for ValueShuffle unicast communication.
 pub const VALUE_SHUFFLE_TOPIC: &'static str = "valueshuffle";
 
-const VS_TIMER: Duration = Duration::from_secs(1); // recurring 1sec events
-const VS_TIMEOUT: i16 = 60; // sec, default for now
+pub const VS_TIMER: Duration = Duration::from_secs(1); // recurring 1sec events
+pub const VS_TIMEOUT: i16 = 60; // sec, default for now
 
 pub const MAX_UTXOS: usize = 5; // max nbr of txout UTXO permitted
 

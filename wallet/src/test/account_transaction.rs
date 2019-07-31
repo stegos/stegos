@@ -1168,3 +1168,372 @@ fn vs_with_wrong_facilitator_pool() {
         s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
     });
 }
+
+/// create_vs but with simplifed broadcast, and 4 participants
+#[test]
+fn create_vs_simple() {
+    const SEND_TOKENS: i64 = 10;
+    // send MINIMAL_TOKEN + FEE
+    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    // set micro_blocks to some big value.
+    let config = SandboxConfig {
+        chain: ChainConfig {
+            micro_blocks_in_epoch: 2000,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    Sandbox::start(config, |mut s| {
+        let mut accounts = genesis_accounts(&mut s);
+
+        s.poll();
+        let (genesis, rest) = accounts.split_at_mut(1);
+        precondition_each_account_has_tokens(&mut s, MIN_AMOUNT, &mut genesis[0], rest);
+        let num_nodes = accounts.len();
+        assert!(num_nodes >= 3);
+
+        let recipient = accounts[3].account_service.account_pkey;
+
+        let mut notifications = Vec::new();
+        for i in 0..num_nodes {
+            let mut notification = accounts[i].account.subscribe();
+            let (id, response) =
+                vs_start(recipient, SEND_TOKENS, &mut accounts[i], &mut notification);
+            notifications.push((notification, id, response));
+            accounts[i].poll();
+        }
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+        debug!("===== JOINING TXPOOL =====");
+        s.deliver_unicast(stegos_node::txpool::POOL_JOIN_TOPIC);
+        s.poll();
+
+        // this code are done just to work with different timeout configuration.
+        {
+            let sleep_time = stegos_node::txpool::MESSAGE_TIMEOUT;
+
+            s.wait(sleep_time);
+            // if not, just poll to triger txpoll_anouncment
+            s.poll();
+        }
+
+        for (account, status) in accounts.iter_mut().zip(&mut notifications) {
+            let (notification, _, _) = status;
+            account.poll();
+            clear_notification(notification)
+        }
+
+        s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+        debug!("===== ANONCING TXPOOL =====");
+        s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
+
+        debug!("===== VS STARTED NEW POOL: Send::SharedKeying =====");
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+
+        debug!("===== VS Receive shared keying: Send::Commitment =====");
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+
+        debug!("===== VS Receive commitment: produce CloakedVals =====");
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+
+        debug!("===== VS Receive CloakedVals: produce signatures =====");
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+
+        debug!("===== VS Receive Signatures: produce tx =====");
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        // rebroadcast transaction to each node
+        let mut my_tx_hash = None;
+        let mut notifications_new = Vec::new();
+        for (account, status) in accounts.iter_mut().zip(notifications) {
+            let (mut notification, hash, response) = status;
+            account.poll();
+            my_tx_hash = Some(match get_request(response) {
+                AccountResponse::TransactionCreated(tx) => tx.tx_hash,
+
+                e => panic!("{:?}", e),
+            });
+            notifications_new.push((notification, hash))
+        }
+
+        debug!("===== BROADCAST VS TRANSACTION =====");
+        s.poll();
+        s.broadcast(stegos_node::TX_TOPIC);
+        s.skip_micro_block();
+
+        for (account, status) in accounts.iter_mut().zip(&mut notifications_new) {
+            let (notification, _hash) = status;
+
+            account.poll();
+
+            // ignore multiple notification, and assert that notification not equal to our.
+            while let AccountNotification::TransactionStatus {
+                tx_hash,
+                status: TransactionStatus::Prepared { .. },
+            } = get_notification(notification)
+            {
+                if tx_hash != my_tx_hash.unwrap() {
+                    unreachable!()
+                }
+            }
+        }
+    });
+}
+
+//
+// Check errors in vs.
+//
+
+#[test]
+fn create_vs_fail_share_key() {
+    const SEND_TOKENS: i64 = 10;
+    // send MINIMAL_TOKEN + FEE
+    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    // set micro_blocks to some big value.
+    let config = SandboxConfig {
+        chain: ChainConfig {
+            micro_blocks_in_epoch: 2000,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    Sandbox::start(config, |mut s| {
+        let mut accounts = genesis_accounts(&mut s);
+
+        s.poll();
+        let (genesis, rest) = accounts.split_at_mut(1);
+        precondition_each_account_has_tokens(&mut s, MIN_AMOUNT, &mut genesis[0], rest);
+        let num_nodes = accounts.len();
+        assert!(num_nodes >= 3);
+
+        let recipient = accounts[3].account_service.account_pkey;
+
+        let mut notifications = Vec::new();
+        for i in 0..num_nodes {
+            let mut notification = accounts[i].account.subscribe();
+            let (id, response) =
+                vs_start(recipient, SEND_TOKENS, &mut accounts[i], &mut notification);
+            notifications.push((notification, id, response));
+            accounts[i].poll();
+        }
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+        debug!("===== JOINING TXPOOL =====");
+        s.deliver_unicast(stegos_node::txpool::POOL_JOIN_TOPIC);
+        s.poll();
+
+        // this code are done just to work with different timeout configuration.
+        {
+            let sleep_time = stegos_node::txpool::MESSAGE_TIMEOUT;
+
+            s.wait(sleep_time);
+            // if not, just poll to triger txpoll_anouncment
+            s.poll();
+        }
+
+        for (account, status) in accounts.iter_mut().zip(&mut notifications) {
+            let (notification, _, _) = status;
+            account.poll();
+            clear_notification(notification)
+        }
+
+        s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+        debug!("===== ANONCING TXPOOL =====");
+
+        s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
+
+        let last_account = accounts.pop();
+        drop(last_account);
+        debug!("===== VS STARTED NEW POOL: Send::SharedKeying =====");
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        s.wait(crate::valueshuffle::VS_TIMER * crate::valueshuffle::VS_TIMEOUT as u32);
+        s.poll();
+
+        s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+        debug!("===== VS Receive shared keying: Send::Commitment =====");
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+
+        debug!("===== VS Receive commitment: produce CloakedVals =====");
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+
+        debug!("===== VS Receive CloakedVals: produce signatures =====");
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+
+        debug!("===== VS Receive Signatures: produce tx =====");
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        // rebroadcast transaction to each node
+        let mut my_tx_hash = None;
+        let mut notifications_new = Vec::new();
+        for (account, status) in accounts.iter_mut().zip(notifications) {
+            let (mut notification, hash, response) = status;
+            account.poll();
+            my_tx_hash = Some(match get_request(response) {
+                AccountResponse::TransactionCreated(tx) => tx.tx_hash,
+
+                e => panic!("{:?}", e),
+            });
+            notifications_new.push((notification, hash))
+        }
+
+        debug!("===== BROADCAST VS TRANSACTION =====");
+        s.poll();
+        s.broadcast(stegos_node::TX_TOPIC);
+        s.skip_micro_block();
+
+        for (account, status) in accounts.iter_mut().zip(&mut notifications_new) {
+            let (notification, _hash) = status;
+
+            account.poll();
+
+            // ignore multiple notification, and assert that notification not equal to our.
+            while let AccountNotification::TransactionStatus {
+                tx_hash,
+                status: TransactionStatus::Prepared { .. },
+            } = get_notification(notification)
+            {
+                if tx_hash != my_tx_hash.unwrap() {
+                    unreachable!()
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn create_vs_fail_committment() {
+    const SEND_TOKENS: i64 = 10;
+    // send MINIMAL_TOKEN + FEE
+    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    // set micro_blocks to some big value.
+    let config = SandboxConfig {
+        chain: ChainConfig {
+            micro_blocks_in_epoch: 2000,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    Sandbox::start(config, |mut s| {
+        let mut accounts = genesis_accounts(&mut s);
+
+        s.poll();
+        let (genesis, rest) = accounts.split_at_mut(1);
+        precondition_each_account_has_tokens(&mut s, MIN_AMOUNT, &mut genesis[0], rest);
+        let num_nodes = accounts.len();
+        assert!(num_nodes >= 3);
+
+        let recipient = accounts[3].account_service.account_pkey;
+
+        let mut notifications = Vec::new();
+        for i in 0..num_nodes {
+            let mut notification = accounts[i].account.subscribe();
+            let (id, response) =
+                vs_start(recipient, SEND_TOKENS, &mut accounts[i], &mut notification);
+            notifications.push((notification, id, response));
+            accounts[i].poll();
+        }
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+        debug!("===== JOINING TXPOOL =====");
+        s.deliver_unicast(stegos_node::txpool::POOL_JOIN_TOPIC);
+        s.poll();
+
+        // this code are done just to work with different timeout configuration.
+        {
+            let sleep_time = stegos_node::txpool::MESSAGE_TIMEOUT;
+
+            s.wait(sleep_time);
+            // if not, just poll to triger txpoll_anouncment
+            s.poll();
+        }
+
+        for (account, status) in accounts.iter_mut().zip(&mut notifications) {
+            let (notification, _, _) = status;
+            account.poll();
+            clear_notification(notification)
+        }
+
+        s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+        debug!("===== ANONCING TXPOOL =====");
+
+        s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
+        debug!("===== VS STARTED NEW POOL: Send::SharedKeying =====");
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+
+        let last_account = accounts.pop();
+        drop(last_account);
+        debug!("===== VS Receive shared keying: Send::Commitment =====");
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        s.wait(crate::valueshuffle::VS_TIMER * crate::valueshuffle::VS_TIMEOUT as u32);
+        s.poll();
+
+        s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+        debug!("===== VS Receive commitment: produce CloakedVals =====");
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+
+        debug!("===== VS Receive CloakedVals: produce signatures =====");
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+
+        debug!("===== VS Receive Signatures: produce tx =====");
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        // rebroadcast transaction to each node
+        let mut my_tx_hash = None;
+        let mut notifications_new = Vec::new();
+        for (account, status) in accounts.iter_mut().zip(notifications) {
+            let (mut notification, hash, response) = status;
+            account.poll();
+            my_tx_hash = Some(match get_request(response) {
+                AccountResponse::TransactionCreated(tx) => tx.tx_hash,
+
+                e => panic!("{:?}", e),
+            });
+            notifications_new.push((notification, hash))
+        }
+
+        debug!("===== BROADCAST VS TRANSACTION =====");
+        s.poll();
+        s.broadcast(stegos_node::TX_TOPIC);
+        s.skip_micro_block();
+
+        for (account, status) in accounts.iter_mut().zip(&mut notifications_new) {
+            let (notification, _hash) = status;
+
+            account.poll();
+
+            // ignore multiple notification, and assert that notification not equal to our.
+            while let AccountNotification::TransactionStatus {
+                tx_hash,
+                status: TransactionStatus::Prepared { .. },
+            } = get_notification(notification)
+            {
+                if tx_hash != my_tx_hash.unwrap() {
+                    unreachable!()
+                }
+            }
+        }
+
+        panic!();
+    });
+}

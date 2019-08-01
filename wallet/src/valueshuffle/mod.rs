@@ -123,8 +123,8 @@ use tokio_timer::Interval;
 /// A topic used for ValueShuffle unicast communication.
 pub const VALUE_SHUFFLE_TOPIC: &'static str = "valueshuffle";
 
-const VS_TIMER: Duration = Duration::from_secs(1); // recurring 1sec events
-const VS_TIMEOUT: i16 = 60; // sec, default for now
+pub const VS_TIMER: Duration = Duration::from_secs(1); // recurring 1sec events
+pub const VS_TIMEOUT: i16 = 60; // sec, default for now
 
 pub const MAX_UTXOS: usize = 5; // max nbr of txout UTXO permitted
 
@@ -867,7 +867,7 @@ impl ValueShuffle {
     fn handle_vs_timer(&mut self, when: SystemTime) -> Result<(), Error> {
         // self.waiting contains the nbr seconds countdown until a timeout
         // specify waiting = 0 for no timeout checking
-        if self.waiting > 0 && when > self.wait_start {
+        if self.waiting > 0 && when >= self.wait_start {
             self.waiting -= 1;
             if 0 == self.waiting {
                 // reset msg_state to indicate done waiting for this kind of message

@@ -43,6 +43,7 @@ use stegos_network::{Libp2pNetwork, NETWORK_STATUS_TOPIC};
 use stegos_node::NodeService;
 use stegos_wallet::WalletService;
 use tokio::runtime::Runtime;
+use tokio_timer::clock;
 
 use crate::report_metrics;
 
@@ -379,7 +380,15 @@ fn run() -> Result<(), Error> {
         .subscribe(&NETWORK_STATUS_TOPIC)?
         .into_future()
         .map_err(drop)
-        .and_then(move |_s| {
+        .and_then(|_s| {
+            // Sic: NetworkReady doesn't wait until unicast networking is initialized.
+            // https://github.com/stegos/stegos/issues/1192
+            // Fire a timer here to wait until unicast networking is fully initialized.
+            // This duration (30 secs) was experimentally found on the real network.
+            let network_grace_period = std::time::Duration::from_secs(30);
+            tokio_timer::Delay::new(clock::now() + network_grace_period).map_err(drop)
+        })
+        .and_then(move |()| {
             info!("Network is ready");
             // TODO: how to handle errors here?
             node_service.init().expect("shit happens");

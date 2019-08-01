@@ -820,6 +820,7 @@ fn create_vs_tx() {
         s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
         debug!("===== ANONCING TXPOOL =====");
+        accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
 
         debug!("===== VS STARTED NEW POOL: Send::SharedKeying =====");

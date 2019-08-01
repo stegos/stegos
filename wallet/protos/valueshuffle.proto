@@ -30,7 +30,7 @@ message CloakedVals {
     DcMatrix matrix = 1;
     stegos.crypto.Fr gamma_sum = 2;
     stegos.crypto.Fr fee_sum = 3;
-    repeated stegos.crypto.DiceMixParticipantID parts = 4;
+    repeated stegos.crypto.DiceMixParticipantID drops = 4;
     repeated stegos.crypto.Hash cloaks = 5;
 }
 

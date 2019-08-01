@@ -74,10 +74,10 @@ impl ProtoConvert for VsPayload {
                 body.set_matrix(dcsheets);
                 body.set_gamma_sum(gamma_sum.into_proto());
                 body.set_fee_sum(fee_sum.into_proto());
-                for (p, h) in cloaks {
-                    body.parts.push(p.into_proto());
+                cloaks.iter().for_each(|(p, h)| {
+                    body.drops.push(p.into_proto());
                     body.cloaks.push(h.into_proto());
-                }
+                });
                 msg.set_cloakedvals(body);
             }
             VsPayload::Signature { sig } => {
@@ -120,14 +120,14 @@ impl ProtoConvert for VsPayload {
                     }
                     matrix.push(rows);
                 }
+                let gamma_sum = Fr::from_proto(msg.get_gamma_sum())?;
+                let fee_sum = Fr::from_proto(msg.get_fee_sum())?;
                 let mut cloaks: HashMap<ParticipantID, Hash> = HashMap::new();
-                for (part, hash) in msg.parts.iter().zip(msg.cloaks.iter()) {
-                    let p = ParticipantID::from_proto(part)?;
+                for (drop, hash) in msg.drops.iter().zip(msg.cloaks.iter()) {
+                    let p = ParticipantID::from_proto(drop)?;
                     let h = Hash::from_proto(hash)?;
                     cloaks.insert(p, h);
                 }
-                let gamma_sum = Fr::from_proto(msg.get_gamma_sum())?;
-                let fee_sum = Fr::from_proto(msg.get_fee_sum())?;
                 VsPayload::CloakedVals {
                     matrix,
                     gamma_sum,

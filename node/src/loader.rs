@@ -27,6 +27,7 @@ use stegos_blockchain::Block;
 use stegos_crypto::hash::{Hashable, Hasher};
 use stegos_crypto::pbc;
 use stegos_serialization::traits::ProtoConvert;
+use tokio_timer::{clock, Delay};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct RequestBlocks {
@@ -89,7 +90,7 @@ impl Hashable for ChainLoaderMessage {
 pub const CHAIN_LOADER_TOPIC: &'static str = "chain-loader";
 
 impl NodeService {
-    pub fn request_history(&mut self, epoch: u64) -> Result<(), Error> {
+    pub fn request_history(&mut self, epoch: u64, reason: &str) -> Result<(), Error> {
         // Choose a master node to download blocks from.
         let mut rng = rand::thread_rng();
         // use latest known validators list.
@@ -103,11 +104,21 @@ impl NodeService {
             Some(pkey) => pkey.clone(),
             None => return Ok(()), // for tests.
         };
-        self.request_history_from(from, epoch)
+        self.request_history_from(from, epoch, reason)
     }
 
-    pub fn request_history_from(&mut self, from: pbc::PublicKey, epoch: u64) -> Result<(), Error> {
-        info!("Downloading blocks: from={}, epoch={}", &from, epoch);
+    pub fn request_history_from(
+        &mut self,
+        from: pbc::PublicKey,
+        epoch: u64,
+        reason: &str,
+    ) -> Result<(), Error> {
+        info!(
+            "Downloading blocks: from={}, epoch={}, reason='{}'",
+            &from, epoch, reason
+        );
+        // Re-schedule loader timer.
+        self.loader_timer = Some(Delay::new(clock::now() + self.cfg.loader_timeout));
         let msg = ChainLoaderMessage::Request(RequestBlocks::new(epoch));
         self.network
             .send(from, CHAIN_LOADER_TOPIC, msg.into_buffer()?)
@@ -158,35 +169,53 @@ impl NodeService {
         let first_epoch = match response.blocks.first() {
             Some(Block::MacroBlock(block)) => block.header.epoch,
             Some(Block::MicroBlock(block)) => block.header.epoch,
-            None => return Ok(()), // Empty response
+            None => {
+                // Empty response
+                info!(
+                    "Received blocks: from={}, num_blocks={}",
+                    pkey,
+                    response.blocks.len(),
+                );
+                return Ok(());
+            }
         };
         let last_epoch = match response.blocks.last() {
             Some(Block::MacroBlock(block)) => block.header.epoch,
             Some(Block::MicroBlock(block)) => block.header.epoch,
             None => unreachable!("Checked above"),
         };
-
         if first_epoch > self.chain.epoch() {
             warn!(
-                "Received blocks from future: from={}, first_epoch={}, our_epoch={}",
+                "Received blocks from the future: from={}, our_epoch={}, first_epoch={}",
                 pkey,
+                self.chain.epoch(),
                 first_epoch,
+            );
+            return Ok(());
+        } else if last_epoch < self.chain.epoch() {
+            warn!(
+                "Received blocks from the past: from={}, last_epoch={}, our_epoch={}",
+                pkey,
+                last_epoch,
                 self.chain.epoch()
             );
             return Ok(());
         }
 
-        debug!(
-            "Received blocks: from={}, first_epoch={}, last_epoch={}, num_blocks={}",
+        info!(
+            "Received blocks: from={}, first_epoch={}, our_epoch={}, last_epoch={}, num_blocks={}",
             pkey,
             first_epoch,
+            self.chain.epoch(),
             last_epoch,
             response.blocks.len(),
         );
-
-        if !self.is_synchronized() {
-            // Optimistically prefetch the next chunk.
-            self.request_history(last_epoch + 1)?;
+        if self.is_synchronized() {
+            // Reset loader timer.
+            self.loader_timer = None;
+        } else {
+            // Optimistically prefetch the next batch.
+            self.request_history(last_epoch + 1, "prefetch")?;
         }
 
         for block in response.blocks {

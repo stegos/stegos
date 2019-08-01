@@ -155,7 +155,6 @@ fn autocommit() {
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
         let block_hash2 = Hash::digest(&block2);
         assert_eq!(block_hash, block_hash2);
-        s.filter_unicast(&["chain-loader"])
     });
 }
 

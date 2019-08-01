@@ -32,6 +32,8 @@ use std::sync::{Arc, Mutex};
 use stegos_crypto::pbc;
 use stegos_serialization::traits::ProtoConvert;
 
+const IGNORED_UNICAST_PROTOCOLS: [&'static str; 1] = ["chain-loader"];
+
 #[derive(Debug, Clone)]
 pub struct LoopbackNetwork {
     state: Arc<Mutex<LoopbackState>>,
@@ -134,6 +136,11 @@ impl Loopback {
         let mut result = Vec::new();
         for data in &state.queue {
             match data {
+                MessageFromNode::SendUnicast { protocol_id, .. }
+                    if IGNORED_UNICAST_PROTOCOLS.contains(&protocol_id.as_str()) =>
+                {
+                    continue
+                }
                 MessageFromNode::SendUnicast {
                     protocol_id: topic, ..
                 }
@@ -181,33 +188,45 @@ impl Loopback {
 
     pub fn try_get_broadcast_raw(&mut self, topic: &str) -> Option<Vec<u8>> {
         let ref mut state = self.state.lock().unwrap();
-        match state.queue.pop_front()? {
-            MessageFromNode::Publish {
-                topic: msg_topic,
-                data: msg_data,
-            } => {
-                assert_eq!(topic, &msg_topic);
-                Some(msg_data.clone())
-            }
-            x => {
-                panic!("Other message in queue = {:?}", x);
+        loop {
+            match state.queue.pop_front() {
+                Some(MessageFromNode::SendUnicast {
+                    ref protocol_id, ..
+                }) if IGNORED_UNICAST_PROTOCOLS.contains(&protocol_id.as_str()) => continue,
+                Some(MessageFromNode::Publish {
+                    topic: msg_topic,
+                    data: msg_data,
+                }) => {
+                    assert_eq!(topic, &msg_topic);
+                    return Some(msg_data.clone());
+                }
+                Some(x) => {
+                    panic!("Other message in queue = {:?}", x);
+                }
+                None => return None,
             }
         }
     }
 
     pub fn try_get_unicast_raw(&mut self, protocol_id: &str) -> Option<(Vec<u8>, pbc::PublicKey)> {
         let ref mut state = self.state.lock().unwrap();
-        match state.queue.pop_front()? {
-            MessageFromNode::SendUnicast {
-                protocol_id: msg_protocol_id,
-                to: msg_peer,
-                data: msg_data,
-            } => {
-                assert_eq!(protocol_id, &msg_protocol_id);
-                Some((msg_data.clone(), msg_peer.clone()))
-            }
-            x => {
-                panic!("Other message in queue = {:?}", x);
+        loop {
+            match state.queue.pop_front() {
+                Some(MessageFromNode::SendUnicast {
+                    ref protocol_id, ..
+                }) if IGNORED_UNICAST_PROTOCOLS.contains(&protocol_id.as_str()) => continue,
+                Some(MessageFromNode::SendUnicast {
+                    protocol_id: msg_protocol_id,
+                    to: msg_peer,
+                    data: msg_data,
+                }) => {
+                    assert_eq!(protocol_id, &msg_protocol_id);
+                    return Some((msg_data.clone(), msg_peer.clone()));
+                }
+                Some(x) => {
+                    panic!("Other message in queue = {:?}", x);
+                }
+                None => return None,
             }
         }
     }

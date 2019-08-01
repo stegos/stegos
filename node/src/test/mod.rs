@@ -32,8 +32,6 @@ mod consensus;
 mod integration;
 #[cfg(test)]
 mod microblocks;
-#[cfg(test)]
-mod requests;
 
 use crate::*;
 use assert_matches::assert_matches;

@@ -190,6 +190,9 @@ pub struct NodeService {
     /// Monotonic clock when the latest block was registered.
     last_block_clock: Instant,
 
+    /// A timer to re-scheduler the loader.
+    loader_timer: Option<Delay>,
+
     /// Cheating detection.
     cheating_proofs: HashMap<pbc::PublicKey, SlashingProof>,
 
@@ -226,6 +229,7 @@ impl NodeService {
             MicroBlockAuditor
         };
         let cheating_proofs = HashMap::new();
+        let loader_timer = None;
 
         let on_node_notification = Vec::new();
 
@@ -285,6 +289,7 @@ impl NodeService {
             mempool,
             validation,
             last_block_clock,
+            loader_timer,
             cheating_proofs,
             network: network.clone(),
             events,
@@ -300,7 +305,7 @@ impl NodeService {
         self.update_validation_status();
         self.on_sync_changed();
         self.restake_expiring_stakes()?;
-        self.request_history(self.chain.epoch())?;
+        self.request_history(self.chain.epoch(), "init")?;
         Ok(())
     }
 
@@ -628,7 +633,7 @@ impl NodeService {
                   local_view_change,
                   remote_view_change);
             // Request history from that node.
-            self.request_history_from(pkey, epoch)?;
+            self.request_history_from(pkey, epoch, "fork resolution")?;
             return Err(ForkError::Canceled);
         }
 
@@ -711,12 +716,16 @@ impl NodeService {
         } else {
             let block_hash = Hash::digest(&block);
             debug!(
-                "Skip a macro block from future: block={}, epoch={}, our_epoch={}",
+                "Skip a macro block from the future: block={}, epoch={}, our_epoch={}",
                 block_hash,
                 block.header.epoch,
                 self.chain.epoch(),
             );
-            self.request_history_from(block.header.pkey, self.chain.epoch())?;
+            self.request_history_from(
+                block.header.pkey,
+                self.chain.epoch(),
+                "macro block from the future",
+            )?;
             Ok(())
         }
     }
@@ -825,7 +834,7 @@ impl NodeService {
                 Ok(BlockchainError::BlockError(BlockError::InvalidMicroBlockPreviousHash(..))) => {
                     // A potential fork - request history from that node.
                     let from = self.chain.select_leader(view_change);
-                    self.request_history_from(from, self.chain.epoch())?;
+                    self.request_history_from(from, self.chain.epoch(), "invalid previous hash")?;
                 }
                 Ok(BlockchainError::BlockError(BlockError::InvalidViewChange(..))) => {
                     assert!(self.chain.view_change() > 0);
@@ -929,6 +938,8 @@ impl NodeService {
         assert_eq!(statuses.len(), transactions.len());
 
         if !was_synchronized && self.is_synchronized() {
+            // Reset loader timer.
+            self.loader_timer = None;
             info!(
                 "Synchronized with the network: epoch={}, last_block={}",
                 epoch,
@@ -1721,10 +1732,7 @@ impl NodeService {
             self.chain.last_block_hash(),
         );
         self.handle_view_change_message(msg)?;
-
-        // Try to request this block from the leader.
         self.on_sync_changed();
-        self.request_history_from(leader, self.chain.epoch())?;
 
         Ok(())
     }
@@ -1841,6 +1849,16 @@ impl Future for NodeService {
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         // Poll timers first.
+        if let Some(ref mut loader_timer) = &mut self.loader_timer {
+            match loader_timer.poll().unwrap() {
+                Async::Ready(()) => {
+                    if let Err(e) = self.request_history(self.chain.epoch(), "timer") {
+                        error!("Failed to request history: {}", e);
+                    }
+                }
+                Async::NotReady => {}
+            }
+        }
         let result = match &mut self.validation {
             MicroBlockAuditor
             | MicroBlockValidator {

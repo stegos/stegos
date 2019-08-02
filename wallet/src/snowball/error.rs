@@ -1,4 +1,4 @@
-//! error.rs - ValueShuffle Errors.
+//! error.rs - Snowball Errors.
 
 //
 // Copyright (c) 2019 Stegos AG
@@ -27,9 +27,9 @@ use failure::Fail;
 // Possible Error return codes
 
 #[derive(Debug, Fail)]
-pub enum VsError {
+pub enum SnowballError {
     #[fail(display = "We aren't a participant")]
-    VsNotInParticipantList,
+    NotInParticipantList,
     #[fail(display = "Not enough participants: {}", _0)]
-    VsTooFewParticipants(usize),
+    TooFewParticipants(usize),
 }

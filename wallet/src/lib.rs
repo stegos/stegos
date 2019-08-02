@@ -29,17 +29,17 @@ mod error;
 mod metrics;
 mod protos;
 mod recovery;
+mod snowball;
 mod storage;
 #[cfg(test)]
 mod test;
 mod transaction;
-mod valueshuffle;
 
 use self::error::WalletError;
 use self::recovery::recovery_to_account_skey;
+use self::snowball::{Snowball, SnowballOutput};
 use self::storage::*;
 use self::transaction::*;
-use self::valueshuffle::{ValueShuffle, ValueShuffleOutput};
 use api::*;
 use failure::{bail, Error};
 use futures::future::IntoFuture;
@@ -142,11 +142,10 @@ struct UnsealedAccountService {
     check_pending_utxos: Interval,
 
     //
-    // Value shuffle api (owned)
+    // Snowball state (owned)
     //
-    /// ValueShuffle State.
-    vs: Option<ValueShuffle>,
-    vs_session: Option<(Hash, oneshot::Sender<AccountResponse>)>,
+    snowball: Option<Snowball>,
+    snowball_session: Option<(Hash, oneshot::Sender<AccountResponse>)>,
     transaction_response: Option<oneshot::Receiver<NodeResponse>>,
 
     //
@@ -196,8 +195,8 @@ impl UnsealedAccountService {
 
         let public_payments = HashMap::new();
         let stakes: HashMap<Hash, StakeValue> = HashMap::new();
-        let vs = None;
-        let vs_session = None;
+        let snowball = None;
+        let snowball_session = None;
 
         let last_macro_block_timestamp = Timestamp::UNIX_EPOCH;
 
@@ -237,8 +236,8 @@ impl UnsealedAccountService {
             stakes,
             resend_tx,
             check_pending_utxos,
-            vs,
-            vs_session,
+            snowball,
+            snowball_session,
             stake_epochs,
             max_inputs_in_tx,
             last_macro_block_timestamp,
@@ -303,7 +302,7 @@ impl UnsealedAccountService {
                     *input,
                     PendingOutput {
                         time,
-                        vs_session: None,
+                        snowball_session: None,
                     }
                 )
                 .is_none());
@@ -360,7 +359,7 @@ impl UnsealedAccountService {
                     *input,
                     PendingOutput {
                         time,
-                        vs_session: None,
+                        snowball_session: None,
                     }
                 )
                 .is_none());
@@ -391,7 +390,7 @@ impl UnsealedAccountService {
         comment: String,
         locked_timestamp: Option<Timestamp>,
     ) -> Result<Hash, Error> {
-        if self.vs.is_some() {
+        if self.snowball.is_some() {
             return Err(WalletError::SnowballBusy.into());
         }
         let unspent_iter = self
@@ -399,7 +398,7 @@ impl UnsealedAccountService {
             .iter()
             .filter(|(h, _)| self.pending_payments.get(h).is_none())
             .map(|(_, v)| (&v.output, v.amount, v.output.locked_timestamp.clone()));
-        let (inputs, outputs, fee) = create_vs_payment_transaction(
+        let (inputs, outputs, fee) = create_snowball_transaction(
             &self.account_pkey,
             recipient,
             unspent_iter,
@@ -410,7 +409,7 @@ impl UnsealedAccountService {
             self.last_macro_block_timestamp,
             self.max_inputs_in_tx / MAX_PARTICIPANTS,
         )?;
-        assert!(inputs.len() <= valueshuffle::MAX_UTXOS);
+        assert!(inputs.len() <= snowball::MAX_UTXOS);
         let session_id = Hash::random();
         let time = clock::now();
         for (input, _) in &inputs {
@@ -420,12 +419,12 @@ impl UnsealedAccountService {
                     *input,
                     PendingOutput {
                         time,
-                        vs_session: Some(session_id),
+                        snowball_session: Some(session_id),
                     }
                 )
                 .is_none());
         }
-        let vs = ValueShuffle::new(
+        let snowball = Snowball::new(
             self.account_skey.clone(),
             self.account_pkey.clone(),
             self.network_pkey.clone(),
@@ -436,7 +435,7 @@ impl UnsealedAccountService {
             outputs,
             fee,
         );
-        self.vs = Some(vs);
+        self.snowball = Some(snowball);
 
         metrics::WALLET_CREATEAD_SECURE_PAYMENTS
             .with_label_values(&[&String::from(&self.account_pkey)])
@@ -476,7 +475,7 @@ impl UnsealedAccountService {
                     *input,
                     PendingOutput {
                         time,
-                        vs_session: None,
+                        snowball_session: None,
                     }
                 )
                 .is_none());
@@ -867,19 +866,19 @@ impl UnsealedAccountService {
             if p.time + PENDING_UTXO_TIME <= now {
                 trace!("Found outdated pending utxo = {}", hash);
                 balance_unlocked = true;
-                match (p.vs_session, &self.vs_session) {
-                    (Some(hash), Some(vs_session)) if hash == vs_session.0 => {
+                match (p.snowball_session, &self.snowball_session) {
+                    (Some(hash), Some(snowball_session)) if hash == snowball_session.0 => {
                         info!(
-                            "Some outputs of snowball are now outdated: vs_session = {}",
+                            "Some outputs of snowball are now outdated: snowball_session = {}",
                             hash
                         );
-                        warn!("Resetting ValueShuffle on timeout.");
-                        self.vs = None;
-                        let _ = self.vs_session.take();
+                        warn!("Resetting Snowball on timeout.");
+                        self.snowball = None;
+                        let _ = self.snowball_session.take();
                     }
                     (Some(hash), _) => {
                         trace!(
-                            "Found outdated pending utxo, for outdated vs_session = {}",
+                            "Found outdated pending utxo, for outdated snowball_session = {}",
                             hash
                         );
                     }
@@ -1014,12 +1013,14 @@ impl Future for UnsealedAccountService {
             }
         }
 
-        if let Some(ref mut vs) = &mut self.vs {
+        if let Some(ref mut vs) = &mut self.snowball {
             match vs.poll() {
-                Ok(Async::Ready(ValueShuffleOutput { tx, is_leader })) => {
-                    self.vs = None;
-                    let (session_id, response_sender) =
-                        self.vs_session.take().expect("active snowball session");
+                Ok(Async::Ready(SnowballOutput { tx, is_leader })) => {
+                    self.snowball = None;
+                    let (session_id, response_sender) = self
+                        .snowball_session
+                        .take()
+                        .expect("active snowball session");
                     let response = match self.handle_snowball_transaction(tx, is_leader, session_id)
                     {
                         Ok(tx) => AccountResponse::TransactionCreated(tx),
@@ -1034,8 +1035,10 @@ impl Future for UnsealedAccountService {
                 }
                 Ok(Async::NotReady) => {}
                 Err((error, inputs)) => {
-                    let (_session_id, response_sender) =
-                        self.vs_session.take().expect("active snowball session");
+                    let (_session_id, response_sender) = self
+                        .snowball_session
+                        .take()
+                        .expect("active snowball session");
                     warn!("Error during snowball session error={}.", error);
                     for (input_hash, _input) in inputs {
                         assert!(self.pending_payments.remove(&input_hash).is_some())
@@ -1170,7 +1173,7 @@ impl Future for UnsealedAccountService {
                                     self.notify(AccountNotification::SnowballStarted {
                                         session_id,
                                     });
-                                    self.vs_session = (session_id, tx).into();
+                                    self.snowball_session = (session_id, tx).into();
                                     continue;
                                 }
                                 Err(e) => AccountResponse::Error {
@@ -1209,7 +1212,7 @@ impl Future for UnsealedAccountService {
                         let updated_statuses = self.account_log.finalize_epoch_txs();
                         self.on_tx_statuses_changed(updated_statuses);
                         self.facilitator_pkey = block.facilitator.clone();
-                        if let Some(ref mut vs) = &mut self.vs {
+                        if let Some(ref mut vs) = &mut self.snowball {
                             vs.change_facilitator(block.facilitator);
                         }
                     }

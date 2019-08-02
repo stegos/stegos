@@ -1,4 +1,4 @@
-//! message.rs - ValueShuffle Protobuf Encoding.
+//! message.rs - Snowball Protobuf Encoding.
 
 //
 // Copyright (c) 2019 Stegos AG
@@ -26,7 +26,7 @@ use failure::Error;
 use stegos_blockchain::protos::ProtoError;
 use stegos_serialization::traits::*;
 
-use crate::protos::valueshuffle;
+use crate::protos::snowball;
 
 use std::collections::HashMap;
 use stegos_crypto::dicemix;
@@ -36,34 +36,34 @@ use stegos_crypto::scc::{Fr, Pt, PublicKey, SchnorrSig, SecretKey};
 type DcRow = Vec<Fr>;
 type DcSheet = Vec<DcRow>;
 type ParticipantID = dicemix::ParticipantID;
-impl ProtoConvert for VsPayload {
-    type Proto = valueshuffle::VsPayload;
+impl ProtoConvert for SnowballPayload {
+    type Proto = snowball::SnowballPayload;
     fn into_proto(&self) -> Self::Proto {
-        let mut msg = valueshuffle::VsPayload::new();
+        let mut msg = snowball::SnowballPayload::new();
         match self {
-            VsPayload::SharedKeying { pkey, ksig } => {
-                let mut body = valueshuffle::SharedKeying::new();
+            SnowballPayload::SharedKeying { pkey, ksig } => {
+                let mut body = snowball::SharedKeying::new();
                 body.set_pkey(pkey.into_proto());
                 body.set_ksig(ksig.into_proto());
                 msg.set_sharedkeying(body);
             }
-            VsPayload::Commitment { cmt } => {
-                let mut body = valueshuffle::Commitment::new();
+            SnowballPayload::Commitment { cmt } => {
+                let mut body = snowball::Commitment::new();
                 body.set_cmt(cmt.into_proto());
                 msg.set_commitment(body);
             }
-            VsPayload::CloakedVals {
+            SnowballPayload::CloakedVals {
                 matrix,
                 gamma_sum,
                 fee_sum,
                 cloaks,
             } => {
-                let mut body = valueshuffle::CloakedVals::new();
-                let mut dcsheets = valueshuffle::DcMatrix::new();
+                let mut body = snowball::CloakedVals::new();
+                let mut dcsheets = snowball::DcMatrix::new();
                 for sheet in matrix {
-                    let mut dcrows = valueshuffle::DcSheet::new();
+                    let mut dcrows = snowball::DcSheet::new();
                     for row in sheet {
-                        let mut dccols = valueshuffle::DcRow::new();
+                        let mut dccols = snowball::DcRow::new();
                         for col in row {
                             dccols.cols.push(col.into_proto());
                         }
@@ -80,13 +80,13 @@ impl ProtoConvert for VsPayload {
                 });
                 msg.set_cloakedvals(body);
             }
-            VsPayload::Signature { sig } => {
-                let mut body = valueshuffle::Signature::new();
+            SnowballPayload::Signature { sig } => {
+                let mut body = snowball::Signature::new();
                 body.set_sig(sig.into_proto());
                 msg.set_signature(body);
             }
-            VsPayload::SecretKeying { skey } => {
-                let mut body = valueshuffle::SecretKeying::new();
+            SnowballPayload::SecretKeying { skey } => {
+                let mut body = snowball::SecretKeying::new();
                 body.set_skey(skey.into_proto());
                 msg.set_secretkeying(body);
             }
@@ -96,18 +96,18 @@ impl ProtoConvert for VsPayload {
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let payload = match proto.body {
-            Some(valueshuffle::VsPayload_oneof_body::sharedkeying(ref msg)) => {
-                VsPayload::SharedKeying {
+            Some(snowball::SnowballPayload_oneof_body::sharedkeying(ref msg)) => {
+                SnowballPayload::SharedKeying {
                     pkey: PublicKey::from_proto(msg.get_pkey())?,
                     ksig: Pt::from_proto(msg.get_ksig())?,
                 }
             }
-            Some(valueshuffle::VsPayload_oneof_body::commitment(ref msg)) => {
-                VsPayload::Commitment {
+            Some(snowball::SnowballPayload_oneof_body::commitment(ref msg)) => {
+                SnowballPayload::Commitment {
                     cmt: Hash::from_proto(msg.get_cmt())?,
                 }
             }
-            Some(valueshuffle::VsPayload_oneof_body::cloakedvals(ref msg)) => {
+            Some(snowball::SnowballPayload_oneof_body::cloakedvals(ref msg)) => {
                 let mut matrix = Vec::<DcSheet>::new();
                 for rowmsg in msg.get_matrix().get_sheets() {
                     let mut rows = Vec::<DcRow>::new();
@@ -128,18 +128,20 @@ impl ProtoConvert for VsPayload {
                     let h = Hash::from_proto(hash)?;
                     cloaks.insert(p, h);
                 }
-                VsPayload::CloakedVals {
+                SnowballPayload::CloakedVals {
                     matrix,
                     gamma_sum,
                     fee_sum,
                     cloaks,
                 }
             }
-            Some(valueshuffle::VsPayload_oneof_body::signature(ref msg)) => VsPayload::Signature {
-                sig: SchnorrSig::from_proto(msg.get_sig())?,
-            },
-            Some(valueshuffle::VsPayload_oneof_body::secretkeying(ref msg)) => {
-                VsPayload::SecretKeying {
+            Some(snowball::SnowballPayload_oneof_body::signature(ref msg)) => {
+                SnowballPayload::Signature {
+                    sig: SchnorrSig::from_proto(msg.get_sig())?,
+                }
+            }
+            Some(snowball::SnowballPayload_oneof_body::secretkeying(ref msg)) => {
+                SnowballPayload::SecretKeying {
                     skey: SecretKey::from_proto(msg.get_skey())?,
                 }
             }
@@ -153,25 +155,25 @@ impl ProtoConvert for VsPayload {
     }
 }
 
-impl ProtoConvert for Message {
-    type Proto = valueshuffle::Message;
+impl ProtoConvert for SnowballMessage {
+    type Proto = snowball::Message;
     fn into_proto(&self) -> Self::Proto {
-        let mut proto = valueshuffle::Message::new();
+        let mut proto = snowball::Message::new();
         match self {
-            Message::VsMessage { sid, payload } => {
-                let mut msg = valueshuffle::VsMessage::new();
+            SnowballMessage::VsMessage { sid, payload } => {
+                let mut msg = snowball::SnowballMessage::new();
                 msg.set_sid(sid.into_proto());
                 msg.set_payload(payload.into_proto());
-                proto.set_vsmessage(msg);
+                proto.set_message(msg);
             }
-            Message::VsRestart {
+            SnowballMessage::VsRestart {
                 without_part,
                 session_id,
             } => {
-                let mut msg = valueshuffle::VsRestart::new();
+                let mut msg = snowball::SnowballRestart::new();
                 msg.set_session_id(session_id.into_proto());
                 msg.set_without_part(without_part.into_proto());
-                proto.set_vsrestart(msg);
+                proto.set_restart(msg);
             }
         }
         proto
@@ -179,11 +181,11 @@ impl ProtoConvert for Message {
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let msg = match proto.body {
-            Some(valueshuffle::Message_oneof_body::vsmessage(ref msg)) => Message::VsMessage {
+            Some(snowball::Message_oneof_body::message(ref msg)) => SnowballMessage::VsMessage {
                 sid: Hash::from_proto(msg.get_sid())?,
-                payload: VsPayload::from_proto(msg.get_payload())?,
+                payload: SnowballPayload::from_proto(msg.get_payload())?,
             },
-            Some(valueshuffle::Message_oneof_body::vsrestart(ref msg)) => Message::VsRestart {
+            Some(snowball::Message_oneof_body::restart(ref msg)) => SnowballMessage::VsRestart {
                 without_part: ParticipantID::from_proto(msg.get_without_part())?,
                 session_id: Hash::from_proto(msg.get_session_id())?,
             },
@@ -198,9 +200,9 @@ impl ProtoConvert for Message {
 }
 
 impl ProtoConvert for DirectMessage {
-    type Proto = valueshuffle::DirectMessage;
+    type Proto = snowball::DirectMessage;
     fn into_proto(&self) -> Self::Proto {
-        let mut proto = valueshuffle::DirectMessage::new();
+        let mut proto = snowball::DirectMessage::new();
         proto.set_source(self.source.into_proto());
         proto.set_destination(self.destination.into_proto());
         proto.set_message(self.message.into_proto());
@@ -209,7 +211,7 @@ impl ProtoConvert for DirectMessage {
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let source = dicemix::ParticipantID::from_proto(proto.get_source())?;
         let destination = dicemix::ParticipantID::from_proto(proto.get_destination())?;
-        let message = Message::from_proto(proto.get_message())?;
+        let message = SnowballMessage::from_proto(proto.get_message())?;
         Ok(DirectMessage {
             source,
             destination,
@@ -228,26 +230,26 @@ pub mod tests {
     use stegos_crypto::scc::make_random_keys;
 
     #[test]
-    fn vs_serialization() {
+    fn snowball_serialization() {
         let (_skey, pkey) = make_random_keys();
         let sid = Hash::digest("test");
         let ksig = simple_commit(&Fr::one(), &Fr::zero());
-        let msg = Message::VsMessage {
+        let msg = SnowballMessage::VsMessage {
             sid,
-            payload: VsPayload::SharedKeying { pkey, ksig },
+            payload: SnowballPayload::SharedKeying { pkey, ksig },
         };
         let smsg = msg.into_buffer().expect("can't into_buffer()");
         // dbg!(&smsg);
-        let xmsg = Message::from_buffer(&smsg).expect("can't deserialize msg");
+        let xmsg = SnowballMessage::from_buffer(&smsg).expect("can't deserialize msg");
         dbg!(&xmsg);
         match xmsg {
-            Message::VsMessage {
+            SnowballMessage::VsMessage {
                 sid: xsid,
                 payload: xpayload,
             } => {
                 assert!(xsid == sid);
                 match xpayload {
-                    VsPayload::SharedKeying {
+                    SnowballPayload::SharedKeying {
                         pkey: xpkey,
                         ksig: xksig,
                     } => {

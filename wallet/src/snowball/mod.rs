@@ -1,4 +1,4 @@
-//! mod.rs - ValueShuffle for secure and anonymous transaction construction
+//! mod.rs - Snowball Protocol for secure and anonymous transaction construction
 
 //
 // Copyright (c) 2019 Stegos AG
@@ -23,18 +23,18 @@
 //
 
 // ========================================================================
-// When a wallet wants to participate in a ValueShuffle session,
+// When a wallet wants to participate in a Snowball session,
 // it should advertise its desire by sending a message to the Facilitator
 // node, along with its network ID (currently a pbc::pbc::PublicKey).
 //
 // When the Facilitator has accumulated a sufficient number of requestor
 // nodes, it collects those ID's and sends a message to each of them, to
-// start a ValueShuffle session. The Facilitator should send that list of
+// start a Snowball session. The Facilitator should send that list of
 // node ID's along with an initial unique session ID (sid).
 //
 // Each wallet will then assemble their list of TXINs and proposed UTXO output
 // details (uncloaked recipient pkey, amount, data). Wallet should then call
-// vs_start() with the list of all participant node ID's, their own node ID,
+// start() with the list of all participant node ID's, their own node ID,
 // the list of TXINs, the list of proposed spending, and the session ID (sid)
 // provided by the Facilitator node.
 //
@@ -43,11 +43,11 @@
 // corresponding to the uncloaked public key used in the formation of the
 // blockchain UTXO.
 //
-// At the start of the first round of ValueShuffle, these TXINs are checked
+// At the start of the first round of Snowball, these TXINs are checked
 // by forming ownership signatures, and verifying that these signatures check.
 //
 // If all TXIN are good, the TXIN hash values and ownership signatures are
-// sent to all other ValueShuffle participants, and they will also perform
+// sent to all other Snowball participants, and they will also perform
 // the signature check. If other participants have problems with any TXIN,
 // the sender wallet will be excluded from further participation without
 // warning.
@@ -59,7 +59,7 @@
 // list of proposed spending. Each request for UTXO's should make use of
 // fresh randomness in choosing the cloaking factors, gamma and delta.
 //
-// The arguments to vs_start() are checked for validity:
+// The arguments to start() are checked for validity:
 //
 //  1. No more than MAX_UTXOS can be indicated by the proposed spending list
 //     (Currently MAX_UTXOS = 5). If fewer UTXOs will be produced, then the
@@ -81,7 +81,7 @@ use message::*;
 
 mod protos;
 
-use crate::valueshuffle::message::DirectMessage;
+use crate::snowball::message::DirectMessage;
 use failure::format_err;
 use failure::Error;
 use futures::Async;
@@ -116,11 +116,11 @@ use stegos_node::Node;
 use stegos_serialization::traits::ProtoConvert;
 use tokio_timer::Interval;
 
-/// A topic used for ValueShuffle unicast communication.
-pub const VALUE_SHUFFLE_TOPIC: &'static str = "valueshuffle";
+/// A topic used for Snowball unicast communication.
+pub const SNOWBALL_TOPIC: &'static str = "snowball";
 
-pub const VS_TIMER: Duration = Duration::from_secs(1); // recurring 1sec events
-pub const VS_TIMEOUT: i16 = 60; // sec, default for now
+pub const SNOWBALL_TIMER: Duration = Duration::from_secs(1); // recurring 1sec events
+pub const SNOWBALL_TIMEOUT: i16 = 60; // sec, default for now
 
 pub const MAX_UTXOS: usize = 5; // max nbr of txout UTXO permitted
 
@@ -148,16 +148,16 @@ struct ValidationData {
 }
 
 #[derive(Debug)]
-/// ValueShuffle Events.
-enum ValueShuffleEvent {
+/// Snowball Events.
+enum SnowballEvent {
     PoolFormed(pbc::PublicKey, Vec<u8>),
     MessageReceived(pbc::PublicKey, Vec<u8>),
-    VsTimer(SystemTime),
+    Timer(SystemTime),
 }
 
 #[derive(Debug, PartialEq, Eq)]
-/// ValueShuffle State.
-enum State {
+/// Pool State.
+enum PoolState {
     PoolWait,
     PoolFormed,
     PoolFinished,
@@ -165,25 +165,37 @@ enum State {
     PoolRestart,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum MessageState {
+    // used to indicate what kind of message payloads are wanted
+    // in a collection pause between Snowball phases.
+    None, // when msg_state == None the participants list is complete
+    SharedKeying,
+    Commitment,
+    CloakedVals,
+    Signature,
+    SecretKeying,
+}
+
 #[derive(Debug)]
-/// Possible outcomes of ValueShuffle
-pub struct ValueShuffleOutput {
+/// Possible outcomes of Snowball
+pub struct SnowballOutput {
     pub tx: PaymentTransaction,
     pub is_leader: bool,
 }
 
-/// ValueShuffle Service.
-pub struct ValueShuffle {
+/// Snowball implementation.
+pub struct Snowball {
     /// Account Secret Key.
     skey: SecretKey,
 
     /// Faciliator's PBC public key
     facilitator: pbc::PublicKey,
     /// Next facilitator's PBC public key.
-    /// Used if facilitator was changed during valueshuffle session.
+    /// Used if facilitator was changed during snowball session.
     future_facilitator: Option<pbc::PublicKey>,
-    /// State.
-    state: State,
+    /// Pool State.
+    poll_state: PoolState,
     /// My public txpool's key.
     participant_key: ParticipantID,
     /// Public keys of txpool's members,
@@ -191,7 +203,7 @@ pub struct ValueShuffle {
     /// Network API.
     network: Network,
     /// Incoming events.
-    events: Box<dyn Stream<Item = ValueShuffleEvent, Error = ()> + Send>,
+    events: Box<dyn Stream<Item = SnowballEvent, Error = ()> + Send>,
 
     // --------------------------------------------
     // Items computed from TXINS before joining pool
@@ -209,7 +221,7 @@ pub struct ValueShuffle {
     my_signing_skey: SecretKey,
 
     // FIFO queue of incoming messages not yet processed
-    msg_queue: VecDeque<(ParticipantID, Hash, VsPayload)>,
+    msg_queue: VecDeque<(ParticipantID, Hash, SnowballPayload)>,
 
     // List of participants that should be excluded on startup
     // normally empty, but could have resulted from restart pool
@@ -217,7 +229,7 @@ pub struct ValueShuffle {
     pending_removals: Vec<ParticipantID>,
 
     // --------------------------------------------
-    // Items computed in vs_start()
+    // Items computed in start()
 
     // session_round - init to zero, incremented in each round
     session_round: u16,
@@ -243,7 +255,7 @@ pub struct ValueShuffle {
     all_txins: HashMap<ParticipantID, Vec<(TXIN, UTXO)>>,
 
     // --------------------------------------------
-    // Items compupted in vs_commit()
+    // Items compupted in commit()
 
     // list of newly constructed txouts
     my_utxos: Vec<Pt>,
@@ -274,10 +286,10 @@ pub struct ValueShuffle {
     commit_phase_participants: Vec<ParticipantID>,
 
     // --------------------------------------------
-    // Items computed in vs_share_cloaked_data()
+    // Items computed in share_cloaked_data()
 
     // --------------------------------------------
-    // Items computed in vs_make_supertransaction()
+    // Items computed in make_supertransaction()
 
     // the super-transaction that each remaining participant should have
     // all of us should compute the same body, different individual signatures
@@ -300,7 +312,7 @@ pub struct ValueShuffle {
     excl_cloaks: HashMap<ParticipantID, Hash>,
 
     // --------------------------------------------
-    // Items computed in vs_sign_supertransaction()
+    // Items computed in sign_supertransaction()
 
     // if we enter a blame cycle, we broadcast our session skey
     // and collect those from remaining participants
@@ -325,7 +337,7 @@ pub struct ValueShuffle {
     // Send/Receive exchange. Reset to None at termination of Receive.
     // Receive can terminate either by timeout, or early after receiving
     // from all expected participants.
-    msg_state: VsMsgExpectedType,
+    msg_state: MessageState,
 
     // Timeout handling - we record the beginning of our timeout
     // period at start of Receive, and decrement waiting on each 1s tick
@@ -337,12 +349,12 @@ pub struct ValueShuffle {
     wait_start: SystemTime,
 }
 
-impl ValueShuffle {
+impl Snowball {
     // ----------------------------------------------------------------------------------------------
     // Public API.
     // ----------------------------------------------------------------------------------------------
 
-    /// Create a new ValueShuffle instance.
+    /// Create a new Snowball instance.
     pub fn new(
         skey: SecretKey,
         pkey: PublicKey,
@@ -353,7 +365,7 @@ impl ValueShuffle {
         my_txins: Vec<(TXIN, UTXO)>,
         my_txouts: Vec<ProposedUTXO>,
         my_fee: i64,
-    ) -> ValueShuffle {
+    ) -> Snowball {
         // check the maximal number of UTXOs.
         assert!(my_txouts.len() <= MAX_UTXOS);
 
@@ -387,7 +399,7 @@ impl ValueShuffle {
         let future_facilitator = None;
         let participants: Vec<ParticipantID> = Vec::new();
         let session_id: Hash = Hash::random();
-        let state = State::PoolWait;
+        let state = PoolState::PoolWait;
         let mut rng = thread_rng();
         let seed = rng.gen::<[u8; 32]>();
         let participant_key = dicemix::ParticipantID::new(participant_pkey, seed);
@@ -395,37 +407,36 @@ impl ValueShuffle {
         //
         // Events.
         //
-        let mut events: Vec<Box<dyn Stream<Item = ValueShuffleEvent, Error = ()> + Send>> =
-            Vec::new();
+        let mut events: Vec<Box<dyn Stream<Item = SnowballEvent, Error = ()> + Send>> = Vec::new();
 
         // Network.
         let pool_formed = network
-            .subscribe_unicast(VALUE_SHUFFLE_TOPIC)
+            .subscribe_unicast(SNOWBALL_TOPIC)
             .expect("connected")
-            .map(|m| ValueShuffleEvent::MessageReceived(m.from, m.data));
+            .map(|m| SnowballEvent::MessageReceived(m.from, m.data));
         events.push(Box::new(pool_formed));
 
         // Pool formation.
         let pool_formed = network
             .subscribe_unicast(POOL_ANNOUNCE_TOPIC)
             .expect("connected")
-            .map(|m| ValueShuffleEvent::PoolFormed(m.from, m.data));
+            .map(|m| SnowballEvent::PoolFormed(m.from, m.data));
         events.push(Box::new(pool_formed));
 
         // VsTimeout timer events
-        let duration = VS_TIMER; // every second
+        let duration = SNOWBALL_TIMER; // every second
         let timer = Interval::new_interval(duration)
-            .map(|_i| ValueShuffleEvent::VsTimer(SystemTime::now()))
+            .map(|_i| SnowballEvent::Timer(SystemTime::now()))
             .map_err(|_e| ()); // ignore transient timer errors
         events.push(Box::new(timer));
 
         let events = select_all(events);
 
-        let mut vs = ValueShuffle {
+        let mut vs = Snowball {
             skey,
             facilitator,
             future_facilitator,
-            state,
+            poll_state: state,
             participant_key,
             participants,
             session_id,
@@ -456,7 +467,7 @@ impl ValueShuffle {
             signatures: HashMap::new(),
             pending_participants: HashSet::new(),
             excl_participants: Vec::new(),
-            msg_state: VsMsgExpectedType::None,
+            msg_state: MessageState::None,
             trans: PaymentTransaction::dum(),
             wait_start: SystemTime::now(),
             waiting: 0,
@@ -475,19 +486,19 @@ impl ValueShuffle {
     // TxPool Membership
     // ----------------------------------------------------------------------------------------------
 
-    // When a wallet wants to participate in a ValueShuffle session,
+    // When a wallet wants to participate in a Snowball session,
     // it should advertise its desire by sending a message to the Facilitator
     // node, along with its network ID (currently a pbc::pbc::PublicKey).
     //
     // When the Facilitator has accumulated a sufficient number of requestor
     // nodes, it collects those ID's and sends a message to each of them, to
-    // start a ValueShuffle session. The Facilitator should send that list of
+    // start a Snowball session. The Facilitator should send that list of
     // node ID's along with an initial unique session ID (sid).
 
     /// Called when facilitator has been changed.
     pub fn change_facilitator(&mut self, facilitator: pbc::PublicKey) {
-        match self.state {
-            State::PoolFinished | State::PoolRestart | State::PoolWait => {}
+        match self.poll_state {
+            PoolState::PoolFinished | PoolState::PoolRestart | PoolState::PoolWait => {}
             // in progress some session, keep new facilitator in future facilitator.
             _ => {
                 debug!(
@@ -501,7 +512,7 @@ impl ValueShuffle {
         self.facilitator = facilitator;
         self.future_facilitator = None;
         // Last session was canceled, rejoining to new facilitator.
-        if self.state == State::PoolRestart || self.state == State::PoolWait {
+        if self.poll_state == PoolState::PoolRestart || self.poll_state == PoolState::PoolWait {
             debug!("Found new facilitator, rejoining to new pool.");
             self.send_pool_join();
         }
@@ -543,8 +554,8 @@ impl ValueShuffle {
 
     fn reset_state(&mut self) {
         self.waiting = 0; // reset timeout counter
-        self.state = State::PoolFinished;
-        self.msg_state = VsMsgExpectedType::None;
+        self.poll_state = PoolState::PoolFinished;
+        self.msg_state = MessageState::None;
         self.msg_queue.clear();
         self.session_round = 0;
         self.try_update_facilitator();
@@ -555,7 +566,7 @@ impl ValueShuffle {
         &mut self,
         from: pbc::PublicKey,
         pool_info: PoolNotification,
-    ) -> Poll<ValueShuffleOutput, VsError> {
+    ) -> Poll<SnowballOutput, SnowballError> {
         debug!("pool = {:?}", pool_info);
         if let Err(e) = self.ensure_facilitator(from) {
             warn!("Found different facilitator: e = {}", e);
@@ -572,7 +583,7 @@ impl ValueShuffle {
                     debug!("Found new facilitator, rejoining to new pool.");
                     self.send_pool_join();
                 } else {
-                    self.state = State::PoolRestart;
+                    self.poll_state = PoolState::PoolRestart;
                 }
                 return Ok(Async::NotReady);
             }
@@ -586,7 +597,7 @@ impl ValueShuffle {
             .is_none()
         {
             debug!("Our key = {:?}", self.participant_key);
-            return Err(VsError::VsNotInParticipantList);
+            return Err(SnowballError::NotInParticipantList);
         }
 
         self.session_id = pool_info.session_id;
@@ -620,10 +631,10 @@ impl ValueShuffle {
             debug!("{:?}", pkey);
         }
 
-        self.state = State::PoolFormed;
+        self.poll_state = PoolState::PoolFormed;
 
         // start processing queued transactions....
-        self.vs_start()
+        self.start()
     }
 
     fn ensure_facilitator(&self, from: pbc::PublicKey) -> Result<(), Error> {
@@ -647,7 +658,7 @@ impl ValueShuffle {
         from: ParticipantID,
         without_part: ParticipantID,
         session_id: Hash,
-    ) -> Poll<ValueShuffleOutput, VsError> {
+    ) -> Poll<SnowballOutput, SnowballError> {
         // called from facilitator node when it is discovered that "without_part" has submitted
         // a side transaction containing a same TXIN as already submitted to the pool - a bad actor.
         if let Err(e) = self.ensure_facilitator(from.pkey) {
@@ -657,16 +668,16 @@ impl ValueShuffle {
         self.session_id = session_id;
         self.session_round = 0;
         let excl = vec![without_part];
-        match self.state {
-            State::PoolFormed | State::PoolFinished => {
+        match self.poll_state {
+            PoolState::PoolFormed | PoolState::PoolFinished => {
                 match self.msg_state {
-                    VsMsgExpectedType::None => {
+                    MessageState::None => {
                         // We aren't currently running, but we can restart with the
                         // participants left over from previous run.
                         // Facilitator should have already discarded our previous supertransaction.
                         self.exclude_participants(&excl);
-                        self.state = State::PoolFormed;
-                        return self.vs_start();
+                        self.poll_state = PoolState::PoolFormed;
+                        return self.start();
                     }
                     _ => {
                         // We are pausing for incoming messages of some kind.
@@ -677,9 +688,9 @@ impl ValueShuffle {
                         }
                         self.exclude_participants(&excl);
                         // set state to reflect this division of participants list state
-                        // in case we abort vs_start
-                        self.msg_state = VsMsgExpectedType::None;
-                        return self.vs_start();
+                        // in case we abort start()
+                        self.msg_state = MessageState::None;
+                        return self.start();
                     }
                 }
             }
@@ -699,7 +710,7 @@ impl ValueShuffle {
     // ----------------------------------------------------------------------------------------------
 
     /// Sends a message to all txpool members via unicast.
-    fn send_message(&self, msg: Message) {
+    fn send_message(&self, msg: SnowballMessage) {
         for pkey in &self.participants {
             if *pkey != self.participant_key {
                 let msg = DirectMessage {
@@ -710,24 +721,24 @@ impl ValueShuffle {
                 let bmsg = msg.into_buffer().expect("serialized");
                 debug!("sending msg {:?} to {}", &msg, pkey);
                 self.network
-                    .send(pkey.pkey.clone(), VALUE_SHUFFLE_TOPIC, bmsg)
+                    .send(pkey.pkey.clone(), SNOWBALL_TOPIC, bmsg)
                     .expect("connected");
             }
         }
     }
 }
 
-impl Future for ValueShuffle {
-    type Item = ValueShuffleOutput;
-    type Error = (VsError, Vec<(TXIN, UTXO)>);
+impl Future for Snowball {
+    type Item = SnowballOutput;
+    type Error = (SnowballError, Vec<(TXIN, UTXO)>);
 
     /// Event loop.
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => {
-                    let result: Poll<ValueShuffleOutput, VsError> = match event {
-                        ValueShuffleEvent::PoolFormed(from, pool_info) => {
+                    let result: Poll<SnowballOutput, SnowballError> = match event {
+                        SnowballEvent::PoolFormed(from, pool_info) => {
                             let pool_info = match PoolNotification::from_buffer(&pool_info) {
                                 Ok(msg) => msg,
                                 Err(e) => {
@@ -737,7 +748,7 @@ impl Future for ValueShuffle {
                             };
                             self.on_pool_notification(from, pool_info)
                         }
-                        ValueShuffleEvent::MessageReceived(from, msg) => {
+                        SnowballEvent::MessageReceived(from, msg) => {
                             let msg = match DirectMessage::from_buffer(&msg) {
                                 Ok(msg) => msg,
                                 Err(e) => {
@@ -758,16 +769,16 @@ impl Future for ValueShuffle {
                                 continue;
                             }
                             match msg.message {
-                                Message::VsMessage { sid, payload } => {
-                                    self.on_vs_message_received(&msg.source, &sid, &payload)
+                                SnowballMessage::VsMessage { sid, payload } => {
+                                    self.on_message_received(&msg.source, &sid, &payload)
                                 }
-                                Message::VsRestart {
+                                SnowballMessage::VsRestart {
                                     without_part,
                                     session_id,
                                 } => self.on_restart_pool(msg.source, without_part, session_id),
                             }
                         }
-                        ValueShuffleEvent::VsTimer(when) => self.handle_vs_timer(when),
+                        SnowballEvent::Timer(when) => self.handle_timer(when),
                     };
                     match result {
                         Ok(Async::Ready(r)) => {
@@ -799,10 +810,10 @@ fn is_valid_pt(pt: &Pt, ans: &mut Pt) -> bool {
     true
 }
 
-type VsFunction = fn(&mut ValueShuffle) -> Poll<ValueShuffleOutput, VsError>;
+type VsFunction = fn(&mut Snowball) -> Poll<SnowballOutput, SnowballError>;
 
-impl ValueShuffle {
-    fn handle_vs_timer(&mut self, when: SystemTime) -> Poll<ValueShuffleOutput, VsError> {
+impl Snowball {
+    fn handle_timer(&mut self, when: SystemTime) -> Poll<SnowballOutput, SnowballError> {
         // self.waiting contains the nbr seconds countdown until a timeout
         // specify waiting = 0 for no timeout checking
         if self.waiting > 0 && when >= self.wait_start {
@@ -813,25 +824,25 @@ impl ValueShuffle {
                 // whichever participants did not respond are in self.pending_participants.
                 debug!("vs timeout, msg_state: {:?}", self.msg_state);
                 let state = self.msg_state;
-                self.msg_state = VsMsgExpectedType::None;
+                self.msg_state = MessageState::None;
                 match state {
-                    VsMsgExpectedType::None => {
+                    MessageState::None => {
                         return Ok(Async::NotReady);
                     }
-                    VsMsgExpectedType::SharedKeying => {
-                        return self.vs_commit();
+                    MessageState::SharedKeying => {
+                        return self.commit();
                     }
-                    VsMsgExpectedType::Commitment => {
-                        return self.vs_share_cloaked_data();
+                    MessageState::Commitment => {
+                        return self.share_cloaked_data();
                     }
-                    VsMsgExpectedType::CloakedVals => {
-                        return self.vs_make_supertransaction();
+                    MessageState::CloakedVals => {
+                        return self.make_supertransaction();
                     }
-                    VsMsgExpectedType::Signature => {
-                        return self.vs_sign_supertransaction();
+                    MessageState::Signature => {
+                        return self.sign_supertransaction();
                     }
-                    VsMsgExpectedType::SecretKeying => {
-                        return self.vs_blame_discovery();
+                    MessageState::SecretKeying => {
+                        return self.blame_discovery();
                     }
                 }
             }
@@ -839,22 +850,22 @@ impl ValueShuffle {
         Ok(Async::NotReady)
     }
 
-    fn on_vs_message_received(
+    fn on_message_received(
         &mut self,
         from: &ParticipantID,
         sid: &Hash,
-        payload: &VsPayload,
-    ) -> Poll<ValueShuffleOutput, VsError> {
+        payload: &SnowballPayload,
+    ) -> Poll<SnowballOutput, SnowballError> {
         debug!("vs message: {}, from: {}, sess: {}", *payload, *from, *sid);
         self.msg_queue.push_front((*from, *sid, payload.clone()));
         self.handle_enqueued_messages()
     }
 
-    fn handle_enqueued_messages(&mut self) -> Poll<ValueShuffleOutput, VsError> {
+    fn handle_enqueued_messages(&mut self) -> Poll<SnowballOutput, SnowballError> {
         let queue = self.msg_queue.clone();
         self.msg_queue.clear();
         for (from, sid, payload) in queue {
-            if self.state != State::PoolFinished {
+            if self.poll_state != PoolState::PoolFinished {
                 if self.is_acceptable_message(&from, &sid, &payload) {
                     // debug!("is_acceptable_message()");
                     self.pending_participants.remove(&from);
@@ -874,7 +885,7 @@ impl ValueShuffle {
         &mut self,
         from: &ParticipantID,
         sid: &Hash,
-        payload: &VsPayload,
+        payload: &SnowballPayload,
     ) -> bool {
         if *sid != self.session_id {
             debug!(
@@ -891,11 +902,11 @@ impl ValueShuffle {
             return false;
         }
         match (self.msg_state, payload) {
-            (VsMsgExpectedType::SharedKeying, VsPayload::SharedKeying { .. })
-            | (VsMsgExpectedType::Commitment, VsPayload::Commitment { .. })
-            | (VsMsgExpectedType::CloakedVals, VsPayload::CloakedVals { .. })
-            | (VsMsgExpectedType::Signature, VsPayload::Signature { .. })
-            | (VsMsgExpectedType::SecretKeying, VsPayload::SecretKeying { .. }) => {
+            (MessageState::SharedKeying, SnowballPayload::SharedKeying { .. })
+            | (MessageState::Commitment, SnowballPayload::Commitment { .. })
+            | (MessageState::CloakedVals, SnowballPayload::CloakedVals { .. })
+            | (MessageState::Signature, SnowballPayload::Signature { .. })
+            | (MessageState::SecretKeying, SnowballPayload::SecretKeying { .. }) => {
                 debug!(
                     "Message accepted: msg_state={:?}, payload={}",
                     self.msg_state, payload
@@ -915,18 +926,18 @@ impl ValueShuffle {
     fn handle_message(
         &mut self,
         from: &ParticipantID,
-        payload: &VsPayload,
-    ) -> Poll<ValueShuffleOutput, VsError> {
+        payload: &SnowballPayload,
+    ) -> Poll<SnowballOutput, SnowballError> {
         match self.msg_state {
-            VsMsgExpectedType::None => {
+            MessageState::None => {
                 warn!("Unexpected message, not in session: {}", payload);
                 return Ok(Async::NotReady);
             }
-            VsMsgExpectedType::SharedKeying => self.handle_shared_keying(from, payload),
-            VsMsgExpectedType::Commitment => self.handle_commitment(from, payload),
-            VsMsgExpectedType::CloakedVals => self.handle_cloaked_vals(from, payload),
-            VsMsgExpectedType::Signature => self.handle_signature(from, payload),
-            VsMsgExpectedType::SecretKeying => self.handle_secret_keying(from, payload),
+            MessageState::SharedKeying => self.handle_shared_keying(from, payload),
+            MessageState::Commitment => self.handle_commitment(from, payload),
+            MessageState::CloakedVals => self.handle_cloaked_vals(from, payload),
+            MessageState::Signature => self.handle_signature(from, payload),
+            MessageState::SecretKeying => self.handle_secret_keying(from, payload),
         }
     }
 
@@ -934,14 +945,14 @@ impl ValueShuffle {
         &mut self,
         from: &ParticipantID,
         vfn: VsFunction,
-    ) -> Poll<ValueShuffleOutput, VsError> {
+    ) -> Poll<SnowballOutput, SnowballError> {
         self.participants.push(*from);
         if self.pending_participants.is_empty() {
             // Reset state to reflect a full participants list in case
             // we bomb out of the vfn(). We do this in case of any incoming
             // VsRestart messages which are sensitive to the state of the
             // participants list and pending_participants.
-            self.msg_state = VsMsgExpectedType::None;
+            self.msg_state = MessageState::None;
             vfn(self)
         } else {
             Ok(Async::NotReady)
@@ -951,18 +962,18 @@ impl ValueShuffle {
     fn handle_shared_keying(
         &mut self,
         from: &ParticipantID,
-        msg: &VsPayload,
-    ) -> Poll<ValueShuffleOutput, VsError> {
+        msg: &SnowballPayload,
+    ) -> Poll<SnowballOutput, SnowballError> {
         // debug!("In handle_shared_keying()");
         match msg {
-            VsPayload::SharedKeying { pkey, ksig } => {
+            SnowballPayload::SharedKeying { pkey, ksig } => {
                 debug!("checking shared keying {:?} {:?}", pkey, ksig);
                 let mut pt = Pt::inf();
                 if is_valid_pt(&ksig, &mut pt) {
                     debug!("shared keying okay {:?}", pkey);
                     self.sigK_vals.insert(*from, pt);
                     self.sess_pkeys.insert(*from, *pkey);
-                    return self.maybe_do(from, Self::vs_commit);
+                    return self.maybe_do(from, Self::commit);
                 } else {
                     debug!("shared keying bad {:?}", pkey);
                 }
@@ -977,14 +988,14 @@ impl ValueShuffle {
     fn handle_commitment(
         &mut self,
         from: &ParticipantID,
-        msg: &VsPayload,
-    ) -> Poll<ValueShuffleOutput, VsError> {
+        msg: &SnowballPayload,
+    ) -> Poll<SnowballOutput, SnowballError> {
         // debug!("In handle_commitment()");
         match msg {
-            VsPayload::Commitment { cmt } => {
+            SnowballPayload::Commitment { cmt } => {
                 debug!("saving commitment {}", cmt);
                 self.commits.insert(*from, *cmt);
-                return self.maybe_do(from, Self::vs_share_cloaked_data);
+                return self.maybe_do(from, Self::share_cloaked_data);
             }
             msg => {
                 error!("Unexpected message: {}", msg);
@@ -996,11 +1007,11 @@ impl ValueShuffle {
     fn handle_cloaked_vals(
         &mut self,
         from: &ParticipantID,
-        msg: &VsPayload,
-    ) -> Poll<ValueShuffleOutput, VsError> {
+        msg: &SnowballPayload,
+    ) -> Poll<SnowballOutput, SnowballError> {
         // debug!("In handle_cloaked_vals()");
         match msg {
-            VsPayload::CloakedVals {
+            SnowballPayload::CloakedVals {
                 matrix,
                 gamma_sum,
                 fee_sum,
@@ -1022,7 +1033,7 @@ impl ValueShuffle {
                     self.cloaked_gamma_adjs.insert(*from, gamma_sum.clone());
                     self.cloaked_fees.insert(*from, fee_sum.clone());
                     self.all_excl_cloaks.insert(*from, cloaks.clone());
-                    return self.maybe_do(from, Self::vs_make_supertransaction);
+                    return self.maybe_do(from, Self::make_supertransaction);
                 } else {
                     debug!("Commitment check failed {}", cmt);
                 }
@@ -1037,14 +1048,14 @@ impl ValueShuffle {
     fn handle_signature(
         &mut self,
         from: &ParticipantID,
-        msg: &VsPayload,
-    ) -> Poll<ValueShuffleOutput, VsError> {
+        msg: &SnowballPayload,
+    ) -> Poll<SnowballOutput, SnowballError> {
         // debug!("In handle_signature()");
         match msg {
-            VsPayload::Signature { sig } => {
+            SnowballPayload::Signature { sig } => {
                 debug!("saving signature {:?}", sig);
                 self.signatures.insert(*from, sig.clone());
-                return self.maybe_do(from, Self::vs_sign_supertransaction);
+                return self.maybe_do(from, Self::sign_supertransaction);
             }
             msg => {
                 error!("Unexpected message: {}", msg);
@@ -1056,14 +1067,14 @@ impl ValueShuffle {
     fn handle_secret_keying(
         &mut self,
         from: &ParticipantID,
-        msg: &VsPayload,
-    ) -> Poll<ValueShuffleOutput, VsError> {
+        msg: &SnowballPayload,
+    ) -> Poll<SnowballOutput, SnowballError> {
         // debug!("In handle_secret_keying()");
         match msg {
-            VsPayload::SecretKeying { skey } => {
+            SnowballPayload::SecretKeying { skey } => {
                 debug!("saving skey {:?}", skey);
                 self.sess_skeys.insert(*from, skey.clone());
-                return self.maybe_do(from, Self::vs_blame_discovery);
+                return self.maybe_do(from, Self::blame_discovery);
             }
             msg => {
                 error!("Unexpected message: {}", msg);
@@ -1074,9 +1085,9 @@ impl ValueShuffle {
 
     fn prep_rx(
         &mut self,
-        msgtype: VsMsgExpectedType,
+        msgtype: MessageState,
         timeout: i16,
-    ) -> Poll<ValueShuffleOutput, VsError> {
+    ) -> Poll<SnowballOutput, SnowballError> {
         // transfer other participants into pending_participants
         // and set new msg_state for expected kind of messages
         let mut other_participants: HashSet<ParticipantID> = HashSet::new();
@@ -1102,14 +1113,14 @@ impl ValueShuffle {
         self.handle_enqueued_messages()
     }
 
-    fn vs_start(&mut self) -> Poll<ValueShuffleOutput, VsError> {
+    fn start(&mut self) -> Poll<SnowballOutput, SnowballError> {
         // Possible exits:
         //   - fewer than 3 participants = protocol fail
         //   - normal exit
 
-        debug!("In vs_start()");
+        debug!("In start()");
         if self.participants.len() < 3 {
-            return Err(VsError::VsTooFewParticipants(self.participants.len()));
+            return Err(SnowballError::TooFewParticipants(self.participants.len()));
         }
         self.participants.sort(); // put into consistent order
         self.session_round += 1;
@@ -1182,14 +1193,14 @@ impl ValueShuffle {
         Ok(Async::NotReady)
     }
 
-    fn vs_commit(&mut self) -> Poll<ValueShuffleOutput, VsError> {
+    fn commit(&mut self) -> Poll<SnowballOutput, SnowballError> {
         // Possible exits:
         //   - normal exit
         //   - fewer than 3 participants = protocol failure
 
-        debug!("In vs_commit()");
+        debug!("In commit()");
         if self.participants.len() < 3 {
-            return Err(VsError::VsTooFewParticipants(self.participants.len()));
+            return Err(SnowballError::TooFewParticipants(self.participants.len()));
         }
 
         // participants at the time of matrix construction
@@ -1286,15 +1297,15 @@ impl ValueShuffle {
         Ok(Async::NotReady)
     }
 
-    fn vs_share_cloaked_data(&mut self) -> Poll<ValueShuffleOutput, VsError> {
+    fn share_cloaked_data(&mut self) -> Poll<SnowballOutput, SnowballError> {
         // Possible exits:
         //   - normal exit
         //   - fewer than 3 participants = protocol failure
         //   - .expect() errors - should never happen in proper code
 
-        debug!("In vs_share_cloaked_data()");
+        debug!("In share_cloaked_data()");
         if self.participants.len() < 3 {
-            return Err(VsError::VsTooFewParticipants(self.participants.len()));
+            return Err(SnowballError::TooFewParticipants(self.participants.len()));
         }
 
         // make note of missing participants here
@@ -1364,16 +1375,16 @@ impl ValueShuffle {
                 .all(|p| self.participants.contains(p))))
     }
 
-    fn vs_make_supertransaction(&mut self) -> Poll<ValueShuffleOutput, VsError> {
+    fn make_supertransaction(&mut self) -> Poll<SnowballOutput, SnowballError> {
         // Possible exits:
         //   - normal exit
         //   - .expect() errors -> should never happen in proper code
         //
-        debug!("In vs_make_supertransaction()");
+        debug!("In make_supertransaction()");
 
         if self.participants.len() < 3 {
             debug!("Too few shared participants");
-            return Err(VsError::VsTooFewParticipants(self.participants.len()));
+            return Err(SnowballError::TooFewParticipants(self.participants.len()));
         }
 
         if self.had_dropouts() {
@@ -1386,7 +1397,7 @@ impl ValueShuffle {
             // now have fewer participants than before. Either we eventually
             // succeed, or we fail by having fewer than 3 participants.
             debug!("dropouts occurred - restarting");
-            return self.vs_start();
+            return self.start();
         }
 
         // -------------------------------------------------------
@@ -1504,12 +1515,12 @@ impl ValueShuffle {
         Ok(Async::NotReady)
     }
 
-    fn vs_sign_supertransaction(&mut self) -> Poll<ValueShuffleOutput, VsError> {
+    fn sign_supertransaction(&mut self) -> Poll<SnowballOutput, SnowballError> {
         // Possible exits:
         //   - normal exit
         //   - .expect() errors -> should never happen in correct code
 
-        debug!("In vs_sign_supertransaction()");
+        debug!("In sign_supertransaction()");
         if !self
             .commit_phase_participants
             .iter()
@@ -1519,7 +1530,7 @@ impl ValueShuffle {
             // so just start a new session. Could only have happened if
             // fewer participants responded.
             debug!("incorrect number of signaturs obtained - restarting without them");
-            return self.vs_start();
+            return self.start();
         }
 
         self.trans.sig = self
@@ -1538,8 +1549,8 @@ impl ValueShuffle {
             self.reset_state(); // indicate nothing more to follow, restartable
             self.msg_queue.clear();
             self.session_round = 0; // for possible restarts
-            debug!("Success in ValueShuffle!");
-            return Ok(Async::Ready(ValueShuffleOutput {
+            debug!("Success in Snowball!");
+            return Ok(Async::Ready(SnowballOutput {
                 tx,
                 is_leader: self.participant_key == leader,
             }));
@@ -1567,11 +1578,11 @@ impl ValueShuffle {
         Ok(Async::NotReady)
     }
 
-    fn vs_blame_discovery(&mut self) -> Poll<ValueShuffleOutput, VsError> {
+    fn blame_discovery(&mut self) -> Poll<SnowballOutput, SnowballError> {
         // Possible exits:
         //   - normal exit
 
-        debug!("In vs_blame_discovery()");
+        debug!("In blame_discovery()");
         if self.had_dropouts() {
             // if there were too few session keys received, then
             // someone dropped out, and we restart without them.
@@ -1605,7 +1616,7 @@ impl ValueShuffle {
             self.exclude_participants(&new_p_excl);
         }
         // and begin another round
-        self.vs_start()
+        self.start()
     }
 
     // -----------------------------------------------------------------
@@ -1781,8 +1792,8 @@ impl ValueShuffle {
 
     // -------------------------------------------------
 
-    fn send_signed_message(&self, payload: &VsPayload) {
-        let msg = Message::VsMessage {
+    fn send_signed_message(&self, payload: &SnowballPayload) {
+        let msg = SnowballMessage::VsMessage {
             payload: payload.clone(),
             sid: self.session_id,
         };
@@ -1791,14 +1802,14 @@ impl ValueShuffle {
 
     fn send_session_pkey(&self, sess_pkey: &PublicKey, sess_KSig: &Pt) {
         // send our session_pkey and sigK to all participants
-        let payload = VsPayload::SharedKeying {
+        let payload = SnowballPayload::SharedKeying {
             pkey: *sess_pkey,
             ksig: *sess_KSig,
         };
         self.send_signed_message(&payload);
     }
 
-    fn receive_session_pkeys(&mut self) -> Poll<ValueShuffleOutput, VsError> {
+    fn receive_session_pkeys(&mut self) -> Poll<SnowballOutput, SnowballError> {
         // collect session pkeys from all participants.
         // If any participant does not answer, add him to the exclusion list, p_excl
 
@@ -1806,23 +1817,23 @@ impl ValueShuffle {
 
         // we allow the receive_xxx to specify individual timeout periods
         // in case they need to vary
-        self.prep_rx(VsMsgExpectedType::SharedKeying, VS_TIMEOUT)
+        self.prep_rx(MessageState::SharedKeying, SNOWBALL_TIMEOUT)
     }
 
     // -------------------------------------------------
 
     fn send_commitment(&self, commit: &Hash) {
         // send our commitment to cloaked data to all other participants
-        let payload = VsPayload::Commitment { cmt: *commit };
+        let payload = SnowballPayload::Commitment { cmt: *commit };
         self.send_signed_message(&payload);
     }
 
-    fn receive_commitments(&mut self) -> Poll<ValueShuffleOutput, VsError> {
+    fn receive_commitments(&mut self) -> Poll<SnowballOutput, SnowballError> {
         // receive commitments from all other participants
         // if any fail to send commitments, add them to exclusion list p_excl
 
         // fill in commits
-        self.prep_rx(VsMsgExpectedType::Commitment, VS_TIMEOUT)
+        self.prep_rx(MessageState::Commitment, SNOWBALL_TIMEOUT)
     }
 
     // -------------------------------------------------
@@ -1835,7 +1846,7 @@ impl ValueShuffle {
         cloaks: &HashMap<ParticipantID, Hash>,
     ) {
         // send matrix, sum, and excl_k_cloaks to all participants
-        let payload = VsPayload::CloakedVals {
+        let payload = SnowballPayload::CloakedVals {
             matrix: matrix.clone(),
             gamma_sum: cloaked_gamma_adj.clone(),
             fee_sum: cloaked_fee.clone(),
@@ -1844,7 +1855,7 @@ impl ValueShuffle {
         self.send_signed_message(&payload);
     }
 
-    fn receive_cloaked_data(&mut self) -> Poll<ValueShuffleOutput, VsError> {
+    fn receive_cloaked_data(&mut self) -> Poll<SnowballOutput, SnowballError> {
         // receive cloaked data from each participant.
         // If participants don't respond, or respond
         // with invalid data, as per previous commitment,
@@ -1852,40 +1863,40 @@ impl ValueShuffle {
 
         // fill in matrices, cloaked_gamma_adj, cloaked_fees,
         // and all_excl_k_cloaks, using commits to validate incoming data
-        self.prep_rx(VsMsgExpectedType::CloakedVals, VS_TIMEOUT)
+        self.prep_rx(MessageState::CloakedVals, SNOWBALL_TIMEOUT)
     }
 
     // -------------------------------------------------
 
     fn send_signature(&self, sig: &SchnorrSig) {
         // send signature to leader node
-        let payload = VsPayload::Signature { sig: sig.clone() };
+        let payload = SnowballPayload::Signature { sig: sig.clone() };
         self.send_signed_message(&payload);
     }
 
-    fn receive_signatures(&mut self) -> Poll<ValueShuffleOutput, VsError> {
+    fn receive_signatures(&mut self) -> Poll<SnowballOutput, SnowballError> {
         // collect signatures from all participants
         // should not count as collected unless signature is partially valid.
         //
         // Partial valid = K component is valid ECC point
 
         // fill in signatures
-        self.prep_rx(VsMsgExpectedType::Signature, VS_TIMEOUT)
+        self.prep_rx(MessageState::Signature, SNOWBALL_TIMEOUT)
     }
 
     // -------------------------------------------------
 
     fn send_session_skey(&self, skey: &SecretKey) {
         // send the session secret key to all participants
-        let payload = VsPayload::SecretKeying { skey: skey.clone() };
+        let payload = SnowballPayload::SecretKeying { skey: skey.clone() };
         self.send_signed_message(&payload);
     }
 
-    fn receive_session_skeys(&mut self) -> Poll<ValueShuffleOutput, VsError> {
+    fn receive_session_skeys(&mut self) -> Poll<SnowballOutput, SnowballError> {
         // non-respondents are added to p_excl
 
         // fills in sess_skeys
-        self.prep_rx(VsMsgExpectedType::SecretKeying, VS_TIMEOUT)
+        self.prep_rx(MessageState::SecretKeying, SNOWBALL_TIMEOUT)
     }
 
     // -------------------------------------------------

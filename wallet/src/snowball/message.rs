@@ -1,4 +1,4 @@
-//! message.rs - ValueShuffle Messages.
+//! message.rs - Snowball Messages.
 
 //
 // Copyright (c) 2019 Stegos AG
@@ -35,22 +35,10 @@ use stegos_crypto::scc::PublicKey;
 use stegos_crypto::scc::SchnorrSig;
 use stegos_crypto::scc::SecretKey;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub(crate) enum VsMsgExpectedType {
-    // used to indicate what kind of message payloads are wanted
-    // in a collection pause between ValueShuffle phases.
-    None, // when msg_state == None the participants list is complete
-    SharedKeying,
-    Commitment,
-    CloakedVals,
-    Signature,
-    SecretKeying,
-}
-
 #[derive(Debug, Clone)]
-pub(crate) enum VsPayload {
+pub(crate) enum SnowballPayload {
     // Message payload types that are of interest to various phases
-    // of ValueShuffle
+    // of Snowball
     SharedKeying {
         pkey: PublicKey,
         ksig: Pt,
@@ -73,13 +61,13 @@ pub(crate) enum VsPayload {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum Message {
+pub(crate) enum SnowballMessage {
     // types of messages delivered by the event system
     VsMessage {
         // this is the kind of message, whose payload
-        // may be of interest to waiting phases in ValueShuffle
+        // may be of interest to waiting phases in Snowball
         sid: Hash,
-        payload: VsPayload,
+        payload: SnowballPayload,
     },
     VsRestart {
         without_part: ParticipantID,
@@ -90,36 +78,40 @@ pub(crate) enum Message {
 #[derive(Debug, Clone)]
 pub(crate) struct DirectMessage {
     // this kind of message could also deliver items
-    // of interest to ValueShuffle phases.
+    // of interest to Snowball phases.
     // it acts as an addressed envelope for contained Message.
     pub source: ParticipantID,
     pub destination: ParticipantID,
-    pub message: Message,
+    pub message: SnowballMessage,
 }
 
-impl fmt::Display for VsPayload {
+impl fmt::Display for SnowballPayload {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            VsPayload::SharedKeying { pkey, ksig } => write!(
+            SnowballPayload::SharedKeying { pkey, ksig } => write!(
                 f,
                 "VsPayload::SharedKeying( pkey: {:?}, ksig: {:?})",
                 pkey, ksig
             ),
-            VsPayload::Commitment { cmt } => write!(f, "VsPayload::Commitment( cmt: {})", cmt),
-            VsPayload::CloakedVals { .. } => write!(f, "VsPayload::CloakedVals(...)"),
-            VsPayload::Signature { sig } => write!(f, "VsPayload::Signature( sig: {:?})", sig),
-            VsPayload::SecretKeying { skey, .. } => {
+            SnowballPayload::Commitment { cmt } => {
+                write!(f, "VsPayload::Commitment( cmt: {})", cmt)
+            }
+            SnowballPayload::CloakedVals { .. } => write!(f, "VsPayload::CloakedVals(...)"),
+            SnowballPayload::Signature { sig } => {
+                write!(f, "VsPayload::Signature( sig: {:?})", sig)
+            }
+            SnowballPayload::SecretKeying { skey, .. } => {
                 write!(f, "VsPayload::SecretKeying( skey: {:?})", skey)
             }
         }
     }
 }
 
-impl fmt::Display for Message {
+impl fmt::Display for SnowballMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Message::VsMessage { payload, .. } => write!(f, "{}", payload),
-            Message::VsRestart {
+            SnowballMessage::VsMessage { payload, .. } => write!(f, "{}", payload),
+            SnowballMessage::VsRestart {
                 without_part,
                 session_id,
             } => write!(
@@ -131,15 +123,15 @@ impl fmt::Display for Message {
     }
 }
 
-impl Hashable for Message {
+impl Hashable for SnowballMessage {
     fn hash(&self, state: &mut Hasher) {
         match self {
-            Message::VsMessage { sid, payload } => {
+            SnowballMessage::VsMessage { sid, payload } => {
                 "VsMessage".hash(state);
                 sid.hash(state);
                 payload.hash(state);
             }
-            Message::VsRestart {
+            SnowballMessage::VsRestart {
                 without_part,
                 session_id,
             } => {
@@ -151,7 +143,7 @@ impl Hashable for Message {
     }
 }
 
-impl Hashable for VsPayload {
+impl Hashable for SnowballPayload {
     fn hash(&self, state: &mut Hasher) {
         fn hash_cloaks(cloaks: &HashMap<ParticipantID, Hash>, state: &mut Hasher) {
             // Hashes on collections can't be consistent
@@ -164,14 +156,14 @@ impl Hashable for VsPayload {
             });
         }
         match self {
-            VsPayload::SharedKeying { pkey, ksig } => {
+            SnowballPayload::SharedKeying { pkey, ksig } => {
                 pkey.hash(state);
                 ksig.hash(state);
             }
-            VsPayload::Commitment { cmt } => {
+            SnowballPayload::Commitment { cmt } => {
                 cmt.hash(state);
             }
-            VsPayload::CloakedVals {
+            SnowballPayload::CloakedVals {
                 matrix,
                 gamma_sum,
                 fee_sum,
@@ -188,10 +180,10 @@ impl Hashable for VsPayload {
                 fee_sum.hash(state);
                 hash_cloaks(cloaks, state);
             }
-            VsPayload::Signature { sig } => {
+            SnowballPayload::Signature { sig } => {
                 sig.hash(state);
             }
-            VsPayload::SecretKeying { skey } => {
+            SnowballPayload::SecretKeying { skey } => {
                 skey.hash(state);
             }
         }

@@ -23,8 +23,8 @@
 
 use crate::change::*;
 use crate::error::*;
+use crate::snowball::ProposedUTXO;
 use crate::storage::ExtendedOutputValue;
-use crate::valueshuffle::ProposedUTXO;
 use failure::Error;
 use log::*;
 use serde_derive::Serialize;
@@ -51,8 +51,8 @@ impl From<PaymentPayloadData> for TransactionType {
     }
 }
 
-/// Create a new ValueShuffle payment transaction. (no data)
-pub(crate) fn create_vs_payment_transaction<'a, UnspentIter>(
+/// Create a new snowball payment transaction.
+pub(crate) fn create_snowball_transaction<'a, UnspentIter>(
     sender_pkey: &PublicKey,
     recipient: &PublicKey,
     unspent_iter: UnspentIter,

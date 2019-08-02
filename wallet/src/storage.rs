@@ -487,7 +487,7 @@ impl Hashable for PaymentTransactionValue {
 
 pub struct PendingOutput {
     pub time: Instant,
-    pub vs_session: Option<Hash>,
+    pub snowball_session: Option<Hash>,
 }
 
 /// Represents Outputs created by account.

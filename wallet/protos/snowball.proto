@@ -1,5 +1,5 @@
 syntax = "proto3";
-package stegos.valueshuffle;
+package stegos.snowball;
 
 import "crypto.proto";
 import "blockchain.proto";
@@ -15,7 +15,6 @@ message DcSheet {
 message DcMatrix {
     repeated DcSheet sheets = 1;
 }
-
 
 message SharedKeying {
     stegos.crypto.PublicKey pkey = 1;
@@ -42,7 +41,7 @@ message SecretKeying {
     stegos.crypto.SecretKey skey = 1;
 }
 
-message VsPayload {
+message SnowballPayload {
     oneof body {
         SharedKeying sharedkeying = 1;
         Commitment commitment = 2;
@@ -52,20 +51,20 @@ message VsPayload {
     }
 }
 
-message VsMessage {
+message SnowballMessage {
     stegos.crypto.Hash sid = 1;
-    VsPayload payload = 3;
+    SnowballPayload payload = 3;
 }
 
-message VsRestart {
+message SnowballRestart {
     stegos.crypto.DiceMixParticipantID without_part = 1;
     stegos.crypto.Hash session_id = 2;
 }
 
 message Message {
     oneof body {
-        VsMessage vsmessage = 1;
-        VsRestart vsrestart = 2;
+        SnowballMessage message = 1;
+        SnowballRestart restart = 2;
     }
 }
 

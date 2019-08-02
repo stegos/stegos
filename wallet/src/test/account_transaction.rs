@@ -22,7 +22,7 @@
 // SOFTWARE.
 
 use super::*;
-use crate::valueshuffle::message::{Message, VsPayload};
+use crate::snowball::message::{SnowballMessage, SnowballPayload};
 use crate::*;
 use assert_matches::assert_matches;
 use futures::Async;
@@ -741,7 +741,7 @@ fn precondition_each_account_has_tokens(
     }
 }
 
-fn vs_start(
+fn snowball_start(
     recipient: PublicKey,
     amount: i64,
     account: &mut AccountSandbox,
@@ -763,9 +763,9 @@ fn vs_start(
     }
 }
 
-/// 3 nodes send monet to 1 recipient, using vs
+/// 3 nodes send monet to 1 recipient, using Snowball
 #[test]
-fn create_vs_tx() {
+fn create_snowball_tx() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
     const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
@@ -792,7 +792,7 @@ fn create_vs_tx() {
         for i in 0..num_nodes {
             let mut notification = accounts[i].account.subscribe();
             let (id, response) =
-                vs_start(recipient, SEND_TOKENS, &mut accounts[i], &mut notification);
+                snowball_start(recipient, SEND_TOKENS, &mut accounts[i], &mut notification);
             notifications.push((notification, id, response));
             accounts[i].poll();
         }
@@ -832,14 +832,14 @@ fn create_vs_tx() {
                 // each node send message to rest
                 let (msg, peer) = account
                     .network
-                    .get_unicast::<valueshuffle::message::DirectMessage>(
-                        crate::valueshuffle::VALUE_SHUFFLE_TOPIC,
+                    .get_unicast::<snowball::message::DirectMessage>(
+                        crate::snowball::SNOWBALL_TOPIC,
                     );
 
                 // TODO: extend assertion.
                 assert_matches!(msg.message,
-                    Message::VsMessage{
-                        payload: VsPayload::SharedKeying {
+                    SnowballMessage::VsMessage{
+                        payload: SnowballPayload::SharedKeying {
                             ..
                         },
                         ..
@@ -862,7 +862,7 @@ fn create_vs_tx() {
             {
                 account.network.receive_unicast(
                     msg.source.pkey,
-                    crate::valueshuffle::VALUE_SHUFFLE_TOPIC,
+                    crate::snowball::SNOWBALL_TOPIC,
                     msg.clone(),
                 )
             }
@@ -877,14 +877,14 @@ fn create_vs_tx() {
                 // each node send message to rest
                 let (msg, peer) = account
                     .network
-                    .get_unicast::<valueshuffle::message::DirectMessage>(
-                        crate::valueshuffle::VALUE_SHUFFLE_TOPIC,
+                    .get_unicast::<snowball::message::DirectMessage>(
+                        crate::snowball::SNOWBALL_TOPIC,
                     );
 
                 // TODO: extend assertion.
                 assert_matches!(msg.message,
-                    Message::VsMessage{
-                        payload: VsPayload::Commitment {
+                    SnowballMessage::VsMessage{
+                        payload: SnowballPayload::Commitment {
                             ..
                         },
                         ..
@@ -902,7 +902,7 @@ fn create_vs_tx() {
             {
                 account.network.receive_unicast(
                     msg.source.pkey,
-                    crate::valueshuffle::VALUE_SHUFFLE_TOPIC,
+                    crate::snowball::SNOWBALL_TOPIC,
                     msg.clone(),
                 )
             }
@@ -917,14 +917,14 @@ fn create_vs_tx() {
                 // each node send message to rest
                 let (msg, peer) = account
                     .network
-                    .get_unicast::<valueshuffle::message::DirectMessage>(
-                        crate::valueshuffle::VALUE_SHUFFLE_TOPIC,
+                    .get_unicast::<snowball::message::DirectMessage>(
+                        crate::snowball::SNOWBALL_TOPIC,
                     );
 
                 // TODO: extend assertion.
                 assert_matches!(msg.message,
-                    Message::VsMessage{
-                        payload: VsPayload::CloakedVals {
+                    SnowballMessage::VsMessage{
+                        payload: SnowballPayload::CloakedVals {
                             ..
                         },
                         ..
@@ -942,7 +942,7 @@ fn create_vs_tx() {
             {
                 account.network.receive_unicast(
                     msg.source.pkey,
-                    crate::valueshuffle::VALUE_SHUFFLE_TOPIC,
+                    crate::snowball::SNOWBALL_TOPIC,
                     msg.clone(),
                 )
             }
@@ -957,14 +957,14 @@ fn create_vs_tx() {
                 // each node send message to rest
                 let (msg, peer) = account
                     .network
-                    .get_unicast::<valueshuffle::message::DirectMessage>(
-                        crate::valueshuffle::VALUE_SHUFFLE_TOPIC,
+                    .get_unicast::<snowball::message::DirectMessage>(
+                        crate::snowball::SNOWBALL_TOPIC,
                     );
 
                 // TODO: extend assertion.
                 assert_matches!(msg.message,
-                    Message::VsMessage{
-                        payload: VsPayload::Signature {
+                    SnowballMessage::VsMessage{
+                        payload: SnowballPayload::Signature {
                             ..
                         },
                         ..
@@ -982,7 +982,7 @@ fn create_vs_tx() {
             {
                 account.network.receive_unicast(
                     msg.source.pkey,
-                    crate::valueshuffle::VALUE_SHUFFLE_TOPIC,
+                    crate::snowball::SNOWBALL_TOPIC,
                     msg.clone(),
                 )
             }
@@ -1030,7 +1030,7 @@ fn create_vs_tx() {
 /// !! This tests asserts internal state, so it could not be ported to API directly. !!
 /// 1 node failed to join pool, and reset snowball on timeout
 #[test]
-fn vs_failed_join() {
+fn snowball_failed_join() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
     const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
@@ -1053,9 +1053,10 @@ fn vs_failed_join() {
         let recipient = accounts[3].account_service.account_pkey;
 
         let mut notification = accounts[0].account.subscribe();
-        let (id, response) = vs_start(recipient, SEND_TOKENS, &mut accounts[0], &mut notification);
+        let (id, response) =
+            snowball_start(recipient, SEND_TOKENS, &mut accounts[0], &mut notification);
         accounts[0].poll();
-        assert!(accounts[0].account_service.vs_session.is_some());
+        assert!(accounts[0].account_service.snowball_session.is_some());
         assert!(!accounts[0].account_service.pending_payments.is_empty());
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
@@ -1070,7 +1071,7 @@ fn vs_failed_join() {
 
         accounts[0].poll();
         assert!(accounts[0].account_service.pending_payments.is_empty());
-        assert!(accounts[0].account_service.vs_session.is_none());
+        assert!(accounts[0].account_service.snowball_session.is_none());
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
         s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
@@ -1120,7 +1121,7 @@ fn annihilation() {
 // check that after message from wrong facilitator, snowball will not break it's session.
 // For more detail, see: #1177
 #[test]
-fn vs_with_wrong_facilitator_pool() {
+fn snowball_with_wrong_facilitator_pool() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
     const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
@@ -1143,9 +1144,10 @@ fn vs_with_wrong_facilitator_pool() {
         let recipient = accounts[3].account_service.account_pkey;
 
         let mut notification = accounts[0].account.subscribe();
-        let (id, response) = vs_start(recipient, SEND_TOKENS, &mut accounts[0], &mut notification);
+        let (id, response) =
+            snowball_start(recipient, SEND_TOKENS, &mut accounts[0], &mut notification);
         accounts[0].poll();
-        assert!(accounts[0].account_service.vs_session.is_some());
+        assert!(accounts[0].account_service.snowball_session.is_some());
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
         s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
@@ -1161,7 +1163,7 @@ fn vs_with_wrong_facilitator_pool() {
             .network
             .receive_unicast(key, txpool::POOL_ANNOUNCE_TOPIC, msg);
         accounts[0].poll();
-        assert!(accounts[0].account_service.vs_session.is_some());
+        assert!(accounts[0].account_service.snowball_session.is_some());
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
 
@@ -1170,9 +1172,9 @@ fn vs_with_wrong_facilitator_pool() {
     });
 }
 
-/// create_vs but with simplifed broadcast, and 4 participants
+/// create_snowball but with simplifed broadcast, and 4 participants
 #[test]
-fn create_vs_simple() {
+fn create_snowball_simple() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
     const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
@@ -1199,7 +1201,7 @@ fn create_vs_simple() {
         for i in 0..num_nodes {
             let mut notification = accounts[i].account.subscribe();
             let (id, response) =
-                vs_start(recipient, SEND_TOKENS, &mut accounts[i], &mut notification);
+                snowball_start(recipient, SEND_TOKENS, &mut accounts[i], &mut notification);
             notifications.push((notification, id, response));
             accounts[i].poll();
         }
@@ -1232,19 +1234,19 @@ fn create_vs_simple() {
 
         debug!("===== VS STARTED NEW POOL: Send::SharedKeying =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         debug!("===== VS Receive shared keying: Send::Commitment =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         debug!("===== VS Receive commitment: produce CloakedVals =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         debug!("===== VS Receive CloakedVals: produce signatures =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         debug!("===== VS Receive Signatures: produce tx =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
@@ -1287,11 +1289,11 @@ fn create_vs_simple() {
 }
 
 //
-// Check errors in vs.
+// Check errors in Snowball.
 //
 
 #[test]
-fn create_vs_fail_share_key() {
+fn create_snowball_fail_share_key() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
     const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
@@ -1318,7 +1320,7 @@ fn create_vs_fail_share_key() {
         for i in 0..num_nodes {
             let mut notification = accounts[i].account.subscribe();
             let (id, response) =
-                vs_start(recipient, SEND_TOKENS, &mut accounts[i], &mut notification);
+                snowball_start(recipient, SEND_TOKENS, &mut accounts[i], &mut notification);
             notifications.push((notification, id, response));
             accounts[i].poll();
         }
@@ -1354,25 +1356,25 @@ fn create_vs_fail_share_key() {
         drop(last_account);
         debug!("===== VS STARTED NEW POOL: Send::SharedKeying =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.wait(crate::valueshuffle::VS_TIMER * crate::valueshuffle::VS_TIMEOUT as u32);
+        s.wait(crate::snowball::SNOWBALL_TIMER * crate::snowball::SNOWBALL_TIMEOUT as u32);
         s.poll();
 
         s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
         debug!("===== VS Receive shared keying: Send::Commitment =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         debug!("===== VS Receive commitment: produce CloakedVals =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         debug!("===== VS Receive CloakedVals: produce signatures =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         debug!("===== VS Receive Signatures: produce tx =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
@@ -1415,7 +1417,7 @@ fn create_vs_fail_share_key() {
 }
 
 #[test]
-fn create_vs_fail_commitment() {
+fn create_snowball_fail_commitment() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
     const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
@@ -1442,7 +1444,7 @@ fn create_vs_fail_commitment() {
         for i in 0..num_nodes {
             let mut notification = accounts[i].account.subscribe();
             let (id, response) =
-                vs_start(recipient, SEND_TOKENS, &mut accounts[i], &mut notification);
+                snowball_start(recipient, SEND_TOKENS, &mut accounts[i], &mut notification);
             notifications.push((notification, id, response));
             accounts[i].poll();
         }
@@ -1475,39 +1477,39 @@ fn create_vs_fail_commitment() {
         s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
         debug!("===== VS STARTED NEW POOL: Send::SharedKeying =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         let last_account = accounts.pop();
         drop(last_account);
         debug!("===== VS Receive shared keying: Send::Commitment =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.wait(crate::valueshuffle::VS_TIMER * crate::valueshuffle::VS_TIMEOUT as u32);
+        s.wait(crate::snowball::SNOWBALL_TIMER * crate::snowball::SNOWBALL_TIMEOUT as u32);
         s.poll();
 
         s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
         debug!("===== VS Receive commitment: produce CloakedVals =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         debug!("===== VS Receive CloakedVals: Check invalid supertransaction, restart=====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         debug!("===== VS STARTED NEW POOL: Send::SharedKeying =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         debug!("===== VS Receive commitment: produce CloakedVals =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         debug!("===== VS Receive CloakedVals: produce signatures =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         debug!("===== VS Receive Signatures: produce tx =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
@@ -1550,7 +1552,7 @@ fn create_vs_fail_commitment() {
 }
 
 #[test]
-fn create_vs_fail_cloacked_vals() {
+fn create_snowball_fail_cloacked_vals() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
     const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
@@ -1577,7 +1579,7 @@ fn create_vs_fail_cloacked_vals() {
         for i in 0..num_nodes {
             let mut notification = accounts[i].account.subscribe();
             let (id, response) =
-                vs_start(recipient, SEND_TOKENS, &mut accounts[i], &mut notification);
+                snowball_start(recipient, SEND_TOKENS, &mut accounts[i], &mut notification);
             notifications.push((notification, id, response));
             accounts[i].poll();
         }
@@ -1610,39 +1612,39 @@ fn create_vs_fail_cloacked_vals() {
         s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
         debug!("===== VS STARTED NEW POOL: Send::SharedKeying =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         debug!("===== VS Receive shared keying: Send::Commitment =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         let last_account = accounts.pop();
         drop(last_account);
         debug!("===== VS Receive commitment: produce CloakedVals =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.wait(crate::valueshuffle::VS_TIMER * crate::valueshuffle::VS_TIMEOUT as u32);
+        s.wait(crate::snowball::SNOWBALL_TIMER * crate::snowball::SNOWBALL_TIMEOUT as u32);
         s.poll();
 
         s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
         debug!("===== VS Receive CloakedVals: Check invalid supertransaction, restart=====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         debug!("===== VS STARTED NEW POOL: Send::SharedKeying =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         debug!("===== VS Receive commitment: produce CloakedVals =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         debug!("===== VS Receive CloakedVals: produce signatures =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(crate::valueshuffle::VALUE_SHUFFLE_TOPIC);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         debug!("===== VS Receive Signatures: produce tx =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);

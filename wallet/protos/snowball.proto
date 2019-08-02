@@ -53,23 +53,7 @@ message SnowballPayload {
 
 message SnowballMessage {
     stegos.crypto.Hash sid = 1;
-    SnowballPayload payload = 3;
-}
-
-message SnowballRestart {
-    stegos.crypto.DiceMixParticipantID without_part = 1;
-    stegos.crypto.Hash session_id = 2;
-}
-
-message Message {
-    oneof body {
-        SnowballMessage message = 1;
-        SnowballRestart restart = 2;
-    }
-}
-
-message DirectMessage {
-    stegos.crypto.DiceMixParticipantID source = 1;
-    stegos.crypto.DiceMixParticipantID destination = 2;
-    Message message = 3;
+    stegos.crypto.DiceMixParticipantID source = 2;
+    stegos.crypto.DiceMixParticipantID destination = 3;
+    SnowballPayload payload = 4;
 }

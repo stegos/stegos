@@ -84,6 +84,7 @@ mod protos;
 use crate::snowball::message::DirectMessage;
 use failure::format_err;
 use failure::Error;
+use futures::task::current;
 use futures::Async;
 use futures::Future;
 use futures::Poll;
@@ -95,7 +96,8 @@ use rand::Rng;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
-use std::time::{Duration, SystemTime};
+use std::mem;
+use std::time::Duration;
 use stegos_blockchain::PaymentTransaction;
 use stegos_blockchain::{Output, Timestamp};
 use stegos_blockchain::{PaymentOutput, PaymentPayloadData};
@@ -114,13 +116,12 @@ use stegos_node::txpool::POOL_ANNOUNCE_TOPIC;
 use stegos_node::txpool::POOL_JOIN_TOPIC;
 use stegos_node::Node;
 use stegos_serialization::traits::ProtoConvert;
-use tokio_timer::Interval;
+use tokio_timer::{clock, Delay};
 
 /// A topic used for Snowball unicast communication.
 pub const SNOWBALL_TOPIC: &'static str = "snowball";
 
-pub const SNOWBALL_TIMER: Duration = Duration::from_secs(1); // recurring 1sec events
-pub const SNOWBALL_TIMEOUT: i16 = 60; // sec, default for now
+pub const SNOWBALL_TIMER: Duration = Duration::from_secs(60); // recurring 1sec events
 
 pub const MAX_UTXOS: usize = 5; // max nbr of txout UTXO permitted
 
@@ -152,7 +153,6 @@ struct ValidationData {
 enum SnowballEvent {
     PoolFormed(pbc::PublicKey, Vec<u8>),
     MessageReceived(pbc::PublicKey, Vec<u8>),
-    Timer(SystemTime),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -202,6 +202,8 @@ pub struct Snowball {
     participants: Vec<ParticipantID>,
     /// Network API.
     network: Network,
+    /// Timeout timer.
+    timer: Option<Delay>,
     /// Incoming events.
     events: Box<dyn Stream<Item = SnowballEvent, Error = ()> + Send>,
 
@@ -338,15 +340,6 @@ pub struct Snowball {
     // Receive can terminate either by timeout, or early after receiving
     // from all expected participants.
     msg_state: MessageState,
-
-    // Timeout handling - we record the beginning of our timeout
-    // period at start of Receive, and decrement waiting on each 1s tick
-    // of our VS Timer.
-    //
-    // Each timer tick carries the instant that it fired. So if tick is earlier
-    // than our start time, we simply ignore the tick event.
-    waiting: i16,
-    wait_start: SystemTime,
 }
 
 impl Snowball {
@@ -423,16 +416,12 @@ impl Snowball {
             .map(|m| SnowballEvent::PoolFormed(m.from, m.data));
         events.push(Box::new(pool_formed));
 
-        // VsTimeout timer events
-        let duration = SNOWBALL_TIMER; // every second
-        let timer = Interval::new_interval(duration)
-            .map(|_i| SnowballEvent::Timer(SystemTime::now()))
-            .map_err(|_e| ()); // ignore transient timer errors
-        events.push(Box::new(timer));
+        // SbTimeout timer events
+        let timer = None;
 
         let events = select_all(events);
 
-        let mut vs = Snowball {
+        let mut sb = Snowball {
             skey,
             facilitator,
             future_facilitator,
@@ -441,6 +430,7 @@ impl Snowball {
             participants,
             session_id,
             network,
+            timer,
             events,
             my_txins,
             my_txouts,
@@ -469,8 +459,6 @@ impl Snowball {
             excl_participants: Vec::new(),
             msg_state: MessageState::None,
             trans: PaymentTransaction::dum(),
-            wait_start: SystemTime::now(),
-            waiting: 0,
             msg_queue: VecDeque::new(),
             serialized_utxo_size: None,
             dicemix_nbr_utxo_chunks: None,
@@ -478,8 +466,17 @@ impl Snowball {
             commit_phase_participants: Vec::new(),
             all_parts_info: HashMap::new(),
         };
-        vs.send_pool_join();
-        vs
+        sb.send_pool_join();
+        sb
+    }
+
+    /// Sets timeout.
+    fn start_timer(&mut self) {
+        trace!("Start timer.");
+        assert!(self.msg_state != MessageState::None);
+        current().notify();
+        let timer = Delay::new(clock::now() + SNOWBALL_TIMER);
+        self.timer = timer.into();
     }
 
     // ----------------------------------------------------------------------------------------------
@@ -553,11 +550,11 @@ impl Snowball {
     }
 
     fn reset_state(&mut self) {
-        self.waiting = 0; // reset timeout counter
         self.poll_state = PoolState::PoolFinished;
         self.msg_state = MessageState::None;
         self.msg_queue.clear();
         self.session_round = 0;
+        self.timer = None;
         self.try_update_facilitator();
     }
 
@@ -734,6 +731,14 @@ impl Future for Snowball {
 
     /// Event loop.
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        match self.timer.poll().expect("Should be no error in timer") {
+            Async::Ready(Some(_)) => match self.handle_timer() {
+                Ok(Async::NotReady) => (),
+                result => return result.map_err(|error| (error, self.my_txins.clone())),
+            },
+            Async::NotReady | Async::Ready(None) => (),
+        }
+
         loop {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => {
@@ -778,8 +783,8 @@ impl Future for Snowball {
                                 } => self.on_restart_pool(msg.source, without_part, session_id),
                             }
                         }
-                        SnowballEvent::Timer(when) => self.handle_timer(when),
                     };
+
                     match result {
                         Ok(Async::Ready(r)) => {
                             // Finish.
@@ -813,41 +818,32 @@ fn is_valid_pt(pt: &Pt, ans: &mut Pt) -> bool {
 type VsFunction = fn(&mut Snowball) -> Poll<SnowballOutput, SnowballError>;
 
 impl Snowball {
-    fn handle_timer(&mut self, when: SystemTime) -> Poll<SnowballOutput, SnowballError> {
-        // self.waiting contains the nbr seconds countdown until a timeout
-        // specify waiting = 0 for no timeout checking
-        if self.waiting > 0 && when >= self.wait_start {
-            self.waiting -= 1;
-            if 0 == self.waiting {
-                // reset msg_state to indicate done waiting for this kind of message
-                // whichever participants have responded are now held in self.participants.
-                // whichever participants did not respond are in self.pending_participants.
-                debug!("vs timeout, msg_state: {:?}", self.msg_state);
-                let state = self.msg_state;
-                self.msg_state = MessageState::None;
-                match state {
-                    MessageState::None => {
-                        return Ok(Async::NotReady);
-                    }
-                    MessageState::SharedKeying => {
-                        return self.commit();
-                    }
-                    MessageState::Commitment => {
-                        return self.share_cloaked_data();
-                    }
-                    MessageState::CloakedVals => {
-                        return self.make_supertransaction();
-                    }
-                    MessageState::Signature => {
-                        return self.sign_supertransaction();
-                    }
-                    MessageState::SecretKeying => {
-                        return self.blame_discovery();
-                    }
-                }
+    fn handle_timer(&mut self) -> Poll<SnowballOutput, SnowballError> {
+        self.timer = None;
+        // reset msg_state to indicate done waiting for this kind of message
+        // whichever participants have responded are now held in self.participants.
+        // whichever participants did not respond are in self.pending_participants.
+        debug!("vs timeout, msg_state: {:?}", self.msg_state);
+        match mem::replace(&mut self.msg_state, MessageState::None) {
+            MessageState::None => {
+                panic!("There should be no timer in None state.");
+            }
+            MessageState::SharedKeying => {
+                return self.commit();
+            }
+            MessageState::Commitment => {
+                return self.share_cloaked_data();
+            }
+            MessageState::CloakedVals => {
+                return self.make_supertransaction();
+            }
+            MessageState::Signature => {
+                return self.sign_supertransaction();
+            }
+            MessageState::SecretKeying => {
+                return self.blame_discovery();
             }
         }
-        Ok(Async::NotReady)
     }
 
     fn on_message_received(
@@ -1083,11 +1079,7 @@ impl Snowball {
         Ok(Async::NotReady)
     }
 
-    fn prep_rx(
-        &mut self,
-        msgtype: MessageState,
-        timeout: i16,
-    ) -> Poll<SnowballOutput, SnowballError> {
+    fn prep_rx(&mut self, msgtype: MessageState) -> Poll<SnowballOutput, SnowballError> {
         // transfer other participants into pending_participants
         // and set new msg_state for expected kind of messages
         let mut other_participants: HashSet<ParticipantID> = HashSet::new();
@@ -1100,15 +1092,8 @@ impl Snowball {
         self.pending_participants = other_participants;
         self.participants = vec![self.participant_key];
 
-        // arrange to ignore enqueue timer events unless they
-        // are timestamped later than now.
-        //
-        // Note: This might fail if our system clock is reset
-        // after this point, and before a final timeout triggering
-        // timer event occurs.
-        self.wait_start = SystemTime::now();
-        self.waiting = timeout;
         self.msg_state = msgtype;
+        self.start_timer();
         debug!("In prep_rx(), state = {:?}", msgtype);
         self.handle_enqueued_messages()
     }
@@ -1817,7 +1802,7 @@ impl Snowball {
 
         // we allow the receive_xxx to specify individual timeout periods
         // in case they need to vary
-        self.prep_rx(MessageState::SharedKeying, SNOWBALL_TIMEOUT)
+        self.prep_rx(MessageState::SharedKeying)
     }
 
     // -------------------------------------------------
@@ -1833,7 +1818,7 @@ impl Snowball {
         // if any fail to send commitments, add them to exclusion list p_excl
 
         // fill in commits
-        self.prep_rx(MessageState::Commitment, SNOWBALL_TIMEOUT)
+        self.prep_rx(MessageState::Commitment)
     }
 
     // -------------------------------------------------
@@ -1863,7 +1848,7 @@ impl Snowball {
 
         // fill in matrices, cloaked_gamma_adj, cloaked_fees,
         // and all_excl_k_cloaks, using commits to validate incoming data
-        self.prep_rx(MessageState::CloakedVals, SNOWBALL_TIMEOUT)
+        self.prep_rx(MessageState::CloakedVals)
     }
 
     // -------------------------------------------------
@@ -1881,7 +1866,7 @@ impl Snowball {
         // Partial valid = K component is valid ECC point
 
         // fill in signatures
-        self.prep_rx(MessageState::Signature, SNOWBALL_TIMEOUT)
+        self.prep_rx(MessageState::Signature)
     }
 
     // -------------------------------------------------
@@ -1896,7 +1881,7 @@ impl Snowball {
         // non-respondents are added to p_excl
 
         // fills in sess_skeys
-        self.prep_rx(MessageState::SecretKeying, SNOWBALL_TIMEOUT)
+        self.prep_rx(MessageState::SecretKeying)
     }
 
     // -------------------------------------------------

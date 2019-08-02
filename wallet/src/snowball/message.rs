@@ -61,28 +61,13 @@ pub(crate) enum SnowballPayload {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum SnowballMessage {
-    // types of messages delivered by the event system
-    VsMessage {
-        // this is the kind of message, whose payload
-        // may be of interest to waiting phases in Snowball
-        sid: Hash,
-        payload: SnowballPayload,
-    },
-    VsRestart {
-        without_part: ParticipantID,
-        session_id: Hash,
-    },
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct DirectMessage {
+pub(crate) struct SnowballMessage {
     // this kind of message could also deliver items
     // of interest to Snowball phases.
-    // it acts as an addressed envelope for contained Message.
+    pub sid: Hash,
     pub source: ParticipantID,
     pub destination: ParticipantID,
-    pub message: SnowballMessage,
+    pub payload: SnowballPayload,
 }
 
 impl fmt::Display for SnowballPayload {
@@ -109,37 +94,17 @@ impl fmt::Display for SnowballPayload {
 
 impl fmt::Display for SnowballMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SnowballMessage::VsMessage { payload, .. } => write!(f, "{}", payload),
-            SnowballMessage::VsRestart {
-                without_part,
-                session_id,
-            } => write!(
-                f,
-                "VsRestart( without_part: {}, session_id: {})",
-                without_part, session_id
-            ),
-        }
+        write!(f, "{}", self.payload)
     }
 }
 
 impl Hashable for SnowballMessage {
     fn hash(&self, state: &mut Hasher) {
-        match self {
-            SnowballMessage::VsMessage { sid, payload } => {
-                "VsMessage".hash(state);
-                sid.hash(state);
-                payload.hash(state);
-            }
-            SnowballMessage::VsRestart {
-                without_part,
-                session_id,
-            } => {
-                "VsRestart".hash(state);
-                session_id.hash(state);
-                without_part.hash(state);
-            }
-        }
+        "SnowballMessage".hash(state);
+        self.sid.hash(state);
+        self.source.hash(state);
+        self.destination.hash(state);
+        self.payload.hash(state);
     }
 }
 

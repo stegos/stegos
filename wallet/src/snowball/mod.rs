@@ -81,7 +81,7 @@ use message::*;
 
 mod protos;
 
-use crate::snowball::message::DirectMessage;
+use crate::snowball::message::SnowballMessage;
 use failure::format_err;
 use failure::Error;
 use futures::task::current;
@@ -649,80 +649,6 @@ impl Snowball {
     fn exclude_participants(&mut self, p_excl: &Vec<ParticipantID>) {
         self.participants.retain(|p| !p_excl.contains(p));
     }
-
-    fn on_restart_pool(
-        &mut self,
-        from: ParticipantID,
-        without_part: ParticipantID,
-        session_id: Hash,
-    ) -> Poll<SnowballOutput, SnowballError> {
-        // called from facilitator node when it is discovered that "without_part" has submitted
-        // a side transaction containing a same TXIN as already submitted to the pool - a bad actor.
-        if let Err(e) = self.ensure_facilitator(from.pkey) {
-            warn!("Found different facilitator: e = {}", e);
-            return Ok(Async::NotReady);
-        }
-        self.session_id = session_id;
-        self.session_round = 0;
-        let excl = vec![without_part];
-        match self.poll_state {
-            PoolState::PoolFormed | PoolState::PoolFinished => {
-                match self.msg_state {
-                    MessageState::None => {
-                        // We aren't currently running, but we can restart with the
-                        // participants left over from previous run.
-                        // Facilitator should have already discarded our previous supertransaction.
-                        self.exclude_participants(&excl);
-                        self.poll_state = PoolState::PoolFormed;
-                        return self.start();
-                    }
-                    _ => {
-                        // We are pausing for incoming messages of some kind.
-                        // Restart from the combined participants and pending_participants.
-                        for p in &self.pending_participants {
-                            // copy over pending participants for restart
-                            self.participants.push(*p);
-                        }
-                        self.exclude_participants(&excl);
-                        // set state to reflect this division of participants list state
-                        // in case we abort start()
-                        self.msg_state = MessageState::None;
-                        return self.start();
-                    }
-                }
-            }
-            _ => {
-                // We haven't yet started. No participants are yet
-                // known. If this message arrived out of order with
-                // a pending startup message this request must be enqueued
-                // for use at startup.
-                self.pending_removals.push(without_part);
-            }
-        }
-        Ok(Async::NotReady)
-    }
-
-    // ----------------------------------------------------------------------------------------------
-    // TxPool Communication
-    // ----------------------------------------------------------------------------------------------
-
-    /// Sends a message to all txpool members via unicast.
-    fn send_message(&self, msg: SnowballMessage) {
-        for pkey in &self.participants {
-            if *pkey != self.participant_key {
-                let msg = DirectMessage {
-                    destination: *pkey,
-                    source: self.participant_key,
-                    message: msg.clone(),
-                };
-                let bmsg = msg.into_buffer().expect("serialized");
-                debug!("sending msg {:?} to {}", &msg, pkey);
-                self.network
-                    .send(pkey.pkey.clone(), SNOWBALL_TOPIC, bmsg)
-                    .expect("connected");
-            }
-        }
-    }
 }
 
 impl Future for Snowball {
@@ -754,7 +680,7 @@ impl Future for Snowball {
                             self.on_pool_notification(from, pool_info)
                         }
                         SnowballEvent::MessageReceived(from, msg) => {
-                            let msg = match DirectMessage::from_buffer(&msg) {
+                            let msg = match SnowballMessage::from_buffer(&msg) {
                                 Ok(msg) => msg,
                                 Err(e) => {
                                     error!("Invalid DirectMessage message: {}", e);
@@ -773,15 +699,7 @@ impl Future for Snowball {
                                 );
                                 continue;
                             }
-                            match msg.message {
-                                SnowballMessage::VsMessage { sid, payload } => {
-                                    self.on_message_received(&msg.source, &sid, &payload)
-                                }
-                                SnowballMessage::VsRestart {
-                                    without_part,
-                                    session_id,
-                                } => self.on_restart_pool(msg.source, without_part, session_id),
-                            }
+                            self.on_message_received(&msg.source, &msg.sid, &msg.payload)
                         }
                     };
 
@@ -1778,11 +1696,21 @@ impl Snowball {
     // -------------------------------------------------
 
     fn send_signed_message(&self, payload: &SnowballPayload) {
-        let msg = SnowballMessage::VsMessage {
-            payload: payload.clone(),
-            sid: self.session_id,
-        };
-        self.send_message(msg)
+        for pkey in &self.participants {
+            if *pkey != self.participant_key {
+                let msg = SnowballMessage {
+                    sid: self.session_id,
+                    payload: payload.clone(),
+                    source: self.participant_key,
+                    destination: *pkey,
+                };
+                let bmsg = msg.into_buffer().expect("serialized");
+                debug!("sending msg {:?} to {}", &msg, pkey);
+                self.network
+                    .send(pkey.pkey.clone(), SNOWBALL_TOPIC, bmsg)
+                    .expect("connected");
+            }
+        }
     }
 
     fn send_session_pkey(&self, sess_pkey: &PublicKey, sess_KSig: &Pt) {

@@ -832,13 +832,13 @@ fn create_snowball_tx() {
                 // each node send message to rest
                 let (msg, peer) = account
                     .network
-                    .get_unicast::<snowball::message::DirectMessage>(
+                    .get_unicast::<snowball::message::SnowballMessage>(
                         crate::snowball::SNOWBALL_TOPIC,
                     );
 
                 // TODO: extend assertion.
-                assert_matches!(msg.message,
-                    SnowballMessage::VsMessage{
+                assert_matches!(msg,
+                    SnowballMessage {
                         payload: SnowballPayload::SharedKeying {
                             ..
                         },
@@ -877,13 +877,13 @@ fn create_snowball_tx() {
                 // each node send message to rest
                 let (msg, peer) = account
                     .network
-                    .get_unicast::<snowball::message::DirectMessage>(
+                    .get_unicast::<snowball::message::SnowballMessage>(
                         crate::snowball::SNOWBALL_TOPIC,
                     );
 
                 // TODO: extend assertion.
-                assert_matches!(msg.message,
-                    SnowballMessage::VsMessage{
+                assert_matches!(msg,
+                    SnowballMessage {
                         payload: SnowballPayload::Commitment {
                             ..
                         },
@@ -917,13 +917,13 @@ fn create_snowball_tx() {
                 // each node send message to rest
                 let (msg, peer) = account
                     .network
-                    .get_unicast::<snowball::message::DirectMessage>(
+                    .get_unicast::<snowball::message::SnowballMessage>(
                         crate::snowball::SNOWBALL_TOPIC,
                     );
 
                 // TODO: extend assertion.
-                assert_matches!(msg.message,
-                    SnowballMessage::VsMessage{
+                assert_matches!(msg,
+                    SnowballMessage {
                         payload: SnowballPayload::CloakedVals {
                             ..
                         },
@@ -957,13 +957,13 @@ fn create_snowball_tx() {
                 // each node send message to rest
                 let (msg, peer) = account
                     .network
-                    .get_unicast::<snowball::message::DirectMessage>(
+                    .get_unicast::<snowball::message::SnowballMessage>(
                         crate::snowball::SNOWBALL_TOPIC,
                     );
 
                 // TODO: extend assertion.
-                assert_matches!(msg.message,
-                    SnowballMessage::VsMessage{
+                assert_matches!(msg,
+                    SnowballMessage {
                         payload: SnowballPayload::Signature {
                             ..
                         },

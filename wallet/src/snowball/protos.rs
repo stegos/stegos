@@ -156,66 +156,25 @@ impl ProtoConvert for SnowballPayload {
 }
 
 impl ProtoConvert for SnowballMessage {
-    type Proto = snowball::Message;
+    type Proto = snowball::SnowballMessage;
     fn into_proto(&self) -> Self::Proto {
-        let mut proto = snowball::Message::new();
-        match self {
-            SnowballMessage::VsMessage { sid, payload } => {
-                let mut msg = snowball::SnowballMessage::new();
-                msg.set_sid(sid.into_proto());
-                msg.set_payload(payload.into_proto());
-                proto.set_message(msg);
-            }
-            SnowballMessage::VsRestart {
-                without_part,
-                session_id,
-            } => {
-                let mut msg = snowball::SnowballRestart::new();
-                msg.set_session_id(session_id.into_proto());
-                msg.set_without_part(without_part.into_proto());
-                proto.set_restart(msg);
-            }
-        }
-        proto
-    }
-
-    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let msg = match proto.body {
-            Some(snowball::Message_oneof_body::message(ref msg)) => SnowballMessage::VsMessage {
-                sid: Hash::from_proto(msg.get_sid())?,
-                payload: SnowballPayload::from_proto(msg.get_payload())?,
-            },
-            Some(snowball::Message_oneof_body::restart(ref msg)) => SnowballMessage::VsRestart {
-                without_part: ParticipantID::from_proto(msg.get_without_part())?,
-                session_id: Hash::from_proto(msg.get_session_id())?,
-            },
-            None => {
-                return Err(
-                    ProtoError::MissingField("body".to_string(), "body".to_string()).into(),
-                );
-            }
-        };
-        Ok(msg)
-    }
-}
-
-impl ProtoConvert for DirectMessage {
-    type Proto = snowball::DirectMessage;
-    fn into_proto(&self) -> Self::Proto {
-        let mut proto = snowball::DirectMessage::new();
+        let mut proto = snowball::SnowballMessage::new();
+        proto.set_sid(self.sid.into_proto());
         proto.set_source(self.source.into_proto());
         proto.set_destination(self.destination.into_proto());
-        proto.set_message(self.message.into_proto());
+        proto.set_payload(self.payload.into_proto());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let sid = Hash::from_proto(proto.get_sid())?;
         let source = dicemix::ParticipantID::from_proto(proto.get_source())?;
         let destination = dicemix::ParticipantID::from_proto(proto.get_destination())?;
-        let message = SnowballMessage::from_proto(proto.get_message())?;
-        Ok(DirectMessage {
+        let payload = SnowballPayload::from_proto(proto.get_payload())?;
+        Ok(SnowballMessage {
+            sid,
             source,
             destination,
-            message,
+            payload,
         })
     }
 }
@@ -225,46 +184,38 @@ impl ProtoConvert for DirectMessage {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use std::dbg;
+    use rand::{thread_rng, Rng};
     use stegos_crypto::bulletproofs::simple_commit;
-    use stegos_crypto::scc::make_random_keys;
+    use stegos_crypto::hash::{Hash, Hashable};
+    use stegos_crypto::{pbc, scc};
+
+    fn roundtrip<T>(x: &T) -> T
+    where
+        T: ProtoConvert + Hashable + std::fmt::Debug,
+    {
+        let r = T::from_proto(&x.clone().into_proto()).unwrap();
+        assert_eq!(Hash::digest(x), Hash::digest(&r));
+        r
+    }
 
     #[test]
     fn snowball_serialization() {
-        let (_skey, pkey) = make_random_keys();
+        let mut rng = thread_rng();
+        let (_wallet_skey, wallet_pkey) = scc::make_random_keys();
+        let (_network_skey, network_pkey) = pbc::make_random_keys();
         let sid = Hash::digest("test");
+        let source = dicemix::ParticipantID::new(network_pkey, rng.gen::<[u8; 32]>());
+        let destination = dicemix::ParticipantID::new(network_pkey, rng.gen::<[u8; 32]>());
         let ksig = simple_commit(&Fr::one(), &Fr::zero());
-        let msg = SnowballMessage::VsMessage {
+        let msg = SnowballMessage {
             sid,
-            payload: SnowballPayload::SharedKeying { pkey, ksig },
+            source,
+            destination,
+            payload: SnowballPayload::SharedKeying {
+                pkey: wallet_pkey,
+                ksig,
+            },
         };
-        let smsg = msg.into_buffer().expect("can't into_buffer()");
-        // dbg!(&smsg);
-        let xmsg = SnowballMessage::from_buffer(&smsg).expect("can't deserialize msg");
-        dbg!(&xmsg);
-        match xmsg {
-            SnowballMessage::VsMessage {
-                sid: xsid,
-                payload: xpayload,
-            } => {
-                assert!(xsid == sid);
-                match xpayload {
-                    SnowballPayload::SharedKeying {
-                        pkey: xpkey,
-                        ksig: xksig,
-                    } => {
-                        assert!(xpkey == pkey);
-                        assert!(xksig == ksig);
-                    }
-                    _ => {
-                        panic!("Improper payload deserialization");
-                    }
-                }
-            }
-            _ => {
-                panic!("Improper message deserialization");
-            }
-        }
+        roundtrip(&msg);
     }
-
 }

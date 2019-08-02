@@ -1359,7 +1359,7 @@ fn create_snowball_fail_share_key() {
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.wait(crate::snowball::SNOWBALL_TIMER * crate::snowball::SNOWBALL_TIMEOUT as u32);
+        s.wait(crate::snowball::SNOWBALL_TIMER);
         s.poll();
 
         s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
@@ -1486,7 +1486,7 @@ fn create_snowball_fail_commitment() {
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.wait(crate::snowball::SNOWBALL_TIMER * crate::snowball::SNOWBALL_TIMEOUT as u32);
+        s.wait(crate::snowball::SNOWBALL_TIMER);
         s.poll();
 
         s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
@@ -1625,7 +1625,7 @@ fn create_snowball_fail_cloacked_vals() {
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.wait(crate::snowball::SNOWBALL_TIMER * crate::snowball::SNOWBALL_TIMEOUT as u32);
+        s.wait(crate::snowball::SNOWBALL_TIMER);
         s.poll();
 
         s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);

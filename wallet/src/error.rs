@@ -38,4 +38,6 @@ pub enum WalletError {
     InvalidUTXOData,
     #[fail(display = "Nothing to re-stake")]
     NothingToRestake,
+    #[fail(display = "Snownall already started")]
+    SnowballBusy,
 }

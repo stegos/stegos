@@ -45,8 +45,6 @@
 //
 // At the start of the first round of ValueShuffle, these TXINs are checked
 // by forming ownership signatures, and verifying that these signatures check.
-// If any problems arise, the ValueShuffle session is aborted with
-// Err(VsError::VsBadTXIN).
 //
 // If all TXIN are good, the TXIN hash values and ownership signatures are
 // sent to all other ValueShuffle participants, and they will also perform
@@ -74,7 +72,6 @@
 // ========================================================================
 
 #![allow(non_snake_case)]
-#![allow(warnings)]
 
 mod error;
 pub use error::*;
@@ -85,9 +82,8 @@ use message::*;
 mod protos;
 
 use crate::valueshuffle::message::DirectMessage;
+use failure::format_err;
 use failure::Error;
-use failure::{bail, format_err};
-use futures::sync::mpsc::UnboundedSender;
 use futures::Async;
 use futures::Future;
 use futures::Poll;
@@ -116,7 +112,7 @@ use stegos_node::txpool::PoolJoin;
 use stegos_node::txpool::PoolNotification;
 use stegos_node::txpool::POOL_ANNOUNCE_TOPIC;
 use stegos_node::txpool::POOL_JOIN_TOPIC;
-use stegos_node::{Node, NodeNotification};
+use stegos_node::Node;
 use stegos_serialization::traits::ProtoConvert;
 use tokio_timer::Interval;
 
@@ -154,7 +150,6 @@ struct ValidationData {
 #[derive(Debug)]
 /// ValueShuffle Events.
 enum ValueShuffleEvent {
-    FacilitatorChanged(pbc::PublicKey),
     PoolFormed(pbc::PublicKey, Vec<u8>),
     MessageReceived(pbc::PublicKey, Vec<u8>),
     VsTimer(SystemTime),
@@ -163,7 +158,6 @@ enum ValueShuffleEvent {
 #[derive(Debug, PartialEq, Eq)]
 /// ValueShuffle State.
 enum State {
-    Offline,
     PoolWait,
     PoolFormed,
     PoolFinished,
@@ -173,10 +167,9 @@ enum State {
 
 #[derive(Debug)]
 /// Possible outcomes of ValueShuffle
-pub enum ValueShuffleOutput {
-    Failure(Error, Vec<(TXIN, UTXO)>),
-    UnsignedTransaction(PaymentTransaction),
-    SignedTransaction(PaymentTransaction, bool),
+pub struct ValueShuffleOutput {
+    pub tx: PaymentTransaction,
+    pub is_leader: bool,
 }
 
 /// ValueShuffle Service.
@@ -185,7 +178,7 @@ pub struct ValueShuffle {
     skey: SecretKey,
 
     /// Faciliator's PBC public key
-    facilitator_pkey: pbc::PublicKey,
+    facilitator: pbc::PublicKey,
     /// Next facilitator's PBC public key.
     /// Used if facilitator was changed during valueshuffle session.
     future_facilitator: Option<pbc::PublicKey>,
@@ -195,8 +188,6 @@ pub struct ValueShuffle {
     participant_key: ParticipantID,
     /// Public keys of txpool's members,
     participants: Vec<ParticipantID>,
-    // Sent transaction.
-    wallet_tx_info: UnboundedSender<ValueShuffleOutput>,
     /// Network API.
     network: Network,
     /// Incoming events.
@@ -357,20 +348,50 @@ impl ValueShuffle {
         pkey: PublicKey,
         participant_pkey: pbc::PublicKey,
         network: Network,
-        node: Node,
-        wallet_tx_info: UnboundedSender<ValueShuffleOutput>,
+        _node: Node,
+        facilitator: pbc::PublicKey,
+        my_txins: Vec<(TXIN, UTXO)>,
+        my_txouts: Vec<ProposedUTXO>,
+        my_fee: i64,
     ) -> ValueShuffle {
-        //
-        // State.
-        //
-        let facilitator_pkey: pbc::PublicKey = pbc::PublicKey::dum();
+        // check the maximal number of UTXOs.
+        assert!(my_txouts.len() <= MAX_UTXOS);
+
+        // validate each TXIN and get my initial signature keying info
+        let utxos = my_txins.iter().map(|(_txin, u)| u.clone()).collect();
+        // signing error if we can't open the TXIN UTXO
+        let own_sig = sign_utxos(&utxos, &skey);
+
+        // double check our own TXINs
+        validate_ownership(&my_txins, &own_sig).expect("invalid keys");
+        let mut amt_in = 0;
+        let mut my_signing_skeyF = Fr::zero();
+        let mut txin_gamma_sum = Fr::zero();
+        for utxo in utxos.clone() {
+            let payload = utxo.decrypt_payload(&skey).expect("invalid keys");
+            let (gamma, delta, amount) = (payload.gamma, payload.delta, payload.amount);
+            assert_ne!(gamma, Fr::zero());
+            amt_in += amount;
+            txin_gamma_sum += gamma;
+            my_signing_skeyF += Fr::from(skey.clone()) + gamma * delta;
+        }
+        let mut amt_out = 0;
+        my_txouts.iter().for_each(|rec| amt_out += rec.amount);
+
+        // check that we have a zero balance condition
+        if my_fee < 0 || amt_in != amt_out + my_fee {
+            panic!("Invalid TX balance");
+        }
+
+        let my_signing_skey: SecretKey = my_signing_skeyF.into();
         let future_facilitator = None;
         let participants: Vec<ParticipantID> = Vec::new();
         let session_id: Hash = Hash::random();
-        let state = State::Offline;
+        let state = State::PoolWait;
         let mut rng = thread_rng();
         let seed = rng.gen::<[u8; 32]>();
         let participant_key = dicemix::ParticipantID::new(participant_pkey, seed);
+
         //
         // Events.
         //
@@ -383,16 +404,6 @@ impl ValueShuffle {
             .expect("connected")
             .map(|m| ValueShuffleEvent::MessageReceived(m.from, m.data));
         events.push(Box::new(pool_formed));
-
-        // Facilitator elections.
-        let facilitator_changed = node
-            .subscribe()
-            .filter_map(|e| match e {
-                NodeNotification::NewMacroBlock(b) => Some(b),
-                _ => None,
-            })
-            .map(|epoch| ValueShuffleEvent::FacilitatorChanged(epoch.facilitator));
-        events.push(Box::new(facilitator_changed));
 
         // Pool formation.
         let pool_formed = network
@@ -410,27 +421,24 @@ impl ValueShuffle {
 
         let events = select_all(events);
 
-        ValueShuffle {
-            wallet_tx_info,
-            skey: skey.clone(),
-            facilitator_pkey,
+        let mut vs = ValueShuffle {
+            skey,
+            facilitator,
             future_facilitator,
             state,
             participant_key,
-            participants: participants.clone(), // empty vector
+            participants,
             session_id,
             network,
             events,
-
-            my_txins: Vec::new(),
-            my_txouts: Vec::new(),
+            my_txins,
+            my_txouts,
             my_utxos: Vec::new(),
-            my_fee: 0,
+            my_fee,
             sess_skey: skey.clone(),
             sess_pkey: pkey,
-            my_signing_skey: skey.clone(),
-            txin_gamma_sum: Fr::zero(),
-
+            my_signing_skey,
+            txin_gamma_sum,
             // these are all empty participant lists
             session_round: 0,
             all_txins: HashMap::new(),
@@ -458,43 +466,9 @@ impl ValueShuffle {
             pending_removals: Vec::new(),
             commit_phase_participants: Vec::new(),
             all_parts_info: HashMap::new(),
-        }
-    }
-
-    /// Called by Wallet.
-    pub fn queue_transaction(
-        &mut self,
-        txins: &Vec<(TXIN, UTXO)>,
-        txouts: &Vec<ProposedUTXO>,
-        fee: i64,
-    ) -> Result<(), Error> {
-        match self.state {
-            State::Offline | State::PoolFinished => (),
-            _ => {
-                return Err(VsError::VsBusy.into());
-            }
-        }
-
-        // get copies of our own TXIN UTXOs
-        self.my_txins = txins.clone();
-        self.my_txouts = txouts.clone();
-        self.my_fee = fee;
-
-        if txouts.len() > MAX_UTXOS {
-            self.reset_state();
-            return Err(VsError::VsTooManyUTXO.into());
-        }
-
-        // Send PoolJoin on the first request.
-        self.state = State::PoolWait;
-        self.msg_state = VsMsgExpectedType::None;
-        self.send_pool_join()
-    }
-
-    /// Terminate ValueShuffle (used when ValueShuffle takes too long)
-    pub fn terminate(&mut self) {
-        warn!("Resetting ValueShuffle on request from outside.");
-        self.reset_state();
+        };
+        vs.send_pool_join();
+        vs
     }
 
     // ----------------------------------------------------------------------------------------------
@@ -511,9 +485,9 @@ impl ValueShuffle {
     // node ID's along with an initial unique session ID (sid).
 
     /// Called when facilitator has been changed.
-    fn on_facilitator_changed(&mut self, facilitator: pbc::PublicKey) -> Result<(), Error> {
+    pub fn change_facilitator(&mut self, facilitator: pbc::PublicKey) {
         match self.state {
-            State::Offline | State::PoolFinished | State::PoolRestart | State::PoolWait => {}
+            State::PoolFinished | State::PoolRestart | State::PoolWait => {}
             // in progress some session, keep new facilitator in future facilitator.
             _ => {
                 debug!(
@@ -521,48 +495,50 @@ impl ValueShuffle {
                     facilitator
                 );
                 self.future_facilitator = Some(facilitator);
-                return Ok(());
             }
         }
         debug!("Changed facilitator: facilitator={}", facilitator);
-        self.facilitator_pkey = facilitator;
+        self.facilitator = facilitator;
         self.future_facilitator = None;
         // Last session was canceled, rejoining to new facilitator.
         if self.state == State::PoolRestart || self.state == State::PoolWait {
             debug!("Found new facilitator, rejoining to new pool.");
-            self.send_pool_join()?;
+            self.send_pool_join();
         }
-
-        Ok(())
     }
 
     fn try_update_facilitator(&mut self) {
         if let Some(facilitator) = self.future_facilitator.take() {
             debug!("Changed facilitator: facilitator={}", facilitator);
-            self.facilitator_pkey = facilitator;
+            self.facilitator = facilitator;
         }
     }
 
     /// Sends a request to join tx pool.
-    fn send_pool_join(&mut self) -> Result<(), Error> {
-        match self.try_send_pool_join() {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                self.zap_state(format_err!("ValueShuffle error: {:?}", err));
-                Err(err)
-            }
-        }
-    }
-
-    fn try_send_pool_join(&mut self) -> Result<(), Error> {
+    fn send_pool_join(&mut self) {
         debug!(
             "Sending pool join request: to_facilitator={}",
-            self.facilitator_pkey
+            self.facilitator
         );
-        let msg = self.form_pooljoin_message()?.into_buffer()?;
+        // To join a session we must send our list of TXINS, along with
+        // our proof of ownership signature on all of them.
+
+        self.all_txins
+            .insert(self.participant_key, self.my_txins.clone());
+
+        let utxos = self.my_txins.iter().map(|(_txin, u)| u.clone()).collect();
+        let ownsig = sign_utxos(&utxos, &self.skey);
+        let msg_txins: Vec<TXIN> = self.my_txins.iter().map(|(k, _u)| k.clone()).collect();
+        let msg = PoolJoin {
+            seed: self.participant_key.seed,
+            txins: msg_txins,
+            utxos,
+            ownsig,
+        };
+        let msg = msg.into_buffer().unwrap();
         self.network
-            .send(self.facilitator_pkey, POOL_JOIN_TOPIC, msg)?;
-        Ok(())
+            .send(self.facilitator, POOL_JOIN_TOPIC, msg)
+            .expect("Connected");
     }
 
     fn reset_state(&mut self) {
@@ -574,52 +550,17 @@ impl ValueShuffle {
         self.try_update_facilitator();
     }
 
-    fn zap_state(&mut self, err: Error) {
-        debug!("Zapping state, returning error to upper level.");
-        if let Err(e) = self
-            .wallet_tx_info
-            .unbounded_send(ValueShuffleOutput::Failure(err, self.my_txins.clone()))
-        {
-            debug!("Error returning error from ValueShuffle: {:?}", e);
-        }
-
-        self.msg_queue.clear();
-        self.waiting = 0;
-        self.session_round = 0;
-        self.try_update_facilitator();
-        self.state = State::PoolFinished;
-        self.msg_state = VsMsgExpectedType::None;
-    }
-
     /// Called when a new txpool is formed.
     fn on_pool_notification(
         &mut self,
         from: pbc::PublicKey,
-        pool_info: Vec<u8>,
-    ) -> Result<(), Error> {
-        match self.try_on_pool_notification(from, pool_info) {
-            Err(err) => {
-                self.zap_state(format_err!("ValueShuffle error: {:?}", err));
-                return Err(err);
-            }
-            _ => {
-                return Ok(());
-            }
-        }
-    }
-
-    fn try_on_pool_notification(
-        &mut self,
-        from: pbc::PublicKey,
-        pool_info: Vec<u8>,
-    ) -> Result<(), Error> {
+        pool_info: PoolNotification,
+    ) -> Poll<ValueShuffleOutput, VsError> {
+        debug!("pool = {:?}", pool_info);
         if let Err(e) = self.ensure_facilitator(from) {
             warn!("Found different facilitator: e = {}", e);
-            return Ok(());
+            return Ok(Async::NotReady);
         }
-
-        let pool_info = PoolNotification::from_buffer(&pool_info)?;
-        debug!("pool = {:?}", pool_info);
         let pool_info = match pool_info {
             PoolNotification::Canceled => {
                 debug!(
@@ -629,11 +570,11 @@ impl ValueShuffle {
                 self.reset_state();
                 if changed {
                     debug!("Found new facilitator, rejoining to new pool.");
-                    self.send_pool_join()?;
+                    self.send_pool_join();
                 } else {
                     self.state = State::PoolRestart;
                 }
-                return Ok(());
+                return Ok(Async::NotReady);
             }
             PoolNotification::Started(info) => info,
         };
@@ -645,7 +586,7 @@ impl ValueShuffle {
             .is_none()
         {
             debug!("Our key = {:?}", self.participant_key);
-            return Err(VsError::VsNotInParticipantList.into());
+            return Err(VsError::VsNotInParticipantList);
         }
 
         self.session_id = pool_info.session_id;
@@ -686,10 +627,10 @@ impl ValueShuffle {
     }
 
     fn ensure_facilitator(&self, from: pbc::PublicKey) -> Result<(), Error> {
-        if from != self.facilitator_pkey {
+        if from != self.facilitator {
             Err(format_err!(
                 "Invalid facilitator: expected={}, got={}",
-                self.facilitator_pkey,
+                self.facilitator,
                 from
             ))
         } else {
@@ -697,36 +638,21 @@ impl ValueShuffle {
         }
     }
 
+    fn exclude_participants(&mut self, p_excl: &Vec<ParticipantID>) {
+        self.participants.retain(|p| !p_excl.contains(p));
+    }
+
     fn on_restart_pool(
         &mut self,
         from: ParticipantID,
         without_part: ParticipantID,
         session_id: Hash,
-    ) -> Result<(), Error> {
-        match self.try_on_restart_pool(from, without_part, session_id) {
-            Ok(ans) => Ok(ans),
-            Err(err) => {
-                self.zap_state(format_err!("ValueShuffle error: {:?}", err));
-                Err(err)
-            }
-        }
-    }
-
-    fn exclude_participants(&mut self, p_excl: &Vec<ParticipantID>) {
-        self.participants.retain(|p| !p_excl.contains(p));
-    }
-
-    fn try_on_restart_pool(
-        &mut self,
-        from: ParticipantID,
-        without_part: ParticipantID,
-        session_id: Hash,
-    ) -> Result<(), Error> {
+    ) -> Poll<ValueShuffleOutput, VsError> {
         // called from facilitator node when it is discovered that "without_part" has submitted
         // a side transaction containing a same TXIN as already submitted to the pool - a bad actor.
         if let Err(e) = self.ensure_facilitator(from.pkey) {
             warn!("Found different facilitator: e = {}", e);
-            return Ok(());
+            return Ok(Async::NotReady);
         }
         self.session_id = session_id;
         self.session_round = 0;
@@ -765,7 +691,7 @@ impl ValueShuffle {
                 self.pending_removals.push(without_part);
             }
         }
-        Ok(())
+        Ok(Async::NotReady)
     }
 
     // ----------------------------------------------------------------------------------------------
@@ -773,7 +699,7 @@ impl ValueShuffle {
     // ----------------------------------------------------------------------------------------------
 
     /// Sends a message to all txpool members via unicast.
-    fn send_message(&self, msg: Message) -> Result<(), Error> {
+    fn send_message(&self, msg: Message) {
         for pkey in &self.participants {
             if *pkey != self.participant_key {
                 let msg = DirectMessage {
@@ -781,70 +707,82 @@ impl ValueShuffle {
                     source: self.participant_key,
                     message: msg.clone(),
                 };
-                let bmsg = msg.into_buffer()?;
+                let bmsg = msg.into_buffer().expect("serialized");
                 debug!("sending msg {:?} to {}", &msg, pkey);
                 self.network
-                    .send(pkey.pkey.clone(), VALUE_SHUFFLE_TOPIC, bmsg)?;
+                    .send(pkey.pkey.clone(), VALUE_SHUFFLE_TOPIC, bmsg)
+                    .expect("connected");
             }
-        }
-        Ok(())
-    }
-
-    /// Called when a new message is received via unicast.
-    fn on_message_received(&mut self, from: ParticipantID, msg: Message) -> Result<(), Error> {
-        match msg {
-            Message::VsMessage { sid, payload } => {
-                self.on_vs_message_received(&from, &sid, &payload)
-            }
-            Message::VsRestart {
-                without_part,
-                session_id,
-            } => self.on_restart_pool(from, without_part, session_id),
         }
     }
 }
 
 impl Future for ValueShuffle {
-    type Item = ();
-    type Error = ();
+    type Item = ValueShuffleOutput;
+    type Error = (VsError, Vec<(TXIN, UTXO)>);
 
     /// Event loop.
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => {
-                    let result: Result<(), Error> = match event {
-                        ValueShuffleEvent::FacilitatorChanged(facilitator) => {
-                            self.on_facilitator_changed(facilitator)
-                        }
-                        ValueShuffleEvent::PoolFormed(from, msg) => {
-                            self.on_pool_notification(from, msg)
+                    let result: Poll<ValueShuffleOutput, VsError> = match event {
+                        ValueShuffleEvent::PoolFormed(from, pool_info) => {
+                            let pool_info = match PoolNotification::from_buffer(&pool_info) {
+                                Ok(msg) => msg,
+                                Err(e) => {
+                                    error!("Invalid PoolInfo message: {}", e);
+                                    continue;
+                                }
+                            };
+                            self.on_pool_notification(from, pool_info)
                         }
                         ValueShuffleEvent::MessageReceived(from, msg) => {
-                            DirectMessage::from_buffer(&msg).and_then(|msg| {
-                                if msg.source.pkey != from {
-                                    bail!(
-                                        "Source key was different {} = {}",
-                                        msg.source.pkey,
-                                        from
-                                    );
+                            let msg = match DirectMessage::from_buffer(&msg) {
+                                Ok(msg) => msg,
+                                Err(e) => {
+                                    error!("Invalid DirectMessage message: {}", e);
+                                    continue;
                                 }
-                                if msg.destination != self.participant_key {
-                                    trace!(
-                                        "Message to other account: destination={} = our_key={}",
-                                        msg.destination,
-                                        self.participant_key
-                                    );
-                                    return Ok(());
+                            };
+                            if msg.source.pkey != from {
+                                warn!("Source key was different {} = {}", msg.source.pkey, from);
+                                continue;
+                            }
+                            if msg.destination != self.participant_key {
+                                trace!(
+                                    "Message to other account: destination={} = our_key={}",
+                                    msg.destination,
+                                    self.participant_key
+                                );
+                                continue;
+                            }
+                            match msg.message {
+                                Message::VsMessage { sid, payload } => {
+                                    self.on_vs_message_received(&msg.source, &sid, &payload)
                                 }
-                                // debug!("in poll() dispatching to on_message_received()");
-                                self.on_message_received(msg.source, msg.message)
-                            })
+                                Message::VsRestart {
+                                    without_part,
+                                    session_id,
+                                } => self.on_restart_pool(msg.source, without_part, session_id),
+                            }
                         }
                         ValueShuffleEvent::VsTimer(when) => self.handle_vs_timer(when),
                     };
-                    if let Err(error) = result {
-                        error!("Error: {:?}", error)
+                    match result {
+                        Ok(Async::Ready(r)) => {
+                            // Finish.
+                            debug!("Done");
+                            return Ok(Async::Ready(r));
+                        }
+                        Ok(Async::NotReady) => {
+                            debug!("NotReady");
+                            continue;
+                        }
+                        Err(error) => {
+                            error!("Error: {:?}", error);
+                            return Err((error, self.my_txins.clone()));
+                        }
                     }
                 }
                 Async::Ready(None) => unreachable!(), // never happens
@@ -861,10 +799,10 @@ fn is_valid_pt(pt: &Pt, ans: &mut Pt) -> bool {
     true
 }
 
-type VsFunction = fn(&mut ValueShuffle) -> Result<(), Error>;
+type VsFunction = fn(&mut ValueShuffle) -> Poll<ValueShuffleOutput, VsError>;
 
 impl ValueShuffle {
-    fn handle_vs_timer(&mut self, when: SystemTime) -> Result<(), Error> {
+    fn handle_vs_timer(&mut self, when: SystemTime) -> Poll<ValueShuffleOutput, VsError> {
         // self.waiting contains the nbr seconds countdown until a timeout
         // specify waiting = 0 for no timeout checking
         if self.waiting > 0 && when >= self.wait_start {
@@ -878,7 +816,7 @@ impl ValueShuffle {
                 self.msg_state = VsMsgExpectedType::None;
                 match state {
                     VsMsgExpectedType::None => {
-                        return Ok(());
+                        return Ok(Async::NotReady);
                     }
                     VsMsgExpectedType::SharedKeying => {
                         return self.vs_commit();
@@ -898,7 +836,7 @@ impl ValueShuffle {
                 }
             }
         }
-        Ok(())
+        Ok(Async::NotReady)
     }
 
     fn on_vs_message_received(
@@ -906,14 +844,13 @@ impl ValueShuffle {
         from: &ParticipantID,
         sid: &Hash,
         payload: &VsPayload,
-    ) -> Result<(), Error> {
+    ) -> Poll<ValueShuffleOutput, VsError> {
         debug!("vs message: {}, from: {}, sess: {}", *payload, *from, *sid);
         self.msg_queue.push_front((*from, *sid, payload.clone()));
         self.handle_enqueued_messages()
     }
 
-    fn handle_enqueued_messages(&mut self) -> Result<(), Error> {
-        let mut ans = Ok(());
+    fn handle_enqueued_messages(&mut self) -> Poll<ValueShuffleOutput, VsError> {
         let queue = self.msg_queue.clone();
         self.msg_queue.clear();
         for (from, sid, payload) in queue {
@@ -922,13 +859,15 @@ impl ValueShuffle {
                     // debug!("is_acceptable_message()");
                     self.pending_participants.remove(&from);
                     debug!("removed from from pending_participants: {}", from);
-                    ans = self.handle_message(&from, &payload);
+                    if let Async::Ready(r) = self.handle_message(&from, &payload)? {
+                        return Ok(Async::Ready(r));
+                    }
                 } else {
                     self.msg_queue.push_back((from, sid, payload));
                 }
             }
         }
-        ans
+        Ok(Async::NotReady)
     }
 
     fn is_acceptable_message(
@@ -973,9 +912,16 @@ impl ValueShuffle {
         }
     }
 
-    fn handle_message(&mut self, from: &ParticipantID, payload: &VsPayload) -> Result<(), Error> {
+    fn handle_message(
+        &mut self,
+        from: &ParticipantID,
+        payload: &VsPayload,
+    ) -> Poll<ValueShuffleOutput, VsError> {
         match self.msg_state {
-            VsMsgExpectedType::None => Err(VsError::VsNotInSession.into()),
+            VsMsgExpectedType::None => {
+                warn!("Unexpected message, not in session: {}", payload);
+                return Ok(Async::NotReady);
+            }
             VsMsgExpectedType::SharedKeying => self.handle_shared_keying(from, payload),
             VsMsgExpectedType::Commitment => self.handle_commitment(from, payload),
             VsMsgExpectedType::CloakedVals => self.handle_cloaked_vals(from, payload),
@@ -984,7 +930,11 @@ impl ValueShuffle {
         }
     }
 
-    fn maybe_do(&mut self, from: &ParticipantID, vfn: VsFunction) -> Result<(), Error> {
+    fn maybe_do(
+        &mut self,
+        from: &ParticipantID,
+        vfn: VsFunction,
+    ) -> Poll<ValueShuffleOutput, VsError> {
         self.participants.push(*from);
         if self.pending_participants.is_empty() {
             // Reset state to reflect a full participants list in case
@@ -994,11 +944,15 @@ impl ValueShuffle {
             self.msg_state = VsMsgExpectedType::None;
             vfn(self)
         } else {
-            Ok(())
+            Ok(Async::NotReady)
         }
     }
 
-    fn handle_shared_keying(&mut self, from: &ParticipantID, msg: &VsPayload) -> Result<(), Error> {
+    fn handle_shared_keying(
+        &mut self,
+        from: &ParticipantID,
+        msg: &VsPayload,
+    ) -> Poll<ValueShuffleOutput, VsError> {
         // debug!("In handle_shared_keying()");
         match msg {
             VsPayload::SharedKeying { pkey, ksig } => {
@@ -1013,12 +967,18 @@ impl ValueShuffle {
                     debug!("shared keying bad {:?}", pkey);
                 }
             }
-            _ => {}
+            msg => {
+                error!("Unexpected message: {}", msg);
+            }
         }
-        Err(VsError::VsInvalidMessage.into())
+        Ok(Async::NotReady)
     }
 
-    fn handle_commitment(&mut self, from: &ParticipantID, msg: &VsPayload) -> Result<(), Error> {
+    fn handle_commitment(
+        &mut self,
+        from: &ParticipantID,
+        msg: &VsPayload,
+    ) -> Poll<ValueShuffleOutput, VsError> {
         // debug!("In handle_commitment()");
         match msg {
             VsPayload::Commitment { cmt } => {
@@ -1026,12 +986,18 @@ impl ValueShuffle {
                 self.commits.insert(*from, *cmt);
                 return self.maybe_do(from, Self::vs_share_cloaked_data);
             }
-            _ => {}
+            msg => {
+                error!("Unexpected message: {}", msg);
+            }
         }
-        Err(VsError::VsInvalidMessage.into())
+        Ok(Async::NotReady)
     }
 
-    fn handle_cloaked_vals(&mut self, from: &ParticipantID, msg: &VsPayload) -> Result<(), Error> {
+    fn handle_cloaked_vals(
+        &mut self,
+        from: &ParticipantID,
+        msg: &VsPayload,
+    ) -> Poll<ValueShuffleOutput, VsError> {
         // debug!("In handle_cloaked_vals()");
         match msg {
             VsPayload::CloakedVals {
@@ -1061,12 +1027,18 @@ impl ValueShuffle {
                     debug!("Commitment check failed {}", cmt);
                 }
             }
-            _ => {}
+            msg => {
+                error!("Unexpected message: {}", msg);
+            }
         }
-        Err(VsError::VsInvalidMessage.into())
+        Ok(Async::NotReady)
     }
 
-    fn handle_signature(&mut self, from: &ParticipantID, msg: &VsPayload) -> Result<(), Error> {
+    fn handle_signature(
+        &mut self,
+        from: &ParticipantID,
+        msg: &VsPayload,
+    ) -> Poll<ValueShuffleOutput, VsError> {
         // debug!("In handle_signature()");
         match msg {
             VsPayload::Signature { sig } => {
@@ -1074,12 +1046,18 @@ impl ValueShuffle {
                 self.signatures.insert(*from, sig.clone());
                 return self.maybe_do(from, Self::vs_sign_supertransaction);
             }
-            _ => {}
+            msg => {
+                error!("Unexpected message: {}", msg);
+            }
         }
-        Err(VsError::VsInvalidMessage.into())
+        Ok(Async::NotReady)
     }
 
-    fn handle_secret_keying(&mut self, from: &ParticipantID, msg: &VsPayload) -> Result<(), Error> {
+    fn handle_secret_keying(
+        &mut self,
+        from: &ParticipantID,
+        msg: &VsPayload,
+    ) -> Poll<ValueShuffleOutput, VsError> {
         // debug!("In handle_secret_keying()");
         match msg {
             VsPayload::SecretKeying { skey } => {
@@ -1087,64 +1065,18 @@ impl ValueShuffle {
                 self.sess_skeys.insert(*from, skey.clone());
                 return self.maybe_do(from, Self::vs_blame_discovery);
             }
-            _ => {}
+            msg => {
+                error!("Unexpected message: {}", msg);
+            }
         }
-        Err(VsError::VsInvalidMessage.into())
+        Ok(Async::NotReady)
     }
 
-    fn form_pooljoin_message(&mut self) -> Result<PoolJoin, Error> {
-        // Possible exits:
-        //   - normal exit
-        //   - ownership signing failure - can't open TXIN UTXO
-        //                               - or signature fails validation
-        //   - can't open TXIN UTXO
-        //   - assertion failure on zero gamma value
-
-        // validate each TXIN and get my initial signature keying info
-        let mut my_signing_skeyF = Fr::zero();
-        self.txin_gamma_sum = Fr::zero();
-        let utxos = self.my_txins.iter().map(|(_txin, u)| u.clone()).collect();
-        // signing error if we can't open the TXIN UTXO
-        let own_sig = sign_utxos(&utxos, &self.skey)?;
-
-        // double check our own TXINs
-        validate_ownership(&self.my_txins, &own_sig)?;
-
-        let mut amt_in = 0;
-        for utxo in utxos.clone() {
-            let (gamma, delta, amount) = open_utxo(&utxo, &self.skey)?;
-            assert!(gamma != Fr::zero());
-            amt_in += amount;
-            self.txin_gamma_sum += gamma;
-            my_signing_skeyF += Fr::from(self.skey) + gamma * delta;
-        }
-        self.my_signing_skey = my_signing_skeyF.into();
-
-        // check that we have a zero balance condition
-        // might as well abort right now, if not...
-        let mut amt_out = 0;
-        self.my_txouts.iter().for_each(|rec| amt_out += rec.amount);
-        if self.my_fee < 0 || amt_in != amt_out + self.my_fee {
-            return Err(VsError::VsBadTransaction.into());
-        }
-
-        // To join a session we must send our list of TXINS, along with
-        // our proof of ownership signature on all of them.
-
-        self.all_txins
-            .insert(self.participant_key, self.my_txins.clone());
-
-        let msg_txins: Vec<TXIN> = self.my_txins.iter().map(|(k, _u)| k.clone()).collect();
-        let msg = PoolJoin {
-            seed: self.participant_key.seed,
-            txins: msg_txins,
-            utxos,
-            ownsig: own_sig,
-        };
-        Ok(msg)
-    }
-
-    fn prep_rx(&mut self, msgtype: VsMsgExpectedType, timeout: i16) {
+    fn prep_rx(
+        &mut self,
+        msgtype: VsMsgExpectedType,
+        timeout: i16,
+    ) -> Poll<ValueShuffleOutput, VsError> {
         // transfer other participants into pending_participants
         // and set new msg_state for expected kind of messages
         let mut other_participants: HashSet<ParticipantID> = HashSet::new();
@@ -1168,27 +1100,16 @@ impl ValueShuffle {
         self.msg_state = msgtype;
         debug!("In prep_rx(), state = {:?}", msgtype);
         self.handle_enqueued_messages()
-            .expect("Can't handle enqueued messages");
     }
 
-    fn vs_start(&mut self) -> Result<(), Error> {
-        match self.try_vs_start() {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                self.zap_state(format_err!("ValueShuffle error: {:?}", err));
-                Err(err)
-            }
-        }
-    }
-
-    fn try_vs_start(&mut self) -> Result<(), Error> {
+    fn vs_start(&mut self) -> Poll<ValueShuffleOutput, VsError> {
         // Possible exits:
         //   - fewer than 3 participants = protocol fail
         //   - normal exit
 
         debug!("In vs_start()");
         if self.participants.len() < 3 {
-            return Err(VsError::VsTooFewParticipants(self.participants.len()).into());
+            return Err(VsError::VsTooFewParticipants(self.participants.len()));
         }
         self.participants.sort(); // put into consistent order
         self.session_round += 1;
@@ -1256,29 +1177,19 @@ impl ValueShuffle {
 
         // Collect cloaked sharing keys from others
         // fill in sess_pkeys and sigK_vals
-        self.receive_session_pkeys();
+        self.receive_session_pkeys()?;
 
-        Ok(())
+        Ok(Async::NotReady)
     }
 
-    fn vs_commit(&mut self) -> Result<(), Error> {
-        match self.try_vs_commit() {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                self.zap_state(format_err!("ValueShuffle error: {:?}", err));
-                Err(err)
-            }
-        }
-    }
-
-    fn try_vs_commit(&mut self) -> Result<(), Error> {
+    fn vs_commit(&mut self) -> Poll<ValueShuffleOutput, VsError> {
         // Possible exits:
         //   - normal exit
         //   - fewer than 3 participants = protocol failure
 
         debug!("In vs_commit()");
         if self.participants.len() < 3 {
-            return Err(VsError::VsTooFewParticipants(self.participants.len()).into());
+            return Err(VsError::VsTooFewParticipants(self.participants.len()));
         }
 
         // participants at the time of matrix construction
@@ -1370,22 +1281,12 @@ impl ValueShuffle {
         self.send_commitment(&my_commit);
 
         // fill in commits
-        self.receive_commitments();
+        self.receive_commitments()?;
 
-        Ok(())
+        Ok(Async::NotReady)
     }
 
-    fn vs_share_cloaked_data(&mut self) -> Result<(), Error> {
-        match self.try_vs_share_cloaked_data() {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                self.zap_state(format_err!("ValueShuffle error: {:?}", err));
-                Err(err)
-            }
-        }
-    }
-
-    fn try_vs_share_cloaked_data(&mut self) -> Result<(), Error> {
+    fn vs_share_cloaked_data(&mut self) -> Poll<ValueShuffleOutput, VsError> {
         // Possible exits:
         //   - normal exit
         //   - fewer than 3 participants = protocol failure
@@ -1393,7 +1294,7 @@ impl ValueShuffle {
 
         debug!("In vs_share_cloaked_data()");
         if self.participants.len() < 3 {
-            return Err(VsError::VsFail.into());
+            return Err(VsError::VsTooFewParticipants(self.participants.len()));
         }
 
         // make note of missing participants here
@@ -1447,9 +1348,9 @@ impl ValueShuffle {
 
         // fill in matrices, cloaked_gamma_adj, cloaked_fees,
         // and all_excl_k_cloaks, using commits to validate incoming data
-        self.receive_cloaked_data();
+        self.receive_cloaked_data()?;
 
-        Ok(())
+        Ok(Async::NotReady)
     }
 
     fn had_dropouts(&self) -> bool {
@@ -1463,17 +1364,7 @@ impl ValueShuffle {
                 .all(|p| self.participants.contains(p))))
     }
 
-    fn vs_make_supertransaction(&mut self) -> Result<(), Error> {
-        match self.try_vs_make_supertransaction() {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                self.zap_state(format_err!("ValueShuffle error: {:?}", err));
-                Err(err)
-            }
-        }
-    }
-
-    fn try_vs_make_supertransaction(&mut self) -> Result<(), Error> {
+    fn vs_make_supertransaction(&mut self) -> Poll<ValueShuffleOutput, VsError> {
         // Possible exits:
         //   - normal exit
         //   - .expect() errors -> should never happen in proper code
@@ -1482,7 +1373,7 @@ impl ValueShuffle {
 
         if self.participants.len() < 3 {
             debug!("Too few shared participants");
-            return Err(VsError::VsFail.into());
+            return Err(VsError::VsTooFewParticipants(self.participants.len()));
         }
 
         if self.had_dropouts() {
@@ -1608,22 +1499,12 @@ impl ValueShuffle {
         self.send_signature(&sig);
 
         // fill in signatures
-        self.receive_signatures();
+        self.receive_signatures()?;
 
-        Ok(())
+        Ok(Async::NotReady)
     }
 
-    fn vs_sign_supertransaction(&mut self) -> Result<(), Error> {
-        match self.try_vs_sign_supertransaction() {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                self.zap_state(format_err!("ValueShuffle error: {:?}", err));
-                Err(err)
-            }
-        }
-    }
-
-    fn try_vs_sign_supertransaction(&mut self) -> Result<(), Error> {
+    fn vs_sign_supertransaction(&mut self) -> Poll<ValueShuffleOutput, VsError> {
         // Possible exits:
         //   - normal exit
         //   - .expect() errors -> should never happen in correct code
@@ -1651,12 +1532,17 @@ impl ValueShuffle {
         debug!("total sig {:?}", self.trans.sig);
 
         if self.validate_transaction() {
-            self.execute_super_transaction()?;
+            let leader = self.leader_id();
+            debug!("Leader = {}", leader);
+            let tx = self.trans.clone();
             self.reset_state(); // indicate nothing more to follow, restartable
             self.msg_queue.clear();
             self.session_round = 0; // for possible restarts
-            debug!("Success in ValueShuffle!!");
-            return Ok(());
+            debug!("Success in ValueShuffle!");
+            return Ok(Async::Ready(ValueShuffleOutput {
+                tx,
+                is_leader: self.participant_key == leader,
+            }));
         }
 
         // ------------------------------------------------------
@@ -1676,21 +1562,12 @@ impl ValueShuffle {
         self.send_session_skey(&self.sess_skey);
 
         // fill in sess_skeys
-        self.receive_session_skeys();
-        Ok(())
+        self.receive_session_skeys()?;
+
+        Ok(Async::NotReady)
     }
 
-    fn vs_blame_discovery(&mut self) -> Result<(), Error> {
-        match self.try_vs_blame_discovery() {
-            Ok(ans) => Ok(ans),
-            Err(err) => {
-                self.zap_state(format_err!("ValueShuffle error: {:?}", err));
-                Err(err)
-            }
-        }
-    }
-
-    fn try_vs_blame_discovery(&mut self) -> Result<(), Error> {
+    fn vs_blame_discovery(&mut self) -> Poll<ValueShuffleOutput, VsError> {
         // Possible exits:
         //   - normal exit
 
@@ -1909,7 +1786,7 @@ impl ValueShuffle {
             payload: payload.clone(),
             sid: self.session_id,
         };
-        self.send_message(msg).expect("Can't send message");
+        self.send_message(msg)
     }
 
     fn send_session_pkey(&self, sess_pkey: &PublicKey, sess_KSig: &Pt) {
@@ -1921,7 +1798,7 @@ impl ValueShuffle {
         self.send_signed_message(&payload);
     }
 
-    fn receive_session_pkeys(&mut self) {
+    fn receive_session_pkeys(&mut self) -> Poll<ValueShuffleOutput, VsError> {
         // collect session pkeys from all participants.
         // If any participant does not answer, add him to the exclusion list, p_excl
 
@@ -1929,7 +1806,7 @@ impl ValueShuffle {
 
         // we allow the receive_xxx to specify individual timeout periods
         // in case they need to vary
-        self.prep_rx(VsMsgExpectedType::SharedKeying, VS_TIMEOUT);
+        self.prep_rx(VsMsgExpectedType::SharedKeying, VS_TIMEOUT)
     }
 
     // -------------------------------------------------
@@ -1940,12 +1817,12 @@ impl ValueShuffle {
         self.send_signed_message(&payload);
     }
 
-    fn receive_commitments(&mut self) {
+    fn receive_commitments(&mut self) -> Poll<ValueShuffleOutput, VsError> {
         // receive commitments from all other participants
         // if any fail to send commitments, add them to exclusion list p_excl
 
         // fill in commits
-        self.prep_rx(VsMsgExpectedType::Commitment, VS_TIMEOUT);
+        self.prep_rx(VsMsgExpectedType::Commitment, VS_TIMEOUT)
     }
 
     // -------------------------------------------------
@@ -1967,7 +1844,7 @@ impl ValueShuffle {
         self.send_signed_message(&payload);
     }
 
-    fn receive_cloaked_data(&mut self) {
+    fn receive_cloaked_data(&mut self) -> Poll<ValueShuffleOutput, VsError> {
         // receive cloaked data from each participant.
         // If participants don't respond, or respond
         // with invalid data, as per previous commitment,
@@ -1975,7 +1852,7 @@ impl ValueShuffle {
 
         // fill in matrices, cloaked_gamma_adj, cloaked_fees,
         // and all_excl_k_cloaks, using commits to validate incoming data
-        self.prep_rx(VsMsgExpectedType::CloakedVals, VS_TIMEOUT);
+        self.prep_rx(VsMsgExpectedType::CloakedVals, VS_TIMEOUT)
     }
 
     // -------------------------------------------------
@@ -1986,14 +1863,14 @@ impl ValueShuffle {
         self.send_signed_message(&payload);
     }
 
-    fn receive_signatures(&mut self) {
+    fn receive_signatures(&mut self) -> Poll<ValueShuffleOutput, VsError> {
         // collect signatures from all participants
         // should not count as collected unless signature is partially valid.
         //
         // Partial valid = K component is valid ECC point
 
         // fill in signatures
-        self.prep_rx(VsMsgExpectedType::Signature, VS_TIMEOUT);
+        self.prep_rx(VsMsgExpectedType::Signature, VS_TIMEOUT)
     }
 
     // -------------------------------------------------
@@ -2004,27 +1881,14 @@ impl ValueShuffle {
         self.send_signed_message(&payload);
     }
 
-    fn receive_session_skeys(&mut self) {
+    fn receive_session_skeys(&mut self) -> Poll<ValueShuffleOutput, VsError> {
         // non-respondents are added to p_excl
 
         // fills in sess_skeys
-        self.prep_rx(VsMsgExpectedType::SecretKeying, VS_TIMEOUT);
+        self.prep_rx(VsMsgExpectedType::SecretKeying, VS_TIMEOUT)
     }
 
     // -------------------------------------------------
-
-    /// Send transaction to the wallet.
-    fn execute_super_transaction(&mut self) -> Result<(), Error> {
-        let leader = self.leader_id();
-        debug!("Leader = {}", leader);
-        let tx = self.trans.clone();
-        self.wallet_tx_info
-            .unbounded_send(ValueShuffleOutput::SignedTransaction(
-                tx,
-                self.participant_key == leader,
-            ))?;
-        Ok(())
-    }
 
     fn leader_id(&mut self) -> ParticipantID {
         // select the leader as the public key hash having the lowest XOR between
@@ -2087,34 +1951,22 @@ fn make_session_key(skey: &SecretKey, sid: &Hash) -> (SecretKey, PublicKey) {
     (skey, pkey)
 }
 
-fn open_utxo(utxo: &UTXO, skey: &SecretKey) -> Result<(Fr, Fr, i64), VsError> {
-    // decrypt the encrypted payload of the UTXO and
-    // return the (gamma, delta, amount)
-    match utxo.decrypt_payload(skey) {
-        Ok(data) => {
-            return Ok((data.gamma, data.delta, data.amount));
-        }
-        _ => {
-            return Err(VsError::VsBadTXIN);
-        }
-    }
-}
-
-fn sign_utxos(utxos: &Vec<UTXO>, skey: &SecretKey) -> Result<SchnorrSig, Error> {
+fn sign_utxos(utxos: &Vec<UTXO>, skey: &SecretKey) -> SchnorrSig {
     // sign an (ordered) list of UTXOs to form an ownership signature
     let mut signing_f = Fr::zero();
     let mut state = Hasher::new();
     for utxo in utxos {
         utxo.hash(&mut state);
-        let (gamma, delta, _) = open_utxo(utxo, skey)?;
+        let payload = utxo.decrypt_payload(skey).expect("invalid keys");
+        let (gamma, delta) = (payload.gamma, payload.delta);
         // decryption can always be performed. But if we don't
         // actually own the UTXO then we get garbage back.
         // This signature would then fail later on validate_ownership().
-        assert!(gamma != Fr::zero());
-        assert!(delta != Fr::zero());
+        assert_ne!(gamma, Fr::zero());
+        assert_ne!(delta, Fr::zero());
         signing_f += Fr::from(skey.clone()) + gamma * delta;
     }
-    Ok(sign_hash(&state.result(), &SecretKey::from(signing_f)))
+    sign_hash(&state.result(), &SecretKey::from(signing_f))
 }
 
 fn validate_ownership(txins: &Vec<(TXIN, UTXO)>, owner_sig: &SchnorrSig) -> Result<(), Error> {
@@ -2123,9 +1975,7 @@ fn validate_ownership(txins: &Vec<(TXIN, UTXO)>, owner_sig: &SchnorrSig) -> Resu
         let mut state = Hasher::new();
         for (txin, utxo) in txins {
             let hash = Hash::digest(utxo);
-            if hash != *txin {
-                return Err(VsError::VsBadTXIN.into());
-            }
+            assert_eq!(hash, *txin);
             p_cmp += Pt::from(utxo.recipient);
             utxo.hash(&mut state);
         }
@@ -2149,7 +1999,7 @@ fn deserialize_utxo(msg: &Vec<u8>, ser_size: usize) -> Result<UTXO, Error> {
     match UTXO::from_buffer(&msg[0..ser_size]) {
         Err(err) => {
             debug!("deserialization error: {:?}", err);
-            Err(VsError::VsBadUTXO.into())
+            Err(err)
         }
         Ok(utxo) => Ok(utxo),
     }

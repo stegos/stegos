@@ -28,24 +28,8 @@ use failure::Fail;
 
 #[derive(Debug, Fail)]
 pub enum VsError {
-    #[fail(display = "Can't form SuperTransaction")]
-    VsFail, // if can't achieve any result in ValueShuffle session
-    #[fail(display = "Too many UTXOs proposed")]
-    VsTooManyUTXO,
-    #[fail(display = "Bad UTXO Encrypted Payload Keying")]
-    VsBadUTXO, // UTXO has bad encryption keying on payload
-    #[fail(display = "Bad TXIN Reference")]
-    VsBadTXIN, // TXIN not accessible with provided ownership sig
-    #[fail(display = "Bad Transaction Attempted")]
-    VsBadTransaction, // user output plus fee not equal TXIN input
     #[fail(display = "We aren't a participant")]
     VsNotInParticipantList,
-    #[fail(display = "ValueShuffle already started")]
-    VsBusy,
-    #[fail(display = "ValueShuffle not in session")]
-    VsNotInSession,
-    #[fail(display = "Invalid message")]
-    VsInvalidMessage,
     #[fail(display = "Not enough participants: {}", _0)]
     VsTooFewParticipants(usize),
 }

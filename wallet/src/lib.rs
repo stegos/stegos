@@ -116,6 +116,8 @@ struct UnsealedAccountService {
     epoch: u64,
     /// Time of last macro block.
     last_macro_block_timestamp: Timestamp,
+    /// Faciliator's PBC public key
+    facilitator_pkey: pbc::PublicKey,
 
     /// Unspent Payment UXTO.
     // Store time in Instant, to be more compatible with tokio-timer.
@@ -143,9 +145,7 @@ struct UnsealedAccountService {
     // Value shuffle api (owned)
     //
     /// ValueShuffle State.
-    vs: ValueShuffle,
-    //TODO: Temporary hack to receive newly created transaction from valueshuffle.
-    wallet_tx_info_receiver: mpsc::UnboundedReceiver<ValueShuffleOutput>,
+    vs: Option<ValueShuffle>,
     vs_session: Option<(Hash, oneshot::Sender<AccountResponse>)>,
     transaction_response: Option<oneshot::Receiver<NodeResponse>>,
 
@@ -192,18 +192,11 @@ impl UnsealedAccountService {
         let epoch = 0;
         let payments = HashMap::new();
         let pending_payments = HashMap::new();
+        let facilitator_pkey: pbc::PublicKey = pbc::PublicKey::dum();
 
         let public_payments = HashMap::new();
         let stakes: HashMap<Hash, StakeValue> = HashMap::new();
-        let (wallet_tx_info, wallet_tx_info_receiver) = mpsc::unbounded();
-        let vs = ValueShuffle::new(
-            account_skey.clone(),
-            account_pkey.clone(),
-            network_pkey.clone(),
-            network.clone(),
-            node.clone(),
-            wallet_tx_info,
-        );
+        let vs = None;
         let vs_session = None;
 
         let last_macro_block_timestamp = Timestamp::UNIX_EPOCH;
@@ -237,6 +230,7 @@ impl UnsealedAccountService {
             network_pkey,
             account_log,
             epoch,
+            facilitator_pkey,
             payments,
             pending_payments,
             public_payments,
@@ -244,7 +238,6 @@ impl UnsealedAccountService {
             resend_tx,
             check_pending_utxos,
             vs,
-            wallet_tx_info_receiver,
             vs_session,
             stake_epochs,
             max_inputs_in_tx,
@@ -398,6 +391,9 @@ impl UnsealedAccountService {
         comment: String,
         locked_timestamp: Option<Timestamp>,
     ) -> Result<Hash, Error> {
+        if self.vs.is_some() {
+            return Err(WalletError::SnowballBusy.into());
+        }
         let unspent_iter = self
             .payments
             .iter()
@@ -414,9 +410,8 @@ impl UnsealedAccountService {
             self.last_macro_block_timestamp,
             self.max_inputs_in_tx / MAX_PARTICIPANTS,
         )?;
+        assert!(inputs.len() <= valueshuffle::MAX_UTXOS);
         let session_id = Hash::random();
-        self.vs.queue_transaction(&inputs, &outputs, fee)?;
-
         let time = clock::now();
         for (input, _) in &inputs {
             assert!(self
@@ -430,6 +425,18 @@ impl UnsealedAccountService {
                 )
                 .is_none());
         }
+        let vs = ValueShuffle::new(
+            self.account_skey.clone(),
+            self.account_pkey.clone(),
+            self.network_pkey.clone(),
+            self.network.clone(),
+            self.node.clone(),
+            self.facilitator_pkey.clone(),
+            inputs,
+            outputs,
+            fee,
+        );
+        self.vs = Some(vs);
 
         metrics::WALLET_CREATEAD_SECURE_PAYMENTS
             .with_label_values(&[&String::from(&self.account_pkey)])
@@ -769,16 +776,14 @@ impl UnsealedAccountService {
     fn handle_snowball_transaction(
         &mut self,
         tx: PaymentTransaction,
-        leader: bool,
-        full: bool,
+        is_leader: bool,
         session_id: Hash,
     ) -> Result<TransactionInfo, Error> {
         let tx_hash = Hash::digest(&tx);
-        if full {
-            metrics::WALLET_PUBLISHED_PAYMENTS
-                .with_label_values(&[&String::from(&self.account_pkey)])
-                .inc();
-        }
+        metrics::WALLET_PUBLISHED_PAYMENTS
+            .with_label_values(&[&String::from(&self.account_pkey)])
+            .inc();
+
         let notify = AccountNotification::SnowballCreated {
             tx_hash,
             session_id,
@@ -790,7 +795,7 @@ impl UnsealedAccountService {
         self.account_log
             .push_outgoing(Timestamp::now(), payment_info.clone())?;
 
-        if leader && full {
+        if is_leader {
             // if I'm leader, then send the completed super-transaction
             // to the blockchain.
             debug!("Sending SuperTransaction to BlockChain");
@@ -868,7 +873,8 @@ impl UnsealedAccountService {
                             "Some outputs of snowball are now outdated: vs_session = {}",
                             hash
                         );
-                        self.vs.terminate();
+                        warn!("Resetting ValueShuffle on timeout.");
+                        self.vs = None;
                         let _ = self.vs_session.take();
                     }
                     (Some(hash), _) => {
@@ -989,12 +995,6 @@ impl Future for UnsealedAccountService {
         }
 
         loop {
-            if let Async::NotReady = self.vs.poll().expect("all errors are already handled") {
-                break;
-            }
-        }
-
-        loop {
             match self.resend_tx.poll().expect("no errors in timers") {
                 Async::Ready(Some(_t)) => self.handle_resend_pending_txs(),
                 Async::NotReady => break,
@@ -1014,51 +1014,36 @@ impl Future for UnsealedAccountService {
             }
         }
 
-        loop {
-            match self
-                .wallet_tx_info_receiver
-                .poll()
-                .expect("all errors are already handled")
-            {
-                Async::Ready(msg) => {
+        if let Some(ref mut vs) = &mut self.vs {
+            match vs.poll() {
+                Ok(Async::Ready(ValueShuffleOutput { tx, is_leader })) => {
+                    self.vs = None;
                     let (session_id, response_sender) =
                         self.vs_session.take().expect("active snowball session");
-                    let response = match msg.expect("channel not ended.") {
-                        ValueShuffleOutput::SignedTransaction(tx, leader) => {
-                            match self.handle_snowball_transaction(tx, leader, true, session_id) {
-                                Ok(tx) => AccountResponse::TransactionCreated(tx),
-                                Err(e) => {
-                                    error!("Error during processing snowball transaction = {}", e);
-                                    AccountResponse::Error {
-                                        error: e.to_string(),
-                                    }
-                                }
-                            }
-                        }
-                        ValueShuffleOutput::UnsignedTransaction(tx) => {
-                            let tx_hash = Hash::digest(&tx);
-
-                            let _ = self.handle_snowball_transaction(tx, false, false, session_id);
-
+                    let response = match self.handle_snowball_transaction(tx, is_leader, session_id)
+                    {
+                        Ok(tx) => AccountResponse::TransactionCreated(tx),
+                        Err(e) => {
+                            error!("Error during processing snowball transaction = {}", e);
                             AccountResponse::Error {
-                                error: format!("Found unsigned transaction = {}", tx_hash),
-                            }
-                        }
-                        ValueShuffleOutput::Failure(error, txins) => {
-                            warn!("Error during snowball session error={}.", error);
-                            for utxo in txins {
-                                assert!(self.pending_payments.remove(&utxo.0).is_some())
-                            }
-                            AccountResponse::Error {
-                                error: error.to_string(),
+                                error: e.to_string(),
                             }
                         }
                     };
-
                     let _ = response_sender.send(response);
                 }
-                Async::NotReady => {
-                    break;
+                Ok(Async::NotReady) => {}
+                Err((error, inputs)) => {
+                    let (_session_id, response_sender) =
+                        self.vs_session.take().expect("active snowball session");
+                    warn!("Error during snowball session error={}.", error);
+                    for (input_hash, _input) in inputs {
+                        assert!(self.pending_payments.remove(&input_hash).is_some())
+                    }
+                    let response = AccountResponse::Error {
+                        error: error.to_string(),
+                    };
+                    let _ = response_sender.send(response);
                 }
             }
         }
@@ -1223,6 +1208,10 @@ impl Future for UnsealedAccountService {
                         self.on_epoch_changed(block.epoch, block.last_macro_block_timestamp);
                         let updated_statuses = self.account_log.finalize_epoch_txs();
                         self.on_tx_statuses_changed(updated_statuses);
+                        self.facilitator_pkey = block.facilitator.clone();
+                        if let Some(ref mut vs) = &mut self.vs {
+                            vs.change_facilitator(block.facilitator);
+                        }
                     }
                     NodeNotification::RollbackMicroBlock(block) => {
                         assert!(self.recovery_rx.is_none(), "recovered from the disk");

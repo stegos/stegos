@@ -746,7 +746,7 @@ fn snowball_start(
     amount: i64,
     account: &mut AccountSandbox,
     notification: &mut mpsc::UnboundedReceiver<AccountNotification>,
-) -> (Hash, oneshot::Receiver<AccountResponse>) {
+) -> (oneshot::Receiver<AccountResponse>) {
     let rx = account.account.request(AccountRequest::SecurePayment {
         recipient,
         amount,
@@ -758,7 +758,7 @@ fn snowball_start(
     account.poll();
 
     match get_notification(notification) {
-        AccountNotification::SnowballStarted { session_id } => (session_id, rx),
+        AccountNotification::SnowballStarted {} => (rx),
         e => panic!("{:?}", e),
     }
 }
@@ -791,9 +791,9 @@ fn create_snowball_tx() {
         let mut notifications = Vec::new();
         for i in 0..num_nodes {
             let mut notification = accounts[i].account.subscribe();
-            let (id, response) =
+            let response =
                 snowball_start(recipient, SEND_TOKENS, &mut accounts[i], &mut notification);
-            notifications.push((notification, id, response));
+            notifications.push((notification, response));
             accounts[i].poll();
         }
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
@@ -812,7 +812,7 @@ fn create_snowball_tx() {
         }
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications) {
-            let (notification, _, _) = status;
+            let (notification, _) = status;
             account.poll();
             clear_notification(notification)
         }
@@ -993,14 +993,14 @@ fn create_snowball_tx() {
         let mut my_tx_hash = None;
         let mut notifications_new = Vec::new();
         for (account, status) in accounts.iter_mut().zip(notifications) {
-            let (mut notification, hash, response) = status;
+            let (mut notification, response) = status;
             account.poll();
             my_tx_hash = Some(match get_request(response) {
                 AccountResponse::TransactionCreated(tx) => tx.tx_hash,
 
                 e => panic!("{:?}", e),
             });
-            notifications_new.push((notification, hash))
+            notifications_new.push(notification)
         }
 
         debug!("===== BROADCAST VS TRANSACTION =====");
@@ -1009,7 +1009,7 @@ fn create_snowball_tx() {
         s.skip_micro_block();
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications_new) {
-            let (notification, _hash) = status;
+            let notification = status;
 
             account.poll();
 
@@ -1053,8 +1053,7 @@ fn snowball_failed_join() {
         let recipient = accounts[3].account_service.account_pkey;
 
         let mut notification = accounts[0].account.subscribe();
-        let (id, response) =
-            snowball_start(recipient, SEND_TOKENS, &mut accounts[0], &mut notification);
+        let response = snowball_start(recipient, SEND_TOKENS, &mut accounts[0], &mut notification);
         accounts[0].poll();
         assert!(accounts[0].account_service.snowball.is_some());
         assert!(!accounts[0].account_service.pending_payments.is_empty());
@@ -1144,8 +1143,7 @@ fn snowball_with_wrong_facilitator_pool() {
         let recipient = accounts[3].account_service.account_pkey;
 
         let mut notification = accounts[0].account.subscribe();
-        let (id, response) =
-            snowball_start(recipient, SEND_TOKENS, &mut accounts[0], &mut notification);
+        let response = snowball_start(recipient, SEND_TOKENS, &mut accounts[0], &mut notification);
         accounts[0].poll();
         assert!(accounts[0].account_service.snowball.is_some());
 
@@ -1200,9 +1198,9 @@ fn create_snowball_simple() {
         let mut notifications = Vec::new();
         for i in 0..num_nodes {
             let mut notification = accounts[i].account.subscribe();
-            let (id, response) =
+            let response =
                 snowball_start(recipient, SEND_TOKENS, &mut accounts[i], &mut notification);
-            notifications.push((notification, id, response));
+            notifications.push((notification, response));
             accounts[i].poll();
         }
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
@@ -1221,7 +1219,7 @@ fn create_snowball_simple() {
         }
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications) {
-            let (notification, _, _) = status;
+            let (notification, _) = status;
             account.poll();
             clear_notification(notification)
         }
@@ -1254,14 +1252,14 @@ fn create_snowball_simple() {
         let mut my_tx_hash = None;
         let mut notifications_new = Vec::new();
         for (account, status) in accounts.iter_mut().zip(notifications) {
-            let (mut notification, hash, response) = status;
+            let (mut notification, response) = status;
             account.poll();
             my_tx_hash = Some(match get_request(response) {
                 AccountResponse::TransactionCreated(tx) => tx.tx_hash,
 
                 e => panic!("{:?}", e),
             });
-            notifications_new.push((notification, hash))
+            notifications_new.push(notification)
         }
 
         debug!("===== BROADCAST VS TRANSACTION =====");
@@ -1270,7 +1268,7 @@ fn create_snowball_simple() {
         s.skip_micro_block();
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications_new) {
-            let (notification, _hash) = status;
+            let notification = status;
 
             account.poll();
 
@@ -1319,9 +1317,9 @@ fn create_snowball_fail_share_key() {
         let mut notifications = Vec::new();
         for i in 0..num_nodes {
             let mut notification = accounts[i].account.subscribe();
-            let (id, response) =
+            let response =
                 snowball_start(recipient, SEND_TOKENS, &mut accounts[i], &mut notification);
-            notifications.push((notification, id, response));
+            notifications.push((notification, response));
             accounts[i].poll();
         }
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
@@ -1340,7 +1338,7 @@ fn create_snowball_fail_share_key() {
         }
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications) {
-            let (notification, _, _) = status;
+            let (notification, _) = status;
             account.poll();
             clear_notification(notification)
         }
@@ -1382,14 +1380,14 @@ fn create_snowball_fail_share_key() {
         let mut my_tx_hash = None;
         let mut notifications_new = Vec::new();
         for (account, status) in accounts.iter_mut().zip(notifications) {
-            let (mut notification, hash, response) = status;
+            let (mut notification, response) = status;
             account.poll();
             my_tx_hash = Some(match get_request(response) {
                 AccountResponse::TransactionCreated(tx) => tx.tx_hash,
 
                 e => panic!("{:?}", e),
             });
-            notifications_new.push((notification, hash))
+            notifications_new.push(notification)
         }
 
         debug!("===== BROADCAST VS TRANSACTION =====");
@@ -1398,7 +1396,7 @@ fn create_snowball_fail_share_key() {
         s.skip_micro_block();
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications_new) {
-            let (notification, _hash) = status;
+            let notification = status;
 
             account.poll();
 
@@ -1443,9 +1441,9 @@ fn create_snowball_fail_commitment() {
         let mut notifications = Vec::new();
         for i in 0..num_nodes {
             let mut notification = accounts[i].account.subscribe();
-            let (id, response) =
+            let response =
                 snowball_start(recipient, SEND_TOKENS, &mut accounts[i], &mut notification);
-            notifications.push((notification, id, response));
+            notifications.push((notification, response));
             accounts[i].poll();
         }
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
@@ -1464,7 +1462,7 @@ fn create_snowball_fail_commitment() {
         }
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications) {
-            let (notification, _, _) = status;
+            let (notification, _) = status;
             account.poll();
             clear_notification(notification)
         }
@@ -1517,14 +1515,14 @@ fn create_snowball_fail_commitment() {
         let mut my_tx_hash = None;
         let mut notifications_new = Vec::new();
         for (account, status) in accounts.iter_mut().zip(notifications) {
-            let (mut notification, hash, response) = status;
+            let (mut notification, response) = status;
             account.poll();
             my_tx_hash = Some(match get_request(response) {
                 AccountResponse::TransactionCreated(tx) => tx.tx_hash,
 
                 e => panic!("{:?}", e),
             });
-            notifications_new.push((notification, hash))
+            notifications_new.push(notification)
         }
 
         debug!("===== BROADCAST VS TRANSACTION =====");
@@ -1533,7 +1531,7 @@ fn create_snowball_fail_commitment() {
         s.skip_micro_block();
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications_new) {
-            let (notification, _hash) = status;
+            let (notification) = status;
 
             account.poll();
 
@@ -1578,9 +1576,9 @@ fn create_snowball_fail_cloacked_vals() {
         let mut notifications = Vec::new();
         for i in 0..num_nodes {
             let mut notification = accounts[i].account.subscribe();
-            let (id, response) =
+            let response =
                 snowball_start(recipient, SEND_TOKENS, &mut accounts[i], &mut notification);
-            notifications.push((notification, id, response));
+            notifications.push((notification, response));
             accounts[i].poll();
         }
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
@@ -1599,7 +1597,7 @@ fn create_snowball_fail_cloacked_vals() {
         }
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications) {
-            let (notification, _, _) = status;
+            let (notification, _) = status;
             account.poll();
             clear_notification(notification)
         }
@@ -1652,14 +1650,14 @@ fn create_snowball_fail_cloacked_vals() {
         let mut my_tx_hash = None;
         let mut notifications_new = Vec::new();
         for (account, status) in accounts.iter_mut().zip(notifications) {
-            let (mut notification, hash, response) = status;
+            let (mut notification, response) = status;
             account.poll();
             my_tx_hash = Some(match get_request(response) {
                 AccountResponse::TransactionCreated(tx) => tx.tx_hash,
 
                 e => panic!("{:?}", e),
             });
-            notifications_new.push((notification, hash))
+            notifications_new.push(notification)
         }
 
         debug!("===== BROADCAST VS TRANSACTION =====");
@@ -1668,7 +1666,7 @@ fn create_snowball_fail_cloacked_vals() {
         s.skip_micro_block();
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications_new) {
-            let (notification, _hash) = status;
+            let notification = status;
 
             account.poll();
 

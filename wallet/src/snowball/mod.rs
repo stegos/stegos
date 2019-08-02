@@ -482,29 +482,6 @@ impl Snowball {
         vs
     }
 
-    pub fn external_session_id(&self) -> Hash {
-        let mut hasher = Hasher::new();
-
-        for input in &self.my_txins {
-            input.0.hash(&mut hasher);
-            input.1.hash(&mut hasher);
-        }
-        for output in &self.my_txouts {
-            output.amount.hash(&mut hasher);
-
-            if let Some(timestamp) = &output.locked _timestamp {
-                "some".hash(&mut hasher);
-                timestamp.hash(&mut hasher);
-            } else {
-                "none".hash(&mut hasher);
-            }
-            output.data.hash(&mut hasher);
-            output.recip.hash(&mut hasher);
-        }
-        self.my_fee.hash(&mut hasher);
-        hasher.result()
-    }
-
     // ----------------------------------------------------------------------------------------------
     // TxPool Membership
     // ----------------------------------------------------------------------------------------------

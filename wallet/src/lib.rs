@@ -863,13 +863,14 @@ impl UnsealedAccountService {
             if p.time + PENDING_UTXO_TIME <= now {
                 trace!("Found outdated pending utxo = {}", hash);
                 balance_unlocked = true;
-                if p.snowball_session {
-                    info!(
-                        "Some outputs of snowball are now outdated: snowball_session = {}",
-                        hash
-                    );
-                    warn!("Resetting Snowball on timeout.");
-                    self.snowball = None;
+                if p.snowball_session && self.snowball.is_some() {
+                    // Terminate Snowball session.
+                    error!("Snowball timed out");
+                    let (_snowball, tx) = self.snowball.take().unwrap();
+                    let response = AccountResponse::Error {
+                        error: "Snowball timed out".to_string(),
+                    };
+                    let _ = tx.send(response);
                 }
             } else {
                 assert!(self.pending_payments.insert(hash, p).is_none());
@@ -1015,7 +1016,7 @@ impl Future for UnsealedAccountService {
                     let _ = response_sender.send(response);
                 }
                 Err((error, inputs)) => {
-                    warn!("Error during snowball session error={}.", error);
+                    error!("Snowball failed: error={}", error);
                     for (input_hash, _input) in inputs {
                         assert!(self.pending_payments.remove(&input_hash).is_some())
                     }

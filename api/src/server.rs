@@ -267,17 +267,16 @@ impl Future for WebSocketHandler {
         let mut network_notifications: Vec<NetworkNotification> = Vec::new();
         for (topic, rx) in self.network_unicast.iter_mut() {
             loop {
-                match rx.poll() {
-                    Ok(Async::Ready(Some(msg))) => {
+                match rx.poll().unwrap() {
+                    Async::Ready(Some(msg)) => {
                         network_notifications.push(NetworkNotification::UnicastMessage {
                             topic: topic.clone(),
                             from: msg.from,
                             data: msg.data,
                         });
                     }
-                    Ok(Async::Ready(None)) => break,
-                    Ok(Async::NotReady) => break,
-                    Err(()) => unreachable!(),
+                    Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
+                    Async::NotReady => break,
                 }
             }
         }
@@ -285,16 +284,15 @@ impl Future for WebSocketHandler {
         // Network broadcast messages.
         for (topic, rx) in self.network_broadcast.iter_mut() {
             loop {
-                match rx.poll() {
-                    Ok(Async::Ready(Some(data))) => {
+                match rx.poll().unwrap() {
+                    Async::Ready(Some(data)) => {
                         network_notifications.push(NetworkNotification::BroadcastMessage {
                             topic: topic.clone(),
                             data,
                         });
                     }
-                    Ok(Async::Ready(None)) => break,
-                    Ok(Async::NotReady) => break,
-                    Err(()) => unreachable!(),
+                    Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
+                    Async::NotReady => break,
                 }
             }
         }
@@ -310,17 +308,16 @@ impl Future for WebSocketHandler {
 
         // Wallet notifications.
         loop {
-            match self.wallet_notifications.poll() {
-                Ok(Async::Ready(Some(notification))) => {
+            match self.wallet_notifications.poll().unwrap() {
+                Async::Ready(Some(notification)) => {
                     let response = Response {
                         kind: ResponseKind::WalletNotification(notification),
                         id: 0,
                     };
                     self.send(response);
                 }
-                Ok(Async::Ready(None)) => return Ok(Async::Ready(())),
-                Ok(Async::NotReady) => break, // fall through
-                Err(()) => panic!("Wallet failure"),
+                Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
+                Async::NotReady => break,                          // fall through
             }
         }
 
@@ -335,7 +332,7 @@ impl Future for WebSocketHandler {
                     self.send(response);
                 }
                 Ok(Async::NotReady) => self.wallet_responses.push((id, rx)),
-                Err(_) => panic!("disconnected"),
+                Err(oneshot::Canceled) => panic!("missing response for WalletRequest"),
             }
         }
 
@@ -350,13 +347,13 @@ impl Future for WebSocketHandler {
                     self.send(response)
                 }
                 Ok(Async::NotReady) => self.node_responses.push((id, rx)),
-                Err(_) => panic!("disconnected"),
+                Err(oneshot::Canceled) => panic!("missing response for NodeRequest"),
             }
         }
 
         // Node notifications.
         loop {
-            match self.node_notifications.poll().expect("connected") {
+            match self.node_notifications.poll().unwrap() {
                 Async::Ready(Some(msg)) => {
                     let msg = Response {
                         kind: ResponseKind::NodeNotification(msg),
@@ -364,8 +361,8 @@ impl Future for WebSocketHandler {
                     };
                     self.send(msg);
                 }
-                Async::Ready(None) => return Ok(Async::Ready(())),
-                Async::NotReady => break, // fall through
+                Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
+                Async::NotReady => break,                          // fall through
             }
         }
 

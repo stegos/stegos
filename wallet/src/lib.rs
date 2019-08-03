@@ -60,7 +60,6 @@ use stegos_keychain::KeyError;
 use stegos_network::Network;
 use stegos_node::NodeNotification;
 use stegos_node::TransactionStatus;
-use stegos_node::MAX_PARTICIPANTS;
 use stegos_node::{Node, NodeRequest, NodeResponse};
 use tokio::runtime::TaskExecutor;
 use tokio_timer::{clock, Interval};
@@ -408,7 +407,7 @@ impl UnsealedAccountService {
             comment,
             locked_timestamp,
             self.last_macro_block_timestamp,
-            self.max_inputs_in_tx / MAX_PARTICIPANTS,
+            snowball::MAX_UTXOS,
         )?;
         assert!(inputs.len() <= snowball::MAX_UTXOS);
 

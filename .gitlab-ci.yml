@@ -19,7 +19,7 @@ fast_checks:
     - cargo fmt --all -- --check
   tags:
     - linux
-  image: stegos/rust:nightly-2019-08-04-25
+  image: stegos/rust:nightly-2019-08-04
 
 .build:
   stage: build

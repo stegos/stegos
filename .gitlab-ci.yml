@@ -93,17 +93,3 @@ release:macos:
     - mkdir -p release/macos && mv /usr/local/bin/{stegos,stegosd} release/macos
   tags:
     - macos
-
-.release:linux:static:
-  extends: .release
-  image: stegos/rust-musl-builder:1.34
-  before_script: []
-  script:
-    - cargo install --bins --path . --root /usr/local && strip /usr/local/bin/{stegos,stegosd}
-    - mkdir -p release/linux && mv /usr/local/bin/stegosd release/linux/stegosd-static && mv /usr/local/bin/stegos release/linux/stegos-static
-    - ldd release/linux/stegosd-static >/tmp/out 2>&1 || true
-    - grep "Not a valid dynamic program" /tmp/out
-    - release/linux/stegosd-static --version 
-  tags:
-    - linux
-

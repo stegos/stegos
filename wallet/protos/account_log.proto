@@ -41,7 +41,6 @@ message PaymentTransactionValue {
 // Incoming event
 message Incoming {
     OutputValue output = 1;
-    bool is_change = 2;
 }
 
 // Outgoing event

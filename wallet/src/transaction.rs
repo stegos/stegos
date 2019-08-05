@@ -135,6 +135,7 @@ where
         amount,
         data,
         locked_timestamp,
+        is_change: false,
     };
     outputs.push(output1);
 
@@ -152,6 +153,7 @@ where
             amount: change,
             data: data.clone(),
             locked_timestamp: None,
+            is_change: true,
         };
         info!(
             "Created change UTXO: recipient={}, change={}, data={:?}",
@@ -260,6 +262,7 @@ where
             );
 
             let extended_output = ExtendedOutputValue {
+                id: 0,
                 rvalue,
                 recipient: *recipient,
                 amount,
@@ -284,6 +287,7 @@ where
             );
 
             let extended_output = ExtendedOutputValue {
+                id: 0,
                 rvalue: None,
                 recipient: *recipient,
                 amount,
@@ -319,6 +323,7 @@ where
         );
         outputs.push(Output::PaymentOutput(output2));
         let extended_output = ExtendedOutputValue {
+            id: 1,
             rvalue: None,
             recipient: *sender_pkey,
             amount: change,

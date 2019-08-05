@@ -44,6 +44,15 @@ fn empty_log_at_start() {
     });
 }
 
+fn last_outgoing(log: &Vec<LogEntryInfo>) -> &LogEntryInfo {
+    for e in log.iter().rev() {
+        if let LogEntryInfo::Outgoing { .. } = e {
+            return e;
+        }
+    }
+    unreachable!()
+}
+
 #[test]
 fn create_tx() {
     Sandbox::start(Default::default(), |mut s| {
@@ -95,6 +104,29 @@ fn create_tx() {
                 status: TransactionStatus::Prepared { .. },
             } => assert_eq!(tx_hash, my_tx),
             _ => unreachable!(),
+        }
+
+        let log = account_history(&mut accounts[0]);
+
+        let entry = last_outgoing(&log);
+
+        if let LogEntryInfo::Outgoing { timestamp, tx } = entry {
+            let outputs = &tx.outputs;
+
+            assert_eq!(outputs.len(), 2);
+            assert_eq!(outputs[0].info.amount, 10);
+            assert!(!outputs[0].info.is_change);
+            assert!(outputs[0].info.rvalue.is_none());
+            assert_eq!(outputs[0].info.recipient, recipient);
+
+            assert!(outputs[1].info.is_change);
+            assert!(outputs[1].info.rvalue.is_none());
+            assert_eq!(
+                outputs[1].info.recipient,
+                accounts[0].account_service.account_pkey
+            );
+        } else {
+            unreachable!();
         }
     });
 }
@@ -1023,6 +1055,21 @@ fn create_snowball_tx() {
                     unreachable!()
                 }
             }
+        }
+
+        let log = account_history(&mut accounts[1]);
+        let entry = last_outgoing(&log);
+
+        if let LogEntryInfo::Outgoing { timestamp, tx } = entry {
+            let outputs = &tx.outputs;
+
+            assert_eq!(outputs.len(), 1);
+            assert_eq!(outputs[0].info.amount, SEND_TOKENS);
+            assert!(!outputs[0].info.is_change);
+            assert!(outputs[0].info.rvalue.is_none());
+            assert_eq!(outputs[0].info.recipient, recipient);
+        } else {
+            unreachable!();
         }
     });
 }

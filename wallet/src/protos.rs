@@ -152,6 +152,7 @@ impl ProtoConvert for ExtendedOutputValue {
         if let Some(ref data) = self.data {
             msg.set_data(data.into_proto());
         }
+        msg.set_id(self.id);
         msg.set_is_change(self.is_change);
         msg
     }
@@ -159,6 +160,7 @@ impl ProtoConvert for ExtendedOutputValue {
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let recipient = PublicKey::from_proto(proto.get_recipient())?;
         let amount = proto.get_amount();
+        let id = proto.get_id();
         let data = if proto.has_data() {
             Some(PaymentPayloadData::from_proto(proto.get_data())?)
         } else {
@@ -172,6 +174,7 @@ impl ProtoConvert for ExtendedOutputValue {
 
         let is_change = proto.get_is_change();
         let payload = ExtendedOutputValue {
+            id,
             recipient,
             amount,
             rvalue,

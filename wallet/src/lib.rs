@@ -752,6 +752,7 @@ impl UnsealedAccountService {
         &mut self,
         tx: PaymentTransaction,
         is_leader: bool,
+        outputs: Vec<ExtendedOutputValue>,
     ) -> Result<TransactionInfo, Error> {
         let tx_hash = Hash::digest(&tx);
         metrics::WALLET_PUBLISHED_PAYMENTS
@@ -761,7 +762,7 @@ impl UnsealedAccountService {
         let notify = AccountNotification::SnowballCreated { tx_hash };
         self.notify(notify);
 
-        let payment_info = PaymentTransactionValue::new_vs(tx.clone());
+        let payment_info = PaymentTransactionValue::new_vs(tx.clone(), outputs);
 
         self.account_log
             .push_outgoing(Timestamp::now(), payment_info.clone())?;
@@ -988,8 +989,12 @@ impl Future for UnsealedAccountService {
 
         if let Some((mut vs, response_sender)) = mem::replace(&mut self.snowball, None) {
             match vs.poll() {
-                Ok(Async::Ready(SnowballOutput { tx, is_leader })) => {
-                    let response = match self.handle_snowball_transaction(tx, is_leader) {
+                Ok(Async::Ready(SnowballOutput {
+                    tx,
+                    is_leader,
+                    outputs,
+                })) => {
+                    let response = match self.handle_snowball_transaction(tx, is_leader, outputs) {
                         Ok(tx) => AccountResponse::TransactionCreated(tx),
                         Err(e) => {
                             error!("Error during processing snowball transaction = {}", e);

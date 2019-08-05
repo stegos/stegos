@@ -28,6 +28,7 @@ message ExtendedOutputValue {
     stegos.crypto.Fr rvalue = 3;
     stegos.blockchain.PaymentPayloadData data = 4;
     bool is_change = 5;
+    uint64 id = 6;
 }
 
 // Information about created transactions

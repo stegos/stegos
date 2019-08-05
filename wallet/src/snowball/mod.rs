@@ -82,6 +82,7 @@ use message::*;
 mod protos;
 
 use crate::snowball::message::SnowballMessage;
+use crate::storage::ExtendedOutputValue;
 use failure::format_err;
 use failure::Error;
 use futures::task::current;
@@ -137,6 +138,7 @@ pub struct ProposedUTXO {
     pub amount: i64,
     pub data: String,
     pub locked_timestamp: Option<Timestamp>,
+    pub is_change: bool,
 }
 
 #[derive(Clone)]
@@ -181,6 +183,7 @@ pub enum MessageState {
 /// Possible outcomes of Snowball
 pub struct SnowballOutput {
     pub tx: PaymentTransaction,
+    pub outputs: Vec<ExtendedOutputValue>,
     pub is_leader: bool,
 }
 
@@ -1128,6 +1131,7 @@ impl Snowball {
         );
 
         // Construct fresh UTXOS and gamma_adj
+        // We should store fresh UTXOS into `my_utxos` with the same order as it was in `my_txouts`.
         let my_pairs = Self::generate_fresh_utxos(&self.skey, &self.my_txouts);
         let mut my_utxos = Vec::<UTXO>::new();
         let mut my_gamma_adj = self.txin_gamma_sum.clone();
@@ -1461,9 +1465,43 @@ impl Snowball {
             self.reset_state(); // indicate nothing more to follow, restartable
             self.msg_queue.clear();
             self.session_round = 0; // for possible restarts
+
+            assert_eq!(self.my_txouts.len(), self.my_utxos.len());
+            let utxos: Vec<_> = self
+                .my_utxos
+                .iter()
+                .map(|o| {
+                    for (id, output) in self.trans.txouts.iter().enumerate() {
+                        if let Ok(c) = output.pedersen_commitment() {
+                            if c == *o {
+                                return id;
+                            }
+                        }
+                    }
+                    panic!("Can't find utxo by Pedersen commitment.");
+                })
+                .collect();
+
+            let outputs = utxos
+                .into_iter()
+                .zip(&self.my_txouts)
+                .map(|(id, output)| {
+                    ExtendedOutputValue {
+                        id: id as u64,
+                        recipient: output.recip.clone(),
+                        amount: output.amount,
+                        //TODO: add certificate to snowball.
+                        rvalue: None,
+                        data: Some(PaymentPayloadData::Comment(output.data.clone())),
+                        is_change: output.is_change,
+                    }
+                })
+                .collect();
+
             debug!("Success in Snowball!");
             return Ok(Async::Ready(SnowballOutput {
                 tx,
+                outputs,
                 is_leader: self.participant_key == leader,
             }));
         }

@@ -434,6 +434,8 @@ impl AccountLog {
 /// Information about created output.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ExtendedOutputValue {
+    /// id of output.
+    pub id: u64,
     /// destination PublicKey.
     pub recipient: PublicKey,
     /// amount of money sended in utxo.
@@ -687,10 +689,13 @@ impl PaymentTransactionValue {
         }
     }
 
-    pub fn new_vs(tx: PaymentTransaction) -> PaymentTransactionValue {
+    pub fn new_vs(
+        tx: PaymentTransaction,
+        outputs: Vec<ExtendedOutputValue>,
+    ) -> PaymentTransactionValue {
         assert!(tx.txouts.len() >= 2);
         PaymentTransactionValue {
-            outputs: Vec::new(),
+            outputs,
             tx,
             status: TransactionStatus::Created {},
         }
@@ -719,13 +724,11 @@ impl PaymentTransactionValue {
 
         // merge output with extended info.
         let outputs = self
-            .tx
-            .txouts
+            .outputs
             .iter()
-            .zip(self.outputs.iter().cloned())
-            .map(|(o, e)| ExtendedOutputInfo {
-                utxo: Hash::digest(o),
-                info: e,
+            .map(|e| ExtendedOutputInfo {
+                utxo: Hash::digest(&self.tx.txouts[e.id as usize]),
+                info: e.clone(),
             })
             .collect();
 

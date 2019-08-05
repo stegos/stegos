@@ -298,13 +298,7 @@ impl UnsealedAccountService {
         for input in &tx.txins {
             assert!(self
                 .pending_payments
-                .insert(
-                    *input,
-                    PendingOutput {
-                        time,
-                        snowball_session: false,
-                    }
-                )
+                .insert(*input, PendingOutput { time })
                 .is_none());
         }
 
@@ -355,13 +349,7 @@ impl UnsealedAccountService {
         for input in &tx.txins {
             assert!(self
                 .pending_payments
-                .insert(
-                    *input,
-                    PendingOutput {
-                        time,
-                        snowball_session: false,
-                    }
-                )
+                .insert(*input, PendingOutput { time })
                 .is_none());
         }
 
@@ -415,13 +403,7 @@ impl UnsealedAccountService {
         for (input, _) in &inputs {
             assert!(self
                 .pending_payments
-                .insert(
-                    *input,
-                    PendingOutput {
-                        time,
-                        snowball_session: true,
-                    }
-                )
+                .insert(*input, PendingOutput { time })
                 .is_none());
         }
 
@@ -471,13 +453,7 @@ impl UnsealedAccountService {
         for input in &tx.txins {
             assert!(self
                 .pending_payments
-                .insert(
-                    *input,
-                    PendingOutput {
-                        time,
-                        snowball_session: false,
-                    }
-                )
+                .insert(*input, PendingOutput { time })
                 .is_none());
         }
 
@@ -862,7 +838,10 @@ impl UnsealedAccountService {
             if p.time + PENDING_UTXO_TIME <= now {
                 trace!("Found outdated pending utxo = {}", hash);
                 balance_unlocked = true;
-                if p.snowball_session && self.snowball.is_some() {
+                if let Some((sb, _)) = &self.snowball {
+                    if !sb.is_my_input(hash) {
+                        continue;
+                    }
                     // Terminate Snowball session.
                     error!("Snowball timed out");
                     let (_snowball, tx) = self.snowball.take().unwrap();
@@ -870,6 +849,13 @@ impl UnsealedAccountService {
                         error: "Snowball timed out".to_string(),
                     };
                     let _ = tx.send(response);
+
+                    info!(
+                        "Some outputs of snowball are now outdated: snowball_session = {}",
+                        hash
+                    );
+                    warn!("Resetting Snowball on timeout.");
+                    self.snowball = None;
                 }
             } else {
                 assert!(self.pending_payments.insert(hash, p).is_none());

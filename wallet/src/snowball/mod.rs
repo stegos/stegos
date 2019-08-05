@@ -479,6 +479,15 @@ impl Snowball {
         self.timer = timer.into();
     }
 
+    pub fn is_my_input(&self, input: Hash) -> bool {
+        for (hash, _) in &self.my_txins {
+            if *hash == input {
+                return true;
+            }
+        }
+        false
+    }
+
     // ----------------------------------------------------------------------------------------------
     // TxPool Membership
     // ----------------------------------------------------------------------------------------------

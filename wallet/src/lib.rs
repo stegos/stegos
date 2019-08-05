@@ -410,6 +410,7 @@ impl UnsealedAccountService {
         let snowball = Snowball::new(
             self.account_skey.clone(),
             self.account_pkey.clone(),
+            self.network_skey.clone(),
             self.network_pkey.clone(),
             self.network.clone(),
             self.node.clone(),

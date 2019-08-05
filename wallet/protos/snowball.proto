@@ -19,6 +19,7 @@ message DcMatrix {
 message SharedKeying {
     stegos.crypto.PublicKey pkey = 1;
     stegos.crypto.Pt ksig = 2;
+    stegos.crypto.SecureSignature signature = 3;
 }
 
 message Commitment {

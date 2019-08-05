@@ -581,15 +581,25 @@ pub fn dc_keys(
     // my_sess_pkey is the public key invented for each specific session round
     // my_sess_skey is the secret key invented for each specific session round
     //
-    let mut out: HashMap<ParticipantID, Hash> = HashMap::new();
+    // Satisfies commutativity:
+    //  shared_key(id1, id2, s1, pk2) == shared_key(id2, id1, s2, pk1)
+    // so we can both agree on the cloaking key
     let alpha = Fr::from(*my_sess_skey);
+    let mut out: HashMap<ParticipantID, Hash> = HashMap::new();
     participants.iter().filter(|&&p| p != *my_id).for_each(|p| {
         let sess_pkey = sess_pkeys.get(p).expect("can't get session pkey");
         let comm_pt = alpha * Pt::from(*sess_pkey);
 
         let mut state = Hasher::new();
-        sess.hash(&mut state);
         comm_pt.hash(&mut state);
+        if *my_id < *p {
+            my_id.hash(&mut state);
+            p.hash(&mut state);
+        } else {
+            p.hash(&mut state);
+            my_id.hash(&mut state);
+        }
+        sess.hash(&mut state);
         let comm = state.result();
 
         out.insert(*p, comm);

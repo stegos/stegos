@@ -31,6 +31,7 @@ use crate::protos::snowball;
 use std::collections::HashMap;
 use stegos_crypto::dicemix;
 use stegos_crypto::hash::Hash;
+use stegos_crypto::pbc;
 use stegos_crypto::scc::{Fr, Pt, PublicKey, SchnorrSig, SecretKey};
 
 type DcRow = Vec<Fr>;
@@ -41,10 +42,15 @@ impl ProtoConvert for SnowballPayload {
     fn into_proto(&self) -> Self::Proto {
         let mut msg = snowball::SnowballPayload::new();
         match self {
-            SnowballPayload::SharedKeying { pkey, ksig } => {
+            SnowballPayload::SharedKeying {
+                pkey,
+                ksig,
+                signature,
+            } => {
                 let mut body = snowball::SharedKeying::new();
                 body.set_pkey(pkey.into_proto());
                 body.set_ksig(ksig.into_proto());
+                body.set_signature(signature.into_proto());
                 msg.set_sharedkeying(body);
             }
             SnowballPayload::Commitment { cmt } => {
@@ -100,6 +106,7 @@ impl ProtoConvert for SnowballPayload {
                 SnowballPayload::SharedKeying {
                     pkey: PublicKey::from_proto(msg.get_pkey())?,
                     ksig: Pt::from_proto(msg.get_ksig())?,
+                    signature: pbc::Signature::from_proto(msg.get_signature())?,
                 }
             }
             Some(snowball::SnowballPayload_oneof_body::commitment(ref msg)) => {
@@ -202,11 +209,13 @@ pub mod tests {
     fn snowball_serialization() {
         let mut rng = thread_rng();
         let (_wallet_skey, wallet_pkey) = scc::make_random_keys();
-        let (_network_skey, network_pkey) = pbc::make_random_keys();
+        let (network_skey, network_pkey) = pbc::make_random_keys();
         let sid = Hash::digest("test");
         let source = dicemix::ParticipantID::new(network_pkey, rng.gen::<[u8; 32]>());
         let destination = dicemix::ParticipantID::new(network_pkey, rng.gen::<[u8; 32]>());
         let ksig = simple_commit(&Fr::one(), &Fr::zero());
+        let h = Hash::from_str("This is a test");
+        let signature = pbc::sign_hash(&h, &network_skey);
         let msg = SnowballMessage {
             sid,
             source,
@@ -214,6 +223,7 @@ pub mod tests {
             payload: SnowballPayload::SharedKeying {
                 pkey: wallet_pkey,
                 ksig,
+                signature,
             },
         };
         roundtrip(&msg);

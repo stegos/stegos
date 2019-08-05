@@ -29,6 +29,7 @@ use stegos_crypto::dicemix::ParticipantID;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::hash::Hashable;
 use stegos_crypto::hash::Hasher;
+use stegos_crypto::pbc;
 use stegos_crypto::scc::Fr;
 use stegos_crypto::scc::Pt;
 use stegos_crypto::scc::PublicKey;
@@ -42,6 +43,7 @@ pub(crate) enum SnowballPayload {
     SharedKeying {
         pkey: PublicKey,
         ksig: Pt,
+        signature: pbc::Signature,
     },
     Commitment {
         cmt: Hash,
@@ -73,7 +75,11 @@ pub(crate) struct SnowballMessage {
 impl fmt::Display for SnowballPayload {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SnowballPayload::SharedKeying { pkey, ksig } => write!(
+            SnowballPayload::SharedKeying {
+                pkey,
+                ksig,
+                signature: _,
+            } => write!(
                 f,
                 "VsPayload::SharedKeying( pkey: {:?}, ksig: {:?})",
                 pkey, ksig
@@ -121,9 +127,14 @@ impl Hashable for SnowballPayload {
             });
         }
         match self {
-            SnowballPayload::SharedKeying { pkey, ksig } => {
+            SnowballPayload::SharedKeying {
+                pkey,
+                ksig,
+                signature,
+            } => {
                 pkey.hash(state);
                 ksig.hash(state);
+                signature.hash(state);
             }
             SnowballPayload::Commitment { cmt } => {
                 cmt.hash(state);

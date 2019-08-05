@@ -35,7 +35,7 @@ use stegos_crypto::scc::PublicKey;
 use stegos_crypto::scc::SchnorrSig;
 use stegos_crypto::scc::SecretKey;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) enum SnowballPayload {
     // Message payload types that are of interest to various phases
     // of Snowball
@@ -71,6 +71,28 @@ pub(crate) struct SnowballMessage {
 }
 
 impl fmt::Display for SnowballPayload {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SnowballPayload::SharedKeying { pkey, ksig } => write!(
+                f,
+                "VsPayload::SharedKeying( pkey: {:?}, ksig: {:?})",
+                pkey, ksig
+            ),
+            SnowballPayload::Commitment { cmt } => {
+                write!(f, "VsPayload::Commitment( cmt: {})", cmt)
+            }
+            SnowballPayload::CloakedVals { .. } => write!(f, "VsPayload::CloakedVals(...)"),
+            SnowballPayload::Signature { sig } => {
+                write!(f, "VsPayload::Signature( sig: {:?})", sig)
+            }
+            SnowballPayload::SecretKeying { skey, .. } => {
+                write!(f, "VsPayload::SecretKeying( skey: {:?})", skey)
+            }
+        }
+    }
+}
+
+impl fmt::Debug for SnowballPayload {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SnowballPayload::SharedKeying { pkey, ksig } => write!(

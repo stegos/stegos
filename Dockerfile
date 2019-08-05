@@ -1,5 +1,5 @@
 # Use multi-stage build to reduce image size
-FROM stegos/rust:nightly-2019-06-25 AS source
+FROM stegos/rust:nightly-2019-08-04 AS source
 LABEL maintainer="Stegos AG <info@stegos.com>"
 
 RUN apt-get update && apt-get install -y git-core

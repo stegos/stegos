@@ -117,9 +117,7 @@ impl<TSubstream> Gatekeeper<TSubstream> {
                     });
                     desired_addesses.insert(maddr);
                 }
-                Err(e) => {
-                    error!(target: "stegos_network::gatekeeper", "failed to parse address: {}, error: {}", addr, e)
-                }
+                Err(e) => error!(target: "stegos_network::gatekeeper", "failed to parse address: {}, error: {}", addr, e),
             }
         }
 

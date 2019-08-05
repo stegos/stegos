@@ -850,5 +850,4 @@ mod test {
             assert_eq!(t, time + Duration::from_millis(id as u64));
         }
     }
-
 }

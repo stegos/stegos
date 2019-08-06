@@ -365,7 +365,19 @@ impl UnsealedAccountService {
     fn get_tx_history(&self, starting_from: Timestamp, limit: u64) -> Vec<LogEntryInfo> {
         self.account_log
             .iter_range(starting_from, limit)
-            .map(|(t, e)| e.to_info(t))
+            .map(|(timestamp, e)| match e {
+                LogEntry::Incoming { ref output } => LogEntryInfo::Incoming {
+                    timestamp,
+                    output: output.to_info(),
+                    is_change: self
+                        .account_log
+                        .is_known_changes(Hash::digest(&output.to_output())),
+                },
+                LogEntry::Outgoing { ref tx } => LogEntryInfo::Outgoing {
+                    timestamp,
+                    tx: tx.to_info(),
+                },
+            })
             .collect()
     }
 

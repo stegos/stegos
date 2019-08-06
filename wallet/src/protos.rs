@@ -50,10 +50,9 @@ impl ProtoConvert for LogEntry {
                 enum_value.set_value(tx.into_proto());
                 msg.set_outgoing(enum_value);
             }
-            LogEntry::Incoming { output, is_change } => {
+            LogEntry::Incoming { output } => {
                 let mut enum_value = account_log::Incoming::new();
                 enum_value.set_output(output.into_proto());
-                enum_value.set_is_change(*is_change);
                 msg.set_incoming(enum_value);
             }
         }
@@ -64,8 +63,7 @@ impl ProtoConvert for LogEntry {
         let payload = match proto.enum_value {
             Some(account_log::LogEntry_oneof_enum_value::incoming(ref msg)) => {
                 let output = OutputValue::from_proto(msg.get_output())?;
-                let is_change = msg.get_is_change();
-                LogEntry::Incoming { output, is_change }
+                LogEntry::Incoming { output }
             }
             Some(account_log::LogEntry_oneof_enum_value::outgoing(ref msg)) => {
                 let tx = PaymentTransactionValue::from_proto(msg.get_value())?;

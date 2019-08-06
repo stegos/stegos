@@ -26,7 +26,7 @@
 use crate::api::*;
 use byteorder::{BigEndian, ByteOrder};
 use failure::{bail, Error};
-use log::{debug, trace};
+use log::{debug, error, trace};
 use rocksdb::{Direction, IteratorMode, WriteBatch, DB};
 use serde::{Deserializer, Serializer};
 use serde_derive::{Deserialize, Serialize};
@@ -48,13 +48,8 @@ const TIME_INDEX: [u8; 2] = [0; 2];
 
 #[derive(Debug, Clone)]
 pub enum LogEntry {
-    Incoming {
-        output: OutputValue,
-        is_change: bool,
-    },
-    Outgoing {
-        tx: PaymentTransactionValue,
-    },
+    Incoming { output: OutputValue },
+    Outgoing { tx: PaymentTransactionValue },
 }
 
 /// Currently we support only transaction that have 2 outputs,
@@ -137,19 +132,21 @@ impl AccountLog {
         }
     }
 
+    pub fn is_known_changes(&self, utxo: Hash) -> bool {
+        let exist = self.known_changes.contains(&utxo);
+        error!("Checking is change = {}, exist={}", utxo, exist);
+        exist
+    }
+
     pub fn recover_state(&mut self) {
         // TODO: limit time for recover
         // (for example, if some transaction was created weak ago, it's no reason to resend it)
         let starting_time = Timestamp::UNIX_EPOCH;
         for (timestamp, entry) in self.iter_range(starting_time, u64::max_value()) {
             match entry {
-                LogEntry::Incoming { output, is_change } => {
+                LogEntry::Incoming { output } => {
                     let output_hash = Hash::digest(&output.to_output());
-                    trace!(
-                        "Recovered output: output={}, is_change={}",
-                        output_hash,
-                        is_change
-                    );
+                    trace!("Recovered output: output={}", output_hash,);
                     assert!(self.utxos_list.insert(output_hash, timestamp).is_none());
                 }
                 LogEntry::Outgoing { tx } => {
@@ -158,9 +155,9 @@ impl AccountLog {
                     trace!("Recovered tx: tx={}, status={:?}", tx_hash, status);
                     assert!(self.created_txs.insert(tx_hash, timestamp).is_none());
                     self.update_tx_indexes(tx_hash, status.clone());
-                    for utxo in tx.outputs.iter().zip(&tx.tx.txouts) {
-                        if utxo.0.is_change {
-                            let utxo_hash = Hash::digest(&utxo.1);
+                    for utxo in tx.outputs.iter() {
+                        if utxo.is_change {
+                            let utxo_hash = Hash::digest(&tx.tx.txouts[utxo.id as usize]);
                             self.known_changes.insert(utxo_hash);
                         }
                     }
@@ -238,11 +235,7 @@ impl AccountLog {
             return Ok(*time);
         }
 
-        let is_change = self.known_changes.contains(&output_hash);
-        let entry = LogEntry::Incoming {
-            output: incoming,
-            is_change,
-        };
+        let entry = LogEntry::Incoming { output: incoming };
         let timestamp = self.push_entry(timestamp, entry)?;
         assert!(self.utxos_list.insert(output_hash, timestamp).is_none());
         Ok(timestamp)
@@ -565,23 +558,6 @@ impl OutputValue {
 }
 
 impl LogEntry {
-    pub fn to_info(&self, timestamp: Timestamp) -> LogEntryInfo {
-        match *self {
-            LogEntry::Incoming {
-                ref output,
-                is_change,
-            } => LogEntryInfo::Incoming {
-                timestamp,
-                output: output.to_info(),
-                is_change,
-            },
-            LogEntry::Outgoing { ref tx } => LogEntryInfo::Outgoing {
-                timestamp,
-                tx: tx.to_info(),
-            },
-        }
-    }
-
     #[allow(unused)]
     fn testing_stub(id: usize) -> LogEntry {
         let (_s, p) = make_random_keys();
@@ -589,7 +565,6 @@ impl LogEntry {
 
         LogEntry::Incoming {
             output: OutputValue::PublicPayment(public),
-            is_change: false,
         }
     }
 

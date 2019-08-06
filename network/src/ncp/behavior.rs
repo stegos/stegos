@@ -23,6 +23,7 @@
 
 use futures::prelude::*;
 use libp2p_core::{
+    multiaddr::Protocol,
     protocols_handler::ProtocolsHandler,
     swarm::{ConnectedPoint, NetworkBehaviour, NetworkBehaviourAction, PollParameters},
     Multiaddr, PeerId,
@@ -34,6 +35,7 @@ use smallvec::SmallVec;
 use std::{
     collections::VecDeque,
     marker::PhantomData,
+    net::Ipv4Addr,
     time::{Duration, Instant},
 };
 use stegos_crypto::pbc;
@@ -50,6 +52,9 @@ const KNOWN_PEERS_TABLE_SIZE: usize = 1024;
 
 // Treat connection as dead after 5 minutes inactivity
 const IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+// Localhost Multiaddr (to use in the filter)
+const LOCALHOST_MULTIADDR: Protocol = Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1));
 
 /// Network behaviour that automatically identifies nodes periodically, and returns information
 /// about them.
@@ -330,6 +335,10 @@ where
                                 );
                             }
                             for addr in peer.addresses.into_iter() {
+                                // Don't store 127.0.0.1 IPs
+                                if is_localhost(&addr) {
+                                    continue;
+                                }
                                 // Safe to unwrap, since we initalized entry on previous step
                                 if self
                                     .known_peers
@@ -356,6 +365,7 @@ where
                                     .1
                                     .iter()
                                     .map(|v| v.clone())
+                                    .filter(|v| !is_localhost(v))
                                     .collect(),
                             });
                         }
@@ -425,6 +435,11 @@ where
         }
         Async::NotReady
     }
+}
+
+fn is_localhost(addr: &Multiaddr) -> bool {
+    let parsed = addr.iter().take(1).collect::<Vec<_>>();
+    parsed[0] == LOCALHOST_MULTIADDR
 }
 
 /// Event that can happen on the floodsub behaviour.

@@ -297,6 +297,7 @@ impl UnsealedAccountService {
 
         let time = clock::now();
         for input in &tx.txins {
+            trace!("Add new pending utxo = {}", input);
             assert!(self
                 .pending_payments
                 .insert(*input, PendingOutput { time })

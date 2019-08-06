@@ -228,6 +228,21 @@ fn create_tx_with_certificate() {
     });
 }
 
+fn balance_requset(account: &mut AccountSandbox) -> (i64, i64) {
+    let rx = account.account.request(AccountRequest::BalanceInfo {});
+
+    account.poll();
+    let response = get_request(rx);
+    info!("{:?}", response);
+    match response {
+        AccountResponse::BalanceInfo {
+            balance,
+            available_balance,
+        } => (balance, available_balance),
+        _ => panic!("Wrong response to balance request"),
+    }
+}
+
 #[test]
 fn full_transfer() {
     Sandbox::start(Default::default(), |mut s| {
@@ -236,15 +251,7 @@ fn full_transfer() {
         s.poll();
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
-        let rx = accounts[0].account.request(AccountRequest::BalanceInfo {});
-
-        accounts[0].poll();
-        let response = get_request(rx);
-        info!("{:?}", response);
-        let balance = match response {
-            AccountResponse::BalanceInfo { balance, .. } => balance,
-            _ => panic!("Wrong response to payment request"),
-        };
+        let (balance, _) = balance_requset(&mut accounts[0]);
 
         let recipient = accounts[1].account_service.account_pkey;
 
@@ -1071,6 +1078,94 @@ fn create_snowball_tx() {
         } else {
             unreachable!();
         }
+    });
+}
+
+/// 3 nodes send monet to 1 recipient, using Snowball
+#[test]
+fn snowball_lock_utxo() {
+    const SEND_TOKENS: i64 = 10;
+    // send MINIMAL_TOKEN + FEE
+    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    // set micro_blocks to some big value.
+    let config = SandboxConfig {
+        chain: ChainConfig {
+            micro_blocks_in_epoch: 2000,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    Sandbox::start(config, |mut s| {
+        let mut accounts = genesis_accounts(&mut s);
+
+        s.poll();
+        let (genesis, rest) = accounts.split_at_mut(1);
+        precondition_each_account_has_tokens(&mut s, MIN_AMOUNT, &mut genesis[0], rest);
+        let num_nodes = accounts.len() - 1;
+        assert!(num_nodes >= 3);
+
+        let recipient = accounts[3].account_service.account_pkey;
+
+        let balance = balance_requset(&mut accounts[0]);
+        assert!(balance.1 > 0);
+
+        let mut notification = accounts[0].account.subscribe();
+        let mut response =
+            snowball_start(recipient, SEND_TOKENS, &mut accounts[0], &mut notification);
+        accounts[0].poll();
+
+        s.filter_unicast(&[stegos_node::txpool::POOL_JOIN_TOPIC]);
+        let balance = balance_requset(&mut accounts[0]);
+        assert_eq!(balance.1, 0);
+        let mut response2 = accounts[0].account.request(AccountRequest::Payment {
+            recipient,
+            amount: SEND_TOKENS,
+            payment_fee: PAYMENT_FEE,
+            comment: "Test".to_string(),
+            locked_timestamp: None,
+            with_certificate: false,
+        });
+        accounts[0].poll();
+
+        assert_eq!(response.poll(), Ok(Async::NotReady));
+
+        // second request failed, because of locked utxos.
+        let response2 = get_request(response2);
+
+        match response2 {
+            AccountResponse::Error { error } => assert_eq!(error, "Not enough money."),
+            _ => unreachable!(),
+        };
+
+        s.wait(crate::PENDING_UTXO_TIME);
+        let balance = balance_requset(&mut accounts[0]);
+        assert!(balance.1 > 0);
+        accounts[0].poll();
+        let response = get_request(response);
+        match response {
+            AccountResponse::Error { error } => assert_eq!(error, "Snowball timed out"),
+            _ => unreachable!(),
+        };
+
+        let mut response3 = accounts[0].account.request(AccountRequest::Payment {
+            recipient,
+            amount: SEND_TOKENS,
+            payment_fee: PAYMENT_FEE,
+            comment: "Test".to_string(),
+            locked_timestamp: None,
+            with_certificate: false,
+        });
+        accounts[0].poll();
+
+        // after timeout request should be accepted.
+        let response3 = get_request(response3);
+        match response3 {
+            AccountResponse::TransactionCreated(_) => {}
+            _ => unreachable!(),
+        };
+        let balance = balance_requset(&mut accounts[0]);
+        assert_eq!(balance.1, 0);
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
     });
 }
 

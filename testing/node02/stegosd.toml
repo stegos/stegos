@@ -1,21 +1,20 @@
 [general]
 chain = "dev"
-log_config = "stegos-log4rs.toml"
-prometheus_endpoint = "127.0.0.1:9893"
-api_endpoint = "127.0.0.1:3147"
-data_dir = "testing/node03"
+prometheus_endpoint = "127.0.0.1:9892"
+api_endpoint = "127.0.0.1:3146"
+data_dir = "testing/node02"
 force_check = true
 
 [network]
 bind_ip = "127.0.0.1"
-bind_port = 10057
+bind_port = 10056
 advertise_local_ips = false
 handshake_puzzle_difficulty = 100
 seed_nodes = [
     "/ip4/127.0.0.1/tcp/10055",
-    "/ip4/127.0.0.1/tcp/10056",
+    "/ip4/127.0.0.1/tcp/10057",
     "/ip4/127.0.0.1/tcp/10058",
 ]
 advertised_addresses = [
-    "/ip4/127.0.0.1/tcp/10057",
+    "/ip4/127.0.0.1/tcp/10056",
 ]

@@ -23,7 +23,7 @@ for i in $(seq -f "%02g" 1 $NUM_KEYS); do
     mv -f network$i.pkey ${data_dir}/network.pkey
     mv -f network$i.skey ${data_dir}/network.skey
     rm password$i.txt
-    NODE_ID=$i j2 --format=env testing/stegos.toml.j2 >testing/node$i/stegos.toml
+    NODE_ID=$i j2 --format=env testing/stegosd.toml.j2 >testing/node$i/stegosd.toml
 done
 
 # Genesis block

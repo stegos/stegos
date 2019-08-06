@@ -76,7 +76,7 @@ const PASSWORD_PROMPT2: &'static str = "Enter same password again: ";
 // The number of records in `show history`.
 const CONSOLE_HISTORY_LIMIT: u64 = 50;
 // The default file name for command-line history
-const HISTORY_FILE_NAME: &'static str = "stegos.history";
+const STEGOS_HISTORY: &'static str = "stegos.history";
 
 fn read_password_from_stdin(confirm: bool) -> Result<String, KeyError> {
     loop {
@@ -150,10 +150,14 @@ impl ConsoleService {
 
     /// Background thread to read stdin.
     fn readline_thread_f(mut tx: Sender<String>, account_id: Arc<Mutex<AccountId>>) {
-        // Use ~/.share/stegos/console.history for command line history.
-        let history_path = dirs::data_dir()
-            .unwrap_or(PathBuf::from(r"."))
-            .join(PathBuf::from(HISTORY_FILE_NAME));
+        // Use ~/.share/stegos/stegos.history for command line history.
+        let history_dir = dirs::data_dir()
+            .map(|p| p.join(r"stegos"))
+            .unwrap_or(PathBuf::from(r"."));
+        if !history_dir.exists() {
+            std::fs::create_dir_all(&history_dir);
+        }
+        let history_path = history_dir.join(STEGOS_HISTORY);
 
         let config = rl::Config::builder()
             .history_ignore_space(true)

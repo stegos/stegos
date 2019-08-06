@@ -26,7 +26,7 @@
 use crate::api::*;
 use byteorder::{BigEndian, ByteOrder};
 use failure::{bail, Error};
-use log::{debug, error, trace};
+use log::{debug, trace};
 use rocksdb::{Direction, IteratorMode, WriteBatch, DB};
 use serde::{Deserializer, Serializer};
 use serde_derive::{Deserialize, Serialize};
@@ -134,7 +134,7 @@ impl AccountLog {
 
     pub fn is_known_changes(&self, utxo: Hash) -> bool {
         let exist = self.known_changes.contains(&utxo);
-        error!("Checking is change = {}, exist={}", utxo, exist);
+        trace!("Checking is change = {}, exist={}", utxo, exist);
         exist
     }
 
@@ -253,9 +253,9 @@ impl AccountLog {
         let timestamp = self.push_entry(timestamp, entry)?;
         assert!(self.created_txs.insert(tx_hash, timestamp).is_none());
         self.update_tx_indexes(tx_hash, status);
-        for utxo in tx.outputs.iter().zip(&tx.tx.txouts) {
-            if utxo.0.is_change {
-                let utxo_hash = Hash::digest(&utxo.1);
+        for utxo in tx.outputs.iter() {
+            if utxo.is_change {
+                let utxo_hash = Hash::digest(&tx.tx.txouts[utxo.id as usize]);
                 self.known_changes.insert(utxo_hash);
             }
         }

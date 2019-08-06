@@ -1,8 +1,8 @@
 *~
 */src/Cargo.lock
 /target
-/stegos.toml
-/stegos-log4rs.toml
+/stegos*.toml
+/stegos*-log4rs.toml
 /node_id.txt
 logs/
 

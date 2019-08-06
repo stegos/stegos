@@ -25,7 +25,7 @@ start_timeout=30
 node_id=01
 
 echo Starting node${node_id} ...
-tmux new-session -d -s node${node_id} "testing/waiter.sh target/${mode}/stegosd -c testing/node${node_id}/stegos.toml"
+tmux new-session -d -s node${node_id} "testing/waiter.sh target/${mode}/stegosd -c testing/node${node_id}/stegosd.toml"
 ${timeout_cli} ${start_timeout} sh -c 'until nc -z $0 $1 2> /dev/null; do echo "Waiting 5 sec..."; sleep 5; done' localhost $((3144 + ${node_id}))
 
 if nc -z localhost $((3144 + ${node_id})) 2>/dev/null; then
@@ -40,8 +40,8 @@ fi
 for i in $(seq -f "%02g" 2 $nodes_count); do
     node_id="${i}"
     echo "Starting node=${node_id}..."
-    # echo tmux new-session -d -s node${node_id} "testing/waiter.sh target/${mode}/stegos -c testing/node${node_id}/stegos.toml"
-    tmux new-session -d -s node${node_id} "testing/waiter.sh target/${mode}/stegosd -c testing/node${node_id}/stegos.toml"
+    # echo tmux new-session -d -s node${node_id} "testing/waiter.sh target/${mode}/stegos -c testing/node${node_id}/stegosd.toml"
+    tmux new-session -d -s node${node_id} "testing/waiter.sh target/${mode}/stegosd -c testing/node${node_id}/stegosd.toml"
     ${timeout_cli} ${start_timeout} sh -c 'until nc -z $0 $1 2> /dev/null; do echo "Waiting 5 sec..."; sleep 2; done' localhost $((3144 + ${node_id}))
     if nc -z localhost $((3144 + ${node_id})) 2>/dev/null; then
         echo "Node '${node_id}' started!"

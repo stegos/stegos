@@ -52,22 +52,59 @@ use stegos_wallet::WalletService;
 use tokio::runtime::Runtime;
 use tokio_timer::clock;
 
-// The default file name for configuration
-const CONFIG_FILE_NAME: &'static str = "stegos.toml";
+/// The default file name for configuration
+const STEGOSD_TOML: &'static str = "stegosd.toml";
+/// The default file name for logger configuration.
+const STEGOSD_LOG4RS_TOML: &'static str = "stegosd-log4rs.toml";
 
-fn initialize_logger(cfg: &config::Config, level: log::LevelFilter) -> Result<LogHandle, LogError> {
-    // Try to load log4rs config file
-    if !cfg.general.log_config.as_os_str().is_empty() {
-        match log4rs::load_config_file(&cfg.general.log_config, Default::default()) {
-            Ok(config) => return Ok(log4rs::init_config(config)?),
-            Err(e) => {
-                return Err(LogError::Log4rs(
-                    format_err!("Failed to read log_config file: {}", e).into(),
-                ));
-            }
+fn load_logger_configuration_file(path: &Path) -> Result<LogHandle, LogError> {
+    match log4rs::load_config_file(path, Default::default()) {
+        Ok(config) => return Ok(log4rs::init_config(config)?),
+        Err(e) => {
+            return Err(LogError::Log4rs(
+                format_err!("Failed to read log_config file: {}", e).into(),
+            ));
         }
+    }
+}
+
+fn load_logger_configuration(
+    args: &ArgMatches<'_>,
+    cfg_log_config: &PathBuf,
+) -> Result<LogHandle, LogError> {
+    let verbosity = args.occurrences_of("verbose");
+    let level = match verbosity {
+        0 => log::LevelFilter::Info,
+        1 => log::LevelFilter::Debug,
+        2 | _ => log::LevelFilter::Trace,
     };
 
+    // Use --log-config argument for configuration.
+    if let Some(log_config) = args.value_of_os("log-config") {
+        return load_logger_configuration_file(Path::new(log_config));
+    }
+
+    // Use log_config from stegosd.toml for configuration.
+    if !cfg_log_config.as_os_str().is_empty() {
+        return load_logger_configuration_file(&cfg_log_config);
+    }
+
+    // Use $PWD/stegosd-log4rs.toml for configuration.
+    let cfg_path = PathBuf::from(STEGOSD_LOG4RS_TOML);
+    if cfg_path.exists() {
+        return load_logger_configuration_file(&cfg_path);
+    }
+
+    // Use ~/.config/stegos/stegosd-log4rs.toml for configuration.
+    let cfg_path = dirs::config_dir()
+        .map(|p| p.join(r"stegos"))
+        .unwrap_or(PathBuf::from(r"."))
+        .join(PathBuf::from(STEGOSD_LOG4RS_TOML));
+    if cfg_path.exists() {
+        return load_logger_configuration_file(&cfg_path);
+    }
+
+    // Use default configuration.
     let stdout = ConsoleAppender::builder()
         .encoder(Box::new(PatternEncoder::new(
             "{d(%Y-%m-%d %H:%M:%S)(local)} {h({l})} [{M}] {m}{n}",
@@ -163,23 +200,25 @@ fn load_configuration_file(args: &ArgMatches<'_>) -> Result<config::Config, Erro
         return Ok(cfg);
     }
 
-    // Use $PWD/stegos.toml for configuration.
-    match config::from_file(CONFIG_FILE_NAME) {
+    // Use $PWD/stegosd.toml for configuration.
+    match config::from_file(STEGOSD_TOML) {
         Ok(cfg) => return Ok(cfg),
         Err(config::ConfigError::NotFoundError) => {} // fall through.
         Err(e) => return Err(e.into()),
     }
 
-    // Use ~/.config/stegos.toml for configuration.
+    // Use ~/.config/stegos/stegosd.toml for configuration.
     let cfg_path = dirs::config_dir()
+        .map(|p| p.join(r"stegos"))
         .unwrap_or(PathBuf::from(r"."))
-        .join(PathBuf::from(CONFIG_FILE_NAME));
+        .join(PathBuf::from(STEGOSD_TOML));
     match config::from_file(cfg_path) {
         Ok(cfg) => return Ok(cfg),
         Err(config::ConfigError::NotFoundError) => {} // fall through.
         Err(e) => return Err(e.into()),
     }
 
+    // Use default configuration.
     Ok(Default::default())
 }
 
@@ -203,11 +242,6 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
     // Override global.force_check via command-line.
     if args.is_present("force-check") {
         cfg.general.force_check = true;
-    }
-
-    // Override global.log_config via command-line.
-    if let Some(log_config) = args.value_of_os("log-config") {
-        cfg.general.log_config = PathBuf::from(log_config);
     }
 
     // Override global.prometheus_endpoint via command-line.
@@ -380,13 +414,7 @@ fn run() -> Result<(), Error> {
     let mut cfg = load_configuration(&args)?;
 
     // Initialize logger
-    let verbosity = args.occurrences_of("verbose");
-    let level = match verbosity {
-        0 => log::LevelFilter::Info,
-        1 => log::LevelFilter::Debug,
-        2 | _ => log::LevelFilter::Trace,
-    };
-    initialize_logger(&cfg, level)?;
+    let _log = load_logger_configuration(&args, &cfg.general.log_config)?;
 
     // Print welcome message
     info!("{} {}", name, version);

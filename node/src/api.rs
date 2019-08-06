@@ -66,7 +66,12 @@ pub enum NodeResponse {
     EscrowInfo(EscrowInfo),
     BlockPopped,
     #[serde(skip)]
-    AccountRecovered(AccountRecoveryState),
+    AccountRecovered {
+        recovery_state: AccountRecoveryState,
+        epoch: u64,
+        facilitator_pkey: pbc::PublicKey,
+        last_macro_block_timestamp: Timestamp,
+    },
     #[serde(skip)]
     AddTransaction {
         hash: Hash,

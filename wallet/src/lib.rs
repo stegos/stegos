@@ -208,6 +208,7 @@ impl UnsealedAccountService {
         //
         // Recovery.
         //
+        info!("Loading account {}", account_pkey);
         let recovery_request = NodeRequest::RecoverAccount {
             account_skey: account_skey.clone(),
             account_pkey: account_pkey.clone(),
@@ -755,9 +756,22 @@ impl UnsealedAccountService {
         Ok(())
     }
 
-    fn on_epoch_changed(&mut self, epoch: u64, time: Timestamp) {
+    fn on_epoch_changed(
+        &mut self,
+        epoch: u64,
+        facilitator_pkey: pbc::PublicKey,
+        last_macro_block_timestamp: Timestamp,
+    ) {
+        debug!(
+            "Epoch changed: epoch={}, facilitator={}, last_macro_block_timestamp={}",
+            epoch, facilitator_pkey, last_macro_block_timestamp
+        );
         self.epoch = epoch;
-        self.last_macro_block_timestamp = time;
+        self.facilitator_pkey = facilitator_pkey;
+        if let Some((ref mut vs, _)) = &mut self.snowball {
+            vs.change_facilitator(self.facilitator_pkey.clone());
+        }
+        self.last_macro_block_timestamp = last_macro_block_timestamp;
     }
 
     fn handle_snowball_transaction(
@@ -940,12 +954,24 @@ impl Future for UnsealedAccountService {
                 Ok(Async::Ready(response)) => {
                     self.recovery_rx = None;
                     match response {
-                        NodeResponse::AccountRecovered(persistent_state) => {
+                        NodeResponse::AccountRecovered {
+                            recovery_state,
+                            epoch,
+                            facilitator_pkey,
+                            last_macro_block_timestamp,
+                        } => {
                             // Recover state.
-                            for OutputRecovery { output, epoch, .. } in persistent_state {
+                            assert!(self.snowball.is_none());
+                            for OutputRecovery { output, epoch, .. } in recovery_state {
                                 let output_hash = Hash::digest(&output);
                                 self.on_output_created(epoch, output_hash, output);
                             }
+                            info!("Loaded account {}", self.account_pkey);
+                            self.on_epoch_changed(
+                                epoch,
+                                facilitator_pkey,
+                                last_macro_block_timestamp,
+                            );
                         }
                         NodeResponse::Error { error } => {
                             // Sic: this case is hard to recover.
@@ -1188,13 +1214,13 @@ impl Future for UnsealedAccountService {
                         assert!(self.recovery_rx.is_none(), "recovered from the disk");
                         self.on_tx_statuses_changed(block.statuses);
                         self.on_outputs_changed(block.epoch, block.inputs, block.outputs);
-                        self.on_epoch_changed(block.epoch, block.last_macro_block_timestamp);
+                        self.on_epoch_changed(
+                            block.epoch,
+                            block.facilitator,
+                            block.last_macro_block_timestamp,
+                        );
                         let updated_statuses = self.account_log.finalize_epoch_txs();
                         self.on_tx_statuses_changed(updated_statuses);
-                        self.facilitator_pkey = block.facilitator.clone();
-                        if let Some((ref mut vs, _)) = &mut self.snowball {
-                            vs.change_facilitator(block.facilitator);
-                        }
                     }
                     NodeNotification::RollbackMicroBlock(block) => {
                         assert!(self.recovery_rx.is_none(), "recovered from the disk");
@@ -1355,7 +1381,7 @@ impl Future for AccountService {
                         AccountService::Sealed(old) => old,
                         _ => unreachable!(),
                     };
-                    info!("Unsealed account: pkey={}", &sealed.account_pkey);
+                    info!("Unsealed account: address={}", &sealed.account_pkey);
                     let unsealed = UnsealedAccountService::new(
                         sealed.database_dir,
                         sealed.account_skey_file,
@@ -1386,7 +1412,7 @@ impl Future for AccountService {
                         AccountService::Unsealed(old) => old,
                         _ => unreachable!(),
                     };
-                    info!("Sealed account: pkey={}", &unsealed.account_pkey);
+                    info!("Sealed account: address={}", &unsealed.account_pkey);
                     let sealed = SealedAccountService::new(
                         unsealed.database_dir,
                         unsealed.account_skey_file,
@@ -1561,9 +1587,9 @@ impl WalletService {
                 }
             };
 
-            debug!("Recovering account {}", account_id);
+            debug!("Opening account {}", account_id);
             service.open_account(&account_id)?;
-            info!("Recovered account {}", account_id);
+            info!("Opened account {}", account_id);
         }
 
         info!("Found {} account(s)", service.accounts.len());
@@ -1643,17 +1669,14 @@ impl WalletService {
             }
             WalletControlRequest::CreateAccount { password } => {
                 let (account_skey, account_pkey) = scc::make_random_keys();
+                info!("Created a new account {}", account_pkey);
                 let account_id = self.create_account(account_skey, account_pkey, &password)?;
                 Ok(WalletControlResponse::AccountCreated { account_id })
             }
             WalletControlRequest::RecoverAccount { recovery, password } => {
-                info!("Recovering keys...");
                 let account_skey = recovery_to_account_skey(&recovery)?;
                 let account_pkey: scc::PublicKey = account_skey.clone().into();
-                info!(
-                    "Recovered a account key: pkey={}",
-                    String::from(&account_pkey)
-                );
+                info!("Restored account from 24-word phrase {}", account_pkey);
                 let account_id = self.create_account(account_skey, account_pkey, &password)?;
                 Ok(WalletControlResponse::AccountCreated { account_id })
             }

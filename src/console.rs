@@ -19,7 +19,6 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-use crate::consts;
 use dirs;
 use failure::{format_err, Error};
 use futures::sync::mpsc::{channel, Receiver, Sender};
@@ -40,8 +39,6 @@ use stegos_api::*;
 use stegos_blockchain::Timestamp;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{pbc, scc};
-
-const CONSOLE_HISTORY_LIMIT: u64 = 50;
 
 // ----------------------------------------------------------------
 // Public API.
@@ -76,6 +73,10 @@ const RECOVERY_PROMPT: &'static str = "Enter 24-word recovery phrase: ";
 const PASSWORD_PROMPT: &'static str = "Enter password: ";
 const PASSWORD_PROMPT1: &'static str = "Enter new password: ";
 const PASSWORD_PROMPT2: &'static str = "Enter same password again: ";
+// The number of records in `show history`.
+const CONSOLE_HISTORY_LIMIT: u64 = 50;
+// The default file name for command-line history
+const HISTORY_FILE_NAME: &'static str = "stegos.history";
 
 fn read_password_from_stdin(confirm: bool) -> Result<String, KeyError> {
     loop {
@@ -152,7 +153,7 @@ impl ConsoleService {
         // Use ~/.share/stegos/console.history for command line history.
         let history_path = dirs::data_dir()
             .unwrap_or(PathBuf::from(r"."))
-            .join(PathBuf::from(consts::HISTORY_FILE_NAME));
+            .join(PathBuf::from(HISTORY_FILE_NAME));
 
         let config = rl::Config::builder()
             .history_ignore_space(true)

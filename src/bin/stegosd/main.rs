@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use stegos::*;
+mod config;
 
 use clap::{self, App, Arg, ArgMatches};
 use dirs;
@@ -93,9 +93,9 @@ fn initialize_logger(cfg: &config::Config, level: log::LevelFilter) -> Result<Lo
 
 fn initialize_genesis(cfg: &config::Config) -> Result<MacroBlock, Error> {
     let genesis: &[u8] = match cfg.general.chain.as_ref() {
-        "dev" => include_bytes!("../../chains/dev/genesis.bin"),
-        "testnet" => include_bytes!("../../chains/testnet/genesis.bin"),
-        "devnet" => include_bytes!("../../chains/devnet/genesis.bin"),
+        "dev" => include_bytes!("../../../chains/dev/genesis.bin"),
+        "testnet" => include_bytes!("../../../chains/testnet/genesis.bin"),
+        "devnet" => include_bytes!("../../../chains/devnet/genesis.bin"),
         chain @ _ => {
             return Err(format_err!("Unknown chain: {}", chain));
         }

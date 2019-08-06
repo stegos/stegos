@@ -3,12 +3,10 @@
 pub mod messages;
 pub use self::messages::*;
 
-use crate::api::NodeNotification;
-use crate::NewMacroBlock;
 use crate::Node;
 use failure::Error;
+use futures::sync::mpsc;
 use futures::{Async, Future, Poll, Stream};
-use futures_stream_select_all_send::select_all;
 use log::*;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -17,7 +15,7 @@ use stegos_crypto::dicemix;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::scc;
-use stegos_network::Network;
+use stegos_network::{Network, UnicastMessage};
 use stegos_serialization::traits::*;
 use tokio_timer::Interval;
 
@@ -70,26 +68,12 @@ enum NodeRole {
     Regular,
 }
 
-#[derive(Debug)]
-pub(crate) enum PoolEvent {
-    //
-    // Public API.
-    //
-    Join(pbc::PublicKey, Vec<u8>),
-
-    //
-    // Internal events.
-    //
-    NewMacroBlock(NewMacroBlock),
-}
-
 pub struct TransactionPoolService {
     facilitator_pkey: pbc::PublicKey,
     pkey: pbc::PublicKey,
     network: Network,
     role: NodeRole,
-
-    events: Box<dyn Stream<Item = PoolEvent, Error = ()> + Send>,
+    pool_join_rx: mpsc::UnboundedReceiver<UnicastMessage>,
 }
 
 impl TransactionPoolService {
@@ -97,47 +81,25 @@ impl TransactionPoolService {
     pub fn new(
         network_pkey: pbc::PublicKey,
         network: Network,
-        node: Node,
+        _node: Node,
     ) -> TransactionPoolService {
         let facilitator_pkey: pbc::PublicKey = pbc::PublicKey::dum();
-        let events = || -> Result<_, Error> {
-            let mut streams = Vec::<Box<dyn Stream<Item = PoolEvent, Error = ()> + Send>>::new();
 
-            // Unicast messages from other nodes
-            let unicast_message = network
-                .subscribe_unicast(POOL_JOIN_TOPIC)?
-                .map(|m| PoolEvent::Join(m.from, m.data));
-            streams.push(Box::new(unicast_message));
-
-            // Epoch Changes
-            let epoch_changes = node
-                .subscribe()
-                .filter_map(|e| match e {
-                    NodeNotification::NewMacroBlock(b) => Some(b),
-                    _ => None,
-                })
-                .map(|m| PoolEvent::NewMacroBlock(m));
-            streams.push(Box::new(epoch_changes));
-
-            Ok(select_all(streams))
-        }()
-        .expect("Error when aggregating streams");
+        // Unicast messages from other nodes
+        let pool_join_rx = network.subscribe_unicast(POOL_JOIN_TOPIC).unwrap();
 
         TransactionPoolService {
             facilitator_pkey,
             role: NodeRole::Regular,
             network,
             pkey: network_pkey,
-            events,
+            pool_join_rx,
         }
     }
 
-    fn handle_epoch(&mut self, new_macro_block: NewMacroBlock) -> Result<(), Error> {
-        debug!(
-            "Changed facilitator: facilitator={}",
-            new_macro_block.facilitator
-        );
-        let role = if new_macro_block.facilitator == self.pkey {
+    pub fn change_facilitator(&mut self, facilitator: pbc::PublicKey) {
+        debug!("Changed facilitator: facilitator={}", facilitator);
+        let role = if facilitator == self.pkey {
             info!("I am facilitator.");
             NodeRole::Facilitator(FacilitatorState::new())
         } else {
@@ -151,8 +113,7 @@ impl TransactionPoolService {
         };
 
         self.role = role;
-        self.facilitator_pkey = new_macro_block.facilitator;
-        Ok(())
+        self.facilitator_pkey = facilitator;
     }
 
     fn notify_cancel(&mut self) -> Result<(), Error> {
@@ -259,55 +220,47 @@ impl Future for TransactionPoolService {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        //
+        // Poll PoolJoin messages.
+        //
         loop {
-            match (self.poll_events(), self.poll_timer()) {
-                // stop when both sources are not ready
-                (Async::NotReady, Async::NotReady) => return Ok(Async::NotReady),
-                _ => continue,
-            }
-        }
-    }
-}
-
-impl TransactionPoolService {
-    /// Polls event queue, stop on errors
-    fn poll_events(&mut self) -> Async<()> {
-        match self.events.poll().expect("all errors are already handled") {
-            Async::Ready(Some(event)) => {
-                let result = match event {
-                    PoolEvent::Join(from, data) => {
-                        debug!("Received join message: from={}", from);
-                        PoolJoin::from_buffer(&data)
-                            .and_then(|pj_rec| self.handle_join_message(pj_rec, from))
+            match self
+                .pool_join_rx
+                .poll()
+                .expect("all errors are already handled")
+            {
+                Async::Ready(Some(msg)) => {
+                    debug!("Received join message: from={}", msg.from);
+                    let result = PoolJoin::from_buffer(&msg.data)
+                        .and_then(|pj_rec| self.handle_join_message(pj_rec, msg.from));
+                    if let Err(e) = result {
+                        error!("Error: {}", e);
                     }
-                    PoolEvent::NewMacroBlock(epoch) => self.handle_epoch(epoch),
-                };
-
-                if let Err(e) = result {
-                    error!("Error: {}", e);
+                    continue;
                 }
-                return Async::Ready(());
+                Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
+                Async::NotReady => break,
             }
-            Async::Ready(None) => unreachable!(), // never happens
-            Async::NotReady => {}
         }
-        Async::NotReady
-    }
 
-    fn poll_timer(&mut self) -> Async<()> {
-        let timer = match self.role {
-            NodeRole::Facilitator(ref mut state) => &mut state.timer,
-            NodeRole::Regular => return Async::NotReady,
-        };
-        match timer.poll().expect("timer fails") {
-            Async::Ready(Some(_)) => {
-                if let Err(e) = self.try_notify_participants() {
-                    error!("Error: {}", e);
+        //
+        // Poll timer.
+        //
+        match self.role {
+            NodeRole::Facilitator(ref mut state) => {
+                match state.timer.poll().expect("timer fails") {
+                    Async::Ready(Some(_)) => {
+                        if let Err(e) = self.try_notify_participants() {
+                            error!("Error: {}", e);
+                        }
+                    }
+                    Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
+                    Async::NotReady => {}
                 }
             }
-            Async::Ready(None) => panic!("Timer fails."),
-            _ => {}
+            NodeRole::Regular => {}
         }
-        Async::NotReady
+
+        Ok(Async::NotReady)
     }
 }

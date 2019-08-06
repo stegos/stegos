@@ -303,6 +303,8 @@ impl NodeService {
     /// Invoked when network is ready.
     pub fn init(&mut self) -> Result<(), Error> {
         self.update_validation_status();
+        let facilitator = self.chain.facilitator().clone();
+        self.txpool_service.change_facilitator(facilitator);
         self.on_sync_changed();
         self.restake_expiring_stakes()?;
         self.request_history(self.chain.epoch(), "init")?;
@@ -963,6 +965,8 @@ impl NodeService {
         let event: NodeNotification = msg.into();
         self.on_node_notification
             .retain(move |ch| ch.unbounded_send(event.clone()).is_ok());
+        let facilitator = self.chain.facilitator().clone();
+        self.txpool_service.change_facilitator(facilitator);
 
         self.cheating_proofs.clear();
         self.restake_expiring_stakes()?;
@@ -1140,18 +1144,6 @@ impl NodeService {
         &mut self,
         tx: UnboundedSender<NodeNotification>,
     ) -> Result<(), Error> {
-        let msg = NewMacroBlock {
-            epoch: self.chain.epoch(),
-            last_macro_block_timestamp: self.chain.last_macro_block_timestamp(),
-            facilitator: self.chain.facilitator().clone(),
-            validators: self.chain.validators().clone(),
-            transactions: HashMap::new(),
-            statuses: HashMap::new(),
-            inputs: HashMap::new(),
-            outputs: HashMap::new(),
-        };
-        let msg = msg.into();
-        tx.unbounded_send(msg).ok(); // ignore error
         self.on_node_notification.push(tx);
         Ok(())
     }
@@ -1231,14 +1223,14 @@ impl NodeService {
         account_pkey: &scc::PublicKey,
     ) -> Result<AccountRecoveryState, Error> {
         debug!("Recovering account from blockchain: pkey={}", account_pkey);
-        let account_persistent_state = self
+        let recovery_state = self
             .chain
             .recover_accounts(&[(account_skey, account_pkey)])?
             .into_iter()
             .next()
             .unwrap();
         info!("Recovered account from blockchain: pkey={}", account_pkey);
-        Ok(account_persistent_state)
+        Ok(recovery_state)
     }
 
     /// Send block to network.
@@ -1936,9 +1928,14 @@ impl Future for NodeService {
                                 } => {
                                     match self.handle_recover_account(&account_skey, &account_pkey)
                                     {
-                                        Ok(account_persistent_state) => {
-                                            NodeResponse::AccountRecovered(account_persistent_state)
-                                        }
+                                        Ok(recovery_state) => NodeResponse::AccountRecovered {
+                                            recovery_state,
+                                            epoch: self.chain.epoch(),
+                                            facilitator_pkey: self.chain.facilitator().clone(),
+                                            last_macro_block_timestamp: self
+                                                .chain
+                                                .last_macro_block_timestamp(),
+                                        },
                                         Err(e) => NodeResponse::Error {
                                             error: format!("{}", e),
                                         },

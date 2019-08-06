@@ -19,13 +19,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+mod console;
+
 use clap;
 use clap::{App, Arg};
+use console::ConsoleService;
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use stegos::config::GeneralConfig;
-use stegos::console::ConsoleService;
 use tokio::runtime::Runtime;
 
 fn main() {
@@ -39,13 +40,13 @@ fn main() {
         env!("VERSION_DATE")
     );
 
-    let gcfg: GeneralConfig = Default::default();
-    let default_token_file = gcfg
-        .data_dir
+    let default_token_file = dirs::data_dir()
+        .map(|p| p.join("stegos"))
+        .unwrap_or(PathBuf::from(r"data"))
         .join("api.token")
         .to_string_lossy()
         .to_string();
-    let default_endpoint = gcfg.api_endpoint;
+    let default_endpoint = "0.0.0.0:3145";
 
     let args = App::new(name)
         .version(&version[..])

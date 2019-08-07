@@ -66,12 +66,14 @@ code_coverage:
   only:
     - dev
     - master
+    - tags
 
 .release:
   stage: release
   only:
     - dev
     - master
+    - tags
   dependencies: []
   artifacts:
     expire_in: 1 week

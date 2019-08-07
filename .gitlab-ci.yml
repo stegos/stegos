@@ -84,15 +84,15 @@ release:linux:
   extends: .release
   image: stegos/rust:nightly-2019-08-04
   script:
-    - cargo install --bins --path . --root /usr/local && strip /usr/local/bin/{stegos,stegosd}
-    - mkdir -p release/linux && mv /usr/local/bin/{stegos,stegosd} release/linux
+    - cargo install --bins --path . --root /usr/local && strip /usr/local/bin/{stegos,stegosd,bootstrap}
+    - mkdir -p release/linux && mv /usr/local/bin/{stegos,stegosd,bootstrap} release/linux
   tags:
     - linux
 
 release:macos:
   extends: .release
   script:
-    - sudo cargo install --bins --path . --root /usr/local && sudo strip /usr/local/bin/{stegos,stegosd}
-    - mkdir -p release/macos && mv /usr/local/bin/{stegos,stegosd} release/macos
+    - sudo cargo install --bins --path . --root /usr/local && sudo strip /usr/local/bin/{stegos,stegosd,bootstrap}
+    - mkdir -p release/macos && mv /usr/local/bin/{stegos,stegosd,bootstrap} release/macos
   tags:
     - macos

@@ -30,10 +30,10 @@ use stegos_serialization::traits::*;
 use stegos_blockchain::protos::*;
 use stegos_crypto::protos::*;
 include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
-use super::storage::{LogEntry, OutputValue, PaymentValue};
-use crate::storage::{ExtendedOutputValue, PaymentTransactionValue};
+use super::storage::{LogEntry, OutputValue, PaymentValue, TransactionValue};
+use crate::storage::StakeValue;
 use stegos_blockchain::{
-    PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput,
+    PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput, StakeOutput,
 };
 use stegos_crypto::scc::{Fr, PublicKey};
 use stegos_node::TransactionStatus;
@@ -66,7 +66,7 @@ impl ProtoConvert for LogEntry {
                 LogEntry::Incoming { output }
             }
             Some(account_log::LogEntry_oneof_enum_value::outgoing(ref msg)) => {
-                let tx = PaymentTransactionValue::from_proto(msg.get_value())?;
+                let tx = TransactionValue::from_proto(msg.get_value())?;
                 LogEntry::Outgoing { tx }
             }
             None => {
@@ -86,6 +86,11 @@ impl ProtoConvert for PaymentValue {
         msg.set_output(self.output.into_proto());
         msg.set_amount(self.amount);
         msg.set_payload(self.data.into_proto());
+        msg.set_recipient(self.recipient.into_proto());
+        if let Some(ref rvalue) = self.rvalue {
+            msg.set_rvalue(rvalue.into_proto());
+        }
+        msg.set_is_change(self.is_change);
         msg
     }
 
@@ -93,11 +98,44 @@ impl ProtoConvert for PaymentValue {
         let output = PaymentOutput::from_proto(proto.get_output())?;
         let amount = proto.get_amount();
         let data = PaymentPayloadData::from_proto(proto.get_payload())?;
-
+        let is_change = proto.get_is_change();
+        let rvalue = if proto.has_rvalue() {
+            Some(Fr::from_proto(proto.get_rvalue())?)
+        } else {
+            None
+        };
+        let recipient = PublicKey::from_proto(proto.get_recipient())?;
         let value = PaymentValue {
             output,
             amount,
             data,
+            is_change,
+            rvalue,
+            recipient,
+        };
+
+        Ok(value)
+    }
+}
+
+impl ProtoConvert for StakeValue {
+    type Proto = account_log::StakeValue;
+    fn into_proto(&self) -> Self::Proto {
+        let mut msg = account_log::StakeValue::new();
+        msg.set_output(self.output.into_proto());
+        msg.set_active_until_epoch(self.active_until_epoch.unwrap_or(0));
+        msg
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let output = StakeOutput::from_proto(proto.get_output())?;
+        let active_until_epoch = match proto.get_active_until_epoch() {
+            0 => None,
+            n => Some(n),
+        };
+        let value = StakeValue {
+            output,
+            active_until_epoch,
         };
 
         Ok(value)
@@ -111,6 +149,7 @@ impl ProtoConvert for OutputValue {
         match self {
             OutputValue::Payment(p) => msg.set_payment(p.into_proto()),
             OutputValue::PublicPayment(p) => msg.set_public_payment(p.into_proto()),
+            OutputValue::Stake(s) => msg.set_stake(s.into_proto()),
         }
         msg
     }
@@ -119,6 +158,10 @@ impl ProtoConvert for OutputValue {
         let payload = match proto.enum_value {
             Some(account_log::OutputValue_oneof_enum_value::payment(ref msg)) => {
                 let output = PaymentValue::from_proto(msg)?;
+                output.into()
+            }
+            Some(account_log::OutputValue_oneof_enum_value::stake(ref msg)) => {
+                let output = StakeValue::from_proto(msg)?;
                 output.into()
             }
             Some(account_log::OutputValue_oneof_enum_value::public_payment(ref msg)) => {
@@ -138,53 +181,7 @@ impl ProtoConvert for OutputValue {
     }
 }
 
-impl ProtoConvert for ExtendedOutputValue {
-    type Proto = account_log::ExtendedOutputValue;
-    fn into_proto(&self) -> Self::Proto {
-        let mut msg = account_log::ExtendedOutputValue::new();
-        msg.set_recipient(self.recipient.into_proto());
-        msg.set_amount(self.amount);
-        if let Some(ref rvalue) = self.rvalue {
-            msg.set_rvalue(rvalue.into_proto());
-        }
-        if let Some(ref data) = self.data {
-            msg.set_data(data.into_proto());
-        }
-        msg.set_id(self.id);
-        msg.set_is_change(self.is_change);
-        msg
-    }
-
-    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let recipient = PublicKey::from_proto(proto.get_recipient())?;
-        let amount = proto.get_amount();
-        let id = proto.get_id();
-        let data = if proto.has_data() {
-            Some(PaymentPayloadData::from_proto(proto.get_data())?)
-        } else {
-            None
-        };
-        let rvalue = if proto.has_rvalue() {
-            Some(Fr::from_proto(proto.get_rvalue())?)
-        } else {
-            None
-        };
-
-        let is_change = proto.get_is_change();
-        let payload = ExtendedOutputValue {
-            id,
-            recipient,
-            amount,
-            rvalue,
-            data,
-            is_change,
-        };
-
-        Ok(payload)
-    }
-}
-
-impl ProtoConvert for PaymentTransactionValue {
+impl ProtoConvert for TransactionValue {
     type Proto = account_log::PaymentTransactionValue;
     fn into_proto(&self) -> Self::Proto {
         let mut msg = account_log::PaymentTransactionValue::new();
@@ -231,9 +228,9 @@ impl ProtoConvert for PaymentTransactionValue {
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let tx = PaymentTransaction::from_proto(proto.get_tx())?;
-        let mut outputs = Vec::<ExtendedOutputValue>::with_capacity(proto.outputs.len());
+        let mut outputs = Vec::<OutputValue>::with_capacity(proto.outputs.len());
         for output in proto.outputs.iter() {
-            outputs.push(ExtendedOutputValue::from_proto(output)?);
+            outputs.push(OutputValue::from_proto(output)?);
         }
         let status = match proto.get_status().enum_value {
             Some(account_log::TransactionStatus_oneof_enum_value::created(ref _msg)) => {
@@ -277,7 +274,7 @@ impl ProtoConvert for PaymentTransactionValue {
                 .into());
             }
         };
-        let payload = PaymentTransactionValue {
+        let payload = TransactionValue {
             tx,
             status,
             outputs,
@@ -306,14 +303,14 @@ mod tests {
         let tx = PaymentTransaction::dum();
         let epoch = 12;
         let offset = 43;
-        let request = PaymentTransactionValue {
+        let request = TransactionValue {
             tx: tx.clone(),
             outputs: vec![],
             status: TransactionStatus::Accepted {},
         };
         roundtrip(&request);
 
-        let request = PaymentTransactionValue {
+        let request = TransactionValue {
             tx: tx.clone(),
             outputs: vec![],
             status: TransactionStatus::Rejected {
@@ -322,35 +319,35 @@ mod tests {
         };
         roundtrip(&request);
 
-        let request = PaymentTransactionValue {
+        let request = TransactionValue {
             tx: tx.clone(),
             outputs: vec![],
             status: TransactionStatus::Created {},
         };
         roundtrip(&request);
 
-        let request = PaymentTransactionValue {
+        let request = TransactionValue {
             tx: tx.clone(),
             outputs: vec![],
             status: TransactionStatus::Committed { epoch },
         };
         roundtrip(&request);
 
-        let request = PaymentTransactionValue {
+        let request = TransactionValue {
             tx: tx.clone(),
             outputs: vec![],
             status: TransactionStatus::Prepared { epoch, offset },
         };
         roundtrip(&request);
 
-        let request = PaymentTransactionValue {
+        let request = TransactionValue {
             tx: tx.clone(),
             outputs: vec![],
             status: TransactionStatus::Rollback { epoch, offset },
         };
         roundtrip(&request);
 
-        let request = PaymentTransactionValue {
+        let request = TransactionValue {
             tx: tx.clone(),
             outputs: vec![],
             status: TransactionStatus::Conflicted {

@@ -75,18 +75,18 @@ impl fmt::Display for SnowballPayload {
         match self {
             SnowballPayload::SharedKeying { pkey, ksig } => write!(
                 f,
-                "VsPayload::SharedKeying( pkey: {:?}, ksig: {:?})",
+                "SnowballPayload::SharedKeying( pkey: {:?}, ksig: {:?})",
                 pkey, ksig
             ),
             SnowballPayload::Commitment { cmt } => {
-                write!(f, "VsPayload::Commitment( cmt: {})", cmt)
+                write!(f, "SnowballPayload::Commitment( cmt: {})", cmt)
             }
-            SnowballPayload::CloakedVals { .. } => write!(f, "VsPayload::CloakedVals(...)"),
+            SnowballPayload::CloakedVals { .. } => write!(f, "SnowballPayload::CloakedVals(...)"),
             SnowballPayload::Signature { sig } => {
-                write!(f, "VsPayload::Signature( sig: {:?})", sig)
+                write!(f, "SnowballPayload::Signature( sig: {:?})", sig)
             }
             SnowballPayload::SecretKeying { skey, .. } => {
-                write!(f, "VsPayload::SecretKeying( skey: {:?})", skey)
+                write!(f, "SnowballPayload::SecretKeying( skey: {:?})", skey)
             }
         }
     }

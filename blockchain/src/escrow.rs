@@ -73,8 +73,10 @@ pub struct ValidatorInfo {
 pub struct StakeInfo {
     pub utxo: Hash,
     pub account_pkey: scc::PublicKey,
-    pub active_until_epoch: u64,
-    pub is_active: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_until_epoch: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_active: Option<bool>,
     pub amount: i64,
 }
 
@@ -311,8 +313,8 @@ impl Escrow {
             let stake = StakeInfo {
                 utxo: k.output_hash,
                 account_pkey: v.account_pkey,
-                active_until_epoch: v.active_until_epoch,
-                is_active,
+                active_until_epoch: v.active_until_epoch.into(),
+                is_active: is_active.into(),
                 amount: v.amount,
             };
             (*entry).stakes.push(stake);

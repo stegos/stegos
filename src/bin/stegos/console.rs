@@ -155,7 +155,7 @@ impl ConsoleService {
             .map(|p| p.join(r"stegos"))
             .unwrap_or(PathBuf::from(r"."));
         if !history_dir.exists() {
-            std::fs::create_dir_all(&history_dir);
+            std::fs::create_dir_all(&history_dir).unwrap();
         }
         let history_path = history_dir.join(STEGOS_HISTORY);
 

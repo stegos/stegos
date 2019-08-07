@@ -114,21 +114,27 @@ fn create_tx() {
             let outputs = &tx.outputs;
 
             assert_eq!(outputs.len(), 2);
-            assert_eq!(outputs[0].info.amount, 10);
-            assert!(!outputs[0].info.is_change);
-            assert!(outputs[0].info.rvalue.is_none());
-            assert_eq!(outputs[0].info.recipient, recipient);
+            let output = unwrap_payment(outputs[0].clone());
+            assert_eq!(output.amount, 10);
+            assert!(!output.is_change);
+            assert!(output.rvalue.is_none());
+            assert_eq!(output.recipient, recipient);
 
-            assert!(outputs[1].info.is_change);
-            assert!(outputs[1].info.rvalue.is_none());
-            assert_eq!(
-                outputs[1].info.recipient,
-                accounts[0].account_service.account_pkey
-            );
+            let output = unwrap_payment(outputs[1].clone());
+            assert!(output.is_change);
+            assert!(output.rvalue.is_none());
+            assert_eq!(output.recipient, accounts[0].account_service.account_pkey);
         } else {
             unreachable!();
         }
     });
+}
+
+fn unwrap_payment(output: OutputInfo) -> PaymentInfo {
+    match output {
+        OutputInfo::Payment(p) => p,
+        _ => unreachable!(),
+    }
 }
 
 #[test]
@@ -156,8 +162,10 @@ fn create_tx_with_certificate() {
         let my_tx = match response {
             AccountResponse::TransactionCreated(tx) => {
                 assert_eq!(tx.outputs.len(), 2);
-                assert_eq!(tx.outputs[0].info.recipient, recipient);
-                assert_eq!(tx.outputs[0].info.amount, 10);
+                let output_info = unwrap_payment(tx.outputs[0].clone());
+
+                assert_eq!(output_info.recipient, recipient);
+                assert_eq!(output_info.amount, 10);
 
                 // TODO: Get transaction from the node using api.
                 {
@@ -189,7 +197,7 @@ fn create_tx_with_certificate() {
                         .validate_certificate(
                             &accounts[0].account_service.account_pkey,
                             &recipient,
-                            &tx.outputs[0].info.rvalue.unwrap(),
+                            &output_info.rvalue.unwrap(),
                         )
                         .unwrap();
                     assert_eq!(amount, 10);
@@ -862,7 +870,7 @@ fn create_snowball_tx() {
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
 
-        debug!("===== VS STARTED NEW POOL: Send::SharedKeying =====");
+        debug!("===== SB STARTED NEW POOL: Send::SharedKeying =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
 
         let mut shared_keying = HashMap::new();
@@ -907,7 +915,7 @@ fn create_snowball_tx() {
             }
         }
 
-        debug!("===== VS Receive shared keying: Send::Commitment =====");
+        debug!("===== SB Receive shared keying: Send::Commitment =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
 
         let mut commitments = HashMap::new();
@@ -947,7 +955,7 @@ fn create_snowball_tx() {
             }
         }
 
-        debug!("===== VS Receive commitment: produce CloakedVals =====");
+        debug!("===== SB Receive commitment: produce CloakedVals =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
 
         let mut cloaked_vals = HashMap::new();
@@ -987,7 +995,7 @@ fn create_snowball_tx() {
             }
         }
 
-        debug!("===== VS Receive CloakedVals: produce signatures =====");
+        debug!("===== SB Receive CloakedVals: produce signatures =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
 
         let mut signatures = HashMap::new();
@@ -1026,7 +1034,7 @@ fn create_snowball_tx() {
                 )
             }
         }
-        debug!("===== VS Receive Signatures: produce tx =====");
+        debug!("===== SB Receive Signatures: produce tx =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         // rebroadcast transaction to each node
         let mut my_tx_hash = None;
@@ -1042,7 +1050,7 @@ fn create_snowball_tx() {
             notifications_new.push(notification)
         }
 
-        debug!("===== BROADCAST VS TRANSACTION =====");
+        debug!("===== BROADCAST SB TRANSACTION =====");
         s.poll();
         s.broadcast(stegos_node::TX_TOPIC);
         s.skip_micro_block();
@@ -1070,11 +1078,13 @@ fn create_snowball_tx() {
         if let LogEntryInfo::Outgoing { timestamp, tx } = entry {
             let outputs = &tx.outputs;
 
+            let output = unwrap_payment(outputs[0].clone());
+
             assert_eq!(outputs.len(), 1);
-            assert_eq!(outputs[0].info.amount, SEND_TOKENS);
-            assert!(!outputs[0].info.is_change);
-            assert!(outputs[0].info.rvalue.is_none());
-            assert_eq!(outputs[0].info.recipient, recipient);
+            assert_eq!(output.amount, SEND_TOKENS);
+            assert!(!output.is_change);
+            assert!(output.rvalue.is_none());
+            assert_eq!(output.recipient, recipient);
         } else {
             unreachable!();
         }
@@ -1372,23 +1382,23 @@ fn create_snowball_simple() {
         debug!("===== ANONCING TXPOOL =====");
         s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
 
-        debug!("===== VS STARTED NEW POOL: Send::SharedKeying =====");
+        debug!("===== SB STARTED NEW POOL: Send::SharedKeying =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
-        debug!("===== VS Receive shared keying: Send::Commitment =====");
+        debug!("===== SB Receive shared keying: Send::Commitment =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
-        debug!("===== VS Receive commitment: produce CloakedVals =====");
+        debug!("===== SB Receive commitment: produce CloakedVals =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
-        debug!("===== VS Receive CloakedVals: produce signatures =====");
+        debug!("===== SB Receive CloakedVals: produce signatures =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
-        debug!("===== VS Receive Signatures: produce tx =====");
+        debug!("===== SB Receive Signatures: produce tx =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         // rebroadcast transaction to each node
         let mut my_tx_hash = None;
@@ -1404,7 +1414,7 @@ fn create_snowball_simple() {
             notifications_new.push(notification)
         }
 
-        debug!("===== BROADCAST VS TRANSACTION =====");
+        debug!("===== BROADCAST SB TRANSACTION =====");
         s.poll();
         s.broadcast(stegos_node::TX_TOPIC);
         s.skip_micro_block();
@@ -1494,7 +1504,7 @@ fn create_snowball_fail_share_key() {
 
         let last_account = accounts.pop();
         drop(last_account);
-        debug!("===== VS STARTED NEW POOL: Send::SharedKeying =====");
+        debug!("===== SB STARTED NEW POOL: Send::SharedKeying =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
@@ -1504,19 +1514,19 @@ fn create_snowball_fail_share_key() {
 
         s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
-        debug!("===== VS Receive shared keying: Send::Commitment =====");
+        debug!("===== SB Receive shared keying: Send::Commitment =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
-        debug!("===== VS Receive commitment: produce CloakedVals =====");
+        debug!("===== SB Receive commitment: produce CloakedVals =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
-        debug!("===== VS Receive CloakedVals: produce signatures =====");
+        debug!("===== SB Receive CloakedVals: produce signatures =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
-        debug!("===== VS Receive Signatures: produce tx =====");
+        debug!("===== SB Receive Signatures: produce tx =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         // rebroadcast transaction to each node
         let mut my_tx_hash = None;
@@ -1532,7 +1542,7 @@ fn create_snowball_fail_share_key() {
             notifications_new.push(notification)
         }
 
-        debug!("===== BROADCAST VS TRANSACTION =====");
+        debug!("===== BROADCAST SB TRANSACTION =====");
         s.poll();
         s.broadcast(stegos_node::TX_TOPIC);
         s.skip_micro_block();
@@ -1615,13 +1625,13 @@ fn create_snowball_fail_commitment() {
         debug!("===== ANONCING TXPOOL =====");
 
         s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
-        debug!("===== VS STARTED NEW POOL: Send::SharedKeying =====");
+        debug!("===== SB STARTED NEW POOL: Send::SharedKeying =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         let last_account = accounts.pop();
         drop(last_account);
-        debug!("===== VS Receive shared keying: Send::Commitment =====");
+        debug!("===== SB Receive shared keying: Send::Commitment =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
@@ -1631,27 +1641,27 @@ fn create_snowball_fail_commitment() {
 
         s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
-        debug!("===== VS Receive commitment: produce CloakedVals =====");
+        debug!("===== SB Receive commitment: produce CloakedVals =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
-        debug!("===== VS Receive CloakedVals: Check invalid supertransaction, restart=====");
+        debug!("===== SB Receive CloakedVals: Check invalid supertransaction, restart=====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
-        debug!("===== VS STARTED NEW POOL: Send::SharedKeying =====");
+        debug!("===== SB STARTED NEW POOL: Send::SharedKeying =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
-        debug!("===== VS Receive commitment: produce CloakedVals =====");
+        debug!("===== SB Receive commitment: produce CloakedVals =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
-        debug!("===== VS Receive CloakedVals: produce signatures =====");
+        debug!("===== SB Receive CloakedVals: produce signatures =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
-        debug!("===== VS Receive Signatures: produce tx =====");
+        debug!("===== SB Receive Signatures: produce tx =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         // rebroadcast transaction to each node
         let mut my_tx_hash = None;
@@ -1667,7 +1677,7 @@ fn create_snowball_fail_commitment() {
             notifications_new.push(notification)
         }
 
-        debug!("===== BROADCAST VS TRANSACTION =====");
+        debug!("===== BROADCAST SB TRANSACTION =====");
         s.poll();
         s.broadcast(stegos_node::TX_TOPIC);
         s.skip_micro_block();
@@ -1750,17 +1760,17 @@ fn create_snowball_fail_cloacked_vals() {
         debug!("===== ANONCING TXPOOL =====");
 
         s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
-        debug!("===== VS STARTED NEW POOL: Send::SharedKeying =====");
+        debug!("===== SB STARTED NEW POOL: Send::SharedKeying =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
-        debug!("===== VS Receive shared keying: Send::Commitment =====");
+        debug!("===== SB Receive shared keying: Send::Commitment =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
         let last_account = accounts.pop();
         drop(last_account);
-        debug!("===== VS Receive commitment: produce CloakedVals =====");
+        debug!("===== SB Receive commitment: produce CloakedVals =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
@@ -1770,23 +1780,23 @@ fn create_snowball_fail_cloacked_vals() {
 
         s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
-        debug!("===== VS Receive CloakedVals: Check invalid supertransaction, restart=====");
+        debug!("===== SB Receive CloakedVals: Check invalid supertransaction, restart=====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
-        debug!("===== VS STARTED NEW POOL: Send::SharedKeying =====");
+        debug!("===== SB STARTED NEW POOL: Send::SharedKeying =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
-        debug!("===== VS Receive commitment: produce CloakedVals =====");
+        debug!("===== SB Receive commitment: produce CloakedVals =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
-        debug!("===== VS Receive CloakedVals: produce signatures =====");
+        debug!("===== SB Receive CloakedVals: produce signatures =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
 
-        debug!("===== VS Receive Signatures: produce tx =====");
+        debug!("===== SB Receive Signatures: produce tx =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         // rebroadcast transaction to each node
         let mut my_tx_hash = None;
@@ -1802,7 +1812,7 @@ fn create_snowball_fail_cloacked_vals() {
             notifications_new.push(notification)
         }
 
-        debug!("===== BROADCAST VS TRANSACTION =====");
+        debug!("===== BROADCAST SB TRANSACTION =====");
         s.poll();
         s.broadcast(stegos_node::TX_TOPIC);
         s.skip_micro_block();

@@ -261,7 +261,7 @@ impl UnsealedAccountService {
         comment: String,
         locked_timestamp: Option<Timestamp>,
         with_certificate: bool,
-    ) -> Result<PaymentTransactionValue, Error> {
+    ) -> Result<TransactionInfo, Error> {
         let data = PaymentPayloadData::Comment(comment);
         let unspent_iter = self
             .payments
@@ -290,7 +290,7 @@ impl UnsealedAccountService {
         // Transaction TXINs can generally have different keying for each one
         let tx = PaymentTransaction::new(&self.account_skey, &inputs, &outputs, &gamma, fee)?;
 
-        let payment_info = PaymentTransactionValue::new_payment(tx.clone(), extended_outputs);
+        let payment_info = TransactionValue::new_payment(tx.clone(), extended_outputs);
 
         self.account_log
             .push_outgoing(Timestamp::now(), payment_info.clone())?;
@@ -310,7 +310,7 @@ impl UnsealedAccountService {
             .with_label_values(&[&String::from(&self.account_pkey)])
             .inc();
 
-        Ok(payment_info)
+        Ok(payment_info.to_info(self.epoch))
     }
 
     /// Send money public.
@@ -320,7 +320,7 @@ impl UnsealedAccountService {
         amount: i64,
         payment_fee: i64,
         locked_timestamp: Option<Timestamp>,
-    ) -> Result<PaymentTransactionValue, Error> {
+    ) -> Result<TransactionInfo, Error> {
         let unspent_iter = self
             .payments
             .iter()
@@ -342,7 +342,7 @@ impl UnsealedAccountService {
 
         // Transaction TXINs can generally have different keying for each one
         let tx = PaymentTransaction::new(&self.account_skey, &inputs, &outputs, &gamma, fee)?;
-        let payment_info = PaymentTransactionValue::new_payment(tx.clone(), extended_outputs);
+        let payment_info = TransactionValue::new_payment(tx.clone(), extended_outputs);
 
         self.account_log
             .push_outgoing(Timestamp::now(), payment_info.clone())?;
@@ -361,23 +361,30 @@ impl UnsealedAccountService {
             .with_label_values(&[&String::from(&self.account_pkey)])
             .inc();
 
-        Ok(payment_info)
+        Ok(payment_info.to_info(self.epoch))
     }
 
     fn get_tx_history(&self, starting_from: Timestamp, limit: u64) -> Vec<LogEntryInfo> {
         self.account_log
             .iter_range(starting_from, limit)
             .map(|(timestamp, e)| match e {
-                LogEntry::Incoming { ref output } => LogEntryInfo::Incoming {
-                    timestamp,
-                    output: output.to_info(),
-                    is_change: self
-                        .account_log
-                        .is_known_changes(Hash::digest(&output.to_output())),
-                },
+                LogEntry::Incoming {
+                    output: ref output_value,
+                } => {
+                    let mut output_info = output_value.to_info(self.epoch);
+                    // Update information about change.
+                    if let OutputInfo::Payment(ref mut p) = output_info {
+                        p.is_change = self.account_log.is_known_changes(p.utxo);
+                    }
+
+                    LogEntryInfo::Incoming {
+                        timestamp,
+                        output: output_info,
+                    }
+                }
                 LogEntry::Outgoing { ref tx } => LogEntryInfo::Outgoing {
                     timestamp,
-                    tx: tx.to_info(),
+                    tx: tx.to_info(self.epoch),
                 },
             })
             .collect()
@@ -440,13 +447,13 @@ impl UnsealedAccountService {
     }
 
     /// Stake money into the escrow.
-    fn stake(&mut self, amount: i64, payment_fee: i64) -> Result<PaymentTransactionValue, Error> {
+    fn stake(&mut self, amount: i64, payment_fee: i64) -> Result<TransactionInfo, Error> {
         let unspent_iter = self
             .payments
             .iter()
             .filter(|(h, _)| self.pending_payments.get(h).is_none())
             .map(|(_, v)| (&v.output, v.amount));
-        let tx = create_staking_transaction(
+        let (tx, outputs) = create_staking_transaction(
             &self.account_skey,
             &self.account_pkey,
             &self.network_pkey,
@@ -458,7 +465,7 @@ impl UnsealedAccountService {
             self.last_macro_block_timestamp,
             self.max_inputs_in_tx,
         )?;
-        let payment_info = PaymentTransactionValue::new_stake(tx.clone());
+        let payment_info = TransactionValue::new_stake(tx.clone(), outputs);
 
         self.account_log
             .push_outgoing(Timestamp::now(), payment_info.clone())?;
@@ -472,14 +479,14 @@ impl UnsealedAccountService {
         }
 
         self.send_transaction(tx.into())?;
-        Ok(payment_info)
+        Ok(payment_info.to_info(self.epoch))
     }
 
     /// Unstake money from the escrow.
     /// NOTE: amount must include PAYMENT_FEE.
-    fn unstake(&mut self, amount: i64, payment_fee: i64) -> Result<PaymentTransactionValue, Error> {
+    fn unstake(&mut self, amount: i64, payment_fee: i64) -> Result<TransactionInfo, Error> {
         let unspent_iter = self.stakes.values().map(|v| &v.output);
-        let tx = create_unstaking_transaction(
+        let (tx, outputs) = create_unstaking_transaction(
             &self.account_skey,
             &self.account_pkey,
             &self.network_pkey,
@@ -491,13 +498,13 @@ impl UnsealedAccountService {
             self.last_macro_block_timestamp,
             self.max_inputs_in_tx,
         )?;
-        let payment_info = PaymentTransactionValue::new_stake(tx.clone());
+        let payment_info = TransactionValue::new_stake(tx.clone(), outputs);
         self.send_transaction(tx.into())?;
-        Ok(payment_info)
+        Ok(payment_info.to_info(self.epoch))
     }
 
     /// Unstake all of the money from the escrow.
-    fn unstake_all(&mut self, payment_fee: i64) -> Result<PaymentTransactionValue, Error> {
+    fn unstake_all(&mut self, payment_fee: i64) -> Result<TransactionInfo, Error> {
         let mut amount: i64 = 0;
         for val in self.stakes.values() {
             amount += val.output.amount;
@@ -513,32 +520,27 @@ impl UnsealedAccountService {
         }
 
         let stakes = self.stakes.values().map(|val| &val.output);
-        let tx = create_restaking_transaction(
+        let (tx, outputs) = create_restaking_transaction(
             &self.account_skey,
             &self.account_pkey,
             &self.network_pkey,
             &self.network_skey,
             stakes,
         )?;
-        let tx_hash = Hash::digest(&tx);
+
+        let transaction = TransactionValue::restake_tx_info(tx.clone(), outputs, self.epoch);
         self.send_transaction(tx.into())?;
-        Ok(TransactionInfo {
-            tx_hash,
-            fee: 0,
-            outputs: vec![],
-            inputs: vec![],
-            status: TransactionStatus::Created {},
-        })
+        Ok(transaction)
     }
 
     /// Cloak all available public outputs.
-    fn cloak_all(&mut self, payment_fee: i64) -> Result<PaymentTransactionValue, Error> {
+    fn cloak_all(&mut self, payment_fee: i64) -> Result<TransactionInfo, Error> {
         if self.public_payments.is_empty() {
             return Err(WalletError::NoPublicOutputs.into());
         }
 
         let public_utxos = self.public_payments.values();
-        let tx = create_cloaking_transaction(
+        let (tx, output) = create_cloaking_transaction(
             &self.account_skey,
             &self.account_pkey,
             public_utxos,
@@ -546,9 +548,9 @@ impl UnsealedAccountService {
             self.last_macro_block_timestamp,
         )?;
 
-        let info = PaymentTransactionValue::new_cloak(tx.clone());
+        let info = TransactionValue::new_cloak(tx.clone(), output);
         self.send_transaction(tx.into())?;
-        Ok(info)
+        Ok(info.to_info(self.epoch))
     }
 
     /// Change the password.
@@ -647,7 +649,10 @@ impl UnsealedAccountService {
                     let value = PaymentValue {
                         output: o,
                         amount,
+                        recipient: self.account_pkey,
                         data: data.clone(),
+                        rvalue: None,
+                        is_change: false,
                     };
 
                     if let Err(e) = self
@@ -689,7 +694,7 @@ impl UnsealedAccountService {
                 );
                 let value = StakeValue {
                     output: o,
-                    active_until_epoch,
+                    active_until_epoch: active_until_epoch.into(),
                 };
 
                 let info = value.to_info(self.epoch);
@@ -769,8 +774,8 @@ impl UnsealedAccountService {
         );
         self.epoch = epoch;
         self.facilitator_pkey = facilitator_pkey;
-        if let Some((ref mut vs, _)) = &mut self.snowball {
-            vs.change_facilitator(self.facilitator_pkey.clone());
+        if let Some((ref mut snowball, _)) = &mut self.snowball {
+            snowball.change_facilitator(self.facilitator_pkey.clone());
         }
         self.last_macro_block_timestamp = last_macro_block_timestamp;
     }
@@ -779,7 +784,7 @@ impl UnsealedAccountService {
         &mut self,
         tx: PaymentTransaction,
         is_leader: bool,
-        outputs: Vec<ExtendedOutputValue>,
+        outputs: Vec<OutputValue>,
     ) -> Result<TransactionInfo, Error> {
         let tx_hash = Hash::digest(&tx);
         metrics::WALLET_PUBLISHED_PAYMENTS
@@ -789,7 +794,7 @@ impl UnsealedAccountService {
         let notify = AccountNotification::SnowballCreated { tx_hash };
         self.notify(notify);
 
-        let payment_info = PaymentTransactionValue::new_vs(tx.clone(), outputs);
+        let payment_info = TransactionValue::new_snowball(tx.clone(), outputs);
 
         self.account_log
             .push_outgoing(Timestamp::now(), payment_info.clone())?;
@@ -800,7 +805,7 @@ impl UnsealedAccountService {
             debug!("Sending SuperTransaction to BlockChain");
             self.send_transaction(tx.into())?
         }
-        Ok(payment_info.to_info())
+        Ok(payment_info.to_info(self.epoch))
     }
 
     fn on_tx_status(&mut self, tx_hash: Hash, status: TransactionStatus) {
@@ -866,8 +871,8 @@ impl UnsealedAccountService {
             if p.time + PENDING_UTXO_TIME <= now {
                 trace!("Found outdated pending utxo = {}", hash);
                 balance_unlocked = true;
-                if let Some((sb, _)) = &self.snowball {
-                    if !sb.is_my_input(hash) {
+                if let Some((snowball, _)) = &self.snowball {
+                    if !snowball.is_my_input(hash) {
                         continue;
                     }
                     // Terminate Snowball session.
@@ -911,17 +916,6 @@ impl UnsealedAccountService {
         trace!("Created notification = {:?}", notification);
         self.subscribers
             .retain(move |tx| tx.unbounded_send(notification.clone()).is_ok());
-    }
-}
-
-impl From<Result<PaymentTransactionValue, Error>> for AccountResponse {
-    fn from(r: Result<PaymentTransactionValue, Error>) -> Self {
-        match r {
-            Ok(info) => AccountResponse::TransactionCreated(info.to_info()),
-            Err(e) => AccountResponse::Error {
-                error: format!("{}", e),
-            },
-        }
     }
 }
 
@@ -1026,8 +1020,8 @@ impl Future for UnsealedAccountService {
             }
         }
 
-        if let Some((mut vs, response_sender)) = mem::replace(&mut self.snowball, None) {
-            match vs.poll() {
+        if let Some((mut snowball, response_sender)) = mem::replace(&mut self.snowball, None) {
+            match snowball.poll() {
                 Ok(Async::Ready(SnowballOutput {
                     tx,
                     is_leader,
@@ -1055,7 +1049,7 @@ impl Future for UnsealedAccountService {
                     let _ = response_sender.send(response);
                 }
                 Ok(Async::NotReady) => {
-                    self.snowball = (vs, response_sender).into();
+                    self.snowball = (snowball, response_sender).into();
                 }
             }
         }

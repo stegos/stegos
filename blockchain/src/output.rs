@@ -790,6 +790,7 @@ impl Hashable for PublicPaymentOutput {
         self.recipient.hash(state);
         self.serno.hash(state);
         self.amount.hash(state);
+        self.locked_timestamp.hash(state);
     }
 }
 

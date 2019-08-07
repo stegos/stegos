@@ -69,7 +69,9 @@ code_coverage:
 
 .release:
   stage: release
-  when: manual
+  only:
+    - dev
+    - master
   dependencies: []
   artifacts:
     expire_in: 1 week

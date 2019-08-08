@@ -218,6 +218,9 @@ pub struct Snowball {
     /// Timeout timer.
     timer: Option<Delay>,
 
+    /// Context of timeout timer
+    timer_context: (MessageState, Hash),
+
     /// Incoming events.
     events: Box<dyn Stream<Item = SnowballEvent, Error = ()> + Send>,
 
@@ -238,11 +241,6 @@ pub struct Snowball {
 
     // FIFO queue of incoming messages not yet processed
     msg_queue: VecDeque<(ParticipantID, Hash, SnowballPayload)>,
-
-    // List of participants that should be excluded on startup
-    // normally empty, but could have resulted from restart pool
-    // message arriving out of order with respect to pool start message.
-    pending_removals: Vec<ParticipantID>,
 
     // --------------------------------------------
     // After facilitator launches our session.
@@ -471,8 +469,8 @@ impl Snowball {
             msg_queue: VecDeque::new(),
             serialized_utxo_size: None,
             dicemix_nbr_utxo_chunks: None,
-            pending_removals: Vec::new(),
             commit_phase_participants: Vec::new(),
+            timer_context: (MessageState::Start, Hash::from_str("init")),
         };
         sb.send_pool_join();
         sb
@@ -483,6 +481,7 @@ impl Snowball {
         trace!("Start timer.");
         assert!(self.msg_state != MessageState::Start);
         current().notify();
+        self.timer_context = (self.msg_state.clone(), self.session_id.clone());
         let timer = Delay::new(clock::now() + SNOWBALL_TIMER);
         self.timer = timer.into();
     }
@@ -632,10 +631,6 @@ impl Snowball {
                 }
             }
         }
-        // handle enqueued requests from possible pool restart
-        // messages that arrived before we got the pool start message
-        let removals = mem::replace(&mut self.pending_removals, Vec::new());
-        self.exclude_participants(&removals);
 
         self.participants.sort();
         self.participants.dedup();
@@ -828,17 +823,28 @@ impl Snowball {
     */
 
     fn handle_timer(&mut self) -> HandlerResult {
-        self.timer = None;
         // reset msg_state to indicate done waiting for this kind of message
         // whichever participants have responded are now held in self.participants.
         // whichever participants did not respond are in self.pending_participants.
-        debug!("vs timeout, msg_state: {:?}", self.msg_state);
-        if self.poll_state == PoolState::PoolFinished {
-            // handle case of left over timer event after we finish
-            // should not ever happen...
-            return Err(SnowballError::WildTimer);
+        self.timer = None;
+        let (timer_state, timer_sid) = self.timer_context;
+        if timer_state == self.msg_state && timer_sid == self.session_id {
+            debug!("vs timeout, msg_state: {:?}", self.msg_state);
+            if self.poll_state == PoolState::PoolFinished {
+                // handle case of left over timer event after we finish
+                // should not ever happen...
+                return Err(SnowballError::WildTimer);
+            } else {
+                if !self.pending_participants.is_empty() {
+                    debug!(
+                        "Timeout. Missing participants for phase {:?}, {:?}",
+                        self.msg_state, self.pending_participants
+                    );
+                }
+                self.perform_next_phase()
+            }
         } else {
-            self.perform_next_phase()
+            Err(SnowballError::WildTimer)
         }
     }
 
@@ -971,6 +977,7 @@ impl Snowball {
     }
 
     fn perform_next_phase(&mut self) -> HandlerResult {
+        self.timer = None; // cancel any pending timeout timer
         match mem::replace(&mut self.msg_state, MessageState::Start) {
             MessageState::Start => {
                 panic!("There should be no processing in Start state.");

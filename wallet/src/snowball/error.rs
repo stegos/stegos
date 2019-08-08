@@ -32,4 +32,6 @@ pub enum SnowballError {
     NotInParticipantList,
     #[fail(display = "Not enough participants: {}", _0)]
     TooFewParticipants(usize),
+    #[fail(display = "Timeout even after we have finished")]
+    WildTimer,
 }

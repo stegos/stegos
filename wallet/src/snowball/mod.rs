@@ -126,6 +126,8 @@ pub const SNOWBALL_TIMER: Duration = Duration::from_secs(60); // recurring 1sec 
 
 pub const MAX_UTXOS: usize = 5; // max nbr of txout UTXO permitted
 
+pub const MSG_FLOOD_LIMIT: usize = 5; // max nbr of pending messages from one participant
+
 // ==============================================================
 
 type ParticipantID = dicemix::ParticipantID;
@@ -171,7 +173,7 @@ enum PoolState {
 pub enum MessageState {
     // used to indicate what kind of message payloads are wanted
     // in a collection pause between Snowball phases.
-    None, // when msg_state == None the participants list is complete
+    Start, // at startup, and after we finished succeessfully
     SharedKeying,
     Commitment,
     CloakedVals,
@@ -189,24 +191,33 @@ pub struct SnowballOutput {
 
 /// Snowball implementation.
 pub struct Snowball {
+    // -------------------------------------------
+    // Startup Info - known at time of Snowball::new()
     /// Account Secret Key.
-    skey: SecretKey,
+    account_skey: SecretKey,
+
+    /// My public txpool's key.
+    my_participant_id: ParticipantID,
 
     /// Faciliator's PBC public key
     facilitator: pbc::PublicKey,
+
     /// Next facilitator's PBC public key.
     /// Used if facilitator was changed during snowball session.
     future_facilitator: Option<pbc::PublicKey>,
+
     /// Pool State.
     poll_state: PoolState,
-    /// My public txpool's key.
-    participant_key: ParticipantID,
+
     /// Public keys of txpool's members,
     participants: Vec<ParticipantID>,
+
     /// Network API.
     network: Network,
+
     /// Timeout timer.
     timer: Option<Delay>,
+
     /// Incoming events.
     events: Box<dyn Stream<Item = SnowballEvent, Error = ()> + Send>,
 
@@ -234,6 +245,7 @@ pub struct Snowball {
     pending_removals: Vec<ParticipantID>,
 
     // --------------------------------------------
+    // After facilitator launches our session.
     // Items computed in start()
 
     // session_round - init to zero, incremented in each round
@@ -290,8 +302,18 @@ pub struct Snowball {
 
     commit_phase_participants: Vec<ParticipantID>,
 
-    // --------------------------------------------
-    // Items computed in share_cloaked_data()
+    // list of participants that did not send us matrices
+    // but to whom we sent our matrix,
+    // and for whom we computed sharing cloaks
+    excl_participants: Vec<ParticipantID>,
+
+    // dictionary by participantID of the cloaking factors
+    // used for the missing participants.
+    excl_cloaks: HashMap<ParticipantID, Hash>,
+
+    // table of participant cloaking hashes used with excluded participants
+    // one of these from each remaining participant during blame discovery
+    all_excl_cloaks: HashMap<ParticipantID, HashMap<ParticipantID, Hash>>,
 
     // --------------------------------------------
     // Items computed in make_supertransaction()
@@ -307,28 +329,12 @@ pub struct Snowball {
     // Final multi-signature is sum of these individual signatures
     signatures: HashMap<ParticipantID, SchnorrSig>,
 
-    // list of participants that did not send us matrices
-    // but to whom we sent our matrix,
-    // and for whom we computed sharing cloaks
-    excl_participants: Vec<ParticipantID>,
-
-    // dictionary by participantID of the cloaking factors
-    // used for the missing participants.
-    excl_cloaks: HashMap<ParticipantID, Hash>,
-
     // --------------------------------------------
     // Items computed in sign_supertransaction()
 
     // if we enter a blame cycle, we broadcast our session skey
     // and collect those from remaining participants
     sess_skeys: HashMap<ParticipantID, SecretKey>,
-
-    // table of participant cloaking hashes used with excluded participants
-    // one of these from each remaining participant during blame discovery
-    all_excl_cloaks: HashMap<ParticipantID, HashMap<ParticipantID, Hash>>,
-
-    // supertransaction participant lists from fellow participants
-    all_parts_info: HashMap<ParticipantID, Vec<ParticipantID>>,
 
     // --------------------------------------------
     // Send/Receieve - we start by sending to all participants,
@@ -352,9 +358,9 @@ impl Snowball {
 
     /// Create a new Snowball instance.
     pub fn new(
-        skey: SecretKey,
-        pkey: PublicKey,
-        participant_pkey: pbc::PublicKey,
+        account_skey: SecretKey,
+        account_pkey: PublicKey,
+        network_pkey: pbc::PublicKey,
         network: Network,
         _node: Node,
         facilitator: pbc::PublicKey,
@@ -368,7 +374,7 @@ impl Snowball {
         // validate each TXIN and get my initial signature keying info
         let utxos = my_txins.iter().map(|(_txin, u)| u.clone()).collect();
         // signing error if we can't open the TXIN UTXO
-        let own_sig = sign_utxos(&utxos, &skey);
+        let own_sig = sign_utxos(&utxos, &account_skey);
 
         // double check our own TXINs
         validate_ownership(&my_txins, &own_sig).expect("invalid keys");
@@ -376,12 +382,12 @@ impl Snowball {
         let mut my_signing_skeyF = Fr::zero();
         let mut txin_gamma_sum = Fr::zero();
         for utxo in utxos.clone() {
-            let payload = utxo.decrypt_payload(&skey).expect("invalid keys");
+            let payload = utxo.decrypt_payload(&account_skey).expect("invalid keys");
             let (gamma, delta, amount) = (payload.gamma, payload.delta, payload.amount);
             assert_ne!(gamma, Fr::zero());
             amt_in += amount;
             txin_gamma_sum += gamma;
-            my_signing_skeyF += Fr::from(skey.clone()) + gamma * delta;
+            my_signing_skeyF += Fr::from(account_skey.clone()) + gamma * delta;
         }
         let mut amt_out = 0;
         my_txouts.iter().for_each(|rec| amt_out += rec.amount);
@@ -398,7 +404,7 @@ impl Snowball {
         let state = PoolState::PoolWait;
         let mut rng = thread_rng();
         let seed = rng.gen::<[u8; 32]>();
-        let participant_key = dicemix::ParticipantID::new(participant_pkey, seed);
+        let my_participant_id = dicemix::ParticipantID::new(network_pkey, seed);
 
         //
         // Events.
@@ -425,11 +431,12 @@ impl Snowball {
         let events = select_all(events);
 
         let mut sb = Snowball {
-            skey,
+            account_skey,
+            sess_pkey: account_pkey, // just a dummy placeholder for now
+            my_participant_id,
             facilitator,
             future_facilitator,
             poll_state: state,
-            participant_key,
             participants,
             session_id,
             network,
@@ -439,8 +446,7 @@ impl Snowball {
             my_txouts,
             my_utxos: Vec::new(),
             my_fee,
-            sess_skey: skey.clone(),
-            sess_pkey: pkey,
+            sess_skey: account_skey.clone(), // dummy placeholder for now
             my_signing_skey,
             txin_gamma_sum,
             // these are all empty participant lists
@@ -460,14 +466,13 @@ impl Snowball {
             signatures: HashMap::new(),
             pending_participants: HashSet::new(),
             excl_participants: Vec::new(),
-            msg_state: MessageState::None,
+            msg_state: MessageState::Start,
             trans: PaymentTransaction::dum(),
             msg_queue: VecDeque::new(),
             serialized_utxo_size: None,
             dicemix_nbr_utxo_chunks: None,
             pending_removals: Vec::new(),
             commit_phase_participants: Vec::new(),
-            all_parts_info: HashMap::new(),
         };
         sb.send_pool_join();
         sb
@@ -476,7 +481,7 @@ impl Snowball {
     /// Sets timeout.
     fn start_timer(&mut self) {
         trace!("Start timer.");
-        assert!(self.msg_state != MessageState::None);
+        assert!(self.msg_state != MessageState::Start);
         current().notify();
         let timer = Delay::new(clock::now() + SNOWBALL_TIMER);
         self.timer = timer.into();
@@ -544,13 +549,13 @@ impl Snowball {
         // our proof of ownership signature on all of them.
 
         self.all_txins
-            .insert(self.participant_key, self.my_txins.clone());
+            .insert(self.my_participant_id, self.my_txins.clone());
 
         let utxos = self.my_txins.iter().map(|(_txin, u)| u.clone()).collect();
-        let ownsig = sign_utxos(&utxos, &self.skey);
+        let ownsig = sign_utxos(&utxos, &self.account_skey);
         let msg_txins: Vec<TXIN> = self.my_txins.iter().map(|(k, _u)| k.clone()).collect();
         let msg = PoolJoin {
-            seed: self.participant_key.seed,
+            seed: self.my_participant_id.seed,
             txins: msg_txins,
             utxos,
             ownsig,
@@ -563,7 +568,7 @@ impl Snowball {
 
     fn reset_state(&mut self) {
         self.poll_state = PoolState::PoolFinished;
-        self.msg_state = MessageState::None;
+        self.msg_state = MessageState::Start;
         self.msg_queue.clear();
         self.session_round = 0;
         self.timer = None;
@@ -575,7 +580,7 @@ impl Snowball {
         &mut self,
         from: pbc::PublicKey,
         pool_info: PoolNotification,
-    ) -> Poll<SnowballOutput, SnowballError> {
+    ) -> HandlerResult {
         debug!("pool = {:?}", pool_info);
         if let Err(e) = self.ensure_facilitator(from) {
             warn!("Found different facilitator: e = {}", e);
@@ -602,10 +607,10 @@ impl Snowball {
         if pool_info
             .participants
             .iter()
-            .find(|k| k.participant == self.participant_key)
+            .find(|k| k.participant == self.my_participant_id)
             .is_none()
         {
-            debug!("Our key = {:?}", self.participant_key);
+            debug!("Our key = {:?}", self.my_participant_id);
             return Err(SnowballError::NotInParticipantList);
         }
 
@@ -629,8 +634,8 @@ impl Snowball {
         }
         // handle enqueued requests from possible pool restart
         // messages that arrived before we got the pool start message
-        self.exclude_participants(&self.pending_removals.clone());
-        self.pending_removals.clear();
+        let removals = mem::replace(&mut self.pending_removals, Vec::new());
+        self.exclude_participants(&removals);
 
         self.participants.sort();
         self.participants.dedup();
@@ -663,6 +668,8 @@ impl Snowball {
     }
 }
 
+type HandlerResult = Poll<SnowballOutput, SnowballError>;
+
 impl Future for Snowball {
     type Item = SnowballOutput;
     type Error = (SnowballError, Vec<(TXIN, UTXO)>);
@@ -680,7 +687,7 @@ impl Future for Snowball {
         loop {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => {
-                    let result: Poll<SnowballOutput, SnowballError> = match event {
+                    let result: HandlerResult = match event {
                         SnowballEvent::PoolFormed(from, pool_info) => {
                             let pool_info = match PoolNotification::from_buffer(&pool_info) {
                                 Ok(msg) => msg,
@@ -703,11 +710,11 @@ impl Future for Snowball {
                                 warn!("Source key was different {} = {}", msg.source.pkey, from);
                                 continue;
                             }
-                            if msg.destination != self.participant_key {
+                            if msg.destination != self.my_participant_id {
                                 trace!(
                                     "Message to other account: destination={} = our_key={}",
                                     msg.destination,
-                                    self.participant_key
+                                    self.my_participant_id
                                 );
                                 continue;
                             }
@@ -739,41 +746,110 @@ impl Future for Snowball {
 }
 
 // -------------------------------------------------
+// Event Handlers
 
-fn is_valid_pt(pt: &Pt, ans: &mut Pt) -> bool {
-    *ans = *pt;
-    true
+#[derive(Debug)]
+enum MsgHandlerResponse {
+    Discard,
+    ReEnqueue,
+    Accept,
 }
 
-type VsFunction = fn(&mut Snowball) -> Poll<SnowballOutput, SnowballError>;
-
 impl Snowball {
-    fn handle_timer(&mut self) -> Poll<SnowballOutput, SnowballError> {
+    /*
+    So the protocol could be written as state machine, called by scheduler
+    on receipt of events. Events are obtained by the scheduler polling for them.
+    Two events are of interest here:
+     1. periodic timer events, occurring at 1sec intervals, and
+     2. messages arriving from other participants.
+
+     fn event_handler(&mut self, event: Event) -> Result<SnowballOutput, SnowballError> {
+         match event.kind {
+             Event::TimerTic(tic) => {
+                 // increment our timer,
+                 // check for timeout im pending reads
+                 // if not timeout then return NotReady
+                 // else perform next session phase
+             },
+             Event::Message(msg) => {
+                 // check if msg is expected type
+                 // if not, just enqueue for later
+                 // else validate message and enqueue its information
+                 // If all participants have responded, perform the next
+                 // session phase,
+                 // else, return NoReady
+             }
+         }
+     }
+
+     Messages could be of two broad categories:
+
+     1. Out-of-band messages - direct the scheduler to perform
+        some action, which might include aborting the current session,
+        possibly restarting with supervision from a different facilitator.
+
+     2. In-band inter-phase messages from other participants -
+
+       a) Some of these might arrive in apparent out-of-order delivery, as
+          might happen when one participant has progressed further than we have.
+          These should be enqueued for later use.
+
+       b) Other messages might pertain to our next anticipated phase of the session.
+          Their payloads must be validated, and if valid, enqueued into a response queue
+          from other participants. If invalid, then responder is considered
+          to have failed to respond and will be considered missing in the next phase.
+
+       c) Other messages might arrive that are irrelevant or noise messages, which
+          should be discarded. Examples would be messages from participants that are not
+          in our session group, or from participants we wish to exclude.
+
+    The message handler is a state machine within the scheduler state machine. Messages
+    directed to the session are identified by session ID. Messages for other sessions
+    should be enqueued because we might also end up in that session later.
+
+    fn message_handler(&mut self, message: Message) -> Result<SnowballOutput, SnowballError> {
+        match message.category() {
+            Message::OutOfBand(info) => {
+                // handle out of band message
+                // which might include altering the state
+            }
+            Message::InBand(info) => {
+                // handle in-band message
+                // which might discard this message,
+                // enueue it for later use,
+                // perform validation of information and
+                // enqueue for this session next phase,
+                // if all participants have responded for the next phase
+                // then we perform that phase and end by setting up the
+                // state machine for its following phase.
+            }
+        }
+    }
+    */
+
+    fn handle_timer(&mut self) -> HandlerResult {
         self.timer = None;
         // reset msg_state to indicate done waiting for this kind of message
         // whichever participants have responded are now held in self.participants.
         // whichever participants did not respond are in self.pending_participants.
         debug!("vs timeout, msg_state: {:?}", self.msg_state);
-        match mem::replace(&mut self.msg_state, MessageState::None) {
-            MessageState::None => {
-                panic!("There should be no timer in None state.");
-            }
-            MessageState::SharedKeying => {
-                return self.commit();
-            }
-            MessageState::Commitment => {
-                return self.share_cloaked_data();
-            }
-            MessageState::CloakedVals => {
-                return self.make_supertransaction();
-            }
-            MessageState::Signature => {
-                return self.sign_supertransaction();
-            }
-            MessageState::SecretKeying => {
-                return self.blame_discovery();
+        if self.poll_state == PoolState::PoolFinished {
+            // handle case of left over timer event after we finish
+            // should not ever happen...
+            return Err(SnowballError::WildTimer);
+        } else {
+            self.perform_next_phase()
+        }
+    }
+
+    fn from_msg_count(&self, from: &ParticipantID) -> usize {
+        let mut ct = 0;
+        for (f, _, _) in self.msg_queue.clone() {
+            if f == *from {
+                ct += 1;
             }
         }
+        ct
     }
 
     fn on_message_received(
@@ -781,262 +857,326 @@ impl Snowball {
         from: &ParticipantID,
         sid: &Hash,
         payload: &SnowballPayload,
-    ) -> Poll<SnowballOutput, SnowballError> {
+    ) -> HandlerResult {
         debug!("vs message: {}, from: {}, sess: {}", *payload, *from, *sid);
-        self.msg_queue.push_front((*from, *sid, payload.clone()));
-        self.handle_enqueued_messages()
-    }
 
-    fn handle_enqueued_messages(&mut self) -> Poll<SnowballOutput, SnowballError> {
-        let queue = self.msg_queue.clone();
-        self.msg_queue.clear();
-        for (from, sid, payload) in queue {
-            if self.poll_state != PoolState::PoolFinished {
-                if self.is_acceptable_message(&from, &sid, &payload) {
-                    // debug!("is_acceptable_message()");
-                    self.pending_participants.remove(&from);
-                    debug!("removed from from pending_participants: {}", from);
-                    if let Async::Ready(r) = self.handle_message(&from, &payload)? {
-                        return Ok(Async::Ready(r));
-                    }
-                } else {
+        // insert new message at head of queue
+        if self.from_msg_count(from) < MSG_FLOOD_LIMIT {
+            self.msg_queue.push_front((*from, *sid, payload.clone()));
+        }
+
+        if self.msg_state == MessageState::Start || self.pending_participants.is_empty() {
+            // if messages arrive while we aren't waiting (yet),
+            // just enqueue them.
+            return Ok(Async::NotReady);
+        }
+
+        // Scan the message queue and process each message
+        // look for actionable messages, while also cleaning out
+        // the queue.
+
+        // If actionable message found, then peform action,
+        // and rescan from the top of the queue again.
+        //
+        // Otherwise, if no actionable messages, just return to event handler
+        //
+        // This is the only place where actions are dispatched.
+        loop {
+            let queue = mem::replace(&mut self.msg_queue, VecDeque::new());
+            let mut ready_to_run = false; // true if we found something to do...
+                                          // process each message in the queue
+            for (from, sid, payload) in queue {
+                if ready_to_run {
+                    // stuff message back on tail of queue for next pass
                     self.msg_queue.push_back((from, sid, payload));
+                } else {
+                    // handle one message, filtering out the queue
+                    match self.handle_message(&from, &sid, &payload) {
+                        MsgHandlerResponse::Discard => { /* discard by default */ }
+                        MsgHandlerResponse::ReEnqueue => {
+                            // guard against message flooding attacks
+                            if self.from_msg_count(&from) < MSG_FLOOD_LIMIT {
+                                // put message back on queue for later
+                                self.msg_queue.push_back((from, sid, payload));
+                            }
+                        }
+                        MsgHandlerResponse::Accept => {
+                            // message will be removed from queue by default
+                            self.pending_participants.remove(&from);
+                            self.participants.push(from);
+                            // we are actionable if no more pending participants
+                            ready_to_run = self.pending_participants.is_empty();
+                        }
+                    }
                 }
+            }
+            if ready_to_run {
+                let ans = self.perform_next_phase();
+                match ans {
+                    Ok(Async::Ready(_)) => {
+                        return ans;
+                    }
+                    Err(_) => {
+                        return ans;
+                    }
+                    _ => { /* go around again */ }
+                }
+            } else {
+                // we processed all messages, and no actions happened
+                break;
             }
         }
         Ok(Async::NotReady)
-    }
-
-    fn is_acceptable_message(
-        &mut self,
-        from: &ParticipantID,
-        sid: &Hash,
-        payload: &SnowballPayload,
-    ) -> bool {
-        if *sid != self.session_id {
-            debug!(
-                "SessionID misatch: ours={}, their={}",
-                self.session_id, *sid
-            );
-            return false;
-        }
-        if !self.pending_participants.contains(from) {
-            debug!(
-                "Not waiting for messages from this participant: participant={}",
-                from
-            );
-            return false;
-        }
-        match (self.msg_state, payload) {
-            (MessageState::SharedKeying, SnowballPayload::SharedKeying { .. })
-            | (MessageState::Commitment, SnowballPayload::Commitment { .. })
-            | (MessageState::CloakedVals, SnowballPayload::CloakedVals { .. })
-            | (MessageState::Signature, SnowballPayload::Signature { .. })
-            | (MessageState::SecretKeying, SnowballPayload::SecretKeying { .. }) => {
-                debug!(
-                    "Message accepted: msg_state={:?}, payload={}",
-                    self.msg_state, payload
-                );
-                true
-            }
-            _ => {
-                debug!(
-                    "Unexpected message state/payload: msg_state={:?}, payload={}",
-                    self.msg_state, payload
-                );
-                false
-            }
-        }
     }
 
     fn handle_message(
         &mut self,
         from: &ParticipantID,
+        sid: &Hash,
         payload: &SnowballPayload,
-    ) -> Poll<SnowballOutput, SnowballError> {
-        match self.msg_state {
-            MessageState::None => {
-                warn!("Unexpected message, not in session: {}", payload);
-                return Ok(Async::NotReady);
+    ) -> MsgHandlerResponse {
+        // If message matches what would be expected for a given msg_state,
+        // then process the message.
+        //
+        // Otherwise, perhaps a participant is ahead of us and we see their
+        // message for the next phase, so re-enqueue the message for later
+        // processing.
+        //
+        // It is possible for messages to have arrived from other participants,
+        // even when our own state is Start. They might be ahead of us.
+        match (self.msg_state, payload) {
+            (MessageState::SharedKeying, SnowballPayload::SharedKeying { pkey, ksig }) => {
+                self.handle_shared_keying(from, sid, pkey, ksig)
             }
-            MessageState::SharedKeying => self.handle_shared_keying(from, payload),
-            MessageState::Commitment => self.handle_commitment(from, payload),
-            MessageState::CloakedVals => self.handle_cloaked_vals(from, payload),
-            MessageState::Signature => self.handle_signature(from, payload),
-            MessageState::SecretKeying => self.handle_secret_keying(from, payload),
+            (MessageState::Commitment, SnowballPayload::Commitment { cmt }) => {
+                self.handle_commitment(from, sid, cmt)
+            }
+            (
+                MessageState::CloakedVals,
+                SnowballPayload::CloakedVals {
+                    matrix,
+                    gamma_sum,
+                    fee_sum,
+                    cloaks,
+                },
+            ) => self.handle_cloaked_vals(from, sid, matrix, gamma_sum, fee_sum, cloaks),
+            (MessageState::Signature, SnowballPayload::Signature { sig }) => {
+                self.handle_signature(from, sid, sig)
+            }
+            (MessageState::SecretKeying, SnowballPayload::SecretKeying { skey }) => {
+                self.handle_secret_keying(from, sid, skey)
+            }
+            _ => MsgHandlerResponse::ReEnqueue,
         }
     }
 
-    fn maybe_do(
-        &mut self,
-        from: &ParticipantID,
-        vfn: VsFunction,
-    ) -> Poll<SnowballOutput, SnowballError> {
-        self.participants.push(*from);
-        if self.pending_participants.is_empty() {
-            // Reset state to reflect a full participants list in case
-            // we bomb out of the vfn(). We do this in case of any incoming
-            // VsRestart messages which are sensitive to the state of the
-            // participants list and pending_participants.
-            self.msg_state = MessageState::None;
-            vfn(self)
-        } else {
-            Ok(Async::NotReady)
+    fn perform_next_phase(&mut self) -> HandlerResult {
+        match mem::replace(&mut self.msg_state, MessageState::Start) {
+            MessageState::Start => {
+                panic!("There should be no processing in Start state.");
+            }
+            MessageState::SharedKeying => self.commit(),
+            MessageState::Commitment => self.share_cloaked_data(),
+            MessageState::CloakedVals => self.make_supertransaction(),
+            MessageState::Signature => self.sign_supertransaction(),
+            MessageState::SecretKeying => self.blame_discovery(),
         }
     }
+
+    // message handlers should accept one payload,
+    // validate it and enqueue it. Then return one
+    // of 3 possible results:
+    //  1. Message Accepted and processed
+    //  2. Message rejected as invalid
+    //  3. Message should be enqueued for later processing
+    //
+    // In case 1, if no pending_participants remain, the next phase
+    // should be initiated. And if so, then all remaining messages
+    // in the message queue should be appended to the new queue
+    // for later processing.
+    //
+    // State processing of messages for that state requres:
+    //   1. message SID = Session ID
+    //      If not, then maybe message is from the next retry,
+    //      so re-enqueue. (Could also be spurious, but no way to tell)
+    //   2. message From must be among the pending participants
+    //      for this session round (same Session ID).
+    //      Otherwise it is a spurious message.
+    //
+    //  Checking must be performed in this order, because the actual
+    //  pending participants may be different for other session ID's.
+
+    // --- Prep for communications and transition to next phase ---
 
     fn handle_shared_keying(
         &mut self,
         from: &ParticipantID,
-        msg: &SnowballPayload,
-    ) -> Poll<SnowballOutput, SnowballError> {
-        // debug!("In handle_shared_keying()");
-        match msg {
-            SnowballPayload::SharedKeying { pkey, ksig } => {
-                debug!("checking shared keying {:?} {:?}", pkey, ksig);
-                let mut pt = Pt::inf();
-                if is_valid_pt(&ksig, &mut pt) {
-                    debug!("shared keying okay {:?}", pkey);
-                    self.sigK_vals.insert(*from, pt);
-                    self.sess_pkeys.insert(*from, *pkey);
-                    return self.maybe_do(from, Self::commit);
-                } else {
-                    debug!("shared keying bad {:?}", pkey);
-                }
+        sid: &Hash,
+        pkey: &PublicKey,
+        ksig: &Pt,
+    ) -> MsgHandlerResponse {
+        if *sid == self.session_id {
+            if self.pending_participants.contains(from) {
+                // debug!("In handle_shared_keying()");
+                debug!("received shared keying {:?}", pkey);
+                self.sigK_vals.insert(*from, *ksig);
+                self.sess_pkeys.insert(*from, *pkey);
+                MsgHandlerResponse::Accept
+            } else {
+                MsgHandlerResponse::Discard
             }
-            msg => {
-                error!("Unexpected message: {}", msg);
-            }
+        } else {
+            MsgHandlerResponse::ReEnqueue
         }
-        Ok(Async::NotReady)
     }
+
+    // --- Commitments to DiceMix Matries ----
 
     fn handle_commitment(
         &mut self,
         from: &ParticipantID,
-        msg: &SnowballPayload,
-    ) -> Poll<SnowballOutput, SnowballError> {
+        sid: &Hash,
+        cmt: &Hash,
+    ) -> MsgHandlerResponse {
         // debug!("In handle_commitment()");
-        match msg {
-            SnowballPayload::Commitment { cmt } => {
+        if *sid == self.session_id {
+            if self.pending_participants.contains(from) {
                 debug!("saving commitment {}", cmt);
                 self.commits.insert(*from, *cmt);
-                return self.maybe_do(from, Self::share_cloaked_data);
+                MsgHandlerResponse::Accept
+            } else {
+                MsgHandlerResponse::Discard
             }
-            msg => {
-                error!("Unexpected message: {}", msg);
-            }
+        } else {
+            MsgHandlerResponse::ReEnqueue
         }
-        Ok(Async::NotReady)
+    }
+
+    // --- Exchange of Cloaked DiceMix Matrices ---
+
+    fn same_exclusions(&self, cloaks: &HashMap<ParticipantID, Hash>) -> bool {
+        // We won't be able to form the same supertransaction as others
+        // unless they have exactly the same missing participants that we do
+        self.excl_participants
+            .iter()
+            .all(|p| cloaks.contains_key(p))
+            && cloaks.keys().all(|p| self.excl_participants.contains(p))
     }
 
     fn handle_cloaked_vals(
         &mut self,
         from: &ParticipantID,
-        msg: &SnowballPayload,
-    ) -> Poll<SnowballOutput, SnowballError> {
+        sid: &Hash,
+        matrix: &DcMatrix,
+        gamma_sum: &Fr,
+        fee_sum: &Fr,
+        cloaks: &HashMap<ParticipantID, Hash>,
+    ) -> MsgHandlerResponse {
         // debug!("In handle_cloaked_vals()");
-        match msg {
-            SnowballPayload::CloakedVals {
-                matrix,
-                gamma_sum,
-                fee_sum,
-                cloaks,
-            } => {
+        if *sid == self.session_id {
+            if self.pending_participants.contains(from) {
                 let cmt = self.commits.get(from).expect("Can't access commit");
                 debug!("Checking commitment {}", cmt);
-                if *cmt == hash_data(matrix, gamma_sum, fee_sum)
                 // DiceMix expects to be able to find all missing
                 // participant cloaking values
-                && self.excl_participants.iter().all(|p| cloaks.contains_key(p))
-                // and we won't be able to form the same supertransaction as others
-                // unless they have exactly the same missing participants that we do
-                && cloaks.keys().all(|p| self.excl_participants.contains(p))
-                {
+                if *cmt == hash_data(matrix, gamma_sum, fee_sum) && self.same_exclusions(cloaks) {
                     debug!("Commitment check passed {}", cmt);
                     debug!("Saving cloaked data");
                     self.matrices.insert(*from, matrix.clone());
                     self.cloaked_gamma_adjs.insert(*from, gamma_sum.clone());
                     self.cloaked_fees.insert(*from, fee_sum.clone());
                     self.all_excl_cloaks.insert(*from, cloaks.clone());
-                    return self.maybe_do(from, Self::make_supertransaction);
+                    MsgHandlerResponse::Accept
                 } else {
+                    // participant has wrong impression, or we are
+                    // under attack...
                     debug!("Commitment check failed {}", cmt);
+                    MsgHandlerResponse::Discard
                 }
+            } else {
+                MsgHandlerResponse::Discard
             }
-            msg => {
-                error!("Unexpected message: {}", msg);
-            }
+        } else {
+            MsgHandlerResponse::ReEnqueue
         }
-        Ok(Async::NotReady)
     }
+
+    // --- Signature exchange for pending supertransaction ---
 
     fn handle_signature(
         &mut self,
         from: &ParticipantID,
-        msg: &SnowballPayload,
-    ) -> Poll<SnowballOutput, SnowballError> {
+        sid: &Hash,
+        sig: &SchnorrSig,
+    ) -> MsgHandlerResponse {
         // debug!("In handle_signature()");
-        match msg {
-            SnowballPayload::Signature { sig } => {
+        if *sid == self.session_id {
+            if self.pending_participants.contains(from) {
                 debug!("saving signature {:?}", sig);
                 self.signatures.insert(*from, sig.clone());
-                return self.maybe_do(from, Self::sign_supertransaction);
+                MsgHandlerResponse::Accept
+            } else {
+                MsgHandlerResponse::Discard
             }
-            msg => {
-                error!("Unexpected message: {}", msg);
-            }
+        } else {
+            MsgHandlerResponse::ReEnqueue
         }
-        Ok(Async::NotReady)
     }
+
+    // --- Session secret key exchange for blame discovery ---
 
     fn handle_secret_keying(
         &mut self,
         from: &ParticipantID,
-        msg: &SnowballPayload,
-    ) -> Poll<SnowballOutput, SnowballError> {
+        sid: &Hash,
+        skey: &SecretKey,
+    ) -> MsgHandlerResponse {
         // debug!("In handle_secret_keying()");
-        match msg {
-            SnowballPayload::SecretKeying { skey } => {
+        if *sid == self.session_id {
+            if self.pending_participants.contains(from) {
                 debug!("saving skey {:?}", skey);
                 self.sess_skeys.insert(*from, skey.clone());
-                return self.maybe_do(from, Self::blame_discovery);
+                MsgHandlerResponse::Accept
+            } else {
+                MsgHandlerResponse::Discard
             }
-            msg => {
-                error!("Unexpected message: {}", msg);
-            }
+        } else {
+            MsgHandlerResponse::ReEnqueue
+        }
+    }
+
+    // ----------------------------------------------------------
+
+    fn need_3_participants(&self) -> HandlerResult {
+        if self.participants.len() < 3 {
+            return Err(SnowballError::TooFewParticipants(self.participants.len()));
         }
         Ok(Async::NotReady)
     }
 
-    fn prep_rx(&mut self, msgtype: MessageState) -> Poll<SnowballOutput, SnowballError> {
-        // transfer other participants into pending_participants
-        // and set new msg_state for expected kind of messages
-        let mut other_participants: HashSet<ParticipantID> = HashSet::new();
-        self.participants
-            .iter()
-            .filter(|&&p| p != self.participant_key)
-            .for_each(|&p| {
-                other_participants.insert(p);
-            });
-        self.pending_participants = other_participants;
-        self.participants = vec![self.participant_key];
+    // ----------------------------------------------------------
+    // The interrim phases of Snowball protocol
+    //
+    // In each phase, input items from other participants are
+    // processed, new items computed, and some are shared with
+    // other participants.
+    //
+    // The phases are split out into basic blocks which run when
+    // either all participants have responded, or a timeout occurs.
+    // Each phase terminates with a broadcast to other recipients,
+    // or a recursive call to start again for a new round.
+    //
+    // Just before returning to the scheduler, the state machine is
+    // set up for receipt of specific items needed for the next phase.
 
-        self.msg_state = msgtype;
-        self.start_timer();
-        debug!("In prep_rx(), state = {:?}", msgtype);
-        self.handle_enqueued_messages()
-    }
-
-    fn start(&mut self) -> Poll<SnowballOutput, SnowballError> {
+    fn start(&mut self) -> HandlerResult {
         // Possible exits:
         //   - fewer than 3 participants = protocol fail
         //   - normal exit
 
         debug!("In start()");
-        if self.participants.len() < 3 {
-            return Err(SnowballError::TooFewParticipants(self.participants.len()));
-        }
+        self.need_3_participants()?;
+
         self.participants.sort(); // put into consistent order
         self.session_round += 1;
         self.session_id = {
@@ -1088,7 +1228,7 @@ impl Snowball {
         let my_sigKcmp = my_sigK;
 
         self.sigK_vals = HashMap::new();
-        self.sigK_vals.insert(self.participant_key, my_sigK);
+        self.sigK_vals.insert(self.my_participant_id, my_sigK);
 
         // Generate new cloaked sharing key set and share with others
         // also shares our sigK value at this time.
@@ -1097,26 +1237,22 @@ impl Snowball {
         self.sess_skey = sess_sk.clone();
 
         self.sess_pkeys = HashMap::new();
-        self.sess_pkeys.insert(self.participant_key, sess_pk);
+        self.sess_pkeys.insert(self.my_participant_id, sess_pk);
 
         self.send_session_pkey(&sess_pk, &my_sigKcmp);
 
         // Collect cloaked sharing keys from others
         // fill in sess_pkeys and sigK_vals
-        self.receive_session_pkeys()?;
-
-        Ok(Async::NotReady)
+        self.receive_session_pkeys()
     }
 
-    fn commit(&mut self) -> Poll<SnowballOutput, SnowballError> {
+    fn commit(&mut self) -> HandlerResult {
         // Possible exits:
         //   - normal exit
         //   - fewer than 3 participants = protocol failure
 
         debug!("In commit()");
-        if self.participants.len() < 3 {
-            return Err(SnowballError::TooFewParticipants(self.participants.len()));
-        }
+        self.need_3_participants()?;
 
         // participants at the time of matrix construction
         self.commit_phase_participants = self.participants.clone();
@@ -1125,14 +1261,14 @@ impl Snowball {
         self.k_cloaks = dc_keys(
             &self.commit_phase_participants,
             &self.sess_pkeys,
-            &self.participant_key,
+            &self.my_participant_id,
             &self.sess_skey,
             &self.session_id,
         );
 
         // Construct fresh UTXOS and gamma_adj
         // We should store fresh UTXOS into `my_utxos` with the same order as it was in `my_txouts`.
-        let my_pairs = Self::generate_fresh_utxos(&self.skey, &self.my_txouts);
+        let my_pairs = Self::generate_fresh_utxos(&self.account_skey, &self.my_txouts);
         let mut my_utxos = Vec::<UTXO>::new();
         let mut my_gamma_adj = self.txin_gamma_sum.clone();
         self.my_utxos = Vec::new();
@@ -1168,61 +1304,57 @@ impl Snowball {
         let my_matrix = Self::encode_matrix(
             &self.commit_phase_participants,
             &my_utxos,
-            &self.participant_key,
+            &self.my_participant_id,
             &self.k_cloaks,
             self.dicemix_nbr_utxo_chunks.unwrap(),
         );
         self.matrices = HashMap::new();
         self.matrices
-            .insert(self.participant_key, my_matrix.clone());
+            .insert(self.my_participant_id, my_matrix.clone());
 
         // cloaked gamma_adj for sharing
         self.cloaked_gamma_adjs = HashMap::new();
         let my_cloaked_gamma_adj = dc_encode_scalar(
             my_gamma_adj,
             &self.commit_phase_participants,
-            &self.participant_key,
+            &self.my_participant_id,
             &self.k_cloaks,
         );
         self.cloaked_gamma_adjs
-            .insert(self.participant_key, my_cloaked_gamma_adj.clone());
+            .insert(self.my_participant_id, my_cloaked_gamma_adj.clone());
 
         self.cloaked_fees = HashMap::new();
         let my_cloaked_fee = dc_encode_scalar(
             Fr::from(self.my_fee),
             &self.commit_phase_participants,
-            &self.participant_key,
+            &self.my_participant_id,
             &self.k_cloaks,
         );
         self.cloaked_fees
-            .insert(self.participant_key, my_cloaked_fee.clone());
+            .insert(self.my_participant_id, my_cloaked_fee.clone());
 
         // form commitments to our matrix and gamma sum
         let my_commit = hash_data(&my_matrix, &my_cloaked_gamma_adj, &my_cloaked_fee);
 
         // Collect and validate commitments from other participants
         self.commits = HashMap::new();
-        self.commits.insert(self.participant_key, my_commit);
+        self.commits.insert(self.my_participant_id, my_commit);
 
         // send sharing commitment to other participants
         self.send_commitment(&my_commit);
 
         // fill in commits
-        self.receive_commitments()?;
-
-        Ok(Async::NotReady)
+        self.receive_commitments()
     }
 
-    fn share_cloaked_data(&mut self) -> Poll<SnowballOutput, SnowballError> {
+    fn share_cloaked_data(&mut self) -> HandlerResult {
         // Possible exits:
         //   - normal exit
         //   - fewer than 3 participants = protocol failure
         //   - .expect() errors - should never happen in proper code
 
         debug!("In share_cloaked_data()");
-        if self.participants.len() < 3 {
-            return Err(SnowballError::TooFewParticipants(self.participants.len()));
-        }
+        self.need_3_participants()?;
 
         // make note of missing participants here
         // so we can furnish decloaking values to other participants
@@ -1242,25 +1374,21 @@ impl Snowball {
         self.excl_cloaks = excl_cloaks;
         self.all_excl_cloaks = HashMap::new();
         self.all_excl_cloaks
-            .insert(self.participant_key, self.excl_cloaks.clone());
+            .insert(self.my_participant_id, self.excl_cloaks.clone());
 
         // send committed and cloaked data to all participants
         let my_matrix = self
             .matrices
-            .get(&self.participant_key)
+            .get(&self.my_participant_id)
             .expect("Can't access my own matrix");
         let my_cloaked_gamma_adj = self
             .cloaked_gamma_adjs
-            .get(&self.participant_key)
+            .get(&self.my_participant_id)
             .expect("Can't access my own gamma_adj");
         let my_cloaked_fee = self
             .cloaked_fees
-            .get(&self.participant_key)
+            .get(&self.my_participant_id)
             .expect("Can't access my own fee");
-
-        self.all_parts_info = HashMap::new();
-        self.all_parts_info
-            .insert(self.participant_key, self.participants.clone());
 
         self.send_cloaked_data(
             &my_matrix,
@@ -1275,33 +1403,27 @@ impl Snowball {
 
         // fill in matrices, cloaked_gamma_adj, cloaked_fees,
         // and all_excl_k_cloaks, using commits to validate incoming data
-        self.receive_cloaked_data()?;
-
-        Ok(Async::NotReady)
+        self.receive_cloaked_data()
     }
 
     fn had_dropouts(&self) -> bool {
         !(self
-            .participants
+            .commit_phase_participants
             .iter()
-            .all(|p| self.commit_phase_participants.contains(p))
-            && (self
-                .commit_phase_participants
+            .all(|p| self.participants.contains(p))
+            && self
+                .participants
                 .iter()
-                .all(|p| self.participants.contains(p))))
+                .all(|p| self.commit_phase_participants.contains(p)))
     }
 
-    fn make_supertransaction(&mut self) -> Poll<SnowballOutput, SnowballError> {
+    fn make_supertransaction(&mut self) -> HandlerResult {
         // Possible exits:
         //   - normal exit
         //   - .expect() errors -> should never happen in proper code
         //
         debug!("In make_supertransaction()");
-
-        if self.participants.len() < 3 {
-            debug!("Too few shared participants");
-            return Err(SnowballError::TooFewParticipants(self.participants.len()));
-        }
+        self.need_3_participants()?;
 
         if self.had_dropouts() {
             // if we don't have exactly the same participants as when
@@ -1339,7 +1461,7 @@ impl Snowball {
         let msgs = dc_decode(
             &self.participants,
             &self.matrices,
-            &self.participant_key,
+            &self.my_participant_id,
             MAX_UTXOS,
             self.dicemix_nbr_utxo_chunks.unwrap(),
             &self.excl_participants, // the excluded participants
@@ -1421,17 +1543,15 @@ impl Snowball {
         // fill in multi-signature...
         self.signatures = HashMap::new();
         let sig = self.trans.sig.clone();
-        self.signatures.insert(self.participant_key, sig.clone());
+        self.signatures.insert(self.my_participant_id, sig.clone());
 
         self.send_signature(&sig);
 
         // fill in signatures
-        self.receive_signatures()?;
-
-        Ok(Async::NotReady)
+        self.receive_signatures()
     }
 
-    fn sign_supertransaction(&mut self) -> Poll<SnowballOutput, SnowballError> {
+    fn sign_supertransaction(&mut self) -> HandlerResult {
         // Possible exits:
         //   - normal exit
         //   - .expect() errors -> should never happen in correct code
@@ -1452,7 +1572,7 @@ impl Snowball {
         self.trans.sig = self
             .commit_phase_participants
             .iter()
-            .filter(|&&p| p != self.participant_key)
+            .filter(|&&p| p != self.my_participant_id)
             .fold(self.trans.sig, |sig, p| {
                 sig + self.signatures.get(p).expect("can't get peer signature")
             });
@@ -1502,7 +1622,7 @@ impl Snowball {
             return Ok(Async::Ready(SnowballOutput {
                 tx,
                 outputs,
-                is_leader: self.participant_key == leader,
+                is_leader: self.my_participant_id == leader,
             }));
         }
 
@@ -1518,17 +1638,15 @@ impl Snowball {
         // broadcast our session skey and begin a round of blame discovery
         self.sess_skeys = HashMap::new();
         self.sess_skeys
-            .insert(self.participant_key, self.sess_skey.clone());
+            .insert(self.my_participant_id, self.sess_skey.clone());
 
         self.send_session_skey(&self.sess_skey);
 
         // fill in sess_skeys
-        self.receive_session_skeys()?;
-
-        Ok(Async::NotReady)
+        self.receive_session_skeys()
     }
 
-    fn blame_discovery(&mut self) -> Poll<SnowballOutput, SnowballError> {
+    fn blame_discovery(&mut self) -> HandlerResult {
         // Possible exits:
         //   - normal exit
 
@@ -1552,7 +1670,7 @@ impl Snowball {
             let new_p_excl = dc_reconstruct(
                 &self.commit_phase_participants,
                 &self.sess_pkeys,
-                &self.participant_key,
+                &self.my_participant_id,
                 &self.sess_skeys,
                 &self.matrices,
                 &self.cloaked_gamma_adjs,
@@ -1744,11 +1862,11 @@ impl Snowball {
 
     fn send_signed_message(&self, payload: &SnowballPayload) {
         for pkey in &self.participants {
-            if *pkey != self.participant_key {
+            if *pkey != self.my_participant_id {
                 let msg = SnowballMessage {
                     sid: self.session_id,
                     payload: payload.clone(),
-                    source: self.participant_key,
+                    source: self.my_participant_id,
                     destination: *pkey,
                 };
                 let bmsg = msg.into_buffer().expect("serialized");
@@ -1760,16 +1878,37 @@ impl Snowball {
         }
     }
 
+    fn prep_rx(&mut self, msgtype: MessageState) -> HandlerResult {
+        // transfer other participants into pending_participants
+        // and set new msg_state for expected kind of messages
+        let mut other_participants: HashSet<ParticipantID> = HashSet::new();
+        self.participants
+            .iter()
+            .filter(|&&p| p != self.my_participant_id)
+            .for_each(|&p| {
+                other_participants.insert(p);
+            });
+        self.pending_participants = other_participants;
+        self.participants = vec![self.my_participant_id];
+
+        self.msg_state = msgtype;
+        self.start_timer();
+        debug!("In prep_rx(), state = {:?}", msgtype);
+        Ok(Async::NotReady)
+    }
+
+    // ------------------------------------------------
+
     fn send_session_pkey(&self, sess_pkey: &PublicKey, sess_KSig: &Pt) {
         // send our session_pkey and sigK to all participants
         let payload = SnowballPayload::SharedKeying {
-            pkey: *sess_pkey,
-            ksig: *sess_KSig,
+            pkey: sess_pkey.clone(),
+            ksig: sess_KSig.clone(),
         };
         self.send_signed_message(&payload);
     }
 
-    fn receive_session_pkeys(&mut self) -> Poll<SnowballOutput, SnowballError> {
+    fn receive_session_pkeys(&mut self) -> HandlerResult {
         // collect session pkeys from all participants.
         // If any participant does not answer, add him to the exclusion list, p_excl
 
@@ -1788,7 +1927,7 @@ impl Snowball {
         self.send_signed_message(&payload);
     }
 
-    fn receive_commitments(&mut self) -> Poll<SnowballOutput, SnowballError> {
+    fn receive_commitments(&mut self) -> HandlerResult {
         // receive commitments from all other participants
         // if any fail to send commitments, add them to exclusion list p_excl
 
@@ -1815,7 +1954,7 @@ impl Snowball {
         self.send_signed_message(&payload);
     }
 
-    fn receive_cloaked_data(&mut self) -> Poll<SnowballOutput, SnowballError> {
+    fn receive_cloaked_data(&mut self) -> HandlerResult {
         // receive cloaked data from each participant.
         // If participants don't respond, or respond
         // with invalid data, as per previous commitment,
@@ -1834,7 +1973,7 @@ impl Snowball {
         self.send_signed_message(&payload);
     }
 
-    fn receive_signatures(&mut self) -> Poll<SnowballOutput, SnowballError> {
+    fn receive_signatures(&mut self) -> HandlerResult {
         // collect signatures from all participants
         // should not count as collected unless signature is partially valid.
         //
@@ -1852,7 +1991,7 @@ impl Snowball {
         self.send_signed_message(&payload);
     }
 
-    fn receive_session_skeys(&mut self) -> Poll<SnowballOutput, SnowballError> {
+    fn receive_session_skeys(&mut self) -> HandlerResult {
         // non-respondents are added to p_excl
 
         // fills in sess_skeys

@@ -199,6 +199,8 @@ pub struct NodeService {
     //
     // Communication with environment.
     //
+    /// Node interface (needed to create TransactionPoolService).
+    node: Node,
     /// Network interface.
     network: Network,
     /// Triggered when epoch is changed.
@@ -207,7 +209,7 @@ pub struct NodeService {
     events: Box<dyn Stream<Item = NodeMessage, Error = ()> + Send>,
 
     /// Txpool
-    txpool_service: TransactionPoolService,
+    txpool_service: Option<TransactionPoolService>,
 }
 
 impl NodeService {
@@ -274,12 +276,11 @@ impl NodeService {
 
         let events = select_all(streams);
 
-        let handler = Node {
+        let node = Node {
             outbox,
             network: network.clone(),
         };
-        let txpool_service =
-            TransactionPoolService::new(network_pkey, network.clone(), handler.clone());
+        let txpool_service = None;
 
         let service = NodeService {
             cfg,
@@ -291,20 +292,20 @@ impl NodeService {
             last_block_clock,
             loader_timer,
             cheating_proofs,
+            node: node.clone(),
             network: network.clone(),
             events,
             txpool_service,
             on_node_notification,
         };
 
-        Ok((service, handler))
+        Ok((service, node))
     }
 
     /// Invoked when network is ready.
     pub fn init(&mut self) -> Result<(), Error> {
         self.update_validation_status();
-        let facilitator = self.chain.facilitator().clone();
-        self.txpool_service.change_facilitator(facilitator);
+        self.on_facilitator_changed();
         self.on_sync_changed();
         self.restake_expiring_stakes()?;
         self.request_history(self.chain.epoch(), "init")?;
@@ -965,10 +966,9 @@ impl NodeService {
         let event: NodeNotification = msg.into();
         self.on_node_notification
             .retain(move |ch| ch.unbounded_send(event.clone()).is_ok());
-        let facilitator = self.chain.facilitator().clone();
-        self.txpool_service.change_facilitator(facilitator);
 
         self.cheating_proofs.clear();
+        self.on_facilitator_changed();
         self.restake_expiring_stakes()?;
 
         Ok(())
@@ -1349,6 +1349,20 @@ impl NodeService {
         }
 
         task::current().notify();
+    }
+
+    /// Called when facilitator is changed.
+    fn on_facilitator_changed(&mut self) {
+        let facilitator = self.chain.facilitator();
+        if facilitator == &self.network_pkey {
+            info!("I am facilitator");
+            let txpool_service =
+                TransactionPoolService::new(self.network.clone(), self.node.clone());
+            self.txpool_service = Some(txpool_service);
+        } else {
+            info!("Facilitator is {}", facilitator);
+            self.txpool_service = None;
+        }
     }
 
     ///
@@ -1895,10 +1909,12 @@ impl Future for NodeService {
             error!("Error: {}", e);
         }
 
-        match self.txpool_service.poll().expect("txpool working") {
-            Async::Ready(_) => unreachable!(),
-            Async::NotReady => {}
-        };
+        if let Some(ref mut txpool_service) = &mut self.txpool_service {
+            match txpool_service.poll().unwrap() {
+                Async::Ready(_) => unreachable!(),
+                Async::NotReady => {}
+            };
+        }
 
         // Poll other events.
         loop {

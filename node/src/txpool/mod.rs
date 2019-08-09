@@ -1,10 +1,30 @@
+//
+// Copyright (c) 2019 Stegos AG
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 #![deny(warnings)]
 
 pub mod messages;
 pub use self::messages::*;
 
 use crate::Node;
-use failure::Error;
 use futures::sync::mpsc;
 use futures::{Async, Future, Poll, Stream};
 use log::*;
@@ -28,19 +48,27 @@ type UTXO = PaymentOutput;
 type SchnorrSig = scc::SchnorrSig;
 type ParticipantID = dicemix::ParticipantID;
 
-struct FacilitatorState {
+pub struct TransactionPoolService {
+    network: Network,
     participants: HashMap<ParticipantID, (Vec<TXIN>, Vec<UTXO>, SchnorrSig)>,
     timer: Interval,
+    pool_join_rx: mpsc::UnboundedReceiver<UnicastMessage>,
 }
 
-impl FacilitatorState {
-    fn new() -> Self {
+impl TransactionPoolService {
+    /// Crates new TransactionPool.
+    pub fn new(network: Network, _node: Node) -> TransactionPoolService {
+        let participants = HashMap::new();
         let mut timer = Interval::new_interval(MESSAGE_TIMEOUT);
         // register new timer to the current task.
         let _ = timer.poll();
-        FacilitatorState {
-            participants: HashMap::new(),
+        // Unicast messages from other nodes
+        let pool_join_rx = network.subscribe_unicast(POOL_JOIN_TOPIC).unwrap();
+        TransactionPoolService {
+            network,
+            participants,
             timer,
+            pool_join_rx,
         }
     }
 
@@ -54,164 +82,75 @@ impl FacilitatorState {
         }
     }
 
-    fn take_pool(&mut self) -> HashMap<ParticipantID, (Vec<TXIN>, Vec<UTXO>, SchnorrSig)> {
-        if self.participants.len() >= 3 {
-            std::mem::replace(&mut self.participants, HashMap::new())
-        } else {
-            HashMap::new()
+    fn try_to_form_pool(&mut self) -> bool {
+        if self.participants.len() < MIN_PARTICIPANTS {
+            debug!(
+                "Found no enough participants, skipping pool formation: pool_len={}, min_len={}",
+                self.participants.len(),
+                MIN_PARTICIPANTS
+            );
+            return false;
         }
-    }
-}
 
-enum NodeRole {
-    Facilitator(FacilitatorState),
-    Regular,
-}
+        // after timeout facilitator should broadcast message to each node.
+        let participants = std::mem::replace(&mut self.participants, HashMap::new());
+        let participants_pkeys: Vec<pbc::PublicKey> =
+            participants.keys().map(|k| k.pkey.clone()).collect();
+        let participants: Vec<ParticipantTXINMap> = participants
+            .into_iter()
+            .map(|(participant, (txins, utxos, ownsig))| ParticipantTXINMap {
+                participant,
+                txins,
+                utxos,
+                ownsig,
+            })
+            .collect();
 
-pub struct TransactionPoolService {
-    facilitator_pkey: pbc::PublicKey,
-    pkey: pbc::PublicKey,
-    network: Network,
-    role: NodeRole,
-    pool_join_rx: mpsc::UnboundedReceiver<UnicastMessage>,
-}
-
-impl TransactionPoolService {
-    /// Crates new TransactionPool.
-    pub fn new(
-        network_pkey: pbc::PublicKey,
-        network: Network,
-        _node: Node,
-    ) -> TransactionPoolService {
-        let facilitator_pkey: pbc::PublicKey = pbc::PublicKey::dum();
-
-        // Unicast messages from other nodes
-        let pool_join_rx = network.subscribe_unicast(POOL_JOIN_TOPIC).unwrap();
-
-        TransactionPoolService {
-            facilitator_pkey,
-            role: NodeRole::Regular,
-            network,
-            pkey: network_pkey,
-            pool_join_rx,
-        }
-    }
-
-    pub fn change_facilitator(&mut self, facilitator: pbc::PublicKey) {
-        debug!("Changed facilitator: facilitator={}", facilitator);
-        let role = if facilitator == self.pkey {
-            info!("I am facilitator.");
-            NodeRole::Facilitator(FacilitatorState::new())
-        } else {
-            // we was facilitator, send notify to everybody, that pool was not formed, or form pool.
-            if let NodeRole::Facilitator(_) = self.role {
-                if let Err(e) = self.notify_cancel() {
-                    error!("Error during notify participants: error={}", e)
-                }
-            }
-            NodeRole::Regular
+        let session_id = Hash::random();
+        info!(
+            "Formed a new pool: session_id={}, participants={:?}",
+            session_id, &participants
+        );
+        let info = PoolInfo {
+            participants,
+            session_id,
         };
-
-        self.role = role;
-        self.facilitator_pkey = facilitator;
-    }
-
-    fn notify_cancel(&mut self) -> Result<(), Error> {
-        match &mut self.role {
-            NodeRole::Facilitator(ref mut state) => {
-                if state.participants.len() < MIN_PARTICIPANTS {
-                    let info = PoolNotification::Canceled;
-                    let data = info.into_buffer()?;
-                    for part in &state.take_pool() {
-                        self.network
-                            .send(part.0.pkey, POOL_ANNOUNCE_TOPIC, data.clone())?;
-                    }
-                } else {
-                    self.try_notify_participants()?
-                }
-            }
-            NodeRole::Regular => unreachable!(),
-        }
-        Ok(())
-    }
-
-    pub fn try_notify_participants(&mut self) -> Result<(), Error> {
-        match &mut self.role {
-            NodeRole::Facilitator(state) => {
-                if state.participants.len() < MIN_PARTICIPANTS {
-                    debug!(
-                        "Found no enough participants, skipping pool formation: \
-                         pool_len={}, min_len={}",
-                        state.participants.len(),
-                        MIN_PARTICIPANTS
-                    );
-                    return Ok(());
-                }
-                // after timeout facilitator should broadcast message to each node.
-                let parts = state.take_pool();
-
-                let mut participants = Vec::<ParticipantTXINMap>::new();
-                for (participant, (txins, utxos, ownsig)) in &parts {
-                    /*
-                    let mut utxos = Vec::<UTXO>::new();
-                    for txin in txins {
-                        utxos.push(get_utxo(txin)?);
-                    }
-                    */
-                    participants.push(ParticipantTXINMap {
-                        participant: participant.clone(),
-                        txins: txins.clone(),
-                        utxos: utxos.clone(),
-                        ownsig: ownsig.clone(),
-                    })
-                }
-                let session_id = Hash::random();
-                info!(
-                    "Formed a new pool: session_id={}, participants={:?}",
-                    session_id, &participants
-                );
-                let info = PoolInfo {
-                    participants: participants.clone(),
-                    session_id,
-                };
-                let msg: PoolNotification = info.into();
-                let data = msg.into_buffer()?;
-                for part in participants {
-                    self.network
-                        .send(part.participant.pkey, POOL_ANNOUNCE_TOPIC, data.clone())?;
-                }
-            }
-            NodeRole::Regular => {
-                unreachable!();
+        let msg: PoolNotification = info.into();
+        let msg = msg.into_buffer().unwrap();
+        for dest in participants_pkeys {
+            if let Err(e) = self.network.send(dest, POOL_ANNOUNCE_TOPIC, msg.clone()) {
+                error!("Failed to send PoolInfo to {}: {}", dest, e);
             }
         }
-        Ok(())
+        true
     }
 
     /// Receive message of other nodes from unicast channel.
-    pub fn handle_join_message(
-        &mut self,
-        data: PoolJoin,
-        from: pbc::PublicKey,
-    ) -> Result<(), Error> {
-        match self.role {
-            NodeRole::Regular => {
-                error!(
-                    "Received a join request on non-faciliator: from={:?}, facilitator={:?}",
-                    from, self.facilitator_pkey
-                );
-            }
-            NodeRole::Facilitator(ref mut state) => {
-                if state.add_participant(from, data) {
-                    info!("Added a new member: pkey={}", from);
-
-                    if state.participants.len() >= MAX_PARTICIPANTS {
-                        self.try_notify_participants()?
-                    }
-                }
+    fn handle_join_message(&mut self, data: PoolJoin, from: pbc::PublicKey) {
+        if self.add_participant(from, data) {
+            info!("Added a new member: pkey={}", from);
+            if self.participants.len() >= MAX_PARTICIPANTS {
+                self.try_to_form_pool();
             }
         }
-        Ok(())
+    }
+}
+
+impl Drop for TransactionPoolService {
+    fn drop(&mut self) {
+        if self.try_to_form_pool() {
+            return;
+        }
+        let info = PoolNotification::Canceled;
+        let data = info.into_buffer().unwrap();
+        for part in self.participants.keys() {
+            if let Err(e) = self
+                .network
+                .send(part.pkey, POOL_ANNOUNCE_TOPIC, data.clone())
+            {
+                error!("Failed to send PoolCanceled message {}: {}", part.pkey, e);
+            }
+        }
     }
 }
 
@@ -231,12 +170,14 @@ impl Future for TransactionPoolService {
             {
                 Async::Ready(Some(msg)) => {
                     debug!("Received join message: from={}", msg.from);
-                    let result = PoolJoin::from_buffer(&msg.data)
-                        .and_then(|pj_rec| self.handle_join_message(pj_rec, msg.from));
-                    if let Err(e) = result {
-                        error!("Error: {}", e);
-                    }
-                    continue;
+                    let pj_rec = match PoolJoin::from_buffer(&msg.data) {
+                        Ok(pj_rec) => pj_rec,
+                        Err(e) => {
+                            error!("Failed to decode PoolJoin message: {}", e);
+                            continue;
+                        }
+                    };
+                    self.handle_join_message(pj_rec, msg.from);
                 }
                 Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
                 Async::NotReady => break,
@@ -246,19 +187,12 @@ impl Future for TransactionPoolService {
         //
         // Poll timer.
         //
-        match self.role {
-            NodeRole::Facilitator(ref mut state) => {
-                match state.timer.poll().expect("timer fails") {
-                    Async::Ready(Some(_)) => {
-                        if let Err(e) = self.try_notify_participants() {
-                            error!("Error: {}", e);
-                        }
-                    }
-                    Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
-                    Async::NotReady => {}
-                }
+        match self.timer.poll().expect("timer fails") {
+            Async::Ready(Some(_)) => {
+                self.try_to_form_pool();
             }
-            NodeRole::Regular => {}
+            Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
+            Async::NotReady => {}
         }
 
         Ok(Async::NotReady)

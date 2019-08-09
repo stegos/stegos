@@ -1468,7 +1468,10 @@ mod tests {
         // introduce a spurious inconsistency
         // adding in one more vector than the dimension expected
         //  - should force a non-monic solution error
-        add_col(&mut col, &vec![Fr::one(), Fr::one(), Fr::one(), Fr::one()]);
+        add_col(
+            &mut col,
+            &vec![Fr::one(), Fr::zero(), Fr::zero(), Fr::zero()],
+        );
 
         dc_solve(&col); // this should panic with non-monic solution
     }

@@ -34,8 +34,6 @@ pub enum WalletError {
     InsufficientStake(i64, i64),
     #[fail(display = "Incorrect TXIN type")]
     IncorrectTXINType,
-    #[fail(display = "Incorrect UTXO data")]
-    InvalidUTXOData,
     #[fail(display = "Nothing to re-stake")]
     NothingToRestake,
     #[fail(display = "Snowball is busy")]

@@ -402,6 +402,7 @@ impl UnsealedAccountService {
         if self.snowball.is_some() {
             return Err(WalletError::SnowballBusy.into());
         }
+        let data = PaymentPayloadData::Comment(comment);
         let unspent_iter = self
             .payments
             .iter()
@@ -413,7 +414,7 @@ impl UnsealedAccountService {
             unspent_iter,
             amount,
             payment_fee,
-            comment,
+            data,
             locked_timestamp,
             self.last_macro_block_timestamp,
             snowball::MAX_UTXOS,

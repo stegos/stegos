@@ -58,7 +58,7 @@ pub(crate) fn create_snowball_transaction<'a, UnspentIter>(
     unspent_iter: UnspentIter,
     amount: i64,
     payment_fee: i64,
-    data: String,
+    data: PaymentPayloadData,
     locked_timestamp: Option<Timestamp>,
     last_block_time: Timestamp,
     max_inputs_in_tx: usize,
@@ -70,13 +70,11 @@ where
         return Err(WalletError::NegativeAmount(amount).into());
     }
 
-    if data.len() > PAYMENT_DATA_LEN {
-        return Err(WalletError::InvalidUTXOData.into());
-    }
+    data.validate()?;
 
     debug!(
-        "Creating a SB payment transaction: recipient={}, amount={}",
-        recipient, amount
+        "Creating Snowball payment transaction: recipient={}, amount={}, data={:?}",
+        recipient, amount, data
     );
 
     //
@@ -133,21 +131,21 @@ where
     let output1 = ProposedUTXO {
         recip: recipient.clone(),
         amount,
-        data,
+        data: data.clone(),
         locked_timestamp,
         is_change: false,
     };
     outputs.push(output1);
 
     info!(
-        "Created payment UTXO: recipient={}, amount={}, locked={:?}",
-        recipient, amount, locked_timestamp
+        "Created payment UTXO: recipient={}, amount={}, locked={:?}, data={:?}",
+        recipient, amount, locked_timestamp, data
     );
 
     if change > 0 {
         // Create an output for change
         trace!("Creating change UTXO...");
-        let data = "Change".to_string();
+        let data = PaymentPayloadData::Comment("Change".to_string());
         let output2 = ProposedUTXO {
             recip: sender_pkey.clone(),
             amount: change,

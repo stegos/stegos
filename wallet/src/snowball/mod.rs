@@ -82,7 +82,7 @@ use message::*;
 mod protos;
 
 use crate::snowball::message::SnowballMessage;
-use crate::storage::ExtendedOutputValue;
+use crate::storage::{OutputValue, PaymentValue};
 use failure::format_err;
 use failure::Error;
 use futures::task::current;
@@ -138,7 +138,7 @@ type UTXO = PaymentOutput;
 pub struct ProposedUTXO {
     pub recip: PublicKey, // payee key (uncloaked)
     pub amount: i64,
-    pub data: String,
+    pub data: PaymentPayloadData,
     pub locked_timestamp: Option<Timestamp>,
     pub is_change: bool,
 }
@@ -185,7 +185,7 @@ pub enum MessageState {
 /// Possible outcomes of Snowball
 pub struct SnowballOutput {
     pub tx: PaymentTransaction,
-    pub outputs: Vec<ExtendedOutputValue>,
+    pub outputs: Vec<OutputValue>,
     pub is_leader: bool,
 }
 
@@ -1594,15 +1594,20 @@ impl Snowball {
             self.session_round = 0; // for possible restarts
 
             assert_eq!(self.my_txouts.len(), self.my_utxos.len());
-            let utxos: Vec<_> = self
+            let utxos: Vec<PaymentOutput> = self
                 .my_utxos
                 .iter()
                 .map(|o| {
-                    for (id, output) in self.trans.txouts.iter().enumerate() {
-                        if let Ok(c) = output.pedersen_commitment() {
-                            if c == *o {
-                                return id;
+                    for output in self.trans.txouts.iter() {
+                        match output {
+                            Output::PaymentOutput(output) => {
+                                if let Ok(c) = output.pedersen_commitment() {
+                                    if c == *o {
+                                        return output.clone();
+                                    }
+                                }
                             }
+                            _ => unreachable!(),
                         }
                     }
                     panic!("Can't find utxo by Pedersen commitment.");
@@ -1612,16 +1617,16 @@ impl Snowball {
             let outputs = utxos
                 .into_iter()
                 .zip(&self.my_txouts)
-                .map(|(id, output)| {
-                    ExtendedOutputValue {
-                        id: id as u64,
-                        recipient: output.recip.clone(),
-                        amount: output.amount,
+                .map(|(output, proposed_output)| {
+                    OutputValue::Payment(PaymentValue {
+                        output,
+                        recipient: proposed_output.recip.clone(),
+                        amount: proposed_output.amount,
                         //TODO: add certificate to snowball.
                         rvalue: None,
-                        data: Some(PaymentPayloadData::Comment(output.data.clone())),
-                        is_change: output.is_change,
-                    }
+                        data: proposed_output.data.clone(),
+                        is_change: proposed_output.is_change,
+                    })
                 })
                 .collect();
 
@@ -1851,12 +1856,11 @@ impl Snowball {
 
         let mut outs = Vec::<(UTXO, Fr)>::new();
         for txout in txouts.clone() {
-            let data = PaymentPayloadData::Comment(txout.data);
             let (output, gamma, _rvalue) = PaymentOutput::with_payload(
                 Some(&spender_skey),
                 &txout.recip,
                 txout.amount,
-                data,
+                txout.data,
                 txout.locked_timestamp,
             )
             .expect("Can't produce Payment UTXO");

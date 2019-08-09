@@ -24,7 +24,7 @@
 use crate::change::*;
 use crate::error::*;
 use crate::snowball::ProposedUTXO;
-use crate::storage::ExtendedOutputValue;
+use crate::storage::{OutputValue, PaymentValue, StakeValue};
 use failure::Error;
 use log::*;
 use serde_derive::Serialize;
@@ -75,7 +75,7 @@ where
     }
 
     debug!(
-        "Creating a VS payment transaction: recipient={}, amount={}",
+        "Creating a SB payment transaction: recipient={}, amount={}",
         recipient, amount
     );
 
@@ -186,7 +186,7 @@ pub(crate) fn create_payment_transaction<'a, UnspentIter>(
     locked_timestamp: Option<Timestamp>,
     last_block_time: Timestamp,
     max_inputs_in_tx: usize,
-) -> Result<(Vec<Output>, Vec<Output>, Fr, Vec<ExtendedOutputValue>, i64), Error>
+) -> Result<(Vec<Output>, Vec<Output>, Fr, Vec<OutputValue>, i64), Error>
 where
     UnspentIter: Iterator<Item = (&'a PaymentOutput, i64, Option<Timestamp>)>,
 {
@@ -261,8 +261,8 @@ where
                 output1_hash, recipient, amount, data, locked_timestamp
             );
 
-            let extended_output = ExtendedOutputValue {
-                id: 0,
+            let extended_output = PaymentValue {
+                output: output1.clone(),
                 rvalue,
                 recipient: *recipient,
                 amount,
@@ -270,7 +270,7 @@ where
                 is_change: false,
             };
 
-            (Output::PaymentOutput(output1), gamma1, extended_output)
+            (output1.into(), gamma1, extended_output.into())
         }
         TransactionType::Public => {
             trace!("Creating public payment UTXO...");
@@ -286,20 +286,7 @@ where
                 output1_hash, recipient, amount, locked_timestamp
             );
 
-            let extended_output = ExtendedOutputValue {
-                id: 0,
-                rvalue: None,
-                recipient: *recipient,
-                amount,
-                data: None,
-                is_change: false,
-            };
-
-            (
-                Output::PublicPaymentOutput(output1),
-                gamma1,
-                extended_output,
-            )
+            (output1.clone().into(), gamma1, output1.into())
         }
     };
 
@@ -321,16 +308,16 @@ where
             change,
             data
         );
-        outputs.push(Output::PaymentOutput(output2));
-        let extended_output = ExtendedOutputValue {
-            id: 1,
+        let extended_output = PaymentValue {
+            output: output2.clone(),
             rvalue: None,
             recipient: *sender_pkey,
             amount: change,
             data: data.into(),
             is_change: true,
         };
-        extended_outputs.push(extended_output);
+        extended_outputs.push(extended_output.into());
+        outputs.push(output2.into());
         gamma += gamma2;
     }
 
@@ -359,7 +346,7 @@ pub(crate) fn create_staking_transaction<'a, UnspentIter>(
     stake_fee: i64,
     last_block_time: Timestamp,
     max_inputs_in_tx: usize,
-) -> Result<PaymentTransaction, Error>
+) -> Result<(PaymentTransaction, Vec<OutputValue>), Error>
 where
     UnspentIter: Iterator<Item = (&'a PaymentOutput, i64)>,
 {
@@ -415,10 +402,11 @@ where
     //
 
     let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
+    let mut extended_outputs = Vec::with_capacity(2);
 
     // Create an output for staking.
     trace!("Creating stake UTXO...");
-    let output1 = Output::new_stake(sender_pkey, validator_skey, validator_pkey, amount)?;
+    let output1 = StakeOutput::new(sender_pkey, validator_skey, validator_pkey, amount)?;
     info!(
         "Created stake UTXO: hash={}, recipient={}, validator={}, amount={}",
         Hash::digest(&output1),
@@ -426,20 +414,37 @@ where
         validator_pkey,
         amount
     );
-    outputs.push(output1);
+    let extended_output = StakeValue {
+        output: output1.clone(),
+        active_until_epoch: None,
+    };
+    outputs.push(output1.into());
+    extended_outputs.push(extended_output.into());
     let mut gamma = Fr::zero();
 
     if change > 0 {
         // Create an output for change
         trace!("Creating change UTXO...");
-        let (output2, gamma2) = Output::new_payment(sender_pkey, change)?;
+        let data = PaymentPayloadData::Comment(String::from("Change for stake."));
+        let (output2, gamma2, _rvalue) =
+            PaymentOutput::with_payload(None, sender_pkey, change, data.clone(), None)?;
         info!(
             "Created change UTXO: hash={}, recipient={}, change={}",
             Hash::digest(&output2),
             sender_pkey,
             change
         );
-        outputs.push(output2);
+        let extended_output = PaymentValue {
+            output: output2.clone(),
+            data,
+            rvalue: None,
+            recipient: *sender_pkey,
+            amount: change,
+            is_change: true,
+        };
+
+        extended_outputs.push(extended_output.into());
+        outputs.push(output2.into());
         gamma += gamma2;
     }
 
@@ -456,7 +461,7 @@ where
         fee
     );
 
-    Ok(tx)
+    Ok((tx, extended_outputs))
 }
 
 /// Create a new unstaking transaction.
@@ -472,7 +477,7 @@ pub(crate) fn create_unstaking_transaction<'a, UnspentIter>(
     stake_fee: i64,
     last_block_time: Timestamp,
     max_inputs_in_tx: usize,
-) -> Result<PaymentTransaction, Error>
+) -> Result<(PaymentTransaction, Vec<OutputValue>), Error>
 where
     UnspentIter: Iterator<Item = &'a StakeOutput>,
 {
@@ -522,31 +527,50 @@ where
     //
 
     let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(2);
+    let mut extended_outputs = Vec::with_capacity(2);
 
     // Create an output for payment
     trace!("Creating payment UTXO...");
-    let (output1, gamma1) = Output::new_payment(sender_pkey, amount)?;
+    let data = PaymentPayloadData::Comment(String::from("Change for stake."));
+    let (output1, gamma1, _rvalue) =
+        PaymentOutput::with_payload(None, sender_pkey, amount, data.clone(), None)?;
     info!(
         "Created payment UTXO: hash={}, recipient={}, amount={}",
         Hash::digest(&output1),
         sender_pkey,
         amount
     );
-    outputs.push(output1);
+    let extended_output = PaymentValue {
+        output: output1.clone(),
+        data,
+        rvalue: None,
+        recipient: *sender_pkey,
+        amount: change,
+        is_change: false,
+    };
+
+    extended_outputs.push(extended_output.into());
+    outputs.push(output1.into());
+
     let gamma = gamma1;
 
     if change > 0 {
         // Create an output for staking.
         assert_eq!(fee, payment_fee + stake_fee);
         trace!("Creating stake UTXO...");
-        let output2 = Output::new_stake(sender_pkey, validator_skey, validator_pkey, change)?;
+        let output2 = StakeOutput::new(sender_pkey, validator_skey, validator_pkey, change)?;
         info!(
             "Created stake UTXO: hash={}, validator={}, amount={}",
             Hash::digest(&output2),
             validator_pkey,
             change
         );
-        outputs.push(output2);
+        let extended_output = StakeValue {
+            output: output2.clone(),
+            active_until_epoch: None,
+        };
+        extended_outputs.push(extended_output.into());
+        outputs.push(output2.into());
     }
 
     trace!("Signing transaction...");
@@ -557,7 +581,7 @@ where
         tx_hash, validator_pkey, amount, change, fee
     );
 
-    Ok(tx)
+    Ok((tx, extended_outputs))
 }
 
 /// Create a restaking transaction.
@@ -567,7 +591,7 @@ pub(crate) fn create_restaking_transaction<'a, UnspentIter>(
     validator_pkey: &pbc::PublicKey,
     validator_skey: &pbc::SecretKey,
     stakes_iter: UnspentIter,
-) -> Result<RestakeTransaction, Error>
+) -> Result<(RestakeTransaction, Vec<OutputValue>), Error>
 where
     UnspentIter: Iterator<Item = &'a StakeOutput>,
 {
@@ -578,6 +602,7 @@ where
 
     let mut inputs: Vec<Output> = Vec::new();
     let mut outputs: Vec<Output> = Vec::new();
+    let mut extended_outputs = Vec::with_capacity(2);
     for input in stakes_iter {
         debug!(
             "Unstake: hash={}, validator={}, amount={}",
@@ -588,14 +613,19 @@ where
         inputs.push(Output::StakeOutput(input.clone()));
 
         trace!("Creating StakeUTXO...");
-        let output = Output::new_stake(sender_pkey, validator_skey, validator_pkey, input.amount)?;
+        let output = StakeOutput::new(sender_pkey, validator_skey, validator_pkey, input.amount)?;
         debug!(
             "Stake: hash={}, validator={}, amount={}",
             Hash::digest(&output),
             validator_pkey,
             input.amount
         );
-        outputs.push(output);
+        let extended_output = StakeValue {
+            output: output.clone(),
+            active_until_epoch: None,
+        };
+        extended_outputs.push(extended_output.into());
+        outputs.push(output.into());
     }
 
     trace!("Signing transaction...");
@@ -608,7 +638,7 @@ where
         tx.txouts.len()
     );
 
-    Ok(tx)
+    Ok((tx, extended_outputs))
 }
 
 /// Create a cloaking transaction.
@@ -618,7 +648,7 @@ pub(crate) fn create_cloaking_transaction<'a, UnspentIter>(
     unspent_iter: UnspentIter,
     payment_fee: i64,
     last_block_time: Timestamp,
-) -> Result<PaymentTransaction, Error>
+) -> Result<(PaymentTransaction, OutputValue), Error>
 where
     UnspentIter: Iterator<Item = &'a PublicPaymentOutput>,
 {
@@ -673,7 +703,6 @@ where
     //
 
     let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(1);
-
     // Create an output for payment
 
     data.validate()?;
@@ -686,7 +715,17 @@ where
         "Created payment UTXO: hash={}, recipient={}, amount={}, data={:?}",
         output1_hash, recipient, total_amount, data
     );
-    outputs.push(Output::PaymentOutput(output));
+
+    let extended_output = PaymentValue {
+        amount: total_amount,
+        rvalue: None,
+        recipient: *recipient,
+        data,
+        output: output.clone(),
+        is_change: false,
+    };
+
+    outputs.push(output.into());
     info!(
         "Created payment transaction: recipient={}, amount={}, withdrawn={}, fee={}",
         recipient,
@@ -694,13 +733,10 @@ where
         total_amount + fee,
         fee
     );
-    Ok(PaymentTransaction::new(
-        sender_skey,
-        &inputs,
-        &outputs,
-        &gamma,
-        fee,
-    )?)
+    Ok((
+        PaymentTransaction::new(sender_skey, &inputs, &outputs, &gamma, fee)?,
+        extended_output.into(),
+    ))
 }
 
 #[cfg(test)]
@@ -730,7 +766,7 @@ pub mod tests {
         let unspent: Vec<StakeOutput> = vec![output];
 
         // Unstake all of the money.
-        let tx = create_unstaking_transaction(
+        let (tx, _) = create_unstaking_transaction(
             &skey,
             &pkey,
             &validator_pkey,
@@ -756,7 +792,7 @@ pub mod tests {
 
         // Unstake part of the money.
         let unstake = stake / 2;
-        let tx = create_unstaking_transaction(
+        let (tx, _) = create_unstaking_transaction(
             &skey,
             &pkey,
             &validator_pkey,

@@ -21,14 +21,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::storage::ExtendedOutputValue;
 use serde_derive::{Deserialize, Serialize};
 pub use stegos_blockchain::PaymentPayloadData;
 pub use stegos_blockchain::StakeInfo;
 use stegos_blockchain::Timestamp;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
-use stegos_crypto::scc::PublicKey;
+use stegos_crypto::scc::{Fr, PublicKey};
 use stegos_node::TransactionStatus;
 
 pub type AccountId = String;
@@ -39,10 +38,8 @@ pub type AccountId = String;
 pub enum LogEntryInfo {
     Incoming {
         timestamp: Timestamp,
-
         #[serde(flatten)]
         output: OutputInfo,
-        is_change: bool,
     },
     Outgoing {
         timestamp: Timestamp,
@@ -69,6 +66,10 @@ pub struct PaymentInfo {
     pub locked_timestamp: Option<Timestamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_timestamp: Option<Timestamp>,
+    pub recipient: PublicKey,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rvalue: Option<Fr>,
+    pub is_change: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -197,18 +198,11 @@ pub enum WalletRequest {
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
-pub struct ExtendedOutputInfo {
-    pub utxo: Hash,
-    #[serde(flatten)]
-    pub info: ExtendedOutputValue,
-}
-
-#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionInfo {
     pub tx_hash: Hash,
     pub fee: i64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub outputs: Vec<ExtendedOutputInfo>,
+    pub outputs: Vec<OutputInfo>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inputs: Vec<Hash>,
     #[serde(flatten)]

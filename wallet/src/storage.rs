@@ -28,17 +28,15 @@ use byteorder::{BigEndian, ByteOrder};
 use failure::{bail, Error};
 use log::{debug, trace};
 use rocksdb::{Direction, IteratorMode, WriteBatch, DB};
-use serde::{Deserializer, Serializer};
-use serde_derive::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use stegos_blockchain::{
     Output, PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput,
-    StakeOutput, Timestamp,
+    RestakeTransaction, StakeOutput, Timestamp,
 };
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::scc::{make_random_keys, Fr, PublicKey};
+use stegos_crypto::scc::{Fr, PublicKey};
 use stegos_node::TransactionStatus;
 use stegos_serialization::traits::ProtoConvert;
 use tempdir::TempDir;
@@ -49,7 +47,7 @@ const TIME_INDEX: [u8; 2] = [0; 2];
 #[derive(Debug, Clone)]
 pub enum LogEntry {
     Incoming { output: OutputValue },
-    Outgoing { tx: PaymentTransactionValue },
+    Outgoing { tx: TransactionValue },
 }
 
 /// Currently we support only transaction that have 2 outputs,
@@ -79,6 +77,7 @@ pub struct AccountLog {
     epoch_transactions: HashSet<Hash>,
 }
 
+//Account log api.
 impl AccountLog {
     /// Open database.
     pub fn open(path: &Path) -> AccountLog {
@@ -156,8 +155,8 @@ impl AccountLog {
                     assert!(self.created_txs.insert(tx_hash, timestamp).is_none());
                     self.update_tx_indexes(tx_hash, status.clone());
                     for utxo in tx.outputs.iter() {
-                        if utxo.is_change {
-                            let utxo_hash = Hash::digest(&tx.tx.txouts[utxo.id as usize]);
+                        if utxo.is_change() {
+                            let utxo_hash = Hash::digest(&utxo.to_output());
                             self.known_changes.insert(utxo_hash);
                         }
                     }
@@ -200,9 +199,7 @@ impl AccountLog {
     }
 
     /// Return iterator over transactions
-    pub fn pending_txs<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = Result<PaymentTransactionValue, Error>> + 'a {
+    pub fn pending_txs<'a>(&'a self) -> impl Iterator<Item = Result<TransactionValue, Error>> + 'a {
         self.pending_txs.iter().map(move |tx_hash| {
             let tx_key = self
                 .created_txs
@@ -245,7 +242,7 @@ impl AccountLog {
     pub fn push_outgoing(
         &mut self,
         timestamp: Timestamp,
-        tx: PaymentTransactionValue,
+        tx: TransactionValue,
     ) -> Result<Timestamp, Error> {
         let tx_hash = Hash::digest(&tx.tx);
         let status = tx.status.clone();
@@ -254,8 +251,8 @@ impl AccountLog {
         assert!(self.created_txs.insert(tx_hash, timestamp).is_none());
         self.update_tx_indexes(tx_hash, status);
         for utxo in tx.outputs.iter() {
-            if utxo.is_change {
-                let utxo_hash = Hash::digest(&tx.tx.txouts[utxo.id as usize]);
+            if utxo.is_change() {
+                let utxo_hash = Hash::digest(&utxo.to_output());
                 self.known_changes.insert(utxo_hash);
             }
         }
@@ -285,29 +282,6 @@ impl AccountLog {
         self.database.write(batch)?;
         self.len = len;
         Ok(timestamp)
-    }
-
-    /// Edit log entry as by idx.
-    fn update_log_entry<F>(&mut self, timestamp: Timestamp, mut func: F) -> Result<(), Error>
-    where
-        F: FnMut(LogEntry) -> Result<LogEntry, Error>,
-    {
-        let key = Self::bytes_from_timestamp(timestamp);
-        let value = self.database.get(&key)?.expect("Log entry not found.");
-        let entry = LogEntry::from_buffer(&value)?;
-
-        trace!("Entry before = {:?}", entry);
-        let entry = func(entry)?;
-
-        trace!("Entry after = {:?}", entry);
-        let data = entry.into_buffer().expect("couldn't serialize block.");
-
-        let mut batch = WriteBatch::default();
-        // writebatch put fails if size exceeded u32::max, which is not our case.
-        batch.put(&key, &data)?;
-        self.database.write(batch)?;
-
-        Ok(())
     }
 
     /// Edit log entry as by idx.
@@ -389,6 +363,29 @@ impl AccountLog {
     // Internal api.
     //
 
+    /// Edit log entry as by idx.
+    fn update_log_entry<F>(&mut self, timestamp: Timestamp, mut func: F) -> Result<(), Error>
+    where
+        F: FnMut(LogEntry) -> Result<LogEntry, Error>,
+    {
+        let key = Self::bytes_from_timestamp(timestamp);
+        let value = self.database.get(&key)?.expect("Log entry not found.");
+        let entry = LogEntry::from_buffer(&value)?;
+
+        trace!("Entry before = {:?}", entry);
+        let entry = func(entry)?;
+
+        trace!("Entry after = {:?}", entry);
+        let data = entry.into_buffer().expect("couldn't serialize block.");
+
+        let mut batch = WriteBatch::default();
+        // writebatch put fails if size exceeded u32::max, which is not our case.
+        batch.put(&key, &data)?;
+        self.database.write(batch)?;
+
+        Ok(())
+    }
+
     /// Convert timestamp to bytearray.
     fn bytes_from_timestamp(timestamp: Timestamp) -> [u8; 8] {
         let mut bytes = [0u8; 8];
@@ -424,86 +421,139 @@ impl AccountLog {
     }
 }
 
-/// Information about created output.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct ExtendedOutputValue {
-    /// id of output.
-    pub id: u64,
-    /// destination PublicKey.
-    pub recipient: PublicKey,
-    /// amount of money sended in utxo.
-    pub amount: i64,
-    /// Rvalue used to decrypt PaymentPayload in case of unfair recipient.
-    #[serde(serialize_with = "ExtendedOutputValue::serialize_rvalue")]
-    #[serde(deserialize_with = "ExtendedOutputValue::deserialize_rvalue")]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rvalue: Option<Fr>,
-    /// Data that was sent in output.
-    /// If output is public, then data would be missing.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde(flatten)]
-    pub data: Option<PaymentPayloadData>,
-    /// Is current utxo change?.
-    pub is_change: bool,
-}
-
-impl Hashable for ExtendedOutputValue {
-    fn hash(&self, hasher: &mut Hasher) {
-        self.recipient.hash(hasher);
-        self.amount.hash(hasher);
-        if let Some(rvalue) = &self.rvalue {
-            rvalue.hash(hasher);
-        }
-        if let Some(data) = &self.data {
-            data.hash(hasher);
-        }
-        self.is_change.hash(hasher);
-    }
+pub struct PendingOutput {
+    pub time: Instant,
 }
 
 /// Information about created transactions
-#[derive(Serialize, Clone, Debug)]
-pub struct PaymentTransactionValue {
-    #[serde(skip_serializing)]
+#[derive(Clone, Debug)]
+pub struct TransactionValue {
     pub tx: PaymentTransaction,
     pub status: TransactionStatus,
-    pub outputs: Vec<ExtendedOutputValue>,
-}
-
-impl Hashable for PaymentTransactionValue {
-    fn hash(&self, hasher: &mut Hasher) {
-        self.tx.hash(hasher);
-        self.status.hash(hasher);
-        for output in &self.outputs {
-            output.hash(hasher);
-        }
-    }
-}
-
-pub struct PendingOutput {
-    pub time: Instant,
+    pub outputs: Vec<OutputValue>,
 }
 
 /// Represents Outputs created by account.
 /// With extended info about its creation.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum OutputValue {
     Payment(PaymentValue),
     PublicPayment(PublicPaymentOutput),
+    Stake(StakeValue),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PaymentValue {
     pub output: PaymentOutput,
     pub amount: i64,
+    /// Uncloaked public key of the owner
+    pub recipient: PublicKey,
     pub data: PaymentPayloadData,
+    pub rvalue: Option<Fr>,
+    pub is_change: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StakeValue {
     pub output: StakeOutput,
-    pub active_until_epoch: u64,
+    pub active_until_epoch: Option<u64>,
+}
+
+impl TransactionValue {
+    pub fn new_payment(tx: PaymentTransaction, outputs: Vec<OutputValue>) -> TransactionValue {
+        assert!(tx.txouts.len() <= 2);
+        assert_eq!(tx.txouts.len(), outputs.len());
+
+        TransactionValue {
+            outputs,
+            tx,
+            status: TransactionStatus::Created {},
+        }
+    }
+
+    pub fn new_snowball(tx: PaymentTransaction, outputs: Vec<OutputValue>) -> TransactionValue {
+        assert!(tx.txouts.len() >= 2);
+        TransactionValue {
+            outputs,
+            tx,
+            status: TransactionStatus::Created {},
+        }
+    }
+
+    pub fn new_cloak(tx: PaymentTransaction, output: OutputValue) -> TransactionValue {
+        assert_eq!(tx.txouts.len(), 1);
+
+        TransactionValue {
+            outputs: vec![output],
+            tx,
+            status: TransactionStatus::Created {},
+        }
+    }
+
+    pub fn new_stake(tx: PaymentTransaction, outputs: Vec<OutputValue>) -> TransactionValue {
+        TransactionValue {
+            outputs,
+            tx,
+            status: TransactionStatus::Created {},
+        }
+    }
+
+    // We didn't track restake transaction, and wont store them on disk.
+    // But we still able to give info about this transaction, to api.
+    // This method was created to split api serialisation logic from main logic.
+    pub fn restake_tx_info(
+        tx: RestakeTransaction,
+        outputs: Vec<OutputValue>,
+        current_epoch: u64,
+    ) -> TransactionInfo {
+        let tx_hash = Hash::digest(&tx);
+
+        // merge output with extended info.
+        let outputs = outputs.iter().map(|e| e.to_info(current_epoch)).collect();
+
+        TransactionInfo {
+            tx_hash,
+            outputs,
+            fee: 0,
+            inputs: tx.txins.clone(),
+            status: TransactionStatus::Created {},
+        }
+    }
+}
+
+impl OutputValue {
+    fn is_change(&self) -> bool {
+        match self {
+            // Change only possible in PaymentUtxo.
+            OutputValue::Payment(p) => p.is_change,
+            _ => false,
+        }
+    }
+}
+
+//
+// Converting to api.
+//
+
+impl TransactionValue {
+    pub fn to_info(&self, current_epoch: u64) -> TransactionInfo {
+        let tx_hash = Hash::digest(&self.tx);
+
+        // merge output with extended info.
+        let outputs = self
+            .outputs
+            .iter()
+            .map(|e| e.to_info(current_epoch))
+            .collect();
+
+        TransactionInfo {
+            tx_hash,
+            outputs,
+            fee: self.tx.fee,
+            inputs: self.tx.txins.clone(),
+            status: self.status.clone(),
+        }
+    }
 }
 
 impl PaymentValue {
@@ -524,58 +574,9 @@ impl PaymentValue {
             data: self.data.clone(),
             locked_timestamp: self.output.locked_timestamp,
             pending_timestamp,
-        }
-    }
-}
-
-impl StakeValue {
-    pub fn to_info(&self, epoch: u64) -> StakeInfo {
-        let is_active = self.active_until_epoch >= epoch;
-        StakeInfo {
-            account_pkey: self.output.recipient,
-            utxo: Hash::digest(&self.output),
-            amount: self.output.amount,
-            active_until_epoch: self.active_until_epoch,
-            is_active,
-        }
-    }
-}
-
-impl OutputValue {
-    pub fn to_info(&self) -> OutputInfo {
-        match self {
-            OutputValue::Payment(o) => o.to_info(None).into(),
-            OutputValue::PublicPayment(o) => public_payment_info(&o).into(),
-        }
-    }
-
-    pub fn to_output(&self) -> Output {
-        match self {
-            OutputValue::Payment(o) => o.output.clone().into(),
-            OutputValue::PublicPayment(o) => o.clone().into(),
-        }
-    }
-}
-
-impl LogEntry {
-    #[allow(unused)]
-    fn testing_stub(id: usize) -> LogEntry {
-        let (_s, p) = make_random_keys();
-        let public = PublicPaymentOutput::new(&p, id as i64);
-
-        LogEntry::Incoming {
-            output: OutputValue::PublicPayment(public),
-        }
-    }
-
-    #[allow(unused)]
-    fn is_testing_stub(&self, id: usize) -> bool {
-        match self {
-            LogEntry::Incoming {
-                output: OutputValue::PublicPayment(output),
-                ..
-            } => output.amount == id as i64,
-            _ => false,
+            recipient: self.recipient,
+            rvalue: self.rvalue.clone(),
+            is_change: self.is_change,
         }
     }
 }
@@ -588,134 +589,42 @@ pub fn public_payment_info(output: &PublicPaymentOutput) -> PublicPaymentInfo {
     }
 }
 
-impl ExtendedOutputValue {
-    fn serialize_rvalue<S>(rvalue: &Option<Fr>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        if let Some(rvalue) = rvalue {
-            serializer.serialize_some(&rvalue.to_hex())
-        } else {
-            serializer.serialize_none()
-        }
-    }
-
-    fn deserialize_rvalue<'de, D>(deserilizer: D) -> Result<Option<Fr>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        use serde::de::{self, Visitor};
-        use std::fmt;
-        struct FrVisitor;
-        struct OptFrVisitor;
-
-        impl<'de> Visitor<'de> for FrVisitor {
-            type Value = Fr;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a hex representation of Fr")
-            }
-            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Fr::try_from_hex(value).map_err(|e| E::custom(e))
-            }
-        }
-
-        impl<'de> Visitor<'de> for OptFrVisitor {
-            type Value = Option<Fr>;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a optional hex representation of Fr")
-            }
-
-            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-            where
-                D: Deserializer<'de>,
-            {
-                Ok(Some(deserializer.deserialize_str(FrVisitor)?))
-            }
-
-            fn visit_none<E>(self) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(None)
-            }
-        }
-
-        deserilizer.deserialize_option(OptFrVisitor)
-    }
-}
-
-impl PaymentTransactionValue {
-    pub fn new_payment(
-        tx: PaymentTransaction,
-        outputs: Vec<ExtendedOutputValue>,
-    ) -> PaymentTransactionValue {
-        assert!(tx.txouts.len() <= 2);
-        assert_eq!(tx.txouts.len(), outputs.len());
-
-        PaymentTransactionValue {
-            outputs,
-            tx,
-            status: TransactionStatus::Created {},
-        }
-    }
-
-    pub fn new_vs(
-        tx: PaymentTransaction,
-        outputs: Vec<ExtendedOutputValue>,
-    ) -> PaymentTransactionValue {
-        assert!(tx.txouts.len() >= 2);
-        PaymentTransactionValue {
-            outputs,
-            tx,
-            status: TransactionStatus::Created {},
-        }
-    }
-
-    pub fn new_cloak(tx: PaymentTransaction) -> PaymentTransactionValue {
-        assert_eq!(tx.txouts.len(), 1);
-
-        PaymentTransactionValue {
-            outputs: Vec::new(),
-            tx,
-            status: TransactionStatus::Created {},
-        }
-    }
-
-    pub fn new_stake(tx: PaymentTransaction) -> PaymentTransactionValue {
-        PaymentTransactionValue {
-            outputs: Vec::new(),
-            tx,
-            status: TransactionStatus::Created {},
-        }
-    }
-
-    pub fn to_info(&self) -> TransactionInfo {
-        let tx_hash = Hash::digest(&self.tx);
-
-        // merge output with extended info.
-        let outputs = self
-            .outputs
-            .iter()
-            .map(|e| ExtendedOutputInfo {
-                utxo: Hash::digest(&self.tx.txouts[e.id as usize]),
-                info: e.clone(),
-            })
-            .collect();
-
-        TransactionInfo {
-            tx_hash,
-            outputs,
-            fee: self.tx.fee,
-            inputs: self.tx.txins.clone(),
-            status: self.status.clone(),
+impl StakeValue {
+    pub fn to_info(&self, epoch: u64) -> StakeInfo {
+        let is_active = self
+            .active_until_epoch
+            .map(|active_until_epoch| active_until_epoch >= epoch);
+        StakeInfo {
+            account_pkey: self.output.recipient,
+            utxo: Hash::digest(&self.output),
+            amount: self.output.amount,
+            active_until_epoch: self.active_until_epoch,
+            is_active,
         }
     }
 }
+
+impl OutputValue {
+    pub fn to_info(&self, epoch: u64) -> OutputInfo {
+        match self {
+            OutputValue::Payment(o) => o.to_info(None).into(),
+            OutputValue::PublicPayment(o) => public_payment_info(&o).into(),
+            OutputValue::Stake(o) => o.to_info(epoch).into(),
+        }
+    }
+
+    pub fn to_output(&self) -> Output {
+        match self {
+            OutputValue::Payment(o) => o.output.clone().into(),
+            OutputValue::PublicPayment(o) => o.clone().into(),
+            OutputValue::Stake(o) => o.output.clone().into(),
+        }
+    }
+}
+
+//
+// Converting implementation
+//
 
 impl From<PaymentValue> for OutputValue {
     fn from(value: PaymentValue) -> OutputValue {
@@ -729,9 +638,80 @@ impl From<PublicPaymentOutput> for OutputValue {
     }
 }
 
+impl From<StakeValue> for OutputValue {
+    fn from(value: StakeValue) -> OutputValue {
+        OutputValue::Stake(value)
+    }
+}
+
+//
+// Hashable implementations
+//
+
+impl Hashable for TransactionValue {
+    fn hash(&self, hasher: &mut Hasher) {
+        self.tx.hash(hasher);
+        self.status.hash(hasher);
+        for output in &self.outputs {
+            output.hash(hasher);
+        }
+    }
+}
+
+impl Hashable for OutputValue {
+    fn hash(&self, hasher: &mut Hasher) {
+        match self {
+            OutputValue::Payment(v) => v.hash(hasher),
+            OutputValue::PublicPayment(v) => v.hash(hasher),
+            OutputValue::Stake(v) => v.hash(hasher),
+        }
+    }
+}
+
+impl Hashable for PaymentValue {
+    fn hash(&self, hasher: &mut Hasher) {
+        self.output.hash(hasher);
+        self.amount.hash(hasher);
+        self.recipient.hash(hasher);
+        self.data.hash(hasher);
+        self.is_change.hash(hasher);
+        self.rvalue.hash(hasher);
+    }
+}
+
+impl Hashable for StakeValue {
+    fn hash(&self, hasher: &mut Hasher) {
+        self.output.hash(hasher);
+        self.active_until_epoch.hash(hasher);
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
+    use stegos_crypto::scc::make_random_keys;
+    impl LogEntry {
+        #[allow(unused)]
+        fn testing_stub(id: usize) -> LogEntry {
+            let (_s, p) = make_random_keys();
+            let public = PublicPaymentOutput::new(&p, id as i64);
+
+            LogEntry::Incoming {
+                output: OutputValue::PublicPayment(public),
+            }
+        }
+
+        #[allow(unused)]
+        fn is_testing_stub(&self, id: usize) -> bool {
+            match self {
+                LogEntry::Incoming {
+                    output: OutputValue::PublicPayment(output),
+                    ..
+                } => output.amount == id as i64,
+                _ => false,
+            }
+        }
+    }
 
     fn create_entry(id: usize) -> (Timestamp, LogEntry) {
         let time = Timestamp::UNIX_EPOCH + Duration::from_millis(id as u64 + 1);

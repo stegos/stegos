@@ -8,6 +8,14 @@ message PaymentValue {
     stegos.blockchain.PaymentOutput output = 1;
     int64 amount = 2;
     stegos.blockchain.PaymentPayloadData payload = 3;
+    stegos.crypto.PublicKey recipient = 4;
+    stegos.crypto.Fr rvalue = 5;
+    bool is_change = 6;
+}
+
+message StakeValue {
+    stegos.blockchain.StakeOutput output = 1;
+    uint64 active_until_epoch = 2;
 }
 
 // Possible outputs
@@ -17,25 +25,15 @@ message OutputValue {
     oneof enum_value {
         PaymentValue payment = 1;
         stegos.blockchain.PublicPaymentOutput public_payment = 2;
+        StakeValue stake = 3;
     }
-}
-
-// Certificate of creation for utxo.
-message ExtendedOutputValue {
-    /// destination PublicKey.
-    stegos.crypto.PublicKey recipient = 1;
-    int64 amount = 2;
-    stegos.crypto.Fr rvalue = 3;
-    stegos.blockchain.PaymentPayloadData data = 4;
-    bool is_change = 5;
-    uint64 id = 6;
 }
 
 // Information about created transactions
 message PaymentTransactionValue {
     stegos.blockchain.PaymentTransaction tx = 1;
     TransactionStatus status = 2;
-    repeated ExtendedOutputValue outputs = 3;
+    repeated OutputValue outputs = 3;
 }
 
 // Incoming event

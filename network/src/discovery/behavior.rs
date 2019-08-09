@@ -46,7 +46,7 @@ const MIN_CLOSEST_PEERS: usize = 10;
 // Deliver message to N closest node ids, if node is not present in DHT
 const DELIVERY_REPLICATION: usize = 5;
 // TTL for known nodes
-const NODES_TTL: Duration = Duration::from_secs(15 * 60);
+const NODES_TTL: Duration = Duration::from_secs(5 * 60);
 
 pub enum DiscoveryOutEvent {
     DialPeer { peer_id: PeerId },

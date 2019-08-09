@@ -178,6 +178,7 @@ where
     fn inject_disconnected(&mut self, id: &PeerId, _: ConnectedPoint) {
         debug!(target: "stegos_network::ncp", "peer disconnected: peer_id={}", id.to_base58());
         self.connected_peers.remove(id);
+        self.known_peers.remove(id.as_bytes());
         self.out_events.push_back(NcpOutEvent::Disconnected {
             peer_id: id.clone(),
         });
@@ -245,7 +246,7 @@ where
                     // refresh peers in known peers, so they wouldn't be purged
                     for p in self.connected_peers.keys() {
                         self.events
-                            .push_back(NcpEvent::SendPing { peer_id: p.clone() });
+                            .push_back(NcpEvent::RequestPeers { peer_id: p.clone() });
                         let _ = self.known_peers.get(p.as_bytes());
                     }
                     if self.connected_peers.len() >= self.max_connections {
@@ -273,21 +274,6 @@ where
                         // remove broken (can't really happen) peer_ids from known peers
                         for p in bad_peer_ids.iter() {
                             self.known_peers.remove(p);
-                        }
-
-                        // if nuymebr of connections is below threshold, ask all connected peers for theis neighbors
-                        // otherwise pick 3 random peers from connected and ask them for their neighbors
-                        if self.connected_peers.len() < self.min_connections {
-                            for p in self.connected_peers.keys() {
-                                self.events
-                                    .push_back(NcpEvent::RequestPeers { peer_id: p.clone() });
-                            }
-                        } else {
-                            let idx = rand::thread_rng().gen_range(0, self.connected_peers.len());
-                            if let Some(p) = self.connected_peers.keys().nth(idx) {
-                                self.events
-                                    .push_back(NcpEvent::RequestPeers { peer_id: p.clone() });
-                            }
                         }
                     };
                 }
@@ -328,12 +314,11 @@ where
                     for peer in message.peers.into_iter() {
                         if peer.peer_id != *poll_parameters.local_peer_id() {
                             let id = peer.peer_id.clone();
-                            if !self.known_peers.contains_key(id.as_bytes()) {
-                                self.known_peers.insert(
-                                    id.clone().into_bytes(),
-                                    (peer.node_id.clone(), SmallVec::new()),
-                                );
-                            }
+                            // Replace information for peer
+                            self.known_peers.insert(
+                                id.clone().into_bytes(),
+                                (peer.node_id.clone(), SmallVec::new()),
+                            );
                             for addr in peer.addresses.into_iter() {
                                 // Don't store 127.0.0.1 IPs
                                 if is_localhost(&addr) {

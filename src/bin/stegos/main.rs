@@ -40,10 +40,9 @@ fn main() {
         env!("VERSION_DATE")
     );
 
-    let default_token_file = dirs::data_dir()
+    let default_data_dir = dirs::data_dir()
         .map(|p| p.join("stegos"))
         .unwrap_or(PathBuf::from(r"data"))
-        .join("api.token")
         .to_string_lossy()
         .to_string();
     let default_endpoint = "0.0.0.0:3145";
@@ -57,6 +56,7 @@ fn main() {
                 .index(1)
                 .short("a")
                 .long("api-endpoint")
+                .env("STEGOS_API_ENDPOINT")
                 .value_name("ENDPOINT")
                 .help("API ENDPOINT, e.g. 127.0.0.1:3145")
                 .takes_value(true)
@@ -68,11 +68,11 @@ fn main() {
                 }),
         )
         .arg(
-            Arg::with_name("token-file")
+            Arg::with_name("api-token-file")
                 .short("t")
-                .long("token-file")
+                .long("api-token-file")
+                .env("STEGOS_API_TOKEN_FILE")
                 .help("A path to file, contains 16-byte API TOKEN")
-                .default_value(&default_token_file)
                 .takes_value(true)
                 .validator(|token_file| {
                     stegos_api::load_api_token(Path::new(&token_file))
@@ -80,6 +80,21 @@ fn main() {
                         .map_err(|e| format!("{:?}", e))
                 })
                 .value_name("FILE"),
+        )
+        .arg(
+            Arg::with_name("data-dir")
+                .short("d")
+                .long("data-dir")
+                .env("STEGOS_DATA_DIR")
+                .value_name("DIR")
+                .help("Path to data directory, contains api.token file")
+                .default_value(&default_data_dir)
+                .takes_value(true)
+                .validator(|data_dir| {
+                    stegos_api::load_api_token(&Path::new(&data_dir).join("api.token"))
+                        .map(|_| ())
+                        .map_err(|e| format!("{:?}", e))
+                }),
         )
         .arg(
             Arg::with_name("verbose")
@@ -98,9 +113,22 @@ fn main() {
     };
     simple_logger::init_with_level(level).unwrap_or_default();
 
-    let token_file = args.value_of("token-file").unwrap();
+    let api_token_file = if let Some(api_token_file) = args.value_of("api-token-file") {
+        PathBuf::from(api_token_file)
+    } else {
+        PathBuf::from(args.value_of("data-dir").unwrap()).join("api.token")
+    };
     let uri = format!("ws://{}", args.value_of("api-endpoint").unwrap());
-    let api_token = stegos_api::load_api_token(Path::new(token_file)).unwrap();
+    let api_token = match stegos_api::load_api_token(&api_token_file) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!(
+                "Failed to load API Token from '{:?}': {}",
+                api_token_file, e
+            );
+            std::process::exit(1);
+        }
+    };
 
     println!("{} {}", name, version);
     println!("Type 'help' to get help");

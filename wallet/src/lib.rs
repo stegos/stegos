@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#![deny(warnings)]
+//#![deny(warnings)]
 
 pub mod api;
 mod change;
@@ -121,8 +121,6 @@ struct UnsealedAccountService {
     // Store time in Instant, to be more compatible with tokio-timer.
     /// List of pending utxos.
     pending_payments: HashMap<Hash, PendingOutput>,
-    /// List of unspent outputs.
-    utxos: HashMap<Hash, OutputValue>,
     /// Persistent part of the state.
     account_log: AccountLog,
 
@@ -186,7 +184,6 @@ impl UnsealedAccountService {
         // State.
         //
         let epoch = 0;
-        let utxos = HashMap::new();
         let pending_payments = HashMap::new();
         let facilitator_pkey: pbc::PublicKey = pbc::PublicKey::dum();
         let snowball = None;
@@ -225,7 +222,6 @@ impl UnsealedAccountService {
             epoch,
             facilitator_pkey,
             pending_payments,
-            utxos,
             resend_tx,
             check_pending_utxos,
             snowball,
@@ -253,12 +249,8 @@ impl UnsealedAccountService {
         with_certificate: bool,
     ) -> Result<TransactionInfo, Error> {
         let data = PaymentPayloadData::Comment(comment);
-        let unspent_iter = self
-            .utxos
-            .iter()
-            .filter_map(|(k, v)| v.payment().map(|v| (k, v)))
-            .filter(|(h, _)| self.pending_payments.get(h).is_none())
-            .map(|(_, v)| (&v.output, v.amount, v.output.locked_timestamp.clone()));
+
+        let unspent_iter = self.unspent_payments();
         let sender = if with_certificate {
             Some(&self.account_skey)
         } else {
@@ -304,6 +296,19 @@ impl UnsealedAccountService {
         Ok(payment_info.to_info(self.epoch))
     }
 
+    fn unspent_payments<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = (PaymentOutput, i64, Option<Timestamp>)> + 'a {
+        self.account_log
+            .iter_unspent()
+            .filter_map(|(k, v)| v.payment().map(|v| (k, v)))
+            .filter(move |(h, _)| self.pending_payments.get(h).is_none())
+            .map(|(_, v)| {
+                let time = v.output.locked_timestamp.clone();
+                (v.output, v.amount, time)
+            })
+    }
+
     /// Send money public.
     fn public_payment(
         &mut self,
@@ -312,13 +317,7 @@ impl UnsealedAccountService {
         payment_fee: i64,
         locked_timestamp: Option<Timestamp>,
     ) -> Result<TransactionInfo, Error> {
-        let unspent_iter = self
-            .utxos
-            .iter()
-            .filter_map(|(k, v)| v.payment().map(|v| (k, v)))
-            .filter(|(h, _)| self.pending_payments.get(h).is_none())
-            .map(|(_, v)| (&v.output, v.amount, v.output.locked_timestamp.clone()));
-
+        let unspent_iter = self.unspent_payments();
         let (inputs, outputs, gamma, extended_outputs, fee) = create_payment_transaction(
             Some(&self.account_skey),
             &self.account_pkey,
@@ -395,12 +394,8 @@ impl UnsealedAccountService {
             return Err(WalletError::SnowballBusy.into());
         }
         let data = PaymentPayloadData::Comment(comment);
-        let unspent_iter = self
-            .utxos
-            .iter()
-            .filter_map(|(k, v)| v.payment().map(|v| (k, v)))
-            .filter(|(h, _)| self.pending_payments.get(h).is_none())
-            .map(|(_, v)| (&v.output, v.amount, v.output.locked_timestamp.clone()));
+
+        let unspent_iter = self.unspent_payments();
         let (inputs, outputs, fee) = create_snowball_transaction(
             &self.account_pkey,
             recipient,
@@ -442,12 +437,7 @@ impl UnsealedAccountService {
 
     /// Stake money into the escrow.
     fn stake(&mut self, amount: i64, payment_fee: i64) -> Result<TransactionInfo, Error> {
-        let unspent_iter = self
-            .utxos
-            .iter()
-            .filter_map(|(k, v)| v.payment().map(|v| (k, v)))
-            .filter(|(h, _)| self.pending_payments.get(h).is_none())
-            .map(|(_, v)| (&v.output, v.amount));
+        let unspent_iter = self.unspent_payments();
         let (tx, outputs) = create_staking_transaction(
             &self.account_skey,
             &self.account_pkey,
@@ -481,10 +471,10 @@ impl UnsealedAccountService {
     /// NOTE: amount must include PAYMENT_FEE.
     fn unstake(&mut self, amount: i64, payment_fee: i64) -> Result<TransactionInfo, Error> {
         let unspent_iter = self
-            .utxos
-            .iter()
+            .account_log
+            .iter_unspent()
             .filter_map(|(_k, v)| v.stake())
-            .map(|v| &v.output);
+            .map(|v| v.output);
         let (tx, outputs) = create_unstaking_transaction(
             &self.account_skey,
             &self.account_pkey,
@@ -505,7 +495,11 @@ impl UnsealedAccountService {
     /// Unstake all of the money from the escrow.
     fn unstake_all(&mut self, payment_fee: i64) -> Result<TransactionInfo, Error> {
         let mut amount: i64 = 0;
-        for val in self.utxos.iter().filter_map(|(_k, v)| v.stake()) {
+        for val in self
+            .account_log
+            .iter_unspent()
+            .filter_map(|(_k, v)| v.stake())
+        {
             amount += val.output.amount;
         }
         self.unstake(amount, payment_fee)
@@ -514,15 +508,21 @@ impl UnsealedAccountService {
     /// Restake all available stakes (even if not expired).
     fn restake_all(&mut self) -> Result<TransactionInfo, Error> {
         assert_eq!(STAKE_FEE, 0);
-        if self.utxos.iter().filter_map(|(_k, v)| v.stake()).count() == 0 {
+        if self
+            .account_log
+            .iter_unspent()
+            .filter_map(|(_k, v)| v.stake())
+            .count()
+            == 0
+        {
             return Err(WalletError::NothingToRestake.into());
         }
 
         let stakes = self
-            .utxos
-            .iter()
+            .account_log
+            .iter_unspent()
             .filter_map(|(_k, v)| v.stake())
-            .map(|val| &val.output);
+            .map(|val| val.output);
         let (tx, outputs) = create_restaking_transaction(
             &self.account_skey,
             &self.account_pkey,
@@ -539,8 +539,8 @@ impl UnsealedAccountService {
     /// Cloak all available public outputs.
     fn cloak_all(&mut self, payment_fee: i64) -> Result<TransactionInfo, Error> {
         if self
-            .utxos
-            .iter()
+            .account_log
+            .iter_unspent()
             .filter_map(|(_k, v)| v.public_payment())
             .count()
             == 0
@@ -548,7 +548,10 @@ impl UnsealedAccountService {
             return Err(WalletError::NoPublicOutputs.into());
         }
 
-        let public_utxos = self.utxos.iter().filter_map(|(_k, v)| v.public_payment());
+        let public_utxos = self
+            .account_log
+            .iter_unspent()
+            .filter_map(|(_k, v)| v.public_payment());
         let (tx, output) = create_cloaking_transaction(
             &self.account_skey,
             &self.account_pkey,
@@ -586,8 +589,8 @@ impl UnsealedAccountService {
         let mut balance: i64 = 0;
         let mut available_balance: i64 = 0;
         for (hash, val) in self
-            .utxos
-            .iter()
+            .account_log
+            .iter_unspent()
             .filter_map(|(k, v)| v.payment().map(|v| (k, v)))
         {
             balance += val.amount;
@@ -598,7 +601,7 @@ impl UnsealedAccountService {
                 }
             }
 
-            if self.pending_payments.get(hash).is_some() {
+            if self.pending_payments.get(&hash).is_some() {
                 continue;
             }
 
@@ -676,8 +679,14 @@ impl UnsealedAccountService {
                     }
 
                     let info = value.to_info(None);
-                    let missing = self.utxos.insert(hash, value.into());
+                    let missing = self
+                        .account_log
+                        .get_unspent(&hash)
+                        .expect("Cannot read database");
                     assert!(missing.is_none());
+                    self.account_log
+                        .insert_unspent(value.into())
+                        .expect("Cannot write to database.");
                     self.notify(AccountNotification::Received(info));
                 }
             }
@@ -695,8 +704,14 @@ impl UnsealedAccountService {
                 }
 
                 let info = public_payment_info(&value);
-                let missing = self.utxos.insert(hash, value.into());
+                let missing = self
+                    .account_log
+                    .get_unspent(&hash)
+                    .expect("Cannot read database");
                 assert!(missing.is_none());
+                self.account_log
+                    .insert_unspent(value.into())
+                    .expect("Cannot write to database.");
                 self.notify(AccountNotification::ReceivedPublic(info));
             }
             Output::StakeOutput(o) => {
@@ -711,8 +726,14 @@ impl UnsealedAccountService {
                 };
 
                 let info = value.to_info(self.epoch);
-                let missing = self.utxos.insert(hash, value.into());
+                let missing = self
+                    .account_log
+                    .get_unspent(&hash)
+                    .expect("Cannot read database");
                 assert!(missing.is_none(), "Inconsistent account state");
+                self.account_log
+                    .insert_unspent(value.into())
+                    .expect("Cannot write to database.");
                 self.notify(AccountNotification::Staked(info));
             }
         };
@@ -729,8 +750,15 @@ impl UnsealedAccountService {
                     o.decrypt_payload(&self.account_skey)
                 {
                     info!("Spent: utxo={}, amount={}, data={:?}", hash, amount, data);
-                    match self.utxos.remove(&hash) {
+                    match self
+                        .account_log
+                        .get_unspent(&hash)
+                        .expect("Cannot read database")
+                    {
                         Some(OutputValue::Payment(value)) => {
+                            self.account_log
+                                .remove_unspent(&hash)
+                                .expect("Cannot write database");
                             let info = value.to_info(self.pending_payments.get(&hash));
                             self.notify(AccountNotification::Spent(info));
                         }
@@ -740,8 +768,15 @@ impl UnsealedAccountService {
             }
             Output::PublicPaymentOutput(PublicPaymentOutput { amount, .. }) => {
                 info!("Spent public payment: utxo={}, amount={}", hash, amount);
-                match self.utxos.remove(&hash) {
+                match self
+                    .account_log
+                    .get_unspent(&hash)
+                    .expect("Cannot read database")
+                {
                     Some(OutputValue::PublicPayment(value)) => {
+                        self.account_log
+                            .remove_unspent(&hash)
+                            .expect("Cannot write database");
                         let info = public_payment_info(&value);
                         self.notify(AccountNotification::SpentPublic(info));
                     }
@@ -750,8 +785,15 @@ impl UnsealedAccountService {
             }
             Output::StakeOutput(o) => {
                 info!("Unstaked: utxo={}, amount={}", hash, o.amount);
-                match self.utxos.remove(&hash) {
+                match self
+                    .account_log
+                    .get_unspent(&hash)
+                    .expect("Cannot read database")
+                {
                     Some(OutputValue::Stake(value)) => {
+                        self.account_log
+                            .remove_unspent(&hash)
+                            .expect("Cannot write database");
                         let info = value.to_info(self.epoch);
                         self.notify(AccountNotification::Unstaked(info));
                     }
@@ -1135,13 +1177,13 @@ impl Future for UnsealedAccountService {
                                 let mut public_payments = Vec::new();
                                 let mut stakes = Vec::new();
                                 let mut payments = Vec::new();
-                                for utxo in self.utxos.iter() {
+                                for utxo in self.account_log.iter_unspent() {
                                     match utxo.1 {
                                         OutputValue::Stake(s) => stakes.push(s.to_info(self.epoch)),
                                         OutputValue::Payment(p) => payments
                                             .push(p.to_info(self.pending_payments.get(&utxo.0))),
                                         OutputValue::PublicPayment(p) => {
-                                            public_payments.push(public_payment_info(p))
+                                            public_payments.push(public_payment_info(&p))
                                         }
                                     }
                                 }

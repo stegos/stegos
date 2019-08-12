@@ -27,7 +27,7 @@ use crate::api::*;
 use byteorder::{BigEndian, ByteOrder};
 use failure::{bail, Error};
 use log::{debug, trace};
-use rocksdb::{Direction, IteratorMode, WriteBatch, DB};
+use rocksdb::{Direction, IteratorMode, Options, WriteBatch, DB};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -43,6 +43,9 @@ use tempdir::TempDir;
 
 const LEN_INDEX: [u8; 1] = [0; 1];
 const TIME_INDEX: [u8; 2] = [0; 2];
+
+const UNSPENT_UTXO: &'static str = "unspent_utxo";
+const COLON_FAMILIES: &[&'static str] = &[UNSPENT_UTXO];
 
 #[derive(Debug, Clone)]
 pub enum LogEntry {
@@ -82,7 +85,10 @@ impl AccountLog {
     /// Open database.
     pub fn open(path: &Path) -> AccountLog {
         debug!("Database path = {}", path.to_string_lossy());
-        let database = DB::open_default(path).expect("couldn't open database");
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+        let database = DB::open_cf(&opts, path, COLON_FAMILIES).expect("couldn't open database");
 
         let len = database
             .get(&LEN_INDEX)
@@ -163,6 +169,50 @@ impl AccountLog {
                 }
             }
         }
+    }
+
+    pub fn iter_unspent(&self) -> impl Iterator<Item = (Hash, OutputValue)> {
+        let cf = self.database.cf_handle(UNSPENT_UTXO).expect("cf created");
+
+        let mode = IteratorMode::Start;
+        let iter = self
+            .database
+            .iterator_cf(cf, mode)
+            .expect("Cannot open cf iterator.");
+
+        iter.map(|(k, v)| {
+            let k = Hash::from_vector(&k);
+            let v = OutputValue::from_buffer(&*v).expect("couldn't deserialize entry.");
+            (k, v)
+        })
+    }
+
+    pub fn get_unspent(&self, hash: &Hash) -> Result<Option<OutputValue>, Error> {
+        let cf = self.database.cf_handle(UNSPENT_UTXO).expect("cf created");
+        self.database
+            .get_cf(cf, hash.base_vector())
+            .map(|v| v.map(|b| OutputValue::from_buffer(&b).expect("Deserialization error.")))
+            .map_err(Into::into)
+    }
+
+    pub fn insert_unspent(&mut self, utxo: OutputValue) -> Result<(), Error> {
+        let cf = self.database.cf_handle(UNSPENT_UTXO).expect("cf created");
+        let key = Hash::digest(&utxo);
+        let data = utxo.into_buffer()?;
+
+        let mut batch = WriteBatch::default();
+        batch.put_cf(cf, key.base_vector(), &data)?;
+        self.database.write(batch)?;
+        Ok(())
+    }
+
+    pub fn remove_unspent(&mut self, key: &Hash) -> Result<(), Error> {
+        let cf = self.database.cf_handle(UNSPENT_UTXO).expect("cf created");
+
+        let mut batch = WriteBatch::default();
+        batch.delete_cf(cf, key.base_vector())?;
+        self.database.write(batch)?;
+        Ok(())
     }
 
     fn update_tx_indexes(&mut self, tx_hash: Hash, status: TransactionStatus) {
@@ -530,21 +580,21 @@ impl OutputValue {
         }
     }
 
-    pub fn payment(&self) -> Option<&PaymentValue> {
+    pub fn payment(self) -> Option<PaymentValue> {
         match self {
             OutputValue::Payment(p) => Some(p),
             _ => None,
         }
     }
 
-    pub fn public_payment(&self) -> Option<&PublicPaymentOutput> {
+    pub fn public_payment(self) -> Option<PublicPaymentOutput> {
         match self {
             OutputValue::PublicPayment(p) => Some(p),
             _ => None,
         }
     }
 
-    pub fn stake(&self) -> Option<&StakeValue> {
+    pub fn stake(self) -> Option<StakeValue> {
         match self {
             OutputValue::Stake(s) => Some(s),
             _ => None,

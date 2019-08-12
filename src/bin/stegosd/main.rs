@@ -79,7 +79,7 @@ fn load_logger_configuration(
         2 | _ => log::LevelFilter::Trace,
     };
 
-    // Use --log-config argument for configuration.
+    // Override log_config via command-line or environment.
     if let Some(log_config) = args.value_of_os("log-config") {
         return load_logger_configuration_file(Path::new(log_config));
     }
@@ -224,17 +224,12 @@ fn load_configuration_file(args: &ArgMatches<'_>) -> Result<config::Config, Erro
 
 fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
     let mut cfg = load_configuration_file(args)?;
-    // Override global.chain via ENV.
-    if let Ok(chain) = std::env::var("STEGOS_CHAIN") {
-        cfg.general.chain = chain;
-    }
-
-    // Override global.chain via command-line.
+    // Override global.chain via command-line or environment.
     if let Some(chain) = args.value_of("chain") {
         cfg.general.chain = chain.to_string();
     }
 
-    // Override global.data_dir via command-line.
+    // Override global.data_dir via command-line or environment.
     if let Some(data_dir) = args.value_of_os("data-dir") {
         cfg.general.data_dir = PathBuf::from(data_dir);
     }
@@ -244,22 +239,31 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
         cfg.general.force_check = true;
     }
 
-    // Override global.prometheus_endpoint via command-line.
+    // Override global.prometheus_endpoint via command-line or environment.
     if let Some(prometheus_endpoint) = args.value_of("prometheus-endpoint") {
         cfg.general.prometheus_endpoint = prometheus_endpoint.to_string();
     }
     if cfg.general.prometheus_endpoint != "" {
-        SocketAddr::from_str(&cfg.general.prometheus_endpoint)
-            .map_err(|e| format_err!("Invalid prometheus_endpoint: {}", e))?;
+        SocketAddr::from_str(&cfg.general.prometheus_endpoint).map_err(|e| {
+            format_err!(
+                "Invalid prometheus_endpoint '{}': {}",
+                cfg.general.prometheus_endpoint,
+                e
+            )
+        })?;
     }
 
-    // Override global.api_endpoint via command-line.
+    // Override global.api_endpoint via command-line or environment.
     if let Some(api_endpoint) = args.value_of("api-endpoint") {
         cfg.general.api_endpoint = api_endpoint.to_string();
-    }
-    if cfg.general.api_endpoint != "" {
-        SocketAddr::from_str(&cfg.general.api_endpoint)
-            .map_err(|e| format_err!("Invalid api_endpoint: {}", e))?;
+    } else if cfg.general.api_endpoint != "" {
+        SocketAddr::from_str(&cfg.general.api_endpoint).map_err(|e| {
+            format_err!(
+                "Invalid api_endpoint '{}': {}",
+                &cfg.general.api_endpoint,
+                e
+            )
+        })?;
     }
 
     // Use default SRV record for the chain
@@ -342,6 +346,7 @@ fn run() -> Result<(), Error> {
             Arg::with_name("config")
                 .short("c")
                 .long("config")
+                .env("STEGOS_CONFIG")
                 .value_name("FILE")
                 .help("Path to stegos.toml configuration file")
                 .takes_value(true),
@@ -350,6 +355,7 @@ fn run() -> Result<(), Error> {
             Arg::with_name("log-config")
                 .short("l")
                 .long("log-config")
+                .env("STEGOS_LOG_CONFIG")
                 .value_name("FILE")
                 .help("Path to stegos-log4rs.toml configuration file")
                 .takes_value(true),
@@ -358,6 +364,7 @@ fn run() -> Result<(), Error> {
             Arg::with_name("data-dir")
                 .short("d")
                 .long("data-dir")
+                .env("STEGOS_DATA_DIR")
                 .value_name("DIR")
                 .help("Path to data directory")
                 .takes_value(true),
@@ -366,6 +373,7 @@ fn run() -> Result<(), Error> {
             Arg::with_name("api-endpoint")
                 .short("a")
                 .long("api-endpoint")
+                .env("STEGOS_API_ENDPOINT")
                 .value_name("ENDPOINT")
                 .help("API ENDPOINT, e.g. 127.0.0.1:3145")
                 .validator(|uri| {
@@ -379,6 +387,7 @@ fn run() -> Result<(), Error> {
             Arg::with_name("prometheus-endpoint")
                 .short("p")
                 .long("prometheus-endpoint")
+                .env("STEGOS_PROMETHEUS_ENDPOINT")
                 .value_name("ENDPOINT")
                 .help("PROMETHEUS ENDPOINT, e.g. 127.0.0.1:9090")
                 .takes_value(true)
@@ -392,6 +401,7 @@ fn run() -> Result<(), Error> {
             Arg::with_name("chain")
                 .short("n")
                 .long("chain")
+                .env("STEGOS_CHAIN")
                 .value_name("NAME")
                 .help("Specify chain to use: testnet or dev")
                 .takes_value(true),

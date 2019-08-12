@@ -529,6 +529,27 @@ impl OutputValue {
             _ => false,
         }
     }
+
+    pub fn payment(&self) -> Option<&PaymentValue> {
+        match self {
+            OutputValue::Payment(p) => Some(p),
+            _ => None,
+        }
+    }
+
+    pub fn public_payment(&self) -> Option<&PublicPaymentOutput> {
+        match self {
+            OutputValue::PublicPayment(p) => Some(p),
+            _ => None,
+        }
+    }
+
+    pub fn stake(&self) -> Option<&StakeValue> {
+        match self {
+            OutputValue::Stake(s) => Some(s),
+            _ => None,
+        }
+    }
 }
 
 //

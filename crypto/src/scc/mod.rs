@@ -646,6 +646,10 @@ impl PartialEq<Pt> for Pt {
 // -----------------------------------------------------------------------
 
 impl SecretKey {
+    pub fn zero() -> Self {
+        SecretKey::from(Fr::zero())
+    }
+
     pub fn to_bytes(&self) -> [u8; 32] {
         self.0.to_bytes()
     }
@@ -741,7 +745,7 @@ impl fmt::Debug for PublicKey {
 impl fmt::Display for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = self.to_hex();
-        write!(f, "PublicKey({}...{})", &s[0..7], &s[57..64])
+        write!(f, "{}", &s[0..7])
     }
 }
 

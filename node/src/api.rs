@@ -44,6 +44,8 @@ pub enum NodeRequest {
         account_skey: scc::SecretKey,
         /// Account Public Key.
         account_pkey: scc::PublicKey,
+        /// Last epoch known by account.
+        epoch: u64,
     },
     #[serde(skip)]
     AddTransaction(Transaction),

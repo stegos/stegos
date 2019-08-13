@@ -152,7 +152,12 @@ pub struct OutputRecovery {
     pub timestamp: Timestamp,
 }
 
-pub type AccountRecoveryState = Vec<OutputRecovery>;
+#[derive(Eq, PartialEq, Debug, Default, Clone)]
+pub struct AccountRecoveryState {
+    pub removed: HashMap<Hash, OutputRecovery>,
+    pub commited: HashMap<Hash, OutputRecovery>,
+    pub prepared: HashMap<Hash, OutputRecovery>,
+}
 
 /// The blockchain database.
 pub struct Blockchain {
@@ -379,13 +384,13 @@ impl Blockchain {
     /// TODO: this method is a temporary solution until persistence is implemented in wallet.
     /// https://github.com/stegos/stegos/issues/812
     ///
-    pub fn recover_accounts(
+    pub fn recover_account(
         &self,
-        accounts: &[(&SecretKey, &PublicKey)],
-    ) -> Result<Vec<AccountRecoveryState>, BlockchainError> {
-        let mut accounts_state: Vec<AccountRecoveryState> =
-            vec![Default::default(); accounts.len()];
-        let mut epoch: u64 = 0;
+        account_skey: &SecretKey,
+        account_pkey: &PublicKey,
+        mut epoch: u64,
+    ) -> Result<AccountRecoveryState, BlockchainError> {
+        let mut account_state: AccountRecoveryState = Default::default();
 
         let mut update_account_state =
             |output: &Output,
@@ -394,18 +399,24 @@ impl Blockchain {
              is_final: bool,
              timestamp: Timestamp| {
                 let output_hash = Hash::digest(&output);
-                if !self.contains_output(&output_hash) {
-                    return; // Spent.
-                }
-                for (account_id, (skey, pkey)) in accounts.iter().enumerate() {
-                    if output.is_my_utxo(*skey, *pkey) {
-                        accounts_state[account_id].push(OutputRecovery {
-                            output: output.clone(),
-                            epoch,
-                            block_hash: block_hash.clone(),
-                            is_final,
-                            timestamp,
-                        });
+                if output.is_my_utxo(account_skey, account_pkey) {
+                    let output = OutputRecovery {
+                        output: output.clone(),
+                        epoch,
+                        block_hash: block_hash.clone(),
+                        timestamp,
+                        is_final,
+                    };
+
+                    if !self.contains_output(&output_hash) {
+                        account_state.removed.insert(output_hash, output);
+                        return; // Spent.
+                    }
+
+                    if is_final {
+                        account_state.commited.insert(output_hash, output);
+                    } else {
+                        account_state.prepared.insert(output_hash, output);
                     }
                 }
             };
@@ -441,7 +452,7 @@ impl Blockchain {
             }
         }
         assert_eq!(epoch, self.epoch);
-        Ok(accounts_state)
+        Ok(account_state)
     }
 
     //

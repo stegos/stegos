@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-//#![deny(warnings)]
+#![deny(warnings)]
 
 pub mod api;
 mod change;
@@ -122,7 +122,7 @@ struct UnsealedAccountService {
     /// List of pending utxos.
     pending_payments: HashMap<Hash, PendingOutput>,
     /// Persistent part of the state.
-    account_log: AccountLog,
+    account_log: AccountDatabase,
 
     /// Network API (shared).
     network: Network,
@@ -183,14 +183,13 @@ impl UnsealedAccountService {
         //
         // State.
         //
-        let epoch = 0;
         let pending_payments = HashMap::new();
         let facilitator_pkey: pbc::PublicKey = pbc::PublicKey::dum();
         let snowball = None;
 
         let last_macro_block_timestamp = Timestamp::UNIX_EPOCH;
 
-        let account_log = AccountLog::open(&database_dir);
+        let (account_log, epoch) = AccountDatabase::open(&database_dir);
         let transaction_response = None;
         let resend_tx = Interval::new(clock::now(), RESEND_TX_INTERVAL);
         let check_pending_utxos = Interval::new(clock::now(), CHECK_PENDING_UTXO);
@@ -201,6 +200,7 @@ impl UnsealedAccountService {
         let recovery_request = NodeRequest::RecoverAccount {
             account_skey: account_skey.clone(),
             account_pkey: account_pkey.clone(),
+            epoch,
         };
         let recovery_rx = Some(node.request(recovery_request));
 
@@ -303,6 +303,7 @@ impl UnsealedAccountService {
             .iter_unspent()
             .filter_map(|(k, v)| v.payment().map(|v| (k, v)))
             .filter(move |(h, _)| self.pending_payments.get(h).is_none())
+            .inspect(|(h, _)| trace!("full unspent iter = {}", h))
             .map(|(_, v)| {
                 let time = v.output.locked_timestamp.clone();
                 (v.output, v.amount, time)
@@ -625,7 +626,7 @@ impl UnsealedAccountService {
             self.on_output_created(epoch, output_hash, output);
         }
         for (input_hash, input) in inputs {
-            self.on_output_pruned(epoch, input_hash, input);
+            self.on_output_pruned(input_hash, input);
         }
 
         let (balance, available_balance) = self.balance();
@@ -740,7 +741,7 @@ impl UnsealedAccountService {
     }
 
     /// Called when UTXO is spent.
-    fn on_output_pruned(&mut self, _epoch: u64, hash: Hash, output: Output) {
+    fn on_output_pruned(&mut self, hash: Hash, output: Output) {
         if !output.is_my_utxo(&self.account_skey, &self.account_pkey) {
             return;
         }
@@ -833,6 +834,11 @@ impl UnsealedAccountService {
             snowball.change_facilitator(self.facilitator_pkey.clone());
         }
         self.last_macro_block_timestamp = last_macro_block_timestamp;
+        let updated_statuses = self
+            .account_log
+            .finalize_epoch(epoch)
+            .expect("Cannot write to db.");
+        self.on_tx_statuses_changed(updated_statuses);
     }
 
     fn handle_snowball_transaction(
@@ -1012,16 +1018,32 @@ impl Future for UnsealedAccountService {
                         } => {
                             // Recover state.
                             assert!(self.snowball.is_none());
-                            for OutputRecovery { output, epoch, .. } in recovery_state {
+                            for (hash, OutputRecovery { output, .. }) in
+                                recovery_state.removed.into_iter()
+                            {
+                                self.on_output_pruned(hash, output)
+                            }
+
+                            // firstly save all info that is final, and finalize epoch state.
+                            for (_, OutputRecovery { output, epoch, .. }) in
+                                recovery_state.commited.into_iter()
+                            {
                                 let output_hash = Hash::digest(&output);
                                 self.on_output_created(epoch, output_hash, output);
                             }
-                            info!("Loaded account {}", self.account_pkey);
                             self.on_epoch_changed(
                                 epoch,
                                 facilitator_pkey,
                                 last_macro_block_timestamp,
                             );
+                            for (_, OutputRecovery { output, epoch, .. }) in
+                                recovery_state.prepared.into_iter()
+                            {
+                                let output_hash = Hash::digest(&output);
+                                self.on_output_created(epoch, output_hash, output);
+                            }
+
+                            info!("Loaded account {}", self.account_pkey);
                         }
                         NodeResponse::Error { error } => {
                             // Sic: this case is hard to recover.
@@ -1030,9 +1052,7 @@ impl Future for UnsealedAccountService {
                         _ => unreachable!(),
                     };
                 }
-                Ok(Async::NotReady) => {
-                    return Ok(Async::NotReady);
-                }
+                Ok(Async::NotReady) => {}
                 Err(_) => panic!("disconnected"),
             }
         }
@@ -1266,8 +1286,6 @@ impl Future for UnsealedAccountService {
                             block.facilitator,
                             block.last_macro_block_timestamp,
                         );
-                        let updated_statuses = self.account_log.finalize_epoch_txs();
-                        self.on_tx_statuses_changed(updated_statuses);
                     }
                     NodeNotification::RollbackMicroBlock(block) => {
                         assert!(self.recovery_rx.is_none(), "recovered from the disk");

@@ -1221,14 +1221,12 @@ impl NodeService {
         &mut self,
         account_skey: &scc::SecretKey,
         account_pkey: &scc::PublicKey,
+        epoch: u64,
     ) -> Result<AccountRecoveryState, Error> {
         debug!("Recovering account from blockchain: pkey={}", account_pkey);
         let recovery_state = self
             .chain
-            .recover_accounts(&[(account_skey, account_pkey)])?
-            .into_iter()
-            .next()
-            .unwrap();
+            .recover_account(account_skey, account_pkey, epoch)?;
         info!("Recovered account from blockchain: pkey={}", account_pkey);
         Ok(recovery_state)
     }
@@ -1941,9 +1939,13 @@ impl Future for NodeService {
                                 NodeRequest::RecoverAccount {
                                     account_skey,
                                     account_pkey,
+                                    epoch,
                                 } => {
-                                    match self.handle_recover_account(&account_skey, &account_pkey)
-                                    {
+                                    match self.handle_recover_account(
+                                        &account_skey,
+                                        &account_pkey,
+                                        epoch,
+                                    ) {
                                         Ok(recovery_state) => NodeResponse::AccountRecovered {
                                             recovery_state,
                                             epoch: self.chain.epoch(),

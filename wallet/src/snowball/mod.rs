@@ -83,15 +83,13 @@ mod protos;
 
 use crate::snowball::message::SnowballMessage;
 use crate::storage::{OutputValue, PaymentValue};
-use failure::format_err;
-use failure::Error;
 use futures::task::current;
 use futures::Async;
 use futures::Future;
 use futures::Poll;
 use futures::Stream;
 use futures_stream_select_all_send::select_all;
-use log::*;
+use log::{log, Level};
 use rand::thread_rng;
 use rand::Rng;
 use std::collections::HashMap;
@@ -103,13 +101,13 @@ use stegos_blockchain::PaymentTransaction;
 use stegos_blockchain::{Output, Timestamp};
 use stegos_blockchain::{PaymentOutput, PaymentPayloadData};
 use stegos_crypto::bulletproofs::{simple_commit, validate_range_proof};
-use stegos_crypto::dicemix;
 use stegos_crypto::dicemix::*;
 use stegos_crypto::hash::{Hash, Hashable, Hasher, HASH_SIZE};
 use stegos_crypto::pbc;
 use stegos_crypto::scc::{
     make_deterministic_keys, sign_hash, validate_sig, Fr, Pt, PublicKey, SchnorrSig, SecretKey,
 };
+use stegos_crypto::{dicemix, CryptoError};
 use stegos_network::Network;
 use stegos_node::txpool::PoolJoin;
 use stegos_node::txpool::PoolNotification;
@@ -129,6 +127,27 @@ pub const MAX_UTXOS: usize = 5; // max nbr of txout UTXO permitted
 pub const MSG_FLOOD_LIMIT: usize = 5; // max nbr of pending messages from one participant
 
 // ==============================================================
+
+macro_rules! sdebug {
+    ($self:expr, $fmt:expr $(,$arg:expr)*) => (
+        log!(Level::Debug, concat!("[{}] ({}) ", $fmt), $self.account_pkey, $self.state.name(), $($arg),*);
+    );
+}
+macro_rules! sinfo {
+    ($self:expr, $fmt:expr $(,$arg:expr)*) => (
+        log!(Level::Info, concat!("[{}] ({}) ", $fmt), $self.account_pkey, $self.state.name(), $($arg),*);
+    );
+}
+macro_rules! swarn {
+    ($self:expr, $fmt:expr $(,$arg:expr)*) => (
+        log!(Level::Warn, concat!("[{}] ({}) ", $fmt), $self.account_pkey, $self.state.name(), $($arg),*);
+    );
+}
+macro_rules! serror {
+    ($self:expr, $fmt:expr $(,$arg:expr)*) => (
+        log!(Level::Error, concat!("[{}] ({}) ", $fmt), $self.account_pkey, $self.state.name(), $($arg),*);
+    );
+}
 
 type ParticipantID = dicemix::ParticipantID;
 type TXIN = Hash;
@@ -160,25 +179,32 @@ enum SnowballEvent {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-/// Pool State.
-enum PoolState {
+/// Snowball Finite State Machine state.
+enum State {
+    Start,
     PoolWait,
-    PoolFormed,
-    PoolFinished,
-    /// Last session was canceled, waiting for new facilitator.
-    PoolRestart,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum MessageState {
-    // used to indicate what kind of message payloads are wanted
-    // in a collection pause between Snowball phases.
-    Start, // at startup, and after we finished succeessfully
     SharedKeying,
     Commitment,
     CloakedVals,
     Signature,
     SecretKeying,
+    Finish,
+}
+
+impl State {
+    /// Enum to string.
+    fn name(&self) -> &'static str {
+        match *self {
+            State::Start => "Start",
+            State::PoolWait => "PoolWait",
+            State::SharedKeying => "SharedKeying",
+            State::Commitment => "Commitment",
+            State::CloakedVals => "CloakedVals",
+            State::Signature => "Signature",
+            State::SecretKeying => "SecretKeying",
+            State::Finish => "Finish",
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -194,6 +220,9 @@ pub struct Snowball {
     // -------------------------------------------
     // Startup Info - known at time of Snowball::new()
     /// Account Secret Key.
+    account_pkey: PublicKey,
+
+    /// Account Secret Key.
     account_skey: SecretKey,
 
     /// My public txpool's key.
@@ -201,13 +230,6 @@ pub struct Snowball {
 
     /// Faciliator's PBC public key
     facilitator: pbc::PublicKey,
-
-    /// Next facilitator's PBC public key.
-    /// Used if facilitator was changed during snowball session.
-    future_facilitator: Option<pbc::PublicKey>,
-
-    /// Pool State.
-    poll_state: PoolState,
 
     /// Public keys of txpool's members,
     participants: Vec<ParticipantID>,
@@ -218,11 +240,11 @@ pub struct Snowball {
     /// Timeout timer.
     timer: Option<Delay>,
 
-    /// Context of timeout timer
-    timer_context: (MessageState, Hash),
-
     /// Incoming events.
     events: Box<dyn Stream<Item = SnowballEvent, Error = ()> + Send>,
+
+    /// FSM.
+    state: State,
 
     // --------------------------------------------
     // Items computed from TXINS before joining pool
@@ -341,12 +363,6 @@ pub struct Snowball {
     // they get moved back to participants list. Remaining pending_participants
     // is the list of participants that dropped out during this exchange
     pending_participants: HashSet<ParticipantID>,
-
-    // msg_state - indicates type of expected messages for each
-    // Send/Receive exchange. Reset to None at termination of Receive.
-    // Receive can terminate either by timeout, or early after receiving
-    // from all expected participants.
-    msg_state: MessageState,
 }
 
 impl Snowball {
@@ -396,10 +412,9 @@ impl Snowball {
         }
 
         let my_signing_skey: SecretKey = my_signing_skeyF.into();
-        let future_facilitator = None;
         let participants: Vec<ParticipantID> = Vec::new();
         let session_id: Hash = Hash::random();
-        let state = PoolState::PoolWait;
+        let state = State::Start;
         let mut rng = thread_rng();
         let seed = rng.gen::<[u8; 32]>();
         let my_participant_id = dicemix::ParticipantID::new(network_pkey, seed);
@@ -429,12 +444,12 @@ impl Snowball {
         let events = select_all(events);
 
         let mut sb = Snowball {
+            account_pkey,
             account_skey,
-            sess_pkey: account_pkey, // just a dummy placeholder for now
+            sess_pkey: PublicKey::zero(), // just a dummy placeholder for now
             my_participant_id,
             facilitator,
-            future_facilitator,
-            poll_state: state,
+            state,
             participants,
             session_id,
             network,
@@ -444,7 +459,7 @@ impl Snowball {
             my_txouts,
             my_utxos: Vec::new(),
             my_fee,
-            sess_skey: account_skey.clone(), // dummy placeholder for now
+            sess_skey: SecretKey::zero(), // dummy placeholder for now
             my_signing_skey,
             txin_gamma_sum,
             // these are all empty participant lists
@@ -464,26 +479,26 @@ impl Snowball {
             signatures: HashMap::new(),
             pending_participants: HashSet::new(),
             excl_participants: Vec::new(),
-            msg_state: MessageState::Start,
             trans: PaymentTransaction::dum(),
             msg_queue: VecDeque::new(),
             serialized_utxo_size: None,
             dicemix_nbr_utxo_chunks: None,
             commit_phase_participants: Vec::new(),
-            timer_context: (MessageState::Start, Hash::from_str("init")),
         };
         sb.send_pool_join();
         sb
     }
 
-    /// Sets timeout.
-    fn start_timer(&mut self) {
-        trace!("Start timer.");
-        assert!(self.msg_state != MessageState::Start);
-        current().notify();
-        self.timer_context = (self.msg_state.clone(), self.session_id.clone());
+    /// Change state.
+    fn change_state(&mut self, state: State) {
+        swarn!(self, "=> ({})", state.name());
+        self.state = state;
+        if self.state == State::Finish {
+            return;
+        }
         let timer = Delay::new(clock::now() + SNOWBALL_TIMER);
-        self.timer = timer.into();
+        self.timer = Some(timer);
+        current().notify();
     }
 
     pub fn is_my_input(&self, input: Hash) -> bool {
@@ -510,38 +525,18 @@ impl Snowball {
 
     /// Called when facilitator has been changed.
     pub fn change_facilitator(&mut self, facilitator: pbc::PublicKey) {
-        match self.poll_state {
-            PoolState::PoolFinished | PoolState::PoolRestart | PoolState::PoolWait => {}
-            // in progress some session, keep new facilitator in future facilitator.
-            _ => {
-                debug!(
-                    "Saving new facilitator, for future change: facilitator={}",
-                    facilitator
-                );
-                self.future_facilitator = Some(facilitator);
-            }
-        }
-        debug!("Changed facilitator: facilitator={}", facilitator);
         self.facilitator = facilitator;
-        self.future_facilitator = None;
-        // Last session was canceled, rejoining to new facilitator.
-        if self.poll_state == PoolState::PoolRestart || self.poll_state == PoolState::PoolWait {
-            debug!("Found new facilitator, rejoining to new pool.");
+        sinfo!(self, "Change facilitator to {}", &facilitator);
+        if self.state == State::PoolWait {
             self.send_pool_join();
-        }
-    }
-
-    fn try_update_facilitator(&mut self) {
-        if let Some(facilitator) = self.future_facilitator.take() {
-            debug!("Changed facilitator: facilitator={}", facilitator);
-            self.facilitator = facilitator;
         }
     }
 
     /// Sends a request to join tx pool.
     fn send_pool_join(&mut self) {
-        debug!(
-            "Sending pool join request: to_facilitator={}",
+        sdebug!(
+            self,
+            "Sending PoolJoin request: facilitator={}",
             self.facilitator
         );
         // To join a session we must send our list of TXINS, along with
@@ -563,15 +558,10 @@ impl Snowball {
         self.network
             .send(self.facilitator, POOL_JOIN_TOPIC, msg)
             .expect("Connected");
-    }
 
-    fn reset_state(&mut self) {
-        self.poll_state = PoolState::PoolFinished;
-        self.msg_state = MessageState::Start;
         self.msg_queue.clear();
         self.session_round = 0;
-        self.timer = None;
-        self.try_update_facilitator();
+        self.change_state(State::PoolWait);
     }
 
     /// Called when a new txpool is formed.
@@ -580,24 +570,33 @@ impl Snowball {
         from: pbc::PublicKey,
         pool_info: PoolNotification,
     ) -> HandlerResult {
-        debug!("pool = {:?}", pool_info);
-        if let Err(e) = self.ensure_facilitator(from) {
-            warn!("Found different facilitator: e = {}", e);
+        if from != self.facilitator {
+            swarn!(
+                self,
+                "Ignore pool notification from a non-facilitator: expected={}, got={}",
+                self.facilitator,
+                from
+            );
             return Ok(Async::NotReady);
         }
+
+        if self.state != State::PoolWait {
+            swarn!(
+                self,
+                "Ignore pool notification in current state: msg={:?}",
+                pool_info
+            );
+            return Ok(Async::NotReady);
+        }
+
         let pool_info = match pool_info {
             PoolNotification::Canceled => {
-                debug!(
-                    "Old facilitator decide to stop forming pool, trying to rejoin to the new one."
+                swarn!(
+                    self,
+                    "Pool has been cancelled, waiting for the next facilitator."
                 );
-                let changed = self.future_facilitator.is_some();
-                self.reset_state();
-                if changed {
-                    debug!("Found new facilitator, rejoining to new pool.");
-                    self.send_pool_join();
-                } else {
-                    self.poll_state = PoolState::PoolRestart;
-                }
+                // Wait until self.change_facilitator() is called by timer.
+                assert!(self.timer.is_some(), "timer is active");
                 return Ok(Async::NotReady);
             }
             PoolNotification::Started(info) => info,
@@ -609,8 +608,10 @@ impl Snowball {
             .find(|k| k.participant == self.my_participant_id)
             .is_none()
         {
-            debug!("Our key = {:?}", self.my_participant_id);
-            return Err(SnowballError::NotInParticipantList);
+            swarn!(self, "We aren't a participant");
+            // Wait until self.change_facilitator() is called by timer.
+            assert!(self.timer.is_some(), "timer is active");
+            return Ok(Async::NotReady);
         }
 
         self.session_id = pool_info.session_id;
@@ -627,7 +628,7 @@ impl Snowball {
                     self.all_txins.insert(elt.participant, pairs);
                 }
                 _ => {
-                    debug!("Invalid ownership signature");
+                    swarn!(self, "Invalid ownership signature");
                 }
             }
         }
@@ -635,27 +636,13 @@ impl Snowball {
         self.participants.sort();
         self.participants.dedup();
 
-        debug!("Formed txpool: members={}", self.participants.len());
+        sinfo!(self, "Formed a pool");
         for pkey in &self.participants {
-            debug!("{:?}", pkey);
+            sinfo!(self, "Member {:?}", pkey);
         }
-
-        self.poll_state = PoolState::PoolFormed;
 
         // start processing queued transactions....
         self.start()
-    }
-
-    fn ensure_facilitator(&self, from: pbc::PublicKey) -> Result<(), Error> {
-        if from != self.facilitator {
-            Err(format_err!(
-                "Invalid facilitator: expected={}, got={}",
-                self.facilitator,
-                from
-            ))
-        } else {
-            Ok(())
-        }
     }
 
     fn exclude_participants(&mut self, p_excl: &Vec<ParticipantID>) {
@@ -671,6 +658,7 @@ impl Future for Snowball {
 
     /// Event loop.
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        assert_ne!(self.state, State::Finish, "poll() after finish");
         match self.timer.poll().expect("Should be no error in timer") {
             Async::Ready(Some(_)) => match self.handle_timer() {
                 Ok(Async::NotReady) => (),
@@ -687,7 +675,7 @@ impl Future for Snowball {
                             let pool_info = match PoolNotification::from_buffer(&pool_info) {
                                 Ok(msg) => msg,
                                 Err(e) => {
-                                    error!("Invalid PoolInfo message: {}", e);
+                                    serror!(self, "Invalid PoolInfo message: {}", e);
                                     continue;
                                 }
                             };
@@ -697,17 +685,23 @@ impl Future for Snowball {
                             let msg = match SnowballMessage::from_buffer(&msg) {
                                 Ok(msg) => msg,
                                 Err(e) => {
-                                    error!("Invalid DirectMessage message: {}", e);
+                                    serror!(self, "Ignore invalid message: {}", e);
                                     continue;
                                 }
                             };
                             if msg.source.pkey != from {
-                                warn!("Source key was different {} = {}", msg.source.pkey, from);
+                                swarn!(
+                                    self,
+                                    "Ignore a message with invalid source: expected={}, got={}",
+                                    from,
+                                    msg.source.pkey
+                                );
                                 continue;
                             }
                             if msg.destination != self.my_participant_id {
-                                trace!(
-                                    "Message to other account: destination={} = our_key={}",
+                                sdebug!(
+                                    self,
+                                    "Ignore a message to other participant: msg_id={}, my_id={}",
                                     msg.destination,
                                     self.my_participant_id
                                 );
@@ -720,15 +714,13 @@ impl Future for Snowball {
                     match result {
                         Ok(Async::Ready(r)) => {
                             // Finish.
-                            debug!("Done");
                             return Ok(Async::Ready(r));
                         }
                         Ok(Async::NotReady) => {
-                            debug!("NotReady");
                             continue;
                         }
                         Err(error) => {
-                            error!("Error: {:?}", error);
+                            serror!(self, "{:?}", error);
                             return Err((error, self.my_txins.clone()));
                         }
                     }
@@ -823,29 +815,25 @@ impl Snowball {
     */
 
     fn handle_timer(&mut self) -> HandlerResult {
-        // reset msg_state to indicate done waiting for this kind of message
+        assert_ne!(self.state, State::Finish, "poll() after finish");
+        // reset state to indicate done waiting for this kind of message
         // whichever participants have responded are now held in self.participants.
         // whichever participants did not respond are in self.pending_participants.
         self.timer = None;
-        let (timer_state, timer_sid) = self.timer_context;
-        if timer_state == self.msg_state && timer_sid == self.session_id {
-            debug!("vs timeout, msg_state: {:?}", self.msg_state);
-            if self.poll_state == PoolState::PoolFinished {
-                // handle case of left over timer event after we finish
-                // should not ever happen...
-                return Err(SnowballError::WildTimer);
-            } else {
-                if !self.pending_participants.is_empty() {
-                    debug!(
-                        "Timeout. Missing participants for phase {:?}, {:?}",
-                        self.msg_state, self.pending_participants
-                    );
-                }
-                self.perform_next_phase()
-            }
-        } else {
-            Err(SnowballError::WildTimer)
+        swarn!(self, "Timed out");
+        if self.state == State::PoolWait {
+            self.send_pool_join();
+            return Ok(Async::NotReady);
         }
+
+        if !self.pending_participants.is_empty() {
+            sdebug!(
+                self,
+                "Missing participants: {:?}",
+                self.pending_participants
+            );
+        }
+        self.perform_next_phase()
     }
 
     fn from_msg_count(&self, from: &ParticipantID) -> usize {
@@ -864,14 +852,20 @@ impl Snowball {
         sid: &Hash,
         payload: &SnowballPayload,
     ) -> HandlerResult {
-        debug!("vs message: {}, from: {}, sess: {}", *payload, *from, *sid);
+        sdebug!(
+            self,
+            "Message: from={}, sid={}, msg={}",
+            *from,
+            *sid,
+            *payload
+        );
 
         // insert new message at head of queue
         if self.from_msg_count(from) < MSG_FLOOD_LIMIT {
             self.msg_queue.push_front((*from, *sid, payload.clone()));
         }
 
-        if self.msg_state == MessageState::Start || self.pending_participants.is_empty() {
+        if self.state == State::PoolWait || self.pending_participants.is_empty() {
             // if messages arrive while we aren't waiting (yet),
             // just enqueue them.
             return Ok(Async::NotReady);
@@ -941,7 +935,7 @@ impl Snowball {
         sid: &Hash,
         payload: &SnowballPayload,
     ) -> MsgHandlerResponse {
-        // If message matches what would be expected for a given msg_state,
+        // If message matches what would be expected for a given state,
         // then process the message.
         //
         // Otherwise, perhaps a participant is ahead of us and we see their
@@ -950,15 +944,15 @@ impl Snowball {
         //
         // It is possible for messages to have arrived from other participants,
         // even when our own state is Start. They might be ahead of us.
-        match (self.msg_state, payload) {
-            (MessageState::SharedKeying, SnowballPayload::SharedKeying { pkey, ksig }) => {
+        match (&self.state, payload) {
+            (State::SharedKeying, SnowballPayload::SharedKeying { pkey, ksig }) => {
                 self.handle_shared_keying(from, sid, pkey, ksig)
             }
-            (MessageState::Commitment, SnowballPayload::Commitment { cmt }) => {
+            (State::Commitment, SnowballPayload::Commitment { cmt }) => {
                 self.handle_commitment(from, sid, cmt)
             }
             (
-                MessageState::CloakedVals,
+                State::CloakedVals,
                 SnowballPayload::CloakedVals {
                     matrix,
                     gamma_sum,
@@ -966,10 +960,10 @@ impl Snowball {
                     cloaks,
                 },
             ) => self.handle_cloaked_vals(from, sid, matrix, gamma_sum, fee_sum, cloaks),
-            (MessageState::Signature, SnowballPayload::Signature { sig }) => {
+            (State::Signature, SnowballPayload::Signature { sig }) => {
                 self.handle_signature(from, sid, sig)
             }
-            (MessageState::SecretKeying, SnowballPayload::SecretKeying { skey }) => {
+            (State::SecretKeying, SnowballPayload::SecretKeying { skey }) => {
                 self.handle_secret_keying(from, sid, skey)
             }
             _ => MsgHandlerResponse::ReEnqueue,
@@ -978,15 +972,18 @@ impl Snowball {
 
     fn perform_next_phase(&mut self) -> HandlerResult {
         self.timer = None; // cancel any pending timeout timer
-        match mem::replace(&mut self.msg_state, MessageState::Start) {
-            MessageState::Start => {
-                panic!("There should be no processing in Start state.");
+        match self.state {
+            State::Start | State::Finish | State::PoolWait => {
+                panic!(
+                    "There should be no processing in {} state.",
+                    self.state.name()
+                );
             }
-            MessageState::SharedKeying => self.commit(),
-            MessageState::Commitment => self.share_cloaked_data(),
-            MessageState::CloakedVals => self.make_supertransaction(),
-            MessageState::Signature => self.sign_supertransaction(),
-            MessageState::SecretKeying => self.blame_discovery(),
+            State::SharedKeying => self.commit(),
+            State::Commitment => self.share_cloaked_data(),
+            State::CloakedVals => self.make_supertransaction(),
+            State::Signature => self.sign_supertransaction(),
+            State::SecretKeying => self.blame_discovery(),
         }
     }
 
@@ -1024,8 +1021,7 @@ impl Snowball {
     ) -> MsgHandlerResponse {
         if *sid == self.session_id {
             if self.pending_participants.contains(from) {
-                // debug!("In handle_shared_keying()");
-                debug!("received shared keying {:?}", pkey);
+                sdebug!(self, "Received shared keying {:?}", pkey);
                 self.sigK_vals.insert(*from, *ksig);
                 self.sess_pkeys.insert(*from, *pkey);
                 MsgHandlerResponse::Accept
@@ -1045,10 +1041,9 @@ impl Snowball {
         sid: &Hash,
         cmt: &Hash,
     ) -> MsgHandlerResponse {
-        // debug!("In handle_commitment()");
         if *sid == self.session_id {
             if self.pending_participants.contains(from) {
-                debug!("saving commitment {}", cmt);
+                sdebug!(self, "Saving commitment {}", cmt);
                 self.commits.insert(*from, *cmt);
                 MsgHandlerResponse::Accept
             } else {
@@ -1079,16 +1074,15 @@ impl Snowball {
         fee_sum: &Fr,
         cloaks: &HashMap<ParticipantID, Hash>,
     ) -> MsgHandlerResponse {
-        // debug!("In handle_cloaked_vals()");
         if *sid == self.session_id {
             if self.pending_participants.contains(from) {
                 let cmt = self.commits.get(from).expect("Can't access commit");
-                debug!("Checking commitment {}", cmt);
+                sdebug!(self, "Checking commitment {}", cmt);
                 // DiceMix expects to be able to find all missing
                 // participant cloaking values
                 if *cmt == hash_data(matrix, gamma_sum, fee_sum) && self.same_exclusions(cloaks) {
-                    debug!("Commitment check passed {}", cmt);
-                    debug!("Saving cloaked data");
+                    sdebug!(self, "Commitment check passed {}", cmt);
+                    sdebug!(self, "Saving cloaked data");
                     self.matrices.insert(*from, matrix.clone());
                     self.cloaked_gamma_adjs.insert(*from, gamma_sum.clone());
                     self.cloaked_fees.insert(*from, fee_sum.clone());
@@ -1097,7 +1091,7 @@ impl Snowball {
                 } else {
                     // participant has wrong impression, or we are
                     // under attack...
-                    debug!("Commitment check failed {}", cmt);
+                    swarn!(self, "Commitment check failed {}", cmt);
                     MsgHandlerResponse::Discard
                 }
             } else {
@@ -1116,10 +1110,10 @@ impl Snowball {
         sid: &Hash,
         sig: &SchnorrSig,
     ) -> MsgHandlerResponse {
-        // debug!("In handle_signature()");
+        // sdebug!(self, "In handle_signature()");
         if *sid == self.session_id {
             if self.pending_participants.contains(from) {
-                debug!("saving signature {:?}", sig);
+                sdebug!(self, "saving signature {:?}", sig);
                 self.signatures.insert(*from, sig.clone());
                 MsgHandlerResponse::Accept
             } else {
@@ -1138,10 +1132,10 @@ impl Snowball {
         sid: &Hash,
         skey: &SecretKey,
     ) -> MsgHandlerResponse {
-        // debug!("In handle_secret_keying()");
+        // sdebug!(self, "In handle_secret_keying()");
         if *sid == self.session_id {
             if self.pending_participants.contains(from) {
-                debug!("saving skey {:?}", skey);
+                sdebug!(self, "saving skey {:?}", skey);
                 self.sess_skeys.insert(*from, skey.clone());
                 MsgHandlerResponse::Accept
             } else {
@@ -1181,7 +1175,6 @@ impl Snowball {
         //   - fewer than 3 participants = protocol fail
         //   - normal exit
 
-        debug!("In start()");
         self.need_3_participants()?;
 
         self.participants.sort(); // put into consistent order
@@ -1258,7 +1251,6 @@ impl Snowball {
         //   - normal exit
         //   - fewer than 3 participants = protocol failure
 
-        debug!("In commit()");
         self.need_3_participants()?;
 
         // participants at the time of matrix construction
@@ -1360,7 +1352,6 @@ impl Snowball {
         //   - fewer than 3 participants = protocol failure
         //   - .expect() errors - should never happen in proper code
 
-        debug!("In share_cloaked_data()");
         self.need_3_participants()?;
 
         // make note of missing participants here
@@ -1429,7 +1420,6 @@ impl Snowball {
         //   - normal exit
         //   - .expect() errors -> should never happen in proper code
         //
-        debug!("In make_supertransaction()");
         self.need_3_participants()?;
 
         if self.had_dropouts() {
@@ -1441,7 +1431,7 @@ impl Snowball {
             // An inifinite restart loop is avoided here because we obviously
             // now have fewer participants than before. Either we eventually
             // succeed, or we fail by having fewer than 3 participants.
-            debug!("dropouts occurred - restarting");
+            swarn!(self, "Dropouts occurred - restarting");
             return self.start();
         }
 
@@ -1462,7 +1452,7 @@ impl Snowball {
                     u.hash(&mut state);
                 });
         });
-        debug!("txin hash: {}", state.result());
+        sdebug!(self, "txins hash: {}", state.result());
 
         // get the cloaks we put there for all missing participants
         let msgs = dc_decode(
@@ -1474,7 +1464,7 @@ impl Snowball {
             &self.excl_participants, // the excluded participants
             &self.all_excl_cloaks,
         );
-        debug!("nbr msgs = {}", msgs.len());
+        sdebug!(self, "nbr msgs = {}", msgs.len());
 
         let mut all_utxos = Vec::<UTXO>::new();
         let mut all_utxo_cmts = Vec::<Pt>::new();
@@ -1490,11 +1480,11 @@ impl Snowball {
                 _ => {} // this will cause failure below
             }
         });
-        debug!("txout hash: {}", state.result());
+        sdebug!(self, "txouts hash: {}", state.result());
         // --------------------------------------------------------
         // for debugging - ensure that all of our txouts made it
         {
-            debug!("nbr txouts = {}", all_utxos.len());
+            sdebug!(self, "nbr txouts = {}", all_utxos.len());
             self.my_utxos
                 .iter()
                 .for_each(|ucmt| assert!(all_utxo_cmts.contains(ucmt)));
@@ -1516,13 +1506,18 @@ impl Snowball {
             match total_fees_f.clone().to_i64() {
                 Ok(val) => val,
                 _ => {
-                    debug!("I failed in conversion of total_fees");
+                    sdebug!(self, "I failed in conversion of total_fees");
                     0 // will probably fail validation...
                 }
             }
         };
-        debug!("total fees {:?} -> {:?}", total_fees_f.clone(), total_fees);
-        debug!("gamma_adj: {:?}", gamma_adj);
+        sdebug!(
+            self,
+            "total fees {:?} -> {:?}",
+            total_fees_f.clone(),
+            total_fees
+        );
+        sdebug!(self, "gamma_adj: {:?}", gamma_adj);
 
         let K_sum = self
             .commit_phase_participants
@@ -1540,12 +1535,14 @@ impl Snowball {
             total_fees,
             &gamma_adj,
         );
-        {
-            // for debugging - show the supertransaction hash at this node
-            // all nodes should agree on this
-            let h = Hash::digest(&self.trans);
-            debug!("hash: {}", h);
-        }
+
+        // for debugging - show the supertransaction hash at this node
+        // all nodes should agree on this
+        sinfo!(
+            self,
+            "Created a super transaction: tx={}",
+            Hash::digest(&self.trans)
+        );
 
         // fill in multi-signature...
         self.signatures = HashMap::new();
@@ -1563,7 +1560,6 @@ impl Snowball {
         //   - normal exit
         //   - .expect() errors -> should never happen in correct code
 
-        debug!("In sign_supertransaction()");
         if !self
             .commit_phase_participants
             .iter()
@@ -1572,7 +1568,10 @@ impl Snowball {
             // we don't have the requisite signatures,
             // so just start a new session. Could only have happened if
             // fewer participants responded.
-            debug!("incorrect number of signaturs obtained - restarting without them");
+            swarn!(
+                self,
+                "Incorrect number of signaturs obtained - restarting without them"
+            );
             return self.start();
         }
 
@@ -1583,16 +1582,12 @@ impl Snowball {
             .fold(self.trans.sig, |sig, p| {
                 sig + self.signatures.get(p).expect("can't get peer signature")
             });
-        debug!("total sig {:?}", self.trans.sig);
+        sdebug!(self, "total sig {:?}", self.trans.sig);
 
         if self.validate_transaction() {
             let leader = self.leader_id();
-            debug!("Leader = {}", leader);
+            sdebug!(self, "Leader = {}", leader);
             let tx = self.trans.clone();
-            self.reset_state(); // indicate nothing more to follow, restartable
-            self.msg_queue.clear();
-            self.session_round = 0; // for possible restarts
-
             assert_eq!(self.my_txouts.len(), self.my_utxos.len());
             let utxos: Vec<PaymentOutput> = self
                 .my_utxos
@@ -1630,7 +1625,9 @@ impl Snowball {
                 })
                 .collect();
 
-            debug!("Success in Snowball!");
+            self.msg_queue.clear();
+            self.session_round = 0; // for possible restarts
+            self.change_state(State::Finish);
             return Ok(Async::Ready(SnowballOutput {
                 tx,
                 outputs,
@@ -1662,11 +1659,10 @@ impl Snowball {
         // Possible exits:
         //   - normal exit
 
-        debug!("In blame_discovery()");
         if self.had_dropouts() {
             // if there were too few session keys received, then
             // someone dropped out, and we restart without them.
-            debug!("too few session keys for blame cycle");
+            sdebug!(self, "Too few session keys for blame cycle");
         } else {
             // everyone responded with their secret session key
 
@@ -1678,7 +1674,7 @@ impl Snowball {
                 all_txins: self.all_txins.clone(),
                 serialized_utxo_size: self.serialized_utxo_size.unwrap(),
             };
-            debug!("calling dc_reconstruct()");
+            sdebug!(self, "Calling dc_reconstruct()");
             let new_p_excl = dc_reconstruct(
                 &self.commit_phase_participants,
                 &self.sess_pkeys,
@@ -1748,7 +1744,7 @@ impl Snowball {
         match self.trans.validate(&inputs) {
             Ok(_) => true,
             Err(err) => {
-                debug!("validation error: {:?}", err);
+                sdebug!(self, "Validation error: {:?}", err);
                 false
             }
         }
@@ -1881,7 +1877,7 @@ impl Snowball {
                     destination: *pkey,
                 };
                 let bmsg = msg.into_buffer().expect("serialized");
-                debug!("sending msg {:?} to {}", &msg, pkey);
+                sdebug!(self, "sending msg {:?} to {}", &msg, pkey);
                 self.network
                     .send(pkey.pkey.clone(), SNOWBALL_TOPIC, bmsg)
                     .expect("connected");
@@ -1889,9 +1885,9 @@ impl Snowball {
         }
     }
 
-    fn prep_rx(&mut self, msgtype: MessageState) -> HandlerResult {
+    fn prep_rx(&mut self, state: State) -> HandlerResult {
         // transfer other participants into pending_participants
-        // and set new msg_state for expected kind of messages
+        // and set new state for expected kind of messages
         let mut other_participants: HashSet<ParticipantID> = HashSet::new();
         self.participants
             .iter()
@@ -1902,9 +1898,8 @@ impl Snowball {
         self.pending_participants = other_participants;
         self.participants = vec![self.my_participant_id];
 
-        self.msg_state = msgtype;
-        self.start_timer();
-        debug!("In prep_rx(), state = {:?}", msgtype);
+        sdebug!(self, "In prep_rx(), state = {:?}", state);
+        self.change_state(state);
         Ok(Async::NotReady)
     }
 
@@ -1927,7 +1922,7 @@ impl Snowball {
 
         // we allow the receive_xxx to specify individual timeout periods
         // in case they need to vary
-        self.prep_rx(MessageState::SharedKeying)
+        self.prep_rx(State::SharedKeying)
     }
 
     // -------------------------------------------------
@@ -1943,7 +1938,7 @@ impl Snowball {
         // if any fail to send commitments, add them to exclusion list p_excl
 
         // fill in commits
-        self.prep_rx(MessageState::Commitment)
+        self.prep_rx(State::Commitment)
     }
 
     // -------------------------------------------------
@@ -1973,7 +1968,7 @@ impl Snowball {
 
         // fill in matrices, cloaked_gamma_adj, cloaked_fees,
         // and all_excl_k_cloaks, using commits to validate incoming data
-        self.prep_rx(MessageState::CloakedVals)
+        self.prep_rx(State::CloakedVals)
     }
 
     // -------------------------------------------------
@@ -1991,7 +1986,7 @@ impl Snowball {
         // Partial valid = K component is valid ECC point
 
         // fill in signatures
-        self.prep_rx(MessageState::Signature)
+        self.prep_rx(State::Signature)
     }
 
     // -------------------------------------------------
@@ -2006,7 +2001,7 @@ impl Snowball {
         // non-respondents are added to p_excl
 
         // fills in sess_skeys
-        self.prep_rx(MessageState::SecretKeying)
+        self.prep_rx(State::SecretKeying)
     }
 
     // -------------------------------------------------
@@ -2090,7 +2085,10 @@ fn sign_utxos(utxos: &Vec<UTXO>, skey: &SecretKey) -> SchnorrSig {
     sign_hash(&state.result(), &SecretKey::from(signing_f))
 }
 
-fn validate_ownership(txins: &Vec<(TXIN, UTXO)>, owner_sig: &SchnorrSig) -> Result<(), Error> {
+fn validate_ownership(
+    txins: &Vec<(TXIN, UTXO)>,
+    owner_sig: &SchnorrSig,
+) -> Result<(), CryptoError> {
     let mut p_cmp = Pt::inf();
     let hash = {
         let mut state = Hasher::new();
@@ -2102,28 +2100,19 @@ fn validate_ownership(txins: &Vec<(TXIN, UTXO)>, owner_sig: &SchnorrSig) -> Resu
         }
         state.result()
     };
-    match validate_sig(&hash, owner_sig, &PublicKey::from(p_cmp)) {
-        Ok(()) => Ok(()),
-        Err(err) => Err(err.into()),
-    }
+    validate_sig(&hash, owner_sig, &PublicKey::from(p_cmp))
 }
 
 fn serialize_utxo(utxo: &UTXO) -> Vec<u8> {
     utxo.into_buffer().expect("Can't serialize UTXO")
 }
 
-fn deserialize_utxo(msg: &Vec<u8>, ser_size: usize) -> Result<UTXO, Error> {
+fn deserialize_utxo(msg: &Vec<u8>, ser_size: usize) -> Result<UTXO, String> {
     // DiceMix returns a byte vector whose length is some integral
     // number of Field size. But proto-bufs is very particular about
     // what it is handed, and complains about trailing padding bytes.
     // otherwise, deserialize and return
-    match UTXO::from_buffer(&msg[0..ser_size]) {
-        Err(err) => {
-            debug!("deserialization error: {:?}", err);
-            Err(err)
-        }
-        Ok(utxo) => Ok(utxo),
-    }
+    UTXO::from_buffer(&msg[0..ser_size]).map_err(|e| format!("{:?}", e))
 }
 
 // -------------------------------------------------

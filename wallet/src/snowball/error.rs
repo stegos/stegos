@@ -28,10 +28,6 @@ use failure::Fail;
 
 #[derive(Debug, Fail)]
 pub enum SnowballError {
-    #[fail(display = "We aren't a participant")]
-    NotInParticipantList,
     #[fail(display = "Not enough participants: {}", _0)]
     TooFewParticipants(usize),
-    #[fail(display = "Timeout even after we have finished")]
-    WildTimer,
 }

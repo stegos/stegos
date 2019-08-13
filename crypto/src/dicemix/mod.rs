@@ -1448,35 +1448,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
-    fn test_solver_panic() {
-        fn add_col(col: &mut Vec<Fr>, x: &Vec<Fr>) {
-            for ix in 0..col.len() {
-                col[ix] += x[ix];
-            }
-        }
-
-        let f1 = Fr::random();
-        let f2 = Fr::random();
-        let f3 = Fr::random();
-        let f4 = Fr::random();
-        let mut col = exp_vec(&f1, 4);
-        add_col(&mut col, &exp_vec(&f2, 4));
-        add_col(&mut col, &exp_vec(&f3, 4));
-        add_col(&mut col, &exp_vec(&f4, 4));
-
-        // introduce a spurious inconsistency
-        // adding in one more vector than the dimension expected
-        //  - should force a non-monic solution error
-        add_col(
-            &mut col,
-            &vec![Fr::one(), Fr::zero(), Fr::zero(), Fr::zero()],
-        );
-
-        dc_solve(&col); // this should panic with non-monic solution
-    }
-
-    #[test]
     fn test_solver() {
         fn add_col(col: &mut Vec<Fr>, x: &Vec<Fr>) {
             for ix in 0..col.len() {

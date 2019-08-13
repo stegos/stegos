@@ -220,6 +220,18 @@ pub struct SnowballOutput {
     pub is_leader: bool,
 }
 
+#[derive(Debug, Clone)]
+pub enum SnowballTestPlan {
+    // StopCommunication -- stop communications with other participants
+    // before sending messages pertaining to the next state
+    // State here must be the current state which is about to
+    // transition to a next state.
+    //
+    // If second arg is None, don't send message to anyone,
+    // else, don't send message to indicated participants
+    StopCommunication(State, Option<Vec<ParticipantID>>),
+}
+
 /// Snowball implementation.
 pub struct Snowball {
     // -------------------------------------------
@@ -368,6 +380,9 @@ pub struct Snowball {
     // they get moved back to participants list. Remaining pending_participants
     // is the list of participants that dropped out during this exchange
     pending_participants: HashSet<ParticipantID>,
+
+    // Snowball test-plan
+    test_plan: Option<SnowballTestPlan>,
 }
 
 impl Snowball {
@@ -489,6 +504,7 @@ impl Snowball {
             serialized_utxo_size: None,
             dicemix_nbr_utxo_chunks: None,
             commit_phase_participants: Vec::new(),
+            test_plan: None,
         };
         sb.send_pool_join();
         sb
@@ -498,6 +514,14 @@ impl Snowball {
     pub fn state(&self) -> State {
         self.state
     }
+
+    // for debug - set up a test plan
+    pub fn set_test_plan(&mut self, plan: SnowballTestPlan) {
+        self.test_plan = Some(plan.clone());
+    }
+
+    // ----------------------------------------------------------
+    // Snowball Internals
 
     /// Change state.
     fn change_state(&mut self, state: State) {
@@ -1878,8 +1902,22 @@ impl Snowball {
     // -------------------------------------------------
 
     fn send_signed_message(&self, payload: &SnowballPayload) {
+        // for testing - see if we are asked to not send message
+        let skip_parts = match self.test_plan.as_ref() {
+            None => vec![self.my_participant_id], // dummy, we never send to self anyway
+            Some(SnowballTestPlan::StopCommunication(phase, parts)) => {
+                if *phase == self.state {
+                    match &*parts {
+                        Some(part_ids) => part_ids.clone(),
+                        None => self.participants.clone(), // send to nobody
+                    }
+                } else {
+                    vec![self.my_participant_id] // dummy, we never send to self anyway
+                }
+            }
+        };
         for pkey in &self.participants {
-            if *pkey != self.my_participant_id {
+            if *pkey != self.my_participant_id && !skip_parts.contains(pkey) {
                 let msg = SnowballMessage {
                     sid: self.session_id,
                     payload: payload.clone(),

@@ -37,7 +37,7 @@ mod transaction;
 
 use self::error::WalletError;
 use self::recovery::recovery_to_account_skey;
-use self::snowball::{Snowball, SnowballOutput, State as SnowballState};
+use self::snowball::{Snowball, SnowballOutput, SnowballTestPlan, State as SnowballState};
 use self::storage::*;
 use self::transaction::*;
 use api::*;
@@ -418,7 +418,7 @@ impl UnsealedAccountService {
                 .is_none());
         }
 
-        let snowball = Snowball::new(
+        let mut snowball = Snowball::new(
             self.account_skey.clone(),
             self.account_pkey.clone(),
             self.network_pkey.clone(),
@@ -429,6 +429,11 @@ impl UnsealedAccountService {
             outputs,
             fee,
         );
+        // force innocuous use of the set_test_plan function to satisfy Rust...
+        snowball.set_test_plan(SnowballTestPlan::StopCommunication(
+            snowball::State::Started,
+            None,
+        ));
 
         metrics::WALLET_CREATEAD_SECURE_PAYMENTS
             .with_label_values(&[&String::from(&self.account_pkey)])

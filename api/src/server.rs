@@ -396,7 +396,7 @@ impl WebSocketServer {
         let node2 = node.clone();
         let version2 = version.clone();
         let addr: SocketAddr = endpoint.parse()?;
-        info!("Starting API Server on {}", &addr);
+        info!(target: "stegos_api", "Starting API Server on {}", &addr);
         let server = TcpListener::bind(&addr)?
             .incoming()
             .map_err(|e| {

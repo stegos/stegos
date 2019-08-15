@@ -42,13 +42,16 @@ use toml;
 /// Don't forget to update stegos.toml.example after adding new options.
 ///
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "snake_case")]
 #[serde(default)]
 pub struct Config {
     /// General settings
     pub general: GeneralConfig,
     /// Chain configuration.
+    #[serde(skip_serializing)]
     pub chain: ChainConfig,
     /// Node configuration.
+    #[serde(skip_serializing)]
     pub node: NodeConfig,
     /// Network configuration.
     pub network: NetworkConfig,
@@ -96,7 +99,7 @@ impl Default for GeneralConfig {
             force_check: cfg!(debug_assertions),
             log_config: PathBuf::new(),
             prometheus_endpoint: "".to_string(),
-            api_endpoint: "0.0.0.0:3145".to_string(),
+            api_endpoint: "127.0.0.1:3145".to_string(),
         }
     }
 }

@@ -24,7 +24,7 @@
 use failure::{format_err, Error};
 use futures::prelude::*;
 use futures::sync::mpsc;
-use libp2p_core::multiaddr::{Multiaddr, Protocol};
+use libp2p_core::multiaddr::Multiaddr;
 use libp2p_core::upgrade::{InboundUpgradeExt, OutboundUpgradeExt};
 use libp2p_core::{
     identity, identity::ed25519, swarm::NetworkBehaviourEventProcess, transport::TransportError,
@@ -41,6 +41,7 @@ use smallvec::SmallVec;
 use std::collections::{HashMap, HashSet};
 use std::error;
 use std::io;
+use std::net::SocketAddr;
 use std::time::Duration;
 use stegos_crypto::hash::{Hashable, Hasher};
 use stegos_crypto::pbc;
@@ -57,6 +58,8 @@ use crate::{Network, NetworkProvider, UnicastMessage};
 
 mod proto;
 use self::proto::unicast_proto;
+use crate::utils::socket_to_multi_addr;
+use std::str::FromStr;
 
 #[derive(Clone, Debug)]
 pub struct Libp2pNetwork {
@@ -180,10 +183,11 @@ fn new_service(
         Swarm::new(transport, behaviour, peer_id)
     };
 
-    let mut bind_ip = Multiaddr::from(Protocol::Ip4(config.bind_ip.clone().parse()?));
-    bind_ip.push(Protocol::Tcp(config.bind_port));
-
-    Swarm::listen_on(&mut swarm, bind_ip).unwrap();
+    if config.endpoint != "" {
+        let endpoint = SocketAddr::from_str(&config.endpoint).expect("Invalid endpoint");
+        let endpoint = socket_to_multi_addr(&endpoint);
+        Swarm::listen_on(&mut swarm, endpoint).unwrap();
+    }
 
     let (control_tx, mut control_rx) = mpsc::unbounded::<ControlMessage>();
     let mut listening = false;
@@ -203,7 +207,7 @@ fn new_service(
                 Async::Ready(None) | Async::NotReady => {
                     if !listening {
                         if let Some(a) = Swarm::listeners(&swarm).next() {
-                            info!("Listening on {:?}", a);
+                            info!(target: "stegos_network", "Starting Network on {:?}", a);
                             listening = true;
                         }
                     }
@@ -263,7 +267,7 @@ where
         };
         let unicast_topic = TopicBuilder::new(UNICAST_TOPIC).build();
         behaviour.floodsub.subscribe(unicast_topic);
-        info!(target: "stegos_network::delivery", "Network endpoints: node_id={}, peer_id={}", network_pkey, peer_id);
+        debug!(target: "stegos_network::delivery", "Network endpoints: node_id={}, peer_id={}", network_pkey, peer_id);
         behaviour
     }
 

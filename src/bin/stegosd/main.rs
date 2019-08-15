@@ -108,7 +108,7 @@ fn load_logger_configuration(
     // Use default configuration.
     let stdout = ConsoleAppender::builder()
         .encoder(Box::new(PatternEncoder::new(
-            "{d(%Y-%m-%d %H:%M:%S)(local)} {h({l})} [{M}] {m}{n}",
+            "{d(%Y-%m-%d %H:%M:%S)(local)} {h({l})} [{t}] {m}{n}",
         )))
         .build();
     let config = LogConfig::builder()
@@ -141,35 +141,8 @@ fn initialize_genesis(cfg: &config::Config) -> Result<MacroBlock, Error> {
     let genesis = Block::from_buffer(genesis).expect("Invalid genesis");
     let genesis = genesis.unwrap_macro();
     let hash = Hash::digest(&genesis);
-    info!("Using genesis={} for '{}' chain", hash, cfg.general.chain);
+    info!("Using '{}' chain, genesis={}", cfg.general.chain, hash);
     Ok(genesis)
-}
-
-fn resolve_pool(cfg: &mut config::Config) -> Result<(), Error> {
-    if cfg.network.seed_pool == "" {
-        return Ok(());
-    }
-
-    let config = DnsConfig::load_default()?;
-    let resolver = resolver::DnsResolver::new(config)?;
-
-    let rrs: Vec<Srv> = resolver.resolve_record(&cfg.network.seed_pool)?;
-
-    for r in rrs.iter() {
-        if let Ok(addrs) = resolver.resolve_host(&r.target) {
-            for a in addrs {
-                let maddr = format!("/ip4/{}/tcp/{}", a.to_string(), r.port);
-                // don't try to connect to ourselves or already configured seed nodes
-                if cfg.network.advertised_addresses.iter().all(|a| *a != maddr)
-                    && cfg.network.seed_nodes.iter().all(|a| *a != maddr)
-                {
-                    info!(target: "stegos_network::ncp", "Adding node from seed pool: {}", maddr);
-                    cfg.network.seed_nodes.push(maddr);
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 fn report_metrics(_req: Request<Body>) -> Response<Body> {
@@ -264,6 +237,59 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
         cfg.general.force_check = true;
     }
 
+    // Override network.endpoint via command-line or environment.
+    if let Some(endpoint) = args.value_of("node-endpoint") {
+        cfg.network.endpoint = endpoint.to_string();
+    }
+    if cfg.network.endpoint != "" {
+        SocketAddr::from_str(&cfg.network.endpoint).map_err(|e| {
+            format_err!("Invalid network.endpoint '{}': {}", cfg.network.endpoint, e)
+        })?;
+    }
+
+    // Override network.advertised_endpoint via command-line or environment.
+    if let Some(network_endpoint) = args.value_of("advertised-endpoint") {
+        cfg.network.advertised_endpoint = network_endpoint.to_string();
+    }
+    if cfg.network.advertised_endpoint != "" {
+        SocketAddr::from_str(&cfg.network.advertised_endpoint).map_err(|e| {
+            format_err!(
+                "Invalid network.advertised_endpoint '{}': {}",
+                cfg.network.advertised_endpoint,
+                e
+            )
+        })?;
+    }
+
+    // Use default SRV record for the chain
+    if cfg.general.chain != "dev" && cfg.network.seed_pool == "" {
+        cfg.network.seed_pool =
+            format!("_stegos._tcp.{}.aws.stegos.com", cfg.general.chain).to_string();
+    }
+
+    // Resolve network.seed_pool.
+    if cfg.network.seed_pool != "" {
+        let config = DnsConfig::load_default()?;
+        let resolver = resolver::DnsResolver::new(config)?;
+        // Sic: DNS operations are blocking.
+        let rrs: Vec<Srv> = resolver.resolve_record(&cfg.network.seed_pool)?;
+        for r in rrs.iter() {
+            let addrs = resolver
+                .resolve_host(&r.target)
+                .map_err(|e| format_err!("Failed to resolve seed_pool: {}", e))?;
+            for addr in addrs {
+                let addr = SocketAddr::new(addr, r.port);
+                cfg.network.seed_nodes.push(addr.to_string());
+            }
+        }
+    }
+
+    // Validate network.seed_nodes.
+    for (i, addr) in cfg.network.seed_nodes.iter().enumerate() {
+        SocketAddr::from_str(addr)
+            .map_err(|e| format_err!("Invalid network.seed_nodes[{}] '{}': {}", i, addr, e))?;
+    }
+
     // Override global.prometheus_endpoint via command-line or environment.
     if let Some(prometheus_endpoint) = args.value_of("prometheus-endpoint") {
         cfg.general.prometheus_endpoint = prometheus_endpoint.to_string();
@@ -289,12 +315,6 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
                 e
             )
         })?;
-    }
-
-    // Use default SRV record for the chain
-    if cfg.general.chain != "dev" && cfg.network.seed_pool == "" {
-        cfg.network.seed_pool =
-            format!("_stegos._tcp.{}.aws.stegos.com", cfg.general.chain).to_string();
     }
 
     // Disable [chain] and [node] sections for mainnet and testnet.
@@ -399,12 +419,38 @@ fn run() -> Result<(), Error> {
                 .takes_value(true),
         )
         .arg(
+            Arg::with_name("node-endpoint")
+                .long("node-endpoint")
+                .env("STEGOS_NODE_ENDPOINT")
+                .value_name("ENDPOINT")
+                .help("Node endpoint (ip:port), e.g. 0.0.0.0:3144")
+                .validator(|uri| {
+                    SocketAddr::from_str(&uri)
+                        .map(|_| ())
+                        .map_err(|e| format!("{}", e))
+                })
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("advertised-endpoint")
+                .long("advertised-endpoint")
+                .env("STEGOS_ADVERTISED_ENDPOINT")
+                .value_name("ENDPOINT")
+                .help("Node advertised endpoint (ip:port), e.g. 1.1.1.1:3144")
+                .validator(|uri| {
+                    SocketAddr::from_str(&uri)
+                        .map(|_| ())
+                        .map_err(|e| format!("{}", e))
+                })
+                .takes_value(true),
+        )
+        .arg(
             Arg::with_name("api-endpoint")
                 .short("a")
                 .long("api-endpoint")
                 .env("STEGOS_API_ENDPOINT")
                 .value_name("ENDPOINT")
-                .help("API ENDPOINT, e.g. 127.0.0.1:3145")
+                .help("WebSocket API endpoint (ip:port), e.g. 127.0.0.1:3145")
                 .validator(|uri| {
                     SocketAddr::from_str(&uri)
                         .map(|_| ())
@@ -418,7 +464,7 @@ fn run() -> Result<(), Error> {
                 .long("prometheus-endpoint")
                 .env("STEGOS_PROMETHEUS_ENDPOINT")
                 .value_name("ENDPOINT")
-                .help("PROMETHEUS ENDPOINT, e.g. 127.0.0.1:9090")
+                .help("Prometheus Exporter endpoint (ip:port), e.g. 127.0.0.1:9090")
                 .takes_value(true)
                 .validator(|uri| {
                     SocketAddr::from_str(&uri)
@@ -450,15 +496,15 @@ fn run() -> Result<(), Error> {
         .get_matches();
 
     // Parse configuration
-    let mut cfg = load_configuration(&args)?;
+    let cfg = load_configuration(&args)?;
 
     // Initialize logger
     let _log = load_logger_configuration(&args, &cfg.general.log_config)?;
 
     // Print welcome message
     info!("{} {}", name, version);
+    debug!("Configuration:\n{}", serde_yaml::to_string(&cfg).unwrap());
 
-    info!("Data directory: {}", cfg.general.data_dir.to_string_lossy());
     let data_dir = cfg.general.data_dir.clone();
     if !data_dir.exists() {
         fs::create_dir_all(&data_dir)
@@ -479,9 +525,6 @@ fn run() -> Result<(), Error> {
     let network_skey_file = data_dir.join("network.skey");
     let network_pkey_file = data_dir.join("network.pkey");
     let (network_skey, network_pkey) = load_network_keys(&network_skey_file, &network_pkey_file)?;
-
-    // Resolve seed pool (works, if chain=='testent', does nothing otherwise)
-    resolve_pool(&mut cfg)?;
 
     // Initialize network
     let mut rt = Runtime::new()?;

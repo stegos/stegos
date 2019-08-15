@@ -3,8 +3,7 @@
 /target
 /stegos*.toml
 /stegos*-log4rs.toml
-/node_id.txt
-logs/
+/stegosd.log
 
 # Keys
 /*.pkey

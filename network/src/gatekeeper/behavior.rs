@@ -45,7 +45,8 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use super::handler::{GatekeeperHandler, GatekeeperSendEvent};
 use super::protocol::{GatekeeperMessage, VDFProof};
 use crate::config::NetworkConfig;
-use crate::utils::{ExpiringQueue, PeerIdKey};
+use crate::utils::{socket_to_multi_addr, ExpiringQueue, PeerIdKey};
+use std::net::SocketAddr;
 
 // Dialout timeout
 const DIAL_TIMEOUT: Duration = Duration::from_secs(60);
@@ -109,16 +110,13 @@ impl<TSubstream> Gatekeeper<TSubstream> {
         addrs.shuffle(&mut rng);
 
         for addr in addrs.iter() {
+            let addr = addr.parse::<SocketAddr>().expect("Invalid seed_node");;
+            let addr = socket_to_multi_addr(&addr);
             debug!(target: "stegos_network::gatekeeper", "dialing peer with address {}", addr);
-            match addr.parse::<Multiaddr>() {
-                Ok(maddr) => {
-                    events.push_back(NetworkBehaviourAction::DialAddress {
-                        address: maddr.clone(),
-                    });
-                    desired_addesses.insert(maddr);
-                }
-                Err(e) => error!(target: "stegos_network::gatekeeper", "failed to parse address: {}, error: {}", addr, e),
-            }
+            events.push_back(NetworkBehaviourAction::DialAddress {
+                address: addr.clone(),
+            });
+            desired_addesses.insert(addr);
         }
 
         let (solution_sink, solution_stream) = unbounded::<Solution>();

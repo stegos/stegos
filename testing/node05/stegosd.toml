@@ -6,18 +6,14 @@ data_dir = "testing/node05"
 force_check = true
 
 [network]
-bind_ip = "127.0.0.1"
-bind_port = 10059
-advertise_local_ips = false
+endpoint = "127.0.0.1:10059"
+public_endpoint = "127.0.0.1:10059"
 handshake_puzzle_difficulty = 100
 seed_nodes = [
-    "/ip4/127.0.0.1/tcp/10055",
-    "/ip4/127.0.0.1/tcp/10056",
-    "/ip4/127.0.0.1/tcp/10057",
-    "/ip4/127.0.0.1/tcp/10058",
-    "/ip4/127.0.0.1/tcp/10060",
-    "/ip4/127.0.0.1/tcp/10061",
-]
-advertised_addresses = [
-    "/ip4/127.0.0.1/tcp/10059",
+    "127.0.0.1:10055",
+    "127.0.0.1:10056",
+    "127.0.0.1:10057",
+    "127.0.0.1:10058",
+    "127.0.0.1:10060",
+    "127.0.0.1:10061",
 ]

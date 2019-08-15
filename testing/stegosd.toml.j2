@@ -6,17 +6,13 @@ data_dir = "testing/node{{NODE_ID}}"
 force_check = true
 
 [network]
-bind_ip = "127.0.0.1"
-bind_port = {{ NODE_ID|int + 10054 }}
-advertise_local_ips = false
+endpoint = "127.0.0.1:{{ NODE_ID|int + 10054 }}"
+public_endpoint = "127.0.0.1:{{ NODE_ID|int + 10054 }}"
 handshake_puzzle_difficulty = 100
 seed_nodes = [
 {%- for k in range(NUM_KEYS|int) %}
 {%- if 1+k|int != NODE_ID|int %}
-    "/ip4/127.0.0.1/tcp/{{10055 + k|int}}",
+    "127.0.0.1:{{10055 + k|int}}",
 {%- endif -%}
 {%- endfor %}
-]
-advertised_addresses = [
-    "/ip4/127.0.0.1/tcp/{{ NODE_ID|int + 10054 }}",
 ]

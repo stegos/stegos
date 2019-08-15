@@ -30,3 +30,11 @@ pub use self::expiring_queue::ExpiringQueue;
 pub use self::lru_bimap::LruBimap;
 pub use self::multihash::IntoMultihash;
 pub use self::peer_id_key::PeerIdKey;
+use libp2p_core::multiaddr::{Multiaddr, Protocol};
+use std::net::SocketAddr;
+
+pub fn socket_to_multi_addr(addr: &SocketAddr) -> Multiaddr {
+    let mut maddr: Multiaddr = addr.ip().into();
+    maddr.push(Protocol::Tcp(addr.port()));
+    maddr
+}

@@ -34,14 +34,15 @@ pub(crate) fn find_utxo<'a, I, T>(
     fee_change: i64,
     last_macro_block_timestamp: Timestamp,
     max_inputs_in_tx: usize,
-) -> Result<(Vec<&'a T>, i64, i64), WalletError>
+) -> Result<(Vec<T>, i64, i64), WalletError>
 where
-    I: IntoIterator<Item = (&'a T, i64, Option<Timestamp>)>,
+    I: IntoIterator<Item = (T, i64, Option<Timestamp>)>,
+    T: Clone,
 {
     assert!(sum >= 0);
     assert!(fee >= 0);
     assert!(fee_change >= 0);
-    let mut sorted: Vec<(i64, &T)> = Vec::new();
+    let mut sorted: Vec<(i64, T)> = Vec::new();
     for (output, amount, time) in unspent_iter {
         if let Some(time) = time {
             if time >= last_macro_block_timestamp {
@@ -68,14 +69,14 @@ where
 
     // Sort in ascending order to eliminate as much outputs as possible
     sorted.sort_by_key(|(amount, _output)| *amount);
-    let mut inputs: VecDeque<(i64, &T)> = VecDeque::from(sorted);
+    let mut inputs: VecDeque<(i64, T)> = VecDeque::from(sorted);
 
     // Try to spend without a change.
-    let mut spent: Vec<&T> = Vec::new();
+    let mut spent: Vec<T> = Vec::new();
     let mut change: i64 = sum + fee;
     for (amount, output) in inputs.iter() {
         change -= *amount;
-        spent.push(*output);
+        spent.push(output.clone());
         if change <= 0 || spent.len() >= max_inputs_in_tx {
             break;
         }
@@ -94,7 +95,7 @@ where
         if change > 0 {
             if let Some((amount, output)) = inputs.pop_back() {
                 change -= amount;
-                spent.push(&*output);
+                spent.push(output);
                 continue;
             } else {
                 break; // no inputs left
@@ -103,7 +104,7 @@ where
         if change <= 0 {
             if let Some((amount, output)) = inputs.pop_front() {
                 change -= amount;
-                spent.push(&*output);
+                spent.push(output);
             } else {
                 break; // no inputs left
             }

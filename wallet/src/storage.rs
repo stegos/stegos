@@ -27,8 +27,9 @@ use crate::api::*;
 use byteorder::{BigEndian, ByteOrder};
 use failure::{bail, Error};
 use log::{debug, trace};
-use rocksdb::{Direction, IteratorMode, WriteBatch, DB};
+use rocksdb::{Direction, IteratorMode, Options, WriteBatch, DB};
 use std::collections::{HashMap, HashSet};
+use std::mem;
 use std::path::Path;
 use std::time::{Duration, Instant};
 use stegos_blockchain::{
@@ -41,8 +42,14 @@ use stegos_node::TransactionStatus;
 use stegos_serialization::traits::ProtoConvert;
 use tempdir::TempDir;
 
-const LEN_INDEX: [u8; 1] = [0; 1];
-const TIME_INDEX: [u8; 2] = [0; 2];
+// colon families.
+const HISTORY: &'static str = "history";
+const UNSPENT: &'static str = "unspent";
+const META: &'static str = "meta";
+const COLON_FAMILIES: &[&'static str] = &[HISTORY, UNSPENT, META];
+
+// Keys in meta cf
+const EPOCH_KEY: &[u8; 9] = b"epoch_key";
 
 #[derive(Debug, Clone)]
 pub enum LogEntry {
@@ -52,19 +59,17 @@ pub enum LogEntry {
 
 /// Currently we support only transaction that have 2 outputs,
 /// one for recipient, and one for change.
-pub struct AccountLog {
+pub struct AccountDatabase {
     /// Guard object for temporary directory.
     _temp_dir: Option<TempDir>,
     /// RocksDB database object.
     database: DB,
-    /// Len of account log.
-    len: u64,
-    /// last known system time.
-    last_time: Timestamp,
 
     //
     // Indexes
     //
+    /// Index of epoch UTXOS, that is not final.
+    utxos: HashMap<Hash, UnspentOutput>,
     /// Index of UTXOS that known to be change.
     known_changes: HashSet<Hash>,
     /// Index of all created transactions by this wallet.
@@ -78,56 +83,47 @@ pub struct AccountLog {
 }
 
 //Account log api.
-impl AccountLog {
+impl AccountDatabase {
     /// Open database.
-    pub fn open(path: &Path) -> AccountLog {
+    pub fn open(path: &Path) -> (AccountDatabase, u64) {
         debug!("Database path = {}", path.to_string_lossy());
-        let database = DB::open_default(path).expect("couldn't open database");
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+        let database = DB::open_cf(&opts, path, COLON_FAMILIES).expect("couldn't open database");
+        debug!("Loading database");
 
-        let len = database
-            .get(&LEN_INDEX)
-            .expect("No error in database reading")
-            .and_then(|v| Self::len_from_bytes(&v))
-            .unwrap_or(0);
-
-        let _time = database
-            .get(&TIME_INDEX)
-            .expect("No error in database reading")
-            .and_then(|v| Self::timestamp_from_bytes(&v))
-            .unwrap_or(Timestamp::UNIX_EPOCH);
-        debug!("Loading database with {} entries", len);
-
-        let mut log = AccountLog {
+        let mut log = AccountDatabase {
             _temp_dir: None,
             database,
-            len,
-            last_time: Timestamp::now(),
             created_txs: HashMap::new(),
             pending_txs: HashSet::new(),
             epoch_transactions: HashSet::new(),
             utxos_list: HashMap::new(),
             known_changes: HashSet::new(),
+            utxos: HashMap::new(),
         };
-        log.recover_state();
-        log
+        let epoch = log.recover_state();
+        (log, epoch)
     }
 
     #[allow(unused)]
-    pub fn testing() -> AccountLog {
+    pub fn testing() -> AccountDatabase {
         let temp_dir = TempDir::new("account").expect("couldn't create temp dir");
-        let len = 0;
-        let last_time = Timestamp::UNIX_EPOCH;
-        let database = DB::open_default(temp_dir.path()).expect("couldn't open database");
-        AccountLog {
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+        let database =
+            DB::open_cf(&opts, temp_dir.path(), COLON_FAMILIES).expect("couldn't open database");
+        AccountDatabase {
             _temp_dir: Some(temp_dir),
             database,
-            len,
-            last_time,
             created_txs: HashMap::new(),
             pending_txs: HashSet::new(),
             epoch_transactions: HashSet::new(),
             utxos_list: HashMap::new(),
             known_changes: HashSet::new(),
+            utxos: HashMap::new(),
         }
     }
 
@@ -137,7 +133,7 @@ impl AccountLog {
         exist
     }
 
-    pub fn recover_state(&mut self) {
+    pub fn recover_state(&mut self) -> u64 {
         // TODO: limit time for recover
         // (for example, if some transaction was created weak ago, it's no reason to resend it)
         let starting_time = Timestamp::UNIX_EPOCH;
@@ -161,6 +157,76 @@ impl AccountLog {
                         }
                     }
                 }
+            }
+        }
+
+        let meta_cf = self.database.cf_handle(META).expect("cf created");
+
+        let epoch = self
+            .database
+            .get_cf(meta_cf, EPOCH_KEY)
+            .expect("cannot read epoch");
+        epoch.and_then(|b| Self::u64_from_bytes(&b)).unwrap_or(0)
+    }
+
+    pub fn iter_unspent<'a>(&'a self) -> impl Iterator<Item = (Hash, OutputValue)> + 'a {
+        let cf = self.database.cf_handle(UNSPENT).expect("cf created");
+
+        let mode = IteratorMode::Start;
+        let iter = self
+            .database
+            .iterator_cf(cf, mode)
+            .expect("Cannot open cf iterator.");
+
+        let iter = iter.map(|(k, v)| {
+            let k = Hash::try_from_bytes(&k).expect("couldn't deserialize entry.");
+            let v = OutputValue::from_buffer(&*v).expect("couldn't deserialize entry.");
+            (k, v)
+        });
+        // filter-out utxos that was removed in epoch.
+        let iter_filtered = iter
+            .filter(move |(hash, _)| self.utxos.get(hash).is_none())
+            .inspect(|(k, _)| trace!("Iter UTXO from db = {}", k));
+        // add utxos that was not finalized.
+        iter_filtered.chain(
+            self.utxos
+                .iter()
+                .filter_map(|(k, v)| match v {
+                    UnspentOutput::Add(v) => Some((k.clone(), v.clone())),
+                    UnspentOutput::Removed => None,
+                })
+                .inspect(|(k, _)| trace!("Iter UTXO from mem = {}", k)),
+        )
+    }
+
+    pub fn insert_unspent(&mut self, utxo: OutputValue) -> Result<(), Error> {
+        let key = Hash::digest(&utxo.to_output());
+        let utxo = UnspentOutput::Add(utxo);
+        self.utxos.insert(key, utxo);
+        Ok(())
+    }
+
+    pub fn remove_unspent(&mut self, key: &Hash) -> Result<(), Error> {
+        trace!("Removed UTXO = {}", key);
+        let utxo = UnspentOutput::Removed;
+        self.utxos.insert(*key, utxo);
+        Ok(())
+    }
+
+    pub fn get_unspent(&self, hash: &Hash) -> Result<Option<OutputValue>, Error> {
+        trace!("Get UTXO = {}", hash);
+        let cf = self.database.cf_handle(UNSPENT).expect("cf created");
+        match self.utxos.get(hash) {
+            Some(UnspentOutput::Removed) => Ok(None),
+            Some(UnspentOutput::Add(t)) => Ok(Some(t.clone())),
+            None => {
+                trace!("Get UTXO from db = {}", hash);
+                self.database
+                    .get_cf(cf, hash.base_vector())
+                    .map(|v| {
+                        v.map(|b| OutputValue::from_buffer(&b).expect("Deserialization error."))
+                    })
+                    .map_err(Into::into)
             }
         }
     }
@@ -200,13 +266,17 @@ impl AccountLog {
 
     /// Return iterator over transactions
     pub fn pending_txs<'a>(&'a self) -> impl Iterator<Item = Result<TransactionValue, Error>> + 'a {
+        let cf = self.database.cf_handle(HISTORY).expect("cf created");
         self.pending_txs.iter().map(move |tx_hash| {
             let tx_key = self
                 .created_txs
                 .get(tx_hash)
                 .expect("Transaction should exist");
             let key = Self::bytes_from_timestamp(*tx_key);
-            let value = self.database.get(&key)?.expect("Log entry not found.");
+            let value = self
+                .database
+                .get_cf(cf, &key)?
+                .expect("Log entry not found.");
             let entry = LogEntry::from_buffer(&value)?;
             Ok(match entry {
                 LogEntry::Outgoing { tx } => tx,
@@ -264,23 +334,22 @@ impl AccountLog {
         mut timestamp: Timestamp,
         entry: LogEntry,
     ) -> Result<Timestamp, Error> {
+        let log_cf = self.database.cf_handle(HISTORY).expect("cf created");
+
         let data = entry.into_buffer().expect("couldn't serialize block.");
 
         // avoid key collisions by increasing time.
-        if timestamp <= self.last_time {
-            self.last_time += Duration::from_millis(1);
-            timestamp = self.last_time;
-        } else {
-            self.last_time = timestamp;
+        while let Some(_) = self
+            .database
+            .get_cf(log_cf, &Self::bytes_from_timestamp(timestamp))?
+        {
+            timestamp += Duration::from_millis(1);
         }
-        let len = self.len + 1;
+
         let mut batch = WriteBatch::default();
         // writebatch put fails if size exceeded u32::max, which is not our case.
-        batch.put(&Self::bytes_from_timestamp(timestamp), &data)?;
-        batch.put(&LEN_INDEX, &Self::bytes_from_len(len))?;
-        batch.put(&TIME_INDEX, &Self::bytes_from_timestamp(timestamp))?;
+        batch.put_cf(log_cf, &Self::bytes_from_timestamp(timestamp), &data)?;
         self.database.write(batch)?;
-        self.len = len;
         Ok(timestamp)
     }
 
@@ -306,7 +375,42 @@ impl AccountLog {
     }
 
     /// Finalize Prepare status for transaction, return list of updated transactions
-    pub fn finalize_epoch_txs(&mut self) -> HashMap<Hash, TransactionStatus> {
+    pub fn finalize_epoch(
+        &mut self,
+        epoch: u64,
+    ) -> Result<HashMap<Hash, TransactionStatus>, Error> {
+        debug!("Finalizing unspent utxos");
+
+        let unspent = self.database.cf_handle(UNSPENT).expect("cf created");
+        let meta_cf = self.database.cf_handle(META).expect("cf created");
+
+        let our_epoch = self
+            .database
+            .get_cf(meta_cf, EPOCH_KEY)?
+            .and_then(|b| Self::u64_from_bytes(&b))
+            .unwrap_or(0);
+        let mut batch = WriteBatch::default();
+        let utxos = mem::replace(&mut self.utxos, HashMap::new());
+        for (hash, utxo) in utxos {
+            match utxo {
+                UnspentOutput::Removed => {
+                    trace!("Found removed utxo = {}", hash);
+                    batch.delete_cf(unspent, hash.base_vector())?;
+                }
+                UnspentOutput::Add(v) => {
+                    trace!("Found added utxo = {}", hash);
+                    let data = v.into_buffer()?;
+                    batch.put_cf(unspent, hash.base_vector(), &data)?;
+                }
+            }
+        }
+
+        batch.put_cf(meta_cf, EPOCH_KEY, &Self::bytes_from_u64(epoch))?;
+        self.database.write(batch)?;
+        if our_epoch == epoch {
+            debug!("Skipping epoch txs finalization");
+            return Ok(HashMap::new());
+        }
         debug!("Finalize epoch txs");
         let mut result = HashMap::new();
         let txs = std::mem::replace(&mut self.epoch_transactions, Default::default());
@@ -330,15 +434,14 @@ impl AccountLog {
                     LogEntry::Incoming { .. } => bail!("Expected outgoing transaction."),
                 };
                 Ok(e)
-            })
-            .expect("error in updating status.");
+            })?;
 
             if let Some(status) = changed_to_status {
                 result.insert(tx_hash, status.clone());
                 self.update_tx_indexes(tx_hash, status);
             }
         }
-        result
+        Ok(result)
     }
 
     /// List log entries starting from `offset`, limited by `limit`.
@@ -347,10 +450,12 @@ impl AccountLog {
         starting_from: Timestamp,
         limit: u64,
     ) -> impl Iterator<Item = (Timestamp, LogEntry)> {
+        let log_cf = self.database.cf_handle(HISTORY).expect("cf created");
         let key = Self::bytes_from_timestamp(starting_from);
         let mode = IteratorMode::From(&key, Direction::Forward);
         self.database
-            .iterator(mode)
+            .iterator_cf(log_cf, mode)
+            .expect("cannot open cf")
             .map(|(k, v)| {
                 let k = Self::timestamp_from_bytes(&k).expect("parsable time");
                 let v = LogEntry::from_buffer(&*v).expect("couldn't deserialize entry.");
@@ -368,8 +473,13 @@ impl AccountLog {
     where
         F: FnMut(LogEntry) -> Result<LogEntry, Error>,
     {
+        let log_cf = self.database.cf_handle(HISTORY).expect("cf created");
+
         let key = Self::bytes_from_timestamp(timestamp);
-        let value = self.database.get(&key)?.expect("Log entry not found.");
+        let value = self
+            .database
+            .get_cf(log_cf, &key)?
+            .expect("Log entry not found.");
         let entry = LogEntry::from_buffer(&value)?;
 
         trace!("Entry before = {:?}", entry);
@@ -380,7 +490,7 @@ impl AccountLog {
 
         let mut batch = WriteBatch::default();
         // writebatch put fails if size exceeded u32::max, which is not our case.
-        batch.put(&key, &data)?;
+        batch.put_cf(log_cf, &key, &data)?;
         self.database.write(batch)?;
 
         Ok(())
@@ -394,7 +504,7 @@ impl AccountLog {
     }
 
     /// Convert timestamp to bytearray.
-    fn bytes_from_len(len: u64) -> [u8; 8] {
+    fn bytes_from_u64(len: u64) -> [u8; 8] {
         let mut bytes = [0u8; 8];
         BigEndian::write_u64(&mut bytes[0..8], len);
         bytes
@@ -411,7 +521,7 @@ impl AccountLog {
     }
 
     /// Convert bytearray to timestamp.
-    fn len_from_bytes(bytes: &[u8]) -> Option<u64> {
+    fn u64_from_bytes(bytes: &[u8]) -> Option<u64> {
         if bytes.len() == 8 {
             let idx = BigEndian::read_u64(&bytes[0..8]);
             Some(idx)
@@ -423,6 +533,12 @@ impl AccountLog {
 
 pub struct PendingOutput {
     pub time: Instant,
+}
+
+#[derive(Clone, Debug)]
+pub enum UnspentOutput {
+    Removed,
+    Add(OutputValue),
 }
 
 /// Information about created transactions
@@ -527,6 +643,27 @@ impl OutputValue {
             // Change only possible in PaymentUtxo.
             OutputValue::Payment(p) => p.is_change,
             _ => false,
+        }
+    }
+
+    pub fn payment(self) -> Option<PaymentValue> {
+        match self {
+            OutputValue::Payment(p) => Some(p),
+            _ => None,
+        }
+    }
+
+    pub fn public_payment(self) -> Option<PublicPaymentOutput> {
+        match self {
+            OutputValue::PublicPayment(p) => Some(p),
+            _ => None,
+        }
+    }
+
+    pub fn stake(self) -> Option<StakeValue> {
+        match self {
+            OutputValue::Stake(s) => Some(s),
+            _ => None,
         }
     }
 }
@@ -719,13 +856,22 @@ mod test {
         (time, entry)
     }
 
+    fn create_output(id: usize) -> OutputValue {
+        OutputValue::PublicPayment(PublicPaymentOutput {
+            serno: id as i64,
+            amount: 10,
+            locked_timestamp: None,
+            recipient: PublicKey::zero(),
+        })
+    }
+
     #[test]
     fn smoke_test() {
         let _ = simple_logger::init();
 
         let entries: Vec<_> = (0..5).map(create_entry).collect();
 
-        let mut db = AccountLog::testing();
+        let mut db = AccountDatabase::testing();
         for (time, e) in entries.iter() {
             db.push_entry(*time, e.clone()).unwrap();
         }
@@ -748,7 +894,7 @@ mod test {
 
         let entries: Vec<_> = (0..256).map(create_entry).collect();
 
-        let mut db = AccountLog::testing();
+        let mut db = AccountDatabase::testing();
         for (time, e) in entries.iter() {
             db.push_entry(*time, e.clone()).unwrap();
         }
@@ -770,7 +916,7 @@ mod test {
 
         let entries: Vec<_> = (0..2).map(create_entry).collect();
         let time = Timestamp::UNIX_EPOCH + Duration::from_millis(5);
-        let mut db = AccountLog::testing();
+        let mut db = AccountDatabase::testing();
         for (_, e) in entries.iter() {
             db.push_entry(time, e.clone()).unwrap();
         }
@@ -782,27 +928,25 @@ mod test {
         }
     }
 
-    // Log can't save data in past time, so old timestamp should be pushed as last_known_time  +1 ms;
     #[test]
-    fn push_past_time() {
+    fn push_output_get_iter() {
         let _ = simple_logger::init();
 
-        let entries: Vec<_> = (0..2).map(create_entry).collect();
-        let time = Timestamp::UNIX_EPOCH + Duration::from_millis(5);
-        let mut db = AccountLog::testing();
+        let outputs: Vec<_> = (0..2).map(create_output).collect();
+        let mut db = AccountDatabase::testing();
+        for output in outputs.iter() {
+            db.insert_unspent(output.clone()).unwrap();
+        }
 
-        let mut iter = entries.iter();
-        let (_, e) = iter.next().unwrap();
-        db.push_entry(time, e.clone()).unwrap();
-
-        let (_, e) = iter.next().unwrap();
-        db.push_entry(time - Duration::from_millis(1), e.clone())
-            .unwrap();
-
-        for (id, (t, ref saved)) in db.iter_range(Timestamp::UNIX_EPOCH, 5).enumerate() {
+        for (t, ref saved) in db.iter_unspent() {
             debug!("saved = {:?}", saved);
-            assert!(saved.is_testing_stub(id));
-            assert_eq!(t, time + Duration::from_millis(id as u64));
+            assert_eq!(t, Hash::digest(&saved.to_output()));
+        }
+        let _ = db.finalize_epoch(1).unwrap();
+
+        for (t, ref saved) in db.iter_unspent() {
+            debug!("saved = {:?}", saved);
+            assert_eq!(t, Hash::digest(&saved.to_output()));
         }
     }
 }

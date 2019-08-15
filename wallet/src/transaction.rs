@@ -64,7 +64,7 @@ pub(crate) fn create_snowball_transaction<'a, UnspentIter>(
     max_inputs_in_tx: usize,
 ) -> Result<(Vec<(Hash, PaymentOutput)>, Vec<ProposedUTXO>, i64), Error>
 where
-    UnspentIter: Iterator<Item = (&'a PaymentOutput, i64, Option<Timestamp>)>,
+    UnspentIter: Iterator<Item = (PaymentOutput, i64, Option<Timestamp>)>,
 {
     if amount < 0 {
         return Err(WalletError::NegativeAmount(amount).into());
@@ -186,7 +186,7 @@ pub(crate) fn create_payment_transaction<'a, UnspentIter>(
     max_inputs_in_tx: usize,
 ) -> Result<(Vec<Output>, Vec<Output>, Fr, Vec<OutputValue>, i64), Error>
 where
-    UnspentIter: Iterator<Item = (&'a PaymentOutput, i64, Option<Timestamp>)>,
+    UnspentIter: Iterator<Item = (PaymentOutput, i64, Option<Timestamp>)>,
 {
     if amount < 0 {
         return Err(WalletError::NegativeAmount(amount).into());
@@ -346,7 +346,7 @@ pub(crate) fn create_staking_transaction<'a, UnspentIter>(
     max_inputs_in_tx: usize,
 ) -> Result<(PaymentTransaction, Vec<OutputValue>), Error>
 where
-    UnspentIter: Iterator<Item = (&'a PaymentOutput, i64)>,
+    UnspentIter: Iterator<Item = (PaymentOutput, i64, Option<Timestamp>)>,
 {
     if amount < 0 {
         return Err(WalletError::NegativeAmount(amount).into());
@@ -367,7 +367,7 @@ where
     trace!("Checking for available funds in the account...");
     let fee = stake_fee;
     let fee_change = fee + payment_fee;
-    let unspent_iter = unspent_iter.map(|(o, a)| (o, a, None));
+    let unspent_iter = unspent_iter.map(|(o, a, _)| (o, a, None));
     let (inputs, fee, change) = find_utxo(
         unspent_iter,
         amount,
@@ -477,7 +477,7 @@ pub(crate) fn create_unstaking_transaction<'a, UnspentIter>(
     max_inputs_in_tx: usize,
 ) -> Result<(PaymentTransaction, Vec<OutputValue>), Error>
 where
-    UnspentIter: Iterator<Item = &'a StakeOutput>,
+    UnspentIter: Iterator<Item = StakeOutput>,
 {
     if amount <= payment_fee {
         return Err(WalletError::NegativeAmount(amount - payment_fee).into());
@@ -493,7 +493,10 @@ where
     //
 
     trace!("Checking for staked money in the account...");
-    let unspent_iter = unspent_iter.map(|o| (o, o.amount, None));
+    let unspent_iter = unspent_iter.map(|o| {
+        let amount = o.amount;
+        (o, amount, None)
+    });
     let amount = amount - payment_fee;
     let (inputs, fee, change) = find_utxo(
         unspent_iter,
@@ -591,7 +594,7 @@ pub(crate) fn create_restaking_transaction<'a, UnspentIter>(
     stakes_iter: UnspentIter,
 ) -> Result<(RestakeTransaction, Vec<OutputValue>), Error>
 where
-    UnspentIter: Iterator<Item = &'a StakeOutput>,
+    UnspentIter: Iterator<Item = StakeOutput>,
 {
     debug!(
         "Creating a restaking transaction: recipient={}, new_validator_key={}",
@@ -648,7 +651,7 @@ pub(crate) fn create_cloaking_transaction<'a, UnspentIter>(
     last_block_time: Timestamp,
 ) -> Result<(PaymentTransaction, OutputValue), Error>
 where
-    UnspentIter: Iterator<Item = &'a PublicPaymentOutput>,
+    UnspentIter: Iterator<Item = PublicPaymentOutput>,
 {
     let data = PaymentPayloadData::Comment(String::from("Exchange public UTXOs to cloaked"));
 
@@ -676,7 +679,7 @@ where
                 continue;
             }
         }
-        debug!("Use UTXO: hash={}", Hash::digest(input));
+        debug!("Use UTXO: hash={}", Hash::digest(&input));
         let PublicPaymentOutput { amount, .. } = input;
         inputs.push(Output::PublicPaymentOutput(input.clone()));
         total_amount += amount;
@@ -769,7 +772,7 @@ pub mod tests {
             &pkey,
             &validator_pkey,
             &validator_skey,
-            unspent.iter(),
+            unspent.clone().into_iter(),
             stake,
             payment_fee,
             stake_fee,
@@ -795,7 +798,7 @@ pub mod tests {
             &pkey,
             &validator_pkey,
             &validator_skey,
-            unspent.iter(),
+            unspent.clone().into_iter(),
             unstake,
             payment_fee,
             stake_fee,
@@ -826,7 +829,7 @@ pub mod tests {
             &pkey,
             &validator_pkey,
             &validator_skey,
-            unspent.iter(),
+            unspent.clone().into_iter(),
             payment_fee - 1,
             payment_fee,
             stake_fee,
@@ -845,7 +848,7 @@ pub mod tests {
             &pkey,
             &validator_pkey,
             &validator_skey,
-            unspent.iter(),
+            unspent.clone().into_iter(),
             payment_fee,
             payment_fee,
             stake_fee,
@@ -865,7 +868,7 @@ pub mod tests {
             &pkey,
             &validator_pkey,
             &validator_skey,
-            unspent.iter(),
+            unspent.clone().into_iter(),
             unstake,
             payment_fee,
             stake_fee,
@@ -888,7 +891,7 @@ pub mod tests {
             &pkey,
             &validator_pkey,
             &validator_skey,
-            unspent.iter(),
+            unspent.clone().into_iter(),
             unstake,
             payment_fee,
             stake_fee,

@@ -37,7 +37,7 @@ use bitvector::BitVector;
 use log::*;
 use rand::{thread_rng, Rng};
 use rand_core::RngCore;
-use std::collections::btree_map::BTreeMap;
+use std::collections::BTreeMap;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::scc::{self, Fr};
@@ -206,18 +206,21 @@ pub fn create_fake_micro_block(
     //
     // Create random transactions.
     //
-    let account_keys: Vec<(&scc::SecretKey, &scc::PublicKey)> = keychains
-        .iter()
-        .map(|keychain| (&keychain.account_skey, &keychain.account_pkey))
-        .collect();
-    let accounts_recovery = chain.recover_accounts(&account_keys).unwrap();
-    for (keychain, unspent) in keychains.iter().zip(accounts_recovery) {
+
+    for keychain in keychains.iter() {
+        let accounts_recovery = chain
+            .recover_account(&keychain.account_skey, &keychain.account_pkey, 0)
+            .unwrap();
+        let unspent = accounts_recovery
+            .commited
+            .into_iter()
+            .chain(accounts_recovery.prepared);
         // Calculate actual balance.
         let mut payments: Vec<Output> = Vec::new();
         let mut stakes: Vec<Output> = Vec::new();
         let mut payment_balance: i64 = 0;
         let mut staking_balance: i64 = 0;
-        for OutputRecovery { output, epoch, .. } in unspent {
+        for (_, OutputRecovery { output, epoch, .. }) in unspent {
             match output {
                 Output::PaymentOutput(ref o) => {
                     let payload = o.decrypt_payload(&keychain.account_skey).unwrap();

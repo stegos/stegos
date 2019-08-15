@@ -29,6 +29,7 @@ use futures::Future;
 use hyper::server::Server;
 use hyper::service::service_fn_ok;
 use hyper::{Body, Request, Response};
+use libc;
 use log::*;
 use log4rs::append::console::ConsoleAppender;
 use log4rs::config::{Appender, Config as LogConfig, Logger, Root};
@@ -193,6 +194,30 @@ fn report_metrics(_req: Request<Body>) -> Response<Body> {
     res
 }
 
+/// Enable backtraces and coredumps.
+fn enable_debug() {
+    // Enable backtraces.
+    let backtrace = std::env::var("RUST_BACKTRACE").unwrap_or("full".to_string());
+    std::env::set_var("RUST_BACKTRACE", &backtrace);
+    // Enable coredumps.
+    if backtrace == "full" {
+        unsafe {
+            let mut rlim = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            if libc::getrlimit(libc::RLIMIT_CORE, &mut rlim) == 0 {
+                rlim.rlim_cur = rlim.rlim_max;
+                let _ = libc::setrlimit(libc::RLIMIT_CORE, &rlim); // ignore errors.
+            }
+            #[cfg(target_os = "linux")]
+            {
+                let _ = libc::prctl(libc::PR_SET_DUMPABLE, 1, 0, 0, 0); // ignore errors.
+            }
+        }
+    }
+}
+
 fn load_configuration_file(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
     // Use --config argument for configuration.
     if let Some(cfg_path) = args.value_of_os("config") {
@@ -273,7 +298,7 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
     }
 
     // Disable [chain] and [node] sections for mainnet and testnet.
-    let is_prod = cfg.general.chain == "mainnet" || cfg.general.chain == "testnet";
+    let is_prod = cfg.general.chain == "mainnet";
     if is_prod && cfg.chain != Default::default() {
         return Err(format_err!(
             "Can't override [chain] options for {}",
@@ -285,6 +310,10 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
             "Can't override [node] options for {}",
             cfg.general.chain
         ));
+    }
+
+    if !is_prod {
+        enable_debug();
     }
 
     Ok(cfg)
@@ -551,7 +580,6 @@ fn run() -> Result<(), Error> {
     Ok(())
 }
 
-// 2
 fn main() {
     if let Err(e) = run() {
         eprintln!("Failed with error: {}", e); // Logger can be not yet initialized.

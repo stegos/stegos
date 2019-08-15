@@ -805,9 +805,13 @@ fn snowball_start(
     account.poll();
 
     match get_notification(notification) {
-        AccountNotification::SnowballStarted {} => (rx),
+        AccountNotification::SnowballStatus(status) => {
+            assert_eq!(status, SnowballStatus::PoolWait);
+        }
         e => panic!("{:?}", e),
     }
+
+    rx
 }
 
 /// 3 nodes send monet to 1 recipient, using Snowball

@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+pub use crate::snowball::State as SnowballStatus;
 use serde_derive::{Deserialize, Serialize};
 pub use stegos_blockchain::PaymentPayloadData;
 pub use stegos_blockchain::StakeInfo;
@@ -29,7 +30,6 @@ use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::scc::{Fr, PublicKey};
 use stegos_node::TransactionStatus;
-
 pub type AccountId = String;
 
 #[derive(Eq, PartialEq, Serialize, Deserialize, Clone, Debug)]
@@ -90,10 +90,7 @@ pub enum AccountNotification {
         balance: i64,
         available_balance: i64,
     },
-    SnowballStarted {},
-    SnowballCreated {
-        tx_hash: Hash,
-    },
+    SnowballStatus(SnowballStatus),
     TransactionStatus {
         tx_hash: Hash,
         #[serde(flatten)]

@@ -92,6 +92,7 @@ use futures_stream_select_all_send::select_all;
 use log::{log, Level};
 use rand::thread_rng;
 use rand::Rng;
+use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
@@ -178,31 +179,35 @@ enum SnowballEvent {
     MessageReceived(pbc::PublicKey, Vec<u8>),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Eq, PartialEq, Debug, Copy, Clone, Serialize, Deserialize)]
+#[serde(tag = "state")]
+#[serde(rename_all = "snake_case")]
 /// Snowball Finite State Machine state.
-enum State {
-    Start,
+pub enum State {
+    Started,
     PoolWait,
     SharedKeying,
     Commitment,
     CloakedVals,
     Signature,
     SecretKeying,
-    Finish,
+    Failed,
+    Succeeded,
 }
 
 impl State {
     /// Enum to string.
     fn name(&self) -> &'static str {
         match *self {
-            State::Start => "Start",
+            State::Started => "Started",
             State::PoolWait => "PoolWait",
             State::SharedKeying => "SharedKeying",
             State::Commitment => "Commitment",
             State::CloakedVals => "CloakedVals",
             State::Signature => "Signature",
             State::SecretKeying => "SecretKeying",
-            State::Finish => "Finish",
+            State::Failed => "Failed",
+            State::Succeeded => "Succeeded",
         }
     }
 }
@@ -414,7 +419,7 @@ impl Snowball {
         let my_signing_skey: SecretKey = my_signing_skeyF.into();
         let participants: Vec<ParticipantID> = Vec::new();
         let session_id: Hash = Hash::random();
-        let state = State::Start;
+        let state = State::Started;
         let mut rng = thread_rng();
         let seed = rng.gen::<[u8; 32]>();
         let my_participant_id = dicemix::ParticipantID::new(network_pkey, seed);
@@ -489,11 +494,16 @@ impl Snowball {
         sb
     }
 
+    /// Return current state.
+    pub fn state(&self) -> State {
+        self.state
+    }
+
     /// Change state.
     fn change_state(&mut self, state: State) {
         swarn!(self, "=> ({})", state.name());
         self.state = state;
-        if self.state == State::Finish {
+        if self.state == State::Succeeded || self.state == State::Failed {
             return;
         }
         let timer = Delay::new(clock::now() + SNOWBALL_TIMER);
@@ -658,7 +668,8 @@ impl Future for Snowball {
 
     /// Event loop.
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        assert_ne!(self.state, State::Finish, "poll() after finish");
+        assert_ne!(self.state, State::Succeeded, "poll() after finish");
+        assert_ne!(self.state, State::Failed, "poll() after finish");
         match self.timer.poll().expect("Should be no error in timer") {
             Async::Ready(Some(_)) => match self.handle_timer() {
                 Ok(Async::NotReady) => (),
@@ -815,7 +826,6 @@ impl Snowball {
     */
 
     fn handle_timer(&mut self) -> HandlerResult {
-        assert_ne!(self.state, State::Finish, "poll() after finish");
         // reset state to indicate done waiting for this kind of message
         // whichever participants have responded are now held in self.participants.
         // whichever participants did not respond are in self.pending_participants.
@@ -973,7 +983,7 @@ impl Snowball {
     fn perform_next_phase(&mut self) -> HandlerResult {
         self.timer = None; // cancel any pending timeout timer
         match self.state {
-            State::Start | State::Finish | State::PoolWait => {
+            State::Started | State::Succeeded | State::Failed | State::PoolWait => {
                 panic!(
                     "There should be no processing in {} state.",
                     self.state.name()
@@ -1148,8 +1158,9 @@ impl Snowball {
 
     // ----------------------------------------------------------
 
-    fn need_3_participants(&self) -> HandlerResult {
+    fn need_3_participants(&mut self) -> HandlerResult {
         if self.participants.len() < 3 {
+            self.change_state(State::Failed);
             return Err(SnowballError::TooFewParticipants(self.participants.len()));
         }
         Ok(Async::NotReady)
@@ -1626,8 +1637,7 @@ impl Snowball {
                 .collect();
 
             self.msg_queue.clear();
-            self.session_round = 0; // for possible restarts
-            self.change_state(State::Finish);
+            self.change_state(State::Succeeded);
             return Ok(Async::Ready(SnowballOutput {
                 tx,
                 outputs,

@@ -37,7 +37,7 @@ mod transaction;
 
 use self::error::WalletError;
 use self::recovery::recovery_to_account_skey;
-use self::snowball::{Snowball, SnowballOutput};
+use self::snowball::{Snowball, SnowballOutput, State as SnowballState};
 use self::storage::*;
 use self::transaction::*;
 use api::*;
@@ -787,13 +787,9 @@ impl UnsealedAccountService {
         is_leader: bool,
         outputs: Vec<OutputValue>,
     ) -> Result<TransactionInfo, Error> {
-        let tx_hash = Hash::digest(&tx);
         metrics::WALLET_PUBLISHED_PAYMENTS
             .with_label_values(&[&String::from(&self.account_pkey)])
             .inc();
-
-        let notify = AccountNotification::SnowballCreated { tx_hash };
-        self.notify(notify);
 
         let payment_info = TransactionValue::new_snowball(tx.clone(), outputs);
 
@@ -879,6 +875,7 @@ impl UnsealedAccountService {
                     // Terminate Snowball session.
                     error!("Snowball timed out");
                     let (_snowball, tx) = self.snowball.take().unwrap();
+                    self.notify(AccountNotification::SnowballStatus(SnowballState::Failed));
                     let response = AccountResponse::Error {
                         error: "Snowball timed out".to_string(),
                     };
@@ -1022,12 +1019,16 @@ impl Future for UnsealedAccountService {
         }
 
         if let Some((mut snowball, response_sender)) = mem::replace(&mut self.snowball, None) {
+            let state = snowball.state();
             match snowball.poll() {
                 Ok(Async::Ready(SnowballOutput {
                     tx,
                     is_leader,
                     outputs,
                 })) => {
+                    self.notify(AccountNotification::SnowballStatus(
+                        SnowballState::Succeeded,
+                    ));
                     let response = match self.handle_snowball_transaction(tx, is_leader, outputs) {
                         Ok(tx) => AccountResponse::TransactionCreated(tx),
                         Err(e) => {
@@ -1041,6 +1042,7 @@ impl Future for UnsealedAccountService {
                 }
                 Err((error, inputs)) => {
                     error!("Snowball failed: error={}", error);
+                    self.notify(AccountNotification::SnowballStatus(SnowballState::Failed));
                     for (input_hash, _input) in inputs {
                         assert!(self.pending_payments.remove(&input_hash).is_some())
                     }
@@ -1050,6 +1052,10 @@ impl Future for UnsealedAccountService {
                     let _ = response_sender.send(response);
                 }
                 Ok(Async::NotReady) => {
+                    if state != snowball.state() {
+                        // Notify about state changes.
+                        self.notify(AccountNotification::SnowballStatus(snowball.state()));
+                    }
                     self.snowball = (snowball, response_sender).into();
                 }
             }
@@ -1174,7 +1180,8 @@ impl Future for UnsealedAccountService {
                                 locked_timestamp,
                             ) {
                                 Ok(snowball) => {
-                                    self.notify(AccountNotification::SnowballStarted {});
+                                    let state = snowball.state();
+                                    self.notify(AccountNotification::SnowballStatus(state));
                                     self.snowball = (snowball, tx).into();
                                     continue;
                                 }

@@ -7,7 +7,7 @@ force_check = true
 
 [network]
 endpoint = "127.0.0.1:10057"
-public_endpoint = "127.0.0.1:10057"
+advertised_endpoint = "127.0.0.1:10057"
 handshake_puzzle_difficulty = 100
 seed_nodes = [
     "127.0.0.1:10055",

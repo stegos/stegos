@@ -64,7 +64,7 @@ pub struct Ncp<TSubstream> {
     /// Out network key
     node_id: pbc::PublicKey,
     /// Advertised Multiaddr.
-    public_endpoint: Option<Multiaddr>,
+    advertised_endpoint: Option<Multiaddr>,
     /// Queue of internal events
     events: VecDeque<NcpEvent>,
     /// Events that need to be yielded to the outside when polling.
@@ -96,9 +96,9 @@ impl<TSubstream> Ncp<TSubstream> {
             .map(|a| socket_to_multi_addr(&SocketAddr::from_str(a).expect("Invalid seed_nodes")))
             .collect();
 
-        let public_endpoint = if config.advertised_endpoint != "" {
-            let endpoint =
-                SocketAddr::from_str(&config.advertised_endpoint).expect("Invalid public_endpoint");
+        let advertised_endpoint = if config.advertised_endpoint != "" {
+            let endpoint = SocketAddr::from_str(&config.advertised_endpoint)
+                .expect("Invalid advertised_endpoint");
             let endpoint = socket_to_multi_addr(&endpoint);
             debug!(target: "stegos_network::ncp", "Public Network endpoint: {}", endpoint);
             seed_nodes.retain(|a| {
@@ -115,7 +115,7 @@ impl<TSubstream> Ncp<TSubstream> {
         };
         Ncp {
             node_id: network_pkey,
-            public_endpoint,
+            advertised_endpoint,
             events: VecDeque::new(),
             out_events: VecDeque::new(),
             connected_peers: ExpiringQueue::new(IDLE_TIMEOUT),
@@ -388,8 +388,8 @@ where
                     }
                     let peer = poll_parameters.local_peer_id().clone();
                     let mut peer_info = PeerInfo::new(&peer, &self.node_id);
-                    if let Some(public_endpoint) = &self.public_endpoint {
-                        peer_info.addresses.push(public_endpoint.clone());
+                    if let Some(advertised_endpoint) = &self.advertised_endpoint {
+                        peer_info.addresses.push(advertised_endpoint.clone());
                     }
                     response.peers.push(peer_info);
                     return Async::Ready(NetworkBehaviourAction::SendEvent {

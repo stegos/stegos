@@ -1,0 +1,42 @@
+# See https://docs.rs/log4rs/0.8.3/log4rs/#configuration
+
+refresh_rate = "30 seconds"
+
+[appenders.console]
+kind = "console"
+[appenders.console.encoder]
+pattern = "{d(%Y-%m-%d %H:%M:%S)(local)} {h({l})} [{t}] {m}{n}"
+[[appenders.console.filters]]
+kind = "threshold"
+level = "debug"
+
+[appenders.file]
+kind = "file"
+path = "stegosd.log"
+[appenders.file.encoder]
+pattern = "{d(%Y-%m-%d %H:%M:%S)(local)} {h({l})} [{t}] {m}{n}"
+[[appenders.console.filters]]
+kind = "threshold"
+level = "trace"
+
+[root]
+level = "info"
+appenders = ["console", "file"]
+
+[loggers."stegosd"]
+level = "debug"
+
+[loggers."stegos_node"]
+level = "debug"
+
+[loggers."stegos_blockchain"]
+level = "debug"
+
+[loggers."stegos_network"]
+level = "info"
+
+[loggers."stegos_wallet"]
+level = "info"
+
+[loggers."stegos_api"]
+level = "info"

@@ -45,7 +45,9 @@ use tokio_timer::Delay;
 use crate::config::NetworkConfig;
 use crate::ncp::handler::NcpHandler;
 use crate::ncp::protocol::{GetPeersResponse, NcpMessage, PeerInfo};
-use crate::utils::ExpiringQueue;
+use crate::utils::{socket_to_multi_addr, ExpiringQueue};
+use std::net::SocketAddr;
+use std::str::FromStr;
 
 // Size of table for "known" peers
 const KNOWN_PEERS_TABLE_SIZE: usize = 1024;
@@ -61,8 +63,8 @@ const LOCALHOST_MULTIADDR: Protocol = Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1))
 pub struct Ncp<TSubstream> {
     /// Out network key
     node_id: pbc::PublicKey,
-    /// List of advertised Multiaddrs
-    advertised_ips: Vec<Multiaddr>,
+    /// Advertised Multiaddr.
+    public_endpoint: Option<Multiaddr>,
     /// Queue of internal events
     events: VecDeque<NcpEvent>,
     /// Events that need to be yielded to the outside when polling.
@@ -88,25 +90,32 @@ pub struct Ncp<TSubstream> {
 impl<TSubstream> Ncp<TSubstream> {
     /// Creates a NetworkBehaviour for NCP.
     pub fn new(config: &NetworkConfig, network_pkey: pbc::PublicKey) -> Self {
-        let seed_nodes: Vec<Multiaddr> = config
+        let mut seed_nodes: Vec<Multiaddr> = config
             .seed_nodes
             .iter()
-            .filter_map(|a| match a.parse() {
-                Ok(addr) => Some(addr),
-                Err(_) => None,
-            })
+            .map(|a| socket_to_multi_addr(&SocketAddr::from_str(a).expect("Invalid seed_nodes")))
             .collect();
-        let advertised_ips: Vec<Multiaddr> = config
-            .advertised_addresses
-            .iter()
-            .filter_map(|a| match a.parse() {
-                Ok(addr) => Some(addr),
-                Err(_) => None,
-            })
-            .collect();
+
+        let public_endpoint = if config.advertised_endpoint != "" {
+            let endpoint =
+                SocketAddr::from_str(&config.advertised_endpoint).expect("Invalid public_endpoint");
+            let endpoint = socket_to_multi_addr(&endpoint);
+            debug!(target: "stegos_network::ncp", "Public Network endpoint: {}", endpoint);
+            seed_nodes.retain(|a| {
+                if a == &endpoint {
+                    debug!(target: "stegos_network::ncp", "Excluded my own endpoint from seed nodes: {}", a);
+                    false
+                } else {
+                    true
+                }
+            });
+            Some(endpoint)
+        } else {
+            None
+        };
         Ncp {
             node_id: network_pkey,
-            advertised_ips,
+            public_endpoint,
             events: VecDeque::new(),
             out_events: VecDeque::new(),
             connected_peers: ExpiringQueue::new(IDLE_TIMEOUT),
@@ -379,8 +388,8 @@ where
                     }
                     let peer = poll_parameters.local_peer_id().clone();
                     let mut peer_info = PeerInfo::new(&peer, &self.node_id);
-                    for addr in self.advertised_ips.iter() {
-                        peer_info.addresses.push(addr.clone());
+                    if let Some(public_endpoint) = &self.public_endpoint {
+                        peer_info.addresses.push(public_endpoint.clone());
                     }
                     response.peers.push(peer_info);
                     return Async::Ready(NetworkBehaviourAction::SendEvent {

@@ -27,13 +27,10 @@ use serde_derive::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(default)]
 pub struct NetworkConfig {
-    /// Node ID
-    /// Local IP address to bind to
-    pub bind_ip: String,
-    /// Local port to use for incoming connections
-    pub bind_port: u16,
-    /// List of advertised reachable address for this node
-    pub advertised_addresses: Vec<String>,
+    /// Local Node endpoint.
+    pub endpoint: String,
+    /// Advertised Node endpoint.
+    pub advertised_endpoint: String,
     /// DNS name of pool of seed nodes
     pub seed_pool: String,
     /// List of nodes to connect to on startup.
@@ -54,11 +51,10 @@ pub struct NetworkConfig {
 impl Default for NetworkConfig {
     fn default() -> NetworkConfig {
         NetworkConfig {
-            bind_port: 0,
             seed_pool: "".to_string(),
             seed_nodes: vec![],
-            advertised_addresses: vec![],
-            bind_ip: "0.0.0.0".to_string(),
+            advertised_endpoint: "".to_string(),
+            endpoint: "".to_string(),
             min_connections: 8,
             max_connections: 32,
             monitoring_interval: 60,

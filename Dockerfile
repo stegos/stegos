@@ -9,23 +9,23 @@ RUN ./ci-scripts/install-deps.sh
 RUN cargo install --bins --path . --root /usr/local
 RUN mkdir /node
 
-FROM scratch
+FROM debian:stretch-slim
 LABEL maintainer="Stegos AG <info@stegos.com>"
+
+ENV RUST_BACKTRACE=1
+
+RUN apt-get update && apt-get install -y gosu
+
+ADD docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+RUN groupadd -g 1111 stegos && useradd -u 1111 -g 1111 stegos
 
 COPY --from=source /usr/local/bin/stegos /usr/local/bin/stegos
 COPY --from=source /usr/local/bin/stegosd /usr/local/bin/stegosd
-COPY --from=source /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /usr/lib/x86_64-linux-gnu/libstdc++.so.6
-COPY --from=source /usr/lib/x86_64-linux-gnu/libgmp.so.10 /usr/lib/x86_64-linux-gnu/libgmp.so.10
-COPY --from=source /lib/x86_64-linux-gnu/libdl.so.2 /lib/x86_64-linux-gnu/libdl.so.2
-COPY --from=source /lib/x86_64-linux-gnu/librt.so.1 /lib/x86_64-linux-gnu/librt.so.1
-COPY --from=source /lib/x86_64-linux-gnu/libpthread.so.0 /lib/x86_64-linux-gnu/libpthread.so.0
-COPY --from=source /lib/x86_64-linux-gnu/libgcc_s.so.1 /lib/x86_64-linux-gnu/libgcc_s.so.1
-COPY --from=source /lib/x86_64-linux-gnu/libc.so.6 /lib/x86_64-linux-gnu/libc.so.6
-COPY --from=source /lib64/ld-linux-x86-64.so.2 /lib64/ld-linux-x86-64.so.2
-COPY --from=source /lib/x86_64-linux-gnu/libm.so.6 /lib/x86_64-linux-gnu/libm.so.6
-COPY --from=source --chown=1111:1111 /node /node
 
-USER 1111:1111
 WORKDIR /node
 
-ENTRYPOINT [ "/usr/local/bin/stegosd" ]
+RUN /usr/local/bin/stegosd --version
+
+ENTRYPOINT [ "/usr/local/bin/docker-entrypoint.sh" ]

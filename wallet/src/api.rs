@@ -23,12 +23,13 @@
 
 pub use crate::snowball::State as SnowballStatus;
 use serde_derive::{Deserialize, Serialize};
+use std::collections::HashMap;
 pub use stegos_blockchain::PaymentPayloadData;
 pub use stegos_blockchain::StakeInfo;
 use stegos_blockchain::Timestamp;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
-use stegos_crypto::scc::{Fr, PublicKey};
+use stegos_crypto::scc;
 use stegos_node::TransactionStatus;
 pub type AccountId = String;
 
@@ -66,9 +67,9 @@ pub struct PaymentInfo {
     pub locked_timestamp: Option<Timestamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_timestamp: Option<Timestamp>,
-    pub recipient: PublicKey,
+    pub recipient: scc::PublicKey,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rvalue: Option<Fr>,
+    pub rvalue: Option<scc::Fr>,
     pub is_change: bool,
 }
 
@@ -124,7 +125,7 @@ pub enum AccountRequest {
         password: String,
     },
     Payment {
-        recipient: PublicKey,
+        recipient: scc::PublicKey,
         amount: i64,
         payment_fee: i64,
         comment: String,
@@ -132,13 +133,13 @@ pub enum AccountRequest {
         with_certificate: bool,
     },
     PublicPayment {
-        recipient: PublicKey,
+        recipient: scc::PublicKey,
         amount: i64,
         payment_fee: i64,
         locked_timestamp: Option<Timestamp>,
     },
     SecurePayment {
-        recipient: PublicKey,
+        recipient: scc::PublicKey,
         amount: i64,
         payment_fee: i64,
         comment: String,
@@ -159,7 +160,7 @@ pub enum AccountRequest {
     CloakAll {
         payment_fee: i64,
     },
-    KeysInfo {},
+    AccountInfo {},
     BalanceInfo {},
     UnspentInfo {},
     HistoryInfo {
@@ -220,10 +221,7 @@ pub enum AccountResponse {
         balance: i64,
         available_balance: i64,
     },
-    KeysInfo {
-        account_address: PublicKey,
-        network_address: pbc::PublicKey,
-    },
+    AccountInfo(AccountInfo),
     UnspentInfo {
         public_payments: Vec<PublicPaymentInfo>,
         payments: Vec<PaymentInfo>,
@@ -243,12 +241,27 @@ pub enum AccountResponse {
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub struct AccountInfo {
+    pub account_pkey: scc::PublicKey,
+    pub network_pkey: pbc::PublicKey,
+}
+
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 #[serde(tag = "type")]
 pub enum WalletControlResponse {
-    AccountsInfo { accounts: Vec<AccountId> },
-    AccountCreated { account_id: AccountId },
-    AccountDeleted { account_id: AccountId },
-    Error { error: String },
+    AccountsInfo {
+        accounts: HashMap<AccountId, AccountInfo>,
+    },
+    AccountCreated {
+        account_id: AccountId,
+    },
+    AccountDeleted {
+        account_id: AccountId,
+    },
+    Error {
+        error: String,
+    },
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]

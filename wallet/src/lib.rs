@@ -1188,10 +1188,13 @@ impl Future for UnsealedAccountService {
                             AccountRequest::CloakAll { payment_fee } => {
                                 self.cloak_all(payment_fee).into()
                             }
-                            AccountRequest::KeysInfo {} => AccountResponse::KeysInfo {
-                                account_address: self.account_pkey,
-                                network_address: self.network_pkey,
-                            },
+                            AccountRequest::AccountInfo {} => {
+                                let account_info = AccountInfo {
+                                    account_pkey: self.account_pkey.clone(),
+                                    network_pkey: self.network_pkey.clone(),
+                                };
+                                AccountResponse::AccountInfo(account_info)
+                            }
                             AccountRequest::BalanceInfo {} => {
                                 let (balance, available_balance) = self.balance();
                                 AccountResponse::BalanceInfo {
@@ -1408,10 +1411,13 @@ impl Future for SealedAccountService {
                                     },
                                 }
                             }
-                            AccountRequest::KeysInfo {} => AccountResponse::KeysInfo {
-                                account_address: self.account_pkey,
-                                network_address: self.network_pkey,
-                            },
+                            AccountRequest::AccountInfo {} => {
+                                let account_info = AccountInfo {
+                                    account_pkey: self.account_pkey,
+                                    network_pkey: self.network_pkey,
+                                };
+                                AccountResponse::AccountInfo(account_info)
+                            }
                             _ => AccountResponse::Error {
                                 error: "Account is sealed".to_string(),
                             },
@@ -1580,9 +1586,11 @@ enum WalletEvent {
 }
 
 struct AccountHandle {
-    /// Wallet API.
+    /// Account public key.
+    account_pkey: scc::PublicKey,
+    /// Account API.
     account: Account,
-    /// Wallet Notifications.
+    /// Account Notifications.
     account_notifications: mpsc::UnboundedReceiver<AccountNotification>,
 }
 
@@ -1627,7 +1635,7 @@ impl WalletService {
             events,
         };
 
-        info!("Scanning directory {:?} for account keys", accounts_dir);
+        info!("Scanning directory {:?} for accounts", accounts_dir);
 
         // Scan directory for accounts.
         for entry in fs::read_dir(accounts_dir)? {
@@ -1648,8 +1656,6 @@ impl WalletService {
                 continue;
             }
 
-            debug!("Found a potential secret key: {:?}", account_skey_file);
-
             // Extract account name.
             let account_id: String = match entry.file_name().into_string() {
                 Ok(id) => id,
@@ -1659,12 +1665,10 @@ impl WalletService {
                 }
             };
 
-            debug!("Opening account {}", account_id);
             service.open_account(&account_id)?;
-            info!("Opened account {}", account_id);
         }
 
-        info!("Found {} account(s)", service.accounts.len());
+        info!("Recovered {} account(s)", service.accounts.len());
         let api = Wallet { outbox };
         Ok((service, api))
     }
@@ -1677,6 +1681,16 @@ impl WalletService {
         let account_database_dir = account_dir.join("history");
         let account_skey_file = account_dir.join("account.skey");
         let account_pkey_file = account_dir.join("account.pkey");
+        let account_pkey = load_account_pkey(&account_pkey_file)?;
+        debug!("Found account id={}, pkey={}", account_id, account_pkey);
+
+        // Check for duplicates.
+        for handle in self.accounts.values() {
+            if handle.account_pkey == account_pkey {
+                return Err(WalletError::DuplicateAccount(account_pkey).into());
+            }
+        }
+
         let (account_service, account) = AccountService::new(
             &account_database_dir,
             &account_skey_file,
@@ -1690,11 +1704,14 @@ impl WalletService {
         )?;
         let account_notifications = account.subscribe();
         let handle = AccountHandle {
+            account_pkey,
             account,
             account_notifications,
         };
-        self.accounts.insert(account_id.to_string(), handle);
+        let prev = self.accounts.insert(account_id.to_string(), handle);
+        assert!(prev.is_none(), "account_id is unique");
         self.executor.spawn(account_service);
+        info!("Recovered account {}", account_pkey);
         Ok(())
     }
 
@@ -1736,7 +1753,19 @@ impl WalletService {
     ) -> Result<WalletControlResponse, Error> {
         match request {
             WalletControlRequest::ListAccounts {} => {
-                let accounts = self.accounts.keys().cloned().collect();
+                let accounts: HashMap<AccountId, AccountInfo> = self
+                    .accounts
+                    .iter()
+                    .map(|(account_id, AccountHandle { account_pkey, .. })| {
+                        (
+                            account_id.clone(),
+                            AccountInfo {
+                                account_pkey: account_pkey.clone(),
+                                network_pkey: self.network_pkey.clone(),
+                            },
+                        )
+                    })
+                    .collect();
                 Ok(WalletControlResponse::AccountsInfo { accounts })
             }
             WalletControlRequest::CreateAccount { password } => {
@@ -1748,6 +1777,12 @@ impl WalletService {
             WalletControlRequest::RecoverAccount { recovery, password } => {
                 let account_skey = recovery_to_account_skey(&recovery)?;
                 let account_pkey: scc::PublicKey = account_skey.clone().into();
+                // Check for duplicates.
+                for handle in self.accounts.values() {
+                    if handle.account_pkey == account_pkey {
+                        return Err(WalletError::DuplicateAccount(account_pkey).into());
+                    }
+                }
                 info!("Restored account from 24-word phrase {}", account_pkey);
                 let account_id = self.create_account(account_skey, account_pkey, &password)?;
                 Ok(WalletControlResponse::AccountCreated { account_id })

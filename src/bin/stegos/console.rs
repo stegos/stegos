@@ -672,7 +672,7 @@ impl ConsoleService {
             self.send_network_request(NetworkRequest::VersionInfo {})?;
             return Ok(true);
         } else if msg == "show keys" {
-            let request = AccountRequest::KeysInfo {};
+            let request = AccountRequest::AccountInfo {};
             self.send_account_request(request)?
         } else if msg == "show balance" {
             let request = AccountRequest::BalanceInfo {};

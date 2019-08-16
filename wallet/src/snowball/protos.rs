@@ -47,9 +47,10 @@ impl ProtoConvert for SnowballPayload {
                 body.set_ksig(ksig.into_proto());
                 msg.set_sharedkeying(body);
             }
-            SnowballPayload::Commitment { cmt } => {
+            SnowballPayload::Commitment { cmt, parts } => {
                 let mut body = snowball::Commitment::new();
                 body.set_cmt(cmt.into_proto());
+                parts.iter().for_each(|p| body.parts.push(p.into_proto()));
                 msg.set_commitment(body);
             }
             SnowballPayload::CloakedVals {
@@ -103,8 +104,13 @@ impl ProtoConvert for SnowballPayload {
                 }
             }
             Some(snowball::SnowballPayload_oneof_body::commitment(ref msg)) => {
+                let mut parts: Vec<ParticipantID> = Vec::new();
+                for part in msg.get_parts() {
+                    parts.push(ParticipantID::from_proto(part)?);
+                }
                 SnowballPayload::Commitment {
                     cmt: Hash::from_proto(msg.get_cmt())?,
+                    parts,
                 }
             }
             Some(snowball::SnowballPayload_oneof_body::cloakedvals(ref msg)) => {

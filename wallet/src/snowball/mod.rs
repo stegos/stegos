@@ -958,8 +958,8 @@ impl Snowball {
             (State::SharedKeying, SnowballPayload::SharedKeying { pkey, ksig }) => {
                 self.handle_shared_keying(from, sid, pkey, ksig)
             }
-            (State::Commitment, SnowballPayload::Commitment { cmt }) => {
-                self.handle_commitment(from, sid, cmt)
+            (State::Commitment, SnowballPayload::Commitment { cmt, parts }) => {
+                self.handle_commitment(from, sid, cmt, parts)
             }
             (
                 State::CloakedVals,
@@ -1045,17 +1045,31 @@ impl Snowball {
 
     // --- Commitments to DiceMix Matries ----
 
+    fn has_same_participants(&self, parts: &Vec<ParticipantID>) -> bool {
+        self.commit_phase_participants
+            .iter()
+            .all(|p| parts.contains(p))
+            && parts
+                .iter()
+                .all(|p| self.commit_phase_participants.contains(p))
+    }
+
     fn handle_commitment(
         &mut self,
         from: &ParticipantID,
         sid: &Hash,
         cmt: &Hash,
+        parts: &Vec<ParticipantID>,
     ) -> MsgHandlerResponse {
         if *sid == self.session_id {
             if self.pending_participants.contains(from) {
-                sdebug!(self, "Saving commitment {}", cmt);
-                self.commits.insert(*from, *cmt);
-                MsgHandlerResponse::Accept
+                if self.has_same_participants(parts) {
+                    sdebug!(self, "Saving commitment {}", cmt);
+                    self.commits.insert(*from, *cmt);
+                    MsgHandlerResponse::Accept
+                } else {
+                    MsgHandlerResponse::Discard
+                }
             } else {
                 MsgHandlerResponse::Discard
             }
@@ -1075,6 +1089,18 @@ impl Snowball {
             && cloaks.keys().all(|p| self.excl_participants.contains(p))
     }
 
+    fn has_correct_matrix_dimensions(&self, matrix: &DcMatrix) -> bool {
+        // specifically - looking for mismatch nbr of cols, which would
+        // indicate that sender has different notion of commit_phase_participants
+        // than we do... (but also checking for phony nbr of rows and sheets)
+        let ncols_expected = self.commit_phase_participants.len();
+        let nrows_expected = self.dicemix_nbr_utxo_chunks.unwrap();
+        matrix.len() == MAX_UTXOS
+            && matrix.iter().all(|sheet| {
+                sheet.len() == nrows_expected && sheet.iter().all(|row| row.len() == ncols_expected)
+            })
+    }
+
     fn handle_cloaked_vals(
         &mut self,
         from: &ParticipantID,
@@ -1090,7 +1116,10 @@ impl Snowball {
                 sdebug!(self, "Checking commitment {}", cmt);
                 // DiceMix expects to be able to find all missing
                 // participant cloaking values
-                if *cmt == hash_data(matrix, gamma_sum, fee_sum) && self.same_exclusions(cloaks) {
+                if *cmt == hash_data(matrix, gamma_sum, fee_sum)
+                    && self.same_exclusions(cloaks)
+                    && self.has_correct_matrix_dimensions(matrix)
+                {
                     sdebug!(self, "Commitment check passed {}", cmt);
                     sdebug!(self, "Saving cloaked data");
                     self.matrices.insert(*from, matrix.clone());
@@ -1351,7 +1380,7 @@ impl Snowball {
         self.commits.insert(self.my_participant_id, my_commit);
 
         // send sharing commitment to other participants
-        self.send_commitment(&my_commit);
+        self.send_commitment(&my_commit, &self.commit_phase_participants);
 
         // fill in commits
         self.receive_commitments()
@@ -1937,9 +1966,12 @@ impl Snowball {
 
     // -------------------------------------------------
 
-    fn send_commitment(&self, commit: &Hash) {
+    fn send_commitment(&self, commit: &Hash, parts: &Vec<ParticipantID>) {
         // send our commitment to cloaked data to all other participants
-        let payload = SnowballPayload::Commitment { cmt: *commit };
+        let payload = SnowballPayload::Commitment {
+            cmt: *commit,
+            parts: parts.clone(),
+        };
         self.send_signed_message(&payload);
     }
 

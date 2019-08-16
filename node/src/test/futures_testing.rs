@@ -71,7 +71,7 @@ impl Notify for NodeNotify {
 }
 
 /// execute poll fn as may times as it needs.
-pub fn execute<U, E, F: FnMut(&NodeNotify) -> Result<Async<U>, E>>(mut future: F)
+pub fn execute<U, E, F: FnMut(&NodeNotify) -> Result<Async<U>, E>>(msg: String, mut future: F)
 where
     U: Debug + Eq,
     E: Debug + Eq,
@@ -80,6 +80,7 @@ where
         repeat_poll: Mutex::new(false),
     });
 
+    super::logger::MODULE_PREFIX.with(|n| *n.borrow_mut() = msg);
     with_notify(node_notify, 1, || loop {
         assert_eq!(future(&node_notify), Ok(Async::NotReady));
         if !node_notify.is_set() {
@@ -87,7 +88,9 @@ where
         }
         debug!("POLL ONCE MORE");
         node_notify.reset();
-    })
+    });
+
+    super::logger::MODULE_PREFIX.with(|n| *n.borrow_mut() = "TESTING".to_string());
 }
 
 #[derive(Clone, Debug)]

@@ -17,6 +17,7 @@
 /testing/node*/accounts/*/history
 /testing/node*/api.token
 /data
+/logs
 
 # IDE files
 /.vscode

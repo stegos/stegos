@@ -81,13 +81,16 @@ pub struct Floodsub<TSubstream> {
     /// Metrics uodate delay (update metrics at this interval)
     metrics_update_delay: Delay,
 
+    /// Do we relay (disabled on edge nodes)
+    relaying: bool,
+
     /// Marker to pin the generics.
     marker: PhantomData<TSubstream>,
 }
 
 impl<TSubstream> Floodsub<TSubstream> {
     /// Creates a `Floodsub`.
-    pub fn new(local_peer_id: PeerId) -> Self {
+    pub fn new(local_peer_id: PeerId, relaying: bool) -> Self {
         Floodsub {
             events: VecDeque::new(),
             local_peer_id,
@@ -101,6 +104,7 @@ impl<TSubstream> Floodsub<TSubstream> {
             ),
             incoming_rates: HashMap::new(),
             metrics_update_delay: Delay::new(Instant::now() + METRICS_UPDATE_INTERVAL),
+            relaying,
             marker: PhantomData,
         }
     }
@@ -357,6 +361,12 @@ where
                         let event = FloodsubEvent::Message(message.clone());
                         self.events
                             .push_back(NetworkBehaviourAction::GenerateEvent(event));
+                    }
+
+                    // Finish, if we are not relay
+                    if !self.relaying {
+                        debug!(target: "stegos_network::pubsub", "skipping message forwarding...");
+                        return;
                     }
 
                     // Propagate the message to everyone else who is subscribed to any of the topics.

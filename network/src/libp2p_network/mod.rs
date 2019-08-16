@@ -252,8 +252,13 @@ where
         network_pkey: pbc::PublicKey,
         peer_id: PeerId,
     ) -> Self {
+        let relaying = if config.advertised_endpoint == "".to_string() {
+            false
+        } else {
+            true
+        };
         let mut behaviour = Libp2pBehaviour {
-            floodsub: Floodsub::new(peer_id.clone()),
+            floodsub: Floodsub::new(peer_id.clone(), relaying),
             ncp: Ncp::new(config, network_pkey.clone()),
             gatekeeper: Gatekeeper::new(config),
             delivery: Delivery::new(),

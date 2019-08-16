@@ -37,7 +37,7 @@ use bitvector::BitVector;
 use log::*;
 use rand::{thread_rng, Rng};
 use rand_core::RngCore;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::scc::{self, Fr};
@@ -209,7 +209,12 @@ pub fn create_fake_micro_block(
 
     for keychain in keychains.iter() {
         let accounts_recovery = chain
-            .recover_account(&keychain.account_skey, &keychain.account_pkey, 0)
+            .recover_account(
+                &keychain.account_skey,
+                &keychain.account_pkey,
+                0,
+                HashMap::new(),
+            )
             .unwrap();
         let unspent = accounts_recovery
             .commited

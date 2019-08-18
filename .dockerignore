@@ -1,1 +1,24 @@
-.gitignore
+*~
+/ci-scripts/
+/.gitlab-ci.yml
+/Dockerfile
+/start-cluster.sh
+/stop-cluster.sh
+/clear-database.sh
+*/src/Cargo.lock
+/target
+/stegos*.toml
+/stegos*-log4rs.toml
+/stegosd.log
+/*.pkey
+/*.skey
+/genesis*.bin
+/password*.txt
+/api_token.txt
+/testing
+/data
+
+# IDE files
+/.vscode
+/.idea
+/idea

@@ -1,13 +1,10 @@
 # Use multi-stage build to reduce image size
-FROM stegos/rust:nightly-2019-08-04 AS source
+FROM stegos/rust:nightly-2019-08-05 AS source
 LABEL maintainer="Stegos AG <info@stegos.com>"
 
-RUN apt-get update && apt-get install -y git-core
 ADD . /usr/src/stegos
 WORKDIR /usr/src/stegos
-RUN ./ci-scripts/install-deps.sh
 RUN cargo install --bins --path . --root /usr/local
-RUN mkdir /node
 
 FROM scratch
 LABEL maintainer="Stegos AG <info@stegos.com>"
@@ -23,9 +20,9 @@ COPY --from=source /lib/x86_64-linux-gnu/libgcc_s.so.1 /lib/x86_64-linux-gnu/lib
 COPY --from=source /lib/x86_64-linux-gnu/libc.so.6 /lib/x86_64-linux-gnu/libc.so.6
 COPY --from=source /lib64/ld-linux-x86-64.so.2 /lib64/ld-linux-x86-64.so.2
 COPY --from=source /lib/x86_64-linux-gnu/libm.so.6 /lib/x86_64-linux-gnu/libm.so.6
-COPY --from=source --chown=1111:1111 /node /node
 
-USER 1111:1111
-WORKDIR /node
+WORKDIR /data
+ENV STEGOS_DATA_DIR /data
 
+EXPOSE 3144 3145 9090
 ENTRYPOINT [ "/usr/local/bin/stegosd" ]

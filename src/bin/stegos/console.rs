@@ -75,24 +75,39 @@ const PASSWORD_PROMPT2: &'static str = "Enter same password again: ";
 // The number of records in `show history`.
 const CONSOLE_HISTORY_LIMIT: u64 = 50;
 
-fn read_password_from_stdin(confirm: bool) -> Result<String, KeyError> {
+fn read_line() -> Result<Option<String>, std::io::Error> {
+    let mut line = String::new();
+    if stdin().read_line(&mut line)? == 0 {
+        return Ok(None); // EOF
+    }
+    if line.ends_with('\n') {
+        line.pop();
+        if line.ends_with('\r') {
+            line.pop();
+        }
+    }
+
+    Ok(Some(line))
+}
+
+fn read_password() -> Result<String, std::io::Error> {
+    if !atty::is(atty::Stream::Stdin) {
+        return Ok(read_line()?.unwrap_or_default());
+    }
+    prompt_password_stdout(PASSWORD_PROMPT)
+}
+
+fn read_password_with_confirmation() -> Result<String, std::io::Error> {
+    if !atty::is(atty::Stream::Stdin) {
+        return Ok(read_line()?.unwrap_or_default());
+    }
     loop {
-        let prompt = if confirm {
-            PASSWORD_PROMPT1
-        } else {
-            PASSWORD_PROMPT
-        };
-        let password = prompt_password_stdout(prompt)
-            .map_err(|e| KeyError::InputOutputError("stdin".to_string(), e))?;
+        let password = prompt_password_stdout(PASSWORD_PROMPT1)?;
         if password.is_empty() {
             eprintln!("Password is empty. Try again.");
             continue;
         }
-        if !confirm {
-            return Ok(password);
-        }
-        let password2 = prompt_password_stdout(PASSWORD_PROMPT2)
-            .map_err(|e| KeyError::InputOutputError("stdin".to_string(), e))?;
+        let password2 = prompt_password_stdout(PASSWORD_PROMPT2)?;
         if password == password2 {
             return Ok(password);
         } else {
@@ -102,9 +117,11 @@ fn read_password_from_stdin(confirm: bool) -> Result<String, KeyError> {
     }
 }
 
-fn read_recovery_from_stdin() -> Result<String, KeyError> {
-    Ok(prompt_password_stdout(RECOVERY_PROMPT)
-        .map_err(|e| KeyError::InputOutputError("stdin".to_string(), e))?)
+fn read_recovery() -> Result<String, std::io::Error> {
+    if !atty::is(atty::Stream::Stdin) {
+        return Ok(read_line()?.unwrap_or_default());
+    }
+    prompt_password_stdout(RECOVERY_PROMPT)
 }
 
 fn parse_money(amount: &str) -> Result<i64, Error> {
@@ -130,13 +147,25 @@ pub struct ConsoleService {
 
 impl ConsoleService {
     /// Constructor.
-    pub fn new(uri: String, api_token: ApiToken, history_file: PathBuf) -> ConsoleService {
+    pub fn new(
+        name: String,
+        version: String,
+        uri: String,
+        api_token: ApiToken,
+        history_file: PathBuf,
+    ) -> ConsoleService {
         let (tx, rx) = channel::<String>(1);
         let client = WebSocketClient::new(uri, api_token);
         let account_id = Arc::new(Mutex::new("1".to_string()));
-        let th_account_id = account_id.clone();
-        let stdin_th =
-            thread::spawn(move || Self::readline_thread_f(tx, history_file, th_account_id));
+        let stdin_th = if atty::is(atty::Stream::Stdin) {
+            println!("{} {}", name, version);
+            println!("Type 'help' to get help");
+            println!();
+            let th_account_id = account_id.clone();
+            thread::spawn(move || Self::interactive_thread_f(tx, history_file, th_account_id))
+        } else {
+            thread::spawn(move || Self::noninteractive_thread_f(tx))
+        };
         let stdin = rx;
         ConsoleService {
             client,
@@ -146,8 +175,8 @@ impl ConsoleService {
         }
     }
 
-    /// Background thread to read stdin.
-    fn readline_thread_f(
+    /// Background thread to read stdin with TTY.
+    fn interactive_thread_f(
         mut tx: Sender<String>,
         history_file: PathBuf,
         account_id: Arc<Mutex<AccountId>>,
@@ -190,6 +219,33 @@ impl ConsoleService {
         if let Err(e) = rl.save_history(&history_file) {
             eprintln!("Failed to save CLI history to {:?}: {}", history_file, e);
         };
+    }
+
+    /// Background thread to read stdin without TTY.
+    fn noninteractive_thread_f(mut tx: Sender<String>) {
+        loop {
+            match read_line() {
+                Ok(None) => {
+                    break; // EOF
+                }
+                Ok(Some(line)) => {
+                    if line.is_empty() {
+                        continue;
+                    }
+                    if tx.try_send(line).is_err() {
+                        assert!(tx.is_closed()); // this channel is never full
+                        break;
+                    }
+                    // Block until line is processed by ConsoleService.
+                    thread::park();
+                }
+                Err(e) => {
+                    eprintln!("CLI I/O Error: {}", e);
+                    break;
+                }
+            }
+        }
+        tx.close().ok(); // ignore errors
     }
 
     fn help() {
@@ -358,7 +414,7 @@ impl ConsoleService {
         if msg == "lock" || msg == "seal" {
             self.send_account_request(AccountRequest::Seal {})?;
         } else if msg == "unlock" || msg == "unseal" {
-            let password = read_password_from_stdin(false)?;
+            let password = read_password()?;
             self.send_account_request(AccountRequest::Unseal { password })?;
         } else if msg.starts_with("net publish ") {
             let caps = match PUBLISH_COMMAND_RE.captures(&msg[12..]) {
@@ -700,16 +756,16 @@ impl ConsoleService {
             let request = WalletControlRequest::ListAccounts {};
             self.send_wallet_control_request(request)?;
         } else if msg == "create account" {
-            let password = read_password_from_stdin(true)?;
+            let password = read_password_with_confirmation()?;
             let request = WalletControlRequest::CreateAccount { password };
             self.send_wallet_control_request(request)?;
         } else if msg == "recover account" {
-            let recovery = read_recovery_from_stdin()?;
-            let password = read_password_from_stdin(true)?;
+            let recovery = read_recovery()?;
+            let password = read_password_with_confirmation()?;
             let request = WalletControlRequest::RecoverAccount { recovery, password };
             self.send_wallet_control_request(request)?;
         } else if msg == "passwd" {
-            let new_password = read_password_from_stdin(true)?;
+            let new_password = read_password_with_confirmation()?;
             let request = AccountRequest::ChangePassword { new_password };
             self.send_account_request(request)?
         } else if msg == "use" {
@@ -806,6 +862,11 @@ impl Future for ConsoleService {
                 }
                 Err(()) => unreachable!(),
             }
+        }
+
+        // Ignore stdin until client is connected.
+        if !self.client.is_connected() {
+            return Ok(Async::NotReady);
         }
 
         loop {

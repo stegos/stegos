@@ -103,6 +103,14 @@ impl WebSocketClient {
             )),
         }
     }
+
+    /// Returns true if client is connected to remote part.
+    pub fn is_connected(&self) -> bool {
+        match &self.state {
+            State::Connected(..) => true,
+            _ => false,
+        }
+    }
 }
 
 impl WebSocketClient {

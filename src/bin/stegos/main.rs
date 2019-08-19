@@ -31,7 +31,7 @@ use std::str::FromStr;
 use tokio::runtime::Runtime;
 
 fn main() {
-    let name = "Stegos CLI";
+    let name = "Stegos CLI".to_string();
     let version = format!(
         "{}.{}.{} ({} {})",
         env!("VERSION_MAJOR"),
@@ -48,7 +48,7 @@ fn main() {
         .to_string();
     let default_endpoint = "0.0.0.0:3145";
 
-    let args = App::new(name)
+    let args = App::new(&name)
         .version(&version[..])
         .author("Stegos AG <info@stegos.com>")
         .about("Stegos is a completely anonymous and confidential cryptocurrency.")
@@ -129,12 +129,8 @@ fn main() {
         }
     };
 
-    println!("{} {}", name, version);
-    println!("Type 'help' to get help");
-    println!();
-
     let mut rt = Runtime::new().expect("Failed to initialize tokio");
-    let console_service = ConsoleService::new(uri, api_token, history_file);
+    let console_service = ConsoleService::new(name, version, uri, api_token, history_file);
     rt.block_on(console_service)
         .expect("errors are handled earlier");
 }

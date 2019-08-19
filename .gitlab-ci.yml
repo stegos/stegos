@@ -1,52 +1,28 @@
 stages:
   - fast_checks
-  - build
   - test
   - release
 
-before_script:
-  - ci-scripts/install-deps.sh
-
 # Running fast-checks to notice an author that his pull-request fails our standards.
 # This checks should not produce any artifacts
-# Allow to fail until fix for https://github.com/stegos/stegos/issues/1149 is released
 fast_checks:
   stage: fast_checks
-  before_script: []
+  before_script:
+    - ./ci-scripts/build.sh builddep
   script:
     - cargo audit
     - cargo fmt --all -- --check
   tags:
     - linux
-  image: stegos/rust:nightly-2019-08-04
-
-.build:
-  stage: build
-  script:
-    - rustc --version
-    - cargo build
-
-build:linux:
-  extends: .build
-  image: stegos/rust:nightly-2019-08-04
-  tags:
-    - linux
-
-build:macos:
-  extends: .build
-  tags:
-    - macos
+  image: stegos/rust:nightly-2019-08-05
 
 .test:
   stage: test
-  script:
-    - rustc --version
-    - cargo test --all
-  dependencies: []
+  script: ./ci-scripts/build.sh test
 
 test:linux:
   extends: .test
-  image: stegos/rust:nightly-2019-08-04
+  image: stegos/rust:nightly-2019-08-05
   tags:
     - linux
 
@@ -57,23 +33,15 @@ test:macos:
 
 code_coverage:
   stage: test
-  image: stegos/rust:nightly-2019-08-04
+  image: stegos/rust:nightly-2019-08-05
   script:
-    - ci-scripts/coverage.sh
+    - ./ci-scripts/build.sh coverage_push
   tags:
     - linux
   allow_failure: true
-  only:
-    - dev
-    - master
-    - tags
 
 .release:
   stage: release
-  only:
-    - dev
-    - master
-    - tags
   dependencies: []
   artifacts:
     expire_in: 1 week
@@ -82,17 +50,21 @@ code_coverage:
 
 release:linux:
   extends: .release
-  image: stegos/rust:nightly-2019-08-04
+  image: stegos/rust:nightly-2019-08-05
+  before_script:
+     - ./ci-scripts/build.sh builddep
   script:
-    - cargo install --bins --path . --root /usr/local && strip /usr/local/bin/{stegos,stegosd,bootstrap}
-    - mkdir -p release/linux && mv /usr/local/bin/{stegos,stegosd,bootstrap} release/linux
+    - cargo build --bins --release
+    - mkdir -p release/linux && mv target/release/{stegos,stegosd,bootstrap} release/linux
   tags:
     - linux
 
 release:macos:
   extends: .release
+  before_script:
+     - ./ci-scripts/build.sh builddep
   script:
-    - sudo cargo install --bins --path . --root /usr/local && sudo strip /usr/local/bin/{stegos,stegosd,bootstrap}
-    - mkdir -p release/macos && mv /usr/local/bin/{stegos,stegosd,bootstrap} release/macos
+    - cargo build --bins --release
+    - mkdir -p release/macos && mv target/release/{stegos,stegosd,bootstrap} release/macos
   tags:
     - macos

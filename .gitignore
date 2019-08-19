@@ -4,15 +4,11 @@
 /stegos*.toml
 /stegos*-log4rs.toml
 /stegosd.log
-
-# Keys
 /*.pkey
 /*.skey
 /genesis*.bin
 /password*.txt
 /api_token.txt
-
-# Test data
 /testing/node*/chain
 /testing/node*/accounts/*/history
 /testing/node*/api.token

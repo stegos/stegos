@@ -212,6 +212,8 @@ impl ConsoleService {
         eprintln!("stake AMOUNT - stake money");
         eprintln!("unstake [AMOUNT] - unstake money");
         eprintln!("restake - restake all available stakes");
+        eprintln!("enable restaking - enable automatic re-staking (default)");
+        eprintln!("disable restaking - disable automatic re-staking");
         eprintln!("cloak - exchange all available public outputs");
         eprintln!("show version - print version information");
         eprintln!("show keys - print keys");
@@ -744,6 +746,12 @@ impl ConsoleService {
             self.send_wallet_control_request(request)?;
         } else if msg == "db pop block" {
             let request = NodeRequest::PopBlock {};
+            self.send_node_request(request)?
+        } else if msg == "enable restaking" {
+            let request = NodeRequest::EnableRestaking {};
+            self.send_node_request(request)?
+        } else if msg == "disable restaking" {
+            let request = NodeRequest::DisableRestaking {};
             self.send_node_request(request)?
         } else {
             Self::help();

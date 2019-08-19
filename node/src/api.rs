@@ -57,6 +57,8 @@ pub enum NodeRequest {
         recipient: scc::PublicKey,
         rvalue: scc::Fr,
     },
+    EnableRestaking {},
+    DisableRestaking {},
 }
 
 ///
@@ -88,6 +90,8 @@ pub enum NodeResponse {
         timestamp: Timestamp,
         amount: i64,
     },
+    RestakingEnabled,
+    RestakingDisabled,
     Error {
         error: String,
     },

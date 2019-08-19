@@ -196,6 +196,9 @@ pub struct NodeService {
     /// Cheating detection.
     cheating_proofs: HashMap<pbc::PublicKey, SlashingProof>,
 
+    /// Automatic re-staking status.
+    is_restaking_enabled: bool,
+
     //
     // Communication with environment.
     //
@@ -232,6 +235,7 @@ impl NodeService {
         };
         let cheating_proofs = HashMap::new();
         let loader_timer = None;
+        let is_restaking_enabled = true;
 
         let on_node_notification = Vec::new();
 
@@ -292,6 +296,7 @@ impl NodeService {
             last_block_clock,
             loader_timer,
             cheating_proofs,
+            is_restaking_enabled,
             node: node.clone(),
             network: network.clone(),
             events,
@@ -421,7 +426,7 @@ impl NodeService {
     /// Re-stake expiring stakes.
     ///
     fn restake_expiring_stakes(&mut self) -> Result<(), Error> {
-        if !self.is_synchronized() {
+        if !self.is_synchronized() || !self.is_restaking_enabled {
             // Don't re-stake during bootstrap, wait for the actual network state.
             return Ok(());
         }
@@ -2007,6 +2012,28 @@ impl Future for NodeService {
                                         error: format!("Invalid UTXO type: {}", utxo),
                                     },
                                 },
+                                NodeRequest::EnableRestaking {} => {
+                                    if self.is_restaking_enabled {
+                                        NodeResponse::Error {
+                                            error: format!("Re-staking is already enabled"),
+                                        }
+                                    } else {
+                                        info!("Re-staking enabled");
+                                        self.is_restaking_enabled = true;
+                                        NodeResponse::RestakingEnabled
+                                    }
+                                }
+                                NodeRequest::DisableRestaking {} => {
+                                    if !self.is_restaking_enabled {
+                                        NodeResponse::Error {
+                                            error: format!("Re-staking is already disabled"),
+                                        }
+                                    } else {
+                                        info!("Re-staking disabled");
+                                        self.is_restaking_enabled = false;
+                                        NodeResponse::RestakingDisabled
+                                    }
+                                }
                             };
                             tx.send(response).ok(); // ignore errors.
                             Ok(())

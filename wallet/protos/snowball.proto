@@ -23,6 +23,7 @@ message SharedKeying {
 
 message Commitment {
     stegos.crypto.Hash cmt = 1;
+    repeated stegos.crypto.DiceMixParticipantID parts = 2;
 }
 
 message CloakedVals {

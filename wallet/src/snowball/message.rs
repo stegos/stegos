@@ -45,6 +45,7 @@ pub(crate) enum SnowballPayload {
     },
     Commitment {
         cmt: Hash,
+        parts: Vec<ParticipantID>,
     },
     CloakedVals {
         matrix: DcMatrix,
@@ -78,7 +79,7 @@ impl fmt::Display for SnowballPayload {
                 "SnowballPayload::SharedKeying( pkey: {:?}, ksig: {:?})",
                 pkey, ksig
             ),
-            SnowballPayload::Commitment { cmt } => {
+            SnowballPayload::Commitment { cmt, .. } => {
                 write!(f, "SnowballPayload::Commitment( cmt: {})", cmt)
             }
             SnowballPayload::CloakedVals { .. } => write!(f, "SnowballPayload::CloakedVals(...)"),
@@ -100,7 +101,7 @@ impl fmt::Debug for SnowballPayload {
                 "VsPayload::SharedKeying( pkey: {:?}, ksig: {:?})",
                 pkey, ksig
             ),
-            SnowballPayload::Commitment { cmt } => {
+            SnowballPayload::Commitment { cmt, .. } => {
                 write!(f, "VsPayload::Commitment( cmt: {})", cmt)
             }
             SnowballPayload::CloakedVals { .. } => write!(f, "VsPayload::CloakedVals(...)"),
@@ -147,8 +148,11 @@ impl Hashable for SnowballPayload {
                 pkey.hash(state);
                 ksig.hash(state);
             }
-            SnowballPayload::Commitment { cmt } => {
+            SnowballPayload::Commitment { cmt, parts } => {
                 cmt.hash(state);
+                let mut lcl_parts = parts.clone();
+                lcl_parts.sort();
+                lcl_parts.iter().for_each(|p| p.hash(state));
             }
             SnowballPayload::CloakedVals {
                 matrix,

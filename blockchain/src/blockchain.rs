@@ -389,44 +389,64 @@ impl Blockchain {
         account_skey: &SecretKey,
         account_pkey: &PublicKey,
         mut epoch: u64,
+        mut unspent: HashMap<Hash, Output>,
     ) -> Result<AccountRecoveryState, BlockchainError> {
         let mut account_state: AccountRecoveryState = Default::default();
 
-        let mut update_account_state =
-            |output: &Output,
-             epoch: u64,
-             block_hash: &Hash,
-             is_final: bool,
-             timestamp: Timestamp| {
-                let output_hash = Hash::digest(&output);
-                if output.is_my_utxo(account_skey, account_pkey) {
-                    let output = OutputRecovery {
-                        output: output.clone(),
-                        epoch,
-                        block_hash: block_hash.clone(),
-                        timestamp,
-                        is_final,
-                    };
+        let process_output = |account_state: &mut AccountRecoveryState,
+                              output: &Output,
+                              epoch: u64,
+                              block_hash: &Hash,
+                              is_final: bool,
+                              timestamp: Timestamp| {
+            let output_hash = Hash::digest(&output);
+            if !self.contains_output(&output_hash) {
+                return; // Spent.
+            }
 
-                    if !self.contains_output(&output_hash) {
-                        account_state.removed.insert(output_hash, output);
-                        return; // Spent.
-                    }
+            if output.is_my_utxo(account_skey, account_pkey) {
+                let output = OutputRecovery {
+                    output: output.clone(),
+                    epoch,
+                    block_hash: block_hash.clone(),
+                    timestamp,
+                    is_final,
+                };
 
-                    if is_final {
-                        account_state.commited.insert(output_hash, output);
-                    } else {
-                        account_state.prepared.insert(output_hash, output);
-                    }
+                if is_final {
+                    account_state.commited.insert(output_hash, output);
+                } else {
+                    account_state.prepared.insert(output_hash, output);
                 }
-            };
+            }
+        };
+
+        let mut process_input = |account_state: &mut AccountRecoveryState,
+                                 input: &Hash,
+                                 epoch: u64,
+                                 block_hash: &Hash,
+                                 is_final: bool,
+                                 timestamp: Timestamp| {
+            if let Some(output) = unspent.remove(input) {
+                let output = OutputRecovery {
+                    output,
+                    epoch,
+                    block_hash: block_hash.clone(),
+                    timestamp,
+                    is_final,
+                };
+
+                account_state.removed.insert(*input, output);
+            }
+        };
 
         for block in self.blocks_starting(epoch, 0) {
             let block_hash = Hash::digest(&block);
             match block {
                 Block::MacroBlock(block) => {
                     for output in &block.outputs {
-                        update_account_state(
+                        process_output(
+                            &mut account_state,
                             output,
                             epoch,
                             &block_hash,
@@ -434,18 +454,39 @@ impl Blockchain {
                             block.header.timestamp,
                         );
                     }
+                    for input in &block.inputs {
+                        process_input(
+                            &mut account_state,
+                            input,
+                            epoch,
+                            &block_hash,
+                            false,
+                            block.header.timestamp,
+                        )
+                    }
                     epoch += 1;
                 }
                 Block::MicroBlock(block) => {
                     for tx in block.transactions {
                         for output in tx.txouts() {
-                            update_account_state(
+                            process_output(
+                                &mut account_state,
                                 output,
                                 epoch,
                                 &block_hash,
                                 false,
                                 block.header.timestamp,
                             );
+                        }
+                        for input in tx.txins() {
+                            process_input(
+                                &mut account_state,
+                                input,
+                                epoch,
+                                &block_hash,
+                                false,
+                                block.header.timestamp,
+                            )
                         }
                     }
                 }

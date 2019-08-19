@@ -197,10 +197,15 @@ impl UnsealedAccountService {
         // Recovery.
         //
         info!("Loading account {}", account_pkey);
+        let unspent = account_log
+            .iter_unspent()
+            .map(|(k, v)| (k, v.to_output()))
+            .collect();
         let recovery_request = NodeRequest::RecoverAccount {
             account_skey: account_skey.clone(),
             account_pkey: account_pkey.clone(),
             epoch,
+            unspent,
         };
         let recovery_rx = Some(node.request(recovery_request));
 
@@ -1013,6 +1018,7 @@ impl Future for UnsealedAccountService {
                             facilitator_pkey,
                             last_macro_block_timestamp,
                         } => {
+                            let (balance, _available_balance) = self.balance();
                             // Recover state.
                             assert!(self.snowball.is_none());
                             for (hash, OutputRecovery { output, .. }) in
@@ -1041,6 +1047,17 @@ impl Future for UnsealedAccountService {
                             }
 
                             info!("Loaded account {}", self.account_pkey);
+                            let (new_balance, available_balance) = self.balance();
+                            metrics::WALLET_AVALIABLE_BALANCES
+                                .with_label_values(&[&String::from(&self.account_pkey)])
+                                .set(available_balance);
+                            if balance != new_balance {
+                                debug!("Balance changed");
+                                self.notify(AccountNotification::BalanceChanged {
+                                    balance: new_balance,
+                                    available_balance,
+                                });
+                            }
                         }
                         NodeResponse::Error { error } => {
                             // Sic: this case is hard to recover.

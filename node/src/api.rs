@@ -46,6 +46,8 @@ pub enum NodeRequest {
         account_pkey: scc::PublicKey,
         /// Last epoch known by account.
         epoch: u64,
+        /// List of active unspent outputs.
+        unspent: HashMap<Hash, Output>,
     },
     #[serde(skip)]
     AddTransaction(Transaction),

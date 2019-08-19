@@ -147,13 +147,18 @@ impl NodeService {
         epoch: u64,
         offset: u32,
     ) -> Result<(), Error> {
-        // Send one epoch.
+        // Send up to `count` epochs.
         let count = self.cfg.loader_speed_in_epoch as usize;
-        let blocks: Vec<Block> = self
-            .chain
-            .blocks_starting(epoch, offset)
-            .take(count)
-            .collect();
+        let mut blocks: Vec<Block> = Vec::new();
+        for block in self.chain.blocks_starting(epoch, offset) {
+            blocks.push(block);
+            match blocks.last().unwrap() {
+                Block::MacroBlock(_) if blocks.len() >= count => {
+                    break;
+                }
+                _ => {}
+            }
+        }
         info!("Feeding blocks: to={}, num_blocks={}", pkey, blocks.len());
         let msg = ChainLoaderMessage::Response(ResponseBlocks::new(blocks));
         self.network

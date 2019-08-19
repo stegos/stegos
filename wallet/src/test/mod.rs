@@ -164,7 +164,10 @@ impl AccountSandbox {
     }
 
     pub fn poll(&mut self) {
-        futures_testing::execute(|_| self.account_service.poll());
+        futures_testing::execute(
+            format!("node:{}", self.account_service.network_pkey),
+            |_| self.account_service.poll(),
+        );
     }
 }
 

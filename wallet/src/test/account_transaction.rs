@@ -25,6 +25,8 @@ use super::*;
 use crate::snowball::message::{SnowballMessage, SnowballPayload};
 use crate::*;
 use assert_matches::assert_matches;
+use futures::sync::mpsc::UnboundedReceiver;
+use futures::sync::oneshot::Receiver;
 use futures::Async;
 use std::string::ToString;
 use std::time::Duration;
@@ -1838,4 +1840,421 @@ fn create_snowball_fail_cloacked_vals() {
             }
         }
     });
+}
+
+#[derive(Clone, Copy)]
+struct DropoutCfg {
+    num_nodes: usize,
+    num_drops: usize,
+}
+// perform random dropouts
+fn random_drops(s: &mut Sandbox, accounts: &mut Vec<AccountSandbox>, dropout_cfg: DropoutCfg) {
+    use rand::Rng;
+
+    let num_nodes = dropout_cfg.num_nodes;
+    let num_drops = 1 + s.prng.gen::<usize>() % dropout_cfg.num_drops;
+
+    let random_ids: Vec<_> = (0..num_drops)
+        .map(|_| {
+            (
+                s.prng.gen::<usize>() % num_nodes,
+                s.prng.gen::<usize>() % (num_nodes - 1),
+            )
+        })
+        .collect();
+    let mut messages = HashMap::new();
+    for (node_id, account) in accounts.iter_mut().take(num_nodes).enumerate() {
+        'msg: for msg_id in 0..num_nodes - 1 {
+            // each node send message to rest
+            let (msg, peer) = account
+                .network
+                .get_unicast::<snowball::message::SnowballMessage>(crate::snowball::SNOWBALL_TOPIC);
+
+            for (random_node_id, random_msg_id) in &random_ids {
+                // perform random message dropout.
+                if *random_node_id == node_id && *random_msg_id == msg_id {
+                    trace!(
+                        "Perform random dropouts of msg from={}, to={}",
+                        account.account_service.network_pkey,
+                        peer
+                    );
+                    continue 'msg;
+                }
+            }
+            let entry = messages.entry(peer).or_insert(Vec::new());
+            entry.push(msg); // msg directed to peer
+        }
+    }
+
+    // see deliver_with_restart method
+    s.wait(crate::snowball::SNOWBALL_TIMER / 2);
+    for account in accounts.iter_mut().take(num_nodes) {
+        for msg in messages.get(&account.account_service.network_pkey).unwrap() {
+            account.network.receive_unicast(
+                msg.source.pkey,
+                crate::snowball::SNOWBALL_TOPIC,
+                msg.clone(),
+            )
+        }
+    }
+
+    accounts.iter_mut().for_each(AccountSandbox::poll);
+
+    s.wait(crate::snowball::SNOWBALL_TIMER / 2);
+}
+
+fn deliver_with_restart(
+    s: &mut Sandbox,
+    accounts: &mut Vec<AccountSandbox>,
+    dropout_cfg: DropoutCfg,
+) {
+    // we know that not all good, so we should wait for timeout, after delivering message.
+
+    // sandbox work synchronised in time.
+    // And after random dropouts, some nodes can go to the next stage,
+    // so split wait into two phases (before and after message receiving).
+    // So if node receive enough messages it will reset timer.
+    trace!("Delivering messages, with wait timeout");
+    s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
+    accounts.iter_mut().for_each(AccountSandbox::poll);
+
+    trace!("WAIT HALF");
+    s.wait(crate::snowball::SNOWBALL_TIMER / 2);
+    s.poll();
+    s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
+    s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+    trace!("WAIT NEXT HALF");
+    s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
+    accounts.iter_mut().for_each(AccountSandbox::poll);
+
+    s.wait(crate::snowball::SNOWBALL_TIMER / 2);
+}
+
+//
+// Assymetric dropouts.
+//
+
+#[test]
+#[ignore]
+fn create_snowball_asymetric_dropouts_sharing() {
+    const SEND_TOKENS: i64 = 10;
+    // send MINIMAL_TOKEN + FEE
+    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    // set micro_blocks to some big value.
+    let config = SandboxConfig {
+        chain: ChainConfig {
+            micro_blocks_in_epoch: 2000,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let drop_cfg = DropoutCfg {
+        num_nodes: 4,
+        num_drops: 1,
+    };
+    Sandbox::start(config, |mut s| {
+        let mut accounts = genesis_accounts(&mut s);
+
+        s.poll();
+        let (genesis, rest) = accounts.split_at_mut(1);
+        precondition_each_account_has_tokens(&mut s, MIN_AMOUNT, &mut genesis[0], rest);
+        let num_nodes = drop_cfg.num_nodes;
+        assert!(num_nodes >= 3);
+        assert!(num_nodes <= accounts.len());
+
+        let recipient = accounts[3].account_service.account_pkey;
+
+        let mut notifications = Vec::new();
+        for i in 0..num_nodes {
+            let mut notification = accounts[i].account.subscribe();
+            let response =
+                snowball_start(recipient, SEND_TOKENS, &mut accounts[i], &mut notification);
+            notifications.push((notification, response));
+            accounts[i].poll();
+        }
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+        debug!("===== JOINING TXPOOL =====");
+        s.deliver_unicast(stegos_node::txpool::POOL_JOIN_TOPIC);
+        s.poll();
+
+        // this code are done just to work with different timeout configuration.
+        {
+            let sleep_time = stegos_node::txpool::MESSAGE_TIMEOUT;
+
+            s.wait(sleep_time);
+            // if not, just poll to triger txpoll_anouncment
+            s.poll();
+        }
+
+        for (account, status) in accounts.iter_mut().zip(&mut notifications) {
+            let (notification, _) = status;
+            account.poll();
+            clear_notification(notification)
+        }
+
+        s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+        debug!("===== ANONCING TXPOOL =====");
+        s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
+
+        debug!("===== SB STARTED NEW POOL: Send::SharedKeying =====");
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        random_drops(&mut s, &mut accounts, drop_cfg);
+
+        s.poll();
+
+        s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+        debug!("===== SB Receive SharedKeying: Check dropout?, restart=====");
+
+        perform_restart_asymetric(s, accounts, drop_cfg, notifications);
+    });
+}
+
+#[test]
+fn create_snowball_asymetric_dropouts_cloackedvals() {
+    const SEND_TOKENS: i64 = 10;
+    // send MINIMAL_TOKEN + FEE
+    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    // set micro_blocks to some big value.
+    let config = SandboxConfig {
+        chain: ChainConfig {
+            micro_blocks_in_epoch: 2000,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let drop_cfg = DropoutCfg {
+        num_nodes: 4,
+        num_drops: 1,
+    };
+    Sandbox::start(config, |mut s| {
+        let mut accounts = genesis_accounts(&mut s);
+
+        s.poll();
+        let (genesis, rest) = accounts.split_at_mut(1);
+        precondition_each_account_has_tokens(&mut s, MIN_AMOUNT, &mut genesis[0], rest);
+        let num_nodes = drop_cfg.num_nodes;
+        assert!(num_nodes >= 3);
+        assert!(num_nodes <= accounts.len());
+
+        let recipient = accounts[3].account_service.account_pkey;
+
+        let mut notifications = Vec::new();
+        for i in 0..num_nodes {
+            let mut notification = accounts[i].account.subscribe();
+            let response =
+                snowball_start(recipient, SEND_TOKENS, &mut accounts[i], &mut notification);
+            notifications.push((notification, response));
+            accounts[i].poll();
+        }
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+        debug!("===== JOINING TXPOOL =====");
+        s.deliver_unicast(stegos_node::txpool::POOL_JOIN_TOPIC);
+        s.poll();
+
+        // this code are done just to work with different timeout configuration.
+        {
+            let sleep_time = stegos_node::txpool::MESSAGE_TIMEOUT;
+
+            s.wait(sleep_time);
+            // if not, just poll to triger txpoll_anouncment
+            s.poll();
+        }
+
+        for (account, status) in accounts.iter_mut().zip(&mut notifications) {
+            let (notification, _) = status;
+            account.poll();
+            clear_notification(notification)
+        }
+
+        s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+        debug!("===== ANONCING TXPOOL =====");
+        s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
+
+        debug!("===== SB STARTED NEW POOL: Send::SharedKeying =====");
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
+
+        debug!("===== SB Receive SharedKeying: produce commitment with dropouts=====");
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        random_drops(&mut s, &mut accounts, drop_cfg);
+
+        s.poll();
+
+        s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+        debug!("===== SB Receive commitment: Check invalid??, restart=====");
+        perform_restart_asymetric(s, accounts, drop_cfg, notifications);
+    });
+}
+
+#[test]
+fn create_snowball_asymetric_dropouts_commitment() {
+    const SEND_TOKENS: i64 = 10;
+    // send MINIMAL_TOKEN + FEE
+    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    // set micro_blocks to some big value.
+    let config = SandboxConfig {
+        chain: ChainConfig {
+            micro_blocks_in_epoch: 2000,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let drop_cfg = DropoutCfg {
+        num_nodes: 4,
+        num_drops: 1,
+    };
+    Sandbox::start(config, |mut s| {
+        let mut accounts = genesis_accounts(&mut s);
+
+        s.poll();
+        let (genesis, rest) = accounts.split_at_mut(1);
+        precondition_each_account_has_tokens(&mut s, MIN_AMOUNT, &mut genesis[0], rest);
+        let num_nodes = drop_cfg.num_nodes;
+        assert!(num_nodes >= 3);
+        assert!(num_nodes <= accounts.len());
+
+        let recipient = accounts[3].account_service.account_pkey;
+
+        let mut notifications = Vec::new();
+        for i in 0..num_nodes {
+            let mut notification = accounts[i].account.subscribe();
+            let response =
+                snowball_start(recipient, SEND_TOKENS, &mut accounts[i], &mut notification);
+            notifications.push((notification, response));
+            accounts[i].poll();
+        }
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+        debug!("===== JOINING TXPOOL =====");
+        s.deliver_unicast(stegos_node::txpool::POOL_JOIN_TOPIC);
+        s.poll();
+
+        // this code are done just to work with different timeout configuration.
+        {
+            let sleep_time = stegos_node::txpool::MESSAGE_TIMEOUT;
+
+            s.wait(sleep_time);
+            // if not, just poll to triger txpoll_anouncment
+            s.poll();
+        }
+
+        for (account, status) in accounts.iter_mut().zip(&mut notifications) {
+            let (notification, _) = status;
+            account.poll();
+            clear_notification(notification)
+        }
+
+        s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+        debug!("===== ANONCING TXPOOL =====");
+        s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
+
+        debug!("===== SB STARTED NEW POOL: Send::SharedKeying =====");
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
+
+        debug!("===== SB Receive SharedKeying: produce сommitment=====");
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
+
+        debug!("===== SB Receive сommitment: produce cloackedvals with dropout=====");
+        accounts.iter_mut().for_each(AccountSandbox::poll);
+        random_drops(&mut s, &mut accounts, drop_cfg);
+
+        s.poll();
+
+        s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+        debug!("===== SB Receive Commitment: Check invalid supertransaction, restart=====");
+        perform_restart_asymetric(s, accounts, drop_cfg, notifications);
+    });
+}
+
+fn perform_restart_asymetric(
+    mut s: Sandbox,
+    mut accounts: Vec<AccountSandbox>,
+    drop_cfg: DropoutCfg,
+    mut notifications: Vec<(
+        UnboundedReceiver<AccountNotification>,
+        Receiver<AccountResponse>,
+    )>,
+) {
+    accounts.iter_mut().for_each(AccountSandbox::poll);
+    deliver_with_restart(&mut s, &mut accounts, drop_cfg);
+
+    s.poll();
+    s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
+    s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+    s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
+
+    debug!("===== SB STARTED NEW POOL: Send::SharedKeying =====");
+    accounts.iter_mut().for_each(AccountSandbox::poll);
+    s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
+
+    debug!("===== SB Receive commitment: produce CloakedVals =====");
+    accounts.iter_mut().for_each(AccountSandbox::poll);
+    s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
+
+    debug!("===== SB Receive CloakedVals: produce signatures =====");
+    accounts.iter_mut().for_each(AccountSandbox::poll);
+    s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
+
+    debug!("===== SB Receive Signatures: produce tx =====");
+    accounts.iter_mut().for_each(AccountSandbox::poll);
+    // rebroadcast transaction to each node
+    let mut my_tx_hash = None;
+    let mut dropouts = None;
+    let mut notifications_new = Vec::new();
+    for (id, (account, status)) in accounts.iter_mut().zip(notifications).enumerate() {
+        let (mut notification, mut response) = status;
+        account.poll();
+        my_tx_hash = Some(match response.poll() {
+            Ok(Async::Ready(AccountResponse::TransactionCreated(tx))) => tx.tx_hash,
+
+            _ => {
+                assert_eq!(dropouts, None);
+                dropouts = Some(id);
+                continue;
+            }
+        });
+        notifications_new.push(notification)
+    }
+
+    assert!(dropouts.is_some());
+    debug!("===== BROADCAST SB TRANSACTION =====");
+    s.poll();
+    s.broadcast(stegos_node::TX_TOPIC);
+    s.skip_micro_block();
+
+    for (id, (account, status)) in accounts.iter_mut().zip(&mut notifications_new).enumerate() {
+        let notification = status;
+
+        account.poll();
+
+        if id == dropouts.unwrap() {
+            continue;
+        }
+        // ignore multiple notification, and assert that notification not equal to our.
+        while let AccountNotification::TransactionStatus {
+            tx_hash,
+            status: TransactionStatus::Prepared { .. },
+        } = get_notification(notification)
+        {
+            if tx_hash != my_tx_hash.unwrap() {
+                unreachable!()
+            }
+        }
+    }
 }

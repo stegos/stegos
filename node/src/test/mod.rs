@@ -23,6 +23,7 @@
 #![allow(dead_code)]
 
 pub mod futures_testing;
+mod logger;
 
 use self::futures_testing::{start_test, wait, TestTimer};
 pub use stegos_network::loopback::Loopback;
@@ -94,7 +95,7 @@ impl<'timer> Sandbox<'timer> {
             };
 
             if let Some(level) = level {
-                let _ = simple_logger::init_with_level(level);
+                let _ = logger::init_with_level(level);
             }
 
             let num_nodes = config.num_nodes;
@@ -326,19 +327,22 @@ impl NodeSandbox {
     }
 
     pub fn poll(&mut self) {
-        futures_testing::execute(|notify| {
-            notify.internal_routine(|| match self.node_service.validation {
-                Validation::MicroBlockValidator {
-                    block_timer: MicroBlockTimer::Propose(ref mut rx),
-                    ..
-                } => {
-                    trace!("Poll in propose, vdf_execution={:?}", self.vdf_execution);
-                    self.vdf_execution.add_vdf(rx);
-                }
-                _ => {}
-            });
-            self.node_service.poll()
-        });
+        futures_testing::execute(
+            format!("node:{}", self.node_service.network_pkey),
+            |notify| {
+                notify.internal_routine(|| match self.node_service.validation {
+                    Validation::MicroBlockValidator {
+                        block_timer: MicroBlockTimer::Propose(ref mut rx),
+                        ..
+                    } => {
+                        trace!("Poll in propose, vdf_execution={:?}", self.vdf_execution);
+                        self.vdf_execution.add_vdf(rx);
+                    }
+                    _ => {}
+                });
+                self.node_service.poll()
+            },
+        );
     }
 }
 

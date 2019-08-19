@@ -46,6 +46,8 @@ use std::str::FromStr;
 
 // -----------------------------------------------------------------
 
+pub const PTSIZE: usize = 32; // bytes to represent a Pt
+
 lazy_static! {
     pub static ref INIT: bool = {
         check_prng();

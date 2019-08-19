@@ -42,6 +42,7 @@ pub(crate) enum SnowballPayload {
     SharedKeying {
         pkey: PublicKey,
         ksig: Pt,
+        fee: i64,
     },
     Commitment {
         cmt: Hash,
@@ -50,7 +51,6 @@ pub(crate) enum SnowballPayload {
     CloakedVals {
         matrix: DcMatrix,
         gamma_sum: Fr,
-        fee_sum: Fr,
         cloaks: HashMap<ParticipantID, Hash>,
     },
     Signature {
@@ -74,10 +74,10 @@ pub(crate) struct SnowballMessage {
 impl fmt::Display for SnowballPayload {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SnowballPayload::SharedKeying { pkey, ksig } => write!(
+            SnowballPayload::SharedKeying { pkey, ksig, fee } => write!(
                 f,
-                "SnowballPayload::SharedKeying( pkey: {:?}, ksig: {:?})",
-                pkey, ksig
+                "SnowballPayload::SharedKeying( pkey: {:?}, ksig: {:?}, fee: {:?})",
+                pkey, ksig, fee
             ),
             SnowballPayload::Commitment { cmt, .. } => {
                 write!(f, "SnowballPayload::Commitment( cmt: {})", cmt)
@@ -96,20 +96,20 @@ impl fmt::Display for SnowballPayload {
 impl fmt::Debug for SnowballPayload {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SnowballPayload::SharedKeying { pkey, ksig } => write!(
+            SnowballPayload::SharedKeying { pkey, ksig, fee } => write!(
                 f,
-                "VsPayload::SharedKeying( pkey: {:?}, ksig: {:?})",
-                pkey, ksig
+                "SnowballPayload::SharedKeying( pkey: {:?}, ksig: {:?}, fee: {:?})",
+                pkey, ksig, fee
             ),
             SnowballPayload::Commitment { cmt, .. } => {
-                write!(f, "VsPayload::Commitment( cmt: {})", cmt)
+                write!(f, "SnowballPayload::Commitment( cmt: {})", cmt)
             }
-            SnowballPayload::CloakedVals { .. } => write!(f, "VsPayload::CloakedVals(...)"),
+            SnowballPayload::CloakedVals { .. } => write!(f, "SnowballPayload::CloakedVals(...)"),
             SnowballPayload::Signature { sig } => {
-                write!(f, "VsPayload::Signature( sig: {:?})", sig)
+                write!(f, "SnowballPayload::Signature( sig: {:?})", sig)
             }
             SnowballPayload::SecretKeying { skey, .. } => {
-                write!(f, "VsPayload::SecretKeying( skey: {:?})", skey)
+                write!(f, "SnowballPayload::SecretKeying( skey: {:?})", skey)
             }
         }
     }
@@ -144,9 +144,10 @@ impl Hashable for SnowballPayload {
             });
         }
         match self {
-            SnowballPayload::SharedKeying { pkey, ksig } => {
+            SnowballPayload::SharedKeying { pkey, ksig, fee } => {
                 pkey.hash(state);
                 ksig.hash(state);
+                fee.hash(state);
             }
             SnowballPayload::Commitment { cmt, parts } => {
                 cmt.hash(state);
@@ -157,7 +158,6 @@ impl Hashable for SnowballPayload {
             SnowballPayload::CloakedVals {
                 matrix,
                 gamma_sum,
-                fee_sum,
                 cloaks,
             } => {
                 for p in matrix {
@@ -168,7 +168,6 @@ impl Hashable for SnowballPayload {
                     }
                 }
                 gamma_sum.hash(state);
-                fee_sum.hash(state);
                 hash_cloaks(cloaks, state);
             }
             SnowballPayload::Signature { sig } => {

@@ -19,6 +19,7 @@ message DcMatrix {
 message SharedKeying {
     stegos.crypto.PublicKey pkey = 1;
     stegos.crypto.Pt ksig = 2;
+    int64 fee = 3;
 }
 
 message Commitment {
@@ -29,7 +30,6 @@ message Commitment {
 message CloakedVals {
     DcMatrix matrix = 1;
     stegos.crypto.Fr gamma_sum = 2;
-    stegos.crypto.Fr fee_sum = 3;
     repeated stegos.crypto.DiceMixParticipantID drops = 4;
     repeated stegos.crypto.Hash cloaks = 5;
 }

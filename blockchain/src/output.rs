@@ -27,7 +27,9 @@ use failure::{Error, Fail};
 use rand::random;
 use serde_derive::{Deserialize, Serialize};
 use std::mem::transmute;
-use stegos_crypto::bulletproofs::{fee_a, make_range_proof, validate_range_proof, BulletProof};
+use stegos_crypto::bulletproofs::{
+    fee_a, make_range_proof, validate_range_proof, BulletProof,
+};
 use stegos_crypto::hash::{Hash, Hashable, Hasher, HASH_SIZE};
 use stegos_crypto::pbc;
 use stegos_crypto::scc::{
@@ -121,6 +123,8 @@ pub struct PaymentOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locked_timestamp: Option<Timestamp>,
 }
+
+pub const UTXO_SIZE: usize = 1832; // ?? = 3 * PTSIZE + BPSIZE + PAYMENT_PAYLOAD_LEN;
 
 /// PublicPayment UTXO.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]

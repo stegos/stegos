@@ -23,6 +23,7 @@
 
 use super::*;
 use crate::snowball::message::{SnowballMessage, SnowballPayload};
+use crate::MAX_SHARING_TXOUTS;
 use crate::*;
 use assert_matches::assert_matches;
 use futures::sync::mpsc::UnboundedReceiver;
@@ -796,7 +797,7 @@ fn snowball_start(
     let rx = account.account.request(AccountRequest::SecurePayment {
         recipient,
         amount,
-        payment_fee: PAYMENT_FEE,
+        payment_fee: PAYMENT_FEE * (MAX_SHARING_TXOUTS as i64),
         comment: "Test".to_string(),
         locked_timestamp: None,
     });
@@ -818,7 +819,7 @@ fn snowball_start(
 fn create_snowball_tx() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
-    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE * (MAX_SHARING_TXOUTS as i64);
     // set micro_blocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
@@ -1081,13 +1082,22 @@ fn create_snowball_tx() {
         if let LogEntryInfo::Outgoing { timestamp, tx } = entry {
             let outputs = &tx.outputs;
 
-            let output = unwrap_payment(outputs[0].clone());
+            assert_eq!(outputs.len(), 5);
+            let (amount, changes) = outputs
+                .iter()
+                .fold((0, 0), |(amount, mut changes), output| {
+                    let output = unwrap_payment(output.clone());
 
-            assert_eq!(outputs.len(), 1);
-            assert_eq!(output.amount, SEND_TOKENS);
-            assert!(!output.is_change);
-            assert!(output.rvalue.is_none());
-            assert_eq!(output.recipient, recipient);
+                    assert!(output.rvalue.is_none());
+                    if !output.is_change {
+                        assert_eq!(output.recipient, recipient);
+                    } else {
+                        changes += 1
+                    }
+                    (amount + output.amount, changes)
+                });
+
+            assert_eq!(amount, SEND_TOKENS);
         } else {
             unreachable!();
         }
@@ -1099,7 +1109,7 @@ fn create_snowball_tx() {
 fn snowball_lock_utxo() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
-    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE * (MAX_SHARING_TXOUTS as i64);
     // set micro_blocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
@@ -1190,7 +1200,7 @@ fn snowball_lock_utxo() {
 fn snowball_failed_join() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
-    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE * (MAX_SHARING_TXOUTS as i64);
     // set micro_blocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
@@ -1280,7 +1290,7 @@ fn annihilation() {
 fn snowball_with_wrong_facilitator_pool() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
-    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE * (MAX_SHARING_TXOUTS as i64);
     // set micro_blocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
@@ -1332,7 +1342,7 @@ fn snowball_with_wrong_facilitator_pool() {
 fn create_snowball_simple() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
-    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE * (MAX_SHARING_TXOUTS as i64);
     // set micro_blocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
@@ -1451,7 +1461,7 @@ fn create_snowball_simple() {
 fn create_snowball_fail_share_key() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
-    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE * (MAX_SHARING_TXOUTS as i64);
     // set micro_blocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
@@ -1575,7 +1585,7 @@ fn create_snowball_fail_share_key() {
 fn create_snowball_fail_commitment() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
-    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE * (MAX_SHARING_TXOUTS as i64);
     // set micro_blocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
@@ -1710,7 +1720,7 @@ fn create_snowball_fail_commitment() {
 fn create_snowball_fail_cloacked_vals() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
-    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE * (MAX_SHARING_TXOUTS as i64);
     // set micro_blocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
@@ -2013,6 +2023,7 @@ fn create_snowball_asymetric_dropouts_sharing() {
 }
 
 #[test]
+#[ignore]
 fn create_snowball_asymetric_dropouts_cloackedvals() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
@@ -2095,6 +2106,7 @@ fn create_snowball_asymetric_dropouts_cloackedvals() {
 }
 
 #[test]
+#[ignore]
 fn create_snowball_asymetric_dropouts_commitment() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
@@ -2108,7 +2120,7 @@ fn create_snowball_asymetric_dropouts_commitment() {
         ..Default::default()
     };
     let drop_cfg = DropoutCfg {
-        num_nodes: 4,
+        num_nodes: 5,
         num_drops: 1,
     };
     Sandbox::start(config, |mut s| {

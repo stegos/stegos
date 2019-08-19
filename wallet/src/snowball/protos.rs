@@ -41,10 +41,11 @@ impl ProtoConvert for SnowballPayload {
     fn into_proto(&self) -> Self::Proto {
         let mut msg = snowball::SnowballPayload::new();
         match self {
-            SnowballPayload::SharedKeying { pkey, ksig } => {
+            SnowballPayload::SharedKeying { pkey, ksig, fee } => {
                 let mut body = snowball::SharedKeying::new();
                 body.set_pkey(pkey.into_proto());
                 body.set_ksig(ksig.into_proto());
+                body.set_fee(*fee);
                 msg.set_sharedkeying(body);
             }
             SnowballPayload::Commitment { cmt, parts } => {
@@ -56,7 +57,6 @@ impl ProtoConvert for SnowballPayload {
             SnowballPayload::CloakedVals {
                 matrix,
                 gamma_sum,
-                fee_sum,
                 cloaks,
             } => {
                 let mut body = snowball::CloakedVals::new();
@@ -74,7 +74,6 @@ impl ProtoConvert for SnowballPayload {
                 }
                 body.set_matrix(dcsheets);
                 body.set_gamma_sum(gamma_sum.into_proto());
-                body.set_fee_sum(fee_sum.into_proto());
                 cloaks.iter().for_each(|(p, h)| {
                     body.drops.push(p.into_proto());
                     body.cloaks.push(h.into_proto());
@@ -101,6 +100,7 @@ impl ProtoConvert for SnowballPayload {
                 SnowballPayload::SharedKeying {
                     pkey: PublicKey::from_proto(msg.get_pkey())?,
                     ksig: Pt::from_proto(msg.get_ksig())?,
+                    fee: msg.get_fee(),
                 }
             }
             Some(snowball::SnowballPayload_oneof_body::commitment(ref msg)) => {
@@ -127,7 +127,6 @@ impl ProtoConvert for SnowballPayload {
                     matrix.push(rows);
                 }
                 let gamma_sum = Fr::from_proto(msg.get_gamma_sum())?;
-                let fee_sum = Fr::from_proto(msg.get_fee_sum())?;
                 let mut cloaks: HashMap<ParticipantID, Hash> = HashMap::new();
                 for (drop, hash) in msg.drops.iter().zip(msg.cloaks.iter()) {
                     let p = ParticipantID::from_proto(drop)?;
@@ -137,7 +136,6 @@ impl ProtoConvert for SnowballPayload {
                 SnowballPayload::CloakedVals {
                     matrix,
                     gamma_sum,
-                    fee_sum,
                     cloaks,
                 }
             }
@@ -220,6 +218,7 @@ pub mod tests {
             payload: SnowballPayload::SharedKeying {
                 pkey: wallet_pkey,
                 ksig,
+                fee: 0,
             },
         };
         roundtrip(&msg);

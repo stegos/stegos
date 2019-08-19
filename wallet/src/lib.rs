@@ -60,7 +60,7 @@ use stegos_keychain::KeyError;
 use stegos_network::Network;
 use stegos_node::NodeNotification;
 use stegos_node::TransactionStatus;
-use stegos_node::{Node, NodeRequest, NodeResponse};
+use stegos_node::{Node, NodeResponse};
 use tokio::runtime::TaskExecutor;
 use tokio_timer::{clock, Interval};
 
@@ -152,8 +152,6 @@ struct UnsealedAccountService {
     //
     // Events source
     //
-    /// Recovery status.
-    recovery_rx: Option<oneshot::Receiver<NodeResponse>>,
     /// API Requests.
     events: mpsc::UnboundedReceiver<AccountEvent>,
     /// Notifications from node.
@@ -201,19 +199,16 @@ impl UnsealedAccountService {
             .iter_unspent()
             .map(|(k, v)| (k, v.to_output()))
             .collect();
-        let recovery_request = NodeRequest::RecoverAccount {
-            account_skey: account_skey.clone(),
-            account_pkey: account_pkey.clone(),
-            epoch,
-            unspent,
-        };
-        let recovery_rx = Some(node.request(recovery_request));
-
         //
         // Notifications from node.
         //
 
-        let node_notifications = node.subscribe();
+        let node_notifications = node.subscribe_with_recovery(
+            account_skey.clone(),
+            account_pkey.clone(),
+            epoch,
+            unspent,
+        );
 
         UnsealedAccountService {
             database_dir,
@@ -236,7 +231,6 @@ impl UnsealedAccountService {
             network,
             node,
             subscribers,
-            recovery_rx,
             events,
             node_notifications,
             transaction_response,
@@ -1007,69 +1001,6 @@ impl Future for UnsealedAccountService {
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         // Recovery information from node.
-        if let Some(ref mut recovery_rx) = &mut self.recovery_rx {
-            match recovery_rx.poll() {
-                Ok(Async::Ready(response)) => {
-                    self.recovery_rx = None;
-                    match response {
-                        NodeResponse::AccountRecovered {
-                            recovery_state,
-                            epoch,
-                            facilitator_pkey,
-                            last_macro_block_timestamp,
-                        } => {
-                            let (balance, _available_balance) = self.balance();
-                            // Recover state.
-                            assert!(self.snowball.is_none());
-                            for (hash, OutputRecovery { output, .. }) in
-                                recovery_state.removed.into_iter()
-                            {
-                                self.on_output_pruned(hash, output)
-                            }
-
-                            // firstly save all info that is final, and finalize epoch state.
-                            for (_, OutputRecovery { output, epoch, .. }) in
-                                recovery_state.commited.into_iter()
-                            {
-                                let output_hash = Hash::digest(&output);
-                                self.on_output_created(epoch, output_hash, output);
-                            }
-                            self.on_epoch_changed(
-                                epoch,
-                                facilitator_pkey,
-                                last_macro_block_timestamp,
-                            );
-                            for (_, OutputRecovery { output, epoch, .. }) in
-                                recovery_state.prepared.into_iter()
-                            {
-                                let output_hash = Hash::digest(&output);
-                                self.on_output_created(epoch, output_hash, output);
-                            }
-
-                            info!("Loaded account {}", self.account_pkey);
-                            let (new_balance, available_balance) = self.balance();
-                            metrics::WALLET_AVALIABLE_BALANCES
-                                .with_label_values(&[&String::from(&self.account_pkey)])
-                                .set(available_balance);
-                            if balance != new_balance {
-                                debug!("Balance changed");
-                                self.notify(AccountNotification::BalanceChanged {
-                                    balance: new_balance,
-                                    available_balance,
-                                });
-                            }
-                        }
-                        NodeResponse::Error { error } => {
-                            // Sic: this case is hard to recover.
-                            panic!("Failed to recover account: {:?}", error);
-                        }
-                        _ => unreachable!(),
-                    };
-                }
-                Ok(Async::NotReady) => {}
-                Err(_) => panic!("disconnected"),
-            }
-        }
 
         if let Some(mut transaction_response) = self.transaction_response.take() {
             match transaction_response.poll().expect("connected") {
@@ -1297,12 +1228,10 @@ impl Future for UnsealedAccountService {
             {
                 Async::Ready(Some(notification)) => match notification {
                     NodeNotification::NewMicroBlock(block) => {
-                        assert!(self.recovery_rx.is_none(), "recovered from the disk");
                         self.on_tx_statuses_changed(block.statuses);
                         self.on_outputs_changed(block.epoch, block.inputs, block.outputs);
                     }
                     NodeNotification::NewMacroBlock(block) => {
-                        assert!(self.recovery_rx.is_none(), "recovered from the disk");
                         self.on_tx_statuses_changed(block.statuses);
                         self.on_outputs_changed(block.epoch, block.inputs, block.outputs);
                         self.on_epoch_changed(
@@ -1312,9 +1241,51 @@ impl Future for UnsealedAccountService {
                         );
                     }
                     NodeNotification::RollbackMicroBlock(block) => {
-                        assert!(self.recovery_rx.is_none(), "recovered from the disk");
                         self.on_tx_statuses_changed(block.statuses);
                         self.on_outputs_changed(block.epoch, block.inputs, block.outputs);
+                    }
+                    NodeNotification::AccountRecovered {
+                        recovery_state,
+                        epoch,
+                        facilitator_pkey,
+                        last_macro_block_timestamp,
+                    } => {
+                        let (balance, _available_balance) = self.balance();
+                        // Recover state.
+                        assert!(self.snowball.is_none());
+                        for (hash, OutputRecovery { output, .. }) in
+                            recovery_state.removed.into_iter()
+                        {
+                            self.on_output_pruned(hash, output)
+                        }
+
+                        // firstly save all info that is final, and finalize epoch state.
+                        for (_, OutputRecovery { output, epoch, .. }) in
+                            recovery_state.commited.into_iter()
+                        {
+                            let output_hash = Hash::digest(&output);
+                            self.on_output_created(epoch, output_hash, output);
+                        }
+                        self.on_epoch_changed(epoch, facilitator_pkey, last_macro_block_timestamp);
+                        for (_, OutputRecovery { output, epoch, .. }) in
+                            recovery_state.prepared.into_iter()
+                        {
+                            let output_hash = Hash::digest(&output);
+                            self.on_output_created(epoch, output_hash, output);
+                        }
+
+                        info!("Loaded account {}", self.account_pkey);
+                        let (new_balance, available_balance) = self.balance();
+                        metrics::WALLET_AVALIABLE_BALANCES
+                            .with_label_values(&[&String::from(&self.account_pkey)])
+                            .set(available_balance);
+                        if balance != new_balance {
+                            debug!("Balance changed");
+                            self.notify(AccountNotification::BalanceChanged {
+                                balance: new_balance,
+                                available_balance,
+                            });
+                        }
                     }
                     _ => {}
                 },

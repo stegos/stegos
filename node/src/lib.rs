@@ -94,10 +94,30 @@ impl Node {
         rx
     }
 
-    /// Subscribe to synchronization status changes.
+    /// Subscribe to node update.
     pub fn subscribe(&self) -> UnboundedReceiver<NodeNotification> {
         let (tx, rx) = unbounded();
         let msg = NodeMessage::SubscribeNodeNotification(tx);
+        self.outbox.unbounded_send(msg).expect("connected");
+        rx
+    }
+    /// Subscribe to node update.
+    /// Also recover info about wallet.
+    pub fn subscribe_with_recovery(
+        &self,
+        account_skey: scc::SecretKey,
+        account_pkey: scc::PublicKey,
+        epoch: u64,
+        unspent: HashMap<Hash, Output>,
+    ) -> UnboundedReceiver<NodeNotification> {
+        let (tx, rx) = unbounded();
+        let msg = NodeMessage::AccountRecover {
+            tx,
+            account_skey,
+            account_pkey,
+            epoch,
+            unspent,
+        };
         self.outbox.unbounded_send(msg).expect("connected");
         rx
     }
@@ -123,6 +143,17 @@ pub enum NodeMessage {
     //
     // Public API
     //
+    AccountRecover {
+        tx: UnboundedSender<NodeNotification>,
+        /// Account Secret Key.
+        account_skey: scc::SecretKey,
+        /// Account Public Key.
+        account_pkey: scc::PublicKey,
+        /// Last epoch known by account.
+        epoch: u64,
+        /// List of active unspent outputs.
+        unspent: HashMap<Hash, Output>,
+    },
     SubscribeNodeNotification(UnboundedSender<NodeNotification>),
     Request {
         request: NodeRequest,
@@ -1153,6 +1184,28 @@ impl NodeService {
         Ok(())
     }
 
+    /// Handler for NodeMessage::AccountRecover.
+    fn handle_subscribe_with_recover(
+        &mut self,
+        tx: UnboundedSender<NodeNotification>,
+        account_skey: scc::SecretKey,
+        account_pkey: scc::PublicKey,
+        epoch: u64,
+        unspent: HashMap<Hash, Output>,
+    ) -> Result<(), Error> {
+        let recovery_state =
+            self.handle_recover_account(&account_skey, &account_pkey, epoch, unspent)?;
+        let response = NodeNotification::AccountRecovered {
+            recovery_state,
+            epoch: self.chain.epoch(),
+            facilitator_pkey: self.chain.facilitator().clone(),
+            last_macro_block_timestamp: self.chain.last_macro_block_timestamp(),
+        };
+        tx.unbounded_send(response)?;
+        self.on_node_notification.push(tx);
+        Ok(())
+    }
+
     /// Handler for NodeRequest::AddTransaction
     fn handle_add_tx(&mut self, tx: Transaction) -> TransactionStatus {
         match self.send_transaction(tx.clone()) {
@@ -1925,6 +1978,19 @@ impl Future for NodeService {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => {
                     let result: Result<(), Error> = match event {
+                        NodeMessage::AccountRecover {
+                            tx,
+                            account_pkey,
+                            account_skey,
+                            epoch,
+                            unspent,
+                        } => self.handle_subscribe_with_recover(
+                            tx,
+                            account_skey,
+                            account_pkey,
+                            epoch,
+                            unspent,
+                        ),
                         NodeMessage::SubscribeNodeNotification(tx) => {
                             self.handle_subscribe_node_notification(tx)
                         }
@@ -1942,31 +2008,6 @@ impl Future for NodeService {
                                         error: format!("{}", e),
                                     },
                                 },
-                                NodeRequest::RecoverAccount {
-                                    account_skey,
-                                    account_pkey,
-                                    epoch,
-                                    unspent,
-                                } => {
-                                    match self.handle_recover_account(
-                                        &account_skey,
-                                        &account_pkey,
-                                        epoch,
-                                        unspent,
-                                    ) {
-                                        Ok(recovery_state) => NodeResponse::AccountRecovered {
-                                            recovery_state,
-                                            epoch: self.chain.epoch(),
-                                            facilitator_pkey: self.chain.facilitator().clone(),
-                                            last_macro_block_timestamp: self
-                                                .chain
-                                                .last_macro_block_timestamp(),
-                                        },
-                                        Err(e) => NodeResponse::Error {
-                                            error: format!("{}", e),
-                                        },
-                                    }
-                                }
                                 NodeRequest::AddTransaction(tx) => {
                                     let hash = Hash::digest(&tx);
                                     NodeResponse::AddTransaction {

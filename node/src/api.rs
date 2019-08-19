@@ -39,17 +39,6 @@ pub enum NodeRequest {
     EscrowInfo {},
     PopBlock {},
     #[serde(skip)]
-    RecoverAccount {
-        /// Account Secret Key.
-        account_skey: scc::SecretKey,
-        /// Account Public Key.
-        account_pkey: scc::PublicKey,
-        /// Last epoch known by account.
-        epoch: u64,
-        /// List of active unspent outputs.
-        unspent: HashMap<Hash, Output>,
-    },
-    #[serde(skip)]
     AddTransaction(Transaction),
     ValidateCertificate {
         utxo: Hash,
@@ -69,13 +58,6 @@ pub enum NodeResponse {
     ElectionInfo(ElectionInfo),
     EscrowInfo(EscrowInfo),
     BlockPopped,
-    #[serde(skip)]
-    AccountRecovered {
-        recovery_state: AccountRecoveryState,
-        epoch: u64,
-        facilitator_pkey: pbc::PublicKey,
-        last_macro_block_timestamp: Timestamp,
-    },
     #[serde(skip)]
     AddTransaction {
         hash: Hash,
@@ -155,6 +137,13 @@ pub enum NodeNotification {
     NewMacroBlock(NewMacroBlock),
     RollbackMicroBlock(RollbackMicroBlock),
     SyncChanged(SyncChanged),
+    #[serde(skip)]
+    AccountRecovered {
+        recovery_state: AccountRecoveryState,
+        epoch: u64,
+        facilitator_pkey: pbc::PublicKey,
+        last_macro_block_timestamp: Timestamp,
+    },
 }
 
 impl From<SyncChanged> for NodeNotification {

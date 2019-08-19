@@ -1,0 +1,48 @@
+syntax = "proto3";
+package stegos.queryshuffle;
+
+import "crypto.proto";
+import "blockchain.proto";
+
+message DcRow {
+    repeated stegos.crypto.Fr cols = 1;
+}
+
+message DcSheet {
+    repeated DcRow rows = 1;
+}
+
+message DcMatrix {
+    repeated DcSheet sheets = 1;
+}
+
+message SharedKeying {
+    stegos.crypto.PublicKey pkey = 1;
+    int64 fee = 2;
+}
+
+message Commitment {
+    stegos.crypto.Hash cmt = 1;
+}
+
+message CloakedVals {
+    DcMatrix matrix = 1;
+    repeated stegos.crypto.DiceMixParticipantID drops = 4;
+    repeated stegos.crypto.Hash cloaks = 5;
+}
+
+message QueryShufflePayload {
+    oneof body {
+        SharedKeying sharedkeying = 1;
+        Commitment commitment = 2;
+        CloakedVals cloakedvals = 3;
+    }
+}
+
+message QueryShufflelMessage {
+    stegos.crypto.Hash sid = 1;
+    stegos.crypto.DiceMixParticipantID source = 2;
+    stegos.crypto.DiceMixParticipantID destination = 3;
+    QueryShufflePayload payload = 4;
+}
+

@@ -38,7 +38,10 @@ use stegos_crypto::hash::Hash;
 use stegos_crypto::scc::SchnorrSig;
 use stegos_crypto::{dicemix, CryptoError};
 
-use crate::txpool::messages::{ParticipantTXINMap, PoolInfo, PoolJoin, PoolNotification};
+use crate::txpool::messages::{
+    ParticipantTXINMap, PoolInfo, PoolJoin, PoolNotification, QueryPoolInfo, QueryPoolJoin,
+    QueryPoolNotification,
+};
 
 impl ProtoConvert for RequestBlocks {
     type Proto = loader::RequestBlocks;
@@ -222,6 +225,78 @@ impl ProtoConvert for PoolNotification {
         Ok(chain_message)
     }
 }
+
+// --------------------------------------------------------------
+
+impl ProtoConvert for QueryPoolJoin {
+    type Proto = txpool::QueryPoolJoin;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = txpool::QueryPoolJoin::new();
+        proto.set_seed(self.seed.to_vec());
+        proto
+    }
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let seed_slice = proto.get_seed();
+        if seed_slice.len() != 32 {
+            return Err(CryptoError::InvalidBinaryLength(32, seed_slice.len()).into());
+        }
+        let mut seed: [u8; 32] = [0u8; 32];
+        seed.copy_from_slice(seed_slice);
+        Ok(QueryPoolJoin { seed })
+    }
+}
+
+impl ProtoConvert for QueryPoolInfo {
+    type Proto = txpool::QueryPoolInfo;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = txpool::QueryPoolInfo::new();
+        for elt in &self.participants {
+            proto.participants.push((*elt).into_proto());
+        }
+        proto.set_session_id(self.session_id.into_proto());
+        proto
+    }
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let mut participants = Vec::<dicemix::ParticipantID>::new();
+        for elt in proto.get_participants() {
+            participants.push(dicemix::ParticipantID::from_proto(elt)?);
+        }
+        let session_id = Hash::from_proto(proto.get_session_id())?;
+        Ok(QueryPoolInfo {
+            participants,
+            session_id,
+        })
+    }
+}
+
+impl ProtoConvert for QueryPoolNotification {
+    type Proto = txpool::QueryPoolNotification;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = txpool::QueryPoolNotification::new();
+        match self {
+            QueryPoolNotification::Started(r) => proto.set_started(r.into_proto()),
+            QueryPoolNotification::Canceled => proto.set_canceled(txpool::QueryPoolCanceled::new()),
+        }
+        proto
+    }
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let ref body = proto
+            .body
+            .as_ref()
+            .ok_or_else(|| format_err!("No variants in QueryPoolNotification found"))?;
+        let chain_message = match body {
+            txpool::QueryPoolNotification_oneof_body::started(ref r) => {
+                QueryPoolNotification::Started(QueryPoolInfo::from_proto(r)?)
+            }
+            txpool::QueryPoolNotification_oneof_body::canceled(_) => {
+                QueryPoolNotification::Canceled
+            }
+        };
+        Ok(chain_message)
+    }
+}
+
+// ---------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

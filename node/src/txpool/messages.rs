@@ -29,6 +29,11 @@ pub const POOL_JOIN_TOPIC: &'static str = "txpool_join";
 /// A topic for PoolInfo messages.
 pub const POOL_ANNOUNCE_TOPIC: &'static str = "txpool_announce";
 
+/// A topic used for QueryPoolJoin requests.
+pub const QUERYPOOL_JOIN_TOPIC: &'static str = "qpool_join";
+/// A topic for QueryPool PoolInfo messages.
+pub const QUERYPOOL_ANNOUNCE_TOPIC: &'static str = "qpool_announce";
+
 type TXIN = Hash;
 type UTXO = PaymentOutput;
 type SchnorrSig = scc::SchnorrSig;
@@ -68,6 +73,27 @@ pub enum PoolNotification {
     Canceled,
 }
 
+// -----------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct QueryPoolJoin {
+    pub seed: [u8; 32],
+}
+
+#[derive(Debug, Clone)]
+pub struct QueryPoolInfo {
+    pub participants: Vec<ParticipantID>,
+    pub session_id: Hash,
+}
+
+#[derive(Debug, Clone)]
+pub enum QueryPoolNotification {
+    /// Pool formed, information about pool.
+    Started(QueryPoolInfo),
+    /// Pool canceled, in case of new facilitator.
+    Canceled,
+}
+
 // --------------------------------------------------
 
 impl Hashable for PoolJoin {
@@ -94,6 +120,7 @@ impl Hashable for ParticipantTXINMap {
         self.ownsig.hash(state);
     }
 }
+
 impl Hashable for PoolInfo {
     fn hash(&self, state: &mut Hasher) {
         "PoolInfo".hash(state);
@@ -119,5 +146,30 @@ impl Hashable for PoolNotification {
 impl From<PoolInfo> for PoolNotification {
     fn from(info: PoolInfo) -> PoolNotification {
         PoolNotification::Started(info)
+    }
+}
+
+// ----------------------------------------------------------
+
+impl Hashable for QueryPoolJoin {
+    fn hash(&self, state: &mut Hasher) {
+        "QueryPoolJoin".hash(state);
+        self.seed.hash(state);
+    }
+}
+
+impl Hashable for QueryPoolInfo {
+    fn hash(&self, state: &mut Hasher) {
+        "QueryPoolInfo".hash(state);
+        for part in &self.participants {
+            part.hash(state);
+        }
+        self.session_id.hash(state);
+    }
+}
+
+impl From<QueryPoolInfo> for QueryPoolNotification {
+    fn from(info: QueryPoolInfo) -> QueryPoolNotification {
+        QueryPoolNotification::Started(info)
     }
 }

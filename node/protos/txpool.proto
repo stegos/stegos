@@ -34,3 +34,23 @@ message PoolNotification {
     }
 }
 
+
+message QueryPoolJoin {
+    bytes seed = 3;
+}
+
+message QueryPoolInfo {
+    repeated stegos.crypto.DiceMixParticipantID participants = 1;
+    stegos.crypto.Hash session_id = 2;
+}
+
+message QueryPoolCanceled {
+}
+
+message QueryPoolNotification {
+    oneof body {
+        QueryPoolInfo started = 1;
+        QueryPoolCanceled canceled = 2;
+    }
+}
+

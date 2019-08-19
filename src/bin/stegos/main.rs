@@ -24,8 +24,9 @@ mod console;
 use clap;
 use clap::{App, Arg};
 use console::ConsoleService;
+use std::fs;
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::str::FromStr;
 use tokio::runtime::Runtime;
 
@@ -74,11 +75,6 @@ fn main() {
                 .env("STEGOS_API_TOKEN_FILE")
                 .help("A path to file, contains 16-byte API TOKEN")
                 .takes_value(true)
-                .validator(|token_file| {
-                    stegos_api::load_api_token(Path::new(&token_file))
-                        .map(|_| ())
-                        .map_err(|e| format!("{:?}", e))
-                })
                 .value_name("FILE"),
         )
         .arg(
@@ -89,12 +85,7 @@ fn main() {
                 .value_name("DIR")
                 .help("Path to data directory, contains api.token file")
                 .default_value(&default_data_dir)
-                .takes_value(true)
-                .validator(|data_dir| {
-                    stegos_api::load_api_token(&Path::new(&data_dir).join("api.token"))
-                        .map(|_| ())
-                        .map_err(|e| format!("{:?}", e))
-                }),
+                .takes_value(true),
         )
         .arg(
             Arg::with_name("verbose")
@@ -113,19 +104,27 @@ fn main() {
     };
     simple_logger::init_with_level(level).unwrap_or_default();
 
+    let data_dir = PathBuf::from(args.value_of("data-dir").unwrap());
+    if !data_dir.exists() {
+        if let Err(e) = fs::create_dir_all(&data_dir) {
+            eprintln!(
+                "Failed to create data directory {:?} for \"stegos.history\": {}",
+                data_dir, e
+            );
+            // Ignore this error.
+        }
+    }
+    let history_file = data_dir.join("stegos.history");
     let api_token_file = if let Some(api_token_file) = args.value_of("api-token-file") {
         PathBuf::from(api_token_file)
     } else {
-        PathBuf::from(args.value_of("data-dir").unwrap()).join("api.token")
+        data_dir.join("api.token")
     };
     let uri = format!("ws://{}", args.value_of("api-endpoint").unwrap());
     let api_token = match stegos_api::load_api_token(&api_token_file) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!(
-                "Failed to load API Token from '{:?}': {}",
-                api_token_file, e
-            );
+            eprintln!("Failed to load API Token from {:?}: {}", api_token_file, e);
             std::process::exit(1);
         }
     };
@@ -135,7 +134,7 @@ fn main() {
     println!();
 
     let mut rt = Runtime::new().expect("Failed to initialize tokio");
-    let console_service = ConsoleService::new(uri, api_token);
+    let console_service = ConsoleService::new(uri, api_token, history_file);
     rt.block_on(console_service)
         .expect("errors are handled earlier");
 }

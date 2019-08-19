@@ -19,7 +19,6 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-use dirs;
 use failure::{format_err, Error};
 use futures::sync::mpsc::{channel, Receiver, Sender};
 use futures::{Async, Future, Poll, Sink, Stream};
@@ -75,8 +74,6 @@ const PASSWORD_PROMPT1: &'static str = "Enter new password: ";
 const PASSWORD_PROMPT2: &'static str = "Enter same password again: ";
 // The number of records in `show history`.
 const CONSOLE_HISTORY_LIMIT: u64 = 50;
-// The default file name for command-line history
-const STEGOS_HISTORY: &'static str = "stegos.history";
 
 fn read_password_from_stdin(confirm: bool) -> Result<String, KeyError> {
     loop {
@@ -133,12 +130,13 @@ pub struct ConsoleService {
 
 impl ConsoleService {
     /// Constructor.
-    pub fn new(uri: String, api_token: ApiToken) -> ConsoleService {
+    pub fn new(uri: String, api_token: ApiToken, history_file: PathBuf) -> ConsoleService {
         let (tx, rx) = channel::<String>(1);
         let client = WebSocketClient::new(uri, api_token);
         let account_id = Arc::new(Mutex::new("1".to_string()));
         let th_account_id = account_id.clone();
-        let stdin_th = thread::spawn(move || Self::readline_thread_f(tx, th_account_id));
+        let stdin_th =
+            thread::spawn(move || Self::readline_thread_f(tx, history_file, th_account_id));
         let stdin = rx;
         ConsoleService {
             client,
@@ -149,16 +147,11 @@ impl ConsoleService {
     }
 
     /// Background thread to read stdin.
-    fn readline_thread_f(mut tx: Sender<String>, account_id: Arc<Mutex<AccountId>>) {
-        // Use ~/.share/stegos/stegos.history for command line history.
-        let history_dir = dirs::data_dir()
-            .map(|p| p.join(r"stegos"))
-            .unwrap_or(PathBuf::from(r"."));
-        if !history_dir.exists() {
-            std::fs::create_dir_all(&history_dir).unwrap();
-        }
-        let history_path = history_dir.join(STEGOS_HISTORY);
-
+    fn readline_thread_f(
+        mut tx: Sender<String>,
+        history_file: PathBuf,
+        account_id: Arc<Mutex<AccountId>>,
+    ) {
         let config = rl::Config::builder()
             .history_ignore_space(true)
             .history_ignore_dups(true)
@@ -168,7 +161,7 @@ impl ConsoleService {
             .build();
 
         let mut rl = rl::Editor::<()>::with_config(config);
-        rl.load_history(&history_path).ok(); // just ignore errors
+        rl.load_history(&history_file).ok(); // just ignore errors
 
         loop {
             let prompt = format!("account#{}> ", account_id.lock().unwrap().clone());
@@ -194,8 +187,8 @@ impl ConsoleService {
             }
         }
         tx.close().ok(); // ignore errors
-        if let Err(e) = rl.save_history(&history_path) {
-            eprintln!("Failed to save CLI history: {}", e);
+        if let Err(e) = rl.save_history(&history_file) {
+            eprintln!("Failed to save CLI history to {:?}: {}", history_file, e);
         };
     }
 

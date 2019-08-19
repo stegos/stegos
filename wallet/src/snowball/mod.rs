@@ -2146,7 +2146,7 @@ fn validate_ownership(
 }
 
 fn serialize_utxo(utxo: &UTXO) -> Vec<u8> {
-    utxo.into_buffer().expect("Can't serialize UTXO")
+    utxo.to_bytes()
 }
 
 fn deserialize_utxo(msg: &Vec<u8>, ser_size: usize) -> Result<UTXO, String> {
@@ -2154,7 +2154,7 @@ fn deserialize_utxo(msg: &Vec<u8>, ser_size: usize) -> Result<UTXO, String> {
     // number of Field size. But proto-bufs is very particular about
     // what it is handed, and complains about trailing padding bytes.
     // otherwise, deserialize and return
-    UTXO::from_buffer(&msg[0..ser_size]).map_err(|e| format!("{:?}", e))
+    UTXO::try_from_bytes(&msg[0..ser_size]).map_err(|e| format!("{:?}", e))
 }
 
 // -------------------------------------------------

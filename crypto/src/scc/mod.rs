@@ -46,6 +46,8 @@ use std::str::FromStr;
 
 // -----------------------------------------------------------------
 
+pub const PTSIZE: usize = 32; // bytes to represent a Pt
+
 lazy_static! {
     pub static ref INIT: bool = {
         check_prng();
@@ -121,6 +123,24 @@ pub struct EncryptedPayload {
 pub struct EncryptedKey {
     pub payload: EncryptedPayload,
     pub sig: SchnorrSig,
+}
+
+impl EncryptedPayload {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut ans = self.ag.to_bytes().to_vec();
+        ans.append(&mut self.ctxt.clone());
+        ans
+    }
+
+    pub fn try_from_bytes(slice: &[u8]) -> Result<EncryptedPayload, CryptoError> {
+        let len = slice.len() - PTSIZE;
+        if len < 1 {
+            return Err(CryptoError::InvalidBinaryLength(1, len));
+        }
+        let ag = Pt::try_from_bytes(&slice[0..PTSIZE])?;
+        let ctxt = slice[PTSIZE..PTSIZE + len].to_vec();
+        Ok(EncryptedPayload { ag, ctxt })
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -1240,6 +1260,17 @@ pub mod tests {
         let recovered_skey =
             decrypt_key(my_cloaking_seed, &encr_key).expect("Key couldn't be decrypted");
         assert!(recovered_skey == skey.to_bytes());
+    }
+
+    #[test]
+    fn encr_payload() {
+        // test production, serialization to bytes, and deserialization of encrypted payloads
+        let msg = b"Testing";
+        let (_skey, pkey) = make_deterministic_keys(b"testing");
+        let (payload, _fr) = aes_encrypt(&msg[..], &pkey).expect("ok");
+        let bytes = payload.to_bytes();
+        let recovered = EncryptedPayload::try_from_bytes(&bytes).expect("ok");
+        assert_eq!(&payload, &recovered);
     }
 
     #[test]

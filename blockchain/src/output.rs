@@ -27,12 +27,14 @@ use failure::{Error, Fail};
 use rand::random;
 use serde_derive::{Deserialize, Serialize};
 use std::mem::transmute;
-use stegos_crypto::bulletproofs::{fee_a, make_range_proof, validate_range_proof, BulletProof};
+use stegos_crypto::bulletproofs::{
+    fee_a, make_range_proof, validate_range_proof, BulletProof, BPSIZE,
+};
 use stegos_crypto::hash::{Hash, Hashable, Hasher, HASH_SIZE};
 use stegos_crypto::pbc;
 use stegos_crypto::scc::{
     aes_decrypt, aes_decrypt_with_rvalue, aes_encrypt, sign_hash, validate_sig, EncryptedPayload,
-    Fr, Pt, PublicKey, SchnorrSig, SecretKey,
+    Fr, Pt, PublicKey, SchnorrSig, SecretKey, PTSIZE,
 };
 use stegos_crypto::CryptoError;
 
@@ -120,6 +122,80 @@ pub struct PaymentOutput {
     /// Timelock for output.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locked_timestamp: Option<Timestamp>,
+}
+
+pub const UTXO_SIZE: usize = 1832; // ?? = 3 * PTSIZE + BPSIZE + PAYMENT_PAYLOAD_LEN;
+
+impl PaymentOutput {
+    // Support fixed-length encodings needed by Snowball/DiceMix
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut ans = self.recipient.to_bytes().to_vec();
+        ans.append(&mut self.cloaking_hint.to_bytes().to_vec());
+        ans.append(&mut self.proof.to_bytes().to_vec());
+        ans.append(&mut self.payload.to_bytes().to_vec());
+        let mut ts: u64 = match self.locked_timestamp {
+            None => 0u64,
+            Some(tsv) => tsv.into(),
+        };
+        for _ in 0..8 {
+            ans.push((ts & 0xff) as u8);
+            ts >>= 8;
+        }
+        ans
+    }
+
+    pub fn try_from_bytes(slice: &[u8]) -> Result<Self, OutputError> {
+        if slice.len() != UTXO_SIZE {
+            return Err(OutputError::UnsupportedDataType(
+                Hash::from_vector(&slice.to_vec()),
+                0u8,
+            ));
+        };
+        let mut pos = 0;
+        let recipient = PublicKey::try_from_bytes(&slice[pos..pos + PTSIZE])?;
+        pos += PTSIZE;
+        let cloaking_hint = Pt::try_from_bytes(&slice[pos..pos + PTSIZE])?;
+        pos += PTSIZE;
+        let proof = match BulletProof::try_from_bytes(&slice[pos..pos + BPSIZE]) {
+            Err(_) => {
+                return Err(OutputError::InvalidBulletProof(Hash::from_vector(
+                    &slice.to_vec(),
+                )));
+            }
+            Ok(bp) => bp,
+        };
+        pos += BPSIZE;
+        let payload =
+            match EncryptedPayload::try_from_bytes(&slice[pos..pos + PTSIZE + PAYMENT_PAYLOAD_LEN])
+            {
+                Err(_) => {
+                    return Err(OutputError::InvalidPayloadLength(
+                        Hash::from_vector(&slice.to_vec()),
+                        1,
+                        slice.len() - pos + PTSIZE,
+                    ));
+                }
+                Ok(bp) => bp,
+            };
+        pos += PTSIZE + PAYMENT_PAYLOAD_LEN;
+        let mut tsval = 0u64;
+        for ix in (0..8).rev() {
+            tsval <<= 8;
+            tsval |= slice[pos + ix] as u64;
+        }
+        let locked_timestamp = if 0 == tsval {
+            None
+        } else {
+            Some(Timestamp::from(tsval))
+        };
+        Ok(PaymentOutput {
+            recipient,
+            cloaking_hint,
+            proof,
+            payload,
+            locked_timestamp,
+        })
+    }
 }
 
 /// PublicPayment UTXO.
@@ -1003,5 +1079,19 @@ pub mod tests {
             .validate_certificate(&spender_pkey, &recipient_pkey, &Fr::random())
             .unwrap_err();
         assert_matches!(e, OutputError::InvalidCertificate);
+    }
+
+    #[test]
+    fn test_utxo_size() {
+        let (spender_skey, _spender_pkey) = make_random_keys();
+        let (_recipient_skey, recipient_pkey) = make_random_keys();
+        let amount: i64 = 100500;
+        let data = PaymentPayloadData::Comment(String::new());
+        let (output, _gamma, _rvalue) =
+            PaymentOutput::with_payload(Some(&spender_skey), &recipient_pkey, amount, data, None)
+                .expect("encryption successful");
+        let slice = output.to_bytes();
+        println!("PaymentOutput bytes = {}", slice.len());
+        assert!(output == PaymentOutput::try_from_bytes(&slice).expect("Same UTXO"));
     }
 }

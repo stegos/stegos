@@ -21,6 +21,7 @@
 
 mod console;
 
+use crate::console::Formatter;
 use clap;
 use clap::{App, Arg};
 use console::ConsoleService;
@@ -88,6 +89,17 @@ fn main() {
                 .takes_value(true),
         )
         .arg(
+            Arg::with_name("formatter")
+                .short("f")
+                .long("formatter")
+                .env("FORMATTER")
+                .value_name("FORMATTER")
+                .help("Formatter to use: yaml or json")
+                .default_value("yaml")
+                .possible_values(&["json", "yaml"])
+                .takes_value(true),
+        )
+        .arg(
             Arg::with_name("verbose")
                 .help("Change verbosity level")
                 .short("v")
@@ -128,9 +140,11 @@ fn main() {
             std::process::exit(1);
         }
     };
+    let formatter = Formatter::from_str(args.value_of("formatter").unwrap()).unwrap();
 
     let mut rt = Runtime::new().expect("Failed to initialize tokio");
-    let console_service = ConsoleService::new(name, version, uri, api_token, history_file);
+    let console_service =
+        ConsoleService::new(name, version, uri, api_token, history_file, formatter);
     rt.block_on(console_service)
         .expect("errors are handled earlier");
 }

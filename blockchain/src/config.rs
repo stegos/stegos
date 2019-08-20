@@ -53,7 +53,7 @@ impl Default for ChainConfig {
         let micro_blocks_in_epoch: u32 = 60;
         ChainConfig {
             max_slot_count: 1000,
-            min_stake_amount: 1_000 * STG, // 1000 STG
+            min_stake_amount: 50_000 * STG,
             micro_blocks_in_epoch,
             stake_epochs: 3,
             awards_difficulty: 3,

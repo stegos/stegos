@@ -22,8 +22,12 @@
 // SOFTWARE.
 
 use failure::Fail;
+use stegos_crypto::scc;
+
 #[derive(Debug, Fail, PartialEq, Eq)]
 pub enum WalletError {
+    #[fail(display = "Duplicate account: pkey={}", _0)]
+    DuplicateAccount(scc::PublicKey),
     #[fail(display = "Not enough money.")]
     NotEnoughMoney,
     #[fail(display = "No unspent public outputs was found.")]

@@ -51,21 +51,21 @@ use stegos_crypto::{pbc, scc};
 
 lazy_static! {
     /// Regex to parse "pay" command.
-    static ref PAY_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9A-Za-z]+)\s+(?P<amount>[0-9_]{1,19})(?P<arguments>.+)?\s*$").unwrap();
+    static ref PAY_COMMAND_RE: Regex = Regex::new(r"^\s*(?P<recipient>[0-9A-Za-z]+)\s+(?P<amount>[0-9_]{1,25})(?P<arguments>.+)?$").unwrap();
     /// Regex to parse argument of "pay" command.
-    static ref PAY_ARGUMENTS_RE: Regex = Regex::new(r"^(\s+(?P<public>(/public)))?(\s+(?P<snowball>(/snowball)))?(\s+(?P<comment>[^/]+?))?(\s+(?P<lock>(/lock\s*[^/]*)))?(\s+(?P<fee>(/fee\s[0-9_]{1,19})))?(\s+(?P<certificate>(/certificate)))?\s*$").unwrap();
+    static ref PAY_ARGUMENTS_RE: Regex = Regex::new(r"^(\s+(?P<public>(/public)))?(\s+(?P<snowball>(/snowball)))?(\s+(?P<comment>[^/]+?))?(\s+(?P<lock>(/lock\s*[^/]*)))?(\s+(?P<fee>(/fee\s[0-9_]{1,25})))?(\s+(?P<certificate>(/certificate)))?$").unwrap();
     /// Regex to parse "msg" command.
-    static ref MSG_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<msg>.+)$").unwrap();
+    static ref MSG_COMMAND_RE: Regex = Regex::new(r"^\s*(?P<recipient>[0-9a-f]+)\s+(?P<msg>.+)$").unwrap();
     /// Regex to parse "stake/unstake" command.
-    static ref STAKE_COMMAND_RE: Regex = Regex::new(r"\s*(?P<amount>[0-9]{1,19})\s*$").unwrap();
+    static ref STAKE_COMMAND_RE: Regex = Regex::new(r"^\s*(?P<amount>[0-9_]{1,25})$").unwrap();
     /// Regex to parse "publish" command.
-    static ref PUBLISH_COMMAND_RE: Regex = Regex::new(r"\s*(?P<topic>[0-9A-Za-z]+)\s+(?P<msg>.*)$").unwrap();
+    static ref PUBLISH_COMMAND_RE: Regex = Regex::new(r"^\s*(?P<topic>[0-9A-Za-z]+)\s+(?P<msg>.*)$").unwrap();
     /// Regex to parse "send" command.
-    static ref SEND_COMMAND_RE: Regex = Regex::new(r"\s*(?P<recipient>[0-9a-f]+)\s+(?P<topic>[0-9A-Za-z]+)\s+(?P<msg>.+)$").unwrap();
+    static ref SEND_COMMAND_RE: Regex = Regex::new(r"^\s*(?P<recipient>[0-9a-f]+)\s+(?P<topic>[0-9A-Za-z]+)\s+(?P<msg>.+)$").unwrap();
     /// Regex to parse "validate certificate" command.
-    static ref VALIDATE_CERTIFICATE_COMMAND_RE: Regex = Regex::new(r"\s*(?P<utxo>[0-9a-f]+)\s+(?P<spender>[0-9A-Za-z]+)\s+(?P<recipient>[0-9A-Za-z]+)\s+(?P<rvalue>[0-9a-f]+)\s*$").unwrap();
+    static ref VALIDATE_CERTIFICATE_COMMAND_RE: Regex = Regex::new(r"^\s*(?P<utxo>[0-9a-f]+)\s+(?P<spender>[0-9A-Za-z]+)\s+(?P<recipient>[0-9A-Za-z]+)\s+(?P<rvalue>[0-9a-f]+)$").unwrap();
     /// Regex to parse "use" command.
-    static ref USE_COMMAND_RE: Regex = Regex::new(r"\s*(?P<account_id>[0-9A-Za-z]+)\s*$").unwrap();
+    static ref USE_COMMAND_RE: Regex = Regex::new(r"^\s*(?P<account_id>[0-9A-Za-z]+)$").unwrap();
 }
 
 const RECOVERY_PROMPT: &'static str = "Enter 24-word recovery phrase: ";
@@ -198,6 +198,10 @@ impl ConsoleService {
                 Ok(line) => {
                     if line.is_empty() {
                         continue;
+                    }
+                    // Skip history for commands starting with whitespace.
+                    if !line.starts_with(" ") {
+                        rl.add_history_entry(line.clone());
                     }
                     if tx.try_send(line).is_err() {
                         assert!(tx.is_closed()); // this channel is never full
@@ -411,6 +415,7 @@ impl ConsoleService {
 
     /// Called when line is typed on standard input.
     fn on_input(&mut self, msg: &str) -> Result<bool, Error> {
+        let msg = msg.trim();
         if msg == "lock" || msg == "seal" {
             self.send_account_request(AccountRequest::Seal {})?;
         } else if msg == "unlock" || msg == "unseal" {
@@ -705,7 +710,14 @@ impl ConsoleService {
             };
 
             let amount = caps.name("amount").unwrap().as_str();
-            let amount = amount.parse::<i64>().expect("checked by regex");
+            let amount = match parse_money(amount) {
+                Ok(amount) => amount,
+                Err(e) => {
+                    eprintln!("{}", e);
+                    Self::help_unstake();
+                    return Ok(true);
+                }
+            };
             let payment_fee = PAYMENT_FEE;
             let request = AccountRequest::Unstake {
                 amount,

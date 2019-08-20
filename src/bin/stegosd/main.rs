@@ -269,7 +269,16 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
 
     // Resolve network.seed_pool.
     if cfg.network.seed_pool != "" {
-        let config = DnsConfig::load_default()?;
+        let mut config = DnsConfig::load_default()?;
+        if !cfg.network.dns_servers.is_empty() {
+            let mut dns_servers: Vec<SocketAddr> = Vec::new();
+            for server in cfg.network.dns_servers.iter() {
+                if let Ok(socket_addr) = server.parse() {
+                    dns_servers.push(socket_addr)
+                }
+            }
+            config.name_servers = dns_servers;
+        }
         let resolver = resolver::DnsResolver::new(config)?;
         // Sic: DNS operations are blocking.
         let rrs: Vec<Srv> = resolver.resolve_record(&cfg.network.seed_pool)?;

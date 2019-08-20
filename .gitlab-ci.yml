@@ -55,7 +55,11 @@ release:linux:
      - ./ci-scripts/build.sh builddep
   script:
     - cargo build --bins --release
-    - mkdir -p release/linux && mv target/release/{stegos,stegosd,bootstrap} release/linux
+    - mkdir -p release
+    - for bin in stegos stegosd bootstrap; do
+        mv target/release/$bin release/$bin-linux-x64.debug;
+        strip -S release/$bin-linux-x64.debug -o release/$bin-linux-x64;
+      done
   tags:
     - linux
 
@@ -65,6 +69,10 @@ release:macos:
      - ./ci-scripts/build.sh builddep
   script:
     - cargo build --bins --release
-    - mkdir -p release/macos && mv target/release/{stegos,stegosd,bootstrap} release/macos
+    - mkdir -p release
+    - for bin in stegos stegosd bootstrap; do
+        mv target/release/$bin release/$bin-macos-x64.debug;
+        strip -S release/$bin-macos-x64.debug -o release/$bin-macos-x64;
+      done
   tags:
     - macos

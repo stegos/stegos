@@ -27,6 +27,8 @@ use serde_derive::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(default)]
 pub struct NetworkConfig {
+    /// DNS server ton use to resolve seed nodes
+    pub dns_servers: Vec<String>,
     /// Local Node endpoint.
     pub endpoint: String,
     /// Advertised Node endpoint.
@@ -51,6 +53,7 @@ pub struct NetworkConfig {
 impl Default for NetworkConfig {
     fn default() -> NetworkConfig {
         NetworkConfig {
+            dns_servers: vec!["1.1.1.1:53".to_string(), "1.0.0.1:53".to_string()],
             seed_pool: "".to_string(),
             seed_nodes: vec![],
             advertised_endpoint: "".to_string(),

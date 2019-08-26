@@ -29,7 +29,6 @@ use futures::Future;
 use hyper::server::Server;
 use hyper::service::service_fn_ok;
 use hyper::{Body, Request, Response};
-use libc;
 use log::*;
 use log4rs::append::console::ConsoleAppender;
 use log4rs::config::{Appender, Config as LogConfig, Logger, Root};
@@ -172,20 +171,23 @@ fn enable_debug() {
     // Enable backtraces.
     let backtrace = std::env::var("RUST_BACKTRACE").unwrap_or("full".to_string());
     std::env::set_var("RUST_BACKTRACE", &backtrace);
-    // Enable coredumps.
-    if backtrace == "full" {
-        unsafe {
-            let mut rlim = libc::rlimit {
-                rlim_cur: 0,
-                rlim_max: 0,
-            };
-            if libc::getrlimit(libc::RLIMIT_CORE, &mut rlim) == 0 {
-                rlim.rlim_cur = rlim.rlim_max;
-                let _ = libc::setrlimit(libc::RLIMIT_CORE, &rlim); // ignore errors.
-            }
-            #[cfg(target_os = "linux")]
-            {
-                let _ = libc::prctl(libc::PR_SET_DUMPABLE, 1, 0, 0, 0); // ignore errors.
+    // Enable coredumps for macos and linux.
+    #[cfg(not(target_os = "windows"))]
+    {
+        if backtrace == "full" {
+            unsafe {
+                let mut rlim = libc::rlimit {
+                    rlim_cur: 0,
+                    rlim_max: 0,
+                };
+                if libc::getrlimit(libc::RLIMIT_CORE, &mut rlim) == 0 {
+                    rlim.rlim_cur = rlim.rlim_max;
+                    let _ = libc::setrlimit(libc::RLIMIT_CORE, &rlim); // ignore errors.
+                }
+                #[cfg(target_os = "linux")]
+                {
+                    let _ = libc::prctl(libc::PR_SET_DUMPABLE, 1, 0, 0, 0); // ignore errors.
+                }
             }
         }
     }
@@ -269,16 +271,17 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
 
     // Resolve network.seed_pool.
     if cfg.network.seed_pool != "" {
-        let mut config = DnsConfig::load_default()?;
-        if !cfg.network.dns_servers.is_empty() {
+        let config = if !cfg.network.dns_servers.is_empty() {
             let mut dns_servers: Vec<SocketAddr> = Vec::new();
             for server in cfg.network.dns_servers.iter() {
                 if let Ok(socket_addr) = server.parse() {
                     dns_servers.push(socket_addr)
                 }
             }
-            config.name_servers = dns_servers;
-        }
+            DnsConfig::with_name_servers(dns_servers)
+        } else {
+            DnsConfig::load_default()?
+        };
         let resolver = resolver::DnsResolver::new(config)?;
         // Sic: DNS operations are blocking.
         let rrs: Vec<Srv> = resolver.resolve_record(&cfg.network.seed_pool)?;

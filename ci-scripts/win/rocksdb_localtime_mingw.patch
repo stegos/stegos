@@ -1,0 +1,2 @@
+46a47
+> #define localtime_r(t,r) std::localtime(t)

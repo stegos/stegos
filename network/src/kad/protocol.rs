@@ -56,10 +56,10 @@ pub enum KadConnectionType {
     CannotConnect = 3,
 }
 
-impl From<dht_proto::dht::Message_ConnectionType> for KadConnectionType {
+impl From<dht_proto::dht::Peer_ConnectionType> for KadConnectionType {
     #[inline]
-    fn from(raw: dht_proto::dht::Message_ConnectionType) -> KadConnectionType {
-        use super::dht_proto::dht::Message_ConnectionType::{
+    fn from(raw: dht_proto::dht::Peer_ConnectionType) -> KadConnectionType {
+        use super::dht_proto::dht::Peer_ConnectionType::{
             CANNOT_CONNECT, CAN_CONNECT, CONNECTED, NOT_CONNECTED,
         };
         match raw {
@@ -71,10 +71,10 @@ impl From<dht_proto::dht::Message_ConnectionType> for KadConnectionType {
     }
 }
 
-impl Into<dht_proto::dht::Message_ConnectionType> for KadConnectionType {
+impl Into<dht_proto::dht::Peer_ConnectionType> for KadConnectionType {
     #[inline]
-    fn into(self) -> dht_proto::dht::Message_ConnectionType {
-        use super::dht_proto::dht::Message_ConnectionType::{
+    fn into(self) -> dht_proto::dht::Peer_ConnectionType {
+        use super::dht_proto::dht::Peer_ConnectionType::{
             CANNOT_CONNECT, CAN_CONNECT, CONNECTED, NOT_CONNECTED,
         };
         match self {
@@ -100,7 +100,7 @@ pub struct KadPeer {
 }
 
 impl KadPeer {
-    fn from_peer(peer: &mut dht_proto::dht::Message_Peer) -> Result<KadPeer, IoError> {
+    fn from_peer(peer: &mut dht_proto::dht::Peer) -> Result<KadPeer, IoError> {
         let node_id = pbc::PublicKey::try_from_bytes(peer.get_id()).map_err(|_| {
             IoError::new(
                 IoErrorKind::InvalidData,
@@ -136,9 +136,9 @@ impl KadPeer {
     }
 }
 
-impl Into<dht_proto::dht::Message_Peer> for KadPeer {
-    fn into(self) -> dht_proto::dht::Message_Peer {
-        let mut out = dht_proto::dht::Message_Peer::new();
+impl Into<dht_proto::dht::Peer> for KadPeer {
+    fn into(self) -> dht_proto::dht::Peer {
+        let mut out = dht_proto::dht::Peer::new();
         out.set_id(self.node_id.to_bytes().to_vec());
         if let Some(peer) = self.peer_id {
             out.set_peer_id(peer.into_bytes());

@@ -24,11 +24,11 @@ use super::protocol::{
     KademliaProtocolConfig,
 };
 use futures::prelude::*;
-use libp2p_core::protocols_handler::{
-    KeepAlive, ProtocolsHandler, ProtocolsHandlerEvent, ProtocolsHandlerUpgrErr, SubstreamProtocol,
-};
 use libp2p_core::{
     either::EitherOutput, upgrade, upgrade::Negotiated, InboundUpgrade, OutboundUpgrade,
+};
+use libp2p_swarm::protocols_handler::{
+    KeepAlive, ProtocolsHandler, ProtocolsHandlerEvent, ProtocolsHandlerUpgrErr, SubstreamProtocol,
 };
 use parity_multihash::Multihash;
 use std::{error, fmt, io, time::Instant};

@@ -24,15 +24,14 @@
 use failure::{format_err, Error};
 use futures::prelude::*;
 use futures::sync::mpsc;
+use libp2p;
 use libp2p_core::multiaddr::Multiaddr;
 use libp2p_core::upgrade::{InboundUpgradeExt, OutboundUpgradeExt};
-use libp2p_core::{
-    identity, identity::ed25519, swarm::NetworkBehaviourEventProcess, transport::TransportError,
-    PeerId, Swarm, Transport,
-};
+use libp2p_core::{identity, identity::ed25519, transport::TransportError, PeerId, Transport};
 use libp2p_core_derive::NetworkBehaviour;
 use libp2p_dns as dns;
 use libp2p_secio as secio;
+use libp2p_swarm::{NetworkBehaviourEventProcess, Swarm};
 use libp2p_tcp as tcp;
 use libp2p_yamux as yamux;
 use log::*;

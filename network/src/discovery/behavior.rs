@@ -25,10 +25,9 @@ use crate::delivery::Unicast;
 use crate::kad::{kbucket::KBucketsPeerId, Kademlia, KademliaOut, NodeInfo};
 use crate::utils::LruBimap;
 use futures::prelude::*;
-use libp2p_core::swarm::{
-    ConnectedPoint, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
-};
-use libp2p_core::{Multiaddr, PeerId, ProtocolsHandler};
+use libp2p_core::ConnectedPoint;
+use libp2p_core::{Multiaddr, PeerId};
+use libp2p_swarm::{NetworkBehaviour, NetworkBehaviourAction, PollParameters, ProtocolsHandler};
 use log::*;
 use lru_time_cache::LruCache;
 use std::cmp;

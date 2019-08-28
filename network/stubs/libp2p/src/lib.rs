@@ -1,5 +1,6 @@
 pub use futures;
 pub use libp2p_core as core;
+pub use libp2p_swarm as swarm;
 pub use tokio_io;
 
 #[cfg(test)]

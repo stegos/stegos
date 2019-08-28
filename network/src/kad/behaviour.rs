@@ -27,10 +27,10 @@ use super::protocol::{KadConnectionType, KadPeer};
 use super::query::{QueryConfig, QueryState, QueryStatePollOut, QueryTarget};
 use fnv::{FnvHashMap, FnvHashSet};
 use futures::{prelude::*, stream};
-use libp2p_core::swarm::{
-    ConnectedPoint, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
+use libp2p_core::{ConnectedPoint, Multiaddr, PeerId};
+use libp2p_swarm::{
+    protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
 };
-use libp2p_core::{protocols_handler::ProtocolsHandler, Multiaddr, PeerId};
 use log::{debug, trace};
 use lru_time_cache::LruCache;
 use parity_multihash::Multihash;

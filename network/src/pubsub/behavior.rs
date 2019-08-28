@@ -23,7 +23,6 @@ use super::metrics;
 use super::protocol::{
     FloodsubMessage, FloodsubRpc, FloodsubSubscription, FloodsubSubscriptionAction,
 };
-use super::topic::{Topic, TopicHash};
 
 use futures::prelude::*;
 use libp2p_core::{ConnectedPoint, Multiaddr, PeerId};
@@ -32,15 +31,12 @@ use libp2p_swarm::{
 };
 use log::{debug, trace};
 use lru_time_cache::LruCache;
-use rand;
 use smallvec::SmallVec;
 use std::time::{Duration, Instant};
 use std::{
     collections::{hash_map::HashMap, hash_set::HashSet, VecDeque},
-    iter,
     marker::PhantomData,
 };
-use stegos_crypto::utils::u8v_to_hexstr;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_timer::Delay;
 use update_rate::{RateCounter, RollingRateCounter};
@@ -62,14 +58,14 @@ pub struct Floodsub<TSubstream> {
     connected_peers: HashSet<PeerId>,
 
     /// List of peers we are allowed to send to
-    unlocked_remotes: HashMap<PeerId, SmallVec<[TopicHash; 8]>>,
+    unlocked_remotes: HashMap<PeerId, SmallVec<[String; 8]>>,
 
     /// List of peers we accept messages from
     allowed_remotes: HashSet<PeerId>,
 
     /// List of topics we're subscribed to. Necessary to filter out messages that we receive
     /// erroneously.
-    subscribed_topics: SmallVec<[Topic; 16]>,
+    subscribed_topics: SmallVec<[String; 16]>,
 
     /// We keep track of the messages we received (in the format `hash(source ID, seq_no)`) so that
     /// we don't dispatch the same message twice if we receive it twice on the network.
@@ -114,12 +110,8 @@ impl<TSubstream> Floodsub<TSubstream> {
     /// Subscribes to a topic.
     ///
     /// Returns true if the subscription worked. Returns false if we were already subscribed.
-    pub fn subscribe(&mut self, topic: Topic) -> bool {
-        if self
-            .subscribed_topics
-            .iter()
-            .any(|t| t.hash() == topic.hash())
-        {
+    pub fn subscribe(&mut self, topic: String) -> bool {
+        if self.subscribed_topics.iter().any(|t| t == &topic) {
             return false;
         }
 
@@ -129,7 +121,7 @@ impl<TSubstream> Floodsub<TSubstream> {
                 event: FloodsubSendEvent::Publish(FloodsubRpc {
                     messages: Vec::new(),
                     subscriptions: vec![FloodsubSubscription {
-                        topic: topic.hash().clone(),
+                        topic: topic.clone(),
                         action: FloodsubSubscriptionAction::Subscribe,
                     }],
                 }),
@@ -143,45 +135,12 @@ impl<TSubstream> Floodsub<TSubstream> {
     /// Publishes a message to the network.
     ///
     /// > **Note**: Doesn't do anything if we're not subscribed to the topic.
-    pub fn publish(&mut self, topic: impl Into<TopicHash>, data: impl Into<Vec<u8>>) {
-        self.publish_many(iter::once(topic), data)
-    }
-
-    /// Publishes a message with multiple topics to the network.
-    ///
-    /// > **Note**: Doesn't do anything if we're not subscribed to any of the topics.
-    pub fn publish_many(
-        &mut self,
-        topic: impl IntoIterator<Item = impl Into<TopicHash>>,
-        data: impl Into<Vec<u8>>,
-    ) {
-        let mut message = FloodsubMessage {
-            source: self.local_peer_id.clone(),
-            data: data.into(),
-            // If the sequence numbers are predictable, then an attacker could flood the network
-            // with packets with the predetermined sequence numbers and absorb our legitimate
-            // messages. We therefore use a random number.
-            sequence_number: rand::random::<[u8; 20]>().to_vec(),
-            topics: topic.into_iter().map(|t| t.into().clone()).collect(),
-        };
+    pub fn publish(&mut self, topic: String, data: Vec<u8>) {
+        let message = FloodsubMessage { data, topic };
 
         // Don't publish the message if we're not subscribed ourselves to any of the topics.
-        if !self
-            .subscribed_topics
-            .iter()
-            .any(|t| message.topics.iter().any(|u| t.hash() == u))
-        {
+        if !self.subscribed_topics.iter().any(|t| t == &message.topic) {
             return;
-        }
-
-        // Guard against very unlikely event of Hash collision
-        if self.received.contains_key(&message.digest()) {
-            loop {
-                message.sequence_number = rand::random::<[u8; 20]>().to_vec();
-                if !self.received.contains_key(&message.digest()) {
-                    break;
-                }
-            }
         }
 
         self.received.insert(message.digest(), ());
@@ -189,14 +148,11 @@ impl<TSubstream> Floodsub<TSubstream> {
 
         // Send to peers we know are subscribed to the topic.
         for (peer_id, sub_topic) in self.unlocked_remotes.iter() {
-            if !sub_topic
-                .iter()
-                .any(|t| message.topics.iter().any(|u| t == u))
-            {
+            if !sub_topic.iter().any(|t| t == &message.topic) {
                 continue;
             }
 
-            trace!(target: "stegos_network::pubsub", "sending message to peer: peer_id={}, seq_no={}", peer_id, u8v_to_hexstr(&message.sequence_number));
+            trace!(target: "stegos_network::pubsub", "sending message to peer: peer_id={}", peer_id);
             self.events.push_back(NetworkBehaviourAction::SendEvent {
                 peer_id: peer_id.clone(),
                 event: FloodsubSendEvent::Publish(FloodsubRpc {
@@ -235,7 +191,7 @@ impl<TSubstream> Floodsub<TSubstream> {
                 event: FloodsubSendEvent::Publish(FloodsubRpc {
                     messages: Vec::new(),
                     subscriptions: vec![FloodsubSubscription {
-                        topic: topic.hash().clone(),
+                        topic: topic.clone(),
                         action: FloodsubSubscriptionAction::Subscribe,
                     }],
                 }),
@@ -345,19 +301,15 @@ where
                     // Use `self.received` to skip the messages that we have already received in the past.
                     // Note that this can false positive.
                     if self.received.insert(message.digest(), ()).is_some() {
-                        trace!(target: "stegos_network::pubsub", "LRU cache hit: set_seqno={}", u8v_to_hexstr(&message.sequence_number));
+                        trace!(target: "stegos_network::pubsub", "LRU cache hit");
                         super::metrics::LRU_CACHE_SIZE.set(self.received.len() as i64);
                         continue;
                     }
                     super::metrics::LRU_CACHE_SIZE.set(self.received.len() as i64);
-                    trace!(target: "stegos_network::pubsub", "processing message: peer_id={}, seq_no={}", propagation_source, u8v_to_hexstr(&message.sequence_number));
+                    trace!(target: "stegos_network::pubsub", "processing message: peer_id={}", propagation_source);
 
                     // Add the message to be dispatched to the user.
-                    if self
-                        .subscribed_topics
-                        .iter()
-                        .any(|t| message.topics.iter().any(|u| t.hash() == u))
-                    {
+                    if self.subscribed_topics.iter().any(|t| t == &message.topic) {
                         let event = FloodsubEvent::Message(message.clone());
                         self.events
                             .push_back(NetworkBehaviourAction::GenerateEvent(event));
@@ -375,10 +327,7 @@ where
                             continue;
                         }
 
-                        if !subscr_topics
-                            .iter()
-                            .any(|t| message.topics.iter().any(|u| t == u))
-                        {
+                        if !subscr_topics.iter().any(|t| t == &message.topic) {
                             continue;
                         }
 
@@ -453,7 +402,7 @@ pub enum FloodsubEvent {
         /// Remote that has subscribed.
         peer_id: PeerId,
         /// The topic it has subscribed to.
-        topic: TopicHash,
+        topic: String,
     },
 
     /// A remote unsubscribed from a topic.
@@ -461,7 +410,7 @@ pub enum FloodsubEvent {
         /// Remote that has unsubscribed.
         peer_id: PeerId,
         /// The topic it has subscribed from.
-        topic: TopicHash,
+        topic: String,
     },
 }
 

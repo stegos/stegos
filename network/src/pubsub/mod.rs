@@ -27,8 +27,6 @@ pub mod protocol;
 mod behavior;
 mod metrics;
 mod proto;
-mod topic;
 
 pub use self::behavior::{Floodsub, FloodsubEvent};
 pub use self::protocol::{FloodsubMessage, FloodsubRpc};
-pub use self::topic::{Topic, TopicBuilder, TopicHash};

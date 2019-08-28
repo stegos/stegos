@@ -25,10 +25,9 @@ use super::behavior::{NcpRecvEvent, NcpSendEvent};
 use super::protocol::{NcpCodec, NcpConfig, NcpMessage};
 
 use futures::prelude::*;
-use libp2p_core::{
-    protocols_handler::{KeepAlive, ProtocolsHandlerUpgrErr, SubstreamProtocol},
-    upgrade::{InboundUpgrade, Negotiated, OutboundUpgrade},
-    ProtocolsHandler, ProtocolsHandlerEvent,
+use libp2p_core::upgrade::{InboundUpgrade, Negotiated, OutboundUpgrade};
+use libp2p_swarm::protocols_handler::{
+    KeepAlive, ProtocolsHandler, ProtocolsHandlerEvent, ProtocolsHandlerUpgrErr, SubstreamProtocol,
 };
 use log::{debug, trace, warn};
 use smallvec::SmallVec;

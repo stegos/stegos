@@ -24,10 +24,9 @@
 use super::protocol::{DeliveryCodec, DeliveryConfig, DeliveryMessage};
 
 use futures::prelude::*;
-use libp2p_core::{
-    protocols_handler::{KeepAlive, ProtocolsHandlerUpgrErr, SubstreamProtocol},
-    upgrade::{InboundUpgrade, Negotiated, OutboundUpgrade},
-    ProtocolsHandler, ProtocolsHandlerEvent,
+use libp2p_core::upgrade::{InboundUpgrade, Negotiated, OutboundUpgrade};
+use libp2p_swarm::protocols_handler::{
+    KeepAlive, ProtocolsHandler, ProtocolsHandlerEvent, ProtocolsHandlerUpgrErr, SubstreamProtocol,
 };
 use log::{debug, trace};
 use smallvec::SmallVec;

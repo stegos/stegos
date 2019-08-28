@@ -23,10 +23,9 @@
 
 use futures::prelude::*;
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
-use libp2p_core::{
-    protocols_handler::ProtocolsHandler,
-    swarm::{ConnectedPoint, NetworkBehaviour, NetworkBehaviourAction, PollParameters},
-    Multiaddr, PeerId,
+use libp2p_core::{ConnectedPoint, Multiaddr, PeerId};
+use libp2p_swarm::{
+    protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
 };
 use log::*;
 use lru_time_cache::LruCache;
@@ -666,9 +665,9 @@ impl StegosDisplay for ConnectedPoint {
         match self {
             ConnectedPoint::Dialer { address } => format!("Dialer({})", address),
             ConnectedPoint::Listener {
-                listen_addr,
+                local_addr,
                 send_back_addr,
-            } => format!("Listener(listen={},advert={}", listen_addr, send_back_addr),
+            } => format!("Listener(listen={},advert={}", local_addr, send_back_addr),
         }
     }
 }

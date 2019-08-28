@@ -26,10 +26,8 @@ pub use super::protocol::{DeliveryMessage, Unicast};
 
 use crate::utils::ExpiringQueue;
 use futures::prelude::*;
-use libp2p_core::swarm::{
-    ConnectedPoint, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
-};
-use libp2p_core::{protocols_handler::ProtocolsHandler, Multiaddr, PeerId};
+use libp2p_core::{ConnectedPoint, Multiaddr, PeerId};
+use libp2p_swarm::{NetworkBehaviour, NetworkBehaviourAction, PollParameters, ProtocolsHandler};
 use log::{debug, error};
 use smallvec::SmallVec;
 use std::{

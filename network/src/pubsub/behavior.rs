@@ -26,10 +26,10 @@ use super::protocol::{
 use super::topic::{Topic, TopicHash};
 
 use futures::prelude::*;
-use libp2p_core::swarm::{
-    ConnectedPoint, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
+use libp2p_core::{ConnectedPoint, Multiaddr, PeerId};
+use libp2p_swarm::{
+    protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
 };
-use libp2p_core::{protocols_handler::ProtocolsHandler, Multiaddr, PeerId};
 use log::{debug, trace};
 use lru_time_cache::LruCache;
 use rand;

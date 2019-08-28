@@ -22,11 +22,9 @@
 // SOFTWARE.
 
 use futures::prelude::*;
-use libp2p_core::{
-    multiaddr::Protocol,
-    protocols_handler::ProtocolsHandler,
-    swarm::{ConnectedPoint, NetworkBehaviour, NetworkBehaviourAction, PollParameters},
-    Multiaddr, PeerId,
+use libp2p_core::{multiaddr::Protocol, ConnectedPoint, Multiaddr, PeerId};
+use libp2p_swarm::{
+    protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
 };
 use log::*;
 use lru_time_cache::LruCache;

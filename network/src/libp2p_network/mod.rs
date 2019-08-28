@@ -52,7 +52,7 @@ use crate::delivery::{Delivery, DeliveryEvent, DeliveryMessage};
 use crate::discovery::{Discovery, DiscoveryOutEvent};
 use crate::gatekeeper::{Gatekeeper, GatekeeperOutEvent, PeerEvent};
 use crate::ncp::{Ncp, NcpOutEvent};
-use crate::pubsub::{Floodsub, FloodsubEvent, TopicBuilder, TopicHash};
+use crate::pubsub::{Floodsub, FloodsubEvent};
 use crate::{Network, NetworkProvider, UnicastMessage};
 
 mod proto;
@@ -228,15 +228,13 @@ pub struct Libp2pBehaviour<TSubstream: AsyncRead + AsyncWrite> {
     delivery: Delivery<TSubstream>,
     discovery: Discovery<TSubstream>,
     #[behaviour(ignore)]
-    consumers: HashMap<TopicHash, SmallVec<[mpsc::UnboundedSender<Vec<u8>>; 3]>>,
+    consumers: HashMap<String, SmallVec<[mpsc::UnboundedSender<Vec<u8>>; 3]>>,
     #[behaviour(ignore)]
     unicast_consumers: HashMap<String, SmallVec<[mpsc::UnboundedSender<UnicastMessage>; 3]>>,
     #[behaviour(ignore)]
     my_pkey: pbc::PublicKey,
     #[behaviour(ignore)]
     my_skey: pbc::SecretKey,
-    #[behaviour(ignore)]
-    topics_map: HashMap<TopicHash, String>,
     #[behaviour(ignore)]
     connected_peers: HashSet<PeerId>,
 }
@@ -266,10 +264,9 @@ where
             unicast_consumers: HashMap::new(),
             my_pkey: network_pkey.clone(),
             my_skey: network_skey.clone(),
-            topics_map: HashMap::new(),
             connected_peers: HashSet::new(),
         };
-        let unicast_topic = TopicBuilder::new(UNICAST_TOPIC).build();
+        let unicast_topic = UNICAST_TOPIC.clone().into();
         behaviour.floodsub.subscribe(unicast_topic);
         debug!(target: "stegos_network::delivery", "Network endpoints: node_id={}, peer_id={}", network_pkey, peer_id);
         behaviour
@@ -279,15 +276,12 @@ where
         trace!("Control event: {:#?}", msg);
         match msg {
             ControlMessage::Subscribe { topic, handler } => {
-                let floodsub_topic = TopicBuilder::new(topic.clone()).build();
-                let topic_hash = floodsub_topic.hash();
                 if topic != NETWORK_STATUS_TOPIC {
-                    self.topics_map.insert(topic_hash.clone(), topic);
                     self.consumers
-                        .entry(topic_hash.clone())
+                        .entry(topic.clone())
                         .or_insert(SmallVec::new())
                         .push(handler);
-                    self.floodsub.subscribe(floodsub_topic);
+                    self.floodsub.subscribe(topic);
                     return;
                 }
                 if self.gatekeeper.is_network_ready() {
@@ -297,7 +291,7 @@ where
                     }
                 }
                 self.consumers
-                    .entry(topic_hash.clone())
+                    .entry(topic.clone())
                     .or_insert(SmallVec::new())
                     .push(handler);
             }
@@ -307,8 +301,7 @@ where
                     topic,
                     data.len(),
                 );
-                let floodsub_topic = TopicBuilder::new(topic).build();
-                self.floodsub.publish(floodsub_topic, data)
+                self.floodsub.publish(topic, data)
             }
             ControlMessage::ChangeNetworkKeys { new_pkey, new_skey } => {
                 debug!(target: "stegos_network::libp2p_network","changing network key: from={}, to={}", self.my_pkey, new_pkey);
@@ -358,7 +351,6 @@ where
                             }
                         })
                 } else {
-                    let _floodsub_topic = TopicBuilder::new(UNICAST_TOPIC).build();
                     let payload = UnicastPayload {
                         from: self.my_pkey.clone(),
                         to: to.clone(),
@@ -430,20 +422,12 @@ where
     fn inject_event(&mut self, message: FloodsubEvent) {
         match message {
             FloodsubEvent::Message(message) => {
-                let network_status_topic = TopicBuilder::new(NETWORK_STATUS_TOPIC).build();
-                let network_status_topic_hash = network_status_topic.hash();
                 // ignore messages with NETWORK_STATUS_TOPIC
-                if message
-                    .topics
-                    .iter()
-                    .any(|t| t == network_status_topic_hash)
-                {
+                if message.topic == NETWORK_STATUS_TOPIC {
                     return;
                 }
 
-                let floodsub_topic = TopicBuilder::new(UNICAST_TOPIC).build();
-                let unicast_topic_hash = floodsub_topic.hash();
-                if message.topics.iter().any(|t| t == unicast_topic_hash) {
+                if &message.topic == UNICAST_TOPIC {
                     match decode_unicast(message.data.clone()) {
                         Ok((payload, signature, rval)) => {
                             // send unicast message upstream
@@ -489,18 +473,16 @@ where
                     }
                     return;
                 }
-                for t in message.topics.into_iter() {
-                    let topic = match self.topics_map.get(&t) {
-                        Some(t) => t.clone(),
-                        None => "Unknown".to_string(),
-                    };
-
+                {
                     debug!(target: "stegos_network::pubsub",
                         "Received broadcast message: topic={}, size={}",
-                        topic,
+                        &message.topic,
                         message.data.len(),
                     );
-                    let consumers = self.consumers.entry(t).or_insert(SmallVec::new());
+                    let consumers = self
+                        .consumers
+                        .entry(message.topic)
+                        .or_insert(SmallVec::new());
                     consumers.retain({
                         let data = &message.data;
                         move |c| {
@@ -540,11 +522,9 @@ where
             }
             GatekeeperOutEvent::NetworkReady => {
                 debug!(target: "stegos_network::gatekeeper", "network is ready");
-                let status_topic = TopicBuilder::new(NETWORK_STATUS_TOPIC).build();
-                let topic_hash = status_topic.hash();
                 let consumers = self
                     .consumers
-                    .entry(topic_hash.clone())
+                    .entry(NETWORK_STATUS_TOPIC.to_string())
                     .or_insert(SmallVec::new());
                 consumers.retain(move |c| c.unbounded_send(NETWORK_READY_TOKEN.to_vec()).is_ok());
             }

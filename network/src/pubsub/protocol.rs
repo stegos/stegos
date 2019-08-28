@@ -19,11 +19,10 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::pubsub::proto::pubsub_proto as rpc_proto;
-use crate::pubsub::topic::TopicHash;
 
 use bytes::{BufMut, BytesMut};
 use futures::future;
-use libp2p_core::{upgrade::Negotiated, InboundUpgrade, OutboundUpgrade, PeerId, UpgradeInfo};
+use libp2p_core::{upgrade::Negotiated, InboundUpgrade, OutboundUpgrade, UpgradeInfo};
 use protobuf::Message as ProtobufMessage;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -107,23 +106,15 @@ impl Encoder for FloodsubCodec {
 
         for message in item.messages.into_iter() {
             let mut msg = rpc_proto::Message::new();
-            msg.set_from(message.source.into_bytes());
             msg.set_data(message.data);
-            msg.set_seqno(message.sequence_number);
-            msg.set_topicIDs(
-                message
-                    .topics
-                    .into_iter()
-                    .map(TopicHash::into_string)
-                    .collect(),
-            );
+            msg.set_topic(message.topic);
             proto.mut_publish().push(msg);
         }
 
         for topic in item.subscriptions.into_iter() {
             let mut subscription = rpc_proto::RPC_SubOpts::new();
             subscription.set_subscribe(topic.action == FloodsubSubscriptionAction::Subscribe);
-            subscription.set_topicid(topic.topic.into_string());
+            subscription.set_topic(topic.topic);
             proto.mut_subscriptions().push(subscription);
         }
 
@@ -157,16 +148,8 @@ impl Decoder for FloodsubCodec {
         let mut messages = Vec::with_capacity(rpc.get_publish().len());
         for mut publish in rpc.take_publish().into_iter() {
             messages.push(FloodsubMessage {
-                source: PeerId::from_bytes(publish.take_from()).map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidData, "Invalid peer ID in message")
-                })?,
                 data: publish.take_data(),
-                sequence_number: publish.take_seqno(),
-                topics: publish
-                    .take_topicIDs()
-                    .into_iter()
-                    .map(|topic| TopicHash::from_raw(topic))
-                    .collect(),
+                topic: publish.take_topic(),
             });
         }
 
@@ -181,7 +164,7 @@ impl Decoder for FloodsubCodec {
                     } else {
                         FloodsubSubscriptionAction::Unsubscribe
                     },
-                    topic: TopicHash::from_raw(sub.take_topicid()),
+                    topic: sub.take_topic(),
                 })
                 .collect(),
         }))
@@ -200,19 +183,11 @@ pub struct FloodsubRpc {
 /// A message received by the floodsub system.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FloodsubMessage {
-    /// Id of the peer that published this message.
-    pub source: PeerId,
+    /// The topic message belong to.
+    pub topic: String,
 
     /// Content of the message. Its meaning is out of scope of this library.
     pub data: Vec<u8>,
-
-    /// An incrementing sequence number.
-    pub sequence_number: Vec<u8>,
-
-    /// List of topics this message belongs to.
-    ///
-    /// Each message can belong to multiple topics at once.
-    pub topics: Vec<TopicHash>,
 }
 
 impl FloodsubMessage {
@@ -229,7 +204,7 @@ pub struct FloodsubSubscription {
     /// Action to perform.
     pub action: FloodsubSubscriptionAction,
     /// The topic from which to subscribe or unsubscribe.
-    pub topic: TopicHash,
+    pub topic: String,
 }
 
 /// Action that a subscription wants to perform.

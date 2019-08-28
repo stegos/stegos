@@ -940,11 +940,7 @@ impl UnsealedAccountService {
                     };
                     let _ = tx.send(response);
 
-                    info!(
-                        "Some outputs of snowball are now outdated: snowball_session = {}",
-                        hash
-                    );
-                    warn!("Resetting Snowball on timeout.");
+                    info!("Some inputs of snowball are now outdated: utxo = {}", hash);
                     self.snowball = None;
                 }
             } else {
@@ -1255,11 +1251,28 @@ impl Future for UnsealedAccountService {
                     } => {
                         let (balance, _available_balance) = self.balance();
                         // Recover state.
-                        assert!(self.snowball.is_none());
                         for (hash, OutputRecovery { output, .. }) in
                             recovery_state.removed.into_iter()
                         {
-                            self.on_output_pruned(hash, output)
+                            self.on_output_pruned(hash, output);
+
+                            // Terminate Snowball session if some of inputs was pruned.
+                            if let Some(snowball) = &self.snowball {
+                                if !snowball.0.is_my_input(hash) {
+                                    continue;
+                                }
+                                let (_snowball, tx) = self.snowball.take().unwrap();
+                                self.notify(AccountNotification::SnowballStatus(
+                                    SnowballState::Failed,
+                                ));
+                                let response = AccountResponse::Error {
+                                    error: format!("Snowball utxo was pruned {}", hash),
+                                };
+                                let _ = tx.send(response);
+                                info!("Some inputs of snowball was pruned: utxo = {}", hash);
+                                error!("Stopping Snowball session.");
+                                self.snowball = None;
+                            }
                         }
 
                         // firstly save all info that is final, and finalize epoch state.

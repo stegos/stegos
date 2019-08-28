@@ -71,7 +71,6 @@ pub const NETWORK_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 pub const NETWORK_STATUS_TOPIC: &'static str = "stegos-network-status";
 pub const NETWORK_READY_TOKEN: &'static [u8] = &[1, 0, 0, 0];
 
-const UNICAST_TOPIC: &'static str = "stegos-unicast";
 const IBE_ID: &'static [u8] = &[105u8, 13, 185, 148, 68, 76, 69, 155];
 
 impl Libp2pNetwork {
@@ -254,7 +253,7 @@ where
         } else {
             true
         };
-        let mut behaviour = Libp2pBehaviour {
+        let behaviour = Libp2pBehaviour {
             floodsub: Floodsub::new(peer_id.clone(), relaying),
             ncp: Ncp::new(config, network_pkey.clone()),
             gatekeeper: Gatekeeper::new(config),
@@ -266,8 +265,6 @@ where
             my_skey: network_skey.clone(),
             connected_peers: HashSet::new(),
         };
-        let unicast_topic = UNICAST_TOPIC.clone().into();
-        behaviour.floodsub.subscribe(unicast_topic);
         debug!(target: "stegos_network::delivery", "Network endpoints: node_id={}, peer_id={}", network_pkey, peer_id);
         behaviour
     }
@@ -427,74 +424,26 @@ where
                     return;
                 }
 
-                if &message.topic == UNICAST_TOPIC {
-                    match decode_unicast(message.data.clone()) {
-                        Ok((payload, signature, rval)) => {
-                            // send unicast message upstream
-                            if payload.to == self.my_pkey {
-                                let payload = match decrypt_message(
-                                    &self.my_skey,
-                                    payload,
-                                    signature,
-                                    rval,
-                                ) {
-                                    Ok(p) => p,
-                                    Err(e) => {
-                                        debug!("bad unicast message received: {}", e);
-                                        return;
-                                    }
-                                };
-                                debug!(target: "stegos_network::pubsub",
-                                    "Received unicast message: from={}, protocol={} size={}",
-                                    payload.from,
-                                    payload.protocol_id,
-                                    payload.data.len()
-                                );
-                                let msg = UnicastMessage {
-                                    from: payload.from,
-                                    data: payload.data,
-                                };
-                                self.unicast_consumers
-                                    .entry(payload.protocol_id)
-                                    .or_insert(SmallVec::new())
-                                    .retain({
-                                        move |c| {
-                                            if let Err(e) = c.unbounded_send(msg.clone()) {
-                                                error!(target:"stegos_network::pubsub", "Error sending data to consumer: {}", e);
-                                                false
-                                            } else {
-                                                true
-                                            }
-                                        }
-                                    })
-                            }
+                debug!(target: "stegos_network::pubsub",
+                       "Received broadcast message: topic={}, size={}",
+                       &message.topic,
+                       message.data.len(),
+                );
+                let consumers = self
+                    .consumers
+                    .entry(message.topic)
+                    .or_insert(SmallVec::new());
+                consumers.retain({
+                    let data = &message.data;
+                    move |c| {
+                        if let Err(e) = c.unbounded_send(data.clone()) {
+                            error!(target: "stegos_network::pubsub", "Error sending data to consumer: {}", e);
+                            false
+                        } else {
+                            true
                         }
-                        Err(e) => error!("Failure decoding unicast message: {}", e),
                     }
-                    return;
-                }
-                {
-                    debug!(target: "stegos_network::pubsub",
-                        "Received broadcast message: topic={}, size={}",
-                        &message.topic,
-                        message.data.len(),
-                    );
-                    let consumers = self
-                        .consumers
-                        .entry(message.topic)
-                        .or_insert(SmallVec::new());
-                    consumers.retain({
-                        let data = &message.data;
-                        move |c| {
-                            if let Err(e) = c.unbounded_send(data.clone()) {
-                                error!(target: "stegos_network::pubsub", "Error sending data to consumer: {}", e);
-                                false
-                            } else {
-                                true
-                            }
-                        }
-                    })
-                }
+                })
             }
             FloodsubEvent::Subscribed { .. } => {}
             FloodsubEvent::Unsubscribed { .. } => {}

@@ -31,11 +31,17 @@ test:macos:
   tags:
     - macos
 
+# Temporary only build on windows, without running tests
+test:windows:
+  extends: .test
+  script: ./ci-scripts/build.sh build
+  tags:
+    - win2019
+
 code_coverage:
   stage: test
   image: stegos/rust:nightly-2019-08-05
-  script:
-    - ./ci-scripts/build.sh coverage_push
+  script: ./ci-scripts/build.sh coverage_push
   tags:
     - linux
   allow_failure: true
@@ -51,28 +57,18 @@ code_coverage:
 release:linux:
   extends: .release
   image: stegos/rust:nightly-2019-08-05
-  before_script:
-     - ./ci-scripts/build.sh builddep
-  script:
-    - cargo build --bins --release
-    - mkdir -p release
-    - for bin in stegos stegosd bootstrap; do
-        mv target/release/$bin release/$bin-linux-x64.debug;
-        strip -S release/$bin-linux-x64.debug -o release/$bin-linux-x64;
-      done
+  script: ./ci-scripts/build.sh release linux
   tags:
     - linux
 
 release:macos:
   extends: .release
-  before_script:
-     - ./ci-scripts/build.sh builddep
-  script:
-    - cargo build --bins --release
-    - mkdir -p release
-    - for bin in stegos stegosd bootstrap; do
-        mv target/release/$bin release/$bin-macos-x64.debug;
-        strip -S release/$bin-macos-x64.debug -o release/$bin-macos-x64;
-      done
+  script: ./ci-scripts/build.sh release macos
   tags:
     - macos
+
+release:windows:
+  extends: .release
+  script: ./ci-scripts/build.sh release win
+  tags:
+    - win2019

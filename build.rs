@@ -1,38 +1,89 @@
 use chrono::Utc;
+use lazy_static::lazy_static;
 use regex::Regex;
+use std::env;
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::Command;
 
-fn main() {
-    // Run `git describe --long` and parse the output.
-    // v0.1-49-g895818f
-    let describe_re = Regex::new(
+lazy_static! {
+    static ref DESCRIBE_RE: Regex = Regex::new(
         r"v(?P<major>[0-9]+)\.(?P<minor>[0-9]+)-(?P<patch>[0-9]+)-g(?P<commit>[0-9a-f]+)$",
     )
     .expect("regex is valid");
-    let describe = Command::new("git")
-        .args(&["describe", "--long"])
-        .output()
-        .expect("git describe works");
-    let describe = String::from_utf8_lossy(&describe.stdout).into_owned();
-    let describe = describe_re
-        .captures(describe.trim())
-        .expect("git describe is valid");
-    let major = describe.name("major").expect("major version").as_str();
-    let minor = describe.name("minor").expect("minor version").as_str();
-    let patch = describe.name("patch").expect("patch version").as_str();
-    let commit = describe.name("commit").expect("commit version").as_str();
-    println!("cargo:rustc-env=VERSION_MAJOR={}", major);
-    println!("cargo:rustc-env=VERSION_MINOR={}", minor);
-    println!("cargo:rustc-env=VERSION_PATCH={}", patch);
-    println!("cargo:rustc-env=VERSION_COMMIT={}", commit);
-    println!(
-        "cargo:rustc-env=VERSION_DATE={}",
-        Utc::now().format("%Y-%m-%d").to_string()
-    );
+}
 
+struct VersionInfo {
+    major: String,
+    minor: String,
+    patch: String,
+    commit: String,
+}
+
+impl VersionInfo {
+    fn parse(describe: String) -> Result<VersionInfo, failure::Error> {
+        let describe = DESCRIBE_RE
+            .captures(describe.trim())
+            .ok_or_else(|| failure::format_err!("Error parsing git describe."))?;
+        let version = VersionInfo {
+            major: describe
+                .name("major")
+                .expect("major version")
+                .as_str()
+                .to_string(),
+            minor: describe
+                .name("minor")
+                .expect("minor version")
+                .as_str()
+                .to_string(),
+            patch: describe
+                .name("patch")
+                .expect("patch version")
+                .as_str()
+                .to_string(),
+            commit: describe
+                .name("commit")
+                .expect("commit version")
+                .as_str()
+                .to_string(),
+        };
+        Ok(version)
+    }
+}
+
+impl Default for VersionInfo {
+    fn default() -> Self {
+        VersionInfo {
+            major: String::from("0"),
+            minor: String::from("0"),
+            patch: String::from("0"),
+            commit: String::from("unknown"),
+        }
+    }
+}
+
+fn parse_cargo_toml() -> Result<VersionInfo, failure::Error> {
+    let mut pre_version = env::var("CARGO_PKG_VERSION_PRE")?;
+    if pre_version.is_empty() {
+        pre_version = "release".to_string();
+    }
+    Ok(VersionInfo {
+        major: env::var("CARGO_PKG_VERSION_MAJOR")?,
+        minor: env::var("CARGO_PKG_VERSION_MINOR")?,
+        patch: env::var("CARGO_PKG_VERSION_PATCH")?,
+        commit: pre_version,
+    })
+}
+
+fn parse_describe() -> Result<(VersionInfo), failure::Error> {
+    // Run `git describe --long` and parse the output.
+    // v0.1-49-g895818f
+
+    let describe = Command::new("git").args(&["describe", "--long"]).output()?;
+
+    let describe = String::from_utf8_lossy(&describe.stdout).into_owned();
+    let version = VersionInfo::parse(describe)?;
     // Stolen from `vergen`:
     // https://github.com/rustyhorde/vergen/blob/master/src/output/envvar.rs
     let git_dir = PathBuf::from(".git");
@@ -56,4 +107,20 @@ fn main() {
     } else {
         eprintln!("You are most likely in a detached HEAD state");
     }
+    Ok(version)
+}
+
+fn main() {
+    let version = parse_describe()
+        .or_else(|_| parse_cargo_toml())
+        .unwrap_or(VersionInfo::default());
+
+    println!("cargo:rustc-env=VERSION_MAJOR={}", version.major);
+    println!("cargo:rustc-env=VERSION_MINOR={}", version.minor);
+    println!("cargo:rustc-env=VERSION_PATCH={}", version.patch);
+    println!("cargo:rustc-env=VERSION_COMMIT={}", version.commit);
+    println!(
+        "cargo:rustc-env=VERSION_DATE={}",
+        Utc::now().format("%Y-%m-%d").to_string()
+    );
 }

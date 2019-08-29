@@ -1,0 +1,4 @@
+181c181
+<   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+---
+>   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -g -fexceptions -funwind-tables -fPIC -D_GLIBCXX_USE_CXX11_ABI=0")

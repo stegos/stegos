@@ -42,6 +42,7 @@ simple_logger = "1.2"
 criterion = "0.2"
 
 [build-dependencies]
+issue-47048-fix = "0.1"
 stegos_serialization = { version = "0.2.0", path = "../serialization" }
 cc = "1.0"
 

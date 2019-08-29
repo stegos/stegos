@@ -28,7 +28,6 @@ use libp2p_swarm::protocols_handler::{
 };
 use log::{debug, trace};
 use smallvec::SmallVec;
-use std::collections::VecDeque;
 use std::{fmt, io, time::Instant};
 use tokio::codec::Framed;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -53,8 +52,6 @@ where
     keep_alive: KeepAlive,
     /// Queue of values that we want to send to the remote.
     send_queue: SmallVec<[FloodsubRpc; 16]>,
-    /// Events to send upstream
-    out_events: VecDeque<FloodsubRecvEvent>,
 }
 
 /// State of an active substream, opened either by us or by the remote.
@@ -98,7 +95,6 @@ where
             substreams: Vec::new(),
             keep_alive: KeepAlive::Yes,
             send_queue: SmallVec::new(),
-            out_events: VecDeque::new(),
         }
     }
 }
@@ -167,11 +163,6 @@ where
         ProtocolsHandlerEvent<Self::OutboundProtocol, Self::OutboundOpenInfo, Self::OutEvent>,
         io::Error,
     > {
-        if !self.out_events.is_empty() {
-            let message = self.out_events.pop_front().unwrap();
-            return Ok(Async::Ready(ProtocolsHandlerEvent::Custom(message)));
-        }
-
         if !self.send_queue.is_empty() {
             let message = self.send_queue.remove(0);
             return Ok(Async::Ready(

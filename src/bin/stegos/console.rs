@@ -133,6 +133,23 @@ fn parse_money(amount: &str) -> Result<i64, Error> {
 
 const PAYMENT_FEE: i64 = 1_000; // 0.001 STG
 
+pub enum Formatter {
+    YAML,
+    JSON,
+}
+
+impl FromStr for Formatter {
+    type Err = Error;
+
+    fn from_str(formatter: &str) -> Result<Self, Error> {
+        match formatter {
+            "yaml" => Ok(Formatter::YAML),
+            "json" => Ok(Formatter::JSON),
+            _ => Err(format_err!("Unknown formatter '{}'", formatter)),
+        }
+    }
+}
+
 /// Console (stdin) service.
 pub struct ConsoleService {
     /// API client.
@@ -143,6 +160,8 @@ pub struct ConsoleService {
     stdin: Receiver<String>,
     /// A thread used for readline.
     stdin_th: thread::JoinHandle<()>,
+    /// Display formatter.
+    formatter: Formatter,
 }
 
 impl ConsoleService {
@@ -153,6 +172,7 @@ impl ConsoleService {
         uri: String,
         api_token: ApiToken,
         history_file: PathBuf,
+        formatter: Formatter,
     ) -> ConsoleService {
         let (tx, rx) = channel::<String>(1);
         let client = WebSocketClient::new(uri, api_token);
@@ -172,6 +192,7 @@ impl ConsoleService {
             account_id,
             stdin,
             stdin_th,
+            formatter,
         }
     }
 
@@ -355,7 +376,7 @@ impl ConsoleService {
     }
 
     fn send_network_request(&mut self, request: NetworkRequest) -> Result<(), WebSocketError> {
-        Self::print(&request);
+        self.print(&request);
         let request = Request {
             kind: RequestKind::NetworkRequest(request),
             id: 0,
@@ -381,11 +402,11 @@ impl ConsoleService {
             | AccountRequest::Unseal { .. } => {
                 // Print passwords only if Trace level is enabled.
                 if log::log_enabled!(log::Level::Trace) {
-                    Self::print(&request);
+                    self.print(&request);
                 }
             }
             _ => {
-                Self::print(&request);
+                self.print(&request);
             }
         }
 
@@ -404,7 +425,7 @@ impl ConsoleService {
     }
 
     fn send_node_request(&mut self, request: NodeRequest) -> Result<(), WebSocketError> {
-        Self::print(&request);
+        self.print(&request);
         let request = Request {
             kind: RequestKind::NodeRequest(request),
             id: 0,
@@ -832,9 +853,19 @@ impl ConsoleService {
         std::process::exit(0);
     }
 
-    fn print<S: Serialize>(s: &S) {
-        let output = serde_yaml::to_string(&[s]).map_err(|_| fmt::Error).unwrap();
-        println!("{}\n...\n", output);
+    fn print<S: Serialize>(&self, s: &S) {
+        match self.formatter {
+            Formatter::YAML => {
+                let output = serde_yaml::to_string(&[s]).map_err(|_| fmt::Error).unwrap();
+                println!("{}\n...\n", output);
+            }
+            Formatter::JSON => {
+                let output = serde_json::to_string_pretty(&s)
+                    .map_err(|_| fmt::Error)
+                    .unwrap();
+                println!("{}\n", output);
+            }
+        }
     }
 
     fn on_response(&mut self, response: Response) {
@@ -842,17 +873,17 @@ impl ConsoleService {
             ResponseKind::NodeResponse(_)
             | ResponseKind::WalletResponse(_)
             | ResponseKind::NetworkResponse(_) => {
-                Self::print(&response);
+                self.print(&response);
                 self.stdin_th.thread().unpark();
             }
             ResponseKind::NodeNotification(_) => {
                 // Print NodeNotifications only if Debug level is enabled.
                 if log::log_enabled!(log::Level::Debug) {
-                    Self::print(&response);
+                    self.print(&response);
                 }
             }
             _ => {
-                Self::print(&response);
+                self.print(&response);
             }
         }
     }

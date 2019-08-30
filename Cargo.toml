@@ -64,6 +64,7 @@ tempdir = "0.3"
 rpassword = "4.0"
 libc = "0.2"
 atty = "0.2"
+serde_json = "1.0"
 
 [build-dependencies]
 failure = "0.1"

@@ -1,4 +1,4 @@
-FROM debian:buster-slim as source
+FROM ubuntu:xenial as source
 LABEL maintainer="Stegos AG <info@stegos.com>"
 ARG RUST_TOOLCHAIN=nightly-2019-08-05
 COPY build.sh /

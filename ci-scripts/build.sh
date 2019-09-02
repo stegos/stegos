@@ -14,6 +14,9 @@ RUST_TOOLCHAIN=${RUST_TOOLCHAIN:-$(cat rust-toolchain)}
 export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-./target}
 mkdir -p ${CARGO_TARGET_DIR}
 
+export CFLAGS="-O3 -mtune=generic -g -fexceptions -funwind-tables -fno-omit-frame-pointer -fPIC"
+export CXXFLAGS="$CFLAGS"
+
 if [[ -z "${NUMCPUS}" ]]; then
   echo "NUMCPUS was not set, so setting number of jobs to count of cpus cores."
   export NUMCPUS=$(grep -c '^processor' /proc/cpuinfo)
@@ -55,9 +58,6 @@ configure_mingw() {
 
 # Install dependencies on Linux via apt
 install_packages_linux() {
-    if test -f /var/tmp/.stegos_deps_installed; then
-        return 0
-    fi
     if test -f /etc/debian_version; then
         echo "Installing dependencies using apt..."
         export DEBIAN_FRONTEND=noninteractive
@@ -65,11 +65,11 @@ install_packages_linux() {
         sudo apt-get install -y \
             binutils-dev \
             build-essential \
+            m4 \
             clang \
             curl \
             git \
             gzip \
-            libgmp-dev \
             libiberty-dev \
             libmpfr-dev \
             libssl-dev \
@@ -91,6 +91,7 @@ install_packages_linux() {
             kernel-devel \
             make \
             mpfr-devel \
+            m4 \
             openssl-devel \
             pkg-config \
             tar \
@@ -100,7 +101,6 @@ install_packages_linux() {
         2>&1 echo "Unsupported Linux distro"
         exit 1
     fi
-    touch /var/tmp/.stegos_deps_installed
 }
 
 # Install dependencies on macOS via brew
@@ -141,17 +141,10 @@ install_packages_mingw() {
 
 # Install Rust toolchain via rustup
 install_toolchain() {
+    export PATH="$HOME/.cargo/bin:$PATH"
     if ! rustup show | grep -q ${RUST_TOOLCHAIN}; then
         echo "Installing Rust ${RUST_TOOLCHAIN}"
         curl -L https://sh.rustup.rs | sh -s -- -y --default-toolchain ${RUST_TOOLCHAIN}
-
-        #if env script is found, execute, if not add bin to path
-        if [ -f $HOME/.cargo/env ]
-        then
-          source $HOME/.cargo/bin
-        else
-          export PATH=$HOME/.cargo/bin:$PATH
-        fi
         rustup show
         rustc --version
     fi
@@ -161,7 +154,7 @@ install_toolchain() {
         rustup component add rustfmt
     fi
 
-    if uname -s | grep -q Linux && ! cargo audit --version | grep -q Audit; then
+    if uname -s | grep -q Linux && ! cargo-audit --help > /dev/null; then
         echo "Installing cargo-audit"
         cargo install cargo-audit
     fi
@@ -173,19 +166,19 @@ install_toolchain() {
 }
 
 install_gmp_linux() {
+    # Ignore /usr/lib/x86_64-linux-gnu/libgmp.a (Debian/Ubuntu)
+    # because it doesn't have -fPIC
     if test -f /usr/local/lib/libgmp.a || \
-        test -f /usr/lib64/libgmp.a || \
-        test -f /usr/lib/x86_64-linux-gnu/libgmp.a; then
+        test -f /usr/lib64/libgmp.a; then
          return 0
     fi
     # install gmp
     echo "Building libgmp..."
-    curl -L https://gmplib.org/download/gmp/gmp-${gmp_vers}.tar.xz | /usr/bin/tar xvfJ - &&
+    curl -L https://gmplib.org/download/gmp/gmp-${gmp_vers}.tar.xz | tar xvfJ - &&
     cd gmp-${gmp_vers} &&
-    CFLAGS="-O3 -g -fexceptions -funwind-tables -fno-omit-frame-pointer -fPIC" \
     ./configure --prefix=/usr/local \
-     --enable-static \
-     --disable-shared &&
+        --enable-static \
+        --disable-shared &&
     make -j $NUMCPUS &&
     sudo make install &&
     cd .. &&
@@ -195,16 +188,16 @@ install_gmp_linux() {
 
 # Build dependencies on Linux
 install_mpfr_linux() {
-    if test -f /usr/local/lib/libmpfr.a ||
-      test -f /usr/lib64/libmpfr.a ||
-      test -f /usr/lib/x86_64-linux-gnu/libmpfr.a; then
+    # Ignore /usr/lib/x86_64-linux-gnu/libmpfr.a (Debian/Ubuntu)
+    # because it doesn't have -fPIC
+    if test -f /usr/local/lib/libmpfr.a || \
+        test -f /usr/lib64/libmpfr.a; then
        return 0
     fi
 
     echo "Building libmpfr..."
     curl -L https://www.mpfr.org/mpfr-current/mpfr-${mpfr_vers}.tar.gz | tar xvzf - && \
     cd mpfr-${mpfr_vers} && \
-    CFLAGS="-O3 -g -fexceptions -funwind-tables -fno-omit-frame-pointer -fPIC" \
     ./configure \
        --prefix=/usr/local \
        --with-gmp=/usr/local \
@@ -225,7 +218,6 @@ install_flint_linux() {
     echo "Building libflint..."
     curl -L http://www.flintlib.org/flint-${flint_vers}.tar.gz | tar xvzf - && \
     cd flint-${flint_vers} && \
-    CFLAGS="-O3 -g -fexceptions -funwind-tables -fno-omit-frame-pointer -fPIC" \
     ./configure \
        --prefix=/usr/local \
        --with-gmp=/usr/local \
@@ -249,7 +241,6 @@ install_flint_mingw() {
     echo "Building libflint..."
     curl -L http://www.flintlib.org/flint-${flint_vers}.tar.gz | tar xvzf - && \
     cd flint-${flint_vers} && \
-    CFLAGS="-O3 -g -fexceptions -funwind-tables -fno-omit-frame-pointer -fPIC" \
     ./configure \
         --prefix=/mingw64 \
         --with-gmp=/mingw64 \
@@ -310,7 +301,6 @@ install_libraries_macos() {
         echo "Building libflint..."
         curl -L http://www.flintlib.org/flint-${flint_vers}.tar.gz | tar xvzf - && \
         cd flint-${flint_vers} && \
-        CFLAGS="-O3 -g -fexceptions -funwind-tables -fno-omit-frame-pointer" \
         ./configure \
             --prefix=/usr/local \
             --enable-static \
@@ -462,7 +452,7 @@ case $1 in
         do_$1 $2
         ;;
     "")
-        set -ve
+        set -xe
         do_build
         ;;
     *)

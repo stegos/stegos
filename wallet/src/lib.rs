@@ -134,6 +134,9 @@ struct UnsealedAccountService {
     /// Check for pending utxos.
     check_pending_utxos: Interval,
 
+    /// Is account was recovered
+    recovered: bool,
+
     //
     // Snowball state (owned)
     //
@@ -209,6 +212,7 @@ impl UnsealedAccountService {
             epoch,
             unspent,
         );
+        let recovered = false;
 
         UnsealedAccountService {
             database_dir,
@@ -234,6 +238,7 @@ impl UnsealedAccountService {
             events,
             node_notifications,
             transaction_response,
+            recovered,
         }
     }
 
@@ -1001,6 +1006,63 @@ impl Future for UnsealedAccountService {
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         // Recovery information from node.
+        if !self.recovered {
+            match self
+                .node_notifications
+                .poll()
+                .expect("all errors are already handled")
+            {
+                Async::Ready(Some(notification)) => match notification {
+                    NodeNotification::AccountRecovered {
+                        recovery_state,
+                        epoch,
+                        facilitator_pkey,
+                        last_macro_block_timestamp,
+                    } => {
+                        let (balance, _available_balance) = self.balance();
+                        // Recover state.
+                        assert!(self.snowball.is_none());
+                        for (hash, OutputRecovery { output, .. }) in
+                            recovery_state.removed.into_iter()
+                        {
+                            self.on_output_pruned(hash, output)
+                        }
+
+                        // firstly save all info that is final, and finalize epoch state.
+                        for (_, OutputRecovery { output, epoch, .. }) in
+                            recovery_state.commited.into_iter()
+                        {
+                            let output_hash = Hash::digest(&output);
+                            self.on_output_created(epoch, output_hash, output);
+                        }
+                        self.on_epoch_changed(epoch, facilitator_pkey, last_macro_block_timestamp);
+                        for (_, OutputRecovery { output, epoch, .. }) in
+                            recovery_state.prepared.into_iter()
+                        {
+                            let output_hash = Hash::digest(&output);
+                            self.on_output_created(epoch, output_hash, output);
+                        }
+
+                        info!("Loaded account {}", self.account_pkey);
+                        let (new_balance, available_balance) = self.balance();
+                        metrics::WALLET_AVALIABLE_BALANCES
+                            .with_label_values(&[&String::from(&self.account_pkey)])
+                            .set(available_balance);
+                        if balance != new_balance {
+                            debug!("Balance changed");
+                            self.notify(AccountNotification::BalanceChanged {
+                                balance: new_balance,
+                                available_balance,
+                            });
+                        }
+                        self.recovered = true;
+                    }
+                    _ => panic!("Wait for recovery"),
+                },
+                Async::Ready(None) => unreachable!(), // never happens
+                Async::NotReady => return Ok(Async::NotReady), // early return
+            }
+        }
 
         if let Some(mut transaction_response) = self.transaction_response.take() {
             match transaction_response.poll().expect("connected") {
@@ -1247,48 +1309,8 @@ impl Future for UnsealedAccountService {
                         self.on_tx_statuses_changed(block.statuses);
                         self.on_outputs_changed(block.epoch, block.inputs, block.outputs);
                     }
-                    NodeNotification::AccountRecovered {
-                        recovery_state,
-                        epoch,
-                        facilitator_pkey,
-                        last_macro_block_timestamp,
-                    } => {
-                        let (balance, _available_balance) = self.balance();
-                        // Recover state.
-                        assert!(self.snowball.is_none());
-                        for (hash, OutputRecovery { output, .. }) in
-                            recovery_state.removed.into_iter()
-                        {
-                            self.on_output_pruned(hash, output)
-                        }
-
-                        // firstly save all info that is final, and finalize epoch state.
-                        for (_, OutputRecovery { output, epoch, .. }) in
-                            recovery_state.commited.into_iter()
-                        {
-                            let output_hash = Hash::digest(&output);
-                            self.on_output_created(epoch, output_hash, output);
-                        }
-                        self.on_epoch_changed(epoch, facilitator_pkey, last_macro_block_timestamp);
-                        for (_, OutputRecovery { output, epoch, .. }) in
-                            recovery_state.prepared.into_iter()
-                        {
-                            let output_hash = Hash::digest(&output);
-                            self.on_output_created(epoch, output_hash, output);
-                        }
-
-                        info!("Loaded account {}", self.account_pkey);
-                        let (new_balance, available_balance) = self.balance();
-                        metrics::WALLET_AVALIABLE_BALANCES
-                            .with_label_values(&[&String::from(&self.account_pkey)])
-                            .set(available_balance);
-                        if balance != new_balance {
-                            debug!("Balance changed");
-                            self.notify(AccountNotification::BalanceChanged {
-                                balance: new_balance,
-                                available_balance,
-                            });
-                        }
+                    NodeNotification::AccountRecovered { .. } => {
+                        panic!("Account should be recovered already.")
                     }
                     _ => {}
                 },

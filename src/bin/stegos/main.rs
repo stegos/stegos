@@ -47,7 +47,7 @@ fn main() {
         .unwrap_or(PathBuf::from(r"data"))
         .to_string_lossy()
         .to_string();
-    let default_endpoint = "0.0.0.0:3145";
+    let default_endpoint = "127.0.0.1:3145";
 
     let args = App::new(&name)
         .version(&version[..])

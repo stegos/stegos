@@ -281,7 +281,7 @@ install_rocksdb_mingw() {
 
     cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_INSTALL_LIBDIR=lib \
           -DWITH_ZSTD=ON -DWITH_SNAPPY=ON -DWITH_SNAPPY=ON \
-          -DWITH_GFLAGS=OFF \
+          -DWITH_GFLAGS=OFF -DWITH_WINDOWS_UTF8_FILENAMES=ON -DPORTABLE=ON \
           -DUSE_RTTI=ON -DWITH_TESTS=OFF -DFAIL_ON_WARNINGS=OFF \
           -DSNAPPY_LIBRARIES="/mingw64/lib/libsnappy.a" \
           -DZSTD_LIBRARIES="/mingw64/lib/libzstd.a" \

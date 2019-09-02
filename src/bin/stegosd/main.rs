@@ -435,7 +435,7 @@ fn run() -> Result<(), Error> {
                 .long("node-endpoint")
                 .env("STEGOS_NODE_ENDPOINT")
                 .value_name("ENDPOINT")
-                .help("Node endpoint (ip:port), e.g. 0.0.0.0:3144")
+                .help("Node endpoint (ip:port), e.g. 0.0.0.0:3145")
                 .validator(|uri| {
                     SocketAddr::from_str(&uri)
                         .map(|_| ())
@@ -448,7 +448,7 @@ fn run() -> Result<(), Error> {
                 .long("advertised-endpoint")
                 .env("STEGOS_ADVERTISED_ENDPOINT")
                 .value_name("ENDPOINT")
-                .help("Node advertised endpoint (ip:port), e.g. 1.1.1.1:3144")
+                .help("Node advertised endpoint (ip:port), e.g. 1.1.1.1:3145")
                 .validator(|uri| {
                     SocketAddr::from_str(&uri)
                         .map(|_| ())

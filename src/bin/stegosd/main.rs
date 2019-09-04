@@ -568,6 +568,7 @@ fn run() -> Result<(), Error> {
         timestamp,
     )?;
 
+    let epoch = chain.epoch();
     // Initialize node
     let (mut node_service, node) = NodeService::new(
         cfg.node.clone(),
@@ -587,6 +588,7 @@ fn run() -> Result<(), Error> {
         rt.executor(),
         cfg.chain.stake_epochs,
         cfg.node.max_inputs_in_tx,
+        epoch,
     )?;
     rt.spawn(wallet_service);
 

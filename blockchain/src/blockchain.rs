@@ -1152,7 +1152,7 @@ impl Blockchain {
         &mut self,
         block: MacroBlock,
         timestamp: Timestamp,
-    ) -> Result<(HashMap<Hash, Output>, HashMap<Hash, Output>), StorageError> {
+    ) -> Result<(Vec<Hash>, HashMap<Hash, Output>), StorageError> {
         assert_eq!(self.epoch, block.header.epoch);
         assert_eq!(self.offset(), 0);
 
@@ -1184,7 +1184,7 @@ impl Blockchain {
         &mut self,
         lsn: LSN,
         block: MacroBlock,
-    ) -> Result<(HashMap<Hash, Output>, HashMap<Hash, Output>), StorageError> {
+    ) -> Result<(Vec<Hash>, HashMap<Hash, Output>), StorageError> {
         assert_eq!(block.header.version, VERSION);
         assert_eq!(self.epoch, block.header.epoch);
         assert_eq!(self.offset(), 0);
@@ -1219,7 +1219,7 @@ impl Blockchain {
             let prev = outputs.insert(output_hash, (output, output_key));
             assert!(prev.is_none(), "duplicate output");
         }
-        for input_hash in block.inputs {
+        for input_hash in block.inputs.clone() {
             if let Some((output, _output_key)) = outputs.remove(&input_hash) {
                 // Annihilate the input and output.
                 debug!(
@@ -1345,7 +1345,7 @@ impl Blockchain {
         );
         debug!("Validators: {:?}", &self.validators());
 
-        Ok((inputs, outputs))
+        Ok((block.inputs, outputs))
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -1364,14 +1364,7 @@ impl Blockchain {
         &mut self,
         block: MicroBlock,
         timestamp: Timestamp,
-    ) -> Result<
-        (
-            HashMap<Hash, Output>,
-            HashMap<Hash, Output>,
-            HashMap<Hash, Transaction>,
-        ),
-        StorageError,
-    > {
+    ) -> Result<(Vec<Hash>, HashMap<Hash, Output>, HashMap<Hash, Transaction>), StorageError> {
         assert_eq!(self.epoch, block.header.epoch);
         assert_eq!(self.offset, block.header.offset);
 
@@ -1539,14 +1532,7 @@ impl Blockchain {
         &mut self,
         lsn: LSN,
         block: MicroBlock,
-    ) -> Result<
-        (
-            HashMap<Hash, Output>,
-            HashMap<Hash, Output>,
-            HashMap<Hash, Transaction>,
-        ),
-        StorageError,
-    > {
+    ) -> Result<(Vec<Hash>, HashMap<Hash, Output>, HashMap<Hash, Transaction>), StorageError> {
         assert_eq!(block.header.version, VERSION);
         assert_eq!(self.epoch, block.header.epoch);
         assert_eq!(self.offset, block.header.offset);
@@ -1696,19 +1682,13 @@ impl Blockchain {
 
         let outputs: HashMap<Hash, Output> =
             outputs.into_iter().map(|(h, (o, _k))| (h, o)).collect();
+        let inputs = inputs.into_iter().map(|(h, _)| h).collect();
         Ok((inputs, outputs, txs))
     }
 
     pub fn pop_micro_block(
         &mut self,
-    ) -> Result<
-        (
-            HashMap<Hash, Output>,
-            HashMap<Hash, Output>,
-            Vec<Transaction>,
-        ),
-        StorageError,
-    > {
+    ) -> Result<(Vec<Hash>, HashMap<Hash, Output>, Vec<Transaction>), StorageError> {
         assert!(self.epoch > 0, "doesn't work for genesis");
         assert!(self.offset > 0, "attempt to revert the macro block");
         let offset = self.offset - 1;
@@ -1752,13 +1732,14 @@ impl Blockchain {
         self.last_block_timestamp = last_block_timestamp;
         self.reset_view_change();
 
-        let mut created: HashMap<Hash, Output> = HashMap::new();
-        let mut pruned: HashMap<Hash, Output> = HashMap::new();
+        // Recover inputs that was removed, and remove outputs that was processed in this block.
+        let mut recovered: HashMap<Hash, Output> = HashMap::new();
+        let mut pruned: Vec<Hash> = Vec::new();
         let mut removed = Vec::new();
         for tx in block.transactions {
             for input_hash in tx.txins() {
                 let input = self.output_by_hash(input_hash)?.expect("exists");
-                created.insert(input_hash.clone(), input);
+                recovered.insert(input_hash.clone(), input);
                 debug!(
                     "Restored UXTO: epoch={}, block={}, utxo={}",
                     self.epoch, &block_hash, &input_hash
@@ -1766,7 +1747,7 @@ impl Blockchain {
             }
             for output in tx.txouts() {
                 let output_hash = Hash::digest(output);
-                pruned.insert(output_hash, output.clone());
+                pruned.push(output_hash);
                 debug!(
                     "Reverted UTXO: epoch={}, block={}, utxo={}",
                     self.epoch, &block_hash, &output_hash
@@ -1792,17 +1773,17 @@ impl Blockchain {
             self.epoch,
             offset,
             &block_hash,
-            created
+            recovered
                 .keys()
                 .map(ToString::to_string)
                 .collect::<Vec<String>>(),
             pruned
-                .keys()
+                .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<String>>(),
         );
 
-        Ok((pruned, created, removed))
+        Ok((pruned, recovered, removed))
     }
 }
 

@@ -661,7 +661,7 @@ impl UnsealedAccountService {
     fn on_outputs_changed(
         &mut self,
         epoch: u64,
-        inputs: HashMap<Hash, Output>,
+        inputs: Vec<Hash>,
         outputs: HashMap<Hash, Output>,
     ) {
         let saved_balance = self.balance();
@@ -671,8 +671,8 @@ impl UnsealedAccountService {
         for (output_hash, output) in outputs {
             self.on_output_created(epoch, output_hash, output);
         }
-        for (input_hash, input) in inputs {
-            self.on_output_pruned(input_hash, input);
+        for input_hash in inputs {
+            self.on_output_pruned(input_hash);
         }
 
         let balance = self.balance();
@@ -774,12 +774,19 @@ impl UnsealedAccountService {
     }
 
     /// Called when UTXO is spent.
-    fn on_output_pruned(&mut self, hash: Hash, output: Output) {
-        if !output.is_my_utxo(&self.account_skey, &self.account_pkey) {
-            return;
-        }
+    fn on_output_pruned(&mut self, hash: Hash) {
+        let output = match self
+            .account_log
+            .get_unspent(&hash)
+            .expect("Cannot read database")
+        {
+            Some(o) => o,
+            None => return,
+        };
+
         match output {
-            Output::PaymentOutput(o) => {
+            OutputValue::Payment(p) => {
+                let o = p.output;
                 if let Ok(PaymentPayload { amount, data, .. }) =
                     o.decrypt_payload(&self.account_skey)
                 {
@@ -800,7 +807,8 @@ impl UnsealedAccountService {
                     }
                 }
             }
-            Output::PublicPaymentOutput(PublicPaymentOutput { amount, .. }) => {
+            OutputValue::PublicPayment(p) => {
+                let PublicPaymentOutput { amount, .. } = p;
                 info!("Spent public payment: utxo={}, amount={}", hash, amount);
                 match self
                     .account_log
@@ -817,7 +825,8 @@ impl UnsealedAccountService {
                     _ => panic!("Inconsistent account state"),
                 }
             }
-            Output::StakeOutput(o) => {
+            OutputValue::Stake(s) => {
+                let o = s.output;
                 info!("Unstaked: utxo={}, amount={}", hash, o.amount);
                 match self
                     .account_log
@@ -1074,10 +1083,8 @@ impl Future for UnsealedAccountService {
                         let balance = self.balance();
                         // Recover state.
                         assert!(self.snowball.is_none());
-                        for (hash, OutputRecovery { output, .. }) in
-                            recovery_state.removed.into_iter()
-                        {
-                            self.on_output_pruned(hash, output)
+                        for (hash, _) in recovery_state.removed.into_iter() {
+                            self.on_output_pruned(hash)
                         }
 
                         // firstly save all info that is final, and finalize epoch state.
@@ -1349,7 +1356,11 @@ impl Future for UnsealedAccountService {
                     }
                     NodeNotification::RollbackMicroBlock(block) => {
                         self.on_tx_statuses_changed(block.statuses);
-                        self.on_outputs_changed(block.epoch, block.inputs, block.outputs);
+                        self.on_outputs_changed(
+                            block.epoch,
+                            block.pruned_outputs,
+                            block.recovered_inputs,
+                        );
                     }
                     NodeNotification::AccountRecovered { .. } => {
                         panic!("Account should be recovered already.")

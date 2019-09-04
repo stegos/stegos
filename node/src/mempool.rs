@@ -139,13 +139,14 @@ impl Mempool {
     /// Prune old transactions contains tx_hash from the mempool.
     ///
     /// Returns List of txs that was removed.
-    pub fn prune<'a, HashIterator>(
+    pub fn prune<'a, HashIterator, HashIterator2>(
         &mut self,
         input_hashes: HashIterator,
-        output_hashes: HashIterator,
+        output_hashes: HashIterator2,
     ) -> HashMap<Hash, (Transaction, bool)>
     where
         HashIterator: Iterator<Item = &'a Hash>,
+        HashIterator2: Iterator<Item = &'a Hash>,
     {
         let input_hashes: HashSet<Hash> = input_hashes.cloned().collect();
         let output_hashes: HashSet<Hash> = output_hashes.cloned().collect();

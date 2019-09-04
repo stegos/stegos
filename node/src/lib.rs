@@ -697,7 +697,7 @@ impl NodeService {
 
         // Truncate the blockchain.
         while self.chain.offset() > offset {
-            let (inputs, outputs, txs) = self.chain.pop_micro_block()?;
+            let (pruned_outputs, recovered_inputs, txs) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
             self.mempool.pop_microblock(txs.clone());
 
@@ -722,8 +722,8 @@ impl NodeService {
                 offset: self.chain.offset(),
                 recovered_transaction,
                 statuses,
-                inputs,
-                outputs,
+                recovered_inputs,
+                pruned_outputs,
             };
 
             let event: NodeNotification = msg.into();
@@ -938,15 +938,15 @@ impl NodeService {
 
         // Remove all micro blocks.
         while self.chain.offset() > 0 {
-            let (inputs, outputs, _txs) = self.chain.pop_micro_block()?;
+            let (pruned_outputs, recovered_inputs, _txs) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
             let msg = RollbackMicroBlock {
                 epoch,
                 offset: self.chain.offset(),
                 recovered_transaction: HashMap::new(),
                 statuses: HashMap::new(),
-                inputs,
-                outputs,
+                recovered_inputs,
+                pruned_outputs,
             };
 
             let event: NodeNotification = msg.into();
@@ -960,7 +960,7 @@ impl NodeService {
         let mut statuses = HashMap::new();
         let mut transactions = HashMap::new();
         // Remove conflict transactions from the mempool.
-        let tx_info = self.mempool.prune(inputs.keys(), outputs.keys());
+        let tx_info = self.mempool.prune(inputs.iter(), outputs.keys());
         for (tx_hash, (tx, full)) in tx_info {
             let status = if full {
                 TransactionStatus::Committed { epoch }
@@ -1089,7 +1089,7 @@ impl NodeService {
         let mut statuses = HashMap::new();
         let mut transactions = HashMap::new();
         // Remove conflict transactions from the mempool.
-        let mut tx_info = self.mempool.prune(inputs.keys(), outputs.keys());
+        let mut tx_info = self.mempool.prune(inputs.iter(), outputs.keys());
         tx_info.extend(
             block_transactions
                 .clone()
@@ -1231,7 +1231,7 @@ impl NodeService {
     fn handle_pop_block(&mut self) -> Result<(), Error> {
         warn!("Received a request to revert the latest block");
         if self.chain.offset() > 1 {
-            let (inputs, outputs, txs) = self.chain.pop_micro_block()?;
+            let (pruned_outputs, recovered_inputs, txs) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
 
             self.mempool.pop_microblock(txs.clone());
@@ -1257,8 +1257,8 @@ impl NodeService {
                 offset: self.chain.offset(),
                 recovered_transaction,
                 statuses,
-                inputs,
-                outputs,
+                recovered_inputs,
+                pruned_outputs,
             };
 
             let event: NodeNotification = msg.into();

@@ -151,7 +151,9 @@ install_toolchain() {
 
     if ! rustfmt --version >/dev/null; then
         echo "Installing rustfmt"
-        rustup component add rustfmt
+        # allow for non-existent rustfmt (nightly ARM65)
+        # does not affect production build
+        rustup component add rustfmt || true
     fi
 
     if uname -s | grep -q Linux && ! cargo-audit --help > /dev/null; then

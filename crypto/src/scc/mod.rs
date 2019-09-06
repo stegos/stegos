@@ -298,7 +298,7 @@ impl MulAssign<Fr> for Fr {
 
 impl From<Hash> for Fr {
     fn from(h: Hash) -> Fr {
-        Fr::from(Scalar::from_bits(h.bits()))
+        Fr::from(Scalar::from_bytes_mod_order(h.bits()))
     }
 }
 
@@ -657,6 +657,19 @@ impl SecretKey {
     pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
         Ok(SecretKey::from(Fr::try_from_bytes(bytes)?))
     }
+
+    pub fn subkey(&self, index: u32) -> Result<Self, CryptoError> {
+        // skey should be master secret key, (no way to verify this)
+        // index is increment for this subkey
+        let pkey = PublicKey::from(*self); // = s * G
+        let offs = compute_subkey_offset(&pkey, index)?; // = H(P | index)
+        let seed = Fr::from(*self) + offs;
+        if seed == Fr::zero() {
+            return Err(CryptoError::InvalidPoint);
+        }
+        let sksub = SecretKey::from(seed); // = s + offs
+        Ok(sksub)
+    }
 }
 
 impl Hashable for SecretKey {
@@ -725,6 +738,19 @@ impl PublicKey {
 
     pub fn try_from_hex(s: &str) -> Result<Self, CryptoError> {
         Ok(PublicKey::from(Pt::try_from_hex(s)?))
+    }
+
+    pub fn subkey(&self, index: u32) -> Result<Self, CryptoError> {
+        // pkey should be the master public key, (no way to verify this)
+        // index is increment for this subkey
+        let offs = compute_subkey_offset(self, index)?; // = H(P | index)
+        let pkoff = PublicKey::from(SecretKey::from(offs)); // = offs * G
+        let ptseed = Pt::from(*self) + Pt::from(pkoff);
+        if ptseed == Pt::inf() {
+            return Err(CryptoError::InvalidPoint);
+        }
+        let pksub = PublicKey::from(ptseed);
+        Ok(pksub)
     }
 }
 
@@ -834,7 +860,8 @@ impl PartialOrd for PublicKey {
 
 pub fn make_deterministic_keys(seed: &[u8]) -> (SecretKey, PublicKey) {
     let h = Hash::from_vector(&seed);
-    let skey = SecretKey::from(Scalar::from_bits(h.bits()));
+    let val = Scalar::from_bytes_mod_order(h.bits());
+    let skey = SecretKey::from(val);
     let pkey = PublicKey::from(skey);
     (skey, pkey)
 }
@@ -848,6 +875,35 @@ pub fn check_keying(skey: &SecretKey, pkey: &PublicKey) -> Result<(), CryptoErro
 pub fn make_random_keys() -> (SecretKey, PublicKey) {
     let seed = thread_rng().gen::<[u8; 32]>();
     make_deterministic_keys(&seed)
+}
+
+// -----------------------------------------------------------------------
+// Subkeying - assumes simple linear derivation from master keys,
+// no keyspace branching
+//
+// Error return - Err(CryptoError::InvalidPoint) - happens if:
+//   1. The pkey seed and the increment hash together to produce zero offset.
+//     This would produce no change and hence duplicate keying. Or,
+//   2. The increment would lead to a secret key of zero in field Fr, or,
+//   3. The increment would lead to a public key as the point at infinity,
+//
+//  Conditions 2 & 3 are actually the same, but approached from two different
+//  directions.
+//
+
+fn compute_subkey_offset(pkey: &PublicKey, index: u32) -> Result<Fr, CryptoError> {
+    let mut state = Hasher::new();
+    pkey.hash(&mut state);
+    index.hash(&mut state);
+    let h = state.result();
+    let offs = Scalar::from_bytes_mod_order(h.bits());
+    // It is an error to return a zero increment - would produce duplicate keys
+    // (about 1/2^255 probability of happening)
+    if offs == Scalar::zero() {
+        Err(CryptoError::InvalidPoint)
+    } else {
+        Ok(Fr::from(offs))
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -932,11 +988,11 @@ pub fn sign_hash(hmsg: &Hash, skey: &SecretKey) -> SchnorrSig {
     // until its value lies within an acceptable range.
     //
     let h = Hash::digest_chain(&[hmsg, skey]);
-    let k = Scalar::from_bits(h.bits());
+    let k = Scalar::from_bytes_mod_order(h.bits());
     let big_k = Pt::from(k * RistrettoPoint::from(Pt::one()));
     let pkey = PublicKey::from(*skey);
     let h = Hash::digest_chain(&[&big_k, &pkey, hmsg]);
-    let u = k + Scalar::from_bits(h.bits()) * Scalar::from(*skey);
+    let u = k + Scalar::from_bytes_mod_order(h.bits()) * Scalar::from(*skey);
     SchnorrSig {
         u: Fr::from(u),
         K: Pt::from(big_k),
@@ -978,7 +1034,7 @@ pub fn sign_hash_with_kval(
     let my_big_k = kval * RistrettoPoint::from(Pt::one());
     let pkey = PublicKey::from(Pt::from(*sumPKey));
     let h = Hash::digest_chain(&[sumK, &pkey, hmsg]);
-    let u = kval + Scalar::from_bits(h.bits()) * Scalar::from(*skey);
+    let u = kval + Scalar::from_bytes_mod_order(h.bits()) * Scalar::from(*skey);
     SchnorrSig {
         u: Fr::from(u),
         K: Pt::from(my_big_k),
@@ -990,7 +1046,8 @@ pub fn validate_sig(hmsg: &Hash, sig: &SchnorrSig, pkey: &PublicKey) -> Result<(
     let Ppt = RistrettoPoint::from(*pkey);
     let Kpt = RistrettoPoint::from(sig.K);
     let uval = Scalar::from(sig.u);
-    if uval * RistrettoPoint::from(Pt::one()) == Kpt + Scalar::from_bits(h.bits()) * Ppt {
+    if uval * RistrettoPoint::from(Pt::one()) == Kpt + Scalar::from_bytes_mod_order(h.bits()) * Ppt
+    {
         return Ok(());
     } else {
         return Err(CryptoError::BadKeyingSignature);
@@ -1049,7 +1106,7 @@ pub fn aes_encrypt(msg: &[u8], pkey: &PublicKey) -> Result<(EncryptedPayload, Fr
         pkey.hash(&mut state);
         h.hash(&mut state);
         let hh = state.result();
-        let alpha = Scalar::from_bits(hh.bits());
+        let alpha = Scalar::from_bytes_mod_order(hh.bits());
         let ppt = RistrettoPoint::from(*pkey);
         let ap = alpha * ppt; // generate key (alpha*s*G = alpha*P), and hint ag = alpha*G
         let ag = alpha * RistrettoPoint::from(Pt::one());
@@ -1172,6 +1229,9 @@ pub mod tests {
 
     #[test]
     fn check_hashable() {
+        // these tests need to be rewritten - not against absolute standards
+        // absolute values vary with correct variations in algorithm implementations
+        // IOW, it would be better to test against consistency constraints instead of absolute values
         let fr =
             Fr::try_from_hex("0bc1914cd062c8a63b51171f8f8800d7043d0924eb8a521fbc1431018390d6ab")
                 .unwrap();
@@ -1191,29 +1251,29 @@ pub mod tests {
         let (skey, pkey) = make_deterministic_keys(b"test");
         assert_eq!(
             Hash::digest(&skey).to_hex(),
-            "54e93b0d5fbcdf31fc816ab1ec21ea25d3e30b661526208a6b8dc0d1ab5d59a9"
+            "62c24afd06482faa776fa7707940604d3966201f4172f659d3e2473219dbce3f"
         );
         assert_eq!(
             Hash::digest(&pkey).to_hex(),
-            "2e87868abe1889b7904a09f5e8464411674773842ab23b7dd132a9d4f47d3600"
+            "8d85b8d5dd243d7a9ab893fd236545b573ecc9536929e724d09c2a94d8ecfd66"
         );
 
         let sig = sign_hash(&Hash::digest("test"), &skey);
         assert_eq!(
             Hash::digest(&sig).to_hex(),
-            "6b5b8ce2c4f4845f615c96928ff5f041842f01f1af841bc63c6d3174e597d108"
+            "6d9abfe5e75733731b4428422e6a625a0dc7759938b2dbaa0ae9517a0a573bc7"
         );
 
         let (payload, _rvalue) = aes_encrypt(b"test", &pkey).unwrap();
         assert_eq!(
             Hash::digest(&payload).to_hex(),
-            "5bc0c7cbf62322a386ade440d7cee20b88de0ac8f4b22b5123ebb0d44c519557"
+            "ceeb3b8b0868da0af648d459c78cb6eaa8d62848bc2da5b432a5dfc9ed6b0a96"
         );
 
         let encrypted_key = encrypt_key("seed", b"key");
         assert_eq!(
             Hash::digest(&encrypted_key).to_hex(),
-            "852430e8e65d6a23c05453e311ca8ad59a5550cff8bd89b0f5434ac9e7c552b6"
+            "fa11e83791bf99c20a51c5fa03919b0e4f2a6f001bb855db89d0473d4030b515"
         );
     }
 
@@ -1291,5 +1351,22 @@ pub mod tests {
                 0, 0, 0, 0
             ]
         );
+    }
+
+    #[test]
+    fn check_subkeying() {
+        let mut rng: ThreadRng = thread_rng();
+        let (skey, pkey) = make_random_keys();
+        for _ in 0..100 {
+            let index = rng.gen::<u32>();
+            let subskey = match skey.subkey(index) {
+                Ok(s) => s,
+                Err(_) => {
+                    continue;
+                }
+            };
+            let subpkey = pkey.subkey(index).expect("ok");
+            assert!(check_keying(&subskey, &subpkey).is_ok());
+        }
     }
 }

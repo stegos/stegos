@@ -382,3 +382,26 @@ pub fn create_micro_block_with_coinbase(
     block.sign(&keys.network_skey, &keys.network_pkey);
     block
 }
+
+#[test]
+fn roundtrip_bitvec() {
+    use serde_derive::{Deserialize, Serialize};
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    struct RT {
+        #[serde(deserialize_with = "crate::deserialize_bitvec")]
+        #[serde(serialize_with = "crate::serialize_bitvec")]
+        v: BitVector,
+    }
+
+    let mut v = BitVector::new(65);
+    for i in vec![0, 1, 2, 10, 15, 18, 25, 31, 40, 42, 60, 64] {
+        v.insert(i);
+    }
+
+    let rt = RT { v };
+
+    let json = serde_json::to_string(&rt).unwrap();
+
+    let rt_recovered: RT = serde_json::from_str(&json).unwrap();
+    assert_eq!(rt, rt_recovered)
+}

@@ -2299,12 +2299,15 @@ pub mod tests {
             .push_micro_block(block, timestamp)
             .expect("no I/O errors");
 
-        let historic_output = inputs.values().next().unwrap();
+        let historic_output_hash = inputs.iter().next().unwrap();
         let historic_output_proof = chain
-            .historic_output_by_hash_with_proof(&Hash::digest(&historic_output))
+            .historic_output_by_hash_with_proof(historic_output_hash)
             .expect("no I/O errors")
             .expect("exists");
-        assert_eq!(&historic_output_proof.output, historic_output);
+        assert_eq!(
+            Hash::digest(&historic_output_proof.output),
+            *historic_output_hash
+        );
         assert_eq!(historic_output_proof.epoch, 0);
         assert_eq!(&historic_output_proof.block_hash, &genesis_hash);
         assert_eq!(historic_output_proof.is_final, true);
@@ -2336,12 +2339,15 @@ pub mod tests {
         let (inputs, _outputs) = chain
             .push_macro_block(block, timestamp)
             .expect("Invalid block");
-        let historic_output = inputs.values().next().unwrap();
+        let historic_output_hash = inputs.iter().next().unwrap();
         let historic_output_proof = chain
-            .historic_output_by_hash_with_proof(&Hash::digest(&historic_output))
+            .historic_output_by_hash_with_proof(historic_output_hash)
             .expect("no I/O errors")
             .expect("exists");
-        assert_eq!(&historic_output_proof.output, historic_output);
+        assert_eq!(
+            Hash::digest(&historic_output_proof.output),
+            *historic_output_hash
+        );
         assert_eq!(historic_output_proof.epoch, 0);
         assert_eq!(historic_output_proof.block_hash, genesis_hash);
         assert_eq!(historic_output_proof.is_final, true);

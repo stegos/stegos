@@ -107,7 +107,7 @@ impl WebSocketHandler {
         let wallet_notifications = wallet.subscribe();
         let wallet_responses = Vec::new();
         let node_responses = Vec::new();
-        let node_notifications = node.subscribe();
+        let node_notifications = node.subscribe_with_recovery_epoch(0);
         WebSocketHandler {
             peer,
             api_token,

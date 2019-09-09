@@ -790,7 +790,10 @@ impl ConsoleService {
             let arg = &msg[10..];
             let arg = arg.trim();
             let epoch: u64 = arg.parse()?;
-            let request = NodeRequest::GetMacroBlockInfo { epoch };
+            let request = NodeRequest::GetMacroBlockInfo {
+                epoch,
+                limit: CONSOLE_HISTORY_LIMIT,
+            };
             self.send_node_request(request)?
         } else if msg == "show accounts" {
             let request = WalletControlRequest::ListAccounts {};

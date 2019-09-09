@@ -50,6 +50,7 @@ pub enum NodeRequest {
     DisableRestaking {},
     GetMacroBlockInfo {
         epoch: u64,
+        limit: u64,
     },
 }
 
@@ -79,7 +80,7 @@ pub enum NodeResponse {
     RestakingDisabled,
     MacroBlockInfo {
         #[serde(flatten)]
-        block_info: NewMacroBlock,
+        blocks_info: Vec<NewMacroBlock>,
     },
     Error {
         error: String,

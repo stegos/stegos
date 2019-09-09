@@ -85,7 +85,7 @@ where
 {
     let mut string_vec = String::new();
 
-    for id in 0..vec.len() {
+    for id in 0..vec.capacity() {
         match vec.contains(id) {
             true => string_vec.push('1'),
             false => string_vec.push('0'),

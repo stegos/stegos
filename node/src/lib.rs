@@ -45,7 +45,7 @@ use crate::validation::*;
 use failure::{format_err, Error};
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::sync::oneshot;
-use futures::{task, Async, Future, Poll, Stream};
+use futures::{task, Async, Future, Poll, Sink, Stream};
 use futures_stream_select_all_send::select_all;
 pub use loader::CHAIN_LOADER_TOPIC;
 use log::*;
@@ -101,6 +101,15 @@ impl Node {
         self.outbox.unbounded_send(msg).expect("connected");
         rx
     }
+
+    /// Subscribe to node update, with last epoch.
+    pub fn subscribe_with_recovery_epoch(&self, epoch: u64) -> UnboundedReceiver<NodeNotification> {
+        let (tx, rx) = unbounded();
+        let msg = NodeMessage::SubscribeNodeNotificationEpoch(tx, epoch);
+        self.outbox.unbounded_send(msg).expect("connected");
+        rx
+    }
+
     /// Subscribe to node update.
     /// Also recover info about wallet.
     pub fn subscribe_with_recovery(
@@ -155,6 +164,7 @@ pub enum NodeMessage {
         unspent: HashMap<Hash, Output>,
     },
     SubscribeNodeNotification(UnboundedSender<NodeNotification>),
+    SubscribeNodeNotificationEpoch(UnboundedSender<NodeNotification>, u64),
     Request {
         request: NodeRequest,
         tx: oneshot::Sender<NodeResponse>,
@@ -202,6 +212,11 @@ enum Validation {
     },
 }
 
+pub struct EpochListener {
+    starting_epoch: u64,
+    sender: UnboundedSender<NodeNotification>,
+}
+
 pub struct NodeService {
     /// Config.
     cfg: NodeConfig,
@@ -233,6 +248,7 @@ pub struct NodeService {
     //
     // Communication with environment.
     //
+    epoch_listeners: Vec<EpochListener>,
     /// Node interface (needed to create TransactionPoolService).
     node: Node,
     /// Network interface.
@@ -311,6 +327,7 @@ impl NodeService {
 
         let events = select_all(streams);
 
+        let epoch_listeners = Vec::new();
         let node = Node {
             outbox,
             network: network.clone(),
@@ -328,6 +345,7 @@ impl NodeService {
             loader_timer,
             cheating_proofs,
             is_restaking_enabled,
+            epoch_listeners,
             node: node.clone(),
             network: network.clone(),
             events,
@@ -1176,6 +1194,21 @@ impl NodeService {
         Ok(())
     }
 
+    /// Handler for NodeMessage::SubscribeNodeNotificationEpoch.
+    fn handle_subscribe_node_notification_with_epoch(
+        &mut self,
+        sender: UnboundedSender<NodeNotification>,
+        starting_epoch: u64,
+    ) -> Result<(), Error> {
+        let epoch_info = EpochListener {
+            starting_epoch,
+            sender,
+        };
+        self.epoch_listeners.push(epoch_info);
+        task::current().notify();
+        Ok(())
+    }
+
     /// Handler for NodeMessage::AccountRecover.
     fn handle_subscribe_with_recover(
         &mut self,
@@ -1893,10 +1926,11 @@ impl NodeService {
         }
     }
 
-    fn get_macro_block_info_by_epoch(&mut self, epoch: u64) -> Result<NewMacroBlock, Error> {
+    fn get_macro_block_info_by_epoch(&self, epoch: u64) -> Result<NewMacroBlock, Error> {
         if epoch >= self.chain.epoch() {
             return Err(format_err!("Unexpected epoch"));
         }
+
         let block = self.chain.macro_block(epoch)?;
         let epoch_info = self
             .chain
@@ -1910,6 +1944,105 @@ impl NodeService {
             statuses: HashMap::new(),
         };
         Ok(msg)
+    }
+
+    fn get_macro_blocks_info(&self, epoch: u64, limit: u64) -> Result<Vec<NewMacroBlock>, Error> {
+        if epoch >= self.chain.epoch() {
+            return Err(format_err!("Unexpected epoch"));
+        }
+
+        if epoch + limit >= self.chain.epoch() {
+            return Err(format_err!("Unexpected epoch"));
+        }
+
+        let mut blocks = Vec::new();
+
+        for epoch in epoch + epoch..limit {
+            let block = self.get_macro_block_info_by_epoch(epoch)?;
+            blocks.push(block);
+        }
+
+        Ok(blocks)
+    }
+
+    /// Process listener events:
+    /// This routine was created to simplify recovery of API client.
+    ///
+    /// 1) Check if sender can receive more items. To prevent big amount of data in memory.
+    /// 2) Send epoch info by one epoch at time.
+    /// 3) Send current epoch microblocks.
+    /// 4) Subscribe listener to NodeNotifications.
+    ///
+    /// Errors:
+    /// This routine will discard listener on some errors:
+    /// 1) If listener subscribe with invalid epoch.
+    /// 2) If we got some error in database.
+    /// 3) If listener receiver side was dropped.
+    ///
+    /// On any error listener will be removed from listener list.
+    ///
+    fn process_listener(
+        &mut self,
+        mut listener: EpochListener,
+    ) -> Result<Option<EpochListener>, Error> {
+        match listener.sender.poll_complete()? {
+            Async::Ready(()) => {
+                if listener.starting_epoch > self.chain.epoch() {
+                    return Err(format_err!(
+                        "Too big epoch requested: epoch_requested={}, chain_epoch={}",
+                        listener.starting_epoch,
+                        self.chain.epoch()
+                    ));
+                }
+
+                if listener.starting_epoch == self.chain.epoch() {
+                    // send microblocks in single batch, to prevent races.
+                    for offset in 0..self.chain.offset() {
+                        let block = self.chain.micro_block(listener.starting_epoch, offset)?;
+                        let transactions: HashMap<_, _> = block
+                            .transactions
+                            .iter()
+                            .cloned()
+                            .map(|tx| (Hash::digest(&tx), tx))
+                            .collect();
+                        let statuses = transactions
+                            .iter()
+                            .map(|(h, _tx)| {
+                                (
+                                    *h,
+                                    TransactionStatus::Prepared {
+                                        epoch: listener.starting_epoch,
+                                        offset,
+                                    },
+                                )
+                            })
+                            .collect();
+                        let block_event = NewMicroBlock {
+                            block,
+                            transactions,
+                            statuses,
+                        };
+                        listener
+                            .sender
+                            .start_send(NodeNotification::NewMicroBlock(block_event))?;
+                    }
+
+                    // And subscribe node to current stream of events.
+                    self.handle_subscribe_node_notification(listener.sender)
+                        .expect("no error in subscribe notification");
+                    return Ok(None);
+                }
+
+                let block = self.get_macro_block_info_by_epoch(listener.starting_epoch)?;
+
+                listener
+                    .sender
+                    .start_send(NodeNotification::NewMacroBlock(block))?;
+                listener.starting_epoch += 1;
+            }
+            Async::NotReady => {}
+        }
+        Ok(listener.into())
     }
 }
 
@@ -1974,6 +2107,20 @@ impl Future for NodeService {
             error!("Error: {}", e);
         }
 
+        let listeners = std::mem::replace(&mut self.epoch_listeners, Vec::new());
+        for listener in listeners {
+            let listener = match self.process_listener(listener) {
+                Ok(Some(listener)) => listener,
+                Ok(None) => continue,
+                Err(e) => {
+                    error!("Error during processing listener: error={}", e);
+                    continue;
+                }
+            };
+            // recover listener at end.
+            self.epoch_listeners.push(listener);
+        }
+
         if let Some(ref mut txpool_service) = &mut self.txpool_service {
             match txpool_service.poll().unwrap() {
                 Async::Ready(_) => unreachable!(),
@@ -2001,6 +2148,9 @@ impl Future for NodeService {
                         ),
                         NodeMessage::SubscribeNodeNotification(tx) => {
                             self.handle_subscribe_node_notification(tx)
+                        }
+                        NodeMessage::SubscribeNodeNotificationEpoch(tx, epoch) => {
+                            self.handle_subscribe_node_notification_with_epoch(tx, epoch)
                         }
                         NodeMessage::Request { request, tx } => {
                             let response = match request {
@@ -2083,10 +2233,10 @@ impl Future for NodeService {
                                         NodeResponse::RestakingDisabled
                                     }
                                 }
-                                NodeRequest::GetMacroBlockInfo { epoch } => {
-                                    match self.get_macro_block_info_by_epoch(epoch) {
-                                        Ok(block_info) => {
-                                            NodeResponse::MacroBlockInfo { block_info }
+                                NodeRequest::GetMacroBlockInfo { epoch, limit } => {
+                                    match self.get_macro_blocks_info(epoch, limit) {
+                                        Ok(blocks_info) => {
+                                            NodeResponse::MacroBlockInfo { blocks_info }
                                         }
                                         Err(e) => NodeResponse::Error {
                                             error: format!("{}", e),

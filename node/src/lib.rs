@@ -42,7 +42,7 @@ use crate::mempool::Mempool;
 use crate::txpool::TransactionPoolService;
 pub use crate::txpool::MAX_PARTICIPANTS;
 use crate::validation::*;
-use failure::Error;
+use failure::{format_err, Error};
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::sync::oneshot;
 use futures::{task, Async, Future, Poll, Stream};
@@ -1897,6 +1897,26 @@ impl NodeService {
             _ => unreachable!(),
         }
     }
+
+    fn get_macro_block_info_by_epoch(&mut self, epoch: u64) -> Result<NewMacroBlock, Error> {
+        if epoch >= self.chain.epoch() {
+            return Err(format_err!("Unexpected epoch"));
+        }
+        let block = self.chain.macro_block(epoch)?;
+        let epoch_info = self
+            .chain
+            .epoch_info(epoch)
+            .ok_or(format_err!("Epoch info not found"))?;
+        let msg = NewMacroBlock {
+            block,
+            election_result: epoch_info.election_result.clone(),
+            transactions: HashMap::new(),
+            statuses: HashMap::new(),
+            inputs: Vec::new(),
+            outputs: HashMap::new(),
+        };
+        Ok(msg)
+    }
 }
 
 // Event loop.
@@ -2067,6 +2087,16 @@ impl Future for NodeService {
                                         info!("Re-staking disabled");
                                         self.is_restaking_enabled = false;
                                         NodeResponse::RestakingDisabled
+                                    }
+                                }
+                                NodeRequest::GetMacroBlockInfo { epoch } => {
+                                    match self.get_macro_block_info_by_epoch(epoch) {
+                                        Ok(block_info) => {
+                                            NodeResponse::MacroBlockInfo { block_info }
+                                        }
+                                        Err(e) => NodeResponse::Error {
+                                            error: format!("{}", e),
+                                        },
                                     }
                                 }
                             };

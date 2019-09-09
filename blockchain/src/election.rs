@@ -42,7 +42,7 @@ pub struct ElectionInfo {
 }
 
 /// Result of election.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ElectionResult {
     /// Initial random of election
     pub random: pbc::VRF,

@@ -697,7 +697,7 @@ impl NodeService {
 
         // Truncate the blockchain.
         while self.chain.offset() > offset {
-            let (pruned_outputs, recovered_inputs, txs) = self.chain.pop_micro_block()?;
+            let (pruned_outputs, recovered_inputs, txs, block) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
             self.mempool.pop_microblock(txs.clone());
 
@@ -718,8 +718,7 @@ impl NodeService {
                 })
                 .collect();
             let msg = RollbackMicroBlock {
-                epoch: self.chain.epoch(),
-                offset: self.chain.offset(),
+                block,
                 recovered_transaction,
                 statuses,
                 recovered_inputs,
@@ -938,11 +937,10 @@ impl NodeService {
 
         // Remove all micro blocks.
         while self.chain.offset() > 0 {
-            let (pruned_outputs, recovered_inputs, _txs) = self.chain.pop_micro_block()?;
+            let (pruned_outputs, recovered_inputs, _txs, block) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
             let msg = RollbackMicroBlock {
-                epoch,
-                offset: self.chain.offset(),
+                block,
                 recovered_transaction: HashMap::new(),
                 statuses: HashMap::new(),
                 recovered_inputs,
@@ -955,7 +953,7 @@ impl NodeService {
         }
         assert_eq!(0, self.chain.offset());
 
-        let (inputs, outputs) = self.chain.push_macro_block(block, timestamp)?;
+        let (inputs, outputs) = self.chain.push_macro_block(block.clone(), timestamp)?;
 
         let mut statuses = HashMap::new();
         let mut transactions = HashMap::new();
@@ -987,10 +985,8 @@ impl NodeService {
         }
 
         let msg = NewMacroBlock {
-            epoch,
-            validators: self.chain.validators().clone(),
-            facilitator: self.chain.facilitator().clone(),
-            last_macro_block_timestamp: self.chain.last_macro_block_timestamp(),
+            block,
+            election_result: self.chain.election_result().clone(),
             transactions,
             statuses,
             inputs: inputs.clone(),
@@ -1084,7 +1080,7 @@ impl NodeService {
 
         // Apply Micro Block.
         let (inputs, outputs, block_transactions) =
-            self.chain.push_micro_block(block, timestamp)?;
+            self.chain.push_micro_block(block.clone(), timestamp)?;
 
         let mut statuses = HashMap::new();
         let mut transactions = HashMap::new();
@@ -1113,8 +1109,7 @@ impl NodeService {
         assert!(transactions.len() >= block_transactions.len());
 
         let msg = NewMicroBlock {
-            epoch,
-            offset,
+            block,
             transactions,
             statuses,
             inputs: inputs.clone(),
@@ -1231,7 +1226,7 @@ impl NodeService {
     fn handle_pop_block(&mut self) -> Result<(), Error> {
         warn!("Received a request to revert the latest block");
         if self.chain.offset() > 1 {
-            let (pruned_outputs, recovered_inputs, txs) = self.chain.pop_micro_block()?;
+            let (pruned_outputs, recovered_inputs, txs, block) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
 
             self.mempool.pop_microblock(txs.clone());
@@ -1253,8 +1248,7 @@ impl NodeService {
                 })
                 .collect();
             let msg = RollbackMicroBlock {
-                epoch: self.chain.epoch(),
-                offset: self.chain.offset(),
+                block,
                 recovered_transaction,
                 statuses,
                 recovered_inputs,

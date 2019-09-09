@@ -28,6 +28,7 @@ use crate::timestamp::Timestamp;
 use crate::transaction::Transaction;
 use crate::view_changes::ViewChangeProof;
 use bitvector::BitVector;
+use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
@@ -44,7 +45,7 @@ pub const VALIDATORS_MAX: usize = 512;
 //--------------------------------------------------------------------------------------------------
 
 /// Micro Block Header.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MicroBlockHeader {
     /// Version number.
     pub version: u64,
@@ -81,7 +82,7 @@ pub struct MicroBlockHeader {
 }
 
 /// Micro Block.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MicroBlock {
     /// Header.
     pub header: MicroBlockHeader,
@@ -90,6 +91,7 @@ pub struct MicroBlock {
     pub sig: pbc::Signature,
 
     /// Transactions.
+    #[serde(skip)]
     pub transactions: Vec<Transaction>,
 }
 
@@ -216,7 +218,7 @@ impl Hashable for MicroBlock {
 //--------------------------------------------------------------------------------------------------
 
 /// Macro Block Header.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MacroBlockHeader {
     /// Version number.
     pub version: u64,
@@ -246,6 +248,8 @@ pub struct MacroBlockHeader {
     pub block_reward: i64,
 
     /// Bitmap of active validators in epoch.
+    #[serde(deserialize_with = "crate::deserialize_bitvec")]
+    #[serde(serialize_with = "crate::serialize_bitvec")]
     pub activity_map: BitVector,
 
     /// The sum of all gamma adjustments.
@@ -286,7 +290,7 @@ impl Hashable for MacroBlockHeader {
 }
 
 /// Macro Block.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MacroBlock {
     /// Header.
     pub header: MacroBlockHeader,
@@ -295,12 +299,15 @@ pub struct MacroBlock {
     pub multisig: pbc::Signature,
 
     /// Bitmap of signers in the multi-signature.
+    #[serde(deserialize_with = "crate::deserialize_bitvec")]
+    #[serde(serialize_with = "crate::serialize_bitvec")]
     pub multisigmap: BitVector,
 
     /// The list of transaction inputs in a Merkle Tree.
     pub inputs: Vec<Hash>,
 
     /// The list of transaction outputs in a Merkle Tree.
+    #[serde(skip)]
     pub outputs: Vec<Output>,
 }
 

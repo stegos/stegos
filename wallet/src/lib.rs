@@ -1343,21 +1343,29 @@ impl Future for UnsealedAccountService {
                 Async::Ready(Some(notification)) => match notification {
                     NodeNotification::NewMicroBlock(block) => {
                         self.on_tx_statuses_changed(block.statuses);
-                        self.on_outputs_changed(block.epoch, block.inputs, block.outputs);
+                        self.on_outputs_changed(
+                            block.block.header.epoch,
+                            block.inputs,
+                            block.outputs,
+                        );
                     }
                     NodeNotification::NewMacroBlock(block) => {
                         self.on_tx_statuses_changed(block.statuses);
-                        self.on_outputs_changed(block.epoch, block.inputs, block.outputs);
+                        self.on_outputs_changed(
+                            block.block.header.epoch,
+                            block.inputs,
+                            block.outputs,
+                        );
                         self.on_epoch_changed(
-                            block.epoch,
-                            block.facilitator,
-                            block.last_macro_block_timestamp,
+                            block.block.header.epoch,
+                            block.election_result.facilitator,
+                            block.block.header.timestamp,
                         );
                     }
                     NodeNotification::RollbackMicroBlock(block) => {
                         self.on_tx_statuses_changed(block.statuses);
                         self.on_outputs_changed(
-                            block.epoch,
+                            block.block.header.epoch,
                             block.pruned_outputs,
                             block.recovered_inputs,
                         );
@@ -1990,9 +1998,9 @@ impl Future for WalletService {
                 Ok(Async::Ready(Some(NodeNotification::NewMacroBlock(b)))) => {
                     trace!(
                         "Update last known epoch in wallet control service: epoch={}",
-                        b.epoch
+                        b.block.header.epoch
                     );
-                    self.last_epoch = b.epoch;
+                    self.last_epoch = b.block.header.epoch;
                 }
                 Ok(Async::Ready(Some(_))) => continue, // filter rest of events.
                 Ok(Async::Ready(None)) => panic!("Node has died"),

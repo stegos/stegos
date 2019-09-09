@@ -37,6 +37,7 @@ use paired::*;
 use rand::prelude::*;
 use serde::de::{Deserialize, Deserializer};
 use serde::ser::{Serialize, Serializer};
+use serde_derive::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash as stdhash;
@@ -604,6 +605,44 @@ impl<'de> Deserialize<'de> for PublicKey {
     }
 }
 
+impl Serialize for Signature {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'de> Deserialize<'de> for Signature {
+    fn deserialize<D>(deserializer: D) -> Result<Signature, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Signature::try_from_hex(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+impl Serialize for G1 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'de> Deserialize<'de> for G1 {
+    fn deserialize<D>(deserializer: D) -> Result<G1, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        G1::try_from_hex(&s).map_err(serde::de::Error::custom)
+    }
+}
+
 impl Eq for PublicKey {}
 
 impl PartialEq for PublicKey {
@@ -1009,7 +1048,7 @@ pub fn ibe_decrypt(pack: &EncryptedPacket, skey: &SecretKey) -> Result<Vec<u8>, 
 
 // -------------------------------------------------------
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
 pub struct VRF {
     pub rand: Hash,
     // hash digest of generated randomness in pairing field

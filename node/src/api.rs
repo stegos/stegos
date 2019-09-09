@@ -94,10 +94,9 @@ pub struct SyncChanged {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NewMacroBlock {
-    pub epoch: u64,
-    pub last_macro_block_timestamp: Timestamp,
-    pub facilitator: pbc::PublicKey,
-    pub validators: Vec<(pbc::PublicKey, i64)>,
+    #[serde(flatten)]
+    pub block: stegos_blockchain::MacroBlock,
+    pub election_result: stegos_blockchain::election::ElectionResult,
     #[serde(skip)]
     pub transactions: HashMap<Hash, Transaction>,
     pub statuses: HashMap<Hash, TransactionStatus>,
@@ -109,8 +108,8 @@ pub struct NewMacroBlock {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RollbackMicroBlock {
-    pub epoch: u64,
-    pub offset: u32,
+    #[serde(flatten)]
+    pub block: stegos_blockchain::MicroBlock,
     #[serde(skip)]
     pub recovered_transaction: HashMap<Hash, Transaction>,
     pub statuses: HashMap<Hash, TransactionStatus>,
@@ -122,8 +121,8 @@ pub struct RollbackMicroBlock {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NewMicroBlock {
-    pub epoch: u64,
-    pub offset: u32,
+    #[serde(flatten)]
+    pub block: stegos_blockchain::MicroBlock,
     #[serde(skip)]
     pub transactions: HashMap<Hash, Transaction>,
     pub statuses: HashMap<Hash, TransactionStatus>,

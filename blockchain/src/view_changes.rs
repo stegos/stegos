@@ -22,11 +22,14 @@
 use crate::blockchain::{Blockchain, ChainInfo};
 use crate::multisignature::{check_multi_signature, create_multi_signature_index};
 use bitvector::BitVector;
+use serde_derive::{Deserialize, Serialize};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ViewChangeProof {
+    #[serde(deserialize_with = "crate::deserialize_bitvec")]
+    #[serde(serialize_with = "crate::serialize_bitvec")]
     pub multimap: BitVector,
     pub multisig: pbc::Signature,
 }

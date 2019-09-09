@@ -1688,7 +1688,15 @@ impl Blockchain {
 
     pub fn pop_micro_block(
         &mut self,
-    ) -> Result<(Vec<Hash>, HashMap<Hash, Output>, Vec<Transaction>), StorageError> {
+    ) -> Result<
+        (
+            Vec<Hash>,
+            HashMap<Hash, Output>,
+            Vec<Transaction>,
+            MicroBlock,
+        ),
+        StorageError,
+    > {
         assert!(self.epoch > 0, "doesn't work for genesis");
         assert!(self.offset > 0, "attempt to revert the macro block");
         let offset = self.offset - 1;
@@ -1736,7 +1744,7 @@ impl Blockchain {
         let mut recovered: HashMap<Hash, Output> = HashMap::new();
         let mut pruned: Vec<Hash> = Vec::new();
         let mut removed = Vec::new();
-        for tx in block.transactions {
+        for tx in block.clone().transactions {
             for input_hash in tx.txins() {
                 let input = self.output_by_hash(input_hash)?.expect("exists");
                 recovered.insert(input_hash.clone(), input);
@@ -1783,7 +1791,7 @@ impl Blockchain {
                 .collect::<Vec<String>>(),
         );
 
-        Ok((pruned, recovered, removed))
+        Ok((pruned, recovered, removed, block))
     }
 }
 

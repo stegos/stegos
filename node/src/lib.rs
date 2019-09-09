@@ -697,7 +697,7 @@ impl NodeService {
 
         // Truncate the blockchain.
         while self.chain.offset() > offset {
-            let (pruned_outputs, recovered_inputs, txs, block) = self.chain.pop_micro_block()?;
+            let (txs, block) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
             self.mempool.pop_microblock(txs.clone());
 
@@ -721,8 +721,6 @@ impl NodeService {
                 block,
                 recovered_transaction,
                 statuses,
-                recovered_inputs,
-                pruned_outputs,
             };
 
             let event: NodeNotification = msg.into();
@@ -937,14 +935,12 @@ impl NodeService {
 
         // Remove all micro blocks.
         while self.chain.offset() > 0 {
-            let (pruned_outputs, recovered_inputs, _txs, block) = self.chain.pop_micro_block()?;
+            let (_txs, block) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
             let msg = RollbackMicroBlock {
                 block,
                 recovered_transaction: HashMap::new(),
                 statuses: HashMap::new(),
-                recovered_inputs,
-                pruned_outputs,
             };
 
             let event: NodeNotification = msg.into();
@@ -983,14 +979,17 @@ impl NodeService {
                 self.chain.last_block_hash()
             );
         }
+        let epoch_info = self
+            .chain
+            .epoch_info(epoch)
+            .expect("Expect epoch info for last macroblock.")
+            .clone();
 
         let msg = NewMacroBlock {
             block,
-            election_result: self.chain.election_result().clone(),
+            epoch_info,
             transactions,
             statuses,
-            inputs: inputs.clone(),
-            outputs: outputs.clone(),
         };
 
         self.on_block_added(block_timestamp, true);
@@ -1112,8 +1111,6 @@ impl NodeService {
             block,
             transactions,
             statuses,
-            inputs: inputs.clone(),
-            outputs: outputs.clone(),
         };
 
         self.on_block_added(block_timestamp, false);
@@ -1226,7 +1223,7 @@ impl NodeService {
     fn handle_pop_block(&mut self) -> Result<(), Error> {
         warn!("Received a request to revert the latest block");
         if self.chain.offset() > 1 {
-            let (pruned_outputs, recovered_inputs, txs, block) = self.chain.pop_micro_block()?;
+            let (txs, block) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
 
             self.mempool.pop_microblock(txs.clone());
@@ -1251,8 +1248,6 @@ impl NodeService {
                 block,
                 recovered_transaction,
                 statuses,
-                recovered_inputs,
-                pruned_outputs,
             };
 
             let event: NodeNotification = msg.into();
@@ -1906,14 +1901,13 @@ impl NodeService {
         let epoch_info = self
             .chain
             .epoch_info(epoch)
-            .ok_or(format_err!("Epoch info not found"))?;
+            .ok_or(format_err!("Epoch info not found"))?
+            .clone();
         let msg = NewMacroBlock {
             block,
-            election_result: epoch_info.election_result.clone(),
+            epoch_info,
             transactions: HashMap::new(),
             statuses: HashMap::new(),
-            inputs: Vec::new(),
-            outputs: HashMap::new(),
         };
         Ok(msg)
     }

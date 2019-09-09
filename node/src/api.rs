@@ -103,14 +103,20 @@ pub struct SyncChanged {
 pub struct NewMacroBlock {
     #[serde(flatten)]
     pub block: stegos_blockchain::MacroBlock,
-    pub election_result: stegos_blockchain::election::ElectionResult,
+    #[serde(flatten)]
+    pub epoch_info: stegos_blockchain::StartEpochInfo,
     #[serde(skip)]
     pub transactions: HashMap<Hash, Transaction>,
     pub statuses: HashMap<Hash, TransactionStatus>,
-    #[serde(skip)]
-    pub inputs: Vec<Hash>,
-    #[serde(skip)]
-    pub outputs: HashMap<Hash, Output>,
+}
+
+impl NewMacroBlock {
+    pub fn inputs(&self) -> impl Iterator<Item = &Hash> {
+        self.block.inputs.iter()
+    }
+    pub fn outputs(&self) -> impl Iterator<Item = &Output> {
+        self.block.outputs.iter()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -120,10 +126,15 @@ pub struct RollbackMicroBlock {
     #[serde(skip)]
     pub recovered_transaction: HashMap<Hash, Transaction>,
     pub statuses: HashMap<Hash, TransactionStatus>,
-    #[serde(skip)]
-    pub recovered_inputs: HashMap<Hash, Output>,
-    #[serde(skip)]
-    pub pruned_outputs: Vec<Hash>,
+}
+
+impl RollbackMicroBlock {
+    pub fn pruned_outputs(&self) -> impl Iterator<Item = &Hash> {
+        self.block.transactions.iter().flat_map(|tx| tx.txins())
+    }
+    pub fn recovered_inputs(&self) -> impl Iterator<Item = &Output> {
+        self.block.transactions.iter().flat_map(|tx| tx.txouts())
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -133,10 +144,15 @@ pub struct NewMicroBlock {
     #[serde(skip)]
     pub transactions: HashMap<Hash, Transaction>,
     pub statuses: HashMap<Hash, TransactionStatus>,
-    #[serde(skip)]
-    pub inputs: Vec<Hash>,
-    #[serde(skip)]
-    pub outputs: HashMap<Hash, Output>,
+}
+
+impl NewMicroBlock {
+    pub fn inputs(&self) -> impl Iterator<Item = &Hash> {
+        self.block.transactions.iter().flat_map(|tx| tx.txins())
+    }
+    pub fn outputs(&self) -> impl Iterator<Item = &Output> {
+        self.block.transactions.iter().flat_map(|tx| tx.txouts())
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -85,6 +85,7 @@ pub struct MicroBlockHeader {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MicroBlock {
     /// Header.
+    #[serde(flatten)]
     pub header: MicroBlockHeader,
 
     /// BLS signature by leader.
@@ -293,6 +294,7 @@ impl Hashable for MacroBlockHeader {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MacroBlock {
     /// Header.
+    #[serde(flatten)]
     pub header: MacroBlockHeader,
 
     /// BLS (multi-)signature.

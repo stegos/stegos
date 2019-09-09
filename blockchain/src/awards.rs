@@ -21,13 +21,14 @@
 
 // TODO: Choose difficulty.
 use log::{debug, info, trace};
+use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::mem;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::scc::PublicKey;
 use stegos_crypto::utils::print_nbits;
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ValidatorAwardState {
     /// Validator have failed at: epoch, offset.
     FailedAt(u64, u32),
@@ -35,12 +36,12 @@ pub enum ValidatorAwardState {
 }
 
 /// Current award state, and budget count.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Awards {
-    budget: i64,
+    pub budget: i64,
     // num of bits to be zero in VRF.
-    difficulty: usize,
-    validators_activity: BTreeMap<PublicKey, ValidatorAwardState>,
+    pub difficulty: usize,
+    pub validators_activity: BTreeMap<PublicKey, ValidatorAwardState>,
 }
 
 impl Awards {

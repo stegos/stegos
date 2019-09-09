@@ -39,6 +39,7 @@ use bitvector::BitVector;
 use byteorder::{BigEndian, ByteOrder};
 use log::*;
 use rocksdb;
+use serde_derive::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use stegos_crypto::bulletproofs::fee_a;
@@ -53,7 +54,7 @@ pub type ViewCounter = u32;
 pub type ValidatorId = u32;
 
 /// Retrospective information for some epoch.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct StartEpochInfo {
     pub election_result: ElectionResult,
     pub service_award_state: Awards,
@@ -1716,17 +1717,7 @@ impl Blockchain {
         Ok((inputs, outputs, txs))
     }
 
-    pub fn pop_micro_block(
-        &mut self,
-    ) -> Result<
-        (
-            Vec<Hash>,
-            HashMap<Hash, Output>,
-            Vec<Transaction>,
-            MicroBlock,
-        ),
-        StorageError,
-    > {
+    pub fn pop_micro_block(&mut self) -> Result<(Vec<Transaction>, MicroBlock), StorageError> {
         assert!(self.epoch > 0, "doesn't work for genesis");
         assert!(self.offset > 0, "attempt to revert the macro block");
         let offset = self.offset - 1;
@@ -1821,7 +1812,7 @@ impl Blockchain {
                 .collect::<Vec<String>>(),
         );
 
-        Ok((pruned, recovered, removed, block))
+        Ok((removed, block))
     }
 }
 

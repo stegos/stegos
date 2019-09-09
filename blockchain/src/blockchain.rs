@@ -52,6 +52,14 @@ use stegos_serialization::traits::ProtoConvert;
 pub type ViewCounter = u32;
 pub type ValidatorId = u32;
 
+/// Retrospective information for some epoch.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StartEpochInfo {
+    pub election_result: ElectionResult,
+    pub service_award_state: Awards,
+    pub awards_winner: Option<(PublicKey, i64)>,
+}
+
 /// Information of current chain, that is used as proof of viewchange.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ChainInfo {
@@ -183,6 +191,8 @@ pub struct Blockchain {
     pub(crate) vdf: VDF,
     /// VDF difficulty,
     difficulty: u64,
+    /// Starting info for each past epochs.
+    epoch_infos: HashMap<u64, StartEpochInfo>,
 
     //
     // Epoch Information.
@@ -245,6 +255,7 @@ impl Blockchain {
         let escrow = Escrow::new();
         let difficulty = genesis.header.difficulty;
         let vdf = VDF::new();
+        let epoch_infos = HashMap::new();
 
         //
         // Epoch Information.
@@ -274,6 +285,7 @@ impl Blockchain {
             escrow,
             vdf,
             difficulty,
+            epoch_infos,
             epoch,
             offset,
             election_result,
@@ -677,14 +689,14 @@ impl Blockchain {
         Ok(self.block(LSN(epoch, MACRO_BLOCK_OFFSET))?.unwrap_macro())
     }
 
-    /// Return iterator over saved blocks.
+    /// Returns iterator over saved blocks.
     pub fn blocks(&self) -> impl Iterator<Item = Block> {
         self.database
             .full_iterator(rocksdb::IteratorMode::Start)
             .map(|(_, v)| Block::from_buffer(&*v).expect("couldn't deserialize block."))
     }
 
-    /// Return iterator over saved blocks.
+    /// Returns iterator over saved blocks.
     pub fn blocks_starting(&self, epoch: u64, offset: u32) -> impl Iterator<Item = Block> {
         let key = Self::block_key(LSN(epoch, offset));
         let mode = rocksdb::IteratorMode::From(&key, rocksdb::Direction::Forward);
@@ -693,11 +705,19 @@ impl Blockchain {
             .map(|(_, v)| Block::from_buffer(&*v).expect("couldn't deserialize block."))
     }
 
+    /// Returns start epoch info for any past epoch.
+    pub fn epoch_info(&self, epoch: u64) -> Option<&StartEpochInfo> {
+        self.epoch_infos.get(&epoch)
+    }
+
+    /// Returns current state of election result.
+    /// Note:
+    /// Election result changes on epoch start, and on slashing.
     pub fn election_result(&self) -> &ElectionResult {
         self.election_result.get(&()).unwrap()
     }
 
-    /// Return leader public key for specific view_change number.
+    /// Returns leader public key for specific view_change number.
     pub fn select_leader(&self, view_change: ViewCounter) -> pbc::PublicKey {
         self.election_result().select_leader(view_change)
     }
@@ -1236,7 +1256,7 @@ impl Blockchain {
         }
 
         // update award (skip genesis).
-        if epoch > 0 {
+        let winner = if epoch > 0 {
             let validators_activity = self
                 .epoch_activity_from_macro_block(&block.header.activity_map)
                 .unwrap();
@@ -1258,7 +1278,10 @@ impl Blockchain {
                 block.header.block_reward, full_reward,
                 "Invalid macro block reward"
             );
-        }
+            winner
+        } else {
+            None
+        };
 
         //
         // Register block.
@@ -1322,6 +1345,13 @@ impl Blockchain {
         self.output_by_hash.checkpoint();
         self.balance.checkpoint();
         self.escrow.checkpoint();
+        let epoch_info = StartEpochInfo {
+            election_result: self.election_result().clone(),
+            service_award_state: self.awards.clone(),
+            awards_winner: winner,
+        };
+
+        self.epoch_infos.insert(epoch, epoch_info);
 
         let mut outputs: HashMap<Hash, Output> =
             outputs.into_iter().map(|(h, (o, _k))| (h, o)).collect();

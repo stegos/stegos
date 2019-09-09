@@ -173,12 +173,12 @@ fn create_tx_with_certificate() {
                 {
                     let timestamp = accounts[0]
                         .account_service
-                        .account_log
+                        .database
                         .tx_entry(tx.tx_hash)
                         .unwrap();
                     let tx_entry = accounts[0]
                         .account_service
-                        .account_log
+                        .database
                         .iter_range(timestamp, 1)
                         .next()
                         .unwrap();

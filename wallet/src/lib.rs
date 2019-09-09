@@ -209,40 +209,25 @@ impl UnsealedAccountService {
         max_inputs_in_tx: usize,
         subscribers: Vec<mpsc::UnboundedSender<AccountNotification>>,
         events: mpsc::UnboundedReceiver<AccountEvent>,
-        created_at_epoch: Option<u64>,
     ) -> Self {
         info!("My account key: {}", String::from(&account_pkey));
         debug!("My network key: {}", network_pkey.to_hex());
 
-        //
-        // State.
-        //
         let pending_payments = HashMap::new();
         let facilitator_pkey: pbc::PublicKey = pbc::PublicKey::dum();
         let snowball = None;
-
         let last_macro_block_timestamp = Timestamp::UNIX_EPOCH;
 
-        let (mut account_log, epoch) = AccountDatabase::open(&database_dir);
+        debug!("Loading account {}", account_pkey);
+        let (account_log, epoch) = AccountDatabase::open(&database_dir);
+        debug!("Opened database: epoch={}", epoch);
         let transaction_response = None;
         let resend_tx = Interval::new(clock::now(), RESEND_TX_INTERVAL);
         let check_pending_utxos = Interval::new(clock::now(), CHECK_PENDING_UTXO);
-        //
-        // Recovery.
-        //
-        let epoch = match created_at_epoch {
-            Some(created_at_epoch) => {
-                info!("Created new account: epoch={}", created_at_epoch);
-                let _ = account_log.finalize_epoch(created_at_epoch);
-                created_at_epoch
-            }
-            None => epoch,
-        };
         let chain_notifications = ChainSubscription::new(&node, epoch, 0);
-
         let current_epoch_balance_changed = false;
-        info!("Loading account {}", account_pkey);
 
+        info!("Loaded account {}", account_pkey);
         UnsealedAccountService {
             database_dir,
             account_skey_file,
@@ -1452,8 +1437,6 @@ struct SealedAccountService {
     stake_epochs: u64,
     /// Maximum allowed count of input UTXOs
     max_inputs_in_tx: usize,
-    /// Account was created at epoch.
-    created_at_epoch: Option<u64>,
 
     /// Network API (shared).
     network: Network,
@@ -1482,7 +1465,6 @@ impl SealedAccountService {
         max_inputs_in_tx: usize,
         subscribers: Vec<mpsc::UnboundedSender<AccountNotification>>,
         events: mpsc::UnboundedReceiver<AccountEvent>,
-        created_at_epoch: Option<u64>,
     ) -> Self {
         SealedAccountService {
             database_dir,
@@ -1497,7 +1479,6 @@ impl SealedAccountService {
             network,
             subscribers,
             events,
-            created_at_epoch,
         }
     }
 
@@ -1600,7 +1581,6 @@ impl Future for AccountService {
                         sealed.max_inputs_in_tx,
                         sealed.subscribers,
                         sealed.events,
-                        sealed.created_at_epoch,
                     );
                     std::mem::replace(self, AccountService::Unsealed(unsealed));
                     task::current().notify();
@@ -1631,7 +1611,6 @@ impl Future for AccountService {
                         unsealed.max_inputs_in_tx,
                         unsealed.subscribers,
                         unsealed.events,
-                        None,
                     );
                     std::mem::replace(self, AccountService::Sealed(sealed));
                     task::current().notify();
@@ -1655,7 +1634,6 @@ impl AccountService {
         node: Node,
         stake_epochs: u64,
         max_inputs_in_tx: usize,
-        created_at_epoch: Option<u64>,
     ) -> Result<(Self, Account), KeyError> {
         let account_pkey = load_account_pkey(account_pkey_file)?;
         let subscribers: Vec<mpsc::UnboundedSender<AccountNotification>> = Vec::new();
@@ -1673,7 +1651,6 @@ impl AccountService {
             max_inputs_in_tx,
             subscribers,
             events,
-            created_at_epoch,
         );
         let service = AccountService::Sealed(service);
         let api = Account { outbox };
@@ -1827,7 +1804,14 @@ impl WalletService {
             }
         }
 
-        let created_at_epoch = if is_new { Some(self.last_epoch) } else { None };
+        // Initialize empty database.
+        let (mut database, epoch) = AccountDatabase::open(&account_database_dir);
+        assert_eq!(epoch, 0, "account is not recovered");
+        if is_new {
+            // Save the last finalized epoch to skip recovery for the new fresh account.
+            database.finalize_epoch(self.last_epoch)?;
+        }
+        drop(database);
 
         let (account_service, account) = AccountService::new(
             &account_database_dir,
@@ -1839,7 +1823,6 @@ impl WalletService {
             self.node.clone(),
             self.stake_epochs,
             self.max_inputs_in_tx,
-            created_at_epoch,
         )?;
         let account_notifications = account.subscribe();
         let handle = AccountHandle {

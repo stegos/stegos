@@ -238,17 +238,14 @@ fn create_tx_with_certificate() {
     });
 }
 
-fn balance_requset(account: &mut AccountSandbox) -> (i64, i64) {
+fn balance_request(account: &mut AccountSandbox) -> AccountBalance {
     let rx = account.account.request(AccountRequest::BalanceInfo {});
 
     account.poll();
     let response = get_request(rx);
     info!("{:?}", response);
     match response {
-        AccountResponse::BalanceInfo {
-            balance,
-            available_balance,
-        } => (balance, available_balance),
+        AccountResponse::BalanceInfo(account_balance) => account_balance,
         _ => panic!("Wrong response to balance request"),
     }
 }
@@ -261,14 +258,14 @@ fn full_transfer() {
         s.poll();
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
-        let (balance, _) = balance_requset(&mut accounts[0]);
+        let balance = balance_request(&mut accounts[0]);
 
         let recipient = accounts[1].account_service.account_pkey;
 
         let mut notification = accounts[0].account.subscribe();
         let rx = accounts[0].account.request(AccountRequest::Payment {
             recipient,
-            amount: balance - PAYMENT_FEE,
+            amount: balance.payment.current - PAYMENT_FEE,
             payment_fee: PAYMENT_FEE,
             comment: "Test".to_string(),
             locked_timestamp: None,
@@ -318,15 +315,8 @@ fn create_tx_invalid() {
         s.poll();
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
-        let rx = accounts[0].account.request(AccountRequest::BalanceInfo {});
-
-        accounts[0].poll();
-        let response = get_request(rx);
-        info!("{:?}", response);
-        let balance = match response {
-            AccountResponse::BalanceInfo { balance, .. } => balance,
-            _ => panic!("Wrong response to payment request"),
-        };
+        let balance = balance_request(&mut accounts[0]);
+        info!("{:?}", balance);
 
         let recipient = accounts[1].account_service.account_pkey;
 
@@ -351,7 +341,7 @@ fn create_tx_invalid() {
         // money more than exist
         let rx = accounts[0].account.request(AccountRequest::Payment {
             recipient,
-            amount: balance - PAYMENT_FEE + 1, // 1 token more than real balance
+            amount: balance.payment.current - PAYMENT_FEE + 1, // 1 token more than real balance
             payment_fee: PAYMENT_FEE,
             comment: "Test".to_string(),
             locked_timestamp: None,
@@ -781,7 +771,14 @@ fn precondition_each_account_has_tokens(
         new_account.poll();
 
         match get_request(rx) {
-            AccountResponse::BalanceInfo { balance, .. } => {
+            AccountResponse::BalanceInfo(AccountBalance {
+                payment:
+                    Balance {
+                        current: balance,
+                        available: _,
+                    },
+                ..
+            }) => {
                 dbg!((balance, amount));
                 assert!(balance >= amount);
             }
@@ -1122,8 +1119,8 @@ fn snowball_lock_utxo() {
 
         let recipient = accounts[3].account_service.account_pkey;
 
-        let balance = balance_requset(&mut accounts[0]);
-        assert!(balance.1 > 0);
+        let balance = balance_request(&mut accounts[0]);
+        assert!(balance.payment.available > 0);
 
         let mut notification = accounts[0].account.subscribe();
         let mut response =
@@ -1131,8 +1128,8 @@ fn snowball_lock_utxo() {
         accounts[0].poll();
 
         s.filter_unicast(&[stegos_node::txpool::POOL_JOIN_TOPIC]);
-        let balance = balance_requset(&mut accounts[0]);
-        assert_eq!(balance.1, 0);
+        let balance = balance_request(&mut accounts[0]);
+        assert_eq!(balance.payment.available, 0);
         let mut response2 = accounts[0].account.request(AccountRequest::Payment {
             recipient,
             amount: SEND_TOKENS,
@@ -1154,8 +1151,8 @@ fn snowball_lock_utxo() {
         };
 
         s.wait(crate::PENDING_UTXO_TIME);
-        let balance = balance_requset(&mut accounts[0]);
-        assert!(balance.1 > 0);
+        let balance = balance_request(&mut accounts[0]);
+        assert!(balance.payment.available > 0);
         accounts[0].poll();
         let response = get_request(response);
         match response {
@@ -1179,8 +1176,8 @@ fn snowball_lock_utxo() {
             AccountResponse::TransactionCreated(_) => {}
             _ => unreachable!(),
         };
-        let balance = balance_requset(&mut accounts[0]);
-        assert_eq!(balance.1, 0);
+        let balance = balance_request(&mut accounts[0]);
+        assert_eq!(balance.payment.available, 0);
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
     });
 }

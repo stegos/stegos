@@ -81,16 +81,41 @@ pub struct PublicPaymentInfo {
 }
 
 ///
+/// Information about balance.
+///
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Balance {
+    /// Available funds plus funds that are being held.
+    pub current: i64,
+    /// Funds can spend right now.
+    pub available: i64,
+}
+
+///
+/// Account balance per each UTXO type.
+///
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct AccountBalance {
+    /// PaymentUTXO.
+    pub payment: Balance,
+    /// PublicPaymentUTXO.
+    pub public_payment: Balance,
+    /// StakeUTXO.
+    pub stake: Balance,
+    /// PaymentUTXO + PublicPaymentUTXO + StakeUTXO.
+    #[serde(flatten)]
+    pub total: Balance,
+}
+
+///
 /// Out-of-band notifications.
 ///
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum AccountNotification {
-    BalanceChanged {
-        balance: i64,
-        available_balance: i64,
-    },
+    BalanceChanged(AccountBalance),
     SnowballStatus(SnowballStatus),
     TransactionStatus {
         tx_hash: Hash,
@@ -217,10 +242,7 @@ pub enum AccountResponse {
     Sealed,
     Unsealed,
     TransactionCreated(TransactionInfo),
-    BalanceInfo {
-        balance: i64,
-        available_balance: i64,
-    },
+    BalanceInfo(AccountBalance),
     AccountInfo(AccountInfo),
     UnspentInfo {
         public_payments: Vec<PublicPaymentInfo>,

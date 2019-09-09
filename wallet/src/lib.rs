@@ -600,30 +600,61 @@ impl UnsealedAccountService {
     }
 
     /// Get actual balance.
-    fn balance(&self) -> (i64, i64) {
+    fn balance(&self) -> AccountBalance {
         let time = Timestamp::now();
-        let mut balance: i64 = 0;
-        let mut available_balance: i64 = 0;
-        for (hash, val) in self
-            .account_log
-            .iter_unspent()
-            .filter_map(|(k, v)| v.payment().map(|v| (k, v)))
-        {
-            balance += val.amount;
-
-            if let Some(t) = val.output.locked_timestamp {
-                if t > time {
-                    continue;
+        let mut balance: AccountBalance = Default::default();
+        for (hash, val) in self.account_log.iter_unspent() {
+            match val {
+                OutputValue::Payment(PaymentValue {
+                    amount,
+                    output:
+                        PaymentOutput {
+                            locked_timestamp, ..
+                        },
+                    ..
+                }) => {
+                    balance.payment.current += amount;
+                    if let Some(t) = locked_timestamp {
+                        if t > time {
+                            continue;
+                        }
+                    }
+                    if self.pending_payments.get(&hash).is_some() {
+                        continue;
+                    }
+                    balance.payment.available += amount;
+                }
+                OutputValue::PublicPayment(PublicPaymentOutput { amount, .. }) => {
+                    balance.public_payment.current += amount;
+                    if self.pending_payments.get(&hash).is_some() {
+                        continue;
+                    }
+                    balance.public_payment.available += amount;
+                }
+                OutputValue::Stake(StakeValue {
+                    output: StakeOutput { amount, .. },
+                    active_until_epoch,
+                    ..
+                }) => {
+                    balance.stake.current += amount;
+                    if self.pending_payments.get(&hash).is_some() {
+                        continue;
+                    }
+                    if let Some(active_until_epoch) = active_until_epoch {
+                        if active_until_epoch >= self.epoch + 1 {
+                            continue;
+                        }
+                    }
+                    balance.stake.available += amount;
                 }
             }
-
-            if self.pending_payments.get(&hash).is_some() {
-                continue;
-            }
-
-            available_balance += val.amount;
         }
-        (balance, available_balance)
+        balance.total.current =
+            balance.payment.current + balance.stake.current + balance.public_payment.current;
+        balance.total.available =
+            balance.payment.available + balance.stake.available + balance.public_payment.available;
+        assert!(balance.total.available <= balance.total.current);
+        balance
     }
 
     /// Called when outputs registered and/or pruned.
@@ -633,7 +664,7 @@ impl UnsealedAccountService {
         inputs: HashMap<Hash, Output>,
         outputs: HashMap<Hash, Output>,
     ) {
-        let (saved_balance, saved_available_balance) = self.balance();
+        let saved_balance = self.balance();
 
         // This order is important - first create outputs, then remove inputs.
         // Otherwise it will fail in case of annihilated input/output in a macro block.
@@ -644,22 +675,9 @@ impl UnsealedAccountService {
             self.on_output_pruned(input_hash, input);
         }
 
-        let (balance, available_balance) = self.balance();
-
-        metrics::WALLET_BALANCES
-            .with_label_values(&[&String::from(&self.account_pkey)])
-            .set(balance);
-
-        metrics::WALLET_AVALIABLE_BALANCES
-            .with_label_values(&[&String::from(&self.account_pkey)])
-            .set(available_balance);
-
-        if saved_balance != balance || saved_available_balance != available_balance {
-            debug!("Balance changed");
-            self.notify(AccountNotification::BalanceChanged {
-                balance,
-                available_balance,
-            });
+        let balance = self.balance();
+        if saved_balance != balance {
+            self.notify_balance_changed(balance);
         }
     }
 
@@ -973,16 +991,39 @@ impl UnsealedAccountService {
         }
 
         // if balance was changed return new balance.
+        let balance = self.balance();
+        self.notify_balance_changed(balance);
+    }
 
-        let (balance, available_balance) = self.balance();
-        metrics::WALLET_AVALIABLE_BALANCES
-            .with_label_values(&[&String::from(&self.account_pkey)])
-            .set(available_balance);
+    fn notify_balance_changed(&mut self, balance: AccountBalance) {
         debug!("Balance changed");
-        self.notify(AccountNotification::BalanceChanged {
-            balance,
-            available_balance,
-        });
+        let account = String::from(&self.account_pkey);
+        let label = &[account.as_str()];
+        metrics::ACCOUNT_CURRENT_BALANCE
+            .with_label_values(label)
+            .set(balance.total.current);
+        metrics::ACCOUNT_CURRENT_PAYMENT_BALANCE
+            .with_label_values(label)
+            .set(balance.payment.current);
+        metrics::ACCOUNT_CURRENT_STAKE_BALANCE
+            .with_label_values(label)
+            .set(balance.stake.current);
+        metrics::ACCOUNT_CURRENT_PUBLIC_PAYMENT_BALANCE
+            .with_label_values(label)
+            .set(balance.public_payment.current);
+        metrics::ACCOUNT_AVAILABLE_BALANCE
+            .with_label_values(label)
+            .set(balance.total.available);
+        metrics::ACCOUNT_AVAILABLE_PAYMENT_BALANCE
+            .with_label_values(label)
+            .set(balance.payment.available);
+        metrics::ACCOUNT_AVAILABLE_STAKE_BALANCE
+            .with_label_values(label)
+            .set(balance.stake.available);
+        metrics::ACCOUNT_AVAILABLE_PUBLIC_PAYMENT_BALANCE
+            .with_label_values(label)
+            .set(balance.public_payment.available);
+        self.notify(AccountNotification::BalanceChanged(balance));
     }
 
     fn notify(&mut self, notification: AccountNotification) {
@@ -1030,7 +1071,7 @@ impl Future for UnsealedAccountService {
                         facilitator_pkey,
                         last_macro_block_timestamp,
                     } => {
-                        let (balance, _available_balance) = self.balance();
+                        let balance = self.balance();
                         // Recover state.
                         assert!(self.snowball.is_none());
                         for (hash, OutputRecovery { output, .. }) in
@@ -1055,16 +1096,9 @@ impl Future for UnsealedAccountService {
                         }
 
                         info!("Loaded account {}", self.account_pkey);
-                        let (new_balance, available_balance) = self.balance();
-                        metrics::WALLET_AVALIABLE_BALANCES
-                            .with_label_values(&[&String::from(&self.account_pkey)])
-                            .set(available_balance);
+                        let new_balance = self.balance();
                         if balance != new_balance {
-                            debug!("Balance changed");
-                            self.notify(AccountNotification::BalanceChanged {
-                                balance: new_balance,
-                                available_balance,
-                            });
+                            self.notify_balance_changed(new_balance);
                         }
                         self.recovered = true;
                     }
@@ -1217,11 +1251,8 @@ impl Future for UnsealedAccountService {
                                 AccountResponse::AccountInfo(account_info)
                             }
                             AccountRequest::BalanceInfo {} => {
-                                let (balance, available_balance) = self.balance();
-                                AccountResponse::BalanceInfo {
-                                    balance,
-                                    available_balance,
-                                }
+                                let balance = self.balance();
+                                AccountResponse::BalanceInfo(balance)
                             }
                             AccountRequest::UnspentInfo {} => {
                                 let mut public_payments = Vec::new();

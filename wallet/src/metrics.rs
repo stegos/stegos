@@ -23,40 +23,76 @@ use lazy_static::lazy_static;
 use prometheus::*;
 
 lazy_static! {
-    pub static ref WALLET_BALANCES: IntGaugeVec = register_int_gauge_vec!(
-        "stegos_wallet_balances",
-        "Balance per wallet public key",
-        &["wallet"]
+    pub static ref ACCOUNT_CURRENT_BALANCE: IntGaugeVec = register_int_gauge_vec!(
+        "stegos_account_current_balance",
+        "Account's balance",
+        &["account"]
     )
     .unwrap();
-    pub static ref WALLET_AVALIABLE_BALANCES: IntGaugeVec = register_int_gauge_vec!(
-        "stegos_available_wallet_balances",
-        "Active balance per wallet public key",
-        &["wallet"]
+    pub static ref ACCOUNT_CURRENT_PAYMENT_BALANCE: IntGaugeVec = register_int_gauge_vec!(
+        "stegos_account_current_payment_balance",
+        "Account's current payment balance",
+        &["account"]
+    )
+    .unwrap();
+    pub static ref ACCOUNT_CURRENT_STAKE_BALANCE: IntGaugeVec = register_int_gauge_vec!(
+        "stegos_account_current_stake_balance",
+        "Account's current stake balance",
+        &["account"]
+    )
+    .unwrap();
+    pub static ref ACCOUNT_CURRENT_PUBLIC_PAYMENT_BALANCE: IntGaugeVec = register_int_gauge_vec!(
+        "stegos_account_current_public_payment_balance",
+        "Account's current public_payment balance",
+        &["account"]
+    )
+    .unwrap();
+    pub static ref ACCOUNT_AVAILABLE_BALANCE: IntGaugeVec = register_int_gauge_vec!(
+        "stegos_account_available_balance",
+        "Account's available balance",
+        &["account"]
+    )
+    .unwrap();
+    pub static ref ACCOUNT_AVAILABLE_PAYMENT_BALANCE: IntGaugeVec = register_int_gauge_vec!(
+        "stegos_account_available_payment_balance",
+        "Account's available payment balance",
+        &["account"]
+    )
+    .unwrap();
+    pub static ref ACCOUNT_AVAILABLE_STAKE_BALANCE: IntGaugeVec = register_int_gauge_vec!(
+        "stegos_account_available_stake_balance",
+        "Account's available stake balance",
+        &["account"]
+    )
+    .unwrap();
+    pub static ref ACCOUNT_AVAILABLE_PUBLIC_PAYMENT_BALANCE: IntGaugeVec = register_int_gauge_vec!(
+        "stegos_account_available_public_payment_balance",
+        "Account's available public_payment balance",
+        &["account"]
     )
     .unwrap();
     pub static ref WALLET_CREATEAD_PAYMENTS: IntGaugeVec = register_int_gauge_vec!(
         "stegos_wallet_pay_count",
         "Count of payment txs created per wallet",
-        &["wallet"]
+        &["account"]
     )
     .unwrap();
     pub static ref WALLET_CREATEAD_SECURE_PAYMENTS: IntCounterVec = register_int_counter_vec!(
         "stegos_wallet_spay_count",
         "Count of secure payment txs created per wallet",
-        &["wallet"]
+        &["account"]
     )
     .unwrap();
     pub static ref WALLET_COMMITTED_PAYMENTS: IntGaugeVec = register_int_gauge_vec!(
         "stegos_wallet_pay_committed",
         "Count of payment txs committed per wallet",
-        &["wallet"]
+        &["account"]
     )
     .unwrap();
     pub static ref WALLET_PUBLISHED_PAYMENTS: IntCounterVec = register_int_counter_vec!(
         "stegos_wallet_spay_committed",
         "Count of secure payment txs committed per wallet",
-        &["wallet"]
+        &["account"]
     )
     .unwrap();
 }

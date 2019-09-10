@@ -22,11 +22,9 @@
 // SOFTWARE.
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
-use stegos_blockchain::{
-    AccountRecoveryState, ElectionInfo, EscrowInfo, Output, Timestamp, Transaction,
-};
+use stegos_blockchain::{ElectionInfo, EscrowInfo, Output, Timestamp, Transaction};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::{pbc, scc};
+use stegos_crypto::scc;
 
 ///
 /// RPC requests.
@@ -127,14 +125,18 @@ pub struct RollbackMicroBlock {
     #[serde(skip)]
     pub recovered_transaction: HashMap<Hash, Transaction>,
     pub statuses: HashMap<Hash, TransactionStatus>,
+    #[serde(skip)]
+    pub recovered_inputs: HashMap<Hash, Output>,
+    #[serde(skip)]
+    pub pruned_outputs: Vec<Hash>,
 }
 
 impl RollbackMicroBlock {
     pub fn pruned_outputs(&self) -> impl Iterator<Item = &Hash> {
-        self.block.transactions.iter().flat_map(|tx| tx.txins())
+        self.pruned_outputs.iter()
     }
     pub fn recovered_inputs(&self) -> impl Iterator<Item = &Output> {
-        self.block.transactions.iter().flat_map(|tx| tx.txouts())
+        self.recovered_inputs.values()
     }
 }
 
@@ -164,13 +166,6 @@ pub enum NodeNotification {
     NewMacroBlock(NewMacroBlock),
     RollbackMicroBlock(RollbackMicroBlock),
     SyncChanged(SyncChanged),
-    #[serde(skip)]
-    AccountRecovered {
-        recovery_state: AccountRecoveryState,
-        epoch: u64,
-        facilitator_pkey: pbc::PublicKey,
-        last_macro_block_timestamp: Timestamp,
-    },
 }
 
 impl From<SyncChanged> for NodeNotification {

@@ -133,10 +133,6 @@ struct UnsealedAccountService {
 
     /// Check for pending utxos.
     check_pending_utxos: Interval,
-
-    /// Is account was recovered
-    recovered: bool,
-
     //
     // Snowball state (owned)
     //
@@ -208,22 +204,11 @@ impl UnsealedAccountService {
         };
 
         info!("Loading account {}", account_pkey);
-        let unspent = account_log
-            .iter_unspent()
-            .map(|(k, v)| (k, v.to_output()))
-            .collect();
-
-        let recovered = false;
         //
         // Notifications from node.
         //
 
-        let node_notifications = node.subscribe_with_recovery(
-            account_skey.clone(),
-            account_pkey.clone(),
-            epoch,
-            unspent,
-        );
+        let node_notifications = node.subscribe_with_recovery_epoch(epoch);
 
         UnsealedAccountService {
             database_dir,
@@ -249,7 +234,6 @@ impl UnsealedAccountService {
             events,
             node_notifications,
             transaction_response,
-            recovered,
         }
     }
 
@@ -1069,62 +1053,6 @@ impl Future for UnsealedAccountService {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        // Recovery information from node.
-        if !self.recovered {
-            match self
-                .node_notifications
-                .poll()
-                .expect("all errors are already handled")
-            {
-                Async::Ready(Some(notification)) => match notification {
-                    NodeNotification::AccountRecovered {
-                        recovery_state,
-                        epoch,
-                        facilitator_pkey,
-                        last_macro_block_timestamp,
-                    } => {
-                        let balance = self.balance();
-                        // Recover state.
-                        assert!(self.snowball.is_none());
-                        for (hash, _) in recovery_state.removed.into_iter() {
-                            self.on_output_pruned(&hash)
-                        }
-
-                        // firstly save all info that is final, and finalize epoch state.
-                        for (
-                            _,
-                            OutputRecovery {
-                                ref output, epoch, ..
-                            },
-                        ) in recovery_state.commited.into_iter()
-                        {
-                            self.on_output_created(epoch, output);
-                        }
-                        self.on_epoch_changed(epoch, facilitator_pkey, last_macro_block_timestamp);
-                        for (
-                            _,
-                            OutputRecovery {
-                                ref output, epoch, ..
-                            },
-                        ) in recovery_state.prepared.into_iter()
-                        {
-                            self.on_output_created(epoch, output);
-                        }
-
-                        info!("Loaded account {}", self.account_pkey);
-                        let new_balance = self.balance();
-                        if balance != new_balance {
-                            self.notify_balance_changed(new_balance);
-                        }
-                        self.recovered = true;
-                    }
-                    _ => panic!("Wait for recovery"),
-                },
-                Async::Ready(None) => unreachable!(), // never happens
-                Async::NotReady => return Ok(Async::NotReady), // early return
-            }
-        }
-
         if let Some(mut transaction_response) = self.transaction_response.take() {
             match transaction_response.poll().expect("connected") {
                 Async::Ready(response) => {
@@ -1351,6 +1279,7 @@ impl Future for UnsealedAccountService {
             {
                 Async::Ready(Some(notification)) => match notification {
                     NodeNotification::NewMicroBlock(block) => {
+                        trace!("New microblock: block:{}", Hash::digest(&block.block));
                         self.on_tx_statuses_changed(&block.statuses);
                         self.on_outputs_changed(
                             block.block.header.epoch,
@@ -1359,6 +1288,7 @@ impl Future for UnsealedAccountService {
                         );
                     }
                     NodeNotification::NewMacroBlock(block) => {
+                        trace!("New epoch macroblock: block:{}", Hash::digest(&block.block));
                         self.on_tx_statuses_changed(&block.statuses);
                         self.on_outputs_changed(
                             block.block.header.epoch,
@@ -1372,15 +1302,27 @@ impl Future for UnsealedAccountService {
                         );
                     }
                     NodeNotification::RollbackMicroBlock(block) => {
+                        trace!(
+                            "Rollaback microblock: block:{}, inputs:{:?}, outputs:{:?}",
+                            Hash::digest(&block.block),
+                            block
+                                .pruned_outputs()
+                                .cloned()
+                                .map(|k| k.to_string())
+                                .collect::<Vec<_>>(),
+                            block
+                                .recovered_inputs()
+                                .map(Hash::digest)
+                                .map(|k| k.to_string())
+                                .collect::<Vec<_>>(),
+                        );
+
                         self.on_tx_statuses_changed(&block.statuses);
                         self.on_outputs_changed(
                             block.block.header.epoch,
                             block.pruned_outputs(),
                             block.recovered_inputs(),
                         );
-                    }
-                    NodeNotification::AccountRecovered { .. } => {
-                        panic!("Account should be recovered already.")
                     }
                     _ => {}
                 },

@@ -133,6 +133,7 @@ impl AccountDatabase {
         exist
     }
 
+    /// Returns id of first unknown epoch
     pub fn recover_state(&mut self) -> u64 {
         // TODO: limit time for recover
         // (for example, if some transaction was created weak ago, it's no reason to resend it)
@@ -166,7 +167,10 @@ impl AccountDatabase {
             .database
             .get_cf(meta_cf, EPOCH_KEY)
             .expect("cannot read epoch");
-        epoch.and_then(|b| Self::u64_from_bytes(&b)).unwrap_or(0)
+        epoch
+            .and_then(|b| Self::u64_from_bytes(&b))
+            .map(|i| i + 1)
+            .unwrap_or(0)
     }
 
     pub fn iter_unspent<'a>(&'a self) -> impl Iterator<Item = (Hash, OutputValue)> + 'a {

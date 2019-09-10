@@ -1717,7 +1717,17 @@ impl Blockchain {
         Ok((inputs, outputs, txs))
     }
 
-    pub fn pop_micro_block(&mut self) -> Result<(Vec<Transaction>, MicroBlock), StorageError> {
+    pub fn pop_micro_block(
+        &mut self,
+    ) -> Result<
+        (
+            Vec<Hash>,
+            HashMap<Hash, Output>,
+            Vec<Transaction>,
+            MicroBlock,
+        ),
+        StorageError,
+    > {
         assert!(self.epoch > 0, "doesn't work for genesis");
         assert!(self.offset > 0, "attempt to revert the macro block");
         let offset = self.offset - 1;
@@ -1812,7 +1822,7 @@ impl Blockchain {
                 .collect::<Vec<String>>(),
         );
 
-        Ok((removed, block))
+        Ok((pruned, recovered, removed, block))
     }
 }
 

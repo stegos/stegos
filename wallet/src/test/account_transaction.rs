@@ -425,7 +425,7 @@ fn wait_for_epoch_end_with_tx() {
         info!("{:?}", response);
         let my_tx = match response {
             AccountResponse::TransactionCreated(tx) => tx.tx_hash,
-            _ => panic!("Wrong respnse to payment request"),
+            e => panic!("Wrong respnse to payment request: e={:?}", e),
         };
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);

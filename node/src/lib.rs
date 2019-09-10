@@ -58,7 +58,7 @@ use stegos_blockchain::*;
 use stegos_consensus::optimistic::{SealedViewChangeProof, ViewChangeCollector, ViewChangeMessage};
 use stegos_consensus::{self as consensus, Consensus, ConsensusMessage, MacroBlockProposal};
 use stegos_crypto::hash::Hash;
-use stegos_crypto::{pbc, scc};
+use stegos_crypto::pbc;
 use stegos_network::Network;
 use stegos_network::UnicastMessage;
 use stegos_serialization::traits::ProtoConvert;
@@ -109,27 +109,6 @@ impl Node {
         self.outbox.unbounded_send(msg).expect("connected");
         rx
     }
-
-    /// Subscribe to node update.
-    /// Also recover info about wallet.
-    pub fn subscribe_with_recovery(
-        &self,
-        account_skey: scc::SecretKey,
-        account_pkey: scc::PublicKey,
-        epoch: u64,
-        unspent: HashMap<Hash, Output>,
-    ) -> UnboundedReceiver<NodeNotification> {
-        let (tx, rx) = unbounded();
-        let msg = NodeMessage::AccountRecover {
-            tx,
-            account_skey,
-            account_pkey,
-            epoch,
-            unspent,
-        };
-        self.outbox.unbounded_send(msg).expect("connected");
-        rx
-    }
 }
 
 // ----------------------------------------------------------------
@@ -152,17 +131,6 @@ pub enum NodeMessage {
     //
     // Public API
     //
-    AccountRecover {
-        tx: UnboundedSender<NodeNotification>,
-        /// Account Secret Key.
-        account_skey: scc::SecretKey,
-        /// Account Public Key.
-        account_pkey: scc::PublicKey,
-        /// Last epoch known by account.
-        epoch: u64,
-        /// List of active unspent outputs.
-        unspent: HashMap<Hash, Output>,
-    },
     SubscribeNodeNotification(UnboundedSender<NodeNotification>),
     SubscribeNodeNotificationEpoch(UnboundedSender<NodeNotification>, u64),
     Request {
@@ -715,7 +683,7 @@ impl NodeService {
 
         // Truncate the blockchain.
         while self.chain.offset() > offset {
-            let (txs, block) = self.chain.pop_micro_block()?;
+            let (pruned_outputs, recovered_inputs, txs, block) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
             self.mempool.pop_microblock(txs.clone());
 
@@ -739,6 +707,8 @@ impl NodeService {
                 block,
                 recovered_transaction,
                 statuses,
+                pruned_outputs,
+                recovered_inputs,
             };
 
             let event: NodeNotification = msg.into();
@@ -953,12 +923,14 @@ impl NodeService {
 
         // Remove all micro blocks.
         while self.chain.offset() > 0 {
-            let (_txs, block) = self.chain.pop_micro_block()?;
+            let (pruned_outputs, recovered_inputs, _txs, block) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
             let msg = RollbackMicroBlock {
                 block,
                 recovered_transaction: HashMap::new(),
                 statuses: HashMap::new(),
+                pruned_outputs,
+                recovered_inputs,
             };
 
             let event: NodeNotification = msg.into();
@@ -1200,34 +1172,13 @@ impl NodeService {
         sender: UnboundedSender<NodeNotification>,
         starting_epoch: u64,
     ) -> Result<(), Error> {
+        trace!("Subscribe on node notification with epoch");
         let epoch_info = EpochListener {
             starting_epoch,
             sender,
         };
         self.epoch_listeners.push(epoch_info);
         task::current().notify();
-        Ok(())
-    }
-
-    /// Handler for NodeMessage::AccountRecover.
-    fn handle_subscribe_with_recover(
-        &mut self,
-        tx: UnboundedSender<NodeNotification>,
-        account_skey: scc::SecretKey,
-        account_pkey: scc::PublicKey,
-        epoch: u64,
-        unspent: HashMap<Hash, Output>,
-    ) -> Result<(), Error> {
-        let recovery_state =
-            self.handle_recover_account(&account_skey, &account_pkey, epoch, unspent)?;
-        let response = NodeNotification::AccountRecovered {
-            recovery_state,
-            epoch: self.chain.epoch(),
-            facilitator_pkey: self.chain.facilitator().clone(),
-            last_macro_block_timestamp: self.chain.last_macro_block_timestamp(),
-        };
-        tx.unbounded_send(response)?;
-        self.on_node_notification.push(tx);
         Ok(())
     }
 
@@ -1256,7 +1207,7 @@ impl NodeService {
     fn handle_pop_block(&mut self) -> Result<(), Error> {
         warn!("Received a request to revert the latest block");
         if self.chain.offset() > 1 {
-            let (txs, block) = self.chain.pop_micro_block()?;
+            let (pruned_outputs, recovered_inputs, txs, block) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
 
             self.mempool.pop_microblock(txs.clone());
@@ -1281,6 +1232,8 @@ impl NodeService {
                 block,
                 recovered_transaction,
                 statuses,
+                pruned_outputs,
+                recovered_inputs,
             };
 
             let event: NodeNotification = msg.into();
@@ -1294,22 +1247,6 @@ impl NodeService {
             );
         }
         Ok(())
-    }
-
-    /// Handler for NodeMessage::RecoverAccount.
-    fn handle_recover_account(
-        &mut self,
-        account_skey: &scc::SecretKey,
-        account_pkey: &scc::PublicKey,
-        epoch: u64,
-        unspent: HashMap<Hash, Output>,
-    ) -> Result<AccountRecoveryState, Error> {
-        debug!("Recovering account from blockchain: pkey={}", account_pkey);
-        let recovery_state =
-            self.chain
-                .recover_account(account_skey, account_pkey, epoch, unspent)?;
-        info!("Recovered account from blockchain: pkey={}", account_pkey);
-        Ok(recovery_state)
     }
 
     /// Send block to network.
@@ -1996,6 +1933,7 @@ impl NodeService {
                 }
 
                 if listener.starting_epoch == self.chain.epoch() {
+                    trace!("Send microblocks to epoch listener");
                     // send microblocks in single batch, to prevent races.
                     for offset in 0..self.chain.offset() {
                         let block = self.chain.micro_block(listener.starting_epoch, offset)?;
@@ -2033,6 +1971,7 @@ impl NodeService {
                     return Ok(None);
                 }
 
+                trace!("Send EPOCH macroblock to epoch listener");
                 let block = self.get_macro_block_info_by_epoch(listener.starting_epoch)?;
 
                 listener
@@ -2133,19 +2072,6 @@ impl Future for NodeService {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => {
                     let result: Result<(), Error> = match event {
-                        NodeMessage::AccountRecover {
-                            tx,
-                            account_pkey,
-                            account_skey,
-                            epoch,
-                            unspent,
-                        } => self.handle_subscribe_with_recover(
-                            tx,
-                            account_skey,
-                            account_pkey,
-                            epoch,
-                            unspent,
-                        ),
                         NodeMessage::SubscribeNodeNotification(tx) => {
                             self.handle_subscribe_node_notification(tx)
                         }

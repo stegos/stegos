@@ -690,7 +690,7 @@ impl NodeService {
             let recovered_transaction: HashMap<_, _> =
                 txs.into_iter().map(|tx| (Hash::digest(&tx), tx)).collect();
 
-            let statuses = recovered_transaction
+            let transaction_statuses = recovered_transaction
                 .iter()
                 .map(|tx| tx.0)
                 .map(|h| {
@@ -706,7 +706,7 @@ impl NodeService {
             let msg = RollbackMicroBlock {
                 block,
                 recovered_transaction,
-                statuses,
+                transaction_statuses,
                 pruned_outputs,
                 recovered_inputs,
             };
@@ -928,7 +928,7 @@ impl NodeService {
             let msg = RollbackMicroBlock {
                 block,
                 recovered_transaction: HashMap::new(),
-                statuses: HashMap::new(),
+                transaction_statuses: HashMap::new(),
                 pruned_outputs,
                 recovered_inputs,
             };
@@ -941,7 +941,7 @@ impl NodeService {
 
         let (inputs, outputs) = self.chain.push_macro_block(block.clone(), timestamp)?;
 
-        let mut statuses = HashMap::new();
+        let mut transaction_statuses = HashMap::new();
         let mut transactions = HashMap::new();
         // Remove conflict transactions from the mempool.
         let tx_info = self.mempool.prune(inputs.iter(), outputs.keys());
@@ -954,11 +954,11 @@ impl NodeService {
                     offset: None,
                 }
             };
-            assert!(statuses.insert(tx_hash, status).is_none());
+            assert!(transaction_statuses.insert(tx_hash, status).is_none());
             assert!(transactions.insert(tx_hash, tx).is_none());
         }
 
-        assert_eq!(statuses.len(), transactions.len());
+        assert_eq!(transaction_statuses.len(), transactions.len());
 
         if !was_synchronized && self.is_synchronized() {
             // Reset loader timer.
@@ -979,7 +979,7 @@ impl NodeService {
             block,
             epoch_info,
             transactions,
-            statuses,
+            transaction_statuses,
         };
 
         self.on_block_added(block_timestamp, true);
@@ -1071,7 +1071,7 @@ impl NodeService {
         let (inputs, outputs, block_transactions) =
             self.chain.push_micro_block(block.clone(), timestamp)?;
 
-        let mut statuses = HashMap::new();
+        let mut transaction_statuses = HashMap::new();
         let mut transactions = HashMap::new();
         // Remove conflict transactions from the mempool.
         let mut tx_info = self.mempool.prune(inputs.iter(), outputs.keys());
@@ -1090,17 +1090,17 @@ impl NodeService {
                     offset: offset.into(),
                 }
             };
-            assert!(statuses.insert(tx_hash, status).is_none());
+            assert!(transaction_statuses.insert(tx_hash, status).is_none());
             assert!(transactions.insert(tx_hash, tx).is_none());
         }
 
-        assert_eq!(statuses.len(), transactions.len());
+        assert_eq!(transaction_statuses.len(), transactions.len());
         assert!(transactions.len() >= block_transactions.len());
 
         let msg = NewMicroBlock {
             block,
             transactions,
-            statuses,
+            transaction_statuses,
         };
 
         self.on_block_added(block_timestamp, false);
@@ -1215,7 +1215,7 @@ impl NodeService {
             let recovered_transaction: HashMap<_, _> =
                 txs.into_iter().map(|tx| (Hash::digest(&tx), tx)).collect();
 
-            let statuses: HashMap<_, _> = recovered_transaction
+            let transaction_statuses: HashMap<_, _> = recovered_transaction
                 .iter()
                 .map(|tx| tx.0)
                 .map(|h| {
@@ -1231,7 +1231,7 @@ impl NodeService {
             let msg = RollbackMicroBlock {
                 block,
                 recovered_transaction,
-                statuses,
+                transaction_statuses,
                 pruned_outputs,
                 recovered_inputs,
             };
@@ -1878,7 +1878,7 @@ impl NodeService {
             block,
             epoch_info,
             transactions: HashMap::new(),
-            statuses: HashMap::new(),
+            transaction_statuses: HashMap::new(),
         };
         Ok(msg)
     }
@@ -1943,7 +1943,7 @@ impl NodeService {
                             .cloned()
                             .map(|tx| (Hash::digest(&tx), tx))
                             .collect();
-                        let statuses = transactions
+                        let transaction_statuses = transactions
                             .iter()
                             .map(|(h, _tx)| {
                                 (
@@ -1958,7 +1958,7 @@ impl NodeService {
                         let block_event = NewMicroBlock {
                             block,
                             transactions,
-                            statuses,
+                            transaction_statuses,
                         };
                         listener
                             .sender

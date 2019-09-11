@@ -106,7 +106,7 @@ pub struct NewMacroBlock {
     pub epoch_info: stegos_blockchain::StartEpochInfo,
     #[serde(skip)]
     pub transactions: HashMap<Hash, Transaction>,
-    pub statuses: HashMap<Hash, TransactionStatus>,
+    pub transaction_statuses: HashMap<Hash, TransactionStatus>,
 }
 
 impl NewMacroBlock {
@@ -124,7 +124,7 @@ pub struct RollbackMicroBlock {
     pub block: stegos_blockchain::MicroBlock,
     #[serde(skip)]
     pub recovered_transaction: HashMap<Hash, Transaction>,
-    pub statuses: HashMap<Hash, TransactionStatus>,
+    pub transaction_statuses: HashMap<Hash, TransactionStatus>,
     #[serde(skip)]
     pub recovered_inputs: HashMap<Hash, Output>,
     #[serde(skip)]
@@ -146,7 +146,7 @@ pub struct NewMicroBlock {
     pub block: stegos_blockchain::MicroBlock,
     #[serde(skip)]
     pub transactions: HashMap<Hash, Transaction>,
-    pub statuses: HashMap<Hash, TransactionStatus>,
+    pub transaction_statuses: HashMap<Hash, TransactionStatus>,
 }
 
 impl NewMicroBlock {

@@ -388,8 +388,8 @@ fn roundtrip_bitvec() {
     use serde_derive::{Deserialize, Serialize};
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
     struct RT {
-        #[serde(deserialize_with = "crate::deserialize_bitvec")]
-        #[serde(serialize_with = "crate::serialize_bitvec")]
+        #[serde(deserialize_with = "stegos_crypto::utils::deserialize_bitvec")]
+        #[serde(serialize_with = "stegos_crypto::utils::serialize_bitvec")]
         v: BitVector,
     }
 

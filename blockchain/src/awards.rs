@@ -29,9 +29,14 @@ use stegos_crypto::scc::PublicKey;
 use stegos_crypto::utils::print_nbits;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "status")]
+#[serde(rename_all = "snake_case")]
 pub enum ValidatorAwardState {
     /// Validator have failed at: epoch, offset.
-    FailedAt(u64, u32),
+    FailedAt {
+        epoch: u64,
+        offset: u32,
+    },
     Active,
 }
 
@@ -83,7 +88,7 @@ impl Awards {
         self.add_reward(reward);
         for (validator, state) in epoch_activity {
             match self.validators_activity.get(&validator) {
-                Some(ValidatorAwardState::FailedAt(epoch, offset)) => {
+                Some(ValidatorAwardState::FailedAt { epoch, offset }) => {
                     trace!(
                         "Found validator, that already failed his slot: epoch={}, offset={}",
                         epoch,
@@ -271,7 +276,15 @@ mod test {
         // make new epoch with active validators list.
         let first_epoch: BTreeMap<_, _> = keys
             .into_iter()
-            .map(|k| (k, ValidatorAwardState::FailedAt(12, 12)))
+            .map(|k| {
+                (
+                    k,
+                    ValidatorAwardState::FailedAt {
+                        epoch: 12,
+                        offset: 12,
+                    },
+                )
+            })
             .collect();
         let mut award = Awards::new(difficulty);
 
@@ -321,7 +334,13 @@ mod test {
             let mut new_epoch = first_epoch.clone();
 
             info!("N={}", n);
-            new_epoch.insert(validator, ValidatorAwardState::FailedAt(12, 12));
+            new_epoch.insert(
+                validator,
+                ValidatorAwardState::FailedAt {
+                    epoch: 12,
+                    offset: 12,
+                },
+            );
             award.finalize_epoch(100, new_epoch.clone());
 
             old_budget += 100;

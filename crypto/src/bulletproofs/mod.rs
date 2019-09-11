@@ -30,14 +30,17 @@ use curve25519_dalek::scalar::Scalar;
 use merlin::Transcript;
 use rand::thread_rng;
 use ristretto_bulletproofs::RangeProof;
+use serde_derive::{Deserialize, Serialize};
 use std::fmt;
 use std::fmt::Debug;
 
 // -------------------------------------------------------------
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BulletProof {
     pub vcmt: Pt,
+    #[serde(deserialize_with = "crate::utils::deserialize_range_proof")]
+    #[serde(serialize_with = "crate::utils::serialize_range_proof")]
     pub proof: RangeProof,
 }
 

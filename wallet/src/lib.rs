@@ -1280,7 +1280,7 @@ impl Future for UnsealedAccountService {
                 Async::Ready(Some(notification)) => match notification {
                     NodeNotification::NewMicroBlock(block) => {
                         trace!("New microblock: block:{}", Hash::digest(&block.block));
-                        self.on_tx_statuses_changed(&block.statuses);
+                        self.on_tx_statuses_changed(&block.transaction_statuses);
                         self.on_outputs_changed(
                             block.block.header.epoch,
                             block.inputs(),
@@ -1289,7 +1289,7 @@ impl Future for UnsealedAccountService {
                     }
                     NodeNotification::NewMacroBlock(block) => {
                         trace!("New epoch macroblock: block:{}", Hash::digest(&block.block));
-                        self.on_tx_statuses_changed(&block.statuses);
+                        self.on_tx_statuses_changed(&block.transaction_statuses);
                         self.on_outputs_changed(
                             block.block.header.epoch,
                             block.inputs(),
@@ -1297,7 +1297,7 @@ impl Future for UnsealedAccountService {
                         );
                         self.on_epoch_changed(
                             block.block.header.epoch,
-                            block.epoch_info.election_result.facilitator,
+                            block.epoch_info.facilitator,
                             block.block.header.timestamp,
                         );
                     }
@@ -1317,7 +1317,7 @@ impl Future for UnsealedAccountService {
                                 .collect::<Vec<_>>(),
                         );
 
-                        self.on_tx_statuses_changed(&block.statuses);
+                        self.on_tx_statuses_changed(&block.transaction_statuses);
                         self.on_outputs_changed(
                             block.block.header.epoch,
                             block.pruned_outputs(),

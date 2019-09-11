@@ -53,12 +53,35 @@ use stegos_serialization::traits::ProtoConvert;
 pub type ViewCounter = u32;
 pub type ValidatorId = u32;
 
+/// Saved information about validator, and its slotcount in epoch.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ValidatorKeyInfo {
+    network_pkey: pbc::PublicKey,
+    wallet_pkey: scc::PublicKey,
+    slots: i64,
+}
+
+/// Information about service award payout.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PayoutInfo {
+    recipient: scc::PublicKey,
+    amount: i64,
+}
+/// Full information about service award state.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AwardsInfo {
+    #[serde(flatten)]
+    pub service_award_state: Awards,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payout: Option<PayoutInfo>,
+}
+
 /// Retrospective information for some epoch.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct StartEpochInfo {
-    pub election_result: ElectionResult,
-    pub service_award_state: Awards,
-    pub awards_winner: Option<(PublicKey, i64)>,
+    pub validators: Vec<ValidatorKeyInfo>,
+    pub facilitator: pbc::PublicKey,
+    pub awards: AwardsInfo,
 }
 
 /// Information of current chain, that is used as proof of viewchange.
@@ -904,7 +927,7 @@ impl Blockchain {
         for (id, (validator, _)) in epoch_validators.iter().enumerate() {
             match epoch_activity.get(validator) {
                 // if validator failed, or cheater, remove it from bitmap.
-                Some(ValidatorAwardState::FailedAt(..)) | None => {
+                Some(ValidatorAwardState::FailedAt { .. }) | None => {
                     activity_map.remove(id);
                 }
                 _ => {}
@@ -944,12 +967,15 @@ impl Blockchain {
             let activity = if activity {
                 ValidatorAwardState::Active
             } else {
-                ValidatorAwardState::FailedAt(self.epoch, self.offset())
+                ValidatorAwardState::FailedAt {
+                    epoch: self.epoch,
+                    offset: self.offset(),
+                }
             };
 
             // multiple validators can have single wallet.
             // So try to override only Active state.
-            if let Some(ValidatorAwardState::FailedAt(..)) =
+            if let Some(ValidatorAwardState::FailedAt { .. }) =
                 validators_activity.get(&validator_account)
             {
                 continue;
@@ -1346,10 +1372,39 @@ impl Blockchain {
         self.output_by_hash.checkpoint();
         self.balance.checkpoint();
         self.escrow.checkpoint();
-        let epoch_info = StartEpochInfo {
-            election_result: self.election_result().clone(),
+        self.election_result.checkpoint();
+
+        let validators = self
+            .election_result()
+            .validators
+            .iter()
+            .map(|v| {
+                let network_pkey = v.0;
+                let wallet_pkey = self
+                    .account_by_network_key(&network_pkey)
+                    .expect("Validator should have wallet key at start of epoch");
+                let slots = v.1;
+                ValidatorKeyInfo {
+                    network_pkey,
+                    wallet_pkey,
+                    slots,
+                }
+            })
+            .collect();
+
+        let facilitator = self.election_result().facilitator;
+        let awards = AwardsInfo {
             service_award_state: self.awards.clone(),
-            awards_winner: winner,
+            payout: winner.map(|w| PayoutInfo {
+                recipient: w.0,
+                amount: w.1,
+            }),
+        };
+
+        let epoch_info = StartEpochInfo {
+            awards,
+            facilitator,
+            validators,
         };
 
         self.epoch_infos.insert(epoch, epoch_info);
@@ -1653,7 +1708,10 @@ impl Blockchain {
             self.epoch_activity.insert(
                 lsn,
                 leader,
-                ValidatorAwardState::FailedAt(self.epoch(), self.offset()),
+                ValidatorAwardState::FailedAt {
+                    epoch: self.epoch(),
+                    offset: self.offset(),
+                },
             );
         }
 

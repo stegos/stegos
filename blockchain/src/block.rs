@@ -72,6 +72,8 @@ pub struct MicroBlockHeader {
     pub random: pbc::VRF,
 
     /// Solution for VDF.
+    #[serde(deserialize_with = "stegos_crypto::utils::vec_deserialize_from_hex")]
+    #[serde(serialize_with = "stegos_crypto::utils::vec_serialize_to_hex")]
     pub solution: Vec<u8>,
 
     /// UNIX timestamp of block creation.
@@ -249,8 +251,8 @@ pub struct MacroBlockHeader {
     pub block_reward: i64,
 
     /// Bitmap of active validators in epoch.
-    #[serde(deserialize_with = "crate::deserialize_bitvec")]
-    #[serde(serialize_with = "crate::serialize_bitvec")]
+    #[serde(deserialize_with = "stegos_crypto::utils::deserialize_bitvec")]
+    #[serde(serialize_with = "stegos_crypto::utils::serialize_bitvec")]
     pub activity_map: BitVector,
 
     /// The sum of all gamma adjustments.
@@ -301,15 +303,14 @@ pub struct MacroBlock {
     pub multisig: pbc::Signature,
 
     /// Bitmap of signers in the multi-signature.
-    #[serde(deserialize_with = "crate::deserialize_bitvec")]
-    #[serde(serialize_with = "crate::serialize_bitvec")]
+    #[serde(deserialize_with = "stegos_crypto::utils::deserialize_bitvec")]
+    #[serde(serialize_with = "stegos_crypto::utils::serialize_bitvec")]
     pub multisigmap: BitVector,
 
     /// The list of transaction inputs in a Merkle Tree.
     pub inputs: Vec<Hash>,
 
     /// The list of transaction outputs in a Merkle Tree.
-    #[serde(skip)]
     pub outputs: Vec<Output>,
 }
 

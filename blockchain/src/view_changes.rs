@@ -28,8 +28,8 @@ use stegos_crypto::pbc;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ViewChangeProof {
-    #[serde(deserialize_with = "crate::deserialize_bitvec")]
-    #[serde(serialize_with = "crate::serialize_bitvec")]
+    #[serde(deserialize_with = "stegos_crypto::utils::deserialize_bitvec")]
+    #[serde(serialize_with = "stegos_crypto::utils::serialize_bitvec")]
     pub multimap: BitVector,
     pub multisig: pbc::Signature,
 }

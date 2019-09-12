@@ -1146,7 +1146,9 @@ fn snowball_lock_utxo() {
         let response2 = get_request(response2);
 
         match response2 {
-            AccountResponse::Error { error } => assert_eq!(error, "Not enough money."),
+            AccountResponse::Error { error } => {
+                assert!(error.starts_with("No enough payment utxo available"))
+            }
             _ => unreachable!(),
         };
 

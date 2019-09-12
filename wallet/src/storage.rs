@@ -572,6 +572,10 @@ pub struct PaymentValue {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StakeValue {
     pub output: StakeOutput,
+    /// Info about stake lock, if epoch is less than current, stake is free to unstake.
+    ///
+    /// This value is used for StakeOutput that is committed in chain,
+    /// and for out of chain (in uncommitted transaction), that's why its optional.
     pub active_until_epoch: Option<u64>,
 }
 

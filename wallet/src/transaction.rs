@@ -352,7 +352,7 @@ where
         return Err(WalletError::NegativeAmount(amount).into());
     } else if amount <= payment_fee {
         // Stake must be > PAYMENT_FEE.
-        return Err(WalletError::InsufficientStake(payment_fee + 1, amount).into());
+        return Err(WalletError::InsufficientStake(payment_fee, amount).into());
     }
 
     debug!(
@@ -479,8 +479,11 @@ pub(crate) fn create_unstaking_transaction<'a, UnspentIter>(
 where
     UnspentIter: Iterator<Item = StakeOutput>,
 {
-    if amount <= payment_fee {
-        return Err(WalletError::NegativeAmount(amount - payment_fee).into());
+    if amount < 0 {
+        return Err(WalletError::NegativeAmount(amount).into());
+    } else if amount <= payment_fee {
+        // Stake must be > PAYMENT_FEE.
+        return Err(WalletError::InsufficientStake(payment_fee, amount).into());
     }
 
     debug!(
@@ -512,7 +515,7 @@ where
         .collect();
     if fee > payment_fee && change <= payment_fee {
         // Stake must be > PAYMENT_FEE.
-        return Err(WalletError::InsufficientStake(payment_fee + 1, change).into());
+        return Err(WalletError::InsufficientStake(payment_fee, change).into());
     }
 
     debug!(
@@ -546,7 +549,7 @@ where
         data,
         rvalue: None,
         recipient: *sender_pkey,
-        amount: change,
+        amount,
         is_change: false,
     };
 
@@ -838,8 +841,8 @@ pub mod tests {
         )
         .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {
-            WalletError::NegativeAmount(_amount) => {}
-            _ => panic!(),
+            WalletError::InsufficientStake(..) => {}
+            e => panic!("{}", e),
         }
 
         // Try to unstake PAYMENT_FEE.
@@ -857,8 +860,8 @@ pub mod tests {
         )
         .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {
-            WalletError::NegativeAmount(_amount) => {}
-            _ => panic!(),
+            WalletError::InsufficientStake(..) => {}
+            e => panic!("{}", e),
         }
 
         // Try to re-stake zero.
@@ -878,7 +881,7 @@ pub mod tests {
         .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {
             WalletError::InsufficientStake(min, got) => {
-                assert_eq!(min, payment_fee + 1);
+                assert_eq!(min, payment_fee);
                 assert_eq!(got, 0);
             }
             _ => panic!(),
@@ -901,7 +904,7 @@ pub mod tests {
         .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {
             WalletError::InsufficientStake(min, got) => {
-                assert_eq!(min, payment_fee + 1);
+                assert_eq!(min, payment_fee);
                 assert_eq!(got, payment_fee);
             }
             _ => panic!(),

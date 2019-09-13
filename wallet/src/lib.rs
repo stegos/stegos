@@ -133,10 +133,6 @@ struct UnsealedAccountService {
 
     /// Check for pending utxos.
     check_pending_utxos: Interval,
-
-    /// Is account was recovered
-    recovered: bool,
-
     //
     // Snowball state (owned)
     //
@@ -208,22 +204,11 @@ impl UnsealedAccountService {
         };
 
         info!("Loading account {}", account_pkey);
-        let unspent = account_log
-            .iter_unspent()
-            .map(|(k, v)| (k, v.to_output()))
-            .collect();
-
-        let recovered = false;
         //
         // Notifications from node.
         //
 
-        let node_notifications = node.subscribe_with_recovery(
-            account_skey.clone(),
-            account_pkey.clone(),
-            epoch,
-            unspent,
-        );
+        let node_notifications = node.subscribe_with_recovery_epoch(epoch);
 
         UnsealedAccountService {
             database_dir,
@@ -249,7 +234,6 @@ impl UnsealedAccountService {
             events,
             node_notifications,
             transaction_response,
-            recovered,
         }
     }
 
@@ -658,21 +642,20 @@ impl UnsealedAccountService {
     }
 
     /// Called when outputs registered and/or pruned.
-    fn on_outputs_changed(
-        &mut self,
-        epoch: u64,
-        inputs: HashMap<Hash, Output>,
-        outputs: HashMap<Hash, Output>,
-    ) {
+    fn on_outputs_changed<'a, I, O>(&mut self, epoch: u64, inputs: I, outputs: O)
+    where
+        I: Iterator<Item = &'a Hash>,
+        O: Iterator<Item = &'a Output>,
+    {
         let saved_balance = self.balance();
 
         // This order is important - first create outputs, then remove inputs.
         // Otherwise it will fail in case of annihilated input/output in a macro block.
-        for (output_hash, output) in outputs {
-            self.on_output_created(epoch, output_hash, output);
+        for output in outputs {
+            self.on_output_created(epoch, output);
         }
-        for (input_hash, input) in inputs {
-            self.on_output_pruned(input_hash, input);
+        for input_hash in inputs {
+            self.on_output_pruned(input_hash);
         }
 
         let balance = self.balance();
@@ -682,10 +665,11 @@ impl UnsealedAccountService {
     }
 
     /// Called when UTXO is created.
-    fn on_output_created(&mut self, epoch: u64, hash: Hash, output: Output) {
+    fn on_output_created(&mut self, epoch: u64, output: &Output) {
         if !output.is_my_utxo(&self.account_skey, &self.account_pkey) {
             return;
         }
+        let hash = Hash::digest(&output);
         match output {
             Output::PaymentOutput(o) => {
                 if let Ok(PaymentPayload { amount, data, .. }) =
@@ -697,7 +681,7 @@ impl UnsealedAccountService {
                         hash, amount, data
                     );
                     let value = PaymentValue {
-                        output: o,
+                        output: o.clone(),
                         amount,
                         recipient: self.account_pkey,
                         data: data.clone(),
@@ -755,7 +739,7 @@ impl UnsealedAccountService {
                     hash, o.amount, active_until_epoch
                 );
                 let value = StakeValue {
-                    output: o,
+                    output: o.clone(),
                     active_until_epoch: active_until_epoch.into(),
                 };
 
@@ -774,12 +758,19 @@ impl UnsealedAccountService {
     }
 
     /// Called when UTXO is spent.
-    fn on_output_pruned(&mut self, hash: Hash, output: Output) {
-        if !output.is_my_utxo(&self.account_skey, &self.account_pkey) {
-            return;
-        }
+    fn on_output_pruned(&mut self, hash: &Hash) {
+        let output = match self
+            .account_log
+            .get_unspent(&hash)
+            .expect("Cannot read database")
+        {
+            Some(o) => o,
+            None => return,
+        };
+
         match output {
-            Output::PaymentOutput(o) => {
+            OutputValue::Payment(p) => {
+                let o = p.output;
                 if let Ok(PaymentPayload { amount, data, .. }) =
                     o.decrypt_payload(&self.account_skey)
                 {
@@ -800,7 +791,8 @@ impl UnsealedAccountService {
                     }
                 }
             }
-            Output::PublicPaymentOutput(PublicPaymentOutput { amount, .. }) => {
+            OutputValue::PublicPayment(p) => {
+                let PublicPaymentOutput { amount, .. } = p;
                 info!("Spent public payment: utxo={}, amount={}", hash, amount);
                 match self
                     .account_log
@@ -817,7 +809,8 @@ impl UnsealedAccountService {
                     _ => panic!("Inconsistent account state"),
                 }
             }
-            Output::StakeOutput(o) => {
+            OutputValue::Stake(s) => {
+                let o = s.output;
                 info!("Unstaked: utxo={}, amount={}", hash, o.amount);
                 match self
                     .account_log
@@ -871,7 +864,7 @@ impl UnsealedAccountService {
             .account_log
             .finalize_epoch(epoch)
             .expect("Cannot write to db.");
-        self.on_tx_statuses_changed(updated_statuses);
+        self.on_tx_statuses_changed(&updated_statuses);
     }
 
     fn handle_snowball_transaction(
@@ -898,11 +891,11 @@ impl UnsealedAccountService {
         Ok(payment_info.to_info(self.epoch))
     }
 
-    fn on_tx_status(&mut self, tx_hash: Hash, status: TransactionStatus) {
-        if let Some(timestamp) = self.account_log.tx_entry(tx_hash) {
+    fn on_tx_status(&mut self, tx_hash: &Hash, status: &TransactionStatus) {
+        if let Some(timestamp) = self.account_log.tx_entry(*tx_hash) {
             // update persistent info.
             self.account_log
-                .update_tx_status(tx_hash, timestamp, status.clone())
+                .update_tx_status(*tx_hash, timestamp, status.clone())
                 .expect("Cannot update status.");
 
             // update metrics
@@ -920,14 +913,17 @@ impl UnsealedAccountService {
                 _ => {}
             }
 
-            let msg = AccountNotification::TransactionStatus { tx_hash, status };
+            let msg = AccountNotification::TransactionStatus {
+                tx_hash: *tx_hash,
+                status: status.clone(),
+            };
             self.notify(msg);
         } else {
             trace!("Transaction was not found = {}", tx_hash);
         }
     }
 
-    fn on_tx_statuses_changed(&mut self, changes: HashMap<Hash, TransactionStatus>) {
+    fn on_tx_statuses_changed(&mut self, changes: &HashMap<Hash, TransactionStatus>) {
         trace!("Updated mempool event");
         for (tx_hash, status) in changes {
             self.on_tx_status(tx_hash, status)
@@ -1057,65 +1053,13 @@ impl Future for UnsealedAccountService {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        // Recovery information from node.
-        if !self.recovered {
-            match self
-                .node_notifications
-                .poll()
-                .expect("all errors are already handled")
-            {
-                Async::Ready(Some(notification)) => match notification {
-                    NodeNotification::AccountRecovered {
-                        recovery_state,
-                        epoch,
-                        facilitator_pkey,
-                        last_macro_block_timestamp,
-                    } => {
-                        let balance = self.balance();
-                        // Recover state.
-                        assert!(self.snowball.is_none());
-                        for (hash, OutputRecovery { output, .. }) in
-                            recovery_state.removed.into_iter()
-                        {
-                            self.on_output_pruned(hash, output)
-                        }
-
-                        // firstly save all info that is final, and finalize epoch state.
-                        for (_, OutputRecovery { output, epoch, .. }) in
-                            recovery_state.commited.into_iter()
-                        {
-                            let output_hash = Hash::digest(&output);
-                            self.on_output_created(epoch, output_hash, output);
-                        }
-                        self.on_epoch_changed(epoch, facilitator_pkey, last_macro_block_timestamp);
-                        for (_, OutputRecovery { output, epoch, .. }) in
-                            recovery_state.prepared.into_iter()
-                        {
-                            let output_hash = Hash::digest(&output);
-                            self.on_output_created(epoch, output_hash, output);
-                        }
-
-                        info!("Loaded account {}", self.account_pkey);
-                        let new_balance = self.balance();
-                        if balance != new_balance {
-                            self.notify_balance_changed(new_balance);
-                        }
-                        self.recovered = true;
-                    }
-                    _ => panic!("Wait for recovery"),
-                },
-                Async::Ready(None) => unreachable!(), // never happens
-                Async::NotReady => return Ok(Async::NotReady), // early return
-            }
-        }
-
         if let Some(mut transaction_response) = self.transaction_response.take() {
             match transaction_response.poll().expect("connected") {
                 Async::Ready(response) => {
                     match response {
                         NodeResponse::AddTransaction { hash, status } => {
                             // Recover state.
-                            self.on_tx_status(hash, status);
+                            self.on_tx_status(&hash, &status);
                         }
                         NodeResponse::Error { error } => {
                             error!("Failed to get transaction status: {:?}", error);
@@ -1335,24 +1279,50 @@ impl Future for UnsealedAccountService {
             {
                 Async::Ready(Some(notification)) => match notification {
                     NodeNotification::NewMicroBlock(block) => {
-                        self.on_tx_statuses_changed(block.statuses);
-                        self.on_outputs_changed(block.epoch, block.inputs, block.outputs);
+                        trace!("New microblock: block:{}", Hash::digest(&block.block));
+                        self.on_tx_statuses_changed(&block.transaction_statuses);
+                        self.on_outputs_changed(
+                            block.block.header.epoch,
+                            block.inputs(),
+                            block.outputs(),
+                        );
                     }
                     NodeNotification::NewMacroBlock(block) => {
-                        self.on_tx_statuses_changed(block.statuses);
-                        self.on_outputs_changed(block.epoch, block.inputs, block.outputs);
+                        trace!("New epoch macroblock: block:{}", Hash::digest(&block.block));
+                        self.on_tx_statuses_changed(&block.transaction_statuses);
+                        self.on_outputs_changed(
+                            block.block.header.epoch,
+                            block.inputs(),
+                            block.outputs(),
+                        );
                         self.on_epoch_changed(
-                            block.epoch,
-                            block.facilitator,
-                            block.last_macro_block_timestamp,
+                            block.block.header.epoch,
+                            block.epoch_info.facilitator,
+                            block.block.header.timestamp,
                         );
                     }
                     NodeNotification::RollbackMicroBlock(block) => {
-                        self.on_tx_statuses_changed(block.statuses);
-                        self.on_outputs_changed(block.epoch, block.inputs, block.outputs);
-                    }
-                    NodeNotification::AccountRecovered { .. } => {
-                        panic!("Account should be recovered already.")
+                        trace!(
+                            "Rollaback microblock: block:{}, inputs:{:?}, outputs:{:?}",
+                            Hash::digest(&block.block),
+                            block
+                                .pruned_outputs()
+                                .cloned()
+                                .map(|k| k.to_string())
+                                .collect::<Vec<_>>(),
+                            block
+                                .recovered_inputs()
+                                .map(Hash::digest)
+                                .map(|k| k.to_string())
+                                .collect::<Vec<_>>(),
+                        );
+
+                        self.on_tx_statuses_changed(&block.transaction_statuses);
+                        self.on_outputs_changed(
+                            block.block.header.epoch,
+                            block.pruned_outputs(),
+                            block.recovered_inputs(),
+                        );
                     }
                     _ => {}
                 },
@@ -1979,9 +1949,9 @@ impl Future for WalletService {
                 Ok(Async::Ready(Some(NodeNotification::NewMacroBlock(b)))) => {
                     trace!(
                         "Update last known epoch in wallet control service: epoch={}",
-                        b.epoch
+                        b.block.header.epoch
                     );
-                    self.last_epoch = b.epoch;
+                    self.last_epoch = b.block.header.epoch;
                 }
                 Ok(Async::Ready(Some(_))) => continue, // filter rest of events.
                 Ok(Async::Ready(None)) => panic!("Node has died"),

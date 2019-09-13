@@ -22,11 +22,9 @@
 // SOFTWARE.
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
-use stegos_blockchain::{
-    AccountRecoveryState, ElectionInfo, EscrowInfo, Output, Timestamp, Transaction,
-};
+use stegos_blockchain::{ElectionInfo, EscrowInfo, Output, Timestamp, Transaction};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::{pbc, scc};
+use stegos_crypto::scc;
 
 ///
 /// RPC requests.
@@ -48,6 +46,10 @@ pub enum NodeRequest {
     },
     EnableRestaking {},
     DisableRestaking {},
+    GetMacroBlockInfo {
+        epoch: u64,
+        limit: u64,
+    },
 }
 
 ///
@@ -74,6 +76,10 @@ pub enum NodeResponse {
     },
     RestakingEnabled,
     RestakingDisabled,
+    MacroBlockInfo {
+        #[serde(flatten)]
+        blocks_info: Vec<NewMacroBlock>,
+    },
     Error {
         error: String,
     },
@@ -94,43 +100,62 @@ pub struct SyncChanged {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NewMacroBlock {
-    pub epoch: u64,
-    pub last_macro_block_timestamp: Timestamp,
-    pub facilitator: pbc::PublicKey,
-    pub validators: Vec<(pbc::PublicKey, i64)>,
+    #[serde(flatten)]
+    pub block: stegos_blockchain::MacroBlock,
+    #[serde(flatten)]
+    pub epoch_info: stegos_blockchain::StartEpochInfo,
     #[serde(skip)]
     pub transactions: HashMap<Hash, Transaction>,
-    pub statuses: HashMap<Hash, TransactionStatus>,
-    #[serde(skip)]
-    pub inputs: HashMap<Hash, Output>,
-    #[serde(skip)]
-    pub outputs: HashMap<Hash, Output>,
+    pub transaction_statuses: HashMap<Hash, TransactionStatus>,
+}
+
+impl NewMacroBlock {
+    pub fn inputs(&self) -> impl Iterator<Item = &Hash> {
+        self.block.inputs.iter()
+    }
+    pub fn outputs(&self) -> impl Iterator<Item = &Output> {
+        self.block.outputs.iter()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RollbackMicroBlock {
-    pub epoch: u64,
-    pub offset: u32,
+    #[serde(flatten)]
+    pub block: stegos_blockchain::MicroBlock,
     #[serde(skip)]
     pub recovered_transaction: HashMap<Hash, Transaction>,
-    pub statuses: HashMap<Hash, TransactionStatus>,
+    pub transaction_statuses: HashMap<Hash, TransactionStatus>,
     #[serde(skip)]
-    pub inputs: HashMap<Hash, Output>,
+    pub recovered_inputs: HashMap<Hash, Output>,
     #[serde(skip)]
-    pub outputs: HashMap<Hash, Output>,
+    pub pruned_outputs: Vec<Hash>,
+}
+
+impl RollbackMicroBlock {
+    pub fn pruned_outputs(&self) -> impl Iterator<Item = &Hash> {
+        self.pruned_outputs.iter()
+    }
+    pub fn recovered_inputs(&self) -> impl Iterator<Item = &Output> {
+        self.recovered_inputs.values()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NewMicroBlock {
-    pub epoch: u64,
-    pub offset: u32,
+    #[serde(flatten)]
+    pub block: stegos_blockchain::MicroBlock,
     #[serde(skip)]
     pub transactions: HashMap<Hash, Transaction>,
-    pub statuses: HashMap<Hash, TransactionStatus>,
-    #[serde(skip)]
-    pub inputs: HashMap<Hash, Output>,
-    #[serde(skip)]
-    pub outputs: HashMap<Hash, Output>,
+    pub transaction_statuses: HashMap<Hash, TransactionStatus>,
+}
+
+impl NewMicroBlock {
+    pub fn inputs(&self) -> impl Iterator<Item = &Hash> {
+        self.block.transactions.iter().flat_map(|tx| tx.txins())
+    }
+    pub fn outputs(&self) -> impl Iterator<Item = &Output> {
+        self.block.transactions.iter().flat_map(|tx| tx.txouts())
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -141,13 +166,6 @@ pub enum NodeNotification {
     NewMacroBlock(NewMacroBlock),
     RollbackMicroBlock(RollbackMicroBlock),
     SyncChanged(SyncChanged),
-    #[serde(skip)]
-    AccountRecovered {
-        recovery_state: AccountRecoveryState,
-        epoch: u64,
-        facilitator_pkey: pbc::PublicKey,
-        last_macro_block_timestamp: Timestamp,
-    },
 }
 
 impl From<SyncChanged> for NodeNotification {

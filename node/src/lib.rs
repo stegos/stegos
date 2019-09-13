@@ -42,10 +42,10 @@ use crate::mempool::Mempool;
 use crate::txpool::TransactionPoolService;
 pub use crate::txpool::MAX_PARTICIPANTS;
 use crate::validation::*;
-use failure::Error;
+use failure::{format_err, Error};
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::sync::oneshot;
-use futures::{task, Async, Future, Poll, Stream};
+use futures::{task, Async, Future, Poll, Sink, Stream};
 use futures_stream_select_all_send::select_all;
 pub use loader::CHAIN_LOADER_TOPIC;
 use log::*;
@@ -58,7 +58,7 @@ use stegos_blockchain::*;
 use stegos_consensus::optimistic::{SealedViewChangeProof, ViewChangeCollector, ViewChangeMessage};
 use stegos_consensus::{self as consensus, Consensus, ConsensusMessage, MacroBlockProposal};
 use stegos_crypto::hash::Hash;
-use stegos_crypto::{pbc, scc};
+use stegos_crypto::pbc;
 use stegos_network::Network;
 use stegos_network::UnicastMessage;
 use stegos_serialization::traits::ProtoConvert;
@@ -101,23 +101,11 @@ impl Node {
         self.outbox.unbounded_send(msg).expect("connected");
         rx
     }
-    /// Subscribe to node update.
-    /// Also recover info about wallet.
-    pub fn subscribe_with_recovery(
-        &self,
-        account_skey: scc::SecretKey,
-        account_pkey: scc::PublicKey,
-        epoch: u64,
-        unspent: HashMap<Hash, Output>,
-    ) -> UnboundedReceiver<NodeNotification> {
+
+    /// Subscribe to node update, with last epoch.
+    pub fn subscribe_with_recovery_epoch(&self, epoch: u64) -> UnboundedReceiver<NodeNotification> {
         let (tx, rx) = unbounded();
-        let msg = NodeMessage::AccountRecover {
-            tx,
-            account_skey,
-            account_pkey,
-            epoch,
-            unspent,
-        };
+        let msg = NodeMessage::SubscribeNodeNotificationEpoch(tx, epoch);
         self.outbox.unbounded_send(msg).expect("connected");
         rx
     }
@@ -143,18 +131,8 @@ pub enum NodeMessage {
     //
     // Public API
     //
-    AccountRecover {
-        tx: UnboundedSender<NodeNotification>,
-        /// Account Secret Key.
-        account_skey: scc::SecretKey,
-        /// Account Public Key.
-        account_pkey: scc::PublicKey,
-        /// Last epoch known by account.
-        epoch: u64,
-        /// List of active unspent outputs.
-        unspent: HashMap<Hash, Output>,
-    },
     SubscribeNodeNotification(UnboundedSender<NodeNotification>),
+    SubscribeNodeNotificationEpoch(UnboundedSender<NodeNotification>, u64),
     Request {
         request: NodeRequest,
         tx: oneshot::Sender<NodeResponse>,
@@ -202,6 +180,11 @@ enum Validation {
     },
 }
 
+pub struct EpochListener {
+    starting_epoch: u64,
+    sender: UnboundedSender<NodeNotification>,
+}
+
 pub struct NodeService {
     /// Config.
     cfg: NodeConfig,
@@ -233,6 +216,7 @@ pub struct NodeService {
     //
     // Communication with environment.
     //
+    epoch_listeners: Vec<EpochListener>,
     /// Node interface (needed to create TransactionPoolService).
     node: Node,
     /// Network interface.
@@ -311,6 +295,7 @@ impl NodeService {
 
         let events = select_all(streams);
 
+        let epoch_listeners = Vec::new();
         let node = Node {
             outbox,
             network: network.clone(),
@@ -328,6 +313,7 @@ impl NodeService {
             loader_timer,
             cheating_proofs,
             is_restaking_enabled,
+            epoch_listeners,
             node: node.clone(),
             network: network.clone(),
             events,
@@ -697,14 +683,14 @@ impl NodeService {
 
         // Truncate the blockchain.
         while self.chain.offset() > offset {
-            let (inputs, outputs, txs) = self.chain.pop_micro_block()?;
+            let (pruned_outputs, recovered_inputs, txs, block) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
             self.mempool.pop_microblock(txs.clone());
 
             let recovered_transaction: HashMap<_, _> =
                 txs.into_iter().map(|tx| (Hash::digest(&tx), tx)).collect();
 
-            let statuses = recovered_transaction
+            let transaction_statuses = recovered_transaction
                 .iter()
                 .map(|tx| tx.0)
                 .map(|h| {
@@ -718,12 +704,11 @@ impl NodeService {
                 })
                 .collect();
             let msg = RollbackMicroBlock {
-                epoch: self.chain.epoch(),
-                offset: self.chain.offset(),
+                block,
                 recovered_transaction,
-                statuses,
-                inputs,
-                outputs,
+                transaction_statuses,
+                pruned_outputs,
+                recovered_inputs,
             };
 
             let event: NodeNotification = msg.into();
@@ -938,15 +923,14 @@ impl NodeService {
 
         // Remove all micro blocks.
         while self.chain.offset() > 0 {
-            let (inputs, outputs, _txs) = self.chain.pop_micro_block()?;
+            let (pruned_outputs, recovered_inputs, _txs, block) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
             let msg = RollbackMicroBlock {
-                epoch,
-                offset: self.chain.offset(),
+                block,
                 recovered_transaction: HashMap::new(),
-                statuses: HashMap::new(),
-                inputs,
-                outputs,
+                transaction_statuses: HashMap::new(),
+                pruned_outputs,
+                recovered_inputs,
             };
 
             let event: NodeNotification = msg.into();
@@ -955,12 +939,12 @@ impl NodeService {
         }
         assert_eq!(0, self.chain.offset());
 
-        let (inputs, outputs) = self.chain.push_macro_block(block, timestamp)?;
+        let (inputs, outputs) = self.chain.push_macro_block(block.clone(), timestamp)?;
 
-        let mut statuses = HashMap::new();
+        let mut transaction_statuses = HashMap::new();
         let mut transactions = HashMap::new();
         // Remove conflict transactions from the mempool.
-        let tx_info = self.mempool.prune(inputs.keys(), outputs.keys());
+        let tx_info = self.mempool.prune(inputs.iter(), outputs.keys());
         for (tx_hash, (tx, full)) in tx_info {
             let status = if full {
                 TransactionStatus::Committed { epoch }
@@ -970,11 +954,11 @@ impl NodeService {
                     offset: None,
                 }
             };
-            assert!(statuses.insert(tx_hash, status).is_none());
+            assert!(transaction_statuses.insert(tx_hash, status).is_none());
             assert!(transactions.insert(tx_hash, tx).is_none());
         }
 
-        assert_eq!(statuses.len(), transactions.len());
+        assert_eq!(transaction_statuses.len(), transactions.len());
 
         if !was_synchronized && self.is_synchronized() {
             // Reset loader timer.
@@ -985,16 +969,17 @@ impl NodeService {
                 self.chain.last_block_hash()
             );
         }
+        let epoch_info = self
+            .chain
+            .epoch_info(epoch)
+            .expect("Expect epoch info for last macroblock.")
+            .clone();
 
         let msg = NewMacroBlock {
-            epoch,
-            validators: self.chain.validators().clone(),
-            facilitator: self.chain.facilitator().clone(),
-            last_macro_block_timestamp: self.chain.last_macro_block_timestamp(),
+            block,
+            epoch_info,
             transactions,
-            statuses,
-            inputs: inputs.clone(),
-            outputs: outputs.clone(),
+            transaction_statuses,
         };
 
         self.on_block_added(block_timestamp, true);
@@ -1084,12 +1069,12 @@ impl NodeService {
 
         // Apply Micro Block.
         let (inputs, outputs, block_transactions) =
-            self.chain.push_micro_block(block, timestamp)?;
+            self.chain.push_micro_block(block.clone(), timestamp)?;
 
-        let mut statuses = HashMap::new();
+        let mut transaction_statuses = HashMap::new();
         let mut transactions = HashMap::new();
         // Remove conflict transactions from the mempool.
-        let mut tx_info = self.mempool.prune(inputs.keys(), outputs.keys());
+        let mut tx_info = self.mempool.prune(inputs.iter(), outputs.keys());
         tx_info.extend(
             block_transactions
                 .clone()
@@ -1105,20 +1090,17 @@ impl NodeService {
                     offset: offset.into(),
                 }
             };
-            assert!(statuses.insert(tx_hash, status).is_none());
+            assert!(transaction_statuses.insert(tx_hash, status).is_none());
             assert!(transactions.insert(tx_hash, tx).is_none());
         }
 
-        assert_eq!(statuses.len(), transactions.len());
+        assert_eq!(transaction_statuses.len(), transactions.len());
         assert!(transactions.len() >= block_transactions.len());
 
         let msg = NewMicroBlock {
-            epoch,
-            offset,
+            block,
             transactions,
-            statuses,
-            inputs: inputs.clone(),
-            outputs: outputs.clone(),
+            transaction_statuses,
         };
 
         self.on_block_added(block_timestamp, false);
@@ -1184,25 +1166,19 @@ impl NodeService {
         Ok(())
     }
 
-    /// Handler for NodeMessage::AccountRecover.
-    fn handle_subscribe_with_recover(
+    /// Handler for NodeMessage::SubscribeNodeNotificationEpoch.
+    fn handle_subscribe_node_notification_with_epoch(
         &mut self,
-        tx: UnboundedSender<NodeNotification>,
-        account_skey: scc::SecretKey,
-        account_pkey: scc::PublicKey,
-        epoch: u64,
-        unspent: HashMap<Hash, Output>,
+        sender: UnboundedSender<NodeNotification>,
+        starting_epoch: u64,
     ) -> Result<(), Error> {
-        let recovery_state =
-            self.handle_recover_account(&account_skey, &account_pkey, epoch, unspent)?;
-        let response = NodeNotification::AccountRecovered {
-            recovery_state,
-            epoch: self.chain.epoch(),
-            facilitator_pkey: self.chain.facilitator().clone(),
-            last_macro_block_timestamp: self.chain.last_macro_block_timestamp(),
+        trace!("Subscribe on node notification with epoch");
+        let epoch_info = EpochListener {
+            starting_epoch,
+            sender,
         };
-        tx.unbounded_send(response)?;
-        self.on_node_notification.push(tx);
+        self.epoch_listeners.push(epoch_info);
+        task::current().notify();
         Ok(())
     }
 
@@ -1231,7 +1207,7 @@ impl NodeService {
     fn handle_pop_block(&mut self) -> Result<(), Error> {
         warn!("Received a request to revert the latest block");
         if self.chain.offset() > 1 {
-            let (inputs, outputs, txs) = self.chain.pop_micro_block()?;
+            let (pruned_outputs, recovered_inputs, txs, block) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
 
             self.mempool.pop_microblock(txs.clone());
@@ -1239,7 +1215,7 @@ impl NodeService {
             let recovered_transaction: HashMap<_, _> =
                 txs.into_iter().map(|tx| (Hash::digest(&tx), tx)).collect();
 
-            let statuses: HashMap<_, _> = recovered_transaction
+            let transaction_statuses: HashMap<_, _> = recovered_transaction
                 .iter()
                 .map(|tx| tx.0)
                 .map(|h| {
@@ -1253,12 +1229,11 @@ impl NodeService {
                 })
                 .collect();
             let msg = RollbackMicroBlock {
-                epoch: self.chain.epoch(),
-                offset: self.chain.offset(),
+                block,
                 recovered_transaction,
-                statuses,
-                inputs,
-                outputs,
+                transaction_statuses,
+                pruned_outputs,
+                recovered_inputs,
             };
 
             let event: NodeNotification = msg.into();
@@ -1272,22 +1247,6 @@ impl NodeService {
             );
         }
         Ok(())
-    }
-
-    /// Handler for NodeMessage::RecoverAccount.
-    fn handle_recover_account(
-        &mut self,
-        account_skey: &scc::SecretKey,
-        account_pkey: &scc::PublicKey,
-        epoch: u64,
-        unspent: HashMap<Hash, Output>,
-    ) -> Result<AccountRecoveryState, Error> {
-        debug!("Recovering account from blockchain: pkey={}", account_pkey);
-        let recovery_state =
-            self.chain
-                .recover_account(account_skey, account_pkey, epoch, unspent)?;
-        info!("Recovered account from blockchain: pkey={}", account_pkey);
-        Ok(recovery_state)
     }
 
     /// Send block to network.
@@ -1903,6 +1862,127 @@ impl NodeService {
             _ => unreachable!(),
         }
     }
+
+    fn get_macro_block_info_by_epoch(&self, epoch: u64) -> Result<NewMacroBlock, Error> {
+        if epoch >= self.chain.epoch() {
+            return Err(format_err!("Unexpected epoch"));
+        }
+
+        let block = self.chain.macro_block(epoch)?;
+        let epoch_info = self
+            .chain
+            .epoch_info(epoch)
+            .ok_or(format_err!("Epoch info not found"))?
+            .clone();
+        let msg = NewMacroBlock {
+            block,
+            epoch_info,
+            transactions: HashMap::new(),
+            transaction_statuses: HashMap::new(),
+        };
+        Ok(msg)
+    }
+
+    fn get_macro_blocks_info(&self, epoch: u64, limit: u64) -> Result<Vec<NewMacroBlock>, Error> {
+        if epoch >= self.chain.epoch() {
+            return Err(format_err!("Unexpected epoch"));
+        }
+
+        if epoch + limit >= self.chain.epoch() {
+            return Err(format_err!("Unexpected epoch"));
+        }
+
+        let mut blocks = Vec::new();
+
+        for epoch in epoch + epoch..limit {
+            let block = self.get_macro_block_info_by_epoch(epoch)?;
+            blocks.push(block);
+        }
+
+        Ok(blocks)
+    }
+
+    /// Process listener events:
+    /// This routine was created to simplify recovery of API client.
+    ///
+    /// 1) Check if sender can receive more items. To prevent big amount of data in memory.
+    /// 2) Send epoch info by one epoch at time.
+    /// 3) Send current epoch microblocks.
+    /// 4) Subscribe listener to NodeNotifications.
+    ///
+    /// Errors:
+    /// This routine will discard listener on some errors:
+    /// 1) If listener subscribe with invalid epoch.
+    /// 2) If we got some error in database.
+    /// 3) If listener receiver side was dropped.
+    ///
+    /// On any error listener will be removed from listener list.
+    ///
+    fn process_listener(
+        &mut self,
+        mut listener: EpochListener,
+    ) -> Result<Option<EpochListener>, Error> {
+        match listener.sender.poll_complete()? {
+            Async::Ready(()) => {
+                if listener.starting_epoch > self.chain.epoch() {
+                    return Err(format_err!(
+                        "Too big epoch requested: epoch_requested={}, chain_epoch={}",
+                        listener.starting_epoch,
+                        self.chain.epoch()
+                    ));
+                }
+
+                if listener.starting_epoch == self.chain.epoch() {
+                    trace!("Send microblocks to epoch listener");
+                    // send microblocks in single batch, to prevent races.
+                    for offset in 0..self.chain.offset() {
+                        let block = self.chain.micro_block(listener.starting_epoch, offset)?;
+                        let transactions: HashMap<_, _> = block
+                            .transactions
+                            .iter()
+                            .cloned()
+                            .map(|tx| (Hash::digest(&tx), tx))
+                            .collect();
+                        let transaction_statuses = transactions
+                            .iter()
+                            .map(|(h, _tx)| {
+                                (
+                                    *h,
+                                    TransactionStatus::Prepared {
+                                        epoch: listener.starting_epoch,
+                                        offset,
+                                    },
+                                )
+                            })
+                            .collect();
+                        let block_event = NewMicroBlock {
+                            block,
+                            transactions,
+                            transaction_statuses,
+                        };
+                        listener
+                            .sender
+                            .start_send(NodeNotification::NewMicroBlock(block_event))?;
+                    }
+
+                    // And subscribe node to current stream of events.
+                    self.handle_subscribe_node_notification(listener.sender)
+                        .expect("no error in subscribe notification");
+                    return Ok(None);
+                }
+
+                trace!("Send EPOCH macroblock to epoch listener");
+                let block = self.get_macro_block_info_by_epoch(listener.starting_epoch)?;
+
+                listener
+                    .sender
+                    .start_send(NodeNotification::NewMacroBlock(block))?;
+                listener.starting_epoch += 1;
+            }
+            Async::NotReady => {}
+        }
+        Ok(listener.into())
+    }
 }
 
 // Event loop.
@@ -1966,6 +2046,20 @@ impl Future for NodeService {
             error!("Error: {}", e);
         }
 
+        let listeners = std::mem::replace(&mut self.epoch_listeners, Vec::new());
+        for listener in listeners {
+            let listener = match self.process_listener(listener) {
+                Ok(Some(listener)) => listener,
+                Ok(None) => continue,
+                Err(e) => {
+                    error!("Error during processing listener: error={}", e);
+                    continue;
+                }
+            };
+            // recover listener at end.
+            self.epoch_listeners.push(listener);
+        }
+
         if let Some(ref mut txpool_service) = &mut self.txpool_service {
             match txpool_service.poll().unwrap() {
                 Async::Ready(_) => unreachable!(),
@@ -1978,21 +2072,11 @@ impl Future for NodeService {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => {
                     let result: Result<(), Error> = match event {
-                        NodeMessage::AccountRecover {
-                            tx,
-                            account_pkey,
-                            account_skey,
-                            epoch,
-                            unspent,
-                        } => self.handle_subscribe_with_recover(
-                            tx,
-                            account_skey,
-                            account_pkey,
-                            epoch,
-                            unspent,
-                        ),
                         NodeMessage::SubscribeNodeNotification(tx) => {
                             self.handle_subscribe_node_notification(tx)
+                        }
+                        NodeMessage::SubscribeNodeNotificationEpoch(tx, epoch) => {
+                            self.handle_subscribe_node_notification_with_epoch(tx, epoch)
                         }
                         NodeMessage::Request { request, tx } => {
                             let response = match request {
@@ -2073,6 +2157,16 @@ impl Future for NodeService {
                                         info!("Re-staking disabled");
                                         self.is_restaking_enabled = false;
                                         NodeResponse::RestakingDisabled
+                                    }
+                                }
+                                NodeRequest::GetMacroBlockInfo { epoch, limit } => {
+                                    match self.get_macro_blocks_info(epoch, limit) {
+                                        Ok(blocks_info) => {
+                                            NodeResponse::MacroBlockInfo { blocks_info }
+                                        }
+                                        Err(e) => NodeResponse::Error {
+                                            error: format!("{}", e),
+                                        },
                                     }
                                 }
                             };

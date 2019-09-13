@@ -44,9 +44,6 @@ fn genesis_accounts(s: &mut Sandbox) -> Vec<AccountSandbox> {
     let mut accounts = Vec::new();
     for i in 0..s.nodes.len() {
         let mut account = AccountSandbox::new_genesis(s, i, None);
-        account.poll();
-        s.nodes[i].poll(); // give node a time to process wallet recovery.
-        account.poll();
         accounts.push(account);
     }
     accounts
@@ -66,8 +63,7 @@ impl AccountSandbox {
         stake_epochs: u64,
         max_inputs_in_tx: usize,
         keys: KeyChain,
-        node: Node,
-        chain: &Blockchain,
+        node: &mut NodeSandbox,
         network_service: Loopback,
         network: Network,
         path: Option<TempDir>,
@@ -103,7 +99,7 @@ impl AccountSandbox {
             network_skey,
             network_pkey,
             network,
-            node,
+            node.node.clone(),
             stake_epochs,
             max_inputs_in_tx,
             subscribers,
@@ -112,27 +108,37 @@ impl AccountSandbox {
         );
         let account = Account { outbox };
 
-        AccountSandbox {
+        let mut account = AccountSandbox {
             account,
             account_service,
             network: network_service,
             _tmp_dir: temp_dir,
+        };
+
+        account.poll();
+        // give node a time to process wallet recovery.
+        for _ in 0..node.chain().epoch() {
+            node.poll();
+            account.poll();
         }
+
+        account
     }
 
     pub fn new_genesis(s: &mut Sandbox, node_id: usize, path: Option<TempDir>) -> AccountSandbox {
         let stake_epochs = s.config.chain.stake_epochs;
         let max_inputs_in_tx = s.config.node.max_inputs_in_tx;
-        let node = s.nodes[node_id].node.clone();
         let keys = s.keychains[node_id].clone();
         // genesis accounts should reuse the same network.
+
         let (network_service, network) = s.nodes[node_id].clone_network();
+
+        let node = &mut s.nodes[node_id];
         Self::new(
             stake_epochs,
             max_inputs_in_tx,
             keys,
             node,
-            &s.nodes[node_id].chain(),
             network_service,
             network,
             path,
@@ -143,7 +149,6 @@ impl AccountSandbox {
     pub fn new_custom(s: &mut Sandbox, node_id: usize, path: Option<TempDir>) -> AccountSandbox {
         let stake_epochs = s.config.chain.stake_epochs;
         let max_inputs_in_tx = s.config.node.max_inputs_in_tx;
-        let node = s.nodes[node_id].node.clone();
         let mut keys = s.keychains[node_id].clone();
         // change account keys to custom
         let (skey, pkey) = scc::make_random_keys();
@@ -151,13 +156,13 @@ impl AccountSandbox {
         keys.account_skey = skey;
 
         let (network_service, network) = Loopback::new();
+        let node = &mut s.nodes[node_id];
 
         Self::new(
             stake_epochs,
             max_inputs_in_tx,
             keys,
             node,
-            &s.nodes[node_id].chain(),
             network_service,
             network,
             path,

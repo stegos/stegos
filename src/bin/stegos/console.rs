@@ -304,9 +304,10 @@ impl ConsoleService {
         eprintln!("show election - print leader election state");
         eprintln!("show escrow - print escrow");
         eprintln!("show recovery - print recovery information");
+        eprintln!("show epoch [EPOCH_ID] - get epoch info for specific block.");
         eprintln!("net publish TOPIC MESSAGE - publish a network message via floodsub");
         eprintln!("net send NETWORK_ADDRESS TOPIC MESSAGE - send a network message via unicast");
-        eprintln!("db pop block - revert the latest block");
+        eprintln!("db pop block - revert the latest micro block");
         eprintln!();
     }
 
@@ -785,6 +786,15 @@ impl ConsoleService {
         } else if msg == "show recovery" {
             let request = AccountRequest::GetRecovery {};
             self.send_account_request(request)?
+        } else if msg.starts_with("show epoch") {
+            let arg = &msg[10..];
+            let arg = arg.trim();
+            let epoch: u64 = arg.parse()?;
+            let request = NodeRequest::GetMacroBlockInfo {
+                epoch,
+                limit: CONSOLE_HISTORY_LIMIT,
+            };
+            self.send_node_request(request)?
         } else if msg == "show accounts" {
             let request = WalletControlRequest::ListAccounts {};
             self.send_wallet_control_request(request)?;

@@ -28,6 +28,7 @@ use crate::timestamp::Timestamp;
 use crate::transaction::Transaction;
 use crate::view_changes::ViewChangeProof;
 use bitvector::BitVector;
+use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
@@ -44,7 +45,7 @@ pub const VALIDATORS_MAX: usize = 512;
 //--------------------------------------------------------------------------------------------------
 
 /// Micro Block Header.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MicroBlockHeader {
     /// Version number.
     pub version: u64,
@@ -71,6 +72,8 @@ pub struct MicroBlockHeader {
     pub random: pbc::VRF,
 
     /// Solution for VDF.
+    #[serde(deserialize_with = "stegos_crypto::utils::vec_deserialize_from_hex")]
+    #[serde(serialize_with = "stegos_crypto::utils::vec_serialize_to_hex")]
     pub solution: Vec<u8>,
 
     /// UNIX timestamp of block creation.
@@ -81,15 +84,17 @@ pub struct MicroBlockHeader {
 }
 
 /// Micro Block.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MicroBlock {
     /// Header.
+    #[serde(flatten)]
     pub header: MicroBlockHeader,
 
     /// BLS signature by leader.
     pub sig: pbc::Signature,
 
     /// Transactions.
+    #[serde(skip)]
     pub transactions: Vec<Transaction>,
 }
 
@@ -216,7 +221,7 @@ impl Hashable for MicroBlock {
 //--------------------------------------------------------------------------------------------------
 
 /// Macro Block Header.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MacroBlockHeader {
     /// Version number.
     pub version: u64,
@@ -246,6 +251,8 @@ pub struct MacroBlockHeader {
     pub block_reward: i64,
 
     /// Bitmap of active validators in epoch.
+    #[serde(deserialize_with = "stegos_crypto::utils::deserialize_bitvec")]
+    #[serde(serialize_with = "stegos_crypto::utils::serialize_bitvec")]
     pub activity_map: BitVector,
 
     /// The sum of all gamma adjustments.
@@ -286,15 +293,18 @@ impl Hashable for MacroBlockHeader {
 }
 
 /// Macro Block.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MacroBlock {
     /// Header.
+    #[serde(flatten)]
     pub header: MacroBlockHeader,
 
     /// BLS (multi-)signature.
     pub multisig: pbc::Signature,
 
     /// Bitmap of signers in the multi-signature.
+    #[serde(deserialize_with = "stegos_crypto::utils::deserialize_bitvec")]
+    #[serde(serialize_with = "stegos_crypto::utils::serialize_bitvec")]
     pub multisigmap: BitVector,
 
     /// The list of transaction inputs in a Merkle Tree.

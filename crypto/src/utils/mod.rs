@@ -23,7 +23,10 @@
 
 use crate::CryptoError;
 
+use bitvector::BitVector;
 use hex;
+use ristretto_bulletproofs::RangeProof;
+use serde::{de, Deserialize, Deserializer, Serializer};
 use std::cmp::Ordering;
 use std::fmt::Write;
 // -------------------------------------------------------------------
@@ -192,4 +195,73 @@ pub fn ushr_le(src: &[u8], dst: &mut [u8], nsh: usize) {
         *elt = tmp | (*x >> nbits);
         tmp = *x << lsh;
     }
+}
+
+pub fn deserialize_bitvec<'de, D>(deserializer: D) -> Result<BitVector, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let string_vec: String = Deserialize::deserialize(deserializer)?;
+
+    let mut bit_vec = BitVector::new(string_vec.len());
+
+    for (id, b) in string_vec.chars().enumerate() {
+        match b {
+            '1' => bit_vec.insert(id),
+            '0' => bit_vec.remove(id),
+            _ => return Err(de::Error::custom("Expecting 0 or 1.")),
+        };
+    }
+
+    Ok(bit_vec)
+}
+
+pub fn serialize_bitvec<S>(vec: &BitVector, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let mut string_vec = String::new();
+
+    for id in 0..vec.capacity() {
+        match vec.contains(id) {
+            true => string_vec.push('1'),
+            false => string_vec.push('0'),
+        }
+    }
+    let string_vec = string_vec.trim_end_matches('0');
+    serializer.serialize_str(&string_vec)
+}
+
+pub fn vec_deserialize_from_hex<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let string_vec: String = Deserialize::deserialize(deserializer)?;
+    hex::decode(string_vec).map_err(de::Error::custom)
+}
+
+pub fn vec_serialize_to_hex<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let string_vec = hex::encode(bytes);
+    serializer.serialize_str(&string_vec)
+}
+
+pub fn deserialize_range_proof<'de, D>(deserializer: D) -> Result<RangeProof, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let string_vec: String = Deserialize::deserialize(deserializer)?;
+    let bytes = hex::decode(string_vec).map_err(de::Error::custom)?;
+    RangeProof::from_bytes(&bytes).map_err(de::Error::custom)
+}
+
+pub fn serialize_range_proof<S>(proof: &RangeProof, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let bytes = proof.to_bytes();
+    let string_vec = hex::encode(bytes);
+    serializer.serialize_str(&string_vec)
 }

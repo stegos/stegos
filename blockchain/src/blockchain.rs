@@ -39,6 +39,7 @@ use bitvector::BitVector;
 use byteorder::{BigEndian, ByteOrder};
 use log::*;
 use rocksdb;
+use serde_derive::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use stegos_crypto::bulletproofs::fee_a;
@@ -51,6 +52,37 @@ use stegos_serialization::traits::ProtoConvert;
 
 pub type ViewCounter = u32;
 pub type ValidatorId = u32;
+
+/// Saved information about validator, and its slotcount in epoch.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ValidatorKeyInfo {
+    network_pkey: pbc::PublicKey,
+    wallet_pkey: scc::PublicKey,
+    slots: i64,
+}
+
+/// Information about service award payout.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PayoutInfo {
+    recipient: scc::PublicKey,
+    amount: i64,
+}
+/// Full information about service award state.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AwardsInfo {
+    #[serde(flatten)]
+    pub service_award_state: Awards,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payout: Option<PayoutInfo>,
+}
+
+/// Retrospective information for some epoch.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct StartEpochInfo {
+    pub validators: Vec<ValidatorKeyInfo>,
+    pub facilitator: pbc::PublicKey,
+    pub awards: AwardsInfo,
+}
 
 /// Information of current chain, that is used as proof of viewchange.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -183,6 +215,8 @@ pub struct Blockchain {
     pub(crate) vdf: VDF,
     /// VDF difficulty,
     difficulty: u64,
+    /// Starting info for each past epochs.
+    epoch_infos: HashMap<u64, StartEpochInfo>,
 
     //
     // Epoch Information.
@@ -245,6 +279,7 @@ impl Blockchain {
         let escrow = Escrow::new();
         let difficulty = genesis.header.difficulty;
         let vdf = VDF::new();
+        let epoch_infos = HashMap::new();
 
         //
         // Epoch Information.
@@ -274,6 +309,7 @@ impl Blockchain {
             escrow,
             vdf,
             difficulty,
+            epoch_infos,
             epoch,
             offset,
             election_result,
@@ -677,14 +713,14 @@ impl Blockchain {
         Ok(self.block(LSN(epoch, MACRO_BLOCK_OFFSET))?.unwrap_macro())
     }
 
-    /// Return iterator over saved blocks.
+    /// Returns iterator over saved blocks.
     pub fn blocks(&self) -> impl Iterator<Item = Block> {
         self.database
             .full_iterator(rocksdb::IteratorMode::Start)
             .map(|(_, v)| Block::from_buffer(&*v).expect("couldn't deserialize block."))
     }
 
-    /// Return iterator over saved blocks.
+    /// Returns iterator over saved blocks.
     pub fn blocks_starting(&self, epoch: u64, offset: u32) -> impl Iterator<Item = Block> {
         let key = Self::block_key(LSN(epoch, offset));
         let mode = rocksdb::IteratorMode::From(&key, rocksdb::Direction::Forward);
@@ -693,11 +729,19 @@ impl Blockchain {
             .map(|(_, v)| Block::from_buffer(&*v).expect("couldn't deserialize block."))
     }
 
+    /// Returns start epoch info for any past epoch.
+    pub fn epoch_info(&self, epoch: u64) -> Option<&StartEpochInfo> {
+        self.epoch_infos.get(&epoch)
+    }
+
+    /// Returns current state of election result.
+    /// Note:
+    /// Election result changes on epoch start, and on slashing.
     pub fn election_result(&self) -> &ElectionResult {
         self.election_result.get(&()).unwrap()
     }
 
-    /// Return leader public key for specific view_change number.
+    /// Returns leader public key for specific view_change number.
     pub fn select_leader(&self, view_change: ViewCounter) -> pbc::PublicKey {
         self.election_result().select_leader(view_change)
     }
@@ -883,7 +927,7 @@ impl Blockchain {
         for (id, (validator, _)) in epoch_validators.iter().enumerate() {
             match epoch_activity.get(validator) {
                 // if validator failed, or cheater, remove it from bitmap.
-                Some(ValidatorAwardState::FailedAt(..)) | None => {
+                Some(ValidatorAwardState::FailedAt { .. }) | None => {
                     activity_map.remove(id);
                 }
                 _ => {}
@@ -923,12 +967,15 @@ impl Blockchain {
             let activity = if activity {
                 ValidatorAwardState::Active
             } else {
-                ValidatorAwardState::FailedAt(self.epoch, self.offset())
+                ValidatorAwardState::FailedAt {
+                    epoch: self.epoch,
+                    offset: self.offset(),
+                }
             };
 
             // multiple validators can have single wallet.
             // So try to override only Active state.
-            if let Some(ValidatorAwardState::FailedAt(..)) =
+            if let Some(ValidatorAwardState::FailedAt { .. }) =
                 validators_activity.get(&validator_account)
             {
                 continue;
@@ -1152,7 +1199,7 @@ impl Blockchain {
         &mut self,
         block: MacroBlock,
         timestamp: Timestamp,
-    ) -> Result<(HashMap<Hash, Output>, HashMap<Hash, Output>), StorageError> {
+    ) -> Result<(Vec<Hash>, HashMap<Hash, Output>), StorageError> {
         assert_eq!(self.epoch, block.header.epoch);
         assert_eq!(self.offset(), 0);
 
@@ -1184,7 +1231,7 @@ impl Blockchain {
         &mut self,
         lsn: LSN,
         block: MacroBlock,
-    ) -> Result<(HashMap<Hash, Output>, HashMap<Hash, Output>), StorageError> {
+    ) -> Result<(Vec<Hash>, HashMap<Hash, Output>), StorageError> {
         assert_eq!(block.header.version, VERSION);
         assert_eq!(self.epoch, block.header.epoch);
         assert_eq!(self.offset(), 0);
@@ -1219,7 +1266,7 @@ impl Blockchain {
             let prev = outputs.insert(output_hash, (output, output_key));
             assert!(prev.is_none(), "duplicate output");
         }
-        for input_hash in block.inputs {
+        for input_hash in block.inputs.clone() {
             if let Some((output, _output_key)) = outputs.remove(&input_hash) {
                 // Annihilate the input and output.
                 debug!(
@@ -1236,7 +1283,7 @@ impl Blockchain {
         }
 
         // update award (skip genesis).
-        if epoch > 0 {
+        let winner = if epoch > 0 {
             let validators_activity = self
                 .epoch_activity_from_macro_block(&block.header.activity_map)
                 .unwrap();
@@ -1258,7 +1305,10 @@ impl Blockchain {
                 block.header.block_reward, full_reward,
                 "Invalid macro block reward"
             );
-        }
+            winner
+        } else {
+            None
+        };
 
         //
         // Register block.
@@ -1322,6 +1372,42 @@ impl Blockchain {
         self.output_by_hash.checkpoint();
         self.balance.checkpoint();
         self.escrow.checkpoint();
+        self.election_result.checkpoint();
+
+        let validators = self
+            .election_result()
+            .validators
+            .iter()
+            .map(|v| {
+                let network_pkey = v.0;
+                let wallet_pkey = self
+                    .account_by_network_key(&network_pkey)
+                    .expect("Validator should have wallet key at start of epoch");
+                let slots = v.1;
+                ValidatorKeyInfo {
+                    network_pkey,
+                    wallet_pkey,
+                    slots,
+                }
+            })
+            .collect();
+
+        let facilitator = self.election_result().facilitator;
+        let awards = AwardsInfo {
+            service_award_state: self.awards.clone(),
+            payout: winner.map(|w| PayoutInfo {
+                recipient: w.0,
+                amount: w.1,
+            }),
+        };
+
+        let epoch_info = StartEpochInfo {
+            awards,
+            facilitator,
+            validators,
+        };
+
+        self.epoch_infos.insert(epoch, epoch_info);
 
         let mut outputs: HashMap<Hash, Output> =
             outputs.into_iter().map(|(h, (o, _k))| (h, o)).collect();
@@ -1345,7 +1431,7 @@ impl Blockchain {
         );
         debug!("Validators: {:?}", &self.validators());
 
-        Ok((inputs, outputs))
+        Ok((block.inputs, outputs))
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -1364,14 +1450,7 @@ impl Blockchain {
         &mut self,
         block: MicroBlock,
         timestamp: Timestamp,
-    ) -> Result<
-        (
-            HashMap<Hash, Output>,
-            HashMap<Hash, Output>,
-            HashMap<Hash, Transaction>,
-        ),
-        StorageError,
-    > {
+    ) -> Result<(Vec<Hash>, HashMap<Hash, Output>, HashMap<Hash, Transaction>), StorageError> {
         assert_eq!(self.epoch, block.header.epoch);
         assert_eq!(self.offset, block.header.offset);
 
@@ -1539,14 +1618,7 @@ impl Blockchain {
         &mut self,
         lsn: LSN,
         block: MicroBlock,
-    ) -> Result<
-        (
-            HashMap<Hash, Output>,
-            HashMap<Hash, Output>,
-            HashMap<Hash, Transaction>,
-        ),
-        StorageError,
-    > {
+    ) -> Result<(Vec<Hash>, HashMap<Hash, Output>, HashMap<Hash, Transaction>), StorageError> {
         assert_eq!(block.header.version, VERSION);
         assert_eq!(self.epoch, block.header.epoch);
         assert_eq!(self.offset, block.header.offset);
@@ -1636,7 +1708,10 @@ impl Blockchain {
             self.epoch_activity.insert(
                 lsn,
                 leader,
-                ValidatorAwardState::FailedAt(self.epoch(), self.offset()),
+                ValidatorAwardState::FailedAt {
+                    epoch: self.epoch(),
+                    offset: self.offset(),
+                },
             );
         }
 
@@ -1696,6 +1771,7 @@ impl Blockchain {
 
         let outputs: HashMap<Hash, Output> =
             outputs.into_iter().map(|(h, (o, _k))| (h, o)).collect();
+        let inputs = inputs.into_iter().map(|(h, _)| h).collect();
         Ok((inputs, outputs, txs))
     }
 
@@ -1703,9 +1779,10 @@ impl Blockchain {
         &mut self,
     ) -> Result<
         (
-            HashMap<Hash, Output>,
+            Vec<Hash>,
             HashMap<Hash, Output>,
             Vec<Transaction>,
+            MicroBlock,
         ),
         StorageError,
     > {
@@ -1752,13 +1829,14 @@ impl Blockchain {
         self.last_block_timestamp = last_block_timestamp;
         self.reset_view_change();
 
-        let mut created: HashMap<Hash, Output> = HashMap::new();
-        let mut pruned: HashMap<Hash, Output> = HashMap::new();
+        // Recover inputs that was removed, and remove outputs that was processed in this block.
+        let mut recovered: HashMap<Hash, Output> = HashMap::new();
+        let mut pruned: Vec<Hash> = Vec::new();
         let mut removed = Vec::new();
-        for tx in block.transactions {
+        for tx in block.clone().transactions {
             for input_hash in tx.txins() {
                 let input = self.output_by_hash(input_hash)?.expect("exists");
-                created.insert(input_hash.clone(), input);
+                recovered.insert(input_hash.clone(), input);
                 debug!(
                     "Restored UXTO: epoch={}, block={}, utxo={}",
                     self.epoch, &block_hash, &input_hash
@@ -1766,7 +1844,7 @@ impl Blockchain {
             }
             for output in tx.txouts() {
                 let output_hash = Hash::digest(output);
-                pruned.insert(output_hash, output.clone());
+                pruned.push(output_hash);
                 debug!(
                     "Reverted UTXO: epoch={}, block={}, utxo={}",
                     self.epoch, &block_hash, &output_hash
@@ -1792,17 +1870,17 @@ impl Blockchain {
             self.epoch,
             offset,
             &block_hash,
-            created
+            recovered
                 .keys()
                 .map(ToString::to_string)
                 .collect::<Vec<String>>(),
             pruned
-                .keys()
+                .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<String>>(),
         );
 
-        Ok((pruned, created, removed))
+        Ok((pruned, recovered, removed, block))
     }
 }
 
@@ -2289,12 +2367,15 @@ pub mod tests {
             .push_micro_block(block, timestamp)
             .expect("no I/O errors");
 
-        let historic_output = inputs.values().next().unwrap();
+        let historic_output_hash = inputs.iter().next().unwrap();
         let historic_output_proof = chain
-            .historic_output_by_hash_with_proof(&Hash::digest(&historic_output))
+            .historic_output_by_hash_with_proof(historic_output_hash)
             .expect("no I/O errors")
             .expect("exists");
-        assert_eq!(&historic_output_proof.output, historic_output);
+        assert_eq!(
+            Hash::digest(&historic_output_proof.output),
+            *historic_output_hash
+        );
         assert_eq!(historic_output_proof.epoch, 0);
         assert_eq!(&historic_output_proof.block_hash, &genesis_hash);
         assert_eq!(historic_output_proof.is_final, true);
@@ -2326,12 +2407,15 @@ pub mod tests {
         let (inputs, _outputs) = chain
             .push_macro_block(block, timestamp)
             .expect("Invalid block");
-        let historic_output = inputs.values().next().unwrap();
+        let historic_output_hash = inputs.iter().next().unwrap();
         let historic_output_proof = chain
-            .historic_output_by_hash_with_proof(&Hash::digest(&historic_output))
+            .historic_output_by_hash_with_proof(historic_output_hash)
             .expect("no I/O errors")
             .expect("exists");
-        assert_eq!(&historic_output_proof.output, historic_output);
+        assert_eq!(
+            Hash::digest(&historic_output_proof.output),
+            *historic_output_hash
+        );
         assert_eq!(historic_output_proof.epoch, 0);
         assert_eq!(historic_output_proof.block_hash, genesis_hash);
         assert_eq!(historic_output_proof.is_final, true);

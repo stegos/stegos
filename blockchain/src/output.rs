@@ -95,7 +95,7 @@ impl From<std::str::Utf8Error> for OutputError {
 }
 
 /// Payment UTXO.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PaymentOutput {
     /// Cloaked public key of recipient.
     pub recipient: PublicKey,
@@ -122,7 +122,7 @@ pub struct PaymentOutput {
 }
 
 /// PublicPayment UTXO.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PublicPaymentOutput {
     /// Uncloaked public key of recipient.
     pub recipient: PublicKey,
@@ -138,7 +138,7 @@ pub struct PublicPaymentOutput {
 }
 
 /// Stake UTXO.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct StakeOutput {
     /// Uncloaked account key of validator.
     pub recipient: PublicKey,
@@ -157,7 +157,9 @@ pub struct StakeOutput {
 }
 
 /// Blockchain UTXO.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+#[serde(rename_all = "snake_case")]
 pub enum Output {
     PaymentOutput(PaymentOutput),
     PublicPaymentOutput(PublicPaymentOutput),

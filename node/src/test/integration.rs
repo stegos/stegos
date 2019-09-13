@@ -538,7 +538,7 @@ fn service_award_round_without_participants(s: &mut Sandbox) {
                     .epoch_activity()
                     .get(&leader_pk)
                     .unwrap(),
-                &ValidatorAwardState::FailedAt(epoch, offset)
+                &ValidatorAwardState::FailedAt { epoch, offset }
             );
         }
 

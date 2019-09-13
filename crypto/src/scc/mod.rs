@@ -38,6 +38,7 @@ use rand::thread_rng;
 use ristretto_bulletproofs::{BulletproofGens, PedersenGens};
 use serde::de::{Deserialize, Deserializer};
 use serde::ser::{Serialize, Serializer};
+use serde_derive::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fmt;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
@@ -107,9 +108,12 @@ pub struct SchnorrSig {
     pub K: Pt,
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EncryptedPayload {
-    pub ag: Pt,        // key hint = alpha*G
+    pub ag: Pt, // key hint = alpha*G
+
+    #[serde(deserialize_with = "crate::utils::vec_deserialize_from_hex")]
+    #[serde(serialize_with = "crate::utils::vec_serialize_to_hex")]
     pub ctxt: Vec<u8>, // ciphertext
 }
 
@@ -217,6 +221,25 @@ impl<'de> Deserialize<'de> for Fr {
     {
         let s = String::deserialize(deserializer)?;
         Fr::try_from_hex(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+impl Serialize for Pt {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'de> Deserialize<'de> for Pt {
+    fn deserialize<D>(deserializer: D) -> Result<Pt, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Pt::try_from_hex(&s).map_err(serde::de::Error::custom)
     }
 }
 

@@ -102,7 +102,7 @@ pub struct SecretKey(Fr);
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct PublicKey(Pt);
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SchnorrSig {
     pub u: Fr,
     pub K: Pt,

@@ -33,7 +33,7 @@ use log::*;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use stegos_network::{Network, UnicastMessage};
-use stegos_node::{Node, NodeNotification, NodeResponse};
+use stegos_node::{ChainNotification, Node, NodeResponse, StatusNotification};
 use stegos_wallet::api::{WalletNotification, WalletResponse};
 use stegos_wallet::Wallet;
 use tokio::net::TcpListener;
@@ -60,10 +60,10 @@ struct WebSocketHandler {
     api_token: ApiToken,
     /// Outgoing stream.
     sink: WsSink,
+    /// Output buffer.
+    sink_buf: Option<OwnedMessage>,
     /// Incoming stream.
     stream: WsStream,
-    /// True if outgoing buffer should be flushed on the next poll().
-    need_flush: bool,
     /// Network API.
     network: Network,
     /// Network unicast subscribtions.
@@ -80,8 +80,10 @@ struct WebSocketHandler {
     node: Node,
     /// Node RPC responses.
     node_responses: Vec<(RequestId, oneshot::Receiver<NodeResponse>)>,
-    /// Synchronization Status Changed Notification.
-    node_notifications: mpsc::UnboundedReceiver<NodeNotification>,
+    /// Subscription to status notifications.
+    status_notifications: Option<mpsc::Receiver<StatusNotification>>,
+    /// Subscription to blockchain notifications.
+    chain_notifications: Option<mpsc::Receiver<ChainNotification>>,
     /// Server version.
     version: String,
 }
@@ -97,7 +99,7 @@ impl WebSocketHandler {
         node: Node,
         version: String,
     ) -> Self {
-        let need_flush = false;
+        let sink_buf = None;
         let mut network_unicast = HashMap::new();
         let rx = network.subscribe_unicast(CONSOLE_TOPIC).unwrap();
         network_unicast.insert(CONSOLE_TOPIC.to_string(), rx);
@@ -107,13 +109,14 @@ impl WebSocketHandler {
         let wallet_notifications = wallet.subscribe();
         let wallet_responses = Vec::new();
         let node_responses = Vec::new();
-        let node_notifications = node.subscribe_with_recovery_epoch(0);
+        let status_notifications = None;
+        let chain_notifications = None;
         WebSocketHandler {
             peer,
             api_token,
             sink,
+            sink_buf,
             stream,
-            need_flush,
             network,
             network_unicast,
             network_broadcast,
@@ -122,7 +125,8 @@ impl WebSocketHandler {
             wallet_responses,
             node,
             node_responses,
-            node_notifications,
+            status_notifications,
+            chain_notifications,
             version,
         }
     }
@@ -170,54 +174,6 @@ impl WebSocketHandler {
             }
         }
     }
-
-    fn on_request(&mut self, request: Request) -> Result<(), WebSocketError> {
-        match request.kind {
-            RequestKind::NetworkRequest(network_request) => {
-                let resp = match self.handle_network_request(network_request) {
-                    Ok(r) => r,
-                    Err(e) => NetworkResponse::Error {
-                        error: format!("{}", e),
-                    },
-                };
-                let response = Response {
-                    kind: ResponseKind::NetworkResponse(resp),
-                    id: request.id,
-                };
-                self.send(response);
-            }
-            RequestKind::WalletsRequest(wallet_request) => {
-                self.wallet_responses
-                    .push((request.id, self.wallet.request(wallet_request)));
-            }
-            RequestKind::NodeRequest(node_request) => {
-                self.node_responses
-                    .push((request.id, self.node.request(node_request)));
-            }
-        }
-        Ok(())
-    }
-
-    fn send(&mut self, msg: Response) {
-        trace!("[{}] <= {:?}", self.peer, msg);
-        let msg = encode(&self.api_token, &msg);
-        if let Err(e) = self.send_raw(OwnedMessage::Text(msg)) {
-            error!("Failed to send message: {}", e);
-        }
-    }
-
-    fn send_raw(&mut self, msg: OwnedMessage) -> Result<(), WebSocketError> {
-        match self.sink.start_send(msg)? {
-            AsyncSink::Ready => {
-                self.need_flush = true;
-                Ok(())
-            }
-            AsyncSink::NotReady(msg) => {
-                warn!("The output buffer is full, discarding message: {:?}", msg);
-                Ok(())
-            }
-        }
-    }
 }
 
 impl Drop for WebSocketHandler {
@@ -231,6 +187,39 @@ impl Future for WebSocketHandler {
     type Error = WebSocketError;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        macro_rules! try_send_raw {
+            ($self:expr, $msg:expr) => {{
+                let msg = $msg;
+                assert!(self.sink_buf.is_none());
+                trace!("[{}] <= {:?}", self.peer, msg);
+                match self.sink.start_send(msg)? {
+                    AsyncSink::Ready => {}
+                    AsyncSink::NotReady(msg) => {
+                        trace!("[{}] Not ready", self.peer);
+                        self.sink_buf = Some(msg);
+                        trace!("[{}] Flush", self.peer);
+                        self.sink.poll_complete()?;
+                        return Ok(Async::NotReady);
+                    }
+                }
+            }};
+        }
+
+        macro_rules! try_send {
+            ($self:expr, $msg:expr) => {{
+                trace!("[{}] <= {:?}", self.peer, $msg);
+                let msg2 = encode(&self.api_token, &$msg);
+                try_send_raw!(self, OwnedMessage::Text(msg2));
+            }};
+        }
+
+        trace!("[{}] Poll", self.peer);
+        if let Some(msg) = self.sink_buf.take() {
+            // Flush pending item.
+            try_send_raw!(self, msg);
+        }
+        assert!(self.sink_buf.is_none());
+
         // Process incoming messages.
         loop {
             match self.stream.poll()? {
@@ -238,7 +227,29 @@ impl Future for WebSocketHandler {
                     trace!("[{}] => Text({})", self.peer, &msg);
                     let request: Request = decode(&self.api_token, &msg)?;
                     trace!("[{}] => {:?}", self.peer, request);
-                    self.on_request(request)?
+                    match request.kind {
+                        RequestKind::NetworkRequest(network_request) => {
+                            let resp = match self.handle_network_request(network_request) {
+                                Ok(r) => r,
+                                Err(e) => NetworkResponse::Error {
+                                    error: format!("{}", e),
+                                },
+                            };
+                            let response = Response {
+                                kind: ResponseKind::NetworkResponse(resp),
+                                id: request.id,
+                            };
+                            try_send!(self, response);
+                        }
+                        RequestKind::WalletsRequest(wallet_request) => {
+                            self.wallet_responses
+                                .push((request.id, self.wallet.request(wallet_request)));
+                        }
+                        RequestKind::NodeRequest(node_request) => {
+                            self.node_responses
+                                .push((request.id, self.node.request(node_request)));
+                        }
+                    }
                 }
                 Async::Ready(Some(OwnedMessage::Binary(msg))) => {
                     trace!("[{}] => Binary(len={})", self.peer, msg.len());
@@ -246,7 +257,7 @@ impl Future for WebSocketHandler {
                 }
                 Async::Ready(Some(OwnedMessage::Ping(msg))) => {
                     trace!("[{}] => Ping(len={})", self.peer, msg.len());
-                    self.send_raw(OwnedMessage::Pong(msg))?
+                    try_send_raw!(self, OwnedMessage::Pong(msg));
                 }
                 Async::Ready(Some(OwnedMessage::Pong(msg))) => {
                     trace!("[{}] => Pong(len={})", self.peer, msg.len());
@@ -264,16 +275,20 @@ impl Future for WebSocketHandler {
         }
 
         // Network unicast messages.
-        let mut network_notifications: Vec<NetworkNotification> = Vec::new();
         for (topic, rx) in self.network_unicast.iter_mut() {
             loop {
                 match rx.poll().unwrap() {
                     Async::Ready(Some(msg)) => {
-                        network_notifications.push(NetworkNotification::UnicastMessage {
+                        let msg = NetworkNotification::UnicastMessage {
                             topic: topic.clone(),
                             from: msg.from,
                             data: msg.data,
-                        });
+                        };
+                        let msg = Response {
+                            kind: ResponseKind::NetworkNotification(msg),
+                            id: 0,
+                        };
+                        try_send!(self, msg);
                     }
                     Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
                     Async::NotReady => break,
@@ -286,24 +301,20 @@ impl Future for WebSocketHandler {
             loop {
                 match rx.poll().unwrap() {
                     Async::Ready(Some(data)) => {
-                        network_notifications.push(NetworkNotification::BroadcastMessage {
+                        let msg = NetworkNotification::BroadcastMessage {
                             topic: topic.clone(),
                             data,
-                        });
+                        };
+                        let msg = Response {
+                            kind: ResponseKind::NetworkNotification(msg),
+                            id: 0,
+                        };
+                        try_send!(self, msg);
                     }
                     Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
                     Async::NotReady => break,
                 }
             }
-        }
-
-        // Flush all network notifications (a workaround for borrow-checker).
-        for notification in network_notifications {
-            let notification = Response {
-                kind: ResponseKind::NetworkNotification(notification),
-                id: 0,
-            };
-            self.send(notification);
         }
 
         // Wallet notifications.
@@ -314,66 +325,114 @@ impl Future for WebSocketHandler {
                         kind: ResponseKind::WalletNotification(notification),
                         id: 0,
                     };
-                    self.send(response);
+                    try_send!(self, response);
                 }
                 Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
                 Async::NotReady => break,                          // fall through
             }
         }
 
-        let account_responses = std::mem::replace(&mut self.wallet_responses, Vec::new());
-        for (id, mut rx) in account_responses {
-            match rx.poll() {
+        // Wallet responses.
+        let mut i = 0;
+        while i < self.wallet_responses.len() {
+            match self.wallet_responses[i].1.poll() {
                 Ok(Async::Ready(response)) => {
+                    let (id, _) = self.wallet_responses.swap_remove(i);
                     let response = Response {
                         kind: ResponseKind::WalletResponse(response),
                         id,
                     };
-                    self.send(response);
+                    try_send!(self, response);
+                    continue;
                 }
-                Ok(Async::NotReady) => self.wallet_responses.push((id, rx)),
+                Ok(Async::NotReady) => {}
                 Err(oneshot::Canceled) => panic!("missing response for WalletRequest"),
             }
+            i += 1;
         }
 
-        let node_responses = std::mem::replace(&mut self.node_responses, Vec::new());
-        for (id, mut rx) in node_responses {
-            match rx.poll() {
-                Ok(Async::Ready(response)) => {
+        // Node responses.
+        let mut i = 0;
+        while i < self.node_responses.len() {
+            match self.node_responses[i].1.poll() {
+                Ok(Async::Ready(mut response)) => {
+                    match &mut response {
+                        NodeResponse::SubscribedStatus { rx, .. } => {
+                            self.status_notifications = rx.take();
+                        }
+                        NodeResponse::SubscribedChain { rx, .. } => {
+                            self.chain_notifications = rx.take();
+                        }
+                        _ => {}
+                    };
+                    let (id, _) = self.node_responses.swap_remove(i);
                     let response = Response {
                         kind: ResponseKind::NodeResponse(response),
                         id,
                     };
-                    self.send(response)
+                    try_send!(self, response);
+                    continue;
                 }
-                Ok(Async::NotReady) => self.node_responses.push((id, rx)),
+                Ok(Async::NotReady) => {}
                 Err(oneshot::Canceled) => panic!("missing response for NodeRequest"),
             }
+            i += 1;
         }
 
-        // Node notifications.
-        loop {
-            match self.node_notifications.poll().unwrap() {
-                Async::Ready(Some(msg)) => {
-                    let msg = Response {
-                        kind: ResponseKind::NodeNotification(msg),
-                        id: 0,
-                    };
-                    self.send(msg);
+        // Status notifications.
+        if let Some(status_notifications) = &mut self.status_notifications {
+            loop {
+                match status_notifications.poll().unwrap() {
+                    Async::Ready(Some(msg)) => {
+                        let msg = Response {
+                            kind: ResponseKind::StatusNotification(msg),
+                            id: 0,
+                        };
+                        try_send!(self, msg);
+                    }
+                    Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
+                    Async::NotReady => break,                          // fall through
                 }
-                Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
-                Async::NotReady => break,                          // fall through
             }
         }
 
-        // Flush output buffer.
-        if self.need_flush {
-            match self.sink.poll_complete()? {
-                Async::Ready(()) => self.need_flush = false,
-                Async::NotReady => {}
+        // Chain notifications.
+        if let Some(chain_notifications) = &mut self.chain_notifications {
+            loop {
+                match chain_notifications.poll().unwrap() {
+                    Async::Ready(Some(msg)) => {
+                        match &msg {
+                            ChainNotification::MicroBlockPrepared(block) => {
+                                warn!(
+                                    "Prepared Micro Block: epoch={}, offset={}",
+                                    block.block.header.epoch, block.block.header.offset
+                                );
+                            }
+                            ChainNotification::MicroBlockReverted(block) => {
+                                warn!(
+                                    "Reverted Micro Block: epoch={}, offset={}",
+                                    block.block.header.epoch, block.block.header.offset
+                                );
+                            }
+                            ChainNotification::MacroBlockCommitted(block) => {
+                                warn!("Comitted Macro Block: epoch={}", block.block.header.epoch);
+                            }
+                        }
+                        let msg = Response {
+                            kind: ResponseKind::ChainNotification(msg),
+                            id: 0,
+                        };
+                        try_send!(self, msg);
+                    }
+                    Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
+                    Async::NotReady => break,
+                }
             }
         }
 
+        // Flush sink.
+        trace!("[{}] Flush", self.peer);
+        self.sink.poll_complete()?;
         Ok(Async::NotReady)
     }
 }
@@ -415,7 +474,7 @@ impl WebSocketServer {
                     }
                 };
                 let api_token = api_token.clone();
-                debug!("[{}] accepted", peer);
+                debug!("[{}] Accepted", peer);
                 let s = s
                     .into_ws()
                     .map_err(move |(_s, _req, _buf, e)| {

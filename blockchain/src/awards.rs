@@ -32,11 +32,9 @@ use stegos_crypto::utils::print_nbits;
 #[serde(tag = "status")]
 #[serde(rename_all = "snake_case")]
 pub enum ValidatorAwardState {
-    /// Validator have failed at: epoch, offset.
-    FailedAt {
-        epoch: u64,
-        offset: u32,
-    },
+    /// Validator has failed at: epoch, offset.
+    Failed { epoch: u64, offset: u32 },
+    /// Validator is active.
     Active,
 }
 
@@ -88,7 +86,7 @@ impl Awards {
         self.add_reward(reward);
         for (validator, state) in epoch_activity {
             match self.validators_activity.get(&validator) {
-                Some(ValidatorAwardState::FailedAt { epoch, offset }) => {
+                Some(ValidatorAwardState::Failed { epoch, offset }) => {
                     trace!(
                         "Found validator, that already failed his slot: epoch={}, offset={}",
                         epoch,
@@ -279,7 +277,7 @@ mod test {
             .map(|k| {
                 (
                     k,
-                    ValidatorAwardState::FailedAt {
+                    ValidatorAwardState::Failed {
                         epoch: 12,
                         offset: 12,
                     },
@@ -336,7 +334,7 @@ mod test {
             info!("N={}", n);
             new_epoch.insert(
                 validator,
-                ValidatorAwardState::FailedAt {
+                ValidatorAwardState::Failed {
                     epoch: 12,
                     offset: 12,
                 },

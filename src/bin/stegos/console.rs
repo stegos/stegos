@@ -64,6 +64,8 @@ lazy_static! {
     static ref SEND_COMMAND_RE: Regex = Regex::new(r"^\s*(?P<recipient>[0-9a-f]+)\s+(?P<topic>[0-9A-Za-z]+)\s+(?P<msg>.+)$").unwrap();
     /// Regex to parse "validate certificate" command.
     static ref VALIDATE_CERTIFICATE_COMMAND_RE: Regex = Regex::new(r"^\s*(?P<utxo>[0-9a-f]+)\s+(?P<spender>[0-9A-Za-z]+)\s+(?P<recipient>[0-9A-Za-z]+)\s+(?P<rvalue>[0-9a-f]+)$").unwrap();
+    /// Regex to parse "show block" command.
+    static ref SHOW_BLOCK_COMMAND_RE: Regex = Regex::new(r"^\s*(?P<epoch>[0-9]+)(\s+(?P<offset>[0-9]+))?$").unwrap();
     /// Regex to parse "use" command.
     static ref USE_COMMAND_RE: Regex = Regex::new(r"^\s*(?P<account_id>[0-9A-Za-z]+)$").unwrap();
 }
@@ -304,10 +306,13 @@ impl ConsoleService {
         eprintln!("show election - print leader election state");
         eprintln!("show escrow - print escrow");
         eprintln!("show recovery - print recovery information");
-        eprintln!("show epoch [EPOCH_ID] - get epoch info for specific block.");
+        eprintln!("show block EPOCH [OFFSET] - show a block");
+        eprintln!("pop block - revert the latest micro block");
+        eprintln!("subscribe chain EPOCH [OFFSET] - subscribe for blockchain changes");
+        eprintln!("show status - show general information about node status");
+        eprintln!("subscribe status - subscribe for status changes");
         eprintln!("net publish TOPIC MESSAGE - publish a network message via floodsub");
         eprintln!("net send NETWORK_ADDRESS TOPIC MESSAGE - send a network message via unicast");
-        eprintln!("db pop block - revert the latest micro block");
         eprintln!();
     }
 
@@ -373,6 +378,20 @@ impl ConsoleService {
 
     fn help_use() {
         eprintln!("Usage: use ACCOUNT_ID");
+        eprintln!();
+    }
+
+    fn help_show_block() {
+        eprintln!("Usage: show block EPOCH [OFFSET]");
+        eprintln!(" - EPOCH - epoch number");
+        eprintln!(" - OFFSET - micro block offset");
+        eprintln!();
+    }
+
+    fn help_subscribe_chain() {
+        eprintln!("Usage: subscribe chain EPOCH [OFFSET]");
+        eprintln!(" - EPOCH - epoch number");
+        eprintln!(" - OFFSET - micro block offset");
         eprintln!();
     }
 
@@ -786,14 +805,48 @@ impl ConsoleService {
         } else if msg == "show recovery" {
             let request = AccountRequest::GetRecovery {};
             self.send_account_request(request)?
-        } else if msg.starts_with("show epoch") {
-            let arg = &msg[10..];
-            let arg = arg.trim();
-            let epoch: u64 = arg.parse()?;
-            let request = NodeRequest::GetMacroBlockInfo {
-                epoch,
-                limit: CONSOLE_HISTORY_LIMIT,
+        } else if msg.starts_with("show block") {
+            let caps = match SHOW_BLOCK_COMMAND_RE.captures(&msg[10..]) {
+                Some(c) => c,
+                None => {
+                    Self::help_show_block();
+                    return Ok(true);
+                }
             };
+
+            let request = if let Some(offset) = caps.name("offset") {
+                let offset: u32 = offset.as_str().parse().unwrap();
+                let epoch = caps.name("epoch").unwrap().as_str();
+                let epoch: u64 = epoch.parse()?;
+                NodeRequest::MicroBlockInfo { epoch, offset }
+            } else {
+                let epoch = caps.name("epoch").unwrap();
+                let epoch: u64 = epoch.as_str().parse()?;
+                NodeRequest::MacroBlockInfo { epoch }
+            };
+            self.send_node_request(request)?
+        } else if msg.starts_with("subscribe chain") {
+            let caps = match SHOW_BLOCK_COMMAND_RE.captures(&msg[15..]) {
+                Some(c) => c,
+                None => {
+                    Self::help_subscribe_chain();
+                    return Ok(true);
+                }
+            };
+
+            let epoch: u64 = caps.name("epoch").unwrap().as_str().parse()?;
+            let offset: u32 = if let Some(offset) = caps.name("offset") {
+                offset.as_str().parse()?
+            } else {
+                0u32
+            };
+            let request = NodeRequest::SubscribeChain { epoch, offset };
+            self.send_node_request(request)?
+        } else if msg.starts_with("show status") {
+            let request = NodeRequest::StatusInfo {};
+            self.send_node_request(request)?
+        } else if msg.starts_with("subscribe status") {
+            let request = NodeRequest::SubscribeStatus {};
             self.send_node_request(request)?
         } else if msg == "show accounts" {
             let request = WalletControlRequest::ListAccounts {};
@@ -843,8 +896,8 @@ impl ConsoleService {
             };
             let request = WalletControlRequest::DeleteAccount { account_id };
             self.send_wallet_control_request(request)?;
-        } else if msg == "db pop block" {
-            let request = NodeRequest::PopBlock {};
+        } else if msg == "pop block" {
+            let request = NodeRequest::PopMicroBlock {};
             self.send_node_request(request)?
         } else if msg == "enable restaking" {
             let request = NodeRequest::EnableRestaking {};
@@ -885,12 +938,6 @@ impl ConsoleService {
             | ResponseKind::NetworkResponse(_) => {
                 self.print(&response);
                 self.stdin_th.thread().unpark();
-            }
-            ResponseKind::NodeNotification(_) => {
-                // Print NodeNotifications only if Debug level is enabled.
-                if log::log_enabled!(log::Level::Debug) {
-                    self.print(&response);
-                }
             }
             _ => {
                 self.print(&response);

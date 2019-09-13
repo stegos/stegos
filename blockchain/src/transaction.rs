@@ -25,6 +25,7 @@ use crate::error::*;
 use crate::output::*;
 use crate::SlashingProof;
 use failure::Error;
+use serde_derive::{Deserialize, Serialize};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
 use stegos_crypto::scc::{
@@ -36,7 +37,7 @@ use stegos_crypto::scc::{
 //--------------------------------------------------------------------------------------------------
 
 /// Transaction that confiscate stake from cheater.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceAwardTransaction {
     pub winner_reward: Vec<Output>,
 }
@@ -55,7 +56,7 @@ impl Hashable for ServiceAwardTransaction {
 //--------------------------------------------------------------------------------------------------
 
 /// Transaction that confiscate stake from cheater.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SlashingTransaction {
     pub proof: SlashingProof,
     /// List of inputs.
@@ -87,7 +88,7 @@ impl Hashable for SlashingTransaction {
 //--------------------------------------------------------------------------------------------------
 
 /// Coinbase Transaction.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoinbaseTransaction {
     /// Block reward.
     pub block_reward: i64,
@@ -139,7 +140,7 @@ impl SlashingTransaction {
 //--------------------------------------------------------------------------------------------------
 
 /// PaymentTransaction.
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentTransaction {
     /// List of inputs.
     pub txins: Vec<Hash>,
@@ -363,7 +364,7 @@ impl PaymentTransaction {
 //--------------------------------------------------------------------------------------------------
 
 /// RestakeTransaction.
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RestakeTransaction {
     /// List of inputs.
     pub txins: Vec<Hash>,
@@ -531,7 +532,9 @@ impl RestakeTransaction {
 //--------------------------------------------------------------------------------------------------
 
 /// Transaction.
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+#[serde(rename_all = "snake_case")]
 pub enum Transaction {
     CoinbaseTransaction(CoinbaseTransaction),
     PaymentTransaction(PaymentTransaction),

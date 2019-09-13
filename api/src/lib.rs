@@ -29,19 +29,18 @@ mod error;
 mod server;
 
 pub use crate::client::{url, WebSocketClient};
+use crate::crypto::{decrypt, encrypt};
 pub use crate::crypto::{load_api_token, load_or_create_api_token, ApiToken};
 pub use crate::error::KeyError;
 pub use crate::server::WebSocketServer;
-pub use stegos_node::{NodeNotification, NodeRequest, NodeResponse};
-pub use stegos_wallet::api::*;
-pub use websocket::WebSocketError;
-
-use crate::crypto::{decrypt, encrypt};
 use log::*;
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use serde_derive::{Deserialize, Serialize};
 use stegos_crypto::pbc;
+pub use stegos_node::{ChainNotification, NodeRequest, NodeResponse, StatusNotification};
+pub use stegos_wallet::api::*;
+pub use websocket::WebSocketError;
 
 pub type RequestId = u64;
 
@@ -49,7 +48,7 @@ fn is_request_id_default(id: &RequestId) -> bool {
     *id == 0
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkRequest {
@@ -78,7 +77,7 @@ pub enum NetworkRequest {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkResponse {
@@ -92,7 +91,7 @@ pub enum NetworkResponse {
     Error { error: String },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkNotification {
@@ -133,7 +132,8 @@ pub enum ResponseKind {
     WalletResponse(WalletResponse),
     WalletNotification(WalletNotification),
     NodeResponse(NodeResponse),
-    NodeNotification(NodeNotification),
+    StatusNotification(StatusNotification),
+    ChainNotification(ChainNotification),
 }
 
 #[derive(Debug, Serialize, Deserialize)]

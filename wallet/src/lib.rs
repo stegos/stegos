@@ -58,9 +58,7 @@ use stegos_keychain as keychain;
 use stegos_keychain::keyfile::{load_account_pkey, write_account_pkey, write_account_skey};
 use stegos_keychain::KeyError;
 use stegos_network::Network;
-use stegos_node::NodeNotification;
-use stegos_node::TransactionStatus;
-use stegos_node::{Node, NodeResponse};
+use stegos_node::{ChainNotification, Node, NodeRequest, NodeResponse, TransactionStatus};
 use tokio::runtime::TaskExecutor;
 use tokio_timer::{clock, Interval};
 
@@ -84,6 +82,42 @@ enum AccountEvent {
         request: AccountRequest,
         tx: oneshot::Sender<AccountResponse>,
     },
+}
+
+/// Helper for NodeRequest::SubscribeChain.
+enum ChainSubscription {
+    // Waiting for subscription.
+    Pending(oneshot::Receiver<NodeResponse>),
+    // Subscribed/
+    Active(mpsc::Receiver<ChainNotification>),
+}
+
+impl ChainSubscription {
+    fn new(node: &Node, epoch: u64, offset: u32) -> Self {
+        let request = NodeRequest::SubscribeChain { epoch, offset };
+        let rx = node.request(request);
+        ChainSubscription::Pending(rx)
+    }
+
+    fn poll_subscribed(&mut self) -> Poll<&mut mpsc::Receiver<ChainNotification>, Error> {
+        match self {
+            ChainSubscription::Pending(rx) => match rx.poll()? {
+                Async::Ready(response) => match response {
+                    NodeResponse::SubscribedChain { rx, .. } => {
+                        let rx = rx.unwrap();
+                        std::mem::replace(self, ChainSubscription::Active(rx));
+                        match self {
+                            ChainSubscription::Active(rx) => Ok(Async::Ready(rx)),
+                            _ => unreachable!(),
+                        }
+                    }
+                    _ => panic!("Unexpected NodeResponse: {:?}", response),
+                },
+                Async::NotReady => Ok(Async::NotReady),
+            },
+            ChainSubscription::Active(rx) => Ok(Async::Ready(rx)),
+        }
+    }
 }
 
 struct UnsealedAccountService {
@@ -153,8 +187,8 @@ struct UnsealedAccountService {
     //
     /// API Requests.
     events: mpsc::UnboundedReceiver<AccountEvent>,
-    /// Notifications from node.
-    node_notifications: mpsc::UnboundedReceiver<NodeNotification>,
+    /// Chain notifications
+    chain_notifications: ChainSubscription,
 }
 
 impl UnsealedAccountService {
@@ -202,13 +236,9 @@ impl UnsealedAccountService {
             }
             None => epoch,
         };
+        let chain_notifications = ChainSubscription::new(&node, epoch, 0);
 
         info!("Loading account {}", account_pkey);
-        //
-        // Notifications from node.
-        //
-
-        let node_notifications = node.subscribe_with_recovery_epoch(epoch);
 
         UnsealedAccountService {
             database_dir,
@@ -232,7 +262,7 @@ impl UnsealedAccountService {
             node,
             subscribers,
             events,
-            node_notifications,
+            chain_notifications,
             transaction_response,
         }
     }
@@ -1271,15 +1301,22 @@ impl Future for UnsealedAccountService {
             }
         }
 
+        // Process chain notifications.
         loop {
-            match self
-                .node_notifications
-                .poll()
-                .expect("all errors are already handled")
-            {
+            let rx = match self.chain_notifications.poll_subscribed() {
+                Ok(Async::Ready(rx)) => rx,
+                Ok(Async::NotReady) => break,
+                Err(e) => panic!("Failed to subscribe for chain changes: {:?}", e),
+            };
+            match rx.poll().expect("all errors are already handled") {
                 Async::Ready(Some(notification)) => match notification {
-                    NodeNotification::NewMicroBlock(block) => {
-                        trace!("New microblock: block:{}", Hash::digest(&block.block));
+                    ChainNotification::MicroBlockPrepared(block) => {
+                        trace!(
+                            "Prepared a micro block: epoch={}, offset={}, block={}",
+                            block.block.header.epoch,
+                            block.block.header.offset,
+                            Hash::digest(&block.block)
+                        );
                         self.on_tx_statuses_changed(&block.transaction_statuses);
                         self.on_outputs_changed(
                             block.block.header.epoch,
@@ -1287,8 +1324,12 @@ impl Future for UnsealedAccountService {
                             block.outputs(),
                         );
                     }
-                    NodeNotification::NewMacroBlock(block) => {
-                        trace!("New epoch macroblock: block:{}", Hash::digest(&block.block));
+                    ChainNotification::MacroBlockCommitted(block) => {
+                        trace!(
+                            "Committed a micro block: epoch={}, block={}",
+                            block.block.header.epoch,
+                            Hash::digest(&block.block)
+                        );
                         self.on_tx_statuses_changed(&block.transaction_statuses);
                         self.on_outputs_changed(
                             block.block.header.epoch,
@@ -1301,9 +1342,11 @@ impl Future for UnsealedAccountService {
                             block.block.header.timestamp,
                         );
                     }
-                    NodeNotification::RollbackMicroBlock(block) => {
+                    ChainNotification::MicroBlockReverted(block) => {
                         trace!(
-                            "Rollaback microblock: block:{}, inputs:{:?}, outputs:{:?}",
+                            "Reverted a micro block: epoch={}, offset={}, block={}, inputs={:?}, outputs={:?}",
+                            block.block.header.epoch,
+                            block.block.header.offset,
                             Hash::digest(&block.block),
                             block
                                 .pruned_outputs()
@@ -1324,7 +1367,6 @@ impl Future for UnsealedAccountService {
                             block.recovered_inputs(),
                         );
                     }
-                    _ => {}
                 },
                 Async::Ready(None) => unreachable!(), // never happens
                 Async::NotReady => break,
@@ -1636,7 +1678,7 @@ pub struct WalletService {
     accounts: HashMap<AccountId, AccountHandle>,
     subscribers: Vec<mpsc::UnboundedSender<WalletNotification>>,
     events: mpsc::UnboundedReceiver<WalletEvent>,
-    node_notifications: mpsc::UnboundedReceiver<NodeNotification>,
+    chain_notifications: ChainSubscription,
     last_epoch: u64,
 }
 
@@ -1654,8 +1696,7 @@ impl WalletService {
     ) -> Result<(Self, Wallet), Error> {
         let (outbox, events) = mpsc::unbounded::<WalletEvent>();
         let subscribers: Vec<mpsc::UnboundedSender<WalletNotification>> = Vec::new();
-        let node_notifications = node.subscribe();
-
+        let chain_notifications = ChainSubscription::new(&node, last_epoch, 0);
         let mut service = WalletService {
             accounts_dir: accounts_dir.to_path_buf(),
             network_skey,
@@ -1668,7 +1709,7 @@ impl WalletService {
             accounts: HashMap::new(),
             subscribers,
             events,
-            node_notifications,
+            chain_notifications,
             last_epoch,
         };
 
@@ -1945,18 +1986,23 @@ impl Future for WalletService {
         }
 
         loop {
-            match self.node_notifications.poll() {
-                Ok(Async::Ready(Some(NodeNotification::NewMacroBlock(b)))) => {
+            let rx = match self.chain_notifications.poll_subscribed() {
+                Ok(Async::Ready(rx)) => rx,
+                Ok(Async::NotReady) => break,
+                Err(e) => panic!("Failed to subscribe for chain changes: {:?}", e),
+            };
+            match rx.poll().unwrap() {
+                Async::Ready(Some(ChainNotification::MacroBlockCommitted(info))) => {
+                    let epoch = info.block.header.epoch;
                     trace!(
                         "Update last known epoch in wallet control service: epoch={}",
-                        b.block.header.epoch
+                        epoch
                     );
-                    self.last_epoch = b.block.header.epoch;
+                    self.last_epoch = epoch;
                 }
-                Ok(Async::Ready(Some(_))) => continue, // filter rest of events.
-                Ok(Async::Ready(None)) => panic!("Node has died"),
-                Ok(Async::NotReady) => break,
-                Err(()) => unreachable!(),
+                Async::Ready(Some(_)) => {} // ignore.
+                Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
+                Async::NotReady => break,
             };
         }
 

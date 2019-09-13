@@ -23,10 +23,11 @@ use crate::error::SlashingError;
 use crate::transaction::SlashingTransaction;
 use crate::{Blockchain, BlockchainError, MicroBlock, PublicPaymentOutput};
 use log::debug;
+use serde_derive::{Deserialize, Serialize};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SlashingProof {
     pub block1: MicroBlock,
     pub block2: MicroBlock,

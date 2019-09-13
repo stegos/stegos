@@ -94,7 +94,6 @@ pub struct MicroBlock {
     pub sig: pbc::Signature,
 
     /// Transactions.
-    #[serde(skip)]
     pub transactions: Vec<Transaction>,
 }
 

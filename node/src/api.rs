@@ -20,22 +20,25 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+use futures::sync::mpsc;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
-use stegos_blockchain::{ElectionInfo, EscrowInfo, Output, Timestamp, Transaction};
+use stegos_blockchain::{
+    ElectionInfo, EpochInfo, EscrowInfo, MacroBlock, MicroBlock, Output, Timestamp, Transaction,
+};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::scc;
 
 ///
 /// RPC requests.
 ///
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum NodeRequest {
     ElectionInfo {},
     EscrowInfo {},
-    PopBlock {},
+    PopMicroBlock {},
     #[serde(skip)]
     AddTransaction(Transaction),
     ValidateCertificate {
@@ -46,22 +49,31 @@ pub enum NodeRequest {
     },
     EnableRestaking {},
     DisableRestaking {},
-    GetMacroBlockInfo {
+    StatusInfo,
+    SubscribeStatus {},
+    MacroBlockInfo {
         epoch: u64,
-        limit: u64,
+    },
+    MicroBlockInfo {
+        epoch: u64,
+        offset: u32,
+    },
+    SubscribeChain {
+        epoch: u64,
+        offset: u32,
     },
 }
 
 ///
 /// RPC responses.
 ///
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum NodeResponse {
     ElectionInfo(ElectionInfo),
     EscrowInfo(EscrowInfo),
-    BlockPopped,
+    MicroBlockPopped,
     #[serde(skip)]
     AddTransaction {
         hash: Hash,
@@ -76,18 +88,29 @@ pub enum NodeResponse {
     },
     RestakingEnabled,
     RestakingDisabled,
-    MacroBlockInfo {
+    StatusInfo(StatusInfo),
+    SubscribedStatus {
         #[serde(flatten)]
-        blocks_info: Vec<NewMacroBlock>,
+        status: StatusInfo,
+        #[serde(skip)]
+        rx: Option<mpsc::Receiver<StatusNotification>>, // Option is needed for serde.
+    },
+    MacroBlockInfo(ExtendedMacroBlock),
+    MicroBlockInfo(ExtendedMicroBlock),
+    SubscribedChain {
+        current_epoch: u64,
+        current_offset: u32,
+        #[serde(skip)]
+        rx: Option<mpsc::Receiver<ChainNotification>>, // Option is needed for serde.
     },
     Error {
         error: String,
     },
 }
 
-/// Send when synchronization status has been changed.
+/// Notification about synchronization status.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SyncChanged {
+pub struct StatusInfo {
     pub is_synchronized: bool,
     pub epoch: u64,
     pub offset: u32,
@@ -98,18 +121,45 @@ pub struct SyncChanged {
     pub local_timestamp: Timestamp,
 }
 
+/// Status notifications.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct NewMacroBlock {
+#[serde(tag = "type")]
+#[serde(rename_all = "snake_case")]
+pub enum StatusNotification {
+    StatusChanged(StatusInfo),
+}
+
+impl From<StatusInfo> for StatusNotification {
+    fn from(status: StatusInfo) -> StatusNotification {
+        StatusNotification::StatusChanged(status)
+    }
+}
+
+/// Blockchain notifications.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+#[serde(rename_all = "snake_case")]
+pub enum ChainNotification {
+    MicroBlockPrepared(ExtendedMicroBlock),
+    MicroBlockReverted(RevertedMicroBlock),
+    MacroBlockCommitted(ExtendedMacroBlock),
+}
+
+/// A macro block with extra information.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExtendedMacroBlock {
+    /// Committed macro block.
     #[serde(flatten)]
-    pub block: stegos_blockchain::MacroBlock,
+    pub block: MacroBlock,
+    /// Collected information about epoch.
     #[serde(flatten)]
-    pub epoch_info: stegos_blockchain::StartEpochInfo,
-    #[serde(skip)]
-    pub transactions: HashMap<Hash, Transaction>,
+    pub epoch_info: EpochInfo,
+    // Transaction statuses.
+    #[serde(skip)] // internal API for wallet.
     pub transaction_statuses: HashMap<Hash, TransactionStatus>,
 }
 
-impl NewMacroBlock {
+impl ExtendedMacroBlock {
     pub fn inputs(&self) -> impl Iterator<Item = &Hash> {
         self.block.inputs.iter()
     }
@@ -118,20 +168,20 @@ impl NewMacroBlock {
     }
 }
 
+/// Information about reverted micro block.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RollbackMicroBlock {
+pub struct RevertedMicroBlock {
     #[serde(flatten)]
-    pub block: stegos_blockchain::MicroBlock,
-    #[serde(skip)]
-    pub recovered_transaction: HashMap<Hash, Transaction>,
+    pub block: MicroBlock,
+    #[serde(skip)] // internal API for wallet
     pub transaction_statuses: HashMap<Hash, TransactionStatus>,
-    #[serde(skip)]
+    #[serde(skip)] // internal API for wallet
     pub recovered_inputs: HashMap<Hash, Output>,
-    #[serde(skip)]
+    #[serde(skip)] // internal API for wallet
     pub pruned_outputs: Vec<Hash>,
 }
 
-impl RollbackMicroBlock {
+impl RevertedMicroBlock {
     pub fn pruned_outputs(&self) -> impl Iterator<Item = &Hash> {
         self.pruned_outputs.iter()
     }
@@ -140,16 +190,16 @@ impl RollbackMicroBlock {
     }
 }
 
+/// PA micro block with extra information.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct NewMicroBlock {
+pub struct ExtendedMicroBlock {
     #[serde(flatten)]
-    pub block: stegos_blockchain::MicroBlock,
-    #[serde(skip)]
-    pub transactions: HashMap<Hash, Transaction>,
+    pub block: MicroBlock,
+    #[serde(skip)] // internal API for wallet.
     pub transaction_statuses: HashMap<Hash, TransactionStatus>,
 }
 
-impl NewMicroBlock {
+impl ExtendedMicroBlock {
     pub fn inputs(&self) -> impl Iterator<Item = &Hash> {
         self.block.transactions.iter().flat_map(|tx| tx.txins())
     }
@@ -158,37 +208,21 @@ impl NewMicroBlock {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
-#[serde(rename_all = "snake_case")]
-pub enum NodeNotification {
-    NewMicroBlock(NewMicroBlock),
-    NewMacroBlock(NewMacroBlock),
-    RollbackMicroBlock(RollbackMicroBlock),
-    SyncChanged(SyncChanged),
-}
-
-impl From<SyncChanged> for NodeNotification {
-    fn from(sync: SyncChanged) -> NodeNotification {
-        NodeNotification::SyncChanged(sync)
+impl From<ExtendedMacroBlock> for ChainNotification {
+    fn from(block: ExtendedMacroBlock) -> ChainNotification {
+        ChainNotification::MacroBlockCommitted(block)
     }
 }
 
-impl From<NewMacroBlock> for NodeNotification {
-    fn from(block: NewMacroBlock) -> NodeNotification {
-        NodeNotification::NewMacroBlock(block)
+impl From<ExtendedMicroBlock> for ChainNotification {
+    fn from(block: ExtendedMicroBlock) -> ChainNotification {
+        ChainNotification::MicroBlockPrepared(block)
     }
 }
 
-impl From<NewMicroBlock> for NodeNotification {
-    fn from(block: NewMicroBlock) -> NodeNotification {
-        NodeNotification::NewMicroBlock(block)
-    }
-}
-
-impl From<RollbackMicroBlock> for NodeNotification {
-    fn from(block: RollbackMicroBlock) -> NodeNotification {
-        NodeNotification::RollbackMicroBlock(block)
+impl From<RevertedMicroBlock> for ChainNotification {
+    fn from(block: RevertedMicroBlock) -> ChainNotification {
+        ChainNotification::MicroBlockReverted(block)
     }
 }
 

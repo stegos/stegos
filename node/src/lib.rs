@@ -43,9 +43,8 @@ use crate::txpool::TransactionPoolService;
 pub use crate::txpool::MAX_PARTICIPANTS;
 use crate::validation::*;
 use failure::{format_err, Error};
-use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
-use futures::sync::oneshot;
-use futures::{task, Async, Future, Poll, Sink, Stream};
+use futures::sync::{mpsc, oneshot};
+use futures::{task, Async, AsyncSink, Future, Poll, Sink, Stream};
 use futures_stream_select_all_send::select_all;
 pub use loader::CHAIN_LOADER_TOPIC;
 use log::*;
@@ -72,7 +71,7 @@ use Validation::*;
 /// Blockchain Node.
 #[derive(Clone, Debug)]
 pub struct Node {
-    outbox: UnboundedSender<NodeMessage>,
+    outbox: mpsc::UnboundedSender<NodeMessage>,
     network: Network,
 }
 
@@ -90,22 +89,6 @@ impl Node {
     pub fn request(&self, request: NodeRequest) -> oneshot::Receiver<NodeResponse> {
         let (tx, rx) = oneshot::channel();
         let msg = NodeMessage::Request { request, tx };
-        self.outbox.unbounded_send(msg).expect("connected");
-        rx
-    }
-
-    /// Subscribe to node update.
-    pub fn subscribe(&self) -> UnboundedReceiver<NodeNotification> {
-        let (tx, rx) = unbounded();
-        let msg = NodeMessage::SubscribeNodeNotification(tx);
-        self.outbox.unbounded_send(msg).expect("connected");
-        rx
-    }
-
-    /// Subscribe to node update, with last epoch.
-    pub fn subscribe_with_recovery_epoch(&self, epoch: u64) -> UnboundedReceiver<NodeNotification> {
-        let (tx, rx) = unbounded();
-        let msg = NodeMessage::SubscribeNodeNotificationEpoch(tx, epoch);
         self.outbox.unbounded_send(msg).expect("connected");
         rx
     }
@@ -128,18 +111,10 @@ const SEALED_BLOCK_TOPIC: &'static str = "block";
 
 #[derive(Debug)]
 pub enum NodeMessage {
-    //
-    // Public API
-    //
-    SubscribeNodeNotification(UnboundedSender<NodeNotification>),
-    SubscribeNodeNotificationEpoch(UnboundedSender<NodeNotification>, u64),
     Request {
         request: NodeRequest,
         tx: oneshot::Sender<NodeResponse>,
     },
-    //
-    // Network Events
-    //
     Transaction(Vec<u8>),
     Consensus(Vec<u8>),
     Block(Vec<u8>),
@@ -180,9 +155,106 @@ enum Validation {
     },
 }
 
-pub struct EpochListener {
-    starting_epoch: u64,
-    sender: UnboundedSender<NodeNotification>,
+/// Chain subscriber which is fed from the disk.
+struct ChainReader {
+    /// Current epoch.
+    epoch: u64,
+    /// Current offset.
+    offset: u32,
+    /// Channel.
+    tx: mpsc::Sender<ChainNotification>,
+}
+
+impl ChainReader {
+    fn poll(&mut self, chain: &Blockchain) -> Poll<(), Error> {
+        // Check if subscriber has already been synchronized.
+        if self.epoch == chain.epoch() && self.offset == chain.offset() {
+            return Ok(Async::Ready(()));
+        }
+
+        // Feed blocks from the disk.
+        for block in chain.blocks_starting(self.epoch, 0) {
+            let (msg, next_epoch, next_offset) = match block {
+                Block::MacroBlock(block) => {
+                    assert_eq!(block.header.epoch, self.epoch);
+                    let epoch_info = chain.epoch_info(block.header.epoch).unwrap().clone();
+                    let next_epoch = block.header.epoch + 1;
+                    let msg = ExtendedMacroBlock {
+                        block,
+                        epoch_info,
+                        transaction_statuses: HashMap::new(),
+                    };
+                    let msg = ChainNotification::MacroBlockCommitted(msg);
+                    (msg, next_epoch, 0)
+                }
+                Block::MicroBlock(block) => {
+                    assert_eq!(block.header.epoch, self.epoch);
+                    assert_eq!(block.header.offset, self.offset);
+                    let (next_epoch, next_offset) =
+                        if block.header.offset + 1 < chain.cfg().micro_blocks_in_epoch {
+                            (block.header.epoch, block.header.offset + 1)
+                        } else {
+                            (block.header.epoch + 1, 0)
+                        };
+                    let transaction_statuses = block
+                        .transactions
+                        .iter()
+                        .map(|tx| {
+                            (
+                                Hash::digest(&tx),
+                                TransactionStatus::Prepared {
+                                    epoch: block.header.epoch,
+                                    offset: block.header.offset,
+                                },
+                            )
+                        })
+                        .collect();
+                    let msg = ExtendedMicroBlock {
+                        block,
+                        transaction_statuses,
+                    };
+                    let msg = ChainNotification::MicroBlockPrepared(msg);
+                    (msg, next_epoch, next_offset)
+                }
+            };
+
+            match self.tx.start_send(msg)? {
+                AsyncSink::Ready => {
+                    self.epoch = next_epoch;
+                    self.offset = next_offset;
+                }
+                AsyncSink::NotReady(_msg) => {
+                    break;
+                }
+            }
+        }
+
+        self.tx.poll_complete()?;
+        Ok(Async::NotReady)
+    }
+}
+
+/// Notify all subscribers about new event.
+fn notify_subscribers<T: Clone>(subscribers: &mut Vec<mpsc::Sender<T>>, msg: T) {
+    let mut i = 0;
+    while i < subscribers.len() {
+        let tx = &mut subscribers[i];
+        match tx.start_send(msg.clone()) {
+            Ok(AsyncSink::Ready) => {}
+            Ok(AsyncSink::NotReady(_msg)) => {
+                warn!("Subscriber is slow, discarding messages");
+            }
+            Err(_e /* SendError<ChainNotification> */) => {
+                subscribers.swap_remove(i);
+                continue;
+            }
+        }
+        if let Err(_e) = tx.poll_complete() {
+            subscribers.swap_remove(i);
+            continue;
+        }
+        i += 1;
+    }
 }
 
 pub struct NodeService {
@@ -216,13 +288,17 @@ pub struct NodeService {
     //
     // Communication with environment.
     //
-    epoch_listeners: Vec<EpochListener>,
+    /// Subscribers for status events.
+    status_subscribers: Vec<mpsc::Sender<StatusNotification>>,
+    /// Subscribers for chain events.
+    chain_subscribers: Vec<mpsc::Sender<ChainNotification>>,
+    /// Subscribers for chain events which are fed from the disk.
+    /// Automatically promoted to chain_subscribers after synchronization.
+    chain_readers: Vec<ChainReader>,
     /// Node interface (needed to create TransactionPoolService).
     node: Node,
     /// Network interface.
     network: Network,
-    /// Triggered when epoch is changed.
-    on_node_notification: Vec<UnboundedSender<NodeNotification>>,
     /// Aggregated stream of events.
     events: Box<dyn Stream<Item = NodeMessage, Error = ()> + Send>,
 
@@ -239,7 +315,7 @@ impl NodeService {
         network_pkey: pbc::PublicKey,
         network: Network,
     ) -> Result<(Self, Node), Error> {
-        let (outbox, inbox) = unbounded();
+        let (outbox, inbox) = mpsc::unbounded();
         let mempool = Mempool::new();
 
         let last_block_clock = clock::now();
@@ -295,7 +371,8 @@ impl NodeService {
 
         let events = select_all(streams);
 
-        let epoch_listeners = Vec::new();
+        let chain_disk_subscribers = Vec::new();
+        let chain_subscribers = Vec::new();
         let node = Node {
             outbox,
             network: network.clone(),
@@ -313,12 +390,13 @@ impl NodeService {
             loader_timer,
             cheating_proofs,
             is_restaking_enabled,
-            epoch_listeners,
+            chain_readers: chain_disk_subscribers,
+            chain_subscribers,
             node: node.clone(),
             network: network.clone(),
             events,
             txpool_service,
-            on_node_notification,
+            status_subscribers: on_node_notification,
         };
 
         Ok((service, node))
@@ -328,7 +406,7 @@ impl NodeService {
     pub fn init(&mut self) -> Result<(), Error> {
         self.update_validation_status();
         self.on_facilitator_changed();
-        self.on_sync_changed();
+        self.on_status_changed();
         self.restake_expiring_stakes()?;
         self.request_history(self.chain.epoch(), "init")?;
         Ok(())
@@ -620,7 +698,7 @@ impl NodeService {
             ChainInfo::from_blockchain(&self.chain)
         } else {
             debug!("Received ViewChangeProof from the future, ignoring for now: epoch={}, remote_offset={}, local_offset={}",
-            epoch, offset, self.chain.offset());
+                   epoch, offset, self.chain.offset());
             return Err(ForkError::Canceled);
         };
 
@@ -686,16 +764,11 @@ impl NodeService {
             let (pruned_outputs, recovered_inputs, txs, block) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
             self.mempool.pop_microblock(txs.clone());
-
-            let recovered_transaction: HashMap<_, _> =
-                txs.into_iter().map(|tx| (Hash::digest(&tx), tx)).collect();
-
-            let transaction_statuses = recovered_transaction
+            let transaction_statuses = txs
                 .iter()
-                .map(|tx| tx.0)
-                .map(|h| {
+                .map(|tx| {
                     (
-                        *h,
+                        Hash::digest(&tx),
                         TransactionStatus::Rollback {
                             epoch: self.chain.epoch(),
                             offset: self.chain.offset(),
@@ -703,17 +776,13 @@ impl NodeService {
                     )
                 })
                 .collect();
-            let msg = RollbackMicroBlock {
+            let msg = RevertedMicroBlock {
                 block,
-                recovered_transaction,
                 transaction_statuses,
                 pruned_outputs,
                 recovered_inputs,
             };
-
-            let event: NodeNotification = msg.into();
-            self.on_node_notification
-                .retain(move |ch| ch.unbounded_send(event.clone()).is_ok());
+            notify_subscribers(&mut self.chain_subscribers, msg.into());
         }
         assert_eq!(offset, self.chain.offset());
 
@@ -925,17 +994,14 @@ impl NodeService {
         while self.chain.offset() > 0 {
             let (pruned_outputs, recovered_inputs, _txs, block) = self.chain.pop_micro_block()?;
             self.last_block_clock = clock::now();
-            let msg = RollbackMicroBlock {
+            let msg = RevertedMicroBlock {
                 block,
-                recovered_transaction: HashMap::new(),
                 transaction_statuses: HashMap::new(),
                 pruned_outputs,
                 recovered_inputs,
             };
 
-            let event: NodeNotification = msg.into();
-            self.on_node_notification
-                .retain(move |ch| ch.unbounded_send(event.clone()).is_ok());
+            notify_subscribers(&mut self.chain_subscribers, msg.into());
         }
         assert_eq!(0, self.chain.offset());
 
@@ -975,19 +1041,15 @@ impl NodeService {
             .expect("Expect epoch info for last macroblock.")
             .clone();
 
-        let msg = NewMacroBlock {
+        let msg = ExtendedMacroBlock {
             block,
             epoch_info,
-            transactions,
             transaction_statuses,
         };
 
         self.on_block_added(block_timestamp, true);
 
-        let event: NodeNotification = msg.into();
-        self.on_node_notification
-            .retain(move |ch| ch.unbounded_send(event.clone()).is_ok());
-
+        notify_subscribers(&mut self.chain_subscribers, msg.into());
         self.cheating_proofs.clear();
         self.on_facilitator_changed();
         self.restake_expiring_stakes()?;
@@ -1097,17 +1159,14 @@ impl NodeService {
         assert_eq!(transaction_statuses.len(), transactions.len());
         assert!(transactions.len() >= block_transactions.len());
 
-        let msg = NewMicroBlock {
-            block,
-            transactions,
-            transaction_statuses,
-        };
-
         self.on_block_added(block_timestamp, false);
 
-        let event: NodeNotification = msg.into();
-        self.on_node_notification
-            .retain(move |ch| ch.unbounded_send(event.clone()).is_ok());
+        let msg = ExtendedMicroBlock {
+            block,
+            transaction_statuses,
+        };
+        notify_subscribers(&mut self.chain_subscribers, msg.into());
+
         Ok(())
     }
 
@@ -1134,14 +1193,13 @@ impl NodeService {
             metrics::MICRO_BLOCK_INTERVAL.set(interval);
             metrics::MICRO_BLOCK_INTERVAL_HG.observe(interval);
         }
-        self.on_sync_changed();
+        self.on_status_changed();
         self.update_validation_status();
     }
 
-    fn on_sync_changed(&mut self) {
+    fn status(&self) -> StatusInfo {
         let is_synchronized = self.is_synchronized();
-        metrics::SYNCHRONIZED.set(if is_synchronized { 1 } else { 0 });
-        let msg = SyncChanged {
+        StatusInfo {
             is_synchronized,
             epoch: self.chain.epoch(),
             offset: self.chain.offset(),
@@ -1150,36 +1208,44 @@ impl NodeService {
             last_macro_block_hash: self.chain.last_macro_block_hash(),
             last_macro_block_timestamp: self.chain.last_macro_block_timestamp(),
             local_timestamp: Timestamp::now(),
-        };
-
-        let event: NodeNotification = msg.into();
-        self.on_node_notification
-            .retain(move |ch| ch.unbounded_send(event.clone()).is_ok());
+        }
     }
 
-    /// Handler for NodeMessage::SubscribeNodeNotification.
-    fn handle_subscribe_node_notification(
-        &mut self,
-        tx: UnboundedSender<NodeNotification>,
-    ) -> Result<(), Error> {
-        self.on_node_notification.push(tx);
-        Ok(())
+    fn on_status_changed(&mut self) {
+        let msg = self.status();
+        metrics::SYNCHRONIZED.set(if msg.is_synchronized { 1 } else { 0 });
+        notify_subscribers(&mut self.status_subscribers, msg.into());
     }
 
-    /// Handler for NodeMessage::SubscribeNodeNotificationEpoch.
-    fn handle_subscribe_node_notification_with_epoch(
+    /// Handler subscription to status.
+    fn handle_subscription_to_status(
         &mut self,
-        sender: UnboundedSender<NodeNotification>,
-        starting_epoch: u64,
-    ) -> Result<(), Error> {
-        trace!("Subscribe on node notification with epoch");
-        let epoch_info = EpochListener {
-            starting_epoch,
-            sender,
-        };
-        self.epoch_listeners.push(epoch_info);
+    ) -> Result<mpsc::Receiver<StatusNotification>, Error> {
+        let (tx, rx) = mpsc::channel(1);
+        self.status_subscribers.push(tx);
+        Ok(rx)
+    }
+
+    /// Handle subscription to chain.
+    fn handle_subscription_to_chain(
+        &mut self,
+        epoch: u64,
+        offset: u32,
+    ) -> Result<mpsc::Receiver<ChainNotification>, Error> {
+        if epoch > self.chain.epoch() {
+            return Err(format_err!(
+                "Invalid epoch requested: epoch_requested={}, our_epoch={}",
+                epoch,
+                self.chain.epoch()
+            ));
+        }
+        // Set buffer size to fit entire epoch plus some extra blocks.
+        let buffer = self.chain.cfg().micro_blocks_in_epoch as usize + 10;
+        let (tx, rx) = mpsc::channel(buffer);
+        let subscriber = ChainReader { tx, epoch, offset };
+        self.chain_readers.push(subscriber);
         task::current().notify();
-        Ok(())
+        Ok(rx)
     }
 
     /// Handler for NodeRequest::AddTransaction
@@ -1203,8 +1269,8 @@ impl NodeService {
         TransactionStatus::Accepted {}
     }
 
-    /// Handler for NodeMessage::PopBlock.
-    fn handle_pop_block(&mut self) -> Result<(), Error> {
+    /// Handler for NodeMessage::RevertMicroBlock.
+    fn handle_pop_micro_block(&mut self) -> Result<(), Error> {
         warn!("Received a request to revert the latest block");
         if self.chain.offset() > 1 {
             let (pruned_outputs, recovered_inputs, txs, block) = self.chain.pop_micro_block()?;
@@ -1212,15 +1278,11 @@ impl NodeService {
 
             self.mempool.pop_microblock(txs.clone());
 
-            let recovered_transaction: HashMap<_, _> =
-                txs.into_iter().map(|tx| (Hash::digest(&tx), tx)).collect();
-
-            let transaction_statuses: HashMap<_, _> = recovered_transaction
+            let transaction_statuses: HashMap<_, _> = txs
                 .iter()
-                .map(|tx| tx.0)
-                .map(|h| {
+                .map(|tx| {
                     (
-                        *h,
+                        Hash::digest(&tx),
                         TransactionStatus::Rollback {
                             epoch: self.chain.epoch(),
                             offset: self.chain.offset(),
@@ -1228,17 +1290,13 @@ impl NodeService {
                     )
                 })
                 .collect();
-            let msg = RollbackMicroBlock {
+            let msg = RevertedMicroBlock {
                 block,
-                recovered_transaction,
                 transaction_statuses,
                 pruned_outputs,
                 recovered_inputs,
             };
-
-            let event: NodeNotification = msg.into();
-            self.on_node_notification
-                .retain(move |ch| ch.unbounded_send(event.clone()).is_ok());
+            notify_subscribers(&mut self.chain_subscribers, msg.into());
             self.update_validation_status()
         } else {
             error!(
@@ -1663,7 +1721,7 @@ impl NodeService {
         self.on_macro_block_leader_changed();
         self.handle_consensus_events();
 
-        self.on_sync_changed();
+        self.on_status_changed();
 
         Ok(())
     }
@@ -1754,7 +1812,7 @@ impl NodeService {
             self.chain.last_block_hash(),
         );
         self.handle_view_change_message(msg)?;
-        self.on_sync_changed();
+        self.on_status_changed();
 
         Ok(())
     }
@@ -1863,125 +1921,39 @@ impl NodeService {
         }
     }
 
-    fn get_macro_block_info_by_epoch(&self, epoch: u64) -> Result<NewMacroBlock, Error> {
+    fn handle_macro_block_info(&self, epoch: u64) -> Result<ExtendedMacroBlock, Error> {
         if epoch >= self.chain.epoch() {
-            return Err(format_err!("Unexpected epoch"));
+            return Err(format_err!("Macro block doesn't exists: epoch={}", epoch));
         }
 
         let block = self.chain.macro_block(epoch)?;
-        let epoch_info = self
-            .chain
-            .epoch_info(epoch)
-            .ok_or(format_err!("Epoch info not found"))?
-            .clone();
-        let msg = NewMacroBlock {
+        let epoch_info = self.chain.epoch_info(epoch).unwrap().clone();
+        let msg = ExtendedMacroBlock {
             block,
             epoch_info,
-            transactions: HashMap::new(),
             transaction_statuses: HashMap::new(),
         };
         Ok(msg)
     }
 
-    fn get_macro_blocks_info(&self, epoch: u64, limit: u64) -> Result<Vec<NewMacroBlock>, Error> {
-        if epoch >= self.chain.epoch() {
-            return Err(format_err!("Unexpected epoch"));
+    fn handle_micro_block_info(
+        &self,
+        epoch: u64,
+        offset: u32,
+    ) -> Result<ExtendedMicroBlock, Error> {
+        if epoch != self.chain.epoch() || offset >= self.chain.offset() {
+            return Err(format_err!(
+                "Micro block doesn't exists: epoch={}, offset={}",
+                epoch,
+                offset
+            ));
         }
-
-        if epoch + limit >= self.chain.epoch() {
-            return Err(format_err!("Unexpected epoch"));
-        }
-
-        let mut blocks = Vec::new();
-
-        for epoch in epoch + epoch..limit {
-            let block = self.get_macro_block_info_by_epoch(epoch)?;
-            blocks.push(block);
-        }
-
-        Ok(blocks)
-    }
-
-    /// Process listener events:
-    /// This routine was created to simplify recovery of API client.
-    ///
-    /// 1) Check if sender can receive more items. To prevent big amount of data in memory.
-    /// 2) Send epoch info by one epoch at time.
-    /// 3) Send current epoch microblocks.
-    /// 4) Subscribe listener to NodeNotifications.
-    ///
-    /// Errors:
-    /// This routine will discard listener on some errors:
-    /// 1) If listener subscribe with invalid epoch.
-    /// 2) If we got some error in database.
-    /// 3) If listener receiver side was dropped.
-    ///
-    /// On any error listener will be removed from listener list.
-    ///
-    fn process_listener(
-        &mut self,
-        mut listener: EpochListener,
-    ) -> Result<Option<EpochListener>, Error> {
-        match listener.sender.poll_complete()? {
-            Async::Ready(()) => {
-                if listener.starting_epoch > self.chain.epoch() {
-                    return Err(format_err!(
-                        "Too big epoch requested: epoch_requested={}, chain_epoch={}",
-                        listener.starting_epoch,
-                        self.chain.epoch()
-                    ));
-                }
-
-                if listener.starting_epoch == self.chain.epoch() {
-                    trace!("Send microblocks to epoch listener");
-                    // send microblocks in single batch, to prevent races.
-                    for offset in 0..self.chain.offset() {
-                        let block = self.chain.micro_block(listener.starting_epoch, offset)?;
-                        let transactions: HashMap<_, _> = block
-                            .transactions
-                            .iter()
-                            .cloned()
-                            .map(|tx| (Hash::digest(&tx), tx))
-                            .collect();
-                        let transaction_statuses = transactions
-                            .iter()
-                            .map(|(h, _tx)| {
-                                (
-                                    *h,
-                                    TransactionStatus::Prepared {
-                                        epoch: listener.starting_epoch,
-                                        offset,
-                                    },
-                                )
-                            })
-                            .collect();
-                        let block_event = NewMicroBlock {
-                            block,
-                            transactions,
-                            transaction_statuses,
-                        };
-                        listener
-                            .sender
-                            .start_send(NodeNotification::NewMicroBlock(block_event))?;
-                    }
-
-                    // And subscribe node to current stream of events.
-                    self.handle_subscribe_node_notification(listener.sender)
-                        .expect("no error in subscribe notification");
-                    return Ok(None);
-                }
-
-                trace!("Send EPOCH macroblock to epoch listener");
-                let block = self.get_macro_block_info_by_epoch(listener.starting_epoch)?;
-
-                listener
-                    .sender
-                    .start_send(NodeNotification::NewMacroBlock(block))?;
-                listener.starting_epoch += 1;
-            }
-            Async::NotReady => {}
-        }
-        Ok(listener.into())
+        let block = self.chain.micro_block(epoch, offset)?;
+        let msg = ExtendedMicroBlock {
+            block,
+            transaction_statuses: HashMap::new(),
+        };
+        Ok(msg)
     }
 }
 
@@ -2046,18 +2018,22 @@ impl Future for NodeService {
             error!("Error: {}", e);
         }
 
-        let listeners = std::mem::replace(&mut self.epoch_listeners, Vec::new());
-        for listener in listeners {
-            let listener = match self.process_listener(listener) {
-                Ok(Some(listener)) => listener,
-                Ok(None) => continue,
-                Err(e) => {
-                    error!("Error during processing listener: error={}", e);
-                    continue;
+        // Poll chain readers.
+        let mut i = 0;
+        while i < self.chain_readers.len() {
+            match self.chain_readers[i].poll(&self.chain) {
+                Ok(Async::Ready(())) => {
+                    // Synchronized with node, convert into a subscription.
+                    let subscriber = self.chain_readers.swap_remove(i);
+                    self.chain_subscribers.push(subscriber.tx);
                 }
-            };
-            // recover listener at end.
-            self.epoch_listeners.push(listener);
+                Ok(Async::NotReady) => {
+                    i += 1;
+                }
+                Err(_e) => {
+                    self.chain_readers.swap_remove(i);
+                }
+            }
         }
 
         if let Some(ref mut txpool_service) = &mut self.txpool_service {
@@ -2072,13 +2048,8 @@ impl Future for NodeService {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => {
                     let result: Result<(), Error> = match event {
-                        NodeMessage::SubscribeNodeNotification(tx) => {
-                            self.handle_subscribe_node_notification(tx)
-                        }
-                        NodeMessage::SubscribeNodeNotificationEpoch(tx, epoch) => {
-                            self.handle_subscribe_node_notification_with_epoch(tx, epoch)
-                        }
                         NodeMessage::Request { request, tx } => {
+                            trace!("=> {:?}", request);
                             let response = match request {
                                 NodeRequest::ElectionInfo {} => {
                                     NodeResponse::ElectionInfo(self.chain.election_info())
@@ -2086,12 +2057,14 @@ impl Future for NodeService {
                                 NodeRequest::EscrowInfo {} => {
                                     NodeResponse::EscrowInfo(self.chain.escrow_info())
                                 }
-                                NodeRequest::PopBlock {} => match self.handle_pop_block() {
-                                    Ok(()) => NodeResponse::BlockPopped,
-                                    Err(e) => NodeResponse::Error {
-                                        error: format!("{}", e),
-                                    },
-                                },
+                                NodeRequest::PopMicroBlock {} => {
+                                    match self.handle_pop_micro_block() {
+                                        Ok(()) => NodeResponse::MicroBlockPopped,
+                                        Err(e) => NodeResponse::Error {
+                                            error: format!("{}", e),
+                                        },
+                                    }
+                                }
                                 NodeRequest::AddTransaction(tx) => {
                                     let hash = Hash::digest(&tx);
                                     NodeResponse::AddTransaction {
@@ -2159,17 +2132,54 @@ impl Future for NodeService {
                                         NodeResponse::RestakingDisabled
                                     }
                                 }
-                                NodeRequest::GetMacroBlockInfo { epoch, limit } => {
-                                    match self.get_macro_blocks_info(epoch, limit) {
-                                        Ok(blocks_info) => {
-                                            NodeResponse::MacroBlockInfo { blocks_info }
+                                NodeRequest::StatusInfo {} => {
+                                    let status = self.status();
+                                    NodeResponse::StatusInfo(status)
+                                }
+                                NodeRequest::SubscribeStatus {} => {
+                                    match self.handle_subscription_to_status() {
+                                        Ok(rx) => {
+                                            let status = self.status();
+                                            NodeResponse::SubscribedStatus {
+                                                status,
+                                                rx: Some(rx),
+                                            }
                                         }
                                         Err(e) => NodeResponse::Error {
                                             error: format!("{}", e),
                                         },
                                     }
                                 }
+                                NodeRequest::MacroBlockInfo { epoch } => {
+                                    match self.handle_macro_block_info(epoch) {
+                                        Ok(block_info) => NodeResponse::MacroBlockInfo(block_info),
+                                        Err(e) => NodeResponse::Error {
+                                            error: format!("{}", e),
+                                        },
+                                    }
+                                }
+                                NodeRequest::MicroBlockInfo { epoch, offset } => {
+                                    match self.handle_micro_block_info(epoch, offset) {
+                                        Ok(block_info) => NodeResponse::MicroBlockInfo(block_info),
+                                        Err(e) => NodeResponse::Error {
+                                            error: format!("{}", e),
+                                        },
+                                    }
+                                }
+                                NodeRequest::SubscribeChain { epoch, offset } => {
+                                    match self.handle_subscription_to_chain(epoch, offset) {
+                                        Ok(rx) => NodeResponse::SubscribedChain {
+                                            current_epoch: self.chain.epoch(),
+                                            current_offset: self.chain.offset(),
+                                            rx: Some(rx),
+                                        },
+                                        Err(e) => NodeResponse::Error {
+                                            error: format!("{}", e),
+                                        },
+                                    }
+                                }
                             };
+                            trace!("<= {:?}", response);
                             tx.send(response).ok(); // ignore errors.
                             Ok(())
                         }

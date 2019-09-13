@@ -118,6 +118,7 @@ pub struct PaymentOutput {
     pub payload: EncryptedPayload,
 
     /// Timelock for output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locked_timestamp: Option<Timestamp>,
 }
 
@@ -134,6 +135,7 @@ pub struct PublicPaymentOutput {
     pub amount: i64,
 
     /// Timelock for output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locked_timestamp: Option<Timestamp>,
 }
 

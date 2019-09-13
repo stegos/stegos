@@ -78,7 +78,7 @@ pub struct AwardsInfo {
 
 /// Retrospective information for some epoch.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct StartEpochInfo {
+pub struct EpochInfo {
     pub validators: Vec<ValidatorKeyInfo>,
     pub facilitator: pbc::PublicKey,
     pub awards: AwardsInfo,
@@ -216,7 +216,7 @@ pub struct Blockchain {
     /// VDF difficulty,
     difficulty: u64,
     /// Starting info for each past epochs.
-    epoch_infos: HashMap<u64, StartEpochInfo>,
+    epoch_infos: HashMap<u64, EpochInfo>,
 
     //
     // Epoch Information.
@@ -730,7 +730,7 @@ impl Blockchain {
     }
 
     /// Returns start epoch info for any past epoch.
-    pub fn epoch_info(&self, epoch: u64) -> Option<&StartEpochInfo> {
+    pub fn epoch_info(&self, epoch: u64) -> Option<&EpochInfo> {
         self.epoch_infos.get(&epoch)
     }
 
@@ -927,7 +927,7 @@ impl Blockchain {
         for (id, (validator, _)) in epoch_validators.iter().enumerate() {
             match epoch_activity.get(validator) {
                 // if validator failed, or cheater, remove it from bitmap.
-                Some(ValidatorAwardState::FailedAt { .. }) | None => {
+                Some(ValidatorAwardState::Failed { .. }) | None => {
                     activity_map.remove(id);
                 }
                 _ => {}
@@ -967,7 +967,7 @@ impl Blockchain {
             let activity = if activity {
                 ValidatorAwardState::Active
             } else {
-                ValidatorAwardState::FailedAt {
+                ValidatorAwardState::Failed {
                     epoch: self.epoch,
                     offset: self.offset(),
                 }
@@ -975,7 +975,7 @@ impl Blockchain {
 
             // multiple validators can have single wallet.
             // So try to override only Active state.
-            if let Some(ValidatorAwardState::FailedAt { .. }) =
+            if let Some(ValidatorAwardState::Failed { .. }) =
                 validators_activity.get(&validator_account)
             {
                 continue;
@@ -1401,7 +1401,7 @@ impl Blockchain {
             }),
         };
 
-        let epoch_info = StartEpochInfo {
+        let epoch_info = EpochInfo {
             awards,
             facilitator,
             validators,
@@ -1708,7 +1708,7 @@ impl Blockchain {
             self.epoch_activity.insert(
                 lsn,
                 leader,
-                ValidatorAwardState::FailedAt {
+                ValidatorAwardState::Failed {
                     epoch: self.epoch(),
                     offset: self.offset(),
                 },

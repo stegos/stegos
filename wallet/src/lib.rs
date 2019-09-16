@@ -277,8 +277,16 @@ impl UnsealedAccountService {
         locked_timestamp: Option<Timestamp>,
         with_certificate: bool,
     ) -> Result<TransactionInfo, Error> {
-        let data = PaymentPayloadData::Comment(comment);
+        let payment_balance = self.balance().payment;
+        if amount > payment_balance.available {
+            return Err(WalletError::NoEnoughPayment(
+                payment_balance.current,
+                payment_balance.available,
+            )
+            .into());
+        }
 
+        let data = PaymentPayloadData::Comment(comment);
         let unspent_iter = self.unspent_payments();
         let sender = if with_certificate {
             Some(&self.account_skey)
@@ -339,6 +347,17 @@ impl UnsealedAccountService {
             })
     }
 
+    /// Stake that is not active, and could be spent.
+    fn unlocked_stake<'a>(&'a self) -> impl Iterator<Item = StakeOutput> + 'a {
+        self.account_log
+            .iter_unspent()
+            .filter_map(|(_k, v)| v.stake())
+            // All stake unspent utxo should be with info about active epoch.
+            .filter_map(|v| v.active_until_epoch.map(|epoch| (v.output, epoch)))
+            .filter(move |(_v, epoch)| *epoch <= self.epoch)
+            .map(|(o, _e)| o)
+    }
+
     /// Send money public.
     fn public_payment(
         &mut self,
@@ -347,6 +366,15 @@ impl UnsealedAccountService {
         payment_fee: i64,
         locked_timestamp: Option<Timestamp>,
     ) -> Result<TransactionInfo, Error> {
+        let payment_balance = self.balance().payment;
+        if amount > payment_balance.available {
+            return Err(WalletError::NoEnoughPayment(
+                payment_balance.current,
+                payment_balance.available,
+            )
+            .into());
+        }
+
         let unspent_iter = self.unspent_payments();
         let (inputs, outputs, gamma, extended_outputs, fee) = create_payment_transaction(
             Some(&self.account_skey),
@@ -423,6 +451,14 @@ impl UnsealedAccountService {
         if self.snowball.is_some() {
             return Err(WalletError::SnowballBusy.into());
         }
+        let payment_balance = self.balance().payment;
+        if amount > payment_balance.available {
+            return Err(WalletError::NoEnoughPayment(
+                payment_balance.current,
+                payment_balance.available,
+            )
+            .into());
+        }
         let data = PaymentPayloadData::Comment(comment);
 
         let unspent_iter = self.unspent_payments();
@@ -467,6 +503,15 @@ impl UnsealedAccountService {
 
     /// Stake money into the escrow.
     fn stake(&mut self, amount: i64, payment_fee: i64) -> Result<TransactionInfo, Error> {
+        let payment_balance = self.balance().payment;
+        if amount > payment_balance.available {
+            return Err(WalletError::NoEnoughPayment(
+                payment_balance.current,
+                payment_balance.available,
+            )
+            .into());
+        }
+
         let unspent_iter = self.unspent_payments();
         let (tx, outputs) = create_staking_transaction(
             &self.account_skey,
@@ -500,11 +545,14 @@ impl UnsealedAccountService {
     /// Unstake money from the escrow.
     /// NOTE: amount must include PAYMENT_FEE.
     fn unstake(&mut self, amount: i64, payment_fee: i64) -> Result<TransactionInfo, Error> {
-        let unspent_iter = self
-            .account_log
-            .iter_unspent()
-            .filter_map(|(_k, v)| v.stake())
-            .map(|v| v.output);
+        let stake_balance = self.balance().stake;
+        if amount > stake_balance.available {
+            return Err(
+                WalletError::NoEnoughStake(stake_balance.current, stake_balance.available).into(),
+            );
+        }
+
+        let unspent_iter = self.unlocked_stake();
         let (tx, outputs) = create_unstaking_transaction(
             &self.account_skey,
             &self.account_pkey,
@@ -525,12 +573,11 @@ impl UnsealedAccountService {
     /// Unstake all of the money from the escrow.
     fn unstake_all(&mut self, payment_fee: i64) -> Result<TransactionInfo, Error> {
         let mut amount: i64 = 0;
-        for val in self
-            .account_log
-            .iter_unspent()
-            .filter_map(|(_k, v)| v.stake())
-        {
-            amount += val.output.amount;
+        for output in self.unlocked_stake() {
+            amount += output.amount;
+        }
+        if amount <= payment_fee {
+            return Err(WalletError::NotEnoughMoney.into());
         }
         self.unstake(amount, payment_fee)
     }
@@ -538,21 +585,11 @@ impl UnsealedAccountService {
     /// Restake all available stakes (even if not expired).
     fn restake_all(&mut self) -> Result<TransactionInfo, Error> {
         assert_eq!(STAKE_FEE, 0);
-        if self
-            .account_log
-            .iter_unspent()
-            .filter_map(|(_k, v)| v.stake())
-            .count()
-            == 0
-        {
+        if self.unlocked_stake().count() == 0 {
             return Err(WalletError::NothingToRestake.into());
         }
 
-        let stakes = self
-            .account_log
-            .iter_unspent()
-            .filter_map(|(_k, v)| v.stake())
-            .map(|val| val.output);
+        let stakes = self.unlocked_stake();
         let (tx, outputs) = create_restaking_transaction(
             &self.account_skey,
             &self.account_pkey,

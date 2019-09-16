@@ -34,8 +34,23 @@ pub enum WalletError {
     NoPublicOutputs,
     #[fail(display = "Negative amount: amount={}", _0)]
     NegativeAmount(i64),
-    #[fail(display = "Insufficient stake: min={}, got={}.", _0, _1)]
+    /// Stake amount is less than fee.
+    #[fail(
+        display = "Stake transaction should contain be more than fee: fee={}, got={}.",
+        _0, _1
+    )]
     InsufficientStake(i64, i64),
+    /// Enough amount of stake should be unlocked.
+    #[fail(
+        display = "No enough stake available: current={}, available={}.",
+        _0, _1
+    )]
+    NoEnoughStake(i64, i64),
+    #[fail(
+        display = "No enough payment utxo available: current={}, available={}.",
+        _0, _1
+    )]
+    NoEnoughPayment(i64, i64),
     #[fail(display = "Incorrect TXIN type")]
     IncorrectTXINType,
     #[fail(display = "Nothing to re-stake")]

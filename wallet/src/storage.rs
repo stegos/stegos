@@ -192,7 +192,7 @@ impl AccountDatabase {
             .filter(move |(hash, _)| self.utxos.get(hash).is_none())
             .inspect(|(k, _)| trace!("Iter UTXO from db = {}", k));
         // add utxos that was not finalized.
-        iter_filtered.chain(
+        let iter_chained = iter_filtered.chain(
             self.utxos
                 .iter()
                 .filter_map(|(k, v)| match v {
@@ -200,7 +200,15 @@ impl AccountDatabase {
                     UnspentOutput::Removed => None,
                 })
                 .inspect(|(k, _)| trace!("Iter UTXO from mem = {}", k)),
-        )
+        );
+        // map info about change.
+        iter_chained.map(move |(h, mut utxo)| {
+            match &mut utxo {
+                OutputValue::Payment(ref mut p) => p.is_change = self.known_changes.contains(&h),
+                _ => (),
+            }
+            (h, utxo)
+        })
     }
 
     pub fn insert_unspent(&mut self, utxo: OutputValue) -> Result<(), Error> {

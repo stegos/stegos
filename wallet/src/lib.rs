@@ -148,6 +148,8 @@ struct UnsealedAccountService {
     //
     /// Current Epoch.
     epoch: u64,
+    /// Is last update of UTXO was in current epoch.
+    current_epoch_balance_changed: bool,
     /// Time of last macro block.
     last_macro_block_timestamp: Timestamp,
     /// Faciliator's PBC public key
@@ -238,6 +240,7 @@ impl UnsealedAccountService {
         };
         let chain_notifications = ChainSubscription::new(&node, epoch, 0);
 
+        let current_epoch_balance_changed = false;
         info!("Loading account {}", account_pkey);
 
         UnsealedAccountService {
@@ -250,6 +253,7 @@ impl UnsealedAccountService {
             network_pkey,
             account_log,
             epoch,
+            current_epoch_balance_changed,
             facilitator_pkey,
             pending_payments,
             resend_tx,
@@ -705,11 +709,12 @@ impl UnsealedAccountService {
         balance.total.available =
             balance.payment.available + balance.stake.available + balance.public_payment.available;
         assert!(balance.total.available <= balance.total.current);
+        balance.is_final = !self.current_epoch_balance_changed;
         balance
     }
 
     /// Called when outputs registered and/or pruned.
-    fn on_outputs_changed<'a, I, O>(&mut self, epoch: u64, inputs: I, outputs: O)
+    fn on_outputs_changed<'a, I, O>(&mut self, epoch: u64, inputs: I, outputs: O, is_final: bool)
     where
         I: Iterator<Item = &'a Hash>,
         O: Iterator<Item = &'a Output>,
@@ -725,6 +730,10 @@ impl UnsealedAccountService {
             self.on_output_pruned(input_hash);
         }
 
+        // finalize epoch balance, before checking balance info.
+        if is_final {
+            self.current_epoch_balance_changed = false;
+        }
         let balance = self.balance();
         if saved_balance != balance {
             self.notify_balance_changed(balance);
@@ -736,6 +745,8 @@ impl UnsealedAccountService {
         if !output.is_my_utxo(&self.account_skey, &self.account_pkey) {
             return;
         }
+
+        self.current_epoch_balance_changed = true;
         let hash = Hash::digest(&output);
         match output {
             Output::PaymentOutput(o) => {
@@ -834,7 +845,7 @@ impl UnsealedAccountService {
             Some(o) => o,
             None => return,
         };
-
+        self.current_epoch_balance_changed = true;
         match output {
             OutputValue::Payment(p) => {
                 let o = p.output;
@@ -1359,6 +1370,7 @@ impl Future for UnsealedAccountService {
                             block.block.header.epoch,
                             block.inputs(),
                             block.outputs(),
+                            false,
                         );
                     }
                     ChainNotification::MacroBlockCommitted(block) => {
@@ -1372,6 +1384,7 @@ impl Future for UnsealedAccountService {
                             block.block.header.epoch,
                             block.inputs(),
                             block.outputs(),
+                            true,
                         );
                         self.on_epoch_changed(
                             block.block.header.epoch,
@@ -1402,6 +1415,7 @@ impl Future for UnsealedAccountService {
                             block.block.header.epoch,
                             block.pruned_outputs(),
                             block.recovered_inputs(),
+                            false,
                         );
                     }
                 },

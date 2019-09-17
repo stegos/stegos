@@ -291,7 +291,7 @@ impl UnsealedAccountService {
         }
 
         let data = PaymentPayloadData::Comment(comment);
-        let unspent_iter = self.unspent_payments();
+        let unspent_iter = self.available_payment_outputs();
         let sender = if with_certificate {
             Some(&self.account_skey)
         } else {
@@ -307,7 +307,6 @@ impl UnsealedAccountService {
             payment_fee,
             TransactionType::Regular(data.clone()),
             locked_timestamp,
-            self.last_macro_block_timestamp,
             self.max_inputs_in_tx,
         )?;
 
@@ -337,22 +336,38 @@ impl UnsealedAccountService {
         Ok(payment_info.to_info(self.epoch))
     }
 
-    fn unspent_payments<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = (PaymentOutput, i64, Option<Timestamp>)> + 'a {
+    /// Returns an iterator over available payment outputs.
+    fn available_payment_outputs<'a>(&'a self) -> impl Iterator<Item = (PaymentOutput, i64)> + 'a {
         self.account_log
             .iter_unspent()
             .filter_map(|(k, v)| v.payment().map(|v| (k, v)))
             .filter(move |(h, _)| self.pending_payments.get(h).is_none())
-            .inspect(|(h, _)| trace!("full unspent iter = {}", h))
-            .map(|(_, v)| {
-                let time = v.output.locked_timestamp.clone();
-                (v.output, v.amount, time)
+            .filter(move |(_h, v)| match &v.output.locked_timestamp {
+                Some(time) if time >= &self.last_macro_block_timestamp => false,
+                _ => true,
             })
+            .inspect(|(h, _)| trace!("Using PaymentOutput: hash={}", h))
+            .map(|(_, v)| (v.output, v.amount))
     }
 
-    /// Stake that is not active, and could be spent.
-    fn unlocked_stake<'a>(&'a self) -> impl Iterator<Item = StakeOutput> + 'a {
+    /// Returns an iterator over available public payment outputs.
+    fn available_public_payment_outputs<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = PublicPaymentOutput> + 'a {
+        self.account_log
+            .iter_unspent()
+            .filter_map(|(k, v)| v.public_payment().map(|v| (k, v)))
+            .filter(move |(h, _)| self.pending_payments.get(h).is_none())
+            .filter(move |(_h, v)| match &v.locked_timestamp {
+                Some(time) if time >= &self.last_macro_block_timestamp => false,
+                _ => true,
+            })
+            .inspect(|(h, _)| trace!("Using PublicPaymentOutput: hash={}", h))
+            .map(|(_, v)| v)
+    }
+
+    /// Returns an iterator over available stake outputs.
+    fn available_stake_outputs<'a>(&'a self) -> impl Iterator<Item = StakeOutput> + 'a {
         self.account_log
             .iter_unspent()
             .filter_map(|(_k, v)| v.stake())
@@ -379,7 +394,7 @@ impl UnsealedAccountService {
             .into());
         }
 
-        let unspent_iter = self.unspent_payments();
+        let unspent_iter = self.available_payment_outputs();
         let (inputs, outputs, gamma, extended_outputs, fee) = create_payment_transaction(
             Some(&self.account_skey),
             &self.account_pkey,
@@ -389,7 +404,6 @@ impl UnsealedAccountService {
             payment_fee,
             TransactionType::Public,
             locked_timestamp,
-            self.last_macro_block_timestamp,
             self.max_inputs_in_tx,
         )?;
 
@@ -465,7 +479,7 @@ impl UnsealedAccountService {
         }
         let data = PaymentPayloadData::Comment(comment);
 
-        let unspent_iter = self.unspent_payments();
+        let unspent_iter = self.available_payment_outputs();
         let (inputs, outputs, fee) = create_snowball_transaction(
             &self.account_pkey,
             recipient,
@@ -474,7 +488,6 @@ impl UnsealedAccountService {
             payment_fee,
             data,
             locked_timestamp,
-            self.last_macro_block_timestamp,
             snowball::MAX_UTXOS,
         )?;
         assert!(inputs.len() <= snowball::MAX_UTXOS);
@@ -516,7 +529,7 @@ impl UnsealedAccountService {
             .into());
         }
 
-        let unspent_iter = self.unspent_payments();
+        let unspent_iter = self.available_payment_outputs();
         let (tx, outputs) = create_staking_transaction(
             &self.account_skey,
             &self.account_pkey,
@@ -526,7 +539,6 @@ impl UnsealedAccountService {
             amount,
             payment_fee,
             STAKE_FEE,
-            self.last_macro_block_timestamp,
             self.max_inputs_in_tx,
         )?;
         let payment_info = TransactionValue::new_stake(tx.clone(), outputs);
@@ -556,7 +568,7 @@ impl UnsealedAccountService {
             );
         }
 
-        let unspent_iter = self.unlocked_stake();
+        let unspent_iter = self.available_stake_outputs();
         let (tx, outputs) = create_unstaking_transaction(
             &self.account_skey,
             &self.account_pkey,
@@ -566,7 +578,6 @@ impl UnsealedAccountService {
             amount,
             payment_fee,
             STAKE_FEE,
-            self.last_macro_block_timestamp,
             self.max_inputs_in_tx,
         )?;
         let payment_info = TransactionValue::new_stake(tx.clone(), outputs);
@@ -577,7 +588,7 @@ impl UnsealedAccountService {
     /// Unstake all of the money from the escrow.
     fn unstake_all(&mut self, payment_fee: i64) -> Result<TransactionInfo, Error> {
         let mut amount: i64 = 0;
-        for output in self.unlocked_stake() {
+        for output in self.available_stake_outputs() {
             amount += output.amount;
         }
         if amount <= payment_fee {
@@ -589,11 +600,11 @@ impl UnsealedAccountService {
     /// Restake all available stakes (even if not expired).
     fn restake_all(&mut self) -> Result<TransactionInfo, Error> {
         assert_eq!(STAKE_FEE, 0);
-        if self.unlocked_stake().count() == 0 {
+        if self.available_stake_outputs().count() == 0 {
             return Err(WalletError::NothingToRestake.into());
         }
 
-        let stakes = self.unlocked_stake();
+        let stakes = self.available_stake_outputs();
         let (tx, outputs) = create_restaking_transaction(
             &self.account_skey,
             &self.account_pkey,
@@ -619,16 +630,12 @@ impl UnsealedAccountService {
             return Err(WalletError::NoPublicOutputs.into());
         }
 
-        let public_utxos = self
-            .account_log
-            .iter_unspent()
-            .filter_map(|(_k, v)| v.public_payment());
+        let public_utxos = self.available_public_payment_outputs();
         let (tx, output) = create_cloaking_transaction(
             &self.account_skey,
             &self.account_pkey,
             public_utxos,
             payment_fee,
-            self.last_macro_block_timestamp,
         )?;
 
         let info = TransactionValue::new_cloak(tx.clone(), output);

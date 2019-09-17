@@ -734,11 +734,6 @@ impl UnsealedAccountService {
 
     /// Called when UTXO is created.
     fn on_output_created(&mut self, epoch: u64, output: &Output) {
-        if !output.is_my_utxo(&self.account_skey, &self.account_pkey) {
-            return;
-        }
-
-        self.current_epoch_balance_changed = true;
         let hash = Hash::digest(&output);
         match output {
             Output::PaymentOutput(o) => {
@@ -750,6 +745,7 @@ impl UnsealedAccountService {
                         "Received: utxo={}, amount={}, data={:?}",
                         hash, amount, data
                     );
+                    self.current_epoch_balance_changed = true;
                     let value = PaymentValue {
                         output: o.clone(),
                         amount,
@@ -779,9 +775,13 @@ impl UnsealedAccountService {
                 }
             }
             Output::PublicPaymentOutput(o) => {
+                if &o.recipient != &self.account_pkey {
+                    return;
+                }
                 let PublicPaymentOutput { ref amount, .. } = &o;
                 assert!(*amount >= 0);
                 info!("Received public payment: utxo={}, amount={}", hash, amount);
+                self.current_epoch_balance_changed = true;
                 let value = o.clone();
 
                 if let Err(e) = self
@@ -803,11 +803,15 @@ impl UnsealedAccountService {
                 self.notify(AccountNotification::ReceivedPublic(info));
             }
             Output::StakeOutput(o) => {
+                if &o.recipient != &self.account_pkey {
+                    return;
+                }
                 let active_until_epoch = epoch + self.stake_epochs;
                 info!(
                     "Staked money to escrow: hash={}, amount={}, active_until_epoch={}",
                     hash, o.amount, active_until_epoch
                 );
+                self.current_epoch_balance_changed = true;
                 let value = StakeValue {
                     output: o.clone(),
                     active_until_epoch: active_until_epoch.into(),
@@ -841,27 +845,26 @@ impl UnsealedAccountService {
         match output {
             OutputValue::Payment(p) => {
                 let o = p.output;
-                if let Ok(PaymentPayload { amount, data, .. }) =
-                    o.decrypt_payload(&self.account_skey)
+                let PaymentPayload { amount, data, .. } =
+                    o.decrypt_payload(&self.account_skey).expect("is my utxo");
+                info!("Spent: utxo={}, amount={}, data={:?}", hash, amount, data);
+                match self
+                    .database
+                    .get_unspent(&hash)
+                    .expect("Cannot read database")
                 {
-                    info!("Spent: utxo={}, amount={}, data={:?}", hash, amount, data);
-                    match self
-                        .database
-                        .get_unspent(&hash)
-                        .expect("Cannot read database")
-                    {
-                        Some(OutputValue::Payment(value)) => {
-                            self.database
-                                .remove_unspent(&hash)
-                                .expect("Cannot write database");
-                            let info = value.to_info(self.pending_payments.get(&hash));
-                            self.notify(AccountNotification::Spent(info));
-                        }
-                        _ => panic!("Inconsistent account state"),
+                    Some(OutputValue::Payment(value)) => {
+                        self.database
+                            .remove_unspent(&hash)
+                            .expect("Cannot write database");
+                        let info = value.to_info(self.pending_payments.get(&hash));
+                        self.notify(AccountNotification::Spent(info));
                     }
+                    _ => panic!("Inconsistent account state"),
                 }
             }
             OutputValue::PublicPayment(p) => {
+                assert_eq!(p.recipient, self.account_pkey, "is my utxo");
                 let PublicPaymentOutput { amount, .. } = p;
                 info!("Spent public payment: utxo={}, amount={}", hash, amount);
                 match self
@@ -881,6 +884,7 @@ impl UnsealedAccountService {
             }
             OutputValue::Stake(s) => {
                 let o = s.output;
+                assert_eq!(o.recipient, self.account_pkey, "is my utxo");
                 info!("Unstaked: utxo={}, amount={}", hash, o.amount);
                 match self
                     .database

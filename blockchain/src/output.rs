@@ -571,12 +571,6 @@ impl PaymentOutput {
         Ok(self.proof.vcmt)
     }
 
-    /// Checks that UTXO belongs to given key.
-    pub fn is_my_utxo(&self, skey: &SecretKey, _pkey: &PublicKey) -> bool {
-        // TODO: use cloaking_hint here.
-        self.decrypt_payload(&skey).is_ok()
-    }
-
     // Returns the amount from the encrypted payload,
     // if you know the secret rvalue for the payload keying
     pub fn validate_certificate(
@@ -636,11 +630,6 @@ impl PublicPaymentOutput {
     pub fn pedersen_commitment(&self) -> Result<Pt, CryptoError> {
         Ok(fee_a(self.amount))
     }
-
-    /// Checks that UTXO belongs to given key.
-    pub fn is_my_utxo(&self, pkey: &PublicKey) -> bool {
-        &self.recipient == pkey
-    }
 }
 
 impl StakeOutput {
@@ -688,11 +677,6 @@ impl StakeOutput {
     pub fn pedersen_commitment(&self) -> Result<Pt, CryptoError> {
         Ok(fee_a(self.amount))
     }
-
-    /// Checks that UTXO belongs to given key.
-    pub fn is_my_utxo(&self, pkey: &PublicKey) -> bool {
-        &self.recipient == pkey
-    }
 }
 
 impl Output {
@@ -737,15 +721,6 @@ impl Output {
             Output::PaymentOutput(o) => o.pedersen_commitment(),
             Output::PublicPaymentOutput(o) => o.pedersen_commitment(),
             Output::StakeOutput(o) => o.pedersen_commitment(),
-        }
-    }
-
-    /// Checks that UTXO belongs to given key.
-    pub fn is_my_utxo(&self, skey: &SecretKey, pkey: &PublicKey) -> bool {
-        match self {
-            Output::PaymentOutput(o) => o.is_my_utxo(skey, pkey),
-            Output::PublicPaymentOutput(o) => o.is_my_utxo(&pkey),
-            Output::StakeOutput(o) => o.is_my_utxo(&pkey),
         }
     }
 

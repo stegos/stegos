@@ -97,7 +97,12 @@ fn recover_account(
             return; // Spent.
         }
 
-        if output.is_my_utxo(account_skey, account_pkey) {
+        let is_my_utxo = match output {
+            Output::PaymentOutput(o) => o.decrypt_payload(&account_skey).is_ok(),
+            Output::PublicPaymentOutput(o) => &o.recipient == account_pkey,
+            Output::StakeOutput(o) => &o.recipient == account_pkey,
+        };
+        if is_my_utxo {
             let output = OutputRecovery {
                 output: output.clone(),
                 epoch,

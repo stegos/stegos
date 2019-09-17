@@ -34,7 +34,10 @@ hex = "0.3.2"
 rocksdb = { version = "0.11", default-features = false, features = [ "zstd","snappy", "lz4"] }
 
 [dev-dependencies]
+serde_cbor = "0.10.1"
 serde_json = "1.0"
+bincode = "1.1.4"
+rmp-serde = "0.14.0"
 simple_logger = "1.2"
 criterion = "0.2"
 serde_derive = "1.0"

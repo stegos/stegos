@@ -1,11 +1,17 @@
 #![feature(test)]
 
-use criterion::{criterion_group, criterion_main, Bencher, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, Bencher, Criterion};
 use log::*;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use simple_logger;
 use std::path::Path;
 use std::time::Duration;
-use stegos_blockchain::{test, Blockchain, ChainConfig, MacroBlock, Timestamp};
+use stegos_blockchain::{
+    test, Blockchain, ChainConfig, MacroBlock, PaymentOutput, PaymentPayload, Timestamp,
+};
+use stegos_crypto::scc::make_random_keys;
+use stegos_serialization::traits::ProtoConvert;
 use tempdir::TempDir;
 
 fn generate_chain(
@@ -90,9 +96,9 @@ fn push_macro_block(b: &mut Bencher) {
                 timestamp,
             )
             .unwrap();
-            (chain, temp_dir, blocks.clone())
+            (chain, blocks.clone())
         },
-        |(mut chain, _temp_dir, blocks)| {
+        |(mut chain, blocks)| {
             for block in blocks.into_iter().skip(1) {
                 chain.push_macro_block(block, timestamp).unwrap();
             }
@@ -126,15 +132,137 @@ fn recover_macro_block(b: &mut Bencher) {
     });
 }
 
+enum Serialization {
+    CBOR,
+    ProtoBuf,
+    Bincode,
+    MsgPack,
+}
+
+impl Serialization {
+    fn serialize<T: Serialize + ProtoConvert>(&self, val: &T) -> Vec<u8> {
+        match self {
+            Self::CBOR => serde_cbor::to_vec(val).unwrap(),
+            Self::Bincode => bincode::serialize(val).unwrap(),
+            Self::MsgPack => rmp_serde::to_vec(val).unwrap(),
+            Self::ProtoBuf => val.into_buffer().unwrap(),
+        }
+    }
+    fn deserialize<T: DeserializeOwned + ProtoConvert>(&self, val: &[u8]) -> T {
+        match self {
+            Self::CBOR => serde_cbor::from_slice(val).unwrap(),
+            Self::Bincode => bincode::deserialize_from(val).unwrap(),
+            Self::MsgPack => rmp_serde::from_read(val).unwrap(),
+            Self::ProtoBuf => T::from_buffer(val).unwrap(),
+        }
+    }
+}
+
+fn serialize_macro_block(b: &mut Bencher, s: Serialization) {
+    const NUM_NODES: usize = 32;
+    const EPOCHS: u64 = 10;
+    let cfg = ChainConfig {
+        stake_epochs: 100,
+        micro_blocks_in_epoch: 1,
+        ..Default::default()
+    };
+    let chain_dir = TempDir::new("bench").unwrap();
+    let blocks = generate_chain(cfg.clone(), chain_dir.path(), NUM_NODES, EPOCHS);
+
+    let block = blocks[0].clone();
+    // Try to recovery from the disk.
+    info!("Starting benchmark");
+    let timestamp = Timestamp::now();
+
+    b.iter(|| black_box(s.serialize(&block)));
+}
+
+fn deserialize_macro_block(b: &mut Bencher, s: Serialization) {
+    const NUM_NODES: usize = 32;
+    const EPOCHS: u64 = 10;
+    let cfg = ChainConfig {
+        stake_epochs: 100,
+        micro_blocks_in_epoch: 1,
+        ..Default::default()
+    };
+    let chain_dir = TempDir::new("bench").unwrap();
+    let blocks = generate_chain(cfg.clone(), chain_dir.path(), NUM_NODES, EPOCHS);
+
+    let block = blocks[0].clone();
+    // Try to recovery from the disk.
+    info!("Starting benchmark");
+    let timestamp = Timestamp::now();
+
+    let buffer = s.serialize(&block);
+
+    b.iter(|| black_box(s.deserialize::<MacroBlock>(&buffer)));
+}
+
+fn serialize_payment(b: &mut Bencher, s: Serialization) {
+    let (_, pk) = make_random_keys();
+    let payment = PaymentOutput::new(&pk, 100).unwrap();
+    info!("Starting benchmark");
+    b.iter(|| black_box(s.serialize(&payment.0)));
+}
+
+fn deserialize_payment(b: &mut Bencher, s: Serialization) {
+    let (_, pk) = make_random_keys();
+    let payment = PaymentOutput::new(&pk, 100).unwrap();
+
+    let buffer = s.serialize(&payment.0);
+    info!("Starting benchmark");
+
+    b.iter(|| black_box(s.deserialize::<PaymentOutput>(&buffer)));
+}
+
 fn blocks_benchmark(c: &mut Criterion) {
-    simple_logger::init_with_level(log::Level::Info).unwrap_or_default();
+    //simple_logger::init_with_level(log::Level::Info).unwrap_or_default();
     c.bench_function("blockchain::push_macro_block(10)", push_macro_block);
     c.bench_function("blockchain::recover_macro_block(10)", recover_macro_block);
+    c.bench_function("blockchain::serialize_macro(cbor)", |b| {
+        serialize_macro_block(b, Serialization::CBOR)
+    });
+    c.bench_function("blockchain::serialize_macro(proto)", |b| {
+        serialize_macro_block(b, Serialization::ProtoBuf)
+    });
+
+    c.bench_function("blockchain::deserialize_macro(cbor)", |b| {
+        deserialize_macro_block(b, Serialization::CBOR)
+    });
+    c.bench_function("blockchain::deserialize_macro(proto)", |b| {
+        deserialize_macro_block(b, Serialization::ProtoBuf)
+    });
+
+    c.bench_function("blockchain::serialize_payment(cbor)", |b| {
+        serialize_payment(b, Serialization::CBOR)
+    });
+    c.bench_function("blockchain::serialize_payment(bincode)", |b| {
+        serialize_payment(b, Serialization::Bincode)
+    });
+    c.bench_function("blockchain::serialize_payment(msgpack)", |b| {
+        serialize_payment(b, Serialization::MsgPack)
+    });
+    c.bench_function("blockchain::serialize_payment(proto)", |b| {
+        serialize_payment(b, Serialization::ProtoBuf)
+    });
+
+    c.bench_function("blockchain::deserialize_payment(cbor)", |b| {
+        deserialize_payment(b, Serialization::CBOR)
+    });
+    //    c.bench_function("blockchain::deserialize_payment(bincode)", |b| {
+    //        deserialize_payment(b, Serialization::Bincode)
+    //    });
+    c.bench_function("blockchain::deserialize_payment(MsgPack)", |b| {
+        deserialize_payment(b, Serialization::MsgPack)
+    });
+    c.bench_function("blockchain::deserialize_payment(proto)", |b| {
+        deserialize_payment(b, Serialization::ProtoBuf)
+    });
 }
 
 criterion_group! {
      name = benches;
-     config = Criterion::default().measurement_time(Duration::from_secs(10)).warm_up_time(Duration::from_secs(1)).sample_size(2);
+     config = Criterion::default().measurement_time(Duration::from_secs(10)).warm_up_time(Duration::from_secs(1)).sample_size(10);
      targets = blocks_benchmark
 }
 

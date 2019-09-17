@@ -23,16 +23,16 @@
 
 #![allow(dead_code)]
 
-use crate::block::{MacroBlock, MicroBlock};
-use crate::blockchain::Blockchain;
-use crate::election::mix;
-use crate::multisignature::create_multi_signature;
-use crate::output::{Output, PaymentOutput, PaymentPayloadData, StakeOutput};
-use crate::timestamp::Timestamp;
-use crate::transaction::{
+use super::block::{Block, MacroBlock, MicroBlock};
+use super::blockchain::{Blockchain, OutputRecovery};
+use super::election::mix;
+use super::error::BlockchainError;
+use super::multisignature::create_multi_signature;
+use super::output::{Output, PaymentOutput, PaymentPayloadData, StakeOutput};
+use super::timestamp::Timestamp;
+use super::transaction::{
     CoinbaseTransaction, PaymentTransaction, RestakeTransaction, Transaction,
 };
-use crate::OutputRecovery;
 use bitvector::BitVector;
 use log::*;
 use rand::{thread_rng, Rng};
@@ -40,7 +40,7 @@ use rand_core::RngCore;
 use std::collections::{BTreeMap, HashMap};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
-use stegos_crypto::scc::{self, Fr};
+use stegos_crypto::scc;
 
 #[derive(Clone, Debug)]
 pub struct KeyChain {
@@ -65,6 +65,133 @@ impl KeyChain {
             network_pkey,
         }
     }
+}
+
+#[derive(Eq, PartialEq, Debug, Default, Clone)]
+pub struct AccountRecoveryState {
+    pub removed: HashMap<Hash, OutputRecovery>,
+    pub commited: HashMap<Hash, OutputRecovery>,
+    pub prepared: HashMap<Hash, OutputRecovery>,
+}
+
+///
+/// Recovery account state from the blockchain.
+///
+fn recover_account(
+    chain: &Blockchain,
+    account_skey: &scc::SecretKey,
+    account_pkey: &scc::PublicKey,
+    mut epoch: u64,
+    mut unspent: HashMap<Hash, Output>,
+) -> Result<AccountRecoveryState, BlockchainError> {
+    let mut account_state: AccountRecoveryState = Default::default();
+
+    let process_output = |account_state: &mut AccountRecoveryState,
+                          output: &Output,
+                          epoch: u64,
+                          block_hash: &Hash,
+                          is_final: bool,
+                          timestamp: Timestamp| {
+        let output_hash = Hash::digest(&output);
+        if !chain.contains_output(&output_hash) {
+            return; // Spent.
+        }
+
+        let is_my_utxo = match output {
+            Output::PaymentOutput(o) => o.decrypt_payload(&account_skey).is_ok(),
+            Output::PublicPaymentOutput(o) => &o.recipient == account_pkey,
+            Output::StakeOutput(o) => &o.recipient == account_pkey,
+        };
+        if is_my_utxo {
+            let output = OutputRecovery {
+                output: output.clone(),
+                epoch,
+                block_hash: block_hash.clone(),
+                timestamp,
+                is_final,
+            };
+
+            if is_final {
+                account_state.commited.insert(output_hash, output);
+            } else {
+                account_state.prepared.insert(output_hash, output);
+            }
+        }
+    };
+
+    let mut process_input = |account_state: &mut AccountRecoveryState,
+                             input: &Hash,
+                             epoch: u64,
+                             block_hash: &Hash,
+                             is_final: bool,
+                             timestamp: Timestamp| {
+        if let Some(output) = unspent.remove(input) {
+            let output = OutputRecovery {
+                output,
+                epoch,
+                block_hash: block_hash.clone(),
+                timestamp,
+                is_final,
+            };
+
+            account_state.removed.insert(*input, output);
+        }
+    };
+
+    for block in chain.blocks_starting(epoch, 0) {
+        let block_hash = Hash::digest(&block);
+        match block {
+            Block::MacroBlock(block) => {
+                for output in &block.outputs {
+                    process_output(
+                        &mut account_state,
+                        output,
+                        epoch,
+                        &block_hash,
+                        true,
+                        block.header.timestamp,
+                    );
+                }
+                for input in &block.inputs {
+                    process_input(
+                        &mut account_state,
+                        input,
+                        epoch,
+                        &block_hash,
+                        false,
+                        block.header.timestamp,
+                    )
+                }
+                epoch += 1;
+            }
+            Block::MicroBlock(block) => {
+                for tx in block.transactions {
+                    for output in tx.txouts() {
+                        process_output(
+                            &mut account_state,
+                            output,
+                            epoch,
+                            &block_hash,
+                            false,
+                            block.header.timestamp,
+                        );
+                    }
+                    for input in tx.txins() {
+                        process_input(
+                            &mut account_state,
+                            input,
+                            epoch,
+                            &block_hash,
+                            false,
+                            block.header.timestamp,
+                        )
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(epoch, chain.epoch());
+    Ok(account_state)
 }
 
 pub fn fake_genesis(
@@ -208,14 +335,14 @@ pub fn create_fake_micro_block(
     //
 
     for keychain in keychains.iter() {
-        let accounts_recovery = chain
-            .recover_account(
-                &keychain.account_skey,
-                &keychain.account_pkey,
-                0,
-                HashMap::new(),
-            )
-            .unwrap();
+        let accounts_recovery = recover_account(
+            chain,
+            &keychain.account_skey,
+            &keychain.account_pkey,
+            0,
+            HashMap::new(),
+        )
+        .unwrap();
         let unspent = accounts_recovery
             .commited
             .into_iter()
@@ -251,7 +378,7 @@ pub fn create_fake_micro_block(
         if payment_balance > 0 {
             let inputs = payments;
             let mut outputs: Vec<Output> = Vec::new();
-            let mut outputs_gamma = Fr::zero();
+            let mut outputs_gamma = scc::Fr::zero();
 
             let (output, output_gamma) =
                 PaymentOutput::new(&keychain.account_pkey, payment_balance)
@@ -334,7 +461,7 @@ pub fn create_micro_block_with_coinbase(
     let random = pbc::make_VRF(&keys.network_skey, &seed);
     let solution = chain.vdf_solver()();
     let mut txouts: Vec<Output> = Vec::new();
-    let mut gamma = Fr::zero();
+    let mut gamma = scc::Fr::zero();
 
     let block_fee = 0;
     let block_reward = chain.cfg().block_reward;

@@ -104,7 +104,6 @@ impl AccountSandbox {
             max_inputs_in_tx,
             subscribers,
             events,
-            None,
         );
         let account = Account { outbox };
 

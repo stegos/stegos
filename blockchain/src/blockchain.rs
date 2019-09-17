@@ -45,7 +45,7 @@ use std::path::Path;
 use stegos_crypto::bulletproofs::fee_a;
 use stegos_crypto::hash::*;
 use stegos_crypto::pbc::VRF;
-use stegos_crypto::scc::{Fr, Pt, PublicKey, SecretKey};
+use stegos_crypto::scc::{Fr, Pt, PublicKey};
 use stegos_crypto::vdf::VDF;
 use stegos_crypto::{pbc, scc};
 use stegos_serialization::traits::ProtoConvert;
@@ -182,13 +182,6 @@ pub struct OutputRecovery {
     pub block_hash: Hash,
     pub is_final: bool,
     pub timestamp: Timestamp,
-}
-
-#[derive(Eq, PartialEq, Debug, Default, Clone)]
-pub struct AccountRecoveryState {
-    pub removed: HashMap<Hash, OutputRecovery>,
-    pub commited: HashMap<Hash, OutputRecovery>,
-    pub prepared: HashMap<Hash, OutputRecovery>,
 }
 
 /// The blockchain database.
@@ -413,123 +406,6 @@ impl Blockchain {
             }
         }
         Ok(())
-    }
-
-    ///
-    /// Recovery account state from the blockchain.
-    /// TODO: this method is a temporary solution until persistence is implemented in wallet.
-    /// https://github.com/stegos/stegos/issues/812
-    ///
-    pub fn recover_account(
-        &self,
-        account_skey: &SecretKey,
-        account_pkey: &PublicKey,
-        mut epoch: u64,
-        mut unspent: HashMap<Hash, Output>,
-    ) -> Result<AccountRecoveryState, BlockchainError> {
-        let mut account_state: AccountRecoveryState = Default::default();
-
-        let process_output = |account_state: &mut AccountRecoveryState,
-                              output: &Output,
-                              epoch: u64,
-                              block_hash: &Hash,
-                              is_final: bool,
-                              timestamp: Timestamp| {
-            let output_hash = Hash::digest(&output);
-            if !self.contains_output(&output_hash) {
-                return; // Spent.
-            }
-
-            if output.is_my_utxo(account_skey, account_pkey) {
-                let output = OutputRecovery {
-                    output: output.clone(),
-                    epoch,
-                    block_hash: block_hash.clone(),
-                    timestamp,
-                    is_final,
-                };
-
-                if is_final {
-                    account_state.commited.insert(output_hash, output);
-                } else {
-                    account_state.prepared.insert(output_hash, output);
-                }
-            }
-        };
-
-        let mut process_input = |account_state: &mut AccountRecoveryState,
-                                 input: &Hash,
-                                 epoch: u64,
-                                 block_hash: &Hash,
-                                 is_final: bool,
-                                 timestamp: Timestamp| {
-            if let Some(output) = unspent.remove(input) {
-                let output = OutputRecovery {
-                    output,
-                    epoch,
-                    block_hash: block_hash.clone(),
-                    timestamp,
-                    is_final,
-                };
-
-                account_state.removed.insert(*input, output);
-            }
-        };
-
-        for block in self.blocks_starting(epoch, 0) {
-            let block_hash = Hash::digest(&block);
-            match block {
-                Block::MacroBlock(block) => {
-                    for output in &block.outputs {
-                        process_output(
-                            &mut account_state,
-                            output,
-                            epoch,
-                            &block_hash,
-                            true,
-                            block.header.timestamp,
-                        );
-                    }
-                    for input in &block.inputs {
-                        process_input(
-                            &mut account_state,
-                            input,
-                            epoch,
-                            &block_hash,
-                            false,
-                            block.header.timestamp,
-                        )
-                    }
-                    epoch += 1;
-                }
-                Block::MicroBlock(block) => {
-                    for tx in block.transactions {
-                        for output in tx.txouts() {
-                            process_output(
-                                &mut account_state,
-                                output,
-                                epoch,
-                                &block_hash,
-                                false,
-                                block.header.timestamp,
-                            );
-                        }
-                        for input in tx.txins() {
-                            process_input(
-                                &mut account_state,
-                                input,
-                                epoch,
-                                &block_hash,
-                                false,
-                                block.header.timestamp,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-        assert_eq!(epoch, self.epoch);
-        Ok(account_state)
     }
 
     //

@@ -137,7 +137,7 @@ pub type DcMatrix = Vec<DcSheet>;
 const SLOT_BYTES: usize = 32; // must correspond to Fr bytes
 const MAX_BYTES: usize = 31; // for Fr we need < 254 bits
 const NPREF: usize = 3; // bytes - will 24 bits be long enough?
-const NCHUNK: usize = MAX_BYTES - NPREF; // nbr bytes of message in prefixed chunks
+pub const NCHUNK: usize = MAX_BYTES - NPREF; // nbr bytes of message in prefixed chunks
 
 // -------------------------------------------------
 

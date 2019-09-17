@@ -83,13 +83,14 @@ mod protos;
 
 use crate::snowball::message::SnowballMessage;
 use crate::storage::{OutputValue, PaymentValue};
+use byteorder::{ByteOrder, LittleEndian};
 use futures::task::current;
 use futures::Async;
 use futures::Future;
 use futures::Poll;
 use futures::Stream;
 use futures_stream_select_all_send::select_all;
-use log::{log, Level};
+use log::{log, trace, Level};
 use rand::thread_rng;
 use rand::Rng;
 use serde_derive::{Deserialize, Serialize};
@@ -126,6 +127,12 @@ pub const SNOWBALL_TIMER: Duration = Duration::from_secs(60); // recurring 1sec 
 pub const MAX_UTXOS: usize = 5; // max nbr of txout UTXO permitted
 
 pub const MSG_FLOOD_LIMIT: usize = 5; // max nbr of pending messages from one participant
+
+/// Utxo fixed serialized size.
+pub const UTXO_FIXED_SIZE: usize = 2048;
+
+/// Number of rows in dicemix for utxo fixed size.
+pub const ROWS_FIXED_SIZE: usize = UTXO_FIXED_SIZE / NCHUNK + 1;
 
 // ==============================================================
 
@@ -169,7 +176,6 @@ struct ValidationData {
     pub all_txins: HashMap<ParticipantID, Vec<(TXIN, UTXO)>>,
     pub signatures: HashMap<ParticipantID, SchnorrSig>,
     pub transaction: PaymentTransaction,
-    pub serialized_utxo_size: usize,
 }
 
 #[derive(Debug)]
@@ -301,12 +307,6 @@ pub struct Snowball {
 
     // list of newly constructed txouts
     my_utxos: Vec<Pt>,
-
-    // size of serialized UTXO for retrieval
-    serialized_utxo_size: Option<usize>,
-
-    // nbr of DiceMix chunks per UTXO
-    dicemix_nbr_utxo_chunks: Option<usize>,
 
     // cloaking hash value used between me and each other participant
     k_cloaks: HashMap<ParticipantID, Hash>,
@@ -486,8 +486,6 @@ impl Snowball {
             excl_participants: Vec::new(),
             trans: PaymentTransaction::dum(),
             msg_queue: VecDeque::new(),
-            serialized_utxo_size: None,
-            dicemix_nbr_utxo_chunks: None,
             commit_phase_participants: Vec::new(),
         };
         sb.send_pool_join();
@@ -1094,7 +1092,7 @@ impl Snowball {
         // indicate that sender has different notion of commit_phase_participants
         // than we do... (but also checking for phony nbr of rows and sheets)
         let ncols_expected = self.commit_phase_participants.len();
-        let nrows_expected = self.dicemix_nbr_utxo_chunks.unwrap();
+        let nrows_expected = ROWS_FIXED_SIZE;
         matrix.len() == MAX_UTXOS
             && matrix.iter().all(|sheet| {
                 sheet.len() == nrows_expected && sheet.iter().all(|row| row.len() == ncols_expected)
@@ -1317,17 +1315,6 @@ impl Snowball {
             self.my_utxos.push(utxo.proof.vcmt);
         });
 
-        // set size of serialized UTXO if not already established
-        match self.serialized_utxo_size {
-            None => {
-                let msg = serialize_utxo(&my_utxos[0]);
-                self.serialized_utxo_size = Some(msg.len());
-                let row = split_message(&msg, None);
-                self.dicemix_nbr_utxo_chunks = Some(row.len());
-            }
-            _ => {}
-        }
-
         // -------------------------------------------------------------
         // for debugging - check that our contribution produces zero balance
         {
@@ -1345,7 +1332,7 @@ impl Snowball {
             &my_utxos,
             &self.my_participant_id,
             &self.k_cloaks,
-            self.dicemix_nbr_utxo_chunks.unwrap(),
+            ROWS_FIXED_SIZE,
         );
         self.matrices = HashMap::new();
         self.matrices
@@ -1500,7 +1487,7 @@ impl Snowball {
             &self.matrices,
             &self.my_participant_id,
             MAX_UTXOS,
-            self.dicemix_nbr_utxo_chunks.unwrap(),
+            ROWS_FIXED_SIZE,
             &self.excl_participants, // the excluded participants
             &self.all_excl_cloaks,
         );
@@ -1511,7 +1498,7 @@ impl Snowball {
         let mut state = Hasher::new();
         msgs.iter().for_each(|msg| {
             // we might have garbage data...
-            match deserialize_utxo(msg, self.serialized_utxo_size.unwrap()) {
+            match deserialize_utxo(msg) {
                 Ok(utxo) => {
                     all_utxos.push(utxo.clone());
                     utxo.hash(&mut state);
@@ -1711,7 +1698,6 @@ impl Snowball {
                 transaction: self.trans.clone(),
                 signatures: self.signatures.clone(),
                 all_txins: self.all_txins.clone(),
-                serialized_utxo_size: self.serialized_utxo_size.unwrap(),
             };
             sdebug!(self, "Calling dc_reconstruct()");
             let new_p_excl = dc_reconstruct(
@@ -1812,7 +1798,7 @@ impl Snowball {
         }
         let mut txout_sum = Pt::inf();
         for msg in msgs {
-            let utxo = match deserialize_utxo(msg, data.serialized_utxo_size) {
+            let utxo = match deserialize_utxo(msg) {
                 Ok(u) => u,
                 _ => {
                     return false;
@@ -2146,15 +2132,53 @@ fn validate_ownership(
 }
 
 fn serialize_utxo(utxo: &UTXO) -> Vec<u8> {
-    utxo.into_buffer().expect("Can't serialize UTXO")
+    let mut message = Vec::new();
+    message.resize(mem::size_of::<u64>(), 0u8);
+    let buffer = utxo.into_buffer().expect("Can't serialize UTXO");
+    LittleEndian::write_u64(&mut message[..mem::size_of::<u64>()], buffer.len() as u64);
+    message.extend(buffer);
+    assert!(message.len() <= UTXO_FIXED_SIZE);
+    message.resize(UTXO_FIXED_SIZE, 0);
+    message
 }
 
-fn deserialize_utxo(msg: &Vec<u8>, ser_size: usize) -> Result<UTXO, String> {
+fn deserialize_utxo(msg: &Vec<u8>) -> Result<UTXO, String> {
     // DiceMix returns a byte vector whose length is some integral
     // number of Field size. But proto-bufs is very particular about
     // what it is handed, and complains about trailing padding bytes.
-    // otherwise, deserialize and return
-    UTXO::from_buffer(&msg[0..ser_size]).map_err(|e| format!("{:?}", e))
+
+    trace!(
+        "Deserialize utxo: msg_len={}, max_size={}",
+        msg.len(),
+        UTXO_FIXED_SIZE
+    );
+
+    if msg.len() <= mem::size_of::<u64>() {
+        return Err(format!(
+            "Failed to deserialize, message size is less than 8 bytes: message_size={}",
+            msg.len()
+        ));
+    }
+
+    let (len_buf, utxo_buf) = msg.split_at(mem::size_of::<u64>());
+    let length = LittleEndian::read_u64(len_buf) as usize;
+
+    if msg.len() < length + mem::size_of::<u64>() {
+        return Err(format!(
+            "Failed to deserialize, expected size is less than actual size in packet: message_size={}, size_of_packet={}",
+            msg.len(), length + mem::size_of::<u64>()
+        ));
+    }
+
+    if UTXO_FIXED_SIZE < length + mem::size_of::<u64>() {
+        return Err(format!(
+            "Failed to deserialize, message size is more than UTXO_FIXED_SIZE: message_size={}, UTXO_FIXED_SIZE={}",
+            msg.len(), UTXO_FIXED_SIZE
+        ));
+    }
+
+    // Shrink buffer to size in packet.
+    UTXO::from_buffer(&utxo_buf[..length]).map_err(|e| format!("{:?}", e))
 }
 
 // -------------------------------------------------
@@ -2176,6 +2200,18 @@ fn times_G(val: &Fr) -> Pt {
 mod tests {
     use super::*;
     use std::dbg;
+    use stegos_crypto::scc::make_random_keys;
+
+    #[test]
+    fn test_serialize_deserialize_utxo() {
+        let (_, pk) = make_random_keys();
+        let utxo = PaymentOutput::new(&pk, 1).unwrap();
+        let utxo_bytes = serialize_utxo(&utxo.0);
+        let utxo_new = deserialize_utxo(&utxo_bytes).unwrap();
+        println!("number of rows = {}", ROWS_FIXED_SIZE);
+        assert_eq!(utxo.0, utxo_new);
+        assert_eq!(split_message(&utxo_bytes, None).len(), ROWS_FIXED_SIZE);
+    }
 
     #[test]
     fn tst_hashmap_presentation_order() {

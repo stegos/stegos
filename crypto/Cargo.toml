@@ -14,7 +14,7 @@ description = "Stegos - Crypto Library"
 
 [dependencies]
 stegos_serialization = { version = "0.2.0", path = "../serialization" }
-base58check = "0.0.1"
+bech32 = "0.7.1"
 bitvector = "0.1"
 failure = "0.1"
 hex = "0.3"

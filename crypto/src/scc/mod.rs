@@ -26,7 +26,7 @@
 use crate::hash::*;
 use crate::utils::*;
 use crate::CryptoError;
-use base58check::{FromBase58Check, ToBase58Check};
+use bech32::{FromBase32, ToBase32};
 use crypto::aes;
 use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::ristretto::RistrettoPoint;
@@ -825,7 +825,9 @@ impl From<PublicKey> for Pt {
 impl<'a> From<&'a PublicKey> for String {
     fn from(pkey: &'a PublicKey) -> String {
         let bytes = pkey.to_bytes();
-        bytes.to_base58check(crate::BASE58_VERSIONID)
+        let bytes_u5 = bytes.to_base32();
+        bech32::encode(crate::get_network_prefix(), bytes_u5)
+            .expect("Incorrect bytes representation of network prefix, or public key")
     }
 }
 
@@ -833,10 +835,14 @@ impl FromStr for PublicKey {
     type Err = CryptoError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (version, raw_bytes) = s.from_base58check()?;
-        if version != crate::BASE58_VERSIONID {
-            return Err(CryptoError::WrongBase58VerisonId(version));
+        let (s, bytes) = bech32::decode(s)?;
+        if s != crate::get_network_prefix() {
+            return Err(CryptoError::IncorrectNetworkPrefix(
+                crate::get_network_prefix(),
+                s,
+            ));
         }
+        let raw_bytes: Vec<u8> = FromBase32::from_base32(&bytes)?;
         let pt = match CompressedRistretto::from_slice(&raw_bytes).decompress() {
             None => {
                 return Err(CryptoError::InvalidPoint);
@@ -1243,7 +1249,8 @@ pub mod tests {
     }
 
     #[test]
-    fn check_base58check() {
+    fn check_bech32check() {
+        crate::init_test_network_prefix();
         let pkey = make_random_keys().1;
         let encoded = String::from(&pkey);
         let decoded = PublicKey::from_str(&encoded).unwrap();
@@ -1302,6 +1309,7 @@ pub mod tests {
 
     #[test]
     fn check_serde() {
+        crate::init_test_network_prefix();
         let pkey = make_random_keys().1;
         let serialized = serde_json::to_string(&pkey).unwrap();
         let deserialized: PublicKey = serde_json::from_str(&serialized).unwrap();

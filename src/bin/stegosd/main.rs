@@ -532,6 +532,8 @@ fn run() -> Result<(), Error> {
         fs::create_dir(&accounts_dir)
             .map_err(|e| format_err!("{}: {}", e, accounts_dir.to_string_lossy()))?
     }
+    stegos_crypto::set_network_prefix(stegos::chain_to_prefix(&cfg.general.chain))
+        .expect("Network prefix not initialised.");
 
     // Initialize keychain
     let network_skey_file = data_dir.join("network.skey");
@@ -560,6 +562,7 @@ fn run() -> Result<(), Error> {
     // Initialize blockchain
     let genesis = initialize_genesis(&cfg)?;
     let timestamp = Timestamp::now();
+
     let chain = Blockchain::new(
         cfg.chain.clone(),
         &chain_dir,

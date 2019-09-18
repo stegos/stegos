@@ -18,3 +18,13 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+
+pub fn chain_to_prefix(network: &str) -> &'static str {
+    match network {
+        "mainnet" => "stg",
+        "testnet" => "stt",
+        "devnet" => "str",
+        "dev" => "dev",
+        e => panic!("Unexpected prefix name = {}", e),
+    }
+}

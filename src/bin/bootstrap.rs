@@ -88,6 +88,15 @@ fn main() {
                 .takes_value(true),
         )
         .arg(
+            Arg::with_name("chain")
+                .short("n")
+                .long("chain")
+                .env("STEGOS_CHAIN")
+                .value_name("NAME")
+                .help("Specify chain to use: mainnet, testnet or dev")
+                .takes_value(true),
+        )
+        .arg(
             Arg::with_name("owner")
                 .short("o")
                 .long("owner")
@@ -172,7 +181,12 @@ fn main() {
 
     let difficulty = args.value_of("difficulty").unwrap().parse::<u64>().unwrap();
 
-    info!("Generating genesis ...");
+    let chain = args.value_of("chain").unwrap_or("dev");
+
+    info!("Generating genesis for chain: {} ...", chain);
+
+    stegos_crypto::set_network_prefix(stegos::chain_to_prefix(chain))
+        .expect("Network prefix not initialised.");
 
     let mut outputs: Vec<Output> = Vec::with_capacity(1 + keys as usize);
     let mut keychains = Vec::<(

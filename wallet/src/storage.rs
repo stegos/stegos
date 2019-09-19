@@ -50,6 +50,7 @@ const COLON_FAMILIES: &[&'static str] = &[HISTORY, UNSPENT, META];
 
 // Keys in meta cf
 const EPOCH_KEY: &[u8; 9] = b"epoch_key";
+const LAST_PUBLIC_ADDRESS_ID_KEY: &[u8; 22] = b"last_public_address_id";
 
 #[derive(Debug, Clone)]
 pub enum LogEntry {
@@ -134,7 +135,7 @@ impl AccountDatabase {
     }
 
     /// Returns id of first unknown epoch
-    pub fn recover_state(&mut self) -> u64 {
+    fn recover_state(&mut self) -> u64 {
         // TODO: limit time for recover
         // (for example, if some transaction was created weak ago, it's no reason to resend it)
         let starting_time = Timestamp::UNIX_EPOCH;
@@ -508,6 +509,32 @@ impl AccountDatabase {
         Ok(())
     }
 
+    /// Get the last public address ID.
+    pub fn last_public_address_id(&mut self) -> Result<u32, Error> {
+        let meta_cf = self.database.cf_handle(META).expect("cf created");
+        Ok(self
+            .database
+            .get_cf(meta_cf, LAST_PUBLIC_ADDRESS_ID_KEY)?
+            .and_then(|b| Self::u32_from_bytes(&b))
+            .unwrap_or(0))
+    }
+
+    /// Update the last public address ID.
+    pub fn update_last_public_address_id(
+        &mut self,
+        last_public_address_id: u32,
+    ) -> Result<(), Error> {
+        let meta_cf = self.database.cf_handle(META).expect("cf created");
+        let mut batch = WriteBatch::default();
+        batch.put_cf(
+            meta_cf,
+            LAST_PUBLIC_ADDRESS_ID_KEY,
+            &Self::bytes_from_u32(last_public_address_id),
+        )?;
+        self.database.write(batch)?;
+        Ok(())
+    }
+
     /// Convert timestamp to bytearray.
     fn bytes_from_timestamp(timestamp: Timestamp) -> [u8; 8] {
         let mut bytes = [0u8; 8];
@@ -515,7 +542,14 @@ impl AccountDatabase {
         bytes
     }
 
-    /// Convert timestamp to bytearray.
+    /// Convert u32 to bytearray.
+    fn bytes_from_u32(val: u32) -> [u8; 4] {
+        let mut bytes = [0u8; 4];
+        BigEndian::write_u32(&mut bytes[0..4], val);
+        bytes
+    }
+
+    /// Convert u64 to bytearray.
     fn bytes_from_u64(len: u64) -> [u8; 8] {
         let mut bytes = [0u8; 8];
         BigEndian::write_u64(&mut bytes[0..8], len);
@@ -532,7 +566,17 @@ impl AccountDatabase {
         }
     }
 
-    /// Convert bytearray to timestamp.
+    /// Convert bytearray to u32.
+    fn u32_from_bytes(bytes: &[u8]) -> Option<u32> {
+        if bytes.len() == 4 {
+            let idx = BigEndian::read_u32(&bytes[0..4]);
+            Some(idx)
+        } else {
+            None
+        }
+    }
+
+    /// Convert bytearray to u64.
     fn u64_from_bytes(bytes: &[u8]) -> Option<u64> {
         if bytes.len() == 8 {
             let idx = BigEndian::read_u64(&bytes[0..8]);
@@ -566,7 +610,7 @@ pub struct TransactionValue {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutputValue {
     Payment(PaymentValue),
-    PublicPayment(PublicPaymentOutput),
+    PublicPayment(PublicPaymentValue),
     Stake(StakeValue),
 }
 
@@ -579,6 +623,12 @@ pub struct PaymentValue {
     pub data: PaymentPayloadData,
     pub rvalue: Option<Fr>,
     pub is_change: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicPaymentValue {
+    pub output: PublicPaymentOutput,
+    pub public_address_id: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -669,7 +719,7 @@ impl OutputValue {
         }
     }
 
-    pub fn public_payment(self) -> Option<PublicPaymentOutput> {
+    pub fn public_payment(self) -> Option<PublicPaymentValue> {
         match self {
             OutputValue::PublicPayment(p) => Some(p),
             _ => None,
@@ -709,18 +759,21 @@ impl TransactionValue {
     }
 }
 
+/// Convert Time from instant to timestamp, for visualise in API.
+fn pending_timestamp(pending: Option<&PendingOutput>) -> Option<Timestamp> {
+    pending.and_then(|p| {
+        let now = tokio_timer::clock::now();
+        if p.time + super::PENDING_UTXO_TIME < now {
+            return None;
+        }
+        let duration_to_end = p.time + super::PENDING_UTXO_TIME - now;
+        Some(Timestamp::now() + duration_to_end)
+    })
+}
+
 impl PaymentValue {
     pub fn to_info(&self, pending: Option<&PendingOutput>) -> PaymentInfo {
-        // Convert Time from instant to timestamp, for visualise in API.
-        let pending_timestamp = pending.and_then(|p| {
-            let now = tokio_timer::clock::now();
-            if p.time + super::PENDING_UTXO_TIME < now {
-                return None;
-            }
-            let duration_to_end = p.time + super::PENDING_UTXO_TIME - now;
-            Some(Timestamp::now() + duration_to_end)
-        });
-
+        let pending_timestamp = pending_timestamp(pending);
         PaymentInfo {
             utxo: Hash::digest(&self.output),
             amount: self.amount,
@@ -734,11 +787,17 @@ impl PaymentValue {
     }
 }
 
-pub fn public_payment_info(output: &PublicPaymentOutput) -> PublicPaymentInfo {
-    PublicPaymentInfo {
-        utxo: Hash::digest(&output),
-        amount: output.amount,
-        locked_timestamp: output.locked_timestamp,
+impl PublicPaymentValue {
+    pub fn to_info(&self, pending: Option<&PendingOutput>) -> PublicPaymentInfo {
+        let pending_timestamp = pending_timestamp(pending);
+        PublicPaymentInfo {
+            utxo: Hash::digest(&self.output),
+            amount: self.output.amount,
+            locked_timestamp: self.output.locked_timestamp,
+            pending_timestamp,
+            recipient: self.output.recipient,
+            public_address_id: self.public_address_id,
+        }
     }
 }
 
@@ -761,7 +820,7 @@ impl OutputValue {
     pub fn to_info(&self, epoch: u64) -> OutputInfo {
         match self {
             OutputValue::Payment(o) => o.to_info(None).into(),
-            OutputValue::PublicPayment(o) => public_payment_info(&o).into(),
+            OutputValue::PublicPayment(o) => o.to_info(None).into(),
             OutputValue::Stake(o) => o.to_info(epoch).into(),
         }
     }
@@ -769,7 +828,7 @@ impl OutputValue {
     pub fn to_output(&self) -> Output {
         match self {
             OutputValue::Payment(o) => o.output.clone().into(),
-            OutputValue::PublicPayment(o) => o.clone().into(),
+            OutputValue::PublicPayment(o) => o.output.clone().into(),
             OutputValue::Stake(o) => o.output.clone().into(),
         }
     }
@@ -785,8 +844,8 @@ impl From<PaymentValue> for OutputValue {
     }
 }
 
-impl From<PublicPaymentOutput> for OutputValue {
-    fn from(value: PublicPaymentOutput) -> OutputValue {
+impl From<PublicPaymentValue> for OutputValue {
+    fn from(value: PublicPaymentValue) -> OutputValue {
         OutputValue::PublicPayment(value)
     }
 }
@@ -832,6 +891,13 @@ impl Hashable for PaymentValue {
     }
 }
 
+impl Hashable for PublicPaymentValue {
+    fn hash(&self, hasher: &mut Hasher) {
+        self.output.hash(hasher);
+        self.public_address_id.hash(hasher);
+    }
+}
+
 impl Hashable for StakeValue {
     fn hash(&self, hasher: &mut Hasher) {
         self.output.hash(hasher);
@@ -847,7 +913,11 @@ mod test {
         #[allow(unused)]
         fn testing_stub(id: usize) -> LogEntry {
             let (_s, p) = make_random_keys();
-            let public = PublicPaymentOutput::new(&p, id as i64);
+            let output = PublicPaymentOutput::new(&p, id as i64);
+            let public = PublicPaymentValue {
+                output,
+                public_address_id: None,
+            };
 
             LogEntry::Incoming {
                 output: OutputValue::PublicPayment(public),
@@ -858,9 +928,9 @@ mod test {
         fn is_testing_stub(&self, id: usize) -> bool {
             match self {
                 LogEntry::Incoming {
-                    output: OutputValue::PublicPayment(output),
+                    output: OutputValue::PublicPayment(value),
                     ..
-                } => output.amount == id as i64,
+                } => value.output.amount == id as i64,
                 _ => false,
             }
         }
@@ -873,12 +943,17 @@ mod test {
     }
 
     fn create_output(id: usize) -> OutputValue {
-        OutputValue::PublicPayment(PublicPaymentOutput {
+        let output = PublicPaymentOutput {
             serno: id as i64,
             amount: 10,
             locked_timestamp: None,
             recipient: PublicKey::zero(),
-        })
+        };
+        let value = PublicPaymentValue {
+            output,
+            public_address_id: None,
+        };
+        OutputValue::PublicPayment(value)
     }
 
     #[test]

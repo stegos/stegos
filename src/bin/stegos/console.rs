@@ -28,7 +28,7 @@ use rpassword::prompt_password_stdout;
 use rustyline as rl;
 use serde::ser::Serialize;
 use std::fmt;
-use std::io::stdin;
+use std::io::{stdin, stdout, Write};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -74,6 +74,8 @@ const RECOVERY_PROMPT: &'static str = "Enter 24-word recovery phrase: ";
 const PASSWORD_PROMPT: &'static str = "Enter password: ";
 const PASSWORD_PROMPT1: &'static str = "Enter new password: ";
 const PASSWORD_PROMPT2: &'static str = "Enter same password again: ";
+const LAST_PUBLIC_ADDRESS_ID_PROMPT: &'static str =
+    "Enter last used public address id (empty to skip): ";
 // The number of records in `show history`.
 const CONSOLE_HISTORY_LIMIT: u64 = 50;
 
@@ -117,13 +119,6 @@ fn read_password_with_confirmation() -> Result<String, std::io::Error> {
             continue;
         }
     }
-}
-
-fn read_recovery() -> Result<String, std::io::Error> {
-    if !atty::is(atty::Stream::Stdin) {
-        return Ok(read_line()?.unwrap_or_default());
-    }
-    prompt_password_stdout(RECOVERY_PROMPT)
 }
 
 fn parse_money(amount: &str) -> Result<i64, Error> {
@@ -297,6 +292,8 @@ impl ConsoleService {
         eprintln!("restake - restake all available stakes");
         eprintln!("enable restaking - enable automatic re-staking (default)");
         eprintln!("disable restaking - disable automatic re-staking");
+        eprintln!("create public address - create a new public address");
+        eprintln!("show public addresses - show created public addresses");
         eprintln!("cloak - exchange all available public outputs");
         eprintln!("show version - print version information");
         eprintln!("show keys - print keys");
@@ -768,6 +765,12 @@ impl ConsoleService {
         } else if msg == "restake" {
             let request = AccountRequest::RestakeAll {};
             self.send_account_request(request)?
+        } else if msg == "create public address" {
+            let request = AccountRequest::CreatePublicAddress {};
+            self.send_account_request(request)?
+        } else if msg == "show public addresses" {
+            let request = AccountRequest::PublicAddressesInfo {};
+            self.send_account_request(request)?
         } else if msg == "cloak" {
             let payment_fee = PAYMENT_FEE;
             let request = AccountRequest::CloakAll { payment_fee };
@@ -856,9 +859,38 @@ impl ConsoleService {
             let request = WalletControlRequest::CreateAccount { password };
             self.send_wallet_control_request(request)?;
         } else if msg == "recover account" {
-            let recovery = read_recovery()?;
+            let recovery = {
+                if !atty::is(atty::Stream::Stdin) {
+                    read_line()?.unwrap_or_default()
+                } else {
+                    prompt_password_stdout(RECOVERY_PROMPT)?
+                }
+            };
             let password = read_password_with_confirmation()?;
-            let request = WalletControlRequest::RecoverAccount { recovery, password };
+            let last_public_address_id = loop {
+                if atty::is(atty::Stream::Stdin) {
+                    let stdout = stdout();
+                    let mut writer = stdout.lock();
+                    writer.write(LAST_PUBLIC_ADDRESS_ID_PROMPT.as_bytes()).ok();
+                    writer.flush().ok();
+                }
+                match read_line()? {
+                    Some(s) => match s.parse::<u32>() {
+                        Ok(r) => break r,
+                        Err(e) => {
+                            eprintln!("Invalid public address id: {}", e);
+                        }
+                    },
+                    None => break 0u32,
+                }
+            };
+            let request = WalletControlRequest::RecoverAccount {
+                recovery: AccountRecovery {
+                    recovery,
+                    last_public_address_id,
+                },
+                password,
+            };
             self.send_wallet_control_request(request)?;
         } else if msg == "passwd" {
             let new_password = read_password_with_confirmation()?;

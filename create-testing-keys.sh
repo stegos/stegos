@@ -3,6 +3,9 @@
 set -e
 export NUM_KEYS=${1:-4}
 
+export CHAIN_NAME=$2
+[[ -z $CHAIN_NAME ]] && export CHAIN_NAME="dev"
+
 # Remove old files
 rm -f stegos*.pkey stegos*.skey password*.txt genesis*.bin
 
@@ -12,7 +15,7 @@ for i in $(seq -f "%02g" 1 $NUM_KEYS); do
 done
 
 # Generate account keys
-cargo run --bin bootstrap -- --keys $NUM_KEYS --difficulty 200
+cargo run --bin bootstrap -- --keys $NUM_KEYS -n $CHAIN_NAME --difficulty 200
 
 mkdir -p testing
 for i in $(seq -f "%02g" 1 $NUM_KEYS); do

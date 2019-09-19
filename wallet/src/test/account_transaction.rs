@@ -393,8 +393,8 @@ fn get_recovery_key() {
         let response = get_request(rx);
         info!("{:?}", response);
         let recovery = match response {
-            AccountResponse::Recovery { recovery } => recovery,
-            _ => panic!("Wrong respnse to payment request"),
+            AccountResponse::Recovery(recovery) => recovery,
+            _ => panic!("Wrong response to payment request"),
         };
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
@@ -1147,7 +1147,7 @@ fn snowball_lock_utxo() {
 
         match response2 {
             AccountResponse::Error { error } => {
-                assert!(error.starts_with("No enough payment utxo available"))
+                assert!(error.starts_with("No enough payment UTXO available"))
             }
             _ => unreachable!(),
         };

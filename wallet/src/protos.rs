@@ -31,7 +31,7 @@ use stegos_blockchain::protos::*;
 use stegos_crypto::protos::*;
 include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
 use super::storage::{LogEntry, OutputValue, PaymentValue, TransactionValue};
-use crate::storage::StakeValue;
+use crate::storage::{PublicPaymentValue, StakeValue};
 use stegos_blockchain::{
     PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput, StakeOutput,
 };
@@ -118,6 +118,33 @@ impl ProtoConvert for PaymentValue {
     }
 }
 
+impl ProtoConvert for PublicPaymentValue {
+    type Proto = account_log::PublicPaymentValue;
+    fn into_proto(&self) -> Self::Proto {
+        let mut msg = account_log::PublicPaymentValue::new();
+        msg.set_output(self.output.into_proto());
+        if let Some(public_address_id) = &self.public_address_id {
+            msg.set_public_address_id(*public_address_id);
+        }
+        msg
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let output = PublicPaymentOutput::from_proto(proto.get_output())?;
+        let public_address_id = if proto.has_public_address_id() {
+            Some(proto.get_public_address_id())
+        } else {
+            None
+        };
+        let value = PublicPaymentValue {
+            output,
+            public_address_id,
+        };
+
+        Ok(value)
+    }
+}
+
 impl ProtoConvert for StakeValue {
     type Proto = account_log::StakeValue;
     fn into_proto(&self) -> Self::Proto {
@@ -165,7 +192,7 @@ impl ProtoConvert for OutputValue {
                 output.into()
             }
             Some(account_log::OutputValue_oneof_enum_value::public_payment(ref msg)) => {
-                let output = PublicPaymentOutput::from_proto(msg)?;
+                let output = PublicPaymentValue::from_proto(msg)?;
                 output.into()
             }
             None => {

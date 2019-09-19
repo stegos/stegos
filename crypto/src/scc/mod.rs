@@ -878,6 +878,14 @@ impl PartialOrd for PublicKey {
     }
 }
 
+impl std::hash::Hash for PublicKey {
+    // Needed to use std::collections::HashMap.
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash("PublicKey", state);
+        std::hash::Hash::hash(&self.0.to_bytes(), state);
+    }
+}
+
 // -----------------------------------------------------------------------
 // Key Generation & Checking
 

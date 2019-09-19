@@ -30,8 +30,6 @@ pub enum WalletError {
     DuplicateAccount(scc::PublicKey),
     #[fail(display = "Not enough money.")]
     NotEnoughMoney,
-    #[fail(display = "No unspent public outputs was found.")]
-    NoPublicOutputs,
     #[fail(display = "Negative amount: amount={}", _0)]
     NegativeAmount(i64),
     /// Stake amount is less than fee.
@@ -42,15 +40,17 @@ pub enum WalletError {
     InsufficientStake(i64, i64),
     /// Enough amount of stake should be unlocked.
     #[fail(
-        display = "No enough stake available: current={}, available={}.",
+        display = "No enough stake UTXO available: current={}, available={}.",
         _0, _1
     )]
     NoEnoughStake(i64, i64),
     #[fail(
-        display = "No enough payment utxo available: current={}, available={}.",
+        display = "No enough payment UTXO available: current={}, available={}.",
         _0, _1
     )]
     NoEnoughPayment(i64, i64),
+    #[fail(display = "No enough public payment UTXO available: available={}", _0)]
+    NoEnoughPublicPayment(i64),
     #[fail(display = "Incorrect TXIN type")]
     IncorrectTXINType,
     #[fail(display = "Nothing to re-stake")]

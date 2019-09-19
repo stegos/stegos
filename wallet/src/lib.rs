@@ -159,6 +159,8 @@ struct UnsealedAccountService {
     pending_payments: HashMap<Hash, PendingOutput>,
     /// Persistent part of the state.
     database: AccountDatabase,
+    /// Map of public addresses to address id.
+    public_addresses: HashMap<scc::PublicKey, u32>,
 
     /// Network API (shared).
     network: Network,
@@ -219,13 +221,36 @@ impl UnsealedAccountService {
         let last_macro_block_timestamp = Timestamp::UNIX_EPOCH;
 
         debug!("Loading account {}", account_pkey);
-        let (database, epoch) = AccountDatabase::open(&database_dir);
+        // TODO: add proper handling for I/O errors.
+        let (mut database, epoch) = AccountDatabase::open(&database_dir);
+        let last_public_address_id = database.last_public_address_id().expect("I/O error");
         debug!("Opened database: epoch={}", epoch);
+        debug!(
+            "Opened database: epoch={}, last_public_address_id={}",
+            epoch, last_public_address_id
+        );
         let transaction_response = None;
         let resend_tx = Interval::new(clock::now(), RESEND_TX_INTERVAL);
         let check_pending_utxos = Interval::new(clock::now(), CHECK_PENDING_UTXO);
         let chain_notifications = ChainSubscription::new(&node, epoch, 0);
         let current_epoch_balance_changed = false;
+
+        // Recover public addresses.
+        let mut public_addresses: HashMap<scc::PublicKey, u32> = HashMap::new();
+        for public_address_id in 1..=last_public_address_id {
+            match account_pkey.subkey(public_address_id) {
+                Ok(public_address) => {
+                    debug!(
+                        "Adding public address #{} {}",
+                        public_address_id,
+                        public_address.to_string()
+                    );
+                    let prev = public_addresses.insert(public_address, public_address_id);
+                    assert!(prev.is_none());
+                }
+                Err(_e) => continue, // skip this account_id.
+            }
+        }
 
         info!("Loaded account {}", account_pkey);
         UnsealedAccountService {
@@ -237,6 +262,7 @@ impl UnsealedAccountService {
             network_skey,
             network_pkey,
             database,
+            public_addresses,
             epoch,
             current_epoch_balance_changed,
             facilitator_pkey,
@@ -253,6 +279,26 @@ impl UnsealedAccountService {
             events,
             chain_notifications,
             transaction_response,
+        }
+    }
+
+    /// Create a new address.
+    fn new_public_address(&mut self) -> Result<(scc::PublicKey, u32), Error> {
+        let mut last_public_address_id = self.database.last_public_address_id()?;
+        loop {
+            last_public_address_id += 1;
+            match self.account_pkey.subkey(last_public_address_id) {
+                Ok(public_address) => {
+                    self.database
+                        .update_last_public_address_id(last_public_address_id)?;
+                    let prev = self
+                        .public_addresses
+                        .insert(public_address.clone(), last_public_address_id);
+                    assert!(prev.is_none());
+                    break Ok((public_address, last_public_address_id));
+                }
+                Err(_e) => continue,
+            }
         }
     }
 
@@ -338,17 +384,17 @@ impl UnsealedAccountService {
     /// Returns an iterator over available public payment outputs.
     fn available_public_payment_outputs<'a>(
         &'a self,
-    ) -> impl Iterator<Item = PublicPaymentOutput> + 'a {
+    ) -> impl Iterator<Item = (PublicPaymentOutput, Option<u32>)> + 'a {
         self.database
             .iter_unspent()
             .filter_map(|(k, v)| v.public_payment().map(|v| (k, v)))
             .filter(move |(h, _)| self.pending_payments.get(h).is_none())
-            .filter(move |(_h, v)| match &v.locked_timestamp {
+            .filter(move |(_h, v)| match &v.output.locked_timestamp {
                 Some(time) if time >= &self.last_macro_block_timestamp => false,
                 _ => true,
             })
             .inspect(|(h, _)| trace!("Using PublicPaymentOutput: hash={}", h))
-            .map(|(_, v)| v)
+            .map(|(_, v)| (v.output, v.public_address_id))
     }
 
     /// Returns an iterator over available stake outputs.
@@ -604,28 +650,129 @@ impl UnsealedAccountService {
     }
 
     /// Cloak all available public outputs.
-    fn cloak_all(&mut self, payment_fee: i64) -> Result<TransactionInfo, Error> {
-        if self
-            .database
-            .iter_unspent()
-            .filter_map(|(_k, v)| v.public_payment())
-            .count()
-            == 0
-        {
-            return Err(WalletError::NoPublicOutputs.into());
+    fn cloak_all(&mut self, fee: i64) -> Result<TransactionInfo, Error> {
+        // Secret key to sign the transaction.
+        // =sum((input.skey + input.delta + input.gamma) for input in inputs)
+        let mut sign_skey = scc::Fr::zero();
+        // Gamma Adjustment
+        // =sum(input.gamma for input in inputs) - sum(output.gamma for output in outputs)
+        let mut gamma = scc::Fr::zero();
+        // TX inputs.
+        let mut txins: Vec<Hash> = Vec::new();
+        let mut txins_expanded: Vec<Output> = Vec::new();
+        // TX outputs.
+        let mut txouts: Vec<Output> = Vec::new();
+
+        //
+        // Get inputs.
+        //
+        let mut amount = 0;
+        for (input, address_id) in self.available_public_payment_outputs() {
+            let input_hash = Hash::digest(&input);
+            debug!(
+                "Using PublicUTXO: utxo={}, amount={}",
+                input_hash, input.amount
+            );
+            let skey = match address_id {
+                Some(address_id) => {
+                    // PublicPayment to a subkey.
+                    let pkey = self
+                        .account_pkey
+                        .subkey(address_id)
+                        .expect("address id is valid");
+                    assert_eq!(input.recipient, pkey, "corrupted UTXO database");
+                    self.account_skey
+                        .subkey(address_id)
+                        .expect("address id is valid")
+                }
+                None => {
+                    // PublicPayment to the primary key.
+                    self.account_skey.clone()
+                }
+            };
+            amount += input.amount;
+            txins.push(input_hash);
+            txins_expanded.push(input.into());
+            sign_skey += scc::Fr::from(skey);
         }
+        if amount < fee {
+            // Don't have enough PublicPaymentUTXO to pay `fee`.
+            return Err(WalletError::NoEnoughPublicPayment(amount).into());
+        }
+        amount -= fee;
+        assert!(!txins.is_empty());
+        assert_eq!(txins.len(), txins_expanded.len());
 
-        let public_utxos = self.available_public_payment_outputs();
-        let (tx, output) = create_cloaking_transaction(
-            &self.account_skey,
-            &self.account_pkey,
-            public_utxos,
-            payment_fee,
-        )?;
+        //
+        // Create outputs.
+        //
+        let extended_output = {
+            let recipient = self.account_pkey.clone();
+            let data = PaymentPayloadData::Comment(String::from("Cloaked from the public UTXOs"));
+            data.validate().unwrap();
+            trace!("Creating PaymentUTXO...");
+            let (output, output_gamma, _rvalue) =
+                PaymentOutput::with_payload(None, &recipient, amount, data.clone(), None)?;
+            let output_hash = Hash::digest(&output);
+            debug!(
+                "Created PaymentUTXO: utxo={}, recipient={}, amount={}, data={:?}",
+                output_hash, recipient, amount, data
+            );
+            let extended_output = PaymentValue {
+                amount,
+                rvalue: None,
+                recipient,
+                data,
+                output: output.clone(),
+                is_change: false,
+            };
+            gamma -= output_gamma;
+            txouts.push(output.into());
+            extended_output
+        };
 
-        let info = TransactionValue::new_cloak(tx.clone(), output);
+        //
+        // Create a transaction.
+        //
+        let mut tx = PaymentTransaction {
+            txins,
+            txouts,
+            gamma,
+            fee,
+            sig: scc::SchnorrSig::new(),
+        };
+
+        //
+        // Sign and validate created transaction.
+        //
+        let tx_hash = Hash::digest(&tx);
+        let sign_skey: scc::SecretKey = sign_skey.into();
+        tx.sig = scc::sign_hash(&tx_hash, &sign_skey);
+        drop(sign_skey);
+        tx.validate(&txins_expanded).expect("Invalid TX created");
+        info!(
+            "Created cloak transaction: tx={}, amount={}, fee={}",
+            tx_hash, amount, fee
+        );
+
+        //
+        // Update the database.
+        //
+        let extended_tx = TransactionValue::new_cloak(tx.clone(), extended_output.into());
+        let time = clock::now();
+        for input_hash in tx.txins.iter() {
+            assert!(self
+                .pending_payments
+                .insert(*input_hash, PendingOutput { time })
+                .is_none());
+        }
+        let tx_info = extended_tx.to_info(self.epoch);
+
+        //
+        // Send the transaction to the network.
+        //
         self.send_transaction(tx.into())?;
-        Ok(info.to_info(self.epoch))
+        Ok(tx_info)
     }
 
     /// Change the password.
@@ -640,10 +787,13 @@ impl UnsealedAccountService {
     }
 
     /// Return recovery codes.
-    fn get_recovery(&mut self) -> Result<String, Error> {
-        Ok(crate::recovery::account_skey_to_recovery(
-            &self.account_skey,
-        ))
+    fn get_recovery(&mut self) -> Result<AccountRecovery, Error> {
+        let last_public_address_id = self.database.last_public_address_id()?;
+        let recovery = crate::recovery::account_skey_to_recovery(&self.account_skey);
+        Ok(AccountRecovery {
+            recovery,
+            last_public_address_id,
+        })
     }
 
     /// Get actual balance.
@@ -671,7 +821,10 @@ impl UnsealedAccountService {
                     }
                     balance.payment.available += amount;
                 }
-                OutputValue::PublicPayment(PublicPaymentOutput { amount, .. }) => {
+                OutputValue::PublicPayment(PublicPaymentValue {
+                    output: PublicPaymentOutput { amount, .. },
+                    ..
+                }) => {
                     balance.public_payment.current += amount;
                     if self.pending_payments.get(&hash).is_some() {
                         continue;
@@ -775,14 +928,21 @@ impl UnsealedAccountService {
                 }
             }
             Output::PublicPaymentOutput(o) => {
-                if &o.recipient != &self.account_pkey {
+                let public_address_id = if o.recipient == self.account_pkey {
+                    None
+                } else if let Some(id) = self.public_addresses.get(&o.recipient) {
+                    Some(*id)
+                } else {
                     return;
-                }
+                };
                 let PublicPaymentOutput { ref amount, .. } = &o;
                 assert!(*amount >= 0);
                 info!("Received public payment: utxo={}, amount={}", hash, amount);
                 self.current_epoch_balance_changed = true;
-                let value = o.clone();
+                let value = PublicPaymentValue {
+                    output: o.clone(),
+                    public_address_id,
+                };
 
                 if let Err(e) = self
                     .database
@@ -791,7 +951,7 @@ impl UnsealedAccountService {
                     error!("Error when adding incomming tx = {}", e)
                 }
 
-                let info = public_payment_info(&value);
+                let info = value.to_info(None);
                 let missing = self
                     .database
                     .get_unspent(&hash)
@@ -864,9 +1024,13 @@ impl UnsealedAccountService {
                 }
             }
             OutputValue::PublicPayment(p) => {
-                assert_eq!(p.recipient, self.account_pkey, "is my utxo");
-                let PublicPaymentOutput { amount, .. } = p;
-                info!("Spent public payment: utxo={}, amount={}", hash, amount);
+                let o = &p.output;
+                assert!(
+                    o.recipient == self.account_pkey
+                        || self.public_addresses.contains_key(&o.recipient),
+                    "is my utxo"
+                );
+                info!("Spent public payment: utxo={}, amount={}", hash, o.amount);
                 match self
                     .database
                     .get_unspent(&hash)
@@ -876,7 +1040,7 @@ impl UnsealedAccountService {
                         self.database
                             .remove_unspent(&hash)
                             .expect("Cannot write database");
-                        let info = public_payment_info(&value);
+                        let info = value.to_info(self.pending_payments.get(&hash));
                         self.notify(AccountNotification::SpentPublic(info));
                     }
                     _ => panic!("Inconsistent account state"),
@@ -1221,6 +1385,19 @@ impl Future for UnsealedAccountService {
                                 // Finish this future.
                                 return Ok(Async::Ready(Some(())));
                             }
+                            AccountRequest::CreatePublicAddress => {
+                                match self.new_public_address() {
+                                    Ok((public_address, public_address_id)) => {
+                                        AccountResponse::PublicAddressCreated {
+                                            public_address,
+                                            public_address_id,
+                                        }
+                                    }
+                                    Err(e) => AccountResponse::Error {
+                                        error: format!("{}", e),
+                                    },
+                                }
+                            }
                             AccountRequest::Payment {
                                 recipient,
                                 amount,
@@ -1268,6 +1445,21 @@ impl Future for UnsealedAccountService {
                                 };
                                 AccountResponse::AccountInfo(account_info)
                             }
+                            AccountRequest::PublicAddressesInfo {} => {
+                                let public_addresses = self
+                                    .public_addresses
+                                    .iter()
+                                    .map(|(address, id)| {
+                                        (
+                                            id.to_string(),
+                                            PublicAddressInfo {
+                                                address: address.clone(),
+                                            },
+                                        )
+                                    })
+                                    .collect();
+                                AccountResponse::PublicAddressesInfo { public_addresses }
+                            }
                             AccountRequest::BalanceInfo {} => {
                                 let balance = self.balance();
                                 AccountResponse::BalanceInfo(balance)
@@ -1281,9 +1473,8 @@ impl Future for UnsealedAccountService {
                                         OutputValue::Stake(s) => stakes.push(s.to_info(self.epoch)),
                                         OutputValue::Payment(p) => payments
                                             .push(p.to_info(self.pending_payments.get(&utxo.0))),
-                                        OutputValue::PublicPayment(p) => {
-                                            public_payments.push(public_payment_info(&p))
-                                        }
+                                        OutputValue::PublicPayment(p) => public_payments
+                                            .push(p.to_info(self.pending_payments.get(&utxo.0))),
                                     }
                                 }
                                 AccountResponse::UnspentInfo {
@@ -1305,7 +1496,7 @@ impl Future for UnsealedAccountService {
                                 }
                             }
                             AccountRequest::GetRecovery {} => match self.get_recovery() {
-                                Ok(recovery) => AccountResponse::Recovery { recovery },
+                                Ok(recovery) => AccountResponse::Recovery(recovery),
                                 Err(e) => AccountResponse::Error {
                                     error: format!("{}", e),
                                 },
@@ -1782,7 +1973,7 @@ impl WalletService {
                 }
             };
 
-            service.open_account(&account_id, false)?;
+            service.open_account(&account_id, false, None)?;
         }
 
         info!("Recovered {} account(s)", service.accounts.len());
@@ -1793,7 +1984,12 @@ impl WalletService {
     ///
     /// Open existing account.
     ///
-    fn open_account(&mut self, account_id: &str, is_new: bool) -> Result<(), Error> {
+    fn open_account(
+        &mut self,
+        account_id: &str,
+        is_new: bool,
+        last_public_address_id: Option<u32>,
+    ) -> Result<(), Error> {
         let account_dir = self.accounts_dir.join(account_id);
         let account_database_dir = account_dir.join("history");
         let account_skey_file = account_dir.join("account.skey");
@@ -1808,14 +2004,18 @@ impl WalletService {
             }
         }
 
-        // Initialize empty database.
-        let (mut database, epoch) = AccountDatabase::open(&account_database_dir);
-        assert_eq!(epoch, 0, "account is not recovered");
         if is_new {
+            // Initialize database.
+            let (mut database, epoch) = AccountDatabase::open(&account_database_dir);
+
             // Save the last finalized epoch to skip recovery for the new fresh account.
+            assert_eq!(epoch, 0, "account is not recovered");
             database.finalize_epoch(self.last_epoch)?;
+            if let Some(last_public_address_id) = last_public_address_id {
+                database.update_last_public_address_id(last_public_address_id)?;
+            }
+            drop(database);
         }
-        drop(database);
 
         let (account_service, account) = AccountService::new(
             &account_database_dir,
@@ -1856,11 +2056,12 @@ impl WalletService {
     ///
     /// Create a new account for provided keys.
     ///
-    fn create_account(
+    fn create_or_recover_account(
         &mut self,
         account_skey: scc::SecretKey,
         account_pkey: scc::PublicKey,
         password: &str,
+        last_public_address_id: u32,
     ) -> Result<AccountId, Error> {
         let account_id = self.find_account_id();
         let account_dir = self.accounts_dir.join(format!("{}", account_id));
@@ -1869,7 +2070,7 @@ impl WalletService {
         let account_pkey_file = account_dir.join("account.pkey");
         write_account_pkey(&account_pkey_file, &account_pkey)?;
         write_account_skey(&account_skey_file, &account_skey, password)?;
-        self.open_account(&account_id, true)?;
+        self.open_account(&account_id, true, Some(last_public_address_id))?;
         Ok(account_id)
     }
 
@@ -1879,7 +2080,7 @@ impl WalletService {
     ) -> Result<WalletControlResponse, Error> {
         match request {
             WalletControlRequest::ListAccounts {} => {
-                let accounts: HashMap<AccountId, AccountInfo> = self
+                let accounts = self
                     .accounts
                     .iter()
                     .map(|(account_id, AccountHandle { account_pkey, .. })| {
@@ -1897,10 +2098,18 @@ impl WalletService {
             WalletControlRequest::CreateAccount { password } => {
                 let (account_skey, account_pkey) = scc::make_random_keys();
                 info!("Created a new account {}", account_pkey);
-                let account_id = self.create_account(account_skey, account_pkey, &password)?;
+                let account_id =
+                    self.create_or_recover_account(account_skey, account_pkey, &password, 0)?;
                 Ok(WalletControlResponse::AccountCreated { account_id })
             }
-            WalletControlRequest::RecoverAccount { recovery, password } => {
+            WalletControlRequest::RecoverAccount {
+                recovery:
+                    AccountRecovery {
+                        recovery,
+                        last_public_address_id,
+                    },
+                password,
+            } => {
                 let account_skey = recovery_to_account_skey(&recovery)?;
                 let account_pkey: scc::PublicKey = account_skey.clone().into();
                 // Check for duplicates.
@@ -1910,7 +2119,12 @@ impl WalletService {
                     }
                 }
                 info!("Restored account from 24-word phrase {}", account_pkey);
-                let account_id = self.create_account(account_skey, account_pkey, &password)?;
+                let account_id = self.create_or_recover_account(
+                    account_skey,
+                    account_pkey,
+                    &password,
+                    last_public_address_id,
+                )?;
                 Ok(WalletControlResponse::AccountCreated { account_id })
             }
             WalletControlRequest::DeleteAccount { account_id } => {

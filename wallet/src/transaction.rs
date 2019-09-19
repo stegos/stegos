@@ -24,7 +24,7 @@
 use crate::change::*;
 use crate::error::*;
 use crate::snowball::ProposedUTXO;
-use crate::storage::{OutputValue, PaymentValue, StakeValue};
+use crate::storage::{OutputValue, PaymentValue, PublicPaymentValue, StakeValue};
 use failure::Error;
 use log::*;
 use serde_derive::Serialize;
@@ -268,7 +268,13 @@ where
                 output1_hash, recipient, amount, locked_timestamp
             );
 
-            (output1.clone().into(), gamma1, output1.into())
+            // TODO: support public addresses.
+            let extended_output = PublicPaymentValue {
+                output: output1.clone(),
+                public_address_id: None,
+            };
+
+            (output1.clone().into(), gamma1, extended_output.into())
         }
     };
 
@@ -616,90 +622,6 @@ where
     );
 
     Ok((tx, extended_outputs))
-}
-
-/// Create a cloaking transaction.
-pub(crate) fn create_cloaking_transaction<'a, UnspentIter>(
-    sender_skey: &SecretKey,
-    recipient: &PublicKey,
-    unspent_iter: UnspentIter,
-    payment_fee: i64,
-) -> Result<(PaymentTransaction, OutputValue), Error>
-where
-    UnspentIter: Iterator<Item = PublicPaymentOutput>,
-{
-    let data = PaymentPayloadData::Comment(String::from("Exchange public UTXOs to cloaked"));
-
-    debug!("Creating a cloaking transaction: recipient={:?}", recipient);
-
-    //
-    // Find inputs
-    //
-
-    trace!("Checking for available public funds in the account...");
-    let fee = payment_fee;
-    let mut inputs = Vec::new();
-    let mut total_amount = -payment_fee;
-
-    for input in unspent_iter {
-        let PublicPaymentOutput { amount, .. } = input;
-        inputs.push(Output::PublicPaymentOutput(input.clone()));
-        total_amount += amount;
-    }
-
-    debug!(
-        "Transaction preview: recipient={:?}, amount={}, withdrawn={}, fee={}",
-        recipient,
-        total_amount,
-        total_amount + fee,
-        fee
-    );
-
-    if total_amount <= 0 {
-        return Err(WalletError::NegativeAmount(total_amount).into());
-    }
-
-    assert!(!inputs.is_empty());
-
-    //
-    // Create outputs
-    //
-
-    let mut outputs: Vec<Output> = Vec::<Output>::with_capacity(1);
-    // Create an output for payment
-
-    data.validate()?;
-    trace!("Creating payment UTXO...");
-
-    let (output, gamma, _rvalue) =
-        PaymentOutput::with_payload(None, recipient, total_amount, data.clone(), None)?;
-    let output1_hash = Hash::digest(&output);
-    info!(
-        "Created payment UTXO: hash={}, recipient={}, amount={}, data={:?}",
-        output1_hash, recipient, total_amount, data
-    );
-
-    let extended_output = PaymentValue {
-        amount: total_amount,
-        rvalue: None,
-        recipient: *recipient,
-        data,
-        output: output.clone(),
-        is_change: false,
-    };
-
-    outputs.push(output.into());
-    info!(
-        "Created payment transaction: recipient={}, amount={}, withdrawn={}, fee={}",
-        recipient,
-        total_amount,
-        total_amount + fee,
-        fee
-    );
-    Ok((
-        PaymentTransaction::new(sender_skey, &inputs, &outputs, &gamma, fee)?,
-        extended_output.into(),
-    ))
 }
 
 #[cfg(test)]

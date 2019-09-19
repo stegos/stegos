@@ -36,6 +36,7 @@ merlin = "1"
 ristretto_bulletproofs = { package = "bulletproofs", version = "1" }
 vdf_field = { path = "stubs/vdf_field" }
 clap = "2.32"
+base58check = "0.0.1"
 
 [dev-dependencies]
 serde_json = "1.0"

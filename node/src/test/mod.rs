@@ -84,6 +84,7 @@ impl<'timer> Sandbox<'timer> {
         F: FnOnce(Sandbox),
     {
         start_test(|timer| {
+            stegos_crypto::init_test_network_prefix();
             let var = std::env::var("STEGOS_TEST_LOGS_LEVEL")
                 .ok()
                 .map(|s| s.to_lowercase());

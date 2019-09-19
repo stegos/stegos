@@ -32,12 +32,11 @@ pub mod scc;
 pub mod utils;
 pub mod vdf;
 
-use base58check::{FromBase58CheckError, FromBase58Error};
+use bech32::Error as Bech32Error;
 use failure::Fail;
 use hex;
 
-// Version byte for Base58Check encoding (TBD)
-pub const BASE58_VERSIONID: u8 = 198u8;
+static mut NETWORK_PREFIX: &'static str = "dev";
 
 #[derive(Debug, Fail)]
 pub enum CryptoError {
@@ -84,14 +83,10 @@ pub enum CryptoError {
 
     #[fail(display = "Not an AONT ciphertext")]
     InvalidAontDecryption,
-    #[fail(display = "Invalid Base58Check checksum")]
-    InvalidBase58Checksum,
-    #[fail(display = "Invalid Base58 Character")]
-    InvalidBase58Character,
-    #[fail(display = "Invalid Base58 Length")]
-    InvalibBase58Length,
-    #[fail(display = "Invalid Base58Check Version byte: {}", _0)]
-    WrongBase58VerisonId(u8),
+    #[fail(display = "Bech32 error = {}", _0)]
+    Bech32Error(Bech32Error),
+    #[fail(display = "Incorrect network prefix: expected={}, actual={}", _0, _1)]
+    IncorrectNetworkPrefix(&'static str, String),
     #[fail(display = "Invalid SubKeying")]
     InvalidSubKeying,
     #[fail(display = "Invalid Decryption")]
@@ -109,6 +104,10 @@ pub enum CryptoError {
         _0, _1, _2
     )]
     UnexpectedVDFComplexity(u64, u64, u64),
+    #[fail(display = "Network prefix already set to: {}", _0)]
+    NetworkPrefixAlreadySet(&'static str),
+    #[fail(display = "Failed to set network prefix from two threads.")]
+    NetworkPrefixSetFailed,
 }
 
 impl From<hex::FromHexError> for CryptoError {
@@ -121,16 +120,52 @@ impl From<hex::FromHexError> for CryptoError {
     }
 }
 
-impl From<FromBase58CheckError> for CryptoError {
-    fn from(error: FromBase58CheckError) -> Self {
-        match error {
-            FromBase58CheckError::InvalidChecksum => CryptoError::InvalidBase58Checksum,
-            FromBase58CheckError::InvalidBase58(base58error) => match base58error {
-                FromBase58Error::InvalidBase58Character(_, _) => {
-                    CryptoError::InvalidBase58Character
-                }
-                FromBase58Error::InvalidBase58Length => CryptoError::InvalibBase58Length,
-            },
+impl From<Bech32Error> for CryptoError {
+    fn from(error: Bech32Error) -> Self {
+        CryptoError::Bech32Error(error)
+    }
+}
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static STATE: AtomicUsize = AtomicUsize::new(UNINITIALIZED);
+const UNINITIALIZED: usize = 0;
+const INITIALIZING: usize = 1;
+const INITIALIZED: usize = 2;
+
+/// Initialize crypto to work with specific network prefix.
+/// Reserved network prefixes:
+/// stg - stegos mainnet;
+/// stt - stegos testnet;
+/// str - stegos devnet;
+/// dev - local stegos dev;
+pub fn set_network_prefix(prefix: &'static str) -> Result<(), CryptoError> {
+    unsafe {
+        match STATE.compare_and_swap(UNINITIALIZED, INITIALIZING, Ordering::SeqCst) {
+            UNINITIALIZED => {
+                NETWORK_PREFIX = prefix;
+                STATE.store(INITIALIZED, Ordering::SeqCst);
+                Ok(())
+            }
+            INITIALIZING => {
+                while STATE.load(Ordering::SeqCst) == INITIALIZING {}
+                Err(CryptoError::NetworkPrefixSetFailed)
+            }
+            _ => Err(CryptoError::NetworkPrefixAlreadySet(NETWORK_PREFIX)),
         }
     }
+}
+
+pub fn get_network_prefix() -> &'static str {
+    unsafe {
+        if STATE.load(Ordering::SeqCst) == INITIALIZED {
+            NETWORK_PREFIX
+        } else {
+            panic!("Network prefix was not initialized.")
+        }
+    }
+}
+
+pub fn init_test_network_prefix() {
+    let _ = set_network_prefix("dev");
 }

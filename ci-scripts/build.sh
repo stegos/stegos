@@ -402,12 +402,14 @@ do_coverage() {
     # ignore:
     # 1) external deps.
     # 2) examples.
-    # 3) test code itself.
-    # 4) error wrappers.
-    # 5) protobuf generated files.
+    # 3) other bins.
+    # 4) test code itself.
+    # 5) error wrappers.
+    # 6) protobuf generated files.
     grcov ccov.zip -s . -t lcov --llvm --branch --ignore-not-existing \
         --ignore-dir "/*" \
         --ignore-dir "*/examples/**" \
+        --ignore-dir "*/bins/**" \
         --ignore-dir "*/tests/**" \
         --ignore-dir "**/tests.rs" \
         --ignore-dir "**/error.rs" \

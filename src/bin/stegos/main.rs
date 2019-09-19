@@ -79,6 +79,16 @@ fn main() {
                 .value_name("FILE"),
         )
         .arg(
+            Arg::with_name("chain")
+                .short("n")
+                .long("chain")
+                .env("STEGOS_CHAIN")
+                .value_name("NAME")
+                .default_value("mainnet")
+                .help("Specify chain to use: testnet or dev")
+                .takes_value(true),
+        )
+        .arg(
             Arg::with_name("data-dir")
                 .short("d")
                 .long("data-dir")
@@ -115,6 +125,10 @@ fn main() {
         2 | _ => log::Level::Trace,
     };
     simple_logger::init_with_level(level).unwrap_or_default();
+
+    let chain = args.value_of("chain").unwrap();
+    stegos_crypto::set_network_prefix(stegos::chain_to_prefix(&chain))
+        .expect("Network prefix not initialised.");
 
     let data_dir = PathBuf::from(args.value_of("data-dir").unwrap());
     if !data_dir.exists() {

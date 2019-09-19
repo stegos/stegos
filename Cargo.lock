@@ -168,6 +168,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "bech32"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
 name = "bigint"
 version = "4.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2479,6 +2484,7 @@ name = "stegos_crypto"
 version = "0.2.0"
 dependencies = [
  "base58check 0.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "bech32 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "bitvector 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "bulletproofs 1.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "cc 1.0.41 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -3429,6 +3435,7 @@ dependencies = [
 "checksum base58check 0.0.1 (registry+https://github.com/rust-lang/crates.io-index)" = "821c80f71fdcd7e7a24fa9d16c8b23a9c8236ab4a0b03f67618fc3c76431998b"
 "checksum base64 0.10.1 (registry+https://github.com/rust-lang/crates.io-index)" = "0b25d992356d2eb0ed82172f5248873db5560c4721f564b13cb5193bda5e668e"
 "checksum base64 0.9.3 (registry+https://github.com/rust-lang/crates.io-index)" = "489d6c0ed21b11d038c31b6ceccca973e65d73ba3bd8ecb9a2babf5546164643"
+"checksum bech32 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)" = "9e0089c35ab7c6f2bc55ab23f769913f0ac65b1023e7e74638a1f43128dd5df2"
 "checksum bigint 4.4.1 (registry+https://github.com/rust-lang/crates.io-index)" = "ebecac13b3c745150d7b6c3ea7572d372f09d627c2077e893bf26c5c7f70d282"
 "checksum bindgen 0.47.3 (registry+https://github.com/rust-lang/crates.io-index)" = "df683a55b54b41d5ea8ebfaebb5aa7e6b84e3f3006a78f010dadc9ca88469260"
 "checksum bitflags 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "3d155346769a6855b86399e9bc3814ab343cd3d62c7e985113d46a0ec3c281fd"

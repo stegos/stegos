@@ -173,7 +173,7 @@ impl ChainReader {
         }
 
         // Feed blocks from the disk.
-        for block in chain.blocks_starting(self.epoch, 0) {
+        for block in chain.blocks_starting(self.epoch, self.offset) {
             let (msg, next_epoch, next_offset) = match block {
                 Block::MacroBlock(block) => {
                     assert_eq!(block.header.epoch, self.epoch);

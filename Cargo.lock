@@ -2527,6 +2527,7 @@ dependencies = [
  "serde_derive 1.0.99 (registry+https://github.com/rust-lang/crates.io-index)",
  "stegos_crypto 0.2.0",
  "stegos_serialization 0.2.0",
+ "tempdir 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

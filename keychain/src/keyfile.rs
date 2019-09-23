@@ -94,13 +94,13 @@ fn load_encrypted_key(path: &Path, tag: &str, password: &str) -> Result<Vec<u8>,
 
 pub fn load_account_pkey(path: &Path) -> Result<scc::PublicKey, KeyError> {
     let pkey_encoded = read(path)?;
-    scc::PublicKey::from_str(&String::from_utf8_lossy(&pkey_encoded))
+    scc::PublicKey::from_str(String::from_utf8_lossy(&pkey_encoded).trim())
         .map_err(|e| KeyError::InvalidKey(path.to_string_lossy().to_string(), e))
 }
 
 pub fn load_network_pkey(path: &Path) -> Result<pbc::PublicKey, KeyError> {
     let pkey = read(path)?;
-    pbc::PublicKey::try_from_hex(&String::from_utf8_lossy(&pkey))
+    pbc::PublicKey::try_from_hex(String::from_utf8_lossy(&pkey).trim())
         .map_err(|e| KeyError::InvalidKey(path.to_string_lossy().to_string(), e))
 }
 
@@ -200,4 +200,40 @@ pub fn load_network_keypair(
     }
     info!("Loaded network key pair: pkey={}", network_pkey);
     Ok((network_skey, network_pkey))
+}
+
+mod test {
+
+    use super::*;
+    use tempdir::TempDir;
+    #[test]
+    fn whitespace_tolerate_account_pkey() {
+        stegos_crypto::init_test_network_prefix();
+
+        let tmp_file = TempDir::new("whitespace_tolerate_account_pkey").unwrap();
+        let source = " dev15q68emdmr3zyk3vqj644kpcpx7grqekdw0cge36fjlm4g0q284esvgy78c \n";
+        let mut path = tmp_file.into_path();
+        path.push("file");
+        write(&path, source.as_bytes().to_vec()).unwrap();
+
+        //test
+
+        load_account_pkey(&path).unwrap();
+    }
+
+    #[test]
+    fn whitespace_tolerate_network_pkey() {
+        let tmp_file = TempDir::new("whitespace_tolerate_account_pkey").unwrap();
+        let source =
+            " 0757675e2547e04ee1f17ec1992a80d8da6f9a05aef55f76a66d5c32c068a32\
+             81212970a44d3150934358f8414b2f60579858c67718fcd4b102eb45add61d069fdb4316fe0ca70f6777\
+             bb0c9b35633469547c2dd1c0382418b88789af01e48ad \n";
+        let mut path = tmp_file.into_path();
+        path.push("file");
+        write(&path, source.as_bytes().to_vec()).unwrap();
+
+        //test
+
+        load_network_pkey(&path).unwrap();
+    }
 }

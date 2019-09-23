@@ -201,7 +201,7 @@ pub fn load_network_keypair(
     info!("Loaded network key pair: pkey={}", network_pkey);
     Ok((network_skey, network_pkey))
 }
-
+#[cfg(test)]
 mod test {
 
     use super::*;

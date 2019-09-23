@@ -403,19 +403,21 @@ impl Future for WebSocketHandler {
                     Async::Ready(Some(msg)) => {
                         match &msg {
                             ChainNotification::MicroBlockPrepared(block) => {
-                                warn!(
+                                trace!(
                                     "Prepared Micro Block: epoch={}, offset={}",
-                                    block.block.header.epoch, block.block.header.offset
+                                    block.block.header.epoch,
+                                    block.block.header.offset
                                 );
                             }
                             ChainNotification::MicroBlockReverted(block) => {
-                                warn!(
+                                trace!(
                                     "Reverted Micro Block: epoch={}, offset={}",
-                                    block.block.header.epoch, block.block.header.offset
+                                    block.block.header.epoch,
+                                    block.block.header.offset
                                 );
                             }
                             ChainNotification::MacroBlockCommitted(block) => {
-                                warn!("Comitted Macro Block: epoch={}", block.block.header.epoch);
+                                trace!("Comitted Macro Block: epoch={}", block.block.header.epoch);
                             }
                         }
                         let msg = Response {

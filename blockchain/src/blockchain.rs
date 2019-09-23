@@ -1158,6 +1158,7 @@ impl Blockchain {
             assert!(prev.is_none(), "duplicate input");
         }
 
+        let mut awards_at_end_epoch = self.awards.clone();
         // update award (skip genesis).
         let winner = if epoch > 0 {
             let validators_activity = self
@@ -1165,6 +1166,10 @@ impl Blockchain {
                 .unwrap();
             self.awards
                 .finalize_epoch(self.cfg.service_award_per_epoch, validators_activity);
+
+            // save awards info at end of past epoch.
+            awards_at_end_epoch = self.awards.clone();
+
             let winner = self.awards.check_winners(block.header.random.rand);
             if let Some((winner_pk, amount)) = winner {
                 info!(
@@ -1270,7 +1275,7 @@ impl Blockchain {
 
         let facilitator = self.election_result().facilitator;
         let awards = AwardsInfo {
-            service_award_state: self.awards.clone(),
+            service_award_state: awards_at_end_epoch,
             payout: winner.map(|w| PayoutInfo {
                 recipient: w.0,
                 amount: w.1,

@@ -39,6 +39,7 @@ use bitvector::BitVector;
 use byteorder::{BigEndian, ByteOrder};
 use log::*;
 use rocksdb;
+use rocksdb::{ColumnFamily, WriteBatch};
 use serde_derive::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -56,16 +57,16 @@ pub type ValidatorId = u32;
 /// Saved information about validator, and its slotcount in epoch.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ValidatorKeyInfo {
-    network_pkey: pbc::PublicKey,
-    wallet_pkey: scc::PublicKey,
-    slots: i64,
+    pub(crate) network_pkey: pbc::PublicKey,
+    pub(crate) account_pkey: scc::PublicKey,
+    pub(crate) slots: i64,
 }
 
 /// Information about service award payout.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PayoutInfo {
-    recipient: scc::PublicKey,
-    amount: i64,
+    pub(crate) recipient: scc::PublicKey,
+    pub(crate) amount: i64,
 }
 /// Full information about service award state.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -128,8 +129,8 @@ impl Hashable for ChainInfo {
 }
 
 /// A helper to find UTXO in this blockchain.
-#[derive(Debug, Clone)]
-enum OutputKey {
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+pub(crate) enum OutputKey {
     MacroBlock {
         /// Block Epoch.
         epoch: u64,
@@ -149,7 +150,7 @@ enum OutputKey {
 }
 
 /// A helper to store the global monetary balance in MultiVersionedMap.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Balance {
     /// The total sum of money created.
     pub created: Pt,
@@ -162,10 +163,11 @@ pub(crate) struct Balance {
 }
 
 /// A special offset used to tore Macro Blocks on the disk.
-const MACRO_BLOCK_OFFSET: u32 = 4294967295u32;
+const MACRO_BLOCK_OFFSET: u32 = u32::max_value();
 
-#[derive(Debug, Default, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct LSN(pub(crate) u64, pub(crate) u32); // use `struct` to disable explicit casts.
+
 const INITIAL_LSN: LSN = LSN(0, 0);
 
 type BlockByHashMap = MultiVersionedMap<Hash, LSN, LSN>;
@@ -183,6 +185,29 @@ pub struct OutputRecovery {
     pub is_final: bool,
     pub timestamp: Timestamp,
 }
+
+// colon families.
+const BLOCK_BY_HASH: &'static str = "block_by_hash";
+const OUTPUT_BY_HASH: &'static str = "output_by_hash";
+const ESCROW: &'static str = "escrow";
+
+const SERVICE_AWARD: &'static str = "service_award";
+const EPOCH_INFOS: &'static str = "epoch_infos";
+const META: &'static str = "META";
+
+const COLON_FAMILIES: &[&'static str] = &[
+    BLOCK_BY_HASH,
+    OUTPUT_BY_HASH,
+    ESCROW,
+    SERVICE_AWARD,
+    EPOCH_INFOS,
+    META,
+];
+
+/// Meta table indexes
+const BALANCE: &'static str = "balance";
+const EPOCH: &'static str = "epoch";
+const ELECTION_RESULT: &'static str = "election_result";
 
 /// The blockchain database.
 pub struct Blockchain {
@@ -209,7 +234,6 @@ pub struct Blockchain {
     /// VDF difficulty,
     difficulty: u64,
     /// Starting info for each past epochs.
-    epoch_infos: HashMap<u64, EpochInfo>,
 
     //
     // Epoch Information.
@@ -258,7 +282,11 @@ impl Blockchain {
         //
         // Storage.
         //
-        let database = rocksdb::DB::open_default(chain_dir)?;
+
+        let mut opts = rocksdb::Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+        let database = rocksdb::DB::open_cf(&opts, chain_dir, COLON_FAMILIES)?;
         let block_by_hash: BlockByHashMap = BlockByHashMap::new();
         let output_by_hash: OutputByHashMap = OutputByHashMap::new();
         let mut balance: BalanceMap = BalanceMap::new();
@@ -272,7 +300,6 @@ impl Blockchain {
         let escrow = Escrow::new();
         let difficulty = genesis.header.difficulty;
         let vdf = VDF::new();
-        let epoch_infos = HashMap::new();
 
         //
         // Epoch Information.
@@ -302,7 +329,6 @@ impl Blockchain {
             escrow,
             vdf,
             difficulty,
-            epoch_infos,
             epoch,
             offset,
             election_result,
@@ -324,12 +350,127 @@ impl Blockchain {
     // Recovery.
     //----------------------------------------------------------------------------------------------
 
+    /// Try recover using local snapshot of state.
+    /// Return true if success.
+    fn try_recover_fast(
+        &mut self,
+        timestamp: Timestamp,
+        force_check: bool,
+    ) -> Result<bool, BlockchainError> {
+        let cf_block_by_hash = self.database.cf_handle(BLOCK_BY_HASH).unwrap();
+        let cf_output_by_hash = self.database.cf_handle(OUTPUT_BY_HASH).unwrap();
+        let cf_escrow = self.database.cf_handle(ESCROW).unwrap();
+        let cf_meta = self.database.cf_handle(META).unwrap();
+        macro_rules! recover_meta {
+            ($key: ident) => {
+                ProtoConvert::from_buffer(
+                    &self
+                        .database
+                        .get_cf(cf_meta, $key.as_bytes())?
+                        .expect(concat!("Cannot find meta name = ", stringify!($key))),
+                )?
+            };
+        }
+
+        macro_rules! recover_map {
+            ($cf: ident, $id: expr, $lsn: ident) => {
+                let iter_mode = rocksdb::IteratorMode::Start;
+                for (k, v) in self.database.iterator_cf($cf, iter_mode)? {
+                    let key = ProtoConvert::from_buffer(&k)?;
+                    let value = ProtoConvert::from_buffer(&v)?;
+
+                    trace!("Recovering map {} {:?}={:?}", stringify!($id), key, value);
+                    assert!($id.insert($lsn, key, value).is_none())
+                }
+            };
+        }
+
+        // Epoch should be present at every snapshot.
+        // Early return if "EPOCH" metadata was not found.
+        if self.database.get_cf(cf_meta, EPOCH.as_bytes())?.is_none() {
+            return Ok(false);
+        }
+
+        let lsn: LSN = recover_meta!(EPOCH);
+        assert_eq!(lsn.1, MACRO_BLOCK_OFFSET);
+
+        info!(
+            "Recovering blockchain from snapshot with: epoch={}, offset={}",
+            lsn.0, lsn.1
+        );
+        self.epoch = lsn.0 + 1;
+        self.offset = 0;
+
+        assert!(self
+            .election_result
+            .insert(lsn, (), recover_meta!(ELECTION_RESULT))
+            .is_none());
+        // balance already set, that's why dont assert
+        let _ = self.balance.insert(lsn, (), recover_meta!(BALANCE));
+        recover_map!(cf_block_by_hash, self.block_by_hash, lsn);
+        recover_map!(cf_output_by_hash, self.output_by_hash, lsn);
+        let mut escrow = EscrowMap::new();
+        recover_map!(cf_escrow, escrow, lsn);
+        self.escrow.escrow = escrow;
+
+        let block = self.macro_block(lsn.0)?;
+
+        let block_hash = Hash::digest(&block);
+
+        self.last_block_timestamp = block.header.timestamp;
+        self.last_block_hash = block_hash;
+        self.last_macro_block_timestamp = block.header.timestamp;
+        self.last_macro_block_random = block.header.random.rand;
+        self.last_macro_block_hash = block_hash;
+        self.difficulty = block.header.difficulty;
+        debug!("Set difficulty to to {}", self.difficulty);
+        let epoch_info = self
+            .epoch_info(lsn.0)?
+            .expect("Any epoch info should be stored with block");
+        self.awards = epoch_info.awards.service_award_state;
+
+        info!("Snapshot recovered, recovering microblocks of last epoch.");
+        // microblocks starting index is (next epoch, and zero offset);
+        let mut microblock_lsn = lsn;
+        microblock_lsn.1 = 0;
+        microblock_lsn.0 += 1;
+        let blocks = self
+            .database
+            .full_iterator(rocksdb::IteratorMode::From(
+                &Self::block_key(microblock_lsn),
+                rocksdb::Direction::Forward,
+            ))
+            .map(|(_, v)| Block::from_buffer(&*v).expect("couldn't deserialize block."))
+            // assert thats we have no macroblocks out of snapshot.
+            .inspect(|b| match b {
+                Block::MacroBlock(b) => {
+                    panic!("Should be no new macroblocks epoch={}", b.header.epoch)
+                }
+                _ => {}
+            });
+
+        // Recover remaining blocks.
+        for block in blocks {
+            self.recover_block(block, timestamp, force_check)?;
+        }
+
+        info!(
+            "Recovered blockchain from the disk: epoch={}, offset={}, last_block={}",
+            self.epoch, self.offset, self.last_block_hash
+        );
+        Ok(true)
+    }
+
     fn recover(
         &mut self,
         genesis: MacroBlock,
         timestamp: Timestamp,
         force_check: bool,
     ) -> Result<(), BlockchainError> {
+        if self.try_recover_fast(timestamp, force_check)? {
+            return Ok(());
+        }
+
         let genesis_hash = Hash::digest(&genesis);
 
         let mut blocks = self.blocks();
@@ -357,7 +498,6 @@ impl Blockchain {
                 BlockchainError::IncompatibleGenesis(genesis_hash, self.last_block_hash()).into(),
             );
         }
-
         // Recover remaining blocks.
         for block in blocks {
             self.recover_block(block, timestamp, force_check)?;
@@ -606,8 +746,15 @@ impl Blockchain {
     }
 
     /// Returns start epoch info for any past epoch.
-    pub fn epoch_info(&self, epoch: u64) -> Option<&EpochInfo> {
-        self.epoch_infos.get(&epoch)
+    pub fn epoch_info(&self, epoch: u64) -> Result<Option<EpochInfo>, BlockchainError> {
+        let cf_epoch_infos = self.database.cf_handle(EPOCH_INFOS).unwrap();
+        let epoch_info = self.database.get_cf(
+            cf_epoch_infos,
+            &Self::block_key(LSN(epoch, MACRO_BLOCK_OFFSET)),
+        )?;
+        Ok(epoch_info
+            .map(|some| ProtoConvert::from_buffer(&some))
+            .transpose()?)
     }
 
     /// Returns current state of election result.
@@ -1075,7 +1222,7 @@ impl Blockchain {
         &mut self,
         block: MacroBlock,
         timestamp: Timestamp,
-    ) -> Result<(Vec<Hash>, HashMap<Hash, Output>), StorageError> {
+    ) -> Result<(Vec<Hash>, HashMap<Hash, Output>), BlockchainError> {
         assert_eq!(self.epoch, block.header.epoch);
         assert_eq!(self.offset(), 0);
 
@@ -1107,7 +1254,7 @@ impl Blockchain {
         &mut self,
         lsn: LSN,
         block: MacroBlock,
-    ) -> Result<(Vec<Hash>, HashMap<Hash, Output>), StorageError> {
+    ) -> Result<(Vec<Hash>, HashMap<Hash, Output>), BlockchainError> {
         assert_eq!(block.header.version, VERSION);
         assert_eq!(self.epoch, block.header.epoch);
         assert_eq!(self.offset(), 0);
@@ -1208,7 +1355,6 @@ impl Blockchain {
         self.last_macro_block_timestamp = block.header.timestamp;
         self.last_macro_block_random = block.header.random.rand;
         self.last_macro_block_hash = block_hash;
-        assert_eq!(self.last_block_hash, block_hash);
         self.election_result.insert(
             lsn,
             (),
@@ -1241,14 +1387,36 @@ impl Blockchain {
                 .set(*stake);
         }
 
+        let cf_block_by_hash = self.database.cf_handle(BLOCK_BY_HASH).unwrap();
+        let cf_output_by_hash = self.database.cf_handle(OUTPUT_BY_HASH).unwrap();
+        let cf_escrow = self.database.cf_handle(ESCROW).unwrap();
+        let cf_epoch_infos = self.database.cf_handle(EPOCH_INFOS).unwrap();
+        let cf_meta = self.database.cf_handle(META).unwrap();
+        let mut batch = WriteBatch::default();
         //
         // Finalize storage.
         //
-        self.block_by_hash.checkpoint();
-        self.output_by_hash.checkpoint();
-        self.balance.checkpoint();
-        self.escrow.checkpoint();
-        self.election_result.checkpoint();
+        Self::write_log(
+            &mut batch,
+            cf_block_by_hash,
+            self.block_by_hash.checkpoint(),
+        )?;
+        Self::write_log(
+            &mut batch,
+            cf_output_by_hash,
+            self.output_by_hash.checkpoint(),
+        )?;
+        Self::write_log(&mut batch, cf_escrow, self.escrow.checkpoint())?;
+        let _ = self.election_result.checkpoint();
+        let _ = self.balance.checkpoint();
+        Self::write_meta(&mut batch, cf_meta, BALANCE, self.balance())?;
+        Self::write_meta(
+            &mut batch,
+            cf_meta,
+            EPOCH,
+            &LSN(self.epoch - 1, MACRO_BLOCK_OFFSET),
+        )?;
+        Self::write_meta(&mut batch, cf_meta, ELECTION_RESULT, self.election_result())?;
 
         let validators = self
             .election_result()
@@ -1256,13 +1424,13 @@ impl Blockchain {
             .iter()
             .map(|v| {
                 let network_pkey = v.0;
-                let wallet_pkey = self
+                let account_pkey = self
                     .account_by_network_key(&network_pkey)
                     .expect("Validator should have wallet key at start of epoch");
                 let slots = v.1;
                 ValidatorKeyInfo {
                     network_pkey,
-                    wallet_pkey,
+                    account_pkey,
                     slots,
                 }
             })
@@ -1283,7 +1451,14 @@ impl Blockchain {
             validators,
         };
 
-        self.epoch_infos.insert(epoch, epoch_info);
+        let data = epoch_info.into_buffer()?;
+        batch.put_cf(
+            cf_epoch_infos,
+            &Self::block_key(LSN(epoch, MACRO_BLOCK_OFFSET)),
+            &data,
+        )?;
+        self.epoch_activity.reset();
+        self.database.write(batch)?;
 
         let mut outputs: HashMap<Hash, Output> =
             outputs.into_iter().map(|(h, (o, _k))| (h, o)).collect();
@@ -1758,6 +1933,49 @@ impl Blockchain {
 
         Ok((pruned, recovered, removed, block))
     }
+
+    fn write_meta<V>(
+        batch: &mut WriteBatch,
+        meta_cf: ColumnFamily,
+        key: &'static str,
+        value: &V,
+    ) -> Result<(), BlockchainError>
+    where
+        V: ProtoConvert + std::fmt::Debug,
+    {
+        let value = value.into_buffer()?;
+        batch.put_cf(meta_cf, key.as_bytes(), &value)?;
+        Ok(())
+    }
+
+    /// Undolog is actualy a patchset, so just apply it to the block.
+    fn write_log<K, V>(
+        batch: &mut WriteBatch,
+        cf: ColumnFamily,
+        diff: BTreeMap<K, Option<V>>,
+    ) -> Result<(), BlockchainError>
+    where
+        K: ProtoConvert + std::fmt::Debug,
+        V: ProtoConvert + std::fmt::Debug,
+    {
+        trace!("Persist log");
+        for (key, value) in diff {
+            match value {
+                Some(value) => {
+                    trace!("New insert {:?}={:?}", key, value);
+                    let key = key.into_buffer()?;
+                    let value = value.into_buffer()?;
+                    batch.put_cf(cf, &key, &value)?
+                }
+                None => {
+                    trace!("Remove {:?}", key);
+                    let key = key.into_buffer()?;
+                    batch.delete_cf(cf, &key)?
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1984,6 +2202,7 @@ pub mod tests {
         let count0 = chain.blocks().count();
         let balance0 = chain.balance().clone();
         let escrow0 = chain.escrow_info().clone();
+        let awards0 = chain.awards.clone();
 
         //
         // Register a micro block #1.
@@ -2110,6 +2329,7 @@ pub mod tests {
         assert_eq!(block_timestamp0, chain.last_macro_block_timestamp());
         assert_eq!(&balance0, chain.balance());
         assert_eq!(escrow0, chain.escrow_info());
+        assert_eq!(awards0, chain.awards.clone());
         for input_hash in &input_hashes1 {
             assert!(chain.contains_output(&input_hash));
         }
@@ -2140,6 +2360,7 @@ pub mod tests {
         assert_eq!(block_timestamp0, chain.last_macro_block_timestamp());
         assert_eq!(&balance0, chain.balance());
         assert_eq!(escrow0, chain.escrow_info());
+        assert_eq!(awards0, chain.awards.clone());
         for input_hash in &input_hashes1 {
             assert!(chain.contains_output(&input_hash));
         }

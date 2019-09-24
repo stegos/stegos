@@ -34,26 +34,26 @@ use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::scc;
 
-#[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd)]
-struct EscrowKey {
-    validator_pkey: pbc::PublicKey,
-    output_hash: Hash,
+#[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd, Serialize, Deserialize)]
+pub(crate) struct EscrowKey {
+    pub(crate) validator_pkey: pbc::PublicKey,
+    pub(crate) output_hash: Hash,
 }
 
-#[derive(Debug, Clone)]
-struct EscrowValue {
-    account_pkey: scc::PublicKey,
-    active_until_epoch: u64,
-    amount: i64,
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct EscrowValue {
+    pub(crate) account_pkey: scc::PublicKey,
+    pub(crate) active_until_epoch: u64,
+    pub(crate) amount: i64,
 }
 
 use crate::LSN;
-type EscrowMap = MultiVersionedMap<EscrowKey, EscrowValue, LSN>;
+pub(crate) type EscrowMap = MultiVersionedMap<EscrowKey, EscrowValue, LSN>;
 
 #[derive(Debug, Clone)]
 pub struct Escrow {
     /// Stakes.
-    escrow: EscrowMap,
+    pub(crate) escrow: EscrowMap,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -335,8 +335,8 @@ impl Escrow {
     }
 
     #[inline]
-    pub fn checkpoint(&mut self) {
-        self.escrow.checkpoint();
+    pub(crate) fn checkpoint(&mut self) -> BTreeMap<EscrowKey, Option<EscrowValue>> {
+        self.escrow.checkpoint()
     }
 
     #[inline]

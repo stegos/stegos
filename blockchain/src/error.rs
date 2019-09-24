@@ -79,6 +79,8 @@ pub enum BlockchainError {
     CryptoError(CryptoError),
     #[fail(display = "Cannot convert utf8 string = {}", _0)]
     UtfError(Utf8Error),
+    #[fail(display = "Other error={}", _0)]
+    FailureError(failure::Error),
 }
 
 /// Transaction errors.
@@ -485,6 +487,11 @@ impl From<OutputError> for BlockchainError {
 impl From<CryptoError> for BlockchainError {
     fn from(error: CryptoError) -> BlockchainError {
         BlockchainError::CryptoError(error)
+    }
+}
+impl From<failure::Error> for BlockchainError {
+    fn from(error: failure::Error) -> BlockchainError {
+        BlockchainError::FailureError(error)
     }
 }
 

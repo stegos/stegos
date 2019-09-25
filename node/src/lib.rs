@@ -177,7 +177,7 @@ impl ChainReader {
             let (msg, next_epoch, next_offset) = match block {
                 Block::MacroBlock(block) => {
                     assert_eq!(block.header.epoch, self.epoch);
-                    let epoch_info = chain.epoch_info(block.header.epoch).unwrap().clone();
+                    let epoch_info = chain.epoch_info(block.header.epoch)?.unwrap().clone();
                     let next_epoch = block.header.epoch + 1;
                     let msg = ExtendedMacroBlock {
                         block,
@@ -1037,7 +1037,7 @@ impl NodeService {
         }
         let epoch_info = self
             .chain
-            .epoch_info(epoch)
+            .epoch_info(epoch)?
             .expect("Expect epoch info for last macroblock.")
             .clone();
 
@@ -1927,7 +1927,7 @@ impl NodeService {
         }
 
         let block = self.chain.macro_block(epoch)?;
-        let epoch_info = self.chain.epoch_info(epoch).unwrap().clone();
+        let epoch_info = self.chain.epoch_info(epoch)?.unwrap().clone();
         let msg = ExtendedMacroBlock {
             block,
             epoch_info,

@@ -260,6 +260,7 @@ fn notify_subscribers<T: Clone>(subscribers: &mut Vec<mpsc::Sender<T>>, msg: T) 
 pub struct NodeService {
     /// Config.
     cfg: NodeConfig,
+    chain_name: String,
     /// Blockchain.
     chain: Blockchain,
     /// Network secret key.
@@ -314,6 +315,7 @@ impl NodeService {
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
         network: Network,
+        chain_name: String,
     ) -> Result<(Self, Node), Error> {
         let (outbox, inbox) = mpsc::unbounded();
         let mempool = Mempool::new();
@@ -381,6 +383,7 @@ impl NodeService {
 
         let service = NodeService {
             cfg,
+            chain_name,
             chain,
             network_skey,
             network_pkey,
@@ -2054,6 +2057,9 @@ impl Future for NodeService {
                                 NodeRequest::ElectionInfo {} => {
                                     NodeResponse::ElectionInfo(self.chain.election_info())
                                 }
+                                NodeRequest::ChainName {} => NodeResponse::ChainName {
+                                    name: self.chain_name.clone(),
+                                },
                                 NodeRequest::EscrowInfo {} => {
                                     NodeResponse::EscrowInfo(self.chain.escrow_info())
                                 }

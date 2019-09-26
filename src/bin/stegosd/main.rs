@@ -579,6 +579,7 @@ fn run() -> Result<(), Error> {
         network_skey.clone(),
         network_pkey.clone(),
         network.clone(),
+        cfg.general.chain.clone(),
     )?;
 
     // Initialize Wallet.

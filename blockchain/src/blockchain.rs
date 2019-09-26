@@ -458,6 +458,19 @@ impl Blockchain {
             "Recovered blockchain from the disk: epoch={}, offset={}, last_block={}",
             self.epoch, self.offset, self.last_block_hash
         );
+
+        metrics::EPOCH.set(self.epoch as i64);
+        metrics::OFFSET.set(0);
+        metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
+        metrics::EMISSION.set(self.balance().block_reward);
+        metrics::DIFFICULTY.set(self.difficulty as i64);
+        for (key, stake) in self.validators().iter() {
+            let key_str = key.to_string();
+            metrics::VALIDATOR_STAKE_GAUGEVEC
+                .with_label_values(&[key_str.as_str()])
+                .set(*stake);
+        }
+
         Ok(true)
     }
 
@@ -542,7 +555,7 @@ impl Blockchain {
                     self.validate_macro_block(&block, timestamp)?;
                 }
                 let lsn = LSN(block.header.epoch, MACRO_BLOCK_OFFSET);
-                let _ = self.register_macro_block(lsn, block)?;
+                let _ = self.register_macro_block(None, lsn, block)?;
             }
         }
         Ok(())
@@ -1091,13 +1104,12 @@ impl Blockchain {
     }
 
     /// Write block to the disk.
-    fn write_block(&self, lsn: LSN, block: Block) -> Result<(), StorageError> {
+    fn write_block(&self, lsn: LSN, block: Block) -> Result<WriteBatch, StorageError> {
         let data = block.into_buffer().expect("couldn't serialize block.");
         let mut batch = rocksdb::WriteBatch::default();
         // writebatch put fails if size exceeded u32::max, which is not our case.
         batch.put(&Self::block_key(lsn), &data)?;
-        self.database.write(batch)?;
-        Ok(())
+        Ok(batch)
     }
 
     ///
@@ -1235,15 +1247,15 @@ impl Blockchain {
         }
 
         //
-        // Write the macro block to the disk.
+        // Write the macro block to the disk, for macroblock save batch for meta indexes processing.
         //
         let lsn = LSN(self.epoch, MACRO_BLOCK_OFFSET);
-        self.write_block(lsn, Block::MacroBlock(block.clone()))?;
+        let batch = self.write_block(lsn, Block::MacroBlock(block.clone()))?;
 
         //
         // Update in-memory indexes and metadata.
         //
-        self.register_macro_block(lsn, block)
+        self.register_macro_block(batch.into(), lsn, block)
     }
 
     ///
@@ -1252,6 +1264,7 @@ impl Blockchain {
     ///
     fn register_macro_block(
         &mut self,
+        batch: Option<WriteBatch>,
         lsn: LSN,
         block: MacroBlock,
     ) -> Result<(Vec<Hash>, HashMap<Hash, Output>), BlockchainError> {
@@ -1397,7 +1410,7 @@ impl Blockchain {
         let cf_escrow = self.database.cf_handle(ESCROW).unwrap();
         let cf_epoch_infos = self.database.cf_handle(EPOCH_INFOS).unwrap();
         let cf_meta = self.database.cf_handle(META).unwrap();
-        let mut batch = WriteBatch::default();
+        let mut batch = batch.unwrap_or_default();
         //
         // Finalize storage.
         //
@@ -1522,7 +1535,8 @@ impl Blockchain {
         // Write the micro block to the disk.
         //
         let lsn = LSN(self.epoch, self.offset);
-        self.write_block(lsn, Block::MicroBlock(block.clone()))?;
+        let batch = self.write_block(lsn, Block::MicroBlock(block.clone()))?;
+        self.database.write(batch)?;
 
         //
         // Update in-memory indexes and metadata.

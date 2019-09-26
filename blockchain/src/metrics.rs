@@ -31,8 +31,8 @@ lazy_static! {
         &["validator"]
     )
     .unwrap();
-    pub static ref EPOCH: IntCounter =
-        register_int_counter!("stegos_blockchain_epoch", "Current blockchain epoch").unwrap();
+    pub static ref EPOCH: IntGauge =
+        register_int_gauge!("stegos_blockchain_epoch", "Current blockchain epoch").unwrap();
     pub static ref OFFSET: IntGauge =
         register_int_gauge!("stegos_blockchain_offset", "Current microblock number").unwrap();
     pub static ref UTXO_LEN: IntGauge =

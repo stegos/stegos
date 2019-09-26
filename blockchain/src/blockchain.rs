@@ -208,6 +208,7 @@ const COLON_FAMILIES: &[&'static str] = &[
 const BALANCE: &'static str = "balance";
 const EPOCH: &'static str = "epoch";
 const ELECTION_RESULT: &'static str = "election_result";
+const AWARDS: &'static str = "awards";
 
 /// The blockchain database.
 pub struct Blockchain {
@@ -385,9 +386,10 @@ impl Blockchain {
             };
         }
 
-        // Epoch should be present at every snapshot.
-        // Early return if "EPOCH" metadata was not found.
-        if self.database.get_cf(cf_meta, EPOCH.as_bytes())?.is_none() {
+        // Awards should be present at every snapshot.
+        // Early return if "AWARDS" metadata was not found. (go to recovery)
+        if self.database.get_cf(cf_meta, AWARDS.as_bytes())?.is_none() {
+            debug!("Not found snapshot, fallback to disk loading");
             return Ok(false);
         }
 
@@ -424,11 +426,7 @@ impl Blockchain {
         self.last_macro_block_hash = block_hash;
         self.difficulty = block.header.difficulty;
         debug!("Set difficulty to to {}", self.difficulty);
-        let epoch_info = self
-            .epoch_info(lsn.0)?
-            .expect("Any epoch info should be stored with block");
-        self.awards = epoch_info.awards.service_award_state;
-
+        self.awards = recover_meta!(AWARDS);
         info!("Snapshot recovered, recovering microblocks of last epoch.");
         // microblocks starting index is (next epoch, and zero offset);
         let mut microblock_lsn = lsn;
@@ -1435,6 +1433,7 @@ impl Blockchain {
             &LSN(self.epoch - 1, MACRO_BLOCK_OFFSET),
         )?;
         Self::write_meta(&mut batch, cf_meta, ELECTION_RESULT, self.election_result())?;
+        Self::write_meta(&mut batch, cf_meta, AWARDS, &self.awards)?;
 
         let validators = self
             .election_result()

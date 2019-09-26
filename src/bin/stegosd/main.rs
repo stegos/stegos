@@ -345,6 +345,13 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
     }
 
     if !is_prod {
+        // Update awards difficulty for devnet and dev.
+        cfg.chain.awards_difficulty = 3;
+        debug!(
+            "Setting service awards difficulty to {}",
+            cfg.chain.awards_difficulty
+        );
+
         enable_debug();
     }
 

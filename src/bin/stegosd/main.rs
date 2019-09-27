@@ -674,17 +674,13 @@ mod tests {
         let mut config = config::Config::default();
         let chain = "testnet";
         config.general.chain = chain.to_string();
+        config.chain.min_stake_amount = 1_000 * 1_000_000;
+        config.chain.awards_difficulty = 3;
         let genesis = initialize_genesis(&config).expect("testnet looks like unloadable.");
         let timestamp = Timestamp::now();
         let chain_dir = TempDir::new("test").unwrap();
-        Blockchain::new(
-            Default::default(),
-            chain_dir.path(),
-            true,
-            genesis,
-            timestamp,
-        )
-        .expect("testnet looks like unloadable.");
+        Blockchain::new(config.chain, chain_dir.path(), true, genesis, timestamp)
+            .expect("testnet looks like unloadable.");
     }
 
     #[test]

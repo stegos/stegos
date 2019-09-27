@@ -157,10 +157,9 @@ fn main() {
             Ok(stake) => {
                 if stake < cfg.min_stake_amount {
                     eprintln!(
-                        "Invalid stake: must be greater than MIN_STAKE_AMOUNT = {}",
+                        "WARNING: stake is less than MIN_STAKE_AMOUNT = {}",
                         cfg.min_stake_amount
                     );
-                    process::exit(1);
                 };
 
                 stake

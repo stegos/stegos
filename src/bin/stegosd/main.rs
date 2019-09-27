@@ -344,12 +344,18 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
         ));
     }
 
-    if !is_prod {
+    if !is_prod && cfg.chain == Default::default() {
         // Update awards difficulty for devnet and dev.
         cfg.chain.awards_difficulty = 3;
         debug!(
             "Setting service awards difficulty to {}",
             cfg.chain.awards_difficulty
+        );
+        // Update awards difficulty for devnet and dev.
+        cfg.chain.min_stake_amount = 1_000 * 1_000_000; // 1k STG
+        debug!(
+            "Setting minimal stake for validation to {}",
+            cfg.chain.min_stake_amount
         );
 
         enable_debug();

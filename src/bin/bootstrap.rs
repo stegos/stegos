@@ -102,12 +102,7 @@ fn main() {
                 .long("owner")
                 .value_name("ADDRESS")
                 .help("Public key of account, used to make all stake transactions")
-                .takes_value(true)
-                .validator(|address| {
-                    scc::PublicKey::from_str(&address)
-                        .map(|_| ())
-                        .map_err(|e| format!("{:?}", e))
-                }),
+                .takes_value(true),
         )
         .arg(
             Arg::with_name("difficulty")
@@ -243,7 +238,9 @@ fn main() {
 
     // Create an initial payment.
     let beneficiary_pkey = match args.value_of("owner") {
-        Some(address) => scc::PublicKey::from_str(address).expect("already validated by clap"),
+        Some(address) => {
+            scc::PublicKey::from_str(address).expect("Incorrect beneficiary public key")
+        }
         None => keychains[0].1.clone(),
     };
     let output_data = PaymentPayloadData::Comment("Genesis".to_string());

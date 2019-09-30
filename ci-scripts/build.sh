@@ -54,6 +54,7 @@ configure_mingw() {
     export SNAPPY_STATIC
     export ZSTD_STATIC
     export LZ4_STATIC
+    export CFLAGS=-mno-sse
 }
 
 # Install dependencies on Linux via apt

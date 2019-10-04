@@ -24,8 +24,7 @@ mod config;
 use clap::{self, App, Arg, ArgMatches};
 use dirs;
 use failure::{format_err, Error};
-use futures::stream::Stream;
-use futures::Future;
+use futures::{Future, Stream};
 use hyper::server::Server;
 use hyper::service::service_fn_ok;
 use hyper::{Body, Request, Response};
@@ -544,7 +543,7 @@ fn run() -> Result<(), Error> {
 
     // Initialize network
     let mut rt = Runtime::new()?;
-    let (network, network_service) = Libp2pNetwork::new(
+    let (network, network_service, peer_id, replication_rx) = Libp2pNetwork::new(
         cfg.network.clone(),
         network_skey.clone(),
         network_pkey.clone(),
@@ -585,6 +584,8 @@ fn run() -> Result<(), Error> {
         network_pkey.clone(),
         network.clone(),
         cfg.general.chain.clone(),
+        peer_id,
+        replication_rx,
     )?;
 
     // Initialize Wallet.
@@ -627,7 +628,7 @@ fn run() -> Result<(), Error> {
             // https://github.com/stegos/stegos/issues/1192
             // Fire a timer here to wait until unicast networking is fully initialized.
             // This duration (30 secs) was experimentally found on the real network.
-            let network_grace_period = std::time::Duration::from_secs(30);
+            let network_grace_period = std::time::Duration::from_secs(0);
             tokio_timer::Delay::new(clock::now() + network_grace_period).map_err(drop)
         })
         .and_then(move |()| {

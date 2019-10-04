@@ -22,12 +22,10 @@
 use crate::NodeService;
 use failure::Error;
 use log::*;
-use rand::seq::IteratorRandom;
 use stegos_blockchain::Block;
 use stegos_crypto::hash::{Hashable, Hasher};
 use stegos_crypto::pbc;
 use stegos_serialization::traits::ProtoConvert;
-use tokio_timer::{clock, Delay};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct RequestBlocks {
@@ -90,23 +88,6 @@ impl Hashable for ChainLoaderMessage {
 pub const CHAIN_LOADER_TOPIC: &'static str = "chain-loader";
 
 impl NodeService {
-    pub fn request_history(&mut self, epoch: u64, reason: &str) -> Result<(), Error> {
-        // Choose a master node to download blocks from.
-        let mut rng = rand::thread_rng();
-        // use latest known validators list.
-        let validators = self
-            .chain
-            .validators()
-            .into_iter()
-            .map(|(k, _)| k)
-            .filter(|key| self.network_pkey != **key);
-        let from = match validators.choose(&mut rng) {
-            Some(pkey) => pkey.clone(),
-            None => return Ok(()), // for tests.
-        };
-        self.request_history_from(from, epoch, reason)
-    }
-
     pub fn request_history_from(
         &mut self,
         from: pbc::PublicKey,
@@ -117,8 +98,6 @@ impl NodeService {
             "Downloading blocks: from={}, epoch={}, reason='{}'",
             &from, epoch, reason
         );
-        // Re-schedule loader timer.
-        self.loader_timer = Some(Delay::new(clock::now() + self.cfg.loader_timeout));
         let msg = ChainLoaderMessage::Request(RequestBlocks::new(epoch));
         self.network
             .send(from, CHAIN_LOADER_TOPIC, msg.into_buffer()?)
@@ -147,16 +126,16 @@ impl NodeService {
         epoch: u64,
         offset: u32,
     ) -> Result<(), Error> {
-        // Send up to `count` epochs.
-        let count = self.cfg.loader_speed_in_epoch as usize;
         let mut blocks: Vec<Block> = Vec::new();
         for block in self.chain.blocks_starting(epoch, offset) {
             blocks.push(block);
+            // Feed the whole epoch.
             match blocks.last().unwrap() {
-                Block::MacroBlock(_) if blocks.len() >= count => {
+                Block::MacroBlock(_) if blocks.len() > 0 => {
                     break;
                 }
-                _ => {}
+                Block::MacroBlock(_) => {}
+                Block::MicroBlock(_) => {}
             }
         }
         info!("Feeding blocks: to={}, num_blocks={}", pkey, blocks.len());
@@ -215,13 +194,6 @@ impl NodeService {
             last_epoch,
             response.blocks.len(),
         );
-        if self.is_synchronized() {
-            // Reset loader timer.
-            self.loader_timer = None;
-        } else {
-            // Optimistically prefetch the next batch.
-            self.request_history(last_epoch + 1, "prefetch")?;
-        }
 
         for block in response.blocks {
             // Fail on the first error.

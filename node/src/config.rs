@@ -44,10 +44,6 @@ pub struct NodeConfig {
     pub max_inputs_in_mempool: usize,
     /// The maximal number of outputs in mempool.
     pub max_outputs_in_mempool: usize,
-    /// Maximal interval between loader runs.
-    pub loader_timeout: Duration,
-    /// Loader will send maximum N epoch at time.
-    pub loader_speed_in_epoch: u64,
     /// Minimal fee for payment transactions.
     pub min_payment_fee: i64,
     /// Minimal fee for the stake transactions.
@@ -66,8 +62,6 @@ impl Default for NodeConfig {
             max_outputs_in_block: 1000,
             max_inputs_in_mempool: 100000,
             max_outputs_in_mempool: 10000,
-            loader_timeout: Duration::from_secs(30),
-            loader_speed_in_epoch: 50,
             min_payment_fee: 1_000, // 0.001 STG
             min_stake_fee: 0,       // free
         }

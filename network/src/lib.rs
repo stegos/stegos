@@ -33,6 +33,7 @@ mod libp2p_network;
 pub mod loopback;
 mod ncp;
 mod pubsub;
+mod replication;
 mod utils;
 
 use failure::{Error, Fail};
@@ -43,9 +44,12 @@ use stegos_crypto::pbc;
 pub use self::config::*;
 pub use self::kad::KBucketsPeerId;
 pub use self::libp2p_network::Libp2pNetwork;
+pub use self::libp2p_network::Multiaddr;
+pub use self::libp2p_network::PeerId;
 pub use self::libp2p_network::NETWORK_IDLE_TIMEOUT;
 pub use self::libp2p_network::NETWORK_READY_TOKEN;
 pub use self::libp2p_network::NETWORK_STATUS_TOPIC;
+pub use self::replication::ReplicationEvent;
 pub use self::utils::IntoMultihash;
 
 pub type Network = Box<dyn NetworkProvider + Send>;
@@ -68,6 +72,12 @@ where
 
     /// Send unicast message to peer identified by network public key
     fn send(&self, dest: pbc::PublicKey, protocol_id: &str, data: Vec<u8>) -> Result<(), Error>;
+
+    /// Connect to a replication upstream.
+    fn replication_connect(&self, peer_id: PeerId) -> Result<(), Error>;
+
+    /// Disconnect from a replication upstream.
+    fn replication_disconnect(&self, peer_id: PeerId) -> Result<(), Error>;
 
     /// Helper for cloning boxed object
     fn box_clone(&self) -> Network;

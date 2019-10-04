@@ -491,10 +491,23 @@ impl Eq for MacroBlock {}
 //--------------------------------------------------------------------------------------------------
 
 /// Types of blocks supported by this blockchain.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "block")]
 pub enum Block {
     MacroBlock(MacroBlock),
     MicroBlock(MicroBlock),
+}
+
+impl From<MacroBlock> for Block {
+    fn from(block: MacroBlock) -> Block {
+        Block::MacroBlock(block)
+    }
+}
+
+impl From<MicroBlock> for Block {
+    fn from(block: MicroBlock) -> Block {
+        Block::MicroBlock(block)
+    }
 }
 
 impl Block {

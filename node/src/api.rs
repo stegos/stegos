@@ -20,6 +20,7 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+use super::replication::api::*;
 use futures::sync::mpsc;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -38,6 +39,7 @@ use stegos_crypto::scc;
 pub enum NodeRequest {
     ElectionInfo {},
     EscrowInfo {},
+    ReplicationInfo {},
     PopMicroBlock {},
     ChainName {},
     #[serde(skip)]
@@ -50,6 +52,7 @@ pub enum NodeRequest {
     },
     EnableRestaking {},
     DisableRestaking {},
+    ChangeUpstream {},
     StatusInfo,
     SubscribeStatus {},
     MacroBlockInfo {
@@ -74,6 +77,7 @@ pub enum NodeRequest {
 pub enum NodeResponse {
     ElectionInfo(ElectionInfo),
     EscrowInfo(EscrowInfo),
+    ReplicationInfo(ReplicationInfo),
     MicroBlockPopped,
     ChainName {
         name: String,
@@ -92,6 +96,7 @@ pub enum NodeResponse {
     },
     RestakingEnabled,
     RestakingDisabled,
+    UpstreamChanged,
     StatusInfo(StatusInfo),
     SubscribedStatus {
         #[serde(flatten)]

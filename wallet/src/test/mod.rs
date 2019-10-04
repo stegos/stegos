@@ -144,30 +144,6 @@ impl AccountSandbox {
         )
     }
 
-    #[allow(dead_code)]
-    pub fn new_custom(s: &mut Sandbox, node_id: usize, path: Option<TempDir>) -> AccountSandbox {
-        let stake_epochs = s.config.chain.stake_epochs;
-        let max_inputs_in_tx = s.config.node.max_inputs_in_tx;
-        let mut keys = s.keychains[node_id].clone();
-        // change account keys to custom
-        let (skey, pkey) = scc::make_random_keys();
-        keys.account_pkey = pkey;
-        keys.account_skey = skey;
-
-        let (network_service, network) = Loopback::new();
-        let node = &mut s.nodes[node_id];
-
-        Self::new(
-            stake_epochs,
-            max_inputs_in_tx,
-            keys,
-            node,
-            network_service,
-            network,
-            path,
-        )
-    }
-
     pub fn poll(&mut self) {
         futures_testing::execute(
             format!("node:{}", self.account_service.network_pkey),

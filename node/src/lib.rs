@@ -30,6 +30,7 @@ mod loader;
 mod mempool;
 pub mod metrics;
 pub mod protos;
+mod replication;
 #[doc(hidden)]
 pub mod test;
 pub mod txpool;
@@ -39,6 +40,7 @@ pub use crate::config::NodeConfig;
 use crate::error::*;
 use crate::loader::ChainLoaderMessage;
 use crate::mempool::Mempool;
+use crate::replication::Replication;
 use crate::txpool::TransactionPoolService;
 pub use crate::txpool::MAX_PARTICIPANTS;
 use crate::validation::*;
@@ -58,8 +60,8 @@ use stegos_consensus::optimistic::{SealedViewChangeProof, ViewChangeCollector, V
 use stegos_consensus::{self as consensus, Consensus, ConsensusMessage, MacroBlockProposal};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
-use stegos_network::Network;
-use stegos_network::UnicastMessage;
+use stegos_network::{Network, ReplicationEvent};
+use stegos_network::{PeerId, UnicastMessage};
 use stegos_serialization::traits::ProtoConvert;
 use tokio_timer::{clock, Delay};
 use Validation::*;
@@ -277,9 +279,6 @@ pub struct NodeService {
     /// Monotonic clock when the latest block was registered.
     last_block_clock: Instant,
 
-    /// A timer to re-scheduler the loader.
-    loader_timer: Option<Delay>,
-
     /// Cheating detection.
     cheating_proofs: HashMap<pbc::PublicKey, SlashingProof>,
 
@@ -305,6 +304,9 @@ pub struct NodeService {
 
     /// Txpool
     txpool_service: Option<TransactionPoolService>,
+
+    /// Replication
+    replication: Replication,
 }
 
 impl NodeService {
@@ -316,6 +318,8 @@ impl NodeService {
         network_pkey: pbc::PublicKey,
         network: Network,
         chain_name: String,
+        peer_id: PeerId,
+        replication_rx: mpsc::UnboundedReceiver<ReplicationEvent>,
     ) -> Result<(Self, Node), Error> {
         let (outbox, inbox) = mpsc::unbounded();
         let mempool = Mempool::new();
@@ -327,7 +331,6 @@ impl NodeService {
             MicroBlockAuditor
         };
         let cheating_proofs = HashMap::new();
-        let loader_timer = None;
         let is_restaking_enabled = true;
 
         let on_node_notification = Vec::new();
@@ -380,6 +383,13 @@ impl NodeService {
             network: network.clone(),
         };
         let txpool_service = None;
+        let replication = Replication::new(
+            chain.epoch(),
+            chain.offset(),
+            peer_id,
+            network.clone(),
+            replication_rx,
+        );
 
         let service = NodeService {
             cfg,
@@ -390,7 +400,6 @@ impl NodeService {
             mempool,
             validation,
             last_block_clock,
-            loader_timer,
             cheating_proofs,
             is_restaking_enabled,
             chain_readers: chain_disk_subscribers,
@@ -399,6 +408,7 @@ impl NodeService {
             network: network.clone(),
             events,
             txpool_service,
+            replication,
             status_subscribers: on_node_notification,
         };
 
@@ -411,7 +421,6 @@ impl NodeService {
         self.on_facilitator_changed();
         self.on_status_changed();
         self.restake_expiring_stakes()?;
-        self.request_history(self.chain.epoch(), "init")?;
         Ok(())
     }
 
@@ -817,11 +826,6 @@ impl NodeService {
                 block.header.epoch,
                 self.chain.epoch(),
             );
-            self.request_history_from(
-                block.header.pkey,
-                self.chain.epoch(),
-                "macro block from the future",
-            )?;
             Ok(())
         }
     }
@@ -1031,7 +1035,6 @@ impl NodeService {
 
         if !was_synchronized && self.is_synchronized() {
             // Reset loader timer.
-            self.loader_timer = None;
             info!(
                 "Synchronized with the network: epoch={}, last_block={}",
                 epoch,
@@ -1044,14 +1047,14 @@ impl NodeService {
             .expect("Expect epoch info for last macroblock.")
             .clone();
 
+        self.on_block_added(block_timestamp, true);
+        self.replication
+            .on_block(block.clone().into(), self.chain.cfg().micro_blocks_in_epoch);
         let msg = ExtendedMacroBlock {
             block,
             epoch_info,
             transaction_statuses,
         };
-
-        self.on_block_added(block_timestamp, true);
-
         notify_subscribers(&mut self.chain_subscribers, msg.into());
         self.cheating_proofs.clear();
         self.on_facilitator_changed();
@@ -1163,7 +1166,8 @@ impl NodeService {
         assert!(transactions.len() >= block_transactions.len());
 
         self.on_block_added(block_timestamp, false);
-
+        self.replication
+            .on_block(block.clone().into(), self.chain.cfg().micro_blocks_in_epoch);
         let msg = ExtendedMicroBlock {
             block,
             transaction_statuses,
@@ -1966,17 +1970,6 @@ impl Future for NodeService {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        // Poll timers first.
-        if let Some(ref mut loader_timer) = &mut self.loader_timer {
-            match loader_timer.poll().unwrap() {
-                Async::Ready(()) => {
-                    if let Err(e) = self.request_history(self.chain.epoch(), "timer") {
-                        error!("Failed to request history: {}", e);
-                    }
-                }
-                Async::NotReady => {}
-            }
-        }
         let result = match &mut self.validation {
             MicroBlockAuditor
             | MicroBlockValidator {
@@ -2063,6 +2056,9 @@ impl Future for NodeService {
                                 NodeRequest::EscrowInfo {} => {
                                     NodeResponse::EscrowInfo(self.chain.escrow_info())
                                 }
+                                NodeRequest::ReplicationInfo {} => {
+                                    NodeResponse::ReplicationInfo(self.replication.info())
+                                }
                                 NodeRequest::PopMicroBlock {} => {
                                     match self.handle_pop_micro_block() {
                                         Ok(()) => NodeResponse::MicroBlockPopped,
@@ -2138,6 +2134,10 @@ impl Future for NodeService {
                                         NodeResponse::RestakingDisabled
                                     }
                                 }
+                                NodeRequest::ChangeUpstream {} => {
+                                    self.replication.change_upstream();
+                                    NodeResponse::UpstreamChanged
+                                }
                                 NodeRequest::StatusInfo {} => {
                                     let status = self.status();
                                     NodeResponse::StatusInfo(status)
@@ -2212,8 +2212,25 @@ impl Future for NodeService {
                     }
                 }
                 Async::Ready(None) => return Ok(Async::Ready(())), // Shutdown.
-                Async::NotReady => return Ok(Async::NotReady),
+                Async::NotReady => break,
             }
         }
+
+        // Replication
+        loop {
+            match self.replication.poll(&self.chain) {
+                Async::Ready(Some(blocks)) => {
+                    for block in blocks {
+                        if let Err(e) = self.handle_block(block) {
+                            error!("Invalid block received from replication: {}", e);
+                        }
+                    }
+                }
+                Async::Ready(None) => return Ok(Async::Ready(())), // Shutdown.
+                Async::NotReady => break,
+            }
+        }
+
+        Ok(Async::NotReady)
     }
 }

@@ -327,8 +327,10 @@ impl ConsoleService {
         eprintln!("show balance - print balance");
         eprintln!("show utxo - print unspent outputs");
         eprintln!("show history [STARTING DATE] - print history since date");
-        eprintln!("show election - print leader election state");
+        eprintln!("show election - show consensus state");
         eprintln!("show escrow - print escrow");
+        eprintln!("show replication - show replication status");
+        eprintln!("change upstream - change the current replication upstream");
         eprintln!("show recovery - print recovery information");
         eprintln!("show block EPOCH [OFFSET] - show a block");
         eprintln!("pop block - revert the latest micro block");
@@ -816,6 +818,12 @@ impl ConsoleService {
             self.send_node_request(request)?
         } else if msg == "show escrow" {
             let request = NodeRequest::EscrowInfo {};
+            self.send_node_request(request)?
+        } else if msg == "show replication" {
+            let request = NodeRequest::ReplicationInfo {};
+            self.send_node_request(request)?
+        } else if msg == "change upstream" {
+            let request = NodeRequest::ChangeUpstream {};
             self.send_node_request(request)?
         } else if msg == "show utxo" {
             let request = AccountRequest::UnspentInfo {};

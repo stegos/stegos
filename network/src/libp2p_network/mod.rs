@@ -74,6 +74,29 @@ pub const NETWORK_READY_TOKEN: &'static [u8] = &[1, 0, 0, 0];
 
 const IBE_ID: &'static [u8] = &[105u8, 13, 185, 148, 68, 76, 69, 155];
 
+#[cfg(target_os = "windows")]
+fn default_dns_config() -> Result<DnsConfig, Error> {
+    use ipconfig::get_adapters;
+    let adapters = get_adapters()?;
+    let mut dns_servers = vec![];
+
+    for dns_server in adapters
+        .iter()
+        .flat_map(|adapter| adapter.dns_servers().iter())
+    {
+        let socket_addr = SocketAddr::new(*dns_server, 53);
+        dns_servers.push(socket_addr)
+    }
+
+    debug!("Setting dns servers on windows = {:?}.", dns_servers);
+    Ok(DnsConfig::with_name_servers(dns_servers))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn default_dns_config() -> Result<DnsConfig, Error> {
+    Ok(DnsConfig::load_default()?)
+}
+
 impl Libp2pNetwork {
     pub fn new(
         mut config: NetworkConfig,
@@ -82,8 +105,11 @@ impl Libp2pNetwork {
     ) -> Result<(Network, impl Future<Item = (), Error = ()>), Error> {
         // Resolve network.seed_pool.
         if config.seed_pool != "" {
-            debug!("Configuring dns to use server from `dns_servers` field.");
-            let dns_cfg = if !config.dns_servers.is_empty() {
+            let mut dns_cfg = if !config.dns_servers.is_empty() {
+                debug!(
+                    "Configuring dns to use server from `dns_servers` field = {:?}.",
+                    config.dns_servers
+                );
                 let mut dns_servers: Vec<SocketAddr> = Vec::new();
                 for server in config.dns_servers.iter() {
                     if let Ok(socket_addr) = server.parse() {
@@ -92,10 +118,14 @@ impl Libp2pNetwork {
                 }
                 DnsConfig::with_name_servers(dns_servers)
             } else {
-                DnsConfig::load_default()?
+                debug!("Use default dns servers.");
+                default_dns_config()?
             };
 
-            debug!("Initialising dns resolver.");
+            dns_cfg.attempts = 5;
+            dns_cfg.retry_on_socket_error = true;
+            dns_cfg.timeout = Duration::from_secs(5);
+            debug!("Initialising dns resolver with config = {:?}.", dns_cfg);
             let resolver = resolver::DnsResolver::new(dns_cfg)?;
             // Sic: DNS operations are blocking.
 
@@ -110,6 +140,7 @@ impl Libp2pNetwork {
                     config.seed_nodes.push(addr.to_string());
                 }
             }
+            debug!("Resolved seed nodes = {:?}.", config.seed_nodes);
         }
 
         debug!("Validating seed_nodes addresses.");

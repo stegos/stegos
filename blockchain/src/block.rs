@@ -116,15 +116,6 @@ impl Hashable for MicroBlockHeader {
     }
 }
 
-impl PartialEq for MicroBlock {
-    fn eq(&self, _other: &MicroBlock) -> bool {
-        // Required by enum Block.
-        unreachable!();
-    }
-}
-
-impl Eq for MicroBlock {}
-
 impl MicroBlock {
     pub fn new(
         previous: Hash,

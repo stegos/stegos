@@ -1762,7 +1762,9 @@ impl Blockchain {
                     election_result.validators = new_validators;
                     self.election_result.insert(lsn, (), election_result);
                 }
-                Transaction::ServiceAwardTransaction(_tx) => unreachable!(),
+                Transaction::ServiceAwardTransaction(_tx) => {
+                    panic!("Found a ServiceAward transaction inside a MicroBlock")
+                }
             }
 
             assert!(txs.insert(tx_hash, tx).is_none());

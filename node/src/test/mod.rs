@@ -885,7 +885,7 @@ pub fn slash_cheater_inner<'a>(
             let block_hash = Hash::digest(&*b);
             b.sig = pbc::sign_hash(&block_hash, &leader.node_service.network_skey);
         }
-        Block::MacroBlock(_) => unreachable!(),
+        Block::MacroBlock(_) => unreachable!("Expected a MacroBlock"),
     }
 
     info!("BROADCAST BLOCK, WITH COPY.");

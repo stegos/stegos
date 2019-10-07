@@ -84,7 +84,6 @@ fn main() {
                 .long("chain")
                 .env("STEGOS_CHAIN")
                 .value_name("NAME")
-                .default_value("mainnet")
                 .help("Specify chain to use: testnet or dev")
                 .takes_value(true),
         )
@@ -126,9 +125,7 @@ fn main() {
     };
     simple_logger::init_with_level(level).unwrap_or_default();
 
-    let chain = args.value_of("chain").unwrap();
-    stegos_crypto::set_network_prefix(stegos::chain_to_prefix(&chain))
-        .expect("Network prefix not initialised.");
+    let chain = args.value_of("chain").map(ToString::to_string);
 
     let data_dir = PathBuf::from(args.value_of("data-dir").unwrap());
     if !data_dir.exists() {
@@ -157,8 +154,15 @@ fn main() {
     let formatter = Formatter::from_str(args.value_of("formatter").unwrap()).unwrap();
 
     let mut rt = Runtime::new().expect("Failed to initialize tokio");
-    let console_service =
-        ConsoleService::new(name, version, uri, api_token, history_file, formatter);
+    let console_service = ConsoleService::new(
+        chain,
+        name,
+        version,
+        uri,
+        api_token,
+        history_file,
+        formatter,
+    );
     rt.block_on(console_service)
         .expect("errors are handled earlier");
 }

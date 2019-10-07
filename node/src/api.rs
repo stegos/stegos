@@ -39,6 +39,7 @@ pub enum NodeRequest {
     ElectionInfo {},
     EscrowInfo {},
     PopMicroBlock {},
+    ChainName {},
     #[serde(skip)]
     AddTransaction(Transaction),
     ValidateCertificate {
@@ -74,6 +75,9 @@ pub enum NodeResponse {
     ElectionInfo(ElectionInfo),
     EscrowInfo(EscrowInfo),
     MicroBlockPopped,
+    ChainName {
+        name: String,
+    },
     #[serde(skip)]
     AddTransaction {
         hash: Hash,

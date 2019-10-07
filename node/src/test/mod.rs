@@ -276,8 +276,15 @@ impl NodeSandbox {
         let chain_dir = TempDir::new("test").unwrap();
         let chain = Blockchain::new(chain_cfg, chain_dir.path(), true, genesis, timestamp)
             .expect("Failed to create blockchain");
-        let (mut node_service, node) =
-            NodeService::new(node_cfg, chain, network_skey, network_pkey, network).unwrap();
+        let (mut node_service, node) = NodeService::new(
+            node_cfg,
+            chain,
+            network_skey,
+            network_pkey,
+            network,
+            "dev".to_string(),
+        )
+        .unwrap();
         node_service.init().unwrap();
         Self {
             vdf_execution: VDFExecution::Nothing,

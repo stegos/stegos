@@ -36,6 +36,7 @@ use libp2p_tcp as tcp;
 use libp2p_yamux as yamux;
 use log::*;
 use protobuf::Message as ProtoMessage;
+use resolve::{record::Srv, resolver, DnsConfig};
 use smallvec::SmallVec;
 use std::collections::{HashMap, HashSet};
 use std::error;
@@ -75,11 +76,50 @@ const IBE_ID: &'static [u8] = &[105u8, 13, 185, 148, 68, 76, 69, 155];
 
 impl Libp2pNetwork {
     pub fn new(
-        config: &NetworkConfig,
+        mut config: NetworkConfig,
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
     ) -> Result<(Network, impl Future<Item = (), Error = ()>), Error> {
-        let (service, control_tx) = new_service(config, network_skey, network_pkey)?;
+        // Resolve network.seed_pool.
+        if config.seed_pool != "" {
+            debug!("Configuring dns to use server from `dns_servers` field.");
+            let dns_cfg = if !config.dns_servers.is_empty() {
+                let mut dns_servers: Vec<SocketAddr> = Vec::new();
+                for server in config.dns_servers.iter() {
+                    if let Ok(socket_addr) = server.parse() {
+                        dns_servers.push(socket_addr)
+                    }
+                }
+                DnsConfig::with_name_servers(dns_servers)
+            } else {
+                DnsConfig::load_default()?
+            };
+
+            debug!("Initialising dns resolver.");
+            let resolver = resolver::DnsResolver::new(dns_cfg)?;
+            // Sic: DNS operations are blocking.
+
+            info!("Resolving seed nodes records.");
+            let rrs: Vec<Srv> = resolver.resolve_record(&config.seed_pool)?;
+            for r in rrs.iter() {
+                let addrs = resolver
+                    .resolve_host(&r.target)
+                    .map_err(|e| format_err!("Failed to resolve seed_pool: {}", e))?;
+                for addr in addrs {
+                    let addr = SocketAddr::new(addr, r.port);
+                    config.seed_nodes.push(addr.to_string());
+                }
+            }
+        }
+
+        debug!("Validating seed_nodes addresses.");
+        // Validate network.seed_nodes.
+        for (i, addr) in config.seed_nodes.iter().enumerate() {
+            SocketAddr::from_str(addr)
+                .map_err(|e| format_err!("Invalid network.seed_nodes[{}] '{}': {}", i, addr, e))?;
+        }
+
+        let (service, control_tx) = new_service(&config, network_skey, network_pkey)?;
         let network = Libp2pNetwork { control_tx };
         Ok((Box::new(network), service))
     }

@@ -35,7 +35,6 @@ use log4rs::config::{Appender, Config as LogConfig, Logger, Root};
 use log4rs::encode::pattern::PatternEncoder;
 use log4rs::{Error as LogError, Handle as LogHandle};
 use prometheus::{self, Encoder};
-use resolve::{config::DnsConfig, record::Srv, resolver};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -267,39 +266,6 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
     if cfg.general.chain != "dev" && cfg.network.seed_pool == "" {
         cfg.network.seed_pool =
             format!("_stegos._tcp.{}.aws.stegos.com", cfg.general.chain).to_string();
-    }
-
-    // Resolve network.seed_pool.
-    if cfg.network.seed_pool != "" {
-        let config = if !cfg.network.dns_servers.is_empty() {
-            let mut dns_servers: Vec<SocketAddr> = Vec::new();
-            for server in cfg.network.dns_servers.iter() {
-                if let Ok(socket_addr) = server.parse() {
-                    dns_servers.push(socket_addr)
-                }
-            }
-            DnsConfig::with_name_servers(dns_servers)
-        } else {
-            DnsConfig::load_default()?
-        };
-        let resolver = resolver::DnsResolver::new(config)?;
-        // Sic: DNS operations are blocking.
-        let rrs: Vec<Srv> = resolver.resolve_record(&cfg.network.seed_pool)?;
-        for r in rrs.iter() {
-            let addrs = resolver
-                .resolve_host(&r.target)
-                .map_err(|e| format_err!("Failed to resolve seed_pool: {}", e))?;
-            for addr in addrs {
-                let addr = SocketAddr::new(addr, r.port);
-                cfg.network.seed_nodes.push(addr.to_string());
-            }
-        }
-    }
-
-    // Validate network.seed_nodes.
-    for (i, addr) in cfg.network.seed_nodes.iter().enumerate() {
-        SocketAddr::from_str(addr)
-            .map_err(|e| format_err!("Invalid network.seed_nodes[{}] '{}': {}", i, addr, e))?;
     }
 
     // Override global.prometheus_endpoint via command-line or environment.
@@ -555,8 +521,11 @@ fn run() -> Result<(), Error> {
 
     // Initialize network
     let mut rt = Runtime::new()?;
-    let (network, network_service) =
-        Libp2pNetwork::new(&cfg.network, network_skey.clone(), network_pkey.clone())?;
+    let (network, network_service) = Libp2pNetwork::new(
+        cfg.network.clone(),
+        network_skey.clone(),
+        network_pkey.clone(),
+    )?;
 
     // Start metrics exporter
     if cfg.general.prometheus_endpoint != "" {

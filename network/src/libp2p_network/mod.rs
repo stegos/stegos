@@ -36,7 +36,6 @@ use libp2p_swarm::{NetworkBehaviourEventProcess, Swarm};
 use libp2p_tcp as tcp;
 use log::*;
 use protobuf::Message as ProtoMessage;
-use resolve::{record::Srv, resolver, DnsConfig};
 use smallvec::SmallVec;
 use std::collections::{HashMap, HashSet};
 use std::error;
@@ -75,29 +74,6 @@ pub const NETWORK_READY_TOKEN: &'static [u8] = &[1, 0, 0, 0];
 
 const IBE_ID: &'static [u8] = &[105u8, 13, 185, 148, 68, 76, 69, 155];
 
-#[cfg(target_os = "windows")]
-fn default_dns_config() -> Result<DnsConfig, Error> {
-    use ipconfig::get_adapters;
-    let adapters = get_adapters()?;
-    let mut dns_servers = vec![];
-
-    for dns_server in adapters
-        .iter()
-        .flat_map(|adapter| adapter.dns_servers().iter())
-    {
-        let socket_addr = SocketAddr::new(*dns_server, 53);
-        dns_servers.push(socket_addr)
-    }
-
-    debug!("Setting dns servers on windows = {:?}.", dns_servers);
-    Ok(DnsConfig::with_name_servers(dns_servers))
-}
-
-#[cfg(not(target_os = "windows"))]
-fn default_dns_config() -> Result<DnsConfig, Error> {
-    Ok(DnsConfig::load_default()?)
-}
-
 impl Libp2pNetwork {
     pub fn new(
         mut config: NetworkConfig,
@@ -113,55 +89,9 @@ impl Libp2pNetwork {
         Error,
     > {
         // Resolve network.seed_pool.
-        if config.seed_pool != "" {
-            let mut dns_cfg = if !config.dns_servers.is_empty() {
-                debug!(
-                    "Configuring dns to use server from `dns_servers` field = {:?}.",
-                    config.dns_servers
-                );
-                let mut dns_servers: Vec<SocketAddr> = Vec::new();
-                for server in config.dns_servers.iter() {
-                    if let Ok(socket_addr) = server.parse() {
-                        dns_servers.push(socket_addr)
-                    }
-                }
-                DnsConfig::with_name_servers(dns_servers)
-            } else {
-                debug!("Use default dns servers.");
-                default_dns_config()?
-            };
-
-            dns_cfg.attempts = 5;
-            dns_cfg.retry_on_socket_error = true;
-            if dns_cfg.use_inet6 {
-                dns_cfg.use_inet6 = false;
-                warn!("Found use_inet6 flag, disabling it.");
-            }
-            dns_cfg.timeout = Duration::from_secs(5);
-            debug!("Initialising dns resolver with config = {:?}.", dns_cfg);
-            let resolver = resolver::DnsResolver::new(dns_cfg)?;
-            // Sic: DNS operations are blocking.
-
-            info!("Resolving seed nodes records.");
-            let rrs: Vec<Srv> = resolver.resolve_record(&config.seed_pool)?;
-            for r in rrs.iter() {
-                let addrs = resolver
-                    .resolve_host(&r.target)
-                    .map_err(|e| format_err!("Failed to resolve seed_pool: {}", e))?;
-                for addr in addrs {
-                    let addr = SocketAddr::new(addr, r.port);
-                    config.seed_nodes.push(addr.to_string());
-                }
-            }
-            debug!("Resolved seed nodes = {:?}.", config.seed_nodes);
-        }
-
-        debug!("Validating seed_nodes addresses.");
-        // Validate network.seed_nodes.
-        for (i, addr) in config.seed_nodes.iter().enumerate() {
-            SocketAddr::from_str(addr)
-                .map_err(|e| format_err!("Invalid network.seed_nodes[{}] '{}': {}", i, addr, e))?;
-        }
+        config
+            .seed_nodes
+            .extend_from_slice(&resolve_seed_nodes(&config.seed_pool)?);
 
         let (service, control_tx, peer_id, replication_rx) =
             new_service(&config, network_skey, network_pkey)?;
@@ -893,6 +823,37 @@ impl Transport for CommonTransport {
     fn dial(self, addr: Multiaddr) -> Result<Self::Dial, TransportError<Self::Error>> {
         self.inner.inner.dial(addr)
     }
+}
+
+fn resolve_seed_nodes(seed_pool: &str) -> Result<Vec<String>, Error> {
+    use trust_dns_resolver::Resolver;
+
+    let mut seed_nodes = Vec::new();
+    if seed_pool != "" {
+        debug!("Initialising dns resolver.");
+
+        let resolver = Resolver::from_system_conf()?;
+
+        info!("Resolving seed nodes records.");
+        let srv_records = resolver.lookup_srv(seed_pool)?;
+        for srv in srv_records.iter() {
+            let addr_records = resolver
+                .lookup_ip(&srv.target().to_utf8())
+                .map_err(|e| format_err!("Failed to resolve seed_pool: {}", e))?;
+
+            for addr in addr_records.iter() {
+                let addr = SocketAddr::new(addr, srv.port());
+                seed_nodes.push(addr.to_string());
+            }
+        }
+        debug!("Validating seed_nodes addresses = {:?}.", seed_nodes);
+        // Validate network.seed_nodes.
+        for (i, addr) in seed_nodes.iter().enumerate() {
+            SocketAddr::from_str(addr)
+                .map_err(|e| format_err!("Invalid network.seed_nodes[{}] '{}': {}", i, addr, e))?;
+        }
+    }
+    Ok(seed_nodes)
 }
 
 #[cfg(test)]

@@ -53,7 +53,7 @@ pub struct NetworkConfig {
 impl Default for NetworkConfig {
     fn default() -> NetworkConfig {
         NetworkConfig {
-            dns_servers: vec!["1.1.1.1:53".to_string(), "1.0.0.1:53".to_string()],
+            dns_servers: vec![], //vec!["1.1.1.1:53".to_string(), "1.0.0.1:53".to_string()],
             seed_pool: "".to_string(),
             seed_nodes: vec![],
             advertised_endpoint: "".to_string(),

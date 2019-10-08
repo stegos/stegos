@@ -108,10 +108,13 @@ impl ChainSubscription {
                         std::mem::replace(self, ChainSubscription::Active(rx));
                         match self {
                             ChainSubscription::Active(rx) => Ok(Async::Ready(rx)),
-                            _ => unreachable!(),
+                            _ => unreachable!("Expected ChainSubscription::Active state"),
                         }
                     }
-                    _ => panic!("Unexpected NodeResponse: {:?}", response),
+                    _ => unreachable!(
+                        "Expected SubscribeChain response NodeResponse: {:?}",
+                        response
+                    ),
                 },
                 Async::NotReady => Ok(Async::NotReady),
             },
@@ -1302,7 +1305,7 @@ impl Future for UnsealedAccountService {
                         NodeResponse::Error { error } => {
                             error!("Failed to get transaction status: {:?}", error);
                         }
-                        _ => unreachable!(),
+                        _ => unreachable!("Expected AddTransaction|Error response"),
                     };
                 }
                 Async::NotReady => self.transaction_response = Some(transaction_response),
@@ -1332,11 +1335,11 @@ impl Future for UnsealedAccountService {
         if let Some((mut snowball, response_sender)) = mem::replace(&mut self.snowball, None) {
             let state = snowball.state();
             match snowball.poll() {
-                Ok(Async::Ready(SnowballOutput {
+                Ok(Async::Ready(Some(SnowballOutput {
                     tx,
                     is_leader,
                     outputs,
-                })) => {
+                }))) => {
                     self.notify(AccountNotification::SnowballStatus(
                         SnowballState::Succeeded,
                     ));
@@ -1351,6 +1354,7 @@ impl Future for UnsealedAccountService {
                     };
                     let _ = response_sender.send(response);
                 }
+                Ok(Async::Ready(None)) => return Ok(Async::Ready(None)), // Shutdown.
                 Err((error, inputs)) => {
                     error!("Snowball failed: error={}", error);
                     self.notify(AccountNotification::SnowballStatus(SnowballState::Failed));
@@ -1531,7 +1535,7 @@ impl Future for UnsealedAccountService {
                         self.subscribers.push(tx);
                     }
                 },
-                Async::Ready(None) => return Ok(Async::Ready(None)),
+                Async::Ready(None) => return Ok(Async::Ready(None)), // Shutdown.
                 Async::NotReady => break,
             }
         }
@@ -1606,7 +1610,7 @@ impl Future for UnsealedAccountService {
                         );
                     }
                 },
-                Async::Ready(None) => unreachable!(), // never happens
+                Async::Ready(None) => return Ok(Async::Ready(None)), // Shutdown.
                 Async::NotReady => break,
             }
         }
@@ -1730,7 +1734,7 @@ impl Future for SealedAccountService {
                         self.subscribers.push(tx);
                     }
                 },
-                Async::Ready(None) => return Ok(Async::Ready(None)),
+                Async::Ready(None) => return Ok(Async::Ready(None)), // Shutdown.
                 Async::NotReady => return Ok(Async::NotReady),
             }
         }
@@ -1750,7 +1754,7 @@ impl Future for AccountService {
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         match self {
-            AccountService::Invalid => unreachable!(),
+            AccountService::Invalid => unreachable!("Invalid state"),
             AccountService::Sealed(sealed) => match sealed.poll().unwrap() {
                 Async::Ready(None) => {
                     debug!("Terminated");
@@ -1759,7 +1763,7 @@ impl Future for AccountService {
                 Async::Ready(Some(account_skey)) => {
                     let sealed = match std::mem::replace(self, AccountService::Invalid) {
                         AccountService::Sealed(old) => old,
-                        _ => unreachable!(),
+                        _ => unreachable!("Expected Sealed state"),
                     };
                     info!("Unsealed account: address={}", &sealed.account_pkey);
                     let unsealed = UnsealedAccountService::new(
@@ -1790,7 +1794,7 @@ impl Future for AccountService {
                 Async::Ready(Some(())) => {
                     let unsealed = match std::mem::replace(self, AccountService::Invalid) {
                         AccountService::Unsealed(old) => old,
-                        _ => unreachable!(),
+                        _ => unreachable!("Expected Unsealed state"),
                     };
                     info!("Sealed account: address={}", &unsealed.account_pkey);
                     let sealed = SealedAccountService::new(
@@ -2050,7 +2054,7 @@ impl WalletService {
                 return account_id;
             }
         }
-        unreachable!();
+        unreachable!("Failed to find the next account id");
     }
 
     ///
@@ -2220,7 +2224,7 @@ impl Future for WalletService {
                         }
                     }
                 },
-                Async::Ready(None) => unreachable!(), // never happens
+                Async::Ready(None) => return Ok(Async::Ready(())), // Shutdown.
                 Async::NotReady => break,
             }
         }
@@ -2228,8 +2232,8 @@ impl Future for WalletService {
         // Forward notifications.
         for (account_id, handle) in self.accounts.iter_mut() {
             loop {
-                match handle.account_notifications.poll() {
-                    Ok(Async::Ready(Some(notification))) => {
+                match handle.account_notifications.poll().unwrap() {
+                    Async::Ready(Some(notification)) => {
                         let notification = WalletNotification {
                             account_id: account_id.clone(),
                             notification,
@@ -2237,9 +2241,8 @@ impl Future for WalletService {
                         self.subscribers
                             .retain(move |tx| tx.unbounded_send(notification.clone()).is_ok());
                     }
-                    Ok(Async::Ready(None)) => panic!("AccountService has died"),
-                    Ok(Async::NotReady) => break,
-                    Err(()) => unreachable!(),
+                    Async::Ready(None) => return Ok(Async::Ready(())), // Shutdown.
+                    Async::NotReady => break,
                 }
             }
         }
@@ -2260,7 +2263,7 @@ impl Future for WalletService {
                     self.last_epoch = epoch;
                 }
                 Async::Ready(Some(_)) => {} // ignore.
-                Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
+                Async::Ready(None) => return Ok(Async::Ready(())), // Shutdown.
                 Async::NotReady => break,
             };
         }

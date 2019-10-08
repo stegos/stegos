@@ -661,7 +661,7 @@ impl Snowball {
 type HandlerResult = Poll<SnowballOutput, SnowballError>;
 
 impl Future for Snowball {
-    type Item = SnowballOutput;
+    type Item = Option<SnowballOutput>;
     type Error = (SnowballError, Vec<(TXIN, UTXO)>);
 
     /// Event loop.
@@ -670,10 +670,16 @@ impl Future for Snowball {
         assert_ne!(self.state, State::Failed, "poll() after finish");
         match self.timer.poll().expect("Should be no error in timer") {
             Async::Ready(Some(_)) => match self.handle_timer() {
+                Ok(Async::Ready(output)) => {
+                    return Ok(Async::Ready(Some(output)));
+                }
                 Ok(Async::NotReady) => (),
-                result => return result.map_err(|error| (error, self.my_txins.clone())),
+                Err(e) => {
+                    return Err((e, self.my_txins.clone()));
+                }
             },
-            Async::NotReady | Async::Ready(None) => (),
+            Async::Ready(None) => return Ok(Async::Ready(None)), // Shutdown
+            Async::NotReady => {}
         }
 
         loop {
@@ -723,7 +729,7 @@ impl Future for Snowball {
                     match result {
                         Ok(Async::Ready(r)) => {
                             // Finish.
-                            return Ok(Async::Ready(r));
+                            return Ok(Async::Ready(Some(r)));
                         }
                         Ok(Async::NotReady) => {
                             continue;
@@ -734,7 +740,7 @@ impl Future for Snowball {
                         }
                     }
                 }
-                Async::Ready(None) => unreachable!(), // never happens
+                Async::Ready(None) => return Ok(Async::Ready(None)), // Shutdown.
                 Async::NotReady => return Ok(Async::NotReady),
             }
         }
@@ -1629,7 +1635,7 @@ impl Snowball {
                                     }
                                 }
                             }
-                            _ => unreachable!(),
+                            _ => unreachable!("Expected PaymentTransaction"),
                         }
                     }
                     panic!("Can't find utxo by Pedersen commitment.");

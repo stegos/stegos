@@ -1920,7 +1920,7 @@ impl NodeService {
                 self.send_block(Block::MacroBlock(macro_block2))
                     .expect("failed to send sealed micro block");
             }
-            _ => unreachable!(),
+            _ => unreachable!("Expected MacroBlockValidator state"),
         }
     }
 
@@ -2041,7 +2041,7 @@ impl Future for NodeService {
 
         if let Some(ref mut txpool_service) = &mut self.txpool_service {
             match txpool_service.poll().unwrap() {
-                Async::Ready(_) => unreachable!(),
+                Async::Ready(()) => return Ok(Async::Ready(())), // Shutdown.
                 Async::NotReady => {}
             };
         }
@@ -2211,7 +2211,7 @@ impl Future for NodeService {
                         error!("Error: {}", e);
                     }
                 }
-                Async::Ready(None) => unreachable!(), // never happens
+                Async::Ready(None) => return Ok(Async::Ready(())), // Shutdown.
                 Async::NotReady => return Ok(Async::NotReady),
             }
         }

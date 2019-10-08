@@ -31,8 +31,10 @@ use hyper::service::service_fn_ok;
 use hyper::{Body, Request, Response};
 use log::*;
 use log4rs::append::console::ConsoleAppender;
+use log4rs::append::file::FileAppender;
 use log4rs::config::{Appender, Config as LogConfig, Logger, Root};
 use log4rs::encode::pattern::PatternEncoder;
+use log4rs::filter::threshold::ThresholdFilter;
 use log4rs::{Error as LogError, Handle as LogHandle};
 use prometheus::{self, Encoder};
 use std::net::SocketAddr;
@@ -55,13 +57,15 @@ use tokio_timer::clock;
 const STEGOSD_TOML: &'static str = "stegosd.toml";
 /// The default file name for logger configuration.
 const STEGOSD_LOG4RS_TOML: &'static str = "stegosd-log4rs.toml";
+/// The default file name for the log file.
+const STEGOSD_LOG: &'static str = "stegosd.log";
 
 fn load_logger_configuration_file(path: &Path) -> Result<LogHandle, LogError> {
     match log4rs::load_config_file(path, Default::default()) {
         Ok(config) => return Ok(log4rs::init_config(config)?),
         Err(e) => {
             return Err(LogError::Log4rs(
-                format_err!("Failed to read log_config file: {}", e).into(),
+                format_err!("Failed to read logger configuration {:?}: {}", path, e).into(),
             ));
         }
     }
@@ -69,29 +73,23 @@ fn load_logger_configuration_file(path: &Path) -> Result<LogHandle, LogError> {
 
 fn load_logger_configuration(
     args: &ArgMatches<'_>,
+    data_dir: &PathBuf,
     cfg_log_config: &PathBuf,
-) -> Result<LogHandle, LogError> {
-    let verbosity = args.occurrences_of("verbose");
-    let level = match verbosity {
-        0 => log::LevelFilter::Info,
-        1 => log::LevelFilter::Debug,
-        2 | _ => log::LevelFilter::Trace,
-    };
-
+) -> Result<LogHandle, Error> {
     // Override log_config via command-line or environment.
     if let Some(log_config) = args.value_of_os("log-config") {
-        return load_logger_configuration_file(Path::new(log_config));
+        return Ok(load_logger_configuration_file(Path::new(log_config))?);
     }
 
     // Use log_config from stegosd.toml for configuration.
     if !cfg_log_config.as_os_str().is_empty() {
-        return load_logger_configuration_file(&cfg_log_config);
+        return Ok(load_logger_configuration_file(&cfg_log_config)?);
     }
 
     // Use $PWD/stegosd-log4rs.toml for configuration.
     let cfg_path = PathBuf::from(STEGOSD_LOG4RS_TOML);
     if cfg_path.exists() {
-        return load_logger_configuration_file(&cfg_path);
+        return Ok(load_logger_configuration_file(&cfg_path)?);
     }
 
     // Use ~/.config/stegos/stegosd-log4rs.toml for configuration.
@@ -100,17 +98,37 @@ fn load_logger_configuration(
         .unwrap_or(PathBuf::from(r"."))
         .join(PathBuf::from(STEGOSD_LOG4RS_TOML));
     if cfg_path.exists() {
-        return load_logger_configuration_file(&cfg_path);
+        return Ok(load_logger_configuration_file(&cfg_path)?);
     }
 
     // Use default configuration.
-    let stdout = ConsoleAppender::builder()
-        .encoder(Box::new(PatternEncoder::new(
-            "{d(%Y-%m-%d %H:%M:%S)(local)} {h({l})} [{t}] {m}{n}",
-        )))
+    let verbosity = args.occurrences_of("verbose");
+    let (console_level, level) = match verbosity {
+        0 => (log::LevelFilter::Info, log::LevelFilter::Debug),
+        1 => (log::LevelFilter::Debug, log::LevelFilter::Debug),
+        2 | _ => (log::LevelFilter::Trace, log::LevelFilter::Trace),
+    };
+    let pattern = "{d(%Y-%m-%d %H:%M:%S)(local)} {h({l})} [{t}] {m}{n}";
+    let console = ConsoleAppender::builder()
+        .encoder(Box::new(PatternEncoder::new(pattern)))
         .build();
+    let file = FileAppender::builder()
+        .encoder(Box::new(PatternEncoder::new(pattern)))
+        .build(data_dir.join(STEGOSD_LOG))
+        .map_err(|e| {
+            format_err!(
+                "Failed to create the log file {:?}: {}",
+                data_dir.join(STEGOSD_LOG),
+                e
+            )
+        })?;
     let config = LogConfig::builder()
-        .appender(Appender::builder().build("stdout", Box::new(stdout)))
+        .appender(
+            Appender::builder()
+                .filter(Box::new(ThresholdFilter::new(console_level)))
+                .build("console", Box::new(console)),
+        )
+        .appender(Appender::builder().build("file", Box::new(file)))
         .logger(Logger::builder().build("stegos", level))
         .logger(Logger::builder().build("stegosd", level))
         .logger(Logger::builder().build("stegos_api", level))
@@ -121,8 +139,13 @@ fn load_logger_configuration(
         .logger(Logger::builder().build("stegos_node", level))
         .logger(Logger::builder().build("stegos_network", level))
         .logger(Logger::builder().build("stegos_wallet", level))
-        .build(Root::builder().appender("stdout").build(LevelFilter::Warn))
-        .expect("console logger should never fail");
+        .build(
+            Root::builder()
+                .appender("file")
+                .appender("console")
+                .build(LevelFilter::Info),
+        )
+        .expect("Failed to initialize logger");
 
     Ok(log4rs::init_config(config)?)
 }
@@ -490,7 +513,7 @@ fn run() -> Result<(), Error> {
     let cfg = load_configuration(&args)?;
 
     // Initialize logger
-    let _log = load_logger_configuration(&args, &cfg.general.log_config)?;
+    let _log = load_logger_configuration(&args, &cfg.general.data_dir, &cfg.general.log_config)?;
 
     // Print welcome message
     info!("{} {}", name, version);
@@ -499,17 +522,17 @@ fn run() -> Result<(), Error> {
     let data_dir = cfg.general.data_dir.clone();
     if !data_dir.exists() {
         fs::create_dir_all(&data_dir)
-            .map_err(|e| format_err!("{}: {}", e, data_dir.to_string_lossy()))?
+            .map_err(|e| format_err!("Failed to create {:?}: {}", data_dir, e))?
     }
     let chain_dir = data_dir.join("chain");
     if !chain_dir.exists() {
         fs::create_dir(&chain_dir)
-            .map_err(|e| format_err!("{}: {}", e, chain_dir.to_string_lossy()))?
+            .map_err(|e| format_err!("Failed to create {:?}: {}", chain_dir, e))?
     }
     let accounts_dir = data_dir.join("accounts");
     if !accounts_dir.exists() {
         fs::create_dir(&accounts_dir)
-            .map_err(|e| format_err!("{}: {}", e, accounts_dir.to_string_lossy()))?
+            .map_err(|e| format_err!("Failed to create {:?}: {}", accounts_dir, e))?
     }
     stegos_crypto::set_network_prefix(stegos::chain_to_prefix(&cfg.general.chain))
         .expect("Network prefix not initialised.");
@@ -625,7 +648,7 @@ fn run() -> Result<(), Error> {
 
 fn main() {
     if let Err(e) = run() {
-        eprintln!("Failed with error: {}", e); // Logger can be not yet initialized.
+        eprintln!("{}", e); // Logger can be not yet initialized.
         error!("{}", e);
         process::exit(1)
     };

@@ -12,8 +12,10 @@
 /testing/node*/chain
 /testing/node*/accounts/*/history
 /testing/node*/api.token
+/testing/node*/stegosd.log
 /data
 /logs
+core
 
 # IDE files
 /.vscode

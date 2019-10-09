@@ -38,7 +38,7 @@ use stegos_crypto::scc::Fr;
 /// Blockchain version.
 pub const VERSION: u64 = 1;
 /// The maximum number of nodes in multi-signature.
-pub const VALIDATORS_MAX: usize = 512;
+pub const VALIDATORS_MAX: usize = 1024;
 
 //--------------------------------------------------------------------------------------------------
 // Micro Blocks.

@@ -124,6 +124,10 @@ impl Libp2pNetwork {
 
             dns_cfg.attempts = 5;
             dns_cfg.retry_on_socket_error = true;
+            if dns_cfg.use_inet6 {
+                dns_cfg.use_inet6 = false;
+                warn!("Found use_inet6 flag, disabling it.");
+            }
             dns_cfg.timeout = Duration::from_secs(5);
             debug!("Initialising dns resolver with config = {:?}.", dns_cfg);
             let resolver = resolver::DnsResolver::new(dns_cfg)?;

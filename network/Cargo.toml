@@ -19,6 +19,7 @@ arrayvec = "0.4"
 bigint = "4.4"
 bs58 = "0.2"
 bytes = "0.4"
+byteorder = "1.3.2"
 cuckoofilter = "0.3"
 env_logger = "0.6"
 failure = "0.1"
@@ -40,7 +41,7 @@ parity-multihash = "0.1"
 prometheus = "0.7"
 protobuf = "2.6"
 rand = "0.7.0"
-resolve = {version="0.2", git = "https://github.com/stegos/resolve"}
+trust-dns-resolver = "0.12.0"
 serde = "1.0"
 serde_derive = "1.0"
 smallvec = "0.6"
@@ -50,9 +51,6 @@ tokio-io = "0.1"
 unsigned-varint = { version = "0.2", features = ["codec"]}
 update_rate = "2.0"
 void = "1.0"
-
-[target.'cfg(windows)'.dependencies]
-ipconfig = { version = "^0.2.0" }
 
 [build-dependencies]
 stegos_serialization = { version = "0.2.0", path = "../serialization" }

@@ -2060,12 +2060,11 @@ impl WalletService {
     ///
     /// Create a new account for provided keys.
     ///
-    fn create_or_recover_account(
+    fn create_account(
         &mut self,
         account_skey: scc::SecretKey,
         account_pkey: scc::PublicKey,
         password: &str,
-        last_public_address_id: u32,
     ) -> Result<AccountId, Error> {
         let account_id = self.find_account_id();
         let account_dir = self.accounts_dir.join(format!("{}", account_id));
@@ -2074,7 +2073,6 @@ impl WalletService {
         let account_pkey_file = account_dir.join("account.pkey");
         write_account_pkey(&account_pkey_file, &account_pkey)?;
         write_account_skey(&account_skey_file, &account_skey, password)?;
-        self.open_account(&account_id, true, Some(last_public_address_id))?;
         Ok(account_id)
     }
 
@@ -2101,9 +2099,9 @@ impl WalletService {
             }
             WalletControlRequest::CreateAccount { password } => {
                 let (account_skey, account_pkey) = scc::make_random_keys();
+                let account_id = self.create_account(account_skey, account_pkey, &password)?;
                 info!("Created a new account {}", account_pkey);
-                let account_id =
-                    self.create_or_recover_account(account_skey, account_pkey, &password, 0)?;
+                self.open_account(&account_id, true, Some(0))?;
                 Ok(WalletControlResponse::AccountCreated { account_id })
             }
             WalletControlRequest::RecoverAccount {
@@ -2122,13 +2120,9 @@ impl WalletService {
                         return Err(WalletError::DuplicateAccount(account_pkey).into());
                     }
                 }
+                let account_id = self.create_account(account_skey, account_pkey, &password)?;
                 info!("Restored account from 24-word phrase {}", account_pkey);
-                let account_id = self.create_or_recover_account(
-                    account_skey,
-                    account_pkey,
-                    &password,
-                    last_public_address_id,
-                )?;
+                self.open_account(&account_id, false, Some(last_public_address_id))?;
                 Ok(WalletControlResponse::AccountCreated { account_id })
             }
             WalletControlRequest::DeleteAccount { account_id } => {

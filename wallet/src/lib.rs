@@ -41,7 +41,7 @@ use self::snowball::{Snowball, SnowballOutput, State as SnowballState};
 use self::storage::*;
 use self::transaction::*;
 use api::*;
-use failure::{bail, Error};
+use failure::{bail, format_err, Error};
 use futures::future::IntoFuture;
 use futures::sync::{mpsc, oneshot};
 use futures::{task, Async, Future, Poll, Stream};
@@ -1288,9 +1288,31 @@ impl From<Vec<LogEntryInfo>> for AccountResponse {
     }
 }
 
+#[derive(Debug)]
+enum UnsealedAccountResult {
+    /// Internal shutdown, on some component failure.
+    Terminated,
+    /// Transient to sealed state.
+    Sealed,
+    /// External disable event
+    Disabled(oneshot::Sender<AccountResponse>),
+}
+
+impl Eq for UnsealedAccountResult {}
+impl PartialEq for UnsealedAccountResult {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (UnsealedAccountResult::Terminated, UnsealedAccountResult::Terminated) => true,
+            (UnsealedAccountResult::Sealed, UnsealedAccountResult::Sealed) => true,
+            (UnsealedAccountResult::Disabled(_), UnsealedAccountResult::Disabled(_)) => true,
+            _ => false,
+        }
+    }
+}
+
 // Event loop.
 impl Future for UnsealedAccountService {
-    type Item = Option<()>;
+    type Item = UnsealedAccountResult;
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -1354,7 +1376,9 @@ impl Future for UnsealedAccountService {
                     };
                     let _ = response_sender.send(response);
                 }
-                Ok(Async::Ready(None)) => return Ok(Async::Ready(None)), // Shutdown.
+                Ok(Async::Ready(None)) => {
+                    return Ok(Async::Ready(UnsealedAccountResult::Terminated))
+                } // Shutdown.
                 Err((error, inputs)) => {
                     error!("Snowball failed: error={}", error);
                     self.notify(AccountNotification::SnowballStatus(SnowballState::Failed));
@@ -1384,10 +1408,14 @@ impl Future for UnsealedAccountService {
                             AccountRequest::Unseal { password: _ } => AccountResponse::Error {
                                 error: "Already unsealed".to_string(),
                             },
+                            AccountRequest::Disable {} => {
+                                info!("Stopping account for future removing.");
+                                return Ok(Async::Ready(UnsealedAccountResult::Disabled(tx)));
+                            }
                             AccountRequest::Seal {} => {
                                 tx.send(AccountResponse::Sealed).ok();
                                 // Finish this future.
-                                return Ok(Async::Ready(Some(())));
+                                return Ok(Async::Ready(UnsealedAccountResult::Sealed));
                             }
                             AccountRequest::CreatePublicAddress => {
                                 match self.new_public_address() {
@@ -1535,7 +1563,7 @@ impl Future for UnsealedAccountService {
                         self.subscribers.push(tx);
                     }
                 },
-                Async::Ready(None) => return Ok(Async::Ready(None)), // Shutdown.
+                Async::Ready(None) => return Ok(Async::Ready(UnsealedAccountResult::Terminated)), // Shutdown.
                 Async::NotReady => break,
             }
         }
@@ -1610,7 +1638,7 @@ impl Future for UnsealedAccountService {
                         );
                     }
                 },
-                Async::Ready(None) => return Ok(Async::Ready(None)), // Shutdown.
+                Async::Ready(None) => return Ok(Async::Ready(UnsealedAccountResult::Terminated)), // Shutdown.
                 Async::NotReady => break,
             }
         }
@@ -1724,6 +1752,10 @@ impl Future for SealedAccountService {
                                 };
                                 AccountResponse::AccountInfo(account_info)
                             }
+                            AccountRequest::Disable {} => {
+                                info!("Stopping account for future removing.");
+                                return Ok(Async::Ready(None));
+                            }
                             _ => AccountResponse::Error {
                                 error: "Account is sealed".to_string(),
                             },
@@ -1787,11 +1819,21 @@ impl Future for AccountService {
                 Async::NotReady => {}
             },
             AccountService::Unsealed(unsealed) => match unsealed.poll().unwrap() {
-                Async::Ready(None) => {
+                Async::Ready(UnsealedAccountResult::Terminated) => {
                     debug!("Terminated");
                     return Ok(Async::Ready(()));
                 }
-                Async::Ready(Some(())) => {
+                Async::Ready(UnsealedAccountResult::Disabled(tx)) => {
+                    let unsealed = match std::mem::replace(self, AccountService::Invalid) {
+                        AccountService::Unsealed(old) => old,
+                        _ => unreachable!("Expected Unsealed state"),
+                    };
+                    drop(unsealed);
+                    debug!("Account disabled, feel free to remove");
+                    tx.send(AccountResponse::Disabled).ok();
+                    return Ok(Async::Ready(()));
+                }
+                Async::Ready(UnsealedAccountResult::Sealed) => {
                     let unsealed = match std::mem::replace(self, AccountService::Invalid) {
                         AccountService::Unsealed(old) => old,
                         _ => unreachable!("Expected Unsealed state"),
@@ -2125,31 +2167,8 @@ impl WalletService {
                 self.open_account(&account_id, false, Some(last_public_address_id))?;
                 Ok(WalletControlResponse::AccountCreated { account_id })
             }
-            WalletControlRequest::DeleteAccount { account_id } => {
-                match self.accounts.remove(&account_id) {
-                    Some(_handle) => {
-                        warn!("Removing account {}", account_id);
-                        let account_dir = self.accounts_dir.join(&account_id);
-                        if account_dir.exists() {
-                            let suffix = Timestamp::now()
-                                .duration_since(Timestamp::UNIX_EPOCH)
-                                .as_secs();
-                            let trash_dir = self.accounts_dir.join(".trash");
-                            if !trash_dir.exists() {
-                                fs::create_dir_all(&trash_dir)?;
-                            }
-                            let account_dir_bkp =
-                                trash_dir.join(format!("{}-{}", &account_id, suffix));
-                            warn!("Renaming {:?} to {:?}", account_dir, account_dir_bkp);
-                            fs::rename(account_dir, account_dir_bkp)?;
-                        }
-                        // AccountService will be destroyed automatically.
-                        Ok(WalletControlResponse::AccountDeleted { account_id })
-                    }
-                    None => Ok(WalletControlResponse::Error {
-                        error: format!("Unknown account: {}", account_id),
-                    }),
-                }
+            WalletControlRequest::DeleteAccount { .. } => {
+                unreachable!("Delete account should be already processed in different routine")
             }
         }
     }
@@ -2185,6 +2204,76 @@ impl WalletService {
             }
         }
     }
+
+    fn handle_account_delete(
+        &mut self,
+        account_id: AccountId,
+        tx: oneshot::Sender<WalletResponse>,
+    ) {
+        let accounts_dir = self.accounts_dir.clone();
+        match self.accounts.remove(&account_id) {
+            Some(handle) => {
+                warn!("Removing account {}", account_id);
+                // Try to seal account, and then perform removing.
+                let fut = handle
+                    .account
+                    .request(AccountRequest::Disable)
+                    .into_future()
+                    .then(move |response| {
+                        futures::future::result(match response {
+                            // oneshot can be closed before we process event.
+                            Ok(AccountResponse::Disabled) => {
+                                Self::delete_account(account_id, accounts_dir)
+                            }
+
+                            Err(e) => Err(format_err!("Error processing disable: {}", e)),
+                            Ok(response) => Err(format_err!(
+                                "Wrong reponse to disable account: {:?}",
+                                response
+                            )),
+                        })
+                    })
+                    .then(|e| {
+                        let r = match e {
+                            Ok(account_id) => WalletControlResponse::AccountDeleted { account_id },
+                            Err(e) => WalletControlResponse::Error {
+                                error: e.to_string(),
+                            },
+                        };
+                        let response = WalletResponse::WalletControlResponse(r);
+                        futures::future::ok::<(), ()>(drop(tx.send(response)))
+                    });
+                self.executor.spawn(fut);
+            }
+            None => {
+                let r = WalletControlResponse::Error {
+                    error: format!("Unknown account: {}", account_id),
+                };
+                let response = WalletResponse::WalletControlResponse(r);
+                tx.send(response).ok();
+            }
+        }
+    }
+
+    fn delete_account(account_id: AccountId, accounts_dir: PathBuf) -> Result<AccountId, Error> {
+        let account_dir = accounts_dir.join(&account_id);
+        if account_dir.exists() {
+            let suffix = Timestamp::now()
+                .duration_since(Timestamp::UNIX_EPOCH)
+                .as_secs();
+            let trash_dir = accounts_dir.join(".trash");
+            if !trash_dir.exists() {
+                fs::create_dir_all(&trash_dir)?;
+            }
+            let account_dir_bkp = trash_dir.join(format!("{}-{}", &account_id, suffix));
+            warn!("Renaming {:?} to {:?}", account_dir, account_dir_bkp);
+            fs::rename(account_dir, account_dir_bkp)?;
+            return Ok(account_id);
+        }
+        return Err(
+            std::io::Error::new(std::io::ErrorKind::NotFound, "Account dir was not found").into(),
+        );
+    }
 }
 
 impl Future for WalletService {
@@ -2201,6 +2290,10 @@ impl Future for WalletService {
                     }
                     WalletEvent::Request { request, tx } => {
                         match request {
+                            // process DeleteAccount seperately, because we need to end account future before.
+                            WalletRequest::WalletControlRequest(
+                                WalletControlRequest::DeleteAccount { account_id },
+                            ) => self.handle_account_delete(account_id, tx),
                             WalletRequest::WalletControlRequest(request) => {
                                 let response = match self.handle_control_request(request) {
                                     Ok(r) => r,

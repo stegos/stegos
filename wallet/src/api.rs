@@ -166,6 +166,10 @@ pub struct WalletNotification {
 #[serde(rename_all = "snake_case")]
 pub enum AccountRequest {
     Seal,
+    /// Controll request that perform full disable of account future.
+    /// Used for future account removing
+    #[serde(skip)]
+    Disable,
     Unseal {
         password: String,
     },
@@ -271,6 +275,8 @@ pub struct TransactionInfo {
 pub enum AccountResponse {
     Sealed,
     Unsealed,
+    #[serde(skip)]
+    Disabled,
     PublicAddressCreated {
         public_address: scc::PublicKey,
         public_address_id: u32,

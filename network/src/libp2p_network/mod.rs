@@ -25,15 +25,15 @@ use failure::{format_err, Error};
 use futures::prelude::*;
 use futures::sync::mpsc;
 use libp2p;
-use libp2p_core::multiaddr::Multiaddr;
+pub use libp2p_core::multiaddr::Multiaddr;
 use libp2p_core::upgrade::{InboundUpgradeExt, OutboundUpgradeExt};
-use libp2p_core::{identity, identity::ed25519, transport::TransportError, PeerId, Transport};
+pub use libp2p_core::PeerId;
+use libp2p_core::{identity, identity::ed25519, transport::TransportError, Transport};
 use libp2p_core_derive::NetworkBehaviour;
 use libp2p_dns as dns;
 use libp2p_secio as secio;
 use libp2p_swarm::{NetworkBehaviourEventProcess, Swarm};
 use libp2p_tcp as tcp;
-use libp2p_yamux as yamux;
 use log::*;
 use protobuf::Message as ProtoMessage;
 use resolve::{record::Srv, resolver, DnsConfig};
@@ -54,6 +54,7 @@ use crate::discovery::{Discovery, DiscoveryOutEvent};
 use crate::gatekeeper::{Gatekeeper, GatekeeperOutEvent, PeerEvent};
 use crate::ncp::{Ncp, NcpOutEvent};
 use crate::pubsub::{Floodsub, FloodsubEvent};
+use crate::replication::{Replication, ReplicationEvent};
 use crate::{Network, NetworkProvider, UnicastMessage};
 
 mod proto;
@@ -102,7 +103,15 @@ impl Libp2pNetwork {
         mut config: NetworkConfig,
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
-    ) -> Result<(Network, impl Future<Item = (), Error = ()>), Error> {
+    ) -> Result<
+        (
+            Network,
+            impl Future<Item = (), Error = ()>,
+            PeerId,
+            mpsc::UnboundedReceiver<ReplicationEvent>,
+        ),
+        Error,
+    > {
         // Resolve network.seed_pool.
         if config.seed_pool != "" {
             let mut dns_cfg = if !config.dns_servers.is_empty() {
@@ -154,9 +163,10 @@ impl Libp2pNetwork {
                 .map_err(|e| format_err!("Invalid network.seed_nodes[{}] '{}': {}", i, addr, e))?;
         }
 
-        let (service, control_tx) = new_service(&config, network_skey, network_pkey)?;
+        let (service, control_tx, peer_id, replication_rx) =
+            new_service(&config, network_skey, network_pkey)?;
         let network = Libp2pNetwork { control_tx };
-        Ok((Box::new(network), service))
+        Ok((Box::new(network), service, peer_id, replication_rx))
     }
 }
 
@@ -208,6 +218,18 @@ impl NetworkProvider for Libp2pNetwork {
         Ok(())
     }
 
+    fn replication_connect(&self, peer_id: PeerId) -> Result<(), Error> {
+        let msg = ControlMessage::EnableReplicationUpstream { peer_id };
+        self.control_tx.unbounded_send(msg)?;
+        Ok(())
+    }
+
+    fn replication_disconnect(&self, peer_id: PeerId) -> Result<(), Error> {
+        let msg = ControlMessage::DisableReplicationUpstream { peer_id };
+        self.control_tx.unbounded_send(msg)?;
+        Ok(())
+    }
+
     // Clone self as a box
     fn box_clone(&self) -> Network {
         Box::new((*self).clone())
@@ -233,6 +255,8 @@ fn new_service(
     (
         impl Future<Item = (), Error = ()>,
         mpsc::UnboundedSender<ControlMessage>,
+        PeerId,
+        mpsc::UnboundedReceiver<ReplicationEvent>,
     ),
     Error,
 > {
@@ -245,16 +269,10 @@ fn new_service(
     let transport = build_tcp_ws_secio_yamux(local_key);
 
     // Create a Swarm to manage peers and events
-    let mut swarm = {
-        let behaviour = Libp2pBehaviour::new(
-            config,
-            network_skey,
-            network_pkey,
-            local_pub_key.clone().into_peer_id(),
-        );
+    let (behaviour, replication_rx) =
+        Libp2pBehaviour::new(config, network_skey, network_pkey, peer_id.clone());
 
-        Swarm::new(transport, behaviour, peer_id)
-    };
+    let mut swarm = Swarm::new(transport, behaviour, peer_id.clone());
 
     if config.endpoint != "" {
         let endpoint = SocketAddr::from_str(&config.endpoint).expect("Invalid endpoint");
@@ -291,7 +309,7 @@ fn new_service(
         Ok(Async::NotReady)
     });
 
-    Ok((service, control_tx))
+    Ok((service, control_tx, peer_id.clone(), replication_rx))
 }
 
 #[derive(NetworkBehaviour)]
@@ -301,10 +319,13 @@ pub struct Libp2pBehaviour<TSubstream: AsyncRead + AsyncWrite> {
     gatekeeper: Gatekeeper<TSubstream>,
     delivery: Delivery<TSubstream>,
     discovery: Discovery<TSubstream>,
+    replication: Replication<TSubstream>,
     #[behaviour(ignore)]
     consumers: HashMap<String, SmallVec<[mpsc::UnboundedSender<Vec<u8>>; 3]>>,
     #[behaviour(ignore)]
     unicast_consumers: HashMap<String, SmallVec<[mpsc::UnboundedSender<UnicastMessage>; 3]>>,
+    #[behaviour(ignore)]
+    replication_tx: mpsc::UnboundedSender<ReplicationEvent>,
     #[behaviour(ignore)]
     my_pkey: pbc::PublicKey,
     #[behaviour(ignore)]
@@ -322,18 +343,22 @@ where
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
         peer_id: PeerId,
-    ) -> Self {
+    ) -> (Self, mpsc::UnboundedReceiver<ReplicationEvent>) {
         let relaying = if config.advertised_endpoint == "".to_string() {
             false
         } else {
             true
         };
+
+        let (replication_tx, replication_rx) = mpsc::unbounded::<ReplicationEvent>();
         let behaviour = Libp2pBehaviour {
             floodsub: Floodsub::new(peer_id.clone(), relaying),
             ncp: Ncp::new(config, network_pkey.clone()),
             gatekeeper: Gatekeeper::new(config),
             delivery: Delivery::new(),
             discovery: Discovery::new(network_pkey.clone()),
+            replication: Replication::new(),
+            replication_tx,
             consumers: HashMap::new(),
             unicast_consumers: HashMap::new(),
             my_pkey: network_pkey.clone(),
@@ -341,7 +366,7 @@ where
             connected_peers: HashSet::new(),
         };
         debug!(target: "stegos_network::delivery", "Network endpoints: node_id={}, peer_id={}", network_pkey, peer_id);
-        behaviour
+        (behaviour, replication_rx)
     }
 
     fn process_event(&mut self, msg: ControlMessage) {
@@ -433,6 +458,12 @@ where
                     // self.floodsub.publish(floodsub_topic, msg);
                     self.discovery.deliver_unicast(&to, msg);
                 }
+            }
+            ControlMessage::EnableReplicationUpstream { peer_id } => {
+                self.replication.connect(peer_id);
+            }
+            ControlMessage::DisableReplicationUpstream { peer_id } => {
+                self.replication.disconnect(peer_id);
             }
         }
     }
@@ -650,6 +681,18 @@ where
     }
 }
 
+impl<TSubstream> NetworkBehaviourEventProcess<ReplicationEvent> for Libp2pBehaviour<TSubstream>
+where
+    TSubstream: AsyncRead + AsyncWrite,
+{
+    fn inject_event(&mut self, event: ReplicationEvent) {
+        trace!(target: "stegos_network::replication", "Received event: event={:?}", event);
+        if let Err(_e) = self.replication_tx.unbounded_send(event) {
+            error!("Failed to send replication event");
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum ControlMessage {
     Subscribe {
@@ -672,6 +715,12 @@ pub enum ControlMessage {
     ChangeNetworkKeys {
         new_pkey: pbc::PublicKey,
         new_skey: pbc::SecretKey,
+    },
+    EnableReplicationUpstream {
+        peer_id: PeerId,
+    },
+    DisableReplicationUpstream {
+        peer_id: PeerId,
     },
 }
 
@@ -784,12 +833,14 @@ pub fn build_tcp_ws_secio_yamux(
     Dial = impl Send,
     ListenerUpgrade = impl Send,
 > + Clone {
+    let mut mplex_config = libp2p_mplex::MplexConfig::new();
+    mplex_config.max_buffer_len_behaviour(libp2p_mplex::MaxBufferBehaviour::Block);
     CommonTransport::new()
         .with_upgrade(secio::SecioConfig::new(keypair))
         .and_then(move |output, endpoint| {
             let peer_id = output.remote_key.into_peer_id();
             let peer_id2 = peer_id.clone();
-            let upgrade = yamux::Config::default()
+            let upgrade = mplex_config
                 // TODO: use a single `.map` instead of two maps
                 .map_inbound(move |muxer| (peer_id, muxer))
                 .map_outbound(move |muxer| (peer_id2, muxer));

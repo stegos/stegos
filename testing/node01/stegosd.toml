@@ -9,6 +9,7 @@ force_check = true
 endpoint = "127.0.0.1:10055"
 advertised_endpoint = "127.0.0.1:10055"
 handshake_puzzle_difficulty = 100
+readiness_threshold = 0
 seed_nodes = [
     "127.0.0.1:10056",
     "127.0.0.1:10057",

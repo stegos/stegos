@@ -580,9 +580,8 @@ impl Blockchain {
         // Validate Awards.
         //
         if epoch > 0 {
-            let validators_activity = self
-                .epoch_activity_from_macro_block(&block.header.activity_map)
-                .unwrap();
+            let validators_activity =
+                self.epoch_activity_from_macro_block(&block.header.activity_map)?;
             let mut service_awards = self.service_awards().clone();
             service_awards.finalize_epoch(self.cfg().service_award_per_epoch, validators_activity);
             let winner = service_awards.check_winners(block.header.random.rand);
@@ -716,6 +715,15 @@ impl Blockchain {
                 block_hash.clone(),
                 header.view_change,
                 view_change,
+            )
+            .into());
+        }
+
+        let validators_at_start = self.validators_at_epoch_start();
+        if header.activity_map.len() > validators_at_start.len() {
+            return Err(BlockError::TooBigActivitymap(
+                header.activity_map.len(),
+                validators_at_start.len(),
             )
             .into());
         }

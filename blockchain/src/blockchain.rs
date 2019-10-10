@@ -955,16 +955,21 @@ impl Blockchain {
             .collect();
 
         let epoch_validators = self.validators_at_epoch_start();
+        debug!(
+            "Creating activity map: len = {}, current_validators_len={}",
+            epoch_validators.len(),
+            self.validators().len()
+        );
 
-        let mut activity_map = BitVector::ones(epoch_validators.len());
+        let mut activity_map = BitVector::new(epoch_validators.len());
 
         for (id, (validator, _)) in epoch_validators.iter().enumerate() {
             match epoch_activity.get(validator) {
                 // if validator failed, or cheater, remove it from bitmap.
-                Some(ValidatorAwardState::Failed { .. }) | None => {
-                    activity_map.remove(id);
+                Some(ValidatorAwardState::Failed { .. }) | None => {}
+                Some(ValidatorAwardState::Active) => {
+                    activity_map.insert(id);
                 }
-                _ => {}
             }
         }
 

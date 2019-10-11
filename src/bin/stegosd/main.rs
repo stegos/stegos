@@ -138,6 +138,7 @@ fn load_logger_configuration(
         .logger(Logger::builder().build("stegos_node", level))
         .logger(Logger::builder().build("stegos_network", level))
         .logger(Logger::builder().build("stegos_wallet", level))
+        .logger(Logger::builder().build("trust-dns-resolver", log::LevelFilter::Trace))
         .build(
             Root::builder()
                 .appender("file")
@@ -650,7 +651,7 @@ fn run() -> Result<(), Error> {
 fn main() {
     if let Err(e) = run() {
         eprintln!("{}", e); // Logger can be not yet initialized.
-        error!("{}", e);
+        error!("{:?}", e);
         process::exit(1)
     };
 }

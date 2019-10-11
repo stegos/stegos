@@ -40,7 +40,7 @@ use smallvec::SmallVec;
 use std::collections::{HashMap, HashSet};
 use std::error;
 use std::io;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, SocketAddrV4};
 use std::time::Duration;
 use stegos_crypto::hash::{Hashable, Hasher};
 use stegos_crypto::pbc;
@@ -60,6 +60,7 @@ mod proto;
 use self::proto::unicast_proto;
 use crate::utils::socket_to_multi_addr;
 use std::str::FromStr;
+use trust_dns_resolver::config::{NameServerConfig, Protocol};
 
 #[derive(Clone, Debug)]
 pub struct Libp2pNetwork {
@@ -91,7 +92,7 @@ impl Libp2pNetwork {
         // Resolve network.seed_pool.
         config
             .seed_nodes
-            .extend_from_slice(&resolve_seed_nodes(&config.seed_pool)?);
+            .extend_from_slice(&resolve_seed_nodes(&config.seed_pool, &config.dns_servers)?);
 
         let (service, control_tx, peer_id, replication_rx) =
             new_service(&config, network_skey, network_pkey)?;
@@ -825,24 +826,44 @@ impl Transport for CommonTransport {
     }
 }
 
-fn resolve_seed_nodes(seed_pool: &str) -> Result<Vec<String>, Error> {
-    use trust_dns_resolver::Resolver;
+fn resolve_seed_nodes(seed_pool: &str, dns_servers: &[String]) -> Result<Vec<String>, Error> {
+    use trust_dns_resolver::{
+        config::{ResolverConfig, ResolverOpts},
+        Resolver,
+    };
+
+    let dns_servers: Result<Vec<_>, std::net::AddrParseError> = dns_servers
+        .iter()
+        .map(|d| {
+            let addr = d.parse::<SocketAddr>()?;
+            Ok(NameServerConfig {
+                socket_addr: addr.into(),
+                protocol: Protocol::Tcp,
+                tls_dns_name: None,
+            })
+        })
+        .collect();
+    let dns_servers = dns_servers?;
 
     let mut seed_nodes = Vec::new();
     if seed_pool != "" {
         debug!("Initialising dns resolver.");
-
-        let resolver = Resolver::from_system_conf()?;
-
-        info!("Resolving seed nodes records.");
+        let resolver = if dns_servers.is_empty() {
+            Resolver::from_system_conf()?
+        } else {
+            debug!("Setting dns servers to {:?}.", dns_servers);
+            let config = ResolverConfig::from_parts(None, vec![], dns_servers);
+            Resolver::new(config, ResolverOpts::default())?
+        };
+        info!("Trying to resolve seed nodes SRV records.");
         let srv_records = resolver.lookup_srv(seed_pool)?;
         for srv in srv_records.iter() {
             let addr_records = resolver
-                .lookup_ip(&srv.target().to_utf8())
+                .ipv4_lookup(&srv.target().to_utf8())
                 .map_err(|e| format_err!("Failed to resolve seed_pool: {}", e))?;
 
             for addr in addr_records.iter() {
-                let addr = SocketAddr::new(addr, srv.port());
+                let addr = SocketAddrV4::new(*addr, srv.port());
                 seed_nodes.push(addr.to_string());
             }
         }

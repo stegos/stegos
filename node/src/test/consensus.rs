@@ -417,19 +417,21 @@ fn lock() {
         for i in 0..s.num_nodes() {
             let _precommit: ConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
         }
+        s.poll();
         s.wait(
             s.config.node.macro_block_timeout
                 * (round - s.nodes[0].node_service.chain.view_change() + 1),
         );
 
-        info!("====== Waiting for keyblock timeout. =====");
+        s.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
+        info!("====== Waiting for macroblock timeout. =====");
         s.poll();
 
         // filter messages from chain loader.
         s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
 
-        let leader_pk = s.nodes[0].node_service.chain.select_leader(round + 1);
-        let leader_node = s.node(&leader_pk).unwrap();
+        let second_leader_pk = s.nodes[0].node_service.chain.select_leader(round + 1);
+        let leader_node = s.node(&second_leader_pk).unwrap();
         let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
 
         let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
@@ -438,7 +440,6 @@ fn lock() {
         assert_eq!(proposal.round, leader_proposal.round + 1);
         assert_eq!(proposal.block_hash, leader_proposal.block_hash);
         s.poll();
-        s.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
     });
 }
 

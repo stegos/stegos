@@ -171,7 +171,7 @@ impl ViewChangeCollector {
                 .actual_view_changes
                 .iter()
                 .map(|(k, v)| (*k, &v.signature));
-            let proof = ViewChangeProof::new(signatures);
+            let proof = ViewChangeProof::new(signatures, blockchain.validators().len());
             self.actual_view_changes.clear();
             self.collected_slots = 0;
             return Ok(Some(proof));

@@ -23,7 +23,7 @@
 
 use super::*;
 use crate::*;
-use bitvector::BitVector;
+use bit_vec::BitVec;
 use std::collections::HashSet;
 use stegos_blockchain::Block;
 use stegos_consensus::MacroBlockProposal;
@@ -755,7 +755,7 @@ fn out_of_order_keyblock_proposal() {
             let difficulty = leader_node.node_service.chain.difficulty();
             let leader = leader_node.node_service.network_pkey;
             let block_reward = 0;
-            let activity_map = BitVector::new(0);
+            let activity_map = BitVec::new();
             let block = MacroBlock::empty(
                 previous,
                 epoch,

@@ -18,7 +18,7 @@ stegos_consensus = { version = "0.2.0", path = "../consensus" }
 stegos_crypto = { version = "0.2.0", path = "../crypto" }
 stegos_network = { version = "0.4.0", path = "../network" }
 stegos_serialization = { version = "0.2.0", path = "../serialization" }
-bitvector = "0.1"
+bit-vec = "0.6"
 clap = "2.32"
 failure = "0.1"
 futures = "0.1"

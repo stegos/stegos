@@ -21,7 +21,7 @@
 
 use crate::blockchain::{Blockchain, ChainInfo};
 use crate::multisignature::{check_multi_signature, create_multi_signature_index};
-use bitvector::BitVector;
+use bit_vec::BitVec;
 use serde_derive::{Deserialize, Serialize};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
@@ -30,16 +30,16 @@ use stegos_crypto::pbc;
 pub struct ViewChangeProof {
     #[serde(deserialize_with = "stegos_crypto::utils::deserialize_bitvec")]
     #[serde(serialize_with = "stegos_crypto::utils::serialize_bitvec")]
-    pub multimap: BitVector,
+    pub multimap: BitVec,
     pub multisig: pbc::Signature,
 }
 
 impl ViewChangeProof {
-    pub fn new<'a, I>(signatures: I) -> Self
+    pub fn new<'a, I>(signatures: I, validators_len: usize) -> Self
     where
         I: Iterator<Item = (u32, &'a pbc::Signature)>,
     {
-        let (multisig, multimap) = create_multi_signature_index(signatures);
+        let (multisig, multimap) = create_multi_signature_index(signatures, validators_len);
         ViewChangeProof { multisig, multimap }
     }
     pub fn validate(

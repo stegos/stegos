@@ -27,7 +27,7 @@ use crate::output::*;
 use crate::timestamp::Timestamp;
 use crate::transaction::Transaction;
 use crate::view_changes::ViewChangeProof;
-use bitvector::BitVector;
+use bit_vec::BitVec;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -37,8 +37,6 @@ use stegos_crypto::scc::Fr;
 
 /// Blockchain version.
 pub const VERSION: u64 = 1;
-/// The maximum number of nodes in multi-signature.
-pub const VALIDATORS_MAX: usize = 1024;
 
 //--------------------------------------------------------------------------------------------------
 // Micro Blocks.
@@ -243,7 +241,7 @@ pub struct MacroBlockHeader {
     /// Bitmap of active validators in epoch.
     #[serde(deserialize_with = "stegos_crypto::utils::deserialize_bitvec")]
     #[serde(serialize_with = "stegos_crypto::utils::serialize_bitvec")]
-    pub activity_map: BitVector,
+    pub activity_map: BitVec,
 
     /// The sum of all gamma adjustments.
     pub gamma: Fr,
@@ -271,8 +269,10 @@ impl Hashable for MacroBlockHeader {
         self.difficulty.hash(state);
         self.timestamp.hash(state);
         self.block_reward.hash(state);
-        for bit in self.activity_map.iter() {
-            (bit as u32).hash(state);
+        for (validator_id, val) in self.activity_map.iter().enumerate() {
+            if val {
+                (validator_id as u32).hash(state);
+            }
         }
         self.gamma.hash(state);
         self.inputs_len.hash(state);
@@ -295,7 +295,7 @@ pub struct MacroBlock {
     /// Bitmap of signers in the multi-signature.
     #[serde(deserialize_with = "stegos_crypto::utils::deserialize_bitvec")]
     #[serde(serialize_with = "stegos_crypto::utils::serialize_bitvec")]
-    pub multisigmap: BitVector,
+    pub multisigmap: BitVec,
 
     /// The list of transaction inputs in a Merkle Tree.
     pub inputs: Vec<Hash>,
@@ -314,7 +314,7 @@ impl MacroBlock {
         difficulty: u64,
         timestamp: Timestamp,
         block_reward: i64,
-        activity_map: BitVector,
+        activity_map: BitVec,
     ) -> MacroBlock {
         let gamma = Fr::zero();
         let inputs: Vec<Hash> = Vec::new();
@@ -347,7 +347,7 @@ impl MacroBlock {
         difficulty: u64,
         timestamp: Timestamp,
         block_reward: i64,
-        activity_map: BitVector,
+        activity_map: BitVec,
         transactions: &[Transaction],
     ) -> Result<MacroBlock, TransactionError> {
         //
@@ -411,7 +411,7 @@ impl MacroBlock {
         difficulty: u64,
         timestamp: Timestamp,
         block_reward: i64,
-        activity_map: BitVector,
+        activity_map: BitVec,
         gamma: Fr,
         mut inputs: Vec<Hash>,
         mut outputs: Vec<Output>,
@@ -456,7 +456,7 @@ impl MacroBlock {
 
         // Create the block.
         let multisig = pbc::Signature::zero();
-        let multisigmap = BitVector::new(VALIDATORS_MAX);
+        let multisigmap = BitVec::new();
         MacroBlock {
             header,
             multisig,

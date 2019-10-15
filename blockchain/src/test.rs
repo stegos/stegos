@@ -33,7 +33,7 @@ use super::timestamp::Timestamp;
 use super::transaction::{
     CoinbaseTransaction, PaymentTransaction, RestakeTransaction, Transaction,
 };
-use bitvector::BitVector;
+use bit_vec::BitVec;
 use log::*;
 use rand::{thread_rng, Rng};
 use rand_core::RngCore;
@@ -240,7 +240,7 @@ pub fn fake_genesis(
     let seed = mix(last_macro_block_random, view_change);
     let random = pbc::make_VRF(&keychains[0].network_skey, &seed);
     let difficulty = 1;
-    let activity_map = BitVector::ones(keychains.len());
+    let activity_map = BitVec::from_elem(keychains.len(), true);
 
     // Create a block.
     let genesis = MacroBlock::new(
@@ -512,17 +512,19 @@ pub fn create_micro_block_with_coinbase(
 
 #[test]
 fn roundtrip_bitvec() {
+    use bit_vec::BitVec;
     use serde_derive::{Deserialize, Serialize};
+
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
     struct RT {
         #[serde(deserialize_with = "stegos_crypto::utils::deserialize_bitvec")]
         #[serde(serialize_with = "stegos_crypto::utils::serialize_bitvec")]
-        v: BitVector,
+        v: BitVec,
     }
 
-    let mut v = BitVector::new(65);
+    let mut v = BitVec::from_elem(65, false);
     for i in vec![0, 1, 2, 10, 15, 18, 25, 31, 40, 42, 60, 64] {
-        v.insert(i);
+        v.set(i, true);
     }
 
     let rt = RT { v };

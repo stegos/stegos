@@ -189,19 +189,12 @@ impl AccountDatabase {
             (k, v)
         });
         // filter-out utxos that was removed in epoch.
-        let iter_filtered = iter
-            .filter(move |(hash, _)| self.utxos.get(hash).is_none())
-            .inspect(|(k, _)| trace!("Iter UTXO from db = {}", k));
+        let iter_filtered = iter.filter(move |(hash, _)| self.utxos.get(hash).is_none());
         // add utxos that was not finalized.
-        let iter_chained = iter_filtered.chain(
-            self.utxos
-                .iter()
-                .filter_map(|(k, v)| match v {
-                    UnspentOutput::Add(v) => Some((k.clone(), v.clone())),
-                    UnspentOutput::Removed => None,
-                })
-                .inspect(|(k, _)| trace!("Iter UTXO from mem = {}", k)),
-        );
+        let iter_chained = iter_filtered.chain(self.utxos.iter().filter_map(|(k, v)| match v {
+            UnspentOutput::Add(v) => Some((k.clone(), v.clone())),
+            UnspentOutput::Removed => None,
+        }));
         // map info about change.
         iter_chained.map(move |(h, mut utxo)| {
             match &mut utxo {
@@ -310,6 +303,7 @@ impl AccountDatabase {
         incoming: OutputValue,
     ) -> Result<Timestamp, Error> {
         let output_hash = Hash::digest(&incoming.to_output());
+        trace!("Push incoming utxo = {:?}", output_hash);
         if let Some(time) = self.utxos_list.get(&output_hash) {
             trace!("Skip adding, log already contain output = {}", output_hash);
             return Ok(*time);
@@ -327,6 +321,7 @@ impl AccountDatabase {
         timestamp: Timestamp,
         tx: TransactionValue,
     ) -> Result<Timestamp, Error> {
+        trace!("Push outgoing tx = {:?}", tx);
         let tx_hash = Hash::digest(&tx.tx);
         let status = tx.status.clone();
         let entry = LogEntry::Outgoing { tx: tx.clone() };

@@ -227,7 +227,6 @@ impl UnsealedAccountService {
         // TODO: add proper handling for I/O errors.
         let (mut database, epoch) = AccountDatabase::open(&database_dir);
         let last_public_address_id = database.last_public_address_id().expect("I/O error");
-        debug!("Opened database: epoch={}", epoch);
         debug!(
             "Opened database: epoch={}, last_public_address_id={}",
             epoch, last_public_address_id
@@ -862,8 +861,14 @@ impl UnsealedAccountService {
     }
 
     /// Called when outputs registered and/or pruned.
-    fn on_outputs_changed<'a, I, O>(&mut self, epoch: u64, inputs: I, outputs: O, is_final: bool)
-    where
+    fn on_outputs_changed<'a, I, O>(
+        &mut self,
+        epoch: u64,
+        inputs: I,
+        outputs: O,
+        is_final: bool,
+        block_timestamp: Timestamp,
+    ) where
         I: Iterator<Item = &'a Hash>,
         O: Iterator<Item = &'a Output>,
     {
@@ -872,7 +877,7 @@ impl UnsealedAccountService {
         // This order is important - first create outputs, then remove inputs.
         // Otherwise it will fail in case of annihilated input/output in a macro block.
         for output in outputs {
-            self.on_output_created(epoch, output);
+            self.on_output_created(epoch, output, block_timestamp);
         }
         for input_hash in inputs {
             self.on_output_pruned(input_hash);
@@ -889,7 +894,7 @@ impl UnsealedAccountService {
     }
 
     /// Called when UTXO is created.
-    fn on_output_created(&mut self, epoch: u64, output: &Output) {
+    fn on_output_created(&mut self, epoch: u64, output: &Output, block_timestamp: Timestamp) {
         let hash = Hash::digest(&output);
         match output {
             Output::PaymentOutput(o) => {
@@ -913,7 +918,7 @@ impl UnsealedAccountService {
 
                     if let Err(e) = self
                         .database
-                        .push_incomming(Timestamp::now(), value.clone().into())
+                        .push_incomming(block_timestamp, value.clone().into())
                     {
                         error!("Error when adding incomming tx = {}", e)
                     }
@@ -949,7 +954,7 @@ impl UnsealedAccountService {
 
                 if let Err(e) = self
                     .database
-                    .push_incomming(Timestamp::now(), value.clone().into())
+                    .push_incomming(block_timestamp, value.clone().into())
                 {
                     error!("Error when adding incomming tx = {}", e)
                 }
@@ -1590,11 +1595,12 @@ impl Future for UnsealedAccountService {
                             block.inputs(),
                             block.outputs(),
                             false,
+                            block.block.header.timestamp,
                         );
                     }
                     ChainNotification::MacroBlockCommitted(block) => {
                         trace!(
-                            "Committed a micro block: epoch={}, block={}",
+                            "Committed a macro block: epoch={}, block={}",
                             block.block.header.epoch,
                             Hash::digest(&block.block)
                         );
@@ -1604,6 +1610,7 @@ impl Future for UnsealedAccountService {
                             block.inputs(),
                             block.outputs(),
                             true,
+                            block.block.header.timestamp,
                         );
                         self.on_epoch_changed(
                             block.block.header.epoch,
@@ -1635,6 +1642,7 @@ impl Future for UnsealedAccountService {
                             block.pruned_outputs(),
                             block.recovered_inputs(),
                             false,
+                            block.block.header.timestamp,
                         );
                     }
                 },

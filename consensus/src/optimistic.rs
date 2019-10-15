@@ -24,7 +24,7 @@
 //!
 
 use crate::error::ConsensusError;
-use log::{debug, info};
+use log::*;
 use std::collections::HashMap;
 use stegos_blockchain::view_changes::*;
 use stegos_blockchain::{check_supermajority, Blockchain, ChainInfo, ValidatorId};
@@ -61,20 +61,6 @@ impl ViewChangeMessage {
             validator_id,
             signature,
         }
-    }
-
-    #[must_use]
-    pub fn validate(&self, blockchain: &Blockchain) -> Result<(), ConsensusError> {
-        let validator_id = self.validator_id;
-        if (validator_id as usize) >= blockchain.validators().len() {
-            return Err(ConsensusError::InvalidValidatorId(validator_id));
-        }
-        let hash = Hash::digest(&self.chain);
-        let author = blockchain.validators()[validator_id as usize].0;
-        if let Err(_e) = pbc::check_hash(&hash, &self.signature, &author) {
-            return Err(ConsensusError::InvalidViewChangeSignature);
-        }
-        Ok(())
     }
 }
 
@@ -120,6 +106,7 @@ impl ViewChangeCollector {
         blockchain: &Blockchain,
         message: ViewChangeMessage,
     ) -> Result<Option<ViewChangeProof>, ConsensusError> {
+        // Check epoch.
         if message.chain.epoch != blockchain.epoch() {
             return Err(ConsensusError::InvalidViewChangeEpoch(
                 message.chain.epoch,
@@ -127,38 +114,61 @@ impl ViewChangeCollector {
             ));
         }
 
-        if message.chain.offset != blockchain.offset() {
-            return Err(ConsensusError::InvalidViewChangeOffset(
+        // Check validator_id.
+        let validator_id = message.validator_id;
+        let validator_pkey = match blockchain.validators().get(validator_id as usize) {
+            Some((validator_pkey, _slots)) => validator_pkey,
+            None => return Err(ConsensusError::InvalidValidatorId(validator_id)),
+        };
+
+        // Check signature.
+        let hash = Hash::digest(&message.chain);
+        if let Err(_e) = pbc::check_hash(&hash, &message.signature, &validator_pkey) {
+            return Err(ConsensusError::InvalidViewChangeSignature);
+        }
+
+        // Check offset.
+        if message.chain.offset < blockchain.offset() {
+            return Err(ConsensusError::ViewChangeOffsetFromThePast(
+                message.chain.offset,
+                blockchain.offset(),
+            ));
+        } else if message.chain.offset > blockchain.offset() {
+            return Err(ConsensusError::ViewChangeOffsetFromTheFuture(
                 message.chain.offset,
                 blockchain.offset(),
             ));
         }
 
+        // Check the last block hash.
         if message.chain.last_block != blockchain.last_block_hash() {
             return Err(ConsensusError::InvalidLastBlockHash(
                 message.chain.last_block,
                 blockchain.last_block_hash(),
             ));
         }
-        //TODO: Implement catch-up
-        if message.chain.view_change != blockchain.view_change() {
-            return Err(ConsensusError::InvalidViewChangeCounter(
+
+        // Check the view change number.
+        if message.chain.view_change < blockchain.view_change() {
+            return Err(ConsensusError::ViewChangeNumberFromThePast(
+                message.chain.view_change,
+                blockchain.view_change(),
+            ));
+        } else if message.chain.view_change > blockchain.view_change() {
+            return Err(ConsensusError::ViewChangeNumberFromTheFuture(
                 message.chain.view_change,
                 blockchain.view_change(),
             ));
         }
 
-        // checks if id exist, and signature.
-        message.validate(&blockchain)?;
-
         info!(
-            "Received valid view_change message: view_change={}, validator_id={},",
-            message.chain.view_change, message.validator_id
+            "Received a valid view_change message: view_change={}, validator={},",
+            message.chain.view_change, validator_pkey
         );
-        let id = message.validator_id;
-        if self.actual_view_changes.get(&id).is_none() {
-            self.actual_view_changes.insert(id, message.clone());
-            self.collected_slots += blockchain.validators()[id as usize].1;
+        if self.actual_view_changes.get(&validator_id).is_none() {
+            self.actual_view_changes
+                .insert(validator_id, message.clone());
+            self.collected_slots += blockchain.validators()[validator_id as usize].1;
         }
         info!(
             "Collected view_changes: collected={}, total={},",
@@ -181,10 +191,6 @@ impl ViewChangeCollector {
 
     /// Handle block timeout, starting mooving to the next view change.
     pub fn handle_timeout(&self, chain_info: ChainInfo) -> ViewChangeMessage {
-        debug!(
-            "Timeout at block receiving, trying to collect view changes: validator_id = {}",
-            self.validator_id
-        );
         // on timeout, create view change message.
         ViewChangeMessage::new(chain_info, self.validator_id, &self.skey)
     }

@@ -57,7 +57,9 @@ use std::time::{Duration, Instant};
 use stegos_blockchain::Timestamp;
 use stegos_blockchain::*;
 use stegos_consensus::optimistic::{SealedViewChangeProof, ViewChangeCollector, ViewChangeMessage};
-use stegos_consensus::{self as consensus, Consensus, ConsensusMessage, MacroBlockProposal};
+use stegos_consensus::{
+    self as consensus, Consensus, ConsensusError, ConsensusMessage, MacroBlockProposal,
+};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_network::{Network, ReplicationEvent};
@@ -748,7 +750,7 @@ impl NodeService {
                   local_view_change,
                   remote_view_change);
             // Request history from that node.
-            self.request_history_from(pkey, epoch, "fork resolution")?;
+            self.request_history_from(pkey, "fork resolution")?;
             return Err(ForkError::Canceled);
         }
 
@@ -934,7 +936,7 @@ impl NodeService {
                 Ok(BlockchainError::BlockError(BlockError::InvalidMicroBlockPreviousHash(..))) => {
                     // A potential fork - request history from that node.
                     let from = self.chain.select_leader(view_change);
-                    self.request_history_from(from, self.chain.epoch(), "invalid previous hash")?;
+                    self.request_history_from(from, "invalid previous hash")?;
                 }
                 Ok(BlockchainError::BlockError(BlockError::InvalidViewChange(..))) => {
                     assert!(self.chain.view_change() > 0);
@@ -1760,18 +1762,37 @@ impl NodeService {
             }
         };
 
-        if let Some(proof) = view_change_collector.handle_message(&self.chain, msg)? {
-            debug!(
-                "Received enough messages for change leader: epoch={}, view_change={}, last_block={}",
-                self.chain.epoch(), self.chain.view_change(), self.chain.last_block_hash(),
-            );
-            // Perform view change.
-            self.chain
-                .set_view_change(self.chain.view_change() + 1, proof);
+        match view_change_collector.handle_message(&self.chain, msg) {
+            Ok(Some(proof)) => {
+                debug!(
+                    "Received enough messages for change leader: epoch={}, view_change={}, last_block={}",
+                    self.chain.epoch(), self.chain.view_change(), self.chain.last_block_hash(),
+                );
+                // Perform view change.
+                self.chain
+                    .set_view_change(self.chain.view_change() + 1, proof);
 
-            // Change leader.
-            self.on_micro_block_leader_changed();
-        };
+                // Change leader.
+                self.on_micro_block_leader_changed();
+            }
+            Ok(None) => {}
+            Err(e @ ConsensusError::ViewChangeOffsetFromTheFuture(..))
+            | Err(e @ ConsensusError::ViewChangeNumberFromTheFuture(..))
+            | Err(e @ ConsensusError::InvalidLastBlockHash(..)) => {
+                let validator_pkey = self
+                    .chain
+                    .validators()
+                    .get(msg.validator_id as usize)
+                    .expect("Invalid validator_id")
+                    .0;
+                debug!(
+                    "Received an invalid view_change message: view_change={}, validator={}, error={}",
+                    msg.chain.view_change, validator_pkey, e
+                );
+                self.request_history_from(validator_pkey, "invalid view change")?;
+            }
+            Err(e) => return Err(e.into()),
+        }
 
         Ok(())
     }

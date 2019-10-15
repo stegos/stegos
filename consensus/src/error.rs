@@ -57,13 +57,24 @@ pub enum ConsensusError {
         display = "Received ViewChangeMessage, with other offset: msg_offset={}, our_offset={}",
         _0, _1
     )]
-    InvalidViewChangeOffset(u32, u32),
+    ViewChangeOffsetFromThePast(u32, u32),
+    #[fail(
+        display = "Received ViewChangeMessage, with other offset: msg_offset={}, our_offset={}",
+        _0, _1
+    )]
+    ViewChangeOffsetFromTheFuture(u32, u32),
+    #[fail(
+        display = "Received ViewChangeMessage, with other view_change: \
+                   msg_view_change={}, our_view_change={}",
+        _0, _1
+    )]
+    ViewChangeNumberFromThePast(u32, u32),
     #[fail(
         display = "Received ViewChangeMessage, with other view_change: \
                    message_view_change={}, our_view_change={}",
         _0, _1
     )]
-    InvalidViewChangeCounter(u32, u32),
+    ViewChangeNumberFromTheFuture(u32, u32),
     #[fail(
         display = "Received ViewChangeMessage, with other last block hash: \
                    message_block_hash={}, our_block_hash={}",

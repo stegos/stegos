@@ -131,7 +131,10 @@ impl Peer {
             Peer::Registered {
                 peer_id, multiaddr, ..
             } => (peer_id, multiaddr),
-            _ => unreachable!("Expected Discovered state"),
+            _ => {
+                // Unexpected state - disconnect.
+                return self.disconnected();
+            }
         };
         debug!("[{}] Connecting", peer_id);
         let new_state = Peer::Connecting {
@@ -160,7 +163,11 @@ impl Peer {
             Peer::Connecting {
                 peer_id, multiaddr, ..
             } => (peer_id, multiaddr),
-            _ => unreachable!("Expected Connecting state"),
+            _ => {
+                // Unexpected state - disconnect.
+                self.disconnected();
+                return;
+            }
         };
         let request = ReplicationRequest::Subscribe { epoch, offset };
         trace!("[{}] <- {:?}", peer_id, request);

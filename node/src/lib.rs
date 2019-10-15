@@ -1552,6 +1552,7 @@ impl NodeService {
             _ => panic!("Expected MacroBlockValidator state"),
         };
 
+        // We should create prevote before handling commit.
         if consensus.should_prevote() {
             let (block_hash, block_proposal, view_change) = consensus.get_proposal();
             debug!(
@@ -2037,8 +2038,7 @@ impl Future for NodeService {
                 Async::NotReady => {}
             };
         }
-
-        // Poll other events.
+        // Poll internal events.
         loop {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => {
@@ -2214,7 +2214,6 @@ impl Future for NodeService {
                 Async::NotReady => break,
             }
         }
-
         // Replication
         loop {
             match self.replication.poll(&self.chain) {

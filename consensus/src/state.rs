@@ -47,7 +47,7 @@ pub struct ConsensusInfo {
     pub precommits_len: usize,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Ord, PartialOrd)]
 pub enum ConsensusState {
     /// Propose state.
     Propose,
@@ -284,7 +284,7 @@ impl Consensus {
     /// Returns true if current node should validate a new request.
     ///
     pub fn should_prevote(&self) -> bool {
-        return self.state == ConsensusState::Prevote && !self.prevotes.contains_key(&self.pkey);
+        return self.state >= ConsensusState::Prevote && !self.prevotes.contains_key(&self.pkey);
     }
 
     ///

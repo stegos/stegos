@@ -91,9 +91,9 @@ impl NodeService {
     pub fn request_history_from(
         &mut self,
         from: pbc::PublicKey,
-        epoch: u64,
         reason: &str,
     ) -> Result<(), Error> {
+        let epoch = self.chain.epoch();
         info!(
             "Downloading blocks: from={}, epoch={}, reason='{}'",
             &from, epoch, reason

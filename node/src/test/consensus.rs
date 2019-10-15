@@ -417,19 +417,21 @@ fn lock() {
         for i in 0..s.num_nodes() {
             let _precommit: ConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
         }
+        s.poll();
         s.wait(
             s.config.node.macro_block_timeout
                 * (round - s.nodes[0].node_service.chain.view_change() + 1),
         );
 
-        info!("====== Waiting for keyblock timeout. =====");
+        s.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
+        info!("====== Waiting for macroblock timeout. =====");
         s.poll();
 
         // filter messages from chain loader.
         s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
 
-        let leader_pk = s.nodes[0].node_service.chain.select_leader(round + 1);
-        let leader_node = s.node(&leader_pk).unwrap();
+        let second_leader_pk = s.nodes[0].node_service.chain.select_leader(round + 1);
+        let leader_node = s.node(&second_leader_pk).unwrap();
         let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
 
         let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
@@ -438,7 +440,263 @@ fn lock() {
         assert_eq!(proposal.round, leader_proposal.round + 1);
         assert_eq!(proposal.block_hash, leader_proposal.block_hash);
         s.poll();
-        s.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
+    });
+}
+
+/// Send pack of prevotes in hope that node will ignore messages.
+///
+#[test]
+fn pack_of_prevotes() {
+    let mut cfg: ChainConfig = Default::default();
+    cfg.micro_blocks_in_epoch = 1;
+    let config = SandboxConfig {
+        chain: cfg,
+        num_nodes: 4,
+        ..Default::default()
+    };
+
+    Sandbox::start(config, |mut s| {
+        // Create one micro block.
+        s.poll();;
+        s.skip_micro_block();
+
+        let topic = crate::CONSENSUS_TOPIC;
+        let epoch = s.nodes[0].node_service.chain.epoch();
+
+        let mut round = s.nodes[0].node_service.chain.view_change();
+
+        let mut ready = false;
+        for i in 0..1000 {
+            info!(
+                "Checking if leader of round {}, and {} is different",
+                i,
+                i + 1
+            );
+            let leader_pk = s.nodes[0].node_service.chain.select_leader(round);
+            let new_leader_pk = s.nodes[0].node_service.chain.select_leader(round + 1);
+
+            if leader_pk != new_leader_pk {
+                ready = true;
+                break;
+            }
+
+            info!("skipping round {}, leader = {}", i, leader_pk);
+            s.poll();
+            let leader_node = s.node(&leader_pk).unwrap();
+
+            leader_node
+                .network_service
+                .filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+            let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+            let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+            round += 1;
+            // wait for current round end
+            s.wait(
+                s.config.node.macro_block_timeout
+                    * (round - s.nodes[0].node_service.chain.view_change()),
+            );
+        }
+
+        assert!(ready);
+        info!("Starting test.");
+        let leader_pk = s.nodes[0].node_service.chain.select_leader(round);
+        let leader_node = s.node(&leader_pk).unwrap();
+        leader_node.poll();
+        // skip proposal and prevote of last leader.
+        let leader_proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+
+        assert_matches!(leader_proposal.body, ConsensusMessageBody::Proposal { .. });
+        let leaders = &[leader_pk];
+        let first_node = s.iter_except(leaders).next().unwrap();
+        let first_node_pk = first_node.node_service.network_pkey;
+        let mut split = s.split(&[first_node_pk]);
+
+        for node in split.parts.1.iter_except(&[leader_pk]) {
+            node.network_service
+                .receive_broadcast(topic, leader_proposal.clone());
+        }
+        let mut prevotes = Vec::new();
+        for node in split.parts.1.iter_mut() {
+            node.poll();
+            let prevote: ConsensusMessage = node.network_service.get_broadcast(topic);
+
+            assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
+            assert_eq!(prevote.epoch, epoch);
+            assert_eq!(prevote.round, round);
+            assert_eq!(prevote.block_hash, leader_proposal.block_hash);
+
+            prevotes.push(prevote)
+        }
+
+        for node in split.parts.1.iter_mut() {
+            for prevote in prevotes.iter() {
+                node.network_service
+                    .receive_broadcast(topic, prevote.clone());
+            }
+        }
+
+        split.parts.1.poll();
+        for node in split.parts.1.iter_mut() {
+            let _precommit: ConsensusMessage = node.network_service.get_broadcast(topic);
+        }
+
+        split.parts.1.poll();
+
+        let first_node = split.parts.0.iter_mut().next().unwrap();
+
+        for prevote in prevotes.iter() {
+            first_node
+                .network_service
+                .receive_broadcast(topic, prevote.clone());
+        }
+
+        first_node
+            .network_service
+            .receive_broadcast(topic, leader_proposal.clone());
+
+        first_node.poll();
+
+        s.wait(
+            s.config.node.macro_block_timeout
+                * (round - s.nodes[0].node_service.chain.view_change() + 1),
+        );
+
+        info!("====== Waiting for macroblock timeout. =====");
+        s.poll();
+
+        s.filter_broadcast(&[topic]);
+    });
+}
+
+/// Send pack of prevotes in hope that node will ignore messages.
+/// This test the same as `pack_of_prevotes` but also send precommits pack to handle autocommit.
+#[test]
+fn pack_of_prevotes_and_precommits() {
+    let mut cfg: ChainConfig = Default::default();
+    cfg.micro_blocks_in_epoch = 1;
+    let config = SandboxConfig {
+        chain: cfg,
+        num_nodes: 4,
+        ..Default::default()
+    };
+
+    Sandbox::start(config, |mut s| {
+        // Create one micro block.
+        s.poll();;
+        s.skip_micro_block();
+
+        let topic = crate::CONSENSUS_TOPIC;
+        let epoch = s.nodes[0].node_service.chain.epoch();
+
+        let mut round = s.nodes[0].node_service.chain.view_change();
+
+        let mut ready = false;
+        for i in 0..1000 {
+            info!(
+                "Checking if leader of round {}, and {} is different",
+                i,
+                i + 1
+            );
+            let leader_pk = s.nodes[0].node_service.chain.select_leader(round);
+            let new_leader_pk = s.nodes[0].node_service.chain.select_leader(round + 1);
+
+            if leader_pk != new_leader_pk {
+                ready = true;
+                break;
+            }
+
+            info!("skipping round {}, leader = {}", i, leader_pk);
+            s.poll();
+            let leader_node = s.node(&leader_pk).unwrap();
+
+            leader_node
+                .network_service
+                .filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+            let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+            let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+            round += 1;
+            // wait for current round end
+            s.wait(
+                s.config.node.macro_block_timeout
+                    * (round - s.nodes[0].node_service.chain.view_change()),
+            );
+        }
+
+        assert!(ready);
+        info!("Starting test.");
+        let leader_pk = s.nodes[0].node_service.chain.select_leader(round);
+        let leader_node = s.node(&leader_pk).unwrap();
+        leader_node.poll();
+        // skip proposal and prevote of last leader.
+        let leader_proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+
+        assert_matches!(leader_proposal.body, ConsensusMessageBody::Proposal { .. });
+        let leaders = &[leader_pk];
+        let first_node = s.iter_except(leaders).next().unwrap();
+        let first_node_pk = first_node.node_service.network_pkey;
+        let mut split = s.split(&[first_node_pk]);
+
+        for node in split.parts.1.iter_except(&[leader_pk]) {
+            node.network_service
+                .receive_broadcast(topic, leader_proposal.clone());
+        }
+        let mut prevotes = Vec::new();
+        for node in split.parts.1.iter_mut() {
+            node.poll();
+            let prevote: ConsensusMessage = node.network_service.get_broadcast(topic);
+
+            assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
+            assert_eq!(prevote.epoch, epoch);
+            assert_eq!(prevote.round, round);
+            assert_eq!(prevote.block_hash, leader_proposal.block_hash);
+
+            prevotes.push(prevote)
+        }
+
+        for node in split.parts.1.iter_mut() {
+            for prevote in prevotes.iter() {
+                node.network_service
+                    .receive_broadcast(topic, prevote.clone());
+            }
+        }
+
+        split.parts.1.poll();
+        let mut precommits = Vec::new();
+        for node in split.parts.1.iter_mut() {
+            let precommit: ConsensusMessage = node.network_service.get_broadcast(topic);
+            precommits.push(precommit);
+        }
+
+        split.parts.1.poll();
+
+        let first_node = split.parts.0.iter_mut().next().unwrap();
+
+        for prevote in prevotes.iter() {
+            first_node
+                .network_service
+                .receive_broadcast(topic, prevote.clone());
+        }
+        for precommit in precommits.iter() {
+            first_node
+                .network_service
+                .receive_broadcast(topic, precommit.clone());
+        }
+
+        first_node
+            .network_service
+            .receive_broadcast(topic, leader_proposal.clone());
+
+        first_node.poll();
+
+        s.wait(
+            s.config.node.macro_block_timeout
+                * (round - s.nodes[0].node_service.chain.view_change() + 1),
+        );
+
+        info!("====== Waiting for macroblock timeout. =====");
+        s.poll();
+
+        s.filter_broadcast(&[topic, SEALED_BLOCK_TOPIC]);
     });
 }
 

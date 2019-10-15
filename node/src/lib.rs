@@ -1409,7 +1409,9 @@ impl NodeService {
             // Consensus may have locked proposal.
             if consensus.should_propose() {
                 let deadline = clock::now();
-                std::mem::replace(block_timer, MacroBlockTimer::Propose(Delay::new(deadline)));
+                *block_timer = MacroBlockTimer::Propose(Delay::new(deadline));
+            } else {
+                *block_timer = MacroBlockTimer::None;
             }
         } else {
             info!(
@@ -1423,10 +1425,7 @@ impl NodeService {
                 .set(consensus::metrics::ConsensusRole::Validator as i64);
             let relevant_round = 1 + consensus.round();
             let deadline = clock::now() + relevant_round * self.cfg.macro_block_timeout;
-            std::mem::replace(
-                block_timer,
-                MacroBlockTimer::ViewChange(Delay::new(deadline)),
-            );
+            *block_timer = MacroBlockTimer::ViewChange(Delay::new(deadline));
         }
 
         task::current().notify();
@@ -1553,6 +1552,7 @@ impl NodeService {
             _ => panic!("Expected MacroBlockValidator state"),
         };
 
+        // We should create prevote before handling commit.
         if consensus.should_prevote() {
             let (block_hash, block_proposal, view_change) = consensus.get_proposal();
             debug!(
@@ -2053,8 +2053,7 @@ impl Future for NodeService {
                 Async::NotReady => {}
             };
         }
-
-        // Poll other events.
+        // Poll internal events.
         loop {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => {
@@ -2230,7 +2229,6 @@ impl Future for NodeService {
                 Async::NotReady => break,
             }
         }
-
         // Replication
         loop {
             match self.replication.poll(&self.chain) {

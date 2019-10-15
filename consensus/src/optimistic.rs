@@ -116,10 +116,9 @@ impl ViewChangeCollector {
 
         // Check validator_id.
         let validator_id = message.validator_id;
-        let validator_pkey = match blockchain.validators().get(validator_id as usize) {
-            Some((validator_pkey, _slots)) => validator_pkey,
-            None => return Err(ConsensusError::InvalidValidatorId(validator_id)),
-        };
+        let validator_pkey = blockchain
+            .validator_key_by_id(validator_id as usize)
+            .ok_or(ConsensusError::InvalidValidatorId(validator_id))?;
 
         // Check signature.
         let hash = Hash::digest(&message.chain);

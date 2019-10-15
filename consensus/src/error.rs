@@ -90,3 +90,14 @@ pub enum ConsensusError {
     #[fail(display = "Failed to check view change message signature.")]
     InvalidViewChangeSignature,
 }
+
+impl ConsensusError {
+    pub fn is_future_viewchange(&self) -> bool {
+        match self {
+            ConsensusError::ViewChangeOffsetFromTheFuture(..)
+            | ConsensusError::ViewChangeNumberFromTheFuture(..)
+            | ConsensusError::InvalidLastBlockHash(..) => true,
+            _ => false,
+        }
+    }
+}

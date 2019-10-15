@@ -57,9 +57,7 @@ use std::time::{Duration, Instant};
 use stegos_blockchain::Timestamp;
 use stegos_blockchain::*;
 use stegos_consensus::optimistic::{SealedViewChangeProof, ViewChangeCollector, ViewChangeMessage};
-use stegos_consensus::{
-    self as consensus, Consensus, ConsensusError, ConsensusMessage, MacroBlockProposal,
-};
+use stegos_consensus::{self as consensus, Consensus, ConsensusMessage, MacroBlockProposal};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_network::{Network, ReplicationEvent};
@@ -1776,15 +1774,11 @@ impl NodeService {
                 self.on_micro_block_leader_changed();
             }
             Ok(None) => {}
-            Err(e @ ConsensusError::ViewChangeOffsetFromTheFuture(..))
-            | Err(e @ ConsensusError::ViewChangeNumberFromTheFuture(..))
-            | Err(e @ ConsensusError::InvalidLastBlockHash(..)) => {
+            Err(ref e) if e.is_future_viewchange() => {
                 let validator_pkey = self
                     .chain
-                    .validators()
-                    .get(msg.validator_id as usize)
-                    .expect("Invalid validator_id")
-                    .0;
+                    .validator_key_by_id(msg.validator_id as usize)
+                    .expect("Invalid validator_id");
                 debug!(
                     "Received an invalid view_change message: view_change={}, validator={}, error={}",
                     msg.chain.view_change, validator_pkey, e

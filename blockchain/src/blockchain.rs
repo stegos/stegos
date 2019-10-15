@@ -791,6 +791,12 @@ impl Blockchain {
         &self.election_result().facilitator
     }
 
+    /// Returns the validator network key, by validator_id.
+    #[inline]
+    pub fn validator_key_by_id(&self, id: usize) -> Option<pbc::PublicKey> {
+        self.validators().get(id).map(|v| v.0)
+    }
+
     /// Returns the current epoch validators with their stakes.
     #[inline]
     pub fn validators(&self) -> &Vec<(pbc::PublicKey, i64)> {

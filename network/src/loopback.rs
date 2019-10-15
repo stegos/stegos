@@ -35,8 +35,6 @@ use std::sync::{Arc, Mutex};
 use stegos_crypto::pbc;
 use stegos_serialization::traits::ProtoConvert;
 
-const IGNORED_UNICAST_PROTOCOLS: [&'static str; 1] = ["chain-loader"];
-
 #[derive(Debug, Clone)]
 pub struct LoopbackNetwork {
     state: Arc<Mutex<LoopbackState>>,
@@ -159,11 +157,6 @@ impl Loopback {
         let mut result = Vec::new();
         for data in &state.queue {
             match data {
-                MessageFromNode::SendUnicast { protocol_id, .. }
-                    if IGNORED_UNICAST_PROTOCOLS.contains(&protocol_id.as_str()) =>
-                {
-                    continue
-                }
                 MessageFromNode::SendUnicast {
                     protocol_id: topic, ..
                 }
@@ -213,9 +206,6 @@ impl Loopback {
         let ref mut state = self.state.lock().unwrap();
         loop {
             match state.queue.pop_front() {
-                Some(MessageFromNode::SendUnicast {
-                    ref protocol_id, ..
-                }) if IGNORED_UNICAST_PROTOCOLS.contains(&protocol_id.as_str()) => continue,
                 Some(MessageFromNode::Publish {
                     topic: msg_topic,
                     data: msg_data,
@@ -235,9 +225,6 @@ impl Loopback {
         let ref mut state = self.state.lock().unwrap();
         loop {
             match state.queue.pop_front() {
-                Some(MessageFromNode::SendUnicast {
-                    ref protocol_id, ..
-                }) if IGNORED_UNICAST_PROTOCOLS.contains(&protocol_id.as_str()) => continue,
                 Some(MessageFromNode::SendUnicast {
                     protocol_id: msg_protocol_id,
                     to: msg_peer,

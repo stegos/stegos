@@ -24,11 +24,14 @@
 //! Test of features build on top of consensus/blockchain stack.
 
 use super::*;
+//use crate::loader::ChainLoaderMessage;
 use crate::*;
 use std::collections::HashSet;
 use stegos_blockchain::Block;
+use stegos_blockchain::ChainInfo;
 use stegos_blockchain::Output;
 use stegos_blockchain::ValidatorAwardState;
+use stegos_consensus::optimistic::ViewChangeMessage;
 
 // CASE rollback slashing:
 // Nodes [A, B, C, D]
@@ -629,5 +632,69 @@ fn service_award_state_no_winners() {
 
         let budget = s.config.chain.service_award_per_epoch;
         service_award_round_normal(&mut s, budget * 2)
+    });
+}
+
+// CASE loader requests on view_change messages from future.
+
+#[test]
+fn view_change_from_future() {
+    let mut cfg: ChainConfig = Default::default();
+    cfg.micro_blocks_in_epoch = 50;
+    // execute award alays
+    cfg.awards_difficulty = 0;
+    let config = SandboxConfig {
+        num_nodes: 4,
+        chain: cfg,
+        ..Default::default()
+    };
+
+    Sandbox::start(config, |mut s| {
+        s.poll();
+        s.skip_micro_block();
+        //        pub fn new(chain: ChainInfo, validator_id: ValidatorId, skey: &pbc::SecretKey) -> Self {
+
+        let mut msgs = Vec::new();
+        let sender = s.first_mut();
+        let sender_pk = sender.node_service.network_pkey.clone();
+        let source_chain_info = ChainInfo::from_blockchain(&sender.node_service.chain);
+
+        let mut chain_info = source_chain_info.clone();
+        chain_info.offset += 1;
+        msgs.push(chain_info);
+
+        let mut chain_info = source_chain_info.clone();
+        chain_info.view_change += 1;
+        msgs.push(chain_info);
+
+        let mut chain_info = source_chain_info.clone();
+        chain_info.last_block = Hash::digest("test");
+        msgs.push(chain_info);
+
+        let msgs: Vec<_> = msgs
+            .into_iter()
+            .map(|chain_info| {
+                ViewChangeMessage::new(
+                    chain_info,
+                    sender.validator_id().unwrap() as u32,
+                    &sender.node_service.network_skey,
+                )
+            })
+            .collect();
+        s.poll();
+        let ref mut receiver = s.nodes[1];
+        for msg in msgs {
+            receiver
+                .network_service
+                .receive_broadcast(VIEW_CHANGE_TOPIC, msg);
+            receiver.poll();
+            let (recv_msg, pk): (ChainLoaderMessage, _) =
+                receiver.network_service.get_unicast(CHAIN_LOADER_TOPIC);
+            assert_eq!(pk, sender_pk);
+            match recv_msg {
+                ChainLoaderMessage::Request(_) => {}
+                _ => panic!("Expected chain loader request."),
+            }
+        }
     });
 }

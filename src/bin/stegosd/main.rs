@@ -30,7 +30,10 @@ use hyper::service::service_fn_ok;
 use hyper::{Body, Request, Response};
 use log::*;
 use log4rs::append::console::ConsoleAppender;
-use log4rs::append::file::FileAppender;
+use log4rs::append::rolling_file::policy::compound::roll::fixed_window::FixedWindowRoller;
+use log4rs::append::rolling_file::policy::compound::trigger::size::SizeTrigger;
+use log4rs::append::rolling_file::policy::compound::CompoundPolicy;
+use log4rs::append::rolling_file::RollingFileAppender;
 use log4rs::config::{Appender, Config as LogConfig, Logger, Root};
 use log4rs::encode::pattern::PatternEncoder;
 use log4rs::filter::threshold::ThresholdFilter;
@@ -58,6 +61,11 @@ const STEGOSD_TOML: &'static str = "stegosd.toml";
 const STEGOSD_LOG4RS_TOML: &'static str = "stegosd-log4rs.toml";
 /// The default file name for the log file.
 const STEGOSD_LOG: &'static str = "stegosd.log";
+
+/// The size of single stegosd.log file, untill rotate.
+const STEGOSD_LOG_SIZE_LIMIT: u64 = 5 * 1024 * 1024; // 5 MBytes
+/// The count of logs file in archive.
+const STEGOSD_LOG_COUNT_LIMIT: u32 = 10; // 10 log files
 
 fn load_logger_configuration_file(path: &Path) -> Result<LogHandle, LogError> {
     match log4rs::load_config_file(path, Default::default()) {
@@ -111,9 +119,19 @@ fn load_logger_configuration(
     let console = ConsoleAppender::builder()
         .encoder(Box::new(PatternEncoder::new(pattern)))
         .build();
-    let file = FileAppender::builder()
+    let trigger = Box::new(SizeTrigger::new(STEGOSD_LOG_SIZE_LIMIT));
+    let roller = Box::new(
+        FixedWindowRoller::builder()
+            .build(
+                &format!("{}/logs/stegosd.{{}}.log.gz", data_dir.to_string_lossy()),
+                STEGOSD_LOG_COUNT_LIMIT,
+            )
+            .map_err(|e| format_err!("Error during setting log: {}", e))?,
+    );
+    let policy = Box::new(CompoundPolicy::new(trigger, roller));
+    let file = RollingFileAppender::builder()
         .encoder(Box::new(PatternEncoder::new(pattern)))
-        .build(data_dir.join(STEGOSD_LOG))
+        .build(data_dir.join(STEGOSD_LOG), policy)
         .map_err(|e| {
             format_err!(
                 "Failed to create the log file {:?}: {}",
@@ -127,7 +145,7 @@ fn load_logger_configuration(
                 .filter(Box::new(ThresholdFilter::new(console_level)))
                 .build("console", Box::new(console)),
         )
-        .appender(Appender::builder().build("file", Box::new(file)))
+        .appender(Appender::builder().build("rolling_file", Box::new(file)))
         .logger(Logger::builder().build("stegos", level))
         .logger(Logger::builder().build("stegosd", level))
         .logger(Logger::builder().build("stegos_api", level))
@@ -141,7 +159,7 @@ fn load_logger_configuration(
         .logger(Logger::builder().build("trust-dns-resolver", log::LevelFilter::Trace))
         .build(
             Root::builder()
-                .appender("file")
+                .appender("rolling_file")
                 .appender("console")
                 .build(LevelFilter::Info),
         )

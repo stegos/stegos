@@ -11,8 +11,19 @@ kind = "threshold"
 level = "debug"
 
 [appenders.file]
-kind = "file"
-path = "stegosd.log"
+    kind = "rolling_file"
+    path = "logs/stegosd.log"
+    policy.kind = "compound"
+
+[appenders.file.policy.trigger]
+    kind = "size"
+    limit = "10Mb"
+[appenders.file.policy.roller]
+    kind = "fixed_window"
+    base = 0
+    count = 10
+    pattern = "logs/stegosd.{}.log.gz"
+
 [appenders.file.encoder]
 pattern = "{d(%Y-%m-%d %H:%M:%S)(local)} {h({l})} [{t}] {m}{n}"
 [[appenders.console.filters]]
